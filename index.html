@@ -5167,6 +5167,313 @@ document.addEventListener('click', function(ev){
     var tab=el.getAttribute('data-tab');
     if(tab){st(tab);return;}
     var role=el.getAttribute('data-role');
+// ============================================================
+// RISAPP BRIDGE - Seccion de Retiros RisApp
+// Agregado al final del script principal - no modifica nada existente
+// ============================================================
+(function(){
+  // 1. Agregar tab "risapp" a TABS del admin si existe
+  if(typeof TABS !== 'undefined' && TABS.admin && TABS.admin.indexOf('risapp') === -1){
+    TABS.admin.push('risapp');
+  }
+  // 2. Agregar label
+  if(typeof TL !== 'undefined'){
+    TL.risapp = "📱 RisApp";
+  }
+
+  // 3. Configuracion del bridge
+  var RISAPP_CFG_KEY = 'risapp_bridge_cfg';
+  function getRisappCfg(){
+    try{ return JSON.parse(localStorage.getItem(RISAPP_CFG_KEY)||'{}'); }catch(e){ return {}; }
+  }
+  function saveRisappCfg(c){ localStorage.setItem(RISAPP_CFG_KEY, JSON.stringify(c)); }
+
+  // 4. API helper
+  async function risApi(method, path, body){
+    var cfg = getRisappCfg();
+    var base = (cfg.baseUrl||'').replace(/\/$/,'');
+    var key = cfg.apiKey||'';
+    if(!base||!key) throw new Error('Configura la URL y API Key de RisApp primero.');
+    var opts = { method: method, headers: { 'Content-Type':'application/json', 'X-AdminBRL-Key': key }};
+    if(body) opts.body = JSON.stringify(body);
+    var r = await fetch(base + '/api/adminbrl' + path, opts);
+    var d = await r.json().catch(function(){ return {}; });
+    if(!r.ok) throw new Error(d.detail || 'Error ' + r.status);
+    return d;
+  }
+
+  // 5. Toast helper (reusar el de la app o crear uno)
+  function risToast(msg, ok){
+    var t = document.getElementById('risapp-toast');
+    if(!t){ t = document.createElement('div'); t.id='risapp-toast';
+      t.style.cssText='position:fixed;bottom:20px;right:20px;z-index:9999;padding:12px 18px;border-radius:10px;font-size:14px;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.3);transition:opacity .4s';
+      document.body.appendChild(t);
+    }
+    t.textContent = msg;
+    t.style.background = ok ? '#16a34a' : '#dc2626';
+    t.style.color = '#fff';
+    t.style.opacity = '1';
+    t.style.display = 'block';
+    clearTimeout(t._timer);
+    t._timer = setTimeout(function(){ t.style.opacity='0'; setTimeout(function(){ t.style.display='none'; },400); }, 3500);
+  }
+
+  // 6. Estado local
+  var _risVES = [];
+  var _risBTC = [];
+  var _risCurrentVES = null;
+  var _risCurrentBTC = null;
+
+  // 7. Renderizar el HTML del tab
+  function renderRisappTab(){
+    var cfg = getRisappCfg();
+    return '<div style="padding:16px;max-width:900px;margin:0 auto;">' +
+      // Config bar
+      '<div style="background:#1e293b;border:1px solid #334155;border-radius:10px;padding:14px;margin-bottom:16px;">' +
+        '<div style="font-weight:700;font-size:13px;color:#94a3b8;margin-bottom:10px;">CONFIGURACION RISAPP BRIDGE</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;">' +
+          '<div><label style="font-size:11px;color:#64748b;display:block;margin-bottom:4px;">URL base de RisApp</label>' +
+            '<input id="ris-url" value="'+(cfg.baseUrl||'')+'" placeholder="https://www.risappbr.com" style="width:100%;padding:8px 10px;border-radius:7px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;font-size:13px;" /></div>' +
+          '<div><label style="font-size:11px;color:#64748b;display:block;margin-bottom:4px;">API Key (X-AdminBRL-Key)</label>' +
+            '<input id="ris-key" type="password" value="'+(cfg.apiKey||'')+'" placeholder="tu-api-key" style="width:100%;padding:8px 10px;border-radius:7px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;font-size:13px;" /></div>' +
+          '<button onclick="risappSaveCfg()" style="padding:8px 16px;background:#3b82f6;color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;">Guardar</button>' +
+        '</div>' +
+      '</div>' +
+      // Tabs internas
+      '<div style="display:flex;gap:8px;margin-bottom:16px;">' +
+        '<button onclick="risappShowPanel('ves')" id="ris-btn-ves" style="flex:1;padding:10px;background:#1e293b;color:#e2e8f0;border:2px solid #3b82f6;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">💸 Retiros VES</button>' +
+        '<button onclick="risappShowPanel('btc')" id="ris-btn-btc" style="flex:1;padding:10px;background:#1e293b;color:#94a3b8;border:1px solid #334155;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">⚡ Remesas BTC</button>' +
+        '<button onclick="risappShowPanel('tasa')" id="ris-btn-tasa" style="flex:1;padding:10px;background:#1e293b;color:#94a3b8;border:1px solid #334155;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">📈 Tasa</button>' +
+      '</div>' +
+      // Panel VES
+      '<div id="ris-panel-ves">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">' +
+          '<div style="font-weight:700;font-size:15px;">Retiros VES Pendientes <span id="ris-ves-badge" style="display:none;background:#f59e0b;color:#fff;border-radius:12px;padding:2px 8px;font-size:12px;margin-left:6px;"></span></div>' +
+          '<button onclick="risappLoadVES()" style="padding:7px 14px;background:#1e293b;color:#94a3b8;border:1px solid #334155;border-radius:7px;font-size:12px;cursor:pointer;">Actualizar</button>' +
+        '</div>' +
+        '<div id="ris-ves-list"><div style="text-align:center;padding:32px;color:#64748b;font-size:13px;">Haz clic en Actualizar para cargar</div></div>' +
+      '</div>' +
+      // Panel BTC
+      '<div id="ris-panel-btc" style="display:none;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">' +
+          '<div style="font-weight:700;font-size:15px;">Remesas BTC por Enviar <span id="ris-btc-badge" style="display:none;background:#f59e0b;color:#fff;border-radius:12px;padding:2px 8px;font-size:12px;margin-left:6px;"></span></div>' +
+          '<button onclick="risappLoadBTC()" style="padding:7px 14px;background:#1e293b;color:#94a3b8;border:1px solid #334155;border-radius:7px;font-size:12px;cursor:pointer;">Actualizar</button>' +
+        '</div>' +
+        '<div id="ris-btc-list"><div style="text-align:center;padding:32px;color:#64748b;font-size:13px;">Haz clic en Actualizar para cargar</div></div>' +
+      '</div>' +
+      // Panel Tasa
+      '<div id="ris-panel-tasa" style="display:none;">' +
+        '<div style="background:#1e293b;border:1px solid #334155;border-radius:10px;padding:20px;max-width:380px;">' +
+          '<div style="font-weight:700;font-size:15px;margin-bottom:16px;">Sincronizar Tasa USD/VES</div>' +
+          '<label style="font-size:12px;color:#64748b;display:block;margin-bottom:6px;">Tasa USD a VES</label>' +
+          '<input id="ris-tasa-val" type="number" step="0.01" placeholder="ej: 42.50" style="width:100%;padding:9px 12px;border-radius:7px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;font-size:14px;margin-bottom:12px;" />' +
+          '<button onclick="risappSyncTasa()" style="width:100%;padding:10px;background:#3b82f6;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">Enviar tasa a RisApp</button>' +
+          '<div id="ris-tasa-msg" style="margin-top:10px;font-size:13px;"></div>' +
+        '</div>' +
+      '</div>' +
+      // Modales
+      '<div id="ris-modal-ves" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:10000;align-items:center;justify-content:center;">' +
+        '<div style="background:#1e293b;border:1px solid #334155;border-radius:12px;padding:24px;width:90%;max-width:460px;">' +
+          '<div id="ris-modal-ves-title" style="font-weight:700;font-size:15px;margin-bottom:16px;"></div>' +
+          '<label style="font-size:12px;color:#64748b;display:block;margin-bottom:4px;">Banco (bank_id)</label>' +
+          '<input id="ris-ves-bank" placeholder="bank_id del banco" style="width:100%;padding:9px 12px;border-radius:7px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;font-size:13px;margin-bottom:10px;" />' +
+          '<label style="font-size:12px;color:#64748b;display:block;margin-bottom:4px;">URL Comprobante (opcional)</label>' +
+          '<input id="ris-ves-proof" placeholder="https://..." style="width:100%;padding:9px 12px;border-radius:7px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;font-size:13px;margin-bottom:10px;" />' +
+          '<label style="font-size:12px;color:#64748b;display:block;margin-bottom:4px;">Motivo rechazo (solo si rechaza)</label>' +
+          '<input id="ris-ves-reason" placeholder="Motivo..." style="width:100%;padding:9px 12px;border-radius:7px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;font-size:13px;margin-bottom:16px;" />' +
+          '<div id="ris-modal-ves-err" style="color:#ef4444;font-size:12px;margin-bottom:8px;"></div>' +
+          '<div style="display:flex;gap:8px;">' +
+            '<button onclick="risappCloseVESModal()" style="flex:1;padding:10px;background:#334155;color:#e2e8f0;border:none;border-radius:8px;font-size:13px;cursor:pointer;">Cancelar</button>' +
+            '<button onclick="risappConfirmVES('reject')" style="flex:1;padding:10px;background:#dc2626;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">Rechazar</button>' +
+            '<button onclick="risappConfirmVES('approve')" style="flex:1;padding:10px;background:#16a34a;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">Aprobar</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div id="ris-modal-btc" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:10000;align-items:center;justify-content:center;">' +
+        '<div style="background:#1e293b;border:1px solid #334155;border-radius:12px;padding:24px;width:90%;max-width:420px;">' +
+          '<div style="font-weight:700;font-size:15px;margin-bottom:16px;">Marcar Remesa BTC como Enviada</div>' +
+          '<label style="font-size:12px;color:#64748b;display:block;margin-bottom:4px;">URL Comprobante (opcional)</label>' +
+          '<input id="ris-btc-proof" placeholder="https://..." style="width:100%;padding:9px 12px;border-radius:7px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;font-size:13px;margin-bottom:16px;" />' +
+          '<div style="display:flex;gap:8px;">' +
+            '<button onclick="risappCloseBTCModal()" style="flex:1;padding:10px;background:#334155;color:#e2e8f0;border:none;border-radius:8px;font-size:13px;cursor:pointer;">Cancelar</button>' +
+            '<button onclick="risappConfirmBTC()" style="flex:1;padding:10px;background:#16a34a;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">Confirmar Envio</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }
+
+  // 8. Funciones globales del tab
+  window.risappSaveCfg = function(){
+    var c = { baseUrl: (document.getElementById('ris-url')||{}).value||'', apiKey: (document.getElementById('ris-key')||{}).value||'' };
+    saveRisappCfg(c);
+    risToast('Configuracion guardada', true);
+  };
+
+  window.risappShowPanel = function(p){
+    ['ves','btc','tasa'].forEach(function(x){
+      var el = document.getElementById('ris-panel-'+x);
+      if(el) el.style.display = x===p ? 'block' : 'none';
+      var btn = document.getElementById('ris-btn-'+x);
+      if(btn){ btn.style.borderColor = x===p ? '#3b82f6' : '#334155'; btn.style.color = x===p ? '#e2e8f0' : '#94a3b8'; btn.style.borderWidth = x===p ? '2px' : '1px'; }
+    });
+  };
+
+  window.risappLoadVES = async function(){
+    var el = document.getElementById('ris-ves-list');
+    if(!el) return;
+    el.innerHTML = '<div style="text-align:center;padding:24px;color:#94a3b8;font-size:13px;">Cargando...</div>';
+    try {
+      var data = await risApi('GET', '/withdrawals/pending');
+      _risVES = data.withdrawals || [];
+      var badge = document.getElementById('ris-ves-badge');
+      if(badge){ badge.textContent = _risVES.length; badge.style.display = _risVES.length ? 'inline' : 'none'; }
+      if(!_risVES.length){ el.innerHTML = '<div style="text-align:center;padding:32px;color:#64748b;font-size:13px;">Sin retiros pendientes</div>'; return; }
+      el.innerHTML = _risVES.map(function(tx, i){
+        var b = tx.beneficiary || {};
+        var fecha = (tx.created_at||'').slice(0,16).replace('T',' ');
+        return '<div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">'+
+          '<div style="flex:1;min-width:200px;">'+
+            '<div style="font-weight:700;color:#f59e0b;font-size:14px;">'+Number(tx.amount_output||0).toLocaleString()+' VES</div>'+
+            '<div style="font-size:12px;color:#94a3b8;margin-top:2px;">'+(tx.user_name||'-')+' &rarr; '+(b.full_name||'-')+'</div>'+
+            '<div style="font-size:11px;color:#64748b;margin-top:2px;">'+(b.bank_name||'-')+' '+(b.account_number||'-')+'</div>'+
+            '<div style="font-size:11px;color:#64748b;">'+fecha+'</div>'+
+          '</div>'+
+          '<button onclick="risappOpenVES('+i+')" style="padding:8px 16px;background:#3b82f6;color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;">Procesar</button>'+
+        '</div>';
+      }).join('');
+    } catch(e){ el.innerHTML = '<div style="text-align:center;padding:24px;color:#ef4444;font-size:13px;">'+e.message+'</div>'; }
+  };
+
+  window.risappLoadBTC = async function(){
+    var el = document.getElementById('ris-btc-list');
+    if(!el) return;
+    el.innerHTML = '<div style="text-align:center;padding:24px;color:#94a3b8;font-size:13px;">Cargando...</div>';
+    try {
+      var data = await risApi('GET', '/btc/pending');
+      _risBTC = data.ordenes || [];
+      var badge = document.getElementById('ris-btc-badge');
+      if(badge){ badge.textContent = _risBTC.length; badge.style.display = _risBTC.length ? 'inline' : 'none'; }
+      if(!_risBTC.length){ el.innerHTML = '<div style="text-align:center;padding:32px;color:#64748b;font-size:13px;">Sin remesas pendientes</div>'; return; }
+      el.innerHTML = _risBTC.map(function(r, i){
+        var b = r.beneficiario || {};
+        var fecha = (r.pagado_en||'').slice(0,16).replace('T',' ');
+        return '<div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">'+
+          '<div style="flex:1;min-width:200px;">'+
+            '<div style="font-weight:700;color:#3b82f6;font-size:14px;">$'+Number(r.usd_cliente||0).toFixed(2)+' USD &rarr; '+Number(r.ves_recibe||0).toLocaleString()+' VES</div>'+
+            '<div style="font-size:12px;color:#94a3b8;margin-top:2px;">'+(r.user_name||r.user_id||'-')+' &rarr; '+(b.full_name||'-')+'</div>'+
+            '<div style="font-size:11px;color:#64748b;">'+Number(r.sats||0).toLocaleString()+' sats | '+fecha+'</div>'+
+          '</div>'+
+          '<button onclick="risappOpenBTC('+i+')" style="padding:8px 16px;background:#16a34a;color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;">Marcar Enviada</button>'+
+        '</div>';
+      }).join('');
+    } catch(e){ el.innerHTML = '<div style="text-align:center;padding:24px;color:#ef4444;font-size:13px;">'+e.message+'</div>'; }
+  };
+
+  window.risappOpenVES = function(i){
+    _risCurrentVES = _risVES[i];
+    if(!_risCurrentVES) return;
+    var t = document.getElementById('ris-modal-ves-title');
+    if(t) t.textContent = 'Retiro: '+(_risCurrentVES.display_id||_risCurrentVES.transaction_id||'');
+    var inputs = ['ris-ves-bank','ris-ves-proof','ris-ves-reason'];
+    inputs.forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
+    var err = document.getElementById('ris-modal-ves-err'); if(err) err.textContent='';
+    var m = document.getElementById('ris-modal-ves');
+    if(m){ m.style.display='flex'; }
+  };
+  window.risappCloseVESModal = function(){
+    var m = document.getElementById('ris-modal-ves'); if(m) m.style.display='none';
+  };
+  window.risappConfirmVES = async function(action){
+    if(!_risCurrentVES) return;
+    var bankId = (document.getElementById('ris-ves-bank')||{}).value||'';
+    var proof = (document.getElementById('ris-ves-proof')||{}).value||'';
+    var reason = (document.getElementById('ris-ves-reason')||{}).value||'';
+    var err = document.getElementById('ris-modal-ves-err');
+    if(action==='approve' && !bankId){ if(err) err.textContent='Ingresa el bank_id del banco.'; return; }
+    try{
+      var body = { transaction_id: _risCurrentVES.transaction_id, action: action };
+      if(bankId) body.bank_id = bankId;
+      if(proof) body.proof_images = [proof];
+      if(reason) body.rejection_reason = reason;
+      var d = await risApi('POST','/withdrawals/process', body);
+      risappCloseVESModal();
+      risToast(d.message||'Procesado', true);
+      risappLoadVES();
+    } catch(e){ if(err) err.textContent = e.message; }
+  };
+
+  window.risappOpenBTC = function(i){
+    _risCurrentBTC = _risBTC[i];
+    if(!_risCurrentBTC) return;
+    var el = document.getElementById('ris-btc-proof'); if(el) el.value='';
+    var m = document.getElementById('ris-modal-btc'); if(m){ m.style.display='flex'; }
+  };
+  window.risappCloseBTCModal = function(){
+    var m = document.getElementById('ris-modal-btc'); if(m) m.style.display='none';
+  };
+  window.risappConfirmBTC = async function(){
+    if(!_risCurrentBTC) return;
+    var proof = (document.getElementById('ris-btc-proof')||{}).value||'';
+    var body = { remesa_id: _risCurrentBTC.remesa_id };
+    if(proof) body.proof_images = [proof];
+    try{
+      var d = await risApi('POST','/btc/process', body);
+      risappCloseBTCModal();
+      risToast(d.msg||'Enviada', true);
+      risappLoadBTC();
+    } catch(e){ risToast(e.message, false); }
+  };
+
+  window.risappSyncTasa = async function(){
+    var val = parseFloat((document.getElementById('ris-tasa-val')||{}).value||'0');
+    var msg = document.getElementById('ris-tasa-msg');
+    if(!val||val<=0){ if(msg) msg.innerHTML='<span style="color:#ef4444">Ingresa una tasa valida.</span>'; return; }
+    try{
+      var d = await risApi('POST','/rates/sync',{ tasa_ves: val, source:'adminbrl' });
+      if(msg) msg.innerHTML='<span style="color:#22c55e">Tasa '+d.tasa_ves+' VES/USD sincronizada.</span>';
+      risToast('Tasa sincronizada: '+d.tasa_ves, true);
+    } catch(e){ if(msg) msg.innerHTML='<span style="color:#ef4444">'+e.message+'</span>'; }
+  };
+
+  // 9. Hook: cuando el tab risapp se activa, inyectar el HTML y mostrar
+  var _risHtmlInjected = false;
+  var _origSt = window.st;
+  window.st = function(tab){
+    if(tab === 'risapp'){
+      // Renderizar el tab risapp
+      var app = document.getElementById('app');
+      // Buscar si ya existe el panel
+      var existing = document.getElementById('ris-root');
+      if(!existing && app){
+        var wrapper = document.createElement('div');
+        wrapper.id = 'ris-root';
+        wrapper.innerHTML = renderRisappTab();
+        app.appendChild(wrapper);
+        _risHtmlInjected = true;
+      }
+      // Ocultar otras secciones de la app y mostrar solo el tab risapp
+      // Usar el mismo mecanismo que usa st() original: llamar al original primero
+      // pero para risapp lo manejamos nosotros
+      var allTabs = app ? app.querySelectorAll('[data-section]') : [];
+      allTabs.forEach(function(el){ el.style.display='none'; });
+      var risRoot = document.getElementById('ris-root');
+      if(risRoot) risRoot.style.display='block';
+      // Actualizar nav activo
+      document.querySelectorAll('[data-tab]').forEach(function(btn){
+        btn.classList.toggle('active', btn.getAttribute('data-tab')==='risapp');
+      });
+      S.tab = 'risapp';
+      return;
+    }
+    // Ocultar panel risapp si existe
+    var risRoot = document.getElementById('ris-root');
+    if(risRoot) risRoot.style.display='none';
+    // Llamar al st() original
+    if(_origSt) _origSt(tab);
+  };
+})();
+
     if(role){showPinLogin(role);return;}
     el=el.parentElement;
   }
