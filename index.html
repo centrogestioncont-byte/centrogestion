@@ -2279,20 +2279,26 @@ function rCapitalTotal(){
   var cap = (S.cuentas||[]).filter(function(c){return c.activa!==false;});
   var mIcons = {USDT:"💰",BRL:"🇧🇷",VES:"🇻🇪",USD:"🇺🇸",EUR:"🇪🇺",COP:"🇨🇴",PEN:"🇵🇪",TTD:"🇹🇹"};
 
-  // ── Tasas de cambio (usar las claves correctas de tasasDia) ───────
-  var rateMap = {USDT:1};
-  if(S.config&&S.config.tasasDia){
-    var td2=S.config.tasasDia;
-    // BRL: cuántos BS por 1 BRL
-    var rBrl=parseFloat(td2.tdia_brl||td2.tc_brl)||0;
-    var rVes=parseFloat(td2.tdia_vzla||td2.tv_ves)||0;
-    var rUsd=parseFloat(td2.tdia_usd||td2.tc_usd)||0;
-    var rUsdBrl=parseFloat(td2.tdia_usd_brl||td2.tc_usd_brl)||0;
-    if(rBrl>0) rateMap["BRL"]=rBrl;
-    if(rVes>0) rateMap["VES"]=rVes;
-    if(rUsd>0) rateMap["USD"]=rUsd;
-    if(rUsdBrl>0) rateMap["USD_BRL"]=rUsdBrl;
-  }
+  // ── Tasas de cambio para convertir todo a USDT ───────────────────
+  // Usamos el último inventario para obtener tc/tv reales
+  var lastRates = getAutoRates("BRL","VES");
+  var lastRatesUsd = getAutoRates("USD","VES");
+  var td2 = (S.config&&S.config.tasasDia)||{};
+
+  // tc = BRL/USDT (cuántos BRL por 1 USDT)
+  // tv = BS/USDT (cuántos BS por 1 USDT)
+  var tcBrl = lastRates.tc || parseFloat(td2.tdia_brl)||0;  // BRL por USDT
+  var tvVes = lastRates.tv || parseFloat(td2.tdia_vzla)||0; // BS por USDT
+  var tcUsd = lastRatesUsd.tc || parseFloat(td2.tdia_usd)||1; // USD por USDT ≈1
+  var tcUsdBrl = parseFloat(td2.tdia_usd_brl)||0; // BRL por 1 USD
+
+  // rateMap[moneda] = cuántas unidades de esa moneda = 1 USDT
+  var rateMap = {
+    USDT: 1,
+    BRL:  tcBrl   > 0 ? tcBrl   : 0,
+    VES:  tvVes   > 0 ? tvVes   : 0,
+    USD:  tcUsd   > 0 ? tcUsd   : 1
+  };
 
   // ── USDT total equivalente desde S.cuentas ────────────────────────
   var totalUsdt = 0;
@@ -2360,6 +2366,42 @@ function rCapitalTotal(){
     "✏️ <b>Solo lectura.</b> Para agregar, editar o eliminar cuentas ve a <b>⚙️ Configuración</b>."+
   "</div>"+
 
+  // ── Generador de Reportes ─────────────────────────────────────────
+  "<div style='background:#f8f8f8;border-radius:12px;padding:16px;margin-bottom:16px;border:1px solid #e0e0e0'>"+
+    "<div style='font-size:13px;font-weight:700;color:#1a3558;margin-bottom:12px'>📋 GENERAR REPORTES MENSUALES</div>"+
+    "<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px'>"+
+
+      // Reporte Julio
+      "<div style='background:#fff;border:1px solid #e0e0e0;border-radius:10px;padding:14px'>"+
+        "<div style='display:flex;align-items:center;gap:8px;margin-bottom:8px'>"+
+          "<div style='width:36px;height:36px;border-radius:50%;background:#1a3558;display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px'>J</div>"+
+          "<div><div style='font-weight:700;font-size:13px'>Julio</div>"+
+          "<div style='font-size:10px;color:#888'>BRL + VZLA + EE.UU (50%)</div></div>"+
+        "</div>"+
+        "<div style='font-size:12px;color:#0f6e3a;font-weight:700;margin-bottom:8px'>$"+f2(neta*0.5)+" USDT</div>"+
+        "<button onclick='reporteJulio(\'"+ selMes +"\')' style='width:100%;background:#1a3558;color:#fff;border:none;padding:9px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer'>📄 Generar Reporte</button>"+
+      "</div>"+
+
+      // Reporte Paul
+      "<div style='background:#fff;border:1px solid #e0e0e0;border-radius:10px;padding:14px'>"+
+        "<div style='display:flex;align-items:center;gap:8px;margin-bottom:8px'>"+
+          "<div style='width:36px;height:36px;border-radius:50%;background:#8B0000;display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px'>P</div>"+
+          "<div><div style='font-weight:700;font-size:13px'>Paul</div>"+
+          "<div style='font-size:10px;color:#888'>Solo EE.UU (50%)</div></div>"+
+        "</div>"+
+        "<div style='font-size:12px;color:#c0392b;font-weight:700;margin-bottom:8px'>"+
+          (function(){
+            var eeuuBruta=eeuuM.reduce(function(a,r){return a+(r.pr||0);},0);
+            var gasEe=gasM.reduce(function(a,g){return a+(parseFloat(g.monto)||0);},0);
+            return "$"+f2((eeuuBruta-gasEe)*0.5)+" USDT";
+          })()+
+        "</div>"+
+        "<button onclick='reportePaul(\'"+ selMes +"\')' style='width:100%;background:#8B0000;color:#fff;border:none;padding:9px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer'>📄 Generar Reporte</button>"+
+      "</div>"+
+
+    "</div>"+
+  "</div>"+
+
   (capRows?
     "<div style='overflow-x:auto;border-radius:10px;border:1px solid #eee'>"+
     "<table style='width:100%;border-collapse:collapse;font-size:12px'>"+
@@ -2395,94 +2437,231 @@ function rCapitalTotal(){
 function reporteJulio(mesKey){
   if(!mesKey) mesKey=_dashMes||(getMesesDisponibles().length?getMesesDisponibles()[0].key:getMesKeyActual());
   var parts=mesKey?mesKey.split("-"):["",""];
-  var brlM=filterByMes(S.brl,mesKey);
-  var vzlaM=filterByMes(S.vzla,mesKey);
-  var eeuuM=filterByMes(S.eeuu,mesKey);
-  var egM=filterByMes(S.egresos,mesKey);
-  var ganBrl=brlM.reduce(function(a,r){return a+r.pr;},0);
-  var ganVzla=vzlaM.reduce(function(a,r){return a+r.pr;},0);
-  var ganEEbruta=eeuuM.reduce(function(a,r){return a+r.pr;},0);
-  // Descontar gastos operacionales EE.UU antes de repartir 50/50
-  var gastosEE=filterByMes(S.gastos_eeuu,mesKey).reduce(function(a,g){return a+(parseFloat(g.monto)||0);},0);
-  var ganEEneta=ganEEbruta-gastosEE;
-  var ganJulio50=ganEEneta*0.5;
-  var ganPaul50=ganEEneta*0.5;
-  var egPag=egM.filter(function(e){return e.pagada;}).reduce(function(a,e){return a+e.usdt;},0);
-  var egPend=egM.filter(function(e){return !e.pagada;}).reduce(function(a,e){return a+e.usdt;},0);
   var mesLabel=getMesLabel(parts[1],parts[0]);
-  var ganTotal=ganBrl+ganVzla+ganJulio50;
-  var neto=ganTotal-egPag;
-  var w=window.open("","_blank","width=700,height=800");
-  var html="<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Reporte Julio - "+mesLabel+"</title>"+
-    "<style>body{font-family:Arial,sans-serif;padding:24px;max-width:660px;margin:0 auto;color:#222}"+
+
+  // Operaciones del mes
+  var brlM  = filterByMes(S.brl,  mesKey);
+  var vzlaM = filterByMes(S.vzla, mesKey);
+  var eeuuM = filterByMes(S.eeuu, mesKey);
+
+  // Ganancias brutas
+  var ganBrl  = brlM.reduce(function(a,r){return a+(r.pr||0);},0);
+  var ganVzla = vzlaM.reduce(function(a,r){return a+(r.pr||0);},0);
+  var ganEEbruta = eeuuM.reduce(function(a,r){return a+(r.pr||0);},0);
+
+  // Gastos EE.UU compartidos 50/50 con Paul
+  var gastosEE = filterByMes(S.gastos_eeuu||[],mesKey).reduce(function(a,g){return a+(parseFloat(g.monto)||0);},0);
+  var ganEEneta  = ganEEbruta - gastosEE;
+  var ganJulio50 = ganEEneta * 0.5;
+  var ganPaul50  = ganEEneta * 0.5;
+
+  // Egresos propios de Julio (alquiler, servicios, otros - NO los de EE.UU)
+  var egM = filterByMes(S.egresos||[], mesKey);
+  var egPag  = egM.filter(function(e){return e.pagada;}).reduce(function(a,e){return a+(e.usdt||0);},0);
+  var egPend = egM.filter(function(e){return !e.pagada;}).reduce(function(a,e){return a+(e.usdt||0);},0);
+
+  // Por cobrar BRL y VZLA del mes
+  var porCobrarBrl = (S.porCobrar||[]).filter(function(p){
+    return (p.tipo==="brl"||p.tipo==="vzla")&&filterByMes([p],mesKey).length>0&&!p.cobrado;
+  });
+  var totalPorCobrar = porCobrarBrl.reduce(function(a,p){return a+(parseFloat(p.monto||p.am)||0);},0);
+
+  // Préstamos pendientes activos
+  var prestPend = (S.prestamos||[]).filter(function(p){return !p.pagado;});
+  var totalPrest = prestPend.reduce(function(a,p){return a+(parseFloat(p.monto||p.saldo)||0);},0);
+
+  // Ganancia total Julio
+  var ganTotal = ganBrl + ganVzla + ganJulio50;
+  var netoJulio = ganTotal - egPag;
+
+  var w=window.open("","_blank","width=740,height=900");
+  var css="body{font-family:Arial,sans-serif;padding:24px;max-width:700px;margin:0 auto;color:#222}"+
     "h1{font-size:20px;border-bottom:3px solid #1a3558;padding-bottom:10px;color:#1a3558}"+
-    "h2{font-size:14px;color:#555;margin:18px 0 8px}"+
-    ".grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}"+
+    "h2{font-size:13px;color:#555;margin:16px 0 8px;font-weight:700;text-transform:uppercase}"+
+    ".grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}"+
     ".card{background:#f8f8f8;border-radius:8px;padding:12px;border-left:4px solid #1a3558}"+
-    ".card.green{border-color:#0f6e3a;background:#D6F5E3}.card.blue{border-color:#0a3d7c;background:#DDEEFF}"+
-    ".card.red{border-color:#c0392b;background:#FDECEA}.card.gold{border-color:#856404;background:#FFF8DC}"+
+    ".card.red{border-color:#c0392b;background:#FDECEA}.card.green{border-color:#0f6e3a;background:#D6F5E3}"+
+    ".card.gold{border-color:#856404;background:#FFF8DC}.card.blue{border-color:#0a3d7c;background:#DDEEFF}"+
+    ".card.orange{border-color:#e67e22;background:#FEF9E7}"+
     ".label{font-size:10px;color:#666;font-weight:700;text-transform:uppercase;margin-bottom:4px}"+
-    ".value{font-size:22px;font-weight:900}"+
-    "table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:16px}"+
-    "th{background:#1a3558;color:#fff;padding:8px;text-align:left}td{padding:7px 8px;border-bottom:1px solid #eee}"+
-    "@media print{button{display:none}}</style></head><body>"+
+    ".value{font-size:20px;font-weight:900}"+
+    "table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:14px}"+
+    "th{background:#1a3558;color:#fff;padding:8px;text-align:left}"+
+    "td{padding:7px 8px;border-bottom:1px solid #eee}"+
+    "@media print{button{display:none}}";
+
+  var html="<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Reporte Julio - "+mesLabel+"</title>"+
+    "<style>"+css+"</style></head><body>"+
     "<h1>📋 REPORTE MENSUAL JULIO — "+mesLabel.toUpperCase()+"</h1>"+
-    "<p style='font-size:11px;color:#888'>Generado automáticamente por RemesasBRL · "+new Date().toLocaleDateString("es-ES")+"</p>"+
-    "<h2>📊 RESUMEN DE OPERACIONES</h2>"+
+    "<p style='font-size:11px;color:#888'>Generado por RemesasBRL · "+new Date().toLocaleDateString("es-ES")+"</p>"+
+
+    // Resumen ejecutivo
+    "<h2>📊 Resumen del mes</h2>"+
     "<div class='grid'>"+
-      "<div class='card green'><div class='label'>🇧🇷 BRL/VZLA</div><div class='value'>$"+f2(ganBrl+ganVzla)+" USDT</div><div style='font-size:11px;color:#555;margin-top:4px'>"+(brlM.length+vzlaM.length)+" operaciones</div></div>"+
-      "<div class='card blue'><div class='label'>🇺🇸 EE.UU — mi 50% neto</div><div class='value'>$"+f2(ganJulio50)+" USDT</div><div style='font-size:11px;color:#555;margin-top:4px'>Bruta: $"+f2(ganEEbruta)+(gastosEE>0?" · Gastos: -$"+f2(gastosEE):"")+"</div></div>"+
-      "<div class='card red'><div class='label'>💸 Egresos pagados</div><div class='value'>-$"+f2(egPag)+" USDT</div><div style='font-size:11px;color:#555;margin-top:4px'>"+egM.filter(function(e){return e.pagada;}).length+" items</div></div>"+
-      "<div class='card gold'><div class='label'>✅ NETO JULIO</div><div class='value'>$"+f2(neto)+" USDT</div><div style='font-size:11px;color:#555;margin-top:4px'>Paul: $"+f2(ganPaul50)+"</div></div>"+
+      "<div class='card green'><div class='label'>🇧🇷 BRL + VZLA</div><div class='value'>$"+f2(ganBrl+ganVzla)+"</div><div style='font-size:11px;color:#555'>"+(brlM.length+vzlaM.length)+" operaciones</div></div>"+
+      "<div class='card blue'><div class='label'>🇺🇸 EE.UU mi 50% neto</div><div class='value'>$"+f2(ganJulio50)+"</div><div style='font-size:11px;color:#555'>Bruta $"+f2(ganEEbruta)+(gastosEE>0?" · Gastos -$"+f2(gastosEE):"")+"</div></div>"+
+      (egPag>0?"<div class='card red'><div class='label'>💸 Egresos propios pagados</div><div class='value'>-$"+f2(egPag)+"</div><div style='font-size:11px'>"+egM.filter(function(e){return e.pagada;}).length+" items</div></div>":"")+
+      (egPend>0?"<div class='card orange'><div class='label'>⚠️ Egresos pendientes</div><div class='value'>$"+f2(egPend)+"</div><div style='font-size:11px;color:#e67e22'>Por pagar</div></div>":"")+
+      (totalPorCobrar>0?"<div class='card orange'><div class='label'>⏳ Por cobrar BRL/VZLA</div><div class='value'>$"+f2(totalPorCobrar)+"</div><div style='font-size:11px'>"+porCobrarBrl.length+" clientes</div></div>":"")+
+      (totalPrest>0?"<div class='card orange'><div class='label'>🤝 Préstamos activos</div><div class='value'>$"+f2(totalPrest)+"</div><div style='font-size:11px'>"+prestPend.length+" prestamos</div></div>":"")+
+      "<div class='card gold'><div class='label'>✅ NETO JULIO</div><div class='value'>$"+f2(netoJulio)+"</div><div style='font-size:11px;color:#555'>Paul recibe: $"+f2(ganPaul50)+"</div></div>"+
     "</div>"+
-    (egPend>0?"<div style='background:#FFF8DC;border:1px solid #F5C518;border-radius:8px;padding:10px;margin-bottom:16px'><b>⚠️ Egresos pendientes por pagar: $"+f2(egPend)+" USDT</b></div>":"")+
-    "<h2>🇧🇷 BRL — "+brlM.length+" operaciones</h2>"+
-    "<table><tr><th>Fecha</th><th>Cliente</th><th>Monto</th><th>Ganancia</th></tr>"+
-    brlM.map(function(r){return "<tr><td>"+dFmt(r.d)+"</td><td>"+r.cl+"</td><td>"+f2(r.am)+" "+r.orig+"</td><td style='color:#0f6e3a;font-weight:700'>$"+f2(r.pr)+"</td></tr>";}).join("")+
-    "<tr style='background:#D6F5E3;font-weight:700'><td colspan='3'>TOTAL BRL/VZLA</td><td style='color:#0f6e3a'>$"+f2(ganBrl+ganVzla)+"</td></tr>"+
-    "</table>"+
-    "<h2>🇺🇸 EE.UU — "+eeuuM.length+" operaciones</h2>"+(gastosEE>0?"<div style='background:#FDECEA;border-radius:8px;padding:10px 14px;margin-bottom:8px;font-size:12px'>⚠️ Gastos operacionales EE.UU (alquiler cuentas/comisiones): <b>-$"+f2(gastosEE)+" USDT</b> descontados antes del reparto 50/50</div>":"")+
-    "<table><tr><th>Fecha</th><th>Cliente</th><th>USD</th><th>Gan. bruta</th><th>Tu 50%</th></tr>"+
+
+    // BRL operaciones
+    (brlM.length?"<h2>🇧🇷 BRL — "+brlM.length+" operaciones</h2>"+
+    "<table><tr><th>Fecha</th><th>Cliente</th><th>Monto BRL</th><th>Tasa</th><th>Ganancia</th></tr>"+
+    brlM.map(function(r){return "<tr><td>"+dFmt(r.d)+"</td><td>"+r.cl+"</td><td>"+f2(r.am)+" BRL</td><td>"+f2(r.tdia)+"</td><td style='color:#0f6e3a;font-weight:700'>$"+f2(r.pr)+"</td></tr>";}).join("")+
+    "<tr style='background:#D6F5E3;font-weight:700'><td colspan='4'>TOTAL BRL</td><td style='color:#0f6e3a'>$"+f2(ganBrl)+"</td></tr>"+
+    "</table>":"")+
+
+    // VZLA operaciones
+    (vzlaM.length?"<h2>🇻🇪 VZLA — "+vzlaM.length+" operaciones</h2>"+
+    "<table><tr><th>Fecha</th><th>Cliente</th><th>Monto VES</th><th>Tasa</th><th>Ganancia</th></tr>"+
+    vzlaM.map(function(r){return "<tr><td>"+dFmt(r.d)+"</td><td>"+r.cl+"</td><td>"+f2(r.am)+" VES</td><td>"+f2(r.tdia)+"</td><td style='color:#0f6e3a;font-weight:700'>$"+f2(r.pr)+"</td></tr>";}).join("")+
+    "<tr style='background:#D6F5E3;font-weight:700'><td colspan='4'>TOTAL VZLA</td><td style='color:#0f6e3a'>$"+f2(ganVzla)+"</td></tr>"+
+    "</table>":"")+
+
+    // EE.UU operaciones
+    (eeuuM.length?"<h2>🇺🇸 EE.UU — "+eeuuM.length+" operaciones (gastos compartidos 50/50 con Paul)</h2>"+
+    (gastosEE>0?"<div style='background:#FDECEA;border-radius:8px;padding:10px;margin-bottom:8px;font-size:12px'>⚠️ Gastos operacionales EE.UU descontados antes del reparto: <b>-$"+f2(gastosEE)+" USDT</b></div>":"")+
+    "<table><tr><th>Fecha</th><th>Cliente</th><th>USD</th><th>Gan. bruta</th><th>Mi 50%</th></tr>"+
     eeuuM.map(function(r){return "<tr><td>"+dFmt(r.d)+"</td><td>"+r.cl+"</td><td>$"+f2(r.am)+"</td><td>$"+f2(r.pr)+"</td><td style='color:#0a3d7c;font-weight:700'>$"+f2(r.pr*0.5)+"</td></tr>";}).join("")+
-    "<tr style='background:#fff3cd'><td colspan='5' style='color:#856404;font-size:11px'>Ganancia bruta: $"+f2(ganEEbruta)+(gastosEE>0?" − Gastos: $"+f2(gastosEE)+" = Neta: $"+f2(ganEEneta):"")+"</td></tr>"+"<tr style='background:#DDEEFF;font-weight:700'><td colspan='4'>TOTAL EE.UU — tu 50% neto</td><td style='color:#0a3d7c;font-size:15px'>$"+f2(ganJulio50)+"</td></tr></table>"+
-    "<div style='background:#1a3558;color:#fff;border-radius:10px;padding:16px;margin-top:16px;text-align:center'>"+
-      "<div style='font-size:12px;opacity:.8;margin-bottom:6px'>GANANCIA NETA JULIO — "+mesLabel.toUpperCase()+"</div>"+
-      "<div style='font-size:36px;font-weight:900;color:#FFD700'>$"+f2(neto)+" USDT</div>"+"<div style='font-size:11px;opacity:.7;margin-top:6px'>BRL+VZLA $"+f2(ganBrl+ganVzla)+" + EE.UU neto 50% $"+f2(ganJulio50)+(egPag>0?" − Egresos $"+f2(egPag):"")+"</div>"+
+    "<tr style='background:#DDEEFF;font-weight:700'><td colspan='3'>TOTAL EE.UU</td><td>$"+f2(ganEEbruta)+"</td><td style='color:#0a3d7c'>$"+f2(ganJulio50)+"</td></tr>"+
+    "</table>":"")+
+
+    // Egresos propios
+    (egM.length?"<h2>💸 Egresos Propios ("+egM.length+")</h2>"+
+    "<table><tr><th>Concepto</th><th>USDT</th><th>Estado</th></tr>"+
+    egM.map(function(e){return "<tr><td>"+(e.concepto||e.desc||"Egreso")+"</td><td style='color:#c0392b;font-weight:700'>-$"+f2(e.usdt||0)+"</td><td>"+(e.pagada?"✅ Pagado":"⏳ Pendiente")+"</td></tr>";}).join("")+
+    "<tr style='background:#FDECEA;font-weight:700'><td>TOTAL PAGADOS</td><td style='color:#c0392b'>-$"+f2(egPag)+"</td><td></td></tr>"+
+    "</table>":"")+
+
+    // Por cobrar
+    (porCobrarBrl.length?"<h2>⏳ Por Cobrar BRL/VZLA</h2>"+
+    "<table><tr><th>Fecha</th><th>Cliente</th><th>Monto</th></tr>"+
+    porCobrarBrl.map(function(p){return "<tr><td>"+dFmt(p.d||p.fecha)+"</td><td>"+(p.cl||p.cliente)+"</td><td style='color:#e67e22;font-weight:700'>$"+f2(parseFloat(p.monto||p.am)||0)+"</td></tr>";}).join("")+
+    "</table>":"")+
+
+    // Préstamos activos
+    (prestPend.length?"<h2>🤝 Préstamos Activos</h2>"+
+    "<table><tr><th>Cliente</th><th>Monto</th><th>Fecha</th></tr>"+
+    prestPend.map(function(p){return "<tr><td>"+(p.cl||p.nombre||"")+"</td><td style='color:#e67e22;font-weight:700'>$"+f2(parseFloat(p.monto||p.saldo)||0)+"</td><td>"+(p.d||p.fecha||"")+"</td></tr>";}).join("")+
+    "</table>":"")+
+
+    // Resumen final
+    "<div style='background:#1a3558;color:#fff;border-radius:10px;padding:18px;text-align:center;margin-top:16px'>"+
+      "<div style='font-size:12px;opacity:.8;margin-bottom:6px'>💵 GANANCIA NETA JULIO — "+mesLabel.toUpperCase()+"</div>"+
+      "<div style='font-size:40px;font-weight:900;color:#FFD700'>$"+f2(netoJulio)+" USDT</div>"+
+      "<div style='font-size:11px;opacity:.7;margin-top:8px'>"+
+        "BRL+VZLA $"+f2(ganBrl+ganVzla)+" + EE.UU 50% $"+f2(ganJulio50)+
+        (egPag>0?" − Egresos $"+f2(egPag):"")+
+        " | Paul recibe: $"+f2(ganPaul50)+
+      "</div>"+
     "</div>"+
     "<div style='text-align:center;margin-top:20px'><button onclick='window.print()' style='background:#1a3558;color:#fff;border:none;padding:12px 24px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer'>🖨️ Imprimir / PDF</button></div>"+
   "</body></html>";
   w.document.write(html);w.document.close();
 }
 
+
 function reportePaul(mesKey){
   if(!mesKey) mesKey=_dashMes||(getMesesDisponibles().length?getMesesDisponibles()[0].key:getMesKeyActual());
   var parts=mesKey?mesKey.split("-"):["",""];
+  var mesLabel=getMesLabel(parts[1],parts[0]);
+
+  // Operaciones EE.UU del mes
   var eeuuM=filterByMes(S.eeuu,mesKey);
-  var ganEEbruta=eeuuM.reduce(function(a,r){return a+r.pr;},0);
-  var gastosEE=filterByMes(S.gastos_eeuu,mesKey).reduce(function(a,g){return a+(parseFloat(g.monto)||0);},0);
+  var ganEEbruta=eeuuM.reduce(function(a,r){return a+(r.pr||0);},0);
+  var gastosEE=filterByMes(S.gastos_eeuu||[],mesKey).reduce(function(a,g){return a+(parseFloat(g.monto)||0);},0);
   var ganEEneta=ganEEbruta-gastosEE;
   var ganPaul=ganEEneta*0.5;
-  var mesLabel=getMesLabel(parts[1],parts[0]);
-  var w=window.open("","_blank","width=680,height=720");
-  var html="<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Reporte Paul - "+mesLabel+"</title>"+
-    "<style>body{font-family:Arial,sans-serif;padding:24px;max-width:640px;margin:0 auto;color:#222}"+
+
+  // Deudas/adelantos de Paul (acumuladas - no filtradas por mes ya que son históricas)
+  var deudas=S.deudas_paul||[];
+  var totalDeudas=deudas.reduce(function(a,d){return a+(parseFloat(d.monto)||0);},0);
+
+  // Por cobrar EE.UU del mes
+  var porCobrar=(S.porCobrar||[]).filter(function(p){
+    return (p.tipo==="eeuu"||p.orig==="USD")&&filterByMes([p],mesKey).length>0&&!p.cobrado;
+  });
+  var totalPorCobrar=porCobrar.reduce(function(a,p){return a+(parseFloat(p.monto)||parseFloat(p.am)||0);},0);
+
+  // Préstamos pendientes
+  var prestamos=(S.prestamos||[]).filter(function(p){return !p.pagado;});
+
+  // Neto final de Paul
+  var netoPaul=ganPaul-totalDeudas;
+
+  var w=window.open("","_blank","width=700,height=860");
+  var css="body{font-family:Arial,sans-serif;padding:24px;max-width:680px;margin:0 auto;color:#222}"+
     "h1{font-size:20px;border-bottom:3px solid #0a3d7c;padding-bottom:10px;color:#0a3d7c}"+
-    "table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:16px}"+
-    "th{background:#0a3d7c;color:#fff;padding:8px;text-align:left}td{padding:7px 8px;border-bottom:1px solid #eee}"+
-    "@media print{button{display:none}}</style></head><body>"+
-    "<h1>📋 REPORTE EE.UU — PAUL · "+mesLabel.toUpperCase()+"</h1>"+
-    "<p style='font-size:11px;color:#888'>Generado automáticamente por RemesasBRL · "+new Date().toLocaleDateString("es-ES")+"</p>"+
-    "<table><tr><th>Fecha</th><th>Cliente</th><th>USD</th><th>Tasa día</th><th>Gan. bruta</th><th>Tu 50%</th></tr>"+
+    "h2{font-size:13px;color:#555;margin:16px 0 8px;font-weight:700;text-transform:uppercase}"+
+    ".grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}"+
+    ".card{background:#f8f8f8;border-radius:8px;padding:12px;border-left:4px solid #0a3d7c}"+
+    ".card.red{border-color:#c0392b;background:#FDECEA}.card.green{border-color:#0f6e3a;background:#D6F5E3}"+
+    ".card.gold{border-color:#856404;background:#FFF8DC}.card.orange{border-color:#e67e22;background:#FEF9E7}"+
+    ".label{font-size:10px;color:#666;font-weight:700;text-transform:uppercase;margin-bottom:4px}"+
+    ".value{font-size:20px;font-weight:900}"+
+    "table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:14px}"+
+    "th{background:#0a3d7c;color:#fff;padding:8px;text-align:left}"+
+    "td{padding:7px 8px;border-bottom:1px solid #eee}"+
+    "@media print{button{display:none}}";
+
+  var html="<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Reporte Paul - "+mesLabel+"</title>"+
+    "<style>"+css+"</style></head><body>"+
+    "<h1>📋 REPORTE EE.UU · PAUL — "+mesLabel.toUpperCase()+"</h1>"+
+    "<p style='font-size:11px;color:#888'>Generado por RemesasBRL · "+new Date().toLocaleDateString("es-ES")+"</p>"+
+
+    // Resumen tarjetas
+    "<h2>📊 Resumen del mes</h2>"+
+    "<div class='grid'>"+
+      "<div class='card'><div class='label'>🇺🇸 Gan. bruta EE.UU</div><div class='value'>$"+f2(ganEEbruta)+"</div><div style='font-size:11px;color:#555'>"+eeuuM.length+" operaciones</div></div>"+
+      (gastosEE>0?"<div class='card red'><div class='label'>💸 Gastos operac. (compartidos)</div><div class='value'>-$"+f2(gastosEE)+"</div><div style='font-size:11px'>Alquiler cuentas, comisiones</div></div>":"")+
+      "<div class='card'><div class='label'>🤝 Neta compartida</div><div class='value'>$"+f2(ganEEneta)+"</div><div style='font-size:11px;color:#555'>Bruta − gastos</div></div>"+
+      "<div class='card green'><div class='label'>✅ Tu 50% bruto</div><div class='value'>$"+f2(ganPaul)+"</div></div>"+
+      (totalDeudas>0?"<div class='card red'><div class='label'>💰 Adelantos / deudas</div><div class='value'>-$"+f2(totalDeudas)+"</div><div style='font-size:11px'>"+deudas.length+" registros</div></div>":"")+
+      (totalPorCobrar>0?"<div class='card orange'><div class='label'>⏳ Por cobrar</div><div class='value'>$"+f2(totalPorCobrar)+"</div><div style='font-size:11px'>"+porCobrar.length+" clientes</div></div>":"")+
+      "<div class='card gold'><div class='label'>💵 NETO A PAGAR A PAUL</div><div class='value'>$"+f2(netoPaul)+"</div><div style='font-size:11px;color:#555'>50% − adelantos</div></div>"+
+    "</div>"+
+
+    // Tabla operaciones
+    "<h2>🇺🇸 Operaciones EE.UU ("+eeuuM.length+")</h2>"+
+    "<table><tr><th>Fecha</th><th>Cliente</th><th>USD</th><th>Tasa</th><th>Gan.</th><th>Tu 50%</th></tr>"+
     eeuuM.map(function(r){return "<tr><td>"+dFmt(r.d)+"</td><td>"+r.cl+"</td><td>$"+f2(r.am)+"</td><td>"+f2(r.tdia)+"</td><td>$"+f2(r.pr)+"</td><td style='color:#0a3d7c;font-weight:700'>$"+f2(r.pr*0.5)+"</td></tr>";}).join("")+
-    "<tr style='background:#fff3cd'><td colspan='6' style='color:#856404;font-size:11px'>Bruta: $"+f2(ganEEbruta)+(gastosEE>0?" − Gastos operac.: $"+f2(gastosEE)+" = Neta: $"+f2(ganEEneta):"")+"</td></tr>"+"<tr style='background:#DDEEFF;font-weight:700'><td colspan='4'>TOTAL "+eeuuM.length+" operaciones</td><td style='color:#0a3d7c'>$"+f2(ganEEbruta)+"</td><td style='color:#0a3d7c;font-size:16px'>$"+f2(ganPaul)+"</td></tr></table>"+
-    "<div style='background:#0a3d7c;color:#fff;border-radius:10px;padding:16px;text-align:center'>"+
-      "<div style='font-size:12px;opacity:.8;margin-bottom:6px'>GANANCIA PAUL (50%) — "+mesLabel.toUpperCase()+"</div>"+
-      "<div style='font-size:36px;font-weight:900;color:#FFD700'>$"+f2(ganPaul)+" USDT</div>"+"<div style='font-size:11px;opacity:.7;margin-top:6px'>Bruta $"+f2(ganEEbruta)+(gastosEE>0?" − Gastos $"+f2(gastosEE)+" = Neta $"+f2(ganEEneta):"")+"</div>"+
+    "<tr style='background:#DDEEFF;font-weight:700'><td colspan='4'>TOTAL</td><td>$"+f2(ganEEbruta)+"</td><td style='color:#0a3d7c'>$"+f2(ganPaul)+"</td></tr>"+
+    "</table>"+
+
+    // Adelantos/deudas
+    (deudas.length?"<h2>💰 Adelantos / Deudas de Paul</h2>"+
+    "<table><tr><th>Fecha</th><th>Descripción</th><th>Monto</th></tr>"+
+    deudas.map(function(d){return "<tr><td>"+d.d+"</td><td>"+d.desc+"</td><td style='color:#c0392b;font-weight:700'>-$"+f2(d.monto)+"</td></tr>";}).join("")+
+    "<tr style='background:#FDECEA;font-weight:700'><td colspan='2'>TOTAL ADELANTOS</td><td style='color:#c0392b'>-$"+f2(totalDeudas)+"</td></tr>"+
+    "</table>":"")+
+
+    // Gastos operacionales
+    (gastosEE>0?"<h2>💸 Gastos Operacionales EE.UU (compartidos 50/50)</h2>"+
+    "<table><tr><th>Concepto</th><th>Monto</th><th>Tu parte</th></tr>"+
+    filterByMes(S.gastos_eeuu||[],mesKey).map(function(g){return "<tr><td>"+(g.desc||g.concepto||"Gasto")+"</td><td>$"+f2(parseFloat(g.monto)||0)+"</td><td style='color:#c0392b'>-$"+f2((parseFloat(g.monto)||0)*0.5)+"</td></tr>";}).join("")+
+    "<tr style='background:#FDECEA;font-weight:700'><td colspan='2'>TOTAL GASTOS</td><td style='color:#c0392b'>-$"+f2(gastosEE)+"</td></tr>"+
+    "</table>":"")+
+
+    // Por cobrar
+    (porCobrar.length?"<h2>⏳ Clientes Por Cobrar EE.UU</h2>"+
+    "<table><tr><th>Fecha</th><th>Cliente</th><th>Monto</th></tr>"+
+    porCobrar.map(function(p){return "<tr><td>"+dFmt(p.d||p.fecha)+"</td><td>"+(p.cl||p.cliente)+"</td><td style='color:#e67e22;font-weight:700'>$"+f2(parseFloat(p.monto||p.am)||0)+"</td></tr>";}).join("")+
+    "</table>":"")+
+
+    // Resumen final
+    "<div style='background:#0a3d7c;color:#fff;border-radius:10px;padding:18px;text-align:center;margin-top:16px'>"+
+      "<div style='font-size:12px;opacity:.8;margin-bottom:6px'>💵 TOTAL A RECIBIR — PAUL · "+mesLabel.toUpperCase()+"</div>"+
+      "<div style='font-size:40px;font-weight:900;color:#FFD700'>$"+f2(netoPaul)+" USDT</div>"+
+      "<div style='font-size:11px;opacity:.7;margin-top:8px'>50%: $"+f2(ganPaul)+(totalDeudas>0?" − Adelantos: $"+f2(totalDeudas):"")+" = $"+f2(netoPaul)+"</div>"+
     "</div>"+
     "<div style='text-align:center;margin-top:20px'><button onclick='window.print()' style='background:#0a3d7c;color:#fff;border:none;padding:12px 24px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer'>🖨️ Imprimir / PDF</button></div>"+
   "</body></html>";
   w.document.write(html);w.document.close();
 }
+
 
 function saveCap(){
   var f=S.nCap;
