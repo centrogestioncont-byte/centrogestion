@@ -2275,169 +2275,123 @@ function _syncCapitalWithCuentas(){
 }
 
 function rCapitalTotal(){
-  // ── Selector de mes (usa variable global, no Firebase) ──────────────
-  var mesActualKey = getMesKeyActual();
-  var mesesDisp    = getMesesDisponibles();
-  if(!_dashMes || _dashMes.length < 6) _dashMes = mesActualKey;
-  var selMes      = _dashMes;
-  var esMesActual = (selMes === mesActualKey);
-  var partsActual = mesActualKey.split("-");
-
-  // Opciones selector — mes actual siempre aparece aunque esté vacío
-  var tieneActual = mesesDisp.some(function(m){ return m.key === mesActualKey; });
-  var mesOpts = tieneActual ? "" :
-    "<option value='" + mesActualKey + "'" + (esMesActual?" selected":"") + ">" +
-    getMesLabel(partsActual[1], partsActual[0]) + " — Mes actual</option>";
-  mesOpts += mesesDisp.map(function(m){
-    return "<option value='" + m.key + "'" + (selMes===m.key?" selected":"") + ">" +
-      getMesLabel(m.mes, m.anio) + (m.key===mesActualKey?" — Mes actual":"") + "</option>";
-  }).join("");
-
-  // ── Datos del mes seleccionado ───────────────────────────────────────
-  var brlM  = filterByMes(S.brl,  selMes);
-  var vzlaM = filterByMes(S.vzla, selMes);
-  var eeuuM = filterByMes(S.eeuu, selMes);
-  var egM   = filterByMes(S.egresos, selMes);
-  var gastosEE = filterByMes(S.gastos_eeuu||[], selMes)
-                  .reduce(function(a,g){ return a+(parseFloat(g.monto)||0); }, 0);
-  var ganBrl    = brlM.reduce(function(a,r){ return a+r.pr; }, 0);
-  var ganVzla   = vzlaM.reduce(function(a,r){ return a+r.pr; }, 0);
-  var ganEEbruta = eeuuM.reduce(function(a,r){ return a+r.pr; }, 0);
-  var ganEEneta = ganEEbruta - gastosEE;
-  var ganPaul   = ganEEneta * 0.5;
-  var ganJulio  = ganEEneta * 0.5;
-  var egPag  = egM.filter(function(e){ return e.pagada; }).reduce(function(a,e){ return a+e.usdt; }, 0);
-  var egPend = egM.filter(function(e){ return !e.pagada; }).reduce(function(a,e){ return a+e.usdt; }, 0);
-  var neto   = ganBrl + ganVzla + ganJulio - egPag;
-  var totalOps = brlM.length + vzlaM.length + eeuuM.length;
-  var mesLabel = getMesLabel(selMes.split("-")[1], selMes.split("-")[0]);
-
-  // ── Saldos en tiempo real (no filtrado por mes) ──────────────────────
-  var cap    = S.capital || [];
+  // ── Fuente única: S.cuentas ──────────────────────────────────────
+  var cap = (S.cuentas||[]).filter(function(c){return c.activa!==false;});
   var mIcons = {USDT:"💰",BRL:"🇧🇷",VES:"🇻🇪",USD:"🇺🇸",EUR:"🇪🇺",COP:"🇨🇴",PEN:"🇵🇪",TTD:"🇹🇹"};
+
+  // ── Tasas de cambio (usar las claves correctas de tasasDia) ───────
   var rateMap = {USDT:1};
   if(S.config&&S.config.tasasDia){
     var td2=S.config.tasasDia;
-    if(td2.tc_brl) rateMap["BRL"]=parseFloat(td2.tc_brl);
-    if(td2.tv_ves) rateMap["VES"]=parseFloat(td2.tv_ves);
-    if(td2.tc_usd) rateMap["USD"]=parseFloat(td2.tc_usd);
+    // BRL: cuántos BS por 1 BRL
+    var rBrl=parseFloat(td2.tdia_brl||td2.tc_brl)||0;
+    var rVes=parseFloat(td2.tdia_vzla||td2.tv_ves)||0;
+    var rUsd=parseFloat(td2.tdia_usd||td2.tc_usd)||0;
+    var rUsdBrl=parseFloat(td2.tdia_usd_brl||td2.tc_usd_brl)||0;
+    if(rBrl>0) rateMap["BRL"]=rBrl;
+    if(rVes>0) rateMap["VES"]=rVes;
+    if(rUsd>0) rateMap["USD"]=rUsd;
+    if(rUsdBrl>0) rateMap["USD_BRL"]=rUsdBrl;
   }
-  var invUsdt    = getInventarioStats().disponible;
-  var totalUsdt  = invUsdt;
-  var capRows = cap.map(function(item, i){
+
+  // ── USDT total equivalente desde S.cuentas ────────────────────────
+  var totalUsdt = 0;
+  cap.forEach(function(item){
+    var saldo=parseFloat(item.saldo)||0;
+    var usdt = item.moneda==="USDT" ? saldo :
+               (rateMap[item.moneda] ? saldo/rateMap[item.moneda] : null);
+    if(usdt!==null) totalUsdt += usdt;
+  });
+  totalUsdt = Math.round(totalUsdt*100)/100;
+
+  // ── Selector de mes ────────────────────────────────────────────────
+  var mesActualKey = getMesKeyActual();
+  var mesesDisp    = getMesesDisponibles();
+  if(!_dashMes||_dashMes.length<6) _dashMes=mesActualKey;
+  var selMes = _dashMes;
+  var esMesActual = (selMes===mesActualKey);
+  var mesOpts = mesesDisp.map(function(m){
+    return "<option value='"+m.key+"'"+(selMes===m.key?" selected":"")+">"+getMesLabel(m.mes,m.anio)+"</option>";
+  }).join("");
+  var mesActOpt = "<option value='"+mesActualKey+"'"+(esMesActual?" selected":"")+">"+getMesLabel(mesActualKey.split("-")[1],mesActualKey.split("-")[0])+" — Mes actual</option>";
+
+  // ── Ganancia del mes seleccionado ─────────────────────────────────
+  var brlM  = filterByMes(S.brl,  selMes);
+  var vzlaM = filterByMes(S.vzla, selMes);
+  var eeuuM = filterByMes(S.eeuu, selMes);
+  var gasM  = filterByMes(S.gastos_eeuu||[], selMes);
+  var bruta = [].concat(brlM,vzlaM,eeuuM).reduce(function(a,r){return a+(r.pr||0);},0);
+  var gasto = gasM.reduce(function(a,g){return a+(parseFloat(g.monto)||0);},0);
+  var neta  = bruta - gasto;
+
+  // ── Filas de cuentas ───────────────────────────────────────────────
+  var capRows = cap.map(function(item){
     var saldo = parseFloat(item.saldo)||0;
-    var rate  = rateMap[item.moneda];
-    var usdt  = item.moneda==="USDT" ? saldo : (rate ? saldo/rate : null);
-    if(usdt !== null) totalUsdt += usdt;
-    var ic = mIcons[item.moneda] || "💲";
-    return "<tr>" +
-      "<td style='padding:8px 10px;font-weight:700'>" + item.nombre + "</td>" +
-      "<td style='padding:8px 10px;text-align:center'>" + ic + " " + item.moneda + "</td>" +
-      "<td style='padding:8px 10px;text-align:right;font-weight:700;color:#0f6e3a;font-size:13px'>" + f2(saldo) + "</td>" +
-      "<td style='padding:8px 10px;text-align:right;color:#0a3d7c;font-weight:700'>" + (usdt!==null?"≈ "+f2(usdt)+" USDT":"—") + "</td>" +
-      "<td style='padding:8px 10px'><input type='number' value='" + saldo + "' step='0.01' " +
-        "onchange='var _v=parseFloat(this.value)||0;S.capital["+i+"].saldo=_v;if(S.capital["+i+"].cuentaId){var _ct=S.cuentas.find(function(x){return x.id===S.capital["+i+"].cuentaId;});if(_ct){_ct.saldo=_v;}}saveData();R()' " +
-        "style='width:100px;font-size:12px;text-align:right;padding:4px 7px;border:1px solid #ddd;border-radius:6px'></td>" +
-      "<td><button class='del-btn' onclick='S.capital=S.capital.filter(function(x,j){return j!==" + i + ";});saveData();R()'>🗑️</button></td>" +
+    var isNeg = saldo < 0;
+    var usdt  = item.moneda==="USDT" ? saldo :
+                (rateMap[item.moneda] ? Math.round(saldo/rateMap[item.moneda]*100)/100 : null);
+    var ic = mIcons[item.moneda]||"💲";
+    return "<tr style='border-bottom:1px solid #eee'>"+
+      "<td style='padding:10px 12px;font-weight:700;color:#1a3558'>"+ic+" "+item.nombre+"</td>"+
+      "<td style='padding:10px 12px;text-align:center;font-size:11px;color:#888'>"+item.moneda+"</td>"+
+      "<td style='padding:10px 12px;text-align:right;font-weight:800;font-size:14px;color:"+(isNeg?"#c0392b":"#0f6e3a")+"'>"+(isNeg?"⚠️ ":"")+f2(saldo)+"</td>"+
+      "<td style='padding:10px 12px;text-align:right;color:#0a3d7c;font-weight:600'>"+(usdt!==null?"≈ "+f2(usdt)+" USDT":"—")+"</td>"+
+      "<td style='padding:10px 12px;text-align:right;font-size:11px;color:#aaa'>✏️ Config</td>"+
     "</tr>";
   }).join("");
 
-  var nc = S.nCap || {nombre:"",tipo:"banco",moneda:"USDT",saldo:"",nota:""};
-  var monOpts  = ["USDT","BRL","VES","USD","EUR","COP","PEN","TTD"].map(function(m){
-    return "<option value='" + m + "'" + (nc.moneda===m?" selected":"") + ">" + m + "</option>";
-  }).join("");
-  var tipoOpts = [["exchange","🏛️ Exchange"],["banco","🏦 Banco"],["efectivo","💵 Efectivo"],["billetera","👛 Billetera"]].map(function(t){
-    return "<option value='" + t[0] + "'" + (nc.tipo===t[0]?" selected":"") + ">" + t[1] + "</option>";
-  }).join("");
+  return "<div style='display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap'>"+
+    // USDT total
+    "<div style='flex:1;min-width:200px;background:linear-gradient(135deg,#1a3558,#2c5282);border-radius:12px;padding:16px;color:#fff;text-align:center'>"+
+      "<div style='font-size:11px;opacity:.8;margin-bottom:4px'>💰 TOTAL DISPONIBLE (USDT equivalente)</div>"+
+      "<div style='font-size:32px;font-weight:900;color:#FFD700'>"+f2(totalUsdt)+"</div>"+
+      "<div style='font-size:10px;opacity:.6;margin-top:3px'>Suma real de todas las cuentas activas</div>"+
+    "</div>"+
+    // Ganancia del mes
+    "<div style='flex:1;min-width:200px;background:linear-gradient(135deg,#0f6e3a,#1a8a4a);border-radius:12px;padding:16px;color:#fff;text-align:center'>"+
+      "<div style='font-size:11px;opacity:.8;margin-bottom:4px'>📊 GANANCIA NETA</div>"+
+      "<select onchange='_dashMes=this.value;R()' style='background:rgba(255,255,255,.2);border:none;color:#fff;font-size:11px;padding:3px 6px;border-radius:6px;margin-bottom:6px;width:100%'>"+mesActOpt+mesOpts+"</select>"+
+      "<div style='font-size:28px;font-weight:900;color:#FFD700'>$"+f2(neta)+"</div>"+
+      "<div style='font-size:10px;opacity:.7'>Bruta $"+f2(bruta)+" − Gastos $"+f2(gasto)+"</div>"+
+    "</div>"+
+  "</div>"+
 
-  return (
-  // ── Header con selector ──────────────────────────────────────────────
-  "<div style='background:linear-gradient(135deg,#1a2a4a,#0f6e3a);border-radius:12px;padding:16px;" +
-  "margin-bottom:14px;color:#fff;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px'>" +
-    "<div><div style='font-size:16px;font-weight:800'>💰 CAPITAL & REPORTES</div>" +
-    "<div style='font-size:11px;opacity:.8;margin-top:3px'>Saldos en tiempo real · Ganancia del mes · Reportes</div></div>" +
-    "<select onchange='_dashMes=this.value;R()' style='border-radius:8px;padding:8px 12px;border:none;font-size:12px;font-weight:700'>" + mesOpts + "</select>" +
-  "</div>" +
+  "<div style='background:#FFF8DC;border:1px solid #F5C518;border-radius:8px;padding:8px 14px;margin-bottom:12px;font-size:11px;color:#7a5c00'>"+
+    "✏️ <b>Solo lectura.</b> Para agregar, editar o eliminar cuentas ve a <b>⚙️ Configuración</b>."+
+  "</div>"+
 
-  // ── Métricas del mes seleccionado ────────────────────────────────────
-  "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:16px'>" +
-    "<div style='background:#D6F5E3;border:1px solid #1a6b3c44;border-radius:10px;padding:12px;text-align:center'>" +
-      "<div style='font-size:10px;color:#0b4d27;font-weight:700'>🇧🇷 BRL+VZLA</div>" +
-      "<div style='font-size:20px;font-weight:800;color:#0f6e3a'>$" + f2(ganBrl+ganVzla) + "</div>" +
-    "</div>" +
-    "<div style='background:#DDEEFF;border:1px solid #0a3d7c44;border-radius:10px;padding:12px;text-align:center'>" +
-      "<div style='font-size:10px;color:#0a3d7c;font-weight:700'>🇺🇸 EE.UU (mi 50%)</div>" +
-      "<div style='font-size:20px;font-weight:800;color:#0a3d7c'>$" + f2(ganJulio) + "</div>" +
-      (gastosEE>0?"<div style='font-size:9px;color:#c0392b;margin-top:2px'>bruta $"+f2(ganEEbruta)+" − $"+f2(gastosEE)+"</div>":"") +
-    "</div>" +
-    "<div style='background:#FDECEA;border:1px solid #c0392b44;border-radius:10px;padding:12px;text-align:center'>" +
-      "<div style='font-size:10px;color:#7c1c0c;font-weight:700'>💸 Egresos pagados</div>" +
-      "<div style='font-size:20px;font-weight:800;color:#c0392b'>-$" + f2(egPag) + "</div>" +
-    "</div>" +
-    "<div style='background:linear-gradient(135deg,#1a2a4a,#0a3d7c);border-radius:10px;padding:12px;text-align:center;color:#fff'>" +
-      "<div style='font-size:10px;opacity:.8;font-weight:700'>✅ NETO DEL MES</div>" +
-      "<div style='font-size:24px;font-weight:900;color:#FFD700'>$" + f2(neto) + "</div>" +
-    "</div>" +
-  "</div>" +
+  (capRows?
+    "<div style='overflow-x:auto;border-radius:10px;border:1px solid #eee'>"+
+    "<table style='width:100%;border-collapse:collapse;font-size:12px'>"+
+      "<thead><tr style='background:#f9f9f9;border-bottom:2px solid #eee'>"+
+        "<th style='padding:10px 12px;text-align:left;font-size:11px;color:#888;font-weight:700'>CUENTA</th>"+
+        "<th style='padding:10px 12px;text-align:center;font-size:11px;color:#888;font-weight:700'>MONEDA</th>"+
+        "<th style='padding:10px 12px;text-align:right;font-size:11px;color:#888;font-weight:700'>SALDO ACTUAL</th>"+
+        "<th style='padding:10px 12px;text-align:right;font-size:11px;color:#888;font-weight:700'>≈ USDT</th>"+
+        "<th style='padding:10px 12px;text-align:right;font-size:11px;color:#888;font-weight:700'></th>"+
+      "</tr></thead>"+
+      "<tbody>"+capRows+"</tbody>"+
+    "</table></div>"
+  :"<div style='text-align:center;padding:30px;color:#aaa'>Sin cuentas registradas. Ve a ⚙️ Configuración para agregar.</div>")+
 
-  // ── Saldos tiempo real ───────────────────────────────────────────────
-  "<div style='background:linear-gradient(135deg,#1a2a4a,#2a4a8a);border-radius:12px;padding:14px;margin-bottom:14px;color:#fff'>" +
-    "<div style='font-size:12px;font-weight:700;opacity:.85;margin-bottom:10px'>🏦 SALDO TOTAL EN TIEMPO REAL</div>" +
-    "<div style='background:rgba(255,215,0,.15);border:2px solid rgba(255,215,0,.4);border-radius:10px;padding:12px 16px;" +
-    "margin-bottom:10px;display:flex;align-items:center;justify-content:space-between'>" +
-      "<div><div style='font-size:11px;color:#FFD700;font-weight:700'>💰 TOTAL DISPONIBLE (USDT)</div>" +
-      "<div style='font-size:10px;opacity:.7;margin-top:3px'>Inventario " + f2(invUsdt) + " + equivalente cuentas</div></div>" +
-      "<div style='font-size:36px;font-weight:900;color:#FFD700'>" + f2(totalUsdt) + "</div>" +
-    "</div>" +
-    (capRows ?
-      "<div style='background:#FFF8DC;border:1px solid #F5C518;border-radius:8px;padding:8px 14px;margin-bottom:10px;font-size:11px;color:#7a5c00'>"+
-        "✏️ <b>Solo lectura.</b> Edita los saldos en <b>⚙️ Configuración</b>."+
-      "</div>"+
-      "<div style='overflow-x:auto'><table style='width:100%;border-collapse:collapse;font-size:11px'>" +
-      "<thead><tr style='background:rgba(255,255,255,.1)'>" +
-        "<th style='padding:7px 10px;text-align:left;color:rgba(255,255,255,.7)'>CUENTA</th>" +
-        "<th style='padding:7px 10px;text-align:center;color:rgba(255,255,255,.7)'>MONEDA</th>" +
-        "<th style='padding:7px 10px;text-align:right;color:rgba(255,255,255,.7)'>SALDO</th>" +
-        "<th style='padding:7px 10px;text-align:right;color:#FFD700'>≈ USDT</th>" +
-        "<th style='padding:7px 10px;color:rgba(255,255,255,.7)'>EDITAR</th>" +
-        "<th></th></tr></thead>" +
-      "<tbody style='color:#fff'>" + capRows + "</tbody></table></div>" :
-      "<div style='text-align:center;opacity:.5;padding:12px'>Sin cuentas registradas. Agrégalas abajo.</div>") +
-  "</div>" +
-
-  // ── Agregar cuenta ───────────────────────────────────────────────────
-  "<div class='sec' style='margin-bottom:14px'><div class='sec-title'>➕ Agregar cuenta / banco / wallet</div>" +
-  "<div class='f3'>" +
-    "<div class='fl'><label>Nombre</label><input type='text' placeholder='Binance Julio, Nubank...' value='" + (nc.nombre||"") + "' oninput='S.nCap.nombre=this.value'></div>" +
-    "<div class='fl'><label>Tipo</label><select onchange='S.nCap.tipo=this.value'>" + tipoOpts + "</select></div>" +
-    "<div class='fl'><label>Moneda</label><select onchange='S.nCap.moneda=this.value;R()'>" + monOpts + "</select></div>" +
-  "</div>" +
-  "<div class='f2'>" +
-    "<div class='fl'><label>Saldo (" + nc.moneda + ")</label><input type='number' step='0.01' placeholder='0.00' value='" + (nc.saldo||"") + "' oninput='S.nCap.saldo=this.value'></div>" +
-    "<div class='fl'><label>Nota</label><input type='text' placeholder='cuenta principal...' value='" + (nc.nota||"") + "' oninput='S.nCap.nota=this.value'></div>" +
-  "</div>" +
-  "<button class='btn-main' onclick='saveCap()' style='background:#1a2a4a;color:#fff'>💾 Agregar cuenta</button></div>" +
-
-  // ── Cierre + reportes del mes ────────────────────────────────────────
-  "<div class='sec' style='border-left:3px solid #1a3558;margin-bottom:14px'>" +
-    "<div class='sec-title' style='color:#1a3558'>📊 CIERRE DEL MES — " + mesLabel + "</div>" +
-    "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:12px'>" +
-      "<div style='background:#f8f8f8;border-radius:8px;padding:12px'><div style='font-size:10px;color:#888;margin-bottom:4px'>Total operaciones</div><div style='font-size:22px;font-weight:800'>" + totalOps + "</div><div style='font-size:10px;color:#888'>BRL:" + brlM.length + " | VZ:" + vzlaM.length + " | EE:" + eeuuM.length + "</div></div>" +
-      "<div style='background:#D6F5E3;border-radius:8px;padding:12px'><div style='font-size:10px;color:#0b4d27;margin-bottom:4px'>Ganancia bruta</div><div style='font-size:22px;font-weight:800;color:#0f6e3a'>$" + f2(ganBrl+ganVzla+ganEEbruta) + "</div></div>" +
-      "<div style='background:#DDEEFF;border-radius:8px;padding:12px'><div style='font-size:10px;color:#0a3d7c;margin-bottom:4px'>Paul (50% EE.UU)</div><div style='font-size:22px;font-weight:800;color:#0a3d7c'>$" + f2(ganPaul) + "</div></div>" +
-      "<div style='background:#FFF8DC;border-radius:8px;padding:12px'><div style='font-size:10px;color:#7a5c00;margin-bottom:4px'>Julio (todo)</div><div style='font-size:22px;font-weight:800;color:#856404'>$" + f2(ganBrl+ganVzla+ganJulio) + "</div></div>" +
-    "</div>" +
-    "<div style='display:flex;gap:10px;flex-wrap:wrap'>" +
-      "<button onclick='exportMesSel()' style='background:#0f6e3a;color:#fff;border:none;padding:10px 18px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer'>📊 Exportar Excel</button>" +
-      "<button onclick='cerrarMes()' style='background:#1a3558;color:#fff;border:none;padding:10px 18px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer'>🔒 Cerrar mes</button>" +
-      "<button onclick='reporteJulio()' style='background:#856404;color:#fff;border:none;padding:10px 18px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer'>📋 Reporte Julio</button>" +
-      "<button onclick='reportePaul()' style='background:#0a3d7c;color:#fff;border:none;padding:10px 18px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer'>📋 Reporte Paul</button>" +
-    "</div>" +
-  "</div>"
-  );
+  // ── Resumen por moneda ────────────────────────────────────────────
+  (function(){
+    var totM={};
+    cap.forEach(function(c){totM[c.moneda]=(totM[c.moneda]||0)+(parseFloat(c.saldo)||0);});
+    var keys=Object.keys(totM);
+    if(!keys.length) return "";
+    return "<div style='display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;margin-top:12px'>"+
+      keys.map(function(mon){
+        var v=totM[mon];var isNeg=v<0;
+        return "<div style='background:"+(isNeg?"#FDECEA":"#f0f7ff")+";border:1px solid "+(isNeg?"#c0392b":"#cce0ff")+";border-radius:10px;padding:10px;text-align:center'>"+
+          "<div style='font-size:10px;color:#888;margin-bottom:3px'>"+(mIcons[mon]||"💲")+" "+mon+"</div>"+
+          "<div style='font-size:16px;font-weight:800;color:"+(isNeg?"#c0392b":"#1a3558")+"'>"+(isNeg?"⚠️ ":"")+f2(v)+"</div>"+
+        "</div>";
+      }).join("")+
+    "</div>";
+  })();
 }
 
-// ── REPORTES SOCIOS ──────────────────────────────────────────────────
 function reporteJulio(mesKey){
   if(!mesKey) mesKey=_dashMes||(getMesesDisponibles().length?getMesesDisponibles()[0].key:getMesKeyActual());
   var parts=mesKey?mesKey.split("-"):["",""];
