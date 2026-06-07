@@ -355,7 +355,7 @@ const TL={
 const RUTAS=[
   {rt:"BRL ↔ VZLA", orig:"BRL",dest:"VES",pais:"VENEZUELA",flag:"🇻🇪",lDia:"Tasa día (BS × 1 BRL)",  lTc:"Tasa compra USDT (BRL/USDT)",lTv:"Tasa venta USDT (BS/USDT)"},
   {rt:"UU.EE ↔ VZLA",orig:"USD",dest:"VES",pais:"VENEZUELA",flag:"🇻🇪",lDia:"Tasa día (BS × 1 USD)",lTc:"Tasa compra USDT (USD/USDT)",lTv:"Tasa venta USDT (BS/USDT)"},
-  {rt:"VZLA ↔ BRL", orig:"VES",dest:"BRL",pais:"BRASIL",   flag:"🇧🇷",lDia:"Tasa día (BRL × 1000 BS)",lTc:"Tasa compra USDT (BS/USDT)",lTv:"Tasa venta USDT (BRL/USDT)"},
+  {rt:"VZLA ↔ BRL", orig:"VES",dest:"BRL",pais:"BRASIL",   flag:"🇧🇷",lDia:"Tasa día (BS ÷ tasa = BRL)",lTc:"Tasa compra USDT (BS/USDT)",lTv:"Tasa venta USDT (BRL/USDT)"},
   {rt:"USD ↔ BRL",  orig:"USD",dest:"BRL",pais:"BRASIL",   flag:"🇧🇷",lDia:"Tasa día (BRL × 1 USD)",  lTc:"Tasa compra USDT (USD/USDT)",lTv:"Tasa venta USDT (BRL/USDT)"},
   {rt:"PEN ↔ VZLA", orig:"PEN",dest:"VES",pais:"VENEZUELA",flag:"🇻🇪",lDia:"Tasa día (BS × 1 PEN)",  lTc:"Tasa compra USDT (PEN/USDT)",lTv:"Tasa venta USDT (BS/USDT)"},
   {rt:"TTD ↔ VZLA", orig:"TTD",dest:"VES",pais:"VENEZUELA",flag:"🇹🇹",lDia:"Tasa día (BS × 1 TTD)",  lTc:"Tasa compra USDT (TTD/USDT)",lTv:"Tasa venta USDT (BS/USDT)"},
@@ -783,20 +783,28 @@ function dinReal(){return gB()+gV()-tEgP()-tEgPend();}
 function cTx(){
   var f=S.tx,am=parseFloat(f.am)||0,td2=parseFloat(f.tdia)||0;
   var ruta=RUTAS.find(function(r){return r.rt===f.rt;})||RUTAS[0];
-  var rates=getAutoRates(ruta.orig,"VES");
+  // VZLA ↔ BRL: cliente entrega BS, tasa = BRL × 1000 BS
+  // → cant (BRL) = am (BS) / tdia * 1000... pero tdia = BRL×1000BS
+  // → cant = am * tdia / 1000  ← división: 138000 BS ÷ 160 = 862.5 BRL... no
+  // Según usuario: 138000 BS, tasa 160 (BS×1BRL=160), cant = 138000/160 = 862.5 BRL
+  // PERO lDia dice "BRL × 1000 BS" = cuántos BRL por cada 1000 BS
+  // entonces cant = am / 1000 * tdia ← si tdia=0.16, cant=138000/1000*0.16=22.08
+  // Revisando historial VZLA: am=5.3, tdia=145, cant=37 → 5300/145=36.55≈37 ✓
+  // ENTONCES: am es en miles de VES (o VES directo), cant = am/tdia
+  // am=5.3 (miles BS?), cant=37 BRL: 5300/145=36.55 ✓ → am en BS directos, cant=am/tdia
+  var isVzla = ruta && ruta.orig==="VES";
+  var cant = isVzla ? (td2>0 ? r4(am/td2) : 0) : am*td2;
+  var rates = getAutoRates(ruta.orig, ruta.dest||"VES");
   var tc=parseFloat(f.tc_manual)||rates.tc||parseFloat(f.tc)||0;
   var tv=parseFloat(f.tv_manual)||rates.tv||parseFloat(f.tv)||0;
   var com=COM();
-  if(!tc||!tv) return{am:am,tdia:td2,cant:am*td2,tc:tc,uc:0,tv:tv,uv:0,pr:0,com:com};
-  // uc = (monto/tc) - 0.06  → USDT que realmente recibes después de comisión compra
-  // uv = (cant/tv) + 0.06   → USDT que realmente pagas incluyendo comisión venta
-  // pr = uc - uv             → ganancia real
-  var uc_r = am/tc - com;
-  var uv_r = (am*td2)/tv + com;
+  if(!tc||!tv) return{am:am,tdia:td2,cant:cant,tc:tc,uc:0,tv:tv,uv:0,pr:0,com:com};
+  var uc_r = isVzla ? (am/tc - com) : (am/tc - com);
+  var uv_r = isVzla ? (cant/tv + com) : (am*td2)/tv + com;
   var uc = r4(uc_r);
   var uv = r4(uv_r);
   var pr = r4(uc_r - uv_r);
-  return{am:am,tdia:td2,cant:am*td2,tc:tc,uc:uc,tv:tv,uv:uv,pr:pr,com:com};
+  return{am:am,tdia:td2,cant:cant,tc:tc,uc:uc,tv:tv,uv:uv,pr:pr,com:com};
 }
 function cTxE(){
   var f=S.txE,am=parseFloat(f.am)||0,td2=parseFloat(f.tdia)||0;
@@ -3982,7 +3990,7 @@ function rTblEE(){
     var isEd=S.editRow&&S.editRow.type==="eeuu"&&S.editRow.n===t.n;
     return "<tr style='background:"+(isEd?"#EEF4FF":"")+"'>"+
     (isEd?"<td><input id='edit-d' value='"+t.d+"' style='width:50px;font-size:10px;padding:2px 4px;border:1px solid #0a3d7c;border-radius:4px'></td>":"<td style='white-space:nowrap;padding:4px 6px'>"+t.d+"</td>")+
-    (isEd?"<td><input id='edit-cl' value='"+t.cl+"' style='min-width:110px;font-size:10px;padding:2px 4px;border:1px solid #0a3d7c;border-radius:4px'></td>":"<td style='padding:4px 6px;min-width:110px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>"+t.cl+"</td>")+
+    (isEd?"<td><input id='edit-cl' value='"+t.cl+"' style='min-width:110px;font-size:10px;padding:2px 4px;border:1px solid #0a3d7c;border-radius:4px'></td>":"<td style='text-align:left;font-weight:600'>"+ t.cl+"</td>")+
     (isEd?"<td><input id='edit-am' type='number' value='"+t.am+"' style='width:60px;font-size:10px;padding:2px 4px;border:1px solid #0a3d7c;border-radius:4px;text-align:right'></td>":"<td style='text-align:right;font-weight:700;padding:4px 6px'>"+f2(t.am)+"</td>")+
     (isEd?"<td><input id='edit-tdia' type='number' step='0.001' value='"+t.tdia+"' style='width:55px;font-size:10px;padding:2px 4px;border:1px solid #0a3d7c;border-radius:4px;text-align:right'></td>":"<td style='text-align:right;padding:4px 6px'>"+f2(t.tdia)+"</td>")+
     "<td style='text-align:right;font-weight:700;padding:4px 6px'>"+f0(t.cant)+"</td>"+
@@ -4095,21 +4103,26 @@ function rNueva(){
     "<div class='sec' style='border-left:3px solid #0a3d7c'><div class='sec-title' style='color:#0a3d7c'>1️⃣ Monto recibido en "+ruta.orig+" · Tasa del día</div>"+
     "<div class='f2'><div class='fl'><label>Valor de transacción ("+ruta.orig+")</label><input type='number' placeholder='ej: 50' value='"+(f.am||"")+"' oninput='S.tx.am=this.value;upC(\"tx\")'></div>"+
     "<div class='fl'><label>"+ruta.lDia+(defTdia&&!f.tdia?" <span style='font-size:10px;color:#e67e22;font-weight:600'>← Config: "+defTdia+"</span>":"")+"</label><input type='number' step='0.001' placeholder='"+(defTdia?"Config: "+defTdia:"ej: 629")+"' value='"+tdiaVal+"' oninput='S.tx.tdia=this.value;upC(\"tx\")'></div></div>"+
-    "<div id='s1-tx'>"+(ok?"<div class='step-box' style='background:#DDEEFF;border:1px solid #0a3d7c33'><span style='font-size:11px;color:#0a3d7c'>"+f2(am)+" "+ruta.orig+" × "+f2(tdia)+" = </span><span style='font-weight:700;font-size:14px;color:#0a3d7c'>📦 "+f0(cant)+" "+ruta.dest+" a entregar</span></div>":"")+"</div></div>"+
+    "<div id='s1-tx'>"+(ok?"<div class='step-box' style='background:#DDEEFF;border:1px solid #0a3d7c33'><span style='font-size:11px;color:#0a3d7c'>"+(ruta.orig==="VES"?(f2(am)+" "+ruta.orig+" ÷ "+f2(tdia)):(f2(am)+" "+ruta.orig+" × "+f2(tdia)))+" = </span><span style='font-weight:700;font-size:14px;color:#0a3d7c'>📦 "+f0(cant)+" "+ruta.dest+" a entregar</span></div>":"")+"</div></div>"+
     "<div class='sec' style='border-left:3px solid #0f6e3a;background:"+(hasInv?"#f8fffe":"#fff")+"'><div class='sec-title' style='color:#0f6e3a'>2️⃣ Tasas USDT"+
     (hasInv?"<span style='background:#D6F5E3;color:#0f6e3a;font-size:10px;padding:2px 8px;border-radius:10px;margin-left:8px;font-weight:600'>✅ Auto desde inventario</span>":"<span style='background:#FDECEA;color:#c0392b;font-size:10px;padding:2px 8px;border-radius:10px;margin-left:8px'>Sin inventario</span>")+
     "</div>"+
     // Mostrar tasas auto si hay inventario
     (hasInv?
-      "<div style='background:#f0fff4;border:1px solid #1a6b3c33;border-radius:8px;padding:10px 12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center'>"+
-        "<div style='font-size:12px;color:#555'>Compra: <b>"+f4(tcAuto)+" "+ruta.orig+"/USDT</b> &nbsp;|&nbsp; Venta: <b>"+f2(tvAuto)+" "+ruta.dest+"/USDT</b></div>"+
-        "<button onclick='S.tx.showTasas=!S.tx.showTasas;R()' style='background:none;border:1px solid #1a6b3c;color:#0f6e3a;padding:4px 10px;border-radius:7px;font-size:11px;cursor:pointer;font-weight:600'>✏️ Editar manualmente</button>"+
+      // Con inventario: mostrar tasas auto + botón editar
+      "<div style='background:#f0fff4;border:1px solid #1a6b3c33;border-radius:8px;padding:10px 12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'>"+
+        "<div style='font-size:12px;color:#555'>TC: <b>"+f4(tcAuto)+" "+ruta.orig+"/USDT</b> &nbsp;·&nbsp; TV: <b>"+f2(tvAuto)+" "+ruta.dest+"/USDT</b></div>"+
+        "<button onclick='S.tx.showTasas=!S.tx.showTasas;R()' style='background:none;border:1px solid #1a6b3c;color:#0f6e3a;padding:4px 10px;border-radius:7px;font-size:11px;cursor:pointer;font-weight:600'>"+(S.tx.showTasas?"✖ Cancelar":"✏️ Editar manualmente")+"</button>"+
       "</div>"
     :
-      "<div style='background:#FFFBEA;border-radius:6px;padding:7px 11px;font-size:11px;color:#7a5c00;margin-bottom:8px'>⚠️ Sin inventario USDT. Las tasas se asignarán automáticamente al registrar el inventario.</div>"
+      // Sin inventario: botón para ingresar manualmente
+      "<div style='background:#FFFBEA;border:1px solid #F5C518;border-radius:8px;padding:10px 12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'>"+
+        "<div style='font-size:11px;color:#7a5c00'>⚠️ Sin inventario. Se asignarán al registrar USDT.</div>"+
+        "<button onclick='S.tx.showTasas=!S.tx.showTasas;R()' style='background:#e67e22;color:#fff;border:none;padding:5px 12px;border-radius:7px;font-size:11px;cursor:pointer;font-weight:600'>"+(S.tx.showTasas?"✖ Ocultar":"✏️ Ingresar manualmente")+"</button>"+
+      "</div>"
     )+
-    // Campos manuales - solo si showTasas o no hay inventario
-    ((!hasInv||S.tx.showTasas)?
+    // Campos manuales - solo si showTasas está activo
+    (S.tx.showTasas?
       "<div class='f2' style='margin-bottom:8px'>"+
         "<div class='fl'><label>Tasa compra USDT ("+ruta.orig+"/USDT)</label><input type='number' step='0.0001' placeholder='ej: 4.980' value='"+(f.tc_manual||tcAuto||"")+"' oninput='S.tx.tc_manual=this.value;upC(\"tx\")'></div>"+
         "<div class='fl'><label>Tasa venta USDT ("+ruta.dest+"/USDT)</label><input type='number' step='0.0001' placeholder='ej: 629.000' value='"+(f.tv_manual||tvAuto||"")+"' oninput='S.tx.tv_manual=this.value;upC(\"tx\")'></div>"+
@@ -4205,14 +4218,17 @@ function rNuevaEE(){
     (hasInv?"<span style='background:#D6F5E3;color:#0f6e3a;font-size:10px;padding:2px 8px;border-radius:10px;margin-left:8px;font-weight:600'>✅ Auto desde inventario</span>":"<span style='background:#FDECEA;color:#c0392b;font-size:10px;padding:2px 8px;border-radius:10px;margin-left:8px'>Sin inventario</span>")+
     "</div>"+
     (hasInv?
-      "<div style='background:#f0fff4;border:1px solid #1a6b3c33;border-radius:8px;padding:10px 12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center'>"+
-        "<div style='font-size:12px;color:#555'>Compra: <b>"+f4(tcAuto)+" USD/USDT</b> &nbsp;|&nbsp; Venta: <b>"+f2(tvAuto)+" BS/USDT</b></div>"+
-        "<button onclick='S.txE.showTasas=!S.txE.showTasas;R()' style='background:none;border:1px solid #1a6b3c;color:#0f6e3a;padding:4px 10px;border-radius:7px;font-size:11px;cursor:pointer;font-weight:600'>✏️ Editar manualmente</button>"+
+      "<div style='background:#f0fff4;border:1px solid #1a6b3c33;border-radius:8px;padding:10px 12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'>"+
+        "<div style='font-size:12px;color:#555'>TC: <b>"+f4(tcAuto)+" USD/USDT</b> &nbsp;·&nbsp; TV: <b>"+f2(tvAuto)+" BS/USDT</b></div>"+
+        "<button onclick='S.txE.showTasas=!S.txE.showTasas;R()' style='background:none;border:1px solid #1a6b3c;color:#0f6e3a;padding:4px 10px;border-radius:7px;font-size:11px;cursor:pointer;font-weight:600'>"+(S.txE.showTasas?"✖ Cancelar":"✏️ Editar manualmente")+"</button>"+
       "</div>"
     :
-      "<div style='background:#FFFBEA;border-radius:6px;padding:7px 11px;font-size:11px;color:#7a5c00;margin-bottom:8px'>⚠️ Sin inventario USDT. Las tasas se asignarán cuando registres el inventario.</div>"
+      "<div style='background:#FFFBEA;border:1px solid #F5C518;border-radius:8px;padding:10px 12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'>"+
+        "<div style='font-size:11px;color:#7a5c00'>⚠️ Sin inventario. Se asignarán al registrar USDT.</div>"+
+        "<button onclick='S.txE.showTasas=!S.txE.showTasas;R()' style='background:#e67e22;color:#fff;border:none;padding:5px 12px;border-radius:7px;font-size:11px;cursor:pointer;font-weight:600'>"+(S.txE.showTasas?"✖ Ocultar":"✏️ Ingresar manualmente")+"</button>"+
+      "</div>"
     )+
-    ((!hasInv||S.txE.showTasas)?
+    (S.txE.showTasas?
       "<div class='f2' style='margin-bottom:8px'>"+
         "<div class='fl'><label>Tasa compra USDT (USD/USDT)</label><input type='number' step='0.0001' placeholder='ej: 1.010' value='"+(f.tc_manual||tcAuto||"")+"' oninput='S.txE.tc_manual=this.value;upC(\"txE\")'></div>"+
         "<div class='fl'><label>Tasa venta USDT (BS/USDT)</label><input type='number' step='0.0001' placeholder='ej: 630.890' value='"+(f.tv_manual||tvAuto||"")+"' oninput='S.txE.tv_manual=this.value;upC(\"txE\")'></div>"+
