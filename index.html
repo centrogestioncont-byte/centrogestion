@@ -1924,18 +1924,34 @@ function pagarPaul(){
     neta:     neta,
     paulBruto:  paulBruto,
     paulDeudas: deudas,
-    paulNeto:   paulNeto,
+    paulNeto:   Math.max(0, paulNeto),
+    paulArrastre: paulNeto < 0 ? Math.round((-paulNeto)*100)/100 : 0,
     julioNeto:  julioNeto,
     totalOps:   eeuuM.length,
     // Guardar copia de operaciones del mes
     ops: eeuuM
   });
 
-  // Limpiar deudas y gastos del mes cerrado
-  S.deudas_paul = [];
+  // Limpiar gastos del mes cerrado
   S.gastos_eeuu = (S.gastos_eeuu||[]).filter(function(g){
     return filterByMes([g], mesKey).length === 0;
   });
+
+  // Manejo de deudas de Paul:
+  // - Si paulNeto >= 0, la deuda se saldó por completo este mes → borrar todas.
+  // - Si paulNeto < 0, la deuda excedió su ganancia → el sobrante (lo que aún debe)
+  //   se arrastra al mes siguiente como una nueva deuda pendiente.
+  if(paulNeto >= 0){
+    S.deudas_paul = [];
+  } else {
+    var sobrante = Math.round((-paulNeto)*100)/100; // lo que quedó debiendo
+    S.deudas_paul = [{
+      id: Date.now(),
+      d: new Date().toLocaleDateString("es-ES",{day:"2-digit",month:"2-digit"}),
+      desc: "Saldo pendiente de "+mesLabel,
+      monto: sobrante
+    }];
+  }
 
   // Resetear selector al mes actual (nuevo mes en blanco)
   _opMesSel = getMesKeyActual();
@@ -2464,8 +2480,8 @@ function reporteJulio(mesKey){
   var egPend = egM.filter(function(e){return !e.pagada;}).reduce(function(a,e){return a+(e.usdt||0);},0);
 
   // Por cobrar BRL y VZLA del mes
-  var porCobrarBrl = (S.porCobrar||[]).filter(function(p){
-    return (p.tipo==="brl"||p.tipo==="vzla")&&filterByMes([p],mesKey).length>0&&!p.cobrado;
+  var porCobrarBrl = (S.cuentasCobrar||[]).filter(function(p){
+    return (p.tipo==="brl"||p.tipo==="vzla")&&filterByMes([{d:p.fecha}],mesKey).length>0&&p.estado==="pendiente";
   });
   var totalPorCobrar = porCobrarBrl.reduce(function(a,p){return a+(parseFloat(p.monto||p.am)||0);},0);
 
@@ -2584,8 +2600,8 @@ function reportePaul(mesKey){
   var totalDeudas=deudas.reduce(function(a,d){return a+(parseFloat(d.monto)||0);},0);
 
   // Por cobrar EE.UU del mes
-  var porCobrar=(S.porCobrar||[]).filter(function(p){
-    return (p.tipo==="eeuu"||p.orig==="USD")&&filterByMes([p],mesKey).length>0&&!p.cobrado;
+  var porCobrar=(S.cuentasCobrar||[]).filter(function(p){
+    return p.tipo==="eeuu"&&filterByMes([{d:p.fecha}],mesKey).length>0&&p.estado==="pendiente";
   });
   var totalPorCobrar=porCobrar.reduce(function(a,p){return a+(parseFloat(p.monto)||parseFloat(p.am)||0);},0);
 
@@ -3934,9 +3950,10 @@ function rDashEE(){
   "<div style='background:#DDEEFF;border:1px solid #0a3d7c33;border-radius:10px;padding:12px;font-size:11px;color:#0a3d7c;margin-bottom:14px'>💡 Fórmula: <b>Ganancia bruta</b> − <b>Gastos</b> = <b>Ganancia neta</b> → 50% Julio / 50% Paul</div>"+
   // ── Historial de liquidaciones ──────────────────────────────────
   (function(){
-    // Solo mostrar liquidaciones de meses ANTERIORES al actual
+    // Solo mostrar la liquidación del mes SELECCIONADO en el selector,
+    // y solo si ese mes no es el mes actual (el actual se ve arriba, sin cerrar)
     var liqs=(S.config&&S.config.liquidaciones_eeuu||[])
-      .filter(function(l){return l.mesKey!==mesActualKey;})
+      .filter(function(l){return l.mesKey===selMes && selMes!==mesActualKey;})
       .slice().reverse();
     if(!liqs.length) return "";
     return "<div style='background:#f8f8f8;border-radius:10px;padding:14px;margin-bottom:14px;border:1px solid #e0e0e0'>"+
