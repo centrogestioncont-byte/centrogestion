@@ -1618,6 +1618,8 @@ function saveTx(){
   arr.push({n:nn,d:ds(f.date),id:f.id,cl:f.cl.toUpperCase(),rt:f.rt,am:res.am,orig:ruta.orig,dest:ruta.dest,tdia:res.tdia,cant:res.cant,tc:res.tc,uc:res.uc,pais:f.pais,uv:res.uv,tv:res.tv,total:res.cant,pr:res.pr,cuentaBanco:f.cuentaBanco||"",cuentaDest:f.cuentaDest||"",locked:true});
   arr.sort(function(a,b){var da=a.d.split("/"),db=b.d.split("/");return (parseInt(da[1])*100+parseInt(da[0]))-(parseInt(db[1])*100+parseInt(db[0]))||a.n-b.n;});
   registrarMovimientoCapital({fecha:ds(f.date),rutaOrig:ruta.orig,rutaDest:ruta.dest,amOrigen:res.am,amDestino:res.cant,concepto:f.cl+" · "+f.rt,remesaId:nn});
+  // Consumir inventario FIFO (más viejo primero): USDT comprados y bolívares de ventas
+  consumirInventarioFIFO(ruta.orig,res.uc,ruta.dest==="VES"?"VES":ruta.dest,res.cant);
   // Guardar referencia de tasas para la próxima operación
   // Crear cuenta por cobrar si el pago es pendiente
   if(f.pendiente){
@@ -1670,6 +1672,8 @@ function saveTxEE(){
   S.eeuu.push({n:nn2,d:ds(f.date),id:f.id||"",cl:(f.cl||"CLIENTE").toUpperCase(),rt:"UU.EE ↔ VZLA",am:res.am,orig:"USD",dest:"VES",tdia:res.tdia,cant:res.cant,tc:parseFloat(f.tc)||1.010,uc:res.uc,pais:"VENEZUELA",uv:res.uv,tv:res.tv,total:res.cant,pr:res.pr,cuentaBanco:f.cuentaBanco||"",cuentaDest:f.cuentaDest||"",locked:true});
   S.eeuu.sort(function(a,b){var da=a.d.split("/"),db=b.d.split("/");return (parseInt(da[1])*100+parseInt(da[0]))-(parseInt(db[1])*100+parseInt(db[0]))||a.n-b.n;});
   registrarMovimientoCapital({fecha:ds(f.date),rutaOrig:"USD",rutaDest:"VES",amOrigen:res.am,amDestino:res.cant,concepto:(f.cl||"Cliente")+" · EE.UU",remesaId:nn2});
+  // Consumir inventario FIFO (más viejo primero)
+  consumirInventarioFIFO("USD",res.uc,"VES",res.cant);
   // Guardar referencia de tasas para la próxima operación
   // Crear cuenta por cobrar si el pago es pendiente
   if(f.pendiente){
@@ -1754,6 +1758,7 @@ function saveIU(){
     S.inventarioUsdt.push({id:Date.now(),tipo:"venta",fecha:fecha,moneda:f.monedaVenta||"VES",
       montOrigen:0,usdt:usdt,neto:neto,tasa:tasa,comision:com,
       bs:Math.round(bsFinal*1000)/1000,
+      bsRestante:Math.round(bsFinal*1000)/1000,
       plataforma:f.plataforma||"",cuentaId:cuentaAfectada,
       cuentaDestinoId:f.cuentaDestinoId||"",  // cuenta que recibe VES/BRL
       restante:0,locked:false});
@@ -3438,8 +3443,7 @@ function getInventarioStats(){
   var totalComp=compras.reduce(function(a,r){return a+(parseFloat(r.usdt)||0);},0);
   var totalVend=ventas.reduce(function(a,r){return a+(parseFloat(r.usdt)||0);},0);
   var totalBsRec=ventas.reduce(function(a,r){return a+(parseFloat(r.bs)||0);},0);
-  var lastVenta=ventas.length?ventas[ventas.length-1]:null;
-  var sugTasaVenta=lastVenta?parseFloat(lastVenta.tasa):0;
+  var sugTasaVenta=parseFloat(getLastTasaVenta("VES"))||0; // FIFO: venta más vieja con bolívares disponibles
 
   // USDT DISPONIBLE REAL: suma saldos reales de cuentas USDT en S.cuentas
   var usdtReal=(S.cuentas||[])
@@ -3465,16 +3469,77 @@ function getInventarioStats(){
     totalBrlReal:brlReal,       // REAL desde S.cuentas BRL
     sugTasaVenta:sugTasaVenta,compras:compras,ventas:ventas};
 }
-function getSugVentaRate(){return getInventarioStats().sugTasaVenta;}
-function getLastTasaCompra(moneda){
-  var arr=S.inventarioUsdt.filter(function(r){return r.tipo==="compra"&&r.moneda===(moneda||"BRL");});
-  return arr.length?arr[arr.length-1].tasa:null;
+function getSugVentaRate(){var t=getLastTasaVenta("VES");return t!==null?t:getInventarioStats().sugTasaVenta;}
+// ── FIFO: normaliza campos de lotes (restante en compras, bsRestante en ventas) ──
+function normalizarInventarioFIFO(){
+  (S.inventarioUsdt||[]).forEach(function(r){
+    if(r.tipo==="compra"){
+      if(r.restante===undefined||r.restante===null) r.restante=parseFloat(r.usdt)||0;
+    }else{
+      if(r.bsRestante===undefined||r.bsRestante===null) r.bsRestante=parseFloat(r.bs)||0;
+    }
+  });
 }
+// Orden cronológico ascendente (fecha MM/DD, luego id) — la más vieja primero
+function ordenFIFO(a,b){
+  function v(f){if(!f)return 0;var p=String(f).split("/");return (parseInt(p[0],10)||0)*100+(parseInt(p[1],10)||0);}
+  return (v(a.fecha)-v(b.fecha))||((a.id||0)-(b.id||0));
+}
+// TC: tasa de la compra MÁS VIEJA con USDT restante (FIFO), sin importar plataforma/operador
+function getLastTasaCompra(moneda){
+  normalizarInventarioFIFO();
+  var arr=S.inventarioUsdt.filter(function(r){return r.tipo==="compra"&&r.moneda===(moneda||"BRL");}).sort(ordenFIFO);
+  if(!arr.length) return null;
+  for(var i=0;i<arr.length;i++){
+    if((parseFloat(arr[i].restante)||0)>0.01) return arr[i].tasa;
+  }
+  return arr[arr.length-1].tasa; // todo consumido → última como referencia
+}
+// TV: tasa de la venta MÁS VIEJA con bolívares disponibles (FIFO), sin importar plataforma/operador
 function getLastTasaVenta(monedaDest){
+  normalizarInventarioFIFO();
   var dest=monedaDest||"VES";
-  var arr=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda===dest;});
-  if(!arr.length){var todas=S.inventarioUsdt.filter(function(r){return r.tipo==="venta";});return todas.length?todas[todas.length-1].tasa:null;}
-  return arr[arr.length-1].tasa;
+  var arr=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda===dest;}).sort(ordenFIFO);
+  if(!arr.length){
+    var todas=S.inventarioUsdt.filter(function(r){return r.tipo==="venta";}).sort(ordenFIFO);
+    if(!todas.length) return null;
+    for(var j=0;j<todas.length;j++){
+      if((parseFloat(todas[j].bsRestante)||0)>0.01) return todas[j].tasa;
+    }
+    return todas[todas.length-1].tasa;
+  }
+  for(var i=0;i<arr.length;i++){
+    if((parseFloat(arr[i].bsRestante)||0)>0.01) return arr[i].tasa;
+  }
+  return arr[arr.length-1].tasa; // todo consumido → última como referencia
+}
+// Consume FIFO los lotes al registrar una remesa:
+//  - compras: descuenta 'usdtUsados' del USDT restante (lote más viejo primero)
+//  - ventas:  descuenta 'bsEntregados' de los bolívares disponibles (lote más viejo primero)
+function consumirInventarioFIFO(monedaOrig, usdtUsados, monedaDest, bsEntregados){
+  normalizarInventarioFIFO();
+  var u=parseFloat(usdtUsados)||0;
+  if(u>0){
+    var compras=S.inventarioUsdt.filter(function(r){return r.tipo==="compra"&&r.moneda===monedaOrig;}).sort(ordenFIFO);
+    for(var i=0;i<compras.length&&u>0.0001;i++){
+      var disp=parseFloat(compras[i].restante)||0;
+      if(disp<=0) continue;
+      var usar=Math.min(disp,u);
+      compras[i].restante=Math.round((disp-usar)*10000)/10000;
+      u-=usar;
+    }
+  }
+  var b=parseFloat(bsEntregados)||0;
+  if(b>0){
+    var ventas=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda===(monedaDest||"VES");}).sort(ordenFIFO);
+    for(var k=0;k<ventas.length&&b>0.01;k++){
+      var dispB=parseFloat(ventas[k].bsRestante)||0;
+      if(dispB<=0) continue;
+      var usarB=Math.min(dispB,b);
+      ventas[k].bsRestante=Math.round((dispB-usarB)*100)/100;
+      b-=usarB;
+    }
+  }
 }
 function getAutoRates(origMoneda,destMoneda){
   var tc=getLastTasaCompra(origMoneda);
