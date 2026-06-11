@@ -1547,9 +1547,12 @@ function cancelEditRow(){S.editRow=null;R();}
 function dRw(a,n){reqDel(a,n,"n");}
 
 // ── SAVE FUNCTIONS ────────────────────────────────────
-function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaDestId){
+function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaDestId, cant){
   // Busca cuentas dinámicamente — NUNCA usa IDs hardcodeados
   var amUsdt = (tc&&tc>0) ? Math.round((am/tc)*10000)/10000 : 0;
+  // FIX: los bolívares a descontar son los realmente entregados (cant = am × tasa del día),
+  // NUNCA am×tv (eso trataba los BRL/USD como si fueran USDT y restaba ~5x de más).
+  var vesEntregado = Math.round((parseFloat(cant)||0)*100)/100;
 
   function adj(idOrKey, delta, moneda){
     if(!delta) return;
@@ -1574,7 +1577,7 @@ function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaD
 
   if(ruta==="BRL"||ruta==="BRL ↔ VZLA"){
     adj(cOrigen||"nubank", +am, "BRL");  // Nubank sube (cliente pagó)
-    if(cuentaDestId){ var amVes=am*tc; adj(cuentaDestId, -(am*(tv||0)), "VES"); } // VES baja (se entrega)
+    if(cuentaDestId){ adj(cuentaDestId, -vesEntregado, "VES"); } // VES baja (se entrega lo real: am×tasa del día)
 
   }else if(ruta==="VZLA"||ruta==="VZLA ↔ BRL"){
     var amBrl=(tv&&tv>0)?Math.round((amUsdt*tv)*100)/100:0;
@@ -1582,7 +1585,7 @@ function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaD
 
   }else if(ruta==="EEUU"||ruta.includes("EE.UU")||ruta.includes("UU.EE")){
     adj(cOrigen||"zelle", +am, "USD");  // Zelle sube (cliente pagó)
-    if(cuentaDestId){ var amVes2=Math.round(am*(tv||0)*100)/100; adj(cuentaDestId, -amVes2, "VES"); } // VES baja
+    if(cuentaDestId){ var amVes2=vesEntregado||Math.round(am*(tv||0)*100)/100; adj(cuentaDestId, -amVes2, "VES"); } // VES baja
 
   }else if(ruta==="USD ↔ BRL"||ruta==="USD→BRL"){
     adj(cOrigen||"zelle", +am, "USD");
@@ -1591,7 +1594,7 @@ function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaD
 
   }else if(ruta==="USD ↔ VZLA"||ruta==="USD→VZLA"){
     adj(cOrigen||"zelle", +am, "USD");
-    if(cuentaDestId){ adj(cuentaDestId, -Math.round(am*(tv||0)*100)/100, "VES"); }
+    if(cuentaDestId){ adj(cuentaDestId, -(vesEntregado||Math.round(am*(tv||0)*100)/100), "VES"); }
 
   }else if(ruta.includes("PEN")){
     if(cOrigen) adj(cOrigen, +am, null);
@@ -1643,7 +1646,7 @@ function saveTx(){
   }
   // Actualizar saldos según el flujo de la remesa
   var rutaClave = isV ? "VZLA" : "BRL";
-  actualizarCuentasPorRemesa(rutaClave, res.am, res.tc, res.tv, res.pr, f.cuentaBanco||"", f.cuentaDest||"");
+  actualizarCuentasPorRemesa(rutaClave, res.am, res.tc, res.tv, res.pr, f.cuentaBanco||"", f.cuentaDest||"", res.cant);
   S.tx={date:f.date,id:"",cl:"",rt:f.rt,am:"",
     tdia:f.tdia,
     tc:"",tv:"",
@@ -1705,7 +1708,7 @@ function saveTxEE(){
     cuentaDest:"",
     pais:"VENEZUELA"};
   // Actualizar saldos según flujo EE.UU
-  actualizarCuentasPorRemesa("EEUU", res.am, parseFloat(f.tc_manual)||1.01, res.tv, res.pr, f.cuentaBanco||"", f.cuentaDest||"");
+  actualizarCuentasPorRemesa("EEUU", res.am, parseFloat(f.tc_manual)||1.01, res.tv, res.pr, f.cuentaBanco||"", f.cuentaDest||"", res.cant);
   saveData();S.tab="eeuu";R();
 }
 function saveEg(){
@@ -1830,7 +1833,8 @@ function abrirFlujo(tipo, monto, moneda, gananciaUsdt){
 
 function confirmarFlujo(){
   if(!_flujoTemp) return;
-  var pasos = FLUJOS_RUTA[_flujoTemp.tipo] || [];
+  var _ft=_flujoTemp; _flujoTemp=null; // anti doble-clic: solo se aplica una vez
+  var pasos = FLUJOS_RUTA[_ft.tipo] || [];
   // Actualizar saldos de las cuentas según los valores ingresados
   pasos.forEach(function(p, i){
     var el = document.getElementById("flujo-val-"+i);
