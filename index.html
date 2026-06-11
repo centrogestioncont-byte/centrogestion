@@ -808,7 +808,7 @@ function cTx(){
   // am=5.3 (miles BS?), cant=37 BRL: 5300/145=36.55 ✓ → am en BS directos, cant=am/tdia
   var isVzla = ruta && ruta.orig==="VES";
   var cant = isVzla ? (td2>0 ? r4(am/td2) : 0) : am*td2;
-  var rates = getAutoRates(ruta.orig, ruta.dest||"VES");
+  var rates = getAutoRates(ruta.orig, ruta.dest||"VES", am, cant);
   var tc=parseFloat(f.tc_manual)||rates.tc||parseFloat(f.tc)||0;
   var tv=parseFloat(f.tv_manual)||rates.tv||parseFloat(f.tv)||0;
   var com=COM();
@@ -822,7 +822,7 @@ function cTx(){
 }
 function cTxE(){
   var f=S.txE,am=parseFloat(f.am)||0,td2=parseFloat(f.tdia)||0;
-  var rates=getAutoRates("USD","VES");
+  var rates=getAutoRates("USD","VES",am,am*td2);
   var tc=parseFloat(f.tc_manual)||rates.tc||parseFloat(f.tc)||0;
   var tv=parseFloat(f.tv_manual)||rates.tv||parseFloat(f.tv)||0;
   var com=COM();
@@ -1602,7 +1602,9 @@ function saveTx(){
   var f=S.tx;
   if(!f.date||!f.cl||!f.am||!f.tdia){alert("Completa: fecha, cliente, monto y tasa del día.");return;}
   var ruta=RUTAS.find(function(r){return r.rt===f.rt;})||RUTAS[0];
-  var rates=getAutoRates(ruta.orig,"VES");
+  var amS=parseFloat(f.am)||0,tdS=parseFloat(f.tdia)||0;
+  var cantS=(ruta.orig==="VES")?(tdS>0?amS/tdS:0):amS*tdS;
+  var rates=getAutoRates(ruta.orig,ruta.dest||"VES",amS,cantS);
   var tcF=parseFloat(f.tc_manual)||rates.tc||0;
   var tvF=parseFloat(f.tv_manual)||rates.tv||0;
   // tc/tv opcionales — se auto-asignan desde inventario USDT
@@ -1657,7 +1659,8 @@ function saveTx(){
 function saveTxEE(){
   var f=S.txE;
   if(!f.date||!f.am||!f.tdia){alert("Completa: fecha, monto y tasa del día.");return;}
-  var rates=getAutoRates("USD","VES");
+  var amE=parseFloat(f.am)||0,tdE=parseFloat(f.tdia)||0;
+  var rates=getAutoRates("USD","VES",amE,amE*tdE);
   var tcF=parseFloat(f.tc_manual)||rates.tc||0;
   var tvF=parseFloat(f.tv_manual)||rates.tv||0;
   // tc/tv opcionales — se auto-asignan desde inventario USDT
@@ -3383,6 +3386,9 @@ function upC(key){
   var res=key==="tx"?cTx():cTxE();
   var ok=res.am>0&&res.tdia>0&&res.tc>0&&res.tv>0;
   var ruta=key==="tx"?(RUTAS.find(function(r){return r.rt===S.tx.rt;})||RUTAS[0]):{orig:"USD",dest:"VES"};
+  // Actualizar en vivo el label de tasas (ponderadas según el monto)
+  var tcv=document.getElementById("tcv-"+key);
+  if(tcv&&res.tc>0&&res.tv>0) tcv.innerHTML="TC: <b>"+f4(res.tc)+" "+ruta.orig+"/USDT</b> &nbsp;·&nbsp; TV: <b>"+f2(res.tv)+" "+(key==="tx"?ruta.dest:"BS")+"/USDT</b>";
   var px=document.getElementById("cp-"+key);
   if(px){
     if(ok){
@@ -3558,10 +3564,61 @@ function editRestanteInv(id){
   else r.bsRestante=Math.round(v*100)/100;
   saveData();R();
 }
-function getAutoRates(origMoneda,destMoneda){
-  var tc=getLastTasaCompra(origMoneda);
-  var tv=getLastTasaVenta(destMoneda||"VES");
+function getAutoRates(origMoneda,destMoneda,montoOrigen,montoBs){
+  var mO=parseFloat(montoOrigen)||0, mB=parseFloat(montoBs)||0;
+  var tc=mO>0?getTasaCompraPonderada(origMoneda,mO):getLastTasaCompra(origMoneda);
+  var tv=mB>0?getTasaVentaPonderada(destMoneda||"VES",mB):getLastTasaVenta(destMoneda||"VES");
   return{tc:tc,tv:tv,hasRates:tc!==null&&tv!==null};
+}
+// TC PONDERADA: si la remesa consume más de un lote, promedia las tasas según lo que toma de cada uno
+function getTasaCompraPonderada(moneda,montoOrigen){
+  normalizarInventarioFIFO();
+  var m=parseFloat(montoOrigen)||0;
+  var base=getLastTasaCompra(moneda);
+  if(m<=0||base===null) return base;
+  var lotes=S.inventarioUsdt.filter(function(r){return r.tipo==="compra"&&r.moneda===(moneda||"BRL")&&(parseFloat(r.tasa)||0)>0;}).sort(ordenFIFO);
+  if(!lotes.length) return base;
+  var rest=m,usdt=0;
+  for(var i=0;i<lotes.length&&rest>0.0001;i++){
+    var disp=parseFloat(lotes[i].restante)||0;
+    if(disp<=0) continue;
+    var tasa=parseFloat(lotes[i].tasa);
+    var capOrigen=disp*tasa;              // cuánto del monto cubre este lote
+    var usar=Math.min(capOrigen,rest);
+    usdt+=usar/tasa;
+    rest-=usar;
+  }
+  if(rest>0.0001){ // lotes insuficientes → el excedente se valora a la tasa más nueva conocida
+    var tNueva=parseFloat(lotes[lotes.length-1].tasa)||parseFloat(base)||0;
+    if(tNueva>0) usdt+=rest/tNueva;
+  }
+  if(usdt<=0) return base;
+  return Math.round((m/usdt)*10000)/10000;
+}
+// TV PONDERADA: igual, sobre los bolívares disponibles de cada venta (lote más viejo primero)
+function getTasaVentaPonderada(monedaDest,montoBs){
+  normalizarInventarioFIFO();
+  var dest=monedaDest||"VES";
+  var m=parseFloat(montoBs)||0;
+  var base=getLastTasaVenta(dest);
+  if(m<=0||base===null) return base;
+  var lotes=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda===dest&&(parseFloat(r.tasa)||0)>0;}).sort(ordenFIFO);
+  if(!lotes.length) return base;
+  var rest=m,usdt=0;
+  for(var i=0;i<lotes.length&&rest>0.01;i++){
+    var disp=parseFloat(lotes[i].bsRestante)||0;
+    if(disp<=0) continue;
+    var tasa=parseFloat(lotes[i].tasa);
+    var usar=Math.min(disp,rest);
+    usdt+=usar/tasa;
+    rest-=usar;
+  }
+  if(rest>0.01){ // bolívares insuficientes → el excedente se valora a la tasa más nueva conocida
+    var tNuevaV=parseFloat(lotes[lotes.length-1].tasa)||parseFloat(base)||0;
+    if(tNuevaV>0) usdt+=rest/tNuevaV;
+  }
+  if(usdt<=0) return base;
+  return Math.round((m/usdt)*10000)/10000;
 }
 function toUsdt(amount,moneda){
   if(moneda==="USDT") return parseFloat(amount)||0;
@@ -4334,12 +4391,14 @@ function rNueva(){
   var f=S.tx;
   var ruta=RUTAS.find(function(r){return r.rt===f.rt;})||RUTAS[0];
   if(f.pais!==ruta.pais) S.tx.pais=ruta.pais;
-  var rates=getAutoRates(ruta.orig,"VES");
+  var am=parseFloat(f.am)||0,tdia=parseFloat(f.tdia)||0;
+  var isVzR=ruta.orig==="VES";
+  var cant=isVzR?(tdia>0?r4(am/tdia):0):am*tdia;
+  var rates=getAutoRates(ruta.orig,ruta.dest||"VES",am,cant);
   var tcAuto=rates.tc||parseFloat(f.tc_manual)||0;
   var tvAuto=rates.tv||parseFloat(f.tv_manual)||0;
   var hasInv=rates.hasRates;
-  var am=parseFloat(f.am)||0,tdia=parseFloat(f.tdia)||0;
-  var tc=tcAuto,tv=tvAuto,cant=am*tdia,uc=tc>0?am/tc:0,uv=tv>0?cant/tv:0,pr=uc-uv;
+  var tc=tcAuto,tv=tvAuto,uc=tc>0?am/tc:0,uv=tv>0?cant/tv:0,pr=uc-uv;
   var ok=am>0&&tdia>0&&tc>0&&tv>0;
   var rOpts=RUTAS.map(function(r){return "<option value='"+r.rt+"'"+(f.rt===r.rt?" selected":"")+">"+r.flag+" "+r.rt+"</option>";}).join("");
   var banner=hasInv
@@ -4409,7 +4468,7 @@ function rNueva(){
     (hasInv?
       // Con inventario: mostrar tasas auto + botón editar
       "<div style='background:#f0fff4;border:1px solid #1a6b3c33;border-radius:8px;padding:10px 12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'>"+
-        "<div style='font-size:12px;color:#555'>TC: <b>"+f4(tcAuto)+" "+ruta.orig+"/USDT</b> &nbsp;·&nbsp; TV: <b>"+f2(tvAuto)+" "+ruta.dest+"/USDT</b></div>"+
+        "<div id='tcv-tx' style='font-size:12px;color:#555'>TC: <b>"+f4(tcAuto)+" "+ruta.orig+"/USDT</b> &nbsp;·&nbsp; TV: <b>"+f2(tvAuto)+" "+ruta.dest+"/USDT</b></div>"+
         "<button onclick='S.tx.showTasas=!S.tx.showTasas;R()' style='background:none;border:1px solid #1a6b3c;color:#0f6e3a;padding:4px 10px;border-radius:7px;font-size:11px;cursor:pointer;font-weight:600'>"+(S.tx.showTasas?"✖ Cancelar":"✏️ Editar manualmente")+"</button>"+
       "</div>"
     :
@@ -4446,11 +4505,11 @@ function rNueva(){
 
 function rNuevaEE(){
   var f=S.txE;
-  var rates=getAutoRates("USD","VES");
+  var am=parseFloat(f.am)||0,tdia=parseFloat(f.tdia)||0;
+  var rates=getAutoRates("USD","VES",am,am*tdia);
   var tcAuto=rates.tc||parseFloat(f.tc_manual)||0;
   var tvAuto=rates.tv||parseFloat(f.tv_manual)||0;
   var hasInv=rates.hasRates;
-  var am=parseFloat(f.am)||0,tdia=parseFloat(f.tdia)||0;
   var tc=tcAuto,tv=tvAuto,cant=am*tdia,uc=tc>0?am/tc:0,uv=tv>0?cant/tv:0,pr=uc-uv;
   var ok=am>0&&tdia>0&&tc>0&&tv>0;
   var q=(S.filtroClEE||"").toLowerCase();
@@ -4517,7 +4576,7 @@ function rNuevaEE(){
     "</div>"+
     (hasInv?
       "<div style='background:#f0fff4;border:1px solid #1a6b3c33;border-radius:8px;padding:10px 12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'>"+
-        "<div style='font-size:12px;color:#555'>TC: <b>"+f4(tcAuto)+" USD/USDT</b> &nbsp;·&nbsp; TV: <b>"+f2(tvAuto)+" BS/USDT</b></div>"+
+        "<div id='tcv-txE' style='font-size:12px;color:#555'>TC: <b>"+f4(tcAuto)+" USD/USDT</b> &nbsp;·&nbsp; TV: <b>"+f2(tvAuto)+" BS/USDT</b></div>"+
         "<button onclick='S.txE.showTasas=!S.txE.showTasas;R()' style='background:none;border:1px solid #1a6b3c;color:#0f6e3a;padding:4px 10px;border-radius:7px;font-size:11px;cursor:pointer;font-weight:600'>"+(S.txE.showTasas?"✖ Cancelar":"✏️ Editar manualmente")+"</button>"+
       "</div>"
     :
