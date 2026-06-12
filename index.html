@@ -3592,6 +3592,34 @@ function consumirInventarioFIFO(monedaOrig, usdtUsados, monedaDest, bsEntregados
   }
 }
 // Ajuste manual del restante de un lote (ej: bolívares ya gastados antes de esta versión)
+function cerrarLotesViejos(){
+  normalizarInventarioFIFO();
+  var inv=S.inventarioUsdt||[];
+  if(!inv.length){alert("No hay registros en el inventario.");return;}
+  function v(f){if(!f)return 0;var p=String(f).split("/");return (parseInt(p[0],10)||0)*100+(parseInt(p[1],10)||0);}
+  var blancos=inv.filter(function(r){return !(parseFloat(r.usdt)||0)&&!(parseFloat(r.bs)||0);});
+  var conDatos=inv.filter(function(r){return (parseFloat(r.usdt)||0)||(parseFloat(r.bs)||0);});
+  var max=0;conDatos.forEach(function(r){var x=v(r.fecha);if(x>max)max=x;});
+  var fechaMax=String(Math.floor(max/100)).padStart(2,"0")+"/"+String(max%100).padStart(2,"0");
+  var viejos=conDatos.filter(function(r){
+    if(v(r.fecha)>=max)return false;
+    return r.tipo==="compra"?(parseFloat(r.restante)||0)>0.01:(parseFloat(r.bsRestante)||0)>0.01;
+  });
+  if(!blancos.length&&!viejos.length){alert("✅ Nada que limpiar: no hay registros en blanco y los lotes viejos ya están en 0.");return;}
+  var msg="🧹 LIMPIEZA DEL INVENTARIO\n\n";
+  if(blancos.length)msg+="• Se eliminarán "+blancos.length+" registro(s) en blanco.\n";
+  if(viejos.length)msg+="• "+viejos.length+" lote(s) anteriores al "+fechaMax+" se marcarán como GASTADOS (restante 0).\n";
+  msg+="\nLas tasas automáticas (TC/TV) pasarán a usar SOLO los lotes del "+fechaMax+".\n\nLos registros NO se borran del historial (solo su restante pasa a 0).\n¿Continuar?";
+  if(!confirm(msg))return;
+  S.inventarioUsdt=inv.filter(function(r){return (parseFloat(r.usdt)||0)||(parseFloat(r.bs)||0);});
+  S.inventarioUsdt.forEach(function(r){
+    if(v(r.fecha)<max){
+      if(r.tipo==="compra")r.restante=0;else r.bsRestante=0;
+    }
+  });
+  saveData();R();
+  alert("✅ Listo. Tasas automáticas ahora basadas en los lotes del "+fechaMax+".");
+}
 function editRestanteInv(id){
   var r=(S.inventarioUsdt||[]).find(function(x){return x.id===id;});
   if(!r) return;
@@ -4662,7 +4690,11 @@ function rInventarioUsdt(){
   var monOpts=MONEDAS_COMPRA.map(function(m){return "<option value='"+m.id+"'"+(f.moneda===m.id?" selected":"")+">"+m.flag+" "+m.label+"</option>";}).join("");
   var mVentaOpts=MONEDAS_VENTA.map(function(m){return "<option value='"+m.id+"'"+(f.monedaVenta===m.id?" selected":"")+">"+m.flag+" "+m.label+"</option>";}).join("");
   var tipoOpts=["exchange","banco","efectivo","billetera"];
-  var rows=S.inventarioUsdt.slice().reverse().map(function(r){
+  var rows=S.inventarioUsdt.slice().sort(function(a,b){return ordenFIFO(b,a);}).map(function(r){
+    var enBlanco=!(parseFloat(r.usdt)||0)&&!(parseFloat(r.bs)||0);
+    if(enBlanco){
+      return "<tr style='background:#fffbe6'><td>"+(r.fecha||"—")+"</td><td colspan='8' style='color:#b8860b;font-size:10px'>⚠️ Registro en blanco (sin montos) — puedes eliminarlo</td><td></td><td><button class='del-btn' onclick='reqDel(\"inventarioUsdt\","+r.id+",\"id\")'>🗑️</button></td></tr>";
+    }
     var isComp=r.tipo==="compra";
     var flag=(MONEDAS_COMPRA.concat(MONEDAS_VENTA).find(function(m){return m.id===r.moneda;})||{flag:"💵"}).flag;
     return "<tr style='background:"+(isComp?"#f0fff4":"#fff8f8")+"'>"+
@@ -4849,7 +4881,10 @@ function rInventarioUsdt(){
     return html;
   })()+
   "<button class='btn-main' onclick='saveIU()' style='background:#1a3558;color:#fff'>💾 Registrar y actualizar cuenta</button></div>"+
-    "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:9px'>📋 Historial</div>"+
+    "<div style='display:flex;align-items:center;justify-content:space-between;margin-bottom:9px'>"+
+    "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase'>📋 Historial</div>"+
+    "<button type='button' onclick='cerrarLotesViejos()' style='background:#7a5c00;color:#fff;border:none;padding:6px 12px;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer'>🧹 Cerrar lotes viejos</button>"+
+    "</div>"+
     (rows?"<div style='border:1px solid #eee;border-radius:10px;overflow-x:auto;overflow-y:auto;max-height:340px'><table style='min-width:700px;width:100%;border-collapse:collapse;font-size:11px'><thead><tr style='background:#f0f4ff'><th style='padding:8px 9px;text-align:left;font-size:10px;color:#1a3558;border-bottom:1px solid #dde;font-weight:700'>FECHA</th><th style='padding:8px 9px;font-size:10px;color:#1a3558;border-bottom:1px solid #dde;font-weight:700'>TIPO</th><th style='padding:8px 9px;text-align:center;font-size:10px;color:#1a3558;border-bottom:1px solid #dde;font-weight:700'>MONEDA</th><th style='padding:8px 9px;text-align:right;font-size:10px;color:#0f6e3a;border-bottom:1px solid #dde;font-weight:700'>USDT</th><th style='padding:8px 9px;text-align:right;font-size:10px;color:#1a3558;border-bottom:1px solid #dde;font-weight:700'>TASA</th><th style='padding:8px 9px;text-align:right;font-size:10px;color:#888;border-bottom:1px solid #dde;font-weight:700'>COMIS.</th><th style='padding:8px 9px;text-align:right;font-size:10px;color:#1a3558;border-bottom:1px solid #dde;font-weight:700'>ORIGEN/BS</th><th style='padding:8px 9px;text-align:left;font-size:10px;color:#888;border-bottom:1px solid #dde;font-weight:700'>PLATAFORMA</th><th style='padding:8px 9px;text-align:right;font-size:10px;color:#0a3d7c;border-bottom:1px solid #dde;font-weight:700;background:#FFFBEA'>RESTANTE (FIFO)</th><th style='padding:8px 9px;border-bottom:1px solid #dde'>🔒</th><th style='padding:8px 9px;border-bottom:1px solid #dde'></th></tr></thead><tbody>"+rows+"</tbody></table></div>"
     :"<div style='text-align:center;padding:28px;color:#aaa'>Sin operaciones aún. Comienza registrando una compra de USDT.</div>");
 }
