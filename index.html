@@ -344,12 +344,14 @@ const ROLES=[
   {id:"brl",  label:"Operador BRL",   sub:"Brasil · VZLA",            ic:"🇧🇷",bg:"#D6F5E3"},
   {id:"vzla", label:"Operador VZLA",  sub:"Venezuela",                ic:"🇻🇪",bg:"#FDECEA"},
   {id:"eeuu", label:"Operador EE.UU", sub:"USA → VZLA · Julio & Paul",ic:"🇺🇸",bg:"#DDEEFF"},
+  {id:"lector",label:"Supervisor",     sub:"Ve todo · No modifica",     ic:"👁️",bg:"#FFF4D6"},
 ];
 const TABS={
   admin:["dash","diario","brl","vzla","eeuu","nueva","inventario_usdt","capital_total","egresos","prestamos","cobrar","historial","traspasos","config_admin"],
   brl:  ["mi_ganancia","op_diario","nueva","clientes"],
   vzla: ["mi_ganancia","op_diario","nueva","clientes"],
   eeuu: ["mi_ganancia","op_diario","nueva_eeuu","clientes"],
+  lector:["dash","diario","brl","vzla","eeuu","inventario_usdt","capital_total","egresos","prestamos","cobrar","historial","traspasos"],
 };
 const TL={
   dash:"📊 Resumen",diario:"📅 Diario",brl:"🇧🇷 BRL",vzla:"🇻🇪 VZLA",eeuu:"🇺🇸 EE.UU",
@@ -2135,6 +2137,7 @@ function rConfigAdmin(){
   if(!S.config.modulos) S.config.modulos={};
   if(!S.config.tasasDia) S.config.tasasDia={};
   if(!S.nCuenta) S.nCuenta={nombre:"",tipo:"fiat",moneda:"USD",institucion:"",saldo:0,operador:"general"};
+  if(!S.nUser) S.nUser={n:"",perfil:"lector",pin:""};
 
   var td=S.config.tasasDia;
   var nc=S.nCuenta;
@@ -2237,7 +2240,26 @@ function rConfigAdmin(){
       }).join("")+"</tr>";
   }).join("");
 
-  return "<div style='background:linear-gradient(135deg,#2c2c6e,#4B3FC7);border-radius:12px;padding:14px 18px;margin-bottom:16px;color:#fff'>"+
+  var _usrSec=(function(){
+    var us=getUsuarios();
+    var perfiles=[["lector","👁️ Supervisor (ve todo, no modifica)"],["admin","🛡️ Administrador (control total)"],["brl","🇧🇷 Operador BRL"],["vzla","🇻🇪 Operador VZLA"],["eeuu","🇺🇸 Operador EE.UU"]];
+    var filas=us.map(function(u){
+      var base=ROLES.find(function(r){return r.id===u.perfil;})||{label:u.perfil,ic:"👤"};
+      return "<tr><td style='padding:7px 9px;font-weight:600'>"+u.n+"</td><td style='padding:7px 9px'>"+base.ic+" "+base.label+"</td><td style='padding:7px 9px;font-family:monospace'>"+u.pin+"</td>"+
+      "<td style='padding:7px 9px;text-align:center'><label style='display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-size:10px;font-weight:700;color:"+(u.editar?"#0f6e3a":"#999")+"'><input type='checkbox' "+(u.editar?"checked":"")+" onchange='toggleEditarUsuario("+u.id+",this.checked)'> "+(u.editar?"✏️ SÍ":"👁 NO")+"</label></td>"+
+      "<td style='padding:7px 9px;text-align:center'><button class='del-btn' onclick='delUsuario("+u.id+")'>🗑️</button></td></tr>";
+    }).join("");
+    return "<div class='sec'><div class='sec-title'>👥 Usuarios adicionales</div>"+
+    "<div style='font-size:11px;color:#666;margin-bottom:10px'>Crea accesos para más personas (familia, suplentes). Cada quien entra con su propio PIN — y puede activar su huella en su teléfono. Cada usuario tiene su interruptor <b>PUEDE EDITAR</b>: apagado, solo mira (ideal para tu esposo); encendido, puede registrar y editar en su módulo (ideal cuando dejas a alguien trabajando). Lo prendes y apagas aquí mismo en cualquier momento, y aplica al instante en todos los aparatos.</div>"+
+    (us.length?"<div class='tw' style='margin-bottom:12px'><table><thead><tr><th>NOMBRE</th><th>PERFIL</th><th>PIN</th><th style='text-align:center'>PUEDE EDITAR</th><th></th></tr></thead><tbody>"+filas+"</tbody></table></div>":"<div style='font-size:11px;color:#aaa;margin-bottom:12px'>Sin usuarios adicionales todavía.</div>")+
+    "<div class='f2'><div class='fl'><label>Nombre</label><input type='text' placeholder='ej: Mi esposo, María...' value='"+(S.nUser.n||"")+"' oninput='S.nUser.n=this.value'></div>"+
+    "<div class='fl'><label>Perfil / módulo</label><select onchange='S.nUser.perfil=this.value'>"+perfiles.map(function(p){return "<option value='"+p[0]+"'"+(S.nUser.perfil===p[0]?" selected":"")+">"+p[1]+"</option>";}).join("")+"</select></div></div>"+
+    "<div class='fl'><label>PIN propio (mín. 4 caracteres, distinto a los demás)</label><input type='text' maxlength='12' placeholder='ej: ANA2026' value='"+(S.nUser.pin||"")+"' oninput='S.nUser.pin=this.value'></div>"+
+    "<label style='display:flex;align-items:center;gap:7px;font-size:12px;cursor:pointer;margin-top:10px'><input type='checkbox' "+(S.nUser.editar?"checked":"")+" onchange='S.nUser.editar=this.checked'> ✏️ Darle permiso de edición desde ya (puedes cambiarlo cuando quieras con el interruptor de la tabla)</label>"+
+    "<button class='btn-main btn-green' onclick='saveUsuario()' style='margin-top:10px'>➕ Crear usuario</button></div>";
+  })();
+
+  return _usrSec+ "<div style='background:linear-gradient(135deg,#2c2c6e,#4B3FC7);border-radius:12px;padding:14px 18px;margin-bottom:16px;color:#fff'>"+
       "<div style='font-size:16px;font-weight:800'>⚙️ CONFIGURACIÓN · MATRIZ DEL SISTEMA</div>"+
       "<div style='font-size:11px;opacity:.8;margin-top:3px'>Todo el sistema se alimenta de aquí. Las cuentas definidas aquí aparecen en todos los módulos.</div>"+
     "</div>"+
@@ -3190,6 +3212,7 @@ function buildMesSelector(varName, selMes, extraOpts){
 }
 
 function saveData(){
+  if(!permisoEdicion()){alert("👁 SOLO LECTURA: el administrador no te ha dado permiso de edición (o te lo quitó). El cambio no se guardó.");location.reload();return;}
   try{
     var obj={_ts:Date.now()};
     // Count total ops for integrity check
@@ -3412,15 +3435,122 @@ function pinKey(k){
   }
   else if(S.pendingFn){rpd();document.getElementById("oe").textContent="";}
 }
+// ── ENTRADA CON HUELLA (WebAuthn) ────────────────────────────────
+// Cada huella se registra en EL DISPOSITIVO de cada operador, amarrada a su rol.
+// ── USUARIOS ADICIONALES (esposo, hermana, suplentes...) ─────────
+function getUsuarios(){return (S&&S.config&&S.config.usuarios)||[];}
+function resolvePerfilKey(key){
+  if(key&&key.indexOf("u_")===0){
+    var u=getUsuarios().find(function(x){return "u_"+x.id===key;});
+    if(u){var base=ROLES.find(function(r){return r.id===u.perfil;})||{};return {key:key,role:u.perfil,label:u.n,ic:base.ic||"👤",pin:u.pin,usuario:u.n,uid:u.id};}
+    return null;
+  }
+  var ro=ROLES.find(function(r){return r.id===key;});
+  return ro?{key:key,role:ro.id,label:ro.label,ic:ro.ic,pin:getPIN(key),usuario:null}:null;
+}
+function permisoEdicion(){
+  if(S.usuarioId){
+    var u=getUsuarios().find(function(x){return x.id===S.usuarioId;});
+    if(!u)return false;            // usuario eliminado por el admin → sin acceso de escritura
+    return u.editar===true;        // el admin decide con el interruptor
+  }
+  return S.role!=="lector";        // perfiles base: todos editan (admin/operadores)
+}
+function toggleEditarUsuario(id,val){
+  var u=getUsuarios().find(function(x){return x.id===id;});
+  if(!u)return;
+  u.editar=!!val;
+  saveData();R();
+}
+function saveUsuario(){
+  var f=S.nUser||{};
+  if(!f.n||!(f.n||"").trim()){alert("Escribe el nombre.");return;}
+  if(!f.pin||String(f.pin).trim().length<4){alert("El PIN debe tener al menos 4 caracteres.");return;}
+  if(!S.config.usuarios)S.config.usuarios=[];
+  var pinNuevo=String(f.pin).trim();
+  var repetido=S.config.usuarios.some(function(u){return u.pin===pinNuevo;})||Object.keys(S.config.pins||{}).some(function(k){return (S.config.pins[k]||"")===pinNuevo;});
+  if(repetido){alert("Ese PIN ya está en uso por otro perfil. Usa uno distinto.");return;}
+  S.config.usuarios.push({id:Date.now(),n:f.n.trim(),perfil:f.perfil||"lector",pin:pinNuevo,editar:f.editar===true});
+  S.nUser={n:"",perfil:"lector",pin:""};
+  saveData();R();
+}
+function delUsuario(id){
+  var u=getUsuarios().find(function(x){return x.id===id;});
+  if(!u)return;
+  if(!confirm("¿Eliminar el acceso de \""+u.n+"\"? Su PIN dejará de funcionar de inmediato (y su huella no podrá volver a activarse)."))return;
+  S.config.usuarios=S.config.usuarios.filter(function(x){return x.id!==id;});
+  saveData();R();
+}
+var _HKEY="remesasBRL_huellas";
+function _hList(){try{return JSON.parse(localStorage.getItem(_HKEY)||"[]");}catch(e){return [];}}
+function _hSave(l){localStorage.setItem(_HKEY,JSON.stringify(l));}
+function _b64u(buf){var b=new Uint8Array(buf),s="";for(var i=0;i<b.length;i++)s+=String.fromCharCode(b[i]);return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");}
+function _b64uBuf(s){s=s.replace(/-/g,"+").replace(/_/g,"/");while(s.length%4)s+="=";var bin=atob(s),b=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++)b[i]=bin.charCodeAt(i);return b.buffer;}
+function huellaDisponible(){return !!(window.PublicKeyCredential&&navigator.credentials&&window.isSecureContext);}
+function _loginOK(key){
+  var p=resolvePerfilKey(key);if(!p){alert("Perfil no encontrado.");return;}
+  S.role=p.role;S.usuario=p.usuario;S.usuarioId=p.uid||null;
+  S.tab=((p.role==="admin"||p.role==="lector")?"dash":"mi_ganancia");
+  S.tblMes=getMesKeyActual();S.pinRole=null;S.pinIn="";S.pinErr="";R();
+}
+function registrarHuella(role){
+  if(!huellaDisponible()){alert("Este dispositivo o navegador no soporta huella. Requiere abrir la app desde la dirección web (HTTPS) en un equipo con sensor de huella o Face ID.");return;}
+  var ro=resolvePerfilKey(role);
+  var chal=new Uint8Array(32);crypto.getRandomValues(chal);
+  var uid=new Uint8Array(16);crypto.getRandomValues(uid);
+  navigator.credentials.create({publicKey:{
+    challenge:chal,
+    rp:{name:"RemesasBRL"},
+    user:{id:uid,name:role+"@remesasbrl",displayName:(ro?ro.label:role)},
+    pubKeyCredParams:[{type:"public-key",alg:-7},{type:"public-key",alg:-257}],
+    authenticatorSelection:{authenticatorAttachment:"platform",userVerification:"required"},
+    timeout:60000,attestation:"none"
+  }}).then(function(cred){
+    var l=_hList().filter(function(h){return h.role!==role;});
+    l.push({credId:_b64u(cred.rawId),role:role,fecha:new Date().toLocaleDateString()});
+    _hSave(l);
+    alert("✅ Huella activada para "+(ro?ro.label:role)+" en este dispositivo.\n\nLa próxima vez entra directo con el botón 👆 Entrar con huella.");R();
+  }).catch(function(e){if(e&&e.name!=="NotAllowedError")alert("No se pudo registrar la huella: "+e.message);});
+}
+function entrarConHuella(){
+  var l=_hList();
+  if(!l.length){alert("No hay huellas registradas en este dispositivo. Entra primero con tu PIN y acepta activarla.");return;}
+  var chal=new Uint8Array(32);crypto.getRandomValues(chal);
+  navigator.credentials.get({publicKey:{
+    challenge:chal,
+    allowCredentials:l.map(function(h){return {type:"public-key",id:_b64uBuf(h.credId),transports:["internal"]};}),
+    userVerification:"required",timeout:60000
+  }}).then(function(asr){
+    var id=_b64u(asr.rawId);
+    var h=l.find(function(x){return x.credId===id;});
+    if(!h){alert("Huella no reconocida en este dispositivo.");return;}
+    _loginOK(h.role);
+  }).catch(function(e){if(e&&e.name!=="NotAllowedError")alert("Error con la huella: "+e.message);});
+}
+function quitarHuellas(){
+  var pin=prompt("PIN de administrador para quitar las huellas registradas en ESTE dispositivo:");
+  if(pin===null)return;
+  if((pin||"").trim()!==(getPIN("admin")||"").trim()){alert("PIN incorrecto.");return;}
+  _hSave([]);alert("Huellas eliminadas de este dispositivo. Cada quien puede volver a activarlas entrando con su PIN.");R();
+}
 function submitPin(){
   if(S.pinRole){
     // El campo de texto es la fuente de verdad; toma su valor por si oninput no disparó.
     var fld=document.getElementById("pin-input-field");
     if(fld) S.pinIn=fld.value;
     var entered=(S.pinIn||"").trim();
-    var expected=(getPIN(S.pinRole)||"").trim();
-    if(entered===expected){S.role=S.pinRole;S.tab=(S.role==="admin"?"dash":"mi_ganancia");
-  S.tblMes=getMesKeyActual();S.pinRole=null;S.pinIn="";S.pinErr="";R();}
+    var _perf=resolvePerfilKey(S.pinRole);
+    var expected=((_perf?_perf.pin:"")||"").trim();
+    if(entered===expected){
+      var rolOK=S.pinRole;
+      var yaTiene=_hList().some(function(h){return h.role===rolOK;});
+      _loginOK(rolOK);
+      if(huellaDisponible()&&!yaTiene){
+        setTimeout(function(){
+          if(confirm("👆 ¿Activar entrada con HUELLA para este perfil en este dispositivo?\n\nLa próxima vez entrarás directo a tu módulo sin escribir el PIN."))registrarHuella(rolOK);
+        },400);
+      }
+    }
     else{S.pinErr="Clave incorrecta. Intenta de nuevo.";S.pinIn="";updatePinDots();var el=document.getElementById("pin-input-field");if(el){el.value="";el.focus();}var er=document.getElementById("pin-error-msg");if(er)er.textContent=S.pinErr;}
     return;
   }
@@ -3834,7 +3964,7 @@ function spL(id){showPinLogin(id);}
 
 function rLogin(){
   if(S.pinRole){
-    var ro=ROLES.find(function(r){return r.id===S.pinRole;});
+    var ro=resolvePerfilKey(S.pinRole)||{ic:"👤",label:"Perfil"};
     var dots=[0,1,2,3,4,5].map(function(i){
       return '<div class="dot'+(i<S.pinIn.length?' on':'')+'"></div>';
     }).join('');
@@ -3862,7 +3992,7 @@ function rLogin(){
   var hasData=totalReg>0;
 
   // Build role buttons using data-id attribute + delegated click
-  var roleBtns=ROLES.map(function(r){
+  var roleBtns=ROLES.filter(function(r){return r.id!=="lector";}).map(function(r){
     return '<button class="rbtn" type="button" data-role="'+r.id+'" style="cursor:pointer">'+
       '<div style="width:38px;height:38px;border-radius:50%;background:'+r.bg+';font-size:19px;display:flex;align-items:center;justify-content:center;flex-shrink:0">'+r.ic+'</div>'+
       '<div><div style="font-weight:600;font-size:13px">'+r.label+'</div>'+
@@ -3886,8 +4016,20 @@ function rLogin(){
           '<div style="font-size:12px;font-weight:700;color:#7a5c00">⚠️ No se encontraron datos. Contacta al Administrador.</div>'+
         '</div>')+
     '<div style="font-size:10px;font-weight:700;letter-spacing:.6px;color:#888;margin-bottom:12px">SELECCIONA TU PERFIL</div>'+
+    (huellaDisponible()&&_hList().length
+      ?'<button type="button" onclick="entrarConHuella()" style="width:100%;padding:14px;background:linear-gradient(135deg,#1a3558,#0f6e3a);color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:6px;display:flex;align-items:center;justify-content:center;gap:8px">👆 Entrar con huella <span style="font-size:12px;opacity:.85;font-weight:400">'+_hList().map(function(h){var r=ROLES.find(function(x){return x.id===h.role;});return r?r.ic:"";}).join(" ")+'</span></button>'+
+       '<div style="text-align:right;margin-bottom:10px"><a href="javascript:void(0)" onclick="quitarHuellas()" style="font-size:10px;color:#bbb;text-decoration:none">quitar huellas de este equipo</a></div>'
+      :'')+
     roleBtns+
-    
+    (getUsuarios().length?'<div style="font-size:10px;font-weight:700;letter-spacing:.6px;color:#888;margin:12px 0">OTROS USUARIOS</div>'+getUsuarios().map(function(u){
+      var base=ROLES.find(function(r){return r.id===u.perfil;})||{ic:"👤",label:u.perfil,bg:"#f0f0f0"};
+      return '<button class="rbtn" type="button" data-user="u_'+u.id+'" style="cursor:pointer">'+
+        '<div style="width:38px;height:38px;border-radius:50%;background:'+base.bg+';font-size:19px;display:flex;align-items:center;justify-content:center;flex-shrink:0">'+base.ic+'</div>'+
+        '<div><div style="font-weight:600;font-size:13px">'+u.n+'</div>'+
+        '<div style="font-size:11px;color:#888">'+base.label+(u.perfil==="lector"?" · solo ver":"")+'</div></div>'+
+        '<span style="margin-left:auto;color:#ccc;font-size:20px">›</span>'+
+      '</button>';
+    }).join(''):'')+
     '<div style="margin-top:8px;padding:9px;background:#f6f6f6;border-radius:8px;font-size:10px;color:#888;text-align:center">🔐 Ingresa tu PIN para acceder al sistema</div>'+
   '</div></div>';
 
@@ -3896,6 +4038,11 @@ function rLogin(){
     document.querySelectorAll('[data-role]').forEach(function(btn){
       btn.addEventListener('click',function(){
         showPinLogin(this.getAttribute('data-role'));
+      });
+    });
+    document.querySelectorAll('[data-user]').forEach(function(btn){
+      btn.addEventListener('click',function(){
+        showPinLogin(this.getAttribute('data-user'));
       });
     });
   },0);
@@ -3974,7 +4121,7 @@ function rMain(){
   return "<div id='app'><div class='topbar' style='background:"+bgMap[S.role]+"'>"+
     "<div style='display:flex;align-items:center;gap:10px;flex-wrap:wrap'>"+
       "<div style='width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center;font-size:17px'>"+ro.ic+"</div>"+
-      "<div><div style='font-weight:700;font-size:14px'>"+ro.label+" · RemesasBRL</div>"+
+      "<div><div style='font-weight:700;font-size:14px'>"+(S.usuario?S.usuario+" ("+ro.label+")":ro.label)+" · RemesasBRL</div>"+
       "<div style='font-size:11px;opacity:.85'>"+sub+"</div></div></div>"+
     "<div style='display:flex;align-items:center;gap:8px'>"+"<div style='display:flex;align-items:center;gap:6px'>"+"<div id='fb-dot' title='Firebase' style='width:9px;height:9px;border-radius:50%;background:#f87171;border:1.5px solid rgba(255,255,255,.5)'></div>"+(S.role==="admin"?"<button onclick='st(\"config_admin\")' title='Configuración Admin' style='background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);color:#fff;padding:5px 9px;border-radius:7px;font-size:13px;cursor:pointer'>⚙️</button>":"")+"<button onclick='salir()' style='background:rgba(255,255,255,.2);border:none;color:#fff;padding:6px 13px;border-radius:8px;font-weight:600;cursor:pointer'>Salir</button>"+"</div>"+"</div>"+
   "</div><div class='panel' style='flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column'>"+
