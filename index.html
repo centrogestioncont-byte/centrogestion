@@ -1711,10 +1711,79 @@ function saveTxEE(){
   actualizarCuentasPorRemesa("EEUU", res.am, parseFloat(f.tc_manual)||1.01, res.tv, res.pr, f.cuentaBanco||"", f.cuentaDest||"", res.cant);
   saveData();S.tab="eeuu";R();
 }
+// ── EGRESOS MULTIMONEDA ──────────────────────────────────────────
+// Equivalente USDT según el costo real (FIFO) de cada moneda
+function usdtDeGasto(mon,monto){
+  var m=parseFloat(monto)||0;if(m<=0)return 0;
+  if(mon==="USDT"||mon==="USD")return Math.round(m*100)/100;
+  if(mon==="BRL"){var t=parseFloat(getLastTasaCompra("BRL"));return t>0?Math.round(m/t*100)/100:null;}
+  if(mon==="VES"){var t2=parseFloat(getLastTasaVenta("VES"));return t2>0?Math.round(m/t2*100)/100:null;}
+  return null;
+}
+function ajusteCuentaEgreso(cuentaId,delta){
+  var c=(S.cuentas||[]).find(function(x){return x.id===cuentaId;});
+  if(!c)return;
+  c.saldo=Math.round(((parseFloat(c.saldo)||0)+(parseFloat(delta)||0))*100)/100;
+  var cap=(S.capital||[]).find(function(k){return k.nombre&&c.nombre&&k.nombre.toLowerCase()===c.nombre.toLowerCase();});
+  if(cap)cap.saldo=c.saldo;
+}
+function nombreCuentaEg(cid){var c=(S.cuentas||[]).find(function(x){return x.id===cid;});return c?c.nombre:"";}
+function setCuentaEgreso(id,cid){var e=S.egresos.find(function(x){return x.id===id;});if(e){e.cuentaId=cid;saveData();R();}}
+function pagarEgreso(id){
+  var e=S.egresos.find(function(x){return x.id===id;});
+  if(!e||e.pagada)return;
+  if(!e.cuentaId){alert("Elige primero la cuenta de pago en el selector de esa factura (o edítala). Si pagaste en efectivo fuera de las cuentas, márcala con el botón ✓ sin cuenta.");return;}
+  var c=(S.cuentas||[]).find(function(x){return x.id===e.cuentaId;});
+  if(!c){alert("La cuenta asignada ya no existe. Elige otra en el selector.");e.cuentaId="";saveData();R();return;}
+  if(!confirm("💰 PAGAR: "+e.mot+"\n\nSe descontarán "+f2(e.monto)+" "+(e.mon||"BRL")+" de \""+c.nombre+"\"\nSaldo actual: "+f2(c.saldo)+" → quedará: "+f2((parseFloat(c.saldo)||0)-(parseFloat(e.monto)||0))+"\n\n¿Confirmar?"))return;
+  ajusteCuentaEgreso(e.cuentaId,-(parseFloat(e.monto)||0));
+  e.pagada=true;e.fp=ds(td());
+  saveData();R();
+}
+function pagarEgresoSinCuenta(id){
+  var e=S.egresos.find(function(x){return x.id===id;});
+  if(!e||e.pagada)return;
+  if(!confirm("Marcar \""+e.mot+"\" como pagada SIN descontar de ninguna cuenta (pago en efectivo/externo). ¿Confirmar?"))return;
+  e.pagada=true;e.fp=ds(td());saveData();R();
+}
+function generarFijasMes(){
+  var hoy=new Date();var mm=String(hoy.getMonth()+1).padStart(2,"0");var yy=String(hoy.getFullYear()).slice(-2);
+  var plant={};
+  S.egresos.filter(function(e){return e.fija;}).forEach(function(e){plant[e.mot]=e;});
+  var motivos=Object.keys(plant);
+  if(!motivos.length){alert("No hay gastos marcados como ⭐ fijos todavía. Registra la suscripción una vez con esa marca y su día de pago.");return;}
+  var creadas=0;
+  motivos.forEach(function(mot){
+    var p=plant[mot];
+    var existe=S.egresos.some(function(e){return e.mot===mot&&String(e.d).slice(3,5)===mm&&String(e.d).slice(6,8)===yy;});
+    if(existe)return;
+    var dia=String(Math.min(Math.max(parseInt(p.diaPago,10)||parseInt(String(p.d).slice(0,2),10)||1,1),28)).padStart(2,"0");
+    S.egresos.push({id:Date.now()+creadas,d:dia+"/"+mm+"/"+yy,cat:p.cat,mot:p.mot,monto:p.monto,usdt:p.usdt,fija:true,pagada:false,locked:true,mon:p.mon||"BRL",cuentaId:p.cuentaId||"",diaPago:parseInt(dia,10)});
+    creadas++;
+  });
+  if(!creadas){alert("✅ Todas las suscripciones fijas ya tienen su factura de este mes.");return;}
+  saveData();R();
+  alert("📅 Se generaron "+creadas+" factura(s) pendiente(s) para este mes. Quedan en FACTURAS PENDIENTES hasta que las pagues con su botón 💰.");
+}
 function saveEg(){
-  var f=S.nEg;if(!f.date||!f.mot||!f.monto||!f.usdt){alert("Completa todos los campos.");return;}
-  S.egresos.push({id:Date.now(),d:ds(f.date),cat:f.cat,mot:f.mot,monto:parseFloat(f.monto),usdt:parseFloat(f.usdt),fija:f.fija,pagada:f.pagada,locked:true});
-  S.nEg={date:td(),cat:"GASTOS FIJOS",mot:"",monto:"",usdt:"",fija:false,pagada:false};saveData();R();
+  var f=S.nEg;if(!f.date||!f.mot||!f.monto){alert("Completa fecha, motivo y monto.");return;}
+  var mon=f.mon||"BRL";
+  var usdt=parseFloat(f.usdt);
+  if(isNaN(usdt)){
+    var aut=usdtDeGasto(mon,f.monto);
+    if(aut===null){alert("No hay tasas en el inventario para calcular el equivalente USDT de "+mon+". Escríbelo manualmente.");return;}
+    usdt=aut;
+  }
+  var e={id:Date.now(),d:ds(f.date),cat:f.cat,mot:f.mot,monto:parseFloat(f.monto),usdt:usdt,fija:f.fija,pagada:f.pagada,locked:true,
+    mon:mon,cuentaId:f.cuentaId||"",diaPago:f.fija?(parseInt(f.diaPago,10)||parseInt(ds(f.date).split("/")[0],10)||1):null};
+  if(e.pagada&&e.cuentaId){
+    var c=(S.cuentas||[]).find(function(x){return x.id===e.cuentaId;});
+    if(c&&!confirm("Se descontarán "+f2(e.monto)+" "+mon+" de \""+c.nombre+"\" (saldo: "+f2(c.saldo)+" → "+f2((parseFloat(c.saldo)||0)-e.monto)+"). ¿Confirmar?"))return;
+    ajusteCuentaEgreso(e.cuentaId,-e.monto);
+    e.fp=ds(td());
+  }
+  S.egresos.push(e);
+  S.nEg={date:td(),cat:f.cat,mot:"",monto:"",usdt:"",fija:false,pagada:false,mon:mon,cuentaId:"",diaPago:""};saveData();R();
 }
 function savePr(){
   var f=S.nPr;if(!f.date||!f.desc)return;
@@ -3242,6 +3311,8 @@ function reqDel(arr,id,field){
       revertirSaldosInventario(item);
     } else if(arr==="traspasos"){
       revertirSaldosTraspaso(item);
+    } else if(arr==="egresos"){
+      if(item.pagada&&item.cuentaId){ajusteCuentaEgreso(item.cuentaId,+(parseFloat(item.monto)||0));}
     }
     S[arr]=S[arr].filter(function(x){return x[field||"id"]!==id;});
     saveData();R();
@@ -5000,7 +5071,7 @@ function rEgresos(){
   var f=S.nEg;
   var cCol={"GASTOS FIJOS":{bg:"#DDEEFF",col:"#0a3d7c"},"PAGOS CRÉDITOS":{bg:"#F0E8FF",col:"#4a2080"},"GASTOS PERSONALES":{bg:"#FFF8DC",col:"#7a5c00"},"GASTOS EXTRAORD.":{bg:"#FDECEA",col:"#7c1c0c"}};
   var rPag=pag.map(function(e){var cc=cCol[e.cat]||{bg:"#f0f0f0",col:"#333"};
-    return "<tr><td>"+e.d+"</td><td><span class='bd' style='background:"+cc.bg+";color:"+cc.col+"'>"+e.cat+"</span></td><td style='max-width:170px;overflow:hidden;text-overflow:ellipsis'>"+e.mot+"</td><td style='text-align:right'>"+f2(e.monto)+"</td><td style='text-align:right' class='neg'>$"+f2(e.usdt)+"</td><td style='text-align:center'>"+(e.fija?"⭐":"")+"</td><td style='text-align:center'>"+(e.locked?"🔒":"")+"</td><td><button class='del-btn' onclick='reqDel(\"egresos\","+e.id+",\"id\")'>🗑️</button></td></tr>";}).join("");
+    return "<tr><td>"+e.d+"</td><td><span class='bd' style='background:"+cc.bg+";color:"+cc.col+"'>"+e.cat+"</span></td><td style='max-width:170px;overflow:hidden;text-overflow:ellipsis'>"+e.mot+(e.cuentaId?"<div style='font-size:9px;color:#888'>🏦 "+nombreCuentaEg(e.cuentaId)+"</div>":"")+"</td><td style='text-align:right'>"+f2(e.monto)+" <span style='font-size:9px;color:#888'>"+(e.mon||"BRL")+"</span></td><td style='text-align:right' class='neg'>$"+f2(e.usdt)+"</td><td style='text-align:center'>"+(e.fija?"⭐":"")+"</td><td style='text-align:center'>"+(e.locked?"🔒":"")+"</td><td><button class='del-btn' onclick='reqDel(\"egresos\","+e.id+",\"id\")'>🗑️</button></td></tr>";}).join("");
   var CATS_EMPRESA=["GASTOS FIJOS EMPRESA","SERVICIOS DIGITALES","GASTOS OPERATIVOS","GASTOS EXTRAORD. EMPRESA"];
   var CATS_PERSONAL=["GASTOS PERSONALES","MI SUELDO","PAGOS CRÉDITOS","CUMPLEAÑOS","VIAJE","OTROS PERSONAL"];
   var cOpts="<optgroup label='🏢 EMPRESA'>"+CATS_EMPRESA.map(function(cat){return "<option"+(f.cat===cat?" selected":"")+">"+cat+"</option>";}).join("")+"</optgroup>"+
@@ -5031,21 +5102,40 @@ function rEgresos(){
     [["Ganancia bruta","$"+f2(gB()+gV())+" USDT",""],["Gastos pagados","−$"+f2(tP)+" USDT","#ffaaaa"],["⚠️ Por pagar","−$"+f2(tPend)+" USDT","#ffe099"],["💵 DINERO REAL","$"+f2(real)+" USDT",""]].map(function(item,i){
       return "<div style='background:rgba(255,255,255,.15);border-radius:9px;padding:10px 12px"+(i===3?";border:2px solid rgba(255,255,255,.6)":"")+"'><div style='font-size:10px;opacity:.8;margin-bottom:4px'>"+item[0]+"</div><div style='font-size:"+(i===3?20:16)+"px;font-weight:700;color:"+(item[2]||"#fff")+"'>"+item[1]+"</div></div>";
     }).join("")+"</div></div>"+
-    (pend.length?"<div class='aside-panel'><div style='font-size:11px;font-weight:700;color:#7a5c00;margin-bottom:10px'>⚠️ FACTURAS PENDIENTES — APARTAR: <b style='font-size:14px'>$"+f2(tPend)+" USDT</b></div>"+
-      pend.map(function(e){return "<div style='display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid #f0e8c0'><div><span style='font-size:12px;font-weight:500'>"+e.mot+"</span><span style='font-size:10px;color:#888;margin-left:6px'>"+e.d+"</span>"+(e.fija?"<span class='bd' style='background:#DDEEFF;color:#0a3d7c;margin-left:5px;font-size:9px'>FIJA</span>":"")+"</div>"+
-      "<div style='display:flex;align-items:center;gap:8px'><span style='font-weight:700;color:#b07000'>$"+f2(e.usdt)+" USDT</span>"+
-      "<button onclick='S.egresos=S.egresos.map(function(eg){return eg.id==="+e.id+"?Object.assign({},eg,{pagada:true}):eg;});saveData();R()' style='background:#1a6b3c;color:#fff;border:none;border-radius:6px;padding:4px 9px;cursor:pointer;font-size:10px'>✓ Pagada</button>"+
+    (pend.length?"<div class='aside-panel'><div style='display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:10px'><div style='font-size:11px;font-weight:700;color:#7a5c00'>⚠️ FACTURAS PENDIENTES — APARTAR: <b style='font-size:14px'>$"+f2(tPend)+" USDT</b></div>"+
+      "<button type='button' onclick='generarFijasMes()' style='background:#0a3d7c;color:#fff;border:none;padding:6px 11px;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer'>📅 Generar suscripciones del mes</button></div>"+
+      pend.map(function(e){
+        var ctasE=(S.cuentas||[]).filter(function(c){return c.activa!==false&&c.moneda===(e.mon||"BRL");});
+        var selC="<select onchange='setCuentaEgreso("+e.id+",this.value)' style='font-size:10px;padding:3px 5px;border-radius:6px;border:1px solid #d8c98a;max-width:130px'><option value=''>cuenta…</option>"+ctasE.map(function(c){return "<option value='"+c.id+"'"+(e.cuentaId===c.id?" selected":"")+">"+c.nombre+"</option>";}).join("")+"</select>";
+        return "<div style='display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 0;border-bottom:1px solid #f0e8c0'><div><span style='font-size:12px;font-weight:500'>"+e.mot+"</span><span style='font-size:10px;color:#888;margin-left:6px'>"+e.d+"</span>"+(e.fija?"<span class='bd' style='background:#DDEEFF;color:#0a3d7c;margin-left:5px;font-size:9px'>FIJA"+(e.diaPago?" · día "+e.diaPago:"")+"</span>":"")+"</div>"+
+      "<div style='display:flex;align-items:center;gap:7px;flex-wrap:wrap'><span style='font-weight:700;color:#b07000'>"+f2(e.monto)+" "+(e.mon||"BRL")+" <span style='font-size:10px;color:#998'>≈$"+f2(e.usdt)+"</span></span>"+selC+
+      "<button onclick='pagarEgreso("+e.id+")' style='background:#1a6b3c;color:#fff;border:none;border-radius:6px;padding:4px 9px;cursor:pointer;font-size:10px;font-weight:700' title='Paga y descuenta de la cuenta elegida'>💰 Pagar</button>"+
+      "<button onclick='pagarEgresoSinCuenta("+e.id+")' style='background:#888;color:#fff;border:none;border-radius:6px;padding:4px 7px;cursor:pointer;font-size:10px' title='Marcar pagada sin tocar cuentas (efectivo/externo)'>✓</button>"+
       "<button class='del-btn' onclick='reqDel(\"egresos\","+e.id+",\"id\")'>🗑️</button></div></div>";}).join("")+"</div>":"")+
+    (function(){
+      var mk=getMesKeyActual();var pagMes=filterByMes(pag,mk);
+      var porMon={};pagMes.forEach(function(e){var m=e.mon||"BRL";if(!porMon[m])porMon[m]={monto:0,usdt:0};porMon[m].monto+=parseFloat(e.monto)||0;porMon[m].usdt+=parseFloat(e.usdt)||0;});
+      var ic={VES:"🇻🇪",BRL:"🇧🇷",USD:"🇺🇸",USDT:"🪙"};
+      var chips=Object.keys(porMon).map(function(m){return "<div style='background:#f0f4ff;border:1px solid #d5e0f5;border-radius:9px;padding:8px 12px;text-align:center'><div style='font-size:10px;color:#666'>"+(ic[m]||"💵")+" Gastado en "+m+"</div><div style='font-size:14px;font-weight:800;color:#1a3558'>"+f2(porMon[m].monto)+"</div><div style='font-size:10px;color:#b07000;font-weight:700'>≈ $"+f2(porMon[m].usdt)+" USDT</div></div>";}).join("");
+      return chips?"<div style='margin-bottom:12px'><div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:7px'>💱 Gasto del mes por moneda (pagados)</div><div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px'>"+chips+"</div></div>":"";
+    })()+
     "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:9px'>📋 Historial de gastos pagados</div>"+
-    "<div class='tw' style='margin-bottom:14px'><table><thead><tr><th>FECHA</th><th>CATEGORÍA</th><th>MOTIVO</th><th style='text-align:right'>MONTO BRL</th><th style='text-align:right'>USDT</th><th>FIJA</th><th>🔒</th><th></th></tr></thead><tbody>"+rPag+"</tbody></table></div>"+
+    "<div class='tw' style='margin-bottom:14px'><table><thead><tr><th>FECHA</th><th>CATEGORÍA</th><th>MOTIVO</th><th style='text-align:right'>MONTO</th><th style='text-align:right'>USDT</th><th>FIJA</th><th>🔒</th><th></th></tr></thead><tbody>"+rPag+"</tbody></table></div>"+
     "<div class='sec'><div class='sec-title'>➕ Registrar egreso / factura</div>"+
     "<div class='f2'><div class='fl'><label>Fecha</label><input type='date' value='"+f.date+"' onchange='S.nEg.date=this.value'></div>"+
     "<div class='fl'><label>Categoría</label><select onchange='S.nEg.cat=this.value'>"+cOpts+"</select></div></div>"+
     "<div class='fl'><label>Motivo</label><input type='text' placeholder='ej: Nubank, internet...' value='"+(f.mot||"")+"' oninput='S.nEg.mot=this.value'></div>"+
-    "<div class='f2'><div class='fl'><label>Monto (BRL)</label><input type='number' placeholder='0.00' value='"+(f.monto||"")+"' oninput='S.nEg.monto=this.value'></div>"+
-    "<div class='fl'><label>Equivalente USDT</label><input type='number' placeholder='0.00' value='"+(f.usdt||"")+"' oninput='S.nEg.usdt=this.value'></div></div>"+
-    "<div class='f2' style='margin-bottom:12px'><label style='display:flex;align-items:center;gap:7px;font-size:12px;cursor:pointer'><input type='checkbox' "+(f.fija?"checked":"")+" onchange='S.nEg.fija=this.checked'> ⭐ Gasto fijo recurrente</label>"+
+    (function(){
+      var monAct=f.mon||"BRL";
+      var ctasF=(S.cuentas||[]).filter(function(c){return c.activa!==false&&c.moneda===monAct;});
+      return "<div class='f2'><div class='fl'><label>Moneda del gasto</label><select onchange='S.nEg.mon=this.value;S.nEg.cuentaId=\"\";S.nEg.usdt=\"\";R()'>"+["BRL","VES","USD","USDT"].map(function(m){return "<option"+(monAct===m?" selected":"")+">"+m+"</option>";}).join("")+"</select></div>"+
+      "<div class='fl'><label>Cuenta de pago (descuenta su saldo)</label><select onchange='S.nEg.cuentaId=this.value'><option value=''>— Sin cuenta / efectivo —</option>"+ctasF.map(function(c){return "<option value='"+c.id+"'"+(f.cuentaId===c.id?" selected":"")+">"+c.nombre+" ("+f2(c.saldo)+")</option>";}).join("")+"</select></div></div>"+
+      "<div class='f2'><div class='fl'><label>Monto ("+monAct+")</label><input type='number' placeholder='0.00' value='"+(f.monto||"")+"' oninput='S.nEg.monto=this.value;var a=usdtDeGasto(S.nEg.mon||\"BRL\",this.value);if(a!==null)S.nEg.usdt=a;' onchange='R()'></div>"+
+      "<div class='fl'><label>Equivalente USDT (auto a tu tasa real, editable)</label><input type='number' placeholder='0.00' value='"+(f.usdt!==""&&f.usdt!==undefined?f.usdt:"")+"' oninput='S.nEg.usdt=this.value'></div></div>";
+    })()+
+    "<div class='f2' style='margin-bottom:12px'><label style='display:flex;align-items:center;gap:7px;font-size:12px;cursor:pointer'><input type='checkbox' "+(f.fija?"checked":"")+" onchange='S.nEg.fija=this.checked;R()'> ⭐ Gasto fijo recurrente (suscripción)</label>"+
     "<label style='display:flex;align-items:center;gap:7px;font-size:12px;cursor:pointer'><input type='checkbox' "+(f.pagada?"checked":"")+" onchange='S.nEg.pagada=this.checked'> ✅ Ya fue pagada</label></div>"+
+    (f.fija?"<div class='fl' style='margin-bottom:12px'><label>📅 Día de pago mensual (1-28)</label><input type='number' min='1' max='28' placeholder='ej: 15' value='"+(f.diaPago||"")+"' oninput='S.nEg.diaPago=this.value'><div style='font-size:10px;color:#888;margin-top:3px'>Con el botón \"📅 Generar suscripciones del mes\" se crea su factura pendiente cada mes en este día.</div></div>":"")+
     "<button class='btn-main btn-green' onclick='saveEg()'>💾 Guardar egreso</button></div>";
 }
 
