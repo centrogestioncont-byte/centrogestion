@@ -1,3 +1,3 @@
-# RemesasBRL
+# Centro de Gestión
 
-Sistema unificado de gestion de remesas BRL - Venezuela/Brasil 2026
+Sistema de gestión y control de operaciones 2026
