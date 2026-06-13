@@ -1746,11 +1746,10 @@ function dRw(a,n){reqDel(a,n,"n");}
 
 // ── SAVE FUNCTIONS ────────────────────────────────────
 function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaDestId, cant){
-  // Busca cuentas dinámicamente — NUNCA usa IDs hardcodeados
-  var amUsdt = (tc&&tc>0) ? Math.round((am/tc)*10000)/10000 : 0;
-  // FIX: los bolívares a descontar son los realmente entregados (cant = am × tasa del día),
-  // NUNCA am×tv (eso trataba los BRL/USD como si fueran USDT y restaba ~5x de más).
-  var vesEntregado = Math.round((parseFloat(cant)||0)*100)/100;
+  // Actualiza saldos de cuentas para CUALQUIER moneda automáticamente.
+  // Funciona por origen→destino de la ruta, sin importar el país (Brasil, Venezuela, Colombia, Perú, etc.)
+  var vesEntregado = Math.round((parseFloat(cant)||0)*100)/100; // lo que se entrega al cliente (en moneda destino)
+  var montoOrigen  = Math.round((parseFloat(am)||0)*100)/100;   // lo que paga el cliente (en moneda origen)
 
   function adj(idOrKey, delta, moneda){
     if(!delta) return;
@@ -1758,7 +1757,7 @@ function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaD
     var c = null;
     // 1. Buscar por ID exacto
     c = (S.cuentas||[]).find(function(x){return x.id===idOrKey;});
-    // 2. Buscar por keyword en nombre con esa moneda (solo si parece un keyword, no un ID)
+    // 2. Buscar por palabra clave en el nombre con esa moneda
     if(!c && moneda && idOrKey.length < 20){
       var kw=idOrKey.toLowerCase();
       c=(S.cuentas||[]).find(function(x){return x.activa!==false&&x.moneda===moneda&&x.nombre.toLowerCase().includes(kw);});
@@ -1766,31 +1765,33 @@ function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaD
     if(c) c.saldo=Math.round(((parseFloat(c.saldo)||0)+(parseFloat(delta)||0))*100)/100;
   }
 
-  var cOrigen = cuentaBancoId||"";
+  // Averiguar moneda de origen y destino a partir de la ruta
+  var rutaObj = RUTAS.find(function(r){ return r.rt===ruta; });
+  var monOrig = rutaObj ? rutaObj.orig : null;
+  var monDest = rutaObj ? rutaObj.dest : null;
 
-  if(ruta==="BRL"||ruta==="BRL ↔ VZLA"){
-    adj(cOrigen||"nubank", +am, "BRL");  // Nubank sube (cliente pagó)
-    if(cuentaDestId){ adj(cuentaDestId, -vesEntregado, "VES"); } // VES baja (se entrega lo real: am×tasa del día)
+  // Cuenta de origen por defecto según la moneda (si el usuario no eligió una)
+  var defaultOrig = { BRL:"nubank", USD:"zelle", VES:"banco de venezuela", PEN:"", COP:"", TTD:"", EUR:"" };
+  var cOrigen = cuentaBancoId || (monOrig ? (defaultOrig[monOrig]||"") : "");
 
-  }else if(ruta==="VZLA"||ruta==="VZLA ↔ BRL"){
-    var amBrl=(tv&&tv>0)?Math.round((amUsdt*tv)*100)/100:0;
-    adj(cOrigen||"nubank", -amBrl, "BRL"); // Nubank baja (se entrega BRL)
+  if(!monOrig){
+    // Ruta desconocida: intento mínimo sobre la cuenta elegida
+    if(cuentaBancoId) adj(cuentaBancoId, +montoOrigen, null);
+    return;
+  }
 
-  }else if(ruta==="EEUU"||ruta.includes("EE.UU")||ruta.includes("UU.EE")){
-    adj(cOrigen||"zelle", +am, "USD");  // Zelle sube (cliente pagó)
-    if(cuentaDestId){ var amVes2=vesEntregado||Math.round(am*(tv||0)*100)/100; adj(cuentaDestId, -amVes2, "VES"); } // VES baja
+  // 1) La cuenta de ORIGEN sube (el cliente paga en la moneda de origen)
+  adj(cOrigen, +montoOrigen, monOrig);
 
-  }else if(ruta==="USD ↔ BRL"||ruta==="USD→BRL"){
-    adj(cOrigen||"zelle", +am, "USD");
-    var amBrl2=(tv&&tv>0)?Math.round((amUsdt*tv)*100)/100:0;
-    adj("nubank", -amBrl2, "BRL");
-
-  }else if(ruta==="USD ↔ VZLA"||ruta==="USD→VZLA"){
-    adj(cOrigen||"zelle", +am, "USD");
-    if(cuentaDestId){ adj(cuentaDestId, -(vesEntregado||Math.round(am*(tv||0)*100)/100), "VES"); }
-
-  }else if(ruta.includes("PEN")){
-    if(cOrigen) adj(cOrigen, +am, null);
+  // 2) La cuenta de DESTINO baja (le entregamos al cliente en la moneda de destino)
+  //    Para destino VES usamos lo realmente entregado (cant). Para otros destinos igual: cant ya viene en moneda destino.
+  if(cuentaDestId){
+    adj(cuentaDestId, -vesEntregado, monDest);
+  } else {
+    // Si no eligió cuenta destino, intentamos por defecto para destinos comunes
+    var defaultDest = { VES:"banco de venezuela", BRL:"nubank", USD:"zelle" };
+    var kd = defaultDest[monDest];
+    if(kd) adj(kd, -vesEntregado, monDest);
   }
 }
 
@@ -4464,26 +4465,37 @@ function rDash(){
       "<select onchange='_dashMes=this.value;R()' style='border-radius:8px;padding:7px 14px;border:1.5px solid #ddd;font-size:12px;font-weight:600;cursor:pointer'>" + mesOpts + "</select>" +
     "</div>";
 
+  // ── Tarjetas automáticas por moneda/ruta (aparecen solas si hay operaciones) ──
+  // Banderas por código de moneda de origen
+  var _flag = { BRL:"🇧🇷", USD:"🇺🇸", VES:"🇻🇪", PEN:"🇵🇪", COP:"🇨🇴", TTD:"🇹🇹", EUR:"🇪🇺" };
+  // Junta todas las operaciones BRL/VZLA del mes (origen distinto de USA, que va aparte)
+  var _todasRem = [].concat(brlM, vzlaM);
+  // Agrupa por ruta (rt). Cada ruta = una tarjeta.
+  var _grupos = {};
+  _todasRem.forEach(function(r){
+    var k = r.rt || (r.orig+" → "+r.dest);
+    if(!_grupos[k]) _grupos[k] = { rt:k, orig:r.orig, dest:r.dest, gan:0, ops:0 };
+    _grupos[k].gan += (parseFloat(r.pr)||0);
+    _grupos[k].ops += 1;
+  });
+  // Ordena de mayor a menor ganancia
+  var _listaGrupos = Object.keys(_grupos).map(function(k){return _grupos[k];})
+    .sort(function(a,b){ return b.gan - a.gan; });
+  // Genera una tarjeta por grupo
+  var _tarjetasRutas = _listaGrupos.map(function(g){
+    var fo = _flag[g.orig] || "💱";
+    var fd = _flag[g.dest] || "";
+    return "<div class='mc' style='background:#D6F5E3;border:1px solid #1a6b3c44'>"+
+      "<div class='lbl'>"+fo+"→"+fd+" "+g.rt+"</div>"+
+      "<div class='val pos'>$"+f2(g.gan)+"</div>"+
+      "<div class='sub'>"+g.ops+" "+(g.ops===1?"operación":"operaciones")+"</div>"+
+    "</div>";
+  }).join("");
+
   return headerSel +
   "<div class='mg' style='grid-template-columns:repeat(auto-fit,minmax(160px,1fr))'>"+
-    // ── Brasil/otras → Venezuela (S.brl) ──
-    "<div class='mc' style='background:#D6F5E3;border:1px solid #1a6b3c44'>"+
-      "<div class='lbl'>🇧🇷→🇻🇪 Hacia Venezuela</div>"+
-      "<div class='val pos'>$"+f2(ganBrl)+"</div>"+
-      "<div class='sub'>"+brlM.length+" ops · BRL/USD/PEN → Bs</div>"+
-    "</div>"+
-    // ── Venezuela → Brasil (S.vzla) ──
-    "<div class='mc' style='background:#FFF0E8;border:1px solid #c0392b44'>"+
-      "<div class='lbl'>🇻🇪→🇧🇷 Desde Venezuela</div>"+
-      "<div class='val' style='color:#c0392b'>$"+f2(ganVzla)+"</div>"+
-      "<div class='sub'>"+vzlaM.length+" ops · Bs → BRL</div>"+
-    "</div>"+
-    // ── Subtotal BRL + VZLA ──
-    "<div class='mc' style='background:#E8F5E9;border:1.5px solid #1a6b3c'>"+
-      "<div class='lbl'>➕ Subtotal BRL + VZLA</div>"+
-      "<div class='val pos'>$"+f2(ganBrl+ganVzla)+"</div>"+
-      "<div class='sub'>"+(brlM.length+vzlaM.length)+" operaciones en total</div>"+
-    "</div>"+
+    // ── Tarjetas automáticas por moneda (Brasil, Venezuela, Colombia, Perú, etc.) ──
+    _tarjetasRutas+
     // ── EE.UU mi parte ──
     "<div class='mc' style='background:#DDEEFF;border:1px solid #0a3d7c44'>"+
       "<div class='lbl'>🇺🇸 EE.UU (mi 50%)</div>"+
