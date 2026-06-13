@@ -360,14 +360,14 @@ const ROLES=[
   {id:"lector",label:"Supervisor",     sub:"Ve todo · No modifica",     ic:"👁️",bg:"#FFF4D6"},
 ];
 const TABS={
-  admin:["dash","diario","brl","vzla","eeuu","nueva","inventario_usdt","capital_total","egresos","prestamos","cobrar","historial","traspasos","config_admin"],
+  admin:["dash","diario","evolucion","brl","vzla","eeuu","nueva","inventario_usdt","capital_total","egresos","prestamos","cobrar","historial","traspasos","config_admin"],
   brl:  ["mi_ganancia","op_diario","nueva","clientes"],
   vzla: ["mi_ganancia","op_diario","nueva","clientes"],
   eeuu: ["mi_ganancia","op_diario","nueva_eeuu","clientes"],
-  lector:["dash","diario","brl","vzla","eeuu","inventario_usdt","capital_total","egresos","prestamos","cobrar","historial","traspasos"],
+  lector:["dash","diario","evolucion","brl","vzla","eeuu","inventario_usdt","capital_total","egresos","prestamos","cobrar","historial","traspasos"],
 };
 const TL={
-  dash:"📊 Resumen",diario:"📅 Diario",brl:"🇧🇷 BRL",vzla:"🇻🇪 VZLA",eeuu:"🇺🇸 EE.UU",
+  dash:"📊 Resumen",diario:"📅 Diario",evolucion:"📈 Evolución",brl:"🇧🇷 BRL",vzla:"🇻🇪 VZLA",eeuu:"🇺🇸 EE.UU",
   nueva:"➕ Nueva",nueva_eeuu:"➕ Nueva EE.UU",cobrar:"💳 Por Cobrar",capital_total:"💰 Capital & Reportes",historial:"📅 Historial",
   inventario_usdt:"📦 Inventario USDT",capital:"🏦 Capital",
   clientes:"👥 Clientes",egresos:"💸 Egresos",prestamos:"🤝 Préstamos",
@@ -974,6 +974,179 @@ function cerrarMes(){
     if(!confirm("¿Cerrar y archivar el mes "+getMesLabel(selMes.split("-")[1],selMes.split("-")[0])+"? Las operaciones quedarán guardadas en el historial.")) return;
   }
   ejecutarCierreMes(selMes, true);
+}
+
+// ══════════════════════════════════════════════════════
+// EVOLUCIÓN MENSUAL: saldo mes anterior + ganancia mes actual = esperado
+// ══════════════════════════════════════════════════════
+function _rateMapActual(){
+  // Construye tasas actuales (FIFO) para convertir cualquier moneda a USDT
+  var rm = { USDT:1 };
+  ["BRL","USD","PEN","COP","TTD","EUR"].forEach(function(mon){
+    var tc=getLastTasaCompra(mon); if(tc) rm[mon]=tc;
+  });
+  var tvVES=getLastTasaVenta("VES"); if(tvVES) rm["VES"]=tvVES;
+  return rm;
+}
+function _saldosCierreAUsdt(saldos, rm){
+  // Convierte el snapshot de saldos de un cierre a USDT
+  var t=0;
+  (saldos||[]).forEach(function(sc){
+    var s=parseFloat(sc.saldo)||0;
+    if(sc.moneda==="USDT") t+=s;
+    else if(rm[sc.moneda]) t+=s/rm[sc.moneda];
+  });
+  return Math.round(t*100)/100;
+}
+function getGananciaUsdtMes(mesKey){
+  // Ganancia en USDT del mes = BRL + VZLA + 50% EE.UU − gastos EE.UU
+  var brlM  = filterByMes(S.brl,  mesKey);
+  var vzlaM = filterByMes(S.vzla, mesKey);
+  var eeuuM = filterByMes(S.eeuu, mesKey);
+  var gasEE = filterByMes(S.gastos_eeuu||[], mesKey)
+                .reduce(function(a,g){return a+(parseFloat(g.monto)||0);},0);
+  var gBrl  = brlM.reduce(function(a,r){return a+(r.pr||0);},0);
+  var gVzla = vzlaM.reduce(function(a,r){return a+(r.pr||0);},0);
+  var gEE   = eeuuM.reduce(function(a,r){return a+(r.pr||0);},0);
+  var gJulio= (gEE - gasEE) * 0.5;
+  return {
+    total: gBrl+gVzla+gJulio,
+    gBrl:gBrl, gVzla:gVzla, gEEbruta:gEE, gasEE:gasEE, gJulio:gJulio,
+    ops: brlM.length+vzlaM.length+eeuuM.length
+  };
+}
+function getCapitalUsdtActual(){
+  // Capital real ahora: solo lo que está en USDT en S.cuentas
+  var solo=0, total=0;
+  var rm=_rateMapActual();
+  (S.cuentas||[]).filter(function(c){return c.activa!==false;}).forEach(function(acc){
+    var s=parseFloat(acc.saldo)||0;
+    if(acc.moneda==="USDT"){ solo+=s; total+=s; }
+    else if(rm[acc.moneda]) total+=s/rm[acc.moneda];
+  });
+  return { usdtSolo:Math.round(solo*100)/100, totalEquivalente:Math.round(total*100)/100 };
+}
+
+function rEvolucion(){
+  var rm = _rateMapActual();
+  var mesActualKey = getMesKeyActual();
+  var partsAct = mesActualKey.split("-");
+  var labelActual = getMesLabel(partsAct[1], partsAct[0]);
+
+  // Cierres ordenados (más reciente primero)
+  var cierres = (S.cierresMes||[]).slice().sort(function(a,b){return b.mesKey.localeCompare(a.mesKey);});
+
+  // Ganancia del mes en curso
+  var ganAct = getGananciaUsdtMes(mesActualKey);
+  var capActual = getCapitalUsdtActual();
+
+  if(!cierres.length){
+    // Sin cierres previos: mostramos solo el mes actual y explicamos
+    return "<div style='background:linear-gradient(135deg,#1a2a4a,#2c2c6e);border-radius:12px;padding:18px 20px;color:#fff;margin-bottom:14px'>"+
+        "<div style='font-size:17px;font-weight:800;margin-bottom:4px'>📈 EVOLUCIÓN DE LA EMPRESA</div>"+
+        "<div style='font-size:12px;opacity:.8'>"+labelActual+" · mes en curso</div>"+
+      "</div>"+
+      "<div style='background:#FFF8DC;border:1px solid #F5C518;border-radius:10px;padding:14px;margin-bottom:14px;font-size:12px;color:#7a5c00'>"+
+        "ℹ️ Aún no hay meses cerrados. Cuando cierres tu primer mes, aquí verás el saldo de cierre del mes anterior más la ganancia del mes actual para saber cuánto deberías tener."+
+      "</div>"+
+      "<div style='background:linear-gradient(135deg,#0f3020,#1a6b3c);border-radius:12px;padding:18px;color:#fff;text-align:center'>"+
+        "<div style='font-size:12px;opacity:.85;margin-bottom:6px'>💰 GANANCIA DEL MES EN CURSO ("+labelActual+")</div>"+
+        "<div style='font-size:40px;font-weight:900;color:#FFD700;line-height:1'>"+f2(ganAct.total)+" <span style='font-size:18px'>USDT</span></div>"+
+        "<div style='font-size:11px;opacity:.7;margin-top:8px'>"+ganAct.ops+" operaciones</div>"+
+      "</div>";
+  }
+
+  var ultimo = cierres[0];
+  var saldoCierreUsdt = _saldosCierreAUsdt(ultimo.saldosCierre, rm);
+  var esperado = Math.round((saldoCierreUsdt + ganAct.total)*100)/100;
+
+  // Diferencia entre lo esperado y lo que realmente hay en USDT
+  var difReal = Math.round((capActual.usdtSolo - esperado)*100)/100;
+
+  // ── Tarjeta principal: la ecuación de evolución ──
+  var html =
+  "<div style='background:linear-gradient(135deg,#1a2a4a,#2c2c6e);border-radius:12px;padding:18px 20px;color:#fff;margin-bottom:16px'>"+
+    "<div style='font-size:17px;font-weight:800;margin-bottom:4px'>📈 EVOLUCIÓN DE LA EMPRESA</div>"+
+    "<div style='font-size:12px;opacity:.8'>¿Cómo vengo respecto al mes pasado?</div>"+
+  "</div>"+
+
+  "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:8px'>"+
+    // Saldo cierre mes anterior
+    "<div style='background:#fff;border:1.5px solid #ddd;border-radius:12px;padding:16px;text-align:center'>"+
+      "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:6px'>Cerré "+ultimo.mesLabel+" con</div>"+
+      "<div style='font-size:26px;font-weight:900;color:#1a3558'>"+f2(saldoCierreUsdt)+"</div>"+
+      "<div style='font-size:10px;color:#aaa;margin-top:3px'>USDT (saldo de cierre)</div>"+
+    "</div>"+
+    // +
+    "<div style='display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:900;color:#1a6b3c'>+</div>"+
+    // Ganancia mes actual
+    "<div style='background:#D6F5E3;border:1.5px solid #1a6b3c44;border-radius:12px;padding:16px;text-align:center'>"+
+      "<div style='font-size:10px;font-weight:700;color:#0b4d27;text-transform:uppercase;margin-bottom:6px'>Gané en "+labelActual+"</div>"+
+      "<div style='font-size:26px;font-weight:900;color:#0f6e3a'>"+f2(ganAct.total)+"</div>"+
+      "<div style='font-size:10px;color:#0b4d27;opacity:.7;margin-top:3px'>USDT ("+ganAct.ops+" ops)</div>"+
+    "</div>"+
+  "</div>"+
+  // = Esperado
+  "<div style='background:linear-gradient(135deg,#0f3020,#1a6b3c);border-radius:12px;padding:20px;color:#fff;text-align:center;margin-bottom:16px'>"+
+    "<div style='font-size:11px;opacity:.8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px'>= Debería tener ahora</div>"+
+    "<div style='font-size:46px;font-weight:900;color:#FFD700;line-height:1'>"+f2(esperado)+" <span style='font-size:20px'>USDT</span></div>"+
+    "<div style='font-size:11px;opacity:.75;margin-top:8px'>Saldo de cierre anterior + ganancia del mes en curso</div>"+
+  "</div>"+
+
+  // ── Comparación con lo que realmente hay ──
+  "<div class='sec'>"+
+    "<div class='sec-title'>🔎 ¿Coincide con lo que tengo de verdad?</div>"+
+    "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px'>"+
+      "<div style='background:#f8f8f8;border-radius:10px;padding:14px;text-align:center'>"+
+        "<div style='font-size:10px;color:#888;font-weight:700;text-transform:uppercase;margin-bottom:4px'>Esperado</div>"+
+        "<div style='font-size:20px;font-weight:800;color:#1a3558'>"+f2(esperado)+" USDT</div>"+
+      "</div>"+
+      "<div style='background:#f8f8f8;border-radius:10px;padding:14px;text-align:center'>"+
+        "<div style='font-size:10px;color:#888;font-weight:700;text-transform:uppercase;margin-bottom:4px'>Tengo en USDT</div>"+
+        "<div style='font-size:20px;font-weight:800;color:#7a5c00'>"+f2(capActual.usdtSolo)+" USDT</div>"+
+      "</div>"+
+      "<div style='background:"+(Math.abs(difReal)<0.5?"#D6F5E3":(difReal>0?"#DDEEFF":"#FDECEA"))+";border-radius:10px;padding:14px;text-align:center'>"+
+        "<div style='font-size:10px;color:#555;font-weight:700;text-transform:uppercase;margin-bottom:4px'>Diferencia</div>"+
+        "<div style='font-size:20px;font-weight:800;color:"+(Math.abs(difReal)<0.5?"#0f6e3a":(difReal>0?"#0a3d7c":"#c0392b"))+"'>"+(difReal>=0?"+":"")+f2(difReal)+" USDT</div>"+
+      "</div>"+
+    "</div>"+
+    "<div style='font-size:11px;color:#888;margin-top:10px;line-height:1.5'>"+
+      (Math.abs(difReal)<0.5
+        ? "✅ La empresa va marchando correctamente: lo que tienes coincide con lo esperado."
+        : (difReal>0
+            ? "🔼 Tienes <b>más</b> de lo esperado. Puede ser por dinero en otras monedas aún sin convertir, o ganancia/ingresos no registrados."
+            : "🔽 Tienes <b>menos</b> de lo esperado. Puede deberse a gastos, retiros, o dinero todavía en bolívares/reales sin pasar a USDT."))+
+      "</div>"+
+    "<div style='font-size:10px;color:#aaa;margin-top:8px'>Nota: \"Tengo en USDT\" cuenta solo los saldos en USDT de tus cuentas. Para ver todo el dinero (incluyendo bolívares y reales) usa la pestaña 💰 Capital & Reportes.</div>"+
+  "</div>";
+
+  // ── Línea de tiempo: historial de cierres + mes actual ──
+  var serie = [];
+  // Tomamos hasta 6 cierres (más antiguos primero) y agregamos el mes actual al final
+  var ultimos = cierres.slice(0,6).slice().reverse();
+  ultimos.forEach(function(c){
+    serie.push({ label:c.mesLabel, val:_saldosCierreAUsdt(c.saldosCierre, rm), tipo:"cierre" });
+  });
+  serie.push({ label:labelActual+" (esperado)", val:esperado, tipo:"actual" });
+
+  var maxV = Math.max.apply(null, [1].concat(serie.map(function(s){return Math.abs(s.val);})));
+  var barras = serie.map(function(s){
+    var h = Math.max(6, (Math.abs(s.val)/maxV)*120);
+    var col = s.tipo==="actual" ? "#1a6b3c" : "#1a3558";
+    return "<div style='flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0'>"+
+      "<div style='font-size:10px;font-weight:700;color:"+col+"'>"+f0(s.val)+"</div>"+
+      "<div style='width:70%;background:"+col+";opacity:"+(s.tipo==="actual"?"1":".75")+";height:"+h+"px;border-radius:5px 5px 0 0'></div>"+
+      "<div style='font-size:9px;color:#888;text-align:center;line-height:1.1'>"+s.label+"</div>"+
+    "</div>";
+  }).join("");
+
+  html += "<div class='sec'>"+
+    "<div class='sec-title'>📊 Saldo al cierre de cada mes (USDT)</div>"+
+    "<div style='display:flex;align-items:flex-end;gap:6px;height:170px;padding:8px 0'>"+barras+"</div>"+
+    "<div style='font-size:10px;color:#aaa;margin-top:4px'>La última barra es el saldo esperado del mes en curso (cierre anterior + ganancia actual).</div>"+
+  "</div>";
+
+  return html;
 }
 
 // Vista del historial de cierres (calendario de meses)
@@ -4168,6 +4341,7 @@ function rMain(){
   if(S.tab==="dash")             body=isAdmin?rDash():"";
   else if(S.tab==="dash_eeuu")   body=isAdmin?rDashEE():"";
   else if(S.tab==="diario")      body=isAdmin?rDiario():"";
+  else if(S.tab==="evolucion")   body=isAdmin?rEvolucion():"";
   else if(S.tab==="brl")         body=isAdmin?rTbl(S.brl,"brl"):"";
   else if(S.tab==="vzla")        body=isAdmin?rTbl(S.vzla,"vzla"):"";
   else if(S.tab==="eeuu")        body=isAdmin?rTblEE():"";
@@ -4245,12 +4419,14 @@ function rDash(){
   var tvVES = getLastTasaVenta("VES"); if(tvVES) rateMap["VES"] = tvVES;
   // Capital total desde S.cuentas (fuente única, sin doble conteo)
   var capitalTotal = 0;
+  var capitalUsdtSolo = 0; // SOLO lo que está realmente en USDT
   (S.cuentas||[]).filter(function(c){return c.activa!==false;}).forEach(function(acc){
     var saldo = parseFloat(acc.saldo)||0;
-    if(acc.moneda==="USDT") capitalTotal += saldo;
+    if(acc.moneda==="USDT"){ capitalTotal += saldo; capitalUsdtSolo += saldo; }
     else if(rateMap[acc.moneda]) capitalTotal += saldo / rateMap[acc.moneda];
   });
   capitalTotal = Math.round(capitalTotal*100)/100;
+  capitalUsdtSolo = Math.round(capitalUsdtSolo*100)/100;
 
   // ── Cuentas por cobrar pendientes (tiempo real) ───────
   var cobPend = (S.cuentasCobrar||[]).filter(function(c){ return c.estado==="pendiente"; });
@@ -4304,9 +4480,9 @@ function rDash(){
     "</div>"+
     // ── Capital ──
     "<div class='mc' style='background:#FFF8DC;border:1px solid #F5C51844;cursor:pointer' onclick='goCapital()'>"+
-      "<div class='lbl'>🏦 Capital total</div>"+
-      "<div class='val' style='color:#7a5c00'>$"+f2(capitalTotal)+"</div>"+
-      "<div class='sub'>Ver Capital & Reportes →</div>"+
+      "<div class='lbl'>🏦 Capital total (USDT)</div>"+
+      "<div class='val' style='color:#7a5c00'>"+f2(capitalUsdtSolo)+" USDT</div>"+
+      "<div class='sub'>Solo lo que está en USDT · Ver Capital →</div>"+
     "</div>"+
     // ── Egresos ──
     "<div class='mc' style='background:#FDECEA;border:1px solid #c0392b44'>"+
@@ -4620,24 +4796,28 @@ function rDiario(){
     "</div>";
   }).join("");
 
-  // ── Current capital state ──────────────────────────
-  var rateMap={};
-  ["BRL","USD","PEN","COP","TTD","EUR"].forEach(function(mon){var tc=getLastTasaCompra(mon);if(tc)rateMap[mon]=tc;});
-  var tvVES=getLastTasaVenta("VES");if(tvVES)rateMap["VES"]=tvVES;
-  var usdtT=getInventarioStats().disponible;
-  S.capital.forEach(function(acc){
-    var s2=parseFloat(acc.saldo)||0;
-    if(acc.moneda==="USDT") usdtT+=s2;
-    else if(rateMap[acc.moneda]) usdtT+=s2/rateMap[acc.moneda];
-  });
+  // ── Ganancia USDT del periodo mostrado (BRL + VZLA + 50% EE.UU − gastos EE.UU) ──
+  var _gBrlP  = allBrl.reduce(function(a,r){return a+(r.pr||0);},0);
+  var _gVzlaP = allVzla.reduce(function(a,r){return a+(r.pr||0);},0);
+  var _gEEbruP= allEeuu.reduce(function(a,r){return a+(r.pr||0);},0);
+  var _gasEEP = (S.diarioMes==="todos"?(S.gastos_eeuu||[]):filterByMes(S.gastos_eeuu||[],S.diarioMes))
+                  .reduce(function(a,g){return a+(parseFloat(g.monto)||0);},0);
+  var _gEEnetaP = _gEEbruP - _gasEEP;
+  var _gJulioP  = _gEEnetaP * 0.5;
+  var _ganUsdtPeriodo = _gBrlP + _gVzlaP + _gJulioP;
 
   return _dHeader+
-  "<div style='background:linear-gradient(135deg,#1a2a4a,#2a4a8a);border-radius:12px;padding:14px 16px;margin-bottom:14px;color:#fff'>"+
-    "<div style='font-size:12px;font-weight:700;opacity:.85;margin-bottom:10px'>📊 CAPITAL ACTUAL</div>"+
-    "<div style='background:rgba(255,215,0,.15);border:1.5px solid rgba(255,215,0,.4);border-radius:9px;padding:11px 16px;display:flex;justify-content:space-between;align-items:center'>"+
-      "<div><div style='font-size:11px;font-weight:700;color:#FFD700'>💰 TOTAL USDT (equivalente)</div>"+
-      "<div style='font-size:10px;opacity:.7;margin-top:2px'>Inventario + todas las cuentas</div></div>"+
-      "<div style='font-size:26px;font-weight:900;color:#FFD700'>"+f2(usdtT)+" USDT</div>"+
+  "<div style='background:linear-gradient(135deg,#0f3020,#1a6b3c);border-radius:12px;padding:16px 18px;margin-bottom:14px;color:#fff'>"+
+    "<div style='font-size:12px;font-weight:700;opacity:.85;margin-bottom:10px'>📊 GANANCIA EN USDT · "+_dMesLabel+"</div>"+
+    "<div style='text-align:center;padding:6px 0'>"+
+      "<div style='font-size:40px;font-weight:900;color:#FFD700;line-height:1'>"+f2(_ganUsdtPeriodo)+" <span style='font-size:18px'>USDT</span></div>"+
+      "<div style='font-size:11px;opacity:.75;margin-top:8px'>Suma de la ganancia de todas las operaciones del mes</div>"+
+    "</div>"+
+    "<div style='display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;justify-content:center'>"+
+      "<span style='background:rgba(255,255,255,.12);border-radius:6px;padding:5px 10px;font-size:11px'>🇧🇷 BRL: $"+f2(_gBrlP)+"</span>"+
+      "<span style='background:rgba(255,255,255,.12);border-radius:6px;padding:5px 10px;font-size:11px'>🇻🇪 VZLA: $"+f2(_gVzlaP)+"</span>"+
+      "<span style='background:rgba(255,255,255,.12);border-radius:6px;padding:5px 10px;font-size:11px'>🇺🇸 EE.UU (50%): $"+f2(_gJulioP)+"</span>"+
+      (_gasEEP>0?"<span style='background:rgba(255,120,120,.25);border-radius:6px;padding:5px 10px;font-size:11px'>− Gastos EE.UU: $"+f2(_gasEEP)+"</span>":"")+
     "</div>"+
   "</div>"+
   "<div style='font-size:11px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:10px'>Historial por día</div>"+
