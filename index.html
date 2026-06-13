@@ -1863,6 +1863,12 @@ function saveTx(){
   registrarMovimientoCapital({fecha:ds(f.date),rutaOrig:ruta.orig,rutaDest:ruta.dest,amOrigen:res.am,amDestino:res.cant,concepto:f.cl+" · "+f.rt,remesaId:nn});
   // Consumir inventario FIFO (más viejo primero): USDT comprados y bolívares de ventas
   consumirInventarioFIFO(ruta.orig,res.uc,ruta.dest==="VES"?"VES":ruta.dest,res.cant);
+  // Si la operación RECIBE bolívares o reales (la moneda de origen entra a tu banco),
+  // aumentar el saldo disponible del lote de inventario de esa moneda, emparejado con la cuenta donde entró.
+  // Ej: una remesa VZLA→BRL hace entrar bolívares (VES) → sube el bsRestante del lote VES de esa cuenta.
+  if(ruta.orig==="VES" || ruta.orig==="BRL"){
+    aumentarLoteRecibido(ruta.orig, res.am, f.cuentaBanco||"");
+  }
   // Guardar referencia de tasas para la próxima operación
   // Crear cuenta por cobrar si el pago es pendiente
   if(f.pendiente){
@@ -4062,6 +4068,34 @@ function consumirInventarioFIFO(monedaOrig, usdtUsados, monedaDest, bsEntregados
     }
   }
 }
+
+// ── AUMENTAR LOTE AL RECIBIR BOLÍVARES O REALES ──────────────────
+// Cuando entra dinero (ej: una remesa VZLA→BRL hace que entren bolívares a tu banco),
+// el lote de inventario de esa misma moneda debe AUMENTAR su saldo disponible,
+// SOLO si ese lote está ligado a la MISMA cuenta donde se depositó el dinero.
+// Es el reflejo inverso de consumirInventarioFIFO (que resta cuando el dinero SALE).
+//
+// IMPORTANTE: si el dinero entra a una cuenta que NO tiene lote de venta de USDT
+// (ej: Banesco, que no usas siempre para vender USDT), NO se toca ningún lote.
+// El saldo de esa cuenta sí sube (lo hace actualizarCuentasPorRemesa), pero los
+// bolívares quedan simplemente disponibles en la cuenta, sin afectar ningún lote.
+function aumentarLoteRecibido(monedaRecibida, montoRecibido, cuentaId){
+  normalizarInventarioFIFO();
+  var monto = Math.round((parseFloat(montoRecibido)||0)*100)/100;
+  if(monto<=0) return;
+  // Sin cuenta seleccionada no podemos emparejar con seguridad → no tocar lotes.
+  if(!cuentaId) return;
+  // Buscar SOLO un lote de venta de esa moneda ligado EXACTAMENTE a la cuenta donde entró el dinero.
+  var objetivo = (S.inventarioUsdt||[]).filter(function(r){
+    return r.tipo==="venta" && r.moneda===monedaRecibida && r.cuentaId===cuentaId;
+  }).sort(ordenFIFO)[0] || null;
+  // Si NO hay lote para esa cuenta, no aumentamos ningún lote (no inventamos ni mezclamos cuentas).
+  // El saldo de la cuenta ya se actualiza aparte; los bolívares quedan disponibles en la cuenta.
+  if(!objetivo) return;
+  var actual = parseFloat(objetivo.bsRestante)||0;
+  objetivo.bsRestante = Math.round((actual + monto)*100)/100;
+}
+
 // Ajuste manual del restante de un lote (ej: bolívares ya gastados antes de esta versión)
 function cerrarLotesViejos(){
   normalizarInventarioFIFO();
