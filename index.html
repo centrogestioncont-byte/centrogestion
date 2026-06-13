@@ -1803,8 +1803,14 @@ function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaD
     if(c) c.saldo=Math.round(((parseFloat(c.saldo)||0)+(parseFloat(delta)||0))*100)/100;
   }
 
-  // Averiguar moneda de origen y destino a partir de la ruta
+  // Averiguar moneda de origen y destino a partir de la ruta.
+  // Acepta tanto la ruta completa ("BRL ↔ VZLA", "COP ↔ VZLA", ...) como palabras cortas heredadas ("BRL","VZLA","EEUU").
   var rutaObj = RUTAS.find(function(r){ return r.rt===ruta; });
+  if(!rutaObj){
+    if(ruta==="EEUU"||(typeof ruta==="string"&&(ruta.indexOf("EE.UU")>-1||ruta.indexOf("UU.EE")>-1))) rutaObj={orig:"USD",dest:"VES"};
+    else if(ruta==="BRL") rutaObj={orig:"BRL",dest:"VES"};
+    else if(ruta==="VZLA") rutaObj={orig:"VES",dest:"BRL"};
+  }
   var monOrig = rutaObj ? rutaObj.orig : null;
   var monDest = rutaObj ? rutaObj.dest : null;
 
@@ -1876,9 +1882,8 @@ function saveTx(){
       fechaCobro:""
     });
   }
-  // Actualizar saldos según el flujo de la operación
-  var rutaClave = isV ? "VZLA" : "BRL";
-  actualizarCuentasPorRemesa(rutaClave, res.am, res.tc, res.tv, res.pr, f.cuentaBanco||"", f.cuentaDest||"", res.cant);
+  // Actualizar saldos según el flujo de la operación (pasamos la ruta COMPLETA para soportar cualquier moneda)
+  actualizarCuentasPorRemesa(f.rt, res.am, res.tc, res.tv, res.pr, f.cuentaBanco||"", f.cuentaDest||"", res.cant);
   S.tx={date:f.date,id:"",cl:"",rt:f.rt,am:"",
     tdia:f.tdia,
     tc:"",tv:"",
@@ -5024,6 +5029,15 @@ function rNueva(){
     var tdiaVal=f.tdia||(defTdia||"");
     var tcVal=f.tc_manual||tcAuto||(defTc||"");
     var tvVal=f.tv_manual||tvAuto||(defTv||"");
+    // FIX: si la fecha está vacía, ponemos HOY por defecto (y la guardamos en el estado).
+    if(!f.date){
+      var _hoy=new Date();
+      S.tx.date=_hoy.getFullYear()+"-"+String(_hoy.getMonth()+1).padStart(2,"0")+"-"+String(_hoy.getDate()).padStart(2,"0");
+      f=S.tx;
+    }
+    // FIX: si la tasa del día mostrada viene del valor por defecto de Config,
+    // la guardamos en el estado para que el botón Guardar la reconozca (antes se veía pero no se guardaba).
+    if(!f.tdia && tdiaVal){ S.tx.tdia=String(tdiaVal); f=S.tx; }
     return "<div style='max-width:580px'>"+banner+
     "<div class='sec' style='border-left:3px solid #4B3FC7'><div class='sec-title' style='color:#4B3FC7'>📋 Datos de la operación</div>"+
     "<div class='f2'><div class='fl'><label>Fecha</label><input type='date' value='"+(f.date||"")+"' onchange='S.tx.date=this.value'></div>"+
