@@ -1969,6 +1969,31 @@ function ajusteCuentaEgreso(cuentaId,delta){
   c.saldo=Math.round(((parseFloat(c.saldo)||0)+(parseFloat(delta)||0))*100)/100;
   var cap=(S.capital||[]).find(function(k){return k.nombre&&c.nombre&&k.nombre.toLowerCase()===c.nombre.toLowerCase();});
   if(cap)cap.saldo=c.saldo;
+  // Reflejar el movimiento también en el lote de inventario ligado a esa cuenta (si existe).
+  ajustarLotePorCuenta(cuentaId, c.moneda, delta);
+}
+
+// ── AJUSTAR LOTE DE INVENTARIO POR MOVIMIENTO EN UNA CUENTA ──────────
+// Cuando una cuenta de bolívares/reales sube o baja por un EGRESO (u otro ajuste manual),
+// el lote de venta de USDT ligado a esa MISMA cuenta debe moverse igual.
+// delta negativo = salió dinero (baja el lote). delta positivo = volvió (revierte un pago).
+// IMPORTANTE: si la cuenta NO tiene lote (ej: Banesco sin venta de USDT registrada),
+// NO se toca ningún lote. Solo se afecta el saldo de la cuenta (eso se hace aparte).
+function ajustarLotePorCuenta(cuentaId, moneda, delta){
+  if(!cuentaId) return;
+  var d = Math.round((parseFloat(delta)||0)*100)/100;
+  if(d===0) return;
+  // Solo monedas que llevan saldo en lote de venta (VES, BRL, etc.). USDT no usa bsRestante.
+  if(moneda==="USDT" || moneda==="USD") return;
+  // Buscar el lote de venta de esa moneda ligado EXACTAMENTE a esa cuenta.
+  var objetivo = (S.inventarioUsdt||[]).filter(function(r){
+    return r.tipo==="venta" && r.moneda===moneda && r.cuentaId===cuentaId;
+  }).sort(ordenFIFO)[0] || null;
+  if(!objetivo) return; // cuenta sin lote → no inventamos nada
+  var actual = parseFloat(objetivo.bsRestante)||0;
+  var nuevo = actual + d;
+  if(nuevo < 0) nuevo = 0; // nunca dejar el lote en negativo
+  objetivo.bsRestante = Math.round(nuevo*100)/100;
 }
 function nombreCuentaEg(cid){var c=(S.cuentas||[]).find(function(x){return x.id===cid;});return c?c.nombre:"";}
 function setCuentaEgreso(id,cid){var e=S.egresos.find(function(x){return x.id===id;});if(e){e.cuentaId=cid;saveData();R();}}
