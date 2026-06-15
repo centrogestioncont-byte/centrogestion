@@ -297,6 +297,8 @@ tr:last-child td{border-bottom:none}
   <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+  <!-- html2canvas: para generar el flyer como imagen con emojis reales -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 </head>
 <body>
 <div id="app"></div>
@@ -5178,239 +5180,91 @@ function _flyerFechaHora(){
 // Genera el flyer en un canvas y lo descarga como imagen PNG
 // Dibuja la insignia "R" de RemesasYA en el canvas (vectorial, sale nítida).
 // cx,cy = esquina superior izquierda del área; s = tamaño (alto≈ancho); col = color.
-function _dibujarR(ctx,cx,cy,s,col){
-  ctx.save();
-  ctx.fillStyle=col;
-  var u=s/100; // unidad relativa
-  function px(v){return cx+v*u;}
-  function py(v){return cy+v*u;}
-  function rr(x,y,w,h,r){ // rect redondeado relativo
-    ctx.beginPath();
-    ctx.moveTo(px(x+r),py(y));
-    ctx.arcTo(px(x+w),py(y),px(x+w),py(y+h),r*u);
-    ctx.arcTo(px(x+w),py(y+h),px(x),py(y+h),r*u);
-    ctx.arcTo(px(x),py(y+h),px(x),py(y),r*u);
-    ctx.arcTo(px(x),py(y),px(x+w),py(y),r*u);
-    ctx.closePath(); ctx.fill();
-  }
-  // Dos barras horizontales izquierdas (las "patas" de la R)
-  rr(8,18,46,15,7);   // barra superior
-  rr(8,50,46,15,7);   // barra inferior
-  // Lomo de la R: arco superior derecho (medio anillo)
-  ctx.beginPath();
-  ctx.lineWidth=15*u; ctx.strokeStyle=col; ctx.lineCap="round";
-  // semicírculo desde arriba-izq del lomo, por la derecha, hasta el centro
-  ctx.arc(px(54),py(33),15*u+7.5*u,-Math.PI/2,Math.PI/2,false);
-  ctx.stroke();
-  // Conector superior (une barra superior con el inicio del lomo)
-  rr(40,18,22,15,7);
-  // Pata diagonal de la R (baja hacia la derecha)
-  ctx.beginPath();
-  ctx.lineWidth=15*u; ctx.lineCap="round"; ctx.strokeStyle=col;
-  ctx.moveTo(px(54),py(48));
-  ctx.quadraticCurveTo(px(70),py(70),px(82),py(90));
-  ctx.stroke();
-  ctx.restore();
-}
-
-// Dibuja una bandera circular nítida (Brasil o Venezuela) con colores sólidos
-function _dibujarBandera(ctx,cx,cy,r,pais){
-  ctx.save();
-  // recorte circular
-  ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.closePath(); ctx.clip();
-  if(pais==="BR"){
-    // verde
-    ctx.fillStyle="#009C3B"; ctx.fillRect(cx-r,cy-r,r*2,r*2);
-    // rombo amarillo
-    ctx.fillStyle="#FFDF00"; ctx.beginPath();
-    ctx.moveTo(cx,cy-r*0.62); ctx.lineTo(cx+r*0.78,cy); ctx.lineTo(cx,cy+r*0.62); ctx.lineTo(cx-r*0.78,cy);
-    ctx.closePath(); ctx.fill();
-    // círculo azul
-    ctx.fillStyle="#002776"; ctx.beginPath(); ctx.arc(cx,cy,r*0.32,0,Math.PI*2); ctx.fill();
-  } else {
-    // Venezuela: tres franjas
-    ctx.fillStyle="#FFCE00"; ctx.fillRect(cx-r,cy-r,r*2,r*0.667);
-    ctx.fillStyle="#00247D"; ctx.fillRect(cx-r,cy-r+r*0.667,r*2,r*0.667);
-    ctx.fillStyle="#CF142B"; ctx.fillRect(cx-r,cy-r+r*1.334,r*2,r*0.667);
-    // arco de estrellas (puntos blancos)
-    ctx.fillStyle="#fff";
-    for(var i=0;i<8;i++){
-      var ang=Math.PI*(0.62+ (i/7)*0.76); // arco inferior
-      var sx=cx+Math.cos(ang)*r*0.42, sy=cy+0.06*r+Math.sin(ang)*r*0.42;
-      ctx.beginPath(); ctx.arc(sx,sy,r*0.045,0,Math.PI*2); ctx.fill();
-    }
-  }
-  ctx.restore();
-  // borde circular naranja
-  ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2);
-  ctx.strokeStyle="#FF9A1F"; ctx.lineWidth=4; ctx.stroke();
-}
-
-// Ícono de WhatsApp (burbuja verde con teléfono) — vectorial
-function _iconWhatsApp(ctx,cx,cy,r){
-  ctx.save();
-  ctx.fillStyle="#25D366";
-  ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
-  // cola de la burbuja (abajo-izquierda)
-  ctx.beginPath(); ctx.moveTo(cx-r*0.5,cy+r*0.6); ctx.lineTo(cx-r*0.98,cy+r*0.98); ctx.lineTo(cx-r*0.15,cy+r*0.82); ctx.closePath(); ctx.fill();
-  // auricular de teléfono blanco (forma clásica de WhatsApp)
-  ctx.fillStyle="#fff";
-  ctx.save();
-  ctx.translate(cx,cy); ctx.rotate(-0.35);
-  ctx.beginPath();
-  // cuerpo curvo del auricular
-  var a=r*0.50;
-  ctx.moveTo(-a*0.55,-a*0.55);
-  ctx.quadraticCurveTo(-a*0.75,-a*0.30,-a*0.30,a*0.30);
-  ctx.quadraticCurveTo(a*0.30,a*0.75,a*0.55,a*0.55);
-  ctx.quadraticCurveTo(a*0.75,a*0.40,a*0.45,a*0.18);
-  ctx.quadraticCurveTo(a*0.28,a*0.05,a*0.10,a*0.22);
-  ctx.quadraticCurveTo(-a*0.10,a*0.0,-a*0.22,-a*0.12);
-  ctx.quadraticCurveTo(a*0.0,-a*0.30,a*0.18,-a*0.45);
-  ctx.quadraticCurveTo(a*0.40,-a*0.75,a*0.18,-a*0.55);
-  ctx.quadraticCurveTo(-a*0.10,-a*0.78,-a*0.55,-a*0.55);
-  ctx.closePath(); ctx.fill();
-  ctx.restore();
-  ctx.restore();
-}
-
-// Ícono de reloj — vectorial
-function _iconReloj(ctx,cx,cy,r,col){
-  ctx.save();
-  ctx.strokeStyle=col; ctx.lineWidth=r*0.13; ctx.fillStyle="none";
-  ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.stroke();
-  ctx.lineCap="round";
-  ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx,cy-r*0.55); ctx.stroke(); // manecilla hora
-  ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx+r*0.42,cy+r*0.1); ctx.stroke(); // minutos
-  ctx.restore();
-}
-
-// Ícono de calendario — vectorial
-function _iconFecha(ctx,cx,cy,r,col){
-  ctx.save();
-  ctx.strokeStyle=col; ctx.fillStyle=col; ctx.lineWidth=r*0.12;
-  // cuerpo
-  ctx.beginPath();
-  var x=cx-r, y=cy-r*0.75, w=r*2, h=r*1.7, rad=r*0.18;
-  ctx.moveTo(x+rad,y); ctx.arcTo(x+w,y,x+w,y+h,rad); ctx.arcTo(x+w,y+h,x,y+h,rad);
-  ctx.arcTo(x,y+h,x,y,rad); ctx.arcTo(x,y,x+w,y,rad); ctx.closePath(); ctx.stroke();
-  // barra superior rellena
-  ctx.fillRect(x,y,w,r*0.42);
-  // anillas
-  ctx.beginPath(); ctx.moveTo(cx-r*0.5,y-r*0.3); ctx.lineTo(cx-r*0.5,y+r*0.2); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(cx+r*0.5,y-r*0.3); ctx.lineTo(cx+r*0.5,y+r*0.2); ctx.stroke();
-  ctx.restore();
-}
+// ══════════════════════════════════════════════════════════
+// FLYER en HTML (emojis reales + logo WhatsApp) → imagen con html2canvas
+// ══════════════════════════════════════════════════════════
+// SVG del logo oficial de WhatsApp (se ve nítido a cualquier tamaño)
+var _WA_SVG = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' width='44' height='44'><path fill='#25D366' d='M16 0C7.2 0 0 7.2 0 16c0 2.8.7 5.5 2.1 7.9L0 32l8.3-2.2c2.3 1.3 5 1.9 7.7 1.9 8.8 0 16-7.2 16-16S24.8 0 16 0z'/><path fill='#fff' d='M24.5 21.6c-.4 1-2 1.9-2.8 2-.7.1-1.6.2-4.6-1-3.9-1.5-6.3-5.4-6.5-5.7-.2-.3-1.5-2-1.5-3.8s.9-2.7 1.3-3.1c.3-.3.7-.5 1-.5h.7c.2 0 .5 0 .8.6.3.7 1 2.4 1.1 2.6.1.2.1.4 0 .6-.1.2-.2.4-.3.5-.2.2-.3.4-.5.6-.2.2-.3.3-.1.7.2.3 1 1.6 2.1 2.6 1.5 1.3 2.7 1.7 3 1.9.3.1.5.1.7-.1.2-.2.8-1 1.1-1.3.2-.3.5-.3.8-.2.3.1 2 1 2.4 1.1.3.2.6.3.6.4.1.2.1.9-.3 1.9z'/></svg>";
 
 function generarFlyer(){
   var t=_calcTasas();
   if(!t.ida.ok && !t.vuelta.ok){ alert("Primero ingresa las tasas de compra y venta para calcular."); return; }
   var fh=_flyerFechaHora();
-  var W=1080, H=1350;
-  var cv=document.createElement("canvas"); cv.width=W; cv.height=H;
-  var ctx=cv.getContext("2d");
 
-  // ── Fondo oscuro elegante con degradado ──
-  var g=ctx.createLinearGradient(0,0,W,H);
-  g.addColorStop(0,"#241c12"); g.addColorStop(0.5,"#2b2118"); g.addColorStop(1,"#161009");
-  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
-  // Halo naranja superior
-  var rg=ctx.createRadialGradient(W/2,150,40,W/2,150,640);
-  rg.addColorStop(0,"rgba(255,138,0,0.26)"); rg.addColorStop(1,"rgba(255,138,0,0)");
-  ctx.fillStyle=rg; ctx.fillRect(0,0,W,H);
-
-  function center(txt,y,size,color,weight,spacing){
-    ctx.fillStyle=color; ctx.font=(weight||"700")+" "+size+"px Arial, sans-serif"; ctx.textAlign="center";
-    if(spacing){
-      var chars=txt.split("");
-      var widths=chars.map(function(ch){return ctx.measureText(ch).width+spacing;});
-      var total=widths.reduce(function(a,b){return a+b;},0)-spacing;
-      var x=W/2-total/2;
-      for(var i=0;i<chars.length;i++){ ctx.textAlign="left"; ctx.fillText(chars[i],x,y); x+=widths[i]; }
-      ctx.textAlign="center";
-    } else { ctx.fillText(txt,W/2,y); }
-  }
-  function roundRect(x,y,w,h,r){
-    ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
-    ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
-  }
-
-  // ── LOGO: insignia R + "RemesasYA" centrados ──
-  var logoSize=104;
-  var texto="RemesasYA";
-  ctx.font="800 76px Arial, sans-serif";
-  var anchoTxt=ctx.measureText(texto).width;
-  var gap=20;
-  var totalLogo=logoSize+gap+anchoTxt;
-  var startX=W/2-totalLogo/2;
-  // R naranja
-  _dibujarR(ctx,startX,118,logoSize,"#FF9A1F");
-  // texto RemesasYA
-  ctx.fillStyle="#FFFFFF"; ctx.textAlign="left"; ctx.font="800 76px Arial, sans-serif";
-  ctx.fillText(texto,startX+logoSize+gap,200);
-  // línea bajo el logo
-  ctx.strokeStyle="rgba(255,154,31,0.5)"; ctx.lineWidth=3;
-  ctx.beginPath(); ctx.moveTo(W/2-200,250); ctx.lineTo(W/2+200,250); ctx.stroke();
-
-  // ── Encabezado ──
-  center("DESDE BRASIL HASTA VENEZUELA", 340, 40, "#EDE6DD", "700", 2);
-  center("TU DINERO", 450, 108, "#FFFFFF", "800", 3);
-  center("SE CONVIERTE EN SOLUCIONES", 540, 40, "#EDE6DD", "700", 1);
-  center("PARA TU FAMILIA", 595, 40, "#EDE6DD", "700", 1);
-
-  // ── Etiqueta tasa ──
-  center("TASA SUJETA A CAMBIO", 710, 30, "#FF9A1F", "700", 3);
-
-  // ── Tarjetas de tasa con banderas nítidas ──
-  var cardY=760, cardH=124, cardW=440;
+  // Contenedor del flyer (1080x1350) construido con HTML real
+  var tarjetas="";
   if(t.ida.ok){
-    var x1=70;
-    roundRect(x1,cardY,cardW,cardH,30); ctx.fillStyle="rgba(255,255,255,0.06)"; ctx.fill();
-    ctx.strokeStyle="#FF9A1F"; ctx.lineWidth=3; ctx.stroke();
-    _dibujarBandera(ctx,x1+62,cardY+cardH/2,40,"BR");
-    ctx.fillStyle="#FFFFFF"; ctx.textAlign="left"; ctx.font="800 42px Arial, sans-serif";
-    ctx.fillText("1 R$ = "+t.ida.cliente.toFixed(2)+" Bs", x1+118, cardY+74);
+    tarjetas+="<div style='display:flex;align-items:center;gap:14px;background:rgba(255,255,255,.06);border:3px solid #FF9A1F;border-radius:30px;padding:18px 22px'>"+
+      "<span style='font-size:54px;line-height:1'>🇧🇷</span>"+
+      "<span style='font-size:40px;font-weight:800;color:#fff;white-space:nowrap'>1 R$ = "+t.ida.cliente.toFixed(2)+" Bs</span>"+
+    "</div>";
   }
   if(t.vuelta.ok){
-    var x2=W-70-cardW;
-    roundRect(x2,cardY,cardW,cardH,30); ctx.fillStyle="rgba(255,255,255,0.06)"; ctx.fill();
-    ctx.strokeStyle="#FF9A1F"; ctx.lineWidth=3; ctx.stroke();
-    _dibujarBandera(ctx,x2+62,cardY+cardH/2,40,"VE");
-    ctx.fillStyle="#FFFFFF"; ctx.textAlign="left"; ctx.font="800 40px Arial, sans-serif";
-    ctx.fillText(t.vuelta.cliente.toFixed(2)+" Bs = 1 R$", x2+118, cardY+74);
+    tarjetas+="<div style='display:flex;align-items:center;gap:14px;background:rgba(255,255,255,.06);border:3px solid #FF9A1F;border-radius:30px;padding:18px 22px'>"+
+      "<span style='font-size:54px;line-height:1'>🇻🇪</span>"+
+      "<span style='font-size:38px;font-weight:800;color:#fff;white-space:nowrap'>"+t.vuelta.cliente.toFixed(2)+" Bs = 1 R$</span>"+
+    "</div>";
   }
 
-  // ── PIE reorganizado: fecha (📅) y hora (⏰) en una fila, WhatsApp destacado abajo ──
-  var filaY=1015;
-  // calendario + fecha (a la izquierda del centro)
-  _iconFecha(ctx, 300, filaY-12, 22, "#FF9A1F");
-  ctx.textAlign="left"; ctx.font="700 38px Arial, sans-serif"; ctx.fillStyle="#FFFFFF";
-  ctx.fillText(fh.fecha, 338, filaY);
-  // reloj + hora (a la derecha del centro)
-  _iconReloj(ctx, 690, filaY-12, 22, "#FF9A1F");
-  ctx.textAlign="left"; ctx.font="700 38px Arial, sans-serif"; ctx.fillStyle="#FFFFFF";
-  ctx.fillText(fh.hora, 728, filaY);
+  var html=
+  "<div id='_flyerCard' style='width:1080px;height:1350px;position:relative;"+
+    "background:linear-gradient(150deg,#241c12,#2b2118 55%,#161009);"+
+    "font-family:Arial,Helvetica,sans-serif;overflow:hidden;box-sizing:border-box;padding:70px 60px'>"+
+    // halo naranja
+    "<div style='position:absolute;top:-200px;left:50%;transform:translateX(-50%);width:900px;height:900px;border-radius:50%;background:radial-gradient(circle,rgba(255,138,0,.22),rgba(255,138,0,0) 70%)'></div>"+
+    // marco
+    "<div style='position:absolute;inset:20px;border:6px solid rgba(255,154,31,.38);border-radius:40px'></div>"+
+    // contenido
+    "<div style='position:relative;height:100%;display:flex;flex-direction:column;align-items:center'>"+
+      // logo (solo texto)
+      "<div style='font-size:80px;font-weight:800;color:#fff;margin-top:30px;letter-spacing:.5px'>Remesas<span style='color:#FF9A1F'>YA</span></div>"+
+      "<div style='width:400px;height:3px;background:rgba(255,154,31,.5);margin:14px 0 0'></div>"+
+      // encabezado
+      "<div style='font-size:40px;font-weight:700;color:#EDE6DD;letter-spacing:2px;margin-top:55px;text-align:center'>DESDE BRASIL HASTA VENEZUELA</div>"+
+      "<div style='font-size:108px;font-weight:800;color:#fff;letter-spacing:3px;margin-top:14px'>TU DINERO</div>"+
+      "<div style='font-size:40px;font-weight:700;color:#EDE6DD;letter-spacing:1px;margin-top:14px;text-align:center;line-height:1.3'>SE CONVIERTE EN SOLUCIONES<br>PARA TU FAMILIA</div>"+
+      // tasa label
+      "<div style='font-size:30px;font-weight:700;color:#FF9A1F;letter-spacing:3px;margin-top:60px'>TASA SUJETA A CAMBIO</div>"+
+      // tarjetas
+      "<div style='display:flex;gap:28px;margin-top:28px;flex-wrap:wrap;justify-content:center'>"+tarjetas+"</div>"+
+      // fecha y hora con emojis
+      "<div style='display:flex;gap:70px;margin-top:60px;align-items:center'>"+
+        "<div style='display:flex;align-items:center;gap:14px'><span style='font-size:44px'>📅</span><span style='font-size:38px;font-weight:700;color:#fff'>"+fh.fecha+"</span></div>"+
+        "<div style='display:flex;align-items:center;gap:14px'><span style='font-size:44px'>⏰</span><span style='font-size:38px;font-weight:700;color:#fff'>"+fh.hora+"</span></div>"+
+      "</div>"+
+      // whatsapp
+      "<div style='display:flex;align-items:center;gap:18px;margin-top:55px;background:rgba(37,211,102,.16);border:3px solid #25D366;border-radius:50px;padding:18px 40px'>"+
+        _WA_SVG+
+        "<span style='font-size:42px;font-weight:800;color:#fff'>+55 95 84098171</span>"+
+      "</div>"+
+    "</div>"+
+  "</div>";
 
-  // ── WhatsApp destacado: píldora verde centrada ──
-  var waY=1130, waW=540, waH=96, waX=W/2-waW/2;
-  roundRect(waX,waY,waW,waH,48);
-  ctx.fillStyle="rgba(37,211,102,0.16)"; ctx.fill();
-  ctx.strokeStyle="#25D366"; ctx.lineWidth=2.5; ctx.stroke();
-  _iconWhatsApp(ctx, waX+58, waY+waH/2, 34);
-  ctx.fillStyle="#FFFFFF"; ctx.textAlign="left"; ctx.font="800 42px Arial, sans-serif";
-  ctx.fillText("+55 95 84098171", waX+112, waY+62);
+  // Crear un contenedor temporal fuera de pantalla
+  var holder=document.createElement("div");
+  holder.style.position="fixed"; holder.style.left="-99999px"; holder.style.top="0";
+  holder.innerHTML=html;
+  document.body.appendChild(holder);
+  var card=holder.querySelector("#_flyerCard");
 
-  // marco naranja sutil
-  ctx.strokeStyle="rgba(255,154,31,0.38)"; ctx.lineWidth=6;
-  roundRect(20,20,W-40,H-40,40); ctx.stroke();
+  if(typeof html2canvas==="undefined"){
+    document.body.removeChild(holder);
+    alert("No se pudo cargar el generador de imagen. Verifica tu conexión a internet e intenta de nuevo.");
+    return;
+  }
 
-  // ── Descargar ──
-  try{
-    var url=cv.toDataURL("image/png");
-    var a=document.createElement("a");
-    a.href=url; a.download="RemesasYA_"+fh.fecha.replace(/\//g,"-")+".png";
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  }catch(e){ alert("No se pudo generar la imagen: "+e.message); }
+  html2canvas(card,{backgroundColor:null,scale:1,width:1080,height:1350,useCORS:true}).then(function(canvas){
+    try{
+      var url=canvas.toDataURL("image/png");
+      var a=document.createElement("a");
+      a.href=url; a.download="RemesasYA_"+fh.fecha.replace(/\//g,"-")+".png";
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    }catch(e){ alert("No se pudo descargar: "+e.message); }
+    document.body.removeChild(holder);
+  }).catch(function(e){
+    document.body.removeChild(holder);
+    alert("No se pudo generar el flyer: "+e.message);
+  });
 }
 
 function rNueva(){
