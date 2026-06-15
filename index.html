@@ -340,15 +340,16 @@ const ROLES=[
   {id:"lector",label:"Supervisor",     sub:"Ve todo · No modifica",     ic:"👁️",bg:"#FFF4D6"},
 ];
 const TABS={
-  admin:["dash","diario","evolucion","brl","vzla","eeuu","nueva","inventario_usdt","capital_total","egresos","prestamos","cobrar","historial","traspasos","config_admin"],
+  admin:["dash","diario","evolucion","brl","vzla","eeuu","nueva","calculadora","inventario_usdt","capital_total","egresos","prestamos","cobrar","traspasos","config_admin"],
   brl:  ["mi_ganancia","op_diario","nueva","clientes"],
   vzla: ["mi_ganancia","op_diario","nueva","clientes"],
   eeuu: ["mi_ganancia","op_diario","nueva_eeuu","clientes"],
-  lector:["dash","diario","evolucion","brl","vzla","eeuu","inventario_usdt","capital_total","egresos","prestamos","cobrar","historial","traspasos"],
+  lector:["dash","diario","evolucion","brl","vzla","eeuu","inventario_usdt","capital_total","egresos","prestamos","cobrar","traspasos"],
 };
 const TL={
   dash:"📊 Resumen",diario:"📅 Diario",evolucion:"📈 Evolución",brl:"🇧🇷 BRL",vzla:"🇻🇪 VZLA",eeuu:"🇺🇸 EE.UU",
   nueva:"➕ Nueva",nueva_eeuu:"➕ Nueva EE.UU",cobrar:"💳 Por Cobrar",capital_total:"💰 Capital & Reportes",historial:"📅 Historial",
+  calculadora:"🧮 Tasas",
   inventario_usdt:"📦 Inventario USDT",capital:"🏦 Capital",
   clientes:"👥 Clientes",egresos:"💸 Egresos",prestamos:"🤝 Préstamos",
   balance:"📈 Balance y Cuentas",dash_eeuu:"📊 Resumen EE.UU",
@@ -743,6 +744,7 @@ let S={
   nTraspaso:{fecha:"",cuentaOrig:"",cuentaDest:"",monto:"",nota:""},
   nCuenta:{nombre:"",tipo:"fiat",moneda:"USD",institucion:"",saldo:0,operador:"general"},
   tx:{date:"",id:"",cl:"",rt:"BRL ↔ VZLA",am:"",tdia:"",tc:"",tv:"",tc_manual:"",tv_manual:"",pais:"VENEZUELA",_savedDate:""},
+  calc:{tcCompra:"",tvVenta:"",margen:"10",tvVentaIda:"",tcCompraVuelta:"",margenVuelta:"10"},
   txE:{date:"",id:"",cl:"",am:"",tdia:"",tc:"1.010",tv:"",tc_manual:"",tv_manual:"",pais:"VENEZUELA"},
   nEg:{date:"",cat:"GASTOS FIJOS",mot:"",monto:"",usdt:"",fija:false,pagada:false},
   nPr:{date:"",desc:"",ent:"",sal:"",soc:""},
@@ -4442,6 +4444,7 @@ function rMain(){
   else if(S.tab==="prestamos")   body=rPrestamos();
   else if(S.tab==="cobrar")      body=rCuentasCobrar();
   else if(S.tab==="historial")   body=isAdmin?rHistorialMeses():"";
+  else if(S.tab==="calculadora") body=rCalculadora();
   return "<div id='app'><div class='topbar' style='background:"+bgMap[S.role]+"'>"+
     "<div style='display:flex;align-items:center;gap:10px;flex-wrap:wrap'>"+
       "<div style='width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center;font-size:17px'>"+ro.ic+"</div>"+
@@ -5038,6 +5041,220 @@ function rTblEE(){
 
     "<th style='padding:5px 6px;border-bottom:1px solid #eee'>🔒</th><th style='padding:5px 6px;border-bottom:1px solid #eee'>ACC.</th>"+
     "</tr></thead><tbody>"+rows+"</tbody></table></div>":"<div style='text-align:center;padding:24px;color:#aaa'>Sin operaciones</div>");
+}
+
+// ══════════════════════════════════════════════════════════
+// CALCULADORA DE TASA AL CLIENTE + FLYER (pestaña propia, independiente)
+// ══════════════════════════════════════════════════════════
+// Guarda el valor SIN re-renderizar (evita que el teclado se cierre al escribir).
+function calcSet(campo,val){ S.calc[campo]=val; calcUpdate(); }
+// Botones de margen: estos SÍ re-renderizan para mover el resaltado.
+function calcSetMargen(campo,val){ S.calc[campo]=val; R(); }
+
+// Calcula las tasas a ofrecer al cliente según compra, venta y margen.
+function _calcTasas(){
+  var c=S.calc, r={};
+  // IDA: Brasil → Venezuela (cliente da reales, recibe bolívares)
+  var tcC=parseFloat(c.tcCompra)||0, tvV=parseFloat(c.tvVenta)||0, mg=parseFloat(c.margen)||0;
+  if(tcC>0 && tvV>0){ var real=tvV/tcC; r.ida={real:real,cliente:real*(1-mg/100),ok:true}; }
+  else { r.ida={ok:false}; }
+  // VUELTA: Venezuela → Brasil (cliente da bolívares, recibe reales)
+  var tvI=parseFloat(c.tvVentaIda)||0, tcVu=parseFloat(c.tcCompraVuelta)||0, mgV=parseFloat(c.margenVuelta)||0;
+  if(tvI>0 && tcVu>0){ var realV=tvI/tcVu; r.vuelta={real:realV,cliente:realV*(1+mgV/100),ok:true}; }
+  else { r.vuelta={ok:false}; }
+  return r;
+}
+
+// Actualiza SOLO los textos de resultado leyendo del estado, sin re-renderizar la página.
+function calcUpdate(){
+  var t=_calcTasas();
+  var elI=document.getElementById("calc-res-ida");
+  if(elI){
+    elI.innerHTML = t.ida.ok
+      ? "<div style='font-size:10px;color:var(--ink2);font-weight:700;text-transform:uppercase;letter-spacing:.3px'>Ofrécele a tu cliente</div>"+
+        "<div style='font-size:30px;font-weight:900;color:var(--brandDeep);margin:3px 0'>1 R$ = "+t.ida.cliente.toFixed(2)+" Bs</div>"+
+        "<div style='font-size:10px;color:var(--ink3)'>tu costo sin ganancia: "+t.ida.real.toFixed(2)+" Bs/R$</div>"
+      : "<div style='font-size:12px;color:var(--ink3);text-align:center;padding:8px'>Ingresa compra y venta para ver la tasa ↑</div>";
+  }
+  var elV=document.getElementById("calc-res-vuelta");
+  if(elV){
+    elV.innerHTML = t.vuelta.ok
+      ? "<div style='font-size:10px;color:var(--ink2);font-weight:700;text-transform:uppercase;letter-spacing:.3px'>Ofrécele a tu cliente</div>"+
+        "<div style='font-size:30px;font-weight:900;color:var(--brandDeep);margin:3px 0'>"+t.vuelta.cliente.toFixed(2)+" Bs = 1 R$</div>"+
+        "<div style='font-size:10px;color:var(--ink3)'>tu costo sin ganancia: "+t.vuelta.real.toFixed(2)+" Bs/R$</div>"
+      : "<div style='font-size:12px;color:var(--ink3);text-align:center;padding:8px'>Ingresa compra y venta para ver la tasa ↑</div>";
+  }
+}
+
+// Pantalla completa de la calculadora (pestaña propia)
+function rCalculadora(){
+  var c=S.calc;
+  var t=_calcTasas();
+  function mbtn(campo,val,actual){
+    return "<button onclick='calcSetMargen(\""+campo+"\",\""+val+"\")' style='flex:1;padding:9px;border:1.5px solid "+(actual===val?"var(--brand)":"var(--line)")+";border-radius:11px;background:"+(actual===val?"var(--brandSoft)":"#fff")+";font-size:13px;font-weight:800;color:var(--brandDeep);cursor:pointer'>"+val+"%</button>";
+  }
+  return "<div style='max-width:560px;margin:0 auto'>"+
+    // Encabezado
+    "<div style='background:linear-gradient(135deg,#2A2622,#4a4038);border-radius:var(--radius);padding:18px 20px;color:#fff;margin-bottom:16px;box-shadow:var(--shadow-md)'>"+
+      "<div style='font-size:19px;font-weight:900;display:flex;align-items:center;gap:8px'>🧮 Calculadora de tasas</div>"+
+      "<div style='font-size:12px;opacity:.85;margin-top:3px'>Calcula la tasa para tu cliente y genera el flyer</div>"+
+    "</div>"+
+    "<div style='font-size:12px;color:var(--ink2);margin-bottom:14px;line-height:1.5;padding:0 2px'>Pon las tasas de Binance del momento y tu % de ganancia. La app calcula sola qué tasa ofrecerle al cliente.</div>"+
+
+    // ── IDA: Brasil → Venezuela ──
+    "<div class='sec'>"+
+      "<div style='font-size:13px;font-weight:800;color:var(--ink);margin-bottom:12px'>🇧🇷 → 🇻🇪 Brasil hacia Venezuela</div>"+
+      "<div class='fl'><label>Compra USDT en Binance (R$ por USDT)</label><input type='number' inputmode='decimal' step='any' placeholder='ej: 5.40' value='"+(c.tcCompra||"")+"' oninput='calcSet(\"tcCompra\",this.value)'></div>"+
+      "<div class='fl'><label>Venta USDT en Binance (Bs por USDT)</label><input type='number' inputmode='decimal' step='any' placeholder='ej: 280' value='"+(c.tvVenta||"")+"' oninput='calcSet(\"tvVenta\",this.value)'></div>"+
+      "<label style='font-size:10px;color:var(--ink2);font-weight:700;text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:6px'>Mi ganancia</label>"+
+      "<div style='display:flex;gap:8px;margin-bottom:12px'>"+mbtn("margen","8",c.margen)+mbtn("margen","9",c.margen)+mbtn("margen","10",c.margen)+
+        "<input type='number' inputmode='decimal' step='any' placeholder='otro' value='"+(c.margen||"")+"' oninput='calcSet(\"margen\",this.value)' style='flex:1;text-align:center'></div>"+
+      "<div id='calc-res-ida' style='background:var(--brandSoft);border-radius:12px;padding:13px 16px;text-align:center'>"+
+        (t.ida.ok
+          ? "<div style='font-size:10px;color:var(--ink2);font-weight:700;text-transform:uppercase;letter-spacing:.3px'>Ofrécele a tu cliente</div>"+
+            "<div style='font-size:30px;font-weight:900;color:var(--brandDeep);margin:3px 0'>1 R$ = "+t.ida.cliente.toFixed(2)+" Bs</div>"+
+            "<div style='font-size:10px;color:var(--ink3)'>tu costo sin ganancia: "+t.ida.real.toFixed(2)+" Bs/R$</div>"
+          : "<div style='font-size:12px;color:var(--ink3);text-align:center;padding:8px'>Ingresa compra y venta para ver la tasa ↑</div>")+
+      "</div>"+
+    "</div>"+
+
+    // ── VUELTA: Venezuela → Brasil ──
+    "<div class='sec'>"+
+      "<div style='font-size:13px;font-weight:800;color:var(--ink);margin-bottom:12px'>🇻🇪 → 🇧🇷 Venezuela hacia Brasil</div>"+
+      "<div class='fl'><label>Compra USDT en Binance (Bs por USDT)</label><input type='number' inputmode='decimal' step='any' placeholder='ej: 280' value='"+(c.tvVentaIda||"")+"' oninput='calcSet(\"tvVentaIda\",this.value)'></div>"+
+      "<div class='fl'><label>Venta USDT en Binance (R$ por USDT)</label><input type='number' inputmode='decimal' step='any' placeholder='ej: 5.40' value='"+(c.tcCompraVuelta||"")+"' oninput='calcSet(\"tcCompraVuelta\",this.value)'></div>"+
+      "<label style='font-size:10px;color:var(--ink2);font-weight:700;text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:6px'>Mi ganancia</label>"+
+      "<div style='display:flex;gap:8px;margin-bottom:12px'>"+mbtn("margenVuelta","8",c.margenVuelta)+mbtn("margenVuelta","9",c.margenVuelta)+mbtn("margenVuelta","10",c.margenVuelta)+
+        "<input type='number' inputmode='decimal' step='any' placeholder='otro' value='"+(c.margenVuelta||"")+"' oninput='calcSet(\"margenVuelta\",this.value)' style='flex:1;text-align:center'></div>"+
+      "<div id='calc-res-vuelta' style='background:var(--brandSoft);border-radius:12px;padding:13px 16px;text-align:center'>"+
+        (t.vuelta.ok
+          ? "<div style='font-size:10px;color:var(--ink2);font-weight:700;text-transform:uppercase;letter-spacing:.3px'>Ofrécele a tu cliente</div>"+
+            "<div style='font-size:30px;font-weight:900;color:var(--brandDeep);margin:3px 0'>"+t.vuelta.cliente.toFixed(2)+" Bs = 1 R$</div>"+
+            "<div style='font-size:10px;color:var(--ink3)'>tu costo sin ganancia: "+t.vuelta.real.toFixed(2)+" Bs/R$</div>"
+          : "<div style='font-size:12px;color:var(--ink3);text-align:center;padding:8px'>Ingresa compra y venta para ver la tasa ↑</div>")+
+      "</div>"+
+    "</div>"+
+
+    // ── Botón flyer ──
+    "<button onclick='generarFlyer()' class='btn-main btn-blue'>📲 Generar flyer para el cliente</button>"+
+    "<div style='font-size:11px;color:var(--ink3);text-align:center;margin-top:8px;margin-bottom:8px'>El flyer usa la fecha y hora del momento en que lo generas</div>"+
+  "</div>";
+}
+
+// Devuelve la hora y fecha actuales formateadas para el flyer
+function _flyerFechaHora(){
+  var d=new Date();
+  var dd=String(d.getDate()).padStart(2,"0");
+  var mm=String(d.getMonth()+1).padStart(2,"0");
+  var yy=d.getFullYear();
+  var h=d.getHours(), m=String(d.getMinutes()).padStart(2,"0");
+  var ampm=h>=12?"PM":"AM";
+  var h12=h%12; if(h12===0) h12=12;
+  return { fecha:dd+"/"+mm+"/"+yy, hora:h12+":"+m+" "+ampm };
+}
+
+// Genera el flyer en un canvas y lo descarga como imagen PNG
+function generarFlyer(){
+  var t=_calcTasas();
+  if(!t.ida.ok && !t.vuelta.ok){ alert("Primero ingresa las tasas de compra y venta para calcular."); return; }
+  var fh=_flyerFechaHora();
+  var W=1080, H=1350;
+  var cv=document.createElement("canvas"); cv.width=W; cv.height=H;
+  var ctx=cv.getContext("2d");
+
+  // ── Fondo oscuro elegante con degradado ──
+  var g=ctx.createLinearGradient(0,0,W,H);
+  g.addColorStop(0,"#241c12"); g.addColorStop(0.5,"#2b2118"); g.addColorStop(1,"#1a140d");
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+
+  // Halo naranja superior sutil
+  var rg=ctx.createRadialGradient(W/2,160,40,W/2,160,650);
+  rg.addColorStop(0,"rgba(255,138,0,0.28)"); rg.addColorStop(1,"rgba(255,138,0,0)");
+  ctx.fillStyle=rg; ctx.fillRect(0,0,W,H);
+
+  function center(txt,y,size,color,weight,spacing){
+    ctx.fillStyle=color; ctx.font=(weight||"700")+" "+size+"px Arial, sans-serif";
+    ctx.textAlign="center";
+    if(spacing){
+      // dibujar con espaciado entre letras
+      var total=0, chars=txt.split("");
+      ctx.font=(weight||"700")+" "+size+"px Arial, sans-serif";
+      var widths=chars.map(function(ch){return ctx.measureText(ch).width+spacing;});
+      total=widths.reduce(function(a,b){return a+b;},0)-spacing;
+      var x=W/2-total/2;
+      for(var i=0;i<chars.length;i++){ ctx.textAlign="left"; ctx.fillText(chars[i],x,y); x+=widths[i]; }
+      ctx.textAlign="center";
+    } else {
+      ctx.fillText(txt,W/2,y);
+    }
+  }
+
+  // ── Logo / Marca ──
+  center("RemesasYA", 200, 86, "#FF9A1F", "800", 1);
+  // línea naranja bajo el logo
+  ctx.strokeStyle="rgba(255,154,31,0.55)"; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.moveTo(W/2-180,232); ctx.lineTo(W/2+180,232); ctx.stroke();
+
+  // ── Encabezado ──
+  center("DESDE BRASIL HASTA VENEZUELA", 320, 40, "#EDE6DD", "700", 2);
+  center("TU DINERO", 430, 110, "#FFFFFF", "800", 3);
+  center("SE CONVIERTE EN SOLUCIONES", 520, 40, "#EDE6DD", "700", 1);
+  center("PARA TU FAMILIA", 575, 40, "#EDE6DD", "700", 1);
+
+  // ── Etiqueta tasa ──
+  center("TASA SUJETA A CAMBIO", 690, 30, "#FF9A1F", "700", 3);
+
+  // ── Tarjetas de tasa ──
+  function roundRect(x,y,w,h,r){
+    ctx.beginPath();
+    ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
+    ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
+  }
+  var cardY=740, cardH=120, cardW=440;
+  // Tarjeta IDA (Brasil→Venezuela)
+  if(t.ida.ok){
+    var x1=70;
+    roundRect(x1,cardY,cardW,cardH,28);
+    ctx.fillStyle="rgba(255,255,255,0.06)"; ctx.fill();
+    ctx.strokeStyle="#FF9A1F"; ctx.lineWidth=3; ctx.stroke();
+    // bandera Brasil a la izquierda dentro de la tarjeta
+    ctx.font="58px Arial"; ctx.textAlign="center"; ctx.fillText("🇧🇷", x1+52, cardY+78);
+    // texto de la tasa
+    ctx.fillStyle="#FFFFFF"; ctx.textAlign="left"; ctx.font="800 44px Arial, sans-serif";
+    ctx.fillText("1 R$ = "+t.ida.cliente.toFixed(2)+" Bs", x1+96, cardY+74);
+  }
+  // Tarjeta VUELTA (Venezuela→Brasil)
+  if(t.vuelta.ok){
+    var x2=W-70-cardW;
+    roundRect(x2,cardY,cardW,cardH,28);
+    ctx.fillStyle="rgba(255,255,255,0.06)"; ctx.fill();
+    ctx.strokeStyle="#FF9A1F"; ctx.lineWidth=3; ctx.stroke();
+    // bandera Venezuela a la izquierda dentro de la tarjeta
+    ctx.font="58px Arial"; ctx.textAlign="center"; ctx.fillText("🇻🇪", x2+52, cardY+78);
+    // texto de la tasa
+    ctx.fillStyle="#FFFFFF"; ctx.textAlign="left"; ctx.font="800 42px Arial, sans-serif";
+    ctx.fillText(t.vuelta.cliente.toFixed(2)+" Bs = 1 R$", x2+96, cardY+74);
+  }
+
+  // ── Pie: fecha, hora, whatsapp ──
+  ctx.textAlign="center"; ctx.font="700 38px Arial, sans-serif"; ctx.fillStyle="#FF9A1F";
+  var pieY=1010;
+  ctx.fillText(fh.fecha, 240, pieY);
+  ctx.fillText(fh.hora, 540, pieY);
+  ctx.fillStyle="#FFFFFF"; ctx.font="800 40px Arial, sans-serif";
+  ctx.fillText("+55 95 84098171", 540, pieY+70);
+
+  // marco naranja sutil
+  ctx.strokeStyle="rgba(255,154,31,0.4)"; ctx.lineWidth=6;
+  roundRect(20,20,W-40,H-40,40); ctx.stroke();
+
+  // ── Descargar ──
+  try{
+    var url=cv.toDataURL("image/png");
+    var a=document.createElement("a");
+    a.href=url; a.download="RemesasYA_"+fh.fecha.replace(/\//g,"-")+".png";
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  }catch(e){ alert("No se pudo generar la imagen: "+e.message); }
 }
 
 function rNueva(){
