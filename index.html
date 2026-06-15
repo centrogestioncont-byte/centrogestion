@@ -744,7 +744,7 @@ let S={
   nTraspaso:{fecha:"",cuentaOrig:"",cuentaDest:"",monto:"",nota:""},
   nCuenta:{nombre:"",tipo:"fiat",moneda:"USD",institucion:"",saldo:0,operador:"general"},
   tx:{date:"",id:"",cl:"",rt:"BRL ↔ VZLA",am:"",tdia:"",tc:"",tv:"",tc_manual:"",tv_manual:"",pais:"VENEZUELA",_savedDate:""},
-  calc:{tcCompra:"",tvVenta:"",margen:"10",tvVentaIda:"",tcCompraVuelta:"",margenVuelta:"10"},
+  calc:{tcCompra:"",tvVenta:"",margen:"10",tvVentaIda:"",tcCompraVuelta:"",margenVuelta:"10",simIda:"100",simVuelta:"100"},
   txE:{date:"",id:"",cl:"",am:"",tdia:"",tc:"1.010",tv:"",tc_manual:"",tv_manual:"",pais:"VENEZUELA"},
   nEg:{date:"",cat:"GASTOS FIJOS",mot:"",monto:"",usdt:"",fija:false,pagada:false},
   nPr:{date:"",desc:"",ent:"",sal:"",soc:""},
@@ -5056,34 +5056,62 @@ function _calcTasas(){
   var c=S.calc, r={};
   // IDA: Brasil → Venezuela (cliente da reales, recibe bolívares)
   var tcC=parseFloat(c.tcCompra)||0, tvV=parseFloat(c.tvVenta)||0, mg=parseFloat(c.margen)||0;
-  if(tcC>0 && tvV>0){ var real=tvV/tcC; r.ida={real:real,cliente:real*(1-mg/100),ok:true}; }
-  else { r.ida={ok:false}; }
+  if(tcC>0 && tvV>0){
+    var real=tvV/tcC, cli=real*(1-mg/100);
+    r.ida={real:real,cliente:cli,ok:true};
+    // Simulador: cliente da "simIda" reales → mi ganancia en USDT
+    var xR=parseFloat(c.simIda)||0;
+    if(xR>0){
+      var usdtObtengo=xR/tcC;            // compro USDT con los reales del cliente
+      var bsEntrego=xR*cli;              // bolívares que le entrego al cliente
+      var usdtEntrego=bsEntrego/tvV;     // esos bolívares en USDT a mi tasa de venta
+      r.ida.simMonto=xR;
+      r.ida.simGanUsdt=usdtObtengo-usdtEntrego;
+    }
+  } else { r.ida={ok:false}; }
   // VUELTA: Venezuela → Brasil (cliente da bolívares, recibe reales)
   var tvI=parseFloat(c.tvVentaIda)||0, tcVu=parseFloat(c.tcCompraVuelta)||0, mgV=parseFloat(c.margenVuelta)||0;
-  if(tvI>0 && tcVu>0){ var realV=tvI/tcVu; r.vuelta={real:realV,cliente:realV*(1+mgV/100),ok:true}; }
-  else { r.vuelta={ok:false}; }
+  if(tvI>0 && tcVu>0){
+    var realV=tvI/tcVu, cliV=realV*(1+mgV/100);
+    r.vuelta={real:realV,cliente:cliV,ok:true};
+    // Simulador: cliente da "simVuelta" bolívares → mi ganancia en USDT
+    var xB=parseFloat(c.simVuelta)||0;
+    if(xB>0){
+      var usdtObtengoV=xB/tvI;           // compro USDT con los bolívares del cliente
+      var realesEntrego=xB/cliV;         // reales que le entrego (cliV = Bs por real)
+      var usdtEntregoV=realesEntrego/tcVu;// esos reales en USDT a mi tasa de venta
+      r.vuelta.simMonto=xB;
+      r.vuelta.simGanUsdt=usdtObtengoV-usdtEntregoV;
+    }
+  } else { r.vuelta={ok:false}; }
   return r;
+}
+
+// Genera el HTML del bloque de resultado (tasa + simulador) para una dirección
+function _calcResHTML(dir,t){
+  if(!t.ok) return "<div style='font-size:12px;color:var(--ink3);text-align:center;padding:8px'>Ingresa compra y venta para ver la tasa ↑</div>";
+  var tasaTxt = dir==="ida" ? ("1 R$ = "+t.cliente.toFixed(2)+" Bs") : (t.cliente.toFixed(2)+" Bs = 1 R$");
+  var html = "<div style='font-size:10px;color:var(--ink2);font-weight:700;text-transform:uppercase;letter-spacing:.3px'>Ofrécele a tu cliente</div>"+
+    "<div style='font-size:30px;font-weight:900;color:var(--brandDeep);margin:3px 0'>"+tasaTxt+"</div>"+
+    "<div style='font-size:10px;color:var(--ink3)'>tu costo sin ganancia: "+t.real.toFixed(2)+" Bs/R$</div>";
+  if(t.simGanUsdt!==undefined){
+    var moneda = dir==="ida" ? "R$" : "Bs";
+    var gan = t.simGanUsdt;
+    html += "<div style='border-top:1px dashed #e0d6c8;margin-top:11px;padding-top:11px'>"+
+      "<div style='font-size:10px;color:var(--ink2);font-weight:700'>Con "+t.simMonto.toLocaleString('es')+" "+moneda+" ganarías</div>"+
+      "<div style='font-size:24px;font-weight:900;color:var(--pos);margin-top:2px'>"+(gan>=0?"":"-")+Math.abs(gan).toFixed(2)+" USDT</div>"+
+    "</div>";
+  }
+  return html;
 }
 
 // Actualiza SOLO los textos de resultado leyendo del estado, sin re-renderizar la página.
 function calcUpdate(){
   var t=_calcTasas();
   var elI=document.getElementById("calc-res-ida");
-  if(elI){
-    elI.innerHTML = t.ida.ok
-      ? "<div style='font-size:10px;color:var(--ink2);font-weight:700;text-transform:uppercase;letter-spacing:.3px'>Ofrécele a tu cliente</div>"+
-        "<div style='font-size:30px;font-weight:900;color:var(--brandDeep);margin:3px 0'>1 R$ = "+t.ida.cliente.toFixed(2)+" Bs</div>"+
-        "<div style='font-size:10px;color:var(--ink3)'>tu costo sin ganancia: "+t.ida.real.toFixed(2)+" Bs/R$</div>"
-      : "<div style='font-size:12px;color:var(--ink3);text-align:center;padding:8px'>Ingresa compra y venta para ver la tasa ↑</div>";
-  }
+  if(elI) elI.innerHTML=_calcResHTML("ida",t.ida);
   var elV=document.getElementById("calc-res-vuelta");
-  if(elV){
-    elV.innerHTML = t.vuelta.ok
-      ? "<div style='font-size:10px;color:var(--ink2);font-weight:700;text-transform:uppercase;letter-spacing:.3px'>Ofrécele a tu cliente</div>"+
-        "<div style='font-size:30px;font-weight:900;color:var(--brandDeep);margin:3px 0'>"+t.vuelta.cliente.toFixed(2)+" Bs = 1 R$</div>"+
-        "<div style='font-size:10px;color:var(--ink3)'>tu costo sin ganancia: "+t.vuelta.real.toFixed(2)+" Bs/R$</div>"
-      : "<div style='font-size:12px;color:var(--ink3);text-align:center;padding:8px'>Ingresa compra y venta para ver la tasa ↑</div>";
-  }
+  if(elV) elV.innerHTML=_calcResHTML("vuelta",t.vuelta);
 }
 
 // Pantalla completa de la calculadora (pestaña propia)
@@ -5109,12 +5137,9 @@ function rCalculadora(){
       "<label style='font-size:10px;color:var(--ink2);font-weight:700;text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:6px'>Mi ganancia</label>"+
       "<div style='display:flex;gap:8px;margin-bottom:12px'>"+mbtn("margen","8",c.margen)+mbtn("margen","9",c.margen)+mbtn("margen","10",c.margen)+
         "<input type='number' inputmode='decimal' step='any' placeholder='otro' value='"+(c.margen||"")+"' oninput='calcSet(\"margen\",this.value)' style='flex:1;text-align:center'></div>"+
+      "<div class='fl'><label>💡 Simular: si el cliente envía (R$)</label><input type='number' inputmode='decimal' step='any' placeholder='ej: 100' value='"+(c.simIda||"")+"' oninput='calcSet(\"simIda\",this.value)'></div>"+
       "<div id='calc-res-ida' style='background:var(--brandSoft);border-radius:12px;padding:13px 16px;text-align:center'>"+
-        (t.ida.ok
-          ? "<div style='font-size:10px;color:var(--ink2);font-weight:700;text-transform:uppercase;letter-spacing:.3px'>Ofrécele a tu cliente</div>"+
-            "<div style='font-size:30px;font-weight:900;color:var(--brandDeep);margin:3px 0'>1 R$ = "+t.ida.cliente.toFixed(2)+" Bs</div>"+
-            "<div style='font-size:10px;color:var(--ink3)'>tu costo sin ganancia: "+t.ida.real.toFixed(2)+" Bs/R$</div>"
-          : "<div style='font-size:12px;color:var(--ink3);text-align:center;padding:8px'>Ingresa compra y venta para ver la tasa ↑</div>")+
+        _calcResHTML("ida",t.ida)+
       "</div>"+
     "</div>"+
 
@@ -5126,12 +5151,9 @@ function rCalculadora(){
       "<label style='font-size:10px;color:var(--ink2);font-weight:700;text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:6px'>Mi ganancia</label>"+
       "<div style='display:flex;gap:8px;margin-bottom:12px'>"+mbtn("margenVuelta","8",c.margenVuelta)+mbtn("margenVuelta","9",c.margenVuelta)+mbtn("margenVuelta","10",c.margenVuelta)+
         "<input type='number' inputmode='decimal' step='any' placeholder='otro' value='"+(c.margenVuelta||"")+"' oninput='calcSet(\"margenVuelta\",this.value)' style='flex:1;text-align:center'></div>"+
+      "<div class='fl'><label>💡 Simular: si el cliente envía (Bs)</label><input type='number' inputmode='decimal' step='any' placeholder='ej: 5000' value='"+(c.simVuelta||"")+"' oninput='calcSet(\"simVuelta\",this.value)'></div>"+
       "<div id='calc-res-vuelta' style='background:var(--brandSoft);border-radius:12px;padding:13px 16px;text-align:center'>"+
-        (t.vuelta.ok
-          ? "<div style='font-size:10px;color:var(--ink2);font-weight:700;text-transform:uppercase;letter-spacing:.3px'>Ofrécele a tu cliente</div>"+
-            "<div style='font-size:30px;font-weight:900;color:var(--brandDeep);margin:3px 0'>"+t.vuelta.cliente.toFixed(2)+" Bs = 1 R$</div>"+
-            "<div style='font-size:10px;color:var(--ink3)'>tu costo sin ganancia: "+t.vuelta.real.toFixed(2)+" Bs/R$</div>"
-          : "<div style='font-size:12px;color:var(--ink3);text-align:center;padding:8px'>Ingresa compra y venta para ver la tasa ↑</div>")+
+        _calcResHTML("vuelta",t.vuelta)+
       "</div>"+
     "</div>"+
 
@@ -5154,6 +5176,132 @@ function _flyerFechaHora(){
 }
 
 // Genera el flyer en un canvas y lo descarga como imagen PNG
+// Dibuja la insignia "R" de RemesasYA en el canvas (vectorial, sale nítida).
+// cx,cy = esquina superior izquierda del área; s = tamaño (alto≈ancho); col = color.
+function _dibujarR(ctx,cx,cy,s,col){
+  ctx.save();
+  ctx.fillStyle=col;
+  var u=s/100; // unidad relativa
+  function px(v){return cx+v*u;}
+  function py(v){return cy+v*u;}
+  function rr(x,y,w,h,r){ // rect redondeado relativo
+    ctx.beginPath();
+    ctx.moveTo(px(x+r),py(y));
+    ctx.arcTo(px(x+w),py(y),px(x+w),py(y+h),r*u);
+    ctx.arcTo(px(x+w),py(y+h),px(x),py(y+h),r*u);
+    ctx.arcTo(px(x),py(y+h),px(x),py(y),r*u);
+    ctx.arcTo(px(x),py(y),px(x+w),py(y),r*u);
+    ctx.closePath(); ctx.fill();
+  }
+  // Dos barras horizontales izquierdas (las "patas" de la R)
+  rr(8,18,46,15,7);   // barra superior
+  rr(8,50,46,15,7);   // barra inferior
+  // Lomo de la R: arco superior derecho (medio anillo)
+  ctx.beginPath();
+  ctx.lineWidth=15*u; ctx.strokeStyle=col; ctx.lineCap="round";
+  // semicírculo desde arriba-izq del lomo, por la derecha, hasta el centro
+  ctx.arc(px(54),py(33),15*u+7.5*u,-Math.PI/2,Math.PI/2,false);
+  ctx.stroke();
+  // Conector superior (une barra superior con el inicio del lomo)
+  rr(40,18,22,15,7);
+  // Pata diagonal de la R (baja hacia la derecha)
+  ctx.beginPath();
+  ctx.lineWidth=15*u; ctx.lineCap="round"; ctx.strokeStyle=col;
+  ctx.moveTo(px(54),py(48));
+  ctx.quadraticCurveTo(px(70),py(70),px(82),py(90));
+  ctx.stroke();
+  ctx.restore();
+}
+
+// Dibuja una bandera circular nítida (Brasil o Venezuela) con colores sólidos
+function _dibujarBandera(ctx,cx,cy,r,pais){
+  ctx.save();
+  // recorte circular
+  ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.closePath(); ctx.clip();
+  if(pais==="BR"){
+    // verde
+    ctx.fillStyle="#009C3B"; ctx.fillRect(cx-r,cy-r,r*2,r*2);
+    // rombo amarillo
+    ctx.fillStyle="#FFDF00"; ctx.beginPath();
+    ctx.moveTo(cx,cy-r*0.62); ctx.lineTo(cx+r*0.78,cy); ctx.lineTo(cx,cy+r*0.62); ctx.lineTo(cx-r*0.78,cy);
+    ctx.closePath(); ctx.fill();
+    // círculo azul
+    ctx.fillStyle="#002776"; ctx.beginPath(); ctx.arc(cx,cy,r*0.32,0,Math.PI*2); ctx.fill();
+  } else {
+    // Venezuela: tres franjas
+    ctx.fillStyle="#FFCE00"; ctx.fillRect(cx-r,cy-r,r*2,r*0.667);
+    ctx.fillStyle="#00247D"; ctx.fillRect(cx-r,cy-r+r*0.667,r*2,r*0.667);
+    ctx.fillStyle="#CF142B"; ctx.fillRect(cx-r,cy-r+r*1.334,r*2,r*0.667);
+    // arco de estrellas (puntos blancos)
+    ctx.fillStyle="#fff";
+    for(var i=0;i<8;i++){
+      var ang=Math.PI*(0.62+ (i/7)*0.76); // arco inferior
+      var sx=cx+Math.cos(ang)*r*0.42, sy=cy+0.06*r+Math.sin(ang)*r*0.42;
+      ctx.beginPath(); ctx.arc(sx,sy,r*0.045,0,Math.PI*2); ctx.fill();
+    }
+  }
+  ctx.restore();
+  // borde circular naranja
+  ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2);
+  ctx.strokeStyle="#FF9A1F"; ctx.lineWidth=4; ctx.stroke();
+}
+
+// Ícono de WhatsApp (burbuja verde con teléfono) — vectorial
+function _iconWhatsApp(ctx,cx,cy,r){
+  ctx.save();
+  ctx.fillStyle="#25D366";
+  ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
+  // cola de la burbuja (abajo-izquierda)
+  ctx.beginPath(); ctx.moveTo(cx-r*0.5,cy+r*0.6); ctx.lineTo(cx-r*0.98,cy+r*0.98); ctx.lineTo(cx-r*0.15,cy+r*0.82); ctx.closePath(); ctx.fill();
+  // auricular de teléfono blanco (forma clásica de WhatsApp)
+  ctx.fillStyle="#fff";
+  ctx.save();
+  ctx.translate(cx,cy); ctx.rotate(-0.35);
+  ctx.beginPath();
+  // cuerpo curvo del auricular
+  var a=r*0.50;
+  ctx.moveTo(-a*0.55,-a*0.55);
+  ctx.quadraticCurveTo(-a*0.75,-a*0.30,-a*0.30,a*0.30);
+  ctx.quadraticCurveTo(a*0.30,a*0.75,a*0.55,a*0.55);
+  ctx.quadraticCurveTo(a*0.75,a*0.40,a*0.45,a*0.18);
+  ctx.quadraticCurveTo(a*0.28,a*0.05,a*0.10,a*0.22);
+  ctx.quadraticCurveTo(-a*0.10,a*0.0,-a*0.22,-a*0.12);
+  ctx.quadraticCurveTo(a*0.0,-a*0.30,a*0.18,-a*0.45);
+  ctx.quadraticCurveTo(a*0.40,-a*0.75,a*0.18,-a*0.55);
+  ctx.quadraticCurveTo(-a*0.10,-a*0.78,-a*0.55,-a*0.55);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+  ctx.restore();
+}
+
+// Ícono de reloj — vectorial
+function _iconReloj(ctx,cx,cy,r,col){
+  ctx.save();
+  ctx.strokeStyle=col; ctx.lineWidth=r*0.13; ctx.fillStyle="none";
+  ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.stroke();
+  ctx.lineCap="round";
+  ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx,cy-r*0.55); ctx.stroke(); // manecilla hora
+  ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx+r*0.42,cy+r*0.1); ctx.stroke(); // minutos
+  ctx.restore();
+}
+
+// Ícono de calendario — vectorial
+function _iconFecha(ctx,cx,cy,r,col){
+  ctx.save();
+  ctx.strokeStyle=col; ctx.fillStyle=col; ctx.lineWidth=r*0.12;
+  // cuerpo
+  ctx.beginPath();
+  var x=cx-r, y=cy-r*0.75, w=r*2, h=r*1.7, rad=r*0.18;
+  ctx.moveTo(x+rad,y); ctx.arcTo(x+w,y,x+w,y+h,rad); ctx.arcTo(x+w,y+h,x,y+h,rad);
+  ctx.arcTo(x,y+h,x,y,rad); ctx.arcTo(x,y,x+w,y,rad); ctx.closePath(); ctx.stroke();
+  // barra superior rellena
+  ctx.fillRect(x,y,w,r*0.42);
+  // anillas
+  ctx.beginPath(); ctx.moveTo(cx-r*0.5,y-r*0.3); ctx.lineTo(cx-r*0.5,y+r*0.2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx+r*0.5,y-r*0.3); ctx.lineTo(cx+r*0.5,y+r*0.2); ctx.stroke();
+  ctx.restore();
+}
+
 function generarFlyer(){
   var t=_calcTasas();
   if(!t.ida.ok && !t.vuelta.ok){ alert("Primero ingresa las tasas de compra y venta para calcular."); return; }
@@ -5164,88 +5312,96 @@ function generarFlyer(){
 
   // ── Fondo oscuro elegante con degradado ──
   var g=ctx.createLinearGradient(0,0,W,H);
-  g.addColorStop(0,"#241c12"); g.addColorStop(0.5,"#2b2118"); g.addColorStop(1,"#1a140d");
+  g.addColorStop(0,"#241c12"); g.addColorStop(0.5,"#2b2118"); g.addColorStop(1,"#161009");
   ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
-
-  // Halo naranja superior sutil
-  var rg=ctx.createRadialGradient(W/2,160,40,W/2,160,650);
-  rg.addColorStop(0,"rgba(255,138,0,0.28)"); rg.addColorStop(1,"rgba(255,138,0,0)");
+  // Halo naranja superior
+  var rg=ctx.createRadialGradient(W/2,150,40,W/2,150,640);
+  rg.addColorStop(0,"rgba(255,138,0,0.26)"); rg.addColorStop(1,"rgba(255,138,0,0)");
   ctx.fillStyle=rg; ctx.fillRect(0,0,W,H);
 
   function center(txt,y,size,color,weight,spacing){
-    ctx.fillStyle=color; ctx.font=(weight||"700")+" "+size+"px Arial, sans-serif";
-    ctx.textAlign="center";
+    ctx.fillStyle=color; ctx.font=(weight||"700")+" "+size+"px Arial, sans-serif"; ctx.textAlign="center";
     if(spacing){
-      // dibujar con espaciado entre letras
-      var total=0, chars=txt.split("");
-      ctx.font=(weight||"700")+" "+size+"px Arial, sans-serif";
+      var chars=txt.split("");
       var widths=chars.map(function(ch){return ctx.measureText(ch).width+spacing;});
-      total=widths.reduce(function(a,b){return a+b;},0)-spacing;
+      var total=widths.reduce(function(a,b){return a+b;},0)-spacing;
       var x=W/2-total/2;
       for(var i=0;i<chars.length;i++){ ctx.textAlign="left"; ctx.fillText(chars[i],x,y); x+=widths[i]; }
       ctx.textAlign="center";
-    } else {
-      ctx.fillText(txt,W/2,y);
-    }
+    } else { ctx.fillText(txt,W/2,y); }
   }
-
-  // ── Logo / Marca ──
-  center("RemesasYA", 200, 86, "#FF9A1F", "800", 1);
-  // línea naranja bajo el logo
-  ctx.strokeStyle="rgba(255,154,31,0.55)"; ctx.lineWidth=3;
-  ctx.beginPath(); ctx.moveTo(W/2-180,232); ctx.lineTo(W/2+180,232); ctx.stroke();
-
-  // ── Encabezado ──
-  center("DESDE BRASIL HASTA VENEZUELA", 320, 40, "#EDE6DD", "700", 2);
-  center("TU DINERO", 430, 110, "#FFFFFF", "800", 3);
-  center("SE CONVIERTE EN SOLUCIONES", 520, 40, "#EDE6DD", "700", 1);
-  center("PARA TU FAMILIA", 575, 40, "#EDE6DD", "700", 1);
-
-  // ── Etiqueta tasa ──
-  center("TASA SUJETA A CAMBIO", 690, 30, "#FF9A1F", "700", 3);
-
-  // ── Tarjetas de tasa ──
   function roundRect(x,y,w,h,r){
-    ctx.beginPath();
-    ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
+    ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
     ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
   }
-  var cardY=740, cardH=120, cardW=440;
-  // Tarjeta IDA (Brasil→Venezuela)
+
+  // ── LOGO: insignia R + "RemesasYA" centrados ──
+  var logoSize=104;
+  var texto="RemesasYA";
+  ctx.font="800 76px Arial, sans-serif";
+  var anchoTxt=ctx.measureText(texto).width;
+  var gap=20;
+  var totalLogo=logoSize+gap+anchoTxt;
+  var startX=W/2-totalLogo/2;
+  // R naranja
+  _dibujarR(ctx,startX,118,logoSize,"#FF9A1F");
+  // texto RemesasYA
+  ctx.fillStyle="#FFFFFF"; ctx.textAlign="left"; ctx.font="800 76px Arial, sans-serif";
+  ctx.fillText(texto,startX+logoSize+gap,200);
+  // línea bajo el logo
+  ctx.strokeStyle="rgba(255,154,31,0.5)"; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.moveTo(W/2-200,250); ctx.lineTo(W/2+200,250); ctx.stroke();
+
+  // ── Encabezado ──
+  center("DESDE BRASIL HASTA VENEZUELA", 340, 40, "#EDE6DD", "700", 2);
+  center("TU DINERO", 450, 108, "#FFFFFF", "800", 3);
+  center("SE CONVIERTE EN SOLUCIONES", 540, 40, "#EDE6DD", "700", 1);
+  center("PARA TU FAMILIA", 595, 40, "#EDE6DD", "700", 1);
+
+  // ── Etiqueta tasa ──
+  center("TASA SUJETA A CAMBIO", 710, 30, "#FF9A1F", "700", 3);
+
+  // ── Tarjetas de tasa con banderas nítidas ──
+  var cardY=760, cardH=124, cardW=440;
   if(t.ida.ok){
     var x1=70;
-    roundRect(x1,cardY,cardW,cardH,28);
-    ctx.fillStyle="rgba(255,255,255,0.06)"; ctx.fill();
+    roundRect(x1,cardY,cardW,cardH,30); ctx.fillStyle="rgba(255,255,255,0.06)"; ctx.fill();
     ctx.strokeStyle="#FF9A1F"; ctx.lineWidth=3; ctx.stroke();
-    // bandera Brasil a la izquierda dentro de la tarjeta
-    ctx.font="58px Arial"; ctx.textAlign="center"; ctx.fillText("🇧🇷", x1+52, cardY+78);
-    // texto de la tasa
-    ctx.fillStyle="#FFFFFF"; ctx.textAlign="left"; ctx.font="800 44px Arial, sans-serif";
-    ctx.fillText("1 R$ = "+t.ida.cliente.toFixed(2)+" Bs", x1+96, cardY+74);
+    _dibujarBandera(ctx,x1+62,cardY+cardH/2,40,"BR");
+    ctx.fillStyle="#FFFFFF"; ctx.textAlign="left"; ctx.font="800 42px Arial, sans-serif";
+    ctx.fillText("1 R$ = "+t.ida.cliente.toFixed(2)+" Bs", x1+118, cardY+74);
   }
-  // Tarjeta VUELTA (Venezuela→Brasil)
   if(t.vuelta.ok){
     var x2=W-70-cardW;
-    roundRect(x2,cardY,cardW,cardH,28);
-    ctx.fillStyle="rgba(255,255,255,0.06)"; ctx.fill();
+    roundRect(x2,cardY,cardW,cardH,30); ctx.fillStyle="rgba(255,255,255,0.06)"; ctx.fill();
     ctx.strokeStyle="#FF9A1F"; ctx.lineWidth=3; ctx.stroke();
-    // bandera Venezuela a la izquierda dentro de la tarjeta
-    ctx.font="58px Arial"; ctx.textAlign="center"; ctx.fillText("🇻🇪", x2+52, cardY+78);
-    // texto de la tasa
-    ctx.fillStyle="#FFFFFF"; ctx.textAlign="left"; ctx.font="800 42px Arial, sans-serif";
-    ctx.fillText(t.vuelta.cliente.toFixed(2)+" Bs = 1 R$", x2+96, cardY+74);
+    _dibujarBandera(ctx,x2+62,cardY+cardH/2,40,"VE");
+    ctx.fillStyle="#FFFFFF"; ctx.textAlign="left"; ctx.font="800 40px Arial, sans-serif";
+    ctx.fillText(t.vuelta.cliente.toFixed(2)+" Bs = 1 R$", x2+118, cardY+74);
   }
 
-  // ── Pie: fecha, hora, whatsapp ──
-  ctx.textAlign="center"; ctx.font="700 38px Arial, sans-serif"; ctx.fillStyle="#FF9A1F";
-  var pieY=1010;
-  ctx.fillText(fh.fecha, 240, pieY);
-  ctx.fillText(fh.hora, 540, pieY);
-  ctx.fillStyle="#FFFFFF"; ctx.font="800 40px Arial, sans-serif";
-  ctx.fillText("+55 95 84098171", 540, pieY+70);
+  // ── PIE reorganizado: fecha (📅) y hora (⏰) en una fila, WhatsApp destacado abajo ──
+  var filaY=1015;
+  // calendario + fecha (a la izquierda del centro)
+  _iconFecha(ctx, 300, filaY-12, 22, "#FF9A1F");
+  ctx.textAlign="left"; ctx.font="700 38px Arial, sans-serif"; ctx.fillStyle="#FFFFFF";
+  ctx.fillText(fh.fecha, 338, filaY);
+  // reloj + hora (a la derecha del centro)
+  _iconReloj(ctx, 690, filaY-12, 22, "#FF9A1F");
+  ctx.textAlign="left"; ctx.font="700 38px Arial, sans-serif"; ctx.fillStyle="#FFFFFF";
+  ctx.fillText(fh.hora, 728, filaY);
+
+  // ── WhatsApp destacado: píldora verde centrada ──
+  var waY=1130, waW=540, waH=96, waX=W/2-waW/2;
+  roundRect(waX,waY,waW,waH,48);
+  ctx.fillStyle="rgba(37,211,102,0.16)"; ctx.fill();
+  ctx.strokeStyle="#25D366"; ctx.lineWidth=2.5; ctx.stroke();
+  _iconWhatsApp(ctx, waX+58, waY+waH/2, 34);
+  ctx.fillStyle="#FFFFFF"; ctx.textAlign="left"; ctx.font="800 42px Arial, sans-serif";
+  ctx.fillText("+55 95 84098171", waX+112, waY+62);
 
   // marco naranja sutil
-  ctx.strokeStyle="rgba(255,154,31,0.4)"; ctx.lineWidth=6;
+  ctx.strokeStyle="rgba(255,154,31,0.38)"; ctx.lineWidth=6;
   roundRect(20,20,W-40,H-40,40); ctx.stroke();
 
   // ── Descargar ──
