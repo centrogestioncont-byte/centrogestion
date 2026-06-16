@@ -299,6 +299,8 @@ tr:last-child td{border-bottom:none}
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
   <!-- html2canvas: para generar el flyer como imagen con emojis reales -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <!-- SheetJS: para exportar Excel del cierre mensual -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
 <div id="app"></div>
@@ -747,7 +749,7 @@ let S={
   nTraspaso:{fecha:"",cuentaOrig:"",cuentaDest:"",monto:"",nota:""},
   nCuenta:{nombre:"",tipo:"fiat",moneda:"USD",institucion:"",saldo:0,operador:"general"},
   tx:{date:"",id:"",cl:"",rt:"BRL ↔ VZLA",am:"",tdia:"",tc:"",tv:"",tc_manual:"",tv_manual:"",pais:"VENEZUELA",_savedDate:""},
-  calc:{tcCompra:"",tvVenta:"",margen:"10",tvVentaIda:"",tcCompraVuelta:"",margenVuelta:"10",simIda:"100",simVuelta:"100"},
+  calc:{tcCompra:"",tvVenta:"",margen:"10",tvVentaIda:"",tcCompraVuelta:"",margenVuelta:"10",simIda:"100",simVuelta:"100",modoCalc:"fijas",exOrig:"BRL",exDest:"VES",exTcCompra:"",exTvVenta:"",exMargen:"9",exSim:""},
   txE:{date:"",id:"",cl:"",am:"",tdia:"",tc:"1.010",tv:"",tc_manual:"",tv_manual:"",pais:"VENEZUELA"},
   nEg:{date:"",cat:"GASTOS FIJOS",mot:"",monto:"",usdt:"",fija:false,pagada:false},
   nPr:{date:"",desc:"",ent:"",sal:"",soc:""},
@@ -938,12 +940,9 @@ function ejecutarCierreMes(mesKey, manual){
     vzlaOps:     vzlaM.length,
     eeuuOps:     eeuuM.length,
     usdtDisp:    usdtDisp,
-    saldosCierre: saldosCierre,
-    // Guardar copia de las operaciones del mes
-    brl:    brlM,
-    vzla:   vzlaM,
-    eeuu:   eeuuM,
-    egresos: egM
+    saldosCierre: saldosCierre
+    // ✅ Operaciones NO se guardan aquí — viven en el Excel descargado
+    // Esto mantiene el sistema ligero sin importar cuántos meses pasen
   };
 
   // Guardar el cierre
@@ -955,16 +954,141 @@ function ejecutarCierreMes(mesKey, manual){
   if(manual) { alert("✅ Mes "+cierre.mesLabel+" cerrado y archivado correctamente."); R(); }
 }
 
+// ─────────────────────────────────────────────────────
+// EXPORTAR CIERRE A EXCEL (SheetJS en el navegador)
+// ─────────────────────────────────────────────────────
+function exportarMesExcel(mesKey){
+  if(typeof XLSX==="undefined"){alert("SheetJS no cargó. Verifica tu conexión.");return;}
+
+  var partsK=mesKey.split("-");
+  var label=getMesLabel(partsK[1],partsK[0]);
+  var brlM  =filterByMes(S.brl,   mesKey);
+  var vzlaM =filterByMes(S.vzla,  mesKey);
+  var eeuuM =filterByMes(S.eeuu,  mesKey);
+  var egM   =filterByMes(S.egresos, mesKey);
+  var invM  =filterByMes(S.inventarioUsdt, mesKey);
+  var cobM  =(S.cuentasCobrar||[]).filter(function(c){return c.estado==="pendiente";});
+
+  var ganBrl =brlM.reduce(function(a,r){return a+(r.pr||0);},0);
+  var ganVzla=vzlaM.reduce(function(a,r){return a+(r.pr||0);},0);
+  var ganEE  =eeuuM.reduce(function(a,r){return a+(r.pr||0);},0);
+  var egPag  =egM.filter(function(e){return e.pagada;}).reduce(function(a,e){return a+(e.usdt||0);},0);
+  var egPend =egM.filter(function(e){return !e.pagada;}).reduce(function(a,e){return a+(e.usdt||0);},0);
+  var totalOps=brlM.length+vzlaM.length+eeuuM.length;
+  var netoJulio=ganBrl+ganVzla+ganEE*0.5-egPag;
+
+  var wb=XLSX.utils.book_new();
+
+  // ── HOJA 1: RESUMEN ──
+  var rs=[
+    ["CIERRE DE MES — CENTRO DE GESTIÓN","","",""],
+    ["Mes:",label,"Fecha de cierre:",new Date().toLocaleDateString("es-VE")],
+    ["","","",""],
+    ["GANANCIAS DEL MES","","",""],
+    ["Concepto","USDT","",""],
+    ["Remesas Brasil → Venezuela (BRL)",Math.round(ganBrl*100)/100,"",""],
+    ["Remesas Venezuela → Brasil (VZLA)",Math.round(ganVzla*100)/100,"",""],
+    ["Remesas EE.UU → Venezuela (total)",Math.round(ganEE*100)/100,"",""],
+    ["Ganancia Julio (50% EE.UU + BRL + VZLA)",Math.round(netoJulio*100)/100,"",""],
+    ["Ganancia Paul (50% EE.UU)",Math.round(ganEE*0.5*100)/100,"",""],
+    ["","","",""],
+    ["EGRESOS DEL MES","","",""],
+    ["Egresos pagados (USDT)",Math.round(egPag*100)/100,"",""],
+    ["Egresos pendientes (USDT)",Math.round(egPend*100)/100,"",""],
+    ["","","",""],
+    ["OPERACIONES","","",""],
+    ["Total operaciones del mes",totalOps,"",""],
+    ["  Remesas BRL",brlM.length,"",""],
+    ["  Remesas VZLA",vzlaM.length,"",""],
+    ["  Remesas EE.UU",eeuuM.length,"",""],
+    ["","","",""],
+    ["SALDOS AL CIERRE","","",""],
+    ["Cuenta","Moneda","Saldo",""]
+  ];
+  (S.capital||[]).forEach(function(c){rs.push([c.nombre,c.moneda,parseFloat(c.saldo)||0,""]);});
+  rs.push(["","","",""]);
+  if(cobM.length){
+    rs.push(["CUENTAS POR COBRAR PENDIENTES","","",""]);
+    rs.push(["Cliente","Ruta","Monto","Moneda"]);
+    cobM.forEach(function(c){rs.push([c.cliente,c.ruta,c.monto,c.moneda]);});
+  }
+  var wsR=XLSX.utils.aoa_to_sheet(rs);
+  wsR["!cols"]=[{wch:42},{wch:16},{wch:16},{wch:16}];
+  XLSX.utils.book_append_sheet(wb,wsR,"📋 Resumen");
+
+  // ── HOJA 2: REMESAS BRL ──
+  var brlRows=[["#","Fecha","Cliente","Ruta","Monto (BRL)","Tasa día","Bs entregados","TC USDT","TV USDT","USDT ganados","Cuenta origen","Cuenta destino"]];
+  brlM.forEach(function(r){brlRows.push([r.n,r.d,r.cl,r.rt,r.am,r.tdia,r.cant,r.tc,r.tv,r.pr,r.cuentaBanco||"",r.cuentaDest||""]);});
+  brlRows.push(["","","","","=SUM(E2:E"+(brlM.length+1)+")",,,"=SUM(G2:G"+(brlM.length+1)+")","","=SUM(J2:J"+(brlM.length+1)+")","",""]);
+  var wsBrl=XLSX.utils.aoa_to_sheet(brlRows);
+  wsBrl["!cols"]=[{wch:5},{wch:10},{wch:30},{wch:16},{wch:12},{wch:10},{wch:14},{wch:10},{wch:10},{wch:13},{wch:18},{wch:18}];
+  XLSX.utils.book_append_sheet(wb,wsBrl,"🇧🇷 Remesas BRL");
+
+  // ── HOJA 3: REMESAS EE.UU ──
+  var eeuuRows=[["#","Fecha","Cliente","Monto (USD)","Tasa día (Bs/USD)","Bs entregados","TC USDT","TV USDT","USDT ganados","Cuenta origen","Cuenta destino"]];
+  eeuuM.forEach(function(r){eeuuRows.push([r.n,r.d,r.cl,r.am,r.tdia,r.cant,r.tc,r.tv,r.pr,r.cuentaBanco||"",r.cuentaDest||""]);});
+  eeuuRows.push(["","","","=SUM(D2:D"+(eeuuM.length+1)+")",,,"=SUM(F2:F"+(eeuuM.length+1)+")","","=SUM(I2:I"+(eeuuM.length+1)+")","",""]);
+  var wsEE=XLSX.utils.aoa_to_sheet(eeuuRows);
+  wsEE["!cols"]=[{wch:5},{wch:10},{wch:30},{wch:12},{wch:16},{wch:14},{wch:10},{wch:10},{wch:13},{wch:18},{wch:18}];
+  XLSX.utils.book_append_sheet(wb,wsEE,"🇺🇸 Remesas EE.UU");
+
+  // ── HOJA 4: VZLA ──
+  if(vzlaM.length){
+    var vzlaRows=[["#","Fecha","Cliente","Monto (VES)","Tasa día","BRL entregados","TC USDT","TV USDT","USDT ganados"]];
+    vzlaM.forEach(function(r){vzlaRows.push([r.n,r.d,r.cl,r.am,r.tdia,r.cant,r.tc,r.tv,r.pr]);});
+    vzlaRows.push(["","","","=SUM(D2:D"+(vzlaM.length+1)+")",,,"=SUM(F2:F"+(vzlaM.length+1)+")","","=SUM(I2:I"+(vzlaM.length+1)+")"]);
+    var wsVZ=XLSX.utils.aoa_to_sheet(vzlaRows);
+    wsVZ["!cols"]=[{wch:5},{wch:10},{wch:30},{wch:14},{wch:10},{wch:14},{wch:10},{wch:10},{wch:13}];
+    XLSX.utils.book_append_sheet(wb,wsVZ,"🔄 VZLA→BRL");
+  }
+
+  // ── HOJA 5: EGRESOS ──
+  if(egM.length){
+    var egRows=[["Fecha","Categoría","Motivo","Monto USDT","Pagado"]];
+    egM.forEach(function(e){egRows.push([e.date||e.d||"",e.cat||"",e.mot||e.motivo||"",(parseFloat(e.usdt)||0),e.pagada?"Sí":"No"]);});
+    egRows.push(["","","","=SUM(D2:D"+(egM.length+1)+")",""]);  // fila totales
+    var wsEg=XLSX.utils.aoa_to_sheet(egRows);
+    wsEg["!cols"]=[{wch:12},{wch:20},{wch:30},{wch:14},{wch:10}];
+    XLSX.utils.book_append_sheet(wb,wsEg,"💸 Egresos");
+  }
+
+  // ── HOJA 6: INVENTARIO USDT ──
+  if(invM.length){
+    var invRows=[["Fecha","Tipo","Plataforma","Moneda","Monto origen","USDT","Tasa","Comisión","Bs"]];
+    invM.forEach(function(r){invRows.push([r.fecha,r.tipo,r.plataforma,r.moneda,r.montOrigen,r.usdt,r.tasa,r.comision,r.bs]);});
+    var wsInv=XLSX.utils.aoa_to_sheet(invRows);
+    wsInv["!cols"]=[{wch:10},{wch:8},{wch:18},{wch:8},{wch:13},{wch:10},{wch:10},{wch:10},{wch:12}];
+    XLSX.utils.book_append_sheet(wb,wsInv,"🪙 Inventario USDT");
+  }
+
+  // ── HOJA 7: CUENTAS POR COBRAR ──
+  if(cobM.length){
+    var cobRows=[["Fecha","Cliente","Ruta","Monto","Moneda","Ganancia USDT","Estado"]];
+    cobM.forEach(function(c){cobRows.push([c.fecha,c.cliente,c.ruta,c.monto,c.moneda,c.ganancia,c.estado]);});
+    var wsCob=XLSX.utils.aoa_to_sheet(cobRows);
+    wsCob["!cols"]=[{wch:12},{wch:30},{wch:18},{wch:10},{wch:8},{wch:14},{wch:12}];
+    XLSX.utils.book_append_sheet(wb,wsCob,"💳 Por Cobrar");
+  }
+
+  var filename="Centro_Gestion_"+label.replace(/ /g,"_")+".xlsx";
+  XLSX.writeFile(wb,filename);
+  return filename;
+}
+
 function cerrarMes(){
   var meses=getMesesDisponibles();
   var selMes=S.filtroMes||(meses.length?meses[0].key:"");
   if(!selMes){alert("Selecciona un mes primero.");return;}
+  var label=getMesLabel(selMes.split("-")[1],selMes.split("-")[0]);
   var yaExiste=S.cierresMes&&S.cierresMes.some(function(c){return c.mesKey===selMes;});
   if(yaExiste){
-    if(!confirm("Este mes ya fue cerrado. ¿Deseas actualizarlo?")) return;
+    if(!confirm("Este mes ya fue cerrado.\n\n¿Deseas descargarlo de nuevo y actualizar el historial?")) return;
   } else {
-    if(!confirm("¿Cerrar y archivar el mes "+getMesLabel(selMes.split("-")[1],selMes.split("-")[0])+"? Las operaciones quedarán guardadas en el historial.")) return;
+    if(!confirm("Cerrar "+label+"\n\n1️⃣ Se descargará un Excel completo con todas las operaciones.\n2️⃣ El historial del sistema guardará solo el resumen (más liviano).\n\n¿Continuar?")) return;
   }
+  // 1. Exportar Excel primero
+  try{ exportarMesExcel(selMes); } catch(e){ alert("Error al generar el Excel: "+e.message); return; }
+  // 2. Cerrar (guarda resumen ligero, sin operaciones)
   ejecutarCierreMes(selMes, true);
 }
 
@@ -1183,75 +1307,92 @@ function rEvolucion(){
 function rHistorialMeses(){
   var cierres = (S.cierresMes||[]).slice().sort(function(a,b){return b.mesKey.localeCompare(a.mesKey);});
   if(!cierres.length){
-    return "<div style='text-align:center;padding:40px;color:#aaa'><div style='font-size:36px;margin-bottom:12px'>📅</div><div style='font-size:14px;font-weight:700'>Sin meses cerrados aún</div><div style='font-size:12px;margin-top:6px'>Al cerrar un mes, quedará archivado aquí.</div></div>";
+    return "<div style='text-align:center;padding:40px;color:#aaa'><div style='font-size:36px;margin-bottom:12px'>📅</div><div style='font-size:14px;font-weight:700'>Sin meses cerrados aún</div><div style='font-size:12px;margin-top:6px'>Cuando cierres un mes, el sistema guardará el resumen aquí y descargará un Excel con todas las operaciones.</div></div>";
   }
   var selCierre = S.filtroHistorial || cierres[0].mesKey;
   var cierre = cierres.find(function(c){return c.mesKey===selCierre;}) || cierres[0];
 
-  // Calendario de meses (grid de botones)
-  var calHtml = "<div style='display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px'>";
+  var gridHtml = "<div style='display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:20px'>";
   cierres.forEach(function(c){
     var isActive = c.mesKey===selCierre;
-    calHtml += "<button onclick=\'S.filtroHistorial=\""+c.mesKey+"\";R()\' style=\'"+
-      "padding:10px 16px;border-radius:10px;border:2px solid "+(isActive?"#1a3558":"#ddd")+";"+
-      "background:"+(isActive?"#1a3558":"#fff")+";color:"+(isActive?"#fff":"#333")+";"+
-      "font-size:12px;font-weight:700;cursor:pointer;transition:all .2s'>"+
-      "📅 "+c.mesLabel+(c.automatico?" 🤖":"")+"</button>";
+    var neto = c.neto||0;
+    var isPos = neto>=0;
+    gridHtml += "<div onclick='S.filtroHistorial=\""+c.mesKey+"\";R()' style='cursor:pointer;border-radius:14px;border:2px solid "+(isActive?"#1a3558":"#e5e5e5")+";background:"+(isActive?"#1a3558":"#fff")+";padding:14px;box-shadow:"+(isActive?"0 4px 16px rgba(26,42,74,.25)":"0 1px 4px rgba(0,0,0,.06)")+"'>"+
+      "<div style='font-size:11px;font-weight:800;color:"+(isActive?"#90CAF9":"#888")+";margin-bottom:6px;text-transform:uppercase;letter-spacing:.4px'>"+c.mesLabel+"</div>"+
+      "<div style='font-size:22px;font-weight:900;color:"+(isActive?(isPos?"#69F0AE":"#FF7043"):(isPos?"#0f6e3a":"#c0392b"))+"'>$"+f2(Math.abs(neto))+"</div>"+
+      "<div style='font-size:9px;color:"+(isActive?"rgba(255,255,255,.6)":"#aaa")+";margin-top:2px'>"+(isPos?"ganancia":"déficit")+"</div>"+
+      "<div style='font-size:9px;color:"+(isActive?"rgba(255,255,255,.5)":"#bbb")+";margin-top:6px'>"+((c.brlOps||0)+(c.vzlaOps||0)+(c.eeuuOps||0))+" ops</div>"+
+    "</div>";
   });
-  calHtml += "</div>";
+  gridHtml += "</div>";
 
-  // Detalle del mes seleccionado
-  var detalle = "<div style='background:linear-gradient(135deg,#1a2a4a,#2c2c6e);border-radius:12px;padding:16px;color:#fff;margin-bottom:14px'>"+
-    "<div style='display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px'>"+
-      "<div><div style='font-size:16px;font-weight:800'>📋 "+cierre.mesLabel+"</div>"+
-      "<div style='font-size:10px;opacity:.7;margin-top:2px'>Cerrado: "+new Date(cierre.fechaCierre).toLocaleDateString("es-ES")+(cierre.automatico?" · Automático":"· Manual")+"</div></div>"+
-      "<div style='background:rgba(255,215,0,.2);border:1px solid rgba(255,215,0,.4);border-radius:8px;padding:8px 14px;text-align:center'>"+
-        "<div style='font-size:10px;color:#FFD700;opacity:.8'>NETO DEL MES</div>"+
-        "<div style='font-size:24px;font-weight:900;color:#FFD700'>$"+f2(cierre.neto)+" USDT</div>"+
+  var detalle = "<div style='background:linear-gradient(135deg,#1a2a4a,#2c2c6e);border-radius:16px;padding:18px;color:#fff;margin-bottom:14px'>"+
+    "<div style='display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;margin-bottom:14px'>"+
+      "<div>"+
+        "<div style='font-size:18px;font-weight:900'>"+cierre.mesLabel+"</div>"+
+        "<div style='font-size:10px;opacity:.6;margin-top:3px'>Cerrado: "+new Date(cierre.fechaCierre).toLocaleDateString("es-ES")+(cierre.automatico?" · Automático":" · Manual")+"</div>"+
       "</div>"+
+      "<button onclick='exportarMesExcel(\""+cierre.mesKey+"\")' style='background:#FFD700;color:#1a2a4a;border:none;padding:9px 15px;border-radius:10px;font-size:12px;font-weight:800;cursor:pointer'>📥 Descargar Excel</button>"+
     "</div>"+
-    "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px'>"+
-      "<div style='background:rgba(255,255,255,.1);border-radius:8px;padding:10px;text-align:center'><div style='font-size:9px;opacity:.7'>🇧🇷 BRL ("+cierre.brlOps+" ops)</div><div style='font-size:16px;font-weight:800;color:#90EE90'>$"+f2(cierre.ganBrl)+"</div></div>"+
-      "<div style='background:rgba(255,255,255,.1);border-radius:8px;padding:10px;text-align:center'><div style='font-size:9px;opacity:.7'>🇻🇪 VZLA ("+cierre.vzlaOps+" ops)</div><div style='font-size:16px;font-weight:800;color:#90EE90'>$"+f2(cierre.ganVzla)+"</div></div>"+
-      "<div style='background:rgba(255,255,255,.1);border-radius:8px;padding:10px;text-align:center'><div style='font-size:9px;opacity:.7'>🇺🇸 EE.UU ("+cierre.eeuuOps+" ops)</div><div style='font-size:16px;font-weight:800;color:#90EE90'>$"+f2(cierre.ganEE)+"</div></div>"+
-      "<div style='background:rgba(255,100,100,.15);border-radius:8px;padding:10px;text-align:center'><div style='font-size:9px;opacity:.7'>💸 Egresos pagados</div><div style='font-size:16px;font-weight:800;color:#ffaaaa'>-$"+f2(cierre.egPag)+"</div></div>"+
-      "<div style='background:rgba(255,215,0,.15);border-radius:8px;padding:10px;text-align:center'><div style='font-size:9px;opacity:.7'>👤 Julio (todo)</div><div style='font-size:16px;font-weight:800;color:#FFD700'>$"+f2(cierre.ganJulio)+"</div></div>"+
-      "<div style='background:rgba(100,180,255,.15);border-radius:8px;padding:10px;text-align:center'><div style='font-size:9px;opacity:.7'>🤝 Paul (50% EE.UU)</div><div style='font-size:16px;font-weight:800;color:#90b4f5'>$"+f2(cierre.ganPaul)+"</div></div>"+
+    "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px'>"+
+      "<div style='background:rgba(255,255,255,.1);border-radius:10px;padding:10px;text-align:center'>"+
+        "<div style='font-size:9px;opacity:.7;margin-bottom:4px'>🇧🇷 BRL</div>"+
+        "<div style='font-size:15px;font-weight:800;color:#90EE90'>$"+f2(cierre.ganBrl||0)+"</div>"+
+        "<div style='font-size:9px;opacity:.5'>"+(cierre.brlOps||0)+" ops</div>"+
+      "</div>"+
+      "<div style='background:rgba(255,255,255,.1);border-radius:10px;padding:10px;text-align:center'>"+
+        "<div style='font-size:9px;opacity:.7;margin-bottom:4px'>🇺🇸 EE.UU</div>"+
+        "<div style='font-size:15px;font-weight:800;color:#90EE90'>$"+f2(cierre.ganEE||0)+"</div>"+
+        "<div style='font-size:9px;opacity:.5'>"+(cierre.eeuuOps||0)+" ops</div>"+
+      "</div>"+
+      "<div style='background:rgba(255,255,255,.1);border-radius:10px;padding:10px;text-align:center'>"+
+        "<div style='font-size:9px;opacity:.7;margin-bottom:4px'>🔄 VZLA</div>"+
+        "<div style='font-size:15px;font-weight:800;color:#90EE90'>$"+f2(cierre.ganVzla||0)+"</div>"+
+        "<div style='font-size:9px;opacity:.5'>"+(cierre.vzlaOps||0)+" ops</div>"+
+      "</div>"+
+      "<div style='background:rgba(255,50,50,.15);border-radius:10px;padding:10px;text-align:center'>"+
+        "<div style='font-size:9px;opacity:.7;margin-bottom:4px'>💸 Egresos</div>"+
+        "<div style='font-size:15px;font-weight:800;color:#ffaaaa'>-$"+f2(cierre.egPag||0)+"</div>"+
+        (cierre.egPend?"<div style='font-size:9px;color:#ff9999'>+$"+f2(cierre.egPend)+" pend</div>":"<div style='font-size:9px;opacity:.5'>pagados</div>")+
+      "</div>"+
+      "<div style='background:rgba(255,215,0,.2);border-radius:10px;padding:10px;text-align:center;border:1px solid rgba(255,215,0,.3)'>"+
+        "<div style='font-size:9px;color:#FFD700;margin-bottom:4px'>👤 JULIO</div>"+
+        "<div style='font-size:18px;font-weight:900;color:#FFD700'>$"+f2(cierre.ganJulio||0)+"</div>"+
+        "<div style='font-size:9px;color:rgba(255,215,0,.7)'>neto del mes</div>"+
+      "</div>"+
+      "<div style='background:rgba(100,160,255,.15);border-radius:10px;padding:10px;text-align:center'>"+
+        "<div style='font-size:9px;opacity:.7;margin-bottom:4px'>🤝 PAUL</div>"+
+        "<div style='font-size:15px;font-weight:800;color:#90b4f5'>$"+f2(cierre.ganPaul||0)+"</div>"+
+        "<div style='font-size:9px;opacity:.5'>50% EE.UU</div>"+
+      "</div>"+
     "</div>"+
   "</div>";
 
-  // Saldos al cierre
   var saldosHtml = "";
   if(cierre.saldosCierre&&cierre.saldosCierre.length){
-    saldosHtml = "<div class='sec' style='margin-bottom:12px'><div class='sec-title'>🏦 Saldos de cuentas al cierre</div>"+
-      "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px'>";
+    var monColores={VES:"#c0392b",BRL:"#0f6e3a",USDT:"#B87800",USD:"#0a3d7c"};
+    saldosHtml = "<div class='sec' style='margin-bottom:14px'><div class='sec-title'>🏦 Saldos al cierre de "+cierre.mesLabel+"</div>"+
+      "<div style='display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px'>";
     cierre.saldosCierre.forEach(function(sc){
-      saldosHtml += "<div style='background:#f8f8f8;border-radius:8px;padding:10px;border-left:3px solid #1a3558'>"+
-        "<div style='font-size:10px;color:#888;margin-bottom:4px'>"+sc.nombre+"</div>"+
-        "<div style='font-size:16px;font-weight:800;color:#1a3558'>"+f2(sc.saldo)+" "+sc.moneda+"</div>"+
+      var col=monColores[sc.moneda]||"#555";
+      var isNeg=sc.saldo<0;
+      saldosHtml += "<div style='background:#f9f9f9;border-radius:10px;padding:11px 13px;border-left:3px solid "+(isNeg?"#c0392b":col)+"'>"+
+        "<div style='font-size:10px;color:#888;margin-bottom:4px;font-weight:700'>"+sc.nombre+"</div>"+
+        "<div style='font-size:17px;font-weight:900;color:"+(isNeg?"#c0392b":col)+"'>"+f2(sc.saldo)+" "+sc.moneda+"</div>"+
       "</div>";
     });
     saldosHtml += "</div></div>";
   }
 
-  // Operaciones del mes archivadas
-  var opsHtml = "";
-  var allOps = (cierre.brl||[]).concat(cierre.vzla||[]).concat(cierre.eeuu||[]);
-  if(allOps.length){
-    var opsRows = allOps.slice(0,20).map(function(r){
-      return "<tr><td style='padding:6px 8px;font-size:11px'>"+dFmt(r.d)+"</td>"+
-        "<td style='padding:6px 8px;font-size:11px;max-width:140px;overflow:hidden;text-overflow:ellipsis'>"+r.cl+"</td>"+
-        "<td style='padding:6px 8px;font-size:11px'>"+r.rt+"</td>"+
-        "<td style='padding:6px 8px;text-align:right;font-size:11px'>"+f2(r.am)+" "+r.orig+"</td>"+
-        "<td style='padding:6px 8px;text-align:right;font-weight:700;color:#0f6e3a;font-size:11px'>$"+f2(r.pr)+"</td></tr>";
-    }).join("");
-    opsHtml = "<div class='sec'><div class='sec-title'>📋 Operaciones del mes ("+allOps.length+" total"+(allOps.length>20?", mostrando primeras 20":"")+")</div>"+
-      "<div class='tw'><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Ruta</th><th style='text-align:right'>Monto</th><th style='text-align:right;color:#0f6e3a'>Ganancia</th></tr></thead>"+
-      "<tbody>"+opsRows+"</tbody></table></div></div>";
-  }
+  var avisoCierre = "<div style='background:#EEF4FF;border:1px solid #b3c8f5;border-radius:12px;padding:14px 16px;font-size:12px;color:#0a3d7c'>"+
+    "📥 <b>El detalle de "+(cierre.totalOps||0)+" operaciones de este mes está en el Excel descargado.</b><br>"+
+    "<span style='opacity:.8'>¿Necesitas generarlo de nuevo? </span>"+
+    "<button onclick='exportarMesExcel(\""+cierre.mesKey+"\")' style='background:#0a3d7c;color:#fff;border:none;padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer;margin-top:6px'>📥 Descargar Excel de "+cierre.mesLabel+"</button>"+
+  "</div>";
 
-  return calHtml + detalle + saldosHtml + opsHtml;
+  return gridHtml + detalle + saldosHtml + avisoCierre;
 }
+
 
 // ══════════════════════════════════════════════════════
 // OPERADOR: MI GANANCIA (vista restringida)
@@ -5123,6 +5264,59 @@ function rTblEE(){
 // ══════════════════════════════════════════════════════════
 // Guarda el valor SIN re-renderizar (evita que el teclado se cierre al escribir).
 function calcSet(campo,val){ S.calc[campo]=val; calcUpdate(); }
+function calcSetExotico(campo,val){ S.calc[campo]=val; calcUpdateExotico(); }
+function calcSetModoCalc(modo){ S.calc.modoCalc=modo; R(); }
+function calcSetMargenExotico(val){ S.calc.exMargen=val; calcUpdateExotico(); }
+
+function _calcTasasExotico(){
+  var c=S.calc;
+  var tc=parseFloat(c.exTcCompra)||0; // orig/USDT: cuántas unidades de origen por 1 USDT
+  var tv=parseFloat(c.exTvVenta)||0;  // dest/USDT: cuántas unidades de destino por 1 USDT
+  var mg=parseFloat(c.exMargen)||0;
+  if(tc<=0||tv<=0) return {ok:false};
+
+  // Tasa real de conversión: cuántas unidades destino da 1 unidad origen
+  var real=tv/tc;
+  // Si el cliente RECIBE destino: le damos MENOS → floor (a tu favor)
+  var cli=Math.floor(real*(1-mg/100)*1000)/1000;
+
+  var res={ok:true,real:real,cliente:cli,orig:c.exOrig,dest:c.exDest};
+
+  var xSim=parseFloat(c.exSim)||0;
+  if(xSim>0){
+    var usdtEntran=xSim/tc;          // USDT que obtienes al comprar con moneda origen
+    var destEntregas=xSim*cli;       // unidades destino que entregas al cliente
+    var usdtSalen=destEntregas/tv;   // esos en USDT a tu tasa de venta
+    res.simMonto=xSim;
+    res.simGanUsdt=Math.round((usdtEntran-usdtSalen)*10000)/10000;
+  }
+  return res;
+}
+
+function calcUpdateExotico(){
+  var t=_calcTasasExotico();
+  var el=document.getElementById("calc-res-exotico");
+  if(!el) return;
+  if(!t.ok){
+    el.innerHTML="<div style='font-size:12px;color:var(--ink3);text-align:center;padding:8px'>Ingresa ambas tasas de Binance para ver el resultado ↑</div>";
+    return;
+  }
+  var orig=t.orig, dest=t.dest;
+  var moOrig=(MONEDAS_COMPRA||[]).find(function(m){return m.id===orig;})||{flag:"",label:orig};
+  var moDest=(MONEDAS_VENTA||[]).find(function(m){return m.id===dest;})||{flag:"",label:dest};
+  var html="<div style='font-size:10px;color:var(--ink2);font-weight:700;text-transform:uppercase;letter-spacing:.3px'>Ofrécele a tu cliente</div>"+
+    "<div style='font-size:28px;font-weight:900;color:var(--brandDeep);margin:3px 0'>1 "+moOrig.flag+" = "+t.cliente+" "+moDest.flag+"</div>"+
+    "<div style='font-size:10px;color:var(--ink3)'>tu costo sin ganancia: "+t.real.toFixed(4)+" "+dest+"/"+orig+"</div>";
+  if(t.simGanUsdt!==undefined){
+    var ganClass=t.simGanUsdt>=0?"var(--pos)":"var(--neg)";
+    html+="<div style='border-top:1px dashed #e0d6c8;margin-top:11px;padding-top:11px'>"+
+      "<div style='font-size:10px;color:var(--ink2);font-weight:700'>Con "+t.simMonto.toLocaleString("es")+" "+orig+" ganarías</div>"+
+      "<div style='font-size:24px;font-weight:900;color:"+ganClass+";margin-top:2px'>"+
+        (t.simGanUsdt>=0?"":"-")+Math.abs(t.simGanUsdt).toFixed(4)+" USDT"+
+      "</div></div>";
+  }
+  el.innerHTML=html;
+}
 // Botones de margen: estos SÍ re-renderizan para mover el resaltado.
 function calcSetMargen(campo,val){ S.calc[campo]=val; R(); }
 
@@ -5196,19 +5390,48 @@ function calcUpdate(){
 // Pantalla completa de la calculadora (pestaña propia)
 function rCalculadora(){
   var c=S.calc;
+  var modo=c.modoCalc||"fijas";
   var t=_calcTasas();
   function mbtn(campo,val,actual){
     return "<button onclick='calcSetMargen(\""+campo+"\",\""+val+"\")' style='flex:1;padding:9px;border:1.5px solid "+(actual===val?"var(--brand)":"var(--line)")+";border-radius:11px;background:"+(actual===val?"var(--brandSoft)":"#fff")+";font-size:13px;font-weight:800;color:var(--brandDeep);cursor:pointer'>"+val+"%</button>";
   }
-  return "<div style='max-width:560px;margin:0 auto'>"+
+  function mbtnEx(val,actual){
+    return "<button onclick='calcSetMargenExotico(\""+val+"\")' style='flex:1;padding:9px;border:1.5px solid "+(actual===val?"var(--brand)":"var(--line)")+";border-radius:11px;background:"+(actual===val?"var(--brandSoft)":"#fff")+";font-size:13px;font-weight:800;color:var(--brandDeep);cursor:pointer'>"+val+"%</button>";
+  }
+
+  // ── Selector de monedas exótico ──
+  var allOrig=(typeof MONEDAS_COMPRA!=="undefined"?MONEDAS_COMPRA:[]).filter(function(m){return m.id!=="VES";});
+  var allDest=(typeof MONEDAS_VENTA!=="undefined"?MONEDAS_VENTA:[]);
+  var selOrig=c.exOrig||"BRL";
+  var selDest=c.exDest||"VES";
+  var moSelOrig=allOrig.find(function(m){return m.id===selOrig;})||allOrig[0]||{flag:"",label:selOrig,hint:""};
+  var moSelDest=allDest.find(function(m){return m.id===selDest;})||allDest[0]||{flag:"",label:selDest};
+
+  var optOrig=allOrig.map(function(m){return "<option value='"+m.id+"'"+(m.id===selOrig?" selected":"")+">"+m.flag+" "+m.label+"</option>";}).join("");
+  var optDest=allDest.filter(function(m){return m.id!==selOrig;}).map(function(m){return "<option value='"+m.id+"'"+(m.id===selDest?" selected":"")+">"+m.flag+" "+m.label+"</option>";}).join("");
+
+  // ── Sub-pestañas ──
+  var subTabs="<div style='display:flex;gap:0;background:#f0f0f0;border-radius:12px;padding:3px;margin-bottom:14px'>"+
+    "<button onclick='calcSetModoCalc(\"fijas\")' style='flex:1;padding:9px;border:none;border-radius:10px;font-size:12px;font-weight:800;cursor:pointer;transition:all .2s;background:"+(modo==="fijas"?"#fff":"transparent")+";color:"+(modo==="fijas"?"#cc6e00":"#888")+";box-shadow:"+(modo==="fijas"?"0 1px 4px rgba(0,0,0,.12)":"none")+"'>🇧🇷🇻🇪 Rutas fijas</button>"+
+    "<button onclick='calcSetModoCalc(\"exoticas\")' style='flex:1;padding:9px;border:none;border-radius:10px;font-size:12px;font-weight:800;cursor:pointer;transition:all .2s;background:"+(modo==="exoticas"?"#fff":"transparent")+";color:"+(modo==="exoticas"?"#cc6e00":"#888")+";box-shadow:"+(modo==="exoticas"?"0 1px 4px rgba(0,0,0,.12)":"none")+"'>🌍 Rutas exóticas</button>"+
+  "</div>";
+
+  var html="<div style='max-width:560px;margin:0 auto'>"+
     // Encabezado
     "<div style='background:linear-gradient(135deg,#2A2622,#4a4038);border-radius:var(--radius);padding:18px 20px;color:#fff;margin-bottom:16px;box-shadow:var(--shadow-md)'>"+
       "<div style='font-size:19px;font-weight:900;display:flex;align-items:center;gap:8px'>🧮 Calculadora de tasas</div>"+
       "<div style='font-size:12px;opacity:.85;margin-top:3px'>Calcula la tasa para tu cliente y genera el flyer</div>"+
     "</div>"+
+    subTabs;
+
+  // ══════════════════════
+  // MODO FIJAS
+  // ══════════════════════
+  if(modo==="fijas"){
+    html+=
     "<div style='font-size:12px;color:var(--ink2);margin-bottom:14px;line-height:1.5;padding:0 2px'>Pon las tasas de Binance del momento y tu % de ganancia. La app calcula sola qué tasa ofrecerle al cliente.</div>"+
 
-    // ── IDA: Brasil → Venezuela ──
+    // IDA: Brasil → Venezuela
     "<div class='sec'>"+
       "<div style='font-size:13px;font-weight:800;color:var(--ink);margin-bottom:12px'>🇧🇷 → 🇻🇪 Brasil hacia Venezuela</div>"+
       "<div class='fl'><label>Compra USDT en Binance (R$ por USDT)</label><input type='number' inputmode='decimal' step='any' placeholder='ej: 5.40' value='"+(c.tcCompra||"")+"' oninput='calcSet(\"tcCompra\",this.value)'></div>"+
@@ -5222,7 +5445,7 @@ function rCalculadora(){
       "</div>"+
     "</div>"+
 
-    // ── VUELTA: Venezuela → Brasil ──
+    // VUELTA: Venezuela → Brasil
     "<div class='sec'>"+
       "<div style='font-size:13px;font-weight:800;color:var(--ink);margin-bottom:12px'>🇻🇪 → 🇧🇷 Venezuela hacia Brasil</div>"+
       "<div class='fl'><label>Compra USDT en Binance (Bs por USDT)</label><input type='number' inputmode='decimal' step='any' placeholder='ej: 280' value='"+(c.tvVentaIda||"")+"' oninput='calcSet(\"tvVentaIda\",this.value)'></div>"+
@@ -5236,11 +5459,67 @@ function rCalculadora(){
       "</div>"+
     "</div>"+
 
-    // ── Botón flyer ──
+    // Botón flyer
     "<button onclick='generarFlyer()' class='btn-main btn-blue'>📲 Generar flyer para el cliente</button>"+
-    "<div style='font-size:11px;color:var(--ink3);text-align:center;margin-top:8px;margin-bottom:8px'>El flyer usa la fecha y hora del momento en que lo generas</div>"+
-  "</div>";
+    "<div style='font-size:11px;color:var(--ink3);text-align:center;margin-top:8px;margin-bottom:8px'>El flyer usa la fecha y hora del momento en que lo generas</div>";
+  }
+
+  // ══════════════════════
+  // MODO EXÓTICAS
+  // ══════════════════════
+  else {
+    var tEx=_calcTasasExotico();
+    html+=
+    "<div style='font-size:12px;color:var(--ink2);margin-bottom:14px;line-height:1.5;padding:0 2px'>Rutas esporádicas: PEN, COP, TTD, EUR y más. Elige origen y destino, pon las tasas de Binance y calcula.</div>"+
+
+    // Selector origen → destino
+    "<div class='sec'>"+
+      "<div style='font-size:13px;font-weight:800;color:var(--ink);margin-bottom:12px'>🌍 Ruta</div>"+
+      "<div style='display:flex;align-items:center;gap:10px'>"+
+        "<div style='flex:1'>"+
+          "<label style='font-size:10px;color:var(--ink2);font-weight:700;display:block;margin-bottom:4px'>El cliente envía</label>"+
+          "<select onchange='S.calc.exOrig=this.value;R()' style='width:100%;padding:10px;border:1.5px solid var(--line);border-radius:10px;font-size:13px;background:#fff'>"+optOrig+"</select>"+
+        "</div>"+
+        "<div style='font-size:24px;color:var(--brand);font-weight:900;margin-top:16px'>→</div>"+
+        "<div style='flex:1'>"+
+          "<label style='font-size:10px;color:var(--ink2);font-weight:700;display:block;margin-bottom:4px'>El cliente recibe</label>"+
+          "<select onchange='S.calc.exDest=this.value;R()' style='width:100%;padding:10px;border:1.5px solid var(--line);border-radius:10px;font-size:13px;background:#fff'>"+optDest+"</select>"+
+        "</div>"+
+      "</div>"+
+    "</div>"+
+
+    // Tasas Binance
+    "<div class='sec'>"+
+      "<div style='font-size:13px;font-weight:800;color:var(--ink);margin-bottom:12px'>📊 Tasas Binance del momento</div>"+
+      "<div class='fl'><label>Compro USDT con "+moSelOrig.flag+" "+selOrig+" ("+moSelOrig.hint||selOrig+" por USDT)</label>"+
+        "<input type='number' inputmode='decimal' step='any' placeholder='"+moSelOrig.hint+"' value='"+(c.exTcCompra||"")+"' oninput='calcSetExotico(\"exTcCompra\",this.value)'></div>"+
+      "<div class='fl'><label>Vendo USDT en "+moSelDest.flag+" "+selDest+" ("+selDest+" por USDT)</label>"+
+        "<input type='number' inputmode='decimal' step='any' placeholder='ej: ...' value='"+(c.exTvVenta||"")+"' oninput='calcSetExotico(\"exTvVenta\",this.value)'></div>"+
+      "<label style='font-size:10px;color:var(--ink2);font-weight:700;text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:6px'>Mi ganancia</label>"+
+      "<div style='display:flex;gap:8px;margin-bottom:12px'>"+mbtnEx("8",c.exMargen)+mbtnEx("9",c.exMargen)+mbtnEx("10",c.exMargen)+
+        "<input type='number' inputmode='decimal' step='any' placeholder='otro' value='"+(c.exMargen||"")+"' oninput='calcSetMargenExotico(this.value)' style='flex:1;text-align:center'></div>"+
+      "<div class='fl'><label>💡 Simular: cliente envía ("+selOrig+")</label>"+
+        "<input type='number' inputmode='decimal' step='any' placeholder='ej: 500' value='"+(c.exSim||"")+"' oninput='calcSetExotico(\"exSim\",this.value)'></div>"+
+      "<div id='calc-res-exotico' style='background:var(--brandSoft);border-radius:12px;padding:13px 16px;text-align:center'>"+
+        (tEx.ok?
+          "<div style='font-size:10px;color:var(--ink2);font-weight:700;text-transform:uppercase;letter-spacing:.3px'>Ofrécele a tu cliente</div>"+
+          "<div style='font-size:28px;font-weight:900;color:var(--brandDeep);margin:3px 0'>1 "+moSelOrig.flag+" = "+tEx.cliente+" "+moSelDest.flag+"</div>"+
+          "<div style='font-size:10px;color:var(--ink3)'>tu costo sin ganancia: "+tEx.real.toFixed(4)+" "+selDest+"/"+selOrig+"</div>"+
+          (tEx.simGanUsdt!==undefined?"<div style='border-top:1px dashed #e0d6c8;margin-top:11px;padding-top:11px'><div style='font-size:10px;color:var(--ink2);font-weight:700'>Con "+tEx.simMonto.toLocaleString("es")+" "+selOrig+" ganarías</div><div style='font-size:24px;font-weight:900;color:"+(tEx.simGanUsdt>=0?"var(--pos)":"var(--neg)")+";margin-top:2px'>"+(tEx.simGanUsdt>=0?"":"-")+Math.abs(tEx.simGanUsdt).toFixed(4)+" USDT</div></div>":"")
+        :"<div style='font-size:12px;color:var(--ink3);text-align:center;padding:8px'>Ingresa ambas tasas de Binance para ver el resultado ↑</div>")+
+      "</div>"+
+    "</div>"+
+
+    // Aviso: sin flyer para exóticas
+    "<div style='background:#EEF4FF;border:1px solid #b3c8f5;border-radius:12px;padding:12px 14px;font-size:12px;color:#0a3d7c'>"+
+      "💡 El flyer está disponible solo en rutas fijas (BRL ↔ VES). Para rutas exóticas usa el resultado de arriba."+
+    "</div>";
+  }
+
+  html+="</div>";
+  return html;
 }
+
 
 // Devuelve la hora y fecha actuales formateadas para el flyer
 function _flyerFechaHora(){
