@@ -4484,6 +4484,10 @@ function R(){
   setTimeout(function(){
     var _newScrollEl = document.querySelector(".panel > div:last-child");
     if(_newScrollEl && _scrollTop > 0) _newScrollEl.scrollTop = _scrollTop;
+    if(S.tab==="calculadora"){
+      if((S.calc.modoCalc||"fijas")==="exoticas") calcUpdateExotico();
+      else calcUpdate();
+    }
   }, 0);
   saveData();
   if(S.role==="admin"){
@@ -5273,29 +5277,35 @@ function calcSetExOrig(val){
   }
   S.calc.exOrig=val; R();
 }
-function calcSetMargenExotico(val){ S.calc.exMargen=val; calcUpdateExotico(); }
+function calcSetMargenExotico(val){ S.calc.exMargen=val; R(); }
 
+function _comisionBinance(moneda){
+  if(moneda==="VES") return 0.0006;
+  if(moneda==="BRL") return 0.0007;
+  return 0.001;
+}
 function _calcTasasExotico(){
   var c=S.calc;
-  var tc=parseFloat(c.exTcCompra)||0; // orig/USDT: cuántas unidades de origen por 1 USDT
-  var tv=parseFloat(c.exTvVenta)||0;  // dest/USDT: cuántas unidades de destino por 1 USDT
+  var tc=parseFloat(c.exTcCompra)||0;
+  var tv=parseFloat(c.exTvVenta)||0;
   var mg=parseFloat(c.exMargen)||0;
   if(tc<=0||tv<=0) return {ok:false};
-
-  // Tasa real de conversión: cuántas unidades destino da 1 unidad origen
-  var real=tv/tc;
-  // Si el cliente RECIBE destino: le damos MENOS → floor (a tu favor)
+  var comOrig=_comisionBinance(c.exOrig);
+  var comDest=_comisionBinance(c.exDest);
+  var realBruto=tv/tc;
+  var real=(tv*(1-comDest))/(tc*(1+comOrig));
   var cli=Math.floor(real*(1-mg/100)*1000)/1000;
-
-  var res={ok:true,real:real,cliente:cli,orig:c.exOrig,dest:c.exDest};
-
+  var res={ok:true,real:realBruto,realNeto:real,cliente:cli,orig:c.exOrig,dest:c.exDest,comOrig:comOrig,comDest:comDest};
   var xSim=parseFloat(c.exSim)||0;
   if(xSim>0){
-    var usdtEntran=xSim/tc;          // USDT que obtienes al comprar con moneda origen
-    var destEntregas=xSim*cli;       // unidades destino que entregas al cliente
-    var usdtSalen=destEntregas/tv;   // esos en USDT a tu tasa de venta
+    var usdtEntran=(xSim/tc)*(1-comOrig);
+    var destEntregas=xSim*cli;
+    var usdtSalen=(destEntregas/tv)/(1-comDest);
     res.simMonto=xSim;
     res.simGanUsdt=Math.round((usdtEntran-usdtSalen)*10000)/10000;
+    res.simUsdOrig=Math.round((xSim/tc)*100)/100;
+    res.simDestMonto=Math.round(destEntregas*1000)/1000;
+    res.simUsdDest=Math.round((destEntregas/tv)*100)/100;
   }
   return res;
 }
@@ -5311,16 +5321,37 @@ function calcUpdateExotico(){
   var orig=t.orig, dest=t.dest;
   var moOrig=(MONEDAS_COMPRA||[]).find(function(m){return m.id===orig;})||{flag:"",label:orig};
   var moDest=(MONEDAS_VENTA||[]).find(function(m){return m.id===dest;})||{flag:"",label:dest};
-  var html="<div style='font-size:10px;color:var(--ink2);font-weight:700;text-transform:uppercase;letter-spacing:.3px'>Ofrécele a tu cliente</div>"+
-    "<div style='font-size:28px;font-weight:900;color:var(--brandDeep);margin:3px 0'>1 "+moOrig.flag+" = "+t.cliente+" "+moDest.flag+"</div>"+
-    "<div style='font-size:10px;color:var(--ink3)'>tu costo sin ganancia: "+t.real.toFixed(4)+" "+dest+"/"+orig+"</div>";
+  var comPctOrig=Math.round((t.comOrig||0)*10000)/100;
+  var comPctDest=Math.round((t.comDest||0)*10000)/100;
+  var html=
+    "<div style='font-size:10px;color:var(--ink2);font-weight:700;text-transform:uppercase;letter-spacing:.3px;text-align:center'>Ofrécele a tu cliente</div>"+
+    "<div style='font-size:30px;font-weight:900;color:var(--brandDeep);margin:4px 0;text-align:center'>1 "+moOrig.flag+" = "+t.cliente+" "+moDest.flag+"</div>"+
+    "<div style='font-size:10px;color:var(--ink3);text-align:center'>tasa bruta: "+t.real.toFixed(4)+" | com. compra: "+comPctOrig+"% · venta: "+comPctDest+"%</div>";
   if(t.simGanUsdt!==undefined){
     var ganClass=t.simGanUsdt>=0?"var(--pos)":"var(--neg)";
-    html+="<div style='border-top:1px dashed #e0d6c8;margin-top:11px;padding-top:11px'>"+
-      "<div style='font-size:10px;color:var(--ink2);font-weight:700'>Con "+t.simMonto.toLocaleString("es")+" "+orig+" ganarías</div>"+
-      "<div style='font-size:24px;font-weight:900;color:"+ganClass+";margin-top:2px'>"+
-        (t.simGanUsdt>=0?"":"-")+Math.abs(t.simGanUsdt).toFixed(4)+" USDT"+
-      "</div></div>";
+    html+=
+      "<div style='border-top:1px dashed #e0d6c8;margin-top:11px;padding-top:11px'>"+
+      "<div style='display:flex;justify-content:space-between;margin-bottom:5px'>"+
+        "<span style='font-size:10px;color:var(--ink2);font-weight:700'>"+moOrig.flag+" Cliente envía</span>"+
+        "<span style='font-size:13px;font-weight:800'>"+t.simMonto.toLocaleString("es")+" "+orig+"</span>"+
+      "</div>"+
+      "<div style='display:flex;justify-content:space-between;margin-bottom:8px'>"+
+        "<span style='font-size:10px;color:var(--ink3)'>≈ en USD</span>"+
+        "<span style='font-size:11px;color:var(--ink2)'>~$"+t.simUsdOrig+" USD</span>"+
+      "</div>"+
+      "<div style='display:flex;justify-content:space-between;margin-bottom:5px;border-top:1px dashed #e0d6c8;padding-top:8px'>"+
+        "<span style='font-size:10px;color:var(--ink2);font-weight:700'>"+moDest.flag+" Cliente recibe</span>"+
+        "<span style='font-size:13px;font-weight:800'>"+t.simDestMonto.toLocaleString("es")+" "+dest+"</span>"+
+      "</div>"+
+      "<div style='display:flex;justify-content:space-between;margin-bottom:10px'>"+
+        "<span style='font-size:10px;color:var(--ink3)'>≈ en USD</span>"+
+        "<span style='font-size:11px;color:var(--ink2)'>~$"+t.simUsdDest+" USD</span>"+
+      "</div>"+
+      "<div style='background:rgba(0,0,0,.05);border-radius:8px;padding:8px 12px;display:flex;justify-content:space-between;align-items:center'>"+
+        "<span style='font-size:10px;color:var(--ink2);font-weight:700'>💰 Tu ganancia</span>"+
+        "<span style='font-size:20px;font-weight:900;color:"+ganClass+"'>"+(t.simGanUsdt>=0?"":"-")+Math.abs(t.simGanUsdt).toFixed(4)+" USDT</span>"+
+      "</div>"+
+      "</div>";
   }
   el.innerHTML=html;
 }
@@ -5499,9 +5530,11 @@ function rCalculadora(){
     "<div class='sec'>"+
       "<div style='font-size:13px;font-weight:800;color:var(--ink);margin-bottom:12px'>📊 Tasas Binance del momento</div>"+
       "<div class='fl'><label>Compro USDT con "+moSelOrig.flag+" "+selOrig+" ("+(moSelOrig.hint||selOrig)+" por USDT)</label>"+
-        "<input type='number' inputmode='decimal' step='any' placeholder='"+moSelOrig.hint+"' value='"+(c.exTcCompra||"")+"' oninput='calcSetExotico(\"exTcCompra\",this.value)'></div>"+
+        "<input type='number' inputmode='decimal' step='any' placeholder='"+moSelOrig.hint+"' value='"+(c.exTcCompra||"")+"' oninput='calcSetExotico(\"exTcCompra\",this.value)'>"+(tEx.ok&&tEx.simMonto?"<div style='font-size:10px;color:#0a6e3a;margin-top:3px;padding-left:2px'>↳ comprando "+((tEx.simMonto/parseFloat(c.exTcCompra)*(1-tEx.comOrig)).toFixed(4))+" USDT</div>":"")+
+        "</div>"+
       "<div class='fl'><label>Vendo USDT en "+moSelDest.flag+" "+selDest+" ("+selDest+" por USDT)</label>"+
-        "<input type='number' inputmode='decimal' step='any' placeholder='ej: ...' value='"+(c.exTvVenta||"")+"' oninput='calcSetExotico(\"exTvVenta\",this.value)'></div>"+
+        "<input type='number' inputmode='decimal' step='any' placeholder='ej: ...' value='"+(c.exTvVenta||"")+"' oninput='calcSetExotico(\"exTvVenta\",this.value)'>"+(tEx.ok&&tEx.simMonto?"<div style='font-size:10px;color:#c0392b;margin-top:3px;padding-left:2px'>↳ vendiendo "+(((tEx.simMonto*tEx.cliente)/parseFloat(c.exTvVenta)/(1-tEx.comDest)).toFixed(4))+" USDT</div>":"")+
+        "</div>"+
       "<label style='font-size:10px;color:var(--ink2);font-weight:700;text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:6px'>Mi ganancia</label>"+
       "<div style='display:flex;gap:8px;margin-bottom:12px'>"+mbtnEx("8",c.exMargen)+mbtnEx("9",c.exMargen)+mbtnEx("10",c.exMargen)+
         "<input type='number' inputmode='decimal' step='any' placeholder='otro' value='"+(c.exMargen||"")+"' oninput='calcSetMargenExotico(this.value)' style='flex:1;text-align:center'></div>"+
