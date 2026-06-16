@@ -5278,7 +5278,24 @@ function calcSetExOrig(val){
   S.calc.exOrig=val; R();
 }
 function calcSetMargenExotico(val){ S.calc.exMargen=val; R(); }
-function calcSetMargenExoticoLibre(val){ S.calc.exMargen=val; calcUpdateExotico(); }
+function calcSetMargenExoticoLibre(val){
+  S.calc.exMargen=val;
+  // Actualizar resultado sin re-renderizar (para no perder el foco)
+  calcUpdateExotico();
+  // También actualizar los indicadores pequeños bajo las tasas
+  var t=_calcTasasExotico();
+  var c=S.calc;
+  var elC=document.getElementById("ex-hint-compra");
+  var elV=document.getElementById("ex-hint-venta");
+  if(elC&&t.ok&&t.simMonto){
+    elC.textContent="↳ comprando "+((t.simMonto/parseFloat(c.exTcCompra)*(1-t.comOrig)).toFixed(4))+" USDT";
+    elC.style.display="";
+  }
+  if(elV&&t.ok&&t.simMonto){
+    elV.textContent="↳ vendiendo "+((t.simDestMonto/parseFloat(c.exTvVenta)/(1-t.comDest)).toFixed(4))+" USDT";
+    elV.style.display="";
+  }
+}
 
 function _comisionBinance(moneda){
   if(moneda==="VES") return 0.0006;
@@ -5293,15 +5310,34 @@ function _calcTasasExotico(){
   if(tc<=0||tv<=0) return {ok:false};
   var comOrig=_comisionBinance(c.exOrig);
   var comDest=_comisionBinance(c.exDest);
+
+  // Tasa real neta descontando comisiones Binance
   var realBruto=tv/tc;
   var real=(tv*(1-comDest))/(tc*(1+comOrig));
-  var cli=Math.floor(real*(1-mg/100)*1000)/1000;
-  var res={ok:true,real:realBruto,realNeto:real,cliente:cli,orig:c.exOrig,dest:c.exDest,comOrig:comOrig,comDest:comDest};
+
+  // Factor de ganancia del operador
+  var factorMg=1-mg/100;
+
+  // Tasa con margen — precisión adaptativa según el tamaño
+  // Para tasas pequeñas (ej: Bs→PEN = 0.00248) necesitamos 6 decimales
+  var tasaConMg=real*factorMg;
+  var decimales=tasaConMg<0.01?6:(tasaConMg<1?4:2);
+  var factor=Math.pow(10,decimales);
+  // Siempre floor para ir a tu favor (le das MENOS al cliente)
+  var cli=Math.floor(tasaConMg*factor)/factor;
+
+  var res={ok:true,real:realBruto,realNeto:real,cliente:cli,decimales:decimales,
+           orig:c.exOrig,dest:c.exDest,comOrig:comOrig,comDest:comDest};
+
   var xSim=parseFloat(c.exSim)||0;
   if(xSim>0){
+    // USDT que entran al comprar con moneda origen (descontando comisión compra)
     var usdtEntran=(xSim/tc)*(1-comOrig);
-    var destEntregas=xSim*cli;
-    var usdtSalen=(destEntregas/tv)/(1-comDest);
+    // Lo que realmente entregamos al cliente: calculado con tasa exacta (no cli redondeado)
+    // para que el simulacro sea preciso
+    var destEntregas=usdtEntran*factorMg*tv*(1-comDest);
+    // USDT que necesitamos para cubrir eso
+    var usdtSalen=destEntregas/tv/(1-comDest);
     res.simMonto=xSim;
     res.simGanUsdt=Math.round((usdtEntran-usdtSalen)*10000)/10000;
     res.simUsdOrig=Math.round((xSim/tc)*100)/100;
