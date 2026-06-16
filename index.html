@@ -1769,13 +1769,15 @@ function dRw(a,n){reqDel(a,n,"n");}
 // ── SAVE FUNCTIONS ────────────────────────────────────
 function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaDestId, cant){
   // Actualiza saldos de cuentas para CUALQUIER moneda automáticamente.
-  // Funciona por origen→destino de la ruta, sin importar el país (Brasil, Venezuela, Colombia, Perú, etc.)
-  var vesEntregado = Math.round((parseFloat(cant)||0)*100)/100; // lo que se entrega al cliente (en moneda destino)
-  var montoOrigen  = Math.round((parseFloat(am)||0)*100)/100;   // lo que paga el cliente (en moneda origen)
+  // Retorna _mov: lista de movimientos realizados para que saveTx los guarde en la remesa
+  // y revertirSaldosRemesa pueda revertirlos exactamente sin adivinar.
+  var vesEntregado = Math.round((parseFloat(cant)||0)*100)/100;
+  var montoOrigen  = Math.round((parseFloat(am)||0)*100)/100;
+  var movimientos  = []; // registro de cada ajuste realizado
 
   function adj(idOrKey, delta, moneda){
     if(!delta) return;
-    if(!idOrKey) return; // sin cuenta seleccionada = no tocar saldos
+    if(!idOrKey) return;
     var c = null;
     // 1. Buscar por ID exacto
     c = (S.cuentas||[]).find(function(x){return x.id===idOrKey;});
@@ -1784,11 +1786,13 @@ function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaD
       var kw=idOrKey.toLowerCase();
       c=(S.cuentas||[]).find(function(x){return x.activa!==false&&x.moneda===moneda&&x.nombre.toLowerCase().includes(kw);});
     }
-    if(c) c.saldo=Math.round(((parseFloat(c.saldo)||0)+(parseFloat(delta)||0))*100)/100;
+    if(c){
+      c.saldo=Math.round(((parseFloat(c.saldo)||0)+(parseFloat(delta)||0))*100)/100;
+      // Guardar el movimiento exacto para poder revertirlo despues
+      movimientos.push({cuentaId: c.id, delta: Math.round((parseFloat(delta)||0)*100)/100});
+    }
   }
 
-  // Averiguar moneda de origen y destino a partir de la ruta.
-  // Acepta tanto la ruta completa ("BRL ↔ VZLA", "COP ↔ VZLA", ...) como palabras cortas heredadas ("BRL","VZLA","EEUU").
   var rutaObj = RUTAS.find(function(r){ return r.rt===ruta; });
   if(!rutaObj){
     if(ruta==="EEUU"||(typeof ruta==="string"&&(ruta.indexOf("EE.UU")>-1||ruta.indexOf("UU.EE")>-1))) rutaObj={orig:"USD",dest:"VES"};
@@ -1798,29 +1802,27 @@ function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaD
   var monOrig = rutaObj ? rutaObj.orig : null;
   var monDest = rutaObj ? rutaObj.dest : null;
 
-  // Cuenta de origen por defecto según la moneda (si el usuario no eligió una)
   var defaultOrig = { BRL:"nubank", USD:"zelle", VES:"banco de venezuela", PEN:"", COP:"", TTD:"", EUR:"" };
   var cOrigen = cuentaBancoId || (monOrig ? (defaultOrig[monOrig]||"") : "");
 
   if(!monOrig){
-    // Ruta desconocida: intento mínimo sobre la cuenta elegida
     if(cuentaBancoId) adj(cuentaBancoId, +montoOrigen, null);
-    return;
+    return movimientos;
   }
 
-  // 1) La cuenta de ORIGEN sube (el cliente paga en la moneda de origen)
+  // 1) Cuenta ORIGEN sube (entra el dinero del cliente)
   adj(cOrigen, +montoOrigen, monOrig);
 
-  // 2) La cuenta de DESTINO baja (le entregamos al cliente en la moneda de destino)
-  //    Para destino VES usamos lo realmente entregado (cant). Para otros destinos igual: cant ya viene en moneda destino.
+  // 2) Cuenta DESTINO baja (sale el dinero que le pagamos al cliente)
   if(cuentaDestId){
     adj(cuentaDestId, -vesEntregado, monDest);
   } else {
-    // Si no eligió cuenta destino, intentamos por defecto para destinos comunes
     var defaultDest = { VES:"banco de venezuela", BRL:"nubank", USD:"zelle" };
     var kd = defaultDest[monDest];
     if(kd) adj(kd, -vesEntregado, monDest);
   }
+
+  return movimientos;
 }
 
 function saveTx(){
@@ -1842,7 +1844,8 @@ function saveTx(){
   var res=cTx();
   var isV=f.rt.startsWith("VZLA");var arr=isV?S.vzla:S.brl;
   var nn=arr.length?Math.max.apply(null,arr.map(function(x){return x.n;}))+1:1;
-  arr.push({n:nn,d:ds(f.date),id:f.id,cl:f.cl.toUpperCase(),rt:f.rt,am:res.am,orig:ruta.orig,dest:ruta.dest,tdia:res.tdia,cant:res.cant,tc:res.tc,uc:res.uc,pais:f.pais,uv:res.uv,tv:res.tv,total:res.cant,pr:res.pr,cuentaBanco:f.cuentaBanco||"",cuentaDest:f.cuentaDest||"",locked:true});
+  var nuevaRemesa={n:nn,d:ds(f.date),id:f.id,cl:f.cl.toUpperCase(),rt:f.rt,am:res.am,orig:ruta.orig,dest:ruta.dest,tdia:res.tdia,cant:res.cant,tc:res.tc,uc:res.uc,pais:f.pais,uv:res.uv,tv:res.tv,total:res.cant,pr:res.pr,cuentaBanco:f.cuentaBanco||"",cuentaDest:f.cuentaDest||"",locked:true};
+  arr.push(nuevaRemesa);
   arr.sort(function(a,b){var da=a.d.split("/"),db=b.d.split("/");return (parseInt(da[1])*100+parseInt(da[0]))-(parseInt(db[1])*100+parseInt(db[0]))||a.n-b.n;});
   registrarMovimientoCapital({fecha:ds(f.date),rutaOrig:ruta.orig,rutaDest:ruta.dest,amOrigen:res.am,amDestino:res.cant,concepto:f.cl+" · "+f.rt,remesaId:nn});
   // Consumir inventario FIFO (más viejo primero): USDT comprados y bolívares de ventas
@@ -1872,8 +1875,9 @@ function saveTx(){
       fechaCobro:""
     });
   }
-  // Actualizar saldos según el flujo de la operación (pasamos la ruta COMPLETA para soportar cualquier moneda)
-  actualizarCuentasPorRemesa(f.rt, res.am, res.tc, res.tv, res.pr, f.cuentaBanco||"", f.cuentaDest||"", res.cant);
+  // Actualizar saldos y guardar movimientos exactos en la remesa para reversion precisa
+  var _mov = actualizarCuentasPorRemesa(f.rt, res.am, res.tc, res.tv, res.pr, f.cuentaBanco||"", f.cuentaDest||"", res.cant);
+  if(_mov && _mov.length) nuevaRemesa._mov = _mov;
   S.tx={date:f.date,id:"",cl:"",rt:f.rt,am:"",
     tdia:f.tdia,
     tc:"",tv:"",
@@ -1902,7 +1906,8 @@ function saveTxEE(){
   }
   var res=cTxE();
   var nn2=S.eeuu.length?Math.max.apply(null,S.eeuu.map(function(x){return x.n;}))+1:1;
-  S.eeuu.push({n:nn2,d:ds(f.date),id:f.id||"",cl:(f.cl||"CLIENTE").toUpperCase(),rt:"UU.EE ↔ VZLA",am:res.am,orig:"USD",dest:"VES",tdia:res.tdia,cant:res.cant,tc:parseFloat(f.tc)||1.010,uc:res.uc,pais:"VENEZUELA",uv:res.uv,tv:res.tv,total:res.cant,pr:res.pr,cuentaBanco:f.cuentaBanco||"",cuentaDest:f.cuentaDest||"",locked:true});
+  var nuevaRemesaEE={n:nn2,d:ds(f.date),id:f.id||"",cl:(f.cl||"CLIENTE").toUpperCase(),rt:"UU.EE ↔ VZLA",am:res.am,orig:"USD",dest:"VES",tdia:res.tdia,cant:res.cant,tc:parseFloat(f.tc)||1.010,uc:res.uc,pais:"VENEZUELA",uv:res.uv,tv:res.tv,total:res.cant,pr:res.pr,cuentaBanco:f.cuentaBanco||"",cuentaDest:f.cuentaDest||"",locked:true};
+  S.eeuu.push(nuevaRemesaEE);
   S.eeuu.sort(function(a,b){var da=a.d.split("/"),db=b.d.split("/");return (parseInt(da[1])*100+parseInt(da[0]))-(parseInt(db[1])*100+parseInt(db[0]))||a.n-b.n;});
   registrarMovimientoCapital({fecha:ds(f.date),rutaOrig:"USD",rutaDest:"VES",amOrigen:res.am,amDestino:res.cant,concepto:(f.cl||"Cliente")+" · EE.UU",remesaId:nn2});
   // Consumir inventario FIFO (más viejo primero)
@@ -1934,8 +1939,9 @@ function saveTxEE(){
     cuentaBanco:"",
     cuentaDest:"",
     pais:"VENEZUELA"};
-  // Actualizar saldos según flujo EE.UU
-  actualizarCuentasPorRemesa("EEUU", res.am, parseFloat(f.tc_manual)||1.01, res.tv, res.pr, f.cuentaBanco||"", f.cuentaDest||"", res.cant);
+  // Actualizar saldos y guardar movimientos exactos para reversion precisa
+  var _movEE = actualizarCuentasPorRemesa("EEUU", res.am, parseFloat(f.tc_manual)||1.01, res.tv, res.pr, f.cuentaBanco||"", f.cuentaDest||"", res.cant);
+  if(_movEE && _movEE.length) nuevaRemesaEE._mov = _movEE;
   saveData();S.tab="eeuu";R();
 }
 // ── EGRESOS MULTIMONEDA ──────────────────────────────────────────
@@ -3630,33 +3636,38 @@ function reqDel(arr,id,field){
 
 // Revierte los saldos de cuentas cuando se elimina una operación
 function revertirSaldosRemesa(tipo, r){
+  // Si la remesa tiene _mov (registro exacto de movimientos), revertir con precision total
+  if(r._mov && r._mov.length){
+    r._mov.forEach(function(m){
+      var c=(S.cuentas||[]).find(function(x){return x.id===m.cuentaId;});
+      if(c) c.saldo=Math.round(((parseFloat(c.saldo)||0)-(parseFloat(m.delta)||0))*100)/100;
+    });
+    return; // listo, no necesitamos el fallback
+  }
+
+  // Fallback para remesas antiguas sin _mov
   var am=parseFloat(r.am)||0;
-  var tv=parseFloat(r.tv)||0;
-  var tc=parseFloat(r.tc)||0;
   var cant=parseFloat(r.cant)||0;
 
   function adj(id, delta, moneda){
     if(!delta) return;
     var c=null;
     if(id) c=(S.cuentas||[]).find(function(x){return x.id===id;});
-    if(!c && moneda) c=(S.cuentas||[]).find(function(x){return x.activa!==false&&x.moneda===moneda;});
+    // Fallback por moneda solo si hay exactamente UNA cuenta con esa moneda
+    if(!c && moneda){
+      var matches=(S.cuentas||[]).filter(function(x){return x.activa!==false&&x.moneda===moneda;});
+      if(matches.length===1) c=matches[0];
+    }
     if(c) c.saldo=Math.round(((parseFloat(c.saldo)||0)+(parseFloat(delta)||0))*100)/100;
   }
 
   if(tipo==="brl"){
-    // BRL→VES: se había sumado BRL a cuentaBanco, descontar
     adj(r.cuentaBanco||null, -am, "BRL");
-    // Si había cuenta VES destino, se había restado cant, devolver
     if(r.cuentaDest) adj(r.cuentaDest, +cant, "VES");
-
   } else if(tipo==="vzla"){
-    // VZLA→BRL: se había restado BRL, devolver
     adj(r.cuentaBanco||null, +am, "BRL");
-
   } else if(tipo==="eeuu"){
-    // EE.UU→VES: se había sumado USD a cuentaBanco, descontar
     adj(r.cuentaBanco||null, -am, "USD");
-    // Si había cuenta VES destino, se había restado cant, devolver
     if(r.cuentaDest) adj(r.cuentaDest, +cant, "VES");
   }
 }
