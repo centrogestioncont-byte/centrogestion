@@ -2070,7 +2070,9 @@ function saveTx(){
     });
   }
   // Actualizar saldos y guardar movimientos exactos en la remesa para reversion precisa
-  var _mov = actualizarCuentasPorRemesa(f.rt, res.am, res.tc, res.tv, res.pr, f.cuentaBanco||"", f.cuentaDest||"", res.cant);
+  // Si es pendiente por cobrar: NO sumar a cuenta origen (el dinero aún no entró al banco)
+  var _cuentaBancoParaAjuste = f.pendiente ? "" : (f.cuentaBanco||"");
+  var _mov = actualizarCuentasPorRemesa(f.rt, res.am, res.tc, res.tv, res.pr, _cuentaBancoParaAjuste, f.cuentaDest||"", res.cant);
   if(_mov && _mov.length) nuevaRemesa._mov = _mov;
   // Comisión bancaria VES: si el usuario marcó que es transferencia a otro banco,
   // descontar el 3% de la cuenta VES destino y restar de la ganancia
@@ -2155,7 +2157,9 @@ function saveTxEE(){
     cuentaDest:"",
     pais:"VENEZUELA"};
   // Actualizar saldos y guardar movimientos exactos para reversion precisa
-  var _movEE = actualizarCuentasPorRemesa("EEUU", res.am, parseFloat(f.tc_manual)||1.01, res.tv, res.pr, f.cuentaBanco||"", f.cuentaDest||"", res.cant);
+  // Si es pendiente: NO sumar a cuenta origen (dinero aún no entró)
+  var _cuentaBancoEE = f.pendiente ? "" : (f.cuentaBanco||"");
+  var _movEE = actualizarCuentasPorRemesa("EEUU", res.am, parseFloat(f.tc_manual)||1.01, res.tv, res.pr, _cuentaBancoEE, f.cuentaDest||"", res.cant);
   if(_movEE && _movEE.length) nuevaRemesaEE._mov = _movEE;
   // Comisión bancaria VES en remesas EE.UU
   if(f.comisionBanco && esBancoVES(f.cuentaDest)){
@@ -4947,12 +4951,7 @@ function rDash(){
       "<div class='val' style='color:#856404'>$"+f2(monCobrar)+"</div>"+
       "<div class='sub'>"+cobPend.length+" operaciones pendientes</div>"+
     "</div>":"")+
-    // ── Comisión bancaria absorbida ──
-    (comBancoAbsorbida>0?"<div class='mc' style='background:#FDECEA;border:1.5px solid #e74c3c99'>"+
-      "<div class='lbl'>🏦 Comisión bancaria absorbida</div>"+
-      "<div class='val neg'>−"+f2(comBancoAbsorbida)+" Bs</div>"+
-      "<div class='sub'>"+(comBancoAbsUSDT>0?"≈ $"+f2(comBancoAbsUSDT)+" USDT · ":"")+"perdida de ganancia</div>"+
-    "</div>":"")+
+    // (Comisión bancaria absorbida se muestra en la tabla de remesas, columna COMIS.)
   "</div>"+
   // ── Gráfico ──
   (bars?"<div class='sec' style='margin-top:8px'><div class='sec-title'>📈 Ganancia diaria BRL+VZLA — "+getMesLabel(selMes.split("-")[1],selMes.split("-")[0])+"</div>"+
@@ -5315,6 +5314,7 @@ function rTbl(data,type){
       "<td style='text-align:right;color:#555'>"+(t.tv?f2(t.tv):"—")+"</td>"+
       "<td style='text-align:right;font-weight:700'>"+f2(t.total)+"</td>"+
       "<td class='gc'>$"+f2(t.pr)+"</td>"+
+      "<td style='text-align:right;font-size:11px;color:#c0392b;font-weight:700'>"+(t.comisionBancoVes&&t.comisionBancoVes>0?"−"+f2(t.comisionBancoVes)+" Bs":"")+"</td>"+
       "<td style='text-align:center'>"+(t.locked?"🔒":"")+"</td>"+
       editDelCell(type,t.n)+
     "</tr>";
@@ -5322,7 +5322,7 @@ function rTbl(data,type){
   return "<div style='display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:8px'>"+"<input placeholder='🔍 Buscar cliente, ruta, ID...' value='"+S.q+"' oninput='ssq(this.value)' style='border-radius:8px;padding:7px 10px;border:1px solid #ddd;font-size:12px'>"+"<select onchange='S.tblMes=this.value;R()' style='border-radius:8px;padding:7px 10px;border:1px solid #ddd;font-size:12px;font-weight:600'>"+mesOpts+"</select>"+"<select onchange='S.opFiltroRuta=this.value;R()' style='border-radius:8px;padding:7px 10px;border:1px solid #ddd;font-size:12px'><option value=''>🔀 Todas las rutas</option>"+(function(){var rs=[];data.forEach(function(r){if(rs.indexOf(r.rt)===-1)rs.push(r.rt);});return rs.map(function(r){return "<option value='"+r+"'"+(S.opFiltroRuta===r?" selected":"")+">"+r+"</option>";}).join("");})()+"</select>"+"<span style='font-size:11px;color:#888;display:flex;align-items:center;gap:6px;white-space:nowrap'>"+fil.length+"/"+(S.tblMes==="todos"?data.length:filterByMes(data,S.tblMes).length)+" · <b class='pos'>$"+f2(gF)+"</b></span>"+
     (S.tblMes!==getMesKeyActual()&&S.tblMes!=='todos'?"<button onclick='S.tblMes=getMesKeyActual();R()' style='background:#1a3558;color:#fff;border:none;padding:5px 12px;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap'>↩ Mes actual</button>":"")+
     "</div>"+
-    (rows?"<div class='tw' style='max-height:calc(100vh - 220px)'><table style='width:100%'><thead><tr style='position:sticky;top:0;z-index:2'><th>FECHA</th><th>ID</th><th style='text-align:left'>CLIENTE</th><th>RUTA</th><th style='text-align:right'>MONTO</th><th style='text-align:right'>TASA DÍA</th><th style='text-align:right'>CANT. ENTREGAR</th><th style='text-align:right'>TC USDT</th><th style='text-align:right;color:#0f6e3a'>USDT COMP.</th><th style='text-align:right;color:#c0392b'>USDT VEND.</th><th style='text-align:right'>TV USDT</th><th style='text-align:right'>TOTAL BS</th><th style='text-align:right;background:#D6F5E3;color:#0b4d27'>GANANCIA</th><th>🔒</th><th>ACC.</th></tr></thead><tbody>"+rows+"</tbody></table></div>":"<div style='text-align:center;padding:24px;color:#aaa'>Sin resultados</div>");
+    (rows?"<div class='tw' style='max-height:calc(100vh - 220px)'><table style='width:100%'><thead><tr style='position:sticky;top:0;z-index:2'><th>FECHA</th><th>ID</th><th style='text-align:left'>CLIENTE</th><th>RUTA</th><th style='text-align:right'>MONTO</th><th style='text-align:right'>TASA DÍA</th><th style='text-align:right'>CANT. ENTREGAR</th><th style='text-align:right'>TC USDT</th><th style='text-align:right;color:#0f6e3a'>USDT COMP.</th><th style='text-align:right;color:#c0392b'>USDT VEND.</th><th style='text-align:right'>TV USDT</th><th style='text-align:right'>TOTAL BS</th><th style='text-align:right;background:#D6F5E3;color:#0b4d27'>GANANCIA</th><th style='text-align:right;background:#FDECEA;color:#922b21'>COMIS.</th><th>🔒</th><th>ACC.</th></tr></thead><tbody>"+rows+"</tbody></table></div>":"<div style='text-align:center;padding:24px;color:#aaa'>Sin resultados</div>");
 }
 
 
@@ -5353,7 +5353,7 @@ function rTblEE(){
     (isEd?"<td><input id='edit-tv' type='number' step='0.001' value='"+t.tv+"' style='width:60px;font-size:10px;padding:2px 4px;border:1px solid #0a3d7c;border-radius:4px;text-align:right'></td>":"<td style='text-align:right;padding:4px 6px'>"+f4(t.tv)+"</td>")+
     "<td style='text-align:right;font-weight:700;padding:4px 6px'>"+f0(t.total)+"</td>"+
     "<td class='gc' style='padding:4px 6px'>$"+f2(t.pr)+"</td>"+
-
+    "<td style='text-align:right;font-size:11px;color:#c0392b;font-weight:700;padding:4px 6px'>"+(t.comisionBancoVes&&t.comisionBancoVes>0?"−"+f2(t.comisionBancoVes)+" Bs":"")+"</td>"+
     "<td style='text-align:center;padding:4px 6px'>"+(t.locked?"🔒":"")+"</td>"+
     editDelCell("eeuu",t.n)+
     "</tr>";
@@ -5380,7 +5380,7 @@ function rTblEE(){
     "<th style='padding:5px 6px;color:#888;border-bottom:1px solid #eee;text-align:right;white-space:nowrap;font-weight:700'>TV USDT</th>"+
     "<th style='padding:5px 6px;color:#888;border-bottom:1px solid #eee;text-align:right;white-space:nowrap;font-weight:700'>TOTAL BS</th>"+
     "<th style='padding:5px 6px;color:#0b4d27;border-bottom:1px solid #eee;text-align:right;background:#D6F5E3;white-space:nowrap;font-weight:700'>GANANCIA</th>"+
-
+    "<th style='padding:5px 6px;color:#922b21;border-bottom:1px solid #eee;text-align:right;background:#FDECEA;white-space:nowrap;font-weight:700'>COMIS.</th>"+
     "<th style='padding:5px 6px;border-bottom:1px solid #eee'>🔒</th><th style='padding:5px 6px;border-bottom:1px solid #eee'>ACC.</th>"+
     "</tr></thead><tbody>"+rows+"</tbody></table></div>":"<div style='text-align:center;padding:24px;color:#aaa'>Sin operaciones</div>");
 }
