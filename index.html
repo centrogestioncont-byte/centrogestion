@@ -1959,7 +1959,7 @@ function cancelEditRow(){S.editRow=null;R();}
 function dRw(a,n){reqDel(a,n,"n");}
 
 // ── SAVE FUNCTIONS ────────────────────────────────────
-function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaDestId, cant){
+function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaDestId, cant, skipOrigen){
   // Actualiza saldos de cuentas para CUALQUIER moneda automáticamente.
   // Retorna _mov: lista de movimientos realizados para que saveTx los guarde en la remesa
   // y revertirSaldosRemesa pueda revertirlos exactamente sin adivinar.
@@ -1998,12 +1998,13 @@ function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaD
   var cOrigen = cuentaBancoId || (monOrig ? (defaultOrig[monOrig]||"") : "");
 
   if(!monOrig){
-    if(cuentaBancoId) adj(cuentaBancoId, +montoOrigen, null);
+    if(cuentaBancoId && !skipOrigen) adj(cuentaBancoId, +montoOrigen, null);
     return movimientos;
   }
 
   // 1) Cuenta ORIGEN sube (entra el dinero del cliente)
-  adj(cOrigen, +montoOrigen, monOrig);
+  // Si skipOrigen=true (pago pendiente), NO sumar a cuenta origen aún
+  if(!skipOrigen) adj(cOrigen, +montoOrigen, monOrig);
 
   // 2) Cuenta DESTINO baja (sale el dinero que le pagamos al cliente)
   if(cuentaDestId){
@@ -2071,8 +2072,8 @@ function saveTx(){
   }
   // Actualizar saldos y guardar movimientos exactos en la remesa para reversion precisa
   // Si es pendiente por cobrar: NO sumar a cuenta origen (el dinero aún no entró al banco)
-  var _cuentaBancoParaAjuste = f.pendiente ? "" : (f.cuentaBanco||"");
-  var _mov = actualizarCuentasPorRemesa(f.rt, res.am, res.tc, res.tv, res.pr, _cuentaBancoParaAjuste, f.cuentaDest||"", res.cant);
+  // Si pendiente: skipOrigen=true para NO sumar a la cuenta hasta que se marque cobrado
+  var _mov = actualizarCuentasPorRemesa(f.rt, res.am, res.tc, res.tv, res.pr, f.cuentaBanco||"", f.cuentaDest||"", res.cant, f.pendiente===true);
   if(_mov && _mov.length) nuevaRemesa._mov = _mov;
   // Comisión bancaria VES: si el usuario marcó que es transferencia a otro banco,
   // descontar el 3% de la cuenta VES destino y restar de la ganancia
@@ -2157,9 +2158,8 @@ function saveTxEE(){
     cuentaDest:"",
     pais:"VENEZUELA"};
   // Actualizar saldos y guardar movimientos exactos para reversion precisa
-  // Si es pendiente: NO sumar a cuenta origen (dinero aún no entró)
-  var _cuentaBancoEE = f.pendiente ? "" : (f.cuentaBanco||"");
-  var _movEE = actualizarCuentasPorRemesa("EEUU", res.am, parseFloat(f.tc_manual)||1.01, res.tv, res.pr, _cuentaBancoEE, f.cuentaDest||"", res.cant);
+  // Si pendiente: skipOrigen=true para NO sumar a la cuenta hasta que se marque cobrado
+  var _movEE = actualizarCuentasPorRemesa("EEUU", res.am, parseFloat(f.tc_manual)||1.01, res.tv, res.pr, f.cuentaBanco||"", f.cuentaDest||"", res.cant, f.pendiente===true);
   if(_movEE && _movEE.length) nuevaRemesaEE._mov = _movEE;
   // Comisión bancaria VES en remesas EE.UU
   if(f.comisionBanco && esBancoVES(f.cuentaDest)){
