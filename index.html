@@ -372,6 +372,7 @@ const RUTAS=[
   {rt:"TTD ↔ VZLA", orig:"TTD",dest:"VES",pais:"VENEZUELA",flag:"🇹🇹",lDia:"Tasa día (BS × 1 TTD)",  lTc:"Tasa compra USDT (TTD/USDT)",lTv:"Tasa venta USDT (BS/USDT)"},
   {rt:"COP ↔ VZLA", orig:"COP",dest:"VES",pais:"VENEZUELA",flag:"🇻🇪",lDia:"Tasa día (BS × 1 COP)",  lTc:"Tasa compra USDT (COP/USDT)",lTv:"Tasa venta USDT (BS/USDT)"},
   {rt:"USD ↔ VZLA", orig:"USD",dest:"VES",pais:"VENEZUELA",flag:"🇻🇪",lDia:"Tasa día (BS × 1 USD)",  lTc:"Tasa compra USDT (USD/USDT)",lTv:"Tasa venta USDT (BS/USDT)"},
+  {rt:"PEN ↔ BRL",  orig:"PEN",dest:"BRL",pais:"BRASIL",   flag:"🇧🇷",lDia:"Tasa día (BRL × 1 PEN)",  lTc:"Tasa compra USDT (PEN/USDT)",lTv:"Tasa venta USDT (BRL/USDT)"},
 ];
 var MONEDAS_COMPRA=[
   {id:"BRL", label:"Real Brasileño",   flag:"🇧🇷", hint:"BRL/USDT (ej: 5.08)"},
@@ -391,6 +392,47 @@ var MONEDAS_VENTA=[
   {id:"TTD", label:"Dólar Trinidad",    flag:"🇹🇹"},
   {id:"EUR", label:"Euro",              flag:"🇪🇺"},
 ];
+
+// Devuelve las rutas base + las rutas extra agregadas por el usuario en Configuración
+function getRUTAS(){
+  var extras=(((window.S&&S.config)||{}).rutasExtra)||[];
+  var TODOS_MON=MONEDAS_COMPRA.concat(MONEDAS_VENTA);
+  var extra_rutas=extras.map(function(e){
+    var mOrig=TODOS_MON.find(function(m){return m.id===e.orig;})||{flag:"🏳"};
+    var mDest=TODOS_MON.find(function(m){return m.id===e.dest;})||{flag:"🏳"};
+    var paises={VES:"VENEZUELA",BRL:"BRASIL",USD:"USA",PEN:"PERÚ",COP:"COLOMBIA",TTD:"TRINIDAD",EUR:"EUROPA"};
+    return {
+      rt: e.orig+" ↔ "+e.dest,
+      orig: e.orig,
+      dest: e.dest,
+      pais: paises[e.dest]||e.dest,
+      flag: mDest.flag,
+      lDia: "Tasa día ("+e.dest+" × 1 "+e.orig+")",
+      lTc:  "Tasa compra USDT ("+e.orig+"/USDT)",
+      lTv:  "Tasa venta USDT ("+e.dest+"/USDT)",
+      extra: true
+    };
+  });
+  // Filtrar extras que ya existen en RUTAS base
+  var bases=RUTAS.map(function(r){return r.orig+r.dest;});
+  extra_rutas=extra_rutas.filter(function(r){return bases.indexOf(r.orig+r.dest)===-1;});
+  return RUTAS.concat(extra_rutas);
+}
+
+// Devuelve todas las rutas: fijas + las que el admin agregó en Configuración
+// Alias de getRUTAS() para mantener compatibilidad
+function getRutas(){ return getRUTAS(); }
+
+// Banderas y países por moneda (para construir rutas nuevas)
+var _MON_META={
+  BRL:{flag:"🇧🇷",pais:"BRASIL",   label:"Real Brasileño"},
+  USD:{flag:"🇺🇸",pais:"EE.UU",    label:"Dólar USA"},
+  VES:{flag:"🇻🇪",pais:"VENEZUELA", label:"Bolívar Venezolano"},
+  PEN:{flag:"🇵🇪",pais:"PERÚ",     label:"Sol Peruano"},
+  COP:{flag:"🇨🇴",pais:"COLOMBIA", label:"Peso Colombiano"},
+  TTD:{flag:"🇹🇹",pais:"TRINIDAD", label:"Dólar Trinidad"},
+  EUR:{flag:"🇪🇺",pais:"EUROPA",   label:"Euro"},
+};
 
 let S={
   role:null,tab:"dash",q:"",qCl:"",pinRole:null,pinIn:"",pendingFn:null,editCl:null,
@@ -595,7 +637,8 @@ let S={
   opFiltroMes:"",
   config:{
     comision_usdt: 0.06,  // Comisión USDT por operación (compra Y venta). Editable por admin.
-    comision_banco_vzla: 0.03  // Comisión bancaria Venezuela por transferencia a otro banco. Editable por admin.
+    comision_banco_vzla: 0.03,  // Comisión bancaria Venezuela por transferencia a otro banco. Editable por admin.
+    rutasExtra: []  // Rutas personalizadas agregadas desde Configuración
   },
   brl:[
     {n:1,d:"01/05",id:"148",cl:"JENSENT STIVEN PAZ",rt:"BRL ↔ VZLA",am:50.0,orig:"BRL",dest:"VES",tdia:117.0,cant:5850.0,tc:4.98,uc:9.98,pais:"VENEZUELA",uv:9.36,tv:629.0,total:5850.0,pr:0.62,locked:true},
@@ -1942,7 +1985,7 @@ function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaD
     }
   }
 
-  var rutaObj = RUTAS.find(function(r){ return r.rt===ruta; });
+  var rutaObj = getRutas().find(function(r){ return r.rt===ruta; });
   if(!rutaObj){
     if(ruta==="EEUU"||(typeof ruta==="string"&&(ruta.indexOf("EE.UU")>-1||ruta.indexOf("UU.EE")>-1))) rutaObj={orig:"USD",dest:"VES"};
     else if(ruta==="BRL") rutaObj={orig:"BRL",dest:"VES"};
@@ -2521,6 +2564,29 @@ function delGE(id){
   if(pin!=="2626"){alert("Clave incorrecta.");return;}
   fn();
 }
+function agregarRutaExtra(){
+  var orig=document.getElementById("nruta-orig").value;
+  var dest=document.getElementById("nruta-dest").value;
+  if(!orig||!dest){alert("Selecciona origen y destino.");return;}
+  if(orig===dest){alert("El origen y destino no pueden ser iguales.");return;}
+  if(!S.config) S.config={};
+  if(!S.config.rutasExtra) S.config.rutasExtra=[];
+  // Verificar que no exista ya (en fijas o extras)
+  var todasRutas=getRUTAS();
+  var yaExiste=todasRutas.some(function(r){return r.orig===orig&&r.dest===dest;});
+  if(yaExiste){alert("Esa ruta ya existe.");return;}
+  S.config.rutasExtra.push({orig:orig,dest:dest});
+  saveData();R();
+  alert("✅ Ruta "+orig+" → "+dest+" agregada.");
+}
+
+function eliminarRutaExtra(idx){
+  if(!confirm("¿Quitar esta ruta personalizada?")) return;
+  if(!S.config||!S.config.rutasExtra) return;
+  S.config.rutasExtra.splice(idx,1);
+  saveData();R();
+}
+
 function guardarComisionBanco(){
   var v=parseFloat(document.getElementById("inp-com-banco").value);
   if(isNaN(v)||v<0||v>0.5){alert("Valor inválido. Usa ej: 0.03 para 3%");return;}
@@ -2774,6 +2840,45 @@ function rConfigAdmin(){
           "</div>"+
         "</div>"+
       "</div>"+
+    "</div>"+
+    "<div class='sec' style='border-left:3px solid #2196F3;margin-bottom:16px'>"+
+      "<div class='sec-title' style='color:#2196F3'>🛣️ RUTAS DE OPERACIÓN</div>"+
+      "<div style='font-size:11px;color:#666;margin-bottom:12px'>Las rutas fijas siempre están disponibles. Aquí puedes agregar rutas nuevas que necesites.</div>"+
+      "<div style='font-size:11px;font-weight:700;color:#555;margin-bottom:8px'>📌 Rutas fijas (predeterminadas):</div>"+
+      "<div style='display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px'>"+
+      getRUTAS().filter(function(r){return !r.extra;}).map(function(r){
+        return "<div style='background:#f0f0f0;border-radius:8px;padding:5px 10px;font-size:11px;font-weight:600;color:#444'>"+r.flag+" "+r.rt+"</div>";
+      }).join('')+
+      "</div>"+
+      "<div style='font-size:11px;font-weight:700;color:#555;margin-bottom:8px'>⚙️ Rutas personalizadas:</div>"+
+      ((S.config.rutasExtra&&S.config.rutasExtra.length)?
+        "<div style='display:flex;flex-direction:column;gap:6px;margin-bottom:12px'>"+
+        S.config.rutasExtra.map(function(r,i){
+          var mo=(MONEDAS_COMPRA.concat(MONEDAS_VENTA)).find(function(m){return m.id===r.orig;})||{flag:'🏳'};
+          var md=(MONEDAS_COMPRA.concat(MONEDAS_VENTA)).find(function(m){return m.id===r.dest;})||{flag:'🏳'};
+          return "<div style='display:flex;align-items:center;justify-content:space-between;background:#f8f8f8;border-radius:8px;padding:8px 12px'>"+
+            "<span style='font-size:13px;font-weight:700'>"+mo.flag+" "+r.orig+" → "+md.flag+" "+r.dest+"</span>"+
+            "<button onclick='eliminarRutaExtra("+i+")' style='background:#e74c3c;color:#fff;border:none;padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer'>✕ Quitar</button>"+
+          "</div>";
+        }).join('')+
+        "</div>"
+      :"<div style='font-size:12px;color:#aaa;margin-bottom:12px'>Ninguna aún.</div>")+
+      "<div style='background:#EEF4FF;border-radius:10px;padding:12px;border:1px solid #b3c8f5'>"+
+      "<div style='font-size:11px;font-weight:700;color:#0a3d7c;margin-bottom:10px'>➕ Agregar nueva ruta</div>"+
+      "<div style='display:flex;gap:8px;align-items:center;flex-wrap:wrap'>"+
+        "<div style='flex:1;min-width:100px'>"+
+          "<label style='font-size:10px;color:#666;display:block;margin-bottom:3px'>El cliente envía</label>"+
+          "<select id='nruta-orig' style='width:100%;padding:8px;border:1.5px solid #ddd;border-radius:8px;font-size:13px'>"+
+          MONEDAS_COMPRA.map(function(m){return "<option value='"+m.id+"'>"+m.flag+" "+m.label+"</option>";}).join('')+
+          "</select></div>"+
+        "<div style='font-size:18px;color:#2196F3;font-weight:900;margin-top:14px'>→</div>"+
+        "<div style='flex:1;min-width:100px'>"+
+          "<label style='font-size:10px;color:#666;display:block;margin-bottom:3px'>El cliente recibe</label>"+
+          "<select id='nruta-dest' style='width:100%;padding:8px;border:1.5px solid #ddd;border-radius:8px;font-size:13px'>"+
+          MONEDAS_VENTA.map(function(m){return "<option value='"+m.id+"'>"+m.flag+" "+m.label+"</option>";}).join('')+
+          "</select></div>"+
+        "<button onclick='agregarRutaExtra()' style='background:#2196F3;color:#fff;border:none;padding:9px 16px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;margin-top:14px'>Agregar</button>"+
+      "</div></div>"+
     "</div>"+
     "<div class='sec' style='border-left:3px solid #e67e22;margin-bottom:16px'>"+
       "<div class='sec-title' style='color:#e67e22'>📊 TASAS DEL DÍA</div>"+
@@ -4087,7 +4192,7 @@ function salir(){S.role=null;S.tab="dash";S.q="";R();}
 function ssq(v){S.q=v;if(_st)clearTimeout(_st);_st=setTimeout(R,300);}
 function sscl(v){S.qCl=v;if(_st)clearTimeout(_st);_st=setTimeout(R,300);}
 function autoFill(val,key){var p=val.split("|");S[key].id=p[0]||"";S[key].cl=p[1]||"";var el=document.getElementById(key+"-nm");if(el&&S[key].cl)el.value=S[key].cl;}
-function setRutaTx(rt){S.tx.rt=rt;var r=RUTAS.find(function(x){return x.rt===rt;})||RUTAS[0];S.tx.pais=r.pais;R();}
+function setRutaTx(rt){S.tx.rt=rt;var r=getRutas().find(function(x){return x.rt===rt;})||getRutas()[0];S.tx.pais=r.pais;R();}
 function buscarClienteTx(val){
   S.tx.id=val;
   var lista=document.getElementById("tx-lista"),nm=document.getElementById("tx-nm");
@@ -4129,7 +4234,7 @@ function fixPinPad(){
 function upC(key){
   var res=key==="tx"?cTx():cTxE();
   var ok=res.am>0&&res.tdia>0&&res.tc>0&&res.tv>0;
-  var ruta=key==="tx"?(RUTAS.find(function(r){return r.rt===S.tx.rt;})||RUTAS[0]):{orig:"USD",dest:"VES"};
+  var ruta=key==="tx"?(getRutas().find(function(r){return r.rt===S.tx.rt;})||getRutas()[0]):{orig:"USD",dest:"VES"};
   // Actualizar en vivo el label de tasas (ponderadas según el monto)
   var tcv=document.getElementById("tcv-"+key);
   if(tcv&&res.tc>0&&res.tv>0) tcv.innerHTML="TC: <b>"+f4(res.tc)+" "+ruta.orig+"/USDT</b> &nbsp;·&nbsp; TV: <b>"+f2(res.tv)+" "+(key==="tx"?ruta.dest:"BS")+"/USDT</b>";
@@ -5844,7 +5949,7 @@ function rNueva(){
   var hasInv=rates.hasRates;
   var tc=tcAuto,tv=tvAuto,uc=tc>0?am/tc:0,uv=tv>0?cant/tv:0,pr=uc-uv;
   var ok=am>0&&tdia>0&&tc>0&&tv>0;
-  var rOpts=RUTAS.map(function(r){return "<option value='"+r.rt+"'"+(f.rt===r.rt?" selected":"")+">"+r.flag+" "+r.rt+"</option>";}).join("");
+  var rOpts=getRutas().map(function(r){return "<option value='"+r.rt+"'"+(f.rt===r.rt?" selected":"")+">"+r.flag+" "+r.rt+"</option>";}).join("");
   var banner=hasInv
     ?"<div style='background:#D6F5E3;border:1px solid #1a6b3c44;border-radius:8px;padding:9px 13px;margin-bottom:12px;font-size:11px;color:#0b4d27;display:flex;justify-content:space-between;align-items:center'><span>✅ Tasas del Inventario USDT</span><span><b>Compra: "+f4(tcAuto)+" "+ruta.orig+"/USDT</b> | <b>Venta: "+f2(tvAuto)+" "+ruta.dest+"/USDT</b></span></div>"
     :"<div style='background:#EEF4FF;border:1.5px solid #90b4f5;border-radius:8px;padding:9px 13px;margin-bottom:12px;font-size:11px;color:#1a3a7c'>ℹ️ <b>Sin inventario.</b> Ingresa las tasas manualmente. Se guardarán como historial automáticamente.</div>";
