@@ -2869,7 +2869,7 @@ function rConfigAdmin(){
           "<div style='font-size:12px;font-weight:700;color:#555;margin-bottom:8px'>💼 % de sueldo mensual (sobre ganancia neta Julio)</div>"+
           "<div style='font-size:11px;color:#888;margin-bottom:6px'>Base = Ganancia BRL + VZLA + 50% EE.UU − egresos empresa pagados. Tu sueldo = Base × %. El resto es utilidad empresa.</div>"+
           "<div style='display:flex;gap:8px;align-items:center;max-width:300px'>"+
-            "<input type='number' id='inp-pct-sueldo' step='1' min='0' max='100' placeholder='ej: 40' value='"+(((S.config||{}).pct_sueldo!==undefined)?((S.config.pct_sueldo)*100).toFixed(0):"40")+"' style='flex:1;padding:9px;border:1.5px solid #ddd;border-radius:8px;font-size:14px'>"+
+            "<input type='number' id='inp-pct-sueldo' step='1' min='0' max='100' placeholder='ej: 5' value='"+(((S.config||{}).pct_sueldo!==undefined)?((S.config.pct_sueldo)*100).toFixed(0):"5")+"' style='flex:1;padding:9px;border:1.5px solid #ddd;border-radius:8px;font-size:14px'>"+
             "<span style='font-size:14px;color:#555;font-weight:700'>%</span>"+
             "<button onclick='guardarPctSueldo()' style='padding:9px 14px;background:#7b2d8b;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
           "</div>"+
@@ -6625,102 +6625,187 @@ function rClientes(){
 }
 
 function rEgresos(){
-  var pag=S.egresos.filter(function(e){return e.pagada;}),pend=S.egresos.filter(function(e){return !e.pagada;});
-  var tP=pag.reduce(function(a,e){return a+e.usdt;},0),tPend=pend.reduce(function(a,e){return a+e.usdt;},0),real=dinReal();
   var f=S.nEg;
-  var cCol={"GASTOS FIJOS":{bg:"#DDEEFF",col:"#0a3d7c"},"PAGOS CRÉDITOS":{bg:"#F0E8FF",col:"#4a2080"},"GASTOS PERSONALES":{bg:"#FFF8DC",col:"#7a5c00"},"GASTOS EXTRAORD.":{bg:"#FDECEA",col:"#7c1c0c"}};
-  var rPag=pag.map(function(e){var cc=cCol[e.cat]||{bg:"#f0f0f0",col:"#333"};
-    return "<tr><td>"+e.d+"</td><td><span class='bd' style='background:"+cc.bg+";color:"+cc.col+"'>"+e.cat+"</span></td><td style='max-width:170px;overflow:hidden;text-overflow:ellipsis'>"+e.mot+(e.cuentaId?"<div style='font-size:9px;color:#888'>🏦 "+nombreCuentaEg(e.cuentaId)+"</div>":"")+"</td><td style='text-align:right'>"+f2(e.monto)+" <span style='font-size:9px;color:#888'>"+(e.mon||"BRL")+"</span></td><td style='text-align:right' class='neg'>$"+f2(e.usdt)+"</td><td style='text-align:center'>"+(e.fija?"⭐":"")+"</td><td style='text-align:center'>"+(e.locked?"🔒":"")+"</td><td><button class='del-btn' onclick='reqDel(\"egresos\","+e.id+",\"id\")'>🗑️</button></td></tr>";}).join("");
+  var mesKey=getMesKeyActual();
+
+  // ── Separar empresa vs personal por campo tipo (no por categoría) ──
+  var egMes=filterByMes(S.egresos||[],mesKey);
+  var egEmp=egMes.filter(function(e){return e.tipo!=="personal";});
+  var epMes=filterByMes(S.egresos_personales||[],mesKey);
+
+  // ── Sueldo proyectado ──
+  var brlM=filterByMes(S.brl,mesKey),vzlaM=filterByMes(S.vzla,mesKey),eeuuM=filterByMes(S.eeuu,mesKey);
+  var gasEE=filterByMes(S.gastos_eeuu||[],mesKey).reduce(function(a,g){return a+(parseFloat(g.monto)||0);},0);
+  var ganBase=(brlM.reduce(function(a,r){return a+(parseFloat(r.pr)||0);},0))
+             +(vzlaM.reduce(function(a,r){return a+(parseFloat(r.pr)||0);},0))
+             +((eeuuM.reduce(function(a,r){return a+(parseFloat(r.pr)||0);},0))-gasEE)*0.5;
+  var egEmpPag=egEmp.filter(function(e){return e.pagada;}).reduce(function(a,e){return a+(e.usdt||0);},0);
+  var egEmpPend=egEmp.filter(function(e){return !e.pagada;}).reduce(function(a,e){return a+(e.usdt||0);},0);
+  var baseNeta=Math.round((ganBase-egEmpPag)*100)/100;
+  var pctSueldo=parseFloat((S.config||{}).pct_sueldo)||0.05;
+  var sueldoProy=Math.round(baseNeta*pctSueldo*100)/100;
+
+  // ── Personal ──
+  var epPag=epMes.filter(function(e){return e.pagada;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0);
+  var epPend=epMes.filter(function(e){return !e.pagada;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0);
+  var dispPersonal=Math.round((sueldoProy-epPag)*100)/100;
+
+  // ── Stats empresa por categoría ──
+  var catEmp={};
+  egEmp.filter(function(e){return e.pagada;}).forEach(function(e){
+    var c=e.cat||"OTROS";
+    if(!catEmp[c])catEmp[c]=0;
+    catEmp[c]+=parseFloat(e.usdt)||0;
+  });
+  var catEmpSort=Object.keys(catEmp).sort(function(a,b){return catEmp[b]-catEmp[a];});
+
+  // ── Stats personal por categoría ──
+  var catPer={};
+  epMes.filter(function(e){return e.pagada;}).forEach(function(e){
+    var c=e.cat||"OTROS";
+    if(!catPer[c])catPer[c]=0;
+    catPer[c]+=parseFloat(e.usdt)||0;
+  });
+  var catPerSort=Object.keys(catPer).sort(function(a,b){return catPer[b]-catPer[a];});
+  var catColors=["#1a3558","#0f6e3a","#7b2d8b","#c0392b","#7a5c00","#2471a3","#117a65"];
+
+  // ── Formulario ──
   var CATS_EMPRESA=["GASTOS FIJOS EMPRESA","SERVICIOS DIGITALES","GASTOS OPERATIVOS","GASTOS EXTRAORD. EMPRESA"];
   var CATS_PERSONAL=["GASTOS PERSONALES","PAGOS CRÉDITOS","CUMPLEAÑOS","VIAJE","OTROS PERSONAL"];
-  // cOpts muestra solo las categorías del tipo seleccionado
   var esPersonalForm=(f.tipo==="personal");
   var cOpts=esPersonalForm
     ?"<optgroup label='👤 PERSONAL'>"+CATS_PERSONAL.map(function(cat){return "<option"+(f.cat===cat?" selected":"")+">"+cat+"</option>";}).join("")+"</optgroup>"
     :"<optgroup label='🏢 EMPRESA'>"+CATS_EMPRESA.map(function(cat){return "<option"+(f.cat===cat?" selected":"")+">"+cat+"</option>";}).join("")+"</optgroup>";
-  // Separar empresa vs personal
-  var CATS_EMP=["GASTOS FIJOS EMPRESA","SERVICIOS DIGITALES","GASTOS OPERATIVOS","GASTOS EXTRAORD. EMPRESA","GASTOS FIJOS"];
-  var egEmpresa=S.egresos.filter(function(e){return CATS_EMP.indexOf(e.cat)>=0;});
-  var egPersonal=S.egresos.filter(function(e){return CATS_EMP.indexOf(e.cat)<0;});
-  var miSueldo=S.egresos.filter(function(e){return e.cat==="MI SUELDO";}).reduce(function(a,e){return a+e.usdt;},0);
-  var tEmpresa=egEmpresa.filter(function(e){return e.pagada;}).reduce(function(a,e){return a+e.usdt;},0);
-  var tPersonal=egPersonal.filter(function(e){return e.pagada&&e.cat!=="MI SUELDO";}).reduce(function(a,e){return a+e.usdt;},0);
-  var gBruta=gB()+gV();
-  var gananciaEmpresa=gBruta-tEmpresa;
-  var gananciaReal=gananciaEmpresa-miSueldo-tPersonal;
+  var monAct=f.mon||"BRL";
+  var ctasF=(S.cuentas||[]).filter(function(c){return c.activa!==false&&c.moneda===monAct;});
 
-  // Sueldo proyectado según % config
-  var mesKeyEg=getMesKeyActual();
-  var brlEg=filterByMes(S.brl,mesKeyEg),vzlaEg=filterByMes(S.vzla,mesKeyEg),eeuuEg=filterByMes(S.eeuu,mesKeyEg);
-  var gasEEeg=filterByMes(S.gastos_eeuu||[],mesKeyEg).reduce(function(a,g){return a+(parseFloat(g.monto)||0);},0);
-  var ganJulioEg=(brlEg.reduce(function(a,r){return a+(parseFloat(r.pr)||0);},0))+(vzlaEg.reduce(function(a,r){return a+(parseFloat(r.pr)||0);},0))+((eeuuEg.reduce(function(a,r){return a+(parseFloat(r.pr)||0);},0))-gasEEeg)*0.5;
-  var pctSueldo=parseFloat((S.config||{}).pct_sueldo)||0.40;
-  var sueldoProyectado=Math.round((ganJulioEg-tEmpresa)*pctSueldo*100)/100;
-  var utilidadEg=Math.round(((ganJulioEg-tEmpresa)-sueldoProyectado)*100)/100;
-  var egPersMesEg=filterByMes(S.egresos_personales||[],mesKeyEg);
-  var tPersEg=egPersMesEg.filter(function(e){return e.pagada;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0);
-  var dispPersonalEg=Math.round((sueldoProyectado-tPersEg)*100)/100;
-  return "<div class='fin-banner'><div style='font-size:10px;font-weight:700;opacity:.8;margin-bottom:12px'>💰 RESUMEN FINANCIERO DEL MES</div>"+
-  "<div style='background:rgba(255,255,255,.15);border-radius:10px;padding:12px;margin-bottom:12px'>"+
-  "<div style='font-size:10px;font-weight:700;opacity:.8;margin-bottom:8px'>🏢 EMPRESA vs 👤 PERSONAL</div>"+
-  "<div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px'>"+
-  "<div style='background:rgba(255,255,255,.12);border-radius:8px;padding:10px;text-align:center'><div style='font-size:10px;opacity:.7'>Ganancia bruta</div><div style='font-size:16px;font-weight:800'>$"+f2(gBruta)+"</div></div>"+
-  "<div style='background:rgba(255,100,100,.2);border-radius:8px;padding:10px;text-align:center'><div style='font-size:10px;opacity:.7'>Gastos empresa</div><div style='font-size:16px;font-weight:800;color:#ffaaaa'>-$"+f2(tEmpresa)+"</div></div>"+
-  "<div style='background:rgba(100,255,100,.15);border-radius:8px;padding:10px;text-align:center'><div style='font-size:10px;opacity:.7'>Ganancia empresa</div><div style='font-size:16px;font-weight:800;color:#90EE90'>$"+f2(gananciaEmpresa)+"</div></div>"+
-  "<div style='background:rgba(255,215,0,.2);border-radius:8px;padding:10px;text-align:center'><div style='font-size:10px;opacity:.7'>💼 Mi sueldo</div><div style='font-size:16px;font-weight:800;color:#FFD700'>$"+f2(miSueldo)+"</div></div>"+
-  "<div style='background:rgba(255,100,100,.15);border-radius:8px;padding:10px;text-align:center'><div style='font-size:10px;opacity:.7'>Gastos personales</div><div style='font-size:16px;font-weight:800;color:#ffaaaa'>-$"+f2(tPersonal)+"</div></div>"+
-  "<div style='background:rgba(255,255,255,.2);border-radius:8px;padding:10px;text-align:center;border:2px solid rgba(255,255,255,.5)'><div style='font-size:10px;opacity:.8'>💵 QUEDA LIBRE</div><div style='font-size:20px;font-weight:900'>$"+f2(gananciaReal)+"</div></div>"+
-  "</div></div>"+
-    "<div style='background:rgba(123,45,139,.25);border-radius:10px;padding:10px;margin-bottom:12px;border:1px solid rgba(123,45,139,.4)'>"+
-    "<div style='font-size:10px;font-weight:700;opacity:.9;margin-bottom:6px'>💼 SUELDO PROYECTADO · "+Math.round(pctSueldo*100)+"% de base neta</div>"+
-    "<div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px'>"+
-    "<div style='background:rgba(255,255,255,.12);border-radius:8px;padding:8px;text-align:center'><div style='font-size:9px;opacity:.7'>💼 Mi sueldo</div><div style='font-size:15px;font-weight:800;color:#e0aaff'>$"+f2(sueldoProyectado)+"</div></div>"+
-    "<div style='background:rgba(255,100,100,.15);border-radius:8px;padding:8px;text-align:center'><div style='font-size:9px;opacity:.7'>👤 Gastos pers.</div><div style='font-size:15px;font-weight:800;color:#ffaaaa'>-$"+f2(tPersEg)+"</div></div>"+
-    "<div style='background:rgba(255,255,255,.2);border-radius:8px;padding:8px;text-align:center;border:1px solid rgba(255,255,255,.4)'><div style='font-size:9px;opacity:.7'>💵 Disponible</div><div style='font-size:15px;font-weight:900;color:"+(dispPersonalEg>=0?"#90EE90":"#ffaaaa")+"'>"+(dispPersonalEg>=0?"":"−")+"$"+f2(Math.abs(dispPersonalEg))+"</div></div>"+
-    "</div></div>"+
-    "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px'>"+
-    [["Ganancia bruta","$"+f2(gB()+gV())+" USDT",""],["Gastos pagados","−$"+f2(tP)+" USDT","#ffaaaa"],["⚠️ Por pagar","−$"+f2(tPend)+" USDT","#ffe099"],["💵 DINERO REAL","$"+f2(real)+" USDT",""]].map(function(item,i){
-      return "<div style='background:rgba(255,255,255,.15);border-radius:9px;padding:10px 12px"+(i===3?";border:2px solid rgba(255,255,255,.6)":"")+"'><div style='font-size:10px;opacity:.8;margin-bottom:4px'>"+item[0]+"</div><div style='font-size:"+(i===3?20:16)+"px;font-weight:700;color:"+(item[2]||"#fff")+"'>"+item[1]+"</div></div>";
-    }).join("")+"</div></div>"+
-    (pend.length?"<div class='aside-panel'><div style='display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:10px'><div style='font-size:11px;font-weight:700;color:#7a5c00'>⚠️ FACTURAS PENDIENTES — APARTAR: <b style='font-size:14px'>$"+f2(tPend)+" USDT</b></div>"+
-      "<button type='button' onclick='generarFijasMes()' style='background:#0a3d7c;color:#fff;border:none;padding:6px 11px;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer'>📅 Generar suscripciones del mes</button></div>"+
-      pend.map(function(e){
-        var ctasE=(S.cuentas||[]).filter(function(c){return c.activa!==false&&c.moneda===(e.mon||"BRL");});
-        var selC="<select onchange='setCuentaEgreso("+e.id+",this.value)' style='font-size:10px;padding:3px 5px;border-radius:6px;border:1px solid #d8c98a;max-width:130px'><option value=''>cuenta…</option>"+ctasE.map(function(c){return "<option value='"+c.id+"'"+(e.cuentaId===c.id?" selected":"")+">"+c.nombre+"</option>";}).join("")+"</select>";
-        return "<div style='display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 0;border-bottom:1px solid #f0e8c0'><div><span style='font-size:12px;font-weight:500'>"+e.mot+"</span><span style='font-size:10px;color:#888;margin-left:6px'>"+e.d+"</span>"+(e.fija?"<span class='bd' style='background:#DDEEFF;color:#0a3d7c;margin-left:5px;font-size:9px'>FIJA"+(e.diaPago?" · día "+e.diaPago:"")+"</span>":"")+"</div>"+
-      "<div style='display:flex;align-items:center;gap:7px;flex-wrap:wrap'><span style='font-weight:700;color:#b07000'>"+f2(e.monto)+" "+(e.mon||"BRL")+" <span style='font-size:10px;color:#998'>≈$"+f2(e.usdt)+"</span></span>"+selC+
-      "<button onclick='pagarEgreso("+e.id+")' style='background:#1a6b3c;color:#fff;border:none;border-radius:6px;padding:4px 9px;cursor:pointer;font-size:10px;font-weight:700' title='Paga y descuenta de la cuenta elegida'>💰 Pagar</button>"+
-      "<button onclick='pagarEgresoSinCuenta("+e.id+")' style='background:#888;color:#fff;border:none;border-radius:6px;padding:4px 7px;cursor:pointer;font-size:10px' title='Marcar pagada sin tocar cuentas (efectivo/externo)'>✓</button>"+
-      "<button class='del-btn' onclick='reqDel(\"egresos\","+e.id+",\"id\")'>🗑️</button></div></div>";}).join("")+"</div>":"")+
-    (function(){
-      var mk=getMesKeyActual();var pagMes=filterByMes(pag,mk);
-      var porMon={};pagMes.forEach(function(e){var m=e.mon||"BRL";if(!porMon[m])porMon[m]={monto:0,usdt:0};porMon[m].monto+=parseFloat(e.monto)||0;porMon[m].usdt+=parseFloat(e.usdt)||0;});
-      var ic={VES:"🇻🇪",BRL:"🇧🇷",USD:"🇺🇸",USDT:"🪙"};
-      var chips=Object.keys(porMon).map(function(m){return "<div style='background:#f0f4ff;border:1px solid #d5e0f5;border-radius:9px;padding:8px 12px;text-align:center'><div style='font-size:10px;color:#666'>"+(ic[m]||"💵")+" Gastado en "+m+"</div><div style='font-size:14px;font-weight:800;color:#1a3558'>"+f2(porMon[m].monto)+"</div><div style='font-size:10px;color:#b07000;font-weight:700'>≈ $"+f2(porMon[m].usdt)+" USDT</div></div>";}).join("");
-      return chips?"<div style='margin-bottom:12px'><div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:7px'>💱 Gasto del mes por moneda (pagados)</div><div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px'>"+chips+"</div></div>":"";
-    })()+
-    "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:9px'>📋 Historial de gastos pagados</div>"+
-    "<div class='tw' style='margin-bottom:14px'><table><thead><tr><th>FECHA</th><th>CATEGORÍA</th><th>MOTIVO</th><th style='text-align:right'>MONTO</th><th style='text-align:right'>USDT</th><th>FIJA</th><th>🔒</th><th></th></tr></thead><tbody>"+rPag+"</tbody></table></div>"+
-    "<div class='sec'><div class='sec-title'>➕ Registrar egreso / factura</div>"+
+  // ── Filas tabla empresa ──
+  var rowsEmp=egEmp.filter(function(e){return e.pagada;}).map(function(e){
+    return "<tr><td>"+e.d+"</td><td><span class='bd' style='background:#DDEEFF;color:#0a3d7c'>"+e.cat+"</span></td>"+
+    "<td>"+e.mot+(e.cuentaId?"<div style='font-size:9px;color:#888'>🏦 "+nombreCuentaEg(e.cuentaId)+"</div>":"")+"</td>"+
+    "<td style='text-align:right'>"+f2(e.monto)+" <span style='font-size:9px;color:#888'>"+(e.mon||"BRL")+"</span></td>"+
+    "<td style='text-align:right' class='neg'>$"+f2(e.usdt)+"</td>"+
+    "<td style='text-align:center'>"+(e.fija?"⭐":"")+"</td>"+
+    "<td><button class='del-btn' onclick='reqDel("egresos","+e.id+","id")'>🗑️</button></td></tr>";
+  }).join("");
+
+  // ── Filas tabla personal ──
+  var rowsPer=epMes.filter(function(e){return e.pagada;}).map(function(e){
+    return "<tr><td>"+e.d+"</td><td><span class='bd' style='background:#F0E8FF;color:#4a2080'>"+e.cat+"</span></td>"+
+    "<td>"+e.mot+(e.cuentaId?"<div style='font-size:9px;color:#888'>🏦 "+nombreCuentaEg(e.cuentaId)+"</div>":"")+"</td>"+
+    "<td style='text-align:right'>"+f2(e.monto)+" <span style='font-size:9px;color:#888'>"+(e.mon||"BRL")+"</span></td>"+
+    "<td style='text-align:right' class='neg'>$"+f2(e.usdt)+"</td>"+
+    "<td><button class='del-btn' onclick='reqDelPersonal("+e.id+")'>🗑️</button></td></tr>";
+  }).join("");
+
+  // ── Pendientes empresa ──
+  var pendEmpRows=(egEmp.filter(function(e){return !e.pagada;}).length?
+    "<div class='aside-panel' style='margin-bottom:16px'>"+
+    "<div style='font-size:11px;font-weight:700;color:#7a5c00;margin-bottom:8px'>⚠️ PENDIENTES EMPRESA — $"+f2(egEmpPend)+" USDT"+
+    "<button type='button' onclick='generarFijasMes()' style='margin-left:10px;background:#0a3d7c;color:#fff;border:none;padding:5px 10px;border-radius:6px;font-size:10px;font-weight:700;cursor:pointer'>📅 Generar suscripciones</button></div>"+
+    egEmp.filter(function(e){return !e.pagada;}).map(function(e){
+      var ctasE=(S.cuentas||[]).filter(function(c){return c.activa!==false&&c.moneda===(e.mon||"BRL");});
+      var selC="<select onchange='setCuentaEgreso("+e.id+",this.value)' style='font-size:10px;padding:3px 5px;border-radius:6px;border:1px solid #d8c98a;max-width:130px'><option value=''>cuenta…</option>"+ctasE.map(function(c){return "<option value='"+c.id+"'"+(e.cuentaId===c.id?" selected":"")+">"+c.nombre+"</option>";}).join("")+"</select>";
+      return "<div style='display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 0;border-bottom:1px solid #f0e8c0'>"+
+      "<div><span style='font-size:12px;font-weight:500'>"+e.mot+"</span><span style='font-size:10px;color:#888;margin-left:6px'>"+e.d+"</span></div>"+
+      "<div style='display:flex;align-items:center;gap:7px'>"+
+      "<span style='font-weight:700;color:#b07000'>"+f2(e.monto)+" "+(e.mon||"BRL")+" <span style='font-size:10px;color:#999'>≈$"+f2(e.usdt)+"</span></span>"+selC+
+      "<button onclick='pagarEgreso("+e.id+")' style='background:#0f6e3a;color:#fff;border:none;padding:5px 9px;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer'>✅ Pagar</button>"+
+      "<button class='del-btn' onclick='reqDel("egresos","+e.id+","id")'>🗑️</button></div></div>";
+    }).join("")+"</div>":"");
+
+  return (
+    // ══ FORMULARIO ══
+    "<div class='sec' style='margin-bottom:20px'>"+
+    "<div class='sec-title'>➕ Registrar gasto</div>"+
     "<div style='display:flex;gap:8px;margin-bottom:14px'>"+
-    "<button onclick='S.nEg.tipo=\"empresa\";R()' style='flex:1;padding:10px;border-radius:10px;border:2px solid "+((!f.tipo||f.tipo==="empresa")?"#1a3558":"#ddd")+";background:"+((!f.tipo||f.tipo==="empresa")?"#1a3558":"#f9f9f9")+";color:"+((!f.tipo||f.tipo==="empresa")?"#fff":"#888")+";font-weight:700;font-size:13px;cursor:pointer'>🏢 Empresa</button>"+
-    "<button onclick='S.nEg.tipo=\"personal\";R()' style='flex:1;padding:10px;border-radius:10px;border:2px solid "+(f.tipo==="personal"?"#7b2d8b":"#ddd")+";background:"+(f.tipo==="personal"?"#7b2d8b":"#f9f9f9")+";color:"+(f.tipo==="personal"?"#fff":"#888")+";font-weight:700;font-size:13px;cursor:pointer'>👤 Personal</button>"+
+    "<button onclick='S.nEg.tipo="empresa";S.nEg.cat="GASTOS FIJOS EMPRESA";R()' style='flex:1;padding:11px;border-radius:10px;border:2px solid "+(!esPersonalForm?"#1a3558":"#e0e0e0")+";background:"+(!esPersonalForm?"#1a3558":"#f5f5f5")+";color:"+(!esPersonalForm?"#fff":"#999")+";font-weight:700;font-size:13px;cursor:pointer'>🏢 Empresa</button>"+
+    "<button onclick='S.nEg.tipo="personal";S.nEg.cat="GASTOS PERSONALES";R()' style='flex:1;padding:11px;border-radius:10px;border:2px solid "+(esPersonalForm?"#7b2d8b":"#e0e0e0")+";background:"+(esPersonalForm?"#7b2d8b":"#f5f5f5")+";color:"+(esPersonalForm?"#fff":"#999")+";font-weight:700;font-size:13px;cursor:pointer'>👤 Personal</button>"+
     "</div>"+
     "<div class='f2'><div class='fl'><label>Fecha</label><input type='date' value='"+f.date+"' onchange='S.nEg.date=this.value'></div>"+
     "<div class='fl'><label>Categoría</label><select onchange='S.nEg.cat=this.value'>"+cOpts+"</select></div></div>"+
     "<div class='fl'><label>Motivo</label><input type='text' placeholder='ej: Nubank, internet...' value='"+(f.mot||"")+"' oninput='S.nEg.mot=this.value'></div>"+
-    (function(){
-      var monAct=f.mon||"BRL";
-      var ctasF=(S.cuentas||[]).filter(function(c){return c.activa!==false&&c.moneda===monAct;});
-      return "<div class='f2'><div class='fl'><label>Moneda del gasto</label><select onchange='S.nEg.mon=this.value;S.nEg.cuentaId=\"\";S.nEg.usdt=\"\";R()'>"+["BRL","VES","USD","USDT"].map(function(m){return "<option"+(monAct===m?" selected":"")+">"+m+"</option>";}).join("")+"</select></div>"+
-      "<div class='fl'><label>Cuenta de pago (descuenta su saldo)</label><select onchange='S.nEg.cuentaId=this.value'><option value=''>— Sin cuenta / efectivo —</option>"+ctasF.map(function(c){return "<option value='"+c.id+"'"+(f.cuentaId===c.id?" selected":"")+">"+c.nombre+" ("+f2(c.saldo)+")</option>";}).join("")+"</select></div></div>"+
-      "<div class='f2'><div class='fl'><label>Monto ("+monAct+")</label><input type='number' placeholder='0.00' value='"+(f.monto||"")+"' oninput='S.nEg.monto=this.value;var a=usdtDeGasto(S.nEg.mon||\"BRL\",this.value);if(a!==null)S.nEg.usdt=a;' onchange='R()'></div>"+
-      "<div class='fl'><label>Equivalente USDT (auto a tu tasa real, editable)</label><input type='number' placeholder='0.00' value='"+(f.usdt!==""&&f.usdt!==undefined?f.usdt:"")+"' oninput='S.nEg.usdt=this.value'></div></div>";
-    })()+
-    "<div class='f2' style='margin-bottom:12px'><label style='display:flex;align-items:center;gap:7px;font-size:12px;cursor:pointer'><input type='checkbox' "+(f.fija?"checked":"")+" onchange='S.nEg.fija=this.checked;R()'> ⭐ Gasto fijo recurrente (suscripción)</label>"+
+    "<div class='f2'><div class='fl'><label>Moneda</label><select onchange='S.nEg.mon=this.value;S.nEg.cuentaId="";S.nEg.usdt="";R()'>"+["BRL","VES","USD","USDT"].map(function(m){return "<option"+(monAct===m?" selected":"")+">"+m+"</option>";}).join("")+"</select></div>"+
+    "<div class='fl'><label>Cuenta de pago</label><select onchange='S.nEg.cuentaId=this.value'><option value=''>— Sin cuenta / efectivo —</option>"+ctasF.map(function(c){return "<option value='"+c.id+"'"+(f.cuentaId===c.id?" selected":"")+">"+c.nombre+" ("+f2(c.saldo)+")</option>";}).join("")+"</select></div></div>"+
+    "<div class='f2'><div class='fl'><label>Monto ("+monAct+")</label><input type='number' placeholder='0.00' value='"+(f.monto||"")+"' oninput='S.nEg.monto=this.value;var a=usdtDeGasto(S.nEg.mon||"BRL",this.value);if(a!==null)S.nEg.usdt=a;' onchange='R()'></div>"+
+    "<div class='fl'><label>Equivalente USDT</label><input type='number' placeholder='0.00' value='"+(f.usdt!==""&&f.usdt!==undefined?f.usdt:"")+"' oninput='S.nEg.usdt=this.value'></div></div>"+
+    "<div class='f2' style='margin-bottom:12px'><label style='display:flex;align-items:center;gap:7px;font-size:12px;cursor:pointer'><input type='checkbox' "+(f.fija?"checked":"")+" onchange='S.nEg.fija=this.checked;R()'> ⭐ Gasto fijo recurrente</label>"+
     "<label style='display:flex;align-items:center;gap:7px;font-size:12px;cursor:pointer'><input type='checkbox' "+(f.pagada?"checked":"")+" onchange='S.nEg.pagada=this.checked'> ✅ Ya fue pagada</label></div>"+
-    (f.fija?"<div class='fl' style='margin-bottom:12px'><label>📅 Día de pago mensual (1-28)</label><input type='number' min='1' max='28' placeholder='ej: 15' value='"+(f.diaPago||"")+"' oninput='S.nEg.diaPago=this.value'><div style='font-size:10px;color:#888;margin-top:3px'>Con el botón \"📅 Generar suscripciones del mes\" se crea su factura pendiente cada mes en este día.</div></div>":"")+
-    "<button class='btn-main btn-green' onclick='saveEg()'>💾 Guardar "+(f.tipo==="personal"?"gasto personal":"egreso de empresa")+"</button></div>";
+    (f.fija?"<div class='fl' style='margin-bottom:12px'><label>📅 Día de pago mensual (1-28)</label><input type='number' min='1' max='28' placeholder='ej: 15' value='"+(f.diaPago||"")+"' oninput='S.nEg.diaPago=this.value'></div>":"")+
+    "<button class='btn-main btn-green' onclick='saveEg()'>💾 Guardar "+(esPersonalForm?"gasto personal":"egreso de empresa")+"</button></div>"+
+
+    // ══ SECCIÓN EMPRESA ══
+    "<div class='sec' style='margin-bottom:24px'>"+
+    "<div class='sec-title'>🏢 Egresos Empresa</div>"+
+    // Tarjetas resumen empresa
+    "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px'>"+
+    "<div style='background:#FDECEA;border:1.5px solid #e74c3c33;border-radius:14px;padding:16px;text-align:center'>"+
+      "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:6px'>💸 Total pagado</div>"+
+      "<div style='font-size:22px;font-weight:800;color:#c0392b'>$"+f2(egEmpPag)+"</div>"+
+      "<div style='font-size:10px;color:#aaa;margin-top:4px'>USDT este mes</div></div>"+
+    "<div style='background:#FFF8DC;border:1.5px solid #f5c51833;border-radius:14px;padding:16px;text-align:center'>"+
+      "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:6px'>⚠️ Pendiente</div>"+
+      "<div style='font-size:22px;font-weight:800;color:#b07000'>$"+f2(egEmpPend)+"</div>"+
+      "<div style='font-size:10px;color:#aaa;margin-top:4px'>por pagar</div></div>"+
+    "<div style='background:#D6F5E3;border:1.5px solid #1a6b3c33;border-radius:14px;padding:16px;text-align:center'>"+
+      "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:6px'>📊 Base neta</div>"+
+      "<div style='font-size:22px;font-weight:800;color:#0f6e3a'>$"+f2(baseNeta)+"</div>"+
+      "<div style='font-size:10px;color:#aaa;margin-top:4px'>ganancia − egresos</div></div>"+
+    "</div>"+
+    // Stats empresa
+    (catEmpSort.length?"<div style='margin-bottom:16px'>"+
+    "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:10px'>📊 En qué se gasta más (empresa)</div>"+
+    "<div style='display:flex;flex-direction:column;gap:7px'>"+
+    catEmpSort.map(function(cat,i){
+      var pct=egEmpPag>0?Math.round(catEmp[cat]/egEmpPag*100):0;
+      return "<div style='display:flex;align-items:center;gap:10px'>"+
+        "<div style='width:100px;font-size:11px;color:#555;text-align:right;flex-shrink:0'>"+cat.replace("GASTOS ","")+"</div>"+
+        "<div style='flex:1;background:#f0f0f0;border-radius:20px;height:8px;overflow:hidden'>"+
+          "<div style='height:100%;border-radius:20px;background:"+catColors[i%catColors.length]+";width:"+pct+"%'></div></div>"+
+        "<div style='font-size:11px;font-weight:700;color:#333;width:50px'>$"+f2(catEmp[cat])+"</div>"+
+        "<div style='font-size:10px;color:#aaa;width:30px'>"+pct+"%</div></div>";
+    }).join("")+"</div></div>":"<div style='text-align:center;color:#ccc;font-size:12px;padding:16px 0'>Sin gastos empresa este mes</div>")+
+    // Pendientes
+    pendEmpRows+
+    // Tabla pagados empresa
+    (rowsEmp?"<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:9px;margin-top:4px'>📋 Pagados este mes</div>"+
+    "<div class='tw'><table><thead><tr><th>FECHA</th><th>CATEGORÍA</th><th>MOTIVO</th><th style='text-align:right'>MONTO</th><th style='text-align:right'>USDT</th><th>FIJA</th><th></th></tr></thead><tbody>"+rowsEmp+"</tbody></table></div>":"")+"</div>"+
+
+    // ══ SECCIÓN PERSONAL ══
+    "<div class='sec'>"+
+    "<div class='sec-title'>👤 Gastos Personales</div>"+
+    // Tarjetas resumen personal
+    "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px'>"+
+    "<div style='background:#F0E8FF;border:1.5px solid #7b2d8b33;border-radius:14px;padding:16px;text-align:center'>"+
+      "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:6px'>💼 Sueldo proyectado</div>"+
+      "<div style='font-size:22px;font-weight:800;color:#7b2d8b'>$"+f2(sueldoProy)+"</div>"+
+      "<div style='font-size:10px;color:#aaa;margin-top:4px'>"+(Math.round(pctSueldo*100))+"% de base neta</div></div>"+
+    "<div style='background:#FDECEA;border:1.5px solid #e74c3c33;border-radius:14px;padding:16px;text-align:center'>"+
+      "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:6px'>💸 Gastado</div>"+
+      "<div style='font-size:22px;font-weight:800;color:#c0392b'>$"+f2(epPag)+"</div>"+
+      "<div style='font-size:10px;color:#aaa;margin-top:4px'>"+(epPend>0?"⚠️ Por pagar: $"+f2(epPend):"al día")+"</div></div>"+
+    "<div style='background:"+(dispPersonal>=0?"#D6F5E3":"#FDECEA")+";border:1.5px solid "+(dispPersonal>=0?"#1a6b3c33":"#c0392b33")+";border-radius:14px;padding:16px;text-align:center;border-width:2px'>"+
+      "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:6px'>💵 Disponible</div>"+
+      "<div style='font-size:22px;font-weight:800;color:"+(dispPersonal>=0?"#0f6e3a":"#c0392b")+"'>"+(dispPersonal<0?"−":"")+"$"+f2(Math.abs(dispPersonal))+"</div>"+
+      "<div style='font-size:10px;color:#aaa;margin-top:4px'>sueldo − gastos</div></div>"+
+    "</div>"+
+    // Stats personal
+    (catPerSort.length?"<div style='margin-bottom:16px'>"+
+    "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:10px'>📊 En qué se gasta más (personal)</div>"+
+    "<div style='display:flex;flex-direction:column;gap:7px'>"+
+    catPerSort.map(function(cat,i){
+      var pct=epPag>0?Math.round(catPer[cat]/epPag*100):0;
+      return "<div style='display:flex;align-items:center;gap:10px'>"+
+        "<div style='width:100px;font-size:11px;color:#555;text-align:right;flex-shrink:0'>"+cat+"</div>"+
+        "<div style='flex:1;background:#f0f0f0;border-radius:20px;height:8px;overflow:hidden'>"+
+          "<div style='height:100%;border-radius:20px;background:"+(["#7b2d8b","#c0392b","#0f6e3a","#1a3558","#b07000"][i%5])+";width:"+pct+"%'></div></div>"+
+        "<div style='font-size:11px;font-weight:700;color:#333;width:50px'>$"+f2(catPer[cat])+"</div>"+
+        "<div style='font-size:10px;color:#aaa;width:30px'>"+pct+"%</div></div>";
+    }).join("")+"</div></div>":"<div style='text-align:center;color:#ccc;font-size:12px;padding:16px 0'>Sin gastos personales este mes</div>")+
+    // Tabla pagados personal
+    (rowsPer?"<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:9px;margin-top:4px'>📋 Pagados este mes</div>"+
+    "<div class='tw'><table><thead><tr><th>FECHA</th><th>CATEGORÍA</th><th>MOTIVO</th><th style='text-align:right'>MONTO</th><th style='text-align:right'>USDT</th><th></th></tr></thead><tbody>"+rowsPer+"</tbody></table></div>":"")+"</div>"
+  );
 }
 
 function marcarCobrado(id){
@@ -6769,7 +6854,7 @@ function rMiGestion(){
   var egEmpPag=egM.filter(function(e){return e.pagada&&CATS_EMP.indexOf(e.cat)>=0;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0);
   // Base y sueldo
   var base=ganJulio-egEmpPag;
-  var pct=parseFloat((S.config||{}).pct_sueldo)||0.40;
+  var pct=parseFloat((S.config||{}).pct_sueldo)||0.05;
   var sueldo=Math.round(base*pct*100)/100;
   var utilidad=Math.round((base-sueldo)*100)/100;
   // Egresos personales del mes
