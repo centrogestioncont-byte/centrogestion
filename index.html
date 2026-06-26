@@ -7839,7 +7839,7 @@ function rTbl(data,type){
 // sin modificarlos. Todos los datos quedan intactos.
 // ══════════════════════════════════════════════════════════════
 function rTblUnificada(){
-  if(!S._ops) S._ops={mes:"",q:"",src:"",ruta:""};
+  if(!S._ops) S._ops={mes:"",q:"",src:"",ruta:"",banco:""};
   var f=S._ops;
 
   // ── Combinar los 3 arrays sin modificarlos ──────────────────
@@ -7865,7 +7865,8 @@ function rTblUnificada(){
     var okQ=!q||(r.cl&&r.cl.toLowerCase().includes(q))||(String(r.id||"").includes(f.q||""))||(r.rt&&r.rt.toLowerCase().includes(q));
     var okSrc=!f.src||r._src===f.src;
     var okRuta=!f.ruta||r.rt===f.ruta;
-    return okQ&&okSrc&&okRuta;
+    var okBanco=!f.banco||(r.cuentaBanco===f.banco||r.cuentaDest===f.banco);
+    return okQ&&okSrc&&okRuta&&okBanco;
   }).slice().sort(function(a,b){
     // Ordenar por fecha desc
     var pa=a.d?a.d.split("/"):[]; var pb=b.d?b.d.split("/"):[];
@@ -7899,7 +7900,16 @@ function rTblUnificada(){
       return "<option value='"+me.key+"'"+(f.mes===me.key?" selected":"")+">"+getMesLabel(me.mes,me.anio)+"</option>";
     }).join("");
 
-  var html =
+  var // ── Filtros adicionales
+  var rutaOpts='<option value="">Todas las rutas</option>'+
+    [...new Set(base.map(function(r){return r.rt;}).filter(Boolean))].sort().map(function(rt){
+      return "<option value='"+rt+"'"+(f.ruta===rt?" selected":"")+">"+rt+"</option>";
+    }).join("");
+  var bancoOpts='<option value="">Todos los bancos</option>'+
+    S.cuentas.filter(function(c){return c.activa;}).map(function(c){
+      return "<option value='"+c.id+"'"+(f.banco===c.id?" selected":"")+">"+c.nombre+"</option>";
+    }).join("");
+  html =
   "<div style='display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;align-items:center'>"+
     "<input placeholder='🔍 Cliente, ID, ruta...' value='"+(f.q||"")+"' oninput='S._ops.q=this.value;R()' "+
       "style='flex:1;min-width:160px;padding:10px 12px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
@@ -7922,7 +7932,13 @@ function rTblUnificada(){
       var cnt=base.filter(function(r){return r.rt===rt;}).length;
       var on=f.ruta===rt;
       return "<button onclick='S._ops.ruta=\""+rt+"\";S._ops.src=\"\";R()' style='padding:5px 10px;border:1.5px solid "+(on?"#1a3558":"#ddd")+";border-radius:14px;font-size:11px;font-weight:700;cursor:pointer;background:"+(on?"#1a3558":"#fff")+";color:"+(on?"#fff":"#888")+";font-family:inherit'>"+rt+" <span style='opacity:.7'>("+cnt+")</span></button>";
-    }).join("")+
+    }).join("")
+  +
+  "<div style='display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;align-items:center'>"+
+  "<select onchange='S._ops.ruta=this.value;S._ops.src="";R()' style='padding:7px 10px;border:1px solid #ddd;border-radius:8px;font-size:12px;background:#fff;cursor:pointer;min-width:180px'>"+rutaOpts+"</select>"+
+  "<select onchange='S._ops.banco=this.value;R()' style='padding:7px 10px;border:1px solid #ddd;border-radius:8px;font-size:12px;background:#fff;cursor:pointer;min-width:160px'>"+bancoOpts+"</select>"+
+  (f.q||f.src||f.ruta||f.banco?"<button onclick='S._ops={mes:S._ops.mes,q:\"\",src:\"\",ruta:\"\",banco:\"\"};R()' style='padding:7px 14px;background:#e74c3c;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:12px'>✕ Limpiar filtros</button>":"")+
+  "</div>"+
   "</div>":"");
 
   // ── Tarjetas dinámicas según filtro activo ───────────────────
@@ -7982,16 +7998,87 @@ function rTblUnificada(){
   }
 
   var cuentasNom={}; S.cuentas.forEach(function(c){cuentasNom[c.id]=c.nombre||c.id;});
-  var f2n = function(v){return (v||0).toLocaleString("es",{minimumFractionDigits:2,maximumFractionDigits:2});};
+  var f2n = function(v,d){return (v||0).toLocaleString("es",{minimumFractionDigits:d||2,maximumFractionDigits:d||2});};
+
+  // ── Totales de la tabla filtrada ──
+  var totGanancia=0, totComisVes=0, totComisUsdt=0;
+  var totPorMoneda={}; // monto enviado por moneda
+  var totEntregaPorMoneda={}; // cant entregada por moneda
+  var totPorBancoCobro={}; // total cobrado por banco
+  fil.forEach(function(r){
+    totGanancia += (r.pr||0);
+    totComisVes += (r.comisionBancoVes||0);
+    var tv = r.tv||r.tdia||1;
+    totComisUsdt += (r.comisionBancoVes && tv ? r.comisionBancoVes/tv : 0);
+    if(r.orig){totPorMoneda[r.orig]=(totPorMoneda[r.orig]||0)+(r.am||0);}
+    if(r.dest){totEntregaPorMoneda[r.dest]=(totEntregaPorMoneda[r.dest]||0)+(r.cant||0);}
+    if(r.cuentaBanco){
+      var nb=cuentasNom[r.cuentaBanco]||r.cuentaBanco;
+      if(!totPorBancoCobro[nb]) totPorBancoCobro[nb]={ves:0,brl:0,usd:0,pen:0,usdt:0,n:0};
+      totPorBancoCobro[nb].n++;
+      var am=r.am||0;
+      if(r.orig==="VES")totPorBancoCobro[nb].ves+=am;
+      else if(r.orig==="BRL")totPorBancoCobro[nb].brl+=am;
+      else if(r.orig==="USD")totPorBancoCobro[nb].usd+=am;
+      else if(r.orig==="PEN")totPorBancoCobro[nb].pen+=am;
+    }
+  });
+
+  // ── Fila de totales ──
+  var monedaAmounts = Object.keys(totPorMoneda).map(function(m){
+    return "<span style='margin-right:8px'><b>"+f2n(totPorMoneda[m])+"</b> "+m+"</span>";
+  }).join("");
+  var monedaEntregas = Object.keys(totEntregaPorMoneda).map(function(m){
+    return "<span style='margin-right:8px'><b>"+f2n(totEntregaPorMoneda[m])+"</b> "+m+"</span>";
+  }).join("");
+  var bancosResumen = Object.keys(totPorBancoCobro).map(function(nb){
+    var b=totPorBancoCobro[nb]; var parts=[];
+    if(b.brl)parts.push(f2n(b.brl)+" BRL");
+    if(b.usd)parts.push(f2n(b.usd)+" USD");
+    if(b.ves)parts.push(f2n(b.ves,0)+" VES");
+    if(b.pen)parts.push(f2n(b.pen)+" PEN");
+    return "<div style='margin-bottom:3px'><b>"+nb+":</b> "+parts.join(" · ")+" <span style='color:#888;font-size:10px'>("+b.n+" ops)</span></div>";
+  }).join("");
+
+  var totalesBar =
+  "<div style='background:#1a3558;color:#fff;border-radius:0 0 11px 11px;padding:12px 16px;font-size:12px'>"+
+    "<div style='display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start'>"+
+      "<div style='flex:1;min-width:180px'>"+
+        "<div style='font-size:10px;color:#8ab;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px'>💰 Ganancia total</div>"+
+        "<div style='font-size:18px;font-weight:800;color:#4ade80'>$"+f2n(totGanancia)+" USD</div>"+
+      "</div>"+
+      "<div style='flex:1;min-width:180px'>"+
+        "<div style='font-size:10px;color:#8ab;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px'>🏦 Comisiones bancarias</div>"+
+        "<div style='font-size:15px;font-weight:700;color:#fbbf24'>"+(totComisVes?f2n(totComisVes,2)+" VES":"—")+"</div>"+
+        "<div style='font-size:11px;color:#a0b'>≈ "+f2n(totComisUsdt,4)+" USDT</div>"+
+      "</div>"+
+      "<div style='flex:1;min-width:200px'>"+
+        "<div style='font-size:10px;color:#8ab;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px'>📤 Montos enviados</div>"+
+        "<div style='font-size:13px;font-weight:600;color:#e2e8f0'>"+monedaAmounts+"</div>"+
+      "</div>"+
+      "<div style='flex:1;min-width:200px'>"+
+        "<div style='font-size:10px;color:#8ab;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px'>📥 Montos entregados</div>"+
+        "<div style='font-size:13px;font-weight:600;color:#e2e8f0'>"+monedaEntregas+"</div>"+
+      "</div>"+
+      (bancosResumen?
+      "<div style='flex:2;min-width:220px'>"+
+        "<div style='font-size:10px;color:#8ab;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px'>🏧 Entradas por banco</div>"+
+        "<div style='font-size:11px;color:#e2e8f0'>"+bancosResumen+"</div>"+
+      "</div>":"")+"    </div>"+
+  "</div>";
 
   var rows=fil.map(function(r){
     var sc=r._src; var bg=srcBg[sc]; var co=srcColor[sc];
     var rtBadge="<span style='background:"+bg+";color:"+co+";border-radius:7px;padding:2px 8px;font-size:10px;font-weight:700;white-space:nowrap'>"+srcFlag[sc]+" "+r.rt+"</span>";
     var ganColor=r.pr>=0?"#0f6e3a":"#c0392b";
     var ganDisplay="<span style='color:"+ganColor+";font-weight:800'>$"+f2n(r.pr)+"</span>";
-    var bancoOrigen = r.cuentaBanco ? (cuentasNom[r.cuentaBanco]||r.cuentaBanco) : "<span style='color:#bbb'>—</span>";
-    var bancoDest = r.cuentaDest ? (cuentasNom[r.cuentaDest]||r.cuentaDest) : "<span style='color:#bbb'>—</span>";
-    var comisDisplay = r.comisionBancoVes ? "<span style='color:#c0392b;font-size:10px'>"+f2n(r.comisionBancoVes)+" VES</span>" : "<span style='color:#bbb'>—</span>";
+    var bancoOrigen = r.cuentaBanco ? (cuentasNom[r.cuentaBanco]||r.cuentaBanco) : "<span style='color:#ccc'>—</span>";
+    var bancoDest = r.cuentaDest ? (cuentasNom[r.cuentaDest]||r.cuentaDest) : "<span style='color:#ccc'>—</span>";
+    var tvR = r.tv||r.tdia||1;
+    var comisUsdt = r.comisionBancoVes && tvR ? r.comisionBancoVes/tvR : 0;
+    var comisDisplay = r.comisionBancoVes ?
+      "<span style='color:#c0392b;font-size:10px'>"+f2n(r.comisionBancoVes)+" VES<br><span style='color:#e67e22;font-size:9px'>="+f2n(comisUsdt,4)+" USDT</span></span>" :
+      "<span style='color:#ccc'>—</span>";
     var td="padding:5px 7px"; var tdr="padding:5px 7px;text-align:right"; var tdc="padding:5px 7px;text-align:center";
     return "<tr style='border-bottom:1px solid #f0f0f0'>"+
       "<td style='"+td+";font-size:11px;color:#888;white-space:nowrap'>"+dFmt(r.d)+"</td>"+
@@ -8016,7 +8103,7 @@ function rTblUnificada(){
       "</tr>";
   }).join("");
 
-  var thS="padding:6px 10px;font-size:11px;font-weight:700;white-space:nowrap;text-align:center";
+  var thS="padding:6px 8px;font-size:11px;font-weight:700;white-space:nowrap;text-align:center";
   html +=
   "<div style='overflow-x:auto;border-radius:11px;border:1px solid #e8e8e8'>"+
     "<div style='font-size:11px;color:#888;padding:8px 12px;background:#fafafa;border-bottom:1px solid #f0f0f0'>"+
@@ -8046,6 +8133,7 @@ function rTblUnificada(){
       "<tbody>"+rows+"</tbody>"+
     "</table>"+
     "</div>"+
+  totalesBar+
   "</div>";
 
   return html;
