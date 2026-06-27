@@ -10645,7 +10645,36 @@ function initFirebase(){
       console.warn("Firebase listener error:", err.code, err.message);
     });
 
-    console.log("✅ Firebase conectado");
+
+
+    // REST POLLING: Sincronizacion via HTTPS cuando WebSocket no funciona
+    var _fbLastRestTs = null;
+    var _fbRestPollTimer = setInterval(function(){
+      if(_fbOnline) return;
+      var url = 'https://adminbrl-default-rtdb.firebaseio.com/remesasBRL_v1/_ts.json';
+      fetch(url, {cache: 'no-store'}).then(function(r){ return r.json(); }).then(function(ts){
+        if(ts && ts !== _fbLastRestTs){
+          _fbLastRestTs = ts;
+          fetch('https://adminbrl-default-rtdb.firebaseio.com/remesasBRL_v1.json', {cache:'no-store'})
+            .then(function(r){ return r.json(); })
+            .then(function(data){
+              if(!data) return;
+              var fbTotal=(data.brl||[]).length+(data.vzla||[]).length+(data.eeuu||[]).length;
+              var lsTotal=S.brl.length+S.vzla.length+S.eeuu.length;
+              if(fbTotal >= lsTotal){
+                DATA_KEYS.forEach(function(k){
+                  if(data[k]!==undefined){ S[k]=data[k]; }
+                });
+                S._ts = data._ts;
+                if(data._deleted) S._deleted=data._deleted;
+                localStorage.setItem('remesasBRL_v1', JSON.stringify(S));
+                console.log('REST poll: datos actualizados ('+fbTotal+' ops)');
+                if(typeof renderAll==='function') renderAll();
+              }
+            }).catch(function(e){ console.warn('REST poll error:', e); });
+        }
+      }).catch(function(e){ });
+    }, 60000);    console.log("✅ Firebase conectado");
   }catch(e){
     console.warn("Firebase init error:", e);
   }
@@ -10658,30 +10687,46 @@ function fbSave(obj){
   _fbSaveTimer = setTimeout(function(){
     _fbMyWrite = true;
     S._ts = obj._ts;
-    // Actualizar solo las claves necesarias (no reemplazar todo el documento)
-    // Esto permite que dos usuarios trabajen sin pisarse los cambios
-    var update = {_ts: obj._ts, _opsCount: obj._opsCount};
-    DATA_KEYS.forEach(function(k){ update[k] = obj[k]; });
-    _fbRef.update(update).then(function(){
-      console.log("💾 Firebase guardado · ts:", obj._ts);
-    }).catch(function(e){
-      console.warn("Firebase update error, intentando set():", e);
-      // Fallback: guardar todo si update() falla
-      _fbRef.set(obj).catch(function(e2){
-        console.warn("Firebase save error:", e2);
-        _fbMyWrite = false;
-      });
+    var updates = {};
+    DATA_KEYS.forEach(function(k){
+      if(obj[k] !== undefined) updates[k] = obj[k];
     });
+    if(obj._ts !== undefined) updates._ts = obj._ts;
+    if(obj._deleted !== undefined) updates._deleted = obj._deleted;
+
+    function fbRestSave(dataToSave){
+      var url = 'https://adminbrl-default-rtdb.firebaseio.com/remesasBRL_v1.json';
+      fetch(url, {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(dataToSave)
+      }).then(function(r){
+        if(!r.ok) throw new Error('REST '+r.status);
+        console.log('Guardado via REST API');
+        setTimeout(function(){ _fbMyWrite = false; }, 3000);
+      }).catch(function(e){
+        console.error('REST save failed:', e);
+        setTimeout(function(){ _fbMyWrite = false; }, 3000);
+      });
+    }
+
+    if(_fbOnline){
+      _fbRef.update(updates).then(function(){
+        setTimeout(function(){ _fbMyWrite = false; }, 3000);
+      }).catch(function(e){
+        console.warn('WebSocket update fallo, usando REST...', e);
+        _fbRef.set(obj).catch(function(e2){
+          console.warn('set() fallo, usando REST:', e2);
+          fbRestSave(updates);
+        });
+        setTimeout(function(){ _fbMyWrite = false; }, 3000);
+      });
+    } else {
+      console.log('Sin WebSocket, guardando via REST API (HTTPS)...');
+      fbRestSave(updates);
+    }
   }, 800);
 }
-
-
-// ── STARTUP ────────────────────────────────────────────
-// 1. Load localStorage for immediate display (no Firebase write)
-var _loaded=loadData();
-_syncCapitalWithCuentas();
-
-// 2. Merge ONLY clients from base data (non-destructive, no ops)
 function mergeBaseClients(){
   if(_EEUU_CLIENTS && _EEUU_CLIENTS.length > 0){
     var _exN=S.clientes.filter(function(cl){return cl.nota==="EEUU";}).map(function(cl){return cl.n;});
