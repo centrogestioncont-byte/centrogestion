@@ -370,7 +370,7 @@ const TABS={
   brl:  ["mi_ganancia","op_diario","nueva","clientes"],
   vzla: ["mi_ganancia","op_diario","nueva","clientes"],
   eeuu: ["mi_ganancia","op_diario","nueva_eeuu","clientes"],
-  lector:["dash","diario","evolucion","brl","vzla","eeuu","inventario_usdt","capital_total","egresos","prestamos","cobrar","traspasos"],
+  lector:["dash","diario","ops","evolucion","cierre","nueva","calculadora","inventario_usdt","capital_total","egresos","prestamos","cobrar","traspasos","auditoria","config_admin"],
 };
 const TL={
   dash:"📊 Resumen",diario:"📅 Diario",ops:"📋 Operaciones",evolucion:"📈 Evolución",cierre:"🗓️ Cierre de Mes",brl:"🇧🇷 BRL",vzla:"🇻🇪 VZLA",eeuu:"🇺🇸 EE.UU",
@@ -3686,13 +3686,20 @@ function rConfigAdmin(){
     var perfiles=[["lector","👁️ Supervisor (ve todo, no modifica)"],["admin","🛡️ Administrador (control total)"],["brl","🇧🇷 Operador BRL"],["vzla","🇻🇪 Operador VZLA"],["eeuu","🇺🇸 Operador EE.UU"]];
     var filas=us.map(function(u){
       var base=ROLES.find(function(r){return r.id===u.perfil;})||{label:u.perfil,ic:"👤"};
-      return "<tr><td style='padding:7px 9px;font-weight:600'>"+u.n+"</td><td style='padding:7px 9px'>"+base.ic+" "+base.label+"</td><td style='padding:7px 9px;font-family:monospace'>"+u.pin+"</td>"+
-      "<td style='padding:7px 9px;text-align:center'><label style='display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-size:10px;font-weight:700;color:"+(u.editar?"#0f6e3a":"#999")+"'><input type='checkbox' "+(u.editar?"checked":"")+" onchange='toggleEditarUsuario("+u.id+",this.checked)'> "+(u.editar?"✏️ SÍ":"👁 NO")+"</label></td>"+
-      "<td style='padding:7px 9px;text-align:center'><button class='del-btn' onclick='delUsuario("+u.id+")'>🗑️</button></td></tr>";
+      var perms=u.permisos||{};
+      var permBtns=PERMISOS_DEF.map(function(p){
+        var on=perms[p.k]||false;
+        return "<span title='"+p.desc+"' onclick='togglePermiso("+u.id+",\'"+p.k+"\',"+(!on)+")' style='display:inline-block;margin:2px;padding:3px 7px;border-radius:6px;font-size:10px;font-weight:700;cursor:pointer;background:"+(on?"#0f6e3a":"#eee")+";color:"+(on?"#fff":"#999")+";border:1.5px solid "+(on?"#0f6e3a":"#ddd")+"'>"+p.label+"</span>";
+      }).join("");
+      return "<tr style='border-bottom:1px solid #f0f0f0'>"+
+        "<td style='padding:8px 10px;font-weight:700;vertical-align:top'>"+u.n+"<br><span style='font-size:10px;color:#888'>"+base.ic+" "+base.label+" · PIN: "+u.pin+"</span></td>"+
+        "<td style='padding:8px 10px'>"+permBtns+"</td>"+
+        "<td style='padding:8px 10px;text-align:center;vertical-align:top'><button class='del-btn' onclick='delUsuario("+u.id+")'>🗑️</button></td>"+
+      "</tr>";
     }).join("");
     return "<div class='sec'><div class='sec-title'>👥 Usuarios adicionales</div>"+
     "<div style='font-size:11px;color:#666;margin-bottom:10px'>Crea accesos para más personas (familia, suplentes). Cada quien entra con su propio PIN — y puede activar su huella en su teléfono. Cada usuario tiene su interruptor <b>PUEDE EDITAR</b>: apagado, solo mira (ideal para tu esposo); encendido, puede registrar y editar en su módulo (ideal cuando dejas a alguien trabajando). Lo prendes y apagas aquí mismo en cualquier momento, y aplica al instante en todos los aparatos.</div>"+
-    (us.length?"<div class='tw' style='margin-bottom:12px'><table><thead><tr><th>NOMBRE</th><th>PERFIL</th><th>PIN</th><th style='text-align:center'>PUEDE EDITAR</th><th></th></tr></thead><tbody>"+filas+"</tbody></table></div>":"<div style='font-size:11px;color:#aaa;margin-bottom:12px'>Sin usuarios adicionales todavía.</div>")+
+    (us.length?"<div style='margin-bottom:12px;overflow-x:auto'><table style='width:100%;border-collapse:collapse'><thead><tr style='background:#f5f5f7'><th style='padding:8px 10px;text-align:left;font-size:11px'>USUARIO</th><th style='padding:8px 10px;text-align:left;font-size:11px'>PERMISOS (toca para activar/desactivar)</th><th style='padding:8px 10px;font-size:11px'></th></tr></thead><tbody>"+filas+"</tbody></table></div>":"<div style='font-size:11px;color:#aaa;margin-bottom:12px'>Sin usuarios adicionales todavía.</div>")+
     "<div class='f2'><div class='fl'><label>Nombre</label><input type='text' placeholder='ej: Mi esposo, María...' value='"+(S.nUser.n||"")+"' oninput='S.nUser.n=this.value'></div>"+
     "<div class='fl'><label>Perfil / módulo</label><select onchange='S.nUser.perfil=this.value'>"+perfiles.map(function(p){return "<option value='"+p[0]+"'"+(S.nUser.perfil===p[0]?" selected":"")+">"+p[1]+"</option>";}).join("")+"</select></div></div>"+
     "<div class='fl'><label>PIN propio (mín. 4 caracteres, distinto a los demás)</label><input type='text' maxlength='12' placeholder='ej: ANA2026' value='"+(S.nUser.pin||"")+"' oninput='S.nUser.pin=this.value'></div>"+
@@ -5839,6 +5846,53 @@ function pinKey(k){
 // Cada huella se registra en EL DISPOSITIVO de cada operador, amarrada a su rol.
 // ── USUARIOS ADICIONALES (esposo, hermana, suplentes...) ─────────
 function getUsuarios(){return (S&&S.config&&S.config.usuarios)||[];}
+
+// ── Permisos granulares ────────────────────────────────────────────
+var PERMISOS_DEF=[
+  {k:"diario",      label:"📅 Diario",              desc:"Ver el registro diario de operaciones"},
+  {k:"ops",         label:"📋 Operaciones",          desc:"Ver tabla completa de operaciones"},
+  {k:"evolucion",   label:"📈 Evolución",             desc:"Ver la evolución mensual de ganancias"},
+  {k:"cierre",      label:"🔒 Cierre Mensual",        desc:"Ver y generar el informe de cierre"},
+  {k:"nueva",       label:"➕ Nueva Operación",       desc:"Registrar nuevas remesas"},
+  {k:"calculadora", label:"💱 Tasas",                 desc:"Usar la calculadora de tasas"},
+  {k:"inventario_usdt",label:"🏦 Inventario USDT",   desc:"Ver el inventario de lotes USDT"},
+  {k:"capital_total",  label:"💰 Balance de Cuentas",desc:"Ver el balance y saldos de cuentas"},
+  {k:"egresos",     label:"💸 Egresos",               desc:"Ver y registrar gastos"},
+  {k:"prestamos",   label:"🤝 Préstamos",             desc:"Ver y gestionar préstamos"},
+  {k:"cobrar",      label:"💳 Por Cobrar",            desc:"Ver operaciones pendientes de cobro"},
+  {k:"traspasos",   label:"🔄 Traspasos",             desc:"Ver y registrar traspasos entre cuentas"},
+  {k:"auditoria",   label:"🔍 Auditoría",             desc:"Ver el registro de auditoría"},
+  {k:"config_admin",label:"⚙️ Configuración",         desc:"Acceder a la configuración del sistema"},
+  {k:"editar",      label:"✏️ Puede editar",          desc:"Guardar cambios (sin esto: solo lectura)"},
+];
+
+function tienePermiso(perm){
+  if(S.role==="admin") return true;
+  if(S.role==="lector"&&S.usuarioId){
+    var u=getUsuarios().find(function(x){return x.id===S.usuarioId;});
+    if(!u) return false;
+    return !!(u.permisos&&u.permisos[perm]);
+  }
+  return false;
+}
+
+function rSinPermiso(seccion){
+  return "<div style='display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:260px;padding:32px;text-align:center'>"+
+    "<div style='font-size:48px;margin-bottom:16px'>🔒</div>"+
+    "<div style='font-size:17px;font-weight:800;color:#1a3558;margin-bottom:8px'>Sin acceso</div>"+
+    "<div style='font-size:13px;color:#888;max-width:280px;line-height:1.6'>No tienes permiso para acceder a <b>"+seccion+"</b>.<br>Contacta al administrador para que te lo active.</div>"+
+  "</div>";
+}
+
+function togglePermiso(userId, perm, val){
+  var u=getUsuarios().find(function(x){return x.id===userId;});
+  if(!u) return;
+  if(!u.permisos) u.permisos={};
+  u.permisos[perm]=!!val;
+  // Compatibilidad con campo editar legacy
+  if(perm==="editar") u.editar=!!val;
+  saveData(); R();
+}
 function resolvePerfilKey(key){
   if(key&&key.indexOf("u_")===0){
     var u=getUsuarios().find(function(x){return "u_"+x.id===key;});
@@ -5851,10 +5905,10 @@ function resolvePerfilKey(key){
 function permisoEdicion(){
   if(S.usuarioId){
     var u=getUsuarios().find(function(x){return x.id===S.usuarioId;});
-    if(!u)return false;            // usuario eliminado por el admin → sin acceso de escritura
-    return u.editar===true;        // el admin decide con el interruptor
+    if(!u) return false;
+    return !!(u.permisos&&u.permisos.editar)||u.editar===true;
   }
-  return S.role!=="lector";        // perfiles base: todos editan (admin/operadores)
+  return S.role!=="lector";
 }
 function toggleEditarUsuario(id,val){
   var u=getUsuarios().find(function(x){return x.id===id;});
@@ -6670,34 +6724,33 @@ function rMain(){
   "x";
   var _dummy2="";
   var body="";
-  // Admin-only tabs
   var isAdmin=S.role==="admin"||S.role==="lector";
-  if(S.tab==="dash")             body=isAdmin?rDash():"";
-  else if(S.tab==="dash_eeuu")   body=isAdmin?rDashEE():"";
-  else if(S.tab==="diario")      body=isAdmin?rDiario():"";
-  else if(S.tab==="evolucion")   body=isAdmin?rEvolucion():"";
-  else if(S.tab==="cierre")        body=isAdmin?rInformeCierre():"";
-  else if(S.tab==="ops")          body=isAdmin?rTblUnificada():"";
-  else if(S.tab==="brl")         body=isAdmin?rTbl(S.brl,"brl"):"";
-  else if(S.tab==="vzla")        body=isAdmin?rTbl(S.vzla,"vzla"):"";
-  else if(S.tab==="eeuu")        body=isAdmin?rTblEE():"";
-  else if(S.tab==="inventario_usdt") body=isAdmin?rInventarioUsdt():"";
-  else if(S.tab==="capital_total") body=isAdmin?rCapitalTotal():"";
-  else if(S.tab==="traspasos")   body=isAdmin?rTraspasos():"";
-  else if(S.tab==="config_admin") body=isAdmin?rConfigAdmin():"";
-  else if(S.tab==="egresos")     body=isAdmin?rEgresos():(S.role==="eeuu"?rDashEE():"");
-  // Operator tabs
-  else if(S.tab==="nueva")       body=rNueva();
-  else if(S.tab==="nueva_eeuu")  body=rNuevaEE();
-  else if(S.tab==="mi_ganancia") body=(S.role==="eeuu"?rDashEE():rMiGanancia());
-  else if(S.tab==="op_diario")   body=rOpDiario();
-  else if(S.tab==="clientes")    body=rClientes();
-  else if(S.tab==="prestamos")   body=rPrestamos();
-  else if(S.tab==="cobrar")      body=rCuentasCobrar();
-  else if(S.tab==="mi_gestion")  body=rMiGestion();
-  else if(S.tab==="auditoria")   body=isAdmin?rAuditoria():"";
-  else if(S.tab==="historial")   body=isAdmin?rHistorialMeses():"";
-  else if(S.tab==="calculadora") body=rCalculadora();
+  var tp=function(perm,fn,nombre){return tienePermiso(perm)?fn():rSinPermiso(nombre||perm);};
+  if(S.tab==="dash")               body=isAdmin?rDash():"";
+  else if(S.tab==="dash_eeuu")     body=isAdmin?rDashEE():"";
+  else if(S.tab==="diario")        body=isAdmin?tp("diario",rDiario,"Diario"):"";
+  else if(S.tab==="evolucion")     body=isAdmin?tp("evolucion",rEvolucion,"Evolución"):"";
+  else if(S.tab==="cierre")        body=isAdmin?tp("cierre",rInformeCierre,"Cierre Mensual"):"";
+  else if(S.tab==="ops")           body=isAdmin?tp("ops",rTblUnificada,"Operaciones"):"";
+  else if(S.tab==="brl")           body=isAdmin?tp("ops",function(){return rTbl(S.brl,"brl");},"BRL"):"";
+  else if(S.tab==="vzla")          body=isAdmin?tp("ops",function(){return rTbl(S.vzla,"vzla");},"VZLA"):"";
+  else if(S.tab==="eeuu")          body=isAdmin?tp("ops",rTblEE,"EE.UU"):"";
+  else if(S.tab==="inventario_usdt") body=isAdmin?tp("inventario_usdt",rInventarioUsdt,"Inventario USDT"):"";
+  else if(S.tab==="capital_total") body=isAdmin?tp("capital_total",rCapitalTotal,"Balance de Cuentas"):"";
+  else if(S.tab==="traspasos")     body=isAdmin?tp("traspasos",rTraspasos,"Traspasos"):"";
+  else if(S.tab==="config_admin")  body=isAdmin?tp("config_admin",rConfigAdmin,"Configuración"):"";
+  else if(S.tab==="egresos")       body=isAdmin?tp("egresos",rEgresos,"Egresos"):(S.role==="eeuu"?rDashEE():"");
+  else if(S.tab==="auditoria")     body=isAdmin?tp("auditoria",rAuditoria,"Auditoría"):"";
+  else if(S.tab==="historial")     body=isAdmin?rHistorialMeses():"";
+  else if(S.tab==="nueva")         body=isAdmin?tp("nueva",rNueva,"Nueva Operación"):rNueva();
+  else if(S.tab==="nueva_eeuu")    body=rNuevaEE();
+  else if(S.tab==="mi_ganancia")   body=(S.role==="eeuu"?rDashEE():rMiGanancia());
+  else if(S.tab==="op_diario")     body=rOpDiario();
+  else if(S.tab==="clientes")      body=rClientes();
+  else if(S.tab==="prestamos")     body=isAdmin?tp("prestamos",rPrestamos,"Préstamos"):rPrestamos();
+  else if(S.tab==="cobrar")        body=isAdmin?tp("cobrar",rCuentasCobrar,"Por Cobrar"):rCuentasCobrar();
+  else if(S.tab==="mi_gestion")    body=rMiGestion();
+  else if(S.tab==="calculadora")   body=isAdmin?tp("calculadora",rCalculadora,"Tasas"):rCalculadora();
   return "<div id='app'><div class='topbar' style='background:"+bgMap[S.role]+"'>"+
     "<div style='display:flex;align-items:center;gap:10px;flex-wrap:wrap'>"+
       "<div style='width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center;font-size:17px'>"+ro.ic+"</div>"+
