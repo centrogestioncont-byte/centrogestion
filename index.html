@@ -397,6 +397,7 @@ const RUTAS=[
   {rt:"COP ↔ VZLA", orig:"COP",dest:"VES",pais:"VENEZUELA",flag:"🇻🇪",lDia:"Tasa día (BS × 1 COP)",  lTc:"Tasa compra USDT (COP/USDT)",lTv:"Tasa venta USDT (BS/USDT)"},
   {rt:"USD ↔ VZLA", orig:"USD",dest:"VES",pais:"VENEZUELA",flag:"🇻🇪",lDia:"Tasa día (BS × 1 USD)",  lTc:"Tasa compra USDT (USD/USDT)",lTv:"Tasa venta USDT (BS/USDT)"},
   {rt:"PEN ↔ BRL",  orig:"PEN",dest:"BRL",pais:"BRASIL",   flag:"🇧🇷",lDia:"Tasa día (BRL × 1 PEN)",  lTc:"Tasa compra USDT (PEN/USDT)",lTv:"Tasa venta USDT (BRL/USDT)"},
+  {rt:"EUR ↔ VZLA", orig:"EUR",dest:"VES",pais:"VENEZUELA",flag:"🇻🇪",lDia:"Tasa día (BS × 1 EUR)",  lTc:"Tasa compra USDT (EUR/USDT)",lTv:"Tasa venta USDT (BS/USDT)"},
 ];
 var MONEDAS_COMPRA=[
   {id:"USDT",label:"USDT (Tether)",       flag:"💲", hint:"USDT/USDT = 1 (directo)"},
@@ -10081,49 +10082,134 @@ function rCapital(){
 }
 
 function rClientes(){
-  var q=S.qCl.toLowerCase();
-  // Filter by operator: EE.UU sees only EEUU clients; BRL/VZLA see only non-EEUU; admin sees all
+  var q=(S.qCl||"").toLowerCase();
+  var fRuta=S.fRutaCl||"";
   var baseCl=S.clientes.filter(function(cl){
     if(S.role==="eeuu") return cl.nota==="EEUU";
     if(S.role==="brl"||S.role==="vzla") return cl.nota!=="EEUU";
-    return true; // admin sees all
+    return true;
   });
-  var fil=q?baseCl.filter(function(c){
-    return c.n.toLowerCase().includes(q)||c.cod.toLowerCase().includes(q)||(c.ruta||"").toLowerCase().includes(q);
-  }):baseCl;
-  var rtBg=function(rt){return rt.includes("BRL")&&!(rt.startsWith("VES")||rt.startsWith("VZLA"))?"#D6F5E3":rt.includes("USD")||rt.includes("EE")?"#DDEEFF":(rt.startsWith("VES")||rt.startsWith("VZLA"))?"#FDECEA":"#FFF8DC";};
-  var rtCl=function(rt){return rt.includes("BRL")&&!(rt.startsWith("VES")||rt.startsWith("VZLA"))?"#0b4d27":rt.includes("USD")||rt.includes("EE")?"#0a3d7c":(rt.startsWith("VES")||rt.startsWith("VZLA"))?"#7c1c0c":"#7a5c00";};
+  var fil=baseCl.filter(function(c){
+    var matchQ=!q||(c.n.toLowerCase().includes(q)||c.cod.toLowerCase().includes(q)||(c.ruta||"").toLowerCase().includes(q)||(c.tel||"").toLowerCase().includes(q));
+    var matchR=!fRuta||(c.ruta||"")===fRuta;
+    return matchQ&&matchR;
+  });
+
+  var rtStyle=function(rt){
+    if(!rt)return{bg:"#f0f0f0",cl:"#555",bd:"#ddd",av:"#aaa"};
+    if(rt==="EUR ↔ VZLA")return{bg:"#EEE0FF",cl:"#4a1d8f",bd:"#9b59d4",av:"#6c3db5"};
+    if(rt.includes("BRL")&&!rt.startsWith("VES")&&!rt.startsWith("VZLA"))return{bg:"#D6F5E3",cl:"#0b4d27",bd:"#27ae60",av:"#0b4d27"};
+    if(rt.includes("EE")||rt==="UU.EE ↔ VZLA")return{bg:"#DDEEFF",cl:"#0a3d7c",bd:"#2980b9",av:"#0a3d7c"};
+    if(rt.includes("USD"))return{bg:"#E0F0FF",cl:"#154080",bd:"#3498db",av:"#154080"};
+    if(rt.startsWith("VES")||rt.startsWith("VZLA"))return{bg:"#FDECEA",cl:"#7c1c0c",bd:"#e74c3c",av:"#c0392b"};
+    if(rt.includes("PEN"))return{bg:"#FFF5DC",cl:"#7a4d00",bd:"#f39c12",av:"#c07800"};
+    if(rt.includes("TTD"))return{bg:"#D6F5F5",cl:"#0d5959",bd:"#16a085",av:"#1a7a7a"};
+    if(rt.includes("COP"))return{bg:"#FFE8D6",cl:"#7c3000",bd:"#e67e22",av:"#c0540c"};
+    return{bg:"#f5f5f5",cl:"#555",bd:"#bbb",av:"#888"};
+  };
+
+  var rutasUnicas=[];
+  baseCl.forEach(function(c){if(c.ruta&&rutasUnicas.indexOf(c.ruta)===-1)rutasUnicas.push(c.ruta);});
+  rutasUnicas.sort();
+
+  // Stats bar
+  var statsHtml="<div style='display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center'>";
+  statsHtml+="<div style='background:linear-gradient(135deg,#FFA31C,#e08a00);color:#fff;border-radius:12px;padding:10px 16px;font-size:12px;font-weight:700;display:flex;align-items:center;gap:6px;box-shadow:0 2px 8px rgba(255,163,28,.35)'>👥 <span style='font-size:20px;line-height:1'>"+(baseCl.length)+"</span> <span style='opacity:.9;font-size:11px'>clientes<br>registrados</span></div>";
+  rutasUnicas.forEach(function(rt){
+    var cnt=baseCl.filter(function(c){return c.ruta===rt;}).length;
+    var st=rtStyle(rt);
+    statsHtml+="<div style='background:"+st.bg+";border:1.5px solid "+st.bd+";border-radius:10px;padding:7px 12px;font-size:11px;font-weight:700;color:"+st.cl+";display:flex;align-items:center;gap:5px'>"+rt+" <span style='background:"+st.av+";color:#fff;border-radius:10px;padding:1px 7px;font-size:10px'>"+cnt+"</span></div>";
+  });
+  statsHtml+="</div>";
+
+  // Search bar
+  var searchHtml="<div style='display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap'>";
+  searchHtml+="<div style='position:relative;flex:1;min-width:200px'><span style='position:absolute;left:11px;top:50%;transform:translateY(-50%);font-size:14px;pointer-events:none;opacity:.5'>🔍</span><input placeholder='Buscar nombre, código, ruta, teléfono...' value='"+S.qCl+"' oninput='sscl(this.value)' style='width:100%;padding:10px 12px 10px 34px;border:1.5px solid #ddd;border-radius:10px;font-size:13px;font-family:inherit;box-sizing:border-box'></div>";
+  searchHtml+="<span style='font-size:12px;color:#888;white-space:nowrap;font-weight:700'>"+fil.length+" / "+baseCl.length+"</span>";
+  searchHtml+=(q||fRuta?"<button onclick='S.qCl=\"\";S.fRutaCl=\"\";R()' style='padding:8px 12px;background:#e74c3c;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>✕</button>":"");
+  searchHtml+="</div>";
+
+  // Route chips
+  var chipsHtml="";
+  if(rutasUnicas.length>1){
+    chipsHtml="<div style='display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;align-items:center'><span style='font-size:10px;color:#aaa;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-right:2px'>Rutas:</span>";
+    rutasUnicas.forEach(function(rt){
+      var st=rtStyle(rt);
+      var on=fRuta===rt;
+      var cnt=baseCl.filter(function(c){return c.ruta===rt;}).length;
+      chipsHtml+="<button onclick='S.fRutaCl=(S.fRutaCl===\""+rt+"\"?\"\": \""+rt+"\");R()' style='padding:5px 11px;border:1.5px solid "+(on?st.bd:"#ddd")+";border-radius:20px;font-size:11px;font-weight:700;cursor:pointer;background:"+(on?st.bg:"#fff")+";color:"+(on?st.cl:"#777")+";font-family:inherit;transition:all .15s'>"+rt+" <span style='opacity:.7'>("+cnt+")</span></button>";
+    });
+    chipsHtml+="</div>";
+  }
+
+  // Client cards
   var nc=S.nCl;
   var rOpts=RUTAS.map(function(r){return "<option value='"+r.rt+"'"+(nc.ruta===r.rt?" selected":"")+">"+r.rt+"</option>";}).join("");
-  var cards=fil.map(function(cl){
-    return "<div class='ccard'>"+
-      "<div style='display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px'>"+
-        (cl.nota==="EEUU"?"":"<span style='background:#f0f0f0;border-radius:6px;padding:3px 8px;font-size:10px;font-weight:700;color:#555'>"+cl.cod+"</span>")+
-        "<span style='background:"+(cl.pais==="VENEZUELA"?"#CF0001":"#009C3B")+";color:#fff;padding:2px 7px;border-radius:20px;font-size:9px;font-weight:700'>"+(cl.pais==="VENEZUELA"?"🇻🇪 VE":"🇧🇷 BR")+"</span></div>"+
-      "<div style='font-weight:700;font-size:12px;margin-bottom:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>"+cl.n+"</div>"+
-      "<span class='bd' style='background:"+rtBg(cl.ruta)+";color:"+rtCl(cl.ruta)+";font-size:9px'>"+cl.ruta+"</span>"+
-      (cl.tel?"<div style='font-size:10px;color:#888;margin-top:4px'>📱 "+cl.tel+"</div>":"")+
-      (cl.nota?"<div style='font-size:9px;background:#DDEEFF;color:#0a3d7c;padding:2px 6px;border-radius:4px;margin-top:4px;display:inline-block'>🇺🇸 "+cl.nota+"</div>":"")+
-      "<div style='display:flex;gap:5px;margin-top:8px'><button class='edit-btn' onclick='editCl(\""+cl.cod+"\")'>✏️ Editar</button><button class='del-btn' onclick='delCl(\""+cl.cod+"\")'>🗑️</button></div></div>";
-  }).join("");
-  return "<div class='srow' style='margin-bottom:14px'><input placeholder='Buscar cliente, código o ruta...' value='"+S.qCl+"' oninput='sscl(this.value)'><span style='font-size:11px;color:#888;white-space:nowrap'>"+fil.length+" clientes</span></div>"+
-    "<div class='client-grid'>"+cards+"</div>"+
-    (function(){
+  var cards="";
+  if(fil.length===0){
+    cards="<div style='grid-column:1/-1;text-align:center;padding:40px 20px;color:#aaa'><div style='font-size:36px;margin-bottom:10px'>👤</div><div style='font-size:14px;font-weight:600'>No se encontraron clientes</div><div style='font-size:12px;margin-top:4px'>Intenta con otro filtro o término</div></div>";
+  } else {
+    cards=fil.map(function(cl){
+      var st=rtStyle(cl.ruta);
+      var words=(cl.n||"?").trim().split(" ");
+      var initials=(words[0]?words[0][0]:"")+(words[1]?words[1][0]:"");
+      initials=initials.toUpperCase()||"?";
+      var isEdit=S.editCl===cl.cod;
+      return "<div class='ccard' style='border-left:4px solid "+st.bd+";padding:0;overflow:hidden"+(isEdit?";box-shadow:0 0 0 2px "+st.bd:"")+"'>"+
+        "<div style='padding:12px 12px 10px 12px'>"+
+          "<div style='display:flex;align-items:flex-start;gap:10px;margin-bottom:8px'>"+
+            "<div style='width:38px;height:38px;min-width:38px;border-radius:50%;background:"+st.av+";display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:900;color:#fff;flex-shrink:0'>"+initials+"</div>"+
+            "<div style='flex:1;min-width:0'>"+
+              (cl.cod?"<div style='font-size:9px;font-weight:700;color:#aaa;letter-spacing:.5px;text-transform:uppercase;margin-bottom:1px'>#"+cl.cod+"</div>":"")+
+              "<div style='font-weight:700;font-size:12px;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#1a1a2e'>"+cl.n+"</div>"+
+            "</div>"+
+            "<span style='background:"+(cl.pais==="VENEZUELA"?"#CF0001":"#009C3B")+";color:#fff;padding:2px 6px;border-radius:6px;font-size:8px;font-weight:700;flex-shrink:0'>"+(cl.pais==="VENEZUELA"?"🇻🇪 VE":"🇧🇷 BR")+"</span>"+
+          "</div>"+
+          "<div style='background:"+st.bg+";border:1px solid "+st.bd+";border-radius:6px;padding:3px 8px;display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;color:"+st.cl+"'>"+cl.ruta+"</div>"+
+          (cl.tel?"<div style='font-size:10px;color:#888;margin-top:6px'>📱 "+cl.tel+"</div>":"")+
+          (cl.nota&&cl.nota!=="EEUU"?"<div style='font-size:9px;background:#f0f0f0;color:#555;padding:2px 7px;border-radius:4px;margin-top:5px;display:inline-block'>"+cl.nota+"</div>":"")+
+        "</div>"+
+        "<div style='border-top:1px solid #f0f0f0;display:flex'>"+
+          "<button class='edit-btn' onclick='editCl(\""+cl.cod+"\")' style='flex:1;border:none;border-right:1px solid #f0f0f0;border-radius:0;background:#fff;color:"+st.cl+";font-weight:700;font-size:11px;padding:9px;cursor:pointer'>✏️ Editar</button>"+
+          "<button class='del-btn' onclick='delCl(\""+cl.cod+"\")' style='border:none;border-radius:0;background:#fff;color:#e74c3c;font-size:14px;padding:9px 14px;cursor:pointer'>🗑</button>"+
+        "</div>"+
+      "</div>";
+    }).join("");
+  }
+
+  // Next code
   var numCodes=S.clientes.filter(function(x){return /^\d+$/.test(x.cod);}).map(function(x){return parseInt(x.cod);});
   var nextNum=numCodes.length?Math.max.apply(null,numCodes)+1:1;
   var nextCod=String(nextNum).padStart(3,"0");
-  return "<div class='sec'><div class='sec-title'>"+(S.editCl?"✏️ Editar":"➕ Nuevo")+" cliente"+
-    (!S.editCl&&S.role!=="eeuu"?" <span style='font-size:10px;background:#D6F5E3;color:#0b4d27;padding:2px 8px;border-radius:5px;margin-left:6px'>Próximo código disponible: "+nextCod+"</span>":"")+
+
+  // Form
+  var isEdit=!!S.editCl;
+  var hdrGrad=isEdit?"linear-gradient(135deg,#1a3558,#2980b9)":"linear-gradient(135deg,#0b4d27,#27ae60)";
+  var hdrBd=isEdit?"#1a355820":"#0b4d2720";
+  var formHtml="<div class='sec' style='padding:0;overflow:hidden;border:1.5px solid "+hdrBd+"'>"+
+    "<div style='background:"+hdrGrad+";padding:14px 16px;display:flex;align-items:center;justify-content:space-between'>"+
+      "<div style='font-weight:700;font-size:14px;color:#fff'>"+(isEdit?"✏️ Editando cliente":"➕ Nuevo cliente")+"</div>"+
+      (!isEdit&&S.role!=="eeuu"?"<span style='font-size:10px;background:rgba(255,255,255,.2);color:#fff;padding:3px 10px;border-radius:8px'>Próximo código: "+nextCod+"</span>":"")+
+    "</div>"+
+    "<div style='padding:16px'>"+
+      "<div class='f3' style='margin-bottom:14px'>"+
+        "<div class='fl'><label style='font-size:11px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:5px'>📋 Código</label><input type='text' placeholder='ej: 001 o E001' value='"+(nc.cod||"")+"' oninput='S.nCl.cod=this.value' style='width:100%;padding:10px 12px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit;font-size:13px;box-sizing:border-box'></div>"+
+        "<div class='fl'><label style='font-size:11px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:5px'>👤 Nombre completo</label><input type='text' placeholder='Nombre y apellido del cliente' value='"+(nc.n||"")+"' oninput='S.nCl.n=this.value' style='width:100%;padding:10px 12px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit;font-size:13px;box-sizing:border-box'></div>"+
+        "<div class='fl'><label style='font-size:11px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:5px'>📱 Teléfono</label><input type='text' placeholder='+1 (555) 0000' value='"+(nc.tel||"")+"' oninput='S.nCl.tel=this.value' style='width:100%;padding:10px 12px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit;font-size:13px;box-sizing:border-box'></div>"+
+      "</div>"+
+      "<div class='f3' style='margin-bottom:16px'>"+
+        "<div class='fl'><label style='font-size:11px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:5px'>🌍 País</label><select onchange='S.nCl.pais=this.value' style='width:100%;padding:10px 12px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit;font-size:13px;box-sizing:border-box'><option value='VENEZUELA'"+(nc.pais==="VENEZUELA"?" selected":"")+">🇻🇪 Venezuela</option><option value='BRASIL'"+(nc.pais==="BRASIL"?" selected":"")+">🇧🇷 Brasil</option></select></div>"+
+        "<div class='fl'><label style='font-size:11px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:5px'>🔀 Ruta principal</label><select onchange='S.nCl.ruta=this.value' style='width:100%;padding:10px 12px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit;font-size:13px;box-sizing:border-box'>"+rOpts+"</select></div>"+
+        "<div class='fl'><label style='font-size:11px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:5px'>📝 Nota / grupo</label><input type='text' placeholder='ej: EEUU, VIP, Referido...' value='"+(nc.nota||"")+"' oninput='S.nCl.nota=this.value' style='width:100%;padding:10px 12px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit;font-size:13px;box-sizing:border-box'></div>"+
+      "</div>"+
+      "<div style='display:flex;gap:10px'>"+
+        "<button class='btn-main btn-green' style='flex:2;font-size:14px;font-weight:700;border-radius:10px;padding:13px' onclick='saveCl()'>"+(isEdit?"💾 Actualizar cliente":"💾 Guardar cliente")+"</button>"+
+        (isEdit?"<button class='btn-main btn-gray' style='flex:1;font-size:13px;border-radius:10px;padding:13px' onclick='S.editCl=null;S.nCl={cod:\"\",n:\"\",tel:\"\",pais:\"VENEZUELA\",ruta:\"BRL ↔ VZLA\",nota:\"\"};R()'>✕ Cancelar</button>":"")+
+      "</div>"+
+    "</div>"+
   "</div>";
-})()+" "+
-    "<div class='f3'><div class='fl'><label>Código</label><input type='text' placeholder='ej: 001 o E001' value='"+(nc.cod||"")+"' oninput='S.nCl.cod=this.value'></div>"+
-    "<div class='fl'><label>Nombre completo</label><input type='text' placeholder='Nombre del cliente' value='"+(nc.n||"")+"' oninput='S.nCl.n=this.value'></div>"+
-    "<div class='fl'><label>Teléfono</label><input type='text' placeholder='+1 (555) 0000' value='"+(nc.tel||"")+"' oninput='S.nCl.tel=this.value'></div></div>"+
-    "<div class='f3'><div class='fl'><label>País</label><select onchange='S.nCl.pais=this.value'><option value='VENEZUELA'"+(nc.pais==="VENEZUELA"?" selected":"")+">🇻🇪 Venezuela</option><option value='BRASIL'"+(nc.pais==="BRASIL"?" selected":"")+">🇧🇷 Brasil</option></select></div>"+
-    "<div class='fl'><label>Ruta principal</label><select onchange='S.nCl.ruta=this.value'>"+rOpts+"</select></div>"+
-    "<div class='fl'><label>Nota / grupo</label><input type='text' placeholder='ej: EEUU, VIP...' value='"+(nc.nota||"")+"' oninput='S.nCl.nota=this.value'></div></div>"+
-    "<div style='display:flex;gap:10px'><button class='btn-main btn-green' style='flex:2' onclick='saveCl()'>"+(S.editCl?"💾 Actualizar":"💾 Guardar")+" cliente</button>"+
-    (S.editCl?"<button class='btn-main btn-gray' style='flex:1' onclick='S.editCl=null;S.nCl={cod:\"\",n:\"\",tel:\"\",pais:\"VENEZUELA\",ruta:\"BRL ↔ VZLA\",nota:\"\"};R()'>✕ Cancelar</button>":"")+"</div></div>";
+
+  return statsHtml+searchHtml+chipsHtml+"<div class='client-grid'>"+cards+"</div>"+formHtml;
 }
 
 function rEgresos(){
