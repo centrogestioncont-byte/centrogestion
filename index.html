@@ -366,11 +366,11 @@ const ROLES=[
   {id:"lector",label:"Supervisor",     sub:"Ve todo · No modifica",     ic:"👁️",bg:"#FFF4D6"},
 ];
 const TABS={
-  admin:["dash","diario","ops","evolucion","cierre","nueva","calculadora","inventario_usdt","capital_total","egresos","prestamos","cobrar","traspasos","auditoria","config_admin"],
+  admin:["dash","diario","ops","evolucion","cierre","nueva","calculadora","inventario_usdt","capital_total","egresos","prestamos","cobrar","traspasos","clientes","auditoria","config_admin"],
   brl:  ["mi_ganancia","op_diario","nueva","clientes"],
   vzla: ["mi_ganancia","op_diario","nueva","clientes"],
   eeuu: ["mi_ganancia","op_diario","nueva_eeuu","clientes"],
-  lector:["dash","diario","ops","evolucion","cierre","nueva","calculadora","inventario_usdt","capital_total","egresos","prestamos","cobrar","traspasos","auditoria","config_admin"],
+  lector:["dash","diario","ops","evolucion","cierre","nueva","calculadora","inventario_usdt","capital_total","egresos","prestamos","cobrar","traspasos","clientes","auditoria","config_admin"],
 };
 const TL={
   dash:"📊 Resumen",diario:"📅 Diario",ops:"📋 Operaciones",evolucion:"📈 Evolución",cierre:"🗓️ Cierre de Mes",brl:"🇧🇷 BRL",vzla:"🇻🇪 VZLA",eeuu:"🇺🇸 EE.UU",
@@ -5866,6 +5866,7 @@ function getUsuarios(){return (S&&S.config&&S.config.usuarios)||[];}
 
 // ── Permisos granulares ────────────────────────────────────────────
 var PERMISOS_DEF=[
+  {k:"clientes",      label:"👥 Clientes",             desc:"Ver, agregar y editar clientes"},
   {k:"diario",      label:"📅 Diario",              desc:"Ver el registro diario de operaciones"},
   {k:"ops",         label:"📋 Operaciones",          desc:"Ver tabla completa de operaciones"},
   {k:"evolucion",   label:"📈 Evolución",             desc:"Ver la evolución mensual de ganancias"},
@@ -6764,7 +6765,7 @@ function rMain(){
   else if(S.tab==="nueva_eeuu")    body=rNuevaEE();
   else if(S.tab==="mi_ganancia")   body=(S.role==="eeuu"?rDashEE():rMiGanancia());
   else if(S.tab==="op_diario")     body=rOpDiario();
-  else if(S.tab==="clientes")      body=rClientes();
+  else if(S.tab==="clientes")      body=isAdmin?tp("clientes",rClientes,"Clientes"):rClientes();
   else if(S.tab==="prestamos")     body=isAdmin?tp("prestamos",rPrestamos,"Préstamos"):rPrestamos();
   else if(S.tab==="cobrar")        body=isAdmin?tp("cobrar",rCuentasCobrar,"Por Cobrar"):rCuentasCobrar();
   else if(S.tab==="mi_gestion")    body=rMiGestion();
@@ -6995,7 +6996,7 @@ function generarInformePDF(mesKey){
   var egEmpM=egM.filter(function(e){return e.tipo==="empresa";});
   var egPerM=filterByMes(S.egresos_personales||[],mesKey);
   var cobrarPend=(S.cuentasCobrar||[]).filter(function(c){return c.estado==="pendiente";});
-  var prestActivos=(S.prestamos||[]).filter(function(p){return p.estado==="activo"||(p.estado===undefined&&(p.sal||0)>0);});
+  var prestActivos=(S.prestamos||[]).filter(function(p){if(p.estado==="pagado"||p.estado==="saldado")return false;if(p.estado==="activo")return true;var b=parseFloat(p.monto||0);if(b>0){var ab=(p.abonos||[]).reduce(function(s,x){return s+(parseFloat(x.monto)||0);},0);return ab<b-0.001;}return (p.sal||0)>0&&(p.ent||0)<(p.sal||0);});
   var cuentasAct=(S.cuentas||[]).filter(function(c){return c.activa!==false;});
   // Fix3: usar getRateToUsdt (igual que Balance de Cuentas) + incluir inventario
   var invUsdtPDF=getInventarioStats().disponible||0;
@@ -7394,7 +7395,7 @@ function rInformeCierre(){
   var egEmpM=egM.filter(function(e){return e.tipo==="empresa";});
   var egPerM=filterByMes(S.egresos_personales||[],mesKey);
   var cobrarPend=(S.cuentasCobrar||[]).filter(function(c){return c.estado==="pendiente";});
-  var prestActivos=(S.prestamos||[]).filter(function(p){return p.estado==="activo"||(p.estado===undefined&&(p.sal||0)>0);});
+  var prestActivos=(S.prestamos||[]).filter(function(p){if(p.estado==="pagado"||p.estado==="saldado")return false;if(p.estado==="activo")return true;var b=parseFloat(p.monto||0);if(b>0){var ab=(p.abonos||[]).reduce(function(s,x){return s+(parseFloat(x.monto)||0);},0);return ab<b-0.001;}return (p.sal||0)>0&&(p.ent||0)<(p.sal||0);});
   var rm=_rateMapActual();
 
   var secs=["resumen","operaciones","bancos","socios","egresos","personal","pendientes"];
@@ -7911,7 +7912,7 @@ function rDash(){
   var alertas=[];
   var cobPendAll=(S.cuentasCobrar||[]).filter(function(c){return c.estado==="pendiente";});
   if(cobPendAll.length>0) alertas.push({color:"#856404",bg:"#FFF8DC",brd:"#F5C518",ico:"⏳",msg:cobPendAll.length+" cobro"+(cobPendAll.length>1?"s":"")+" pendiente"+(cobPendAll.length>1?"s":"")+" por cobrar",accion:"cobrar",aLbl:"Ver →"});
-  var prestActivos=(S.prestamos||[]).filter(function(p){return p.estado==="activo"||(p.estado===undefined&&(p.sal||0)>0);});
+  var prestActivos=(S.prestamos||[]).filter(function(p){if(p.estado==="pagado"||p.estado==="saldado")return false;if(p.estado==="activo")return true;var b=parseFloat(p.monto||0);if(b>0){var ab=(p.abonos||[]).reduce(function(s,x){return s+(parseFloat(x.monto)||0);},0);return ab<b-0.001;}return (p.sal||0)>0&&(p.ent||0)<(p.sal||0);});
   if(prestActivos.length>0){
     var prestUsdtPend=Math.round(prestActivos.reduce(function(a,p){
       var mon=p.moneda||p.mon||"USDT";var monto=parseFloat(p.monto||p.sal)||0;
@@ -10469,10 +10470,12 @@ function rCuentasCobrar(){
   var lista=S.cuentasCobrar||[];
   var pendientes=lista.filter(function(c){return c.estado==="pendiente";});
   var cobradas=lista.filter(function(c){return c.estado==="cobrado";});
-  var totalPend=pendientes.reduce(function(a,c){return a+c.monto;},0);
-  var ganPend=pendientes.reduce(function(a,c){return a+c.ganancia;},0);
-  var totalCob=cobradas.reduce(function(a,c){return a+c.monto;},0);
-  var ganCob=cobradas.reduce(function(a,c){return a+c.ganancia;},0);
+  // Ordenar cobradas: más reciente primero
+  cobradas.sort(function(a,b){return (b.fechaCobro||"").localeCompare(a.fechaCobro||"");});
+  var totalPend=pendientes.reduce(function(a,c){return a+(c.monto||0);},0);
+  var ganPend=pendientes.reduce(function(a,c){return a+(c.ganancia||0);},0);
+  var totalCob=cobradas.reduce(function(a,c){return a+(c.monto||0);},0);
+  var ganCob=cobradas.reduce(function(a,c){return a+(c.ganancia||0);},0);
 
   function rowCuenta(c){
     var isPend=c.estado==="pendiente";
@@ -10583,10 +10586,18 @@ function rCuentasCobrar(){
   }
 
   if(cobradas.length > 0){
-    html += "<div class='sec' style='border-left:3px solid #10b981'><div class='sec-title' style='color:#065f46'>✅ COBRADAS ("+cobradas.length+")</div>";
-    html += "<div style='display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:8px'>";
-    cobradas.slice().reverse().forEach(function(c){ html += rowCuenta(c); });
-    html += "</div></div>";
+    var showCob=S._showCobradas||false;
+    html += "<div style='margin-bottom:10px'>"+
+      "<button onclick='S._showCobradas=!S._showCobradas;R()' style='width:100%;padding:10px 14px;border:1.5px solid #10b981;border-radius:10px;background:"+(showCob?"#D1FAE5":"#fff")+";color:#065f46;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;display:flex;justify-content:space-between;align-items:center'>"+
+        "<span>✅ Historial cobradas ("+cobradas.length+" ops · $"+f2(totalCob)+" ganado)</span>"+
+        "<span style='font-size:16px'>"+(showCob?"▲":"▼")+"</span>"+
+      "</button>"+
+      (showCob?
+        "<div style='margin-top:8px;display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:8px'>"+
+          cobradas.map(function(c){return rowCuenta(c);}).join("")+
+        "</div>"
+      :"")+
+    "</div>";
   }
 
   if(lista.length === 0){
@@ -10604,8 +10615,20 @@ function rPrestamos(){
   var f=S.nPr||{date:td(),desc:"",mon:"USDT",monto:"",cuentaId:""};
   if(!S.nPr){S.nPr=f;}
   if(!S.prestamos)S.prestamos=[];
-  var activos=S.prestamos.filter(function(p){return p.estado==="activo"||(p.estado===undefined&&(p.sal||0)>0&&(p.ent||0)<(p.sal||0));});
-  var pagados=S.prestamos.filter(function(p){return p.estado==="pagado"||(p.estado===undefined&&(p.ent||0)>=(p.sal||0)&&(p.sal||0)>0);});
+  var activos=S.prestamos.filter(function(p){
+    if(p.estado==="pagado"||p.estado==="saldado") return false;
+    if(p.estado==="activo") return true;
+    var base=parseFloat(p.monto||0);
+    if(base>0){var ab=(p.abonos||[]).reduce(function(s,x){return s+(parseFloat(x.monto)||0);},0);return ab<base-0.001;}
+    return (p.sal||0)>0&&(p.ent||0)<(p.sal||0);
+  });
+  var pagados=S.prestamos.filter(function(p){
+    if(p.estado==="pagado"||p.estado==="saldado") return true;
+    if(p.estado==="activo") return false;
+    var base=parseFloat(p.monto||0);
+    if(base>0){var ab=(p.abonos||[]).reduce(function(s,x){return s+(parseFloat(x.monto)||0);},0);return ab>=base-0.001;}
+    return (p.ent||0)>=(p.sal||0)&&(p.sal||0)>0;
+  });
   var totalActivoUsdt=Math.round(activos.reduce(function(a,p){
     var mon=p.mon||"USDT";
     var base=parseFloat(p.monto||p.sal)||0;
