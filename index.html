@@ -5271,26 +5271,40 @@ function fbSaveREST(obj){
   });
 }
 function fbCheckREST(){
-  // Si ya estamos online por WebSocket, no hace falta
-  if(_fbOnline) return;
-  fetch(_FB_REST)
+  fetch(_FB_REST+"?ts="+Date.now()) // bust cache
     .then(function(r){return r.json();})
     .then(function(data){
       if(!data||!data._ts) return;
       var tsRemoto=data._ts||0;
       var tsLocal=S._ts||0;
-      if(tsRemoto > tsLocal){
-        console.log("📥 Firebase REST: datos más nuevos encontrados, actualizando...");
-        var fbOps=(data.brl||[]).length+(data.vzla||[]).length+(data.eeuu||[]).length;
-        var localOps=(S.brl||[]).length+(S.vzla||[]).length+(S.eeuu||[]).length;
-        if(fbOps >= localOps){
-          DATA_KEYS.forEach(function(k){if(data[k]!==undefined)S[k]=data[k];});
-          S._ts=tsRemoto;
-          saveData();R();
-        }
+      // Si Firebase tiene datos más nuevos que lo que tenemos localmente
+      if(tsRemoto > tsLocal + 500){ // 500ms de margen para evitar rebotes propios
+        console.log("📥 Auto-sync: datos más nuevos en Firebase (remoto="+tsRemoto+", local="+tsLocal+")");
+        DATA_KEYS.forEach(function(k){if(data[k]!==undefined)S[k]=data[k];});
+        S._ts=tsRemoto;
+        try{localStorage.setItem(STORAGE_KEY,JSON.stringify(data));}catch(e){}
+        R();
+        // Mostrar indicador de actualización
+        var dot=document.getElementById("fb-dot");
+        if(dot){dot.style.background="#4ade80";dot.title="✅ Datos actualizados desde Firebase";}
+        console.log("✅ Auto-sync aplicado correctamente.");
       }
     })
-    .catch(function(e){console.warn("REST check error:", e.message);});
+    .catch(function(e){console.warn("Auto-sync check error:", e.message);});
+}
+
+// ── AUTO-POLL: revisar Firebase cada 30 segundos automáticamente ──────
+// Funciona independientemente del WebSocket — garantiza sincronización
+// entre todos los dispositivos sin presionar ningún botón.
+var _autoPollStarted=false;
+function startAutoSync(){
+  if(_autoPollStarted) return;
+  _autoPollStarted=true;
+  // Primera verificación a los 5 segundos de cargar
+  setTimeout(fbCheckREST, 5000);
+  // Luego cada 30 segundos
+  setInterval(fbCheckREST, 30000);
+  console.log("🔄 Auto-sync cada 30 segundos activado");
 }
 function reconectarFirebase(){
   if(!_fbDb) return;
@@ -6583,7 +6597,8 @@ function R(){
       d.style.cssText="display:flex;gap:6px;align-items:center;margin-left:6px;flex-wrap:wrap";
       d.innerHTML='<button onclick="exportData()" style="background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.35);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer">💾 Exportar</button>'+
         '<button onclick="importData()" style="background:rgba(255,215,0,.25);border:1px solid rgba(255,215,0,.4);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer">📂 Importar</button>'+
-        '<button onclick="forzarSyncFirebase()" id="btn-sync-firebase" style="background:rgba(100,200,100,.3);border:1px solid rgba(100,200,100,.5);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer;font-weight:700" title="Enviar todos los datos locales a Firebase ahora">📡 Sincronizar Firebase</button>'+
+        '<button onclick="forzarSyncFirebase()" id="btn-sync-firebase" style="background:rgba(100,200,100,.3);border:1px solid rgba(100,200,100,.5);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer;font-weight:700" title="Guardar en Firebase ahora (auto-sync ya está activo cada 30s)">📤 Guardar</button>'+
+        '<button onclick="fbCheckREST()" style="background:rgba(100,200,255,.25);border:1px solid rgba(100,200,255,.4);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer;font-weight:700;margin-left:4px" title="Revisar Firebase ahora por si hay datos nuevos">📥 Actualizar</button>'+
         '<button onclick="restoreFromBackup()" style="background:rgba(255,100,100,.25);border:1px solid rgba(255,100,100,.4);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer" title="Restaurar desde el último backup automático de Firebase">🔒 Restaurar</button>'+
         '<button onclick="clearAllData()" style="background:rgba(255,100,100,.2);border:1px solid rgba(255,100,100,.35);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer" title="Borrar todo (PIN 2626)">🗑️</button>';
       tb.appendChild(d);
@@ -11214,8 +11229,6 @@ function mergeBaseOps(){
 mergeBaseOps();
 
 // 4. Init Firebase — Firebase es la fuente de verdad
-//    NO escribimos a Firebase en startup para no borrar datos nuevos
-//    Firebase listener cargará los datos y luego hará el merge de base encima
 (function tryInitFirebase(attempt){
   if(typeof firebase !== "undefined"){
     initFirebase();
@@ -11225,6 +11238,9 @@ mergeBaseOps();
     console.warn("Firebase SDK no disponible después de 5s — funcionando sin sync");
   }
 })(0);
+
+// ── AUTO-SYNC: polling automático al cargar ───────────────────────────
+setTimeout(startAutoSync, 3000);
 
 // ── Global uppercase enforcement ────────────────────────────────────────
 document.addEventListener("input", function(e){
