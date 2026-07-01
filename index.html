@@ -7241,6 +7241,22 @@ function generarInformePDF(mesKey){
       return a+((c.moneda==="USDT"||!c.moneda)?pend:(rate?pend/rate:pend));
     },0);
     totalCobrarUsdt=Math.round(totalCobrarUsdt*100)/100;
+    // Total préstamos activos en USDT
+    var totalPrestamosUsdt=0;
+    prestActivos.forEach(function(p){
+      var mon=p.mon||"USDT";
+      var base=parseFloat(p.monto||p.sal)||0;
+      var abos=(p.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);
+      var ent=parseFloat(p.ent)||0;
+      var pend=Math.max(0,base-abos-ent);
+      var rate=getRateToUsdt(mon);
+      totalPrestamosUsdt+=(mon==="USDT"?pend:(rate?Math.round(pend/rate*100)/100:0));
+    });
+    totalPrestamosUsdt=Math.round(totalPrestamosUsdt*100)/100;
+    // Total afuera = cobros pendientes + préstamos activos
+    var totalAfuera=Math.round((totalCobrarUsdt+totalPrestamosUsdt)*100)/100;
+    // Si cobras todo = lo que hay en cuentas + todo lo que está afuera
+    var siCobrasTodo=Math.round((totalUsdtCuentas+totalAfuera)*100)/100;
     // Neto empresa = utilidad - sueldo (lo que queda en caja después de pagarte)
     var netoEmpresa=Math.round(((calc.utilidadEmpresa||0)-(calc.sueldo||0))*100)/100;
     var totalApartar=Math.max(0,calc.socioFinalEE)+calc.totalCom+calc.egEmpPend;
@@ -7293,9 +7309,9 @@ function generarInformePDF(mesKey){
           "<div style='font-size:8px;color:rgba(255,255,255,.5);margin-top:3px'>Equivalente USDT</div>"+
         "</div>"+
         "<div style='background:rgba(122,92,0,.3);border-radius:10px;padding:12px;border-top:3px solid #F5C518'>"+
-          "<div style='font-size:8px;color:#F5C518;font-weight:700;text-transform:uppercase;margin-bottom:5px'>💳 Por cobrar</div>"+
-          "<div style='font-size:18px;font-weight:900;color:#fff'>$"+f2l(totalCobrarUsdt)+"</div>"+
-          "<div style='font-size:8px;color:rgba(255,255,255,.5);margin-top:3px'>"+cobrarPend.length+" pendiente(s)</div>"+
+          "<div style='font-size:8px;color:#F5C518;font-weight:700;text-transform:uppercase;margin-bottom:5px'>💰 Dinero afuera</div>"+
+          "<div style='font-size:18px;font-weight:900;color:#fff'>$"+f2l(totalAfuera)+"</div>"+
+          "<div style='font-size:8px;color:rgba(255,255,255,.5);margin-top:3px'>"+cobrarPend.length+" cobros + "+prestActivos.length+" prest.</div>"+
         "</div>"+
       "</div>"+
     "</div>"+
@@ -7380,6 +7396,12 @@ function generarInformePDF(mesKey){
         "<tr style='background:#FFF8DC'><td colspan='2' style='padding:7px 10px;font-size:11px;font-weight:800;color:#7a5c00'>TOTAL A COBRAR</td><td colspan='2' style='padding:7px 10px;text-align:right;font-size:13px;font-weight:900;color:#7a5c00'>$"+f2l(totalCobrarUsdt)+" USDT</td></tr>"+
       "</table>"+
     "</div>":"<div style='margin-bottom:20px;padding:12px 16px;background:#E3F8EC;border-radius:10px;border:1.5px solid #0f6e3a;font-size:12px;color:#0f6e3a;font-weight:700'>✅ Sin cobros pendientes — todas las operaciones están cobradas</div>")+
+
+    // ── PRÉSTAMOS ACTIVOS ──────────────────────────────────────────────
+    (prestActivos.length>0?"<div style='margin-bottom:20px;border:2px solid #c0392b;border-radius:12px;overflow:hidden'>"+"<div style='background:#c0392b;padding:12px 16px;display:flex;justify-content:space-between;align-items:center'>"+"<div style='font-size:13px;font-weight:800;color:#fff'>🤝 Préstamos activos</div>"+"<div style='font-size:12px;color:#ffd5d5'>Total: <b>≈$"+f2l(totalPrestamosUsdt)+" USDT</b> · "+prestActivos.length+" préstamo(s)</div>"+"</div>"+"<table style='width:100%;border-collapse:collapse'>"+"<tr style='background:#FDECEA'><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b'>Descripción</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b'>Moneda</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b;text-align:right'>Prestado</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b;text-align:right'>Recuperado</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b;text-align:right'>Pendiente</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b;text-align:right'>≈ USDT</th></tr>"+prestActivos.map(function(p,i){var mon=p.mon||"USDT";var base=parseFloat(p.monto||p.sal)||0;var abos=(p.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);var ent=parseFloat(p.ent)||0;var rec=Math.round((abos+ent)*100)/100;var pend=Math.max(0,Math.round((base-rec)*100)/100);var rate=getRateToUsdt(mon);var pendUsdt=(mon==="USDT"?pend:(rate?Math.round(pend/rate*100)/100:null));return "<tr style='background:"+(i%2===0?"#fff":"#fff5f5")+"'>"+"<td style='padding:7px 10px;font-size:12px;font-weight:600'>"+p.desc+"</td>"+"<td style='padding:7px 10px;font-size:11px;color:#888'>"+mon+"</td>"+"<td style='padding:7px 10px;font-size:12px;text-align:right'>"+f2l(base)+"</td>"+"<td style='padding:7px 10px;font-size:12px;text-align:right;color:#0f6e3a'>"+f2l(rec)+"</td>"+"<td style='padding:7px 10px;font-size:12px;text-align:right;font-weight:700;color:#c0392b'>"+f2l(pend)+"</td>"+"<td style='padding:7px 10px;font-size:12px;text-align:right;color:#1a3558;font-weight:700'>"+(pendUsdt!==null?"$"+f2l(pendUsdt):"—")+"</td>"+"</tr>";}).join("")+"<tr style='background:#FDECEA'><td colspan='4' style='padding:7px 10px;font-size:11px;font-weight:800;color:#c0392b'>TOTAL PRÉSTAMOS PENDIENTES</td><td colspan='2' style='padding:7px 10px;text-align:right;font-size:13px;font-weight:900;color:#c0392b'>≈$"+f2l(totalPrestamosUsdt)+" USDT</td></tr>"+"</table>"+"</div>":"")+
+
+    // ── RESUMEN COMPLETO: DINERO AFUERA + SI COBRAS TODO ──────────────
+    (totalAfuera>0?"<div style='margin-bottom:20px;background:linear-gradient(135deg,#1a3558,#0a2744);border-radius:14px;padding:18px;color:#fff'>"+"<div style='font-size:13px;font-weight:800;color:#FFA31C;margin-bottom:14px'>💼 Visión completa del dinero de la empresa</div>"+"<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px'>"+"<div style='background:rgba(255,255,255,.08);border-radius:10px;padding:14px'>"+"<div style='font-size:9px;color:rgba(255,255,255,.6);text-transform:uppercase;font-weight:700;margin-bottom:4px'>💵 En cuentas ahora</div>"+"<div style='font-size:22px;font-weight:900;color:#fff'>$"+f2l(totalUsdtCuentas)+" USDT</div></div>"+"<div style='background:rgba(255,163,28,.15);border-radius:10px;padding:14px;border:1px solid rgba(255,163,28,.4)'>"+"<div style='font-size:9px;color:#FFA31C;text-transform:uppercase;font-weight:700;margin-bottom:4px'>📤 Total afuera</div>"+"<div style='font-size:22px;font-weight:900;color:#FFA31C'>$"+f2l(totalAfuera)+" USDT</div>"+(cobrarPend.length>0?"<div style='font-size:9px;color:rgba(255,255,255,.5);margin-top:4px'>💳 Cobros: $"+f2l(totalCobrarUsdt)+" USDT</div>":"")+""+(prestActivos.length>0?"<div style='font-size:9px;color:rgba(255,255,255,.5);margin-top:2px'>🤝 Préstamos: $"+f2l(totalPrestamosUsdt)+" USDT</div>":"")+""+"</div></div>"+"<div style='border-top:1px solid rgba(255,255,255,.15);padding-top:14px;display:flex;justify-content:space-between;align-items:center'>"+"<div>"+"<div style='font-size:10px;color:rgba(255,255,255,.6);margin-bottom:2px'>Si cobras todo lo que te deben…</div>"+"<div style='font-size:11px;color:rgba(255,255,255,.5)'>En cuentas ($"+f2l(totalUsdtCuentas)+") + Afuera ($"+f2l(totalAfuera)+")</div>"+"</div>"+"<div style='text-align:right'>"+"<div style='font-size:9px;color:#4ade80;text-transform:uppercase;font-weight:700'>Potencial total</div>"+"<div style='font-size:28px;font-weight:900;color:#4ade80'>$"+f2l(siCobrasTodo)+" USDT</div>"+"</div></div>"+"</div>":"")+
 
     // ── TIENES vs DEBERÍAS TENER ───────────────────────────────────────
     (deberiasTener!==null?"<div style='margin-bottom:20px;display:grid;grid-template-columns:1fr 1fr;gap:12px'>"+
@@ -7844,7 +7866,62 @@ function rInformeCierre(){
           "</div>"+
         "</div>";
       }).join("")+
-    "</div>":"");
+    "</div>":"")+ 
+
+    // ── PANEL SI COBRAS TODO ───────────────────────────────────────
+    (function(){
+      var _pTotPrest=0;
+      prestActivos.forEach(function(p){
+        var mon=p.mon||"USDT";
+        var base=parseFloat(p.monto||p.sal)||0;
+        var abos=(p.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);
+        var ent=parseFloat(p.ent)||0;
+        var pend=Math.max(0,base-abos-ent);
+        var rate=getRateToUsdt(mon);
+        _pTotPrest+=(mon==="USDT"?pend:(rate?pend/rate:0));
+      });
+      _pTotPrest=Math.round(_pTotPrest*100)/100;
+      var _pTotCobrar=cobrarPend.reduce(function(a,c){
+        var abos=(c.abonos||[]).reduce(function(s,ab){return s+(ab.monto||0);},0);
+        var pend=Math.max(0,(c.monto||0)-abos);
+        var rate=getRateToUsdt(c.moneda||"USDT");
+        return a+((c.moneda==="USDT"||!c.moneda)?pend:(rate?pend/rate:pend));
+      },0);
+      _pTotCobrar=Math.round(_pTotCobrar*100)/100;
+      var _afuera=Math.round((_pTotPrest+_pTotCobrar)*100)/100;
+      if(_afuera<=0) return "";
+      // Saldo en cuentas en USDT
+      var _enCuentas=0;
+      (S.cuentas||[]).filter(function(c){return c.activa!==false;}).forEach(function(c){
+        var s=parseFloat(c.saldo)||0;
+        var rate=getRateToUsdt(c.moneda);
+        _enCuentas+=(c.moneda==="USDT"?s:(rate?s/rate:0));
+      });
+      _enCuentas=Math.round(_enCuentas*100)/100;
+      var _potencial=Math.round((_enCuentas+_afuera)*100)/100;
+      return "<div style='background:linear-gradient(135deg,#1a3558,#0a2744);border-radius:12px;padding:14px;color:#fff;margin-top:10px'>"+ 
+        "<div style='font-size:11px;font-weight:700;color:#FFA31C;margin-bottom:10px'>💼 Dinero total de la empresa</div>"+ 
+        "<div style='display:flex;gap:8px;margin-bottom:10px'>"+ 
+          "<div style='flex:1;background:rgba(255,255,255,.08);border-radius:8px;padding:10px;text-align:center'>"+ 
+            "<div style='font-size:9px;color:rgba(255,255,255,.6);margin-bottom:4px'>💵 En cuentas</div>"+ 
+            "<div style='font-size:16px;font-weight:800'>$"+f2(_enCuentas)+"</div>"+ 
+          "</div>"+ 
+          "<div style='flex:1;background:rgba(255,163,28,.15);border-radius:8px;padding:10px;text-align:center;border:1px solid rgba(255,163,28,.3)'>"+ 
+            "<div style='font-size:9px;color:#FFA31C;margin-bottom:4px'>📤 Afuera</div>"+ 
+            "<div style='font-size:16px;font-weight:800;color:#FFA31C'>$"+f2(_afuera)+"</div>"+ 
+            (_pTotCobrar>0?"<div style='font-size:8px;color:rgba(255,255,255,.4)'>Cobros: $"+f2(_pTotCobrar)+"</div>":"")+  
+            (_pTotPrest>0?"<div style='font-size:8px;color:rgba(255,255,255,.4)'>Prest.: $"+f2(_pTotPrest)+"</div>":"")+  
+          "</div>"+ 
+        "</div>"+ 
+        "<div style='border-top:1px solid rgba(255,255,255,.15);padding-top:10px;display:flex;justify-content:space-between;align-items:center'>"+ 
+          "<div style='font-size:11px;color:rgba(255,255,255,.6)'>Si cobras todo lo que te deben</div>"+ 
+          "<div style='text-align:right'>"+ 
+            "<div style='font-size:9px;color:#4ade80;text-transform:uppercase;font-weight:700'>Potencial total</div>"+ 
+            "<div style='font-size:22px;font-weight:900;color:#4ade80'>$"+f2(_potencial)+" USDT</div>"+ 
+          "</div>"+ 
+        "</div>"+ 
+      "</div>";
+    })();
   }
 
   var secContent=
