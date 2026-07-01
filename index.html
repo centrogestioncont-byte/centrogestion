@@ -953,33 +953,39 @@ function getMesKeyActual(){
   return n.getFullYear()+"-"+String(n.getMonth()+1).padStart(2,"0");
 }
 
-// Llama esto al iniciar la app y también con setInterval cada minuto
+// ─── Cierre automático de mes ────────────────────────────────────────────────
+// Se ejecuta al cargar la app Y a medianoche exacta (setTimeout calibrado)
 function checkCierreAutomatico(){
   var ahora=new Date();
-  var mesKey=getMesKeyActual();
   if(!S.cierresMes) S.cierresMes=[];
-
-  // Ver si el mes activo en S es diferente al mes actual del calendario
-  var ultimoCierre=S.ultimoMesCerrado||"";
-  // Construir mesKey del mes ANTERIOR al actual
+  // Mes anterior al actual
   var anio=ahora.getFullYear(), mes=ahora.getMonth()+1;
-  var mesAnt=mes===1?(anio-1)+"-12":(anio)+"-"+String(mes-1).padStart(2,"0");
-
-  // Si ya cerramos este mes anterior, no hacer nada
-  if(ultimoCierre===mesAnt) return;
-
-  // Verificar si hay operaciones del mes anterior que aún no fueron cerradas
-  var hayOpsAnt = S.brl.some(function(r){ return r.d && getMesAnio(r.d).anio+"-"+getMesAnio(r.d).mes === mesAnt.replace(/^(\d+)-0?(\d+)$/, "$1-$2"); });
-  // Simplified: check if there are ops from previous month
-  var partsAnt = mesAnt.split("-");
-  var brlAnt = filterByMes(S.brl, mesAnt);
-  var vzlaAnt = filterByMes(S.vzla, mesAnt);
-  var eeuuAnt = filterByMes(S.eeuu, mesAnt);
-  var yaExiste = S.cierresMes.some(function(c){ return c.mesKey===mesAnt; });
-
-  if(!yaExiste && (brlAnt.length||vzlaAnt.length||eeuuAnt.length)){
-    ejecutarCierreMes(mesAnt, false); // false = automático, sin confirmación
+  var mesAnt=mes===1?(anio-1)+"-12":anio+"-"+String(mes-1).padStart(2,"0");
+  // Solo cerrar si no está cerrado ya y hay operaciones
+  var yaExiste=S.cierresMes.some(function(c){return c.mesKey===mesAnt;});
+  if(!yaExiste){
+    var brlAnt=filterByMes(S.brl||[],mesAnt);
+    var vzlaAnt=filterByMes(S.vzla||[],mesAnt);
+    var eeuuAnt=filterByMes(S.eeuu||[],mesAnt);
+    if(brlAnt.length||vzlaAnt.length||eeuuAnt.length){
+      ejecutarCierreMes(mesAnt,false);
+      console.log("[CierreAuto] Cerrado automaticamente: "+mesAnt);
+    }
   }
+}
+
+// Programa el próximo disparo a medianoche exacta y se recalibra solo
+function programarCierreMedianoche(){
+  var ahora=new Date();
+  // Calcular milisegundos hasta las 00:00:05 del día siguiente (5 seg de margen)
+  var manana=new Date(ahora.getFullYear(),ahora.getMonth(),ahora.getDate()+1,0,0,5,0);
+  var msHastaMedianoche=manana.getTime()-ahora.getTime();
+  console.log("[CierreAuto] Próximo cierre automático en "+(msHastaMedianoche/1000/60).toFixed(1)+" minutos");
+  setTimeout(function(){
+    checkCierreAutomatico(); // ejecutar cierre
+    R();                     // refrescar UI
+    programarCierreMedianoche(); // recalibrar para la siguiente medianoche
+  }, msHastaMedianoche);
 }
 
 function ejecutarCierreMes(mesKey, manual){
@@ -2171,6 +2177,15 @@ function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaD
 function saveTx(){
   var f=S.tx;
   if(!f.date||!f.cl||!f.am||!f.tdia){alert("Completa: fecha, cliente, monto y tasa del día.");return;}
+  // ⚠️ Aviso si el mes ya fue cerrado (no bloquea — permite registrar olvidados)
+  var _txMesKey=f.date.substring(0,7);
+  var _txCierreMes=(S.cierresMes||[]).find(function(c){return c.mesKey===_txMesKey;});
+  if(_txCierreMes){
+    var _pK=_txMesKey.split("-");
+    var _ok=confirm("⚠️ "+getMesLabel(_pK[1],_pK[0])+" ya está cerrado.\n\n¿Agregar esta remesa de todas formas?\n(El resumen del mes se actualizará automáticamente.)");
+    if(!_ok) return;
+  }
+
   var ruta=getRutas().find(function(r){return r.rt===f.rt;})||getRutas()[0];
   var amS=parseFloat(f.am)||0,tdS=parseFloat(f.tdia)||0;
   var cantS=(ruta.orig==="VES")?(tdS>0?amS/tdS:0):amS*tdS;
@@ -2259,11 +2274,23 @@ function saveTx(){
     pais:f.pais,
     _tcLock:null,_tvLock:null,_amLock:null,_tdiaLock:null,_rtLock:null};
   logAudit("REMESA_GUARDAR","Remesa "+f.rt+" · "+f.cl+" · $"+f2(res.pr)+" USDT");
-  saveData();S.tab=isV?"vzla":"brl";R();
+  saveData();
+  // Si el mes ya estaba cerrado, recalcular y actualizar el resumen archivado
+  if(_txCierreMes) ejecutarCierreMes(_txMesKey, false);
+  S.tab=isV?"vzla":"brl";R();
 }
 function saveTxEE(){
   var f=S.txE;
   if(!f.date||!f.am||!f.tdia){alert("Completa: fecha, monto y tasa del día.");return;}
+  // ⚠️ Aviso si el mes ya fue cerrado (no bloquea — permite registrar olvidados)
+  var _txeMesKey=f.date.substring(0,7);
+  var _txeCierreMes=(S.cierresMes||[]).find(function(c){return c.mesKey===_txeMesKey;});
+  if(_txeCierreMes){
+    var _peK=_txeMesKey.split("-");
+    var _okEE=confirm("⚠️ "+getMesLabel(_peK[1],_peK[0])+" ya está cerrado.\n\n¿Agregar esta remesa de todas formas?\n(El resumen del mes se actualizará automáticamente.)");
+    if(!_okEE) return;
+  }
+
   var amE=parseFloat(f.am)||0,tdE=parseFloat(f.tdia)||0;
   var rates=getAutoRates("USD","VES",amE,amE*tdE);
   var tcF=parseFloat(f.tc_manual)||rates.tc||0;
@@ -2338,7 +2365,10 @@ function saveTxEE(){
     comisionBanco:false,
     cuentaBanco:"",cuentaDest:"",
     pais:"VENEZUELA"};
-  saveData();S.tab="eeuu";R();
+  saveData();
+  // Si el mes ya estaba cerrado, recalcular y actualizar el resumen archivado
+  if(_txeCierreMes) ejecutarCierreMes(_txeMesKey, false);
+  S.tab="eeuu";R();
 }
 // ── EGRESOS MULTIMONEDA ──────────────────────────────────────────
 // Equivalente USDT según el costo real (FIFO) de cada moneda
@@ -6087,9 +6117,10 @@ function selClTx(cod,nombre){
   var l=document.getElementById("tx-lista");if(l)l.style.display="none";
 }
 
-// Auto-check month close on load and every minute
+// Cierre automático: al cargar (2 seg) + a medianoche exacta + cada 5 min de respaldo
 setTimeout(checkCierreAutomatico, 2000);
-setInterval(checkCierreAutomatico, 60000);
+setInterval(checkCierreAutomatico, 300000); // respaldo cada 5 min
+programarCierreMedianoche();               // disparo preciso a las 00:00:05
 
 function fixPinPad(){
   // Focus pin input if on login screen
@@ -7390,6 +7421,24 @@ function rInformeCierre(){
   var esMesAct=mesKey===getMesKeyActual();
   var cierreGuardado=(S.cierresMes||[]).find(function(c){return c.mesKey===mesKey;});
   var calc=calcMesCompleto(mesKey);
+  // Si el mes está CERRADO, sobrescribir los totales con los datos congelados al cierre
+  // para que el reporte muestre exactamente lo mismo que Evolución
+  if(cierreGuardado && !esMesAct){
+    var cg=cierreGuardado;
+    if(cg.ganBrutaTotal!==undefined) calc.ganBrutaTotal=parseFloat(cg.ganBrutaTotal)||0;
+    if(cg.ganBrl!==undefined)        calc.ganBrl=parseFloat(cg.ganBrl)||0;
+    if(cg.ganVzla!==undefined)       calc.ganVzla=parseFloat(cg.ganVzla)||0;
+    if(cg.ganEE!==undefined)         calc.ganEEBruta=parseFloat(cg.ganEE)||0;
+    if(cg.gasEEUU!==undefined)       calc.gasEEUU=parseFloat(cg.gasEEUU)||0;
+    if(cg.ganEENeta!==undefined)     calc.ganEENeta=parseFloat(cg.ganEENeta)||0;
+    if(cg.miParteEEUU!==undefined)   calc.miParteEEUU=parseFloat(cg.miParteEEUU)||0;
+    if(cg.comisionesSocios)          calc.comisionesSocios=cg.comisionesSocios;
+    if(cg.totalCom!==undefined)      calc.totalCom=parseFloat(cg.totalCom)||0;
+    if(cg.miGanOperaciones!==undefined) calc.miGanOperaciones=parseFloat(cg.miGanOperaciones)||0;
+    if(cg.egPag!==undefined)         calc.egEmpPag=parseFloat(cg.egPag)||0;
+    if(cg.utilidadEmpresa!==undefined) calc.utilidadEmpresa=parseFloat(cg.utilidadEmpresa)||0;
+    if(cg.sueldo!==undefined)        calc.sueldo=parseFloat(cg.sueldo)||0;
+  }
   var brlM=filterByMes(S.brl||[],mesKey),vzlaM=filterByMes(S.vzla||[],mesKey),eeuuM=filterByMes(S.eeuu||[],mesKey);
   var todasOps=[].concat(brlM,vzlaM,eeuuM);
   var egM=filterByMes(S.egresos||[],mesKey);
