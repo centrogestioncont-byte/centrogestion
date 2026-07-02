@@ -6488,99 +6488,46 @@ function editarSaldoCuentaEnConfig(cid){
   alert("✅ Saldo de \""+c.nombre+"\" actualizado a "+c.saldo+" "+c.moneda+".");
 }
 
-// ── LEER COMPROBANTE CON IA ─────────────────────────────────────────────────
-// Analiza imagen de Binance P2P (u otro exchange) y rellena el formulario
-// automáticamente. Solo queda seleccionar las cuentas (origen/destino).
-async function leerComprobanteIA(input){
-  var file = input.files[0];
-  if(!file){ return; }
-  S._iaLeyendo = true;
-  S._iaResultado = null;
-  S._iaError = null;
-  R();
+// ── ATAJO RÁPIDO DE INVENTARIO ──────────────────────────────────────────────
+// Rellena el formulario existente con los datos del panel de ingreso rápido.
+// NO toca ninguna lógica FIFO ni de cálculo — solo pone valores en S.nIU.
+function rellenarDesdeAtajo(){
+  var q=S._qf||{};
+  var tipo=q.tipo||"compra";
+  var com=COM();
+  var hoy=new Date();
+  var fechaHoy=hoy.getFullYear()+"-"+String(hoy.getMonth()+1).padStart(2,"0")+"-"+String(hoy.getDate()).padStart(2,"0");
 
-  try {
-    // Convertir imagen a base64
-    var base64 = await new Promise(function(res, rej){
-      var reader = new FileReader();
-      reader.onload = function(e){ res(e.target.result.split(",")[1]); };
-      reader.onerror = function(){ rej(new Error("No se pudo leer el archivo")); };
-      reader.readAsDataURL(file);
-    });
+  // Solo tocar S.nIU — el formulario existente se encarga del resto
+  S.nIU.tipo=tipo;
+  if(!S.nIU.fecha) S.nIU.fecha=fechaHoy;
+  S.nIU.comision=com;
+  if(!S.nIU.plataforma) S.nIU.plataforma="Binance P2P";
 
-    var mediaType = file.type || "image/jpeg";
-
-    var prompt = "Eres un asistente experto en comprobantes de Binance P2P y exchanges cripto para Venezuela, Perú, Brasil, Colombia, Trinidad.\n\n" +
-      "Analiza esta imagen de un comprobante y extrae los datos en JSON. Responde SOLO con el JSON, sin texto adicional, sin markdown.\n\n" +
-      "Campos a extraer:\n" +
-      "- tipo: \"compra\" (si el usuario recibe USDT) o \"venta\" (si el usuario entrega USDT y recibe fiat)\n" +
-      "- moneda: código ISO de la moneda fiat (VES, BRL, USD, PEN, COP, EUR, TTD)\n" +
-      "- montOrigen: monto en moneda fiat (número, solo para compra)\n" +
-      "- usdt: cantidad total de USDT de la orden (número)\n" +
-      "- tasa: precio por USDT en moneda fiat (número)\n" +
-      "- comision: comisión en USDT (número, 0 si no hay o si fue exonerada)\n" +
-      "- fecha: fecha en formato YYYY-MM-DD\n" +
-      "- plataforma: nombre de la plataforma (ej: Binance P2P, DAKAGS, etc.)\n" +
-      "- bsRecibidos: monto fiat realmente recibido (solo para venta, si aparece)\n" +
-      "- ordenNum: número de orden si aparece\n\n" +
-      "Reglas importantes:\n" +
-      "- Si dice \"Comprar USDT\" → tipo=compra\n" +
-      "- Si dice \"Vender USDT\" → tipo=venta\n" +
-      "- Si la comisión dice 0 USDT → comision=0\n" +
-      "- La moneda la deduce del símbolo: Bs/BS/VES=VES, S/=PEN, R$=BRL, $=USD (si no es VES/PEN/BRL), COP=COP\n" +
-      "- Si no encuentras un campo, ponlo como null\n\n" +
-      "Responde SOLO con el JSON, ejemplo: {\"tipo\":\"compra\",\"moneda\":\"VES\",\"montOrigen\":8000,\"usdt\":10.70,\"tasa\":747.5,\"comision\":0,\"fecha\":\"2026-07-01\",\"plataforma\":\"Binance P2P\",\"bsRecibidos\":null,\"ordenNum\":\"229057958...\"}";
-
-    var resp = await fetch("/api/claude-vision", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 1000,
-        messages: [{
-          role: "user",
-          content: [
-            { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } },
-            { type: "text", text: prompt }
-          ]
-        }]
-      })
-    });
-
-    var data = await resp.json();
-    var raw = (data.content||[]).map(function(b){ return b.text||""; }).join("").trim();
-    // Limpiar posibles backticks
-    raw = raw.replace(/^```[a-z]*\n?/,"").replace(/```$/,"").trim();
-    var parsed = JSON.parse(raw);
-
-    // Rellenar S.nIU con los datos extraídos
-    if(parsed.tipo) S.nIU.tipo = parsed.tipo;
-    if(parsed.moneda) S.nIU.moneda = parsed.moneda;
-    if(parsed.moneda) S.nIU.monedaVenta = parsed.moneda; // para venta
-    if(parsed.montOrigen!=null) S.nIU.montOrigen = parsed.montOrigen;
-    if(parsed.usdt!=null) S.nIU.usdt = parsed.usdt;
-    if(parsed.tasa!=null) S.nIU.tasa = parsed.tasa;
-    if(parsed.comision!=null) S.nIU.comision = parsed.comision;
-    if(parsed.fecha) S.nIU.fecha = parsed.fecha;
-    if(parsed.plataforma) S.nIU.plataforma = parsed.plataforma;
-    if(parsed.bsRecibidos!=null) S.nIU.bsRecibidos = parsed.bsRecibidos;
-
-    // Resumen de lo que se detectó
-    var resumen = (parsed.tipo==="compra"?"⬇️ Compra":"⬆️ Venta") +
-      " · " + (parsed.moneda||"?") +
-      " · " + (parsed.usdt||"?") + " USDT" +
-      " · Tasa: " + (parsed.tasa||"?");
-    S._iaResultado = resumen;
-
-  } catch(err) {
-    S._iaError = err.message || "Error al analizar la imagen";
+  if(tipo==="compra"){
+    var monto=parseFloat(q.monto)||0;
+    var tasa=parseFloat(q.tasa)||0;
+    var mon=q.moneda||"VES";
+    var usdt=tasa>0?Math.round((monto/tasa-com)*10000)/10000:0;
+    S.nIU.moneda=mon;
+    S.nIU.montOrigen=monto;
+    S.nIU.tasa=tasa;
+    S.nIU.usdt=usdt>0?usdt:"";
+  } else {
+    var usdt2=parseFloat(q.usdt)||0;
+    var tasa2=parseFloat(q.tasa)||0;
+    var monV=q.moneda||"VES";
+    var fiat=Math.round((usdt2-com)*tasa2*100)/100;
+    S.nIU.monedaVenta=monV;
+    S.nIU.usdt=usdt2;
+    S.nIU.tasa=tasa2;
+    S.nIU.bsRecibidos=fiat>0?fiat:"";
   }
-
-  S._iaLeyendo = false;
-  // Limpiar el input para permitir subir la misma imagen de nuevo
-  input.value = "";
+  // Limpiar el atajo y refrescar — el formulario queda listo para revisar y guardar
+  S._qf=null;
   R();
 }
+
 
 function editRestanteInv(id){
   var r=(S.inventarioUsdt||[]).find(function(x){return x.id===id;});
@@ -10148,18 +10095,59 @@ function rInventarioUsdt(){
     })()+
   "</div>"+
     "<div class='sec'><div class='sec-title'>"+(f.tipo==="compra"?"⬇️ COMPRA de USDT":"⬆️ VENTA de USDT (recibo moneda)")+"</div>"+
-    <!-- Botón leer imagen con IA -->
-    "<div style='margin-bottom:14px;background:linear-gradient(135deg,#2d1b6e,#4a2d9e);border-radius:12px;padding:14px 16px'>"+
-    "<div style='font-size:11px;font-weight:700;color:#c4b5fd;margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px'>🤖 Leer comprobante con IA</div>"+
-    "<div style='display:flex;align-items:center;gap:10px;flex-wrap:wrap'>"+
-      "<label for='inv-img-upload' style='background:#7c3aed;color:#fff;padding:10px 16px;border-radius:9px;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:7px'>📷 Adjuntar comprobante</label>"+
-      "<input id='inv-img-upload' type='file' accept='image/*' style='display:none' onchange='leerComprobanteIA(this)'>"+
-      (S._iaLeyendo?"<div style='color:#c4b5fd;font-size:13px;display:flex;align-items:center;gap:6px'><span style='display:inline-block;animation:spin 1s linear infinite'>⏳</span> Analizando imagen...</div>":
-      S._iaResultado?"<div style='color:#4ade80;font-size:12px;font-weight:700'>✅ "+S._iaResultado+"</div>":
-      S._iaError?"<div style='color:#f87171;font-size:12px'>❌ "+S._iaError+"</div>":
-      "<div style='color:rgba(196,181,253,.7);font-size:11px'>Sube la foto del comprobante de Binance o cualquier P2P.<br>El sistema detectará tipo, moneda, monto, tasa, USDT y comisión.</div>")
-    +"</div>"+
-    "</div>"+
+    // ── Panel atajo rápido ─────────────────────────────────────────────
+    (function(){
+      var q=S._qf||{tipo:"compra",moneda:"VES",tasa:"",monto:"",usdt:""};
+      var com=COM();
+      var monOps=["VES","BRL","USD","PEN","COP","EUR","TTD"];
+      // Preview del cálculo en tiempo real
+      var prevCalc="";
+      if(q.tipo==="compra"){
+        var _m=parseFloat(q.monto)||0,_t=parseFloat(q.tasa)||0;
+        if(_m>0&&_t>0){
+          var _u=Math.round((_m/_t-com)*10000)/10000;
+          prevCalc="<div style='background:#D6F5E3;border-radius:8px;padding:8px 12px;font-size:12px;color:#0b4d27;font-weight:700;margin-top:8px'>"+
+            _m+" "+q.moneda+" ÷ "+_t+" − "+com+" comis. = <span style='font-size:15px'>+"+_u+" USDT</span></div>";
+        }
+      } else {
+        var _u2=parseFloat(q.usdt)||0,_t2=parseFloat(q.tasa)||0;
+        if(_u2>0&&_t2>0){
+          var _f=Math.round((_u2-com)*_t2*100)/100;
+          prevCalc="<div style='background:#DDEEFF;border-radius:8px;padding:8px 12px;font-size:12px;color:#0a3d7c;font-weight:700;margin-top:8px'>"+
+            "("+_u2+" − "+com+" comis.) × "+_t2+" = <span style='font-size:15px'>+"+_f+" "+q.moneda+"</span></div>";
+        }
+      }
+      return "<div style='background:#1a3558;border-radius:12px;padding:14px 16px;margin-bottom:14px'>"+
+        "<div style='font-size:11px;font-weight:700;color:#FFA31C;margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px'>⚡ Ingreso rápido</div>"+
+        "<div style='display:flex;gap:6px;margin-bottom:12px'>"+
+          "<button type='button' onclick='(S._qf=S._qf||{}).tipo=\"compra\";R()' style='flex:1;padding:9px;border-radius:8px;border:2px solid "+(q.tipo==="compra"?"#4ade80":"rgba(255,255,255,.2)")+";background:"+(q.tipo==="compra"?"rgba(74,222,128,.15)":"transparent")+";color:#fff;font-weight:700;font-size:12px;cursor:pointer'>⬇️ COMPRA</button>"+
+          "<button type='button' onclick='(S._qf=S._qf||{}).tipo=\"venta\";R()' style='flex:1;padding:9px;border-radius:8px;border:2px solid "+(q.tipo==="venta"?"#f87171":"rgba(255,255,255,.2)")+";background:"+(q.tipo==="venta"?"rgba(248,113,113,.15)":"transparent")+";color:#fff;font-weight:700;font-size:12px;cursor:pointer'>⬆️ VENTA</button>"+
+        "</div>"+
+        "<div style='display:grid;grid-template-columns:"+(q.tipo==="compra"?"1fr 1fr 1fr":"1fr 1fr 1fr")+";gap:8px'>"+
+          (q.tipo==="compra"?
+            "<div><div style='font-size:10px;color:rgba(255,255,255,.6);margin-bottom:4px'>MONTO FIAT</div>"+
+            "<input type='number' placeholder='ej: 8000' value='"+(q.monto||"")+"' oninput='(S._qf=S._qf||{}).monto=this.value;R()' style='width:100%;padding:9px;border:1px solid rgba(255,255,255,.2);border-radius:8px;background:rgba(255,255,255,.08);color:#fff;font-size:13px;font-weight:700;box-sizing:border-box'></div>"+
+            "<div><div style='font-size:10px;color:rgba(255,255,255,.6);margin-bottom:4px'>MONEDA</div>"+
+            "<select oninput='(S._qf=S._qf||{}).moneda=this.value;R()' style='width:100%;padding:9px;border:1px solid rgba(255,255,255,.2);border-radius:8px;background:#1a3558;color:#fff;font-size:13px;box-sizing:border-box'>"+
+            "+monOps.map(function(m){return \"<option value='\"+m+\"'\"+(q.moneda===m?\" selected\":\"\")+\">\"+m+\"</option>\";}).join(\"\")+ "</select></div>"+
+            "<div><div style='font-size:10px;color:rgba(255,255,255,.6);margin-bottom:4px'>TASA (MON/USDT)</div>"+
+            "<input type='number' step='0.0001' placeholder='ej: 747.5' value='"+(q.tasa||"")+"' oninput='(S._qf=S._qf||{}).tasa=this.value;R()' style='width:100%;padding:9px;border:1px solid rgba(255,255,255,.2);border-radius:8px;background:rgba(255,255,255,.08);color:#fff;font-size:13px;font-weight:700;box-sizing:border-box'></div>"
+          :
+            "<div><div style='font-size:10px;color:rgba(255,255,255,.6);margin-bottom:4px'>USDT LIBERADOS</div>"+
+            "<input type='number' step='0.01' placeholder='ej: 171.49' value='"+(q.usdt||"")+"' oninput='(S._qf=S._qf||{}).usdt=this.value;R()' style='width:100%;padding:9px;border:1px solid rgba(255,255,255,.2);border-radius:8px;background:rgba(255,255,255,.08);color:#fff;font-size:13px;font-weight:700;box-sizing:border-box'></div>"+
+            "<div><div style='font-size:10px;color:rgba(255,255,255,.6);margin-bottom:4px'>TASA (MON/USDT)</div>"+
+            "<input type='number' step='0.0001' placeholder='ej: 3.404' value='"+(q.tasa||"")+"' oninput='(S._qf=S._qf||{}).tasa=this.value;R()' style='width:100%;padding:9px;border:1px solid rgba(255,255,255,.2);border-radius:8px;background:rgba(255,255,255,.08);color:#fff;font-size:13px;font-weight:700;box-sizing:border-box'></div>"+
+            "<div><div style='font-size:10px;color:rgba(255,255,255,.6);margin-bottom:4px'>MONEDA RECIBIDA</div>"+
+            "<select oninput='(S._qf=S._qf||{}).moneda=this.value;R()' style='width:100%;padding:9px;border:1px solid rgba(255,255,255,.2);border-radius:8px;background:#1a3558;color:#fff;font-size:13px;box-sizing:border-box'>"+
+            "+monOps.map(function(m){return \"<option value='\"+m+\"'\"+(q.moneda===m?\" selected\":\"\")+\">\"+m+\"</option>\";}).join(\"\")+ "</select></div>"
+          )+
+        "</div>"+
+        prevCalc+
+        ((q.tipo==="compra"?(parseFloat(q.monto)>0&&parseFloat(q.tasa)>0):(parseFloat(q.usdt)>0&&parseFloat(q.tasa)>0))?
+          "<button type='button' onclick='rellenarDesdeAtajo()' style='width:100%;margin-top:10px;padding:11px;background:#FFA31C;color:#1a2a4a;border:none;border-radius:9px;font-size:13px;font-weight:800;cursor:pointer'>→ Rellenar formulario</button>":
+          "<div style='margin-top:8px;font-size:11px;color:rgba(255,255,255,.4);text-align:center'>Completa los campos para ver el cálculo</div>")+
+      "</div>";
+    })()+
     "<div style='display:flex;gap:8px;margin-bottom:14px'>"+
       "<button type='button' onclick='S.nIU.tipo=\"compra\";R()' style='flex:1;padding:10px;border-radius:8px;border:2px solid "+(f.tipo==="compra"?"#1a6b3c":"#ddd")+";background:"+(f.tipo==="compra"?"#D6F5E3":"#fff")+";font-weight:700;cursor:pointer'>⬇️ COMPRA USDT<div style='font-size:10px;font-weight:400'>Gasto BRL/USD/PEN/COP...</div></button>"+
       "<button type='button' onclick='S.nIU.tipo=\"venta\";R()' style='flex:1;padding:10px;border-radius:8px;border:2px solid "+(f.tipo==="venta"?"#c0392b":"#ddd")+";background:"+(f.tipo==="venta"?"#FDECEA":"#fff")+";font-weight:700;cursor:pointer'>⬆️ VENTA USDT<div style='font-size:10px;font-weight:400'>Recibo Bolívares u otra moneda</div></button>"+
