@@ -3045,10 +3045,13 @@ function savePr(){
         if(!confirm("⚠️ La cuenta "+c.nombre+" tiene "+f2(c.saldo)+" "+mon+" y el préstamo es "+f2(monto)+" "+mon+". El saldo quedaría negativo.\n¿Continuar igual?"))return;
       }
       if(!confirm("Descontar "+f2(monto)+" "+mon+" de "+c.nombre+".\n¿Confirmar préstamo a "+f.desc+"?"))return;
-      // Descontar solo de la cuenta, NO del FIFO
+      // Descontar de la cuenta bancaria
       c.saldo=Math.round(((parseFloat(c.saldo)||0)-monto)*100)/100;
       var cap=(S.capital||[]).find(function(k){return k.cuentaId===c.id||(k.nombre&&k.nombre.toLowerCase()===c.nombre.toLowerCase());});
       if(cap)cap.saldo=c.saldo;
+      // También descontar del inventario FIFO según la moneda del préstamo
+      if(mon==="VES"||mon==="BRL") descontarFIFOEgreso(mon,monto,0);
+      else if(mon==="USDT")        descontarFIFOEgreso("USDT",0,monto);
     }
   }
   S.prestamos.push({
@@ -5310,6 +5313,36 @@ function fbSaveREST(obj){
     console.warn("❌ Firebase REST no disponible:", e.message);
   });
 }
+// ── Carga forzada desde Firebase — ignora timestamps, siempre actualiza ───────
+function fbForceLoad(){
+  var btn=document.querySelector('[onclick="fbForceLoad()"]');
+  if(btn){btn.textContent="⏳ Cargando...";btn.disabled=true;}
+  var url="https://adminbrl-default-rtdb.firebaseio.com/remesasBRL_v1.json?ts="+Date.now();
+  fetch(url)
+    .then(function(r){
+      if(!r.ok) throw new Error("HTTP "+r.status);
+      return r.json();
+    })
+    .then(function(data){
+      if(!data){throw new Error("Firebase devolvió datos vacíos");}
+      // Aplicar SIEMPRE, sin comparar timestamps
+      DATA_KEYS.forEach(function(k){if(data[k]!==undefined)S[k]=data[k];});
+      if(data._ts) S._ts=data._ts;
+      try{localStorage.setItem(STORAGE_KEY,JSON.stringify(data));}catch(e){}
+      R();
+      if(btn){btn.textContent="📥 Actualizar";btn.disabled=false;}
+      var dot=document.getElementById("fb-dot");
+      if(dot){dot.style.background="#4ade80";dot.title="✅ Datos actualizados desde Firebase";}
+      console.log("✅ Carga forzada OK — _ts:",data._ts);
+    })
+    .catch(function(e){
+      if(btn){btn.textContent="📥 Actualizar";btn.disabled=false;}
+      alert("❌ No se pudo conectar con Firebase.\nError: "+e.message+"\n\nIntenta con datos móviles si el WiFi bloquea Firebase.");
+      console.warn("fbForceLoad error:",e);
+    });
+}
+
+
 function fbCheckREST(){
   fetch(_FB_REST+"?ts="+Date.now()) // bust cache
     .then(function(r){return r.json();})
@@ -6641,7 +6674,7 @@ function R(){
       d.innerHTML='<button onclick="exportData()" style="background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.35);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer">💾 Exportar</button>'+
         '<button onclick="importData()" style="background:rgba(255,215,0,.25);border:1px solid rgba(255,215,0,.4);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer">📂 Importar</button>'+
         '<button onclick="forzarSyncFirebase()" id="btn-sync-firebase" style="background:rgba(100,200,100,.3);border:1px solid rgba(100,200,100,.5);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer;font-weight:700" title="Guardar en Firebase ahora (auto-sync ya está activo cada 30s)">📤 Guardar</button>'+
-        '<button onclick="fbCheckREST()" style="background:rgba(100,200,255,.25);border:1px solid rgba(100,200,255,.4);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer;font-weight:700;margin-left:4px" title="Revisar Firebase ahora por si hay datos nuevos">📥 Actualizar</button>'+
+        '<button onclick="fbForceLoad()" style="background:rgba(100,200,255,.25);border:1px solid rgba(100,200,255,.4);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer;font-weight:700;margin-left:4px" title="Cargar datos más recientes de Firebase ahora">📥 Actualizar</button>'+
         '<button onclick="restoreFromBackup()" style="background:rgba(255,100,100,.25);border:1px solid rgba(255,100,100,.4);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer" title="Restaurar desde el último backup automático de Firebase">🔒 Restaurar</button>'+
         '<button onclick="clearAllData()" style="background:rgba(255,100,100,.2);border:1px solid rgba(255,100,100,.35);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer" title="Borrar todo (PIN 2626)">🗑️</button>';
       tb.appendChild(d);
