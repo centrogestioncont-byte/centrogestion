@@ -8976,8 +8976,11 @@ function rTblUnificada(){
   var totPorMoneda={}; // monto enviado por moneda
   var totEntregaPorMoneda={}; // cant entregada por moneda
   var totPorBancoCobro={}; // total cobrado por banco
+  var totUc=0, totUv=0; // USDT comprado y vendido en el período
   fil.forEach(function(r){
     totGanancia += (r.pr||0);
+    totUc += (parseFloat(r.uc)||0);
+    totUv += (parseFloat(r.uv)||0);
     totComisVes += (r.comisionBancoVes||0);
     var tv = r.tv||r.tdia||1;
     totComisUsdt += (r.comisionBancoVes && tv ? r.comisionBancoVes/tv : 0);
@@ -9011,31 +9014,89 @@ function rTblUnificada(){
     return "<div style='margin-bottom:3px'><b>"+nb+":</b> "+parts.join(" · ")+" <span style='color:#888;font-size:10px'>("+b.n+" ops)</span></div>";
   }).join("");
 
+
+  // ── Configuración de colores y banderas por moneda ──────────────
+  var monCfg2={
+    USDT:{flag:"💰",label:"USDT",color:"#4ade80",bg:"rgba(74,222,128,.12)",bd:"rgba(74,222,128,.3)"},
+    BRL: {flag:"🇧🇷",label:"Reales",color:"#27ae60",bg:"rgba(39,174,96,.12)",bd:"rgba(39,174,96,.35)"},
+    VES: {flag:"🇻🇪",label:"Bolívares",color:"#fbbf24",bg:"rgba(251,191,36,.10)",bd:"rgba(251,191,36,.35)"},
+    USD: {flag:"🇺🇸",label:"Dólares",color:"#60a5fa",bg:"rgba(96,165,250,.12)",bd:"rgba(96,165,250,.35)"},
+    PEN: {flag:"🇵🇪",label:"Soles",color:"#f87171",bg:"rgba(248,113,113,.12)",bd:"rgba(248,113,113,.35)"},
+    EUR: {flag:"🇪🇺",label:"Euros",color:"#a78bfa",bg:"rgba(167,139,250,.12)",bd:"rgba(167,139,250,.35)"},
+    COP: {flag:"🇨🇴",label:"Pesos COP",color:"#fb923c",bg:"rgba(251,146,60,.12)",bd:"rgba(251,146,60,.35)"},
+    TTD: {flag:"🇹🇹",label:"TTD",color:"#34d399",bg:"rgba(52,211,153,.12)",bd:"rgba(52,211,153,.35)"},
+  };
+  function mCfg(m){return monCfg2[m]||{flag:"💱",label:m,color:"#94a3b8",bg:"rgba(148,163,184,.10)",bd:"rgba(148,163,184,.3)"};}
+
+  // ── Bancos por moneda (para el bloque de cada moneda) ────────────
+  var bancosPorMon={}; // {BRL: {NuBank: 20832, ...}, VES: {BDV: 794657}, ...}
+  Object.keys(totPorBancoCobro).forEach(function(nb){
+    var b=totPorBancoCobro[nb];
+    ["brl","usd","ves","pen"].forEach(function(k){
+      if(!b[k]) return;
+      var M=k.toUpperCase();
+      if(!bancosPorMon[M]) bancosPorMon[M]={};
+      bancosPorMon[M][nb]=(bancosPorMon[M][nb]||0)+b[k];
+    });
+  });
+
+  function bloqueMoneda(mon){
+    var cfg=mCfg(mon);
+    var recv=totPorMoneda[mon]||0;
+    var entr=totEntregaPorMoneda[mon]||0;
+    if(!recv&&!entr) return "";
+    var html="<div style='background:"+cfg.bg+";border:1px solid "+cfg.bd+";border-radius:12px;padding:12px 14px;min-width:180px;flex:1'>";
+    // Header
+    html+="<div style='font-size:11px;font-weight:800;color:"+cfg.color+";letter-spacing:.3px;margin-bottom:9px'>"+cfg.flag+" "+cfg.label+" ("+mon+")</div>";
+    // Recibido
+    if(recv>0) html+="<div style='display:flex;justify-content:space-between;margin-bottom:4px'><span style='font-size:10px;color:#94a3b8'>📥 Recibido</span><span style='font-size:12px;font-weight:700;color:#e2e8f0'>"+f2n(recv,mon==="VES"?0:2)+" "+mon+"</span></div>";
+    // Entregado
+    if(entr>0) html+="<div style='display:flex;justify-content:space-between;margin-bottom:4px'><span style='font-size:10px;color:#94a3b8'>📤 Entregado</span><span style='font-size:12px;font-weight:700;color:#e2e8f0'>"+f2n(entr,mon==="VES"?0:2)+" "+mon+"</span></div>";
+    // Comisiones VES
+    if(mon==="VES"&&totComisVes>0) html+="<div style='display:flex;justify-content:space-between;margin-bottom:4px'><span style='font-size:10px;color:#fbbf24'>🏦 Comisiones</span><span style='font-size:11px;color:#fbbf24'>"+f2n(totComisVes,0)+" VES<span style='font-size:9px;opacity:.7'> ≈$"+f2n(totComisUsdt,2)+" USDT</span></span></div>";
+    // Bancos para esta moneda
+    var bm=bancosPorMon[mon]||{};
+    var bkeys=Object.keys(bm);
+    if(bkeys.length>0){
+      html+="<div style='border-top:1px solid "+cfg.bd+";margin-top:7px;padding-top:7px'>";
+      html+="<div style='font-size:9px;color:#64748b;font-weight:700;text-transform:uppercase;margin-bottom:5px'>Entró por</div>";
+      bkeys.forEach(function(bn){
+        html+="<div style='display:flex;justify-content:space-between;margin-bottom:2px'>";
+        html+="<span style='font-size:10px;color:#94a3b8'>"+bn+"</span>";
+        html+="<span style='font-size:11px;font-weight:700;color:"+cfg.color+"'>"+f2n(bm[bn],mon==="VES"?0:2)+" "+mon+"</span>";
+        html+="</div>";
+      });
+      html+="</div>";
+    }
+    html+="</div>";
+    return html;
+  }
+
+  // Bloque especial USDT
+  var bloqueUsdt=(totUc>0||totUv>0)?
+    "<div style='background:rgba(74,222,128,.12);border:1px solid rgba(74,222,128,.3);border-radius:12px;padding:12px 14px;min-width:180px;flex:1'>"+
+    "<div style='font-size:11px;font-weight:800;color:#4ade80;letter-spacing:.3px;margin-bottom:9px'>💰 USDT · Movimiento del período</div>"+
+    "<div style='display:flex;justify-content:space-between;margin-bottom:4px'><span style='font-size:10px;color:#94a3b8'>🟢 Comprado (neto)</span><span style='font-size:12px;font-weight:700;color:#4ade80'>+"+f2n(totUc)+" USDT</span></div>"+
+    "<div style='display:flex;justify-content:space-between;margin-bottom:4px'><span style='font-size:10px;color:#94a3b8'>🔴 Vendido (total)</span><span style='font-size:12px;font-weight:700;color:#f87171'>−"+f2n(totUv)+" USDT</span></div>"+
+    "<div style='border-top:1px solid rgba(74,222,128,.2);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between;align-items:center'>"+
+    "<span style='font-size:10px;color:#94a3b8;font-weight:700'>= Ganancia</span>"+
+    "<span style='font-size:16px;font-weight:900;color:"+(totGanancia>0?"#4ade80":"#f87171")+"'>$"+f2n(totGanancia)+" USDT</span>"+
+    "</div></div>"
+  :"";
+
   var totalesBar =
-  "<div style='background:#1a3558;color:#fff;border-radius:0 0 11px 11px;padding:12px 16px;font-size:12px'>"+
-    "<div style='display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start'>"+
-      "<div style='flex:1;min-width:180px'>"+
-        "<div style='font-size:10px;color:#8ab;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px'>💰 Ganancia total</div>"+
-        "<div style='font-size:18px;font-weight:800;color:#4ade80'>$"+f2n(totGanancia)+" USD</div>"+
-      "</div>"+
-      "<div style='flex:1;min-width:180px'>"+
-        "<div style='font-size:10px;color:#8ab;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px'>🏦 Comisiones bancarias</div>"+
-        "<div style='font-size:15px;font-weight:700;color:#fbbf24'>"+(totComisVes?f2n(totComisVes,2)+" VES":"—")+"</div>"+
-        "<div style='font-size:11px;color:#a0b'>≈ "+f2n(totComisUsdt,4)+" USDT</div>"+
-      "</div>"+
-      "<div style='flex:1;min-width:200px'>"+
-        "<div style='font-size:10px;color:#8ab;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px'>📤 Montos enviados</div>"+
-        "<div style='font-size:13px;font-weight:600;color:#e2e8f0'>"+monedaAmounts+"</div>"+
-      "</div>"+
-      "<div style='flex:1;min-width:200px'>"+
-        "<div style='font-size:10px;color:#8ab;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px'>📥 Montos entregados</div>"+
-        "<div style='font-size:13px;font-weight:600;color:#e2e8f0'>"+monedaEntregas+"</div>"+
-      "</div>"+
-      (bancosResumen?
-      "<div style='flex:2;min-width:220px'>"+
-        "<div style='font-size:10px;color:#8ab;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px'>🏧 Entradas por banco</div>"+
-        "<div style='font-size:11px;color:#e2e8f0'>"+bancosResumen+"</div>"+
-      "</div>":"")+"    </div>"+
+  "<div style='background:#0f172a;border-radius:0 0 11px 11px;padding:14px 16px'>"+
+    "<div style='font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px'>📊 Resumen del período · "+fil.length+" operaciones</div>"+
+    "<div style='display:flex;flex-wrap:wrap;gap:9px;align-items:stretch'>"+
+      bloqueUsdt+
+      bloqueMoneda("BRL")+
+      bloqueMoneda("VES")+
+      bloqueMoneda("USD")+
+      bloqueMoneda("PEN")+
+      bloqueMoneda("EUR")+
+      bloqueMoneda("COP")+
+      bloqueMoneda("TTD")+
+    "</div>"+
   "</div>";
 
   var rows=fil.map(function(r){
