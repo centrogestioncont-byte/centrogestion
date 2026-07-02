@@ -4157,7 +4157,16 @@ function rCapitalTotal(){
 
   // ── Panel salud de cartera ────────────────────────────────────────
   var porCobrarPend = (S.cuentasCobrar||[]).filter(function(x){return !x.cobrado;});
-  var totalPorCobrar = porCobrarPend.reduce(function(a,x){return a+(parseFloat(x.monto)||0);},0);
+  // Convertir cada cobro pendiente a USDT según su moneda real (no sumar BRL/USD como si fueran USDT)
+  var totalPorCobrar = porCobrarPend.reduce(function(a,x){
+    var mon = x.moneda||"BRL";
+    var m = parseFloat(x.monto)||0;
+    var abos = (x.abonos||[]).reduce(function(s,ab){return s+(parseFloat(ab.monto)||0);},0);
+    var pend = Math.max(0, m - abos);
+    var rate = getRateToUsdt(mon);
+    return a + (mon==="USDT" ? pend : (rate ? Math.round(pend/rate*100)/100 : 0));
+  },0);
+  totalPorCobrar = Math.round(totalPorCobrar*100)/100;
   var prestPend = (S.prestamos||[]).filter(function(x){return !x.saldado;});
   var totalPrestPend = prestPend.reduce(function(a,x){
     var pagado=(x.pagos||[]).reduce(function(s,p){return s+(parseFloat(p.monto)||0);},0);
@@ -6478,6 +6487,101 @@ function editarSaldoCuentaEnConfig(cid){
   saveData();R();
   alert("✅ Saldo de \""+c.nombre+"\" actualizado a "+c.saldo+" "+c.moneda+".");
 }
+
+// ── LEER COMPROBANTE CON IA ─────────────────────────────────────────────────
+// Analiza imagen de Binance P2P (u otro exchange) y rellena el formulario
+// automáticamente. Solo queda seleccionar las cuentas (origen/destino).
+async function leerComprobanteIA(input){
+  var file = input.files[0];
+  if(!file){ return; }
+  S._iaLeyendo = true;
+  S._iaResultado = null;
+  S._iaError = null;
+  R();
+
+  try {
+    // Convertir imagen a base64
+    var base64 = await new Promise(function(res, rej){
+      var reader = new FileReader();
+      reader.onload = function(e){ res(e.target.result.split(",")[1]); };
+      reader.onerror = function(){ rej(new Error("No se pudo leer el archivo")); };
+      reader.readAsDataURL(file);
+    });
+
+    var mediaType = file.type || "image/jpeg";
+
+    var prompt = "Eres un asistente experto en comprobantes de Binance P2P y exchanges cripto para Venezuela, Perú, Brasil, Colombia, Trinidad.\n\n" +
+      "Analiza esta imagen de un comprobante y extrae los datos en JSON. Responde SOLO con el JSON, sin texto adicional, sin markdown.\n\n" +
+      "Campos a extraer:\n" +
+      "- tipo: \"compra\" (si el usuario recibe USDT) o \"venta\" (si el usuario entrega USDT y recibe fiat)\n" +
+      "- moneda: código ISO de la moneda fiat (VES, BRL, USD, PEN, COP, EUR, TTD)\n" +
+      "- montOrigen: monto en moneda fiat (número, solo para compra)\n" +
+      "- usdt: cantidad total de USDT de la orden (número)\n" +
+      "- tasa: precio por USDT en moneda fiat (número)\n" +
+      "- comision: comisión en USDT (número, 0 si no hay o si fue exonerada)\n" +
+      "- fecha: fecha en formato YYYY-MM-DD\n" +
+      "- plataforma: nombre de la plataforma (ej: Binance P2P, DAKAGS, etc.)\n" +
+      "- bsRecibidos: monto fiat realmente recibido (solo para venta, si aparece)\n" +
+      "- ordenNum: número de orden si aparece\n\n" +
+      "Reglas importantes:\n" +
+      "- Si dice \"Comprar USDT\" → tipo=compra\n" +
+      "- Si dice \"Vender USDT\" → tipo=venta\n" +
+      "- Si la comisión dice 0 USDT → comision=0\n" +
+      "- La moneda la deduce del símbolo: Bs/BS/VES=VES, S/=PEN, R$=BRL, $=USD (si no es VES/PEN/BRL), COP=COP\n" +
+      "- Si no encuentras un campo, ponlo como null\n\n" +
+      "Responde SOLO con el JSON, ejemplo: {\"tipo\":\"compra\",\"moneda\":\"VES\",\"montOrigen\":8000,\"usdt\":10.70,\"tasa\":747.5,\"comision\":0,\"fecha\":\"2026-07-01\",\"plataforma\":\"Binance P2P\",\"bsRecibidos\":null,\"ordenNum\":\"229057958...\"}";
+
+    var resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 1000,
+        messages: [{
+          role: "user",
+          content: [
+            { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } },
+            { type: "text", text: prompt }
+          ]
+        }]
+      })
+    });
+
+    var data = await resp.json();
+    var raw = (data.content||[]).map(function(b){ return b.text||""; }).join("").trim();
+    // Limpiar posibles backticks
+    raw = raw.replace(/^```[a-z]*\n?/,"").replace(/```$/,"").trim();
+    var parsed = JSON.parse(raw);
+
+    // Rellenar S.nIU con los datos extraídos
+    if(parsed.tipo) S.nIU.tipo = parsed.tipo;
+    if(parsed.moneda) S.nIU.moneda = parsed.moneda;
+    if(parsed.moneda) S.nIU.monedaVenta = parsed.moneda; // para venta
+    if(parsed.montOrigen!=null) S.nIU.montOrigen = parsed.montOrigen;
+    if(parsed.usdt!=null) S.nIU.usdt = parsed.usdt;
+    if(parsed.tasa!=null) S.nIU.tasa = parsed.tasa;
+    if(parsed.comision!=null) S.nIU.comision = parsed.comision;
+    if(parsed.fecha) S.nIU.fecha = parsed.fecha;
+    if(parsed.plataforma) S.nIU.plataforma = parsed.plataforma;
+    if(parsed.bsRecibidos!=null) S.nIU.bsRecibidos = parsed.bsRecibidos;
+
+    // Resumen de lo que se detectó
+    var resumen = (parsed.tipo==="compra"?"⬇️ Compra":"⬆️ Venta") +
+      " · " + (parsed.moneda||"?") +
+      " · " + (parsed.usdt||"?") + " USDT" +
+      " · Tasa: " + (parsed.tasa||"?");
+    S._iaResultado = resumen;
+
+  } catch(err) {
+    S._iaError = err.message || "Error al analizar la imagen";
+  }
+
+  S._iaLeyendo = false;
+  // Limpiar el input para permitir subir la misma imagen de nuevo
+  input.value = "";
+  R();
+}
+
 function editRestanteInv(id){
   var r=(S.inventarioUsdt||[]).find(function(x){return x.id===id;});
   if(!r) return;
@@ -10044,6 +10148,18 @@ function rInventarioUsdt(){
     })()+
   "</div>"+
     "<div class='sec'><div class='sec-title'>"+(f.tipo==="compra"?"⬇️ COMPRA de USDT":"⬆️ VENTA de USDT (recibo moneda)")+"</div>"+
+    <!-- Botón leer imagen con IA -->
+    "<div style='margin-bottom:14px;background:linear-gradient(135deg,#2d1b6e,#4a2d9e);border-radius:12px;padding:14px 16px'>"+
+    "<div style='font-size:11px;font-weight:700;color:#c4b5fd;margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px'>🤖 Leer comprobante con IA</div>"+
+    "<div style='display:flex;align-items:center;gap:10px;flex-wrap:wrap'>"+
+      "<label for='inv-img-upload' style='background:#7c3aed;color:#fff;padding:10px 16px;border-radius:9px;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:7px'>📷 Adjuntar comprobante</label>"+
+      "<input id='inv-img-upload' type='file' accept='image/*' style='display:none' onchange='leerComprobanteIA(this)'>"+
+      (S._iaLeyendo?"<div style='color:#c4b5fd;font-size:13px;display:flex;align-items:center;gap:6px'><span style='display:inline-block;animation:spin 1s linear infinite'>⏳</span> Analizando imagen...</div>":
+      S._iaResultado?"<div style='color:#4ade80;font-size:12px;font-weight:700'>✅ "+S._iaResultado+"</div>":
+      S._iaError?"<div style='color:#f87171;font-size:12px'>❌ "+S._iaError+"</div>":
+      "<div style='color:rgba(196,181,253,.7);font-size:11px'>Sube la foto del comprobante de Binance o cualquier P2P.<br>El sistema detectará tipo, moneda, monto, tasa, USDT y comisión.</div>")
+    +"</div>"+
+    "</div>"+
     "<div style='display:flex;gap:8px;margin-bottom:14px'>"+
       "<button type='button' onclick='S.nIU.tipo=\"compra\";R()' style='flex:1;padding:10px;border-radius:8px;border:2px solid "+(f.tipo==="compra"?"#1a6b3c":"#ddd")+";background:"+(f.tipo==="compra"?"#D6F5E3":"#fff")+";font-weight:700;cursor:pointer'>⬇️ COMPRA USDT<div style='font-size:10px;font-weight:400'>Gasto BRL/USD/PEN/COP...</div></button>"+
       "<button type='button' onclick='S.nIU.tipo=\"venta\";R()' style='flex:1;padding:10px;border-radius:8px;border:2px solid "+(f.tipo==="venta"?"#c0392b":"#ddd")+";background:"+(f.tipo==="venta"?"#FDECEA":"#fff")+";font-weight:700;cursor:pointer'>⬆️ VENTA USDT<div style='font-size:10px;font-weight:400'>Recibo Bolívares u otra moneda</div></button>"+
