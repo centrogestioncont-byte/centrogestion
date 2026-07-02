@@ -2274,6 +2274,7 @@ function saveTx(){
     pais:f.pais,
     _tcLock:null,_tvLock:null,_amLock:null,_tdiaLock:null,_rtLock:null};
   logAudit("REMESA_GUARDAR","Remesa "+f.rt+" · "+f.cl+" · $"+f2(res.pr)+" USDT");
+  notificarNtfy("💸 Remesa registrada", f.rt+" · "+f.cl+" · $"+f2(res.pr)+" USDT · "+f.am+" "+((f.rt||"").split("↔")[0]||""));
   saveData();
   // Si el mes ya estaba cerrado, recalcular y actualizar el resumen archivado
   if(_txCierreMes) ejecutarCierreMes(_txMesKey, false);
@@ -2365,6 +2366,7 @@ function saveTxEE(){
     comisionBanco:false,
     cuentaBanco:"",cuentaDest:"",
     pais:"VENEZUELA"};
+  notificarNtfy("💸 Remesa EE.UU registrada", "USD ↔ VZLA · $"+f2(parseFloat(f.am)||0)+" USD");
   saveData();
   // Si el mes ya estaba cerrado, recalcular y actualizar el resumen archivado
   if(_txeCierreMes) ejecutarCierreMes(_txeMesKey, false);
@@ -3789,7 +3791,25 @@ function rConfigAdmin(){
         "</div>":"")+
     "</div>";
 
-  return _usrSec+ sociosUI+ "<div style='background:linear-gradient(135deg,#1b1e24,#4a3a12);border-radius:12px;padding:14px 18px;margin-bottom:16px;color:#fff'>"+
+  // ── Sección Notificaciones Ntfy ────────────────────────────────────
+  var canal = S.config.ntfyCanal||"";
+  var ntfySec =
+    "<div class='sec' style='margin-bottom:14px'>"+
+    "<div class='sec-title'>🔔 Notificaciones push (ntfy.sh)</div>"+
+    "<p style='font-size:12px;color:#888;margin:0 0 10px'>Instala la app <b>ntfy</b> en tu teléfono, suscríbete a tu canal secreto y recibirás una notificación cada vez que se registre una remesa.</p>"+
+    "<label style='font-size:11px;font-weight:700;color:#555;display:block;margin-bottom:5px'>Nombre de tu canal secreto</label>"+
+    "<div style='display:flex;gap:8px'>"+
+    "<input type='text' placeholder='ej: remesasya-2626-secreto' value='"+canal+"' id='ntfy-canal-inp' oninput='if(!S.config)S.config={};S.config.ntfyCanal=this.value' style='flex:1;padding:10px;border:1.5px solid #ddd;border-radius:9px;font-size:13px;font-family:inherit'>"+
+    "<button onclick='guardarCanalNtfy()' style='padding:10px 16px;background:#1a3558;color:#fff;border:none;border-radius:9px;font-size:13px;font-weight:700;cursor:pointer'>💾 Guardar</button>"+
+    "</div>"+
+    (canal?
+      "<div style='font-size:11px;color:#0b4d27;margin-top:8px;background:#D6F5E3;padding:6px 10px;border-radius:7px'>✅ Activo — canal: <b>"+canal+"</b></div>":
+      "<div style='font-size:11px;color:#888;margin-top:6px'>Sin canal — notificaciones desactivadas</div>"
+    )+
+    "</div>";
+
+
+  return _usrSec+ sociosUI+ ntfySec+ "<div style='background:linear-gradient(135deg,#1b1e24,#4a3a12);border-radius:12px;padding:14px 18px;margin-bottom:16px;color:#fff'>"+
       "<div style='font-size:16px;font-weight:800'>⚙️ CONFIGURACIÓN · MATRIZ DEL SISTEMA</div>"+
       "<div style='font-size:11px;opacity:.8;margin-top:3px'>Todo el sistema se alimenta de aquí. Las cuentas definidas aquí aparecen en todos los módulos.</div>"+
     "</div>"+
@@ -5340,6 +5360,122 @@ function fbForceLoad(){
       alert("❌ No se pudo conectar con Firebase.\nError: "+e.message+"\n\nIntenta con datos móviles si el WiFi bloquea Firebase.");
       console.warn("fbForceLoad error:",e);
     });
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// NTFY.SH — Notificaciones push gratuitas entre dispositivos
+// Canal configurable en S.config.ntfyCanal. Si está vacío, no hace nada.
+// Es fire-and-forget: si falla, no afecta nada en la app.
+// ══════════════════════════════════════════════════════════════════════════════
+function guardarCanalNtfy(){
+  if(!S.config) S.config={};
+  var inp=document.getElementById("ntfy-canal-inp");
+  if(inp) S.config.ntfyCanal=inp.value.trim();
+  saveData();
+  var msg=S.config.ntfyCanal?"Canal guardado: "+S.config.ntfyCanal:"Canal borrado — notificaciones desactivadas";
+  alert(msg);
+  R();
+}
+
+
+function notificarNtfy(titulo, cuerpo){
+  var canal = (S.config && S.config.ntfyCanal) ? S.config.ntfyCanal.trim() : "";
+  if(!canal) return; // notificaciones desactivadas
+  fetch("https://ntfy.sh/" + canal, {
+    method: "POST",
+    headers: {
+      "Title": titulo,
+      "Priority": "default",
+      "Tags": "money_with_wings"
+    },
+    body: cuerpo
+  }).catch(function(){}); // silencioso si falla
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// TASAS DE MERCADO — Solo referencia visual, NUNCA usadas en cálculos FIFO
+// Fuentes: ve.dolarapi.com (VES) + frankfurter.app (BRL, PEN, EUR, COP)
+// Se guarda en S._tasasMercado — campo aislado, no interfiere con nada.
+// ══════════════════════════════════════════════════════════════════════════════
+var _tasasRefTimer = null;
+
+function cargarTasasRef(){
+  if(!S._tasasMercado) S._tasasMercado = {};
+  S._tasasMercado._cargando = true;
+  S._tasasMercado._error = null;
+
+  // 1. Tasa VES (DolarAPI Venezuela)
+  fetch("https://ve.dolarapi.com/v1/dolares", {cache:"no-store"})
+    .then(function(r){ return r.json(); })
+    .then(function(data){
+      // Buscar tasa paralela/promedio
+      var item = (data||[]).find(function(d){ return d.fuente==="paralelo"||d.fuente==="promedio"; });
+      if(!item) item = (data||[])[0];
+      if(item && item.promedio){
+        S._tasasMercado.VES = Math.round(parseFloat(item.promedio)*100)/100;
+        S._tasasMercado._fechaVES = new Date().toLocaleTimeString("es-VE",{hour:"2-digit",minute:"2-digit"});
+      }
+      _actualizarWidgetTasas();
+    })
+    .catch(function(e){ S._tasasMercado._errorVES = true; _actualizarWidgetTasas(); });
+
+  // 2. Tasas BRL, PEN, EUR, COP (Frankfurter — datos del BCE)
+  fetch("https://api.frankfurter.app/latest?from=USD&to=BRL,PEN,EUR,COP", {cache:"no-store"})
+    .then(function(r){ return r.json(); })
+    .then(function(data){
+      var rates = data && data.rates ? data.rates : {};
+      // Guardamos como moneda/USDT (≈ moneda/USD ya que USDT ≈ 1 USD)
+      if(rates.BRL) S._tasasMercado.BRL = Math.round(parseFloat(rates.BRL)*1000)/1000;
+      if(rates.PEN) S._tasasMercado.PEN = Math.round(parseFloat(rates.PEN)*1000)/1000;
+      if(rates.EUR) S._tasasMercado.EUR = Math.round((1/parseFloat(rates.EUR))*1000)/1000;
+      if(rates.COP) S._tasasMercado.COP = Math.round(parseFloat(rates.COP)*100)/100;
+      S._tasasMercado._fechaFX = new Date().toLocaleTimeString("es-VE",{hour:"2-digit",minute:"2-digit"});
+      S._tasasMercado._cargando = false;
+      _actualizarWidgetTasas();
+    })
+    .catch(function(e){ S._tasasMercado._cargando = false; _actualizarWidgetTasas(); });
+}
+
+function _actualizarWidgetTasas(){
+  // Actualiza solo el widget sin re-renderizar toda la app
+  var el = document.getElementById("tasas-ref-widget");
+  if(!el) return;
+  el.innerHTML = _htmlTasasRef();
+}
+
+function _htmlTasasRef(){
+  var t = S._tasasMercado || {};
+  if(t._cargando && !t.VES && !t.BRL) return "<div style='font-size:11px;color:#888;padding:8px'>⏳ Cargando tasas...</div>";
+
+  var items = [
+    {mon:"VES", label:"Bs/USDT",  val:t.VES,  flag:"🇻🇪", hora:t._fechaVES},
+    {mon:"BRL", label:"R$/USDT",  val:t.BRL,  flag:"🇧🇷", hora:t._fechaFX},
+    {mon:"PEN", label:"S//USDT",  val:t.PEN,  flag:"🇵🇪", hora:t._fechaFX},
+    {mon:"EUR", label:"€/USDT",   val:t.EUR,  flag:"🇪🇺", hora:t._fechaFX},
+    {mon:"COP", label:"COP/USDT", val:t.COP,  flag:"🇨🇴", hora:t._fechaFX},
+  ];
+
+  var html = "<div style='display:flex;flex-wrap:wrap;gap:6px'>";
+  items.forEach(function(it){
+    if(!it.val) return;
+    html += "<div style='background:#fff;border:1px solid #e5e7eb;border-radius:9px;padding:7px 11px;display:flex;align-items:center;gap:6px;min-width:110px'>";
+    html += "<span style='font-size:14px'>" + it.flag + "</span>";
+    html += "<div><div style='font-size:9px;color:#aaa;font-weight:700;text-transform:uppercase'>" + it.label + "</div>";
+    html += "<div style='font-size:13px;font-weight:800;color:#1a1a2e'>" + it.val.toLocaleString("es-VE") + "</div>";
+    if(it.hora) html += "<div style='font-size:8px;color:#bbb'>" + it.hora + "</div>";
+    html += "</div></div>";
+  });
+  html += "</div>";
+  html += "<div style='font-size:9px;color:#ccc;margin-top:6px'>⚠️ Solo referencia de mercado — los cálculos de ganancia usan tus tasas FIFO reales</div>";
+  return html;
+}
+
+function iniciarTasasAutoRef(){
+  cargarTasasRef();
+  // Actualizar cada 10 minutos
+  if(_tasasRefTimer) clearInterval(_tasasRefTimer);
+  _tasasRefTimer = setInterval(cargarTasasRef, 600000);
 }
 
 
@@ -7972,6 +8108,8 @@ function rInformeCierre(){
 
 // ── DASHBOARDS ────────────────────────────────────────
 function rDash(){
+  // Iniciar carga de tasas de referencia si aún no están disponibles
+  if(!S._tasasMercado || !S._tasasMercado.VES) iniciarTasasAutoRef();
   var mesActualKey = getMesKeyActual();
   var mesesDisp    = getMesesDisponibles();
 
@@ -8151,7 +8289,16 @@ function rDash(){
       return "<div style='background:"+a.bg+";border:1px solid "+a.brd+";border-radius:10px;padding:9px 13px;display:flex;align-items:center;justify-content:space-between;gap:8px'><div style='display:flex;align-items:center;gap:8px'><span style='font-size:16px'>"+a.ico+"</span><span style='font-size:12px;font-weight:600;color:"+a.color+"'>"+a.msg+"</span></div>"+(a.accion?"<button onclick=\""+onclk+"\" style='background:"+a.color+";color:#fff;border:none;padding:4px 10px;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;font-family:inherit'>"+a.aLbl+"</button>":"")+"</div>";
     }).join("")+"</div>":"";
 
-  return headerSel +
+  // Widget tasas de mercado (solo referencia visual — no entra en ningún cálculo)
+  var tasasWidget =
+    "<div style='background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:12px 14px;margin-bottom:14px'>"+
+    "<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px'>"+
+    "<span style='font-size:11px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.5px'>📊 Tasas de mercado · referencia</span>"+
+    "<button onclick='cargarTasasRef()' style='border:none;background:none;cursor:pointer;font-size:11px;color:#aaa' title='Actualizar tasas'>🔄</button></div>"+
+    "<div id='tasas-ref-widget'>"+_htmlTasasRef()+"</div>"+
+    "</div>";
+
+  return headerSel + tasasWidget +
   alertasHtml+
   "<div style='background:#f8f9fd;border:1px solid #e8eaf0;border-radius:12px;padding:11px 14px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:center'>"+
     "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;width:100%;margin-bottom:4px'>🔍 Desglose por fuente · "+getMesLabel(selMes.split("-")[1],selMes.split("-")[0])+"</div>"+
