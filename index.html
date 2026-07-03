@@ -1926,6 +1926,10 @@ function rBalancePlus(){
   "<div class='fl'><label>Moneda</label><select onchange='S.nCap.moneda=this.value;R()'>"+monedaOpts+"</select></div></div>"+
   "<div class='f2'><div class='fl'><label>Saldo actual ("+nc.moneda+")</label><input type='number' step='0.01' placeholder='0.00' value='"+(nc.saldo||"")+"' oninput='S.nCap.saldo=this.value'></div>"+
   "<div class='fl'><label>Nota</label><input type='text' placeholder='ej: cuenta principal' value='"+(nc.nota||"")+"' oninput='S.nCap.nota=this.value'></div></div>"+
+  "<label style='display:flex;align-items:center;gap:8px;margin-bottom:12px;padding:9px 12px;background:#F3F0FF;border-radius:9px;cursor:pointer'>"+
+    "<input type='checkbox' "+(nc.esPersonal?"checked":"")+" onchange='S.nCap.esPersonal=this.checked'>"+
+    "<span style='font-size:12px'><b>💜 Es mi cuenta personal</b> — el dinero es mío, no de la empresa. Los gastos pagados desde aquí NO se restan del sueldo teórico ni afectan el cierre de mes.</span>"+
+  "</label>"+
   "<button class='btn-main btn-blue' onclick='saveNewCuenta()'>💾 Agregar cuenta</button></div>"
   );
 }
@@ -1960,6 +1964,19 @@ function saveCuenta(){
 function editarSaldoCuenta(inp){
   var cid=inp.getAttribute("data-cid");var val=parseFloat(inp.value)||0;
   showPinEdit(function(){updateCuentaSaldo(cid,val);});
+}
+
+function toggleCuentaPersonal(cid){
+  var c=(S.cuentas||[]).find(function(x){return x.id===cid;});
+  if(!c) return;
+  var nuevoEstado=!c.esPersonal;
+  var msg=nuevoEstado?
+    "💜 Marcar \""+c.nombre+"\" como cuenta PERSONAL.\n\nLos gastos que pagues desde aquí ya NO se restarán de tu sueldo teórico ni afectarán el cierre de mes — porque ya es tu propio dinero.\n\n¿Confirmar?":
+    "Quitar la marca de personal a \""+c.nombre+"\".\n\nSus gastos volverán a contarse en el cálculo de sueldo teórico.\n\n¿Confirmar?";
+  if(!confirm(msg)) return;
+  c.esPersonal=nuevoEstado;
+  logAudit("CUENTA_PERSONAL",c.nombre+" → esPersonal="+nuevoEstado);
+  saveData();R();
 }
 
 function editarNombreCuenta(cid){
@@ -2065,8 +2082,8 @@ function deleteCuenta(id){
 function saveNewCuenta(){
   var f=S.nCap;
   if(!f.nombre||!f.moneda){alert("Completa nombre y moneda.");return;}
-  S.cuentas.push({id:"c"+Date.now(),nombre:f.nombre,tipo:f.tipo||"banco",moneda:f.moneda,saldo:parseFloat(f.saldo)||0,nota:f.nota||"",activa:true});
-  S.nCap={nombre:"",tipo:"banco",moneda:"USDT",saldo:"",nota:""};
+  S.cuentas.push({id:"c"+Date.now(),nombre:f.nombre,tipo:f.tipo||"banco",moneda:f.moneda,saldo:parseFloat(f.saldo)||0,nota:f.nota||"",activa:true,esPersonal:!!f.esPersonal});
+  S.nCap={nombre:"",tipo:"banco",moneda:"USDT",saldo:"",nota:"",esPersonal:false};
   saveData();R();
 }
 
@@ -3740,6 +3757,7 @@ function rConfigAdmin(){
           "<div>"+
             "<div style=\'font-size:13px;font-weight:700;color:"+(inac?"#999":isNeg?"#c0392b":"#1a3558")+"\'>"+
               (tipoIco[c.tipo||"fiat"]||"🏦")+" "+(inac?"<s>":"")+c.nombre+(inac?"</s>":"")+
+              (c.esPersonal?" <span style=\'font-size:9px;font-weight:700;background:#F3F0FF;color:#7c3aed;padding:1px 7px;border-radius:8px;vertical-align:middle\'>💜 Personal</span>":"")+
             "</div>"+
             "<div style=\'font-size:10px;color:#aaa;margin-top:2px\'>"+(c.tipo||"")+(c.operador&&c.operador!=="general"?" · "+c.operador:"")+"</div>"+
           "</div>"+
@@ -3756,6 +3774,8 @@ function rConfigAdmin(){
             "style=\'flex:1;padding:6px 8px;border:1.5px solid "+(isNeg?"#f5b7b1":"#e8e8e8")+";border-radius:8px;font-size:12px;font-weight:700;text-align:right;min-width:0;color:"+(isNeg?"#c0392b":"#1a3558")+"\' title=\'Editar saldo\'>"+
           "<button onclick=\'editarNombreCuenta(\""+c.id+"\")\' title=\'Editar nombre\' "+
             "style=\'padding:6px 9px;border:1.5px solid #d0d8ff;border-radius:8px;font-size:12px;cursor:pointer;background:#EEF3FF\'>✏️</button>"+
+          "<button onclick=\'toggleCuentaPersonal(\""+c.id+"\")\' title=\'"+(c.esPersonal?"Cuenta personal — click para quitar marca":"Marcar como cuenta personal (mi propia plata)")+"\' "+
+            "style=\'padding:6px 9px;border:1.5px solid "+(c.esPersonal?"#c4b5fd":"#e8e8e8")+";border-radius:8px;font-size:12px;cursor:pointer;background:"+(c.esPersonal?"#F3F0FF":"#f8f8f8")+"\'>"+(c.esPersonal?"💜":"🤍")+"</button>"+
           "<button data-cid=\'"+c.id+"\' onclick=\'toggleCuenta(this)\' title=\'"+(inac?"Reactivar":"Pausar")+"\' "+
             "style=\'padding:6px 9px;border:1.5px solid #e8e8e8;border-radius:8px;font-size:12px;cursor:pointer;background:"+(inac?"#D6F5E3":"#fff8dc")+"\'>"+
             (inac?"▶️":"⏸")+"</button>"+
@@ -7485,7 +7505,12 @@ function calcMesCompleto(mesKey, pctOverrides){
   var sueldo    = r2(utilidadEmpresa * pctSueldo);
 
   // ── 8. Personal ──
-  var egPerPag    = r2(egPerM.filter(function(e){return e.pagada;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0));
+  // Excluir del cálculo teórico los gastos pagados desde una cuenta marcada
+  // "esPersonal" (dinero propio del usuario, no de la empresa — no debe
+  // afectar el sueldo teórico ni el cierre de mes).
+  var cuentasPersonalesIds=(S.cuentas||[]).filter(function(c){return c.esPersonal;}).map(function(c){return c.id;});
+  var egPerPag    = r2(egPerM.filter(function(e){return e.pagada && cuentasPersonalesIds.indexOf(e.cuentaId)===-1;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0));
+  var egPerPagPropio = r2(egPerM.filter(function(e){return e.pagada && cuentasPersonalesIds.indexOf(e.cuentaId)!==-1;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0));
   var repTotal    = r2(repM.reduce(function(a,r){return a+(parseFloat(r.monto)||0);},0));
   var disponiblePer = r2(sueldo - egPerPag + repTotal);
 
@@ -7506,7 +7531,7 @@ function calcMesCompleto(mesKey, pctOverrides){
     egEmpPag:egEmpPag,egEmpPend:egEmpPend,
     utilidadEmpresa:utilidadEmpresa,
     sueldo:sueldo,pctSueldo:Math.round(pctSueldo*100),
-    egPerPag:egPerPag,repTotal:repTotal,disponiblePer:disponiblePer
+    egPerPag:egPerPag,egPerPagPropio:egPerPagPropio,repTotal:repTotal,disponiblePer:disponiblePer
   };
 }
 
@@ -11162,7 +11187,8 @@ function rEgresos(){
 
   // ── Datos personales ──
   var epMes=filterByMes(S.egresos_personales||[],mesKey);
-  var epPag=epMes.filter(function(e){return e.pagada;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0);
+  var _cuentasPropiasIds=(S.cuentas||[]).filter(function(c){return c.esPersonal;}).map(function(c){return c.id;});
+  var epPag=epMes.filter(function(e){return e.pagada && _cuentasPropiasIds.indexOf(e.cuentaId)===-1;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0);
 
   // ── Sueldo ──
   var brlM=filterByMes(S.brl,mesKey),vzlaM=filterByMes(S.vzla,mesKey),eeuuM=filterByMes(S.eeuu,mesKey);
@@ -11375,7 +11401,8 @@ function rMiGestion(){
   var utilidad=Math.round((base-sueldo)*100)/100;
   // Personales
   var epMes=filterByMes(S.egresos_personales,mesKey);
-  var epPag=epMes.filter(function(e){return e.pagada;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0);
+  var _cuentasPropiasIds2=(S.cuentas||[]).filter(function(c){return c.esPersonal;}).map(function(c){return c.id;});
+  var epPag=epMes.filter(function(e){return e.pagada && _cuentasPropiasIds2.indexOf(e.cuentaId)===-1;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0);
   var dispPersonal=Math.round((sueldo-epPag+repMesUsdt(getMesKeyActual()))*100)/100;
   // Stats personal
   var catPerMap={};
