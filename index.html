@@ -5498,13 +5498,31 @@ function fbForceLoad(){
 
 
 // ── Parsear texto pegado del comprobante y rellenar el formulario ─────────────
-function _limpiarPaste(){
-  S._pasteText=""; S._pasteError=null; S._pasteDebug=null;
-  var el=document.getElementById('paste-txt-ocr');
-  if(el) el.value='';
-  var box=document.getElementById('paste-status-box');
-  if(box) box.innerHTML='';
+function _abrirPegado(){
+  var txt=prompt("Pega el texto del comprobante de Binance");
+  if(!txt||!txt.trim()){return;}
+  var parsed=_parsearOCR(txt.trim());
+  if(parsed&&(parsed.usdt||parsed.tasa||parsed.monto)){
+    if(!S._qf) S._qf={tipo:'compra',moneda:'VES',tasa:'',monto:'',usdt:''};
+    S._qf.tipo  =parsed.tipo  ||S._qf.tipo;
+    S._qf.moneda=parsed.moneda||S._qf.moneda;
+    if(parsed.monto) S._qf.monto=String(parsed.monto);
+    if(parsed.tasa)  S._qf.tasa =String(parsed.tasa);
+    if(parsed.usdt)  S._qf.usdt =String(parsed.usdt);
+    if(parsed.ordenId) S.nIU.ordenId=parsed.ordenId;
+    if(parsed.fecha)   S.nIU.fecha  =parsed.fecha;
+    if(parsed.comision!==undefined) S.nIU.comision=parsed.comision;
+    S._pasteOk=(parsed.tipo==='compra'?'Compra':'Venta')+' '+
+      (parsed.moneda||'?')+
+      (parsed.monto?' · '+parsed.monto:'')+(parsed.usdt?' · '+parsed.usdt+' USDT':'')+(parsed.tasa?' · Tasa: '+parsed.tasa:'');
+    S._pasteErr=null;
+  } else {
+    S._pasteOk=null;
+    S._pasteErr='No identifiqué los datos ('+txt.length+' chars). Texto: "'+txt.substring(0,80)+'"';
+  }
+  R();
 }
+function _limpiarPaste(){S._pasteOk=null;S._pasteErr=null;R();}
 
 function _normNum(s){
   s=String(s||'').trim().replace(/\s/g,'');
@@ -5592,51 +5610,7 @@ function _parsearOCR(txt){
 }
 
 
-function _parsearYRellenar(){
-  // Leer siempre del DOM directamente (más confiable que S._pasteText)
-  var el=document.getElementById('paste-txt-ocr');
-  var txt=(el?el.value:(S._pasteText||'')).trim();
-  if(!txt){
-    var box=document.getElementById('paste-status-box');
-    if(box) box.innerHTML="<span style='color:#f87171'>❌ Pega primero el texto del comprobante de Binance.</span>";
-    return;
-  }
 
-  var parsed=_parsearOCR(txt);
-  S._pasteDebug='Detectado → tipo:'+parsed.tipo+' | moneda:'+parsed.moneda+
-    ' | USDT:'+parsed.usdt+' | tasa:'+parsed.tasa+' | monto:'+parsed.monto;
-  console.log('[PARSE]',S._pasteDebug);
-  console.log('[PARSE] Texto original:\n'+txt);
-
-  if(parsed&&(parsed.usdt||parsed.tasa||parsed.monto)){
-    if(!S._qf) S._qf={tipo:'compra',moneda:'VES',tasa:'',monto:'',usdt:''};
-    if(parsed.tipo)    S._qf.tipo  =parsed.tipo;
-    if(parsed.moneda)  S._qf.moneda=parsed.moneda;
-    if(parsed.monto)   S._qf.monto =String(parsed.monto);
-    if(parsed.tasa)    S._qf.tasa  =String(parsed.tasa);
-    if(parsed.usdt)    S._qf.usdt  =String(parsed.usdt);
-    // También rellenar orden, fecha y comisión directamente en el formulario
-    if(parsed.ordenId) S.nIU.ordenId =parsed.ordenId;
-    if(parsed.fecha)   S.nIU.fecha   =parsed.fecha;
-    if(parsed.comision!==undefined) S.nIU.comision=parsed.comision;
-    if(parsed.moneda)  S.nIU.moneda  =parsed.moneda;
-    S._pasteText=''; S._pasteError=null;
-    // Limpiar textarea directamente
-    if(el) el.value='';
-    var box=document.getElementById('paste-status-box');
-    if(box) box.innerHTML="<span style='color:#4ade80'>✅ Datos extraídos — revisa los campos de ingreso rápido abajo</span>";
-    R();
-  } else {
-    var box2=document.getElementById('paste-status-box');
-    var preview=txt.substring(0,150).split('\n').join(' | ');
-    var msg="❌ No identifiqué los datos. Texto recibido ("+txt.length+" chars):<br><small style='opacity:.7'>"+preview+"</small>";
-    if(box2) box2.innerHTML="<div style='color:#f87171'>"+msg+"</div>";
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// LECTOR OCR — Tesseract.js (actualiza UI via DOM, sin parpadeo)
-// ══════════════════════════════════════════════════════════════════════════════
 function _ocrUpdateUI(status, pct, result, error){
   var box=document.getElementById('ocr-status-box');
   if(!box) return;
@@ -10826,18 +10800,13 @@ function rInventarioUsdt(){
     "<div class='sec'>"+
     // ── Panel OCR Tesseract (gratis, sin API) ─────────────────────────────
     (function(){
-      // Panel de pegar texto — usa el OCR nativo del teléfono
-      var ptxt=S._pasteText||'';
+      // Botón simple — prompt() nativo, no depende de R()
       var ocrPanel="<div style='background:linear-gradient(135deg,#0f2a14,#1a4020);border-radius:11px;padding:12px 14px;margin-bottom:12px;border:1px solid rgba(34,197,94,.25)'>"+
-        "<div style='font-size:10px;font-weight:700;color:#4ade80;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px'>📋 Pegar texto del comprobante</div>"+
-        "<div style='font-size:10px;color:rgba(74,222,100,.6);margin-bottom:8px'>"+
-        "📱 iPhone: mantén presionado el texto en la captura → Copiar &nbsp;·&nbsp; Android: Google Lens → Seleccionar texto</div>"+
-        "<textarea id='paste-txt-ocr' rows='3' placeholder='Pega aquí el texto copiado de Binance P2P...' oninput='S._pasteText=this.value' style='width:100%;padding:9px;background:rgba(255,255,255,.08);border:1px solid rgba(34,197,94,.3);border-radius:8px;color:#fff;font-size:12px;font-family:inherit;resize:none;box-sizing:border-box'>"+ptxt+"</textarea>"+
-        "<div style='display:flex;gap:7px;margin-top:7px'>"+
-          "<button type='button' onclick='_parsearYRellenar()' style='flex:2;padding:10px;background:#16a34a;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:800;cursor:pointer'>✅ Extraer datos</button>"+
-          "<button type='button' onclick='_limpiarPaste()' style='flex:1;padding:10px;background:rgba(255,255,255,.1);color:#fff;border:none;border-radius:8px;font-size:12px;cursor:pointer'>✕</button>"+
-        "</div>"+
-        "<div id='paste-status-box' style='margin-top:7px;font-size:10px;min-height:16px'></div>"+
+        "<div style='font-size:10px;font-weight:700;color:#4ade80;margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px'>📋 Pegar texto del comprobante</div>"+
+        "<div style='font-size:10px;color:rgba(74,222,100,.6);margin-bottom:10px'>📱 iPhone: mantén el texto en la captura → Copiar · Android: Google Lens → Seleccionar texto</div>"+
+        "<button type='button' onclick='_abrirPegado()' style='width:100%;padding:12px;background:#16a34a;color:#fff;border:none;border-radius:9px;font-size:13px;font-weight:800;cursor:pointer'>📋 Pegar texto de Binance</button>"+
+        (S._pasteOk?"<div style='margin-top:8px;font-size:11px;color:#4ade80;background:rgba(34,197,94,.12);border-radius:7px;padding:6px 10px'>✅ "+S._pasteOk+"</div>":"")+ 
+        (S._pasteErr?"<div style='margin-top:8px;font-size:11px;color:#f87171;background:rgba(248,113,113,.1);border-radius:7px;padding:6px 10px'>❌ "+S._pasteErr+"</div>":"")+ 
       "</div>";
       return ocrPanel;
     })()+
