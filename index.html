@@ -11325,7 +11325,7 @@ function rEgresos(){
     "<td><button class='del-btn' onclick='delEgPer("+e.id+")'>🗑️</button></td></tr>";
   }).join("");
 
-  // ── Pendientes empresa ──
+  // ── Pendientes empresa (egresos "fijos" antiguos) ──
   var pendRows=egEmp.filter(function(e){return !e.pagada;}).map(function(e){
     var ctasE=(S.cuentas||[]).filter(function(c){return c.activa!==false&&c.moneda===(e.mon||"BRL");});
     var selC="<select onchange='setCuentaEgreso("+e.id+",this.value)' style='font-size:10px;padding:3px 6px;border-radius:6px;border:1px solid #ddd;max-width:110px'><option value=''>cuenta…</option>"+ctasE.map(function(c){return "<option value='"+c.id+"'"+(e.cuentaId===c.id?" selected":"")+">"+c.nombre+"</option>";}).join("")+"</select>";
@@ -11337,11 +11337,32 @@ function rEgresos(){
     "<button onclick='delEg("+e.id+")' style='background:none;border:none;cursor:pointer;font-size:13px'>🗑️</button></div></div>";
   }).join("");
 
+  // ── Pendientes empresa (Pagos Programados / compromisos) — mismo mes ──
+  var cmpsEmpPend=getCompromisosParaMes(mesKey).filter(function(c){
+    if(c.tipo!=="empresa") return false;
+    var pago=getCmpPago(c,mesKey);
+    return !pago||!pago.pagado;
+  });
+  var cmpEmpPendUsdt=Math.round(cmpsEmpPend.reduce(function(a,c){return a+(parseFloat(c.usdt)||0);},0)*100)/100;
+  var pendRowsCmp=cmpsEmpPend.map(function(c){
+    return "<div style='display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid #f5f5f5'>"+
+    "<div><div style='font-size:12px;font-weight:500'>📅 "+c.nombre+"</div><div style='font-size:10px;color:#aaa'>día "+c.diaVence+" · programado</div></div>"+
+    "<div style='display:flex;align-items:center;gap:6px'>"+
+    "<span style='font-weight:700;color:#9a6d00'>"+f2(c.monto)+" "+c.moneda+(c.moneda!=="USDT"?" <span style='opacity:.6;font-size:10px'>(≈$"+f2(c.usdt)+")</span>":"")+"</span>"+
+    "<button onclick='pagarCompromiso(\""+c.id+"\",\""+mesKey+"\")' style='background:#0f6e3a;color:#fff;border:none;padding:5px 8px;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer'>✅</button>"+
+    "</div></div>";
+  }).join("");
+
+  // Total combinado (egresos fijos antiguos + compromisos programados) — solo para este aviso visual
+  var pendEmpresaCombinado=Math.round((egEmpPend+cmpEmpPendUsdt)*100)/100;
+  var pendRowsCombinado=pendRows+pendRowsCmp;
+
+
   // ── Contenido pestaña empresa ──
   var tabEmpresa=
     "<div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:16px'>"+
     "<div style='background:#FFF0F0;border:1.5px solid #FFD0D0;border-radius:12px;padding:12px;text-align:center'><div style='font-size:9px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:5px'>💸 Pagado</div><div style='font-size:18px;font-weight:800;color:#c0392b'>$"+f2(egEmpPag)+"</div><div style='font-size:9px;color:#aaa'>"+egEmp.filter(function(e){return e.pagada;}).length+" gastos</div></div>"+
-    "<div style='background:#FFFBF0;border:1.5px solid #FFE8A0;border-radius:12px;padding:12px;text-align:center'><div style='font-size:9px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:5px'>⚠️ Pendiente</div><div style='font-size:18px;font-weight:800;color:#9a6d00'>$"+f2(egEmpPend)+"</div></div>"+
+    "<div style='background:#FFFBF0;border:1.5px solid #FFE8A0;border-radius:12px;padding:12px;text-align:center'><div style='font-size:9px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:5px'>⚠️ Pendiente</div><div style='font-size:18px;font-weight:800;color:#9a6d00'>$"+f2(pendEmpresaCombinado)+"</div></div>"+
     "<div style='background:#F0FFF6;border:1.5px solid #A0E8C0;border-radius:12px;padding:12px;text-align:center'><div style='font-size:9px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:5px'>📊 Base</div><div style='font-size:18px;font-weight:800;color:#0f6e3a'>$"+f2(baseNeta)+"</div></div>"+
     "</div>"+
     (catEmpSort.length?
@@ -11355,10 +11376,10 @@ function rEgresos(){
           "<div style='font-size:10px;font-weight:700;width:44px;text-align:right'>$"+f2(catEmpMap[cat])+"</div>"+
           "<div style='font-size:9px;color:#aaa;width:28px'>"+pct+"%</div></div>";
       }).join("")+"</div>":"<div style='text-align:center;color:#ccc;font-size:12px;padding:12px 0'>Sin gastos empresa este mes</div>")+
-    (egEmpPend>0?
+    (pendEmpresaCombinado>0?
       "<div style='background:#FFFBF0;border-radius:10px;padding:12px;margin-bottom:14px'>"+
-      "<div style='font-size:10px;font-weight:700;color:#9a6d00;margin-bottom:8px'>⚠️ Por pagar — $"+f2(egEmpPend)+" USDT "+btnGen+"</div>"+
-      pendRows+"</div>":"")+
+      "<div style='font-size:10px;font-weight:700;color:#9a6d00;margin-bottom:8px'>⚠️ Por pagar — $"+f2(pendEmpresaCombinado)+" USDT "+btnGen+"</div>"+
+      pendRowsCombinado+"</div>":"")+
     (rowsEmp?
       "<div style='font-size:9px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:8px'>📋 Pagados este mes</div>"+
       "<div class='tw'><table><thead><tr><th>Fecha</th><th>Cat.</th><th>Motivo</th><th style='text-align:right'>Monto</th><th style='text-align:right'>USDT</th><th></th></tr></thead><tbody>"+rowsEmp+"</tbody></table></div>":
