@@ -359,6 +359,8 @@ tr:last-child td{border-bottom:none}
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <!-- SheetJS: para exportar Excel del cierre mensual -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<!-- Tesseract.js — OCR local, sin API key, 100% gratis -->
+<script src="https://unpkg.com/tesseract.js@v4/dist/tesseract.min.js"></script>
 </head>
 <body>
 <div id="app"></div>
@@ -5491,6 +5493,69 @@ function fbForceLoad(){
 
 
 // ══════════════════════════════════════════════════════════════════════════════
+// LECTOR OCR — Tesseract.js (gratis, sin API, corre 100% en el navegador)
+// Lee foto de Binance P2P y extrae datos automáticamente
+// ══════════════════════════════════════════════════════════════════════════════
+async function leerComprobanteOCR(input){
+  var file=input.files[0];
+  if(!file) return;
+  S._ocrLeyendo=true; S._ocrResultado=null; S._ocrError=null; R();
+  try{
+    var result=await Tesseract.recognize(file,'spa+eng',{
+      logger:function(m){if(m.status==='recognizing text')console.log('OCR:'+(m.progress*100).toFixed(0)+'%');}
+    });
+    var txt=result.data.text;
+    console.log('[OCR]',txt);
+    var parsed=_parsearOCR(txt);
+    if(parsed){
+      if(!S._qf)S._qf={tipo:'compra',moneda:'VES',tasa:'',monto:'',usdt:''};
+      if(parsed.tipo)   S._qf.tipo  =parsed.tipo;
+      if(parsed.moneda) S._qf.moneda=parsed.moneda;
+      if(parsed.monto)  S._qf.monto =String(parsed.monto);
+      if(parsed.tasa)   S._qf.tasa  =String(parsed.tasa);
+      if(parsed.usdt)   S._qf.usdt  =String(parsed.usdt);
+      S._ocrResultado=(parsed.tipo==='compra'?'Compra':'Venta')+' '+
+        (parsed.moneda||'?')+
+        (parsed.monto?' · '+parsed.monto:'')+(parsed.usdt?' · '+parsed.usdt+' USDT':'')+(parsed.tasa?' · Tasa:'+parsed.tasa:'');
+    } else {
+      S._ocrError='No pude leer. Asegúrate que la foto sea clara y muestre los datos.';
+    }
+  } catch(err){
+    S._ocrError='Error al procesar imagen: '+(err.message||'foto poco clara');
+  }
+  S._ocrLeyendo=false; input.value=''; R();
+}
+
+function _parsearOCR(txt){
+  if(!txt)return null;
+  var t=txt.replace(/,/g,'').replace(/\s+/g,' ').trim();
+  var r={};
+  // Tipo
+  if(/comprar|compra.*usdt/i.test(t))r.tipo='compra';
+  else if(/vender|venta.*usdt/i.test(t))r.tipo='venta';
+  else r.tipo='compra';
+  // Moneda
+  if(/bs\s*\.?\s*\d|bolivar|ves\b/i.test(t))r.moneda='VES';
+  else if(/r\s*\$|brl\b|reais|real\b/i.test(t))r.moneda='BRL';
+  else if(/s\s*\/\s*\.|pen\b|soles/i.test(t))r.moneda='PEN';
+  else if(/cop\b|\$\s*\d{4}/i.test(t))r.moneda='COP';
+  else if(/eur\b|euro/i.test(t))r.moneda='EUR';
+  else if(/usd\b|us\s*\$|dolar/i.test(t))r.moneda='USD';
+  // USDT
+  var mu=t.match(/(?:cantidad|total|recibida?|amount)\s*:?\s*(\d+\.?\d*)\s*usdt/i)||t.match(/(\d+\.?\d{2,4})\s*usdt/i);
+  if(mu)r.usdt=parseFloat(mu[1]);
+  // Tasa
+  var mt=t.match(/(?:precio|price|tasa)\s*:?\s*\S*?\s*(\d+\.?\d*)/i);
+  if(mt)r.tasa=parseFloat(mt[1]);
+  // Monto fiat
+  var mm=t.match(/(?:importe|monto|fiat|pago)\s*:?\s*\S*?\s*(\d+\.?\d*)/i);
+  if(mm)r.monto=parseFloat(mm[1]);
+  if(!r.monto&&r.usdt&&r.tasa)r.monto=Math.round(r.usdt*r.tasa*100)/100;
+  if(!r.usdt&&!(r.monto&&r.tasa))return null;
+  return r;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // NTFY.SH — Notificaciones push gratuitas entre dispositivos
 // Canal configurable en S.config.ntfyCanal. Si está vacío, no hace nada.
 // Es fire-and-forget: si falla, no afecta nada en la app.
@@ -10546,7 +10611,23 @@ function rInventarioUsdt(){
       "</div>";
     })()+
   "</div>"+
-    "<div class='sec'><div class='sec-title'>"+(f.tipo==="compra"?"⬇️ COMPRA de USDT":"⬆️ VENTA de USDT (recibo moneda)")+"</div>"+
+    "<div class='sec'>"+
+    // ── Panel OCR Tesseract (gratis, sin API) ─────────────────────────────
+    (function(){
+      var ocrPanel="<div style='background:linear-gradient(135deg,#0f2a14,#1a4020);border-radius:11px;padding:12px 14px;margin-bottom:12px;border:1px solid rgba(34,197,94,.25)'>"+
+        "<div style='font-size:10px;font-weight:700;color:#4ade80;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px'>📷 Leer comprobante automáticamente · Tesseract OCR · Gratis</div>"+
+        "<div style='display:flex;gap:8px;align-items:center;flex-wrap:wrap'>"+
+          "<label for='ocr-img-inp' style='background:#16a34a;color:#fff;padding:8px 14px;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:6px'>📸 Subir foto del comprobante</label>"+
+          "<input id='ocr-img-inp' type='file' accept='image/*' capture='environment' style='display:none' onchange='leerComprobanteOCR(this)'>"+
+          (S._ocrLeyendo?"<span style='font-size:12px;color:#4ade80'>⏳ Analizando...</span>":
+          S._ocrResultado?"<span style='font-size:10px;color:#4ade80'>✅ "+S._ocrResultado+"</span>":
+          S._ocrError?"<span style='font-size:10px;color:#f87171'>❌ "+S._ocrError+"</span>":
+          "<span style='font-size:10px;color:rgba(74,222,100,.5)'>Toma la captura de Binance P2P · Corre en tu dispositivo, sin costo extra</span>")+
+        "</div>"+
+      "</div>";
+      return ocrPanel;
+    })()+
+    "<div class='sec-title'>"+(f.tipo==="compra"?"⬇️ COMPRA de USDT":"⬆️ VENTA de USDT (recibo moneda)")+"</div>"+
     "<div style='display:flex;gap:8px;margin-bottom:14px'>"+
       "<button type='button' onclick='S.nIU.tipo=\"compra\";R()' style='flex:1;padding:10px;border-radius:8px;border:2px solid "+(f.tipo==="compra"?"#1a6b3c":"#ddd")+";background:"+(f.tipo==="compra"?"#D6F5E3":"#fff")+";font-weight:700;cursor:pointer'>⬇️ COMPRA USDT<div style='font-size:10px;font-weight:400'>Gasto BRL/USD/PEN/COP...</div></button>"+
       "<button type='button' onclick='S.nIU.tipo=\"venta\";R()' style='flex:1;padding:10px;border-radius:8px;border:2px solid "+(f.tipo==="venta"?"#c0392b":"#ddd")+";background:"+(f.tipo==="venta"?"#FDECEA":"#fff")+";font-weight:700;cursor:pointer'>⬆️ VENTA USDT<div style='font-size:10px;font-weight:400'>Recibo Bolívares u otra moneda</div></button>"+
