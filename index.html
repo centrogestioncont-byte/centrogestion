@@ -5542,79 +5542,59 @@ function _normNum(s){
 
 function _parsearOCR(txt){
   if(!txt||!txt.trim()) return null;
-  var lines=txt.split('\n').map(function(l){return l.trim();}).filter(Boolean);
-  var full=lines.join(' ');
-  var r={tipo:'compra',moneda:'VES'};
+  // Normalizar TODO el texto a una sola línea con espacios simples.
+  // Esto hace el parser inmune a que prompt() pierda los saltos de línea
+  // al pegar en móvil — cada campo se busca por CERCANÍA a su etiqueta,
+  // no por posición de línea.
+  var t=txt.replace(/[\r\n]+/g,' ').replace(/\s+/g,' ').trim();
+  var r={tipo:'compra',moneda:'VES',comision:0};
 
-  // ── Tipo ──────────────────────────────────────────────────────────────────
-  if(/comprar|compra|buy/i.test(full)) r.tipo='compra';
-  else if(/vender|venta|sell/i.test(full)) r.tipo='venta';
+  // ── Tipo ────────────────────────────────────────────────────────────────
+  if(/comprar|compra|buy/i.test(t)) r.tipo='compra';
+  else if(/vender|venta|sell/i.test(t)) r.tipo='venta';
 
-  // ── Moneda ─────────────────────────────────────────────────────────────────
-  if(/\bBs\.?|\bVES\b|bolivar/i.test(full)) r.moneda='VES';
-  else if(/R\$|\bBRL\b|reais/i.test(full)) r.moneda='BRL';
-  else if(/S\/\.?|\bPEN\b|soles/i.test(full)) r.moneda='PEN';
-  else if(/\bCOP\b/i.test(full)) r.moneda='COP';
-  else if(/\bEUR\b/i.test(full)) r.moneda='EUR';
+  // ── Moneda ──────────────────────────────────────────────────────────────
+  if(/\bBs\.?\s*\d|\bVES\b|bolivar/i.test(t)) r.moneda='VES';
+  else if(/R\$|\bBRL\b|reais/i.test(t)) r.moneda='BRL';
+  else if(/S\/\.?\s*\d|\bPEN\b|soles/i.test(t)) r.moneda='PEN';
+  else if(/\bCOP\b/i.test(t)) r.moneda='COP';
+  else if(/\bEUR\b/i.test(t)) r.moneda='EUR';
 
-  // ── Buscar línea por línea con contexto ────────────────────────────────────
-  for(var i=0;i<lines.length;i++){
-    var line=lines[i];
-    var next=lines[i+1]||'';
-    var nextN=_normNum(next.replace(/[^0-9.,]/g,''));
+  // ── USDT total: primer "número USDT" del texto ───────────────────────────
+  var mu=t.match(/([\d]+[.,][\d]{1,4})\s*USDT/i);
+  if(mu) r.usdt=_normNum(mu[1]);
 
-    // USDT: línea con número + "USDT"
-    if(!r.usdt){
-      var mu=line.match(/([\d]+[.,][\d]{1,4})\s*USDT/i)||
-             (line.match(/USDT/i)&&next.match(/^([\d]+[.,][\d]{1,4})$/));
-      if(mu) r.usdt=_normNum(mu[1]||next);
-    }
+  // ── Comisión: etiqueta + número cercano (por defecto 0 si dice "0 USDT") ─
+  var mCom=t.match(/Comisi[oó]n[^\d]{0,12}([\d]+[.,]?[\d]*)\s*USDT/i)||
+            t.match(/(?:Fee|Commission)[^\d]{0,12}([\d]+[.,]?[\d]*)\s*USDT/i);
+  if(mCom) r.comision=_normNum(mCom[1]);
 
-    // Fecha: línea "Hora de creación" o contiene fecha ISO
-    var mFecha=line.match(/(\d{4}-\d{2}-\d{2})/);
-    if(mFecha&&!r.fecha) r.fecha=mFecha[1];
+  // ── Precio / Tasa ──────────────────────────────────────────────────────
+  var mPrecio=t.match(/Precio[^\d]{0,15}([\d]+[.,]?[\d]{0,4})/i)||
+              t.match(/Price[^\d]{0,15}([\d]+[.,]?[\d]{0,4})/i);
+  if(mPrecio) r.tasa=_normNum(mPrecio[1]);
 
-    // Order ID: línea con número de 15+ dígitos
-    var mOrd=line.match(/\b(\d{15,25})\b/);
-    if(mOrd&&!r.ordenId) r.ordenId=mOrd[1];
+  // ── Importe en fiat / Monto ──────────────────────────────────────────────
+  var mImporte=t.match(/Importe\s*en\s*fiat[^\d]{0,15}([\d]+[.,]?[\d]{0,3})/i)||
+               t.match(/(?:Importe|Monto)[^\d]{0,15}([\d]+[.,]?[\d]{0,3})/i)||
+               t.match(/Amount[^\d]{0,15}([\d]+[.,]?[\d]{0,3})/i);
+  if(mImporte) r.monto=_normNum(mImporte[1]);
 
-    // Comisión: línea "Comisión" → siguiente línea tiene el valor
-    if(/comisi[oó]n|commission/i.test(line)){
-      var mCom=next.match(/([\d]+[.,]?[\d]*)\s*USDT/i)||(line.match(/([\d]+[.,]?[\d]*)\s*USDT/i));
-      if(mCom) r.comision=parseFloat(mCom[1])||0;
-    }
+  // ── Order ID: Binance siempre usa 15-25 dígitos consecutivos ─────────────
+  var mOrd=t.match(/\b(\d{15,25})\b/);
+  if(mOrd) r.ordenId=mOrd[1];
 
-    // Importe/Monto fiat: línea "Importe en fiat" → siguiente tiene el valor
-    if(/importe|fiat|amount/i.test(line)&&!r.monto&&nextN>100){
-      r.monto=nextN;
-    }
-    // O directamente "Bs X.XXX" o "Bs X,XXX"
-    var mBsMonto=line.match(/Bs\.?\s*([\d]{2,8}[.,]?[\d]{0,3})/i);
-    if(mBsMonto&&!r.monto){
-      var v=_normNum(mBsMonto[1]);
-      if(v>500) r.monto=v;
-    }
+  // ── Fecha ISO (yyyy-mm-dd) ────────────────────────────────────────────────
+  var mFecha=t.match(/(\d{4}-\d{2}-\d{2})/);
+  if(mFecha) r.fecha=mFecha[1];
 
-    // Precio/Tasa: línea "Precio" → siguiente tiene el valor
-    if(/precio|price|rate|tasa/i.test(line)&&!r.tasa&&nextN>0&&nextN<100000){
-      r.tasa=nextN;
-    }
-    // O "Bs X" donde X < 10000 (tasa, no monto)
-    if(mBsMonto&&!r.tasa){
-      var vt=_normNum(mBsMonto[1]);
-      if(vt>0&&vt<10000&&(!r.monto||vt!==r.monto)) r.tasa=vt;
-    }
-  }
-
-  // ── Derivar lo que falta ───────────────────────────────────────────────────
+  // ── Derivar lo que falta a partir de lo demás ─────────────────────────────
   if(!r.monto&&r.usdt&&r.tasa) r.monto=Math.round(r.usdt*r.tasa*100)/100;
   if(!r.usdt&&r.monto&&r.tasa&&r.tasa>0) r.usdt=Math.round(r.monto/r.tasa*10000)/10000;
   if(!r.tasa&&r.usdt&&r.monto&&r.usdt>0) r.tasa=Math.round(r.monto/r.usdt*100)/100;
 
   return r;
 }
-
-
 
 function _ocrUpdateUI(status, pct, result, error){
   var box=document.getElementById('ocr-status-box');
