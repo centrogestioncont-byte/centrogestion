@@ -11317,18 +11317,38 @@ function rEgresos(){
   var cuentasPersonalesInfo=(S.cuentas||[]).filter(function(c){return c.esPersonal && c.activa!==false;}).map(function(c){
     var gastosCuenta=epMes.filter(function(e){return e.pagada && e.cuentaId===c.id;});
     var gastadoCuenta=gastosCuenta.reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0);
-    return {nombre:c.nombre,moneda:c.moneda,saldo:parseFloat(c.saldo)||0,gastado:gastadoCuenta,count:gastosCuenta.length};
+    // Desglose por moneda: cuánto se gastó en cada moneda + su referencia en USDT
+    var porMoneda={};
+    gastosCuenta.forEach(function(e){
+      var m=e.mon||"USDT";
+      if(!porMoneda[m]) porMoneda[m]={monto:0,usdt:0};
+      porMoneda[m].monto+=(parseFloat(e.monto)||0);
+      porMoneda[m].usdt+=(parseFloat(e.usdt)||0);
+    });
+    var monedasList=Object.keys(porMoneda).map(function(m){return{mon:m,monto:porMoneda[m].monto,usdt:porMoneda[m].usdt};});
+    return {nombre:c.nombre,moneda:c.moneda,saldo:parseFloat(c.saldo)||0,gastado:gastadoCuenta,count:gastosCuenta.length,porMoneda:monedasList};
   });
+  var _flagsMon={USDT:"💰",BRL:"🇧🇷",VES:"🇻🇪",USD:"🇺🇸",PEN:"🇵🇪",EUR:"🇪🇺",COP:"🇨🇴",TTD:"🇹🇹"};
   var panelCuentasPersonales=cuentasPersonalesInfo.length?
     "<div style='background:linear-gradient(135deg,#2d1a3e,#4a2d6e);border-radius:12px;padding:14px;margin-bottom:14px;color:#fff'>"+
     "<div style='font-size:9px;color:#c4b5fd;font-weight:700;margin-bottom:10px;text-transform:uppercase;letter-spacing:.4px'>💜 Mi plata — cuentas personales</div>"+
     cuentasPersonalesInfo.map(function(info){
       return "<div style='background:rgba(255,255,255,.08);border-radius:10px;padding:12px;margin-bottom:8px'>"+
         "<div style='font-size:12px;font-weight:700;margin-bottom:9px'>"+info.nombre+" · "+info.moneda+"</div>"+
-        "<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px'>"+
+        "<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:"+(info.porMoneda.length?"10px":"0")+"'>"+
         "<div><div style='font-size:9px;color:#c4b5fd;margin-bottom:2px'>💰 Saldo disponible</div><div style='font-size:19px;font-weight:900;color:#4ade80'>$"+f2(info.saldo)+"</div></div>"+
         "<div><div style='font-size:9px;color:#c4b5fd;margin-bottom:2px'>💸 Gastado este mes</div><div style='font-size:19px;font-weight:900;color:#f87171'>$"+f2(info.gastado)+"</div><div style='font-size:9px;color:rgba(255,255,255,.5);margin-top:1px'>"+info.count+" gasto"+(info.count!==1?"s":"")+"</div></div>"+
         "</div>"+
+        (info.porMoneda.length?
+          "<div style='border-top:1px solid rgba(255,255,255,.15);padding-top:9px'>"+
+          info.porMoneda.map(function(pm){
+            return "<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:4px'>"+
+              "<span style='font-size:11px;color:rgba(255,255,255,.85)'>"+(_flagsMon[pm.mon]||"💱")+" "+f2n(pm.monto,pm.mon==="VES"?0:2)+" "+pm.mon+"</span>"+
+              "<span style='font-size:10px;color:#c4b5fd'>≈ $"+f2(pm.usdt)+" USDT</span>"+
+            "</div>";
+          }).join("")+
+          "</div>"
+        :"")+
       "</div>";
     }).join("")+
     "<div style='font-size:9px;color:rgba(255,255,255,.5);margin-top:2px'>Este dinero es tuyo — no afecta el sueldo teórico de la empresa que ves abajo.</div>"+
