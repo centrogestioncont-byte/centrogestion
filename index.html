@@ -12262,6 +12262,7 @@ var _FB_CONFIG = {
 var _fbDb = null, _fbRef = null, _fbSaveTimer = null;
 var _fbMyWrite = false;   // evita que mi propio guardado rebote
 var _fbOnline = false;
+var _FB_REST = "https://adminbrl-default-rtdb.firebaseio.com/remesasBRL_v1.json"; // usada por fbSaveREST() y fbForceLoad-adyacentes — antes NO estaba definida
 
 function initFirebase(){
   try{
@@ -12370,27 +12371,84 @@ function initFirebase(){
 }
 
 // Guarda en Firebase — por clave individual para evitar conflictos multi-usuario
+// ── Fusiona un array remoto con el local por campo id: conserva TODO lo local
+// y AGREGA lo que exista remotamente pero no localmente (agregado desde otro
+// dispositivo). Nunca elimina nada — solo suma lo que falte. ──────────────
+function _mergeArrayById(remoteArr, localArr, idField){
+  idField = idField || "id";
+  if(!Array.isArray(remoteArr)) return localArr;
+  if(!Array.isArray(localArr)) return remoteArr.slice();
+  var localIds = {};
+  localArr.forEach(function(item){
+    if(item && item[idField]!==undefined && item[idField]!==null) localIds[item[idField]]=true;
+  });
+  var merged = localArr.slice();
+  var agregados = 0;
+  remoteArr.forEach(function(remoteItem){
+    if(remoteItem && remoteItem[idField]!==undefined && remoteItem[idField]!==null && !localIds[remoteItem[idField]]){
+      merged.push(remoteItem);
+      agregados++;
+    }
+  });
+  if(agregados>0) console.log("🔗 Fusión: +"+agregados+" registro(s) recuperado(s) de otro dispositivo ("+idField+")");
+  return merged;
+}
+
+// ── Campos que se fusionan por id antes de cada guardado. Deliberadamente
+// NO incluye brl/vzla/eeuu/inventarioUsdt (datos FIFO/transaccionales) —
+// esos siguen con guardado directo para no arriesgar duplicados o desincronizar
+// el inventario. Este fix cubre exactamente lo reportado: cuentas y compromisos
+// perdidos al guardar desde un dispositivo con datos desactualizados. ──────
+var _MERGE_FIELDS = ["cuentas","compromisos","egresos","egresos_personales","prestamos","cuentasCobrar"];
+
 function fbSave(obj){
   if(!_fbRef) return;
   if(_fbSaveTimer) clearTimeout(_fbSaveTimer);
   _fbSaveTimer = setTimeout(function(){
-    _fbMyWrite = true;
-    S._ts = obj._ts;
-    if(_fbOnline){
-      // WebSocket disponible → guardar por SDK (tiempo real)
-      _fbRef.update(obj).then(function(){
-        console.log("💾 Firebase SDK guardado · ts:", obj._ts);
-      }).catch(function(e){
-        console.warn("Firebase SDK error, usando REST:", e);
-        fbSaveREST(obj);
-        _fbMyWrite = false;
-      });
-    } else {
-      // WebSocket bloqueado → usar REST API (HTTPS)
-      console.log("📡 Firebase offline — guardando via REST API...");
-      fbSaveREST(obj);
-    }
+    _fbMergeAndWrite(obj);
   }, 800);
+}
+
+function _fbMergeAndWrite(obj){
+  // Antes de escribir: traer el estado remoto y fusionar los campos críticos
+  // para no borrar cuentas/compromisos/egresos agregados desde otro dispositivo.
+  fetch(_FB_REST+"?ts="+Date.now())
+    .then(function(r){ return r.ok?r.json():null; })
+    .then(function(remote){
+      if(remote){
+        _MERGE_FIELDS.forEach(function(k){
+          if(remote[k]!==undefined){
+            obj[k] = _mergeArrayById(remote[k], obj[k]);
+            S[k] = obj[k]; // reflejar la fusión también en el estado local/UI
+          }
+        });
+      }
+    })
+    .catch(function(e){
+      console.warn("fbMergeAndWrite: no se pudo leer remoto antes de guardar, se guarda solo con datos locales:", e.message);
+    })
+    .finally(function(){
+      _fbWriteNow(obj);
+    });
+}
+
+function _fbWriteNow(obj){
+  _fbMyWrite = true;
+  S._ts = obj._ts;
+  if(_fbOnline){
+    // WebSocket disponible → guardar por SDK (tiempo real)
+    _fbRef.update(obj).then(function(){
+      console.log("💾 Firebase SDK guardado (fusionado) · ts:", obj._ts);
+    }).catch(function(e){
+      console.warn("Firebase SDK error, usando REST:", e);
+      fbSaveREST(obj);
+      _fbMyWrite = false;
+    });
+  } else {
+    // WebSocket bloqueado → usar REST API (HTTPS)
+    console.log("📡 Firebase offline — guardando via REST API...");
+    fbSaveREST(obj);
+  }
 }
 
 
