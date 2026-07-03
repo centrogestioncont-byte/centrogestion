@@ -5522,7 +5522,26 @@ async function leerComprobanteOCR(input){
   _ocrUpdateUI('Iniciando OCR...',5);
 
   try{
-    var result=await Tesseract.recognize(file,'eng',{
+    // Convertir imagen a canvas primero (soluciona HEIC, imágenes grandes, cualquier formato)
+    var canvas=await new Promise(function(resolve,reject){
+      var img=new Image();
+      var url=URL.createObjectURL(file);
+      img.onload=function(){
+        var maxW=1400;
+        var w=img.width,h=img.height;
+        if(w>maxW){h=Math.round(h*maxW/w);w=maxW;}
+        var cv=document.createElement('canvas');
+        cv.width=w; cv.height=h;
+        var ctx=cv.getContext('2d');
+        ctx.drawImage(img,0,0,w,h);
+        URL.revokeObjectURL(url);
+        resolve(cv);
+      };
+      img.onerror=function(){URL.revokeObjectURL(url);reject(new Error('No se pudo cargar la imagen'));};
+      img.src=url;
+    });
+
+    var result=await Tesseract.recognize(canvas,'eng',{
       logger:function(m){
         var pct=5;
         var st=m.status||'';
