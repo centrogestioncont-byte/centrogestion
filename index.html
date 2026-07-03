@@ -5492,6 +5492,30 @@ function fbForceLoad(){
 }
 
 
+// ── Parsear texto pegado del comprobante y rellenar el formulario ─────────────
+function _limpiarPaste(){S._pasteText="";S._pasteError=null;R();}
+function _parsearYRellenar(){
+  var txt=(S._pasteText||'').trim();
+  if(!txt){S._pasteError='Pega primero el texto del comprobante.';R();return;}
+  var parsed=_parsearOCR(txt);
+  if(parsed&&(parsed.usdt||parsed.tasa||parsed.monto)){
+    if(!S._qf) S._qf={tipo:'compra',moneda:'VES',tasa:'',monto:'',usdt:''};
+    if(parsed.tipo)   S._qf.tipo  =parsed.tipo;
+    if(parsed.moneda) S._qf.moneda=parsed.moneda;
+    if(parsed.monto)  S._qf.monto =String(parsed.monto);
+    if(parsed.tasa)   S._qf.tasa  =String(parsed.tasa);
+    if(parsed.usdt)   S._qf.usdt  =String(parsed.usdt);
+    S._pasteText=''; S._pasteError=null;
+    R();
+  } else {
+    // Intentar extraer cualquier número que parezca útil
+    var nums=txt.match(/\d+\.?\d*/g)||[];
+    S._pasteError='No pude identificar los campos. Asegúrate de copiar el texto completo con: monto, precio y cantidad USDT.';
+    R();
+  }
+}
+
+
 // ══════════════════════════════════════════════════════════════════════════════
 // LECTOR OCR — Tesseract.js (actualiza UI via DOM, sin parpadeo)
 // ══════════════════════════════════════════════════════════════════════════════
@@ -5522,48 +5546,25 @@ async function leerComprobanteOCR(input){
   _ocrUpdateUI('Iniciando OCR...',5);
 
   try{
-    // Convertir imagen a canvas + preprocesar para OCR
-    // Binance usa tema oscuro: detectar y invertir para que Tesseract lea bien
+    // Pasar imagen directamente sin manipulación de píxeles
+    // (el preprocesamiento destruía el texto)
     var canvas=await new Promise(function(resolve,reject){
       var img=new Image();
       var url=URL.createObjectURL(file);
       img.onload=function(){
-        // Mantener tamaño original si es menor a 2400px, sino reducir
-        var maxW=2400;
-        var w=img.width,h=img.height;
+        var w=img.width, h=img.height;
+        // Solo reducir si es extremadamente grande (>4000px)
+        var maxW=4000;
         if(w>maxW){h=Math.round(h*maxW/w);w=maxW;}
         var cv=document.createElement('canvas');
         cv.width=w; cv.height=h;
         var ctx=cv.getContext('2d');
+        // Fondo blanco (por si hay transparencias)
+        ctx.fillStyle='#ffffff';
+        ctx.fillRect(0,0,w,h);
         ctx.drawImage(img,0,0,w,h);
         URL.revokeObjectURL(url);
-
-        // ── Preprocesar píxeles para mejorar OCR ──────────────────────────
-        var imgData=ctx.getImageData(0,0,w,h);
-        var data=imgData.data;
-
-        // 1. Calcular brillo promedio para detectar tema oscuro
-        var totalBrillo=0;
-        for(var i=0;i<data.length;i+=4){
-          totalBrillo+=(data[i]*0.299+data[i+1]*0.587+data[i+2]*0.114);
-        }
-        var brilloMedio=totalBrillo/(data.length/4);
-
-        // 2. Si fondo oscuro (Binance dark theme): invertir colores
-        var esOscuro=brilloMedio<110;
-        console.log('[OCR] Brillo medio:',brilloMedio.toFixed(0),'- Tema oscuro:',esOscuro);
-
-        for(var j=0;j<data.length;j+=4){
-          var r=data[j],g=data[j+1],b=data[j+2];
-          // Convertir a escala de grises
-          var gray=r*0.299+g*0.587+b*0.114;
-          // Invertir si tema oscuro
-          if(esOscuro) gray=255-gray;
-          // Aumentar contraste
-          gray=Math.max(0,Math.min(255,((gray-128)*1.4)+128));
-          data[j]=data[j+1]=data[j+2]=gray;
-        }
-        ctx.putImageData(imgData,0,0);
+        console.log('[OCR] Canvas creado: '+w+'x'+h+'px');
         resolve(cv);
       };
       img.onerror=function(){URL.revokeObjectURL(url);reject(new Error('No se pudo cargar la imagen'));};
@@ -5571,6 +5572,7 @@ async function leerComprobanteOCR(input){
     });
 
     var result=await Tesseract.recognize(canvas,'eng',{
+      tessedit_pageseg_mode:'6',
       logger:function(m){
         var pct=5;
         var st=m.status||'';
@@ -10706,13 +10708,18 @@ function rInventarioUsdt(){
     "<div class='sec'>"+
     // ── Panel OCR Tesseract (gratis, sin API) ─────────────────────────────
     (function(){
+      // Panel de pegar texto — usa el OCR nativo del teléfono
+      var ptxt=S._pasteText||'';
       var ocrPanel="<div style='background:linear-gradient(135deg,#0f2a14,#1a4020);border-radius:11px;padding:12px 14px;margin-bottom:12px;border:1px solid rgba(34,197,94,.25)'>"+
-        "<div style='font-size:10px;font-weight:700;color:#4ade80;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px'>📷 Leer comprobante automáticamente · Tesseract OCR · Gratis</div>"+
-        "<div style='display:flex;gap:8px;align-items:center;flex-wrap:wrap'>"+
-          "<label for='ocr-img-inp' style='background:#16a34a;color:#fff;padding:8px 14px;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:6px'>📸 Subir foto del comprobante</label>"+
-          "<input id='ocr-img-inp' type='file' accept='image/*' style='display:none' onchange='leerComprobanteOCR(this)'>"+
-          "<div id='ocr-status-box' style='flex:1;font-size:10px;color:rgba(74,222,100,.45)'>Sube la captura de pantalla de Binance P2P</div>"+
+        "<div style='font-size:10px;font-weight:700;color:#4ade80;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px'>📋 Pegar texto del comprobante</div>"+
+        "<div style='font-size:10px;color:rgba(74,222,100,.6);margin-bottom:8px'>"+
+        "📱 iPhone: mantén presionado el texto en la captura → Copiar &nbsp;·&nbsp; Android: Google Lens → Seleccionar texto</div>"+
+        "<textarea id='paste-txt-ocr' rows='3' placeholder='Pega aquí el texto copiado de Binance P2P...' oninput='S._pasteText=this.value' style='width:100%;padding:9px;background:rgba(255,255,255,.08);border:1px solid rgba(34,197,94,.3);border-radius:8px;color:#fff;font-size:12px;font-family:inherit;resize:none;box-sizing:border-box'>"+ptxt+"</textarea>"+
+        "<div style='display:flex;gap:7px;margin-top:7px'>"+
+          "<button type='button' onclick='_parsearYRellenar()' style='flex:2;padding:9px;background:#16a34a;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer'>✅ Extraer datos</button>"+
+          "<button type='button' onclick='_limpiarPaste()' style='flex:1;padding:9px;background:rgba(255,255,255,.1);color:#fff;border:none;border-radius:8px;font-size:12px;cursor:pointer'>✕ Limpiar</button>"+
         "</div>"+
+        (S._pasteError?"<div style='margin-top:7px;font-size:10px;color:#f87171;background:rgba(248,113,113,.1);border-radius:7px;padding:5px 9px'>❌ "+S._pasteError+"</div>":"")+ 
       "</div>";
       return ocrPanel;
     })()+
