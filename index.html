@@ -1997,31 +1997,61 @@ function editarNombreCuenta(cid){
     alert("✅ Renombrada: "+nuevo);
   });
 }
-function togglePagarPrest(id){S._pagarPrestId=(S._pagarPrestId===id?null:id);if(S._pagarPrestId)S.nPagarPrest={monto:"",cuentaId:""};R();}
+function togglePagarPrest(id){
+  S._pagarPrestId=(S._pagarPrestId===id?null:id);
+  if(S._pagarPrestId){
+    var pp=(S.prestamos||[]).find(function(x){return x.id===id;});
+    S.nPagarPrest={monto:"",cuentaId:"",moneda:(pp&&pp.mon)||"USDT"};
+  }
+  R();
+}
 function pagarPrestamo(id){
   var p=(S.prestamos||[]).find(function(x){return x.id===id;});if(!p)return;
-  var np=S.nPagarPrest||{cuentaId:"",monto:""};
-  var monto=parseFloat(np.monto)||0;
-  if(monto<=0){alert("Pon el monto cobrado.");return;}
-  var mon=p.mon||"USDT";
+  var np=S.nPagarPrest||{cuentaId:"",monto:"",moneda:""};
+  var montoIngresado=parseFloat(np.monto)||0;
+  if(montoIngresado<=0){alert("Pon el monto cobrado.");return;}
+  var mon=p.mon||"USDT";           // moneda ORIGINAL del préstamo (para el saldo pendiente)
+  var monPago=np.moneda||mon;      // moneda en la que REALMENTE está pagando esta persona
+
+  // ── Si paga en una moneda distinta a la del préstamo, convertir usando tasas ──
+  var monto=montoIngresado;        // monto expresado en la moneda del préstamo (para trackear saldo)
+  var notaPago="";
+  if(monPago!==mon){
+    var rPago=getRateToUsdt(monPago);
+    var rPrestamo=getRateToUsdt(mon);
+    if(!rPago||!rPrestamo){
+      alert("No hay tasa disponible para convertir "+monPago+" → "+mon+".\nConfigura la tasa en 🧮 Tasas, o ingresa el monto ya convertido a "+mon+".");
+      return;
+    }
+    var usdtEquiv=monPago==="USDT"?montoIngresado:montoIngresado/rPago;
+    monto=mon==="USDT"?usdtEquiv:usdtEquiv*rPrestamo;
+    monto=Math.round(monto*100)/100;
+    notaPago=" (pagó "+f2(montoIngresado)+" "+monPago+")";
+  }
+
   if(!p.abonos) p.abonos=[];
   var totalAbonado=p.abonos.reduce(function(a,ab){return a+ab.monto;},0);
   var montoBase=parseFloat(p.monto||p.sal)||0;
   var saldoPend=Math.max(0,Math.round((montoBase-totalAbonado)*100)/100);
   if(monto>saldoPend+0.01){
-    if(!confirm("El abono ("+f2(monto)+" "+mon+") supera el saldo pendiente ("+f2(saldoPend)+" "+mon+").\nSe registrará solo el saldo restante.\n¿Continuar?"))return;
+    if(!confirm("El abono equivale a "+f2(monto)+" "+mon+notaPago+", que supera el saldo pendiente ("+f2(saldoPend)+" "+mon+").\nSe ajustará al saldo restante.\n¿Continuar?"))return;
+    // Ajustar proporcionalmente lo que realmente se acredita a la cuenta si excede el saldo
+    var factor=monto>0?(saldoPend/monto):0;
+    montoIngresado=Math.round(montoIngresado*factor*100)/100;
     monto=saldoPend;
   }
   var c=(S.cuentas||[]).find(function(x){return x.id===np.cuentaId;});
   if(!np.cuentaId||!c){alert("Elige la cuenta donde entró el dinero.");return;}
-  if(!confirm("Abonar "+f2(monto)+" "+mon+" de "+p.desc+" → "+c.nombre+". ¿Confirmar?"))return;
-  ajusteCuentaEgreso(np.cuentaId,monto);
-  p.abonos.push({id:Date.now(),fecha:td(),monto:Math.round(monto*100)/100,cuentaId:np.cuentaId});
+  if(!confirm("Abonar "+f2(montoIngresado)+" "+monPago+(monPago!==mon?" (≈"+f2(monto)+" "+mon+" del préstamo)":"")+" de "+p.desc+" → "+c.nombre+". ¿Confirmar?"))return;
+  // Acreditar la cuenta con lo REALMENTE recibido (en su propia moneda)
+  ajusteCuentaEgreso(np.cuentaId,montoIngresado);
+  // Trackear el abono en la moneda ORIGINAL del préstamo para que el saldo cuadre
+  p.abonos.push({id:Date.now(),fecha:td(),monto:Math.round(monto*100)/100,cuentaId:np.cuentaId,monedaPago:monPago,montoPago:Math.round(montoIngresado*100)/100});
   var nuevoTotal=p.abonos.reduce(function(a,ab){return a+ab.monto;},0);
   var restante=Math.round((montoBase-nuevoTotal)*100)/100;
   if(restante<=0.001){p.estado="pagado";p.fechaPago=td();p.montoCobrado=nuevoTotal;}
-  logAudit("ABONO_PRESTAMO","Abono "+f2(monto)+" "+mon+" de "+p.desc+" → "+c.nombre+(restante>0.001?" · pendiente: "+f2(restante):" · SALDADO"));
-  S._pagarPrestId=null;S.nPagarPrest={cuentaId:"",monto:""};
+  logAudit("ABONO_PRESTAMO","Abono "+f2(monto)+" "+mon+notaPago+" de "+p.desc+" → "+c.nombre+(restante>0.001?" · pendiente: "+f2(restante):" · SALDADO"));
+  S._pagarPrestId=null;S.nPagarPrest={cuentaId:"",monto:"",moneda:""};
   saveData();R();
 }
 function toggleCuenta(btn){
@@ -2601,12 +2631,33 @@ function rTabCompromisos(){
     return mesKeyLabel2(mkMin);
   }());
 
+  // ── Desglose por moneda de lo pendiente este mes ──────────────────
+  var pendPorMoneda={};
+  cmpsActual.forEach(function(c){
+    var pago=getCmpPago(c,mesActual);
+    if(pago&&pago.pagado) return;
+    var m=c.moneda||"USDT";
+    if(!pendPorMoneda[m]) pendPorMoneda[m]={monto:0,usdt:0};
+    pendPorMoneda[m].monto+=(parseFloat(c.monto)||0);
+    pendPorMoneda[m].usdt+=(parseFloat(c.usdt)||0);
+  });
+  var _flagsCmp={USDT:"💰",BRL:"🇧🇷",VES:"🇻🇪",USD:"🇺🇸",PEN:"🇵🇪",EUR:"🇪🇺",COP:"🇨🇴",TTD:"🇹🇹"};
+  var pendMonedaKeys=Object.keys(pendPorMoneda);
+  var pendPorMonedaHTML=(pendMonedaKeys.length>1||(pendMonedaKeys.length===1&&pendMonedaKeys[0]!=="USDT"))?
+    "<div style='padding:9px 16px;background:#FFFBEA;border-top:1px solid #f0e0b0;display:flex;flex-wrap:wrap;gap:10px'>"+
+    pendMonedaKeys.map(function(m){
+      var pm=pendPorMoneda[m];
+      return "<span style='font-size:11px;color:#7a5c00'>"+(_flagsCmp[m]||"💱")+" <b>"+f2(pm.monto)+" "+m+"</b>"+(m!=="USDT"?" <span style='opacity:.65'>≈$"+f2(pm.usdt)+"</span>":"")+"</span>";
+    }).join("")+
+    "</div>":"";
+
   vistaHTML+=
     "<div style='margin-bottom:14px;border:2px solid #FFA31C;border-radius:12px;overflow:hidden'>"+
       "<div style='background:#1a3558;padding:11px 16px;display:flex;justify-content:space-between;align-items:center'>"+
         "<div style='font-size:13px;font-weight:800;color:#fff'>\uD4CC Este mes · "+mesKeyLabel2(mesActual)+"</div>"+
         "<div style='font-size:12px;font-weight:700;color:#FFA31C'>"+(pendActualAmt>0?"$"+f2(pendActualAmt)+" pendiente":"\u2705 Todo al d\xeda")+"</div>"+
       "</div>"+
+      pendPorMonedaHTML+
       (cmpsActual.length?
         cmpsActual.map(function(c){
           var pago=getCmpPago(c,mesActual);var pagado=pago&&pago.pagado;
@@ -11731,8 +11782,9 @@ function rPrestamos(){
   function cardPrest(p){
     var monP=p.mon||"USDT";
     var isPaying=S._pagarPrestId===p.id;
-    var ctasPago=(S.cuentas||[]).filter(function(c){return c.activa!==false&&c.moneda===monP;});
-    var np=S.nPagarPrest||{cuentaId:"",monto:""};
+    var np=S.nPagarPrest||{cuentaId:"",monto:"",moneda:monP};
+    var monPago=np.moneda||monP;
+    var ctasPago=(S.cuentas||[]).filter(function(c){return c.activa!==false&&c.moneda===monPago;});
     if(!p.abonos) p.abonos=[];
     var totalAbonado=p.abonos.reduce(function(a,ab){return a+ab.monto;},0);
     var montoBase=parseFloat(p.monto||p.sal)||0;
@@ -11747,9 +11799,11 @@ function rPrestamos(){
         "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:6px'>Abonos recibidos</div>"+
         p.abonos.map(function(ab){
           var nCta=ab.cuentaId?nombreCuentaEg(ab.cuentaId):"Sin acreditar";
+          var pagoOtraMoneda=(ab.monedaPago&&ab.monedaPago!==monP);
           return "<div style='display:flex;justify-content:space-between;align-items:center;padding:7px 10px;background:#F0FFF6;border:1px solid #c8ecd5;border-radius:8px;margin-bottom:5px;gap:8px'>"+
             "<div style='flex:1;min-width:0'>"+
               "<span style='font-size:13px;font-weight:700;color:#0f6e3a'>"+f2(ab.monto)+" "+monP+"</span>"+
+              (pagoOtraMoneda?"<span style='font-size:10px;color:#0a6b4e;margin-left:5px'>(pagó "+f2(ab.montoPago)+" "+ab.monedaPago+")</span>":"")+
               "<div style='font-size:10px;color:#888;margin-top:1px'>"+ab.fecha+" · "+nCta+"</div>"+
             "</div>"+
           "</div>";
@@ -11767,16 +11821,37 @@ function rPrestamos(){
     // Formulario de abono (columna única, inputs grandes)
     var abonoForm="";
     if(isPaying){
+      var MONEDAS_ABONO=["USDT","VES","BRL","USD","PEN","EUR","COP","TTD"];
+      var montoIng=parseFloat(np.monto)||0;
+      var previewHtml="";
+      if(monPago!==monP&&montoIng>0){
+        var rP=getRateToUsdt(monPago),rL=getRateToUsdt(monP);
+        if(rP&&rL){
+          var usdtEq=monPago==="USDT"?montoIng:montoIng/rP;
+          var equivalente=monP==="USDT"?usdtEq:usdtEq*rL;
+          previewHtml="<div style='font-size:11px;color:#0a6b4e;background:#E3F8EC;border-radius:7px;padding:7px 10px;margin-top:6px'>≈ "+f2(equivalente)+" "+monP+" del préstamo (con tasa actual)</div>";
+        } else {
+          previewHtml="<div style='font-size:11px;color:#c0392b;background:#FDECEA;border-radius:7px;padding:7px 10px;margin-top:6px'>⚠️ Sin tasa "+monPago+"→"+monP+" configurada — ve a 🧮 Tasas primero</div>";
+        }
+      }
       abonoForm="<div style='background:#F0FFF6;border:1px solid #a0e8c0;border-radius:10px;padding:12px;margin-top:10px'>"+
         "<div style='font-size:11px;font-weight:700;color:#0f6e3a;margin-bottom:10px'>💵 Registrar abono · Pendiente: <b>"+f2(saldoPend)+" "+monP+"</b></div>"+
         "<div style='display:flex;flex-direction:column;gap:8px;margin-bottom:10px'>"+
-          "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Monto a abonar ("+monP+")</label>"+
-          "<input type='number' placeholder='"+f2(saldoPend)+"' value='"+(np.monto||"")+"' oninput='S.nPagarPrest=Object.assign(S.nPagarPrest||{},{monto:this.value})' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
-          "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Cuenta donde entra</label>"+
+          "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>¿En qué moneda te está pagando?</label>"+
+          "<select onchange='S.nPagarPrest=Object.assign(S.nPagarPrest||{},{moneda:this.value,cuentaId:\"\"})' style='width:100%;padding:11px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
+            MONEDAS_ABONO.map(function(m){return "<option value='"+m+"'"+(monPago===m?" selected":"")+">"+m+(m===monP?" (moneda del préstamo)":"")+"</option>";}).join("")+
+          "</select></div>"+
+          "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Monto recibido ("+monPago+")</label>"+
+          "<input type='number' placeholder='0.00' value='"+(np.monto||"")+"' oninput='S.nPagarPrest=Object.assign(S.nPagarPrest||{},{monto:this.value})' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
+          previewHtml+
+          "</div>"+
+          "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Cuenta donde entra ("+monPago+")</label>"+
           "<select onchange='S.nPagarPrest=Object.assign(S.nPagarPrest||{},{cuentaId:this.value})' style='width:100%;padding:12px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
             "<option value=''>— elegir —</option>"+
             ctasPago.map(function(c){return "<option value='"+c.id+"'"+(np.cuentaId===c.id?" selected":"")+">"+c.nombre+" ("+f2(c.saldo)+")</option>";}).join("")+
-          "</select></div>"+
+          "</select>"+
+          (ctasPago.length===0?"<div style='font-size:10px;color:#c0392b;margin-top:4px'>No tienes cuentas activas en "+monPago+". Créala en ⚙️ Configuración o elige otra moneda.</div>":"")+
+          "</div>"+
         "</div>"+
         "<button onclick='pagarPrestamo("+p.id+")' style='width:100%;padding:14px;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;background:#0f6e3a;color:#fff;font-family:inherit'>💵 Confirmar abono</button>"+
       "</div>";
