@@ -5532,12 +5532,14 @@ function _limpiarPaste(){S._pasteOk=null;S._pasteErr=null;R();}
 
 function _normNum(s){
   s=String(s||'').trim().replace(/\s/g,'');
-  // Coma seguida de exactamente 3 dígitos = miles: 10,000 → 10000
-  s=s.replace(/,(\d{3})(?!\d)/g,'$1');
-  // Punto seguido de exactamente 3 dígitos = miles: 10.000 → 10000
-  s=s.replace(/\.(\d{3})(?!\d)/g,'$1');
-  // Coma seguida de 1-2 dígitos al final = decimal: 10,70 → 10.70
-  s=s.replace(/,(\d{1,2})$/,'.$1');
+  // Binance usa consistentemente: coma=separador de miles, punto=decimal
+  // Confirmado con comprobantes reales: "Bs 10,000"→10000  "R$ 5.244"→5.244
+  // Excepción rara: coma+1-2 dígitos AL FINAL sin más comas → es decimal (10,70)
+  if(/,\d{1,2}$/.test(s) && !/,\d{3}/.test(s) && (s.match(/,/g)||[]).length===1){
+    s=s.replace(',','.');
+  } else {
+    s=s.replace(/,/g,''); // todas las demás comas son separador de miles
+  }
   return parseFloat(s)||0;
 }
 
@@ -5550,9 +5552,9 @@ function _parsearOCR(txt){
   var t=txt.replace(/[\r\n]+/g,' ').replace(/\s+/g,' ').trim();
   var r={tipo:'compra',moneda:'VES',comision:0};
 
-  // ── Tipo ────────────────────────────────────────────────────────────────
-  if(/comprar|compra|buy/i.test(t)) r.tipo='compra';
-  else if(/vender|venta|sell/i.test(t)) r.tipo='venta';
+  // ── Tipo (con límites de palabra: "comprador" no debe activar "compra") ──
+  if(/\b(?:comprar|compra|buy)\b/i.test(t)) r.tipo='compra';
+  else if(/\b(?:vender|venta|sell)\b/i.test(t)) r.tipo='venta';
 
   // ── Moneda ──────────────────────────────────────────────────────────────
   if(/\bBs\.?\s*\d|\bVES\b|bolivar/i.test(t)) r.moneda='VES';
@@ -5561,9 +5563,14 @@ function _parsearOCR(txt){
   else if(/\bCOP\b/i.test(t)) r.moneda='COP';
   else if(/\bEUR\b/i.test(t)) r.moneda='EUR';
 
-  // ── USDT total: primer "número USDT" del texto ───────────────────────────
-  var mu=t.match(/([\d]+[.,][\d]{1,4})\s*USDT/i);
-  if(mu) r.usdt=_normNum(mu[1]);
+  // ── USDT total: priorizar etiqueta "Cantidad total" (evita confundir con
+  // "Cantidad liberada" que aparece en ventas y es un valor distinto) ────────
+  var mUsdtTotal=t.match(/Cantidad\s*total[^\d]{0,10}([\d]+[.,][\d]{1,4})\s*USDT/i);
+  if(mUsdtTotal) r.usdt=_normNum(mUsdtTotal[1]);
+  else {
+    var mu=t.match(/([\d]+[.,][\d]{1,4})\s*USDT/i);
+    if(mu) r.usdt=_normNum(mu[1]);
+  }
 
   // ── Comisión: etiqueta + número cercano (por defecto 0 si dice "0 USDT") ─
   var mCom=t.match(/Comisi[oó]n[^\d]{0,12}([\d]+[.,]?[\d]*)\s*USDT/i)||
@@ -5577,13 +5584,14 @@ function _parsearOCR(txt){
 
   // ── Importe en fiat / Monto ──────────────────────────────────────────────
   var mImporte=t.match(/Importe\s*en\s*fiat[^\d]{0,15}([\d]+[.,]?[\d]{0,3})/i)||
+               t.match(/Cantidad\s*en\s*fiat[^\d]{0,15}([\d]+[.,]?[\d]{0,3})/i)||
                t.match(/(?:Importe|Monto)[^\d]{0,15}([\d]+[.,]?[\d]{0,3})/i)||
                t.match(/Amount[^\d]{0,15}([\d]+[.,]?[\d]{0,3})/i);
   if(mImporte) r.monto=_normNum(mImporte[1]);
 
   // ── Order ID: buscar primero cerca de la etiqueta (tolera espacios que
   // a veces mete el OCR de Google Lens en medio de números largos) ──────────
-  var mOrdLabel=t.match(/(?:N\.?\s*[ºo°]\.?\s*de\s*orden|Nro\.?\s*de\s*orden|Order\s*(?:ID|No|number)?)[^\d]{0,10}((?:\d[\s]?){15,30})/i);
+  var mOrdLabel=t.match(/(?:N\.?\s*[ºo°]\.?\s*de\s*orden|Nro\.?\s*de\s*orden|Orden\s*n[uú]mero|Order\s*(?:ID|No|number)?)[^\d]{0,10}((?:\d[\s]?){15,30})/i);
   if(mOrdLabel){
     r.ordenId=mOrdLabel[1].replace(/\s/g,'');
   } else {
