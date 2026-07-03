@@ -5493,41 +5493,61 @@ function fbForceLoad(){
 
 
 // ══════════════════════════════════════════════════════════════════════════════
-// LECTOR OCR — Tesseract.js (gratis, sin API, corre 100% en el navegador)
-// Lee foto de Binance P2P y extrae datos automáticamente
+// LECTOR OCR — Tesseract.js (actualiza UI via DOM, sin parpadeo)
 // ══════════════════════════════════════════════════════════════════════════════
-// LECTOR OCR — Tesseract.js (gratis, sin API, 100% en el navegador)
-// Primera vez: descarga ~10MB (1-2 min). Siguientes veces: caché del navegador.
-// ══════════════════════════════════════════════════════════════════════════════
+function _ocrUpdateUI(status, pct, result, error){
+  var box=document.getElementById('ocr-status-box');
+  if(!box) return;
+  if(pct!==undefined && pct>=0){
+    box.innerHTML="<div style='font-size:11px;color:#4ade80;margin-bottom:5px'>⏳ "+status+"</div>"+
+      "<div style='background:rgba(255,255,255,.1);border-radius:20px;height:6px'><div style='height:100%;background:#4ade80;border-radius:20px;width:"+pct+"%'></div></div>"+
+      "<div style='font-size:9px;color:rgba(74,222,100,.4);margin-top:3px'>Primera vez descarga ~10MB · Las siguientes son instantáneas</div>";
+  } else if(result){
+    box.innerHTML="<div style='font-size:10px;color:#4ade80;background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.3);border-radius:7px;padding:6px 10px'>✅ "+result+"<br><span style='opacity:.6;font-size:9px'>Revisa los campos abajo y ajusta si es necesario</span></div>";
+  } else if(error){
+    box.innerHTML="<div style='font-size:10px;color:#f87171;background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.2);border-radius:7px;padding:6px 10px'>❌ "+error+"</div>";
+  }
+}
+
 async function leerComprobanteOCR(input){
   var file=input.files[0];
   if(!file) return;
-  S._ocrLeyendo=true; S._ocrPct=0; S._ocrStatus='Iniciando...';
-  S._ocrResultado=null; S._ocrError=null; R();
+
+  // Verificar que Tesseract está disponible
+  if(typeof Tesseract==='undefined'){
+    _ocrUpdateUI(null,-1,null,'Tesseract no cargó. Verifica tu conexión a internet y recarga la página.');
+    input.value=''; return;
+  }
+
+  _ocrUpdateUI('Iniciando OCR...',5);
+
   try{
     var result=await Tesseract.recognize(file,'eng',{
       logger:function(m){
-        var pct=S._ocrPct||0;
-        if(m.status==='loading tesseract core'){S._ocrStatus='Cargando motor OCR...';pct=10;}
-        else if(m.status==='initializing tesseract'){S._ocrStatus='Iniciando...';pct=20;}
-        else if(m.status==='loading language traineddata'){
-          S._ocrStatus='Descargando datos de idioma (solo primera vez)... '+Math.round((m.progress||0)*100)+'%';
+        var pct=5;
+        var st=m.status||'';
+        if(st==='loading tesseract core'){pct=10; _ocrUpdateUI('Cargando motor OCR...',pct);}
+        else if(st==='initializing tesseract'){pct=20; _ocrUpdateUI('Iniciando...',pct);}
+        else if(st==='loading language traineddata'){
           pct=30+Math.round((m.progress||0)*35);
+          _ocrUpdateUI('Descargando datos de idioma... '+Math.round((m.progress||0)*100)+'%',pct);
         }
-        else if(m.status==='initializing api'){S._ocrStatus='Preparando...';pct=66;}
-        else if(m.status==='recognizing text'){
-          S._ocrStatus='Leyendo imagen... '+Math.round((m.progress||0)*100)+'%';
+        else if(st==='initializing api'){pct=66; _ocrUpdateUI('Preparando...',pct);}
+        else if(st==='recognizing text'){
           pct=70+Math.round((m.progress||0)*28);
+          _ocrUpdateUI('Leyendo imagen... '+Math.round((m.progress||0)*100)+'%',pct);
         }
-        if(pct!==S._ocrPct){S._ocrPct=pct;R();}
       }
     });
+
     var txt=result.data.text||'';
-    console.log('[OCR] Texto:\n'+txt);
+    console.log('[OCR] Texto detectado:\n'+txt);
+
     if(!txt.trim()){
-      S._ocrError='La imagen no tiene texto legible. Usa una captura de pantalla del teléfono.';
-      S._ocrLeyendo=false; input.value=''; R(); return;
+      _ocrUpdateUI(null,-1,null,'No se detectó texto. Usa una captura de pantalla del teléfono (no foto de pantalla).');
+      input.value=''; return;
     }
+
     var parsed=_parsearOCR(txt);
     if(parsed&&(parsed.usdt||parsed.tasa||parsed.monto)){
       if(!S._qf) S._qf={tipo:'compra',moneda:'VES',tasa:'',monto:'',usdt:''};
@@ -5536,52 +5556,43 @@ async function leerComprobanteOCR(input){
       if(parsed.monto)  S._qf.monto =String(parsed.monto);
       if(parsed.tasa)   S._qf.tasa  =String(parsed.tasa);
       if(parsed.usdt)   S._qf.usdt  =String(parsed.usdt);
-      S._ocrResultado=(parsed.tipo==='compra'?'Compra':'Venta')+' '+(parsed.moneda||'?')+
+      var resumen=(parsed.tipo==='compra'?'Compra':'Venta')+' '+(parsed.moneda||'?')+
         (parsed.monto?' · '+parsed.monto:'')+(parsed.usdt?' · '+parsed.usdt+' USDT':'')+(parsed.tasa?' · Tasa: '+parsed.tasa:'');
+      _ocrUpdateUI(null,-1,resumen,null);
+      R(); // solo R() al final cuando ya tenemos resultado
     } else {
-      // Mostrar texto crudo para que el usuario vea qué detectó
-      S._ocrError='Texto detectado: "'+txt.replace(/\n/g,' ').substring(0,120)+'" — Completa los campos manualmente.';
+      _ocrUpdateUI(null,-1,null,'Texto leído: "'+txt.replace(/\n/g,' ').substring(0,150)+'" — Completa los campos manualmente.');
     }
+
   } catch(err){
-    console.error('[OCR]',err);
-    S._ocrError='Error: '+(err.message||'desconocido')+'. Prueba con una captura de pantalla.';
+    console.error('[OCR] Error completo:', err);
+    var msg=err&&(err.message||err.toString())||'Error desconocido';
+    // Detectar error CORS/Worker
+    if(/cors|cross-origin|worker|failed to fetch/i.test(msg)){
+      msg='El navegador bloqueó el lector OCR (restricción de seguridad). Intenta desde Chrome en Android.';
+    }
+    _ocrUpdateUI(null,-1,null,msg);
   }
-  S._ocrLeyendo=false; S._ocrPct=0; input.value=''; R();
+  input.value='';
 }
 
 function _parsearOCR(txt){
   var t=txt.replace(/,(\d{3})/g,'$1').replace(/\s+/g,' ').trim();
   var r={};
-  // Tipo
   if(/buy|comprar|compra/i.test(t)) r.tipo='compra';
   else if(/sell|vender|venta/i.test(t)) r.tipo='venta';
   else r.tipo='compra';
-  // Moneda
   if(/Bs[\.\s]?\d|bolivar|ves\b|VES/i.test(t)) r.moneda='VES';
   else if(/R\$|BRL\b|reais|real\b/i.test(t)) r.moneda='BRL';
   else if(/S\/[\.\s]?|PEN\b|soles/i.test(t)) r.moneda='PEN';
   else if(/COP\b/i.test(t)) r.moneda='COP';
   else if(/EUR\b/i.test(t)) r.moneda='EUR';
-  // USDT — buscar número seguido de USDT
-  var mu=[
-    t.match(/(\d{1,5}\.?\d{0,6})\s*USDT/i),
-    t.match(/(?:quantity|cantidad|total|received)\s*[:\-]?\s*(\d+\.?\d*)/i)
-  ];
+  var mu=[t.match(/(\d{1,5}\.?\d{0,6})\s*USDT/i),t.match(/(?:quantity|cantidad|total|received)\s*[:\-]?\s*(\d+\.?\d*)/i)];
   for(var i=0;i<mu.length;i++){if(mu[i]){r.usdt=parseFloat(mu[i][1]);break;}}
-  // Tasa
-  var mt=[
-    t.match(/(?:price|precio|rate|tasa)\s*[:\-]?\s*(?:Bs\.?|R\$|S\/\.?)?\s*(\d{2,7}\.?\d{0,4})/i),
-    t.match(/(?:Bs\.?|VES)\s*(\d{3,7}\.?\d{0,3})/i),
-    t.match(/(\d{3,7}\.?\d{0,3})\s*(?:VES|Bs)/i)
-  ];
+  var mt=[t.match(/(?:price|precio|rate|tasa)\s*[:\-]?\s*(?:Bs\.?|R\$|S\/\.?)?\s*(\d{2,7}\.?\d{0,4})/i),t.match(/(?:Bs\.?|VES)\s*(\d{3,7}\.?\d{0,3})/i)];
   for(var j=0;j<mt.length;j++){if(mt[j]){r.tasa=parseFloat(mt[j][1]);break;}}
-  // Monto fiat
-  var mm=[
-    t.match(/(?:fiat|importe|amount in fiat|monto)\s*[:\-]?\s*(?:Bs\.?|R\$|S\/\.?)?\s*(\d+\.?\d*)/i),
-    t.match(/(?:Bs\.?)\s*(\d{3,8}(?:\.\d{0,2})?)/i)
-  ];
+  var mm=[t.match(/(?:fiat|importe|amount in fiat|monto)\s*[:\-]?\s*(?:Bs\.?|R\$|S\/\.?)?\s*(\d+\.?\d*)/i),t.match(/(?:Bs\.?)\s*(\d{3,8}(?:\.\d{0,2})?)/i)];
   for(var k=0;k<mm.length;k++){if(mm[k]){r.monto=parseFloat(mm[k][1]);break;}}
-  // Derivar lo que falta
   if(!r.monto&&r.usdt&&r.tasa) r.monto=Math.round(r.usdt*r.tasa*100)/100;
   if(!r.usdt&&r.monto&&r.tasa) r.usdt=Math.round(r.monto/r.tasa*10000)/10000;
   if(!r.tasa&&r.usdt&&r.monto&&r.usdt>0) r.tasa=Math.round(r.monto/r.usdt*100)/100;
@@ -10652,16 +10663,7 @@ function rInventarioUsdt(){
         "<div style='display:flex;gap:8px;align-items:center;flex-wrap:wrap'>"+
           "<label for='ocr-img-inp' style='background:#16a34a;color:#fff;padding:8px 14px;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:6px'>📸 Subir foto del comprobante</label>"+
           "<input id='ocr-img-inp' type='file' accept='image/*' style='display:none' onchange='leerComprobanteOCR(this)'>"+
-          (S._ocrLeyendo?
-            "<div style='flex:1;min-width:180px'>"+
-            "<div style='font-size:11px;color:#4ade80;margin-bottom:5px'>⏳ "+(S._ocrStatus||'Procesando...')+"</div>"+
-            "<div style='background:rgba(255,255,255,.1);border-radius:20px;height:6px;overflow:hidden'>"+
-            "<div style='height:100%;background:#4ade80;border-radius:20px;transition:width .3s;width:"+(S._ocrPct||5)+'%'+"'></div></div>"+
-            "<div style='font-size:9px;color:rgba(74,222,100,.5);margin-top:3px'>Primera vez tarda 1-2 min descargando datos · Las siguientes veces es instantáneo</div>"+
-            "</div>":
-          S._ocrResultado?"<div style='font-size:10px;color:#4ade80;background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.3);border-radius:7px;padding:5px 9px'>✅ "+S._ocrResultado+"<br><span style='opacity:.6;font-size:9px'>Revisa los campos abajo y ajusta si es necesario</span></div>":
-          S._ocrError?"<div style='font-size:10px;color:#f87171;background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.2);border-radius:7px;padding:5px 9px'>❌ "+S._ocrError+"</div>":
-          "<span style='font-size:10px;color:rgba(74,222,100,.45)'>Sube la captura de pantalla de Binance P2P</span>")+
+          "<div id='ocr-status-box' style='flex:1;font-size:10px;color:rgba(74,222,100,.45)'>Sube la captura de pantalla de Binance P2P</div>"+
         "</div>"+
       "</div>";
       return ocrPanel;
