@@ -12401,12 +12401,43 @@ function _mergeArrayById(remoteArr, localArr, idField){
 // perdidos al guardar desde un dispositivo con datos desactualizados. ──────
 var _MERGE_FIELDS = ["cuentas","compromisos","egresos","egresos_personales","prestamos","cuentasCobrar"];
 
+var _fbPendingObj = null; // referencia al último guardado pendiente, para poder forzarlo si la app se cierra/oculta antes del debounce
+
 function fbSave(obj){
   if(!_fbRef) return;
+  _fbPendingObj = obj;
   if(_fbSaveTimer) clearTimeout(_fbSaveTimer);
   _fbSaveTimer = setTimeout(function(){
+    _fbSaveTimer = null;
+    _fbPendingObj = null;
     _fbMergeAndWrite(obj);
   }, 800);
+}
+
+// ── Fuerza el guardado YA MISMO si hay uno pendiente — se llama al cerrar,
+// minimizar o cambiar de pestaña la app, para no perder datos que aún
+// estaban esperando el debounce de 800ms. ─────────────────────────────────
+function fbFlushNow(){
+  if(_fbSaveTimer && _fbPendingObj){
+    clearTimeout(_fbSaveTimer);
+    _fbSaveTimer = null;
+    var obj = _fbPendingObj;
+    _fbPendingObj = null;
+    console.log("⚡ Guardado forzado — la app se está cerrando/ocultando con cambios pendientes");
+    _fbMergeAndWrite(obj);
+  }
+}
+// Detecta cierre de pestaña/app, minimizar, cambiar de app en el celular, etc.
+// Se usan varios eventos porque ningún navegador los soporta todos igual —
+// esto asegura que al menos uno se dispare en cualquier dispositivo.
+if(typeof document!=="undefined"&&document.addEventListener){
+  document.addEventListener("visibilitychange", function(){
+    if(document.visibilityState==="hidden") fbFlushNow();
+  });
+}
+if(typeof window!=="undefined"&&window.addEventListener){
+  window.addEventListener("pagehide", fbFlushNow);
+  window.addEventListener("beforeunload", fbFlushNow);
 }
 
 function _fbMergeAndWrite(obj){
