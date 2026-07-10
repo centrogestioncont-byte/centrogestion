@@ -992,7 +992,7 @@ var STORAGE_KEY = "remesasBRL_v1";
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
 var APP_VERSION = "20260625_v3";
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
-  "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos"];
+  "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge"];
 
 // ══════════════════════════════════════════════════════════════════════
 // SISTEMA DE CIERRE AUTOMÁTICO DE MES
@@ -2551,6 +2551,7 @@ function saveCompromiso(){
 
 function delCompromiso(id){
   if(!confirm("¿Eliminar este compromiso?"))return;
+  _marcarBorradoMerge("compromisos",id);
   S.compromisos=(S.compromisos||[]).filter(function(c){return c.id!==id;});
   saveData();R();
 }
@@ -6393,6 +6394,11 @@ function reqDel(arr,id,field){
       if(S._deleted.indexOf(_delKey)===-1) S._deleted.push(_delKey);
     }
     logAudit("BORRAR_"+arr.toUpperCase(),"Borró ID:"+id+(item?" · "+item.d+" · $"+(item.pr||item.usdt||item.monto||"?"):" "));
+    // Si este campo se fusiona entre dispositivos (_MERGE_FIELDS), anotar el
+    // borrado para que la fusión no lo revida — ver _marcarBorradoMerge().
+    if(["cuentas","compromisos","egresos","egresos_personales","prestamos","cuentasCobrar"].indexOf(arr)!==-1){
+      _marcarBorradoMerge(arr,id);
+    }
     S[arr]=S[arr].filter(function(x){return x[field||"id"]!==id;});
     saveData();R();
   };
@@ -12309,7 +12315,7 @@ var _FB_REST = "https://adminbrl-default-rtdb.firebaseio.com/remesasBRL_v1.json"
 //      {"rules":{".read":"auth.uid==='UID_AQUI'",".write":"auth.uid==='UID_AQUI'"}}
 // ══════════════════════════════════════════════════════
 var _FB_APP_EMAIL = "centro.gestion.cont@gmail.com";
-var _FB_APP_PASS  = "Mmostacho1."; // ⚠️ reemplaza esto por la contraseña real que creaste en Firebase Users
+var _FB_APP_PASS  = "Mmostacho1."; // contraseña real de la cuenta dedicada de la app en Firebase
 var _fbIdToken = "";
 function _fbAppendAuth(url){
   if(!_fbIdToken) return url;
@@ -12473,6 +12479,28 @@ function _mergeArrayById(remoteArr, localArr, idField){
   return merged;
 }
 
+// ── Lista negra de borrados para los campos que se fusionan (_MERGE_FIELDS) ──
+// Problema que resuelve: al borrar un egreso/compromiso/cuenta y guardar, la
+// fusión de arriba traía de vuelta ese mismo registro desde Firebase (porque el
+// borrado local todavía no había llegado allá), haciendo que lo borrado
+// "reapareciera" solo. Igual que ya existe para brl/vzla/eeuu con S._deleted,
+// aquí se anota qué se borró (por 24h) para que la fusión no lo reviva.
+function _marcarBorradoMerge(campo,id){
+  try{
+    if(!S._deletedMerge) S._deletedMerge={};
+    if(!S._deletedMerge[campo]) S._deletedMerge[campo]=[];
+    var cutoff=Date.now()-86400000; // 24h
+    S._deletedMerge[campo]=S._deletedMerge[campo].filter(function(x){return x.ts>cutoff;});
+    S._deletedMerge[campo].push({id:id,ts:Date.now()});
+  }catch(e){}
+}
+function _estaBorradoMerge(campo,id){
+  try{
+    if(!S._deletedMerge||!S._deletedMerge[campo]) return false;
+    return S._deletedMerge[campo].some(function(x){return x.id===id;});
+  }catch(e){ return false; }
+}
+
 // ── Campos que se fusionan por id antes de cada guardado. Deliberadamente
 // NO incluye brl/vzla/eeuu/inventarioUsdt (datos FIFO/transaccionales) —
 // esos siguen con guardado directo para no arriesgar duplicados o desincronizar
@@ -12528,7 +12556,10 @@ function _fbMergeAndWrite(obj){
       if(remote){
         _MERGE_FIELDS.forEach(function(k){
           if(remote[k]!==undefined){
-            obj[k] = _mergeArrayById(remote[k], obj[k]);
+            var remoteFiltrado=(remote[k]||[]).filter(function(it){
+              return !(it && it.id!==undefined && _estaBorradoMerge(k,it.id));
+            });
+            obj[k] = _mergeArrayById(remoteFiltrado, obj[k]);
             S[k] = obj[k]; // reflejar la fusión también en el estado local/UI
           }
         });
