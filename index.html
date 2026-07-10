@@ -27,7 +27,7 @@
     if(!cur._ts||cur._ts<d._ts){localStorage.setItem('remesasBRL_v1',JSON.stringify(d));}
   }catch(e){}
   // Sincronización Capital ↔ Cuentas
-  var _sm={"Binance Julio":"Binance Julio","Nubank":"Nubank","BANCO DE VENEZUELA":"Banco De Venezuela","True Wallet":"True Wallet","Kraken Fiat":"Kraken","Zelle":"Zelle","Banco Banesco":"Banco Banesco"};
+  var _sm={"Binance Julio":"Binance Julio","Nubank":"Nubank","BANCO DE VENEZUELA":"Banco De Venezuela","True Wallet":"True Wallet","Kraken Fiat":"Kraken","Zelle":"Zelle","Banco Banesco":"Banco Banesco","PicPay":"PicPay"};
   window._syncCapitalCuentas=function(o){
     if(!window.S)return;
     Object.keys(_sm).forEach(function(cn){
@@ -2543,7 +2543,7 @@ function saveCompromiso(){
   if(!f.mesInicio){alert("Elige el mes de inicio");return;}
   var mon=f.moneda||"USDT";
   var usdt=mon==="USDT"?(parseFloat(f.monto)||0):(function(){var r=getRateToUsdt(mon);return r?(parseFloat(f.monto)||0)/r:0;}());
-  var obj={id:f.id||("cmp_"+Date.now()),nombre:f.nombre.trim(),monto:parseFloat(f.monto)||0,moneda:mon,usdt:Math.round(usdt*100)/100,cat:f.cat||getCatsEmpresa()[0],tipo:f.tipo||"empresa",diaVence:parseInt(f.diaVence)||1,mesInicio:f.mesInicio,mesFin:f.mesFin||null,activo:true,pagos:f.pagos||{}};
+  var obj={id:f.id||("cmp_"+Date.now()),nombre:f.nombre.trim(),monto:parseFloat(f.monto)||0,moneda:mon,usdt:Math.round(usdt*100)/100,cat:f.cat||getCatsEmpresa()[0],tipo:f.tipo||"empresa",diaVence:parseInt(f.diaVence)||1,mesInicio:f.mesInicio,mesFin:f.mesFin||null,activo:true,pagos:f.pagos||{},cuentaId:f.cuentaId||""};
   if(f.id){var idx=(S.compromisos||[]).findIndex(function(c){return c.id===f.id;});if(idx>=0)S.compromisos[idx]=obj;}
   else{S.compromisos=S.compromisos||[];S.compromisos.push(obj);}
   S.nCmp={};S._cmpFormOpen=false;saveData();R();
@@ -2573,15 +2573,31 @@ function pagarCompromiso(cmpId,mesKey){
   var pago=getCmpPago(c,mesKey);
   if(pago&&pago.pagado){
     if(!confirm("¿Deshacer el pago de "+c.nombre+" en "+mesKeyLabel2(mesKey)+"?"))return;
-    if(pago.egresoId)S.egresos=(S.egresos||[]).filter(function(e){return e.id!==pago.egresoId;});
+    if(pago.egresoId){
+      var egOld=(S.egresos||[]).find(function(e){return e.id===pago.egresoId;});
+      if(egOld){
+        // Revertir el descuento real que se hizo al pagar (cuenta + lote FIFO)
+        if(egOld.cuentaId) ajusteCuentaEgreso(egOld.cuentaId,+(parseFloat(egOld.monto)||0));
+        restaurarFIFOEgreso(egOld.mon||"BRL",egOld.monto,egOld.usdt);
+      }
+      S.egresos=(S.egresos||[]).filter(function(e){return e.id!==pago.egresoId;});
+    }
     c.pagos[mesKey]={pagado:false,fechaPago:null,egresoId:null};
     saveData();R();return;
   }
+  // ── Requiere cuenta de pago asignada para poder descontar de verdad ──
+  if(!c.cuentaId){alert("Este compromiso no tiene una cuenta de pago asignada.\n\nEdítalo (✏️ en \"Gestionar compromisos\") y elige la cuenta desde la que se descuenta cada mes antes de pagarlo.");return;}
+  var cuenta=(S.cuentas||[]).find(function(x){return x.id===c.cuentaId;});
+  if(!cuenta){alert("La cuenta asignada a este compromiso ya no existe. Edítalo y elige otra.");return;}
+  if(cuenta.moneda!==c.moneda){alert("La cuenta asignada (\""+cuenta.nombre+"\") es en "+cuenta.moneda+", pero este compromiso es en "+c.moneda+".\n\nEdítalo y elige una cuenta en "+c.moneda+".");return;}
+  if(!confirm("💰 PAGAR: "+c.nombre+"\n\nSe descontarán "+f2(c.monto)+" "+c.moneda+" de \""+cuenta.nombre+"\"\nSaldo actual: "+f2(cuenta.saldo)+" → quedará: "+f2((parseFloat(cuenta.saldo)||0)-(parseFloat(c.monto)||0))+"\n\n¿Confirmar?"))return;
   var p=mesKey.split("-");
   var dia=String(Math.min(c.diaVence,28)).padStart(2,"0");
   var egId="cmpeg_"+Date.now();
   S.egresos=S.egresos||[];
-  S.egresos.push({id:egId,d:dia+"/"+p[1]+"/"+String(parseInt(p[0])).slice(-2),cat:c.cat,mot:"[Compromiso] "+c.nombre,monto:c.monto,usdt:c.usdt,mon:c.moneda,tipo:c.tipo,pagada:true,locked:false,fromCompromiso:cmpId});
+  ajusteCuentaEgreso(c.cuentaId,-(parseFloat(c.monto)||0));
+  descontarFIFOEgreso(c.moneda,c.monto,c.usdt);
+  S.egresos.push({id:egId,d:dia+"/"+p[1]+"/"+String(parseInt(p[0])).slice(-2),cat:c.cat,mot:"[Compromiso] "+c.nombre,monto:c.monto,usdt:c.usdt,mon:c.moneda,tipo:c.tipo,pagada:true,locked:false,fromCompromiso:cmpId,cuentaId:c.cuentaId});
   if(!c.pagos)c.pagos={};
   c.pagos[mesKey]={pagado:true,fechaPago:dia+"/"+p[1]+"/"+String(parseInt(p[0])).slice(-2),egresoId:egId};
   saveData();R();
@@ -2758,7 +2774,7 @@ function rTabCompromisos(){
           "</div>"+
           "<div class='f2'>"+
             "<div class='fl'><label>Monto</label><input type='number' step='any' placeholder='0.00' value='"+(f.monto||"")+"' oninput='(S.nCmp=S.nCmp||{}).monto=this.value'></div>"+
-            "<div class='fl'><label>Moneda</label><select onchange='(S.nCmp=S.nCmp||{}).moneda=this.value'>"+
+            "<div class='fl'><label>Moneda</label><select onchange='(S.nCmp=S.nCmp||{}).moneda=this.value;S.nCmp.cuentaId=\"\";R()'>"+
               MONEDAS_CMP.map(function(m){return "<option value='"+m+"'"+((f.moneda||"USDT")===m?" selected":"")+">"+m+"</option>";}).join("")+
             "</select></div>"+
           "</div>"+
@@ -2773,7 +2789,12 @@ function rTabCompromisos(){
           "</div>"+
           "<div class='f2'>"+
             "<div class='fl'><label>Día del mes que vence</label><input type='number' min='1' max='28' placeholder='15' value='"+(f.diaVence||"")+"' oninput='(S.nCmp=S.nCmp||{}).diaVence=this.value'></div>"+
+            "<div class='fl'><label>Cuenta de pago</label><select onchange='(S.nCmp=S.nCmp||{}).cuentaId=this.value'>"+
+              "<option value=''>— elegir cuenta —</option>"+
+              (S.cuentas||[]).filter(function(c){return c.activa!==false&&c.moneda===(f.moneda||"USDT");}).map(function(c){return "<option value='"+c.id+"'"+(f.cuentaId===c.id?" selected":"")+">"+c.nombre+" ($"+f2(c.saldo)+")</option>";}).join("")+
+            "</select></div>"+
           "</div>"+
+          "<div style='font-size:9px;color:#888;margin:-6px 0 8px 2px'>⚠️ Debe ser una cuenta en "+(f.moneda||"USDT")+". Sin cuenta asignada no se podrá pagar este compromiso.</div>"+
           "<div class='f2'>"+
             "<div class='fl'><label>Desde el mes</label><input type='month' value='"+(f.mesInicio||mesActual)+"' onchange='(S.nCmp=S.nCmp||{}).mesInicio=this.value'></div>"+
             "<div class='fl'><label>Hasta (vacío = sin límite)</label><input type='month' value='"+(f.mesFin||"")+"' onchange='(S.nCmp=S.nCmp||{}).mesFin=this.value||null'></div>"+
@@ -6351,6 +6372,18 @@ function reqDel(arr,id,field){
         if(item.cuentaId) ajusteCuentaEgreso(item.cuentaId,+(parseFloat(item.monto)||0));
         // 2. Restaurar lote FIFO
         restaurarFIFOEgreso(item.mon||"BRL",item.monto,item.usdt);
+      }
+      // 3. Si este egreso viene de un compromiso, resetear su estado de pago
+      // para que no quede "fantasma" marcado como pagado sin registro real.
+      if(item.fromCompromiso){
+        var _cmp=(S.compromisos||[]).find(function(x){return x.id===item.fromCompromiso;});
+        if(_cmp&&_cmp.pagos){
+          Object.keys(_cmp.pagos).forEach(function(mk){
+            if(_cmp.pagos[mk]&&_cmp.pagos[mk].egresoId===item.id){
+              _cmp.pagos[mk]={pagado:false,fechaPago:null,egresoId:null};
+            }
+          });
+        }
       }
     }
     // Lista negra: evita que Firebase re-agregue entradas borradas en sync
