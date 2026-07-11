@@ -9226,8 +9226,21 @@ function _rBalanceRealDia(){
       }
     });
   });
+  var cobrarHoy=0;
+  (S.cuentasCobrar||[]).forEach(function(cc){
+    (cc.abonos||[]).forEach(function(ab){
+      if(ab.fecha===hoyKey){
+        var montoAbono=parseFloat(ab.monto)||0;
+        if(cc.moneda==="USDT"){ cobrarHoy+=montoAbono; }
+        else{
+          var rate=getRateToUsdt(cc.moneda);
+          if(rate) cobrarHoy+=montoAbono/rate;
+        }
+      }
+    });
+  });
 
-  var explicado=ganOpsHoy+ganExtraHoy+prestCobradosHoy-gastosHoy-gastosPersHoy-prestEntregadosHoy;
+  var explicado=ganOpsHoy+ganExtraHoy+prestCobradosHoy+cobrarHoy-gastosHoy-gastosPersHoy-prestEntregadosHoy;
   var noExplicado=hayAyer?Math.round((diff-explicado)*100)/100:null;
 
   var dias7=[];
@@ -9239,13 +9252,14 @@ function _rBalanceRealDia(){
   var promedio7=dias7.length?Math.round((dias7.reduce(function(a,b){return a+b;},0)/dias7.length)*100)/100:null;
 
   var abierto=!!S._balanceRealAbierto;
-  var hayActividad = (ganOpsHoy||ganExtraHoy||prestCobradosHoy||gastosHoy||gastosPersHoy||prestEntregadosHoy);
+  var hayActividad = (ganOpsHoy||ganExtraHoy||prestCobradosHoy||cobrarHoy||gastosHoy||gastosPersHoy||prestEntregadosHoy);
   var desglose=
     "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin:10px 0 6px'>¿Qué pasó hoy?</div>"+
     (hayActividad?
       "<div style='display:flex;flex-direction:column;gap:4px;font-size:12px'>"+
         (ganOpsHoy?"<div style='display:flex;justify-content:space-between'><span>💚 Ganancia de operaciones</span><b style='color:#0f6e3a'>+"+f2(ganOpsHoy)+"</b></div>":"")+
         (ganExtraHoy?"<div style='display:flex;justify-content:space-between'><span>💰 Ganancias extra</span><b style='color:#0f6e3a'>+"+f2(ganExtraHoy)+"</b></div>":"")+
+        (cobrarHoy?"<div style='display:flex;justify-content:space-between'><span>🟣 Cuentas por cobrar (cobrado)</span><b style='color:#0f6e3a'>+"+f2(cobrarHoy)+"</b></div>":"")+
         (prestCobradosHoy?"<div style='display:flex;justify-content:space-between'><span>🔵 Préstamos cobrados</span><b style='color:#0f6e3a'>+"+f2(prestCobradosHoy)+"</b></div>":"")+
         (gastosHoy?"<div style='display:flex;justify-content:space-between'><span>🔴 Egresos pagados</span><b style='color:#c0392b'>-"+f2(gastosHoy)+"</b></div>":"")+
         (gastosPersHoy?"<div style='display:flex;justify-content:space-between'><span>🔴 Gastos personales</span><b style='color:#c0392b'>-"+f2(gastosPersHoy)+"</b></div>":"")+
@@ -9270,12 +9284,24 @@ function _rBalanceRealDia(){
       (promedio7!==null?"<div style='margin-top:10px;font-size:11px;color:#888'>📈 Promedio diario, últimos "+dias7.length+" día(s): <b style='color:"+(promedio7>=0?"#0f6e3a":"#c0392b")+"'>"+(promedio7>=0?"+":"")+f2(promedio7)+" USDT</b></div>":"");
   }
 
+  var _diag="<div style='margin-top:12px;padding-top:10px;border-top:1px solid #eee'>"+
+    "<div style='font-size:10px;color:#c0392b;font-weight:700;margin-bottom:6px'>🔍 Detalle técnico temporal (para revisar un problema — se puede quitar después)</div>"+
+    "<div style='font-size:10px;color:#555;font-family:monospace;white-space:pre-wrap;background:#fafafa;padding:8px;border-radius:6px'>"+
+    "hoyKey="+hoyKey+" · hoyDD="+hoyDD+"\n\n"+
+    "GANANCIA EXTRA (d==="+hoyDD+"):\n"+
+    ((S.gananciaExtra||[]).filter(function(g){return g.d===hoyDD;}).map(function(g){return "  id:"+g.id+" desc:"+(g.desc||"")+" monto:"+g.monto+" mon:"+g.mon+" usdt:"+g.usdt;}).join("\n")||"  (ninguna)")+"\n\n"+
+    "PRESTAMOS - abonos (fecha==="+hoyKey+"):\n"+
+    ((function(){var out=[];(S.prestamos||[]).forEach(function(p){(p.abonos||[]).forEach(function(ab){if(ab.fecha===hoyKey)out.push("  préstamo:"+(p.desc||p.id)+" mon:"+p.mon+" abono.monto:"+ab.monto+" abono.fecha:"+ab.fecha);});});return out.join("\n")||"  (ninguno)";})())+"\n\n"+
+    "CUENTAS POR COBRAR - abonos (fecha==="+hoyKey+"):\n"+
+    ((function(){var out=[];(S.cuentasCobrar||[]).forEach(function(c){(c.abonos||[]).forEach(function(ab){if(ab.fecha===hoyKey)out.push("  cliente:"+(c.cliente||c.id)+" moneda:"+c.moneda+" abono.monto:"+ab.monto+" abono.fecha:"+ab.fecha);});});return out.join("\n")||"  (ninguno)";})())+
+    "</div></div>";
+
   return "<div style='background:#fff;border:1px solid #e8e8e8;border-radius:12px;margin-bottom:14px;overflow:hidden'>"+
     "<div onclick='S._balanceRealAbierto=!S._balanceRealAbierto;R()' style='cursor:pointer;padding:14px 16px;display:flex;justify-content:space-between;align-items:center;background:#fafafa'>"+
       "<div style='font-size:13px;font-weight:800;color:#1a3558'>📊 Balance real del día"+(hayAyer?" · "+(diff>=0?"+":"")+f2(diff)+" USDT":"")+"</div>"+
       "<div style='font-size:16px;color:#888'>"+(abierto?"▲":"▼")+"</div>"+
     "</div>"+
-    (abierto?"<div style='padding:0 16px 16px'>"+contenido+"</div>":"")+
+    (abierto?"<div style='padding:0 16px 16px'>"+contenido+_diag+"</div>":"")+
   "</div>";
 }
 
