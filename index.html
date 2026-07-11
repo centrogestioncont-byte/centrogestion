@@ -992,7 +992,7 @@ var STORAGE_KEY = "remesasBRL_v1";
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
 var APP_VERSION = "20260625_v3";
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
-  "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge"];
+  "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance"];
 
 // ══════════════════════════════════════════════════════════════════════
 // SISTEMA DE CIERRE AUTOMÁTICO DE MES
@@ -3273,15 +3273,19 @@ function saveIU(){
 
   if(f.tipo==="compra"){
     var mo=parseFloat(f.montOrigen)||usdt*tasa;
+    // Binance acredita el NETO después de su comisión — antes se guardaba/acreditaba
+    // el bruto (usdt) y la comisión quedaba solo anotada sin restarse realmente,
+    // haciendo que la cuenta quedara con más USDT del que en verdad hay en Binance.
+    var usdtNeto=Math.round((usdt-com)*10000)/10000;
     S.inventarioUsdt.push({id:Date.now(),tipo:"compra",fecha:fecha,moneda:f.moneda||"BRL",
-      montOrigen:Math.round(mo*100)/100,usdt:usdt,tasa:tasa,comision:com,bs:0,
+      montOrigen:Math.round(mo*100)/100,usdt:usdtNeto,tasa:tasa,comision:com,bs:0,
       plataforma:f.plataforma||"",ordenId:ordenId,cuentaId:cuentaAfectada,
       cuentaOrigenId:f.cuentaOrigenId||"",  // cuenta que pagó (BRL/USD)
-      restante:usdt,locked:false});
-    // USDT sube en la cuenta destino (Binance)
+      restante:usdtNeto,locked:false});
+    // USDT sube en la cuenta destino (Binance) — se acredita el neto real
     if(cuentaAfectada){
       var cObj=(S.cuentas||[]).find(function(c){return c.id===cuentaAfectada;});
-      if(cObj&&cObj.moneda==="USDT") cObj.saldo=Math.round(((parseFloat(cObj.saldo)||0)+usdt)*100)/100;
+      if(cObj&&cObj.moneda==="USDT") cObj.saldo=Math.round(((parseFloat(cObj.saldo)||0)+usdtNeto)*100)/100;
     }
     // BRL/USD baja de la cuenta origen
     if(f.cuentaOrigenId){
@@ -9159,6 +9163,105 @@ function rDashEE(){
   "</div>";
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// 📊 BALANCE REAL DEL DÍA — panel nuevo, colapsado por defecto, dentro de Diario.
+// No modifica nada de lo que ya existía en rDiario(); solo se agrega antes.
+// Compara el total en USDT de TODAS las cuentas (mismo cálculo que usa
+// "Balance de Cuentas") entre hoy y ayer, y desglosa de dónde salió la
+// diferencia: ganancias de operaciones, egresos pagados, préstamos
+// entregados/cobrados. Lo que no se puede explicar con eso (transferencias,
+// cambios de tasa, redondeos) queda como "otros ajustes".
+// ══════════════════════════════════════════════════════════════════════
+function _calcTotalUsdtCuentas(){
+  var cap=(S.cuentas||[]).filter(function(c){return c.activa!==false;});
+  var total=0;
+  cap.forEach(function(item){
+    var saldo=parseFloat(item.saldo)||0;
+    if(item.moneda==="USDT"){ total+=saldo; return; }
+    var lim=_RATE_LIMITS[item.moneda];
+    var rate=getRateToUsdt(item.moneda);
+    var rateOk=rate&&(!lim||(rate>=lim[0]&&rate<=lim[1]));
+    if(rateOk) total+=saldo/rate;
+  });
+  return Math.round(total*100)/100;
+}
+function _ymd(d){return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");}
+function _capturarBalanceHoy(){
+  try{
+    if(!S.histBalance) S.histBalance={};
+    var hoyKey=_ymd(new Date());
+    S.histBalance[hoyKey]=_calcTotalUsdtCuentas();
+    var keys=Object.keys(S.histBalance).sort();
+    if(keys.length>120) keys.slice(0,keys.length-120).forEach(function(k){delete S.histBalance[k];});
+  }catch(e){}
+}
+function _rBalanceRealDia(){
+  _capturarBalanceHoy();
+  var h=new Date();
+  var hoyKey=_ymd(h);
+  var ayerKey=_ymd(new Date(h.getTime()-86400000));
+  var hoyDD=String(h.getDate()).padStart(2,"0")+"/"+String(h.getMonth()+1).padStart(2,"0");
+
+  var totalHoy=S.histBalance[hoyKey];
+  var totalAyer=S.histBalance[ayerKey];
+  var hayAyer=(totalAyer!==undefined);
+  var diff=hayAyer?Math.round((totalHoy-totalAyer)*100)/100:null;
+
+  var opsHoy=[].concat(S.brl||[],S.vzla||[],S.eeuu||[]).filter(function(r){return r.d===hoyDD;});
+  var ganOpsHoy=opsHoy.reduce(function(a,r){var isEE=r.rt&&r.rt.indexOf("UU.EE")>-1;return a+(isEE?(r.pr||0)/2:(r.pr||0));},0);
+  var ganExtraHoy=(S.gananciaExtra||[]).filter(function(g){return g.d===hoyDD;}).reduce(function(a,g){return a+(parseFloat(g.usdt)||0);},0);
+  var gastosHoy=(S.egresos||[]).filter(function(e){return e.pagada&&e.d===hoyDD;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0);
+  var gastosPersHoy=(S.egresos_personales||[]).filter(function(e){return e.pagada&&e.d===hoyDD;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0);
+  var prestEntregadosHoy=(S.prestamos||[]).filter(function(p){return p.d===hoyDD;}).reduce(function(a,p){return a+(parseFloat(p.usdt)||0);},0);
+  var prestCobradosHoy=0;
+  (S.prestamos||[]).forEach(function(p){(p.abonos||[]).forEach(function(ab){if(ab.d===hoyDD) prestCobradosHoy+=(parseFloat(ab.usdt||ab.monto)||0);});});
+
+  var explicado=ganOpsHoy+ganExtraHoy+prestCobradosHoy-gastosHoy-gastosPersHoy-prestEntregadosHoy;
+  var noExplicado=hayAyer?Math.round((diff-explicado)*100)/100:null;
+
+  var dias7=[];
+  for(var i=0;i<7;i++){
+    var k1=_ymd(new Date(h.getTime()-i*86400000));
+    var k0=_ymd(new Date(h.getTime()-(i+1)*86400000));
+    if(S.histBalance[k1]!==undefined&&S.histBalance[k0]!==undefined) dias7.push(S.histBalance[k1]-S.histBalance[k0]);
+  }
+  var promedio7=dias7.length?Math.round((dias7.reduce(function(a,b){return a+b;},0)/dias7.length)*100)/100:null;
+
+  var abierto=!!S._balanceRealAbierto;
+  var contenido="";
+  if(!hayAyer){
+    contenido="<div style='font-size:11px;color:#888;padding:8px 0'>Aún no hay comparación disponible (necesita el dato de ayer). Hoy quedó guardado: <b>$"+f2(totalHoy)+" USDT</b>. Mañana ya podrás ver la diferencia.</div>";
+  } else {
+    contenido=
+      "<div style='display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:10px'>"+
+        "<div><div style='font-size:10px;color:#888'>Ayer</div><div style='font-size:16px;font-weight:700'>$"+f2(totalAyer)+"</div></div>"+
+        "<div style='font-size:20px;color:#ccc'>→</div>"+
+        "<div><div style='font-size:10px;color:#888'>Hoy</div><div style='font-size:16px;font-weight:700'>$"+f2(totalHoy)+"</div></div>"+
+        "<div style='text-align:right'><div style='font-size:10px;color:#888'>Diferencia real</div>"+
+        "<div style='font-size:22px;font-weight:900;color:"+(diff>=0?"#0f6e3a":"#c0392b")+"'>"+(diff>=0?"+":"")+f2(diff)+" USDT</div></div>"+
+      "</div>"+
+      "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin:10px 0 6px'>¿De dónde sale esto?</div>"+
+      "<div style='display:flex;flex-direction:column;gap:4px;font-size:12px'>"+
+        (ganOpsHoy?"<div style='display:flex;justify-content:space-between'><span>💚 Ganancia de operaciones</span><b style='color:#0f6e3a'>+"+f2(ganOpsHoy)+"</b></div>":"")+
+        (ganExtraHoy?"<div style='display:flex;justify-content:space-between'><span>💰 Ganancias extra</span><b style='color:#0f6e3a'>+"+f2(ganExtraHoy)+"</b></div>":"")+
+        (prestCobradosHoy?"<div style='display:flex;justify-content:space-between'><span>🔵 Préstamos cobrados</span><b style='color:#0f6e3a'>+"+f2(prestCobradosHoy)+"</b></div>":"")+
+        (gastosHoy?"<div style='display:flex;justify-content:space-between'><span>🔴 Egresos pagados</span><b style='color:#c0392b'>-"+f2(gastosHoy)+"</b></div>":"")+
+        (gastosPersHoy?"<div style='display:flex;justify-content:space-between'><span>🔴 Gastos personales</span><b style='color:#c0392b'>-"+f2(gastosPersHoy)+"</b></div>":"")+
+        (prestEntregadosHoy?"<div style='display:flex;justify-content:space-between'><span>🟠 Préstamos entregados</span><b style='color:#c0392b'>-"+f2(prestEntregadosHoy)+"</b></div>":"")+
+        "<div style='display:flex;justify-content:space-between;padding-top:5px;border-top:1px dashed #ddd'><span style='color:#888'>Otros ajustes (tasas, transferencias, redondeos)</span><b style='color:#888'>"+(noExplicado>=0?"+":"")+f2(noExplicado)+"</b></div>"+
+      "</div>"+
+      (promedio7!==null?"<div style='margin-top:10px;font-size:11px;color:#888'>📈 Promedio diario, últimos "+dias7.length+" día(s): <b style='color:"+(promedio7>=0?"#0f6e3a":"#c0392b")+"'>"+(promedio7>=0?"+":"")+f2(promedio7)+" USDT</b></div>":"");
+  }
+
+  return "<div style='background:#fff;border:1px solid #e8e8e8;border-radius:12px;margin-bottom:14px;overflow:hidden'>"+
+    "<div onclick='S._balanceRealAbierto=!S._balanceRealAbierto;R()' style='cursor:pointer;padding:14px 16px;display:flex;justify-content:space-between;align-items:center;background:#fafafa'>"+
+      "<div style='font-size:13px;font-weight:800;color:#1a3558'>📊 Balance real del día"+(hayAyer?" · "+(diff>=0?"+":"")+f2(diff)+" USDT":"")+"</div>"+
+      "<div style='font-size:16px;color:#888'>"+(abierto?"▲":"▼")+"</div>"+
+    "</div>"+
+    (abierto?"<div style='padding:0 16px 16px'>"+contenido+"</div>":"")+
+  "</div>";
+}
+
 function rDiario(){
   // Default to "todos" if current month has no ops, so user sees all data
   var _mesAct=getMesKeyActual();
@@ -9296,6 +9399,7 @@ function rDiario(){
   var _ganUsdtPeriodo = _gBrlP + _gVzlaP + _gJulioP;
 
   return _dHeader+
+  _rBalanceRealDia()+
   "<div style='background:linear-gradient(135deg,#0f3020,#1a6b3c);border-radius:12px;padding:16px 18px;margin-bottom:14px;color:#fff'>"+
     "<div style='font-size:12px;font-weight:700;opacity:.85;margin-bottom:10px'>📊 GANANCIA EN USDT · "+_dMesLabel+"</div>"+
     "<div style='text-align:center;padding:6px 0'>"+
