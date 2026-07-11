@@ -9200,7 +9200,7 @@ function _rBalanceRealDia(){
   var h=new Date();
   var hoyKey=_ymd(h);
   var ayerKey=_ymd(new Date(h.getTime()-86400000));
-  var hoyDD=String(h.getDate()).padStart(2,"0")+"/"+String(h.getMonth()+1).padStart(2,"0");
+  var hoyDD=String(h.getDate()).padStart(2,"0")+"/"+String(h.getMonth()+1).padStart(2,"0")+"/"+String(h.getFullYear()).slice(-2);
 
   var totalHoy=S.histBalance[hoyKey];
   var totalAyer=S.histBalance[ayerKey];
@@ -9214,7 +9214,18 @@ function _rBalanceRealDia(){
   var gastosPersHoy=(S.egresos_personales||[]).filter(function(e){return e.pagada&&e.d===hoyDD;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0);
   var prestEntregadosHoy=(S.prestamos||[]).filter(function(p){return p.d===hoyDD;}).reduce(function(a,p){return a+(parseFloat(p.usdt)||0);},0);
   var prestCobradosHoy=0;
-  (S.prestamos||[]).forEach(function(p){(p.abonos||[]).forEach(function(ab){if(ab.d===hoyDD) prestCobradosHoy+=(parseFloat(ab.usdt||ab.monto)||0);});});
+  (S.prestamos||[]).forEach(function(p){
+    (p.abonos||[]).forEach(function(ab){
+      if(ab.fecha===hoyKey){
+        var montoAbono=parseFloat(ab.monto)||0;
+        if(p.mon==="USDT"){ prestCobradosHoy+=montoAbono; }
+        else{
+          var rate=getRateToUsdt(p.mon);
+          if(rate) prestCobradosHoy+=montoAbono/rate;
+        }
+      }
+    });
+  });
 
   var explicado=ganOpsHoy+ganExtraHoy+prestCobradosHoy-gastosHoy-gastosPersHoy-prestEntregadosHoy;
   var noExplicado=hayAyer?Math.round((diff-explicado)*100)/100:null;
@@ -9228,9 +9239,24 @@ function _rBalanceRealDia(){
   var promedio7=dias7.length?Math.round((dias7.reduce(function(a,b){return a+b;},0)/dias7.length)*100)/100:null;
 
   var abierto=!!S._balanceRealAbierto;
+  var hayActividad = (ganOpsHoy||ganExtraHoy||prestCobradosHoy||gastosHoy||gastosPersHoy||prestEntregadosHoy);
+  var desglose=
+    "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin:10px 0 6px'>¿Qué pasó hoy?</div>"+
+    (hayActividad?
+      "<div style='display:flex;flex-direction:column;gap:4px;font-size:12px'>"+
+        (ganOpsHoy?"<div style='display:flex;justify-content:space-between'><span>💚 Ganancia de operaciones</span><b style='color:#0f6e3a'>+"+f2(ganOpsHoy)+"</b></div>":"")+
+        (ganExtraHoy?"<div style='display:flex;justify-content:space-between'><span>💰 Ganancias extra</span><b style='color:#0f6e3a'>+"+f2(ganExtraHoy)+"</b></div>":"")+
+        (prestCobradosHoy?"<div style='display:flex;justify-content:space-between'><span>🔵 Préstamos cobrados</span><b style='color:#0f6e3a'>+"+f2(prestCobradosHoy)+"</b></div>":"")+
+        (gastosHoy?"<div style='display:flex;justify-content:space-between'><span>🔴 Egresos pagados</span><b style='color:#c0392b'>-"+f2(gastosHoy)+"</b></div>":"")+
+        (gastosPersHoy?"<div style='display:flex;justify-content:space-between'><span>🔴 Gastos personales</span><b style='color:#c0392b'>-"+f2(gastosPersHoy)+"</b></div>":"")+
+        (prestEntregadosHoy?"<div style='display:flex;justify-content:space-between'><span>🟠 Préstamos entregados</span><b style='color:#c0392b'>-"+f2(prestEntregadosHoy)+"</b></div>":"")+
+        (hayAyer?"<div style='display:flex;justify-content:space-between;padding-top:5px;border-top:1px dashed #ddd'><span style='color:#888'>Otros ajustes (tasas, transferencias, redondeos)</span><b style='color:#888'>"+(noExplicado>=0?"+":"")+f2(noExplicado)+"</b></div>":"")+
+      "</div>"
+      :"<div style='font-size:11px;color:#888'>Todavía no se registró ninguna operación, egreso o préstamo hoy.</div>");
+
   var contenido="";
   if(!hayAyer){
-    contenido="<div style='font-size:11px;color:#888;padding:8px 0'>Aún no hay comparación disponible (necesita el dato de ayer). Hoy quedó guardado: <b>$"+f2(totalHoy)+" USDT</b>. Mañana ya podrás ver la diferencia.</div>";
+    contenido="<div style='font-size:11px;color:#888;padding:8px 0 10px'>La comparación total con ayer no está disponible todavía (hoy quedó guardado: <b>$"+f2(totalHoy)+" USDT</b> — mañana ya se podrá comparar). Pero esto es lo que ya se sabe que pasó hoy:</div>"+desglose;
   } else {
     contenido=
       "<div style='display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:10px'>"+
@@ -9240,16 +9266,7 @@ function _rBalanceRealDia(){
         "<div style='text-align:right'><div style='font-size:10px;color:#888'>Diferencia real</div>"+
         "<div style='font-size:22px;font-weight:900;color:"+(diff>=0?"#0f6e3a":"#c0392b")+"'>"+(diff>=0?"+":"")+f2(diff)+" USDT</div></div>"+
       "</div>"+
-      "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin:10px 0 6px'>¿De dónde sale esto?</div>"+
-      "<div style='display:flex;flex-direction:column;gap:4px;font-size:12px'>"+
-        (ganOpsHoy?"<div style='display:flex;justify-content:space-between'><span>💚 Ganancia de operaciones</span><b style='color:#0f6e3a'>+"+f2(ganOpsHoy)+"</b></div>":"")+
-        (ganExtraHoy?"<div style='display:flex;justify-content:space-between'><span>💰 Ganancias extra</span><b style='color:#0f6e3a'>+"+f2(ganExtraHoy)+"</b></div>":"")+
-        (prestCobradosHoy?"<div style='display:flex;justify-content:space-between'><span>🔵 Préstamos cobrados</span><b style='color:#0f6e3a'>+"+f2(prestCobradosHoy)+"</b></div>":"")+
-        (gastosHoy?"<div style='display:flex;justify-content:space-between'><span>🔴 Egresos pagados</span><b style='color:#c0392b'>-"+f2(gastosHoy)+"</b></div>":"")+
-        (gastosPersHoy?"<div style='display:flex;justify-content:space-between'><span>🔴 Gastos personales</span><b style='color:#c0392b'>-"+f2(gastosPersHoy)+"</b></div>":"")+
-        (prestEntregadosHoy?"<div style='display:flex;justify-content:space-between'><span>🟠 Préstamos entregados</span><b style='color:#c0392b'>-"+f2(prestEntregadosHoy)+"</b></div>":"")+
-        "<div style='display:flex;justify-content:space-between;padding-top:5px;border-top:1px dashed #ddd'><span style='color:#888'>Otros ajustes (tasas, transferencias, redondeos)</span><b style='color:#888'>"+(noExplicado>=0?"+":"")+f2(noExplicado)+"</b></div>"+
-      "</div>"+
+      desglose+
       (promedio7!==null?"<div style='margin-top:10px;font-size:11px;color:#888'>📈 Promedio diario, últimos "+dias7.length+" día(s): <b style='color:"+(promedio7>=0?"#0f6e3a":"#c0392b")+"'>"+(promedio7>=0?"+":"")+f2(promedio7)+" USDT</b></div>":"");
   }
 
