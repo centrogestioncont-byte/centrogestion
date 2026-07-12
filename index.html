@@ -888,7 +888,7 @@ let S={
   filtroClEE:"",
 };
 
-function td(){return new Date().toISOString().split("T")[0];}
+function td(){var _d=new Date();return _d.getFullYear()+"-"+String(_d.getMonth()+1).padStart(2,"0")+"-"+String(_d.getDate()).padStart(2,"0");}
 function r4(n){ // Round to max 4 significant decimals, no floating point artifacts
   var v=parseFloat(n)||0;
   return Math.round(v*10000)/10000;
@@ -9209,15 +9209,30 @@ function _rBalanceRealDia(){
 
   var opsHoy=[].concat(S.brl||[],S.vzla||[],S.eeuu||[]).filter(function(r){return r.d===hoyDD;});
   var ganOpsHoy=opsHoy.reduce(function(a,r){var isEE=r.rt&&r.rt.indexOf("UU.EE")>-1;return a+(isEE?(r.pr||0)/2:(r.pr||0));},0);
-  var ganExtraHoy=(S.gananciaExtra||[]).filter(function(g){return g.d===hoyDD;}).reduce(function(a,g){return a+(parseFloat(g.usdt)||0);},0);
-  var gastosHoy=(S.egresos||[]).filter(function(e){return e.pagada&&e.d===hoyDD;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0);
-  var gastosPersHoy=(S.egresos_personales||[]).filter(function(e){return e.pagada&&e.d===hoyDD;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0);
-  var prestEntregadosHoy=(S.prestamos||[]).filter(function(p){return p.d===hoyDD;}).reduce(function(a,p){return a+(parseFloat(p.usdt)||0);},0);
-  var prestCobradosHoy=0;
+  var detGanOps=opsHoy.length?opsHoy.length+" operación"+(opsHoy.length===1?"":"es")+" del día":"";
+
+  var listaGanExtra=(S.gananciaExtra||[]).filter(function(g){return g.d===hoyDD;});
+  var ganExtraHoy=listaGanExtra.reduce(function(a,g){return a+(parseFloat(g.usdt)||0);},0);
+  var detGanExtra=listaGanExtra.map(function(g){return (g.desc||"ganancia")+": "+f2(g.monto)+" "+g.mon;}).join(" · ");
+
+  var listaGastos=(S.egresos||[]).filter(function(e){return e.pagada&&e.d===hoyDD;});
+  var gastosHoy=listaGastos.reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0);
+  var detGastos=listaGastos.map(function(e){return (e.mot||e.cat||"egreso")+": "+f2(e.monto)+" "+e.mon;}).join(" · ");
+
+  var listaGastosPers=(S.egresos_personales||[]).filter(function(e){return e.pagada&&e.d===hoyDD;});
+  var gastosPersHoy=listaGastosPers.reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0);
+  var detGastosPers=listaGastosPers.map(function(e){return (e.mot||e.cat||"gasto")+": "+f2(e.monto)+" "+e.mon;}).join(" · ");
+
+  var listaPrestEnt=(S.prestamos||[]).filter(function(p){return p.d===hoyDD;});
+  var prestEntregadosHoy=listaPrestEnt.reduce(function(a,p){return a+(parseFloat(p.usdt)||0);},0);
+  var detPrestEnt=listaPrestEnt.map(function(p){return (p.desc||"préstamo")+": "+f2(p.monto)+" "+p.mon;}).join(" · ");
+
+  var prestCobradosHoy=0, detPrestList=[];
   (S.prestamos||[]).forEach(function(p){
     (p.abonos||[]).forEach(function(ab){
       if(ab.fecha===hoyKey){
         var montoAbono=parseFloat(ab.monto)||0;
+        detPrestList.push((p.desc||"préstamo")+": "+f2(montoAbono)+" "+p.mon);
         if(p.mon==="USDT"){ prestCobradosHoy+=montoAbono; }
         else{
           var rate=getRateToUsdt(p.mon);
@@ -9226,19 +9241,30 @@ function _rBalanceRealDia(){
       }
     });
   });
-  var cobrarHoy=0;
+  var detPrest=detPrestList.join(" · ");
+
+  var cobrarHoy=0, detCobrarList=[];
   (S.cuentasCobrar||[]).forEach(function(cc){
+    var sumAbonosHoy=0;
     (cc.abonos||[]).forEach(function(ab){
-      if(ab.fecha===hoyKey){
-        var montoAbono=parseFloat(ab.monto)||0;
-        if(cc.moneda==="USDT"){ cobrarHoy+=montoAbono; }
-        else{
-          var rate=getRateToUsdt(cc.moneda);
-          if(rate) cobrarHoy+=montoAbono/rate;
-        }
-      }
+      if(ab.fecha===hoyKey) sumAbonosHoy+=(parseFloat(ab.monto)||0);
     });
+    var montoAConvertir=sumAbonosHoy;
+    // Si se cobró completo de una sola vez (sin pasar por abonos parciales),
+    // la fecha queda en cc.fechaCobro, no en un abono — hay que detectarlo aparte.
+    if(sumAbonosHoy===0 && cc.fechaCobro===hoyKey && cc.estado==="cobrado"){
+      montoAConvertir=parseFloat(cc.monto)||0;
+    }
+    if(montoAConvertir>0){
+      detCobrarList.push((cc.cliente||"cliente")+": "+f2(montoAConvertir)+" "+cc.moneda);
+      if(cc.moneda==="USDT"){ cobrarHoy+=montoAConvertir; }
+      else{
+        var rate=getRateToUsdt(cc.moneda);
+        if(rate) cobrarHoy+=montoAConvertir/rate;
+      }
+    }
   });
+  var detCobrar=detCobrarList.join(" · ");
 
   var explicado=ganOpsHoy+ganExtraHoy+prestCobradosHoy+cobrarHoy-gastosHoy-gastosPersHoy-prestEntregadosHoy;
   var noExplicado=hayAyer?Math.round((diff-explicado)*100)/100:null;
@@ -9252,56 +9278,87 @@ function _rBalanceRealDia(){
   var promedio7=dias7.length?Math.round((dias7.reduce(function(a,b){return a+b;},0)/dias7.length)*100)/100:null;
 
   var abierto=!!S._balanceRealAbierto;
-  var hayActividad = (ganOpsHoy||ganExtraHoy||prestCobradosHoy||cobrarHoy||gastosHoy||gastosPersHoy||prestEntregadosHoy);
+
+  var cats=[
+    {label:"Ganancia de operaciones",emoji:"💚",val:ganOpsHoy,color:"#0f6e3a",det:detGanOps},
+    {label:"Ganancias extra",emoji:"💰",val:ganExtraHoy,color:"#b8860b",det:detGanExtra},
+    {label:"Cuentas por cobrar cobradas",emoji:"🟣",val:cobrarHoy,color:"#7d4fb0",det:detCobrar},
+    {label:"Préstamos cobrados",emoji:"🔵",val:prestCobradosHoy,color:"#1c6dd0",det:detPrest},
+    {label:"Egresos pagados",emoji:"🔴",val:-gastosHoy,color:"#c0392b",det:detGastos},
+    {label:"Gastos personales",emoji:"🟠",val:-gastosPersHoy,color:"#d35400",det:detGastosPers},
+    {label:"Préstamos entregados",emoji:"🟤",val:-prestEntregadosHoy,color:"#8a5a2b",det:detPrestEnt}
+  ].filter(function(c){return Math.abs(c.val)>0.001;});
+  if(hayAyer && Math.abs(noExplicado)>0.001){
+    cats.push({label:"Otros movimientos (tasas, transferencias, redondeos)",emoji:"⚪",val:noExplicado,color:"#999",det:"lo que no se explica con las categorías de arriba"});
+  }
+  var maxAbs=Math.max.apply(null,cats.map(function(c){return Math.abs(c.val);}).concat([0.01]));
+
   var desglose=
-    "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin:10px 0 6px'>¿Qué pasó hoy?</div>"+
-    (hayActividad?
-      "<div style='display:flex;flex-direction:column;gap:4px;font-size:12px'>"+
-        (ganOpsHoy?"<div style='display:flex;justify-content:space-between'><span>💚 Ganancia de operaciones</span><b style='color:#0f6e3a'>+"+f2(ganOpsHoy)+"</b></div>":"")+
-        (ganExtraHoy?"<div style='display:flex;justify-content:space-between'><span>💰 Ganancias extra</span><b style='color:#0f6e3a'>+"+f2(ganExtraHoy)+"</b></div>":"")+
-        (cobrarHoy?"<div style='display:flex;justify-content:space-between'><span>🟣 Cuentas por cobrar (cobrado)</span><b style='color:#0f6e3a'>+"+f2(cobrarHoy)+"</b></div>":"")+
-        (prestCobradosHoy?"<div style='display:flex;justify-content:space-between'><span>🔵 Préstamos cobrados</span><b style='color:#0f6e3a'>+"+f2(prestCobradosHoy)+"</b></div>":"")+
-        (gastosHoy?"<div style='display:flex;justify-content:space-between'><span>🔴 Egresos pagados</span><b style='color:#c0392b'>-"+f2(gastosHoy)+"</b></div>":"")+
-        (gastosPersHoy?"<div style='display:flex;justify-content:space-between'><span>🔴 Gastos personales</span><b style='color:#c0392b'>-"+f2(gastosPersHoy)+"</b></div>":"")+
-        (prestEntregadosHoy?"<div style='display:flex;justify-content:space-between'><span>🟠 Préstamos entregados</span><b style='color:#c0392b'>-"+f2(prestEntregadosHoy)+"</b></div>":"")+
-        (hayAyer?"<div style='display:flex;justify-content:space-between;padding-top:5px;border-top:1px dashed #ddd'><span style='color:#888'>Otros ajustes (tasas, transferencias, redondeos)</span><b style='color:#888'>"+(noExplicado>=0?"+":"")+f2(noExplicado)+"</b></div>":"")+
+    "<div style='font-size:11px;font-weight:700;color:#9aa0a6;text-transform:uppercase;letter-spacing:.3px;margin:16px 0 4px'>¿Qué pasó hoy?</div>"+
+    "<div style='font-size:11px;color:#aaa;margin-bottom:10px'>Cada línea es un tipo de movimiento que sube o baja tu saldo real, convertido a USDT para poder compararlos.</div>"+
+    (cats.length?
+      "<div style='display:flex;flex-direction:column;gap:12px'>"+
+      cats.map(function(c){
+        var pct=Math.max(4,Math.round(Math.abs(c.val)/maxAbs*100));
+        var sign=c.val>=0?"+":"-";
+        return "<div>"+
+          "<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:4px'>"+
+            "<div style='display:flex;align-items:center;gap:7px'>"+
+              "<span style='display:inline-flex;align-items:center;justify-content:center;width:21px;height:21px;border-radius:50%;background:"+c.color+"22;font-size:11px'>"+c.emoji+"</span>"+
+              "<span style='font-size:12.5px;color:#3a3a3a'>"+c.label+"</span>"+
+            "</div>"+
+            "<b style='font-size:13px;color:"+c.color+"'>"+sign+f2(Math.abs(c.val))+" <span style='font-size:10px;font-weight:600;color:#bbb'>USDT</span></b>"+
+          "</div>"+
+          "<div style='height:5px;background:#f1f2f4;border-radius:3px;overflow:hidden;margin-left:28px'><div style='height:100%;width:"+pct+"%;background:"+c.color+";border-radius:3px'></div></div>"+
+          (c.det?"<div style='font-size:10.5px;color:#a8a8a8;margin:3px 0 0 28px'>"+c.det+"</div>":"")+
+        "</div>";
+      }).join("")+
       "</div>"
-      :"<div style='font-size:11px;color:#888'>Todavía no se registró ninguna operación, egreso o préstamo hoy.</div>");
+      :"<div style='font-size:12px;color:#999;padding:6px 0'>Todavía no se registró ninguna operación, egreso o préstamo hoy. En cuanto hagas algo, va a aparecer aquí.</div>");
 
   var contenido="";
   if(!hayAyer){
-    contenido="<div style='font-size:11px;color:#888;padding:8px 0 10px'>La comparación total con ayer no está disponible todavía (hoy quedó guardado: <b>$"+f2(totalHoy)+" USDT</b> — mañana ya se podrá comparar). Pero esto es lo que ya se sabe que pasó hoy:</div>"+desglose;
-  } else {
     contenido=
-      "<div style='display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:10px'>"+
-        "<div><div style='font-size:10px;color:#888'>Ayer</div><div style='font-size:16px;font-weight:700'>$"+f2(totalAyer)+"</div></div>"+
-        "<div style='font-size:20px;color:#ccc'>→</div>"+
-        "<div><div style='font-size:10px;color:#888'>Hoy</div><div style='font-size:16px;font-weight:700'>$"+f2(totalHoy)+"</div></div>"+
-        "<div style='text-align:right'><div style='font-size:10px;color:#888'>Diferencia real</div>"+
-        "<div style='font-size:22px;font-weight:900;color:"+(diff>=0?"#0f6e3a":"#c0392b")+"'>"+(diff>=0?"+":"")+f2(diff)+" USDT</div></div>"+
+      "<div style='font-size:12px;color:#888;line-height:1.5;padding-bottom:4px'>La comparación con ayer todavía no está disponible — hoy quedó guardado <b style='color:#1a3558'>$"+f2(totalHoy)+" USDT</b> como punto de partida. Mañana ya se va a poder comparar.</div>"+
+      desglose;
+  } else {
+    var maxCompare=Math.max(totalAyer,totalHoy,0.01);
+    var pctAyer=Math.max(4,Math.round(totalAyer/maxCompare*100));
+    var pctHoy=Math.max(4,Math.round(totalHoy/maxCompare*100));
+    var subiendo=diff>=0;
+    contenido=
+      "<div style='display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:14px'>"+
+        "<div>"+
+          "<div style='font-size:28px;font-weight:800;color:#1a3558;line-height:1;letter-spacing:-.5px'>"+(subiendo?"+":"")+f2(diff)+" <span style='font-size:14px;font-weight:600;color:#aaa'>USDT</span></div>"+
+          "<div style='font-size:11.5px;color:#888;margin-top:3px'>lo que realmente ganaste (o perdiste) hoy</div>"+
+        "</div>"+
+        "<div style='padding:6px 13px;border-radius:20px;background:"+(subiendo?"#e7f5ed":"#fceaea")+";color:"+(subiendo?"#0f6e3a":"#c0392b")+";font-size:12px;font-weight:700;white-space:nowrap'>"+(subiendo?"▲ Subiendo":"▼ Bajando")+"</div>"+
+      "</div>"+
+      "<div style='display:flex;flex-direction:column;gap:7px'>"+
+        "<div style='display:flex;align-items:center;gap:9px'>"+
+          "<span style='font-size:10.5px;color:#999;width:30px;flex-shrink:0'>Ayer</span>"+
+          "<div style='flex:1;height:9px;background:#f1f2f4;border-radius:5px;overflow:hidden'><div style='height:100%;width:"+pctAyer+"%;background:#cdd7e1;border-radius:5px'></div></div>"+
+          "<span style='font-size:11.5px;color:#666;width:76px;text-align:right;flex-shrink:0'>$"+f2(totalAyer)+"</span>"+
+        "</div>"+
+        "<div style='display:flex;align-items:center;gap:9px'>"+
+          "<span style='font-size:10.5px;color:#999;width:30px;flex-shrink:0'>Hoy</span>"+
+          "<div style='flex:1;height:9px;background:#f1f2f4;border-radius:5px;overflow:hidden'><div style='height:100%;width:"+pctHoy+"%;background:#1a3558;border-radius:5px'></div></div>"+
+          "<span style='font-size:11.5px;color:#1a3558;font-weight:700;width:76px;text-align:right;flex-shrink:0'>$"+f2(totalHoy)+"</span>"+
+        "</div>"+
       "</div>"+
       desglose+
-      (promedio7!==null?"<div style='margin-top:10px;font-size:11px;color:#888'>📈 Promedio diario, últimos "+dias7.length+" día(s): <b style='color:"+(promedio7>=0?"#0f6e3a":"#c0392b")+"'>"+(promedio7>=0?"+":"")+f2(promedio7)+" USDT</b></div>":"");
+      (promedio7!==null?"<div style='margin-top:14px;padding-top:12px;border-top:1px solid #f0f0f0;font-size:11.5px;color:#888;display:flex;align-items:center;gap:6px'>📈 Promedio diario (últimos "+dias7.length+" día"+(dias7.length===1?"":"s")+"): <b style='color:"+(promedio7>=0?"#0f6e3a":"#c0392b")+"'>"+(promedio7>=0?"+":"")+f2(promedio7)+" USDT</b></div>":"");
   }
 
-  var _diag="<div style='margin-top:12px;padding-top:10px;border-top:1px solid #eee'>"+
-    "<div style='font-size:10px;color:#c0392b;font-weight:700;margin-bottom:6px'>🔍 Detalle técnico temporal (para revisar un problema — se puede quitar después)</div>"+
-    "<div style='font-size:10px;color:#555;font-family:monospace;white-space:pre-wrap;background:#fafafa;padding:8px;border-radius:6px'>"+
-    "hoyKey="+hoyKey+" · hoyDD="+hoyDD+"\n\n"+
-    "GANANCIA EXTRA (d==="+hoyDD+"):\n"+
-    ((S.gananciaExtra||[]).filter(function(g){return g.d===hoyDD;}).map(function(g){return "  id:"+g.id+" desc:"+(g.desc||"")+" monto:"+g.monto+" mon:"+g.mon+" usdt:"+g.usdt;}).join("\n")||"  (ninguna)")+"\n\n"+
-    "PRESTAMOS - abonos (fecha==="+hoyKey+"):\n"+
-    ((function(){var out=[];(S.prestamos||[]).forEach(function(p){(p.abonos||[]).forEach(function(ab){if(ab.fecha===hoyKey)out.push("  préstamo:"+(p.desc||p.id)+" mon:"+p.mon+" abono.monto:"+ab.monto+" abono.fecha:"+ab.fecha);});});return out.join("\n")||"  (ninguno)";})())+"\n\n"+
-    "CUENTAS POR COBRAR - abonos (fecha==="+hoyKey+"):\n"+
-    ((function(){var out=[];(S.cuentasCobrar||[]).forEach(function(c){(c.abonos||[]).forEach(function(ab){if(ab.fecha===hoyKey)out.push("  cliente:"+(c.cliente||c.id)+" moneda:"+c.moneda+" abono.monto:"+ab.monto+" abono.fecha:"+ab.fecha);});});return out.join("\n")||"  (ninguno)";})())+
-    "</div></div>";
+  var pillHoy=hayAyer?
+    ("<span style='margin-left:8px;padding:2px 9px;border-radius:12px;font-size:11px;font-weight:700;background:"+(diff>=0?"#e7f5ed":"#fceaea")+";color:"+(diff>=0?"#0f6e3a":"#c0392b")+"'>"+(diff>=0?"+":"")+f2(diff)+"</span>"):"";
 
-  return "<div style='background:#fff;border:1px solid #e8e8e8;border-radius:12px;margin-bottom:14px;overflow:hidden'>"+
-    "<div onclick='S._balanceRealAbierto=!S._balanceRealAbierto;R()' style='cursor:pointer;padding:14px 16px;display:flex;justify-content:space-between;align-items:center;background:#fafafa'>"+
-      "<div style='font-size:13px;font-weight:800;color:#1a3558'>📊 Balance real del día"+(hayAyer?" · "+(diff>=0?"+":"")+f2(diff)+" USDT":"")+"</div>"+
-      "<div style='font-size:16px;color:#888'>"+(abierto?"▲":"▼")+"</div>"+
+  return "<div style='background:#fff;border:1px solid #ececec;border-radius:16px;margin-bottom:16px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.04)'>"+
+    "<div onclick='S._balanceRealAbierto=!S._balanceRealAbierto;R()' style='cursor:pointer;padding:15px 17px;display:flex;justify-content:space-between;align-items:center;background:#fbfbfc'>"+
+      "<div style='display:flex;align-items:center;font-size:13.5px;font-weight:700;color:#1a3558'>📊 Balance real del día"+pillHoy+"</div>"+
+      "<div style='font-size:13px;color:#bbb;transform:"+(abierto?"rotate(180deg)":"none")+";transition:transform .15s'>▼</div>"+
     "</div>"+
-    (abierto?"<div style='padding:0 16px 16px'>"+contenido+_diag+"</div>":"")+
+    (abierto?"<div style='padding:2px 18px 18px'>"+contenido+"</div>":"")+
   "</div>";
 }
 
