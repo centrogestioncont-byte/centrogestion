@@ -8475,49 +8475,92 @@ function rInformeCierre(){
   }
 
   // ── REPORTE PARA EL CONTADOR (BRL) ──────────────────────────────
-  // Regla acordada: compras de USDT en BRL = Saídas (Custos) · ventas de USDT
-  // en BRL = Entradas (Receita). Formato oficial pt-BR/BRL en todo momento.
+  // Dos cosas separadas, a propósito:
+  // 1) FLUJO DE CAJA real por cuenta en BRL — debe cuadrar exacto con el
+  //    extracto bancario (entra lo que entra, sale lo que sale, sin importar
+  //    el motivo). Se calcula igual para cualquier cuenta BRL, incluidas las
+  //    que se agreguen en el futuro — no hay que tocar código para eso.
+  // 2) GANANCIA real de las operaciones BRL↔VZLA, convertida a Reais con la
+  //    tasa BRL/USDT más reciente (mostrada explícitamente para que se pueda
+  //    verificar). No es lo mismo que el flujo de caja: la ganancia es el
+  //    margen cambiario real; el flujo de caja incluye todo el movimiento
+  //    de dinero (compras de USDT, pagos, etc.), que no es "ganancia".
   function _fmtBRL(v){
     return (parseFloat(v)||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
   }
   function secContador(){
-    var invMes=(S.inventarioUsdt||[]).filter(function(r){return mesKeyDeInv(r.fecha,mesKey)===mesKey && r.moneda==="BRL";});
-    var receitaBruta=invMes.filter(function(r){return r.tipo==="venta";}).reduce(function(a,r){return a+(parseFloat(r.bs)||0);},0);
-    var custosOperacionais=invMes.filter(function(r){return r.tipo==="compra";}).reduce(function(a,r){return a+(parseFloat(r.montOrigen)||0);},0);
-    var lucroLiquido=receitaBruta-custosOperacionais;
+    var cuentasBRL=(S.cuentas||[]).filter(function(c){return c.activa!==false&&c.moneda==="BRL";});
+    var flujosPorCuenta=cuentasBRL.map(function(c){return {cuenta:c,flujo:_flujoCuentaMes(c.id,mesKey)};});
+    var totalEntradas=flujosPorCuenta.reduce(function(a,x){return a+x.flujo.totalE;},0);
+    var totalSalidas=flujosPorCuenta.reduce(function(a,x){return a+x.flujo.totalS;},0);
+    var flujoNeto=totalEntradas-totalSalidas;
 
-    var _diagInv=(function(){
-      var compras=invMes.filter(function(r){return r.tipo==="compra";});
-      if(!compras.length) return "";
-      return "<div style='background:#fff;border:1.5px solid #F5C518;border-radius:12px;padding:14px 16px;margin-bottom:14px'>"+
-        "<div style='font-size:10px;color:#c0392b;font-weight:700;margin-bottom:8px'>🔍 Detalle temporal — compras de USDT en BRL este mes y su cuenta de origen guardada</div>"+
-        "<div style='font-size:10.5px;color:#555;font-family:monospace;white-space:pre-wrap;background:#fafafa;padding:8px;border-radius:6px'>"+
-        compras.map(function(r){
-          var cta=(S.cuentas||[]).find(function(c){return c.id===r.cuentaOrigenId;});
-          return "fecha:"+r.fecha+" montOrigen:"+r.montOrigen+" cuentaOrigenId:"+(r.cuentaOrigenId||"(VACÍO)")+" → "+(cta?cta.nombre:"⚠️ no coincide con ninguna cuenta");
-        }).join("\n")+
-        "</div></div>";
-    })();
+    var tasaBRLUSDT=getRateToUsdt("BRL")||0;
+    var ganBrlUsdt=parseFloat(calc.ganBrl)||0;
+    var ganBrlReais=tasaBRLUSDT?ganBrlUsdt*tasaBRLUSDT:0;
+    // Gastos fijos y sueldo de la EMPRESA (nunca lo personal) — ya vienen
+    // calculados en USDT desde calcMesCompleto()/el cierre; se convierten a
+    // Reais con la misma tasa para que el contador vea todo en una sola moneda.
+    var gastosEmpresaUsdt=parseFloat(calc.egEmpPag)||0;
+    var sueldoUsdt=parseFloat(calc.sueldo)||0;
+    var gastosEmpresaReais=tasaBRLUSDT?gastosEmpresaUsdt*tasaBRLUSDT:0;
+    var sueldoReais=tasaBRLUSDT?sueldoUsdt*tasaBRLUSDT:0;
+    var lucroFinalReais=ganBrlReais-gastosEmpresaReais-sueldoReais;
 
-    var reporte={
-      "Receita Bruta (Entradas)":_fmtBRL(receitaBruta),
-      "Custos Operacionais (Saídas)":_fmtBRL(custosOperacionais),
-      "Lucro Líquido do Mês":_fmtBRL(lucroLiquido)
-    };
-    S._reporteContadorActual=reporte; // usado por exportarReporteContadorCSV()
+    // ── CSV / objeto para exportar ──
+    var reporte={"Mês":mesLabel};
+    flujosPorCuenta.forEach(function(x){
+      reporte["Entradas — "+x.cuenta.nombre]=_fmtBRL(x.flujo.totalE);
+      reporte["Saídas — "+x.cuenta.nombre]=_fmtBRL(x.flujo.totalS);
+    });
+    reporte["Total Entradas (todas as contas BRL)"]=_fmtBRL(totalEntradas);
+    reporte["Total Saídas (todas as contas BRL)"]=_fmtBRL(totalSalidas);
+    reporte["Fluxo de Caixa Líquido"]=_fmtBRL(flujoNeto);
+    reporte["Lucro das operações BRL↔VZLA (USDT)"]="$"+f2(ganBrlUsdt)+" USDT";
+    reporte["Taxa BRL/USDT usada"]=f4(tasaBRLUSDT);
+    reporte["Lucro Bruto das operações BRL↔VZLA (em Reais)"]=_fmtBRL(ganBrlReais);
+    reporte["(−) Gastos Fixos da Empresa (em Reais)"]=_fmtBRL(gastosEmpresaReais);
+    reporte["(−) Salário (em Reais)"]=_fmtBRL(sueldoReais);
+    reporte["Lucro Líquido Final (em Reais)"]=_fmtBRL(lucroFinalReais);
+    S._reporteContadorActual=reporte;
 
-    return _diagInv+"<div style='background:#fff;border:1.5px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px'>"+
-      "<div style='font-size:12px;font-weight:800;color:#1a3558;margin-bottom:10px'>📄 Reporte para el contador · "+mesLabel+"</div>"+
-      "<div style='display:flex;flex-direction:column;gap:8px'>"+
-        "<div style='display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:#f0fff4;border-radius:8px'><span style='font-size:12px;color:#0f6e3a;font-weight:700'>Receita Bruta (Entradas)</span><b style='font-size:15px;color:#0f6e3a'>"+_fmtBRL(receitaBruta)+"</b></div>"+
-        "<div style='display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:#fff5f5;border-radius:8px'><span style='font-size:12px;color:#c0392b;font-weight:700'>Custos Operacionais (Saídas)</span><b style='font-size:15px;color:#c0392b'>"+_fmtBRL(custosOperacionais)+"</b></div>"+
-        "<div style='display:flex;justify-content:space-between;align-items:center;padding:12px 14px;background:#1a3558;border-radius:8px'><span style='font-size:12px;color:#FFA31C;font-weight:700'>Lucro Líquido do Mês</span><b style='font-size:17px;color:#FFA31C'>"+_fmtBRL(lucroLiquido)+"</b></div>"+
-      "</div>"+
+    function filaCuenta(x){
+      var f=x.flujo, c=x.cuenta;
+      return "<div style='background:#fff;border:1.5px solid #eee;border-radius:11px;padding:13px 14px;margin-bottom:8px'>"+
+        "<div style='font-size:12.5px;font-weight:800;color:#1a3558;margin-bottom:8px'>"+c.nombre+"</div>"+
+        "<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px'>"+
+          "<div style='background:#f0fff4;border-radius:7px;padding:7px 9px'><div style='font-size:9px;color:#0f6e3a;font-weight:700'>ENTRADAS</div><div style='font-size:14px;font-weight:800;color:#0f6e3a'>"+_fmtBRL(f.totalE)+"</div></div>"+
+          "<div style='background:#fff5f5;border-radius:7px;padding:7px 9px'><div style='font-size:9px;color:#c0392b;font-weight:700'>SAÍDAS</div><div style='font-size:14px;font-weight:800;color:#c0392b'>"+_fmtBRL(f.totalS)+"</div></div>"+
+        "</div>"+
+        "<div style='display:flex;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px dashed #eee'><span style='font-size:10px;color:#888'>Flujo neto</span><b style='font-size:12px;color:"+(f.totalE-f.totalS>=0?"#0f6e3a":"#c0392b")+"'>"+_fmtBRL(f.totalE-f.totalS)+"</b></div>"+
+      "</div>";
+    }
+
+    return "<div style='background:#fff;border:1.5px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px'>"+
+      "<div style='font-size:12px;font-weight:800;color:#1a3558;margin-bottom:4px'>🏦 Flujo de caja real por cuenta (BRL) · "+mesLabel+"</div>"+
+      "<div style='font-size:10.5px;color:#999;margin-bottom:12px'>Entradas y salidas exactas de cada cuenta — debe coincidir con el extracto bancario. Se incluye automáticamente cualquier cuenta en BRL, sin importar cuál sea.</div>"+
+      (cuentasBRL.length?flujosPorCuenta.map(filaCuenta).join(""):"<div style='font-size:11px;color:#999'>No tienes ninguna cuenta activa en BRL.</div>")+
+      (cuentasBRL.length>1?
+        "<div style='background:#1a3558;border-radius:9px;padding:11px 13px;color:#fff;margin-top:4px'>"+
+          "<div style='font-size:10px;color:#FFA31C;font-weight:700;margin-bottom:4px'>TOTAL — TODAS LAS CUENTAS BRL</div>"+
+          "<div style='display:flex;justify-content:space-between;font-size:12px'><span>Entradas: "+_fmtBRL(totalEntradas)+"</span><span>Saídas: "+_fmtBRL(totalSalidas)+"</span></div>"+
+          "<div style='font-size:16px;font-weight:900;margin-top:4px'>Neto: "+_fmtBRL(flujoNeto)+"</div>"+
+        "</div>":"")+
+    "</div>"+
+    "<div style='background:#fff;border:1.5px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px'>"+
+      "<div style='font-size:12px;font-weight:800;color:#1a3558;margin-bottom:4px'>💹 Ganancia real de operaciones BRL ↔ VZLA (en Reais)</div>"+
+      "<div style='font-size:10.5px;color:#999;margin-bottom:10px'>Ya con los gastos fijos y sueldo de la empresa descontados (no incluye nada personal) — este es el número final para el contador.</div>"+
+      "<div style='display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#666'>Ganancia bruta en USDT</span><b style='font-size:13px'>$"+f2(ganBrlUsdt)+" USDT</b></div>"+
+      "<div style='display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#666'>Tasa BRL/USDT usada</span><b style='font-size:13px'>"+f4(tasaBRLUSDT)+"</b></div>"+
+      "<div style='display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#0f6e3a;font-weight:700'>Ganancia bruta en Reais</span><b style='font-size:14px;color:#0f6e3a'>"+_fmtBRL(ganBrlReais)+"</b></div>"+
+      "<div style='display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#c0392b'>(−) Gastos fijos de la empresa</span><b style='font-size:13px;color:#c0392b'>"+_fmtBRL(gastosEmpresaReais)+"</b></div>"+
+      "<div style='display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#c0392b'>(−) Sueldo</span><b style='font-size:13px;color:#c0392b'>"+_fmtBRL(sueldoReais)+"</b></div>"+
+      "<div style='display:flex;justify-content:space-between;align-items:center;padding:12px 14px;background:#1a3558;border-radius:8px;margin-top:8px'><span style='font-size:12px;color:#FFA31C;font-weight:700'>Lucro Líquido Final (para el contador)</span><b style='font-size:18px;color:#FFA31C'>"+_fmtBRL(lucroFinalReais)+"</b></div>"+
       "<button onclick='exportarReporteContadorCSV(\""+mesKey+"\")' style='width:100%;margin-top:12px;padding:11px;background:#0f6e3a;color:#fff;border:none;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>⬇️ Descargar CSV para el contador</button>"+
     "</div>"+
     "<div style='background:#FFFBEA;border:1.5px solid #F5C518;border-radius:12px;padding:14px 16px'>"+
-      "<div style='font-size:10px;font-weight:800;color:#7a5c00;text-transform:uppercase;margin-bottom:6px'>🔒 Solo para ti — control interno (no es parte del reporte del contador)</div>"+
-      "<div style='font-size:13px;color:#5c4400;line-height:1.5'>Deberías de tener <b>"+_fmtBRL(lucroLiquido)+"</b> en reales en tu cuenta, que es la ganancia del mes.</div>"+
+      "<div style='font-size:10px;font-weight:800;color:#7a5c00;text-transform:uppercase;margin-bottom:6px'>🔒 Solo para ti — control interno</div>"+
+      "<div style='font-size:13px;color:#5c4400;line-height:1.5'>El flujo de caja de tus cuentas BRL este mes es de <b>"+_fmtBRL(flujoNeto)+"</b> (entradas − salidas), y el lucro líquido final (después de gastos fijos y sueldo) es de <b>"+_fmtBRL(lucroFinalReais)+"</b>.</div>"+
     "</div>";
   }
 
@@ -9402,8 +9445,27 @@ function _rBalanceRealDia(){
   var detGastos=listaGastos.map(function(e){return (e.mot||e.cat||"egreso")+": "+f2(e.monto)+" "+e.mon;}).join(" · ");
 
   var listaGastosPers=(S.egresos_personales||[]).filter(function(e){return e.pagada&&(e.fp||e.d)===hoyDD;});
-  var gastosPersHoy=listaGastosPers.reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0);
-  var detGastosPers=listaGastosPers.map(function(e){return (e.mot||e.cat||"gasto")+": "+f2(e.monto)+" "+e.mon;}).join(" · ");
+  var gastosPersHoyBruto=listaGastosPers.reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0);
+  // Los gastos personales NO son gasto de empresa — solo importan para el
+  // balance de la empresa si YA superaste tu sueldo del mes (lo que excede
+  // es efectivamente un retiro extra contra la empresa). Antes se mostraba
+  // el gasto personal completo cada vez, mezclándolo con lo de la empresa.
+  var mesActualKey=getMesKeyActual();
+  function _ddmmyyAMesKey(dstr){ // "dd/mm/yy" -> "yyyy-mm"
+    if(!dstr) return "";
+    var p=String(dstr).split("/"); if(p.length<3) return "";
+    return "20"+p[2]+"-"+p[1].padStart(2,"0");
+  }
+  var calcMesActual=calcMesCompleto(mesActualKey);
+  var sueldoMes=parseFloat(calcMesActual.sueldo)||0;
+  var mtdPersonalAntes=(S.egresos_personales||[]).filter(function(e){
+    var fe=e.fp||e.d; return e.pagada&&fe&&fe!==hoyDD&&_ddmmyyAMesKey(fe)===mesActualKey;
+  }).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0);
+  var excedenteAntes=Math.max(0,mtdPersonalAntes-sueldoMes);
+  var excedenteConHoy=Math.max(0,mtdPersonalAntes+gastosPersHoyBruto-sueldoMes);
+  var gastosPersHoy=Math.round((excedenteConHoy-excedenteAntes)*100)/100; // solo el exceso que aporta HOY
+  var detGastosPers=gastosPersHoy>0?
+    ("Excede el sueldo del mes ($"+f2(sueldoMes)+") — de "+f2(gastosPersHoyBruto)+" gastados hoy, $"+f2(gastosPersHoy)+" son de más"):"";
 
   var listaPrestEnt=(S.prestamos||[]).filter(function(p){return p.d===hoyDD;});
   var prestEntregadosHoy=listaPrestEnt.reduce(function(a,p){return a+(parseFloat(p.usdt)||0);},0);
@@ -9467,7 +9529,7 @@ function _rBalanceRealDia(){
     {label:"Cuentas por cobrar cobradas",emoji:"🟣",val:cobrarHoy,color:"#7d4fb0",det:detCobrar},
     {label:"Préstamos cobrados",emoji:"🔵",val:prestCobradosHoy,color:"#1c6dd0",det:detPrest},
     {label:"Egresos pagados",emoji:"🔴",val:-gastosHoy,color:"#c0392b",det:detGastos},
-    {label:"Gastos personales",emoji:"🟠",val:-gastosPersHoy,color:"#d35400",det:detGastosPers},
+    {label:"Gastos personales (exceso sobre sueldo)",emoji:"🟠",val:-gastosPersHoy,color:"#d35400",det:detGastosPers},
     {label:"Préstamos entregados",emoji:"🟤",val:-prestEntregadosHoy,color:"#8a5a2b",det:detPrestEnt}
   ].filter(function(c){return Math.abs(c.val)>0.001;});
   if(hayAyer && Math.abs(noExplicado)>0.001){
