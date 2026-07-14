@@ -992,7 +992,7 @@ var STORAGE_KEY = "remesasBRL_v1";
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
 var APP_VERSION = "20260625_v3";
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
-  "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance"];
+  "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos"];
 
 // ══════════════════════════════════════════════════════════════════════
 // SISTEMA DE CIERRE AUTOMÁTICO DE MES
@@ -9414,10 +9414,27 @@ function _ymd(d){return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0
 function _capturarBalanceHoy(){
   try{
     if(!S.histBalance) S.histBalance={};
+    if(!S.histTasas) S.histTasas={};
+    if(!S.histSaldos) S.histSaldos={};
     var hoyKey=_ymd(new Date());
     S.histBalance[hoyKey]=_calcTotalUsdtCuentas();
-    var keys=Object.keys(S.histBalance).sort();
-    if(keys.length>120) keys.slice(0,keys.length-120).forEach(function(k){delete S.histBalance[k];});
+    // Guardar también la tasa de cada moneda y el saldo de cada cuenta ese
+    // día — necesario para poder explicar exactamente cuánto del cambio de
+    // hoy se debe solo al movimiento de la tasa (sin ninguna operación).
+    var tasasHoy={};
+    ["VES","BRL","USD","PEN","COP","TTD","EUR"].forEach(function(m){
+      var r=getRateToUsdt(m); if(r) tasasHoy[m]=r;
+    });
+    S.histTasas[hoyKey]=tasasHoy;
+    var saldosHoy={};
+    (S.cuentas||[]).filter(function(c){return c.activa!==false;}).forEach(function(c){
+      saldosHoy[c.id]=parseFloat(c.saldo)||0;
+    });
+    S.histSaldos[hoyKey]=saldosHoy;
+    [S.histBalance,S.histTasas,S.histSaldos].forEach(function(obj){
+      var keys=Object.keys(obj).sort();
+      if(keys.length>120) keys.slice(0,keys.length-120).forEach(function(k){delete obj[k];});
+    });
   }catch(e){}
 }
 function _rBalanceRealDia(){
@@ -9510,8 +9527,35 @@ function _rBalanceRealDia(){
     {label:"Egresos pagados",emoji:"🔴",val:-gastosHoy,color:"#c0392b",det:detGastos},
     {label:"Préstamos entregados",emoji:"🟤",val:-prestEntregadosHoy,color:"#8a5a2b",det:detPrestEnt}
   ].filter(function(c){return Math.abs(c.val)>0.001;});
+  var detOtros="lo que no se explica con las categorías de arriba";
+  if(hayAyer && S.histTasas && S.histTasas[ayerKey] && S.histSaldos && S.histSaldos[ayerKey]){
+    var tasasAyer=S.histTasas[ayerKey]||{};
+    var tasasHoy=S.histTasas[hoyKey]||{};
+    var saldosAyer=S.histSaldos[ayerKey]||{};
+    var efectoTasaTotal=0, detalleTasas=[];
+    (S.cuentas||[]).filter(function(c){return c.activa!==false&&c.moneda!=="USDT";}).forEach(function(c){
+      var tA=tasasAyer[c.moneda], tH=tasasHoy[c.moneda], sA=saldosAyer[c.id];
+      if(tA&&tH&&sA){
+        var efecto=sA/tH-sA/tA;
+        if(Math.abs(efecto)>0.01){
+          efectoTasaTotal+=efecto;
+          detalleTasas.push(c.moneda+" "+f4(tA)+"→"+f4(tH)+" ("+c.nombre+"): "+(efecto>=0?"+":"")+f2(efecto));
+        }
+      }
+    });
+    var traspasosHoy=(S.traspasos||[]).filter(function(t){return t.fecha===hoyKey;});
+    var detTraspasos=traspasosHoy.length?(traspasosHoy.length+" traspaso(s) entre tus propias cuentas hoy (no debería cambiar el total)"):"";
+    var piezas=[];
+    if(detalleTasas.length) piezas.push("Cambio de tasa: "+detalleTasas.join(" · ")+" → total "+(efectoTasaTotal>=0?"+":"")+f2(efectoTasaTotal));
+    if(detTraspasos) piezas.push(detTraspasos);
+    var residuo=Math.round((noExplicado-efectoTasaTotal)*100)/100;
+    piezas.push("Residuo sin identificar: "+(residuo>=0?"+":"")+f2(residuo));
+    detOtros=piezas.join(" · ");
+  } else if(hayAyer){
+    detOtros="El desglose exacto por tasa estará disponible desde mañana (hoy es el primer día que se guarda la tasa de cada moneda).";
+  }
   if(hayAyer && Math.abs(noExplicado)>0.001){
-    cats.push({label:"Otros movimientos (tasas, transferencias, redondeos)",emoji:"⚪",val:noExplicado,color:"#999",det:"lo que no se explica con las categorías de arriba"});
+    cats.push({label:"Otros movimientos (tasas, transferencias, redondeos)",emoji:"⚪",val:noExplicado,color:"#999",det:detOtros});
   }
   var maxAbs=Math.max.apply(null,cats.map(function(c){return Math.abs(c.val);}).concat([0.01]));
 
