@@ -5567,6 +5567,7 @@ function fbSaveREST(obj){
   }).then(function(r){
     _restPendiente = false;
     if(r.ok){
+      _marcarConexionOK();
       console.log("✅ Firebase REST: guardado correctamente");
       var dot=document.getElementById("fb-dot");
       if(dot) dot.style.background="#4ade80";
@@ -5576,6 +5577,7 @@ function fbSaveREST(obj){
   }).catch(function(e){
     _restPendiente = false;
     console.warn("❌ Firebase REST no disponible:", e.message);
+    _marcarConexionFallo();
   });
 }
 // ── Carga forzada desde Firebase — ignora timestamps, siempre actualiza ───────
@@ -5957,13 +5959,27 @@ function fbCheckREST(){
   fetch(_FB_REST+"?ts="+Date.now()) // bust cache
     .then(function(r){return r.json();})
     .then(function(data){
+      _marcarConexionOK(); // llegó respuesta por HTTPS normal → sí hay internet
       if(!data||!data._ts) return;
       var tsRemoto=data._ts||0;
       var tsLocal=S._ts||0;
       // Si Firebase tiene datos más nuevos que lo que tenemos localmente
       if(tsRemoto > tsLocal + 500){ // 500ms de margen para evitar rebotes propios
         console.log("📥 Auto-sync: datos más nuevos en Firebase (remoto="+tsRemoto+", local="+tsLocal+")");
-        DATA_KEYS.forEach(function(k){if(data[k]!==undefined)S[k]=data[k];});
+        DATA_KEYS.forEach(function(k){
+          if(data[k]===undefined) return;
+          if(_MERGE_FIELDS.indexOf(k)!==-1 && Array.isArray(data[k])){
+            // Respetar la lista negra de borrados: no revivir lo que se
+            // borró intencionalmente a propósito solo porque Firebase
+            // todavía tiene la versión vieja.
+            var filtrado=data[k].filter(function(it){
+              return !(it && it.id!==undefined && _estaBorradoMerge(k,it.id));
+            });
+            S[k]=filtrado;
+          } else {
+            S[k]=data[k];
+          }
+        });
         S._ts=tsRemoto;
         try{localStorage.setItem(STORAGE_KEY,JSON.stringify(data));}catch(e){}
         R();
@@ -5973,21 +5989,23 @@ function fbCheckREST(){
         console.log("✅ Auto-sync aplicado correctamente.");
       }
     })
-    .catch(function(e){console.warn("Auto-sync check error:", e.message);});
+    .catch(function(e){console.warn("Auto-sync check error:", e.message); _marcarConexionFallo();});
 }
 
-// ── AUTO-POLL: revisar Firebase cada 30 segundos automáticamente ──────
+// ── AUTO-POLL: revisar Firebase cada 8 segundos automáticamente ──────
 // Funciona independientemente del WebSocket — garantiza sincronización
-// entre todos los dispositivos sin presionar ningún botón.
+// entre todos los dispositivos sin presionar ningún botón. Se acortó de
+// 30s a 8s para que, en redes donde el tiempo real (WebSocket) no logra
+// conectar, la sincronización se sienta mucho más parecida a instantánea.
 var _autoPollStarted=false;
 function startAutoSync(){
   if(_autoPollStarted) return;
   _autoPollStarted=true;
-  // Primera verificación a los 5 segundos de cargar
-  setTimeout(fbCheckREST, 5000);
-  // Luego cada 30 segundos
-  setInterval(fbCheckREST, 30000);
-  console.log("🔄 Auto-sync cada 30 segundos activado");
+  // Primera verificación a los 3 segundos de cargar
+  setTimeout(fbCheckREST, 3000);
+  // Luego cada 8 segundos
+  setInterval(fbCheckREST, 8000);
+  console.log("🔄 Auto-sync cada 8 segundos activado");
 }
 function reconectarFirebase(){
   if(!_fbDb) return;
@@ -7299,8 +7317,35 @@ function registrarMovimientoCapital(opts){
 
 
 // ── RENDER SYSTEM ─────────────────────────────────────
+// Conexión REAL detectada por HTTPS normal (lo que ya sabemos que funciona
+// en esta red, a diferencia del WebSocket de Firebase que a veces se bloquea
+// aunque sí haya internet). Esto es lo que decide si se bloquea la pantalla.
+var _hayConexionReal = true; // optimista al inicio — se corrige rápido si falla
+var _fallosConsecutivosRest = 0;
+function _marcarConexionOK(){
+  _fallosConsecutivosRest = 0;
+  if(!_hayConexionReal){ _hayConexionReal = true; if(typeof R==="function") R(); }
+}
+function _marcarConexionFallo(){
+  _fallosConsecutivosRest++;
+  // Solo declarar "sin internet" tras varios fallos seguidos (no por un
+  // bache momentáneo de red), para no bloquear la app de más.
+  if(_fallosConsecutivosRest>=3 && _hayConexionReal){
+    _hayConexionReal = false;
+    if(typeof R==="function") R();
+  }
+}
+function _rOfflineBlock(){
+  return "<div style='position:fixed;inset:0;background:#0f1c2e;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:32px;z-index:99999;font-family:inherit'>"+
+    "<div style='width:52px;height:52px;border:4px solid rgba(255,255,255,.2);border-top-color:#fff;border-radius:50%;animation:_spin 0.8s linear infinite;margin-bottom:24px'></div>"+
+    "<div style='font-size:17px;font-weight:800;margin-bottom:8px'>Sin acceso a internet</div>"+
+    "<div style='font-size:13px;color:#aab4c0;max-width:280px;line-height:1.5'>Esta app necesita conexión para trabajar de forma segura. Esperando que vuelva la señal...</div>"+
+    "<style>@keyframes _spin{to{transform:rotate(360deg)}}</style>"+
+  "</div>";
+}
 function R(){
   var el=document.getElementById("app");
+  if(!_hayConexionReal){ el.innerHTML=_rOfflineBlock(); return; }
   if(S.role){
     el.style.height="100vh";
     el.style.display="flex";
@@ -12848,17 +12893,21 @@ function initFirebase(){
       });
     }
 
-    // Indicador de conexión en topbar
+    // Indicador de conexión en topbar + bloqueo total de la app sin internet
     _fbDb.ref(".info/connected").on("value", function(snap){
+      var estabaOnline=_fbOnline;
       _fbOnline = snap.val()===true;
       var dot = document.getElementById("fb-dot");
-      // Solo actualizar color si no hay badge pendiente
       var badge=document.getElementById("sync-badge");
       if(dot && !badge) dot.style.background = _fbOnline ? "#4ade80" : "#f87171";
+      // Si cambió el estado de conexión, re-renderizar para mostrar u
+      // ocultar el bloqueo de pantalla completa.
+      if(estabaOnline!==_fbOnline && typeof R==="function") R();
     });
 
     // Listener en tiempo real: cuando OTRO usuario guarda, actualizamos
     _fbRef.on("value", function(snap){
+      _marcarConexionOK();
       // Si YO acabo de guardar, ignoro el rebote
       if(_fbMyWrite){ _fbMyWrite=false; return; }
       var data = snap.val();
@@ -12882,7 +12931,17 @@ function initFirebase(){
 
       if(fbTotal >= lsTotal){
         // Firebase tiene igual o más datos → usar Firebase
-        DATA_KEYS.forEach(function(k){ if(data[k]!==undefined) S[k]=data[k]; });
+        DATA_KEYS.forEach(function(k){
+          if(data[k]===undefined) return;
+          if(_MERGE_FIELDS.indexOf(k)!==-1 && Array.isArray(data[k])){
+            var filtrado=data[k].filter(function(it){
+              return !(it && it.id!==undefined && _estaBorradoMerge(k,it.id));
+            });
+            S[k]=filtrado;
+          } else {
+            S[k]=data[k];
+          }
+        });
         S._ts = tsRemoto;
         if(S.tx){S.tx._tcLock=null;S.tx._tvLock=null;S.tx._amLock=null;S.tx._tdiaLock=null;S.tx._rtLock=null;}
         if(S.txE){S.txE._tcLock=null;S.txE._tvLock=null;S.txE._amLock=null;S.txE._tdiaLock=null;}
@@ -13071,6 +13130,7 @@ function _fbWriteNow(obj){
   if(_fbOnline){
     // WebSocket disponible → guardar por SDK (tiempo real)
     _fbRef.update(obj).then(function(){
+      _marcarConexionOK();
       console.log("💾 Firebase SDK guardado (fusionado) · ts:", obj._ts);
     }).catch(function(e){
       console.warn("Firebase SDK error, usando REST:", e);
