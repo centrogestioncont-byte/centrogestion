@@ -4289,6 +4289,10 @@ function _syncCapitalWithCuentas(){
 function rCapitalTotal(){
   // ── Fuente única: S.cuentas ──────────────────────────────────────
   var cap = (S.cuentas||[]).filter(function(c){return c.activa!==false;});
+  // Cuentas de la empresa (excluye las marcadas 💜 personal) — se usa para
+  // TODOS los totales/sumas. Las cuentas personales se siguen mostrando en
+  // la lista individualmente, pero no cuentan en ningún total del negocio.
+  var capNegocio = cap.filter(function(c){return !c.esPersonal;});
   var mIcons = {USDT:"💰",BRL:"🇧🇷",VES:"🇻🇪",USD:"🇺🇸",EUR:"🇪🇺",COP:"🇨🇴",PEN:"🇵🇪",TTD:"🇹🇹"};
 
   // ── Tasas de cambio para convertir todo a USDT ───────────────────
@@ -4350,7 +4354,7 @@ function rCapitalTotal(){
 
   // ── USDT total equivalente (solo cuentas, sin inventario para evitar doble conteo) ──
   var totalUsdt = 0;
-  cap.forEach(function(item){
+  capNegocio.forEach(function(item){
     var saldo=parseFloat(item.saldo)||0;
     if(item.moneda==="USDT"){ totalUsdt+=saldo; return; }
     var lim=_RATE_LIMITS[item.moneda];
@@ -4359,6 +4363,18 @@ function rCapitalTotal(){
     if(rateOk) totalUsdt+=saldo/rate;
   });
   totalUsdt=Math.round(totalUsdt*100)/100;
+  // Total de las cuentas personales (💜) — se muestra aparte, nunca sumado al de empresa
+  var capPersonal = cap.filter(function(c){return c.esPersonal;});
+  var totalUsdtPersonal = 0;
+  capPersonal.forEach(function(item){
+    var saldo=parseFloat(item.saldo)||0;
+    if(item.moneda==="USDT"){ totalUsdtPersonal+=saldo; return; }
+    var lim=_RATE_LIMITS[item.moneda];
+    var rate=getRateToUsdt(item.moneda);
+    var rateOk=rate&&(!lim||(rate>=lim[0]&&rate<=lim[1]));
+    if(rateOk) totalUsdtPersonal+=saldo/rate;
+  });
+  totalUsdtPersonal=Math.round(totalUsdtPersonal*100)/100;
   var sinTasaCount=cap.filter(function(c){
     if(c.moneda==="USDT") return false;
     var lim=_RATE_LIMITS[c.moneda];var r=getRateToUsdt(c.moneda);
@@ -4391,8 +4407,14 @@ function rCapitalTotal(){
   var neta  = ganBrlCap + ganVzlaCap + ganJulioCap; // Total Julio
   var bruta = neta; // alias
 
+  // ── Orden: por moneda, y dentro de cada moneda primero empresa, personal al final ──
+  var capOrdenado = cap.slice().sort(function(a,b){
+    if(a.moneda!==b.moneda) return (a.moneda||"").localeCompare(b.moneda||"");
+    if(!!a.esPersonal!==!!b.esPersonal) return a.esPersonal?1:-1;
+    return (a.nombre||"").localeCompare(b.nombre||"");
+  });
   // ── Filas de cuentas — Opción B: expandibles con ✏️ ───────────────
-  var capRows = cap.map(function(item){
+  var capRows = capOrdenado.map(function(item,idxOrd){
     var saldo = parseFloat(item.saldo)||0;
     var isNeg = saldo < 0;
     var lim   = _RATE_LIMITS[item.moneda];
@@ -4403,13 +4425,19 @@ function rCapitalTotal(){
     var isEditOpen = (S._editTasaCuenta===item.moneda);
     var tasaManual = S.tasasDia&&S.tasasDia[item.moneda]?S.tasasDia[item.moneda]:"";
     var fuenteTasa = tasaManual ? "Manual: "+f2(tasaManual) : (rateOk ? "Inventario: "+f2(rate) : "");
+    // Encabezado de sección: cambia de moneda, o pasa de empresa → personal dentro de la misma moneda
+    var prev = idxOrd>0?capOrdenado[idxOrd-1]:null;
+    var nuevaSeccion = !prev || prev.moneda!==item.moneda || !!prev.esPersonal!==!!item.esPersonal;
+    var seccionHeader = nuevaSeccion ?
+      "<div style='padding:7px 12px;background:"+(item.esPersonal?"#F3F0FF":"#f0f4ff")+";font-size:10px;font-weight:800;color:"+(item.esPersonal?"#7c3aed":"#1a3558")+";text-transform:uppercase;letter-spacing:.3px'>"+
+      (item.esPersonal?"💜 Personal":"🏢 Empresa")+" · "+item.moneda+"</div>" : "";
 
     // Fila principal
     var mainRow =
       "<div style='display:flex;align-items:center;padding:11px 12px;gap:8px;background:"+(usdt===null?"#FFFBEA":isEditOpen?"#F0F4FF":"#fff")+"'>"+
         "<div style='font-size:15px;flex-shrink:0'>"+ic+"</div>"+
         "<div style='flex:1;min-width:0'>"+
-          "<div style='font-size:12px;font-weight:700;color:#1a3558;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>"+item.nombre+"</div>"+
+          "<div style='font-size:12px;font-weight:700;color:#1a3558;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>"+item.nombre+(item.esPersonal?" <span style='font-size:9px;font-weight:700;background:#F3F0FF;color:#7c3aed;padding:1px 6px;border-radius:7px'>💜</span>":"")+"</div>"+
           "<div style='font-size:10px;color:#aaa'>"+item.moneda+(fuenteTasa?" · "+fuenteTasa:"")+"</div>"+
         "</div>"+
         "<div style='text-align:right;flex-shrink:0'>"+
@@ -4440,7 +4468,7 @@ function rCapitalTotal(){
         "</div>"
       : "";
 
-    return "<div style='border-bottom:1px solid #f0f0f0'>"+mainRow+expandPanel+"</div>";
+    return "<div style='border-bottom:1px solid #f0f0f0'>"+seccionHeader+mainRow+expandPanel+"</div>";
   }).join("");
 
   // ── Panel salud de cartera ────────────────────────────────────────
@@ -4463,7 +4491,7 @@ function rCapitalTotal(){
 
   // Distribución por moneda en USDT
   var distMon = {};
-  cap.forEach(function(c){
+  capNegocio.forEach(function(c){
     var s = parseFloat(c.saldo)||0; if(s<=0) return;
     var lim=_RATE_LIMITS[c.moneda]; var rate=getRateToUsdt(c.moneda);
     var ok=c.moneda==="USDT"||(rate&&(!lim||(rate>=lim[0]&&rate<=lim[1])));
@@ -4535,13 +4563,19 @@ function rCapitalTotal(){
     "</div>";
 
   return "<div style='padding:8px'>"+
-  "<div style='position:sticky;top:0;z-index:10;background:#1a3558;border-radius:12px;padding:12px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:12px'>"+
+  "<div style='position:sticky;top:0;z-index:10;background:#1a3558;border-radius:12px;padding:12px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap'>"+
       "<div>"+
-        "<div style='font-size:10px;font-weight:700;color:#FFA31C;text-transform:uppercase;margin-bottom:2px'>💰 Total en USDT equivalente</div>"+
+        "<div style='font-size:10px;font-weight:700;color:#FFA31C;text-transform:uppercase;margin-bottom:2px'>🏢 Total empresa (USDT equiv.)</div>"+
         "<div style='font-size:28px;font-weight:900;color:#FFD700;line-height:1'>$"+f2(totalUsdt)+"</div>"+
         (sinTasaCount>0?"<div style='font-size:9px;color:#F5C518;margin-top:3px'>⚠️ "+sinTasaCount+" cuenta(s) sin tasa — edita ↓</div>":
         "<div style='font-size:9px;color:rgba(255,255,255,.5);margin-top:3px'>Todas las tasas activas</div>")+
       "</div>"+
+      (capPersonal.length>0?
+      "<div style='border-left:1px solid rgba(255,255,255,.2);padding-left:14px'>"+
+        "<div style='font-size:10px;font-weight:700;color:#c4b5fd;text-transform:uppercase;margin-bottom:2px'>💜 Total personal</div>"+
+        "<div style='font-size:22px;font-weight:900;color:#e9d5ff;line-height:1'>$"+f2(totalUsdtPersonal)+"</div>"+
+        "<div style='font-size:9px;color:rgba(255,255,255,.5);margin-top:3px'>No cuenta como dinero de la empresa</div>"+
+      "</div>":"")+
       "<div style='text-align:right'>"+
         "<button onclick='S._showTasasPanel=!S._showTasasPanel;R()' style='background:rgba(255,255,255,.15);border:1px solid rgba(255,165,28,.5);color:#FFA31C;padding:8px 12px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>"+
           "💱 Tasas<br><span style='font-size:10px;opacity:.8'>"+(S._showTasasPanel?"▲":"▼")+"</span>"+
@@ -4560,7 +4594,7 @@ function rCapitalTotal(){
   :"<div style='text-align:center;padding:30px;color:#aaa'>Sin cuentas registradas. Ve a ⚙️ Configuración para agregar.</div>")+
   (function(){
     var totM={};
-    cap.forEach(function(c){totM[c.moneda]=(totM[c.moneda]||0)+(parseFloat(c.saldo)||0);});
+    capNegocio.forEach(function(c){totM[c.moneda]=(totM[c.moneda]||0)+(parseFloat(c.saldo)||0);});
     var keys=Object.keys(totM);
     if(!keys.length) return "";
     var mIcons2={USDT:"💰",BRL:"🇧🇷",VES:"🇻🇪",USD:"🇺🇸",EUR:"🇪🇺",COP:"🇨🇴",PEN:"🇵🇪",TTD:"🇹🇹"};
@@ -6939,20 +6973,21 @@ function getInventarioStats(){
   var sugTasaVenta=parseFloat(getLastTasaVenta("VES"))||0; // FIFO: venta más vieja con bolívares disponibles
 
   // USDT DISPONIBLE REAL: suma saldos reales de cuentas USDT en S.cuentas
+  // (excluye cuentas marcadas 💜 personal — esa plata no es de la empresa)
   var usdtReal=(S.cuentas||[])
-    .filter(function(c){return c.moneda==="USDT"&&c.activa!==false;})
+    .filter(function(c){return c.moneda==="USDT"&&c.activa!==false&&!c.esPersonal;})
     .reduce(function(a,c){return a+(parseFloat(c.saldo)||0);},0);
   usdtReal=Math.round(usdtReal*10000)/10000;
 
   // BS DISPONIBLE REAL: suma saldos reales de cuentas VES en S.cuentas
   var bsReal=(S.cuentas||[])
-    .filter(function(c){return c.moneda==="VES"&&c.activa!==false;})
+    .filter(function(c){return c.moneda==="VES"&&c.activa!==false&&!c.esPersonal;})
     .reduce(function(a,c){return a+(parseFloat(c.saldo)||0);},0);
   bsReal=Math.round(bsReal*100)/100;
 
   // BRL DISPONIBLE REAL: suma saldos reales de cuentas BRL
   var brlReal=(S.cuentas||[])
-    .filter(function(c){return c.moneda==="BRL"&&c.activa!==false;})
+    .filter(function(c){return c.moneda==="BRL"&&c.activa!==false&&!c.esPersonal;})
     .reduce(function(a,c){return a+(parseFloat(c.saldo)||0);},0);
   brlReal=Math.round(brlReal*100)/100;
 
@@ -7855,7 +7890,7 @@ function generarInformePDF(mesKey){
   var egPerM=filterByMes(S.egresos_personales||[],mesKey);
   var cobrarPend=(S.cuentasCobrar||[]).filter(function(c){return c.estado==="pendiente";});
   var prestActivos=(S.prestamos||[]).filter(function(p){if(p.estado==="pagado"||p.estado==="saldado")return false;if(p.estado==="activo")return true;var b=parseFloat(p.monto||0);if(b>0){var ab=(p.abonos||[]).reduce(function(s,x){return s+(parseFloat(x.monto)||0);},0);return ab<b-0.001;}return (p.sal||0)>0&&(p.ent||0)<(p.sal||0);});
-  var cuentasAct=(S.cuentas||[]).filter(function(c){return c.activa!==false;});
+  var cuentasAct=(S.cuentas||[]).filter(function(c){return c.activa!==false&&!c.esPersonal;});
   // Fix3: usar getRateToUsdt (igual que Balance de Cuentas) + incluir inventario
   var invUsdtPDF=getInventarioStats().disponible||0;
   // totalUsdtCuentas = solo cuentas (no inventario, para evitar doble conteo con cuentas USDT tipo Binance)
@@ -8488,8 +8523,7 @@ function rInformeCierre(){
     return "<div style='display:flex;justify-content:space-between;font-size:10.5px;padding:2px 0'><span style='color:#888'>"+lbl+"</span><b style='color:"+col+"'>"+val.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+"</b></div>";
   }
   function secBancos(){
-    var cuentasAct=(S.cuentas||[]).filter(function(c){return c.activa!==false;});
-    var egPorCuenta={};
+    var cuentasAct=(S.cuentas||[]).filter(function(c){return c.activa!==false&&!c.esPersonal;});
     egEmpM.filter(function(e){return e.pagada&&e.cuentaId;}).forEach(function(e){egPorCuenta[e.cuentaId]=(egPorCuenta[e.cuentaId]||0)+(parseFloat(e.usdt)||0);});
     var invUsdtSec=getInventarioStats().disponible||0;
     var totalUsdt=invUsdtSec;
@@ -9469,7 +9503,7 @@ function rDashEE(){
 // cambios de tasa, redondeos) queda como "otros ajustes".
 // ══════════════════════════════════════════════════════════════════════
 function _calcTotalUsdtCuentas(){
-  var cap=(S.cuentas||[]).filter(function(c){return c.activa!==false;});
+  var cap=(S.cuentas||[]).filter(function(c){return c.activa!==false&&!c.esPersonal;});
   var total=0;
   cap.forEach(function(item){
     var saldo=parseFloat(item.saldo)||0;
@@ -9604,7 +9638,7 @@ function _rBalanceRealDia(){
     var tasasHoy=S.histTasas[hoyKey]||{};
     var saldosAyer=S.histSaldos[ayerKey]||{};
     var efectoTasaTotal=0, detalleTasas=[];
-    (S.cuentas||[]).filter(function(c){return c.activa!==false&&c.moneda!=="USDT";}).forEach(function(c){
+    (S.cuentas||[]).filter(function(c){return c.activa!==false&&c.moneda!=="USDT"&&!c.esPersonal;}).forEach(function(c){
       var tA=tasasAyer[c.moneda], tH=tasasHoy[c.moneda], sA=saldosAyer[c.id];
       if(tA&&tH&&sA){
         var efecto=sA/tH-sA/tA;
