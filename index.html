@@ -6062,6 +6062,9 @@ function startAutoSync(){
   setTimeout(fbCheckREST, 3000);
   // Luego cada 8 segundos
   setInterval(fbCheckREST, 8000);
+  // Renovar la sesión cada minuto mientras haya alguien logueado, para que
+  // usar la app de corrido nunca te saque a mitad de camino.
+  setInterval(function(){ if(S.role) _guardarSesion(); }, 60000);
   console.log("🔄 Auto-sync cada 8 segundos activado");
 }
 function reconectarFirebase(){
@@ -6761,7 +6764,7 @@ function _loginOK(key){
   var p=resolvePerfilKey(key);if(!p){alert("Perfil no encontrado.");return;}
   S.role=p.role;S.usuario=p.usuario;S.usuarioId=p.uid||null;
   S.tab=((p.role==="admin"||p.role==="lector")?"dash":"mi_ganancia");
-  S.tblMes=getMesKeyActual();S.pinRole=null;S.pinIn="";S.pinErr="";R();
+  S.tblMes=getMesKeyActual();S.pinRole=null;S.pinIn="";S.pinErr="";_guardarSesion();R();
   setTimeout(function(){logAudit("LOGIN","Ingresó como "+p.usuario);},1000);
 }
 function registrarHuella(role){
@@ -6859,7 +6862,34 @@ function st(t){
   }
   R();
 }
-function salir(){logAudit("LOGOUT","Cerró sesión");S.role=null;S.tab="dash";S.q="";R();}
+// ── Sesión persistente (evita pedir la clave de nuevo al refrescar) ──────
+// Se guarda SOLO en este navegador/dispositivo (localStorage), nunca en
+// Firebase. Vence a los 30 minutos SIN actividad — se renueva sola mientras
+// la app siga abierta y en uso, así que trabajar de corrido no la corta.
+var _SESSION_KEY="remesasBRL_session";
+var _SESSION_MS=30*60*1000; // 30 minutos de inactividad
+function _guardarSesion(){
+  try{
+    if(!S.role) return;
+    localStorage.setItem(_SESSION_KEY,JSON.stringify({role:S.role,usuario:S.usuario,usuarioId:S.usuarioId,ts:Date.now()}));
+  }catch(e){}
+}
+function _restaurarSesion(){
+  try{
+    var raw=localStorage.getItem(_SESSION_KEY);
+    if(!raw) return false;
+    var s=JSON.parse(raw);
+    if(!s||!s.role) return false;
+    if(Date.now()-(s.ts||0) > _SESSION_MS){ localStorage.removeItem(_SESSION_KEY); return false; }
+    S.role=s.role; S.usuario=s.usuario; S.usuarioId=s.usuarioId||null;
+    S.tab=((s.role==="admin"||s.role==="lector")?"dash":"mi_ganancia");
+    _guardarSesion(); // renovar el reloj al restaurar
+    return true;
+  }catch(e){ return false; }
+}
+function _borrarSesion(){ try{localStorage.removeItem(_SESSION_KEY);}catch(e){} }
+
+function salir(){logAudit("LOGOUT","Cerró sesión");S.role=null;S.tab="dash";S.q="";_borrarSesion();R();}
 function ssq(v){S.q=v;if(_st)clearTimeout(_st);_st=setTimeout(R,300);}
 function sscl(v){S.qCl=v;if(_st)clearTimeout(_st);_st=setTimeout(R,300);}
 function autoFill(val,key){var p=val.split("|");S[key].id=p[0]||"";S[key].cl=p[1]||"";var el=document.getElementById(key+"-nm");if(el&&S[key].cl)el.value=S[key].cl;}
@@ -13236,6 +13266,7 @@ function _fbWriteNow(obj){
 // ── STARTUP ────────────────────────────────────────────
 // 1. Load localStorage for immediate display (no Firebase write)
 var _loaded=loadData();
+_restaurarSesion(); // si había sesión activa (<30 min de inactividad), no pide la clave otra vez
 // Asignar código único (_uid) a remesas ya existentes que no lo tengan aún
 // (registradas antes de este cambio) — así la fusión segura cubre TODO,
 // no solo lo nuevo.
