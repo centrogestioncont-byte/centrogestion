@@ -1975,7 +1975,7 @@ function saveCuenta(){
     institucion:nc.institucion||nc.nombre.trim(),saldo:parseFloat(nc.saldo)||0,operador:nc.operador||"general",activa:true};
   S.cuentas.push(nueva);
   S.capital=S.capital||[];
-  S.capital.push({nombre:nueva.nombre,tipo:nueva.tipo,moneda:nueva.moneda,saldo:nueva.saldo,nota:"",cuentaId:nueva.id});
+  S.capital.push({id:_newUid(),nombre:nueva.nombre,tipo:nueva.tipo,moneda:nueva.moneda,saldo:nueva.saldo,nota:"",cuentaId:nueva.id});
   S.nCuenta={nombre:"",tipo:"fiat",moneda:"USD",institucion:"",saldo:0,operador:"general"};
   saveData();R();
   alert("✅ Cuenta '"+nueva.nombre+"' agregada.");
@@ -3097,6 +3097,7 @@ function delRep(id){
   if(!confirm("Eliminar esta reposición de $"+f2(r.monto)+" USDT?\nSe le restará de nuevo a la cuenta."))return;
   creditCuentaRep(r.cuentaId,-(parseFloat(r.monto)||0));
   S.reposiciones=S.reposiciones.filter(function(x){return x.id!==id;});
+  _marcarBorradoMerge("reposiciones",id);
   logAudit("REPOSICION_DEL","Eliminó reposición de $"+f2(r.monto)+" USDT");
   saveData();R();
 }
@@ -3427,7 +3428,7 @@ function cerrarFlujo(){
 
 function saveCap(){
   var f=S.nCap;if(!f.nombre||!f.moneda){alert("Completa nombre y moneda.");return;}
-  S.capital.push({nombre:f.nombre,tipo:f.tipo||"banco",moneda:f.moneda,saldo:parseFloat(f.saldo)||0,nota:f.nota||""});
+  S.capital.push({id:_newUid(),nombre:f.nombre,tipo:f.tipo||"banco",moneda:f.moneda,saldo:parseFloat(f.saldo)||0,nota:f.nota||""});
   S.nCap={nombre:"",tipo:"exchange",moneda:"USDT",saldo:"",nota:""};saveData();R();
 }
 function saveGE(){
@@ -3559,6 +3560,7 @@ function delDeudaPaul(id){
   if(pin===null) return;
   if(pin!=="2626"){alert("Clave incorrecta.");return;}
   S.deudas_paul=S.deudas_paul.filter(function(x){return x.id!==id;});
+  _marcarBorradoMerge("deudas_paul",id);
   saveData();R();
 }
 function editDeudaPaul(id){
@@ -3577,7 +3579,7 @@ function editDeudaPaul(id){
 }
 function delGE(id){
   var g=S.gastos_eeuu.find(function(x){return x.id===id;});if(!g)return;
-  var fn=function(){S.gastos_eeuu=S.gastos_eeuu.filter(function(x){return x.id!==id;});saveData();R();};
+  var fn=function(){S.gastos_eeuu=S.gastos_eeuu.filter(function(x){return x.id!==id;});_marcarBorradoMerge("gastos_eeuu",id);saveData();R();};
   if(S.role==="admin"){ showPinEdit(fn); return; }
   var pin=prompt("🔐 Clave de autorización para eliminar gasto:");
   if(pin===null) return;
@@ -5093,7 +5095,7 @@ function saveCap(){
   var f=S.nCap;
   if(!f.nombre||!f.moneda){alert("Completa nombre y moneda.");return;}
   if(!S.capital) S.capital=[];
-  S.capital.push({nombre:f.nombre,tipo:f.tipo||"banco",moneda:f.moneda,saldo:parseFloat(f.saldo)||0,nota:f.nota||""});
+  S.capital.push({id:_newUid(),nombre:f.nombre,tipo:f.tipo||"banco",moneda:f.moneda,saldo:parseFloat(f.saldo)||0,nota:f.nota||""});
   S.nCap={nombre:"",tipo:"banco",moneda:"USDT",saldo:"",nota:""};
   saveData();R();
 }
@@ -11640,7 +11642,7 @@ function rCapital(){
       "<td style='text-align:right;background:#FFFBEA;border-left:2px solid #F5C51822'>"+(usdt!==null?"<span style='font-size:12px;font-weight:700;color:#0a3d7c'>≈ "+f4(usdt)+" USDT</span><div style='font-size:9px;color:#888'>÷ "+f2(rate)+"</div>":"<span style='font-size:10px;color:#aaa'>Sin tasa</span>")+"</td>"+
       "<td class='mu' style='font-size:10px'>"+item.nota+"</td>"+
       "<td style='text-align:right'><input type='number' value='"+(parseFloat(item.saldo)||0)+"' step='0.01' onchange='S.capital["+idx+"].saldo=parseFloat(this.value)||0;saveData();R()' style='width:100px;font-size:12px;text-align:right;padding:4px 7px;border:1px solid #ddd;border-radius:6px'></td>"+
-      "<td><button class='del-btn' onclick='S.capital=S.capital.filter(function(x,i){return i!=="+idx+";});saveData();R()'>🗑️</button></td></tr>";
+      "<td><button class='del-btn' onclick='var _delId=(S.capital["+idx+"]||{}).id;S.capital=S.capital.filter(function(x,i){return i!=="+idx+";});_marcarBorradoMerge(\"capital\",_delId);saveData();R()'>🗑️</button></td></tr>";
   }).join("");
   var monOpts=["USDT","BRL","VES","USD","EUR","COP","PEN","TTD"].map(function(m){return "<option value='"+m+"'"+(f.moneda===m?" selected":"")+">"+m+"</option>";}).join("");
   var tipoOpts=["exchange","banco","efectivo","billetera"].map(function(t){return "<option value='"+t+"'"+(f.tipo===t?" selected":"")+">"+(tIcons[t]||t)+"</option>";}).join("");
@@ -13090,9 +13092,9 @@ function _estaBorradoMerge(campo,id){
 // inventarioUsdt se fusiona por "id" (Date.now()): el consumo FIFO siempre
 // reordena por fecha (ordenFIFO) antes de usar los lotes, así que el orden
 // en que quedan en el array no afecta el cálculo.
-var _MERGE_FIELDS = ["cuentas","compromisos","egresos","egresos_personales","prestamos","cuentasCobrar","clientes","inventarioUsdt","brl","vzla","eeuu"];
-// clientes usa "cod" como identificador único; brl/vzla/eeuu usan "_uid"
-var _MERGE_ID_FIELD = {clientes:"cod",brl:"_uid",vzla:"_uid",eeuu:"_uid"};
+var _MERGE_FIELDS = ["cuentas","compromisos","egresos","egresos_personales","prestamos","cuentasCobrar","clientes","inventarioUsdt","brl","vzla","eeuu","traspasos","reposiciones","gastos_eeuu","deudas_paul","movimientosCapital","pagosSocios","gananciaExtra","gastos_socios","inventarioUsdt_cerrado","cierresMes","capital"];
+// clientes usa "cod"; brl/vzla/eeuu usan "_uid"; cierresMes usa "mesKey" (el resto ya usa "id")
+var _MERGE_ID_FIELD = {clientes:"cod",brl:"_uid",vzla:"_uid",eeuu:"_uid",cierresMes:"mesKey"};
 // Después de fusionar remesas hay que renumerar "n" (0,1,2...) para que no
 // queden números repetidos ni huecos — "n" sigue usándose para editar/borrar
 // filas y para el desglose de lotes FIFO en pantalla, pero ya no decide el
@@ -13207,6 +13209,7 @@ function _asignarUidsFaltantes(){
   ["brl","vzla","eeuu"].forEach(function(k){
     (S[k]||[]).forEach(function(r){ if(!r._uid) r._uid=_newUid(); });
   });
+  (S.capital||[]).forEach(function(r){ if(!r.id) r.id=_newUid(); });
 }
 _asignarUidsFaltantes();
 _syncCapitalWithCuentas();
