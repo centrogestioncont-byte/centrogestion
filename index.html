@@ -889,6 +889,11 @@ let S={
 };
 
 function td(){var _d=new Date();return _d.getFullYear()+"-"+String(_d.getMonth()+1).padStart(2,"0")+"-"+String(_d.getDate()).padStart(2,"0");}
+// ── ID único real, seguro entre dispositivos (fecha+hora + parte aleatoria) ──
+// Se usa como identificador de fusión para remesas (brl/vzla/eeuu), a diferencia
+// de "n" que es solo un número de orden visual y puede repetirse si dos
+// dispositivos crean una remesa antes de sincronizar entre sí.
+function _newUid(){return Date.now().toString(36)+"_"+Math.random().toString(36).slice(2,8);}
 function r4(n){ // Round to max 4 significant decimals, no floating point artifacts
   var v=parseFloat(n)||0;
   return Math.round(v*10000)/10000;
@@ -2353,7 +2358,7 @@ function saveTx(){
   var res=cTx();
   var isV=ruta.orig==="VES";var arr=isV?S.vzla:S.brl;
   var nn=arr.length?Math.max.apply(null,arr.map(function(x){return x.n;}))+1:1;
-  var nuevaRemesa={n:nn,d:ds(f.date),id:f.id,cl:f.cl.toUpperCase(),rt:f.rt,am:res.am,orig:ruta.orig,dest:ruta.dest,tdia:res.tdia,cant:res.cant,tc:res.tc,uc:res.uc,pais:f.pais,uv:res.uv,tv:res.tv,total:res.cant,pr:res.pr,cuentaBanco:f.cuentaBanco||"",cuentaDest:f.cuentaDest||"",locked:true};
+  var nuevaRemesa={n:nn,_uid:_newUid(),d:ds(f.date),id:f.id,cl:f.cl.toUpperCase(),rt:f.rt,am:res.am,orig:ruta.orig,dest:ruta.dest,tdia:res.tdia,cant:res.cant,tc:res.tc,uc:res.uc,pais:f.pais,uv:res.uv,tv:res.tv,total:res.cant,pr:res.pr,cuentaBanco:f.cuentaBanco||"",cuentaDest:f.cuentaDest||"",locked:true};
   arr.push(nuevaRemesa);
   arr.sort(function(a,b){var da=a.d.split("/"),db=b.d.split("/");return (parseInt(da[1])*100+parseInt(da[0]))-(parseInt(db[1])*100+parseInt(db[0]))||a.n-b.n;});
   registrarMovimientoCapital({fecha:ds(f.date),rutaOrig:ruta.orig,rutaDest:ruta.dest,amOrigen:res.am,amDestino:res.cant,concepto:f.cl+" · "+f.rt,remesaId:nn});
@@ -2456,7 +2461,7 @@ function saveTxEE(){
   }
   var res=cTxE();
   var nn2=S.eeuu.length?Math.max.apply(null,S.eeuu.map(function(x){return x.n;}))+1:1;
-  var nuevaRemesaEE={n:nn2,d:ds(f.date),id:f.id||"",cl:(f.cl||"CLIENTE").toUpperCase(),rt:"UU.EE ↔ VZLA",am:res.am,orig:"USD",dest:"VES",tdia:res.tdia,cant:res.cant,tc:parseFloat(f.tc)||1.010,uc:res.uc,pais:"VENEZUELA",uv:res.uv,tv:res.tv,total:res.cant,pr:res.pr,cuentaBanco:f.cuentaBanco||"",cuentaDest:f.cuentaDest||"",locked:true};
+  var nuevaRemesaEE={n:nn2,_uid:_newUid(),d:ds(f.date),id:f.id||"",cl:(f.cl||"CLIENTE").toUpperCase(),rt:"UU.EE ↔ VZLA",am:res.am,orig:"USD",dest:"VES",tdia:res.tdia,cant:res.cant,tc:parseFloat(f.tc)||1.010,uc:res.uc,pais:"VENEZUELA",uv:res.uv,tv:res.tv,total:res.cant,pr:res.pr,cuentaBanco:f.cuentaBanco||"",cuentaDest:f.cuentaDest||"",locked:true};
   S.eeuu.push(nuevaRemesaEE);
   S.eeuu.sort(function(a,b){var da=a.d.split("/"),db=b.d.split("/");return (parseInt(da[1])*100+parseInt(da[0]))-(parseInt(db[1])*100+parseInt(db[0]))||a.n-b.n;});
   registrarMovimientoCapital({fecha:ds(f.date),rutaOrig:"USD",rutaDest:"VES",amOrigen:res.am,amDestino:res.cant,concepto:(f.cl||"Cliente")+" · EE.UU",remesaId:nn2});
@@ -5990,6 +5995,7 @@ function fbCheckREST(){
             var filtrado=data[k].filter(function(it){
               return !(it && it[idF]!==undefined && _estaBorradoMerge(k,it[idF]));
             });
+            if(k==="brl"||k==="vzla"||k==="eeuu") _renumerarPorFecha(filtrado);
             S[k]=filtrado;
           } else {
             S[k]=data[k];
@@ -6446,8 +6452,11 @@ function reqDel(arr,id,field){
     logAudit("BORRAR_"+arr.toUpperCase(),"Borró ID:"+id+(item?" · "+item.d+" · $"+(item.pr||item.usdt||item.monto||"?"):" "));
     // Si este campo se fusiona entre dispositivos (_MERGE_FIELDS), anotar el
     // borrado para que la fusión no lo revida — ver _marcarBorradoMerge().
-    if(["cuentas","compromisos","egresos","egresos_personales","prestamos","cuentasCobrar"].indexOf(arr)!==-1){
+    if(["cuentas","compromisos","egresos","egresos_personales","prestamos","cuentasCobrar","inventarioUsdt"].indexOf(arr)!==-1){
       _marcarBorradoMerge(arr,id);
+    } else if(arr==="brl"||arr==="vzla"||arr==="eeuu"){
+      // Estas usan "_uid" como identificador de fusión, no el "n"/"id" que llega aquí
+      _marcarBorradoMerge(arr,item._uid||id);
     }
     S[arr]=S[arr].filter(function(x){return x[field||"id"]!==id;});
     saveData();R();
@@ -12953,9 +12962,11 @@ function initFirebase(){
         DATA_KEYS.forEach(function(k){
           if(data[k]===undefined) return;
           if(_MERGE_FIELDS.indexOf(k)!==-1 && Array.isArray(data[k])){
+            var idF=_MERGE_ID_FIELD[k]||"id";
             var filtrado=data[k].filter(function(it){
-              return !(it && it.id!==undefined && _estaBorradoMerge(k,it.id));
+              return !(it && it[idF]!==undefined && _estaBorradoMerge(k,it[idF]));
             });
+            if(k==="brl"||k==="vzla"||k==="eeuu") _renumerarPorFecha(filtrado);
             S[k]=filtrado;
           } else {
             S[k]=data[k];
@@ -13071,14 +13082,32 @@ function _estaBorradoMerge(campo,id){
   }catch(e){ return false; }
 }
 
-// ── Campos que se fusionan por id antes de cada guardado. Deliberadamente
-// NO incluye brl/vzla/eeuu/inventarioUsdt (datos FIFO/transaccionales) —
-// esos siguen con guardado directo para no arriesgar duplicados o desincronizar
-// el inventario. Este fix cubre exactamente lo reportado: cuentas y compromisos
-// perdidos al guardar desde un dispositivo con datos desactualizados. ──────
-var _MERGE_FIELDS = ["cuentas","compromisos","egresos","egresos_personales","prestamos","cuentasCobrar","clientes"];
-// clientes usa "cod" como identificador único (no "id")
-var _MERGE_ID_FIELD = {clientes:"cod"};
+// ── Campos que se fusionan por id antes de cada guardado.
+// brl/vzla/eeuu ahora SÍ se fusionan: desde este cambio cada remesa nueva
+// lleva un "_uid" real (fecha+hora+aleatorio), único incluso si dos
+// dispositivos registran al mismo tiempo — a diferencia de "n" que es solo
+// un número de orden visual y sí puede repetirse entre dispositivos.
+// inventarioUsdt se fusiona por "id" (Date.now()): el consumo FIFO siempre
+// reordena por fecha (ordenFIFO) antes de usar los lotes, así que el orden
+// en que quedan en el array no afecta el cálculo.
+var _MERGE_FIELDS = ["cuentas","compromisos","egresos","egresos_personales","prestamos","cuentasCobrar","clientes","inventarioUsdt","brl","vzla","eeuu"];
+// clientes usa "cod" como identificador único; brl/vzla/eeuu usan "_uid"
+var _MERGE_ID_FIELD = {clientes:"cod",brl:"_uid",vzla:"_uid",eeuu:"_uid"};
+// Después de fusionar remesas hay que renumerar "n" (0,1,2...) para que no
+// queden números repetidos ni huecos — "n" sigue usándose para editar/borrar
+// filas y para el desglose de lotes FIFO en pantalla, pero ya no decide el
+// contenido: solo el orden visual, recalculado siempre después de fusionar.
+function _renumerarPorFecha(arr){
+  if(!Array.isArray(arr)) return;
+  arr.sort(function(a,b){
+    var da=a.d?a.d.split("/"):[]; var db=b.d?b.d.split("/"):[];
+    var ka=da.length>=2?parseInt(da[1])*100+parseInt(da[0]):0;
+    var kb=db.length>=2?parseInt(db[1])*100+parseInt(db[0]):0;
+    if(ka!==kb) return ka-kb;
+    return (a._uid||"").localeCompare(b._uid||"");
+  });
+  arr.forEach(function(r,i){r.n=i+1;});
+}
 
 var _fbPendingObj = null; // referencia al último guardado pendiente, para poder forzarlo si la app se cierra/oculta antes del debounce
 
@@ -13133,6 +13162,7 @@ function _fbMergeAndWrite(obj){
               return !(it && it[idF]!==undefined && _estaBorradoMerge(k,it[idF]));
             });
             obj[k] = _mergeArrayById(remoteFiltrado, obj[k], idF);
+            if(k==="brl"||k==="vzla"||k==="eeuu") _renumerarPorFecha(obj[k]);
             S[k] = obj[k]; // reflejar la fusión también en el estado local/UI
           }
         });
@@ -13170,6 +13200,15 @@ function _fbWriteNow(obj){
 // ── STARTUP ────────────────────────────────────────────
 // 1. Load localStorage for immediate display (no Firebase write)
 var _loaded=loadData();
+// Asignar código único (_uid) a remesas ya existentes que no lo tengan aún
+// (registradas antes de este cambio) — así la fusión segura cubre TODO,
+// no solo lo nuevo.
+function _asignarUidsFaltantes(){
+  ["brl","vzla","eeuu"].forEach(function(k){
+    (S[k]||[]).forEach(function(r){ if(!r._uid) r._uid=_newUid(); });
+  });
+}
+_asignarUidsFaltantes();
 _syncCapitalWithCuentas();
 
 // 2. Merge ONLY clients from base data (non-destructive, no ops)
