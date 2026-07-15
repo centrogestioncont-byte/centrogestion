@@ -939,7 +939,7 @@ function cTx(){
   var isVzla = ruta && ruta.orig==="VES";
   // Para rutas VZLA (VES→BRL): Binance opera en BRL enteros, redondear para que
   // el cálculo de USDT coincida con lo que realmente se libera en Binance P2P
-  var cant = isVzla ? (td2>0 ? Math.round(r4(am/td2)) : 0) : am*td2;
+  var cant = isVzla ? (td2>0 ? Math.round(r4(am/td2)) : 0) : Math.floor(r4(am*td2));
   var rates = getAutoRates(ruta.orig, ruta.dest||"VES", am, cant);
   var tc=parseFloat(f.tc_manual)||rates.tc||parseFloat(f.tc)||0;
   var tv=parseFloat(f.tv_manual)||rates.tv||parseFloat(f.tv)||0;
@@ -2242,7 +2242,7 @@ function saveEditRow(){
   ["am","tdia","tc","tv"].forEach(function(f){var el=document.getElementById("edit-"+f);if(el)row[f]=parseFloat(el.value)||row[f];});
   var com=COM();
   var am=parseFloat(row.am)||0,tdia=parseFloat(row.tdia)||0,tc=parseFloat(row.tc)||1,tv=parseFloat(row.tv)||1;
-  row.cant=r4(am*tdia);
+  row.cant=(type==="vzla")?(tdia>0?Math.round(r4(am/tdia)):0):Math.floor(r4(am*tdia));
   var uc_r=am/tc-com, uv_r=row.cant/tv+com;
   row.uc=r4(uc_r); row.uv=r4(uv_r);
   row.pr=r4(uc_r-uv_r); row.total=row.cant;
@@ -2339,7 +2339,7 @@ function saveTx(){
   }
   var amS=parseFloat(f.am)||0,tdS=parseFloat(f.tdia)||0;
   // Mismo redondeo que cTx() para que lo guardado coincida con Binance
-  var cantS=(ruta.orig==="VES")?(tdS>0?Math.round(r4(amS/tdS)):0):amS*tdS;
+  var cantS=(ruta.orig==="VES")?(tdS>0?Math.round(r4(amS/tdS)):0):Math.floor(r4(amS*tdS));
   var rates=getAutoRates(ruta.orig,ruta.dest||"VES",amS,cantS);
   var tcF=parseFloat(f.tc_manual)||rates.tc||0;
   var tvF=parseFloat(f.tv_manual)||rates.tv||0;
@@ -3273,7 +3273,7 @@ function saveCl(){
   S.nCl={cod:"",n:"",tel:"",pais:"VENEZUELA",ruta:"BRL ↔ VZLA",nota:""};saveData();R();
 }
 function editCl(cod){var c=S.clientes.find(function(x){return x.cod===cod;});if(!c)return;S.editCl=cod;S.nCl=Object.assign({},c);R();}
-function delCl(cod){if(!confirm("¿Eliminar cliente?"))return;S.clientes=S.clientes.filter(function(x){return x.cod!==cod;});saveData();R();}
+function delCl(cod){if(!confirm("¿Eliminar cliente?"))return;S.clientes=S.clientes.filter(function(x){return x.cod!==cod;});_marcarBorradoMerge("clientes",cod);saveData();R();}
 function saveIU(){
   var f=S.nIU;
   var usdt=parseFloat(f.usdt)||0,tasa=parseFloat(f.tasa)||0,com=parseFloat(f.comision)||COM();
@@ -5986,8 +5986,9 @@ function fbCheckREST(){
             // Respetar la lista negra de borrados: no revivir lo que se
             // borró intencionalmente a propósito solo porque Firebase
             // todavía tiene la versión vieja.
+            var idF=_MERGE_ID_FIELD[k]||"id";
             var filtrado=data[k].filter(function(it){
-              return !(it && it.id!==undefined && _estaBorradoMerge(k,it.id));
+              return !(it && it[idF]!==undefined && _estaBorradoMerge(k,it[idF]));
             });
             S[k]=filtrado;
           } else {
@@ -10242,16 +10243,18 @@ function rTblUnificada(){
       "<span style='color:#c0392b;font-size:10px'>"+f2n(r.comisionBancoVes)+" VES<br><span style='color:#e67e22;font-size:9px'>="+f2n(comisUsdt,4)+" USDT</span></span>" :
       "<span style='color:#ccc'>—</span>";
     var td="padding:5px 7px"; var tdr="padding:5px 7px;text-align:right"; var tdc="padding:5px 7px;text-align:center";
-    return "<tr style='border-bottom:1px solid #f0f0f0'>"+
+    var isEd=S.editRow&&S.editRow.type===sc&&S.editRow.n===r.n;
+    var edInStyle="width:65px;font-size:11px;padding:3px 5px;border:1px solid #1a6b3c;border-radius:5px;text-align:right";
+    return "<tr style='border-bottom:1px solid #f0f0f0;background:"+(isEd?"#f0fff4":"")+"'>"+
       "<td style='"+td+";font-size:11px;color:#888;white-space:nowrap'>"+dFmt(r.d)+"</td>"+
       "<td style='"+tdc+";font-size:10px;color:#aaa'>"+(r.id||r.n||"")+"</td>"+
       "<td style='"+td+";font-size:12px;font-weight:700;color:#1a3558'>"+r.cl+"</td>"+
       "<td style='"+tdc+"'>"+rtBadge+"</td>"+
-      "<td style='"+tdr+";font-size:12px;font-weight:700'>"+f2n(r.am)+" <span style='font-size:9px;color:#888'>"+r.orig+"</span></td>"+
+      (isEd?"<td style='"+tdr+"'><input id='edit-am' type='number' value='"+r.am+"' style='"+edInStyle+"'></td>":"<td style='"+tdr+";font-size:12px;font-weight:700'>"+f2n(r.am)+" <span style='font-size:9px;color:#888'>"+r.orig+"</span></td>")+
       "<td style='"+tdr+";font-size:12px;font-weight:700'>"+f2n(r.cant)+" <span style='font-size:9px;color:#888'>"+r.dest+"</span></td>"+
-      "<td style='"+tdr+";font-size:11px;color:#1a6b3c'>"+f2n(r.tc)+"</td>"+
-      "<td style='"+tdr+";font-size:11px;color:#8b4513'>"+f2n(r.tv)+"</td>"+
-      "<td style='"+tdr+";font-size:11px;color:#555'>"+f2n(r.tdia)+"</td>"+
+      (isEd?"<td style='"+tdr+"'><input id='edit-tc' type='number' step='0.0001' value='"+r.tc+"' style='"+edInStyle+"'></td>":"<td style='"+tdr+";font-size:11px;color:#1a6b3c'>"+f2n(r.tc)+"</td>")+
+      (isEd?"<td style='"+tdr+"'><input id='edit-tv' type='number' step='0.001' value='"+r.tv+"' style='"+edInStyle+"'></td>":"<td style='"+tdr+";font-size:11px;color:#8b4513'>"+f2n(r.tv)+"</td>")+
+      (isEd?"<td style='"+tdr+"'><input id='edit-tdia' type='number' step='0.001' value='"+r.tdia+"' style='"+edInStyle+"'></td>":"<td style='"+tdr+";font-size:11px;color:#555'>"+f2n(r.tdia)+"</td>")+
       "<td style='"+tdr+";font-size:11px;color:#2471a3'>"+f2n(r.uc)+"</td>"+
       "<td style='"+tdr+";font-size:11px;color:#884ea0'>"+f2n(r.uv)+"</td>"+
       "<td style='"+tdc+";font-size:10px'>"+bancoOrigen+"</td>"+
@@ -10259,8 +10262,10 @@ function rTblUnificada(){
       "<td style='"+tdc+"'>"+comisDisplay+"</td>"+
       "<td style='"+tdr+"'>"+ganDisplay+"</td>"+
       "<td style='"+tdc+";white-space:nowrap'>"+
+      (isEd?
+      "<button onclick='saveEditRow()' style='background:#1a6b3c;color:#fff;border:none;padding:2px 7px;border-radius:5px;cursor:pointer;font-size:11px;margin-right:3px'>✅</button><button onclick='cancelEditRow()' style='background:#f0f0f0;border:1px solid #ddd;padding:2px 7px;border-radius:5px;cursor:pointer;font-size:11px'>✕</button>":
       "<button onclick='startEditRow(\""+r._src+"\","+r.n+")' style='background:#1a6b3c;color:#fff;border:none;padding:2px 7px;border-radius:5px;cursor:pointer;font-size:11px;margin-right:3px'>✏️</button>"+
-      "<button onclick='confirmDeleteOp(\""+r._src+"\","+r.n+")' style='background:#c0392b;color:#fff;border:none;padding:2px 7px;border-radius:5px;cursor:pointer;font-size:11px'>🗑️</button>"+
+      "<button onclick='confirmDeleteOp(\""+r._src+"\","+r.n+")' style='background:#c0392b;color:#fff;border:none;padding:2px 7px;border-radius:5px;cursor:pointer;font-size:11px'>🗑️</button>")+
       "</td>"+
       "</tr>";
   }).join("");
@@ -10964,7 +10969,7 @@ function rNueva(){
   if(f.pais!==ruta.pais) S.tx.pais=ruta.pais;
   var am=parseFloat(f.am)||0,tdia=parseFloat(f.tdia)||0;
   var isVzR=ruta.orig==="VES";
-  var cant=isVzR?(tdia>0?r4(am/tdia):0):am*tdia;
+  var cant=isVzR?(tdia>0?r4(am/tdia):0):Math.floor(r4(am*tdia));
   // Solo recalcular tasas ponderadas si cambió am o tdia (evita fluctuación al marcar checkboxes)
   var _amChanged=(String(am)!==String(f._amLock)||String(tdia)!==String(f._tdiaLock)||f.rt!==f._rtLock);
   var rates;
@@ -13071,7 +13076,9 @@ function _estaBorradoMerge(campo,id){
 // esos siguen con guardado directo para no arriesgar duplicados o desincronizar
 // el inventario. Este fix cubre exactamente lo reportado: cuentas y compromisos
 // perdidos al guardar desde un dispositivo con datos desactualizados. ──────
-var _MERGE_FIELDS = ["cuentas","compromisos","egresos","egresos_personales","prestamos","cuentasCobrar"];
+var _MERGE_FIELDS = ["cuentas","compromisos","egresos","egresos_personales","prestamos","cuentasCobrar","clientes"];
+// clientes usa "cod" como identificador único (no "id")
+var _MERGE_ID_FIELD = {clientes:"cod"};
 
 var _fbPendingObj = null; // referencia al último guardado pendiente, para poder forzarlo si la app se cierra/oculta antes del debounce
 
@@ -13121,10 +13128,11 @@ function _fbMergeAndWrite(obj){
       if(remote){
         _MERGE_FIELDS.forEach(function(k){
           if(remote[k]!==undefined){
+            var idF=_MERGE_ID_FIELD[k]||"id";
             var remoteFiltrado=(remote[k]||[]).filter(function(it){
-              return !(it && it.id!==undefined && _estaBorradoMerge(k,it.id));
+              return !(it && it[idF]!==undefined && _estaBorradoMerge(k,it[idF]));
             });
-            obj[k] = _mergeArrayById(remoteFiltrado, obj[k]);
+            obj[k] = _mergeArrayById(remoteFiltrado, obj[k], idF);
             S[k] = obj[k]; // reflejar la fusión también en el estado local/UI
           }
         });
