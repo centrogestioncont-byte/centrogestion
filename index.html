@@ -997,7 +997,7 @@ var STORAGE_KEY = "remesasBRL_v1";
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
 var APP_VERSION = "20260625_v3";
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
-  "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos"];
+  "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
 
 // ══════════════════════════════════════════════════════════════════════
 // SISTEMA DE CIERRE AUTOMÁTICO DE MES
@@ -1962,6 +1962,12 @@ function updateCuentaSaldo(id, val){
   var c=(S.cuentas||[]).find(function(x){return x.id===id;});
   if(!c) return;
   var v=parseFloat(val)||0;
+  var antes=parseFloat(c.saldo)||0;
+  var delta=Math.round((v-antes)*10000)/10000;
+  if(Math.abs(delta)>0.0001){
+    S.ajustesSaldo=S.ajustesSaldo||[];
+    S.ajustesSaldo.push({id:_newUid(),fecha:ds(td()),cuentaId:id,delta:delta,saldoAntes:antes,saldoDespues:v,motivo:"Ajuste manual de saldo"});
+  }
   c.saldo=v;
   if(c.moneda==="USDT") c.manual_override=true;
   (S.capital||[]).forEach(function(cap,i){if(cap.cuentaId===id){S.capital[i].saldo=v;}});
@@ -7314,6 +7320,12 @@ function editarSaldoCuentaEnConfig(cid){
   if(nv===null)return;
   var num=parseFloat(nv.replace(",","."));
   if(isNaN(num)){alert("Número inválido.");return;}
+  var antesCfg=parseFloat(c.saldo)||0;
+  var deltaCfg=Math.round((num-antesCfg)*10000)/10000;
+  if(Math.abs(deltaCfg)>0.0001){
+    S.ajustesSaldo=S.ajustesSaldo||[];
+    S.ajustesSaldo.push({id:_newUid(),fecha:ds(td()),cuentaId:cid,delta:deltaCfg,saldoAntes:antesCfg,saldoDespues:num,motivo:"Ajuste manual de saldo"});
+  }
   c.saldo=Math.round(num*100)/100;
   // Sincronizar capital
   var cap=(S.capital||[]).find(function(k){return k.nombre&&c.nombre&&k.nombre.toLowerCase()===c.nombre.toLowerCase();});
@@ -8523,8 +8535,8 @@ function rInformeCierre(){
   // por categoría. Se recalcula en cada render, así que se actualiza solo
   // al eliminar o agregar cualquier movimiento — no requiere guardar nada aparte.
   function _flujoCuentaMes(cuentaId, mk){
-    var e={clientes:0,prestamos:0,cuentasCobrar:0,ventaUsdt:0,traspasos:0};
-    var s={clientes:0,egresos:0,prestamos:0,compraUsdt:0,traspasos:0};
+    var e={clientes:0,prestamos:0,cuentasCobrar:0,ventaUsdt:0,traspasos:0,ajustes:0};
+    var s={clientes:0,egresos:0,prestamos:0,compraUsdt:0,traspasos:0,ajustes:0};
     // Remesas: cuentaBanco = entra el pago del cliente · cuentaDest = sale para entregarle al destinatario
     [].concat(S.brl||[],S.vzla||[],S.eeuu||[]).forEach(function(r){
       if(mesKeyDe(r.d)!==mk) return;
@@ -8566,9 +8578,16 @@ function rInformeCierre(){
       if(t.origen===cuentaId) s.traspasos+=(parseFloat(t.monto)||0);
       if(t.destino===cuentaId) e.traspasos+=(parseFloat(t.monto)||0);
     });
+    // Ajustes manuales de saldo (correcciones, efectivo agregado a mano fuera
+    // de remesas/préstamos/traspasos) — sin esto, estos cambios eran invisibles
+    // para el reporte y hacían que entradas/salidas no cuadraran con la realidad.
+    (S.ajustesSaldo||[]).forEach(function(a){
+      if(a.cuentaId!==cuentaId || mesKeyDe(a.fecha)!==mk) return;
+      if(a.delta>0) e.ajustes+=a.delta; else if(a.delta<0) s.ajustes+=-a.delta;
+    });
     return {entradas:e,salidas:s,
-      totalE:e.clientes+e.prestamos+e.cuentasCobrar+e.ventaUsdt+e.traspasos,
-      totalS:s.clientes+s.prestamos+s.egresos+s.compraUsdt+s.traspasos};
+      totalE:e.clientes+e.prestamos+e.cuentasCobrar+e.ventaUsdt+e.traspasos+e.ajustes,
+      totalS:s.clientes+s.prestamos+s.egresos+s.compraUsdt+s.traspasos+s.ajustes};
   }
   function mesKeyDe(dstr){ // "dd/mm/yy" -> "yyyy-mm"
     if(!dstr) return "";
@@ -8632,6 +8651,7 @@ function rInformeCierre(){
               flujoRow("Cuentas por cobrar",fl.entradas.cuentasCobrar,"#0f6e3a")+
               flujoRow("Venta de USDT",fl.entradas.ventaUsdt,"#0f6e3a")+
               flujoRow("Traspasos recibidos",fl.entradas.traspasos,"#0f6e3a")+
+              flujoRow("Ajustes manuales",fl.entradas.ajustes,"#0f6e3a")+
               (fl.totalE===0?"<div style='font-size:10px;color:#bbb'>Sin entradas este mes</div>":"")+
             "</div>"+
             "<div style='background:#FDF4F4;border-radius:10px;padding:10px 12px'>"+
@@ -8641,6 +8661,7 @@ function rInformeCierre(){
               flujoRow("Préstamos entregados",fl.salidas.prestamos,"#c0392b")+
               flujoRow("Compra de USDT",fl.salidas.compraUsdt,"#c0392b")+
               flujoRow("Traspasos enviados",fl.salidas.traspasos,"#c0392b")+
+              flujoRow("Ajustes manuales",fl.salidas.ajustes,"#c0392b")+
               (fl.totalS===0?"<div style='font-size:10px;color:#bbb'>Sin salidas este mes</div>":"")+
             "</div>"+
           "</div>"
@@ -13209,7 +13230,7 @@ function _estaBorradoMerge(campo,id){
 // inventarioUsdt se fusiona por "id" (Date.now()): el consumo FIFO siempre
 // reordena por fecha (ordenFIFO) antes de usar los lotes, así que el orden
 // en que quedan en el array no afecta el cálculo.
-var _MERGE_FIELDS = ["cuentas","compromisos","egresos","egresos_personales","prestamos","cuentasCobrar","clientes","inventarioUsdt","brl","vzla","eeuu","traspasos","reposiciones","gastos_eeuu","deudas_paul","movimientosCapital","pagosSocios","gananciaExtra","gastos_socios","inventarioUsdt_cerrado","cierresMes","capital"];
+var _MERGE_FIELDS = ["cuentas","compromisos","egresos","egresos_personales","prestamos","cuentasCobrar","clientes","inventarioUsdt","brl","vzla","eeuu","traspasos","reposiciones","gastos_eeuu","deudas_paul","movimientosCapital","pagosSocios","gananciaExtra","gastos_socios","inventarioUsdt_cerrado","cierresMes","capital","ajustesSaldo"];
 // clientes usa "cod"; brl/vzla/eeuu usan "_uid"; cierresMes usa "mesKey" (el resto ya usa "id")
 var _MERGE_ID_FIELD = {clientes:"cod",brl:"_uid",vzla:"_uid",eeuu:"_uid",cierresMes:"mesKey"};
 // Después de fusionar remesas hay que renumerar "n" (0,1,2...) para que no
