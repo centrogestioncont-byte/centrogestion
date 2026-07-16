@@ -405,14 +405,14 @@ const ROLES=[
   {id:"lector",label:"Supervisor",     sub:"Ve todo · No modifica",     ic:"👁️",bg:"#FFF4D6"},
 ];
 const TABS={
-  admin:["dash","diario","ops","evolucion","cierre","nueva","calculadora","inventario_usdt","capital_total","egresos","prestamos","cobrar","traspasos","clientes","auditoria","config_admin"],
+  admin:["dash","diario","ops","evolucion","salud_financiera","cierre","nueva","calculadora","inventario_usdt","capital_total","egresos","prestamos","cobrar","traspasos","clientes","auditoria","config_admin"],
   brl:  ["mi_ganancia","op_diario","nueva","clientes"],
   vzla: ["mi_ganancia","op_diario","nueva","clientes"],
   eeuu: ["mi_ganancia","op_diario","nueva_eeuu","clientes"],
-  lector:["dash","diario","ops","evolucion","cierre","nueva","calculadora","inventario_usdt","capital_total","egresos","prestamos","cobrar","traspasos","clientes","auditoria","config_admin"],
+  lector:["dash","diario","ops","evolucion","salud_financiera","cierre","nueva","calculadora","inventario_usdt","capital_total","egresos","prestamos","cobrar","traspasos","clientes","auditoria","config_admin"],
 };
 const TL={
-  dash:"📊 Resumen",diario:"📅 Diario",ops:"📋 Operaciones",evolucion:"📈 Evolución",cierre:"🗓️ Cierre de Mes",brl:"🇧🇷 BRL",vzla:"🇻🇪 VZLA",eeuu:"🇺🇸 EE.UU",
+  dash:"📊 Resumen",diario:"📅 Diario",ops:"📋 Operaciones",evolucion:"📈 Evolución",salud_financiera:"🩺 Salud Financiera",cierre:"🗓️ Cierre de Mes",brl:"🇧🇷 BRL",vzla:"🇻🇪 VZLA",eeuu:"🇺🇸 EE.UU",
   nueva:"➕ Nueva",nueva_eeuu:"➕ Nueva EE.UU",cobrar:"💳 Por Cobrar",capital_total:"💰 Balance de Cuentas",historial:"📅 Historial",
   calculadora:"🧮 Tasas",
   inventario_usdt:"📦 Inventario USDT",capital:"🏦 Capital",
@@ -1457,6 +1457,170 @@ function rEvolucion(){
   "</div>";
 
   return html;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// 🩺 SALUD FINANCIERA — análisis económico, no contable.
+// Lee cierresMes (histórico) + el mes en curso, detecta tendencias,
+// da un veredicto, recomendaciones y una proyección simple.
+// No inventa nada: todo sale de calcMesCompleto()/cierresMes ya existentes.
+// ══════════════════════════════════════════════════════════════════
+function _linReg(vals){
+  var n=vals.length; if(n<2) return {slope:0,intercept:vals[0]||0};
+  var sx=0,sy=0,sxy=0,sxx=0;
+  for(var i=0;i<n;i++){sx+=i;sy+=vals[i];sxy+=i*vals[i];sxx+=i*i;}
+  var den=(n*sxx-sx*sx)||1;
+  var slope=(n*sxy-sx*sy)/den;
+  var intercept=(sy-slope*sx)/n;
+  return {slope:slope,intercept:intercept};
+}
+function _tendenciaPct(arr){
+  if(!arr||arr.length<2) return null;
+  if(arr.length>=6){
+    var rec=arr.slice(-3), prev=arr.slice(-6,-3);
+    var avgRec=rec.reduce(function(a,b){return a+b;},0)/3;
+    var avgPrev=prev.reduce(function(a,b){return a+b;},0)/3;
+    if(Math.abs(avgPrev)<0.01) return null;
+    return (avgRec-avgPrev)/Math.abs(avgPrev)*100;
+  }
+  var a=arr[arr.length-2], b=arr[arr.length-1];
+  if(Math.abs(a)<0.01) return null;
+  return (b-a)/Math.abs(a)*100;
+}
+function rSaludFinanciera(){
+  var cerrados=(S.cierresMes||[]).slice().sort(function(a,b){return a.mesKey.localeCompare(b.mesKey);});
+  var mesActualKey=getMesKeyActual();
+  var yaCerroActual=cerrados.some(function(c){return c.mesKey===mesActualKey;});
+  var meses=cerrados.slice();
+  if(!yaCerroActual){
+    var calcAct=calcMesCompleto(mesActualKey);
+    var pA=mesActualKey.split("-");
+    meses.push({mesKey:mesActualKey,mesLabel:getMesLabel(pA[1],pA[0])+" (en curso)",
+      ganBrutaTotal:calcAct.ganBrutaTotal,ganBrl:calcAct.ganBrl,ganVzla:calcAct.ganVzla,ganEE:calcAct.ganEEBruta,
+      utilidadEmpresa:calcAct.utilidadEmpresa,sueldo:calcAct.sueldo,
+      netoFinal:Math.round((calcAct.utilidadEmpresa-calcAct.sueldo)*100)/100,
+      totalOps:calcAct.ops,egPag:calcAct.egEmpPag,enCurso:true});
+  }
+
+  if(meses.length<2){
+    return "<div style='padding:8px'><div style='background:#fff;border-radius:16px;box-shadow:0 1px 4px rgba(20,30,60,.06);padding:24px;text-align:center'>"+
+      "<div style='font-size:32px;margin-bottom:10px'>🩺</div>"+
+      "<div style='font-size:14px;font-weight:800;color:#1a3558;margin-bottom:6px'>Todavía no hay suficiente historial</div>"+
+      "<div style='font-size:12px;color:#888;line-height:1.5'>Necesito al menos 2 meses de datos (idealmente con algún mes ya cerrado en Cierre Mensual) para poder detectar tendencias reales y darte un análisis confiable.<br><br>Sigue registrando operaciones y cerrando tus meses — este panel se va a ir llenando solo.</div>"+
+    "</div></div>";
+  }
+
+  var ult=meses.slice(-12);
+  var netos=ult.map(function(m){return parseFloat(m.netoFinal)||0;});
+  var brutos=ult.map(function(m){return parseFloat(m.ganBrutaTotal)||0;});
+  var gastos=ult.map(function(m){return parseFloat(m.egPag)||0;});
+  var ops=ult.map(function(m){return parseInt(m.totalOps)||0;});
+  var margenes=ult.map(function(m,i){return brutos[i]>0?(netos[i]/brutos[i]*100):0;});
+  var gxOp=ult.map(function(m,i){return ops[i]>0?(brutos[i]/ops[i]):0;});
+
+  var tendNeto=_tendenciaPct(netos), tendBruto=_tendenciaPct(brutos), tendGasto=_tendenciaPct(gastos),
+      tendOps=_tendenciaPct(ops), tendGxOp=_tendenciaPct(gxOp);
+  var ultN=netos.slice(-3);
+  var mesesNeg=ultN.filter(function(x){return x<0;}).length;
+
+  var reg=_linReg(netos);
+  var proy=[1,2,3].map(function(k){return Math.round((reg.intercept+reg.slope*(netos.length-1+k))*100)/100;});
+
+  var veredicto,vColor,vIcon,vBg;
+  if(mesesNeg>=2){veredicto="En riesgo — necesita atención ahora";vColor="#c0392b";vBg="linear-gradient(135deg,#8b2f2f,#5c1f1f)";vIcon="🔴";}
+  else if(tendNeto!==null&&tendNeto<-15){veredicto="Señales de desaceleración";vColor="#e67e22";vBg="linear-gradient(135deg,#8a5a1f,#5c3a12)";vIcon="🟠";}
+  else if(tendNeto!==null&&tendNeto>10){veredicto="Saludable y en crecimiento";vColor="#0f6e3a";vBg="linear-gradient(135deg,#1a3558,#132840)";vIcon="🟢";}
+  else{veredicto="Estable";vColor="#2c6e9e";vBg="linear-gradient(135deg,#1a3558,#132840)";vIcon="🔵";}
+
+  function pctStr(v){return v===null?"sin datos suficientes":((v>=0?"+":"")+f2(v)+"%");}
+  function pctColor(v,inverso){if(v===null)return"#999";var bueno=inverso?v<0:v>0;return bueno?"#0f6e3a":"#c0392b";}
+
+  // ── Recomendaciones basadas en reglas, sobre tus números reales ──
+  var recs=[];
+  if(mesesNeg>=2) recs.push("🔴 Llevas "+mesesNeg+" de los últimos 3 meses con resultado neto negativo. Antes de pensar en crecer, hay que frenar la sangría — revisa qué gasto fijo se puede pausar o renegociar este mes.");
+  if(tendGasto!==null&&tendGasto>15&&(tendBruto===null||tendGasto>tendBruto+5)) recs.push("⚠️ Tus gastos fijos están creciendo más rápido que tu ganancia bruta ("+pctStr(tendGasto)+" vs "+pctStr(tendBruto)+"). Si sigue así, en unos meses los gastos se comen buena parte de lo que ganas.");
+  if(tendGxOp!==null&&tendGxOp<-10) recs.push("📉 Estás ganando "+pctStr(Math.abs(tendGxOp)).replace("+","")+" menos por cada operación que antes. Puede ser la tasa de cambio, más competencia, o más operaciones chicas. Vale la pena revisar tus márgenes por ruta.");
+  if(tendOps!==null&&tendOps>15&&tendGxOp!==null&&tendGxOp<0) recs.push("📊 Estás haciendo "+pctStr(tendOps)+" más operaciones, pero ganando menos en cada una. Estás creciendo en volumen, no necesariamente en rentabilidad — no siempre es lo mismo.");
+  if(margenes[margenes.length-1]<10&&brutos[brutos.length-1]>0) recs.push("💡 Tu margen neto de este mes es "+f2(margenes[margenes.length-1])+"%, bastante ajustado. En cambio de divisas/remesas, un margen saludable suele rondar 15-25%.");
+  var ultimo=ult[ult.length-1];
+  var totalRutas=(ultimo.ganBrl||0)+(ultimo.ganVzla||0)+(ultimo.ganEE||0);
+  if(totalRutas>0){
+    var mayor=Math.max(ultimo.ganBrl||0,ultimo.ganVzla||0,ultimo.ganEE||0);
+    var shareMayor=mayor/totalRutas*100;
+    if(shareMayor>75) recs.push("🎯 Más del "+f2(shareMayor)+"% de tu ganancia de este mes viene de una sola ruta. Es un riesgo de concentración: si esa ruta se ve afectada (regulación, tasa, competencia), te pega fuerte. Diversificar rutas/clientes reduce ese riesgo.");
+  }
+  if(recs.length===0) recs.push("✅ No detecto señales de alerta claras en tus números recientes. Sigue registrando bien cada mes — mientras más historial tenga, más preciso se vuelve este análisis.");
+
+  // ── Gráfico de barras: utilidad neta por mes (CSS, sin dependencias) ──
+  var maxAbs=Math.max.apply(null,netos.map(Math.abs).concat([1]));
+  var barras=ult.map(function(m,i){
+    var v=netos[i];
+    var alto=Math.max(4,Math.round(Math.abs(v)/maxAbs*70));
+    var esNeg=v<0;
+    return "<div style='display:flex;flex-direction:column;align-items:center;flex:1;min-width:0'>"+
+      "<div style='font-size:8px;color:#9aa3b5;margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%'>"+(v>=0?"+":"")+f0(v)+"</div>"+
+      "<div style='width:100%;max-width:26px;height:70px;display:flex;align-items:flex-end;justify-content:center'>"+
+        "<div style='width:100%;height:"+alto+"px;background:"+(esNeg?"#e74c3c":"#0f6e3a")+";border-radius:5px 5px 0 0'></div>"+
+      "</div>"+
+      "<div style='font-size:8px;color:#b8c0d4;margin-top:4px;white-space:nowrap;font-weight:600'>"+(m.mesLabel||"").replace(" (en curso)"," ⏳").split(" ")[0].slice(0,3)+"</div>"+
+    "</div>";
+  }).join("");
+
+  function vitalCard(icon,label,val,sub,color){
+    return "<div style='background:#fff;border-radius:14px;box-shadow:0 1px 3px rgba(20,30,60,.07);padding:12px 14px'>"+
+      "<div style='font-size:9px;color:#9aa3b5;font-weight:700;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px'>"+icon+" "+label+"</div>"+
+      "<div style='font-size:17px;font-weight:900;color:"+color+"'>"+val+"</div>"+
+      (sub?"<div style='font-size:9.5px;color:#9aa3b5;margin-top:2px'>"+sub+"</div>":"")+
+    "</div>";
+  }
+
+  return "<div style='padding:8px'>"+
+    "<div style='background:#fff;border-radius:18px;box-shadow:0 1px 4px rgba(20,30,60,.06);padding:18px;margin-bottom:12px'>"+
+      "<div style='display:flex;align-items:center;gap:10px;margin-bottom:4px'>"+
+        "<div style='width:34px;height:34px;border-radius:11px;background:#F3F0FF;display:flex;align-items:center;justify-content:center;font-size:17px'>🩺</div>"+
+        "<div><div style='font-size:14px;font-weight:800;color:#16233d'>Salud Financiera del Negocio</div>"+
+        "<div style='font-size:10px;color:#9aa3b5'>Análisis de tendencias, no de contabilidad — basado en tus últimos "+ult.length+" meses</div></div>"+
+      "</div>"+
+    "</div>"+
+    "<div style='background:"+vBg+";border-radius:16px;padding:16px 18px;margin-bottom:12px;box-shadow:0 4px 14px rgba(19,40,64,.2)'>"+
+      "<div style='font-size:10px;color:rgba(255,255,255,.6);font-weight:700;text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px'>Diagnóstico general</div>"+
+      "<div style='font-size:19px;font-weight:900;color:#fff'>"+vIcon+" "+veredicto+"</div>"+
+      "<div style='font-size:11px;color:rgba(255,255,255,.7);margin-top:6px;line-height:1.4'>"+
+        (mesesNeg>=2?(mesesNeg+" de los últimos 3 meses cerraron en negativo."):
+         tendNeto!==null?("Tu utilidad neta "+(tendNeto>=0?"subió":"bajó")+" "+f2(Math.abs(tendNeto))+"% frente al período anterior."):
+         "Todavía acumulando historial suficiente para medir la tendencia con precisión.")+
+      "</div>"+
+    "</div>"+
+    "<div style='background:#fff;border-radius:16px;box-shadow:0 1px 3px rgba(20,30,60,.07);padding:14px 12px;margin-bottom:12px'>"+
+      "<div style='font-size:11px;font-weight:800;color:#1a3558;margin-bottom:10px;padding-left:2px'>Utilidad neta por mes (USDT)</div>"+
+      "<div style='display:flex;align-items:flex-end;gap:4px'>"+barras+"</div>"+
+    "</div>"+
+    "<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px'>"+
+      vitalCard("💰","Margen neto",f2(margenes[margenes.length-1])+"%","% de la ganancia bruta que queda limpio",margenes[margenes.length-1]>=15?"#0f6e3a":margenes[margenes.length-1]>=0?"#e67e22":"#c0392b")+
+      vitalCard("📈","Ganancia bruta",pctStr(tendBruto),"vs. período anterior",pctColor(tendBruto))+
+      vitalCard("💸","Gastos fijos",pctStr(tendGasto),"vs. período anterior",pctColor(tendGasto,true))+
+      vitalCard("🎯","$ por operación",pctStr(tendGxOp),"eficiencia por transacción",pctColor(tendGxOp))+
+      vitalCard("📊","Volumen (ops)",pctStr(tendOps),"cantidad de operaciones",pctColor(tendOps))+
+      vitalCard("🧾","Meses en negativo",mesesNeg+" de 3","últimos 3 meses",mesesNeg>=2?"#c0392b":mesesNeg===1?"#e67e22":"#0f6e3a")+
+    "</div>"+
+    "<div style='background:#fff;border-radius:16px;box-shadow:0 1px 3px rgba(20,30,60,.07);padding:16px;margin-bottom:12px'>"+
+      "<div style='font-size:12px;font-weight:800;color:#1a3558;margin-bottom:10px'>💡 Recomendaciones</div>"+
+      recs.map(function(r){return "<div style='font-size:12px;color:#3a4a63;line-height:1.5;padding:8px 0;border-bottom:1px solid #f5f5f5'>"+r+"</div>";}).join("")+
+    "</div>"+
+    "<div style='background:#fff;border-radius:16px;box-shadow:0 1px 3px rgba(20,30,60,.07);padding:16px;margin-bottom:12px'>"+
+      "<div style='font-size:12px;font-weight:800;color:#1a3558;margin-bottom:4px'>🔮 Proyección — próximos 3 meses</div>"+
+      "<div style='font-size:10px;color:#9aa3b5;margin-bottom:10px;line-height:1.4'>Estimación simple basada solo en tu tendencia histórica reciente (regresión lineal). No es una promesa — no considera cambios de tasa, temporada, o decisiones nuevas que tomes.</div>"+
+      "<div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px'>"+
+        proy.map(function(v,i){
+          return "<div style='background:"+(v>=0?"#F3FAF5":"#FDF4F4")+";border-radius:10px;padding:10px;text-align:center'>"+
+            "<div style='font-size:9px;color:#9aa3b5;font-weight:700'>Mes +"+(i+1)+"</div>"+
+            "<div style='font-size:15px;font-weight:900;color:"+(v>=0?"#0f6e3a":"#c0392b")+";margin-top:3px'>"+(v>=0?"+":"")+f0(v)+"</div>"+
+          "</div>";
+        }).join("")+
+      "</div>"+
+    "</div>"+
+    "<div style='font-size:9.5px;color:#b8c0d4;text-align:center;padding:6px 20px;line-height:1.4'>Este análisis es orientativo — se basa exclusivamente en los datos que ya registraste. Mientras más meses cierres correctamente, más confiable se vuelve.</div>"+
+  "</div>";
 }
 
 
@@ -7664,6 +7828,7 @@ function rMain(){
   else if(S.tab==="dash_eeuu")     body=isAdmin?rDashEE():"";
   else if(S.tab==="diario")        body=isAdmin?tp("diario",rDiario,"Diario"):"";
   else if(S.tab==="evolucion")     body=isAdmin?tp("evolucion",rEvolucion,"Evolución"):"";
+  else if(S.tab==="salud_financiera") body=isAdmin?tp("evolucion",rSaludFinanciera,"Salud Financiera"):"";
   else if(S.tab==="cierre")        body=isAdmin?tp("cierre",rInformeCierre,"Cierre Mensual"):"";
   else if(S.tab==="ops")           body=isAdmin?tp("ops",rTblUnificada,"Operaciones"):"";
   else if(S.tab==="brl")           body=isAdmin?tp("ops",function(){return rTbl(S.brl,"brl");},"BRL"):"";
