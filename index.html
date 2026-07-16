@@ -133,9 +133,9 @@ td{color:var(--ink);border-bottom:1px solid rgba(255,255,255,.04) !important;}
 .btn-red{background:var(--neg) !important;color:#fff !important;}
 .edit-btn:hover{background:rgba(255,163,28,.15) !important;}
 .del-btn{border:1px solid rgba(239,68,68,.3);background:transparent;color:#ef4444;}
-.result-box{background:#0f1320 !important;border:1px solid var(--line) !important;}
+.result-box{background:#0f1320;border:1px solid var(--line);}
 .result-box.gain{border-color:rgba(34,197,94,.3) !important;background:rgba(34,197,94,.06) !important;}
-.step-box{background:#0f1320 !important;border:1px solid var(--line) !important;}
+.step-box{background:#0f1320;border:1px solid var(--line);}
 .login-bg{background:var(--bg) !important;}
 
 .bd{background:var(--brandSoft);color:var(--brand);}
@@ -1946,9 +1946,13 @@ function rBalancePlus(){
   "<div class='fl'><label>Moneda</label><select onchange='S.nCap.moneda=this.value;R()'>"+monedaOpts+"</select></div></div>"+
   "<div class='f2'><div class='fl'><label>Saldo actual ("+nc.moneda+")</label><input type='number' step='0.01' placeholder='0.00' value='"+(nc.saldo||"")+"' oninput='S.nCap.saldo=this.value'></div>"+
   "<div class='fl'><label>Nota</label><input type='text' placeholder='ej: cuenta principal' value='"+(nc.nota||"")+"' oninput='S.nCap.nota=this.value'></div></div>"+
-  "<label style='display:flex;align-items:center;gap:8px;margin-bottom:12px;padding:9px 12px;background:#F3F0FF;border-radius:9px;cursor:pointer'>"+
+  "<label style='display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:9px 12px;background:#F3F0FF;border-radius:9px;cursor:pointer'>"+
     "<input type='checkbox' "+(nc.esPersonal?"checked":"")+" onchange='S.nCap.esPersonal=this.checked'>"+
     "<span style='font-size:12px'><b>💜 Es mi cuenta personal</b> — el dinero es mío, no de la empresa. Los gastos pagados desde aquí NO se restan del sueldo teórico ni afectan el cierre de mes.</span>"+
+  "</label>"+
+  "<label style='display:flex;align-items:center;gap:8px;margin-bottom:12px;padding:9px 12px;background:#E8F0FE;border-radius:9px;cursor:pointer'>"+
+    "<input type='checkbox' "+(nc.esJuridica?"checked":"")+" onchange='S.nCap.esJuridica=this.checked'>"+
+    "<span style='font-size:12px'><b>🏛️ Es una cuenta jurídica (CNPJ)</b> — cuenta a nombre de la empresa registrada, no a tu nombre personal. Solo es una etiqueta para identificarla; sigue contando como cuenta de empresa en todos los totales.</span>"+
   "</label>"+
   "<button class='btn-main btn-blue' onclick='saveNewCuenta()'>💾 Agregar cuenta</button></div>"
   );
@@ -1996,6 +2000,23 @@ function toggleCuentaPersonal(cid){
   if(!confirm(msg)) return;
   c.esPersonal=nuevoEstado;
   logAudit("CUENTA_PERSONAL",c.nombre+" → esPersonal="+nuevoEstado);
+  saveData();R();
+}
+// Marca una cuenta como jurídica (CNPJ) de la empresa — para diferenciarla de
+// las cuentas informales/personales-de-nombre que se usan para el negocio.
+// No cambia ningún cálculo (una cuenta jurídica sigue siendo 100% empresa,
+// igual que las demás no-personales); es solo una etiqueta informativa para
+// que tú y el contador identifiquen cuáles cuentas están a nombre del CNPJ.
+function toggleCuentaJuridica(cid){
+  var c=(S.cuentas||[]).find(function(x){return x.id===cid;});
+  if(!c) return;
+  var nuevoEstado=!c.esJuridica;
+  var msg=nuevoEstado?
+    "🏛️ Marcar \""+c.nombre+"\" como cuenta JURÍDICA (CNPJ) de la empresa.\n\nEsto es solo una etiqueta para identificarla — sigue contando como cuenta de empresa en todos los totales, igual que antes.\n\n¿Confirmar?":
+    "Quitar la marca de jurídica a \""+c.nombre+"\".\n\n¿Confirmar?";
+  if(!confirm(msg)) return;
+  c.esJuridica=nuevoEstado;
+  logAudit("CUENTA_JURIDICA",c.nombre+" → esJuridica="+nuevoEstado);
   saveData();R();
 }
 
@@ -2132,8 +2153,8 @@ function deleteCuenta(id){
 function saveNewCuenta(){
   var f=S.nCap;
   if(!f.nombre||!f.moneda){alert("Completa nombre y moneda.");return;}
-  S.cuentas.push({id:"c"+Date.now(),nombre:f.nombre,tipo:f.tipo||"banco",moneda:f.moneda,saldo:parseFloat(f.saldo)||0,nota:f.nota||"",activa:true,esPersonal:!!f.esPersonal});
-  S.nCap={nombre:"",tipo:"banco",moneda:"USDT",saldo:"",nota:"",esPersonal:false};
+  S.cuentas.push({id:"c"+Date.now(),nombre:f.nombre,tipo:f.tipo||"banco",moneda:f.moneda,saldo:parseFloat(f.saldo)||0,nota:f.nota||"",activa:true,esPersonal:!!f.esPersonal,esJuridica:!!f.esJuridica});
+  S.nCap={nombre:"",tipo:"banco",moneda:"USDT",saldo:"",nota:"",esPersonal:false,esJuridica:false};
   saveData();R();
 }
 
@@ -3875,6 +3896,7 @@ function rConfigAdmin(){
             "<div style=\'font-size:13px;font-weight:700;color:"+(inac?"#999":isNeg?"#c0392b":"#1a3558")+"\'>"+
               (tipoIco[c.tipo||"fiat"]||"🏦")+" "+(inac?"<s>":"")+c.nombre+(inac?"</s>":"")+
               (c.esPersonal?" <span style=\'font-size:9px;font-weight:700;background:#F3F0FF;color:#7c3aed;padding:1px 7px;border-radius:8px;vertical-align:middle\'>💜 Personal</span>":"")+
+              (c.esJuridica?" <span style=\'font-size:9px;font-weight:700;background:#E8F0FE;color:#1a5fb4;padding:1px 7px;border-radius:8px;vertical-align:middle\'>🏛️ PJ (CNPJ)</span>":"")+
             "</div>"+
             "<div style=\'font-size:10px;color:#aaa;margin-top:2px\'>"+(c.tipo||"")+(c.operador&&c.operador!=="general"?" · "+c.operador:"")+"</div>"+
           "</div>"+
@@ -3893,6 +3915,8 @@ function rConfigAdmin(){
             "style=\'padding:6px 9px;border:1.5px solid #d0d8ff;border-radius:8px;font-size:12px;cursor:pointer;background:#EEF3FF\'>✏️</button>"+
           "<button onclick=\'toggleCuentaPersonal(\""+c.id+"\")\' title=\'"+(c.esPersonal?"Cuenta personal — click para quitar marca":"Marcar como cuenta personal (mi propia plata)")+"\' "+
             "style=\'padding:6px 9px;border:1.5px solid "+(c.esPersonal?"#c4b5fd":"#e8e8e8")+";border-radius:8px;font-size:12px;cursor:pointer;background:"+(c.esPersonal?"#F3F0FF":"#f8f8f8")+"\'>"+(c.esPersonal?"💜":"🤍")+"</button>"+
+          "<button onclick=\'toggleCuentaJuridica(\""+c.id+"\")\' title=\'"+(c.esJuridica?"Cuenta jurídica (CNPJ) — click para quitar marca":"Marcar como cuenta jurídica (CNPJ) de la empresa")+"\' "+
+            "style=\'padding:6px 9px;border:1.5px solid "+(c.esJuridica?"#a8c5f0":"#e8e8e8")+";border-radius:8px;font-size:12px;cursor:pointer;background:"+(c.esJuridica?"#E8F0FE":"#f8f8f8")+"\'>🏛️</button>"+
           "<button data-cid=\'"+c.id+"\' onclick=\'toggleCuenta(this)\' title=\'"+(inac?"Reactivar":"Pausar")+"\' "+
             "style=\'padding:6px 9px;border:1.5px solid #e8e8e8;border-radius:8px;font-size:12px;cursor:pointer;background:"+(inac?"#D6F5E3":"#fff8dc")+"\'>"+
             (inac?"▶️":"⏸")+"</button>"+
@@ -4443,7 +4467,7 @@ function rCapitalTotal(){
       "<div style='display:flex;align-items:center;padding:11px 12px;gap:8px;background:"+(usdt===null?"#FFFBEA":isEditOpen?"#F0F4FF":"#fff")+"'>"+
         "<div style='font-size:15px;flex-shrink:0'>"+ic+"</div>"+
         "<div style='flex:1;min-width:0'>"+
-          "<div style='font-size:12px;font-weight:700;color:#1a3558;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>"+item.nombre+(item.esPersonal?" <span style='font-size:9px;font-weight:700;background:#F3F0FF;color:#7c3aed;padding:1px 6px;border-radius:7px'>💜</span>":"")+"</div>"+
+          "<div style='font-size:12px;font-weight:700;color:#1a3558;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>"+item.nombre+(item.esPersonal?" <span style='font-size:9px;font-weight:700;background:#F3F0FF;color:#7c3aed;padding:1px 6px;border-radius:7px'>💜</span>":"")+(item.esJuridica?" <span style='font-size:9px;font-weight:700;background:#E8F0FE;color:#1a5fb4;padding:1px 6px;border-radius:7px'>🏛️ PJ</span>":"")+"</div>"+
           "<div style='font-size:10px;color:#aaa'>"+item.moneda+(fuenteTasa?" · "+fuenteTasa:"")+"</div>"+
         "</div>"+
         "<div style='text-align:right;flex-shrink:0'>"+
@@ -8499,8 +8523,8 @@ function rInformeCierre(){
   // por categoría. Se recalcula en cada render, así que se actualiza solo
   // al eliminar o agregar cualquier movimiento — no requiere guardar nada aparte.
   function _flujoCuentaMes(cuentaId, mk){
-    var e={clientes:0,prestamos:0,cuentasCobrar:0,ventaUsdt:0};
-    var s={clientes:0,egresos:0,prestamos:0,compraUsdt:0};
+    var e={clientes:0,prestamos:0,cuentasCobrar:0,ventaUsdt:0,traspasos:0};
+    var s={clientes:0,egresos:0,prestamos:0,compraUsdt:0,traspasos:0};
     // Remesas: cuentaBanco = entra el pago del cliente · cuentaDest = sale para entregarle al destinatario
     [].concat(S.brl||[],S.vzla||[],S.eeuu||[]).forEach(function(r){
       if(mesKeyDe(r.d)!==mk) return;
@@ -8534,9 +8558,17 @@ function rInformeCierre(){
       if(iu.tipo==="compra" && iu.cuentaOrigenId===cuentaId) s.compraUsdt+=(parseFloat(iu.montOrigen)||0);
       if(iu.tipo==="venta" && iu.cuentaId===cuentaId) e.ventaUsdt+=(parseFloat(iu.bs)||0);
     });
+    // Traspasos entre cuentas propias: si sale de esta cuenta es salida real
+    // de caja de ESTA cuenta (aunque el dinero siga siendo de la empresa);
+    // si entra a esta cuenta, es entrada real de esta cuenta.
+    (S.traspasos||[]).forEach(function(t){
+      if(mesKeyDeISO(t.fecha)!==mk) return;
+      if(t.origen===cuentaId) s.traspasos+=(parseFloat(t.monto)||0);
+      if(t.destino===cuentaId) e.traspasos+=(parseFloat(t.monto)||0);
+    });
     return {entradas:e,salidas:s,
-      totalE:e.clientes+e.prestamos+e.cuentasCobrar+e.ventaUsdt,
-      totalS:s.clientes+s.prestamos+s.egresos+s.compraUsdt};
+      totalE:e.clientes+e.prestamos+e.cuentasCobrar+e.ventaUsdt+e.traspasos,
+      totalS:s.clientes+s.prestamos+s.egresos+s.compraUsdt+s.traspasos};
   }
   function mesKeyDe(dstr){ // "dd/mm/yy" -> "yyyy-mm"
     if(!dstr) return "";
@@ -8558,6 +8590,7 @@ function rInformeCierre(){
     if(!val) return "";
     return "<div style='display:flex;justify-content:space-between;font-size:10.5px;padding:2px 0'><span style='color:#888'>"+lbl+"</span><b style='color:"+col+"'>"+val.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+"</b></div>";
   }
+  var _mIcCur={USDT:"💰",BRL:"🇧🇷",VES:"🇻🇪",USD:"🇺🇸",EUR:"🇪🇺",COP:"🇨🇴",PEN:"🇵🇪",TTD:"🇹🇹"};
   function secBancos(){
     var cuentasAct=(S.cuentas||[]).filter(function(c){return c.activa!==false&&!c.esPersonal;});
     egEmpM.filter(function(e){return e.pagada&&e.cuentaId;}).forEach(function(e){egPorCuenta[e.cuentaId]=(egPorCuenta[e.cuentaId]||0)+(parseFloat(e.usdt)||0);});
@@ -8570,37 +8603,43 @@ function rInformeCierre(){
       var egsC=egPorCuenta[c.id]||0;
       var fl=_flujoCuentaMes(c.id,mesKey);
       var flAbierto=S["_flujoAbierto_"+c.id];
-      return "<div style='background:"+(isNeg?"#FDECEA":"#fff")+";border:1.5px solid "+(isNeg?"#e74c3c":"#eee")+";border-radius:11px;padding:12px 14px;margin-bottom:8px'>"+
-        "<div style='display:flex;justify-content:space-between;align-items:flex-start;gap:8px'>"+
-          "<div><div style='font-size:13px;font-weight:800;color:#1a3558'>"+c.nombre+"</div>"+
-            "<div style='font-size:10px;color:#aaa;margin-top:2px'>"+c.moneda+(c.tipo?" · "+c.tipo:"")+"</div></div>"+
-          "<div style='text-align:right'>"+
-            "<div style='font-size:16px;font-weight:800;color:"+(isNeg?"#c0392b":"#0f6e3a")+"'>"+f2(parseFloat(c.saldo)||0)+" "+c.moneda+"</div>"+
-            (usdtEq!==null&&c.moneda!=="USDT"?"<div style='font-size:10px;color:#0a3d7c'>≈ $"+f2(usdtEq)+" USDT</div>":"")+
+      var accent=isNeg?"#e74c3c":"#0f6e3a";
+      return "<div style='background:#fff;border-radius:16px;box-shadow:0 1px 3px rgba(20,30,60,.08);padding:0;margin-bottom:10px;overflow:hidden;border:1px solid #f0f1f5'>"+
+        "<div style='display:flex;align-items:center;gap:12px;padding:14px 16px'>"+
+          "<div style='width:38px;height:38px;border-radius:12px;background:"+(isNeg?"#FDECEA":"#EEF6F0")+";display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0'>"+(_mIcCur[c.moneda]||"🏦")+"</div>"+
+          "<div style='flex:1;min-width:0'>"+
+            "<div style='font-size:13.5px;font-weight:800;color:#1a3558;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'>"+c.nombre+(c.esJuridica?" <span style='font-size:8.5px;font-weight:700;background:#E8F0FE;color:#1a5fb4;padding:1px 6px;border-radius:6px;vertical-align:middle'>🏛️ CNPJ</span>":"")+"</div>"+
+            "<div style='font-size:9.5px;color:#9aa3b5;font-weight:600;text-transform:uppercase;letter-spacing:.3px;margin-top:1px'>"+c.moneda+(c.tipo?" · "+c.tipo:"")+"</div>"+
+          "</div>"+
+          "<div style='text-align:right;flex-shrink:0'>"+
+            "<div style='font-size:18px;font-weight:900;color:"+(isNeg?"#c0392b":"#16233d")+";letter-spacing:-.3px'>"+(isNeg?"−":"")+f2(Math.abs(parseFloat(c.saldo)||0))+"</div>"+
+            (usdtEq!==null&&c.moneda!=="USDT"?"<div style='font-size:10px;color:#7c8aa8;font-weight:600;margin-top:1px'>≈ $"+f2(usdtEq)+" USDT</div>":"")+
           "</div>"+
         "</div>"+
-        (egsC>0?"<div style='font-size:10px;color:#c0392b;margin-top:7px;background:#fff5f5;border-radius:6px;padding:4px 8px'>Salieron en egresos: −$"+f2(egsC)+" USDT</div>":"")+
-        (isNeg?"<div style='font-size:10px;background:#c0392b;color:#fff;border-radius:6px;padding:4px 8px;margin-top:7px;font-weight:700'>⚠️ Saldo negativo — revisar</div>":"")+
-        "<div onclick='S._flujoAbierto_"+c.id+"=!S._flujoAbierto_"+c.id+";R()' style='cursor:pointer;margin-top:8px;padding-top:8px;border-top:1px solid #f0f0f0;display:flex;justify-content:space-between;align-items:center'>"+
-          "<span style='font-size:10.5px;color:#0a3d7c;font-weight:700'>📊 Movimientos del mes en esta cuenta</span>"+
-          "<span style='font-size:11px;color:#bbb'>"+(flAbierto?"▲":"▼")+"</span>"+
+        (egsC>0?"<div style='font-size:10.5px;color:#c0392b;font-weight:600;margin:0 16px 10px;background:#FFF5F5;border-radius:8px;padding:6px 10px'>↓ Salieron en egresos: −$"+f2(egsC)+" USDT</div>":"")+
+        (isNeg?"<div style='font-size:10.5px;background:#e74c3c;color:#fff;border-radius:8px;padding:6px 10px;margin:0 16px 10px;font-weight:700'>⚠️ Saldo negativo — revisar</div>":"")+
+        "<div onclick='S._flujoAbierto_"+c.id+"=!S._flujoAbierto_"+c.id+";R()' style='cursor:pointer;padding:10px 16px;background:#FAFBFD;border-top:1px solid #F0F1F5;display:flex;justify-content:space-between;align-items:center'>"+
+          "<span style='font-size:11px;color:#4a6fa5;font-weight:700'>📊 Movimientos del mes</span>"+
+          "<span style='font-size:10px;color:#b8c0d4;transition:transform .15s'>"+(flAbierto?"▲":"▼")+"</span>"+
         "</div>"+
         (flAbierto?
-          "<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px'>"+
-            "<div style='background:#f0fff4;border-radius:8px;padding:8px 10px'>"+
-              "<div style='font-size:10px;font-weight:800;color:#0f6e3a;margin-bottom:4px'>ENTRADAS · "+fl.totalE.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+"</div>"+
+          "<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:12px 16px'>"+
+            "<div style='background:#F3FAF5;border-radius:10px;padding:10px 12px'>"+
+              "<div style='font-size:9.5px;font-weight:800;color:#0f6e3a;text-transform:uppercase;letter-spacing:.3px;margin-bottom:5px'>↑ Entradas · "+fl.totalE.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+"</div>"+
               flujoRow("Pagos de clientes",fl.entradas.clientes,"#0f6e3a")+
               flujoRow("Préstamos cobrados",fl.entradas.prestamos,"#0f6e3a")+
               flujoRow("Cuentas por cobrar",fl.entradas.cuentasCobrar,"#0f6e3a")+
               flujoRow("Venta de USDT",fl.entradas.ventaUsdt,"#0f6e3a")+
+              flujoRow("Traspasos recibidos",fl.entradas.traspasos,"#0f6e3a")+
               (fl.totalE===0?"<div style='font-size:10px;color:#bbb'>Sin entradas este mes</div>":"")+
             "</div>"+
-            "<div style='background:#fff5f5;border-radius:8px;padding:8px 10px'>"+
-              "<div style='font-size:10px;font-weight:800;color:#c0392b;margin-bottom:4px'>SALIDAS · "+fl.totalS.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+"</div>"+
+            "<div style='background:#FDF4F4;border-radius:10px;padding:10px 12px'>"+
+              "<div style='font-size:9.5px;font-weight:800;color:#c0392b;text-transform:uppercase;letter-spacing:.3px;margin-bottom:5px'>↓ Salidas · "+fl.totalS.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+"</div>"+
               flujoRow("Entregas a clientes",fl.salidas.clientes,"#c0392b")+
               flujoRow("Egresos / suscripciones",fl.salidas.egresos,"#c0392b")+
               flujoRow("Préstamos entregados",fl.salidas.prestamos,"#c0392b")+
               flujoRow("Compra de USDT",fl.salidas.compraUsdt,"#c0392b")+
+              flujoRow("Traspasos enviados",fl.salidas.traspasos,"#c0392b")+
               (fl.totalS===0?"<div style='font-size:10px;color:#bbb'>Sin salidas este mes</div>":"")+
             "</div>"+
           "</div>"
@@ -8608,10 +8647,10 @@ function rInformeCierre(){
       "</div>";
     }).join("");
     return rows+
-      "<div style='background:#1a3558;border-radius:11px;padding:12px 14px;color:#fff;display:flex;justify-content:space-between;align-items:center;margin-top:4px'>"+
-        "<div><div style='font-size:11px;color:#FFA31C;font-weight:700'>TOTAL EN TODAS LAS CUENTAS</div>"+
-        "<div style='font-size:10px;opacity:.6;margin-top:2px'>Incluye inventario USDT ($"+f2(invUsdtSec)+") + equivalente de todas las cuentas</div></div>"+
-        "<div style='font-size:24px;font-weight:900;color:#FFA31C'>$"+f2(totalUsdt)+"</div>"+
+      "<div style='background:linear-gradient(135deg,#1a3558,#132840);border-radius:16px;padding:16px 18px;color:#fff;display:flex;justify-content:space-between;align-items:center;margin-top:8px;box-shadow:0 4px 14px rgba(19,40,64,.25)'>"+
+        "<div><div style='font-size:10px;color:#FFA31C;font-weight:800;text-transform:uppercase;letter-spacing:.4px'>💎 Total en todas las cuentas</div>"+
+        "<div style='font-size:10px;color:rgba(255,255,255,.5);margin-top:3px'>Incluye inventario USDT ($"+f2(invUsdtSec)+") + equivalente de todas las cuentas</div></div>"+
+        "<div style='font-size:26px;font-weight:900;color:#FFD700;letter-spacing:-.5px'>$"+f2(totalUsdt)+"</div>"+
       "</div>";
   }
 
@@ -8630,13 +8669,13 @@ function rInformeCierre(){
     return (parseFloat(v)||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
   }
   function secContador(){
-    var cuentasBRL=(S.cuentas||[]).filter(function(c){return c.activa!==false&&c.moneda==="BRL";});
+    var cuentasBRL=(S.cuentas||[]).filter(function(c){return c.activa!==false&&c.moneda==="BRL"&&!c.esPersonal;});
     var flujosPorCuenta=cuentasBRL.map(function(c){return {cuenta:c,flujo:_flujoCuentaMes(c.id,mesKey)};});
     var totalEntradas=flujosPorCuenta.reduce(function(a,x){return a+x.flujo.totalE;},0);
     var totalSalidas=flujosPorCuenta.reduce(function(a,x){return a+x.flujo.totalS;},0);
     var flujoNeto=totalEntradas-totalSalidas;
 
-    var tasaBRLUSDT=getRateToUsdt("BRL")||0;
+    var tasaBRLUSDT=(S._contadorTasaBRL!==undefined&&S._contadorTasaBRL!==""&&S._contadorTasaBRL!==null)?(parseFloat(S._contadorTasaBRL)||0):(getRateToUsdt("BRL")||0);
     var ganBrlUsdt=parseFloat(calc.ganBrl)||0;
     var ganBrlReais=tasaBRLUSDT?ganBrlUsdt*tasaBRLUSDT:0;
     // Gastos fijos y sueldo de la EMPRESA (nunca lo personal) — ya vienen
@@ -8657,9 +8696,7 @@ function rInformeCierre(){
     reporte["Total Entradas (todas as contas BRL)"]=_fmtBRL(totalEntradas);
     reporte["Total Saídas (todas as contas BRL)"]=_fmtBRL(totalSalidas);
     reporte["Fluxo de Caixa Líquido"]=_fmtBRL(flujoNeto);
-    reporte["Lucro das operações BRL↔VZLA (USDT)"]="$"+f2(ganBrlUsdt)+" USDT";
-    reporte["Taxa BRL/USDT usada"]=f4(tasaBRLUSDT);
-    reporte["Lucro Bruto das operações BRL↔VZLA (em Reais)"]=_fmtBRL(ganBrlReais);
+    reporte["Lucro Bruto das Operações (em Reais)"]=_fmtBRL(ganBrlReais);
     reporte["(−) Gastos Fixos da Empresa (em Reais)"]=_fmtBRL(gastosEmpresaReais);
     reporte["(−) Salário (em Reais)"]=_fmtBRL(sueldoReais);
     reporte["Lucro Líquido Final (em Reais)"]=_fmtBRL(lucroFinalReais);
@@ -8667,37 +8704,46 @@ function rInformeCierre(){
 
     function filaCuenta(x){
       var f=x.flujo, c=x.cuenta;
-      return "<div style='background:#fff;border:1.5px solid #eee;border-radius:11px;padding:13px 14px;margin-bottom:8px'>"+
-        "<div style='font-size:12.5px;font-weight:800;color:#1a3558;margin-bottom:8px'>"+c.nombre+"</div>"+
-        "<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px'>"+
-          "<div style='background:#f0fff4;border-radius:7px;padding:7px 9px'><div style='font-size:9px;color:#0f6e3a;font-weight:700'>ENTRADAS</div><div style='font-size:14px;font-weight:800;color:#0f6e3a'>"+_fmtBRL(f.totalE)+"</div></div>"+
-          "<div style='background:#fff5f5;border-radius:7px;padding:7px 9px'><div style='font-size:9px;color:#c0392b;font-weight:700'>SAÍDAS</div><div style='font-size:14px;font-weight:800;color:#c0392b'>"+_fmtBRL(f.totalS)+"</div></div>"+
+      var neto=f.totalE-f.totalS;
+      return "<div style='background:#fff;border-radius:16px;box-shadow:0 1px 3px rgba(20,30,60,.08);border:1px solid #f0f1f5;padding:14px 16px;margin-bottom:10px'>"+
+        "<div style='display:flex;align-items:center;gap:10px;margin-bottom:10px'>"+
+          "<div style='width:32px;height:32px;border-radius:10px;background:#EEF3FF;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0'>🏦</div>"+
+          "<div style='font-size:13px;font-weight:800;color:#1a3558'>"+c.nombre+(c.esJuridica?" <span style='font-size:8.5px;font-weight:700;background:#E8F0FE;color:#1a5fb4;padding:1px 6px;border-radius:6px;vertical-align:middle'>🏛️ CNPJ</span>":"")+"</div>"+
         "</div>"+
-        "<div style='display:flex;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px dashed #eee'><span style='font-size:10px;color:#888'>Flujo neto</span><b style='font-size:12px;color:"+(f.totalE-f.totalS>=0?"#0f6e3a":"#c0392b")+"'>"+_fmtBRL(f.totalE-f.totalS)+"</b></div>"+
+        "<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px'>"+
+          "<div style='background:#F3FAF5;border-radius:10px;padding:8px 10px'><div style='font-size:8.5px;color:#0f6e3a;font-weight:800;text-transform:uppercase;letter-spacing:.3px'>↑ Entradas</div><div style='font-size:15px;font-weight:900;color:#0f6e3a;margin-top:1px'>"+_fmtBRL(f.totalE)+"</div></div>"+
+          "<div style='background:#FDF4F4;border-radius:10px;padding:8px 10px'><div style='font-size:8.5px;color:#c0392b;font-weight:800;text-transform:uppercase;letter-spacing:.3px'>↓ Saídas</div><div style='font-size:15px;font-weight:900;color:#c0392b;margin-top:1px'>"+_fmtBRL(f.totalS)+"</div></div>"+
+        "</div>"+
+        "<div style='display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding-top:8px;border-top:1px dashed #eee'><span style='font-size:10px;color:#9aa3b5;font-weight:600'>Fluxo líquido</span><b style='font-size:13px;color:"+(neto>=0?"#0f6e3a":"#c0392b")+"'>"+_fmtBRL(neto)+"</b></div>"+
       "</div>";
     }
 
-    return "<div style='background:#fff;border:1.5px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px'>"+
-      "<div style='font-size:12px;font-weight:800;color:#1a3558;margin-bottom:4px'>🏦 Flujo de caja real por cuenta (BRL) · "+mesLabel+"</div>"+
-      "<div style='font-size:10.5px;color:#999;margin-bottom:12px'>Entradas y salidas exactas de cada cuenta — debe coincidir con el extracto bancario. Se incluye automáticamente cualquier cuenta en BRL, sin importar cuál sea.</div>"+
+    return "<div style='background:#fff;border-radius:18px;box-shadow:0 1px 4px rgba(20,30,60,.06);padding:18px;margin-bottom:16px'>"+
+      "<div style='display:flex;align-items:center;gap:10px;margin-bottom:4px'>"+
+        "<div style='width:34px;height:34px;border-radius:11px;background:#EEF3FF;display:flex;align-items:center;justify-content:center;font-size:16px'>🏦</div>"+
+        "<div style='font-size:13.5px;font-weight:800;color:#16233d'>Flujo de caja real por cuenta (BRL)</div>"+
+      "</div>"+
+      "<div style='font-size:10.5px;color:#9aa3b5;margin:6px 0 14px;line-height:1.4'>"+mesLabel+" · Entradas y salidas exactas de cada cuenta — debe coincidir con el extracto bancario.</div>"+
       (cuentasBRL.length?flujosPorCuenta.map(filaCuenta).join(""):"<div style='font-size:11px;color:#999'>No tienes ninguna cuenta activa en BRL.</div>")+
       (cuentasBRL.length>1?
-        "<div style='background:#1a3558;border-radius:9px;padding:11px 13px;color:#fff;margin-top:4px'>"+
-          "<div style='font-size:10px;color:#FFA31C;font-weight:700;margin-bottom:4px'>TOTAL — TODAS LAS CUENTAS BRL</div>"+
-          "<div style='display:flex;justify-content:space-between;font-size:12px'><span>Entradas: "+_fmtBRL(totalEntradas)+"</span><span>Saídas: "+_fmtBRL(totalSalidas)+"</span></div>"+
-          "<div style='font-size:16px;font-weight:900;margin-top:4px'>Neto: "+_fmtBRL(flujoNeto)+"</div>"+
+        "<div style='background:linear-gradient(135deg,#1a3558,#132840);border-radius:14px;padding:14px 16px;color:#fff;margin-top:6px;box-shadow:0 4px 14px rgba(19,40,64,.2)'>"+
+          "<div style='font-size:9.5px;color:#FFA31C;font-weight:800;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px'>Total — todas las cuentas BRL</div>"+
+          "<div style='display:flex;justify-content:space-between;font-size:11.5px;color:rgba(255,255,255,.75)'><span>Entradas: "+_fmtBRL(totalEntradas)+"</span><span>Saídas: "+_fmtBRL(totalSalidas)+"</span></div>"+
+          "<div style='font-size:19px;font-weight:900;margin-top:5px;color:#FFD700'>Neto: "+_fmtBRL(flujoNeto)+"</div>"+
         "</div>":"")+
     "</div>"+
-    "<div style='background:#fff;border:1.5px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px'>"+
-      "<div style='font-size:12px;font-weight:800;color:#1a3558;margin-bottom:4px'>💹 Ganancia real de operaciones BRL ↔ VZLA (en Reais)</div>"+
-      "<div style='font-size:10.5px;color:#999;margin-bottom:10px'>Ya con los gastos fijos y sueldo de la empresa descontados (no incluye nada personal) — este es el número final para el contador.</div>"+
-      "<div style='display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#666'>Ganancia bruta en USDT</span><b style='font-size:13px'>$"+f2(ganBrlUsdt)+" USDT</b></div>"+
-      "<div style='display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#666'>Tasa BRL/USDT usada</span><b style='font-size:13px'>"+f4(tasaBRLUSDT)+"</b></div>"+
-      "<div style='display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#0f6e3a;font-weight:700'>Ganancia bruta en Reais</span><b style='font-size:14px;color:#0f6e3a'>"+_fmtBRL(ganBrlReais)+"</b></div>"+
-      "<div style='display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#c0392b'>(−) Gastos fijos de la empresa</span><b style='font-size:13px;color:#c0392b'>"+_fmtBRL(gastosEmpresaReais)+"</b></div>"+
-      "<div style='display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#c0392b'>(−) Sueldo</span><b style='font-size:13px;color:#c0392b'>"+_fmtBRL(sueldoReais)+"</b></div>"+
-      "<div style='display:flex;justify-content:space-between;align-items:center;padding:12px 14px;background:#1a3558;border-radius:8px;margin-top:8px'><span style='font-size:12px;color:#FFA31C;font-weight:700'>Lucro Líquido Final (para el contador)</span><b style='font-size:18px;color:#FFA31C'>"+_fmtBRL(lucroFinalReais)+"</b></div>"+
-      "<button onclick='exportarReporteContadorCSV(\""+mesKey+"\")' style='width:100%;margin-top:12px;padding:11px;background:#0f6e3a;color:#fff;border:none;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>⬇️ Descargar CSV para el contador</button>"+
+    "<div style='background:#fff;border-radius:18px;box-shadow:0 1px 4px rgba(20,30,60,.06);padding:18px;margin-bottom:16px'>"+
+      "<div style='display:flex;align-items:center;gap:10px;margin-bottom:4px'>"+
+        "<div style='width:34px;height:34px;border-radius:11px;background:#F3FAF5;display:flex;align-items:center;justify-content:center;font-size:16px'>💹</div>"+
+        "<div style='font-size:13.5px;font-weight:800;color:#16233d'>Ganancia real de operaciones (en Reais)</div>"+
+      "</div>"+
+      "<div style='font-size:10.5px;color:#9aa3b5;margin:6px 0 14px;line-height:1.4'>Ya con los gastos fijos y sueldo de la empresa descontados (no incluye nada personal) — este es el número final para el contador.</div>"+
+      "<div style='display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#7c8aa8;font-weight:600'>Tasa BRL/USDT usada</span><span style='display:flex;align-items:center;gap:6px'><input type='number' step='0.0001' value='"+(S._contadorTasaBRL!==undefined&&S._contadorTasaBRL!==null?S._contadorTasaBRL:f4(tasaBRLUSDT))+"' oninput='S._contadorTasaBRL=this.value;R()' style='width:80px;font-size:13px;padding:5px 8px;border:1px solid #e2e6ef;border-radius:8px;text-align:right;font-weight:700;color:#1a3558'>"+(S._contadorTasaBRL!==undefined&&S._contadorTasaBRL!==""&&S._contadorTasaBRL!==null?"<button onclick='S._contadorTasaBRL=undefined;R()' style='background:none;border:none;color:#9aa3b5;font-size:10px;cursor:pointer;text-decoration:underline'>usar auto</button>":"")+"</span></div>"+
+      "<div style='display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#0f6e3a;font-weight:700'>Ganancia bruta en Reais</span><b style='font-size:15px;color:#0f6e3a'>"+_fmtBRL(ganBrlReais)+"</b></div>"+
+      "<div style='display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#c0392b;font-weight:600'>(−) Gastos fijos de la empresa</span><b style='font-size:13.5px;color:#c0392b'>"+_fmtBRL(gastosEmpresaReais)+"</b></div>"+
+      "<div style='display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#c0392b;font-weight:600'>(−) Sueldo</span><b style='font-size:13.5px;color:#c0392b'>"+_fmtBRL(sueldoReais)+"</b></div>"+
+      "<div style='display:flex;justify-content:space-between;align-items:center;padding:14px 16px;background:linear-gradient(135deg,#1a3558,#132840);border-radius:14px;margin-top:10px;box-shadow:0 4px 14px rgba(19,40,64,.2)'><span style='font-size:11.5px;color:#FFA31C;font-weight:700;text-transform:uppercase;letter-spacing:.3px'>Lucro Líquido Final</span><b style='font-size:20px;color:#FFD700'>"+_fmtBRL(lucroFinalReais)+"</b></div>"+
+      "<button onclick='exportarReporteContadorCSV(\""+mesKey+"\")' style='width:100%;margin-top:14px;padding:13px;background:#0f6e3a;color:#fff;border:none;border-radius:12px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px rgba(15,110,58,.25)'>⬇️ Descargar CSV para el contador</button>"+
     "</div>"+
     "<div style='background:#FFFBEA;border:1.5px solid #F5C518;border-radius:12px;padding:14px 16px'>"+
       "<div style='font-size:10px;font-weight:800;color:#7a5c00;text-transform:uppercase;margin-bottom:6px'>🔒 Solo para ti — control interno</div>"+
