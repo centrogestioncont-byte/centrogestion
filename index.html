@@ -945,7 +945,7 @@ function cTx(){
   // Para rutas VZLA (VES→BRL): Binance opera en BRL enteros, redondear para que
   // el cálculo de USDT coincida con lo que realmente se libera en Binance P2P
   var cant = isVzla ? (td2>0 ? Math.round(r4(am/td2)) : 0) : Math.floor(r4(am*td2));
-  var rates = getAutoRates(ruta.orig, ruta.dest||"VES", am, cant);
+  var rates = getAutoRates(ruta.orig, ruta.dest||"VES", am, cant, f.cuentaBanco, f.cuentaDest);
   var tc=parseFloat(f.tc_manual)||rates.tc||parseFloat(f.tc)||0;
   var tv=parseFloat(f.tv_manual)||rates.tv||parseFloat(f.tv)||0;
   // Comisión diferenciada: lado VES (exonerada) vs lado fiat extranjero
@@ -964,7 +964,7 @@ function cTx(){
 }
 function cTxE(){
   var f=S.txE,am=parseFloat(f.am)||0,td2=parseFloat(f.tdia)||0;
-  var rates=getAutoRates("USD","VES",am,am*td2);
+  var rates=getAutoRates("USD","VES",am,am*td2,f.cuentaBanco,f.cuentaDest);
   var tc=parseFloat(f.tc_manual)||rates.tc||parseFloat(f.tc)||0;
   var tv=parseFloat(f.tv_manual)||rates.tv||parseFloat(f.tv)||0;
   // EE.UU: compra con USD (comOtr), vende USDT por VES (comVES)
@@ -2536,7 +2536,7 @@ function saveTx(){
   var amS=parseFloat(f.am)||0,tdS=parseFloat(f.tdia)||0;
   // Mismo redondeo que cTx() para que lo guardado coincida con Binance
   var cantS=(ruta.orig==="VES")?(tdS>0?Math.round(r4(amS/tdS)):0):Math.floor(r4(amS*tdS));
-  var rates=getAutoRates(ruta.orig,ruta.dest||"VES",amS,cantS);
+  var rates=getAutoRates(ruta.orig,ruta.dest||"VES",amS,cantS,f.cuentaBanco,f.cuentaDest);
   var tcF=parseFloat(f.tc_manual)||rates.tc||0;
   var tvF=parseFloat(f.tv_manual)||rates.tv||0;
   // tc/tv opcionales — se auto-asignan desde inventario USDT
@@ -2554,10 +2554,10 @@ function saveTx(){
   arr.sort(function(a,b){var da=a.d.split("/"),db=b.d.split("/");return (parseInt(da[1])*100+parseInt(da[0]))-(parseInt(db[1])*100+parseInt(db[0]))||a.n-b.n;});
   registrarMovimientoCapital({fecha:ds(f.date),rutaOrig:ruta.orig,rutaDest:ruta.dest,amOrigen:res.am,amDestino:res.cant,concepto:f.cl+" · "+f.rt,remesaId:nn});
   // Capturar desglose de lotes ANTES de consumir (solo lectura)
-  var _lotesSnap = simularConsumoFIFO(ruta.orig, res.uc, ruta.dest==="VES"?"VES":ruta.dest, res.cant);
+  var _lotesSnap = simularConsumoFIFO(ruta.orig, res.uc, ruta.dest==="VES"?"VES":ruta.dest, res.cant, f.cuentaBanco, f.cuentaDest);
   if(_lotesSnap.compras.length||_lotesSnap.ventas.length) nuevaRemesa._lotesConsumidos=_lotesSnap;
   // Consumir inventario FIFO (más viejo primero): USDT comprados y bolívares de ventas
-  consumirInventarioFIFO(ruta.orig,res.uc,ruta.dest==="VES"?"VES":ruta.dest,res.cant);
+  consumirInventarioFIFO(ruta.orig,res.uc,ruta.dest==="VES"?"VES":ruta.dest,res.cant,f.cuentaBanco,f.cuentaDest);
   // Si la operación RECIBE bolívares o reales (la moneda de origen entra a tu banco),
   // aumentar el saldo disponible del lote de inventario de esa moneda, emparejado con la cuenta donde entró.
   // Ej: una remesa VZLA→BRL hace entrar bolívares (VES) → sube el bsRestante del lote VES de esa cuenta.
@@ -2640,7 +2640,7 @@ function saveTxEE(){
   }
 
   var amE=parseFloat(f.am)||0,tdE=parseFloat(f.tdia)||0;
-  var rates=getAutoRates("USD","VES",amE,amE*tdE);
+  var rates=getAutoRates("USD","VES",amE,amE*tdE,f.cuentaBanco,f.cuentaDest);
   var tcF=parseFloat(f.tc_manual)||rates.tc||0;
   var tvF=parseFloat(f.tv_manual)||rates.tv||0;
   // tc/tv opcionales — se auto-asignan desde inventario USDT
@@ -2657,7 +2657,7 @@ function saveTxEE(){
   S.eeuu.sort(function(a,b){var da=a.d.split("/"),db=b.d.split("/");return (parseInt(da[1])*100+parseInt(da[0]))-(parseInt(db[1])*100+parseInt(db[0]))||a.n-b.n;});
   registrarMovimientoCapital({fecha:ds(f.date),rutaOrig:"USD",rutaDest:"VES",amOrigen:res.am,amDestino:res.cant,concepto:(f.cl||"Cliente")+" · EE.UU",remesaId:nn2});
   // Consumir inventario FIFO (más viejo primero)
-  consumirInventarioFIFO("USD",res.uc,"VES",res.cant);
+  consumirInventarioFIFO("USD",res.uc,"VES",res.cant,f.cuentaBanco,f.cuentaDest);
   // Guardar referencia de tasas para la próxima operación
   // Crear cuenta por cobrar si el pago es pendiente
   if(f.pendiente){
@@ -7279,21 +7279,38 @@ function ordenFIFO(a,b){
   function v(f){if(!f)return 0;var p=String(f).split("/");return (parseInt(p[0],10)||0)*100+(parseInt(p[1],10)||0);}
   return (v(a.fecha)-v(b.fecha))||((a.id||0)-(b.id||0));
 }
-// TC: tasa de la compra MÁS VIEJA con USDT restante (FIFO), sin importar plataforma/operador
-function getLastTasaCompra(moneda){
+// TC: tasa de la compra MÁS VIEJA con USDT restante (FIFO), respetando la cuenta si se indica
+function getLastTasaCompra(moneda,cuentaOrigenId){
   normalizarInventarioFIFO();
-  var arr=S.inventarioUsdt.filter(function(r){return r.tipo==="compra"&&r.moneda===(moneda||"BRL");}).sort(ordenFIFO);
-  if(!arr.length) return null;
-  for(var i=0;i<arr.length;i++){
-    if((parseFloat(arr[i].restante)||0)>0.01) return arr[i].tasa;
+  var mon=moneda||"BRL";
+  var todas=S.inventarioUsdt.filter(function(r){return r.tipo==="compra"&&r.moneda===mon;}).sort(ordenFIFO);
+  if(cuentaOrigenId){
+    var propias=todas.filter(function(r){return r.cuentaOrigenId===cuentaOrigenId;});
+    if(propias.length){
+      for(var p=0;p<propias.length;p++){ if((parseFloat(propias[p].restante)||0)>0.01) return propias[p].tasa; }
+      return propias[propias.length-1].tasa; // esta cuenta ya consumió todo lo suyo → su propia última tasa como referencia
+    }
+    // Esta cuenta nunca ha comprado en esta moneda (cuenta nueva) → cae al pool general de abajo
   }
-  return arr[arr.length-1].tasa; // todo consumido → última como referencia
+  if(!todas.length) return null;
+  for(var i=0;i<todas.length;i++){
+    if((parseFloat(todas[i].restante)||0)>0.01) return todas[i].tasa;
+  }
+  return todas[todas.length-1].tasa; // todo consumido → última como referencia
 }
 // TV: tasa de la venta MÁS VIEJA con bolívares disponibles (FIFO), sin importar plataforma/operador
-function getLastTasaVenta(monedaDest){
+function getLastTasaVenta(monedaDest,cuentaDestinoId){
   normalizarInventarioFIFO();
   var dest=monedaDest||"VES";
   var arr=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda===dest;}).sort(ordenFIFO);
+  if(cuentaDestinoId){
+    var propias=arr.filter(function(r){return r.cuentaDestinoId===cuentaDestinoId;});
+    if(propias.length){
+      for(var p=0;p<propias.length;p++){ if((parseFloat(propias[p].bsRestante)||0)>0.01) return propias[p].tasa; }
+      return propias[propias.length-1].tasa; // esta cuenta ya consumió lo suyo → su propia última tasa
+    }
+    // Esta cuenta nunca ha recibido ventas en esta moneda (cuenta nueva) → sigue con el pool general de abajo
+  }
   if(!arr.length){
     // Sin lote de venta VES: buscar en todas las ventas
     var todas=S.inventarioUsdt.filter(function(r){return r.tipo==="venta";}).sort(ordenFIFO);
@@ -7345,11 +7362,14 @@ function _ultimasTasasCompra(moneda,n){
   }
   return out;
 }
-function consumirInventarioFIFO(monedaOrig, usdtUsados, monedaDest, bsEntregados){
+function consumirInventarioFIFO(monedaOrig, usdtUsados, monedaDest, bsEntregados, cuentaOrigenId, cuentaDestId){
   normalizarInventarioFIFO();
   var u=parseFloat(usdtUsados)||0;
   if(u>0){
-    var compras=S.inventarioUsdt.filter(function(r){return r.tipo==="compra"&&r.moneda===monedaOrig;}).sort(ordenFIFO);
+    var comprasTodas=S.inventarioUsdt.filter(function(r){return r.tipo==="compra"&&r.moneda===monedaOrig;}).sort(ordenFIFO);
+    // Si se indica cuenta, consumir SOLO los lotes de esa cuenta — nunca los de otra
+    // (igual que aumentarLoteRecibido: sin mezclar cuentas, aunque quede sin consumir).
+    var compras=cuentaOrigenId?comprasTodas.filter(function(r){return r.cuentaOrigenId===cuentaOrigenId;}):comprasTodas;
     for(var i=0;i<compras.length&&u>0.0001;i++){
       var disp=parseFloat(compras[i].restante)||0;
       if(disp<=0) continue;
@@ -7360,7 +7380,8 @@ function consumirInventarioFIFO(monedaOrig, usdtUsados, monedaDest, bsEntregados
   }
   var b=parseFloat(bsEntregados)||0;
   if(b>0){
-    var ventas=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda===(monedaDest||"VES");}).sort(ordenFIFO);
+    var ventasTodas=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda===(monedaDest||"VES");}).sort(ordenFIFO);
+    var ventas=cuentaDestId?ventasTodas.filter(function(r){return r.cuentaDestinoId===cuentaDestId;}):ventasTodas;
     for(var k=0;k<ventas.length&&b>0.01;k++){
       var dispB=parseFloat(ventas[k].bsRestante)||0;
       if(dispB<=0) continue;
@@ -7376,12 +7397,13 @@ function consumirInventarioFIFO(monedaOrig, usdtUsados, monedaDest, bsEntregados
 // Usado para guardar _lotesConsumidos en cada remesa (visibilidad, no cálculo).
 // Las funciones de cálculo real (getTasaCompraPonderada, consumirInventarioFIFO)
 // NO se tocan — esto es solo un espejo de lectura para transparencia.
-function simularConsumoFIFO(monedaOrig, usdtUsados, monedaDest, bsEntregados){
+function simularConsumoFIFO(monedaOrig, usdtUsados, monedaDest, bsEntregados, cuentaOrigenId, cuentaDestId){
   normalizarInventarioFIFO();
   var resCompras=[], resVentas=[];
   var u=parseFloat(usdtUsados)||0;
   if(u>0.0001){
-    var compras=S.inventarioUsdt.filter(function(r){return r.tipo==="compra"&&r.moneda===monedaOrig;}).sort(ordenFIFO);
+    var comprasTodas=S.inventarioUsdt.filter(function(r){return r.tipo==="compra"&&r.moneda===monedaOrig;}).sort(ordenFIFO);
+    var compras=cuentaOrigenId?comprasTodas.filter(function(r){return r.cuentaOrigenId===cuentaOrigenId;}):comprasTodas;
     for(var i=0;i<compras.length&&u>0.0001;i++){
       var disp=parseFloat(compras[i].restante)||0;
       if(disp<=0) continue;
@@ -7392,7 +7414,8 @@ function simularConsumoFIFO(monedaOrig, usdtUsados, monedaDest, bsEntregados){
   }
   var b=parseFloat(bsEntregados)||0;
   if(b>0.01){
-    var ventas=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda===(monedaDest||"VES");}).sort(ordenFIFO);
+    var ventasTodas=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda===(monedaDest||"VES");}).sort(ordenFIFO);
+    var ventas=cuentaDestId?ventasTodas.filter(function(r){return r.cuentaDestinoId===cuentaDestId;}):ventasTodas;
     for(var k=0;k<ventas.length&&b>0.01;k++){
       var dispB=parseFloat(ventas[k].bsRestante)||0;
       if(dispB<=0) continue;
@@ -7514,11 +7537,11 @@ function editRestanteInv(id){
   else r.bsRestante=Math.round(v*100)/100;
   saveData();R();
 }
-function getAutoRates(origMoneda,destMoneda,montoOrigen,montoBs){
+function getAutoRates(origMoneda,destMoneda,montoOrigen,montoBs,cuentaOrigenId,cuentaDestinoId){
   var mO=parseFloat(montoOrigen)||0, mB=parseFloat(montoBs)||0;
-  var tc=mO>0?getTasaCompraPonderada(origMoneda,mO):getLastTasaCompra(origMoneda);
+  var tc=mO>0?getTasaCompraPonderada(origMoneda,mO,cuentaOrigenId):getLastTasaCompra(origMoneda,cuentaOrigenId);
   var dest=destMoneda||"VES";
-  var tv=mB>0?getTasaVentaPonderada(dest,mB):getLastTasaVenta(dest);
+  var tv=mB>0?getTasaVentaPonderada(dest,mB,cuentaDestinoId):getLastTasaVenta(dest,cuentaDestinoId);
   // Fix rutas no-estándar (ej: VES→BRL, VES→PEN):
   // Si destMoneda no es VES y no hay lotes de VENTA para esa moneda,
   // getLastTasaVenta cae en VES (error). Usar en su lugar lotes de COMPRA del destino.
@@ -7527,7 +7550,7 @@ function getAutoRates(origMoneda,destMoneda,montoOrigen,montoBs){
       return r.tipo==="venta"&&r.moneda===dest&&(parseFloat(r.tasa)||0)>0;
     });
     if(!hayLotesVentaDest){
-      var tvAlt=mB>0?getTasaCompraPonderada(dest,mB):getLastTasaCompra(dest);
+      var tvAlt=mB>0?getTasaCompraPonderada(dest,mB,cuentaDestinoId):getLastTasaCompra(dest,cuentaDestinoId);
       if(tvAlt!==null) tv=tvAlt;
     }
   }
@@ -7540,12 +7563,14 @@ function getAutoRates(origMoneda,destMoneda,montoOrigen,montoBs){
 // ║  NUNCA modificar sin análisis quirúrgico y aprobación.      ║
 // ║  Las tasas TC/TV vienen SIEMPRE de los lotes FIFO reales.   ║
 // ╚══════════════════════════════════════════════════════════════╝
-function getTasaCompraPonderada(moneda,montoOrigen){
+function getTasaCompraPonderada(moneda,montoOrigen,cuentaOrigenId){
   normalizarInventarioFIFO();
   var m=parseFloat(montoOrigen)||0;
-  var base=getLastTasaCompra(moneda);
+  var base=getLastTasaCompra(moneda,cuentaOrigenId);
   if(m<=0||base===null) return base;
-  var lotes=S.inventarioUsdt.filter(function(r){return r.tipo==="compra"&&r.moneda===(moneda||"BRL")&&(parseFloat(r.tasa)||0)>0;}).sort(ordenFIFO);
+  var lotesTodos=S.inventarioUsdt.filter(function(r){return r.tipo==="compra"&&r.moneda===(moneda||"BRL")&&(parseFloat(r.tasa)||0)>0;}).sort(ordenFIFO);
+  var lotes=cuentaOrigenId?lotesTodos.filter(function(r){return r.cuentaOrigenId===cuentaOrigenId;}):lotesTodos;
+  if(!lotes.length) lotes=lotesTodos; // cuenta nueva sin lotes propios → usar el pool general, igual que getLastTasaCompra
   if(!lotes.length) return base;
   var rest=m,usdt=0;
   for(var i=0;i<lotes.length&&rest>0.0001;i++){
@@ -7571,13 +7596,15 @@ function getTasaCompraPonderada(moneda,montoOrigen){
 // ║  NUNCA modificar sin análisis quirúrgico y aprobación.      ║
 // ║  Las tasas TC/TV vienen SIEMPRE de los lotes FIFO reales.   ║
 // ╚══════════════════════════════════════════════════════════════╝
-function getTasaVentaPonderada(monedaDest,montoBs){
+function getTasaVentaPonderada(monedaDest,montoBs,cuentaDestinoId){
   normalizarInventarioFIFO();
   var dest=monedaDest||"VES";
   var m=parseFloat(montoBs)||0;
-  var base=getLastTasaVenta(dest);
+  var base=getLastTasaVenta(dest,cuentaDestinoId);
   if(m<=0||base===null) return base;
-  var lotes=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda===dest&&(parseFloat(r.tasa)||0)>0;}).sort(ordenFIFO);
+  var lotesTodos=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda===dest&&(parseFloat(r.tasa)||0)>0;}).sort(ordenFIFO);
+  var lotes=cuentaDestinoId?lotesTodos.filter(function(r){return r.cuentaDestinoId===cuentaDestinoId;}):lotesTodos;
+  if(!lotes.length) lotes=lotesTodos; // cuenta nueva sin lotes propios → usar el pool general, igual que getLastTasaVenta
   if(!lotes.length) return base;
   var rest=m,usdt=0;
   for(var i=0;i<lotes.length&&rest>0.01;i++){
@@ -11288,7 +11315,7 @@ function rNueva(){
   var _amChanged=(String(am)!==String(f._amLock)||String(tdia)!==String(f._tdiaLock)||f.rt!==f._rtLock);
   var rates;
   if(_amChanged||!f._tcLock||!f._tvLock){
-    rates=getAutoRates(ruta.orig,ruta.dest||"VES",am,cant);
+    rates=getAutoRates(ruta.orig,ruta.dest||"VES",am,cant,f.cuentaBanco,f.cuentaDest);
     if(rates.tc&&rates.tv&&am>0&&tdia>0){
       S.tx._tcLock=rates.tc; S.tx._tvLock=rates.tv;
       S.tx._amLock=String(am); S.tx._tdiaLock=String(tdia); S.tx._rtLock=f.rt;
@@ -11444,7 +11471,7 @@ function rNuevaEE(){
   var _amChangedEE=(String(am)!==String(f._amLock)||String(tdia)!==String(f._tdiaLock));
   var rates;
   if(_amChangedEE||!f._tcLock||!f._tvLock){
-    rates=getAutoRates("USD","VES",am,am*tdia);
+    rates=getAutoRates("USD","VES",am,am*tdia,f.cuentaBanco,f.cuentaDest);
     if(rates.tc&&rates.tv&&am>0&&tdia>0){
       S.txE._tcLock=rates.tc; S.txE._tvLock=rates.tv;
       S.txE._amLock=String(am); S.txE._tdiaLock=String(tdia);
@@ -11639,13 +11666,16 @@ function rInventarioUsdt(){
   var monOpts=MONEDAS_COMPRA.map(function(m){return "<option value='"+m.id+"'"+(f.moneda===m.id?" selected":"")+">"+m.flag+" "+m.label+"</option>";}).join("");
   var mVentaOpts=MONEDAS_VENTA.map(function(m){return "<option value='"+m.id+"'"+(f.monedaVenta===m.id?" selected":"")+">"+m.flag+" "+m.label+"</option>";}).join("");
   var tipoOpts=["exchange","banco","efectivo","billetera"];
+  var _cuentasNomInv={}; (S.cuentas||[]).forEach(function(c){_cuentasNomInv[c.id]=c.nombre||c.id;});
   var rows=S.inventarioUsdt.slice().sort(function(a,b){return ordenFIFO(b,a);}).map(function(r){
     var enBlanco=!(parseFloat(r.usdt)||0)&&!(parseFloat(r.bs)||0);
     if(enBlanco){
-      return "<tr style='background:#fffbe6'><td>"+(r.fecha||"—")+"</td><td colspan='8' style='color:#b8860b;font-size:10px'>⚠️ Registro en blanco (sin montos) — puedes eliminarlo</td><td></td><td><button class='del-btn' onclick='reqDel(\"inventarioUsdt\","+r.id+",\"id\")'>🗑️</button></td></tr>";
+      return "<tr style='background:#fffbe6'><td>"+(r.fecha||"—")+"</td><td colspan='9' style='color:#b8860b;font-size:10px'>⚠️ Registro en blanco (sin montos) — puedes eliminarlo</td><td></td><td><button class='del-btn' onclick='reqDel(\"inventarioUsdt\","+r.id+",\"id\")'>🗑️</button></td></tr>";
     }
     var isComp=r.tipo==="compra";
     var flag=(MONEDAS_COMPRA.concat(MONEDAS_VENTA).find(function(m){return m.id===r.moneda;})||{flag:"💵"}).flag;
+    var bancoId=isComp?r.cuentaOrigenId:r.cuentaDestinoId;
+    var bancoNom=bancoId?(_cuentasNomInv[bancoId]||"—"):"—";
     return "<tr style='background:"+(isComp?"#f0fff4":"#fff8f8")+"'>"+
       "<td>"+r.fecha+"</td>"+
       "<td><span class='bd' style='background:"+(isComp?"#D6F5E3":"#FDECEA")+";color:"+(isComp?"#0b4d27":"#7c1c0c")+"'>"+(isComp?"⬇️ COMPRA":"⬆️ VENTA")+"</span></td>"+
@@ -11655,6 +11685,7 @@ function rInventarioUsdt(){
       "<td style='text-align:right;font-size:10px;color:#888'>"+f2(r.comision)+"</td>"+
       "<td style='text-align:right;font-weight:700;color:"+(isComp?"#c0392b":"#0f6e3a")+"'>"+(isComp&&r.montOrigen?"-"+f2(r.montOrigen)+" "+r.moneda:(!isComp?"+"+f2(r.bs)+" "+r.moneda:""))+"</td>"+
       "<td class='mu' style='font-size:10px'>"+r.plataforma+"</td>"+
+      "<td style='font-size:10px;font-weight:700;color:#1a3558;white-space:nowrap'>🏦 "+bancoNom+"</td>"+
       "<td style='text-align:right;font-weight:700;color:#0a3d7c;white-space:nowrap'>"+
         (r.usdt||r.bs?((isComp?f4(parseFloat(r.restante)||0)+" USDT":f2(r.bsRestante!==undefined?r.bsRestante:(parseFloat(r.bs)||0))+" "+r.moneda)+
         " <button type='button' onclick='editRestanteInv("+r.id+")' style='background:none;border:none;cursor:pointer;font-size:11px' title='Ajustar restante'>✏️</button>"):"")+
@@ -11915,7 +11946,7 @@ function rInventarioUsdt(){
         "<th style='padding:6px 8px;text-align:left;font-size:9px;color:#7a5c00'>PLATAFORMA</th>"+
         "<th style='padding:6px 8px;text-align:right;font-size:9px;color:#7a5c00'>CERRADO</th></tr></thead><tbody>"+arows+"</tbody></table></div>";
     })()+
-    (rows?"<div style='border:1px solid #eee;border-radius:10px;overflow-x:auto;overflow-y:auto;max-height:340px'><table style='min-width:700px;width:100%;border-collapse:collapse;font-size:11px'><thead><tr style='background:#f0f4ff'><th style='padding:8px 9px;text-align:left;font-size:10px;color:#1a3558;border-bottom:1px solid #dde;font-weight:700'>FECHA</th><th style='padding:8px 9px;font-size:10px;color:#1a3558;border-bottom:1px solid #dde;font-weight:700'>TIPO</th><th style='padding:8px 9px;text-align:center;font-size:10px;color:#1a3558;border-bottom:1px solid #dde;font-weight:700'>MONEDA</th><th style='padding:8px 9px;text-align:right;font-size:10px;color:#0f6e3a;border-bottom:1px solid #dde;font-weight:700'>USDT</th><th style='padding:8px 9px;text-align:right;font-size:10px;color:#1a3558;border-bottom:1px solid #dde;font-weight:700'>TASA</th><th style='padding:8px 9px;text-align:right;font-size:10px;color:#888;border-bottom:1px solid #dde;font-weight:700'>COMIS.</th><th style='padding:8px 9px;text-align:right;font-size:10px;color:#1a3558;border-bottom:1px solid #dde;font-weight:700'>ORIGEN</th><th style='padding:8px 9px;text-align:left;font-size:10px;color:#888;border-bottom:1px solid #dde;font-weight:700'>PLATAFORMA</th><th style='padding:8px 9px;text-align:right;font-size:10px;color:#0a3d7c;border-bottom:1px solid #dde;font-weight:700;background:#FFFBEA'>RESTANTE (FIFO)</th><th style='padding:8px 9px;border-bottom:1px solid #dde'>🔒</th><th style='padding:8px 9px;border-bottom:1px solid #dde'></th></tr></thead><tbody>"+rows+"</tbody></table></div>"
+    (rows?"<div style='border:1px solid #eee;border-radius:10px;overflow-x:auto;overflow-y:auto;max-height:340px'><table style='min-width:780px;width:100%;border-collapse:collapse;font-size:11px'><thead><tr style='background:#f0f4ff'><th style='padding:8px 9px;text-align:left;font-size:10px;color:#1a3558;border-bottom:1px solid #dde;font-weight:700'>FECHA</th><th style='padding:8px 9px;font-size:10px;color:#1a3558;border-bottom:1px solid #dde;font-weight:700'>TIPO</th><th style='padding:8px 9px;text-align:center;font-size:10px;color:#1a3558;border-bottom:1px solid #dde;font-weight:700'>MONEDA</th><th style='padding:8px 9px;text-align:right;font-size:10px;color:#0f6e3a;border-bottom:1px solid #dde;font-weight:700'>USDT</th><th style='padding:8px 9px;text-align:right;font-size:10px;color:#1a3558;border-bottom:1px solid #dde;font-weight:700'>TASA</th><th style='padding:8px 9px;text-align:right;font-size:10px;color:#888;border-bottom:1px solid #dde;font-weight:700'>COMIS.</th><th style='padding:8px 9px;text-align:right;font-size:10px;color:#1a3558;border-bottom:1px solid #dde;font-weight:700'>ORIGEN</th><th style='padding:8px 9px;text-align:left;font-size:10px;color:#888;border-bottom:1px solid #dde;font-weight:700'>PLATAFORMA</th><th style='padding:8px 9px;text-align:left;font-size:10px;color:#1a3558;border-bottom:1px solid #dde;font-weight:700;background:#EEF3FF'>🏦 BANCO</th><th style='padding:8px 9px;text-align:right;font-size:10px;color:#0a3d7c;border-bottom:1px solid #dde;font-weight:700;background:#FFFBEA'>RESTANTE (FIFO)</th><th style='padding:8px 9px;border-bottom:1px solid #dde'>🔒</th><th style='padding:8px 9px;border-bottom:1px solid #dde'></th></tr></thead><tbody>"+rows+"</tbody></table></div>"
     :"<div style='text-align:center;padding:28px;color:#aaa'>Sin operaciones aún. Comienza registrando una compra de USDT.</div>")+
   "</div>";
 }
