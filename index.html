@@ -5839,23 +5839,50 @@ function fbSaveREST(obj){
 function fbForceLoad(){
   var btn=document.querySelector('[onclick="fbForceLoad()"]');
   if(btn){btn.textContent="⏳ Cargando...";btn.disabled=true;}
-  var url="https://adminbrl-default-rtdb.firebaseio.com/remesasBRL_v1.json?ts="+Date.now();
+  // Capturar el estado LOCAL actual antes de traer nada — así lo que acabas
+  // de registrar hace un instante (aunque todavía no haya llegado a Firebase)
+  // no se pierde al actualizar.
+  var obj={_ts:Date.now()};
+  DATA_KEYS.forEach(function(k){obj[k]=S[k];});
+  var url=_FB_REST+"?ts="+Date.now();
   fetch(url)
     .then(function(r){
       if(!r.ok) throw new Error("HTTP "+r.status);
       return r.json();
     })
-    .then(function(data){
-      if(!data){throw new Error("Firebase devolvió datos vacíos");}
-      // Aplicar SIEMPRE, sin comparar timestamps
-      DATA_KEYS.forEach(function(k){if(data[k]!==undefined)S[k]=data[k];});
-      if(data._ts) S._ts=data._ts;
-      try{localStorage.setItem(STORAGE_KEY,JSON.stringify(data));}catch(e){}
+    .then(function(remote){
+      if(!remote){throw new Error("Firebase devolvió datos vacíos");}
+      // Campos "registro" (remesas, cuentas, egresos, etc.) — SIEMPRE se fusionan
+      // por id, nunca se sobrescriben a ciegas. Esto es lo que faltaba: antes,
+      // este botón ignoraba por completo la fusión y reemplazaba todo con lo
+      // último de Firebase, borrando cualquier cosa guardada localmente que
+      // aún no hubiera llegado al servidor.
+      _MERGE_FIELDS.forEach(function(k){
+        if(remote[k]!==undefined){
+          var idF=_MERGE_ID_FIELD[k]||"id";
+          var remoteFiltrado=(remote[k]||[]).filter(function(it){
+            return !(it && it[idF]!==undefined && _estaBorradoMerge(k,it[idF]));
+          });
+          obj[k]=_mergeArrayById(remoteFiltrado,obj[k],idF);
+          if(k==="brl"||k==="vzla"||k==="eeuu") _renumerarPorFecha(obj[k]);
+        }
+      });
+      // El resto (configuración, tasas, etc. — no son listas de registros)
+      // sí toman la versión de Firebase tal cual, como antes.
+      DATA_KEYS.forEach(function(k){
+        if(_MERGE_FIELDS.indexOf(k)===-1 && remote[k]!==undefined) obj[k]=remote[k];
+      });
+      DATA_KEYS.forEach(function(k){ S[k]=obj[k]; });
+      S._ts=Date.now();
+      try{localStorage.setItem(STORAGE_KEY,JSON.stringify(obj));}catch(e){}
       R();
       if(btn){btn.textContent="📥 Actualizar";btn.disabled=false;}
       var dot=document.getElementById("fb-dot");
-      if(dot){dot.style.background="#4ade80";dot.title="✅ Datos actualizados desde Firebase";}
-      console.log("✅ Carga forzada OK — _ts:",data._ts);
+      if(dot){dot.style.background="#4ade80";dot.title="✅ Datos actualizados (fusionados) desde Firebase";}
+      console.log("✅ Carga forzada OK — fusionada, _ts:",S._ts);
+      // Reflejar la fusión también en Firebase, por si el servidor no tenía
+      // todavía lo que estaba solo en este dispositivo.
+      _fbWriteNow(obj);
     })
     .catch(function(e){
       if(btn){btn.textContent="📥 Actualizar";btn.disabled=false;}
