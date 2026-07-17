@@ -6744,11 +6744,14 @@ function revertirSaldosRemesa(tipo, r){
     var monOrig=tipo==="brl"?"BRL":tipo==="vzla"?"VES":"USD";
     var monDest=tipo==="vzla"?"BRL":"VES";
     normalizarInventarioFIFO();
-    // Restaurar USDT al lote de compra más reciente consumido (LIFO para revertir)
+    // Restaurar USDT al lote de compra — primero a los de la MISMA cuenta que
+    // se usó (más nuevo primero), igual criterio que consumirInventarioFIFO.
     if(uc>0){
-      var compras=S.inventarioUsdt.filter(function(l){
+      var comprasTodas=S.inventarioUsdt.filter(function(l){
         return l.tipo==="compra"&&l.moneda===monOrig;
       }).sort(function(a,b){return(b.id||0)-(a.id||0);}); // más nuevo primero para revertir
+      var compras=r.cuentaBanco?comprasTodas.filter(function(l){return l.cuentaOrigenId===r.cuentaBanco;}):comprasTodas;
+      if(r.cuentaBanco&&!compras.length) compras=comprasTodas; // esa cuenta nunca tuvo lotes propios
       var restUc=uc;
       for(var i=0;i<compras.length&&restUc>0.001;i++){
         var cap=parseFloat(compras[i].usdt)||0;
@@ -6760,11 +6763,13 @@ function revertirSaldosRemesa(tipo, r){
         }
       }
     }
-    // Restaurar BS/BRL al lote de venta más reciente consumido
+    // Restaurar BS/BRL al lote de venta — misma cuenta que se usó primero
     if(cant>0){
-      var ventas=S.inventarioUsdt.filter(function(l){
+      var ventasTodas=S.inventarioUsdt.filter(function(l){
         return l.tipo==="venta"&&l.moneda===monDest;
       }).sort(function(a,b){return(b.id||0)-(a.id||0);}); // más nuevo primero para revertir
+      var ventas=r.cuentaDest?ventasTodas.filter(function(l){return l.cuentaDestinoId===r.cuentaDest;}):ventasTodas;
+      if(r.cuentaDest&&!ventas.length) ventas=ventasTodas; // esa cuenta nunca tuvo lotes propios
       var restCant=cant;
       for(var j=0;j<ventas.length&&restCant>0.001;j++){
         var capV=parseFloat(ventas[j].bs)||0;
@@ -6808,33 +6813,37 @@ function revertirSaldosRemesa(tipo, r){
     adj(r.cuentaBanco||null, -am, "USD");
     if(r.cuentaDest) adj(r.cuentaDest, +cant, "VES");
   }
-  // Restaurar lotes FIFO en el fallback también
+  // Restaurar lotes FIFO en el fallback también — respetando la cuenta, igual que arriba
   var monOrig=tipo==="brl"?"BRL":tipo==="vzla"?"VES":"USD";
   var monDest=tipo==="vzla"?"BRL":"VES";
   normalizarInventarioFIFO();
   var uc=parseFloat(r.uc)||0;
   if(uc>0){
-    var compras=S.inventarioUsdt.filter(function(l){
+    var comprasTodas2=S.inventarioUsdt.filter(function(l){
       return l.tipo==="compra"&&l.moneda===monOrig;
     }).sort(function(a,b){return(b.id||0)-(a.id||0);});
+    var compras2=r.cuentaBanco?comprasTodas2.filter(function(l){return l.cuentaOrigenId===r.cuentaBanco;}):comprasTodas2;
+    if(r.cuentaBanco&&!compras2.length) compras2=comprasTodas2;
     var restUc=uc;
-    for(var ci=0;ci<compras.length&&restUc>0.001;ci++){
-      var cap=parseFloat(compras[ci].usdt)||0;
-      var act=parseFloat(compras[ci].restante)||0;
+    for(var ci=0;ci<compras2.length&&restUc>0.001;ci++){
+      var cap=parseFloat(compras2[ci].usdt)||0;
+      var act=parseFloat(compras2[ci].restante)||0;
       var dev=Math.min(restUc,cap-act);
-      if(dev>0){compras[ci].restante=Math.round((act+dev)*100)/100;restUc-=dev;}
+      if(dev>0){compras2[ci].restante=Math.round((act+dev)*100)/100;restUc-=dev;}
     }
   }
   if(cant>0){
-    var ventas=S.inventarioUsdt.filter(function(l){
+    var ventasTodas2=S.inventarioUsdt.filter(function(l){
       return l.tipo==="venta"&&l.moneda===monDest;
     }).sort(function(a,b){return(b.id||0)-(a.id||0);});
+    var ventas2=r.cuentaDest?ventasTodas2.filter(function(l){return l.cuentaDestinoId===r.cuentaDest;}):ventasTodas2;
+    if(r.cuentaDest&&!ventas2.length) ventas2=ventasTodas2;
     var restCant=cant;
-    for(var vi=0;vi<ventas.length&&restCant>0.001;vi++){
-      var capV=parseFloat(ventas[vi].bs)||0;
-      var actV=parseFloat(ventas[vi].bsRestante)||0;
+    for(var vi=0;vi<ventas2.length&&restCant>0.001;vi++){
+      var capV=parseFloat(ventas2[vi].bs)||0;
+      var actV=parseFloat(ventas2[vi].bsRestante)||0;
       var devV=Math.min(restCant,capV-actV);
-      if(devV>0){ventas[vi].bsRestante=Math.round((actV+devV)*100)/100;restCant-=devV;}
+      if(devV>0){ventas2[vi].bsRestante=Math.round((actV+devV)*100)/100;restCant-=devV;}
     }
   }
 }
