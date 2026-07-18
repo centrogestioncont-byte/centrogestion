@@ -5370,7 +5370,7 @@ function toggleModulo(key, enabled){
 function saveTasasConfig(){
   if(!S.config) S.config={};
   if(!S.config.tasasDia) S.config.tasasDia={};
-  var campos=['tdia_brl','tdia_vzla','tdia_usd'];
+  var campos=['tdia_brl','tdia_vzla','tdia_usd','tdia_ves_brl','tdia_usd_brl'];
   campos.forEach(function(k){
     var el=document.getElementById('tasa-'+k);
     if(el&&el.value) S.config.tasasDia[k]=parseFloat(el.value)||0;
@@ -11010,8 +11010,19 @@ function _rConversorBCV(){
   var bcv=S._bcvRate;
   var fecha=S._bcvFecha;
   var t=_calcTasas();
-  var tieneIda=t.ida&&t.ida.ok;
-  var tasaCliente=tieneIda?t.ida.cliente:null; // "1 BRL = X VES" — la misma que ya ofreces en Rutas fijas
+  var conMargen=t.ida&&t.ida.ok;
+  var tasaManualDia=parseFloat((S.config&&S.config.tasasDia&&S.config.tasasDia.tdia_ves_brl)||0);
+  var tasaCliente, fuenteTasa;
+  if(tasaManualDia>0){
+    tasaCliente=tasaManualDia; fuenteTasa="la que pusiste hoy en Configuración → Tasas del día";
+  } else if(conMargen){
+    tasaCliente=t.ida.cliente; fuenteTasa="con tu margen — la misma de \"Rutas fijas\"";
+  } else {
+    var rBrl=getRateToUsdt("BRL"), rVes=getRateToUsdt("VES");
+    tasaCliente=(rBrl&&rVes)?(rVes/rBrl):null;
+    fuenteTasa="del inventario, SIN margen aplicado todavía";
+  }
+  var esBuena=tasaManualDia>0||conMargen;
   var header="<div onclick='S._convBcvAbierto=!S._convBcvAbierto;R()' style='cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:#fff;border:1.5px solid #eee;border-radius:14px"+(abierto?" 14px 0 0":"")+"'>"+
       "<div style='font-size:13px;font-weight:800;color:#1a3558'>📡 Conversor rápido para clientes</div>"+
       "<div style='font-size:11px;color:#999'>"+(abierto?"▲ ocultar":"▼ toca para abrir")+"</div>"+
@@ -11019,11 +11030,11 @@ function _rConversorBCV(){
   if(!abierto) return header+"<div style='margin-bottom:14px'></div>";
   return header+
   "<div style='background:#fff;border:1.5px solid #eee;border-top:none;border-radius:0 0 14px 14px;padding:14px 16px;margin-bottom:14px'>"+
-    "<div style='background:#F3FAF5;border-radius:9px;padding:9px 11px;margin-bottom:10px'>"+
-      (tieneIda?
-        "<div style='font-size:12px;color:#0b4d27;font-weight:800'>🇧🇷 Tu tasa con el cliente: 1 BRL = "+f2(tasaCliente)+" VES</div>"+
-        "<div style='font-size:9.5px;color:#5a8a6c;margin-top:2px'>Es la misma de \"Rutas fijas\" — si la cambias ahí, se actualiza aquí solo.</div>"
-      :"<div style='font-size:11.5px;color:#c0392b'>⚠️ Todavía no tienes tasa BRL→VZLA configurada. Bájale a \"Rutas fijas\" y pon tu compra/venta/margen primero.</div>")+
+    "<div style='background:"+(esBuena?"#F3FAF5":"#FFF8E8")+";border-radius:9px;padding:9px 11px;margin-bottom:10px'>"+
+      (tasaCliente?
+        "<div style='font-size:12px;color:"+(esBuena?"#0b4d27":"#7a5c00")+";font-weight:800'>🇧🇷 1 BRL = <input id='tasa-cliente-inp' type='number' step='0.01' value='"+f2(tasaCliente)+"' oninput='S._convTasaOverride=parseFloat(this.value)||null;_reconvertirBCV()' style='width:70px;padding:2px 5px;border:1px solid "+(esBuena?"#a0e8c0":"#f0d080")+";border-radius:5px;font-weight:800;color:inherit;font-size:12px'> VES</div>"+
+        "<div style='font-size:9.5px;color:"+(esBuena?"#5a8a6c":"#9a7c30")+";margin-top:2px'>"+fuenteTasa+" — puedes ajustarla arriba a mano.</div>"
+      :"<div style='font-size:11.5px;color:#c0392b'>⚠️ Todavía no hay tasas de compra/venta registradas en Inventario USDT para calcular esto.</div>")+
     "</div>"+
     "<div style='display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap'>"+
       "<span style='font-size:11px;color:#666'>🇺🇸 1 USD (BCV) =</span>"+
@@ -11068,13 +11079,21 @@ function _fetchTasaBCV(){
       alert("No se pudo traer la tasa BCV automáticamente (sin internet o la fuente no respondió).\n\nPuedes escribirla a mano en el campo de arriba — funciona igual.\n\nDetalle: "+e.message);
     });
 }
+function _getTasaClienteBRL(){
+  if(S._convTasaOverride) return parseFloat(S._convTasaOverride);
+  var tasaManualDia=parseFloat((S.config&&S.config.tasasDia&&S.config.tasasDia.tdia_ves_brl)||0);
+  if(tasaManualDia>0) return tasaManualDia;
+  var t=_calcTasas();
+  if(t.ida&&t.ida.ok) return t.ida.cliente;
+  var rBrl=getRateToUsdt("BRL"), rVes=getRateToUsdt("VES");
+  return (rBrl&&rVes)?(rVes/rBrl):0;
+}
 function _convDesde(campo){
   _convUltimoCampo=campo;
   var elVes=document.getElementById("conv-ves"), elUsd=document.getElementById("conv-usd"), elBrl=document.getElementById("conv-brl");
   if(!elVes||!elUsd||!elBrl) return;
   var bcv=parseFloat(S._bcvRate)||0;
-  var t=_calcTasas();
-  var tasaCliente=(t.ida&&t.ida.ok)?t.ida.cliente:0; // 1 BRL = X VES, la real que ofreces
+  var tasaCliente=_getTasaClienteBRL();
   if(campo==="brl"){
     var brl=parseFloat(elBrl.value)||0;
     var ves=tasaCliente>0?brl*tasaCliente:0;
@@ -11097,8 +11116,7 @@ function _copiarMsjCliente(){
   var ves=parseFloat((document.getElementById("conv-ves")||{}).value)||0;
   var usd=parseFloat((document.getElementById("conv-usd")||{}).value)||0;
   if(!brl&&!ves&&!usd){ alert("Escribe un monto en alguno de los 3 campos primero."); return; }
-  var t=_calcTasas();
-  var tasaCliente=(t.ida&&t.ida.ok)?t.ida.cliente:0;
+  var tasaCliente=_getTasaClienteBRL();
   var msg;
   if(_convUltimoCampo==="usd"){
     // Empezó preguntando "¿cuánto debo enviar para que le lleguen $X?"
