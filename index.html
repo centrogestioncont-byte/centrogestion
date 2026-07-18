@@ -10990,6 +10990,93 @@ function calcUpdate(){
 }
 
 // Pantalla completa de la calculadora (pestaña propia)
+// ══════════════════════════════════════════════════════════════════
+// 📡 CONVERSOR RÁPIDO — Tasa oficial BCV (para responder preguntas de
+// clientes al vuelo: "¿cuántos reales son 30.000 Bs?", etc.)
+// Fuente: ve.dolarapi.com (API pública, sin autenticación, gratuita).
+// Si falla (sin internet, API caída, etc.) se puede escribir la tasa a
+// mano — igual que todas las tasas manuales del resto de la app.
+// El BRL se calcula usando TU tasa BRL/USDT ya configurada en Inventario
+// (asumiendo 1 USDT ≈ 1 USD), porque el BCV no publica tasa de Real.
+// ══════════════════════════════════════════════════════════════════
+function _rConversorBCV(){
+  var bcv=S._bcvRate;
+  var fecha=S._bcvFecha;
+  var tasaBrlUsdt=getRateToUsdt("BRL");
+  return "<div style='background:#fff;border:1.5px solid #eee;border-radius:14px;padding:14px 16px;margin-bottom:14px'>"+
+    "<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:10px'>"+
+      "<div style='font-size:13px;font-weight:800;color:#1a3558'>📡 Conversor rápido (tasa BCV oficial)</div>"+
+      "<button type='button' onclick='_fetchTasaBCV()' id='btn-bcv-refresh' style='background:#EEF3FF;border:1px solid #1a5fb444;color:#1a5fb4;padding:5px 10px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer'>🔄 Actualizar</button>"+
+    "</div>"+
+    "<div style='display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap'>"+
+      "<span style='font-size:11px;color:#666'>1 USD =</span>"+
+      "<input id='bcv-rate-input' type='number' step='0.01' value='"+(bcv||"")+"' placeholder='Escribe la tasa BCV' oninput='S._bcvRate=parseFloat(this.value)||null;_reconvertirBCV()' style='width:100px;padding:6px 8px;font-size:13px;font-weight:800;border:1px solid #ddd;border-radius:7px;text-align:right'>"+
+      "<span style='font-size:11px;color:#666'>VES</span>"+
+      "<span id='bcv-fecha-txt' style='font-size:9.5px;color:#999;margin-left:4px'>"+(fecha?"actualizada "+fecha:"toca 🔄 para traerla")+"</span>"+
+    "</div>"+
+    "<div style='display:grid;grid-template-columns:1fr;gap:8px'>"+
+      "<div style='display:flex;align-items:center;gap:8px;background:#FDECEA;border-radius:9px;padding:8px 10px'>"+
+        "<span style='font-size:16px'>🇻🇪</span><input id='conv-ves' type='number' inputmode='decimal' placeholder='0' oninput='_convDesde(\"ves\")' style='flex:1;border:none;background:transparent;font-size:15px;font-weight:800;color:#7c1c0c;text-align:right'><span style='font-size:11px;color:#7c1c0c;font-weight:700;width:34px'>VES</span>"+
+      "</div>"+
+      "<div style='display:flex;align-items:center;gap:8px;background:#DDEEFF;border-radius:9px;padding:8px 10px'>"+
+        "<span style='font-size:16px'>🇺🇸</span><input id='conv-usd' type='number' inputmode='decimal' placeholder='0' oninput='_convDesde(\"usd\")' style='flex:1;border:none;background:transparent;font-size:15px;font-weight:800;color:#0a3d7c;text-align:right'><span style='font-size:11px;color:#0a3d7c;font-weight:700;width:34px'>USD</span>"+
+      "</div>"+
+      "<div style='display:flex;align-items:center;gap:8px;background:#D6F5E3;border-radius:9px;padding:8px 10px'>"+
+        "<span style='font-size:16px'>🇧🇷</span><input id='conv-brl' type='number' inputmode='decimal' placeholder='0' oninput='_convDesde(\"brl\")' style='flex:1;border:none;background:transparent;font-size:15px;font-weight:800;color:#0b4d27;text-align:right'><span style='font-size:11px;color:#0b4d27;font-weight:700;width:34px'>BRL</span>"+
+      "</div>"+
+    "</div>"+
+    "<div style='font-size:9.5px;color:#999;margin-top:8px;line-height:1.4'>Escribe en cualquier campo y los otros dos se calculan solos. VES↔USD usa la tasa BCV de arriba. BRL usa tu tasa de Inventario ("+(tasaBrlUsdt?f4(tasaBrlUsdt)+" BRL/USDT ≈ USD":"sin configurar todavía")+").</div>"+
+  "</div>";
+}
+function _fetchTasaBCV(){
+  var btn=document.getElementById("btn-bcv-refresh");
+  if(btn){btn.textContent="⏳...";btn.disabled=true;}
+  fetch("https://ve.dolarapi.com/v1/dolares/oficial")
+    .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); })
+    .then(function(data){
+      var tasa=parseFloat(data.promedio||data.venta||data.compra);
+      if(!tasa) throw new Error("Respuesta sin tasa");
+      S._bcvRate=Math.round(tasa*100)/100;
+      S._bcvFecha=ds(td())+" "+new Date().toLocaleTimeString("es-VE",{hour:"2-digit",minute:"2-digit"});
+      saveData();
+      var inp=document.getElementById("bcv-rate-input"); if(inp) inp.value=S._bcvRate;
+      var txt=document.getElementById("bcv-fecha-txt"); if(txt) txt.textContent="actualizada "+S._bcvFecha;
+      _reconvertirBCV();
+      if(btn){btn.textContent="✅ Listo";btn.disabled=false;setTimeout(function(){if(btn)btn.textContent="🔄 Actualizar";},1800);}
+    })
+    .catch(function(e){
+      if(btn){btn.textContent="🔄 Actualizar";btn.disabled=false;}
+      alert("No se pudo traer la tasa BCV automáticamente (sin internet o la fuente no respondió).\n\nPuedes escribirla a mano en el campo de arriba — funciona igual.\n\nDetalle: "+e.message);
+    });
+}
+function _convDesde(campo){
+  var elVes=document.getElementById("conv-ves"), elUsd=document.getElementById("conv-usd"), elBrl=document.getElementById("conv-brl");
+  if(!elVes||!elUsd||!elBrl) return;
+  var bcv=parseFloat(S._bcvRate)||0;
+  var tBrl=getRateToUsdt("BRL")||0; // BRL por 1 USDT ≈ 1 USD
+  if(campo==="ves"){
+    var ves=parseFloat(elVes.value)||0;
+    if(bcv>0){ var usd=ves/bcv; elUsd.value=usd?f2(usd):""; elBrl.value=(usd&&tBrl)?f2(usd*tBrl):""; }
+  } else if(campo==="usd"){
+    var usd2=parseFloat(elUsd.value)||0;
+    elVes.value=(bcv>0&&usd2)?f2(usd2*bcv):"";
+    elBrl.value=(tBrl>0&&usd2)?f2(usd2*tBrl):"";
+  } else if(campo==="brl"){
+    var brl=parseFloat(elBrl.value)||0;
+    var usd3=tBrl>0?brl/tBrl:0;
+    elUsd.value=usd3?f2(usd3):"";
+    elVes.value=(bcv>0&&usd3)?f2(usd3*bcv):"";
+  }
+}
+function _reconvertirBCV(){
+  // Al cambiar la tasa BCV manualmente, recalcular usando el campo que ya tenga algo escrito
+  var elVes=document.getElementById("conv-ves"), elUsd=document.getElementById("conv-usd"), elBrl=document.getElementById("conv-brl");
+  if(!elVes||!elUsd||!elBrl) return;
+  if(elVes.value) _convDesde("ves");
+  else if(elUsd.value) _convDesde("usd");
+  else if(elBrl.value) _convDesde("brl");
+}
+
 function rCalculadora(){
   var c=S.calc;
   var modo=c.modoCalc||"fijas";
@@ -11024,6 +11111,7 @@ function rCalculadora(){
       "<div style='font-size:19px;font-weight:900;display:flex;align-items:center;gap:8px'>🧮 Calculadora de tasas</div>"+
       "<div style='font-size:12px;opacity:.85;margin-top:3px'>Calcula la tasa para tu cliente y genera el flyer</div>"+
     "</div>"+
+    _rConversorBCV()+
     subTabs;
 
   // ══════════════════════
