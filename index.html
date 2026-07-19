@@ -5874,9 +5874,15 @@ function fbForceLoad(){
         }
       });
       // El resto (configuración, tasas, etc. — no son listas de registros)
-      // sí toman la versión de Firebase tal cual, como antes.
+      // sí toman la versión de Firebase, EXCEPTO "config": ese se fusiona
+      // campo por campo para que una tasa recién guardada acá nunca se borre
+      // por una versión vieja/vacía que traiga otro dispositivo.
       DATA_KEYS.forEach(function(k){
-        if(_MERGE_FIELDS.indexOf(k)===-1 && remote[k]!==undefined) obj[k]=remote[k];
+        if(k==="config"){
+          if(remote.config!==undefined) obj.config=_mergeConfigSafe(remote.config,obj.config||{});
+        } else if(_MERGE_FIELDS.indexOf(k)===-1 && remote[k]!==undefined){
+          obj[k]=remote[k];
+        }
       });
       DATA_KEYS.forEach(function(k){ S[k]=obj[k]; });
       S._ts=Date.now();
@@ -6256,6 +6262,10 @@ function fbCheckREST(){
         console.log("📥 Auto-sync: datos más nuevos en Firebase (remoto="+tsRemoto+", local="+tsLocal+")");
         DATA_KEYS.forEach(function(k){
           if(data[k]===undefined) return;
+          if(k==="config"){
+            S.config=_mergeConfigSafe(data.config,S.config||{});
+            return;
+          }
           if(_MERGE_FIELDS.indexOf(k)!==-1 && Array.isArray(data[k])){
             // Respetar la lista negra de borrados: no revivir lo que se
             // borró intencionalmente a propósito solo porque Firebase
@@ -11023,6 +11033,7 @@ function _rConversorBCV(){
     fuenteTasa="del inventario, SIN margen aplicado todavía";
   }
   var esBuena=tasaConfig>0||conMargen;
+  var _diag="<div style='font-size:9px;color:#bbb;margin-top:6px;font-family:monospace'>🔍 diagnóstico: S.config.tasasDia.tdia_brl = "+JSON.stringify((S.config&&S.config.tasasDia)?S.config.tasasDia.tdia_brl:"—")+"</div>";
   var header="<div onclick='S._convBcvAbierto=!S._convBcvAbierto;R()' style='cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:#fff;border:1.5px solid #eee;border-radius:14px"+(abierto?" 14px 0 0":"")+"'>"+
       "<div style='font-size:13px;font-weight:800;color:#1a3558'>📡 Conversor rápido para clientes</div>"+
       "<div style='font-size:11px;color:#999'>"+(abierto?"▲ ocultar":"▼ toca para abrir")+"</div>"+
@@ -11033,7 +11044,7 @@ function _rConversorBCV(){
     "<div style='background:"+(esBuena?"#F3FAF5":"#FFF8E8")+";border-radius:9px;padding:9px 11px;margin-bottom:10px'>"+
       (tasaCliente?
         "<div style='font-size:12px;color:"+(esBuena?"#0b4d27":"#7a5c00")+";font-weight:800'>🇧🇷 1 BRL = <input id='tasa-cliente-inp' type='number' step='0.01' value='"+f2(tasaCliente)+"' oninput='S._convTasaOverride=parseFloat(this.value)||null;_reconvertirBCV()' style='width:70px;padding:2px 5px;border:1px solid "+(esBuena?"#a0e8c0":"#f0d080")+";border-radius:5px;font-weight:800;color:inherit;font-size:12px'> VES</div>"+
-        "<div style='font-size:9.5px;color:"+(esBuena?"#5a8a6c":"#9a7c30")+";margin-top:2px'>"+fuenteTasa+" — puedes ajustarla arriba a mano.</div>"
+        "<div style='font-size:9.5px;color:"+(esBuena?"#5a8a6c":"#9a7c30")+";margin-top:2px'>"+fuenteTasa+" — puedes ajustarla arriba a mano.</div>"+_diag
       :"<div style='font-size:11.5px;color:#c0392b'>⚠️ Todavía no hay tasas de compra/venta registradas en Inventario USDT para calcular esto.</div>")+
     "</div>"+
     "<div style='display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap'>"+
@@ -13530,6 +13541,10 @@ function initFirebase(){
         // Firebase tiene igual o más datos → usar Firebase
         DATA_KEYS.forEach(function(k){
           if(data[k]===undefined) return;
+          if(k==="config"){
+            S.config=_mergeConfigSafe(data.config,S.config||{});
+            return;
+          }
           if(_MERGE_FIELDS.indexOf(k)!==-1 && Array.isArray(data[k])){
             var idF=_MERGE_ID_FIELD[k]||"id";
             var filtrado=data[k].filter(function(it){
@@ -13717,6 +13732,27 @@ if(typeof window!=="undefined"&&window.addEventListener){
   window.addEventListener("beforeunload", fbFlushNow);
 }
 
+// Fusión segura para "config" (no es una lista de registros, es un objeto de
+// ajustes — tasas, comisiones, pines, etc.). Regla: si el lado local YA tiene
+// un valor real (no vacío, no cero), nunca se lo dejamos pisar por un valor
+// vacío/viejo que venga de otro dispositivo. Esto es justo lo que le faltaba
+// a "config" — por eso una tasa recién guardada podía "desaparecer" si otro
+// dispositivo sincronizaba con una versión vieja/vacía.
+function _mergeConfigSafe(remoteCfg, localCfg){
+  if(!remoteCfg) return localCfg;
+  if(!localCfg) return remoteCfg;
+  var out = Object.assign({}, localCfg);
+  Object.keys(remoteCfg).forEach(function(k){
+    var rv=remoteCfg[k], lv=localCfg[k];
+    if(rv&&typeof rv==="object"&&!Array.isArray(rv)){
+      out[k]=_mergeConfigSafe(rv,(lv&&typeof lv==="object")?lv:{});
+    } else if(lv===undefined||lv===null||lv===""||lv===0){
+      out[k]=rv; // local no tiene nada útil aquí → sí tomar lo remoto
+    }
+    // si local ya tiene un valor real, se queda tal cual (no se pisa)
+  });
+  return out;
+}
 function _fbMergeAndWrite(obj){
   // Antes de escribir: traer el estado remoto y fusionar los campos críticos
   // para no borrar cuentas/compromisos/egresos agregados desde otro dispositivo.
@@ -13735,6 +13771,10 @@ function _fbMergeAndWrite(obj){
             S[k] = obj[k]; // reflejar la fusión también en el estado local/UI
           }
         });
+        if(remote.config!==undefined){
+          obj.config = _mergeConfigSafe(remote.config, obj.config||{});
+          S.config = obj.config;
+        }
       }
     })
     .catch(function(e){
