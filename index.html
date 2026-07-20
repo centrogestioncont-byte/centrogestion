@@ -2442,6 +2442,15 @@ function saveEditRow(){
   var uc_r=am/tc-com, uv_r=row.cant/tv+com;
   row.uc=r4(uc_r); row.uv=r4(uv_r);
   row.pr=r4(uc_r-uv_r); row.total=row.cant;
+  // Si esta operación tiene una Cuenta por Cobrar vinculada y sigue pendiente,
+  // reflejar aquí el mismo cambio — antes esto quedaba desactualizado porque
+  // nada conectaba la edición de la remesa con su registro en Por Cobrar.
+  var cobrar=(S.cuentasCobrar||[]).find(function(x){return x.tipo===type&&x.refN===n&&x.estado==="pendiente";});
+  if(cobrar){
+    cobrar.monto=am;
+    cobrar.moneda=row.orig;
+    cobrar.ganancia=row.pr;
+  }
   S.editRow=null;saveData();R();
 }
 function cancelEditRow(){S.editRow=null;R();}
@@ -3108,6 +3117,28 @@ function marcarCobrado(id){
   c.estado="cobrado";
   c.fechaCobro=td();
   logAudit("COBRO_MARCADO","Marcó cobrado · Cliente: "+c.cliente+" · "+c.monto+" "+c.moneda);
+  saveData();R();
+}
+// Elimina un registro de Cuentas por Cobrar. Esta función NO EXISTÍA —
+// el botón 🗑️ de esta pantalla llamaba a un nombre que nunca se definió
+// en ningún lado, así que tocarlo no hacía absolutamente nada.
+function eliminarCuenta(id){
+  var c=(S.cuentasCobrar||[]).find(function(x){return x.id===id;});
+  if(!c){alert("No encontrado.");return;}
+  var totalAbonado=(c.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);
+  var msg="¿Eliminar este registro de Cuentas por Cobrar?\n\nCliente: "+c.cliente+"\nMonto: "+f2(c.monto)+" "+c.moneda;
+  if(totalAbonado>0) msg+="\n\n⚠️ Ya tiene "+f2(totalAbonado)+" "+c.moneda+" en abonos registrados — se revertirá el saldo que se acreditó en las cuentas correspondientes.";
+  if(!confirm(msg)) return;
+  // Revertir cualquier abono ya acreditado a una cuenta, para no dejar
+  // dinero "fantasma" metido en un banco sin el registro que lo respalda.
+  (c.abonos||[]).forEach(function(ab){
+    if(!ab.cuentaId) return;
+    var cta=(S.cuentas||[]).find(function(x){return x.id===ab.cuentaId;});
+    if(cta) cta.saldo=Math.round(((parseFloat(cta.saldo)||0)-(parseFloat(ab.monto)||0))*100)/100;
+  });
+  S.cuentasCobrar=S.cuentasCobrar.filter(function(x){return x.id!==id;});
+  _marcarBorradoMerge("cuentasCobrar",id);
+  logAudit("CUENTA_COBRAR_ELIMINADA","Eliminó · Cliente: "+c.cliente+" · "+c.monto+" "+c.moneda);
   saveData();R();
 }
 
@@ -6701,6 +6732,13 @@ function reqDel(arr,id,field){
     // ── Revertir saldos según el tipo de array ──────────────────────
     if(arr==="brl"||arr==="vzla"||arr==="eeuu"){
       revertirSaldosRemesa(arr, item);
+      // Si esta remesa tenía una Cuenta por Cobrar vinculada y todavía
+      // pendiente, quitarla — ya no hay remesa real detrás de ese cobro.
+      var _cobrarLigada=(S.cuentasCobrar||[]).find(function(x){return x.tipo===arr&&x.refN===item.n&&x.estado==="pendiente";});
+      if(_cobrarLigada){
+        S.cuentasCobrar=S.cuentasCobrar.filter(function(x){return x!==_cobrarLigada;});
+        _marcarBorradoMerge("cuentasCobrar",_cobrarLigada.id);
+      }
     } else if(arr==="inventarioUsdt"){
       revertirSaldosInventario(item);
     } else if(arr==="traspasos"){
