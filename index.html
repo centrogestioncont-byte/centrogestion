@@ -3518,7 +3518,12 @@ function saveIU(){
   if(f.tipo==="compra"){
     var mo0=parseFloat(f.montOrigen)||usdt*tasa;
     var cOrig0=(S.cuentas||[]).find(function(c){return c.id===f.cuentaOrigenId;});
-    if(!confirm("Vas a registrar:\n\nCOMPRA de "+f2(usdt)+" USDT\ncon "+f2(mo0)+" "+(f.moneda||"BRL")+"\ndesde: "+(cOrig0?cOrig0.nombre:"(sin cuenta seleccionada)")+"\n\n¿Es correcto? Si pagaste con otra moneda o cuenta, cancela y corrígelo arriba."))return;
+    var saldoActual0=cOrig0?(parseFloat(cOrig0.saldo)||0):0;
+    var quedaria0=saldoActual0-mo0;
+    var avisoNegativo=(cOrig0&&quedaria0<-0.01)?
+      "\n\n⚠️ ATENCIÓN: \""+cOrig0.nombre+"\" tiene "+f2(saldoActual0)+" "+(f.moneda||"BRL")+" ahora mismo. Después de esta compra quedaría en "+f2(quedaria0)+" (negativo). Confirma solo si ya sabes de dónde va a salir/entrar ese dinero (una remesa pendiente, un cobro, etc.)."
+      :"";
+    if(!confirm("Vas a registrar:\n\nCOMPRA de "+f2(usdt)+" USDT\ncon "+f2(mo0)+" "+(f.moneda||"BRL")+"\ndesde: "+(cOrig0?cOrig0.nombre:"(sin cuenta seleccionada)")+"\n\n¿Es correcto? Si pagaste con otra moneda o cuenta, cancela y corrígelo arriba."+avisoNegativo))return;
   }else{
     var cDest0=(S.cuentas||[]).find(function(c){return c.id===f.cuentaDestinoId;});
     if(!confirm("Vas a registrar:\n\nVENTA de "+f2(usdt)+" USDT\nrecibiendo "+(f.monedaVenta||"VES")+"\nen: "+(cDest0?cDest0.nombre:"(sin cuenta seleccionada)")+"\n\n¿Es correcto? Si recibiste otra moneda o en otra cuenta, cancela y corrígelo arriba."))return;
@@ -5900,7 +5905,7 @@ function fbForceLoad(){
           var remoteFiltrado=(remote[k]||[]).filter(function(it){
             return !(it && it[idF]!==undefined && _estaBorradoMerge(k,it[idF]));
           });
-          obj[k]=_mergeArrayById(remoteFiltrado,obj[k],idF);
+          obj[k]=_mergeArrayById(remoteFiltrado,obj[k],idF,remote._ts,S._ts);
           if(k==="brl"||k==="vzla"||k==="eeuu") _renumerarPorFecha(obj[k]);
         }
       });
@@ -6302,11 +6307,12 @@ function fbCheckREST(){
             // borró intencionalmente a propósito solo porque Firebase
             // todavía tiene la versión vieja.
             var idF=_MERGE_ID_FIELD[k]||"id";
-            var filtrado=data[k].filter(function(it){
+            var remoteFiltrado=data[k].filter(function(it){
               return !(it && it[idF]!==undefined && _estaBorradoMerge(k,it[idF]));
             });
-            if(k==="brl"||k==="vzla"||k==="eeuu") _renumerarPorFecha(filtrado);
-            S[k]=filtrado;
+            var fusionado=_mergeArrayById(remoteFiltrado, S[k], idF, tsRemoto, tsLocal);
+            if(k==="brl"||k==="vzla"||k==="eeuu") _renumerarPorFecha(fusionado);
+            S[k]=fusionado;
           } else {
             S[k]=data[k];
           }
@@ -11161,19 +11167,22 @@ function _convDesde(campo){
   var tasaIda=_getTasaClienteBRL();       // 1 BRL = X VES (cliente envía reales)
   var tasaVuelta=_getTasaVueltaVESaBRL(); // X VES = 1 BRL (cliente envía bolívares)
   if(campo==="brl"){
+    // Cliente escribió cuántos BRL paga → tú entregas VES: bolívares hacia ABAJO (a tu favor)
     var brl=parseFloat(elBrl.value)||0;
     var ves=tasaIda>0?brl*tasaIda:0;
-    elVes.value=ves?ves.toFixed(2):"";
+    elVes.value=ves?Math.floor(ves):"";
     elUsd.value=(bcv>0&&ves)?(ves/bcv).toFixed(2):"";
   } else if(campo==="ves"){
+    // Cliente da VES → tú entregas BRL: reales hacia ABAJO (a tu favor)
     var ves2=parseFloat(elVes.value)||0;
-    elBrl.value=(tasaVuelta>0&&ves2)?(ves2/tasaVuelta).toFixed(2):"";
+    elBrl.value=(tasaVuelta>0&&ves2)?Math.floor(ves2/tasaVuelta):"";
     elUsd.value=(bcv>0&&ves2)?(ves2/bcv).toFixed(2):"";
   } else if(campo==="usd"){
+    // Cliente quiere que lleguen $X → él paga BRL: reales hacia ARRIBA (a tu favor)
     var usd=parseFloat(elUsd.value)||0;
     var ves3=bcv>0?usd*bcv:0;
     elVes.value=ves3?ves3.toFixed(2):"";
-    elBrl.value=(tasaIda>0&&ves3)?(ves3/tasaIda).toFixed(2):"";
+    elBrl.value=(tasaIda>0&&ves3)?Math.ceil(ves3/tasaIda):"";
   }
 }
 var _convUltimoCampo="brl";
@@ -13684,23 +13693,36 @@ function initFirebase(){
 // ── Fusiona un array remoto con el local por campo id: conserva TODO lo local
 // y AGREGA lo que exista remotamente pero no localmente (agregado desde otro
 // dispositivo). Nunca elimina nada — solo suma lo que falte. ──────────────
-function _mergeArrayById(remoteArr, localArr, idField){
+function _mergeArrayById(remoteArr, localArr, idField, remoteTs, localTs){
   idField = idField || "id";
   if(!Array.isArray(remoteArr)) return localArr;
   if(!Array.isArray(localArr)) return remoteArr.slice();
   var localIds = {};
-  localArr.forEach(function(item){
-    if(item && item[idField]!==undefined && item[idField]!==null) localIds[item[idField]]=true;
+  localArr.forEach(function(item, i){
+    if(item && item[idField]!==undefined && item[idField]!==null) localIds[item[idField]]=i;
   });
   var merged = localArr.slice();
-  var agregados = 0;
+  var agregados = 0, actualizados = 0;
+  // Si el lado remoto en su conjunto se guardó MÁS RECIENTE que el local,
+  // un registro que existe en ambos lados (misma id) pero con datos distintos
+  // (ej: el saldo de una cuenta) se actualiza con la versión remota — antes
+  // esto JAMÁS pasaba: un registro ya conocido localmente se dejaba tal cual
+  // aunque el otro lado tuviera un valor más nuevo (ej: el saldo después de
+  // una compra de USDT), haciendo que ese cambio "desapareciera" solo.
+  var remoteEsMasNuevo = (typeof remoteTs==="number" && typeof localTs==="number") ? (remoteTs > localTs) : false;
   remoteArr.forEach(function(remoteItem){
-    if(remoteItem && remoteItem[idField]!==undefined && remoteItem[idField]!==null && !localIds[remoteItem[idField]]){
+    if(!remoteItem || remoteItem[idField]===undefined || remoteItem[idField]===null) return;
+    var idx=localIds[remoteItem[idField]];
+    if(idx===undefined){
       merged.push(remoteItem);
       agregados++;
+    } else if(remoteEsMasNuevo && JSON.stringify(merged[idx])!==JSON.stringify(remoteItem)){
+      merged[idx]=remoteItem;
+      actualizados++;
     }
   });
   if(agregados>0) console.log("🔗 Fusión: +"+agregados+" registro(s) recuperado(s) de otro dispositivo ("+idField+")");
+  if(actualizados>0) console.log("🔗 Fusión: "+actualizados+" registro(s) actualizado(s) con datos más recientes ("+idField+")");
   return merged;
 }
 
