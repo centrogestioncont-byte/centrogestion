@@ -11123,23 +11123,41 @@ function _rConversorBCV(){
 function _fetchTasaBCV(){
   var btn=document.getElementById("btn-bcv-refresh");
   if(btn){btn.textContent="⏳...";btn.disabled=true;}
-  fetch("https://ve.dolarapi.com/v1/dolares/oficial?_="+Date.now(),{cache:"no-store"})
+  function aplicar(tasa,fechaFuente){
+    S._bcvRate=Math.round(tasa*100)/100;
+    S._bcvFechaFuente=fechaFuente||"";
+    S._bcvFecha=ds(td())+" "+new Date().toLocaleTimeString("es-VE",{hour:"2-digit",minute:"2-digit"});
+    saveData();
+    var inp=document.getElementById("bcv-rate-input"); if(inp) inp.value=S._bcvRate;
+    var txt=document.getElementById("bcv-fecha-txt"); if(txt) txt.textContent="actualizada "+S._bcvFecha+(S._bcvFechaFuente?" · fuente: "+S._bcvFechaFuente:"");
+    _reconvertirBCV();
+    if(btn){btn.textContent="✅ Listo";btn.disabled=false;setTimeout(function(){if(btn)btn.textContent="🔄 Traer";},1800);}
+  }
+  // Fuente principal: PyDolarVenezuela — lee la página del BCV directo, donde
+  // el viernes por la tarde YA aparece la tasa que regirá el lunes (la misma
+  // que muestran apps como "Dólar al Día" el fin de semana).
+  fetch("https://pydolarve.org/api/v2/dollar?page=bcv&_="+Date.now(),{cache:"no-store"})
     .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); })
     .then(function(data){
-      var tasa=parseFloat(data.promedio||data.venta||data.compra);
-      if(!tasa) throw new Error("Respuesta sin tasa");
-      S._bcvRate=Math.round(tasa*100)/100;
-      S._bcvFechaFuente=data.fechaActualizacion?new Date(data.fechaActualizacion).toLocaleString("es-VE",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"}):"";
-      S._bcvFecha=ds(td())+" "+new Date().toLocaleTimeString("es-VE",{hour:"2-digit",minute:"2-digit"});
-      saveData();
-      var inp=document.getElementById("bcv-rate-input"); if(inp) inp.value=S._bcvRate;
-      var txt=document.getElementById("bcv-fecha-txt"); if(txt) txt.textContent="actualizada "+S._bcvFecha+(S._bcvFechaFuente?" · el BCV la fechó: "+S._bcvFechaFuente:"");
-      _reconvertirBCV();
-      if(btn){btn.textContent="✅ Listo";btn.disabled=false;setTimeout(function(){if(btn)btn.textContent="🔄 Actualizar";},1800);}
+      var mon=(data&&data.monitors&&(data.monitors.usd||data.monitors.bcv))||null;
+      var tasa=mon?parseFloat(mon.price):0;
+      if(!tasa) throw new Error("respuesta sin tasa");
+      aplicar(tasa,(mon.last_update||"")+" (BCV vía PyDolarVe)");
     })
-    .catch(function(e){
-      if(btn){btn.textContent="🔄 Actualizar";btn.disabled=false;}
-      alert("No se pudo traer la tasa BCV automáticamente (sin internet o la fuente no respondió).\n\nPuedes escribirla a mano en el campo de arriba — funciona igual.\n\nDetalle: "+e.message);
+    .catch(function(){
+      // Respaldo automático: dolarapi (la fuente que usábamos antes)
+      fetch("https://ve.dolarapi.com/v1/dolares/oficial?_="+Date.now(),{cache:"no-store"})
+        .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); })
+        .then(function(data){
+          var tasa=parseFloat(data.promedio||data.venta||data.compra);
+          if(!tasa) throw new Error("Respuesta sin tasa");
+          var f=data.fechaActualizacion?new Date(data.fechaActualizacion).toLocaleString("es-VE",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"}):"";
+          aplicar(tasa,f?f+" (dolarapi)":"(dolarapi)");
+        })
+        .catch(function(e){
+          if(btn){btn.textContent="🔄 Traer";btn.disabled=false;}
+          alert("No se pudo traer la tasa BCV de ninguna de las dos fuentes (sin internet o no respondieron).\n\nPuedes escribirla a mano en el campo — funciona igual.\n\nDetalle: "+e.message);
+        });
     });
 }
 function _getTasaClienteBRL(){
@@ -11181,11 +11199,16 @@ function _convDesde(campo){
     elBrl.value=(tasaVuelta>0&&ves2)?Math.floor(ves2/tasaVuelta):"";
     elUsd.value=(bcv>0&&ves2)?(ves2/bcv).toFixed(2):"";
   } else if(campo==="usd"){
-    // Cliente quiere que lleguen $X → él paga BRL: reales hacia ARRIBA (a tu favor)
+    // Cliente quiere que lleguen $X → él paga BRL: reales hacia ARRIBA (a tu favor).
+    // IMPORTANTE: después de redondear los reales, los bolívares se recalculan
+    // desde ese número final (BRL × tasa) — así, cuando el cliente haga la
+    // multiplicación con tu tasa, el monto en Bs le cuadra EXACTO (y siempre
+    // le llega al menos lo que pidió en $).
     var usd=parseFloat(elUsd.value)||0;
     var ves3=bcv>0?usd*bcv:0;
-    elVes.value=ves3?ves3.toFixed(2):"";
-    elBrl.value=(tasaIda>0&&ves3)?Math.ceil(ves3/tasaIda):"";
+    var brlCobrar=(tasaIda>0&&ves3)?Math.ceil(ves3/tasaIda):0;
+    elBrl.value=brlCobrar||"";
+    elVes.value=(brlCobrar&&tasaIda>0)?Math.floor(brlCobrar*tasaIda):(ves3?ves3.toFixed(2):"");
   }
 }
 var _convUltimoCampo="brl";
