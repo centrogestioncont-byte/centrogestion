@@ -991,11 +991,35 @@ function COMVES(){var v=(S.config&&S.config.comision_usdt_ves);return v!==undefi
 
 // ── STORAGE / PERSISTENCIA ──────────────────────────
 var STORAGE_KEY = "remesasBRL_v1";
+// ── Detector de versión nueva ─────────────────────────────────────
+// La app revisa sola si hay una versión más nueva publicada y muestra un
+// aviso para recargar — así se acaba el problema de "sigue la app vieja".
+// (El número de versión en sí se define más abajo, junto a DATA_KEYS.)
+function _checkAppUpdate(){
+  try{
+    fetch(location.pathname+"?_chk="+Date.now(),{cache:"no-store"})
+      .then(function(r){ return r.ok?r.text():""; })
+      .then(function(txt){
+        var m=txt.match(/APP_VERSION\s*=\s*"([^"]+)"/);
+        if(m&&m[1]&&m[1]!==APP_VERSION&&!document.getElementById("upd-banner")){
+          var b=document.createElement("div");
+          b.id="upd-banner";
+          b.style.cssText="position:fixed;bottom:12px;left:12px;right:12px;z-index:99999;background:#1a3558;color:#fff;padding:13px 16px;border-radius:12px;font-size:13px;font-weight:700;text-align:center;box-shadow:0 4px 16px rgba(0,0,0,.35);cursor:pointer";
+          b.textContent="🔄 Hay una versión nueva de la app ("+m[1]+") — toca aquí para actualizar";
+          b.onclick=function(){ location.replace(location.pathname+"?upd="+Date.now()); };
+          document.body.appendChild(b);
+        }
+      }).catch(function(){});
+  }catch(e){}
+}
+setTimeout(_checkAppUpdate,6000);
+setInterval(_checkAppUpdate,5*60*1000);
 // ─── VERSIÓN DEL ARCHIVO ──────────────────────────────────────────
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260625_v3";
+var APP_VERSION = "20260724_v1";
+console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
 
@@ -4432,7 +4456,7 @@ function rConfigAdmin(){
     _cfgAcc("pines","🔑","Pines de acceso",null,"#4B3FC7",pinsHTML,false)+
     _cfgAcc("permisos","🔒","Permisos por operador",null,"#1a6b3c",permisosBody,false)+
     "<div style='background:#f8f8f8;border-radius:14px;padding:14px;border:1px solid #eee'>"+
-      "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:8px'>ℹ️ Sistema</div>"+
+      "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:8px'>ℹ️ Sistema · versión "+APP_VERSION+"</div>"+
       "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:10px'>"+
         "<div><div style='font-size:10px;color:#888'>BRL</div><div style='font-size:22px;font-weight:800;color:#0f6e3a'>"+S.brl.length+"</div></div>"+
         "<div><div style='font-size:10px;color:#888'>VZLA</div><div style='font-size:22px;font-weight:800;color:#c0392b'>"+S.vzla.length+"</div></div>"+
@@ -11134,45 +11158,64 @@ function _fetchTasaBCV(){
     _reconvertirBCV();
     if(btn){btn.textContent="✅ Listo";btn.disabled=false;setTimeout(function(){if(btn)btn.textContent="🔄 Traer";},1800);}
   }
-  function _fin(e){
-    _fallos.push("dolarapi: "+e.message);
-    if(btn){btn.textContent="🔄 Traer";btn.disabled=false;}
-    console.warn("BCV — fuentes fallidas:",_fallos);
-    alert("No se pudo traer la tasa de ninguna fuente:\n\n"+_fallos.join("\n")+"\n\nEscríbela a mano en el campo — funciona igual.");
+  function _parsePyDolar(txt){
+    var d=JSON.parse(txt);
+    var mon=(d&&d.monitors&&(d.monitors.usd||d.monitors.bcv))||null;
+    if(!mon||!parseFloat(mon.price)) return null;
+    return {t:parseFloat(mon.price), f:"fecha BCV: "+(mon.last_update||"?")+" (PyDolarVe)"};
   }
-  // Fuente 1: PyDolarVenezuela (lee la página del BCV; trae la del lunes desde el viernes)
-  fetch("https://pydolarve.org/api/v2/dollar?page=bcv",{cache:"no-store"})
-    .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); })
-    .then(function(data){
-      var mon=(data&&data.monitors&&(data.monitors.usd||data.monitors.bcv))||null;
-      var tasa=mon?parseFloat(mon.price):0;
-      if(!tasa) throw new Error("respuesta sin tasa");
-      aplicar(tasa,"fecha BCV: "+(mon.last_update||"?")+" (PyDolarVe)");
-    })
-    .catch(function(e1){
-      _fallos.push("PyDolarVe: "+e1.message);
-      // Fuente 2: BCV-API — scrapea bcv.org.ve directo, incluye la Fecha Valor (la del lunes)
-      fetch("https://bcv-api.rafnixg.dev/rates/",{cache:"no-store"})
-        .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); })
-        .then(function(data){
-          var tasa=parseFloat(data&&(data.dollar||data.usd||(data.rates&&data.rates.usd)));
-          if(!tasa) throw new Error("respuesta sin tasa");
-          aplicar(tasa,"fecha valor: "+(data.date||"?")+" (BCV directo)");
-        })
-        .catch(function(e2){
-          _fallos.push("BCV directo: "+e2.message);
-          // Fuente 3 (último respaldo): dolarapi — OJO: trae la tasa vigente HOY, puede no ser la del lunes
-          fetch("https://ve.dolarapi.com/v1/dolares/oficial",{cache:"no-store"})
-            .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); })
-            .then(function(data){
-              var tasa=parseFloat(data.promedio||data.venta||data.compra);
-              if(!tasa) throw new Error("respuesta sin tasa");
-              var f=data.fechaActualizacion?new Date(data.fechaActualizacion).toLocaleString("es-VE",{day:"2-digit",month:"2-digit",year:"2-digit"}):"?";
-              aplicar(tasa,"⚠️ respaldo dolarapi ("+f+") — puede ser la tasa de HOY y no la del lunes; verifica");
-            })
-            .catch(_fin);
-        });
-    });
+  // Cadena de fuentes: se intentan EN ORDEN hasta que una funcione.
+  // Las rutas con proxy (allorigins) existen porque algunos navegadores
+  // bloquean la llamada directa a estas APIs (CORS) — el proxy la hace
+  // por ti desde su servidor y sí llega.
+  var fuentes=[
+    {n:"PyDolarVe",
+     u:"https://pydolarve.org/api/v2/dollar?page=bcv",
+     p:_parsePyDolar},
+    {n:"PyDolarVe (vía proxy)",
+     u:"https://api.allorigins.win/raw?url="+encodeURIComponent("https://pydolarve.org/api/v2/dollar?page=bcv"),
+     p:_parsePyDolar},
+    {n:"Página del BCV",
+     u:"https://r.jina.ai/https://www.bcv.org.ve/",
+     p:function(txt){
+       var m=txt.match(/USD[\s\S]{0,200}?(\d{1,3}(?:\.\d{3})*,\d{2,})/);
+       if(!m) return null;
+       var t=parseFloat(m[1].replace(/\./g,"").replace(",","."));
+       if(!t||t<10||t>100000) return null;
+       var fv=txt.match(/Fecha\s*Valor:?\s*([^\n<]{4,50})/i);
+       return {t:t, f:"fecha valor: "+(fv?fv[1].trim():"?")+" (página oficial del BCV)"};
+     }},
+    {n:"dolarapi (respaldo)",
+     u:"https://ve.dolarapi.com/v1/dolares/oficial",
+     p:function(txt){
+       var d=JSON.parse(txt);
+       var t=parseFloat(d.promedio||d.venta||d.compra);
+       if(!t) return null;
+       return {t:t, f:"⚠️ respaldo dolarapi — puede ser la tasa de HOY y no la del lunes; verifica"};
+     }}
+  ];
+  function intentar(i){
+    if(i>=fuentes.length){
+      if(btn){btn.textContent="🔄 Traer";btn.disabled=false;}
+      console.warn("BCV — todas las fuentes fallaron:",_fallos);
+      alert("No se pudo traer la tasa de ninguna fuente:\n\n"+_fallos.join("\n")+"\n\nEscríbela a mano en el campo — funciona igual.");
+      return;
+    }
+    var f=fuentes[i];
+    fetch(f.u,{cache:"no-store"})
+      .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.text(); })
+      .then(function(txt){
+        var res=null;
+        try{ res=f.p(txt); }catch(e){}
+        if(!res||!res.t) throw new Error("respuesta sin tasa");
+        aplicar(res.t,res.f);
+      })
+      .catch(function(e){
+        _fallos.push(f.n+": "+e.message);
+        intentar(i+1);
+      });
+  }
+  intentar(0);
 }
 function _getTasaClienteBRL(){
   if(S._convTasaOverride) return parseFloat(S._convTasaOverride);
