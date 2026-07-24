@@ -11101,7 +11101,7 @@ function _rConversorBCV(){
       "<span style='font-size:11px;color:#666'>VES</span>"+
       "<button type='button' onclick='_fetchTasaBCV()' id='btn-bcv-refresh' style='background:#EEF3FF;border:1px solid #1a5fb444;color:#1a5fb4;padding:5px 9px;border-radius:8px;font-size:10.5px;font-weight:700;cursor:pointer;margin-left:auto'>🔄 Traer</button>"+
     "</div>"+
-    "<div id='bcv-fecha-txt' style='font-size:9.5px;color:#999;margin-bottom:10px'>"+(fecha?"actualizada "+fecha+(S._bcvFechaFuente?" · el BCV la fechó: "+S._bcvFechaFuente:""):"Toca 🔄 para traerla, o escríbela a mano")+" · solo de referencia, no afecta tu ganancia real</div>"+
+    "<div id='bcv-fecha-txt' style='font-size:9.5px;color:#999;margin-bottom:10px'>"+(fecha?"actualizada "+fecha+(S._bcvFechaFuente?" · "+S._bcvFechaFuente:""):"Toca 🔄 para traerla, o escríbela a mano")+" · solo de referencia, no afecta tu ganancia real</div>"+
     "<div style='display:grid;grid-template-columns:1fr;gap:8px'>"+
       "<div style='display:flex;align-items:center;gap:8px;background:#D6F5E3;border-radius:9px;padding:8px 10px'>"+
         "<span style='font-size:16px'>🇧🇷</span><input id='conv-brl' type='number' inputmode='decimal' placeholder='0' oninput='_convDesde(\"brl\")' style='flex:1;border:none;background:transparent;font-size:15px;font-weight:800;color:#0b4d27;text-align:right;min-width:0'><span style='font-size:11px;color:#0b4d27;font-weight:700;width:34px'>BRL</span>"+
@@ -11123,40 +11123,54 @@ function _rConversorBCV(){
 function _fetchTasaBCV(){
   var btn=document.getElementById("btn-bcv-refresh");
   if(btn){btn.textContent="⏳...";btn.disabled=true;}
+  var _fallos=[];
   function aplicar(tasa,fechaFuente){
     S._bcvRate=Math.round(tasa*100)/100;
     S._bcvFechaFuente=fechaFuente||"";
     S._bcvFecha=ds(td())+" "+new Date().toLocaleTimeString("es-VE",{hour:"2-digit",minute:"2-digit"});
     saveData();
     var inp=document.getElementById("bcv-rate-input"); if(inp) inp.value=S._bcvRate;
-    var txt=document.getElementById("bcv-fecha-txt"); if(txt) txt.textContent="actualizada "+S._bcvFecha+(S._bcvFechaFuente?" · fuente: "+S._bcvFechaFuente:"");
+    var txt=document.getElementById("bcv-fecha-txt"); if(txt) txt.textContent="actualizada "+S._bcvFecha+(S._bcvFechaFuente?" · "+S._bcvFechaFuente:"");
     _reconvertirBCV();
     if(btn){btn.textContent="✅ Listo";btn.disabled=false;setTimeout(function(){if(btn)btn.textContent="🔄 Traer";},1800);}
   }
-  // Fuente principal: PyDolarVenezuela — lee la página del BCV directo, donde
-  // el viernes por la tarde YA aparece la tasa que regirá el lunes (la misma
-  // que muestran apps como "Dólar al Día" el fin de semana).
-  fetch("https://pydolarve.org/api/v2/dollar?page=bcv&_="+Date.now(),{cache:"no-store"})
+  function _fin(e){
+    _fallos.push("dolarapi: "+e.message);
+    if(btn){btn.textContent="🔄 Traer";btn.disabled=false;}
+    console.warn("BCV — fuentes fallidas:",_fallos);
+    alert("No se pudo traer la tasa de ninguna fuente:\n\n"+_fallos.join("\n")+"\n\nEscríbela a mano en el campo — funciona igual.");
+  }
+  // Fuente 1: PyDolarVenezuela (lee la página del BCV; trae la del lunes desde el viernes)
+  fetch("https://pydolarve.org/api/v2/dollar?page=bcv",{cache:"no-store"})
     .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); })
     .then(function(data){
       var mon=(data&&data.monitors&&(data.monitors.usd||data.monitors.bcv))||null;
       var tasa=mon?parseFloat(mon.price):0;
       if(!tasa) throw new Error("respuesta sin tasa");
-      aplicar(tasa,(mon.last_update||"")+" (BCV vía PyDolarVe)");
+      aplicar(tasa,"fecha BCV: "+(mon.last_update||"?")+" (PyDolarVe)");
     })
-    .catch(function(){
-      // Respaldo automático: dolarapi (la fuente que usábamos antes)
-      fetch("https://ve.dolarapi.com/v1/dolares/oficial?_="+Date.now(),{cache:"no-store"})
+    .catch(function(e1){
+      _fallos.push("PyDolarVe: "+e1.message);
+      // Fuente 2: BCV-API — scrapea bcv.org.ve directo, incluye la Fecha Valor (la del lunes)
+      fetch("https://bcv-api.rafnixg.dev/rates/",{cache:"no-store"})
         .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); })
         .then(function(data){
-          var tasa=parseFloat(data.promedio||data.venta||data.compra);
-          if(!tasa) throw new Error("Respuesta sin tasa");
-          var f=data.fechaActualizacion?new Date(data.fechaActualizacion).toLocaleString("es-VE",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"}):"";
-          aplicar(tasa,f?f+" (dolarapi)":"(dolarapi)");
+          var tasa=parseFloat(data&&(data.dollar||data.usd||(data.rates&&data.rates.usd)));
+          if(!tasa) throw new Error("respuesta sin tasa");
+          aplicar(tasa,"fecha valor: "+(data.date||"?")+" (BCV directo)");
         })
-        .catch(function(e){
-          if(btn){btn.textContent="🔄 Traer";btn.disabled=false;}
-          alert("No se pudo traer la tasa BCV de ninguna de las dos fuentes (sin internet o no respondieron).\n\nPuedes escribirla a mano en el campo — funciona igual.\n\nDetalle: "+e.message);
+        .catch(function(e2){
+          _fallos.push("BCV directo: "+e2.message);
+          // Fuente 3 (último respaldo): dolarapi — OJO: trae la tasa vigente HOY, puede no ser la del lunes
+          fetch("https://ve.dolarapi.com/v1/dolares/oficial",{cache:"no-store"})
+            .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); })
+            .then(function(data){
+              var tasa=parseFloat(data.promedio||data.venta||data.compra);
+              if(!tasa) throw new Error("respuesta sin tasa");
+              var f=data.fechaActualizacion?new Date(data.fechaActualizacion).toLocaleString("es-VE",{day:"2-digit",month:"2-digit",year:"2-digit"}):"?";
+              aplicar(tasa,"⚠️ respaldo dolarapi ("+f+") — puede ser la tasa de HOY y no la del lunes; verifica");
+            })
+            .catch(_fin);
         });
     });
 }
