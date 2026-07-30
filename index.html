@@ -1018,7 +1018,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260730_v9";
+var APP_VERSION = "20260730_v10";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -6163,7 +6163,7 @@ async function leerComprobanteOCR(input){
       img.src=url;
     });
 
-    var result=await Tesseract.recognize(canvas,'eng',{
+    var result=await Tesseract.recognize(canvas,'spa+por',{
       tessedit_pageseg_mode:'6',
       logger:function(m){
         var pct=5;
@@ -6192,14 +6192,31 @@ async function leerComprobanteOCR(input){
 
     var parsed=_parsearOCR(txt);
     if(parsed&&(parsed.usdt||parsed.tasa||parsed.monto)){
-      if(!S._qf) S._qf={tipo:'compra',moneda:'VES',tasa:'',monto:'',usdt:''};
-      if(parsed.tipo)   S._qf.tipo  =parsed.tipo;
-      if(parsed.moneda) S._qf.moneda=parsed.moneda;
-      if(parsed.monto)  S._qf.monto =String(parsed.monto);
-      if(parsed.tasa)   S._qf.tasa  =String(parsed.tasa);
-      if(parsed.usdt)   S._qf.usdt  =String(parsed.usdt);
+      // Llenar S.nIU — el formulario REAL de Inventario USDT (antes esto
+      // llenaba S._qf, un formulario que no existe en ninguna pantalla,
+      // así que el resultado del OCR nunca se veía reflejado en ningún lado).
+      S.nIU.tipo = parsed.tipo || 'compra';
+      S.nIU.plataforma = 'Binance P2P';
+      if(parsed.tasa)    S.nIU.tasa = parsed.tasa;
+      if(parsed.usdt)    S.nIU.usdt = parsed.usdt;
+      if(parsed.ordenId) S.nIU.ordenId = parsed.ordenId;
+      if(parsed.comision!==undefined) S.nIU.comision = parsed.comision;
+      if(parsed.tipo==='venta'){
+        S.nIU.monedaVenta = parsed.moneda||'VES';
+        if(parsed.monto) S.nIU.bsRecibidos = parsed.monto;
+      } else {
+        S.nIU.moneda = parsed.moneda||'VES';
+        if(parsed.monto) S.nIU.montOrigen = parsed.monto;
+      }
+      if(parsed.fecha) S.nIU.fecha = parsed.fecha;
+      else if(!S.nIU.fecha){
+        var h=new Date();
+        S.nIU.fecha=h.getFullYear()+'-'+String(h.getMonth()+1).padStart(2,'0')+'-'+String(h.getDate()).padStart(2,'0');
+      }
       var resumen=(parsed.tipo==='compra'?'Compra':'Venta')+' '+(parsed.moneda||'?')+
         (parsed.monto?' · '+parsed.monto:'')+(parsed.usdt?' · '+parsed.usdt+' USDT':'')+(parsed.tasa?' · Tasa: '+parsed.tasa:'');
+      S._pasteOk='✅ '+resumen+' — Selecciona las cuentas y guarda';
+      S._pasteErr=null;
       _ocrUpdateUI(null,-1,resumen,null);
       R(); // solo R() al final cuando ya tenemos resultado
     } else {
@@ -12337,6 +12354,10 @@ function rInventarioUsdt(){
         "<div style='font-size:10px;font-weight:700;color:#4ade80;margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px'>📋 Pegar texto del comprobante</div>"+
         "<div style='font-size:10px;color:rgba(74,222,100,.6);margin-bottom:10px'>📱 iPhone: mantén el texto en la captura → Copiar · Android: Google Lens → Seleccionar texto</div>"+
         "<button type='button' onclick='_abrirPegado()' style='width:100%;padding:12px;background:#16a34a;color:#fff;border:none;border-radius:9px;font-size:13px;font-weight:800;cursor:pointer'>📋 Pegar texto de Binance</button>"+
+        "<div style='display:flex;align-items:center;gap:8px;margin:10px 0'><div style='flex:1;height:1px;background:rgba(74,222,100,.2)'></div><span style='font-size:9px;color:rgba(74,222,100,.5)'>O DIRECTO DESDE UNA FOTO</span><div style='flex:1;height:1px;background:rgba(74,222,100,.2)'></div></div>"+
+        "<input type='file' accept='image/*' id='ocr-file-input' style='display:none' onchange='leerComprobanteOCR(this)'>"+
+        "<button type='button' onclick='document.getElementById(\"ocr-file-input\").click()' style='width:100%;padding:12px;background:transparent;color:#4ade80;border:1.5px solid #16a34a;border-radius:9px;font-size:13px;font-weight:800;cursor:pointer'>📷 Leer captura o foto del comprobante</button>"+
+        "<div id='ocr-status-box' style='margin-top:8px'></div>"+
         (S._pasteOk?"<div style='margin-top:8px;font-size:11px;color:#4ade80;background:rgba(34,197,94,.12);border-radius:7px;padding:6px 10px'>✅ "+S._pasteOk+"</div>":"")+ 
         (S._pasteErr?"<div style='margin-top:8px;font-size:11px;color:#f87171;background:rgba(248,113,113,.1);border-radius:7px;padding:6px 10px'>❌ "+S._pasteErr+"</div>":"")+ 
       "</div>";
