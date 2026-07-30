@@ -1018,7 +1018,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260730_v2";
+var APP_VERSION = "20260730_v3";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -7677,15 +7677,40 @@ function editRestanteInv(id){
   var esCompra=r.tipo==="compra";
   var actual=esCompra?(parseFloat(r.restante)||0):(parseFloat(r.bsRestante)||0);
   var max=esCompra?(parseFloat(r.usdt)||0):(parseFloat(r.bs)||0);
-  var v=prompt((esCompra?"USDT restantes de este lote (máx "+f4(max)+"):":"Bolívares disponibles de esta venta (máx "+f2(max)+"):"),String(actual));
-  if(v===null) return;
-  v=parseFloat(String(v).replace(/\./g,"").replace(",","."));
-  if(isNaN(v)){v=parseFloat(prompt("Valor no válido. Ingresa solo números (usa punto decimal):","")||"");}
-  if(isNaN(v)||v<0){alert("Valor no válido.");return;}
-  if(esCompra) r.restante=Math.round(v*10000)/10000;
-  else r.bsRestante=Math.round(v*100)/100;
-  r._mod=Date.now(); // marca de cuándo se tocó ESTE lote específico, para que la fusión entre dispositivos sepa cuál versión es la más nueva
-  saveData();R();
+  var label=esCompra?"USDT restantes de este lote":"Bolívares/Reais disponibles de esta venta";
+  var unidad=esCompra?"USDT":(r.moneda||"");
+  var old=document.getElementById("editRestanteModal");
+  if(old) old.remove();
+  var div=document.createElement("div");
+  div.id="editRestanteModal";
+  div.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px";
+  div.innerHTML=
+    "<div style='background:#fff;border-radius:16px;padding:20px;max-width:360px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,.3)'>"+
+      "<div style='font-size:15px;font-weight:800;color:#1a3558;margin-bottom:4px'>✏️ Editar restante</div>"+
+      "<div style='font-size:12px;color:#888;margin-bottom:14px'>"+label+" (máx "+(esCompra?f4(max):f2(max))+" "+unidad+")</div>"+
+      "<input id='editRestanteInput' type='number' step='0.0001' value='"+actual+"' style='width:100%;padding:11px;font-size:16px;font-weight:700;border:1.5px solid #ddd;border-radius:9px;box-sizing:border-box;margin-bottom:14px' autofocus>"+
+      "<div style='display:flex;gap:8px'>"+
+        "<button id='editRestanteCancel' style='flex:1;padding:11px;border:1.5px solid #ddd;border-radius:9px;background:#fff;color:#555;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit'>Cancelar</button>"+
+        "<button id='editRestanteSave' style='flex:1;padding:11px;border:none;border-radius:9px;background:#1a3558;color:#fff;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit'>Guardar</button>"+
+      "</div>"+
+    "</div>";
+  document.body.appendChild(div);
+  var inp=document.getElementById("editRestanteInput");
+  inp.focus(); inp.select();
+  function cerrar(){ var m=document.getElementById("editRestanteModal"); if(m) m.remove(); }
+  document.getElementById("editRestanteCancel").onclick=cerrar;
+  div.onclick=function(e){ if(e.target===div) cerrar(); };
+  function guardar(){
+    var v=parseFloat(inp.value);
+    if(isNaN(v)||v<0){ alert("Valor no válido."); return; }
+    if(esCompra) r.restante=Math.round(v*10000)/10000;
+    else r.bsRestante=Math.round(v*100)/100;
+    r._mod=Date.now();
+    cerrar();
+    saveData();R();
+  }
+  document.getElementById("editRestanteSave").onclick=guardar;
+  inp.onkeydown=function(e){ if(e.key==="Enter") guardar(); if(e.key==="Escape") cerrar(); };
 }
 function getAutoRates(origMoneda,destMoneda,montoOrigen,montoBs,cuentaOrigenId,cuentaDestinoId){
   var mO=parseFloat(montoOrigen)||0, mB=parseFloat(montoBs)||0;
