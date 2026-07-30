@@ -1018,7 +1018,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260730_v3";
+var APP_VERSION = "20260730_v4";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -14026,13 +14026,21 @@ function _fbMergeAndWrite(obj){
             var remoteFiltrado=(remote[k]||[]).filter(function(it){
               return !(it && it[idF]!==undefined && _estaBorradoMerge(k,it[idF]));
             });
-            obj[k] = _mergeArrayById(remoteFiltrado, obj[k], idF, remote._ts, obj._ts);
+            // OJO: se fusiona contra el estado VIVO actual (S[k]), no contra
+            // la foto vieja que se tomó cuando ESTE guardado empezó (obj[k]).
+            // Antes, si editabas otra cosa mientras este guardado todavía
+            // esperaba la respuesta de Firebase (así sea 1 segundo), esa
+            // edición nueva se perdía al llegar la respuesta, porque se
+            // pisaba TODO con la foto vieja. Usando S[k] (que ya incluye
+            // cualquier edición hecha mientras tanto) como base, nada de
+            // lo más reciente se pierde.
+            obj[k] = _mergeArrayById(remoteFiltrado, S[k], idF, remote._ts, obj._ts);
             if(k==="brl"||k==="vzla"||k==="eeuu") _renumerarPorFecha(obj[k]);
             S[k] = obj[k]; // reflejar la fusión también en el estado local/UI
           }
         });
         if(remote.config!==undefined){
-          obj.config = _mergeConfigSafe(remote.config, obj.config||{});
+          obj.config = _mergeConfigSafe(remote.config, S.config||{});
           S.config = obj.config;
         }
       }
