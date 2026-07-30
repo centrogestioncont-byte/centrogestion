@@ -1018,7 +1018,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260730_v8";
+var APP_VERSION = "20260730_v9";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -6576,6 +6576,23 @@ function corregirSaldoCierre(mesKey){
 function saveData(){
   if(!permisoEdicion()){return;} // Solo lectura — no guarda, no interrumpe
   try{
+    // Marcar qué cuentas cambiaron de saldo desde el último guardado — un
+    // solo punto central en vez de tocar cada lugar del código que ajusta
+    // saldos (son decenas). Sin esto, un saldo recién actualizado (ej: al
+    // registrar una venta de USDT) podía perderse en la sincronización con
+    // otro dispositivo, exactamente igual que pasaba con los lotes de
+    // inventario — porque las cuentas nunca tenían una marca de "cuándo se
+    // tocó esta en particular" para que la fusión supiera cuál es la más
+    // nueva.
+    if(!window._ultimoSaldoPorCuenta) window._ultimoSaldoPorCuenta={};
+    (S.cuentas||[]).forEach(function(c){
+      var actual=parseFloat(c.saldo)||0;
+      var previo=window._ultimoSaldoPorCuenta[c.id];
+      if(previo===undefined || Math.abs(previo-actual)>0.001){
+        c._mod=Date.now();
+      }
+      window._ultimoSaldoPorCuenta[c.id]=actual;
+    });
     var obj={_ts:Date.now()};
     // Count total ops for integrity check
     obj._opsCount=(S.brl||[]).length+(S.vzla||[]).length+(S.eeuu||[]).length;
