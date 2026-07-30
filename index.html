@@ -361,7 +361,7 @@ tr:last-child td{border-bottom:none}
   <!-- SheetJS: para exportar Excel del cierre mensual -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <!-- Tesseract.js — OCR local, sin API key, 100% gratis -->
-<script src="https://unpkg.com/tesseract.js@v4/dist/tesseract.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
 <body>
 <div id="app"></div>
@@ -1018,7 +1018,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260730_v11";
+var APP_VERSION = "20260730_v12";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -6136,40 +6136,13 @@ async function leerComprobanteOCR(input){
   }
 
   _ocrUpdateUI('Iniciando OCR...',5);
+  var worker=null;
 
   try{
-    // Pasar imagen directamente sin manipulación de píxeles
-    // (el preprocesamiento destruía el texto)
-    var canvas=await new Promise(function(resolve,reject){
-      var img=new Image();
-      var url=URL.createObjectURL(file);
-      img.onload=function(){
-        var w=img.width, h=img.height;
-        // Solo reducir si es extremadamente grande (>4000px)
-        var maxW=4000;
-        if(w>maxW){h=Math.round(h*maxW/w);w=maxW;}
-        var cv=document.createElement('canvas');
-        cv.width=w; cv.height=h;
-        var ctx=cv.getContext('2d');
-        // Fondo blanco (por si hay transparencias)
-        ctx.fillStyle='#ffffff';
-        ctx.fillRect(0,0,w,h);
-        ctx.drawImage(img,0,0,w,h);
-        URL.revokeObjectURL(url);
-        console.log('[OCR] Canvas creado: '+w+'x'+h+'px');
-        resolve(cv);
-      };
-      img.onerror=function(){URL.revokeObjectURL(url);reject(new Error('No se pudo cargar la imagen'));};
-      img.src=url;
-    });
-
-    // OJO: pasarle el <canvas> tal cual a Tesseract.recognize() es un patrón
-    // que falla silenciosamente (da texto vacío) — está documentado en el
-    // propio repositorio de la librería. Convertirlo a imagen (dataURL)
-    // primero es la forma confiable de pasarlo.
-    var imgDataUrl=canvas.toDataURL('image/png');
-    var result=await Tesseract.recognize(imgDataUrl,'spa+por',{
-      tessedit_pageseg_mode:'6',
+    // API actual de Tesseract.js (v5): createWorker + worker.recognize().
+    // Se le pasa el archivo DIRECTAMENTE — nada de canvas ni conversiones
+    // manuales; es el formato que la librería maneja de forma confiable.
+    worker = await Tesseract.createWorker('spa+por', 1, {
       logger:function(m){
         var pct=5;
         var st=m.status||'';
@@ -6187,11 +6160,15 @@ async function leerComprobanteOCR(input){
       }
     });
 
-    var txt=result.data.text||'';
+    var result = await worker.recognize(file);
+    var txt = (result&&result.data&&result.data.text) || '';
     console.log('[OCR] Texto detectado:\n'+txt);
 
+    await worker.terminate();
+    worker=null;
+
     if(!txt.trim()){
-      _ocrUpdateUI(null,-1,null,'No se detectó texto. Usa una captura de pantalla del teléfono (no foto de pantalla).');
+      _ocrUpdateUI(null,-1,null,'No se detectó texto. Intenta con otra captura, o usa "Pegar texto de Binance" con Google Lens mientras tanto.');
       input.value=''; return;
     }
 
@@ -6229,6 +6206,7 @@ async function leerComprobanteOCR(input){
     }
 
   } catch(err){
+    if(worker){ try{ await worker.terminate(); }catch(e2){} }
     console.error('[OCR] Error completo:', err);
     var msg=err&&(err.message||err.toString())||'Error desconocido';
     // Detectar error CORS/Worker
