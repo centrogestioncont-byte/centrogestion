@@ -1018,7 +1018,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260730_v6";
+var APP_VERSION = "20260730_v7";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -7670,6 +7670,32 @@ function editarSaldoCuentaEnConfig(cid){
   alert("✅ Saldo de \""+c.nombre+"\" actualizado a "+c.saldo+" "+c.moneda+".");
 }
 
+// ── Corrección puntual de una sola vez (30/jul) ──────────────────────────
+// Deja todos los lotes de VENTA en VES en 0, EXCEPTO el que originalmente
+// era de 50.000 (se identifica por su monto original 'bs', no por el
+// restante, que ya se estuvo editando de un lado a otro) — a ese le deja
+// 25.864 exacto. Todo en UN SOLO guardado, para no repetir la carrera de
+// guardados rápidos seguidos que causaba que un lote "reviviera" al editar
+// el siguiente. Después de usarse una vez, el botón desaparece solo.
+function _correccionLotesVES30Jul(){
+  var lotes=(S.inventarioUsdt||[]).filter(function(r){return r.tipo==="venta"&&r.moneda==="VES";});
+  if(!lotes.length){alert("No hay lotes de venta en VES.");return;}
+  var elDe50000=lotes.find(function(r){return Math.abs((parseFloat(r.bs)||0)-50000)<0.01;});
+  var resumen=lotes.map(function(r){
+    var esElDe50000=(elDe50000&&r===elDe50000);
+    var nuevo=esElDe50000?25864:0;
+    return (esElDe50000?"★ ":"• ")+"Lote de "+f2(r.bs)+" (restante actual "+f2(r.bsRestante)+") → quedará en "+f2(nuevo);
+  }).join("\n");
+  if(!confirm("🛠️ CORRECCIÓN DE UNA SOLA VEZ\n\nSe van a ajustar "+lotes.length+" lote(s) de venta en VES así:\n\n"+resumen+"\n\n¿Confirmar? Esto no se puede deshacer con un clic."))return;
+  lotes.forEach(function(r){
+    var esElDe50000=(elDe50000&&r===elDe50000);
+    r.bsRestante=esElDe50000?25864:0;
+    r._mod=Date.now();
+  });
+  S._correccion30jul=true; // el botón desaparece — corrección de una sola vez
+  saveData();R();
+  alert("✅ Listo. Los lotes quedaron ajustados en un solo guardado.");
+}
 function editRestanteInv(id){
   var r=(S.inventarioUsdt||[]).find(function(x){return x.id===id;});
   if(!r) return;
@@ -12400,6 +12426,7 @@ function rInventarioUsdt(){
     "<div style='display:flex;gap:8px'>"+
     "<button type='button' onclick='toggleArchivados()' style='background:"+(S._verArchivados?"#5a4500":"#efe6c0")+";color:"+(S._verArchivados?"#fff":"#7a5c00")+";border:none;padding:6px 12px;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer'>📦 Archivados ("+((S.inventarioUsdt_cerrado||[]).length)+")</button>"+
     "<button type='button' onclick='cerrarLotesViejos()' style='background:#7a5c00;color:#fff;border:none;padding:6px 12px;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer'>🧹 Cerrar lotes viejos</button>"+
+    (!S._correccion30jul?"<button type='button' onclick='_correccionLotesVES30Jul()' style='background:#c0392b;color:#fff;border:none;padding:6px 12px;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer'>🛠️ Corregir lotes VES (una vez)</button>":"")+
     "</div>"+
     "</div>"+
     (function(){
