@@ -1018,7 +1018,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260730_v1";
+var APP_VERSION = "20260730_v2";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -2830,7 +2830,7 @@ function pagarCompromiso(cmpId,mesKey){
       if(egOld){
         // Revertir el descuento real que se hizo al pagar (cuenta + lote FIFO)
         if(egOld.cuentaId) ajusteCuentaEgreso(egOld.cuentaId,+(parseFloat(egOld.monto)||0));
-        restaurarFIFOEgreso(egOld.mon||"BRL",egOld.monto,egOld.usdt);
+        restaurarFIFOEgreso(egOld.mon||"BRL",egOld.monto,egOld.usdt,egOld.cuentaId);
       }
       S.egresos=(S.egresos||[]).filter(function(e){return e.id!==pago.egresoId;});
     }
@@ -2855,7 +2855,7 @@ function pagarCompromiso(cmpId,mesKey){
   var egId="cmpeg_"+Date.now();
   S.egresos=S.egresos||[];
   ajusteCuentaEgreso(c.cuentaId,-(parseFloat(c.monto)||0));
-  descontarFIFOEgreso(c.moneda,c.monto,c.usdt);
+  descontarFIFOEgreso(c.moneda,c.monto,c.usdt,c.cuentaId);
   S.egresos.push({id:egId,d:fechaPagoReal,cat:c.cat,mot:"[Compromiso] "+c.nombre,monto:c.monto,usdt:c.usdt,mon:c.moneda,tipo:c.tipo,pagada:true,locked:false,fromCompromiso:cmpId,cuentaId:c.cuentaId,diaVenceCiclo:dia+"/"+p[1]+"/"+String(parseInt(p[0])).slice(-2)});
   if(!c.pagos)c.pagos={};
   c.pagos[mesKey]={pagado:true,fechaPago:fechaPagoReal,egresoId:egId};
@@ -3371,7 +3371,7 @@ function pagarEgreso(id){
   if(!confirm("💰 PAGAR: "+e.mot+"\n\nSe descontarán "+f2(e.monto)+" "+(e.mon||"BRL")+" de \""+c.nombre+"\"\nSaldo actual: "+f2(c.saldo)+" → quedará: "+f2((parseFloat(c.saldo)||0)-(parseFloat(e.monto)||0))+"\n\n¿Confirmar?"))return;
   ajusteCuentaEgreso(e.cuentaId,-(parseFloat(e.monto)||0));
   // Descontar del lote FIFO
-  descontarFIFOEgreso(e.mon||"BRL",e.monto,e.usdt);
+  descontarFIFOEgreso(e.mon||"BRL",e.monto,e.usdt,e.cuentaId);
   e.pagada=true;e.fp=ds(td());
   saveData();R();
 }
@@ -3406,20 +3406,30 @@ function generarFijasMes(){
 // ║  NUNCA modificar sin análisis quirúrgico y aprobación.      ║
 // ║  Las tasas TC/TV vienen SIEMPRE de los lotes FIFO reales.   ║
 // ╚══════════════════════════════════════════════════════════════╝
-function descontarFIFOEgreso(mon,monto,usdt){
-  // Descuenta del lote FIFO correspondiente según la moneda
+function descontarFIFOEgreso(mon,monto,usdt,cuentaId){
+  // Descuenta del lote FIFO correspondiente según la moneda — si se indica
+  // cuenta, SOLO de los lotes de esa cuenta (mismo criterio ya aprobado
+  // para remesas: nunca mezclar bancos). Si la cuenta no tiene lotes
+  // propios, sigue con el pool general de esa moneda (comportamiento igual
+  // al de siempre, para no romper egresos ya existentes sin esta info).
   normalizarInventarioFIFO();
   var m=parseFloat(monto)||0;
   if(mon==="VES"){
-    var vs=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda==="VES";}).sort(ordenFIFO);
-    for(var i=0;i<vs.length&&m>0.01;i++){var d=parseFloat(vs[i].bsRestante)||0;if(d<=0)continue;var u=Math.min(d,m);vs[i].bsRestante=Math.round((d-u)*100)/100;m-=u;}
+    var vsTodas=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda==="VES";}).sort(ordenFIFO);
+    var vs=cuentaId?vsTodas.filter(function(r){return r.cuentaDestinoId===cuentaId;}):vsTodas;
+    if(cuentaId&&!vs.length) vs=vsTodas;
+    for(var i=0;i<vs.length&&m>0.01;i++){var d=parseFloat(vs[i].bsRestante)||0;if(d<=0)continue;var u=Math.min(d,m);vs[i].bsRestante=Math.round((d-u)*100)/100;vs[i]._mod=Date.now();m-=u;}
   } else if(mon==="BRL"){
-    var vb=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda==="BRL";}).sort(ordenFIFO);
-    for(var j=0;j<vb.length&&m>0.01;j++){var db=parseFloat(vb[j].bsRestante)||0;if(db<=0)continue;var ub=Math.min(db,m);vb[j].bsRestante=Math.round((db-ub)*100)/100;m-=ub;}
+    var vbTodas=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda==="BRL";}).sort(ordenFIFO);
+    var vb=cuentaId?vbTodas.filter(function(r){return r.cuentaDestinoId===cuentaId;}):vbTodas;
+    if(cuentaId&&!vb.length) vb=vbTodas;
+    for(var j=0;j<vb.length&&m>0.01;j++){var db=parseFloat(vb[j].bsRestante)||0;if(db<=0)continue;var ub=Math.min(db,m);vb[j].bsRestante=Math.round((db-ub)*100)/100;vb[j]._mod=Date.now();m-=ub;}
   } else if(mon==="USDT"){
-    var vu=S.inventarioUsdt.filter(function(r){return r.tipo==="compra";}).sort(ordenFIFO);
+    var vuTodas=S.inventarioUsdt.filter(function(r){return r.tipo==="compra";}).sort(ordenFIFO);
+    var vu=cuentaId?vuTodas.filter(function(r){return r.cuentaOrigenId===cuentaId;}):vuTodas;
+    if(cuentaId&&!vu.length) vu=vuTodas;
     var mu=parseFloat(usdt)||0;
-    for(var k=0;k<vu.length&&mu>0.001;k++){var du=parseFloat(vu[k].restante)||0;if(du<=0)continue;var uu=Math.min(du,mu);vu[k].restante=Math.round((du-uu)*10000)/10000;mu-=uu;}
+    for(var k=0;k<vu.length&&mu>0.001;k++){var du=parseFloat(vu[k].restante)||0;if(du<=0)continue;var uu=Math.min(du,mu);vu[k].restante=Math.round((du-uu)*10000)/10000;vu[k]._mod=Date.now();mu-=uu;}
   }
 }
 // ╔══════════════════════════════════════════════════════════════╗
@@ -3428,20 +3438,27 @@ function descontarFIFOEgreso(mon,monto,usdt){
 // ║  NUNCA modificar sin análisis quirúrgico y aprobación.      ║
 // ║  Las tasas TC/TV vienen SIEMPRE de los lotes FIFO reales.   ║
 // ╚══════════════════════════════════════════════════════════════╝
-function restaurarFIFOEgreso(mon,monto,usdt){
-  // Restaura al lote FIFO cuando se elimina un egreso
+function restaurarFIFOEgreso(mon,monto,usdt,cuentaId){
+  // Restaura al lote FIFO cuando se elimina un egreso — respetando cuenta,
+  // mismo criterio que restaurarSaldosRemesa (más nuevo primero al revertir).
   normalizarInventarioFIFO();
   var m=parseFloat(monto)||0;
   if(mon==="VES"){
-    var vs=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda==="VES";}).sort(function(a,b){return(b.id||0)-(a.id||0);});
-    for(var i=0;i<vs.length&&m>0.01;i++){var cap=parseFloat(vs[i].bs)||0;var act=parseFloat(vs[i].bsRestante)||0;var dev=Math.min(m,cap-act);if(dev>0){vs[i].bsRestante=Math.round((act+dev)*100)/100;m-=dev;}}
+    var vsTodas=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda==="VES";}).sort(function(a,b){return(b.id||0)-(a.id||0);});
+    var vs=cuentaId?vsTodas.filter(function(r){return r.cuentaDestinoId===cuentaId;}):vsTodas;
+    if(cuentaId&&!vs.length) vs=vsTodas;
+    for(var i=0;i<vs.length&&m>0.01;i++){var cap=parseFloat(vs[i].bs)||0;var act=parseFloat(vs[i].bsRestante)||0;var dev=Math.min(m,cap-act);if(dev>0){vs[i].bsRestante=Math.round((act+dev)*100)/100;vs[i]._mod=Date.now();m-=dev;}}
   } else if(mon==="BRL"){
-    var vb=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda==="BRL";}).sort(function(a,b){return(b.id||0)-(a.id||0);});
-    for(var j=0;j<vb.length&&m>0.01;j++){var capB=parseFloat(vb[j].bs)||0;var actB=parseFloat(vb[j].bsRestante)||0;var devB=Math.min(m,capB-actB);if(devB>0){vb[j].bsRestante=Math.round((actB+devB)*100)/100;m-=devB;}}
+    var vbTodas=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda==="BRL";}).sort(function(a,b){return(b.id||0)-(a.id||0);});
+    var vb=cuentaId?vbTodas.filter(function(r){return r.cuentaDestinoId===cuentaId;}):vbTodas;
+    if(cuentaId&&!vb.length) vb=vbTodas;
+    for(var j=0;j<vb.length&&m>0.01;j++){var capB=parseFloat(vb[j].bs)||0;var actB=parseFloat(vb[j].bsRestante)||0;var devB=Math.min(m,capB-actB);if(devB>0){vb[j].bsRestante=Math.round((actB+devB)*100)/100;vb[j]._mod=Date.now();m-=devB;}}
   } else if(mon==="USDT"){
-    var vu=S.inventarioUsdt.filter(function(r){return r.tipo==="compra";}).sort(function(a,b){return(b.id||0)-(a.id||0);});
+    var vuTodas=S.inventarioUsdt.filter(function(r){return r.tipo==="compra";}).sort(function(a,b){return(b.id||0)-(a.id||0);});
+    var vu=cuentaId?vuTodas.filter(function(r){return r.cuentaOrigenId===cuentaId;}):vuTodas;
+    if(cuentaId&&!vu.length) vu=vuTodas;
     var mu=parseFloat(usdt)||0;
-    for(var k=0;k<vu.length&&mu>0.001;k++){var capU=parseFloat(vu[k].usdt)||0;var actU=parseFloat(vu[k].restante)||0;var devU=Math.min(mu,capU-actU);if(devU>0){vu[k].restante=Math.round((actU+devU)*10000)/10000;mu-=devU;}}
+    for(var k=0;k<vu.length&&mu>0.001;k++){var capU=parseFloat(vu[k].usdt)||0;var actU=parseFloat(vu[k].restante)||0;var devU=Math.min(mu,capU-actU);if(devU>0){vu[k].restante=Math.round((actU+devU)*10000)/10000;vu[k]._mod=Date.now();mu-=devU;}}
   }
 }
 
@@ -3476,7 +3493,7 @@ function saveEg(){
       if(!confirm("Marcaste \"Ya pagado\" pero la cuenta está en \"— Efectivo —\".\n\nSe descontará del inventario (FIFO) pero NO de ningún banco.\n\nSi querías descontar de un banco, cancela y elige la cuenta antes de guardar.\n¿Continuar igual?"))return;
     }
     // Descontar del lote FIFO según moneda (independiente de si tiene cuenta)
-    descontarFIFOEgreso(mon,e.monto,e.usdt);
+    descontarFIFOEgreso(mon,e.monto,e.usdt,e.cuentaId);
     e.fp=ds(td());
   }
   // Guardar en el array correcto
@@ -3513,8 +3530,8 @@ function savePr(){
       var cap=(S.capital||[]).find(function(k){return k.cuentaId===c.id||(k.nombre&&k.nombre.toLowerCase()===c.nombre.toLowerCase());});
       if(cap)cap.saldo=c.saldo;
       // También descontar del inventario FIFO según la moneda del préstamo
-      if(mon==="VES"||mon==="BRL") descontarFIFOEgreso(mon,monto,0);
-      else if(mon==="USDT")        descontarFIFOEgreso("USDT",0,monto);
+      if(mon==="VES"||mon==="BRL") descontarFIFOEgreso(mon,monto,0,f.cuentaId);
+      else if(mon==="USDT")        descontarFIFOEgreso("USDT",0,monto,f.cuentaId);
     }
   }
   S.prestamos.push({
@@ -6786,7 +6803,7 @@ function reqDel(arr,id,field){
         // 1. Restaurar cuenta si tiene cuentaId
         if(item.cuentaId) ajusteCuentaEgreso(item.cuentaId,+(parseFloat(item.monto)||0));
         // 2. Restaurar lote FIFO
-        restaurarFIFOEgreso(item.mon||"BRL",item.monto,item.usdt);
+        restaurarFIFOEgreso(item.mon||"BRL",item.monto,item.usdt,item.cuentaId);
       }
       // 3. Si este egreso viene de un compromiso, resetear su estado de pago
       // para que no quede "fantasma" marcado como pagado sin registro real.
@@ -12987,7 +13004,7 @@ function pagarEgPersonal(id){
   var e=S.egresos_personales[idx];
   if(e.cuentaId) ajusteCuentaEgreso(e.cuentaId,-e.monto);
   // Descontar del lote FIFO
-  descontarFIFOEgreso(e.mon||"BRL",e.monto,e.usdt);
+  descontarFIFOEgreso(e.mon||"BRL",e.monto,e.usdt,e.cuentaId);
   S.egresos_personales[idx].pagada=true;S.egresos_personales[idx].fp=ds(td());
   saveData();R();
 }
@@ -12998,7 +13015,7 @@ function reqDelPersonal(id){
     // Restaurar cuenta si tiene cuentaId
     if(item.cuentaId) ajusteCuentaEgreso(item.cuentaId,+(parseFloat(item.monto)||0));
     // Restaurar lote FIFO
-    restaurarFIFOEgreso(item.mon||"BRL",item.monto,item.usdt);
+    restaurarFIFOEgreso(item.mon||"BRL",item.monto,item.usdt,item.cuentaId);
   }
   S.egresos_personales=(S.egresos_personales||[]).filter(function(e){return e.id!==id;});
   saveData();R();
