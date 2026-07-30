@@ -1018,7 +1018,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260724_v1";
+var APP_VERSION = "20260729_v2";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -1143,7 +1143,13 @@ function ejecutarCierreMes(mesKey, manual){
     vzlaOps:       calc.vzlaOps,
     eeuuOps:       calc.eeuuOps,
     usdtDisp:      usdtDisp,
-    saldosCierre:  saldosCierre
+    saldosCierre:  saldosCierre,
+    ganExtraEmp:   calc.ganExtraEmp||0,
+    // Al cerrar el mes es cuando el sueldo se "cobra" de verdad — se suma
+    // a lo que ya tenías acumulado de meses anteriores, menos lo que ya
+    // gastaste este mes. Esto es lo que el próximo mes va a leer como su
+    // punto de partida gastable.
+    saldoPersonalAcumulado: Math.round(((calc.saldoPersonalAcumuladoPrevio||0) - (calc.egPerPag||0) + (calc.repTotal||0) + (calc.sueldo||0))*100)/100
   };
 
   // Guardar el cierre
@@ -1338,7 +1344,8 @@ function getGananciaUsdtMes(mesKey){
     gasEE:       c.gasEEUU,
     gJulio:      c.miParteEEUU,
     ops:         c.ops,
-    egPend:      c.egEmpPend
+    egPend:      c.egEmpPend,
+    ganExtraEmp: c.ganExtraEmp||0
   };
 }
 function getCapitalUsdtActual(){
@@ -1365,7 +1372,7 @@ function rEvolucion(){
   function f2(n){return (Math.round((n||0)*100)/100).toFixed(2).replace(".",",");}
 
   // ── Fila de cada mes (cerrado o actual) ──
-  function filasMes(mesLabel, neto, bruta, socios, egresos, sueldo, esActual, mesKey){
+  function filasMes(mesLabel, neto, bruta, socios, egresos, sueldo, esActual, mesKey, ganExtra){
     var color = neto >= 0 ? "#0f6e3a" : "#c0392b";
     var bgColor = neto >= 0 ? "#E3F8EC" : "#FDECEA";
     var abierto = S["_evoOpen_"+mesKey];
@@ -1393,6 +1400,7 @@ function rEvolucion(){
           "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:8px'>Cómo se calculó</div>"+
           "<div style='display:flex;flex-direction:column;gap:4px'>"+
             "<div style='display:flex;justify-content:space-between;font-size:12px'><span style='color:#555'>Ganancia bruta del mes</span><span style='font-weight:700;color:#0f6e3a'>+$"+f2(bruta)+"</span></div>"+
+            (ganExtra>0?"<div style='display:flex;justify-content:space-between;font-size:12px'><span style='color:#555'>+ Ganancias extra empresa</span><span style='font-weight:700;color:#0f6e3a'>+$"+f2(ganExtra)+"</span></div>":"")+
             (socios>0?"<div style='display:flex;justify-content:space-between;font-size:12px'><span style='color:#555'>− Pago socios</span><span style='font-weight:700;color:#c0392b'>−$"+f2(socios)+"</span></div>":"")+
             (egresos>0?"<div style='display:flex;justify-content:space-between;font-size:12px'><span style='color:#555'>− Egresos empresa</span><span style='font-weight:700;color:#c0392b'>−$"+f2(egresos)+"</span></div>":"")+
             (sueldo>0?"<div style='display:flex;justify-content:space-between;font-size:12px'><span style='color:#555'>− Mi sueldo</span><span style='font-weight:700;color:#c0392b'>−$"+f2(sueldo)+"</span></div>":"")+
@@ -1437,13 +1445,13 @@ function rEvolucion(){
       sueldo  = 0;
     }
     sumaTotal += neto;
-    html += filasMes(c.mesLabel, neto, bruta, socios, egresos, sueldo, false, c.mesKey);
+    html += filasMes(c.mesLabel, neto, bruta, socios, egresos, sueldo, false, c.mesKey, c.ganExtraEmp||0);
   });
 
   // ── Fila mes actual (en curso) ──
   var netoActual = ganAct.netoFinal||0;
   sumaTotal += netoActual;
-  html += filasMes(labelActual, netoActual, ganAct.total, ganAct.totalSocios, ganAct.egPag, ganAct.sueldo, true, mesActualKey);
+  html += filasMes(labelActual, netoActual, ganAct.total, ganAct.totalSocios, ganAct.egPag, ganAct.sueldo, true, mesActualKey, ganAct.ganExtraEmp||0);
 
   // ── Comparación final ──
   var capUsdt = capActual.usdtSolo||0;
@@ -8125,7 +8133,15 @@ function calcMesCompleto(mesKey, pctOverrides){
   var egPerPag    = r2(egPerM.filter(function(e){return e.pagada && cuentasPersonalesIds.indexOf(e.cuentaId)===-1;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0));
   var egPerPagPropio = r2(egPerM.filter(function(e){return e.pagada && cuentasPersonalesIds.indexOf(e.cuentaId)!==-1;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0));
   var repTotal    = r2(repM.reduce(function(a,r){return a+(parseFloat(r.monto)||0);},0));
-  var disponiblePer = r2(sueldo - egPerPag + repTotal);
+  // El sueldo de ESTE mes todavía no está "cobrado" — se va acumulando en
+  // teoría, pero no es gastable hasta que cierres el mes (igual que un
+  // sueldo de trabajo normal, no lo tienes hasta que te lo pagan). Lo que
+  // SÍ es gastable ahora mismo es lo que ya dejaste guardado de meses
+  // anteriores ya cerrados (saldoPersonalAcumulado del último cierre).
+  var cierresAntPer = (S.cierresMes||[]).filter(function(c){return c.mesKey<mesKey;}).sort(function(a,b){return b.mesKey.localeCompare(a.mesKey);});
+  var saldoPersonalAcumuladoPrevio = cierresAntPer.length ? (parseFloat(cierresAntPer[0].saldoPersonalAcumulado)||0) : 0;
+  var disponiblePer = r2(saldoPersonalAcumuladoPrevio - egPerPag + repTotal);
+  var sueldoAcumulando = sueldo; // se sumará al disponible recién cuando cierres este mes
 
   return {
     ganBrutaTotal:ganBrutaTotal,   // ← número que el usuario acumula (P2)
@@ -8144,7 +8160,8 @@ function calcMesCompleto(mesKey, pctOverrides){
     egEmpPag:egEmpPag,egEmpPend:egEmpPend,
     utilidadEmpresa:utilidadEmpresa,
     sueldo:sueldo,pctSueldo:Math.round(pctSueldo*100),
-    egPerPag:egPerPag,egPerPagPropio:egPerPagPropio,repTotal:repTotal,disponiblePer:disponiblePer
+    egPerPag:egPerPag,egPerPagPropio:egPerPagPropio,repTotal:repTotal,disponiblePer:disponiblePer,
+    sueldoAcumulando:sueldoAcumulando,saldoPersonalAcumuladoPrevio:saldoPersonalAcumuladoPrevio
   };
 }
 
@@ -8316,15 +8333,18 @@ function generarInformePDF(mesKey){
     "<table><tr><th>Concepto</th><th>Monto</th></tr>"+
     "<tr><td style='padding:5px 8px;font-size:12px'>Total operaciones realizadas</td><td style='padding:5px 8px;font-size:12px;text-align:right;font-weight:700;color:#1a3558'>"+calc.ops+" operaciones</td></tr>"+
     row("Ganancia bruta total",calc.ganBrutaTotal,"#0f6e3a")+
+    (calc.ganExtraEmp>0?row("+ Ganancias extra empresa",calc.ganExtraEmp,"#7a5c00"):"")+
     (calc.gasEEUU>0?row("− Gastos EE.UU compartidos (mi "+( 100-calc.socioPorcentajeEE)+"% de $"+f2(calc.gasEEUU)+")",Math.round(calc.gasEEUU*(1-calc.socioPorcentajeEE/100)*100)/100,"#c0392b"):"")+
     (calc.socioParte>0?row("− "+calc.socioNombreEE+" ("+calc.socioPorcentajeEE+"%)",calc.socioParte,"#c0392b"):"")+
     (calc.totalCom>0?row("− Otros socios",calc.totalCom,"#c0392b"):"")+
     row("Mi ganancia de operaciones",calc.miGanOperaciones,"#0f6e3a")+
     row("− Egresos empresa pagados",calc.egEmpPag,"#c0392b")+
     row("= Utilidad empresa",calc.utilidadEmpresa,"#7a5c00")+
-    row("Mi sueldo ("+calc.pctSueldo+"%)",calc.sueldo,"#c0392b")+
-    row("Egresos personales pagados",calc.egPerPag,"#c0392b")+
-    row("Disponible personal",calc.disponiblePer,calc.disponiblePer>=0?"#0f6e3a":"#c0392b",true)+
+    "<tr><td colspan='2' style='padding:8px 8px 4px;font-size:10px;color:#999;border-top:2px solid #eee'>▾ Lo que puedes gastar ahora — solo lo ya cobrado de meses cerrados</td></tr>"+
+    row("Acumulado de meses ya cerrados",calc.saldoPersonalAcumuladoPrevio,"#0f6e3a")+
+    row("− Gastos personales pagados este mes",calc.egPerPag,"#c0392b")+
+    row("= Disponible para gastar hoy",calc.disponiblePer,calc.disponiblePer>=0?"#0f6e3a":"#c0392b",true)+
+    "<tr><td colspan='2' style='padding:6px 8px;font-size:10px;color:#7a5c00;background:#FFFBEA'>🔒 Sueldo de este mes ("+calc.pctSueldo+"% de la utilidad): $"+f2(calc.sueldoAcumulando)+" — se acumula, no gastable hasta cerrar el mes</td></tr>"+
     "</table>")+
   // OPS POR RUTA
   sec("🔀 Operaciones por ruta",
@@ -8406,7 +8426,7 @@ function generarInformePDF(mesKey){
       return "<tr><td style='padding:4px 8px'>"+c+"</td><td style='padding:4px 8px'><div style='background:#eee;border-radius:4px;height:10px;width:120px;display:inline-block;vertical-align:middle'><div style='background:#7a5c00;border-radius:4px;height:100%;width:"+pct+"%'></div></div></td><td style='padding:4px 8px;text-align:right;color:#7a5c00;font-weight:700'>$"+f2l(catPer[c])+"</td><td style='padding:4px 8px;color:#888;font-size:10px'>"+pct+"%</td></tr>";
     }).join("");
     return sec("👤 Situación personal",
-      "<div style='background:"+(calc.disponiblePer>=0?"#E3F8EC":"#FDECEA")+";border-radius:8px;padding:10px 12px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center'><span style='font-size:12px'>Sueldo: <b>$"+f2l(calc.sueldo)+"</b> · Gastado: <b>$"+f2l(calc.egPerPag)+"</b></span><span style='font-weight:800;color:"+(calc.disponiblePer>=0?"#0f6e3a":"#c0392b")+"'>"+(calc.disponiblePer<0?"⚠️ Excediste: −$":"✅ Disponible: $")+f2l(Math.abs(calc.disponiblePer))+" USDT</span></div>"+
+      "<div style='background:"+(calc.disponiblePer>=0?"#E3F8EC":"#FDECEA")+";border-radius:8px;padding:10px 12px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center'><span style='font-size:12px'>Acumulado: <b>$"+f2l(calc.saldoPersonalAcumuladoPrevio)+"</b> · Gastado: <b>$"+f2l(calc.egPerPag)+"</b></span><span style='font-weight:800;color:"+(calc.disponiblePer>=0?"#0f6e3a":"#c0392b")+"'>"+(calc.disponiblePer<0?"⚠️ Excediste: −$":"✅ Disponible: $")+f2l(Math.abs(calc.disponiblePer))+" USDT</span></div>"+
       (Object.keys(catPer).length>1?"<div style='margin-bottom:10px'><b style='font-size:11px;color:#555'>En qué se gastó el sueldo:</b><table style='width:100%;margin-top:6px'>"+catBarrasPer+"</table></div>":"")+
       "<table><tr><th>Fecha</th><th>Categoría</th><th>Descripción</th><th>Monto USDT</th></tr>"+
       egPerM.filter(function(e){return e.pagada;}).map(function(e){
@@ -8573,8 +8593,8 @@ function generarInformePDF(mesKey){
       // Nota de sueldo personal
       (calc.sueldo>0?"<div style='margin-top:10px;margin-left:26px;padding:8px 12px;background:#ede9fe;border-radius:8px;font-size:11px;color:#4a2080'>"+
         "👤 <b>Tu sueldo personal de $"+f2l(calc.sueldo)+" USDT</b> queda en tu bolsillo. "+
-        (calc.disponiblePer>=0?"✅ Gastaste $"+f2l(calc.egPerPag)+" y te sobra $"+f2l(calc.disponiblePer)+" USDT de este sueldo.":
-        "⚠️ Gastaste $"+f2l(calc.egPerPag)+" USDT — excediste el sueldo en $"+f2l(Math.abs(calc.disponiblePer))+" USDT.")+
+        (calc.disponiblePer>=0?"✅ Gastaste $"+f2l(calc.egPerPag)+" y te sobra $"+f2l(calc.disponiblePer)+" USDT de lo acumulado.":
+        "⚠️ Gastaste $"+f2l(calc.egPerPag)+" USDT — excediste lo acumulado en $"+f2l(Math.abs(calc.disponiblePer))+" USDT.")+
       "</div>":"")+
     "</div>"+
 
@@ -8777,16 +8797,16 @@ function rInformeCierre(){
       "<b>En resumen · "+mesLabel+"</b><br>"+
       "Se realizaron <b>"+calc.ops+" operaciones</b> que generaron <b>$"+f2(calc.ganBrutaTotal)+" USDT</b> en ganancias brutas. "+
       (calc.socioParte>0||calc.totalCom>0?"Se pagaron <b>$"+f2(calc.socioParte+calc.totalCom)+" USDT</b> a los socios. ":"")+
-      "La utilidad empresa quedó en <b>$"+f2(calc.utilidadEmpresa)+" USDT</b>. "+
-      (excedido?"<span style='color:#c0392b'>⚠️ Los gastos personales superaron el sueldo en $"+f2(-calc.disponiblePer)+" USDT.</span>":
-        "El disponible personal es <b style='color:#0f6e3a'>$"+f2(calc.disponiblePer)+" USDT</b>.")+
+      "La utilidad empresa quedó en <b>$"+f2(calc.utilidadEmpresa)+" USDT</b>, con un sueldo de <b>$"+f2(calc.sueldoAcumulando)+"</b> que se está acumulando (disponible al cerrar el mes). "+
+      (excedido?"<span style='color:#c0392b'>⚠️ Los gastos personales superaron lo acumulado en $"+f2(-calc.disponiblePer)+" USDT.</span>":
+        "Ahora mismo puedes gastar <b style='color:#0f6e3a'>$"+f2(calc.disponiblePer)+" USDT</b> de lo ya acumulado de meses anteriores.")+
     "</div>"+
     "<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px'>"+
       card("#1a3558","#fff","💰 Ganancia bruta","$"+f2(calc.ganBrutaTotal),"todas las operaciones")+
       card(excedido?"#c0392b":"#0f6e3a","#fff","💚 Mi utilidad","$"+f2(calc.utilidadEmpresa),"después de socios y gastos")+
     "</div>"+
-    "<div style='background:#fff;border:1px solid #eee;border-radius:12px;overflow:hidden;margin-bottom:12px'>"+
-      "<div style='background:#f5f5f7;padding:8px 12px;font-size:10px;font-weight:700;color:#888;text-transform:uppercase'>Cómo llegamos a ese número</div>"+
+    "<div style='background:#fff;border:1px solid #eee;border-radius:12px;overflow:hidden;margin-bottom:10px'>"+
+      "<div style='background:#f5f5f7;padding:8px 12px;font-size:10px;font-weight:700;color:#888;text-transform:uppercase'>Cómo llegamos a la utilidad de la empresa</div>"+
       wrow("Ganancia de todas las operaciones",calc.ganBrutaTotal,"#0f6e3a")+
       (calc.ganExtraEmp>0?wrow("+ Ganancias extra empresa",calc.ganExtraEmp,"#7a5c00"):"")+
       (calc.gasEEUU>0?wrow("− Gastos EE.UU compartidos (mi "+(100-calc.socioPorcentajeEE)+"% de $"+f2(calc.gasEEUU)+")",Math.round(calc.gasEEUU*(1-calc.socioPorcentajeEE/100)*100)/100,"#c0392b"):"")+
@@ -8794,10 +8814,15 @@ function rInformeCierre(){
       calc.comisionesSocios.map(function(s){return wrow("− Pago a "+s.nombre+" ("+s.pct+"%)",s.monto,"#c0392b");}).join("")+
       wrow("= Mi ganancia de operaciones",calc.miGanOperaciones,"#0f6e3a")+
       wrow("− Gastos de empresa pagados",calc.egEmpPag,"#c0392b")+
-      "<div style='display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:#FFF8DC;border-bottom:1px solid #f5f5f5'><b style='font-size:12px;color:#7a5c00'>= Utilidad empresa</b><b style='font-size:14px;color:#7a5c00'>$"+f2(calc.utilidadEmpresa)+" USDT</b></div>"+
-      wrow("− Mi sueldo ("+calc.pctSueldo+"%)",calc.sueldo,"#c0392b")+
-      wrow("− Gastos personales pagados",calc.egPerPag,"#c0392b")+
-      "<div style='display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:"+(excedido?"#FDECEA":"#E3F8EC")+"'><b style='font-size:12px;color:"+(excedido?"#c0392b":"#0f6e3a")+"'>= Disponible personal</b><b style='font-size:14px;color:"+(excedido?"#c0392b":"#0f6e3a")+"'>$"+f2(Math.abs(calc.disponiblePer))+" USDT "+(excedido?"⚠️":"✅")+"</b></div>"+
+      "<div style='display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:#FFF8DC'><b style='font-size:12px;color:#7a5c00'>= Utilidad empresa</b><b style='font-size:14px;color:#7a5c00'>$"+f2(calc.utilidadEmpresa)+" USDT</b></div>"+
+    "</div>"+
+    "<div style='background:#fff;border:1px solid #eee;border-radius:12px;overflow:hidden;margin-bottom:12px'>"+
+      "<div style='background:#f5f5f7;padding:8px 12px;font-size:10px;font-weight:700;color:#888;text-transform:uppercase'>Lo que puedes gastar ahora — solo lo ya cobrado</div>"+
+      "<div style='display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#555'>Acumulado de meses ya cerrados</span><b style='font-size:13px;color:#0f6e3a'>$"+f2(calc.saldoPersonalAcumuladoPrevio)+"</b></div>"+
+      (calc.repTotal>0?wrow("+ Reposiciones",calc.repTotal,"#0f6e3a"):"")+
+      wrow("− Gastos personales pagados este mes",calc.egPerPag,"#c0392b")+
+      "<div style='display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:"+(excedido?"#FDECEA":"#E3F8EC")+"'><b style='font-size:12px;color:"+(excedido?"#c0392b":"#0f6e3a")+"'>= Disponible para gastar hoy</b><b style='font-size:14px;color:"+(excedido?"#c0392b":"#0f6e3a")+"'>$"+f2(Math.abs(calc.disponiblePer))+" USDT "+(excedido?"⚠️":"✅")+"</b></div>"+
+      "<div style='padding:9px 12px;font-size:10.5px;color:#9a8a5c;background:#FFFBEA;border-top:1px solid #f5f5f5'>🔒 Tu sueldo de este mes (<b>$"+f2(calc.sueldoAcumulando)+"</b>, "+calc.pctSueldo+"% de la utilidad) todavía se está acumulando — no es gastable hasta que cierres el mes. En ese momento se suma al acumulado de arriba para el próximo mes.</div>"+
     "</div>"+
     (calc.egEmpPend>0?"<div style='background:#FFF8DC;border:1px solid #F5C518;border-radius:10px;padding:10px 12px;font-size:12px;color:#7a5c00'><b>⚠️ Hay $"+f2(calc.egEmpPend)+" USDT en egresos de empresa sin pagar.</b></div>":"");
   }
@@ -9010,7 +9035,12 @@ function rInformeCierre(){
     var flujoNeto=totalEntradas-totalSalidas;
 
     var tasaBRLUSDT=(S._contadorTasaBRL!==undefined&&S._contadorTasaBRL!==""&&S._contadorTasaBRL!==null)?(parseFloat(S._contadorTasaBRL)||0):(getRateToUsdt("BRL")||0);
-    var ganBrlUsdt=parseFloat(calc.ganBrl)||0;
+    // OJO: se usa calc.miGanOperaciones (todas las rutas juntas, ya con
+    // ganancias extra sumadas y socios restados) — NO calc.ganBrl (que es
+    // solo la ruta BRL). Antes se restaba el gasto y sueldo de TODA la
+    // empresa contra la ganancia de UNA sola ruta, lo que podía dar un
+    // "Lucro líquido" negativo aunque el negocio completo fuera positivo.
+    var ganBrlUsdt=parseFloat(calc.miGanOperaciones)||0;
     var ganBrlReais=tasaBRLUSDT?ganBrlUsdt*tasaBRLUSDT:0;
     // Gastos fijos y sueldo de la EMPRESA (nunca lo personal) — ya vienen
     // calculados en USDT desde calcMesCompleto()/el cierre; se convierten a
@@ -9073,7 +9103,7 @@ function rInformeCierre(){
       "</div>"+
       "<div style='font-size:10.5px;color:#9aa3b5;margin:6px 0 14px;line-height:1.4'>Ya con los gastos fijos y sueldo de la empresa descontados (no incluye nada personal) — este es el número final para el contador.</div>"+
       "<div style='display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#7c8aa8;font-weight:600'>Tasa BRL/USDT usada</span><span style='display:flex;align-items:center;gap:6px'><input type='number' step='0.0001' inputmode='decimal' value='"+(S._contadorTasaBRL!==undefined&&S._contadorTasaBRL!==null?S._contadorTasaBRL:f4(tasaBRLUSDT))+"' onchange='S._contadorTasaBRL=this.value;R()' style='width:80px;font-size:13px;padding:5px 8px;border:1px solid #e2e6ef;border-radius:8px;text-align:right;font-weight:700;color:#1a3558'>"+(S._contadorTasaBRL!==undefined&&S._contadorTasaBRL!==""&&S._contadorTasaBRL!==null?"<button onclick='S._contadorTasaBRL=undefined;R()' style='background:none;border:none;color:#9aa3b5;font-size:10px;cursor:pointer;text-decoration:underline'>usar auto</button>":"")+"</span></div>"+
-      "<div style='display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#0f6e3a;font-weight:700'>Ganancia bruta en Reais</span><b style='font-size:15px;color:#0f6e3a'>"+_fmtBRL(ganBrlReais)+"</b></div>"+
+      "<div style='display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#0f6e3a;font-weight:700'>Mi ganancia de operaciones (todas las rutas)</span><b style='font-size:15px;color:#0f6e3a'>"+_fmtBRL(ganBrlReais)+"</b></div>"+
       "<div style='display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#c0392b;font-weight:600'>(−) Gastos fijos de la empresa</span><b style='font-size:13.5px;color:#c0392b'>"+_fmtBRL(gastosEmpresaReais)+"</b></div>"+
       "<div style='display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#c0392b;font-weight:600'>(−) Sueldo</span><b style='font-size:13.5px;color:#c0392b'>"+_fmtBRL(sueldoReais)+"</b></div>"+
       "<div style='display:flex;justify-content:space-between;align-items:center;padding:14px 16px;background:linear-gradient(135deg,#1a3558,#132840);border-radius:14px;margin-top:10px;box-shadow:0 4px 14px rgba(19,40,64,.2)'><span style='font-size:11.5px;color:#FFA31C;font-weight:700;text-transform:uppercase;letter-spacing:.3px'>Lucro Líquido Final</span><b style='font-size:20px;color:#FFD700'>"+_fmtBRL(lucroFinalReais)+"</b></div>"+
@@ -9210,7 +9240,7 @@ function rInformeCierre(){
       card("#B87800","#FFF8DC","💵 Sueldo del mes","$"+f2(calc.sueldo)+" USDT",calc.pctSueldo+"% de la utilidad")+
       card(excedido?"#c0392b":"#0f6e3a","#fff","💳 Disponible","$"+f2(Math.abs(calc.disponiblePer))+" USDT",excedido?"⚠️ Te excediste":"✅ Disponible")+
     "</div>"+
-    (excedido?"<div style='background:#FDECEA;border:1.5px solid #e74c3c;border-radius:10px;padding:10px 12px;font-size:12px;color:#c0392b;margin-bottom:12px'><b>⚠️ Te excediste $"+f2(-calc.disponiblePer)+" USDT del sueldo.</b> Recuerda reponerlo a las cuentas de la empresa.</div>":"")+
+    (excedido?"<div style='background:#FDECEA;border:1.5px solid #e74c3c;border-radius:10px;padding:10px 12px;font-size:12px;color:#c0392b;margin-bottom:12px'><b>⚠️ Te excediste $"+f2(-calc.disponiblePer)+" USDT de lo acumulado.</b> Recuerda reponerlo a las cuentas de la empresa.</div>":"")+
     (calc.ganExtraPer>0?"<div style='background:#FFF8DC;border:1px solid #F5C518;border-radius:11px;padding:11px 13px;margin-bottom:12px'>"+
       "<div style='font-size:10px;font-weight:700;color:#7a5c00;text-transform:uppercase;margin-bottom:6px'>💰 Ganancias extra personales del mes</div>"+
       calc.ganExtraItems.filter(function(g){return g.tipo==="personal";}).map(function(g){return "<div style='display:flex;justify-content:space-between;font-size:12px;padding:5px 0;border-bottom:1px solid #efe6c0'><span>"+g.d+" · "+g.desc+"</span><b style='color:#7a5c00'>+$"+f2(g.usdt)+"</b></div>";}).join("")+
@@ -12609,7 +12639,7 @@ function rEgresos(){
         "<div style='font-size:11px;font-weight:800;color:#0f6e3a'>💵 Reponer / Saldar sueldo"+(repTotal>0?" <span style='font-weight:600;color:#888'>· repuesto $"+f2(repTotal)+"</span>":"")+"</div>"+
         "<button type='button' onclick='toggleRep()' style='background:"+(S._repOpen?"#888":"#0f6e3a")+";color:#fff;border:none;padding:6px 12px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer'>"+(S._repOpen?"✕ Cerrar":"+ Reponer")+"</button>"+
       "</div>"+
-      (dispPersonal<0?"<div style='font-size:10px;color:#c0392b;margin-top:8px'>⚠️ Te excediste $"+f2(-dispPersonal)+" del sueldo. Repón para saldar.</div>":"")+
+      (dispPersonal<0?"<div style='font-size:10px;color:#c0392b;margin-top:8px'>⚠️ Te excediste $"+f2(-dispPersonal)+" de lo acumulado. Repón para saldar.</div>":"")+
       (S._repOpen?
         "<div style='background:#fff;border:1px solid #d8ead8;border-radius:10px;padding:11px;margin-top:10px'>"+
           "<div style='font-size:10px;color:#888;margin-bottom:9px'>Pones dinero de vuelta en una cuenta USDT de la empresa (devolver lo que gastaste o saldar lo que te excediste). Sube el saldo de esa cuenta y tu disponible. No afecta el inventario.</div>"+
