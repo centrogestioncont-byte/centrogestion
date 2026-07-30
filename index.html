@@ -1018,7 +1018,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260729_v2";
+var APP_VERSION = "20260730_v1";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -3578,7 +3578,7 @@ function saveIU(){
       montOrigen:Math.round(mo*100)/100,usdt:usdtNeto,tasa:tasa,comision:com,bs:0,
       plataforma:f.plataforma||"",ordenId:ordenId,cuentaId:cuentaAfectada,
       cuentaOrigenId:f.cuentaOrigenId||"",  // cuenta que pagó (BRL/USD)
-      restante:usdtNeto,locked:false});
+      restante:usdtNeto,locked:false,_mod:Date.now()});
     // USDT sube en la cuenta destino (Binance) — se acredita el neto real
     if(cuentaAfectada){
       var cObj=(S.cuentas||[]).find(function(c){return c.id===cuentaAfectada;});
@@ -3599,7 +3599,7 @@ function saveIU(){
       bsRestante:Math.round(bsFinal*1000)/1000,
       plataforma:f.plataforma||"",ordenId:ordenId,cuentaId:cuentaAfectada,
       cuentaDestinoId:f.cuentaDestinoId||"",  // cuenta que recibe VES/BRL
-      restante:0,locked:false});
+      restante:0,locked:false,_mod:Date.now()});
     // USDT baja de Binance
     if(cuentaAfectada){
       var cObjV=(S.cuentas||[]).find(function(c){return c.id===cuentaAfectada;});
@@ -6851,6 +6851,7 @@ function revertirSaldosRemesa(tipo, r){
         var devolver=Math.min(restUc, cap-actual);
         if(devolver>0){
           compras[i].restante=Math.round((actual+devolver)*100)/100;
+          compras[i]._mod=Date.now();
           restUc-=devolver;
         }
       }
@@ -6869,6 +6870,7 @@ function revertirSaldosRemesa(tipo, r){
         var devolverV=Math.min(restCant, capV-actualV);
         if(devolverV>0){
           ventas[j].bsRestante=Math.round((actualV+devolverV)*100)/100;
+          ventas[j]._mod=Date.now();
           restCant-=devolverV;
         }
       }
@@ -6921,7 +6923,7 @@ function revertirSaldosRemesa(tipo, r){
       var cap=parseFloat(compras2[ci].usdt)||0;
       var act=parseFloat(compras2[ci].restante)||0;
       var dev=Math.min(restUc,cap-act);
-      if(dev>0){compras2[ci].restante=Math.round((act+dev)*100)/100;restUc-=dev;}
+      if(dev>0){compras2[ci].restante=Math.round((act+dev)*100)/100;compras2[ci]._mod=Date.now();restUc-=dev;}
     }
   }
   if(cant>0){
@@ -6935,7 +6937,7 @@ function revertirSaldosRemesa(tipo, r){
       var capV=parseFloat(ventas2[vi].bs)||0;
       var actV=parseFloat(ventas2[vi].bsRestante)||0;
       var devV=Math.min(restCant,capV-actV);
-      if(devV>0){ventas2[vi].bsRestante=Math.round((actV+devV)*100)/100;restCant-=devV;}
+      if(devV>0){ventas2[vi].bsRestante=Math.round((actV+devV)*100)/100;ventas2[vi]._mod=Date.now();restCant-=devV;}
     }
   }
 }
@@ -7503,6 +7505,7 @@ function consumirInventarioFIFO(monedaOrig, usdtUsados, monedaDest, bsEntregados
       if(disp<=0) continue;
       var usar=Math.min(disp,u);
       compras[i].restante=Math.round((disp-usar)*10000)/10000;
+      compras[i]._mod=Date.now();
       u-=usar;
     }
   }
@@ -7515,6 +7518,7 @@ function consumirInventarioFIFO(monedaOrig, usdtUsados, monedaDest, bsEntregados
       if(dispB<=0) continue;
       var usarB=Math.min(dispB,b);
       ventas[k].bsRestante=Math.round((dispB-usarB)*100)/100;
+      ventas[k]._mod=Date.now();
       b-=usarB;
     }
   }
@@ -7663,6 +7667,7 @@ function editRestanteInv(id){
   if(isNaN(v)||v<0){alert("Valor no válido.");return;}
   if(esCompra) r.restante=Math.round(v*10000)/10000;
   else r.bsRestante=Math.round(v*100)/100;
+  r._mod=Date.now(); // marca de cuándo se tocó ESTE lote específico, para que la fusión entre dispositivos sepa cuál versión es la más nueva
   saveData();R();
 }
 function getAutoRates(origMoneda,destMoneda,montoOrigen,montoBs,cuentaOrigenId,cuentaDestinoId){
@@ -13829,20 +13834,25 @@ function _mergeArrayById(remoteArr, localArr, idField, remoteTs, localTs){
   });
   var merged = localArr.slice();
   var agregados = 0, actualizados = 0;
-  // Si el lado remoto en su conjunto se guardó MÁS RECIENTE que el local,
-  // un registro que existe en ambos lados (misma id) pero con datos distintos
-  // (ej: el saldo de una cuenta) se actualiza con la versión remota — antes
-  // esto JAMÁS pasaba: un registro ya conocido localmente se dejaba tal cual
-  // aunque el otro lado tuviera un valor más nuevo (ej: el saldo después de
-  // una compra de USDT), haciendo que ese cambio "desapareciera" solo.
-  var remoteEsMasNuevo = (typeof remoteTs==="number" && typeof localTs==="number") ? (remoteTs > localTs) : false;
+  var remoteEsMasNuevoGlobal = (typeof remoteTs==="number" && typeof localTs==="number") ? (remoteTs > localTs) : false;
   remoteArr.forEach(function(remoteItem){
     if(!remoteItem || remoteItem[idField]===undefined || remoteItem[idField]===null) return;
     var idx=localIds[remoteItem[idField]];
     if(idx===undefined){
       merged.push(remoteItem);
       agregados++;
-    } else if(remoteEsMasNuevo && JSON.stringify(merged[idx])!==JSON.stringify(remoteItem)){
+      return;
+    }
+    var localItem=merged[idx];
+    if(JSON.stringify(localItem)===JSON.stringify(remoteItem)) return; // idénticos, nada que decidir
+    // Preferir la marca de tiempo DE ESTE REGISTRO puntual (ej: cuándo se
+    // tocó este lote específico) sobre la del dispositivo completo — así,
+    // si edité un lote hace 1 minuto pero mi teléfono no ha guardado nada
+    // más en horas, ese lote sigue ganando aunque el _ts general del otro
+    // dispositivo sea "más nuevo" por haber hecho algún cambio no relacionado.
+    var tieneModAmbos = typeof remoteItem._mod==="number" && typeof localItem._mod==="number";
+    var remoteGana = tieneModAmbos ? (remoteItem._mod > localItem._mod) : remoteEsMasNuevoGlobal;
+    if(remoteGana){
       merged[idx]=remoteItem;
       actualizados++;
     }
@@ -13974,7 +13984,7 @@ function _fbMergeAndWrite(obj){
             var remoteFiltrado=(remote[k]||[]).filter(function(it){
               return !(it && it[idF]!==undefined && _estaBorradoMerge(k,it[idF]));
             });
-            obj[k] = _mergeArrayById(remoteFiltrado, obj[k], idF);
+            obj[k] = _mergeArrayById(remoteFiltrado, obj[k], idF, remote._ts, obj._ts);
             if(k==="brl"||k==="vzla"||k==="eeuu") _renumerarPorFecha(obj[k]);
             S[k] = obj[k]; // reflejar la fusión también en el estado local/UI
           }
