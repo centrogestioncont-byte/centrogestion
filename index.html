@@ -1018,7 +1018,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260730_v13";
+var APP_VERSION = "20260730_v14";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -6135,17 +6135,31 @@ async function leerComprobanteOCR(input){
     input.value=''; return;
   }
 
+  // Bitácora paso a paso — se ve en pantalla, no hace falta abrir la
+  // consola del navegador. Si algo falla, queda visible EXACTAMENTE en
+  // qué paso fue y con qué mensaje.
+  var _pasos=[];
+  function _paso(txt){ _pasos.push(txt); console.log('[OCR] '+txt); }
+  function _mostrarBitacora(extra){
+    var html="<div style='font-size:9px;color:#ccc;background:#1a1a1a;border-radius:7px;padding:8px 10px;margin-top:6px;font-family:monospace;white-space:pre-wrap;word-break:break-all'>"+
+      _pasos.join("\n")+(extra?"\n"+extra:"")+"</div>";
+    var box=document.getElementById('ocr-status-box');
+    if(box) box.innerHTML += html;
+  }
+
+  _paso('Archivo: '+file.name+' · '+file.type+' · '+(Math.round(file.size/1024))+'KB');
+  _paso('Navegador: '+navigator.userAgent.substring(0,80));
+  _paso('WebAssembly disponible: '+(typeof WebAssembly!=='undefined'));
   _ocrUpdateUI('Iniciando OCR...',5);
   var worker=null;
 
   try{
-    // API actual de Tesseract.js (v5): createWorker + worker.recognize().
-    // Se le pasa el archivo DIRECTAMENTE — nada de canvas ni conversiones
-    // manuales; es el formato que la librería maneja de forma confiable.
-    worker = await Tesseract.createWorker('spa+por', 1, {
+    _paso('Paso 1/4: creando worker (idioma: spa)...');
+    worker = await Tesseract.createWorker('spa', 1, {
       logger:function(m){
         var pct=5;
         var st=m.status||'';
+        _paso('  logger: '+st+' '+(m.progress!==undefined?Math.round(m.progress*100)+'%':''));
         if(st==='loading tesseract core'){pct=10; _ocrUpdateUI('Cargando motor OCR...',pct);}
         else if(st==='initializing tesseract'){pct=20; _ocrUpdateUI('Iniciando...',pct);}
         else if(st==='loading language traineddata'){
@@ -6159,25 +6173,31 @@ async function leerComprobanteOCR(input){
         }
       }
     });
+    _paso('Paso 1/4: ✅ worker creado correctamente.');
 
-    // Convertir a data URL (texto base64) antes de pasarlo — es el formato
-    // más compatible; entregar el File tal cual falla en algunos navegadores
-    // con el error genérico "Error attempting to read image."
+    _paso('Paso 2/4: leyendo el archivo como imagen (FileReader)...');
     var dataUrl = await new Promise(function(resolve,reject){
       var reader=new FileReader();
       reader.onload=function(){ resolve(reader.result); };
-      reader.onerror=function(){ reject(new Error('No se pudo leer el archivo de imagen.')); };
+      reader.onerror=function(){ reject(new Error('FileReader falló: '+(reader.error&&reader.error.message))); };
       reader.readAsDataURL(file);
     });
+    _paso('Paso 2/4: ✅ imagen leída, '+Math.round(dataUrl.length/1024)+'KB en base64.');
+
+    _paso('Paso 3/4: enviando a Tesseract para reconocer...');
     var result = await worker.recognize(dataUrl);
+    _paso('Paso 3/4: ✅ Tesseract respondió sin lanzar error.');
+
     var txt = (result&&result.data&&result.data.text) || '';
+    _paso('Paso 4/4: texto recibido, longitud='+txt.length+' caracteres.');
     console.log('[OCR] Texto detectado:\n'+txt);
 
     await worker.terminate();
     worker=null;
 
     if(!txt.trim()){
-      _ocrUpdateUI(null,-1,null,'No se detectó texto. Intenta con otra captura, o usa "Pegar texto de Binance" con Google Lens mientras tanto.');
+      _ocrUpdateUI(null,-1,null,'No se detectó texto (Tesseract respondió vacío, sin error).');
+      _mostrarBitacora();
       input.value=''; return;
     }
 
@@ -6212,17 +6232,16 @@ async function leerComprobanteOCR(input){
       R(); // solo R() al final cuando ya tenemos resultado
     } else {
       _ocrUpdateUI(null,-1,null,'Texto leído: "'+txt.replace(/\n/g,' ').substring(0,150)+'" — Completa los campos manualmente.');
+      _mostrarBitacora();
     }
 
   } catch(err){
     if(worker){ try{ await worker.terminate(); }catch(e2){} }
+    _paso('❌ ERROR en: '+(err&&err.name)+' — '+(err&&err.message));
     console.error('[OCR] Error completo:', err);
     var msg=err&&(err.message||err.toString())||'Error desconocido';
-    // Detectar error CORS/Worker
-    if(/cors|cross-origin|worker|failed to fetch/i.test(msg)){
-      msg='El navegador bloqueó el lector OCR (restricción de seguridad). Intenta desde Chrome en Android.';
-    }
-    _ocrUpdateUI(null,-1,null,msg);
+    _ocrUpdateUI(null,-1,null,'Falló · '+(err&&err.name||'Error')+': '+msg);
+    _mostrarBitacora(err&&err.stack?('stack: '+String(err.stack).substring(0,300)):'');
   }
   input.value='';
 }
