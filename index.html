@@ -1018,7 +1018,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260730_v4";
+var APP_VERSION = "20260730_v5";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -13887,13 +13887,27 @@ function _mergeArrayById(remoteArr, localArr, idField, remoteTs, localTs){
     }
     var localItem=merged[idx];
     if(JSON.stringify(localItem)===JSON.stringify(remoteItem)) return; // idénticos, nada que decidir
-    // Preferir la marca de tiempo DE ESTE REGISTRO puntual (ej: cuándo se
-    // tocó este lote específico) sobre la del dispositivo completo — así,
-    // si edité un lote hace 1 minuto pero mi teléfono no ha guardado nada
-    // más en horas, ese lote sigue ganando aunque el _ts general del otro
-    // dispositivo sea "más nuevo" por haber hecho algún cambio no relacionado.
-    var tieneModAmbos = typeof remoteItem._mod==="number" && typeof localItem._mod==="number";
-    var remoteGana = tieneModAmbos ? (remoteItem._mod > localItem._mod) : remoteEsMasNuevoGlobal;
+    var remoteTieneMod = typeof remoteItem._mod==="number";
+    var localTieneMod = typeof localItem._mod==="number";
+    var remoteGana;
+    if(remoteTieneMod && localTieneMod){
+      // Ambos lados tienen marca de este registro puntual — gana el más nuevo.
+      remoteGana = remoteItem._mod > localItem._mod;
+    } else if(localTieneMod && !remoteTieneMod){
+      // Local fue tocado deliberadamente hace poco (tiene marca); lo remoto
+      // es una copia sin marca (probablemente de antes de este sistema, o
+      // que todavía no recibió la escritura más reciente) — local gana SIEMPRE,
+      // sin importar la hora general del dispositivo. Esto es justo lo que
+      // faltaba: antes, un lote recién editado podía perder contra una copia
+      // vieja de Firebase que aún no tenía la marca, si la hora general del
+      // otro guardado parecía "más nueva".
+      remoteGana = false;
+    } else if(remoteTieneMod && !localTieneMod){
+      remoteGana = true;
+    } else {
+      // Ninguno tiene marca puntual — usar el respaldo (todo el dispositivo).
+      remoteGana = remoteEsMasNuevoGlobal;
+    }
     if(remoteGana){
       merged[idx]=remoteItem;
       actualizados++;
