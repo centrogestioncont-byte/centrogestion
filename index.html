@@ -1018,7 +1018,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260730_v14";
+var APP_VERSION = "20260730_v15";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -6175,17 +6175,36 @@ async function leerComprobanteOCR(input){
     });
     _paso('Paso 1/4: ✅ worker creado correctamente.');
 
-    _paso('Paso 2/4: leyendo el archivo como imagen (FileReader)...');
+    _paso('Paso 2/4: normalizando la imagen (redibujando a PNG vía canvas)...');
     var dataUrl = await new Promise(function(resolve,reject){
-      var reader=new FileReader();
-      reader.onload=function(){ resolve(reader.result); };
-      reader.onerror=function(){ reject(new Error('FileReader falló: '+(reader.error&&reader.error.message))); };
-      reader.readAsDataURL(file);
+      var img=new Image();
+      var url=URL.createObjectURL(file);
+      img.onload=function(){
+        try{
+          var w=img.naturalWidth||img.width, h=img.naturalHeight||img.height;
+          var cv=document.createElement('canvas');
+          cv.width=w; cv.height=h;
+          var ctx=cv.getContext('2d');
+          ctx.fillStyle='#ffffff';
+          ctx.fillRect(0,0,w,h);
+          ctx.drawImage(img,0,0,w,h);
+          URL.revokeObjectURL(url);
+          resolve(cv.toDataURL('image/png'));
+        }catch(e){ URL.revokeObjectURL(url); reject(e); }
+      };
+      img.onerror=function(){URL.revokeObjectURL(url);reject(new Error('No se pudo cargar la imagen en un elemento <img>.'));};
+      img.src=url;
     });
-    _paso('Paso 2/4: ✅ imagen leída, '+Math.round(dataUrl.length/1024)+'KB en base64.');
+    _paso('Paso 2/4: ✅ imagen normalizada, '+Math.round(dataUrl.length/1024)+'KB en base64 (PNG).');
 
     _paso('Paso 3/4: enviando a Tesseract para reconocer...');
-    var result = await worker.recognize(dataUrl);
+    var result;
+    try{
+      result = await worker.recognize(dataUrl);
+    }catch(errRec){
+      _paso('  detalle crudo del error: '+JSON.stringify(Object.keys(errRec||{}))+' · '+String(errRec));
+      throw errRec;
+    }
     _paso('Paso 3/4: ✅ Tesseract respondió sin lanzar error.');
 
     var txt = (result&&result.data&&result.data.text) || '';
