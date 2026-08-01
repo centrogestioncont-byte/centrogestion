@@ -1018,7 +1018,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260730_v17";
+var APP_VERSION = "20260730_v20";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -3756,7 +3756,7 @@ function pagarPaul(){
   var gastos = filterByMes(S.gastos_eeuu||[], mesKey).reduce(function(a,g){return a+(parseFloat(g.monto)||0);},0);
   var neta   = bruta - gastos;
   var paulBruto = neta * 0.5;  // 50% total de Paul antes de deudas
-  var deudas = (S.deudas_paul||[]).reduce(function(a,d){return a+(parseFloat(d.monto)||0);},0);
+  var deudas = (S.deudas_paul||[]).filter(function(d){return !d.cobrada;}).reduce(function(a,d){return a+(parseFloat(d.monto)||0);},0);
   var paulNeto  = paulBruto - deudas;  // lo que realmente recibe
   var julioNeto = neta * 0.5;          // 50% de Julio
   var partsM = mesKey.split("-");
@@ -3843,6 +3843,17 @@ function delDeudaPaul(id){
   if(pin!=="2626"){alert("Clave incorrecta.");return;}
   S.deudas_paul=S.deudas_paul.filter(function(x){return x.id!==id;});
   _marcarBorradoMerge("deudas_paul",id);
+  saveData();R();
+}
+// Marca una deuda de Paul como pagada SIN borrarla — a diferencia de
+// eliminar (que pierde el registro para siempre), esto deja el historial:
+// se ve tachada/gris en la lista, pero ya no cuenta en "lo que debe".
+function marcarDeudaPaulPagada(id){
+  var d=(S.deudas_paul||[]).find(function(x){return x.id===id;});
+  if(!d) return;
+  if(!confirm("¿Marcar como pagada esta deuda?\n\n"+d.desc+" · $"+f2(d.monto)+" USDT\n\nSe queda en el historial, pero deja de contar como pendiente.")) return;
+  d.cobrada=true;
+  d.fechaPago=ds(td());
   saveData();R();
 }
 function editDeudaPaul(id){
@@ -4953,7 +4964,7 @@ function generarReporteSocio(socioId, mesKey){
   var gastosParteSocio=esEEUU?Math.round(gastosPropios*(pct/100)*100)/100:gastosPropios;
   var baseCalc=ganBruta-gastosPropios;
   var suParte=Math.round(baseCalc*(pct/100)*100)/100;
-  var deudas=esEEUU?(S.deudas_paul||[]).reduce(function(a,d){return a+(parseFloat(d.monto)||0);},0):0;
+  var deudas=esEEUU?(S.deudas_paul||[]).filter(function(d){return !d.cobrada;}).reduce(function(a,d){return a+(parseFloat(d.monto)||0);},0):0;
   // También incluir gastos_socios para el socio EE.UU
   if(esEEUU&&socio){
     var gsEE=filterByMes(S.gastos_socios||[],mesKey).filter(function(g){return String(g.socioId)===String(socioId);});
@@ -5495,7 +5506,7 @@ function rCierreMes(){
   var gasEE=filterByMes(S.gastos_eeuu||[],selMes).reduce(function(a,g){return a+(parseFloat(g.monto)||0);},0);
   var ganEEneta=ganEEbruta-gasEE;
   var ganJulio=ganEEneta*0.5;
-  var deudaPaul=(S.deudas_paul||[]).reduce(function(a,d){return a+(parseFloat(d.monto)||0);},0);
+  var deudaPaul=(S.deudas_paul||[]).filter(function(d){return !d.cobrada;}).reduce(function(a,d){return a+(parseFloat(d.monto)||0);},0);
   var ganPaul=ganEEneta*0.5-deudaPaul;
   var ganTotal=ganBrl+ganVzla+ganJulio;
 
@@ -8967,8 +8978,9 @@ function rInformeCierre(){
       "<div style='display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#555'>Acumulado de meses ya cerrados</span><b style='font-size:13px;color:#0f6e3a'>$"+f2(calc.saldoPersonalAcumuladoPrevio)+"</b></div>"+
       (calc.repTotal>0?wrow("+ Reposiciones",calc.repTotal,"#0f6e3a"):"")+
       wrow("− Gastos personales pagados este mes",calc.egPerPag,"#c0392b")+
-      "<div style='display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:"+(excedido?"#FDECEA":"#E3F8EC")+"'><b style='font-size:12px;color:"+(excedido?"#c0392b":"#0f6e3a")+"'>= Disponible para gastar hoy</b><b style='font-size:14px;color:"+(excedido?"#c0392b":"#0f6e3a")+"'>$"+f2(Math.abs(calc.disponiblePer))+" USDT "+(excedido?"⚠️":"✅")+"</b></div>"+
-      "<div style='padding:9px 12px;font-size:10.5px;color:#9a8a5c;background:#FFFBEA;border-top:1px solid #f5f5f5'>🔒 Tu sueldo de este mes (<b>$"+f2(calc.sueldoAcumulando)+"</b>, "+calc.pctSueldo+"% de la utilidad) todavía se está acumulando — no es gastable hasta que cierres el mes. En ese momento se suma al acumulado de arriba para el próximo mes.</div>"+
+      "<div style='display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:"+(excedido?"#FDECEA":"#E3F8EC")+"'><b style='font-size:12px;color:"+(excedido?"#c0392b":"#0f6e3a")+"'>= Disponible para gastar hoy</b><b style='font-size:14px;color:"+(excedido?"#c0392b":"#0f6e3a")+"'>"+(excedido?"−":"")+"$"+f2(Math.abs(calc.disponiblePer))+" USDT "+(excedido?"⚠️ (excedido)":"✅")+"</b></div>"+
+      "<div style='padding:9px 12px;font-size:10.5px;color:#9a8a5c;background:#FFFBEA;border-top:1px solid #f5f5f5'>🔒 Tu sueldo de este mes (<b>$"+f2(calc.sueldoAcumulando)+"</b>, "+calc.pctSueldo+"% de la utilidad) todavía se está acumulando — no es gastable hasta que cierres el mes. Si NO lo retiras, se suma a lo que ya tienes acumulado.</div>"+
+      "<div style='padding:9px 12px;font-size:11px;color:#0a3d7c;background:#F0F4FF;border-top:1px solid #f5f5f5'>📈 Si cerraras el mes hoy sin retirar nada, para el próximo mes tendrías acumulado: <b>$"+f2(calc.disponiblePer+calc.sueldoAcumulando)+"</b> ("+f2(calc.disponiblePer)+" de ahora + "+f2(calc.sueldoAcumulando)+" del sueldo)</div>"+
     "</div>"+
     (calc.egEmpPend>0?"<div style='background:#FFF8DC;border:1px solid #F5C518;border-radius:10px;padding:10px 12px;font-size:12px;color:#7a5c00'><b>⚠️ Hay $"+f2(calc.egEmpPend)+" USDT en egresos de empresa sin pagar.</b></div>":"");
   }
@@ -9384,7 +9396,7 @@ function rInformeCierre(){
     var porCatPer={};pagPerList.forEach(function(e){var c=e.categoria||e.cat||"General";if(!porCatPer[c])porCatPer[c]=0;porCatPer[c]+=(parseFloat(e.usdt)||0);});
     return "<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px'>"+
       card("#B87800","#FFF8DC","💵 Sueldo del mes","$"+f2(calc.sueldo)+" USDT",calc.pctSueldo+"% de la utilidad")+
-      card(excedido?"#c0392b":"#0f6e3a","#fff","💳 Disponible","$"+f2(Math.abs(calc.disponiblePer))+" USDT",excedido?"⚠️ Te excediste":"✅ Disponible")+
+      card(excedido?"#c0392b":"#0f6e3a","#fff","💳 Disponible",(excedido?"−":"")+"$"+f2(Math.abs(calc.disponiblePer))+" USDT",excedido?"⚠️ Te excediste":"✅ Disponible")+
     "</div>"+
     (excedido?"<div style='background:#FDECEA;border:1.5px solid #e74c3c;border-radius:10px;padding:10px 12px;font-size:12px;color:#c0392b;margin-bottom:12px'><b>⚠️ Te excediste $"+f2(-calc.disponiblePer)+" USDT de lo acumulado.</b> Recuerda reponerlo a las cuentas de la empresa.</div>":"")+
     (calc.ganExtraPer>0?"<div style='background:#FFF8DC;border:1px solid #F5C518;border-radius:11px;padding:11px 13px;margin-bottom:12px'>"+
@@ -9925,7 +9937,7 @@ function rDashEE(){
   var bruta = eeuuM.reduce(function(a,r){return a+r.pr;},0);
   var gasto = gasM.reduce(function(a,g){return a+(parseFloat(g.monto)||0);},0);
   var neta  = bruta - gasto;
-  var deudaPaulTotal=(S.deudas_paul||[]).reduce(function(a,d){return a+(parseFloat(d.monto)||0);},0);
+  var deudaPaulTotal=(S.deudas_paul||[]).filter(function(d){return !d.cobrada;}).reduce(function(a,d){return a+(parseFloat(d.monto)||0);},0);
   var paulNeto=neta*0.5-deudaPaulTotal;
   var julioNeto=neta*0.5;
   var mesLiquidado=(S.config&&S.config.liquidaciones_eeuu||[]).find(function(l){return l.mesKey===selMes;});
@@ -10060,7 +10072,7 @@ function rDashEE(){
     "<div style='font-size:11px;font-weight:700;opacity:.85;margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px'>💸 DEDUCCIONES DE "+socioEENomDash.toUpperCase()+"</div>"+
     // Deudas antiguas (deudas_paul - compatibilidad)
     ((S.deudas_paul&&S.deudas_paul.length)
-      ? S.deudas_paul.map(function(d){return "<div style='display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.1)'><div><span style='font-size:12px'>"+d.desc+"</span><span style='font-size:10px;opacity:.6;margin-left:8px'>"+d.d+"</span><span style='font-size:9px;opacity:.5;margin-left:4px'>(legacy)</span></div><div style='display:flex;align-items:center;gap:6px'><span style='font-weight:700;color:#ffaaaa'>−$"+f2(d.monto)+" USDT</span>"+(S.role!=="eeuu"?"<button onclick='editDeudaPaul("+d.id+")' style='background:rgba(255,200,100,.2);border:1px solid rgba(255,200,100,.4);color:#fff;padding:3px 8px;border-radius:5px;cursor:pointer;font-size:10px'>✏️</button><button onclick='delDeudaPaul("+d.id+")' style='background:rgba(255,100,100,.2);border:1px solid rgba(255,100,100,.4);color:#fff;padding:3px 8px;border-radius:5px;cursor:pointer;font-size:10px'>🗑️</button>":"")+  "</div></div>";}).join("")
+      ? S.deudas_paul.map(function(d){return "<div style='display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.1)"+(d.cobrada?";opacity:.5":"")+"'><div><span style='font-size:12px"+(d.cobrada?";text-decoration:line-through":"")+"'>"+d.desc+"</span><span style='font-size:10px;opacity:.6;margin-left:8px'>"+d.d+"</span><span style='font-size:9px;opacity:.5;margin-left:4px'>"+(d.cobrada?"(pagada)":"(legacy)")+"</span></div><div style='display:flex;align-items:center;gap:6px'><span style='font-weight:700;color:#ffaaaa'>−$"+f2(d.monto)+" USDT</span>"+(S.role!=="eeuu"?(!d.cobrada?"<button onclick='marcarDeudaPaulPagada("+d.id+")' style='background:rgba(100,255,150,.2);border:1px solid rgba(100,255,150,.4);color:#fff;padding:3px 8px;border-radius:5px;cursor:pointer;font-size:10px'>✅</button>":"")+"<button onclick='editDeudaPaul("+d.id+")' style='background:rgba(255,200,100,.2);border:1px solid rgba(255,200,100,.4);color:#fff;padding:3px 8px;border-radius:5px;cursor:pointer;font-size:10px'>✏️</button><button onclick='delDeudaPaul("+d.id+")' style='background:rgba(255,100,100,.2);border:1px solid rgba(255,100,100,.4);color:#fff;padding:3px 8px;border-radius:5px;cursor:pointer;font-size:10px'>🗑️</button>":"")+  "</div></div>";}).join("")
       : "")+
     // Gastos socios registrados desde la pestaña Socios
     (gsEEDash.length?
@@ -13131,6 +13143,17 @@ function pagarEgPersonal(id){
   var idx=S.egresos_personales.findIndex(function(e){return e.id===id;});
   if(idx===-1) return;
   var e=S.egresos_personales[idx];
+  // Aviso previo: tu sueldo de este mes no cuenta como disponible hasta que
+  // cierres el mes — si este gasto deja el acumulado en negativo, te avisa
+  // y pide confirmar (mismo criterio que ya usas para las cuentas bancarias:
+  // no bloquea, pero no deja pasar por accidente sin que lo sepas).
+  var calcActual=calcMesCompleto(getMesKeyActual());
+  var montoUsdt=parseFloat(e.usdt)||0;
+  var quedaria=(calcActual.disponiblePer||0)-montoUsdt;
+  if(quedaria<-0.01){
+    var seguir=confirm("⚠️ ATENCIÓN: Ahora mismo tienes $"+f2(calcActual.disponiblePer)+" acumulado de meses ya cerrados. Tu sueldo de este mes ($"+f2(calcActual.sueldoAcumulando)+") todavía NO cuenta como disponible.\n\nSi marcas este gasto de $"+f2(montoUsdt)+" como pagado, quedarías en "+f2(quedaria)+" (negativo) hasta que cierres el mes.\n\n¿Confirmas que quieres pagarlo de todas formas?");
+    if(!seguir) return;
+  }
   if(e.cuentaId) ajusteCuentaEgreso(e.cuentaId,-e.monto);
   // Descontar del lote FIFO
   descontarFIFOEgreso(e.mon||"BRL",e.monto,e.usdt,e.cuentaId);
