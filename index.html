@@ -1018,7 +1018,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260730_v23";
+var APP_VERSION = "20260730_v26";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -5016,14 +5016,17 @@ function generarReporteSocio(socioId, mesKey){
     ".firma{border-top:2px solid #e0e0e0;margin-top:40px;padding-top:16px;display:grid;grid-template-columns:1fr 1fr;gap:40px}"+
     ".firma div{text-align:center;font-size:11px;color:#888}"+
     ".firma .line{border-top:1px solid #bbb;padding-top:6px;margin-top:36px}"+
-    "@media print{.no-print{display:none}body{background:#fff}.page{box-shadow:none}}";
+    "@media print{.no-print{display:none}body{background:#fff}.page{box-shadow:none}}"+
+    "@media (max-width:640px){body{padding:10px !important;font-size:15px}.page{padding:16px !important}td{padding:10px 8px;font-size:12.5px}.card-row{grid-template-columns:1fr !important}.card .val{font-size:20px}h1{font-size:19px !important}table{display:block;overflow-x:auto;white-space:nowrap}.no-print{display:flex;flex-direction:column;gap:8px}.no-print button{width:100%;box-sizing:border-box;padding:14px !important}}";
 
-  var html="<!doctype html><html lang='es'><head><meta charset='utf-8'>"+
+  var html="<!doctype html><html lang='es'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>"+
+    "<script src='https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js'></script>"+
     "<title>Reporte "+nomSocio+" — "+mesLabel+"</title><style>"+css+"</style></head><body>"+
-    "<div class='no-print' style='text-align:right;margin-bottom:14px'>"+
-      "<button onclick='window.print()' style='background:#1a3558;color:#fff;border:none;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer'>🖨️ Imprimir / Guardar PDF</button>"+
+    "<div class='no-print' style='text-align:right;margin-bottom:14px;display:flex;gap:8px;justify-content:flex-end'>"+
+      "<button id='btnCompartirSocio' onclick='_compartirSocioImg()' style='background:#16a34a;color:#fff;border:none;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer'>📤 Compartir</button>"+
+      "<button onclick='window.print()' style='background:#1a3558;color:#fff;border:none;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer'>🖨️ Imprimir / PDF</button>"+
     "</div>"+
-    "<div class='page'>"+
+    "<div class='page' id='reporteSocioCapture'>"+
 
     // ── ENCABEZADO ──
     "<div style='display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px'>"+
@@ -5198,7 +5201,25 @@ function generarReporteSocio(socioId, mesKey){
     :"")+
 
 
-    "</div></body></html>";
+    "</div>"+ // cierra #reporteSocioCapture
+    "<script>function _compartirSocioImg(){"+
+      "var btn=document.getElementById('btnCompartirSocio');var t0=btn.textContent;btn.textContent='⏳ Generando...';btn.disabled=true;"+
+      "html2canvas(document.getElementById('reporteSocioCapture'),{scale:2,backgroundColor:'#ffffff'}).then(function(canvas){"+
+        "canvas.toBlob(function(blob){"+
+          "var archivo=new File([blob],'Reporte_"+nomSocio.replace(/\s/g,'_')+"_"+mesLabel.replace(/\s/g,'_')+".png',{type:'image/png'});"+
+          "if(navigator.canShare && navigator.canShare({files:[archivo]})){"+
+            "navigator.share({files:[archivo],title:'Reporte "+nomSocio+" — "+mesLabel+"'}).catch(function(){});"+
+            "btn.textContent=t0;btn.disabled=false;"+
+          "} else {"+
+            "var url=URL.createObjectURL(blob);var a=document.createElement('a');a.href=url;a.download=archivo.name;a.click();"+
+            "setTimeout(function(){URL.revokeObjectURL(url);},2000);"+
+            "btn.textContent='✅ Descargado — compártelo desde tu galería';btn.disabled=false;"+
+            "setTimeout(function(){btn.textContent=t0;},4000);"+
+          "}"+
+        "},'image/png');"+
+      "}).catch(function(e){ alert('No se pudo generar la imagen: '+e.message); btn.textContent=t0; btn.disabled=false; });"+
+    "}</script>"+
+    "</body></html>";
 
   var w=window.open("","_blank");
   if(w){w.document.write(html);w.document.close();}
@@ -8479,14 +8500,22 @@ function generarInformePDF(mesKey){
   var row=function(l,v,color,signed){var num=parseFloat(v)||0;var disp=signed?num:Math.abs(num);var col=(color||"#1a3558");return "<tr><td style='padding:5px 8px;font-size:12px'>"+l+"</td><td style='padding:5px 8px;font-size:12px;text-align:right;font-weight:700;color:"+col+"'>"+(signed&&num<0?"−":"")+"$"+f2l(Math.abs(disp))+" USDT</td></tr>";};
   var sec=function(title,content){return "<div style='margin-bottom:22px'><h2 style='font-size:14px;font-weight:800;color:#1a3558;border-bottom:2px solid #FFA31C;padding-bottom:6px;margin-bottom:12px'>"+title+"</h2>"+content+"</div>";};
 
-  var html="<!doctype html><html lang='es'><head><meta charset='utf-8'><title>Informe "+mesLabel+"</title>"+
+  var html="<!doctype html><html lang='es'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Informe "+mesLabel+"</title>"+
+  "<script src='https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js'></script>"+
   "<style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:800px;margin:0 auto;padding:24px;color:#222}"+
   "table{width:100%;border-collapse:collapse}td,th{border:1px solid #e0e0e0;padding:6px 10px;font-size:12px}"+
   "th{background:#f5f5f7;font-weight:700;color:#555}"+
   ".chip{display:inline-block;padding:2px 8px;border-radius:8px;font-size:10px;font-weight:700}"+
   ".pos{color:#0f6e3a}.neg{color:#c0392b}.btn{background:#1a3558;color:#fff;border:none;padding:10px 18px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;margin-bottom:16px}"+
-  "@media print{.btn{display:none}}</style></head><body>"+
-  "<button class='btn' onclick='window.print()'>🖨️ Imprimir / Guardar como PDF</button>"+
+  ".btnShare{background:#16a34a}"+
+  "@media print{.btn,.btnBar{display:none}}"+
+  "@media (max-width:640px){body{padding:12px;font-size:15px}td,th{padding:8px 6px;font-size:12.5px}h1{font-size:19px !important}h2{font-size:15px !important}.btnBar{display:flex;flex-direction:column;gap:8px}.btn{width:100%;box-sizing:border-box;padding:14px;font-size:14px;margin-bottom:0}table{display:block;overflow-x:auto;white-space:nowrap}}"+
+  "</style></head><body>"+
+  "<div class='btnBar' style='display:flex;gap:8px;margin-bottom:16px'>"+
+    "<button class='btn btnShare' id='btnCompartirInforme' onclick='_compartirInformeImg()'>📤 Compartir</button>"+
+    "<button class='btn' onclick='window.print()'>🖨️ Imprimir / PDF</button>"+
+  "</div>"+
+  "<div id='reporteCapture'>"+
   "<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:12px'>"+
     "<div><h1 style='font-size:22px;font-weight:900;color:#1a3558;margin:0'>Informe Mensual</h1>"+
     "<div style='font-size:14px;color:#888;margin-top:4px'>"+mesLabel+" · Centro de Gestión RemesasYA</div></div>"+
@@ -8572,34 +8601,39 @@ function generarInformePDF(mesKey){
     }).join("");
     return sec("💸 Egresos empresa",
       (Object.keys(catEmp).length>1?"<div style='margin-bottom:10px'><b style='font-size:11px;color:#555'>Por categoría:</b><table style='width:100%;margin-top:6px'>"+catBarras+"</table></div>":"")+
-      "<table><tr><th>Fecha</th><th>Categoría</th><th>Descripción</th><th>Estado</th><th>Monto USDT</th></tr>"+
+      "<table><tr><th>Fecha</th><th>Categoría</th><th>Descripción</th><th>Estado</th><th>Monto original</th><th>USDT</th></tr>"+
       egEmpM.slice().sort(function(a,b){return (a.fecha||a.d||"").localeCompare(b.fecha||b.d||"");}).map(function(e){
         return "<tr><td>"+((e.fecha||e.d)||"")+"</td><td style='color:#0a3d7c;font-weight:600'>"+(e.categoria||"General")+"</td><td>"+(e.mot||e.desc||e.motivo||"—")+"</td>"+
           "<td style='text-align:center'>"+(e.pagada?"✅":"⏳")+"</td>"+
+          "<td style='text-align:right;color:#888'>"+((e.mon||"BRL")==="USDT"?"":(f2l(parseFloat(e.monto)||0)+" "+(e.mon||"BRL")))+"</td>"+
           "<td style='text-align:right;font-weight:700;color:"+(e.pagada?"#c0392b":"#888")+"'>$"+f2l(parseFloat(e.usdt)||0)+"</td></tr>";
       }).join("")+
-      "<tr><td colspan='4'><b>TOTAL PAGADOS</b></td><td style='text-align:right;font-weight:900;color:#c0392b'>$"+f2l(calc.egEmpPag)+"</td></tr>"+
-      (calc.egEmpPend>0?"<tr style='background:#FFF8DC'><td colspan='4'><b>PENDIENTES DE PAGO</b></td><td style='text-align:right;font-weight:900;color:#7a5c00'>$"+f2l(calc.egEmpPend)+"</td></tr>":"")+
+      "<tr><td colspan='5'><b>TOTAL PAGADOS</b></td><td style='text-align:right;font-weight:900;color:#c0392b'>$"+f2l(calc.egEmpPag)+"</td></tr>"+
+      (calc.egEmpPend>0?"<tr style='background:#FFF8DC'><td colspan='5'><b>PENDIENTES DE PAGO</b></td><td style='text-align:right;font-weight:900;color:#7a5c00'>$"+f2l(calc.egEmpPend)+"</td></tr>":"")+
       "</table>");
   }())+
   // PERSONAL
   (function(){
+    var pagadosPer=egPerM.filter(function(e){return e.pagada;});
+    var totalGastadoReal=r2(pagadosPer.reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0));
     var catPer={};
-    egPerM.filter(function(e){return e.pagada;}).forEach(function(e){var c=e.categoria||e.cat||"General";if(!catPer[c])catPer[c]=0;catPer[c]+=(parseFloat(e.usdt)||0);});
+    pagadosPer.forEach(function(e){var c=e.categoria||e.cat||"General";if(!catPer[c])catPer[c]=0;catPer[c]+=(parseFloat(e.usdt)||0);});
     var catBarrasPer=Object.keys(catPer).sort(function(a,b){return catPer[b]-catPer[a];}).map(function(c){
-      var pct=calc.egPerPag>0?Math.round(catPer[c]/calc.egPerPag*100):0;
+      var pct=totalGastadoReal>0?Math.round(catPer[c]/totalGastadoReal*100):0;
       return "<tr><td style='padding:4px 8px'>"+c+"</td><td style='padding:4px 8px'><div style='background:#eee;border-radius:4px;height:10px;width:120px;display:inline-block;vertical-align:middle'><div style='background:#7a5c00;border-radius:4px;height:100%;width:"+pct+"%'></div></div></td><td style='padding:4px 8px;text-align:right;color:#7a5c00;font-weight:700'>$"+f2l(catPer[c])+"</td><td style='padding:4px 8px;color:#888;font-size:10px'>"+pct+"%</td></tr>";
     }).join("");
     return sec("👤 Situación personal",
-      "<div style='background:"+(calc.disponiblePer>=0?"#E3F8EC":"#FDECEA")+";border-radius:8px;padding:10px 12px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center'><span style='font-size:12px'>Acumulado: <b>$"+f2l(calc.saldoPersonalAcumuladoPrevio)+"</b> · Gastado: <b>$"+f2l(calc.egPerPag)+"</b></span><span style='font-weight:800;color:"+(calc.disponiblePer>=0?"#0f6e3a":"#c0392b")+"'>"+(calc.disponiblePer<0?"⚠️ Excediste: −$":"✅ Disponible: $")+f2l(Math.abs(calc.disponiblePer))+" USDT</span></div>"+
+      "<div style='background:"+(calc.disponiblePer>=0?"#E3F8EC":"#FDECEA")+";border-radius:8px;padding:10px 12px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center'><span style='font-size:12px'>Acumulado: <b>$"+f2l(calc.saldoPersonalAcumuladoPrevio)+"</b> · Gastado en total: <b>$"+f2l(totalGastadoReal)+"</b></span><span style='font-weight:800;color:"+(calc.disponiblePer>=0?"#0f6e3a":"#c0392b")+"'>"+(calc.disponiblePer<0?"⚠️ Excediste: −$":"✅ Disponible: $")+f2l(Math.abs(calc.disponiblePer))+" USDT</span></div>"+
+      "<div style='font-size:10.5px;color:#888;margin-bottom:10px'>De ese total, <b>$"+f2l(calc.egPerPag)+" USDT</b> salió de fondos de la empresa (el resto se pagó desde una cuenta personal, no cuenta contra tu disponible).</div>"+
       (Object.keys(catPer).length>1?"<div style='margin-bottom:10px'><b style='font-size:11px;color:#555'>En qué se gastó el sueldo:</b><table style='width:100%;margin-top:6px'>"+catBarrasPer+"</table></div>":"")+
-      "<table><tr><th>Fecha</th><th>Categoría</th><th>Descripción</th><th>Monto USDT</th></tr>"+
-      egPerM.filter(function(e){return e.pagada;}).map(function(e){
+      "<table><tr><th>Fecha</th><th>Categoría</th><th>Descripción</th><th>Monto original</th><th>USDT</th></tr>"+
+      pagadosPer.map(function(e){
         return "<tr><td>"+((e.fecha||e.d)||"")+"</td><td style='color:#7a5c00;font-weight:600'>"+(e.categoria||e.cat||"General")+"</td>"+
           "<td>"+(e.mot||e.desc||e.motivo||"Sin descripción")+"</td>"+
+          "<td style='text-align:right;color:#555'>"+((e.mon||"BRL")===("USDT")?"":(f2l(parseFloat(e.monto)||0)+" "+(e.mon||"BRL")))+"</td>"+
           "<td style='text-align:right;color:#c0392b;font-weight:700'>$"+f2l(parseFloat(e.usdt)||0)+"</td></tr>";
       }).join("")+
-      "<tr style='background:#f5f5f7'><td colspan='3'><b>Total gastado</b></td><td style='text-align:right;font-weight:900;color:#c0392b'>$"+f2l(calc.egPerPag)+"</td></tr>"+
+      "<tr style='background:#f5f5f7'><td colspan='4'><b>Total gastado</b></td><td style='text-align:right;font-weight:900;color:#c0392b'>$"+f2l(totalGastadoReal)+"</td></tr>"+
       "</table>");
   }())+
   // GANANCIAS EXTRA
@@ -8845,6 +8879,24 @@ function generarInformePDF(mesKey){
 
     return sec("🎯 Resumen Ejecutivo Final",html2);
   }())+
+  "</div>"+ // cierra #reporteCapture
+  "<script>function _compartirInformeImg(){"+
+    "var btn=document.getElementById('btnCompartirInforme');var t0=btn.textContent;btn.textContent='⏳ Generando...';btn.disabled=true;"+
+    "html2canvas(document.getElementById('reporteCapture'),{scale:2,backgroundColor:'#ffffff'}).then(function(canvas){"+
+      "canvas.toBlob(function(blob){"+
+        "var archivo=new File([blob],'Informe_"+mesLabel.replace(/\\s/g,'_')+".png',{type:'image/png'});"+
+        "if(navigator.canShare && navigator.canShare({files:[archivo]})){"+
+          "navigator.share({files:[archivo],title:'Informe "+mesLabel+"'}).catch(function(){});"+
+          "btn.textContent=t0;btn.disabled=false;"+
+        "} else {"+
+          "var url=URL.createObjectURL(blob);var a=document.createElement('a');a.href=url;a.download=archivo.name;a.click();"+
+          "setTimeout(function(){URL.revokeObjectURL(url);},2000);"+
+          "btn.textContent='✅ Descargado — compártelo desde tu galería';btn.disabled=false;"+
+          "setTimeout(function(){btn.textContent=t0;},4000);"+
+        "}"+
+      "},'image/png');"+
+    "}).catch(function(e){ alert('No se pudo generar la imagen: '+e.message); btn.textContent=t0; btn.disabled=false; });"+
+  "}</script>"+
   "</body></html>";
   var w=window.open("","_blank");
   if(w){w.document.write(html);w.document.close();}
