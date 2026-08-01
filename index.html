@@ -1018,7 +1018,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260730_v21";
+var APP_VERSION = "20260730_v22";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -2833,6 +2833,7 @@ function pagarCompromiso(cmpId,mesKey){
         restaurarFIFOEgreso(egOld.mon||"BRL",egOld.monto,egOld.usdt,egOld.cuentaId);
       }
       S.egresos=(S.egresos||[]).filter(function(e){return e.id!==pago.egresoId;});
+      _marcarBorradoMerge("egresos",pago.egresoId);
     }
     c.pagos[mesKey]={pagado:false,fechaPago:null,egresoId:null};
     saveData();R();return;
@@ -3794,6 +3795,9 @@ function pagarPaul(){
   });
 
   // Limpiar gastos del mes cerrado
+  (S.gastos_eeuu||[]).forEach(function(g){
+    if(filterByMes([g], mesKey).length > 0) _marcarBorradoMerge("gastos_eeuu", g.id);
+  });
   S.gastos_eeuu = (S.gastos_eeuu||[]).filter(function(g){
     return filterByMes([g], mesKey).length === 0;
   });
@@ -3803,9 +3807,11 @@ function pagarPaul(){
   // - Si paulNeto < 0, la deuda excedió su ganancia → el sobrante (lo que aún debe)
   //   se arrastra al mes siguiente como una nueva deuda pendiente.
   if(paulNeto >= 0){
+    (S.deudas_paul||[]).forEach(function(d){ _marcarBorradoMerge("deudas_paul", d.id); });
     S.deudas_paul = [];
   } else {
     var sobrante = Math.round((-paulNeto)*100)/100; // lo que quedó debiendo
+    (S.deudas_paul||[]).forEach(function(d){ _marcarBorradoMerge("deudas_paul", d.id); });
     S.deudas_paul = [{
       id: Date.now(),
       d: new Date().toLocaleDateString("es-ES",{day:"2-digit",month:"2-digit"}),
@@ -4024,6 +4030,7 @@ function delGastoSocio(id){
   if(pin===null) return;
   if(pin!=="2626"){alert("PIN incorrecto.");return;}
   S.gastos_socios=(S.gastos_socios||[]).filter(function(g){return g.id!==id;});
+  _marcarBorradoMerge("gastos_socios",id);
   saveData();R();
 }
 function toggleGastoSocioForm(socioId){
@@ -8381,6 +8388,7 @@ function delGanExtra(id){
   if(!g||!confirm("Eliminar '"+g.desc+"' ($"+f2(g.usdt)+" USDT)?"))return;
   if(g.cuentaId) ajusteCuentaEgreso(g.cuentaId,-g.monto);
   S.gananciaExtra=(S.gananciaExtra||[]).filter(function(x){return x.id!==id;});
+  _marcarBorradoMerge("gananciaExtra",id);
   logAudit("GANANCIA_EXTRA_DEL","Eliminó: "+g.desc);
   saveData();R();
 }
@@ -13181,6 +13189,7 @@ function reqDelPersonal(id){
     restaurarFIFOEgreso(item.mon||"BRL",item.monto,item.usdt,item.cuentaId);
   }
   S.egresos_personales=(S.egresos_personales||[]).filter(function(e){return e.id!==id;});
+  _marcarBorradoMerge("egresos_personales",id);
   saveData();R();
 }
 function rCuentasCobrar(){
