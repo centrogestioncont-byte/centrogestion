@@ -1018,7 +1018,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260730_v30";
+var APP_VERSION = "20260730_v32";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -1391,7 +1391,12 @@ function rEvolucion(){
         "<div style='display:flex;align-items:center;gap:10px'>"+
           (mesKey&&!esActual?"<button onclick='event.stopPropagation();corregirSaldoCierre(\""+mesKey+"\")' style='background:none;border:1px solid #ddd;border-radius:6px;padding:2px 7px;font-size:10px;cursor:pointer;color:#aaa'>✏️</button>":"")+
           "<div style='text-align:right'><div style='font-size:20px;font-weight:900;color:"+color+"'>$"+f2(neto)+" <span style='font-size:10px;color:#aaa'>USDT</span></div>"+
-          (function(){var _t=getRateToUsdt("BRL")||0;return _t>0?"<div style='font-size:10px;color:#999'>≈ R$"+f2(neto*_t)+"</div>":"";}())+
+          (function(){
+            if(!mesKey) return "";
+            var _brlMes=filterByMes(S.brl||[],mesKey);
+            var _reaisMes=_brlMes.reduce(function(a,r){return a+((parseFloat(r.pr)||0)*(parseFloat(r.tc)||0));},0);
+            return _reaisMes?"<div style='font-size:10px;color:#999'>🇧🇷 ruta BRL ≈ R$"+f2(_reaisMes)+"</div>":"";
+          }())+
           "</div>"+
           "<div style='font-size:14px;color:#ccc'>"+(abierto?"▲":"▼")+"</div>"+
         "</div>"+
@@ -4878,7 +4883,7 @@ function rCapitalTotal(){
       "<div>"+
         "<div style='font-size:10px;font-weight:700;color:#FFA31C;text-transform:uppercase;margin-bottom:2px'>🏢 Total empresa (USDT equiv.)</div>"+
         "<div style='font-size:28px;font-weight:900;color:#FFD700;line-height:1'>$"+f2(totalUsdt)+"</div>"+
-        (function(){var _t=getRateToUsdt("BRL")||0;return _t>0?"<div style='font-size:12px;color:#FFD700;opacity:.75;margin-top:1px'>≈ R$"+f2(totalUsdt*_t)+"</div>":"";}())+
+        (function(){var _t=getLastTasaCompra("BRL")||getRateToUsdt("BRL")||0;return _t>0?"<div style='font-size:12px;color:#FFD700;opacity:.75;margin-top:1px'>≈ R$"+f2(totalUsdt*_t)+"</div>":"";}())+
         (sinTasaCount>0?"<div style='font-size:9px;color:#F5C518;margin-top:3px'>⚠️ "+sinTasaCount+" cuenta(s) sin tasa — edita ↓</div>":
         "<div style='font-size:9px;color:rgba(255,255,255,.5);margin-top:3px'>Todas las tasas activas</div>")+
       "</div>"+
@@ -8445,6 +8450,7 @@ function exportarReporteContadorCSV(mesKey){
   URL.revokeObjectURL(url);
 }
 function generarInformePDF(mesKey){
+ try{
   var partsK=mesKey.split("-");
   var mesLabel=getMesLabel(partsK[1],partsK[0]);
   var calc=calcMesCompleto(mesKey);
@@ -8924,6 +8930,10 @@ function generarInformePDF(mesKey){
   var w=window.open("","_blank");
   if(w){w.document.write(html);w.document.close();}
   else{alert("Permite las ventanas emergentes para generar el PDF.");}
+ }catch(e){
+  console.error("generarInformePDF error:",e);
+  alert("⚠️ El PDF no se pudo generar.\n\nError exacto: "+e.message+"\n\nLínea aproximada: "+(e.stack?e.stack.split("\n")[0]:"desconocida")+"\n\nManda esto en captura para corregirlo.");
+ }
 }
 
 function rInformeCierre(){
@@ -10485,11 +10495,13 @@ function rDiario(){
   // del día — para que el contador tenga el monto exacto en Reales al
   // declarar, sin tener que estar calculándolo aparte.
   var ganBrlPeriodoUsdt = allBrl.reduce(function(a,r){return a+(parseFloat(r.pr)||0);},0);
-  var tasaBrlHoy = getRateToUsdt("BRL")||0;
-  var ganBrlPeriodoReais = tasaBrlHoy>0 ? ganBrlPeriodoUsdt*tasaBrlHoy : 0;
+  // Cada remesa se convierte con SU PROPIA tasa histórica (r.tc, la que
+  // estaba vigente ese día) — no la tasa de hoy — así un mes ya cerrado
+  // no cambia si la tasa sube o baja después.
+  var ganBrlPeriodoReais = allBrl.reduce(function(a,r){return a+((parseFloat(r.pr)||0)*(parseFloat(r.tc)||0));},0);
   _dHeader += "<div style='background:#0b4d27;border-radius:10px;padding:10px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px'>"+
     "<span style='color:#d6f5e3;font-size:12px;font-weight:700'>🇧🇷 Ganancia ruta BRL · "+_dMesLabel+"</span>"+
-    "<span style='color:#fff;font-size:15px;font-weight:900'>$"+f2(ganBrlPeriodoUsdt)+" USDT"+(tasaBrlHoy>0?" ≈ R$ "+f2(ganBrlPeriodoReais):"")+"</span>"+
+    "<span style='color:#fff;font-size:15px;font-weight:900'>$"+f2(ganBrlPeriodoUsdt)+" USDT"+(ganBrlPeriodoReais?" ≈ R$ "+f2(ganBrlPeriodoReais):"")+"</span>"+
   "</div>";
 
   var cards=dias.map(function(dia){
@@ -10998,7 +11010,17 @@ function rTblUnificada(){
     "<div style='border-top:1px solid rgba(74,222,128,.2);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between;align-items:center'>"+
     "<span style='font-size:10px;color:#94a3b8;font-weight:700'>= Ganancia</span>"+
     "<span style='font-size:16px;font-weight:900;color:"+(totGanancia>0?"#4ade80":"#f87171")+"'>$"+f2n(totGanancia)+" USDT</span>"+
-    "</div></div>"
+    "</div>"+
+    (function(){
+      var _brlRows=fil.filter(function(r){return r._src==="brl";});
+      // Cada remesa usa SU PROPIA tasa histórica (r.tc, la vigente ese día)
+      // — no la tasa de hoy — así los días/meses pasados no cambian si la
+      // tasa cambió después.
+      var _ganBrlReais=_brlRows.reduce(function(a,r){return a+((parseFloat(r.pr)||0)*(parseFloat(r.tc)||0));},0);
+      if(!_ganBrlReais) return "";
+      return "<div style='display:flex;justify-content:space-between;margin-top:2px'><span style='font-size:9.5px;color:#94a3b8'>🇧🇷 De eso, ruta BRL en Reais (tasa de cada día)</span><span style='font-size:12px;font-weight:700;color:#4ade80'>≈ R$"+f2n(_ganBrlReais)+"</span></div>";
+    }())+
+    "</div>"
   :"";
 
   var totalesBar =
@@ -11016,12 +11038,11 @@ function rTblUnificada(){
     "</div>"+
   "</div>";
 
-  var _tasaBrlOps = getRateToUsdt("BRL")||0;
   var rows=fil.map(function(r){
     var sc=r._src; var bg=srcBg[sc]; var co=srcColor[sc];
     var rtBadge="<span style='background:"+bg+";color:"+co+";border-radius:7px;padding:2px 8px;font-size:10px;font-weight:700;white-space:nowrap'>"+srcFlag[sc]+" "+r.rt+"</span>";
     var ganColor=r.pr>=0?"#0f6e3a":"#c0392b";
-    var ganReaisTxt = (sc==="brl" && _tasaBrlOps>0) ? ("<div style='font-size:9.5px;color:#888;font-weight:600'>≈ R$"+f2(r.pr*_tasaBrlOps)+"</div>") : "";
+    var ganReaisTxt = (sc==="brl" && parseFloat(r.tc)>0) ? ("<div style='font-size:9.5px;color:#888;font-weight:600'>≈ R$"+f2(r.pr*r.tc)+"</div>") : "";
     var ganDisplay="<span style='color:"+ganColor+";font-weight:800'>$"+f2n(r.pr)+"</span>"+ganReaisTxt;
     var bancoOrigen = r.cuentaBanco ? (cuentasNom[r.cuentaBanco]||r.cuentaBanco) : "<span style='color:#ccc'>—</span>";
     var bancoDest = r.cuentaDest ? (cuentasNom[r.cuentaDest]||r.cuentaDest) : "<span style='color:#ccc'>—</span>";
