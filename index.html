@@ -1018,7 +1018,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260802_v8";
+var APP_VERSION = "20260802_v10";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -4987,7 +4987,7 @@ function generarReporteSocio(socioId, mesKey){
   }
   var netUsdt=Math.round((suParte-deudas)*100)/100;
   var netLocal=Math.round(netUsdt*rateLocal*100)/100;
-  var pagosMes=(S.pagosSocios||[]).filter(function(p){return String(p.socioId)===String(socioId)&&p.mesKey===mesKey;});
+  var pagosMes=(S.pagosSocios||[]).filter(function(p){return String(p.socioId)===String(socioId)&&(p.mesKeyPara||p.mesKey)===mesKey;});
   var totalPagado=pagosMes.reduce(function(a,p){return a+p.monto;},0);
   var pendiente=Math.round((netUsdt-totalPagado)*100)/100;
   var f2r=function(n){return (Math.round(Math.abs(n)*100)/100).toFixed(2).replace(".",",");};
@@ -8408,12 +8408,14 @@ function savePagoSocio(socioId){
   if(!np.cuentaId){alert("Selecciona la cuenta de donde sale el pago.");return;}
   var cta=(S.cuentas||[]).find(function(x){return x.id===np.cuentaId;});
   if(!cta){alert("Cuenta no encontrada.");return;}
-  if(!confirm("Pagar $"+f2(monto)+" USDT a "+nomS+" desde "+cta.nombre+".\n¿Confirmar?"))return;
+  var mesParaKey=np.mesKeyPara||getMesKeyActual();
+  var mesParaLbl=getMesLabel(mesParaKey.split("-")[1],mesParaKey.split("-")[0]);
+  if(!confirm("Pagar $"+f2(monto)+" USDT a "+nomS+" desde "+cta.nombre+" (por "+mesParaLbl+").\n¿Confirmar?"))return;
   ajusteCuentaEgreso(np.cuentaId,-monto);
   S.pagosSocios.push({id:Date.now(),socioId:socioId,socioNombre:nomS,
-    fecha:td(),mesKey:getMesKeyActual(),monto:Math.round(monto*100)/100,
+    fecha:td(),mesKey:getMesKeyActual(),mesKeyPara:mesParaKey,monto:Math.round(monto*100)/100,
     cuentaId:np.cuentaId,nota:(np.nota||"").trim()});
-  logAudit("PAGO_SOCIO","Pagó $"+f2(monto)+" USDT a "+nomS+" desde "+cta.nombre);
+  logAudit("PAGO_SOCIO","Pagó $"+f2(monto)+" USDT a "+nomS+" desde "+cta.nombre+" (por "+mesParaLbl+")");
   S._pagoSocioId=null;S._nPagoSocio={monto:"",cuentaId:"",nota:""};
   saveData();R();
 }
@@ -8577,7 +8579,7 @@ function generarInformePDF(mesKey){
   var empPorCat={};egEmpM.filter(function(e){return e.pagada;}).forEach(function(e){var c=e.categoria||"General";if(!empPorCat[c])empPorCat[c]=0;empPorCat[c]+=(parseFloat(e.usdt)||0);});
   var perPorCat={};egPerM.filter(function(e){return e.pagada;}).forEach(function(e){var c=e.categoria||e.cat||"General";if(!perPorCat[c])perPorCat[c]=0;perPorCat[c]+=(parseFloat(e.usdt)||0);});
   // Pagos a socios del mes
-  var pagosMes=(S.pagosSocios||[]).filter(function(p){return p.mesKey===mesKey;});
+  var pagosMes=(S.pagosSocios||[]).filter(function(p){return (p.mesKeyPara||p.mesKey)===mesKey;});
   var f2l=function(n){return (Math.round(n*100)/100).toFixed(2).replace(".",",");};
   var row=function(l,v,color,signed){var num=parseFloat(v)||0;var disp=signed?num:Math.abs(num);var col=(color||"#1a3558");return "<tr><td style='padding:5px 8px;font-size:12px'>"+l+"</td><td style='padding:5px 8px;font-size:12px;text-align:right;font-weight:700;color:"+col+"'>"+(signed&&num<0?"−":"")+"$"+f2l(Math.abs(disp))+" USDT</td></tr>";};
   var sec=function(title,content){return "<div style='margin-bottom:22px'><h2 style='font-size:14px;font-weight:800;color:#1a3558;border-bottom:2px solid #FFA31C;padding-bottom:6px;margin-bottom:12px'>"+title+"</h2>"+content+"</div>";};
@@ -9179,8 +9181,8 @@ function rInformeCierre(){
   // por categoría. Se recalcula en cada render, así que se actualiza solo
   // al eliminar o agregar cualquier movimiento — no requiere guardar nada aparte.
   function _flujoCuentaMes(cuentaId, mk){
-    var e={clientes:0,prestamos:0,cuentasCobrar:0,ventaUsdt:0,traspasos:0,ajustes:0};
-    var s={clientes:0,egresos:0,prestamos:0,compraUsdt:0,traspasos:0,ajustes:0};
+    var e={clientes:0,prestamos:0,cuentasCobrar:0,ventaUsdt:0,traspasos:0,ajustes:0,reposiciones:0,gananciaExtra:0};
+    var s={clientes:0,egresos:0,prestamos:0,compraUsdt:0,traspasos:0,ajustes:0,pagosSocios:0};
     // Remesas: cuentaBanco = entra el pago del cliente · cuentaDest = sale para entregarle al destinatario
     [].concat(S.brl||[],S.vzla||[],S.eeuu||[]).forEach(function(r){
       if(mesKeyDe(r.d)!==mk) return;
@@ -9212,7 +9214,7 @@ function rInformeCierre(){
     (S.inventarioUsdt||[]).forEach(function(iu){
       if(mesKeyDeInv(iu.fecha,mk)!==mk) return;
       if(iu.tipo==="compra" && iu.cuentaOrigenId===cuentaId) s.compraUsdt+=(parseFloat(iu.montOrigen)||0);
-      if(iu.tipo==="venta" && iu.cuentaId===cuentaId) e.ventaUsdt+=(parseFloat(iu.bs)||0);
+      if(iu.tipo==="venta" && iu.cuentaDestinoId===cuentaId) e.ventaUsdt+=(parseFloat(iu.bs)||0);
     });
     // Traspasos entre cuentas propias: si sale de esta cuenta es salida real
     // de caja de ESTA cuenta (aunque el dinero siga siendo de la empresa);
@@ -9229,9 +9231,21 @@ function rInformeCierre(){
       if(a.cuentaId!==cuentaId || mesKeyDe(a.fecha)!==mk) return;
       if(a.delta>0) e.ajustes+=a.delta; else if(a.delta<0) s.ajustes+=-a.delta;
     });
+    // Reposiciones: crédito directo a la cuenta (dinero que metiste a mano)
+    (S.reposiciones||[]).forEach(function(rep){
+      if(rep.cuentaId===cuentaId && mesKeyDe(rep.d)===mk) e.reposiciones+=(parseFloat(rep.monto)||0);
+    });
+    // Ganancias extra asignadas a esta cuenta: crédito
+    (S.gananciaExtra||[]).forEach(function(g){
+      if(g.cuentaId===cuentaId && mesKeyDe(g.d)===mk) e.gananciaExtra+=(parseFloat(g.monto)||0);
+    });
+    // Pagos a socios desde esta cuenta: salida (ya trae su propio mesKey guardado)
+    (S.pagosSocios||[]).forEach(function(p){
+      if(p.cuentaId===cuentaId && p.mesKey===mk) s.pagosSocios+=(parseFloat(p.monto)||0);
+    });
     return {entradas:e,salidas:s,
-      totalE:e.clientes+e.prestamos+e.cuentasCobrar+e.ventaUsdt+e.traspasos+e.ajustes,
-      totalS:s.clientes+s.prestamos+s.egresos+s.compraUsdt+s.traspasos+s.ajustes};
+      totalE:e.clientes+e.prestamos+e.cuentasCobrar+e.ventaUsdt+e.traspasos+e.ajustes+e.reposiciones+e.gananciaExtra,
+      totalS:s.clientes+s.prestamos+s.egresos+s.compraUsdt+s.traspasos+s.ajustes+s.pagosSocios};
   }
   function mesKeyDe(dstr){ // "dd/mm/yy" -> "yyyy-mm"
     if(!dstr) return "";
@@ -9296,6 +9310,8 @@ function rInformeCierre(){
               flujoRow("Venta de USDT",fl.entradas.ventaUsdt,"#0f6e3a")+
               flujoRow("Traspasos recibidos",fl.entradas.traspasos,"#0f6e3a")+
               flujoRow("Ajustes manuales",fl.entradas.ajustes,"#0f6e3a")+
+              flujoRow("Reposiciones",fl.entradas.reposiciones,"#0f6e3a")+
+              flujoRow("Ganancias extra",fl.entradas.gananciaExtra,"#0f6e3a")+
               (fl.totalE===0?"<div style='font-size:10px;color:#bbb'>Sin entradas este mes</div>":"")+
             "</div>"+
             "<div style='background:#FDF4F4;border-radius:10px;padding:10px 12px'>"+
@@ -9306,6 +9322,7 @@ function rInformeCierre(){
               flujoRow("Compra de USDT",fl.salidas.compraUsdt,"#c0392b")+
               flujoRow("Traspasos enviados",fl.salidas.traspasos,"#c0392b")+
               flujoRow("Ajustes manuales",fl.salidas.ajustes,"#c0392b")+
+              flujoRow("Pagos a socios",fl.salidas.pagosSocios,"#c0392b")+
               (fl.totalS===0?"<div style='font-size:10px;color:#bbb'>Sin salidas este mes</div>":"")+
             "</div>"+
           "</div>"
@@ -9424,7 +9441,7 @@ function rInformeCierre(){
 
   // ── SOCIOS ─────────────────────────────────────────────────────
   function secSocios(){
-    var pagosMes=(S.pagosSocios||[]).filter(function(p){return p.mesKey===mesKey;});
+    var pagosMes=(S.pagosSocios||[]).filter(function(p){return (p.mesKeyPara||p.mesKey)===mesKey;});
     var ctasUsdt=(S.cuentas||[]).filter(function(c){return c.activa!==false&&c.moneda==="USDT";});
     var np=S._nPagoSocio||{monto:"",cuentaId:"",nota:""};
     function socioCard(socioId,nombre,bruta,gastos,pctNum,su50,deudas,final,isEE){
@@ -9490,6 +9507,10 @@ function rInformeCierre(){
           "<div style='display:flex;flex-direction:column;gap:8px;margin-bottom:10px'>"+
             "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Monto a pagar (USDT)</label>"+
             "<input type='number' placeholder='"+f2(Math.max(0,final-totalPagado))+"' value='"+(np.monto||"")+"' oninput='S._nPagoSocio=Object.assign(S._nPagoSocio||{},{monto:this.value})' style='width:100%;padding:11px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
+            "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>¿Este pago es por qué mes?</label>"+
+            "<select onchange='S._nPagoSocio=Object.assign(S._nPagoSocio||{},{mesKeyPara:this.value})' style='width:100%;padding:11px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
+              getMesesDisponibles().map(function(m){return "<option value='"+m.key+"'"+((np.mesKeyPara||getMesKeyActual())===m.key?" selected":"")+">"+m.label+"</option>";}).join("")+
+            "</select><div style='font-size:9px;color:#999;margin-top:3px'>Si es un pago atrasado (ej: pagas en julio lo de junio), elige junio aquí</div></div>"+
             "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Cuenta de donde sale</label>"+
             "<select onchange='S._nPagoSocio=Object.assign(S._nPagoSocio||{},{cuentaId:this.value})' style='width:100%;padding:11px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
               "<option value=''>— elegir —</option>"+ctasUsdt.map(function(c){return "<option value='"+c.id+"'"+(np.cuentaId===c.id?" selected":"")+">"+c.nombre+" ($"+f2(c.saldo)+")</option>";}).join("")+
