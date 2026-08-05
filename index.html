@@ -1108,6 +1108,22 @@ function ejecutarCierreMes(mesKey, manual){
   var netoFinalMes = Math.round(((calc.utilidadEmpresa||0) - (calc.sueldo||0)) * 100) / 100;
   var saldoAcumulado = Math.round((prevAcum + netoFinalMes) * 100) / 100;
 
+  // Snapshot de cuentas por cobrar pendientes AL MOMENTO DEL CIERRE — para
+  // que el informe de un mes ya cerrado muestre lo que quedaba pendiente
+  // ese día, no lo que queda pendiente hoy (que cambia según lo que se
+  // haya ido cobrando después).
+  var cobrarCierre = (S.cuentasCobrar||[]).filter(function(c){return c.estado==="pendiente";}).map(function(c){return Object.assign({},c);});
+  // Snapshot de préstamos activos AL MOMENTO DEL CIERRE — mismo motivo:
+  // que el informe de un mes cerrado no cambie según abonos/pagos hechos
+  // después de esa fecha.
+  var prestamosCierre = (S.prestamos||[]).filter(function(p){
+    if(p.estado==="pagado"||p.estado==="saldado") return false;
+    if(p.estado==="activo") return true;
+    var b=parseFloat(p.monto||0);
+    if(b>0){var ab=(p.abonos||[]).reduce(function(s,x){return s+(parseFloat(x.monto)||0);},0);return ab<b-0.001;}
+    return (p.sal||0)>0&&(p.ent||0)<(p.sal||0);
+  }).map(function(p){return Object.assign({},p);});
+
   var cierre = {
     mesKey:               mesKey,
     mesLabel:             getMesLabel(partsK[1], partsK[0]),
@@ -1144,6 +1160,8 @@ function ejecutarCierreMes(mesKey, manual){
     eeuuOps:       calc.eeuuOps,
     usdtDisp:      usdtDisp,
     saldosCierre:  saldosCierre,
+    cobrarCierre:  cobrarCierre,
+    prestamosCierre: prestamosCierre,
     ganExtraEmp:   calc.ganExtraEmp||0,
     // Al cerrar el mes es cuando el sueldo se "cobra" de verdad — se suma
     // a lo que ya tenías acumulado de meses anteriores, menos lo que ya
@@ -8540,14 +8558,26 @@ function _compartirInformeImg(){
   _cargarH2PDF(function(){
     btn.textContent="⏳ Generando PDF...";
     var nombreMes=(window._informeMesLabelActual||"Informe").replace(/\s/g,"_");
+    var el=document.getElementById("reporteCapture");
+    // Fix8: html2canvas NO respeta los estilos de @media print (esos solo
+    // aplican al botón nativo de Imprimir). Aquí .hoja tiene overflow:hidden
+    // y vive dentro de un overlay position:fixed — sin esto, html2canvas
+    // puede capturar solo lo que entra en la pantalla (por eso se cortaba
+    // después de "Resumen General"). Forzamos overflow visible y le damos
+    // el alto REAL (scrollHeight) para que capture el documento completo.
+    var _overflowPrev=el.style.overflow;
+    el.style.overflow="visible";
+    var alturaReal=el.scrollHeight;
     var opciones={
       margin:8,
       filename:"Informe_"+nombreMes+".pdf",
       image:{type:"jpeg",quality:0.95},
-      html2canvas:{scale:2,useCORS:true},
-      jsPDF:{unit:"mm",format:"a4",orientation:"portrait"}
+      html2canvas:{scale:2,useCORS:true,scrollY:0,windowHeight:alturaReal,height:alturaReal},
+      jsPDF:{unit:"mm",format:"a4",orientation:"portrait"},
+      pagebreak:{mode:["css","legacy"]}
     };
-    html2pdf().set(opciones).from(document.getElementById("reporteCapture")).toPdf().output("blob").then(function(blob){
+    html2pdf().set(opciones).from(el).toPdf().output("blob").then(function(blob){
+      el.style.overflow=_overflowPrev;
       var archivo=new File([blob],"Informe_"+nombreMes+".pdf",{type:"application/pdf"});
       if(navigator.canShare && navigator.canShare({files:[archivo]})){
         navigator.share({files:[archivo],title:"Informe "+(window._informeMesLabelActual||"")}).catch(function(){});
@@ -8560,6 +8590,7 @@ function _compartirInformeImg(){
         setTimeout(function(){btn.textContent=t0;},4000);
       }
     }).catch(function(e){
+      el.style.overflow=_overflowPrev;
       alert("No se pudo generar el PDF: "+e.message);
       btn.textContent=t0; btn.disabled=false;
     });
@@ -8610,14 +8641,30 @@ function generarInformePDF(mesKey){
   var egM=filterByMes(S.egresos||[],mesKey);
   var egEmpM=egM.filter(function(e){return e.tipo==="empresa";});
   var egPerM=filterByMes(S.egresos_personales||[],mesKey);
-  var cobrarPend=(S.cuentasCobrar||[]).filter(function(c){return c.estado==="pendiente";});
-  var prestActivos=(S.prestamos||[]).filter(function(p){if(p.estado==="pagado"||p.estado==="saldado")return false;if(p.estado==="activo")return true;var b=parseFloat(p.monto||0);if(b>0){var ab=(p.abonos||[]).reduce(function(s,x){return s+(parseFloat(x.monto)||0);},0);return ab<b-0.001;}return (p.sal||0)>0&&(p.ent||0)<(p.sal||0);});
+  // Fix7/9: si el mes YA CERRÓ, todo esto debe ser la FOTO congelada de
+  // ese cierre — saldos de cuentas Y cuentas por cobrar pendientes — no
+  // los datos en vivo de hoy. Así el reporte de un mes cerrado no cambia
+  // según el día en que se genere/reimprima el PDF, ni según lo que se
+  // haya cobrado o movido después de cerrar.
+  var _esCierrePasado = !!(_pdfCierreGuardado && !_pdfEsActual);
+  var cobrarPend = (_esCierrePasado && _pdfCierreGuardado.cobrarCierre)
+    ? _pdfCierreGuardado.cobrarCierre
+    : (S.cuentasCobrar||[]).filter(function(c){return c.estado==="pendiente";});
+  var prestActivos = (_esCierrePasado && _pdfCierreGuardado.prestamosCierre)
+    ? _pdfCierreGuardado.prestamosCierre
+    : (S.prestamos||[]).filter(function(p){if(p.estado==="pagado"||p.estado==="saldado")return false;if(p.estado==="activo")return true;var b=parseFloat(p.monto||0);if(b>0){var ab=(p.abonos||[]).reduce(function(s,x){return s+(parseFloat(x.monto)||0);},0);return ab<b-0.001;}return (p.sal||0)>0&&(p.ent||0)<(p.sal||0);});
   var cuentasAct=(S.cuentas||[]).filter(function(c){return c.activa!==false&&!c.esPersonal;});
+  var cuentasParaInforme = (_esCierrePasado && _pdfCierreGuardado.saldosCierre && _pdfCierreGuardado.saldosCierre.length)
+    ? _pdfCierreGuardado.saldosCierre
+    : cuentasAct;
+  var fechaSaldosInforme = (_esCierrePasado && _pdfCierreGuardado.fechaCierre)
+    ? new Date(_pdfCierreGuardado.fechaCierre).toLocaleDateString("es-VE")
+    : new Date().toLocaleDateString("es-VE");
   // Fix3: usar getRateToUsdt (igual que Balance de Cuentas) + incluir inventario
-  var invUsdtPDF=getInventarioStats().disponible||0;
+  var invUsdtPDF = _esCierrePasado ? (parseFloat(_pdfCierreGuardado.usdtDisp)||0) : (getInventarioStats().disponible||0);
   // totalUsdtCuentas = solo cuentas (no inventario, para evitar doble conteo con cuentas USDT tipo Binance)
   var totalUsdtCuentas=0;
-  cuentasAct.forEach(function(c){var s=parseFloat(c.saldo)||0;var rate=getRateToUsdt(c.moneda);if(c.moneda==="USDT")totalUsdtCuentas+=s;else if(rate)totalUsdtCuentas+=s/rate;});
+  cuentasParaInforme.forEach(function(c){var s=parseFloat(c.saldo)||0;var rate=getRateToUsdt(c.moneda);if(c.moneda==="USDT")totalUsdtCuentas+=s;else if(rate)totalUsdtCuentas+=s/rate;});
   totalUsdtCuentas=Math.round(totalUsdtCuentas*100)/100;
   // Fix6: cierre anterior para el resumen final
   var cierresArr=(S.cierresMes||[]).slice().sort(function(a,b){return b.mesKey.localeCompare(a.mesKey);});
@@ -8714,9 +8761,9 @@ function generarInformePDF(mesKey){
     }).join("")+
     "</table></div>")+
   // BANCOS
-  sec("🏦 Saldos de cuentas al "+new Date().toLocaleDateString("es-VE"),
+  sec("🏦 Saldos de cuentas al "+fechaSaldosInforme+(_esCierrePasado?" <span style='font-weight:400;font-size:9.5px;color:#999'>(cierre de "+mesLabel+")</span>":""),
     "<div class='tabla-scroll'><table><tr><th>Cuenta</th><th>Moneda</th><th>Saldo actual</th><th>≈ USDT</th></tr>"+
-    cuentasAct.map(function(c){
+    cuentasParaInforme.map(function(c){
       var rate=getRateToUsdt(c.moneda);
       var usdt=c.moneda==="USDT"?(parseFloat(c.saldo)||0):(rate?((parseFloat(c.saldo)||0)/rate):null);
       return "<tr><td>"+c.nombre+"</td><td style='text-align:center'>"+c.moneda+"</td>"+
