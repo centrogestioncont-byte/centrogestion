@@ -1018,7 +1018,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260804_v21";
+var APP_VERSION = "20260805_v22";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -11632,7 +11632,7 @@ function _rConversorBCV(){
       "<span style='font-size:11px;color:#666'>VES</span>"+
       "<button type='button' onclick='_fetchTasaBCV()' id='btn-bcv-refresh' style='background:#EEF3FF;border:1px solid #1a5fb444;color:#1a5fb4;padding:5px 9px;border-radius:8px;font-size:10.5px;font-weight:700;cursor:pointer;margin-left:auto'>🔄 Traer</button>"+
     "</div>"+
-    "<div id='bcv-fecha-txt' style='font-size:9.5px;color:#999;margin-bottom:10px'>"+(fecha?"actualizada "+fecha+(S._bcvFechaFuente?" · "+S._bcvFechaFuente:""):"Toca 🔄 para traerla, o escríbela a mano")+" · solo de referencia, no afecta tu ganancia real</div>"+
+    "<div id='bcv-fecha-txt' style='font-size:9.5px;color:#999;margin-bottom:10px'>"+_bcvEstadoTxt()+"</div>"+
     "<div style='display:grid;grid-template-columns:1fr;gap:8px'>"+
       "<div style='display:flex;align-items:center;gap:8px;background:#D6F5E3;border-radius:9px;padding:8px 10px'>"+
         "<span style='font-size:16px'>🇧🇷</span><input id='conv-brl' type='number' inputmode='decimal' placeholder='0' oninput='_convDesde(\"brl\")' style='flex:1;border:none;background:transparent;font-size:15px;font-weight:800;color:#0b4d27;text-align:right;min-width:0'><span style='font-size:11px;color:#0b4d27;font-weight:700;width:34px'>BRL</span>"+
@@ -11651,6 +11651,26 @@ function _rConversorBCV(){
     "<div style='font-size:9.5px;color:#999;margin-top:8px;line-height:1.4'>Escribe en cualquiera de los 3 campos y los otros se calculan solos con tu tasa real.</div>"+
   "</div>";
 }
+function _bcvVigente(){
+  // El BCV publica tasa nueva ~4pm y esa tasa vale hasta el próximo corte
+  // de las 4pm del día siguiente. Si desde que se trajo la tasa ya pasó
+  // un corte de las 4pm, probablemente ya cambió y conviene refrescar.
+  if(!S._bcvFechaTs) return false;
+  function cortePrevio(d){
+    var c=new Date(d); c.setHours(16,0,0,0);
+    if(d.getTime()<c.getTime()) c.setDate(c.getDate()-1);
+    return c.getTime();
+  }
+  return cortePrevio(new Date())===cortePrevio(new Date(S._bcvFechaTs));
+}
+function _bcvEstadoTxt(){
+  if(!S._bcvFecha) return "Toca 🔄 para traerla, o escríbela a mano · solo de referencia, no afecta tu ganancia real";
+  var base="actualizada "+S._bcvFecha+(S._bcvFechaFuente?" · "+S._bcvFechaFuente:"");
+  if(_bcvVigente()){
+    return "<span style='color:#1a7a3a;font-weight:700'>✅ vigente</span> · "+base;
+  }
+  return "<span style='color:#b8860b;font-weight:700'>⚠️ el BCV ya pudo haber publicado tasa nueva — toca 🔄</span> · "+base;
+}
 function _fetchTasaBCV(){
   var btn=document.getElementById("btn-bcv-refresh");
   if(btn){btn.textContent="⏳...";btn.disabled=true;}
@@ -11659,9 +11679,10 @@ function _fetchTasaBCV(){
     S._bcvRate=Math.round(tasa*100)/100;
     S._bcvFechaFuente=fechaFuente||"";
     S._bcvFecha=ds(td())+" "+new Date().toLocaleTimeString("es-VE",{hour:"2-digit",minute:"2-digit"});
+    S._bcvFechaTs=Date.now();
     saveData();
     var inp=document.getElementById("bcv-rate-input"); if(inp) inp.value=S._bcvRate;
-    var txt=document.getElementById("bcv-fecha-txt"); if(txt) txt.textContent="actualizada "+S._bcvFecha+(S._bcvFechaFuente?" · "+S._bcvFechaFuente:"");
+    var txt=document.getElementById("bcv-fecha-txt"); if(txt) txt.innerHTML=_bcvEstadoTxt();
     _reconvertirBCV();
     if(btn){btn.textContent="✅ Listo";btn.disabled=false;setTimeout(function(){if(btn)btn.textContent="🔄 Traer";},1800);}
   }
@@ -11709,8 +11730,10 @@ function _fetchTasaBCV(){
       return;
     }
     var f=fuentes[i];
-    fetch(f.u,{cache:"no-store"})
-      .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.text(); })
+    var _ctrl=(typeof AbortController!=="undefined")?new AbortController():null;
+    var _to=_ctrl?setTimeout(function(){_ctrl.abort();},4000):null;
+    fetch(f.u,{cache:"no-store",signal:_ctrl?_ctrl.signal:undefined})
+      .then(function(r){ if(_to)clearTimeout(_to); if(!r.ok) throw new Error("HTTP "+r.status); return r.text(); })
       .then(function(txt){
         var res=null;
         try{ res=f.p(txt); }catch(e){}
@@ -11718,7 +11741,8 @@ function _fetchTasaBCV(){
         aplicar(res.t,res.f);
       })
       .catch(function(e){
-        _fallos.push(f.n+": "+e.message);
+        if(_to)clearTimeout(_to);
+        _fallos.push(f.n+": "+(e.name==="AbortError"?"tardó demasiado (4s)":e.message));
         intentar(i+1);
       });
   }
