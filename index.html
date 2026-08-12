@@ -1018,7 +1018,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v25";
+var APP_VERSION = "20260806_v27";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -13232,8 +13232,13 @@ function rEgresos(){
   var EMP_COLORS=["#1a3558","#2471a3","#117a65","#0a3d7c","#7a5c00"];
 
   // ── Stats personal ──
+  // Solo los gastos que salieron del SUELDO (sin cuenta seleccionada, o de
+  // una cuenta que no es una de "mi plata personal") — para que coincida
+  // con el "Gastado" que se muestra en la tarjeta de arriba. Los gastos
+  // pagados desde Pensión de Abuela, Nubank Julio, etc. ya tienen su
+  // propio conteo en su propia tarjeta, y no deben duplicarse aquí.
   var catPerMap={};
-  epMes.filter(function(e){return e.pagada;}).forEach(function(e){var c=e.cat||"OTROS";catPerMap[c]=(catPerMap[c]||0)+(parseFloat(e.usdt)||0);});
+  epMes.filter(function(e){return e.pagada && _cuentasPropiasIds.indexOf(e.cuentaId)===-1;}).forEach(function(e){var c=e.cat||"OTROS";catPerMap[c]=(catPerMap[c]||0)+(parseFloat(e.usdt)||0);});
   var catPerSort=Object.keys(catPerMap).sort(function(a,b){return catPerMap[b]-catPerMap[a];});
   var PER_COLORS=["#7b2d8b","#c0392b","#9b59b6","#6c3483","#a93226"];
 
@@ -13338,7 +13343,12 @@ function rEgresos(){
       porMoneda[m].usdt+=(parseFloat(e.usdt)||0);
     });
     var monedasList=Object.keys(porMoneda).map(function(m){return{mon:m,monto:porMoneda[m].monto,usdt:porMoneda[m].usdt};});
-    return {nombre:c.nombre,moneda:c.moneda,saldo:parseFloat(c.saldo)||0,gastado:gastadoCuenta,count:gastosCuenta.length,porMoneda:monedasList};
+    // Saldo en su moneda real (BRL, VES, etc.) + su equivalente en USDT —
+    // antes se mostraba el número crudo con "$" como si ya fuera USDT.
+    var saldoNativo=parseFloat(c.saldo)||0;
+    var _rateCta=getRateToUsdt(c.moneda);
+    var saldoUsdt=c.moneda==="USDT"?saldoNativo:(_rateCta?saldoNativo/_rateCta:0);
+    return {nombre:c.nombre,moneda:c.moneda,saldo:saldoUsdt,saldoNativo:saldoNativo,gastado:gastadoCuenta,count:gastosCuenta.length,porMoneda:monedasList};
   });
   var _flagsMon={USDT:"💰",BRL:"🇧🇷",VES:"🇻🇪",USD:"🇺🇸",PEN:"🇵🇪",EUR:"🇪🇺",COP:"🇨🇴",TTD:"🇹🇹"};
   var panelCuentasPersonales=cuentasPersonalesInfo.length?
@@ -13348,7 +13358,7 @@ function rEgresos(){
       return "<div style='background:rgba(255,255,255,.08);border-radius:10px;padding:12px;margin-bottom:8px'>"+
         "<div style='font-size:12px;font-weight:700;margin-bottom:9px'>"+info.nombre+" · "+info.moneda+"</div>"+
         "<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:"+(info.porMoneda.length?"10px":"0")+"'>"+
-        "<div><div style='font-size:9px;color:#c4b5fd;margin-bottom:2px'>💰 Saldo disponible</div><div style='font-size:19px;font-weight:900;color:#4ade80'>$"+f2(info.saldo)+"</div></div>"+
+        "<div><div style='font-size:9px;color:#c4b5fd;margin-bottom:2px'>💰 Saldo disponible</div><div style='font-size:19px;font-weight:900;color:#4ade80'>"+(info.moneda==="VES"?Math.round(info.saldoNativo).toLocaleString("es-VE"):f2(info.saldoNativo))+" <span style='font-size:12px;font-weight:700'>"+info.moneda+"</span></div>"+(info.moneda!=="USDT"?"<div style='font-size:10px;color:#c4b5fd;margin-top:1px'>≈ $"+f2(info.saldo)+" USDT</div>":"")+"</div>"+
         "<div><div style='font-size:9px;color:#c4b5fd;margin-bottom:2px'>💸 Gastado este mes</div><div style='font-size:19px;font-weight:900;color:#f87171'>$"+f2(info.gastado)+"</div><div style='font-size:9px;color:rgba(255,255,255,.5);margin-top:1px'>"+info.count+" gasto"+(info.count!==1?"s":"")+"</div></div>"+
         "</div>"+
         (info.porMoneda.length?
@@ -13465,9 +13475,10 @@ function rMiGestion(){
   var epPag=_calcMiGestion.egPerPag;
   var dispPersonal=_calcMiGestion.disponiblePer;
   var _acumuladoPrevioMiGestion=_calcMiGestion.saldoPersonalAcumuladoPrevio;
-  // Stats personal
+  // Stats personal — solo lo que salió del sueldo (mismo criterio que
+  // egPerPag), no todo lo pagado desde cuentas personales propias.
   var catPerMap={};
-  epMes.filter(function(e){return e.pagada;}).forEach(function(e){var c=e.cat||"OTROS";catPerMap[c]=(catPerMap[c]||0)+(parseFloat(e.usdt)||0);});
+  epMes.filter(function(e){return e.pagada && _cuentasPropiasIds2.indexOf(e.cuentaId)===-1;}).forEach(function(e){var c=e.cat||"OTROS";catPerMap[c]=(catPerMap[c]||0)+(parseFloat(e.usdt)||0);});
   var catPerSort=Object.keys(catPerMap).sort(function(a,b){return catPerMap[b]-catPerMap[a];});
   var PER_COLORS=["#7b2d8b","#c0392b","#9b59b6","#6c3483","#a93226"];
   var mesLabel=getMesLabel(mesKey.split("-")[1],mesKey.split("-")[0]);
