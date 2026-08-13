@@ -1018,7 +1018,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v31";
+var APP_VERSION = "20260806_v34";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -2321,6 +2321,10 @@ function pagarPrestamo(id){
   logAudit("ABONO_PRESTAMO","Abono "+f2(monto)+" "+mon+notaPago+" de "+p.desc+" → "+c.nombre+(restante>0.001?" · pendiente: "+f2(restante):" · SALDADO"));
   S._pagarPrestId=null;S.nPagarPrest={cuentaId:"",monto:"",moneda:""};
   saveData();R();
+  // Agradecimiento automático por WhatsApp al registrar el abono
+  if(confirm("Abono registrado ✅\n\n¿Enviar mensaje de agradecimiento a "+p.desc+" por WhatsApp?")){
+    agradecerAbonoWA(p.desc,monto,mon);
+  }
 }
 function toggleCuenta(btn){
   var cid=btn.getAttribute("data-cid");
@@ -3583,13 +3587,131 @@ function saveEg(){
   S.nEg={date:td(),cat:f.cat,mot:"",monto:"",usdt:"",fija:false,pagada:false,mon:mon,cuentaId:"",diaPago:"",tipo:tipo};
   saveData();R();
 }
+// ── Pedir compromiso por WhatsApp + adjuntar captura de respaldo ──
+// ── Cronograma: encontrar la próxima cuota pendiente de un préstamo ──
+// (misma lógica de "cobertura acumulada" que ya se usa para pintar el
+// cronograma en la tarjeta — una cuota se considera cubierta cuando lo
+// abonado acumulado alcanza la suma acumulada de cuotas hasta esa).
+function proximaCuotaPendiente(p){
+  if(!p.cuotas||!p.cuotas.length) return null;
+  var totalAbonado=(p.abonos||[]).reduce(function(a,ab){return a+ab.monto;},0);
+  var acum=0;
+  for(var i=0;i<p.cuotas.length;i++){
+    acum+=p.cuotas[i].monto;
+    if(totalAbonado<acum-0.01) return p.cuotas[i];
+  }
+  return null; // todas cubiertas
+}
+function recordarCuotaWA(id){
+  var p=(S.prestamos||[]).find(function(x){return x.id===id;});
+  if(!p) return;
+  var cu=proximaCuotaPendiente(p);
+  if(!cu){alert("Este préstamo no tiene cuotas pendientes (o no se registró con cronograma de cuotas).");return;}
+  var monP=p.mon||"USDT";
+  var hoy=td();
+  var esHoy = cu.iso===hoy;
+  var esPasada = cu.iso && cu.iso<hoy;
+  var msg;
+  if(esPasada){
+    msg="Hola "+p.desc+"! 👋 Te escribo porque la cuota "+cu.n+" de "+f2(cu.monto)+" "+monP+" venció el "+cu.fecha+" y no la veo reflejada aún. ¿Me puedes confirmar cuándo la pasas? 🙏";
+  } else if(esHoy){
+    msg="Hola "+p.desc+"! 👋 Hoy es la fecha de tu cuota "+cu.n+" de *"+f2(cu.monto)+" "+monP+"*. Cuando puedas la confirmas por aquí. ¡Gracias! 🙏";
+  } else {
+    msg="Hola "+p.desc+"! 👋 Te recuerdo que tu próxima cuota ("+cu.n+") de *"+f2(cu.monto)+" "+monP+"* vence el "+cu.fecha+". ¡Gracias! 🙏";
+  }
+  window.open("https://wa.me/?text="+encodeURIComponent(msg),"_blank");
+}
+function agradecerAbonoWA(desc,monto,monP){
+  var msg="¡Gracias "+desc+"! ✅ Recibí tu pago de *"+f2(monto)+" "+monP+"*. Quedó registrado. 🙌";
+  window.open("https://wa.me/?text="+encodeURIComponent(msg),"_blank");
+}
+function pedirCompromisoWA(id){
+  var p=(S.prestamos||[]).find(function(x){return x.id===id;});
+  if(!p) return;
+  var monP=p.mon||"USDT";
+  var totalAbonado=(p.abonos||[]).reduce(function(a,ab){return a+ab.monto;},0);
+  var montoBase=parseFloat(p.monto||p.sal)||0;
+  var saldoPend=Math.max(0,Math.round((montoBase-totalAbonado)*100)/100);
+  var msg="Hola "+p.desc+"! 👋 Te confirmo el préstamo de *"+f2(saldoPend)+" "+monP+"* del "+p.d+".\n\n"+
+    "¿Me puedes confirmar que estás de acuerdo con este monto y que te comprometes a devolverlo? Con que respondas \"Sí, confirmo\" aquí mismo ya me sirve como respaldo. ¡Gracias! 🙏";
+  var url="https://wa.me/?text="+encodeURIComponent(msg);
+  window.open(url,"_blank");
+}
+function adjuntarCapturaPrestamo(id){
+  S._capturaTargetId=id;
+  var inp=document.getElementById("inputCapturaPrestamo");
+  if(inp) inp.click();
+}
+function _onCapturaPrestamoSeleccionada(input){
+  var file=input.files&&input.files[0];
+  var id=S._capturaTargetId;
+  input.value="";
+  if(!file||!id) return;
+  var reader=new FileReader();
+  reader.onload=function(e){
+    var img=new Image();
+    img.onload=function(){
+      // Comprimir/redimensionar antes de guardar en Firebase (para no
+      // inflar la base de datos con fotos a resolución completa)
+      var maxW=900;
+      var scale=Math.min(1,maxW/img.width);
+      var w=Math.round(img.width*scale), h=Math.round(img.height*scale);
+      var canvas=document.createElement("canvas");
+      canvas.width=w; canvas.height=h;
+      canvas.getContext("2d").drawImage(img,0,0,w,h);
+      var dataUrl=canvas.toDataURL("image/jpeg",0.72);
+      var p=(S.prestamos||[]).find(function(x){return x.id===id;});
+      if(!p) return;
+      if(!p.capturas) p.capturas=[];
+      p.capturas.push({img:dataUrl,fecha:ds(td())});
+      logAudit("PRESTAMO_CAPTURA","Adjuntó captura de compromiso a préstamo de "+p.desc);
+      saveData();R();
+    };
+    img.src=e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+function verCapturaPrestamo(id,idx){
+  var p=(S.prestamos||[]).find(function(x){return x.id===id;});
+  if(!p||!p.capturas||!p.capturas[idx]) return;
+  S._capturaVer={id:id,idx:idx};
+  R();
+}
+function cerrarCapturaVer(){ S._capturaVer=null; R(); }
+function borrarCapturaPrestamo(id,idx){
+  if(!confirm("¿Borrar esta captura?")) return;
+  var p=(S.prestamos||[]).find(function(x){return x.id===id;});
+  if(!p||!p.capturas) return;
+  p.capturas.splice(idx,1);
+  S._capturaVer=null;
+  saveData();R();
+}
 function savePr(){
   var f=S.nPr;
   if(!f.date||!f.desc){alert("Completa fecha y nombre/descripción.");return;}
   var mon=f.mon||"USDT";
-  var monto=parseFloat(f.monto)||0;
-  if(monto<=0){alert("El monto debe ser mayor a 0.");return;}
-  var usdt=usdtDeGasto(mon,monto);
+  var capital=parseFloat(f.monto)||0;
+  if(capital<=0){alert("El monto debe ser mayor a 0.");return;}
+  var conInteres=!!f.conInteres;
+  var tasaInteres=conInteres?(parseFloat(f.tasaInteres)||0):0;
+  var montoTotal=Math.round((conInteres?capital*(1+tasaInteres/100):capital)*100)/100;
+  var numCuotas=Math.max(1,parseInt(f.numCuotas)||1);
+  var frecuencia=f.frecuencia||"mensual";
+  // Cronograma de cuotas: fecha de cada una a partir de la fecha del préstamo
+  var cuotas=[];
+  var montoCuota=Math.round((montoTotal/numCuotas)*100)/100;
+  var sumaAsignada=0;
+  for(var i=1;i<=numCuotas;i++){
+    var fechaCuota=new Date(f.date+"T00:00:00");
+    var diasSumar = frecuencia==="semanal" ? 7*i : frecuencia==="quincenal" ? 15*i : 0;
+    if(frecuencia==="mensual"){ fechaCuota.setMonth(fechaCuota.getMonth()+i); }
+    else { fechaCuota.setDate(fechaCuota.getDate()+diasSumar); }
+    var isoFecha=fechaCuota.getFullYear()+"-"+String(fechaCuota.getMonth()+1).padStart(2,"0")+"-"+String(fechaCuota.getDate()).padStart(2,"0");
+    var montoEsta = (i===numCuotas) ? Math.round((montoTotal-sumaAsignada)*100)/100 : montoCuota;
+    sumaAsignada += montoEsta;
+    cuotas.push({n:i,fecha:ds(isoFecha),iso:isoFecha,monto:montoEsta});
+  }
+  var usdt=usdtDeGasto(mon,montoTotal);
   if(usdt===null||isNaN(usdt)){
     if(!confirm("No hay tasa de conversión para "+mon+". Se registra sin equivalente USDT.\n¿Continuar?"))return;
     usdt=0;
@@ -3597,29 +3719,33 @@ function savePr(){
   if(f.cuentaId){
     var c=(S.cuentas||[]).find(function(x){return x.id===f.cuentaId;});
     if(c){
-      if((parseFloat(c.saldo)||0)<monto){
-        if(!confirm("⚠️ La cuenta "+c.nombre+" tiene "+f2(c.saldo)+" "+mon+" y el préstamo es "+f2(monto)+" "+mon+". El saldo quedaría negativo.\n¿Continuar igual?"))return;
+      if((parseFloat(c.saldo)||0)<capital){
+        if(!confirm("⚠️ La cuenta "+c.nombre+" tiene "+f2(c.saldo)+" "+mon+" y el préstamo es "+f2(capital)+" "+mon+". El saldo quedaría negativo.\n¿Continuar igual?"))return;
       }
-      if(!confirm("Descontar "+f2(monto)+" "+mon+" de "+c.nombre+".\n¿Confirmar préstamo a "+f.desc+"?"))return;
-      // Descontar de la cuenta bancaria
-      c.saldo=Math.round(((parseFloat(c.saldo)||0)-monto)*100)/100;
+      if(!confirm("Descontar "+f2(capital)+" "+mon+" de "+c.nombre+".\n¿Confirmar préstamo a "+f.desc+"?"))return;
+      // Descontar de la cuenta bancaria (el capital real que sale — el
+      // interés no es dinero que salga físicamente, es lo que se suma a
+      // lo que el cliente debe devolver)
+      c.saldo=Math.round(((parseFloat(c.saldo)||0)-capital)*100)/100;
       var cap=(S.capital||[]).find(function(k){return k.cuentaId===c.id||(k.nombre&&k.nombre.toLowerCase()===c.nombre.toLowerCase());});
       if(cap)cap.saldo=c.saldo;
       // También descontar del inventario FIFO según la moneda del préstamo
-      if(mon==="VES"||mon==="BRL") descontarFIFOEgreso(mon,monto,0,f.cuentaId);
-      else if(mon==="USDT")        descontarFIFOEgreso("USDT",0,monto,f.cuentaId);
+      if(mon==="VES"||mon==="BRL") descontarFIFOEgreso(mon,capital,0,f.cuentaId);
+      else if(mon==="USDT")        descontarFIFOEgreso("USDT",0,capital,f.cuentaId);
     }
   }
   S.prestamos.push({
     id:Date.now(),d:ds(f.date),desc:f.desc,
-    mon:mon,monto:monto,usdt:Math.round((usdt||0)*100)/100,
+    mon:mon,monto:montoTotal,capital:capital,interesPct:tasaInteres,
+    numCuotas:numCuotas,frecuencia:frecuencia,cuotas:cuotas,
+    usdt:Math.round((usdt||0)*100)/100,
     cuentaId:f.cuentaId||"",estado:"activo",
     // compat legacy: ent/sal/saldo
     ent:0,sal:Math.round((usdt||0)*100)/100,
     saldo:Math.round((usdt||0)*100)/100,soc:f.desc,locked:false
   });
-  logAudit("PRESTAMO","Prestó "+monto+" "+mon+" a "+f.desc+(f.cuentaId?" (de "+nombreCuentaEg(f.cuentaId)+")":""));
-  S.nPr={date:td(),desc:"",mon:"USDT",monto:"",cuentaId:""};
+  logAudit("PRESTAMO","Prestó "+capital+" "+mon+(conInteres?" + "+tasaInteres+"% interés (total a cobrar: "+montoTotal+")":"")+" a "+f.desc+(numCuotas>1?" en "+numCuotas+" cuotas "+frecuencia+"s":"")+(f.cuentaId?" (de "+nombreCuentaEg(f.cuentaId)+")":""));
+  S.nPr={date:td(),desc:"",mon:"USDT",monto:"",cuentaId:"",conInteres:false,tasaInteres:"",numCuotas:1,frecuencia:"mensual"};
   saveData();R();
 }
 function saveCl(){
@@ -13745,7 +13871,7 @@ function rCuentasCobrar(){
 }
 
 function rPrestamos(){
-  var f=S.nPr||{date:td(),desc:"",mon:"USDT",monto:"",cuentaId:""};
+  var f=S.nPr||{date:td(),desc:"",mon:"USDT",monto:"",cuentaId:"",conInteres:false,tasaInteres:"",numCuotas:1,frecuencia:"mensual"};
   if(!S.nPr){S.nPr=f;}
   if(!S.prestamos)S.prestamos=[];
   var activos=S.prestamos.filter(function(p){
@@ -13859,6 +13985,40 @@ function rPrestamos(){
       "</div>";
     }
 
+    // Capturas de WhatsApp guardadas (respaldo del compromiso del cliente)
+    var capturasHtml="";
+    if(p.capturas&&p.capturas.length){
+      capturasHtml="<div style='display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px'>"+
+        p.capturas.map(function(cap,idx){
+          return "<div style='position:relative'>"+
+            "<img src='"+cap.img+"' onclick='verCapturaPrestamo("+p.id+","+idx+")' style='width:52px;height:52px;object-fit:cover;border-radius:8px;border:1px solid #ddd;cursor:pointer'>"+
+          "</div>";
+        }).join("")+
+      "</div>";
+    }
+
+    // Cronograma de cuotas (si el préstamo se registró con más de 1 cuota
+    // o con interés). Una cuota se considera "cubierta" comparando el
+    // total abonado acumulado contra la suma acumulada de cuotas — no se
+    // guarda un estado por cuota aparte para no duplicar la lógica de
+    // abonos que ya existe.
+    var cuotasHtml="";
+    if(p.cuotas&&p.cuotas.length){
+      var acumCuota=0;
+      cuotasHtml="<div style='margin-top:10px;padding-top:10px;border-top:1px dashed #ddd'>"+
+        "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:6px'>📅 Cronograma"+(p.interesPct?" · capital "+f2(p.capital)+" "+monP+" + "+p.interesPct+"% interés":"")+"</div>"+
+        p.cuotas.map(function(cu){
+          acumCuota+=cu.monto;
+          var cubierta=totalAbonado>=acumCuota-0.01;
+          var enCurso=!cubierta&&totalAbonado>(acumCuota-cu.monto+0.01);
+          return "<div style='display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:"+(cubierta?"#F0FFF6":"#FAFAFA")+";border:1px solid "+(cubierta?"#c8ecd5":"#eee")+";border-radius:8px;margin-bottom:4px;font-size:11px'>"+
+            "<span>"+(cubierta?"✅":"⬜")+" Cuota "+cu.n+" · "+cu.fecha+"</span>"+
+            "<span style='font-weight:700;color:"+(cubierta?"#0f6e3a":"#555")+"'>"+f2(cu.monto)+" "+monP+"</span>"+
+          "</div>";
+        }).join("")+
+      "</div>";
+    }
+
     return "<div style='background:#fff;border:1.5px solid #f5d5d5;border-radius:14px;padding:14px;margin-bottom:10px'>"+
       // Fila 1: fecha + origen
       "<div style='font-size:10px;color:#aaa;margin-bottom:6px'>"+p.d+(p.cuentaId?" · de "+nombreCuentaEg(p.cuentaId):"")+"</div>"+
@@ -13871,11 +14031,19 @@ function rPrestamos(){
           (p.usdt&&p.mon&&p.mon!=="USDT"?"<div style='font-size:10px;color:#aaa'>≈ $"+f2(p.usdt)+" USDT</div>":"")+
         "</div>"+
       "</div>"+
+      capturasHtml+
+      // Botones fila extra: compromiso + adjuntar + recordar
+      "<div style='display:flex;gap:6px;margin-bottom:8px'>"+
+        "<button onclick='pedirCompromisoWA("+p.id+")' style='flex:1;padding:9px 4px;border:1px solid #25D36655;border-radius:9px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;background:#EAFBF0;color:#1a7a3a'>📤 Compromiso</button>"+
+        "<button onclick='recordarCuotaWA("+p.id+")' style='flex:1;padding:9px 4px;border:1px solid #f0c05055;border-radius:9px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;background:#FFF8E8;color:#a06800'>🔔 Recordar</button>"+
+        "<button onclick='adjuntarCapturaPrestamo("+p.id+")' style='flex:1;padding:9px 4px;border:1px solid #ddd;border-radius:9px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;background:#f8f8f8;color:#555'>📎 Captura</button>"+
+      "</div>"+
       // Botones
       "<div style='display:flex;gap:8px'>"+
         "<button onclick='togglePagarPrest("+p.id+")' style='flex:1;padding:12px;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;background:"+(isPaying?"#555":"#1a3558")+";color:#fff'>"+(isPaying?"✕ Cancelar":"💵 Abonar")+"</button>"+
         "<button onclick='reqDel(\"prestamos\","+p.id+",\"id\")' style='padding:12px 14px;border:1px solid #ffd5d5;border-radius:10px;font-size:14px;cursor:pointer;background:#fff5f5;color:#c0392b;font-family:inherit'>🗑️</button>"+
       "</div>"+
+      cuotasHtml+
       abonosHtml+
       abonoForm+
     "</div>";
@@ -13906,7 +14074,57 @@ function rPrestamos(){
     ? pagados.slice().reverse().map(cardPagado).join("")
     : "<div style='text-align:center;padding:16px;color:#aaa;font-size:12px'>Sin préstamos saldados aún</div>";
 
+  // ── Agenda de cobranza: próximas cuotas pendientes de préstamos ACTIVOS,
+  // vencidas + próximos 3 días, ordenadas por fecha ──
+  var hoyIso=td();
+  var _limite=new Date(hoyIso+"T00:00:00"); _limite.setDate(_limite.getDate()+3);
+  var _limiteIso=_limite.getFullYear()+"-"+String(_limite.getMonth()+1).padStart(2,"0")+"-"+String(_limite.getDate()).padStart(2,"0");
+  var agendaItems=[];
+  activos.forEach(function(p){
+    var cu=proximaCuotaPendiente(p);
+    if(cu&&cu.iso&&cu.iso<=_limiteIso){
+      agendaItems.push({p:p,cu:cu,vencida:cu.iso<hoyIso,esHoy:cu.iso===hoyIso});
+    }
+  });
+  agendaItems.sort(function(a,b){return a.cu.iso<b.cu.iso?-1:1;});
+  var agendaHtml="";
+  if(agendaItems.length){
+    agendaHtml="<div class='sec' style='margin-bottom:14px;border-left:3px solid #a06800'>"+
+      "<div class='sec-title' style='color:#a06800'>📅 AGENDA DE COBRANZA ("+agendaItems.length+")</div>"+
+      agendaItems.map(function(it){
+        var monP=it.p.mon||"USDT";
+        var etiqueta=it.vencida?"<span style='color:#c0392b;font-weight:700'>⚠️ VENCIDA</span>":it.esHoy?"<span style='color:#a06800;font-weight:700'>📌 HOY</span>":it.cu.fecha;
+        return "<div style='display:flex;justify-content:space-between;align-items:center;gap:8px;background:#fff;border:1px solid "+(it.vencida?"#f5c0c0":"#f0d080")+";border-radius:10px;padding:10px 12px;margin-bottom:6px'>"+
+          "<div style='flex:1;min-width:0'>"+
+            "<div style='font-size:13px;font-weight:700;color:#1a3558;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>👤 "+it.p.desc+"</div>"+
+            "<div style='font-size:10px;color:#888;margin-top:1px'>Cuota "+it.cu.n+" · "+f2(it.cu.monto)+" "+monP+" · "+etiqueta+"</div>"+
+          "</div>"+
+          "<button onclick='recordarCuotaWA("+it.p.id+")' style='flex-shrink:0;padding:9px 12px;border:none;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;background:#a06800;color:#fff;font-family:inherit'>🔔 Recordar</button>"+
+        "</div>";
+      }).join("")+
+    "</div>";
+  }
+
+  // Modal de captura ampliada
+  var _cv=S._capturaVer, modalCaptura="";
+  if(_cv){
+    var pCv=(S.prestamos||[]).find(function(x){return x.id===_cv.id;});
+    var capCv=pCv&&pCv.capturas&&pCv.capturas[_cv.idx];
+    if(capCv){
+      modalCaptura="<div onclick='cerrarCapturaVer()' style='position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px'>"+
+        "<img src='"+capCv.img+"' onclick='event.stopPropagation()' style='max-width:100%;max-height:75vh;border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,.5)'>"+
+        "<div style='color:#fff;font-size:11px;margin-top:10px;opacity:.7'>"+capCv.fecha+"</div>"+
+        "<div style='display:flex;gap:10px;margin-top:14px'>"+
+          "<button onclick='event.stopPropagation();borrarCapturaPrestamo("+_cv.id+","+_cv.idx+")' style='padding:10px 18px;border:none;border-radius:9px;background:#c0392b;color:#fff;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit'>🗑️ Borrar</button>"+
+          "<button onclick='cerrarCapturaVer()' style='padding:10px 18px;border:none;border-radius:9px;background:#555;color:#fff;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit'>✕ Cerrar</button>"+
+        "</div>"+
+      "</div>";
+    }
+  }
+
   return (
+    modalCaptura+
+    "<input type='file' id='inputCapturaPrestamo' accept='image/*' style='display:none' onchange='_onCapturaPrestamoSeleccionada(this)'>"+
     // Resumen
     "<div class='mg' style='margin-bottom:16px'>"+
       "<div class='mc' style='background:#FDECEA;border:1.5px solid #c0392b44'>"+
@@ -13920,6 +14138,7 @@ function rPrestamos(){
         "<div class='sub'>en historial</div>"+
       "</div>"+
     "</div>"+
+    agendaHtml+
     // Activos
     "<div class='sec' style='margin-bottom:14px;border-left:3px solid #c0392b'>"+
       "<div class='sec-title' style='color:#c0392b'>🤝 PRÉSTAMOS ACTIVOS ("+activos.length+")</div>"+
@@ -13948,6 +14167,34 @@ function rPrestamos(){
         "</div>"+
         "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>¿De qué cuenta sale? (opcional)</label>"+
         "<select onchange='S.nPr.cuentaId=this.value' style='width:100%;padding:12px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+ctaOpts+"</select></div>"+
+        "<div style='background:#F8F9FB;border-radius:10px;padding:12px'>"+
+          "<label style='display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:#333;margin-bottom:"+(f.conInteres?"10px":"0")+"'>"+
+            "<input type='checkbox' "+(f.conInteres?"checked":"")+" onchange='S.nPr.conInteres=this.checked;R()' style='width:18px;height:18px'> 💹 ¿Con interés?"+
+          "</label>"+
+          (f.conInteres?
+            "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Interés total del préstamo (%)</label>"+
+            "<input type='number' inputmode='decimal' placeholder='ej: 10' value='"+(f.tasaInteres||"")+"' oninput='S.nPr.tasaInteres=this.value' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"
+          :"")+
+        "</div>"+
+        "<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px'>"+
+          "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Número de cuotas</label>"+
+          "<input type='number' min='1' step='1' value='"+(f.numCuotas||1)+"' oninput='S.nPr.numCuotas=this.value;R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
+          "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Frecuencia</label>"+
+          "<select onchange='S.nPr.frecuencia=this.value;R()' style='width:100%;padding:12px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'"+((parseInt(f.numCuotas)||1)<=1?" disabled":"")+">"+
+            ["semanal","quincenal","mensual"].map(function(fr){return "<option value='"+fr+"'"+((f.frecuencia||"mensual")===fr?" selected":"")+">"+fr.charAt(0).toUpperCase()+fr.slice(1)+"</option>";}).join("")+
+          "</select></div>"+
+        "</div>"+
+        (function(){
+          var _cap=parseFloat(f.monto)||0;
+          if(_cap<=0) return "";
+          var _tot=Math.round((f.conInteres?_cap*(1+(parseFloat(f.tasaInteres)||0)/100):_cap)*100)/100;
+          var _nc=Math.max(1,parseInt(f.numCuotas)||1);
+          var _porCuota=Math.round((_tot/_nc)*100)/100;
+          return "<div style='background:#EAF2FF;border-radius:9px;padding:10px 12px;font-size:12px;color:#1a3558'>"+
+            (f.conInteres?"Total a cobrar (con interés): <b>"+f2(_tot)+" "+mon+"</b><br>":"")+
+            (_nc>1?_nc+" cuotas de <b>"+f2(_porCuota)+" "+mon+"</b> c/u ("+(f.frecuencia||"mensual")+"s)":"Pago único de <b>"+f2(_tot)+" "+mon+"</b>")+
+          "</div>";
+        })()+
         "<button onclick='savePr()' style='width:100%;padding:14px;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;background:#1a3558;color:#fff;font-family:inherit'>💾 Registrar préstamo</button>"+
       "</div>"+
     "</div>"
