@@ -1018,7 +1018,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v38";
+var APP_VERSION = "20260806_v39";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -3714,19 +3714,28 @@ function savePr(){
   var tasaInteres=conInteres?(parseFloat(f.tasaInteres)||0):0; // % POR CUOTA/período
   var numCuotas=Math.max(1,parseInt(f.numCuotas)||1);
   var frecuencia=f.frecuencia||"mensual";
+  var periodDays = frecuencia==="semanal"?7 : frecuencia==="quincenal"?15 : 30;
+  var diasExtra=Math.max(0,parseInt(f.diasExtraPrimeraCuota)||0);
   // Interés por cuota × número de cuotas = interés total (a más cuotas,
   // más tiempo transcurre, más interés se acumula — igual que un
-  // préstamo real, no un % fijo que se reparte).
+  // préstamo real, no un % fijo que se reparte). Además, si la primera
+  // cuota se alarga más allá del período normal, se cobra interés extra
+  // prorrateado por esos días de más (mientras más lejos la primera
+  // cuota, más paga el cliente).
   var tasaEfectiva=tasaInteres*numCuotas;
-  var montoTotal=Math.round((conInteres?capital*(1+tasaEfectiva/100):capital)*100)/100;
-  // Cronograma de cuotas: fecha de cada una a partir de la fecha del préstamo
+  var tasaDiaria=periodDays?(tasaInteres/periodDays):0;
+  var interesExtraPct=conInteres?Math.round((tasaDiaria*diasExtra)*100)/100:0;
+  var montoTotal=Math.round((conInteres?capital*(1+(tasaEfectiva+interesExtraPct)/100):capital)*100)/100;
+  // Cronograma de cuotas: la primera cuota parte del período normal MÁS
+  // los días extra que se hayan agregado; las siguientes continúan a
+  // intervalos normales desde ahí.
   var cuotas=[];
   var montoCuota=Math.round((montoTotal/numCuotas)*100)/100;
   var sumaAsignada=0;
   for(var i=1;i<=numCuotas;i++){
     var fechaCuota=new Date(f.date+"T00:00:00");
-    var diasSumar = frecuencia==="semanal" ? 7*i : frecuencia==="quincenal" ? 15*i : 0;
-    if(frecuencia==="mensual"){ fechaCuota.setMonth(fechaCuota.getMonth()+i); }
+    var diasSumar = (frecuencia==="mensual") ? 0 : (periodDays*i + diasExtra);
+    if(frecuencia==="mensual"){ fechaCuota.setMonth(fechaCuota.getMonth()+i); fechaCuota.setDate(fechaCuota.getDate()+diasExtra); }
     else { fechaCuota.setDate(fechaCuota.getDate()+diasSumar); }
     var isoFecha=fechaCuota.getFullYear()+"-"+String(fechaCuota.getMonth()+1).padStart(2,"0")+"-"+String(fechaCuota.getDate()).padStart(2,"0");
     var montoEsta = (i===numCuotas) ? Math.round((montoTotal-sumaAsignada)*100)/100 : montoCuota;
@@ -3758,7 +3767,7 @@ function savePr(){
   }
   S.prestamos.push({
     id:Date.now(),d:ds(f.date),desc:f.desc,
-    mon:mon,monto:montoTotal,capital:capital,interesPct:tasaEfectiva,interesPorCuota:tasaInteres,
+    mon:mon,monto:montoTotal,capital:capital,interesPct:Math.round((tasaEfectiva+interesExtraPct)*100)/100,interesPorCuota:tasaInteres,diasExtraPrimeraCuota:diasExtra,
     numCuotas:numCuotas,frecuencia:frecuencia,cuotas:cuotas,
     usdt:Math.round((usdt||0)*100)/100,
     cuentaId:f.cuentaId||"",estado:"activo",
@@ -14201,14 +14210,38 @@ function rPrestamos(){
           var _pct=parseFloat(f.tasaComparador!==undefined?f.tasaComparador:(f.tasaInteres||10));
           if(isNaN(_pct)) _pct=0;
           var _opciones=[1,2,3,4,6,9,12];
+          // Referencia de mercado (informal, no es asesoría legal — solo
+          // para ubicarte). El ejemplo de banco que compartiste cobra
+          // 10,75% MENSUAL (CET anual ~357%), que ya es una tasa alta típica
+          // de crédito personal sin garantía para público general.
+          var _refTxt, _refColor;
+          if(_pct<=0){_refTxt="";_refColor="";}
+          else if(_pct<5){_refTxt="🟢 Baja — más generosa que un banco típico.";_refColor="#1a7a3a";}
+          else if(_pct<=12){_refTxt="🟡 En rango típico de crédito personal/informal en Brasil (bancos suelen cobrar 6-13% mensual a público general sin garantía).";_refColor="#a06800";}
+          else if(_pct<=20){_refTxt="🟠 Alta — por encima de la mayoría de bancos, común en préstamos informales a corto plazo.";_refColor="#c0392b";}
+          else {_refTxt="🔴 Muy alta — revisa que sea justificado (riesgo del cliente, plazo muy corto), podría sentirse abusiva.";_refColor="#c0392b";}
+          // Días extra antes de la primera cuota: si el cliente pide más
+          // tiempo antes de empezar a pagar, se le suma interés
+          // proporcional a esos días (el dinero está "en la calle" más
+          // tiempo sin generar nada).
+          var _diasExtra=parseFloat(f.diasExtraPrimeraCuota)||0;
+          var _periodDays={semanal:7,quincenal:15,mensual:30}[f.frecuencia||"mensual"]||30;
+          var _tasaDiaria=_periodDays?(_pct/_periodDays):0;
+          var _extraPct=Math.round((_tasaDiaria*_diasExtra)*100)/100;
           return "<div style='background:#EAF2FF;border:1.5px solid #b8d0f0;border-radius:10px;padding:12px'>"+
             "<div style='font-size:12px;font-weight:800;color:#1a3558;margin-bottom:8px'>📊 Comparar opciones de pago</div>"+
-            "<div style='display:flex;align-items:center;gap:8px;margin-bottom:10px'>"+
+            "<div style='display:flex;align-items:center;gap:8px;margin-bottom:6px'>"+
               "<label style='font-size:11px;color:#555;white-space:nowrap'>Interés por cuota (%):</label>"+
               "<input type='number' inputmode='decimal' value='"+_pct+"' oninput='S.nPr.tasaComparador=this.value' onblur='R()' style='flex:1;padding:9px;font-size:14px;border:1.5px solid #ccc;border-radius:8px;font-family:inherit'>"+
             "</div>"+
+            (_refTxt?"<div style='font-size:10px;color:"+_refColor+";font-weight:600;margin-bottom:10px'>"+_refTxt+"</div>":"")+
+            "<div style='display:flex;align-items:center;gap:8px;margin-bottom:10px'>"+
+              "<label style='font-size:11px;color:#555;white-space:nowrap'>Días extra antes de la 1ra cuota:</label>"+
+              "<input type='number' min='0' inputmode='numeric' value='"+(f.diasExtraPrimeraCuota||0)+"' oninput='S.nPr.diasExtraPrimeraCuota=this.value' onblur='R()' style='width:70px;padding:9px;font-size:14px;border:1.5px solid #ccc;border-radius:8px;font-family:inherit'>"+
+            "</div>"+
+            (_diasExtra>0?"<div style='font-size:10px;color:#888;margin-bottom:10px'>+"+_diasExtra+" días de gracia → +"+_extraPct+"% adicional sobre el total (proporcional al tiempo extra).</div>":"")+
             _opciones.map(function(nc){
-              var _te=_pct*nc;
+              var _te=(_pct*nc)+_extraPct;
               var _to=Math.round((_cap*(1+_te/100))*100)/100;
               var _pc=Math.round((_to/nc)*100)/100;
               var _sel=(parseInt(f.numCuotas)||0)===nc&&f.conInteres;
