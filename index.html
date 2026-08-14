@@ -1018,7 +1018,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v34";
+var APP_VERSION = "20260806_v36";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -3625,6 +3625,24 @@ function agradecerAbonoWA(desc,monto,monP){
   var msg="¡Gracias "+desc+"! ✅ Recibí tu pago de *"+f2(monto)+" "+monP+"*. Quedó registrado. 🙌";
   window.open("https://wa.me/?text="+encodeURIComponent(msg),"_blank");
 }
+function enviarOpcionesWA(){
+  var f=S.nPr;
+  var cap=parseFloat(f.monto)||0;
+  var pct=parseFloat(f.tasaInteres)||0;
+  var mon=f.mon||"USDT";
+  if(cap<=0||pct<=0) return;
+  var opciones=[1,2,3,4,6,9,12];
+  var nombre=f.desc?f.desc+", ":"Hola! ";
+  var msg=nombre+"👋 te paso las opciones para el préstamo de "+f2(cap)+" "+mon+":\n\n";
+  opciones.forEach(function(nc){
+    var te=pct*nc;
+    var tot=Math.round((cap*(1+te/100))*100)/100;
+    var pc=Math.round((tot/nc)*100)/100;
+    msg+="• "+nc+"x de "+f2(pc)+" "+mon+" — Total: "+f2(tot)+" "+mon+(nc===1?" (menor interés)":"")+"\n";
+  });
+  msg+="\n¿Cuál te queda mejor? 🙂";
+  window.open("https://wa.me/?text="+encodeURIComponent(msg),"_blank");
+}
 function pedirCompromisoWA(id){
   var p=(S.prestamos||[]).find(function(x){return x.id===id;});
   if(!p) return;
@@ -3693,10 +3711,14 @@ function savePr(){
   var capital=parseFloat(f.monto)||0;
   if(capital<=0){alert("El monto debe ser mayor a 0.");return;}
   var conInteres=!!f.conInteres;
-  var tasaInteres=conInteres?(parseFloat(f.tasaInteres)||0):0;
-  var montoTotal=Math.round((conInteres?capital*(1+tasaInteres/100):capital)*100)/100;
+  var tasaInteres=conInteres?(parseFloat(f.tasaInteres)||0):0; // % POR CUOTA/período
   var numCuotas=Math.max(1,parseInt(f.numCuotas)||1);
   var frecuencia=f.frecuencia||"mensual";
+  // Interés por cuota × número de cuotas = interés total (a más cuotas,
+  // más tiempo transcurre, más interés se acumula — igual que un
+  // préstamo real, no un % fijo que se reparte).
+  var tasaEfectiva=tasaInteres*numCuotas;
+  var montoTotal=Math.round((conInteres?capital*(1+tasaEfectiva/100):capital)*100)/100;
   // Cronograma de cuotas: fecha de cada una a partir de la fecha del préstamo
   var cuotas=[];
   var montoCuota=Math.round((montoTotal/numCuotas)*100)/100;
@@ -3736,7 +3758,7 @@ function savePr(){
   }
   S.prestamos.push({
     id:Date.now(),d:ds(f.date),desc:f.desc,
-    mon:mon,monto:montoTotal,capital:capital,interesPct:tasaInteres,
+    mon:mon,monto:montoTotal,capital:capital,interesPct:tasaEfectiva,interesPorCuota:tasaInteres,
     numCuotas:numCuotas,frecuencia:frecuencia,cuotas:cuotas,
     usdt:Math.round((usdt||0)*100)/100,
     cuentaId:f.cuentaId||"",estado:"activo",
@@ -3744,7 +3766,7 @@ function savePr(){
     ent:0,sal:Math.round((usdt||0)*100)/100,
     saldo:Math.round((usdt||0)*100)/100,soc:f.desc,locked:false
   });
-  logAudit("PRESTAMO","Prestó "+capital+" "+mon+(conInteres?" + "+tasaInteres+"% interés (total a cobrar: "+montoTotal+")":"")+" a "+f.desc+(numCuotas>1?" en "+numCuotas+" cuotas "+frecuencia+"s":"")+(f.cuentaId?" (de "+nombreCuentaEg(f.cuentaId)+")":""));
+  logAudit("PRESTAMO","Prestó "+capital+" "+mon+(conInteres?" + "+tasaInteres+"%/cuota × "+numCuotas+" = "+tasaEfectiva+"% interés total (a cobrar: "+montoTotal+")":"")+" a "+f.desc+(numCuotas>1?" en "+numCuotas+" cuotas "+frecuencia+"s":"")+(f.cuentaId?" (de "+nombreCuentaEg(f.cuentaId)+")":""));
   S.nPr={date:td(),desc:"",mon:"USDT",monto:"",cuentaId:"",conInteres:false,tasaInteres:"",numCuotas:1,frecuencia:"mensual"};
   saveData();R();
 }
@@ -14172,13 +14194,14 @@ function rPrestamos(){
             "<input type='checkbox' "+(f.conInteres?"checked":"")+" onchange='S.nPr.conInteres=this.checked;R()' style='width:18px;height:18px'> 💹 ¿Con interés?"+
           "</label>"+
           (f.conInteres?
-            "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Interés total del préstamo (%)</label>"+
-            "<input type='number' inputmode='decimal' placeholder='ej: 10' value='"+(f.tasaInteres||"")+"' oninput='S.nPr.tasaInteres=this.value' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"
+            "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Interés por cuota/período (%)</label>"+
+            "<input type='number' inputmode='decimal' placeholder='ej: 10' value='"+(f.tasaInteres||"")+"' oninput='S.nPr.tasaInteres=this.value' onblur='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
+            "<div style='font-size:9px;color:#999;margin-top:3px'>Se aplica por cada cuota — a más cuotas, más interés total (como un préstamo real).</div></div>"
           :"")+
         "</div>"+
         "<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px'>"+
           "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Número de cuotas</label>"+
-          "<input type='number' min='1' step='1' value='"+(f.numCuotas||1)+"' oninput='S.nPr.numCuotas=this.value;R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
+          "<input type='number' min='1' step='1' inputmode='numeric' value='"+(f.numCuotas||1)+"' oninput='S.nPr.numCuotas=this.value' onblur='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
           "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Frecuencia</label>"+
           "<select onchange='S.nPr.frecuencia=this.value;R()' style='width:100%;padding:12px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'"+((parseInt(f.numCuotas)||1)<=1?" disabled":"")+">"+
             ["semanal","quincenal","mensual"].map(function(fr){return "<option value='"+fr+"'"+((f.frecuencia||"mensual")===fr?" selected":"")+">"+fr.charAt(0).toUpperCase()+fr.slice(1)+"</option>";}).join("")+
@@ -14187,13 +14210,45 @@ function rPrestamos(){
         (function(){
           var _cap=parseFloat(f.monto)||0;
           if(_cap<=0) return "";
-          var _tot=Math.round((f.conInteres?_cap*(1+(parseFloat(f.tasaInteres)||0)/100):_cap)*100)/100;
           var _nc=Math.max(1,parseInt(f.numCuotas)||1);
+          // Interés por cuota × número de cuotas = interés total (a más
+          // cuotas, más tiempo, más interés — igual que un préstamo real)
+          var _tasaEfectiva=(parseFloat(f.tasaInteres)||0)*_nc;
+          var _tot=Math.round((f.conInteres?_cap*(1+_tasaEfectiva/100):_cap)*100)/100;
           var _porCuota=Math.round((_tot/_nc)*100)/100;
           return "<div style='background:#EAF2FF;border-radius:9px;padding:10px 12px;font-size:12px;color:#1a3558'>"+
-            (f.conInteres?"Total a cobrar (con interés): <b>"+f2(_tot)+" "+mon+"</b><br>":"")+
+            (f.conInteres?"Interés total: <b>"+_tasaEfectiva+"%</b> → Total a cobrar: <b>"+f2(_tot)+" "+mon+"</b><br>":"")+
             (_nc>1?_nc+" cuotas de <b>"+f2(_porCuota)+" "+mon+"</b> c/u ("+(f.frecuencia||"mensual")+"s)":"Pago único de <b>"+f2(_tot)+" "+mon+"</b>")+
           "</div>";
+        })()+
+        // Comparador de opciones — como el de un banco: le muestras al
+        // cliente varias cantidades de cuotas lado a lado (menos cuotas =
+        // menos interés total), usando la MISMA tasa por cuota que ya
+        // pusiste arriba. Solo aparece si hay capital y % cargados.
+        (function(){
+          var _cap=parseFloat(f.monto)||0;
+          var _pct=parseFloat(f.tasaInteres)||0;
+          if(!f.conInteres||_cap<=0||_pct<=0) return "";
+          var _opciones=[1,2,3,4,6,9,12];
+          return "<button type='button' onclick='S.nPr._mostrarComparador=!S.nPr._mostrarComparador;R()' style='width:100%;padding:11px;border:1.5px dashed #1a3558;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;background:#fff;color:#1a3558'>📊 "+(S.nPr._mostrarComparador?"Ocultar":"Comparar")+" opciones de pago para el cliente</button>"+
+          (S.nPr._mostrarComparador?
+            "<div style='background:#F8F9FB;border-radius:10px;padding:10px'>"+
+              _opciones.map(function(nc){
+                var _te=_pct*nc;
+                var _to=Math.round((_cap*(1+_te/100))*100)/100;
+                var _pc=Math.round((_to/nc)*100)/100;
+                var _sel=(parseInt(f.numCuotas)||1)===nc;
+                return "<div onclick='S.nPr.numCuotas="+nc+";S.nPr._mostrarComparador=false;R()' style='display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:"+(_sel?"#1a3558":"#fff")+";border:1px solid "+(_sel?"#1a3558":"#e0e0e0")+";border-radius:9px;margin-bottom:6px;cursor:pointer'>"+
+                  "<div>"+
+                    "<div style='font-size:13px;font-weight:800;color:"+(_sel?"#fff":"#1a3558")+"'>"+nc+"x de "+f2(_pc)+" "+mon+"</div>"+
+                    "<div style='font-size:10px;color:"+(_sel?"#cdd8e8":"#999")+"'>Total con interés: "+f2(_to)+" "+mon+"</div>"+
+                  "</div>"+
+                  (nc===1?"<span style='font-size:9px;font-weight:700;color:"+(_sel?"#a8d8b8":"#1a7a3a")+"'>MENOR INTERÉS</span>":"")+
+                "</div>";
+              }).join("")+
+              "<button type='button' onclick='enviarOpcionesWA()' style='width:100%;padding:10px;border:none;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;background:#25D366;color:#fff;margin-top:4px'>📤 Enviar estas opciones al cliente por WhatsApp</button>"+
+            "</div>"
+          :"");
         })()+
         "<button onclick='savePr()' style='width:100%;padding:14px;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;background:#1a3558;color:#fff;font-family:inherit'>💾 Registrar préstamo</button>"+
       "</div>"+
