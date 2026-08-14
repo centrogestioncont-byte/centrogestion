@@ -1018,7 +1018,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v36";
+var APP_VERSION = "20260806_v38";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -3628,9 +3628,9 @@ function agradecerAbonoWA(desc,monto,monP){
 function enviarOpcionesWA(){
   var f=S.nPr;
   var cap=parseFloat(f.monto)||0;
-  var pct=parseFloat(f.tasaInteres)||0;
+  var pct=parseFloat(f.tasaComparador!==undefined?f.tasaComparador:(f.tasaInteres||10))||0;
   var mon=f.mon||"USDT";
-  if(cap<=0||pct<=0) return;
+  if(cap<=0) return;
   var opciones=[1,2,3,4,6,9,12];
   var nombre=f.desc?f.desc+", ":"Hola! ";
   var msg=nombre+"👋 te paso las opciones para el préstamo de "+f2(cap)+" "+mon+":\n\n";
@@ -13893,7 +13893,12 @@ function rCuentasCobrar(){
 }
 
 function rPrestamos(){
-  var f=S.nPr||{date:td(),desc:"",mon:"USDT",monto:"",cuentaId:"",conInteres:false,tasaInteres:"",numCuotas:1,frecuencia:"mensual"};
+  // Combina defaults con lo que ya exista en S.nPr, en vez de reemplazarlo
+  // por completo — así, si S.nPr ya existía pero incompleto (por ejemplo
+  // sin "date" tras una sincronización vieja), cada campo faltante se
+  // rellena solo, sin dejar inputs en blanco.
+  S.nPr=Object.assign({date:td(),desc:"",mon:"USDT",monto:"",cuentaId:"",conInteres:false,tasaInteres:"",numCuotas:1,frecuencia:"mensual"},S.nPr||{});
+  var f=S.nPr;
   if(!S.nPr){S.nPr=f;}
   if(!S.prestamos)S.prestamos=[];
   var activos=S.prestamos.filter(function(p){
@@ -14178,18 +14183,51 @@ function rPrestamos(){
       "<div class='sec-title'>➕ Registrar préstamo</div>"+
       "<div style='display:flex;flex-direction:column;gap:10px'>"+
         "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Fecha</label>"+
-        "<input type='date' value='"+f.date+"' onchange='S.nPr.date=this.value' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
+        "<input type='date' value='"+(f.date||td())+"' onchange='S.nPr.date=this.value' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
         "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Nombre / A quién</label>"+
         "<input type='text' placeholder='ej: Juan Pérez' value='"+(f.desc||"")+"' oninput='S.nPr.desc=this.value' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
         "<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px'>"+
           "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Moneda</label>"+
           "<select onchange='S.nPr.mon=this.value;S.nPr.cuentaId=\"\";R()' style='width:100%;padding:12px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+monOpts+"</select></div>"+
           "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Monto ("+mon+")</label>"+
-          "<input type='number' placeholder='0.00' value='"+(f.monto||"")+"' oninput='S.nPr.monto=this.value' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
+          "<input type='number' placeholder='0.00' value='"+(f.monto||"")+"' oninput='S.nPr.monto=this.value' onblur='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
         "</div>"+
+        // ── Comparador: PRIMERO se comparan opciones, sin tener que
+        // decidir el % de antemano — así el cliente elige cómo pagar. Solo
+        // depende de que haya un monto cargado, no de marcar "con interés".
+        (function(){
+          var _cap=parseFloat(f.monto)||0;
+          if(_cap<=0) return "";
+          var _pct=parseFloat(f.tasaComparador!==undefined?f.tasaComparador:(f.tasaInteres||10));
+          if(isNaN(_pct)) _pct=0;
+          var _opciones=[1,2,3,4,6,9,12];
+          return "<div style='background:#EAF2FF;border:1.5px solid #b8d0f0;border-radius:10px;padding:12px'>"+
+            "<div style='font-size:12px;font-weight:800;color:#1a3558;margin-bottom:8px'>📊 Comparar opciones de pago</div>"+
+            "<div style='display:flex;align-items:center;gap:8px;margin-bottom:10px'>"+
+              "<label style='font-size:11px;color:#555;white-space:nowrap'>Interés por cuota (%):</label>"+
+              "<input type='number' inputmode='decimal' value='"+_pct+"' oninput='S.nPr.tasaComparador=this.value' onblur='R()' style='flex:1;padding:9px;font-size:14px;border:1.5px solid #ccc;border-radius:8px;font-family:inherit'>"+
+            "</div>"+
+            _opciones.map(function(nc){
+              var _te=_pct*nc;
+              var _to=Math.round((_cap*(1+_te/100))*100)/100;
+              var _pc=Math.round((_to/nc)*100)/100;
+              var _sel=(parseInt(f.numCuotas)||0)===nc&&f.conInteres;
+              return "<div onclick='S.nPr.numCuotas="+nc+";S.nPr.conInteres=true;S.nPr.tasaInteres="+_pct+";R()' style='display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:"+(_sel?"#1a3558":"#fff")+";border:1px solid "+(_sel?"#1a3558":"#e0e0e0")+";border-radius:9px;margin-bottom:6px;cursor:pointer'>"+
+                "<div>"+
+                  "<div style='font-size:13px;font-weight:800;color:"+(_sel?"#fff":"#1a3558")+"'>"+nc+"x de "+f2(_pc)+" "+mon+"</div>"+
+                  "<div style='font-size:10px;color:"+(_sel?"#cdd8e8":"#999")+"'>Total: "+f2(_to)+" "+mon+"</div>"+
+                "</div>"+
+                (nc===1?"<span style='font-size:9px;font-weight:700;color:"+(_sel?"#a8d8b8":"#1a7a3a")+"'>MENOR INTERÉS</span>":"")+
+                (_sel?"<span style='font-size:16px'>✅</span>":"")+
+              "</div>";
+            }).join("")+
+            "<button type='button' onclick='enviarOpcionesWA()' style='width:100%;padding:10px;border:none;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;background:#25D366;color:#fff;margin-top:4px'>📤 Enviar estas opciones al cliente por WhatsApp</button>"+
+          "</div>";
+        })()+
         "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>¿De qué cuenta sale? (opcional)</label>"+
         "<select onchange='S.nPr.cuentaId=this.value' style='width:100%;padding:12px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+ctaOpts+"</select></div>"+
         "<div style='background:#F8F9FB;border-radius:10px;padding:12px'>"+
+          "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:8px'>⚙️ Ajuste manual (para casos puntuales)</div>"+
           "<label style='display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:#333;margin-bottom:"+(f.conInteres?"10px":"0")+"'>"+
             "<input type='checkbox' "+(f.conInteres?"checked":"")+" onchange='S.nPr.conInteres=this.checked;R()' style='width:18px;height:18px'> 💹 ¿Con interés?"+
           "</label>"+
@@ -14220,35 +14258,6 @@ function rPrestamos(){
             (f.conInteres?"Interés total: <b>"+_tasaEfectiva+"%</b> → Total a cobrar: <b>"+f2(_tot)+" "+mon+"</b><br>":"")+
             (_nc>1?_nc+" cuotas de <b>"+f2(_porCuota)+" "+mon+"</b> c/u ("+(f.frecuencia||"mensual")+"s)":"Pago único de <b>"+f2(_tot)+" "+mon+"</b>")+
           "</div>";
-        })()+
-        // Comparador de opciones — como el de un banco: le muestras al
-        // cliente varias cantidades de cuotas lado a lado (menos cuotas =
-        // menos interés total), usando la MISMA tasa por cuota que ya
-        // pusiste arriba. Solo aparece si hay capital y % cargados.
-        (function(){
-          var _cap=parseFloat(f.monto)||0;
-          var _pct=parseFloat(f.tasaInteres)||0;
-          if(!f.conInteres||_cap<=0||_pct<=0) return "";
-          var _opciones=[1,2,3,4,6,9,12];
-          return "<button type='button' onclick='S.nPr._mostrarComparador=!S.nPr._mostrarComparador;R()' style='width:100%;padding:11px;border:1.5px dashed #1a3558;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;background:#fff;color:#1a3558'>📊 "+(S.nPr._mostrarComparador?"Ocultar":"Comparar")+" opciones de pago para el cliente</button>"+
-          (S.nPr._mostrarComparador?
-            "<div style='background:#F8F9FB;border-radius:10px;padding:10px'>"+
-              _opciones.map(function(nc){
-                var _te=_pct*nc;
-                var _to=Math.round((_cap*(1+_te/100))*100)/100;
-                var _pc=Math.round((_to/nc)*100)/100;
-                var _sel=(parseInt(f.numCuotas)||1)===nc;
-                return "<div onclick='S.nPr.numCuotas="+nc+";S.nPr._mostrarComparador=false;R()' style='display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:"+(_sel?"#1a3558":"#fff")+";border:1px solid "+(_sel?"#1a3558":"#e0e0e0")+";border-radius:9px;margin-bottom:6px;cursor:pointer'>"+
-                  "<div>"+
-                    "<div style='font-size:13px;font-weight:800;color:"+(_sel?"#fff":"#1a3558")+"'>"+nc+"x de "+f2(_pc)+" "+mon+"</div>"+
-                    "<div style='font-size:10px;color:"+(_sel?"#cdd8e8":"#999")+"'>Total con interés: "+f2(_to)+" "+mon+"</div>"+
-                  "</div>"+
-                  (nc===1?"<span style='font-size:9px;font-weight:700;color:"+(_sel?"#a8d8b8":"#1a7a3a")+"'>MENOR INTERÉS</span>":"")+
-                "</div>";
-              }).join("")+
-              "<button type='button' onclick='enviarOpcionesWA()' style='width:100%;padding:10px;border:none;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;background:#25D366;color:#fff;margin-top:4px'>📤 Enviar estas opciones al cliente por WhatsApp</button>"+
-            "</div>"
-          :"");
         })()+
         "<button onclick='savePr()' style='width:100%;padding:14px;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;background:#1a3558;color:#fff;font-family:inherit'>💾 Registrar préstamo</button>"+
       "</div>"+
