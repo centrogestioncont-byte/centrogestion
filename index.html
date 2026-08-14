@@ -1018,7 +1018,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v39";
+var APP_VERSION = "20260806_v41";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -3631,14 +3631,30 @@ function enviarOpcionesWA(){
   var pct=parseFloat(f.tasaComparador!==undefined?f.tasaComparador:(f.tasaInteres||10))||0;
   var mon=f.mon||"USDT";
   if(cap<=0) return;
+  var frecuencia=f.frecuencia||"mensual";
+  var periodDays={semanal:7,quincenal:15,mensual:30}[frecuencia]||30;
+  var diasExtra=Math.max(0,parseInt(f.diasExtraPrimeraCuota)||0);
+  var tasaDiaria=periodDays?(pct/periodDays):0;
+  var extraPct=Math.round((tasaDiaria*diasExtra)*100)/100;
+  var fechaBase=f.date||td();
+  var etiquetaFrec={semanal:"semanal",quincenal:"quincenal",mensual:"mensual"}[frecuencia]||"mensual";
   var opciones=[1,2,3,4,6,9,12];
   var nombre=f.desc?f.desc+", ":"Hola! ";
-  var msg=nombre+"👋 te paso las opciones para el préstamo de "+f2(cap)+" "+mon+":\n\n";
+  var msg=nombre+"👋 te paso las opciones para el préstamo de "+f2(cap)+" "+mon+" (pagos "+etiquetaFrec+"es"+(diasExtra>0?", con "+diasExtra+" días de gracia antes de la 1ª cuota":"")+"):\n\n";
   opciones.forEach(function(nc){
-    var te=pct*nc;
+    var te=(pct*nc)+extraPct;
     var tot=Math.round((cap*(1+te/100))*100)/100;
     var pc=Math.round((tot/nc)*100)/100;
+    // Fecha de CADA cuota, igual que se calcula al guardar el préstamo
+    var fechasTxt=[];
+    for(var i=1;i<=nc;i++){
+      var fi=new Date(fechaBase+"T00:00:00");
+      if(frecuencia==="mensual"){ fi.setMonth(fi.getMonth()+i); fi.setDate(fi.getDate()+diasExtra); }
+      else { fi.setDate(fi.getDate()+periodDays*i+diasExtra); }
+      fechasTxt.push(ds(fi.getFullYear()+"-"+String(fi.getMonth()+1).padStart(2,"0")+"-"+String(fi.getDate()).padStart(2,"0")));
+    }
     msg+="• "+nc+"x de "+f2(pc)+" "+mon+" — Total: "+f2(tot)+" "+mon+(nc===1?" (menor interés)":"")+"\n";
+    msg+="   📅 "+fechasTxt.map(function(fx,idx){return "Cuota "+(idx+1)+": "+fx;}).join(" · ")+"\n\n";
   });
   msg+="\n¿Cuál te queda mejor? 🙂";
   window.open("https://wa.me/?text="+encodeURIComponent(msg),"_blank");
