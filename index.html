@@ -1018,7 +1018,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v47";
+var APP_VERSION = "20260806_v49";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -3651,22 +3651,21 @@ function enviarOpcionesWA(){
   opciones.forEach(function(nc){
     var amort=calcularAmortizacion(cap,pct,nc);
     var extraFlat=Math.round((cap*(extraPct/100))*100)/100;
-    // Igual que al guardar el préstamo: el cargo por días de gracia se
-    // suma completo a la PRIMERA cuota, no queda flotando aparte del
-    // total — así el cliente puede sumar las cuotas y le da exacto.
-    if(extraFlat>0){
-      var primera=Math.round((amort.cuotaFija+extraFlat)*100)/100;
-      var totalReal=Math.round((primera+amort.cuotaFija*(nc-1))*100)/100;
-      if(nc===1){
-        msg+=(nc===1?"🟢 ":"▪️ ")+"1x de "+f2(primera)+" "+mon+" (incluye cargo por días de gracia)"+(nc===1?" ← menos interés":"")+"\n";
-      } else {
-        msg+=(nc===1?"🟢 ":"▪️ ")+nc+"x — 1ª cuota "+f2(primera)+" (incluye cargo por gracia) + "+(nc-1)+" de "+f2(amort.cuotaFija)+" "+mon+" — Total: "+f2(totalReal)+"\n";
-      }
+    // El total real (capital + interés + cargo por días de gracia si
+    // aplica) se reparte en partes IGUALES para que el mensaje sea
+    // simple de leer — "N cuotas de X cada una". El cronograma que se
+    // guarda de verdad en el sistema sí ajusta la primera cuota con
+    // más precisión centavo a centavo, pero para explicárselo al
+    // cliente por WhatsApp no hace falta ese detalle.
+    var totalReal=Math.round((amort.montoTotal+extraFlat)*100)/100;
+    var cuotaProm=Math.round((totalReal/nc)*100)/100;
+    if(nc===1){
+      msg+="🟢 1 pago único de "+f2(totalReal)+" "+mon+" ← menos interés\n\n";
     } else {
-      msg+=(nc===1?"🟢 ":"▪️ ")+nc+"x de "+f2(amort.cuotaFija)+" "+mon+" (total "+f2(amort.montoTotal)+")"+(nc===1?" ← menos interés":"")+"\n";
+      msg+="▪️ "+nc+" cuotas de "+f2(cuotaProm)+" "+mon+" cada una — quedarían en "+f2(totalReal)+" "+mon+" en total\n\n";
     }
   });
-  msg+="\n¿Cuál te queda mejor? 🙂";
+  msg+="¿Cuál te queda mejor? 🙂";
   window.open("https://wa.me/?text="+encodeURIComponent(msg),"_blank");
 }
 function pedirCompromisoWA(id){
@@ -14315,16 +14314,12 @@ function rPrestamos(){
             _opciones.map(function(nc){
               var _amortC=calcularAmortizacion(_cap,_pct,nc);
               var _extraFlat=Math.round((_cap*(_extraPct/100))*100)/100;
-              var _pc=_amortC.cuotaFija;
-              var _primera=_extraFlat>0?Math.round((_pc+_extraFlat)*100)/100:_pc;
-              var _to=_extraFlat>0?Math.round((_primera+_pc*(nc-1))*100)/100:_amortC.montoTotal;
+              var _to=Math.round((_amortC.montoTotal+_extraFlat)*100)/100;
+              var _cuotaProm=Math.round((_to/nc)*100)/100;
               var _sel=(parseInt(f.numCuotas)||0)===nc&&f.conInteres;
-              var _linea1 = (_extraFlat>0&&nc>1)
-                ? "1ª: "+f2(_primera)+" + "+(nc-1)+"x "+f2(_pc)+" "+mon
-                : nc+"x de "+f2(_extraFlat>0?_primera:_pc)+" "+mon;
               return "<div onclick='S.nPr.numCuotas="+nc+";S.nPr.conInteres=true;S.nPr.tasaInteres="+_pct+";R()' style='display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:"+(_sel?"#1a3558":"#fff")+";border:1px solid "+(_sel?"#1a3558":"#e0e0e0")+";border-radius:9px;margin-bottom:6px;cursor:pointer'>"+
                 "<div>"+
-                  "<div style='font-size:13px;font-weight:800;color:"+(_sel?"#fff":"#1a3558")+"'>"+_linea1+"</div>"+
+                  "<div style='font-size:13px;font-weight:800;color:"+(_sel?"#fff":"#1a3558")+"'>"+nc+"x de "+f2(_cuotaProm)+" "+mon+"</div>"+
                   "<div style='font-size:10px;color:"+(_sel?"#cdd8e8":"#999")+"'>Total: "+f2(_to)+" "+mon+"</div>"+
                 "</div>"+
                 (nc===1?"<span style='font-size:9px;font-weight:700;color:"+(_sel?"#a8d8b8":"#1a7a3a")+"'>MENOR INTERÉS</span>":"")+
