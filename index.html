@@ -1018,7 +1018,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v50";
+var APP_VERSION = "20260806_v52";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -3822,7 +3822,7 @@ function savePr(){
   }
   S.prestamos.push({
     id:Date.now(),d:ds(f.date),desc:f.desc,
-    mon:mon,monto:montoTotal,capital:capital,interesPct:Math.round((tasaEfectiva+interesExtraPct)*100)/100,interesPorCuota:tasaInteres,diasExtraPrimeraCuota:diasExtra,
+    mon:mon,monto:montoTotal,capital:capital,interesPct:tasaEfectiva,interesPorCuota:tasaInteres,diasExtraPrimeraCuota:diasExtra,
     numCuotas:numCuotas,frecuencia:frecuencia,cuotas:cuotas,
     usdt:Math.round((usdt||0)*100)/100,
     cuentaId:f.cuentaId||"",estado:"activo",
@@ -7269,6 +7269,19 @@ function reqDel(arr,id,field){
           });
         }
       }
+    } else if(arr==="prestamos"){
+      // Al borrar un préstamo, devolver el capital a la cuenta bancaria de
+      // donde salió Y restaurar el inventario FIFO que se consumió al
+      // registrarlo — si no, el dinero queda "perdido" de la cuenta y un
+      // préstamo nuevo lo vuelve a descontar, quedando descontado dos veces.
+      var _capPrest=parseFloat(item.capital!==undefined?item.capital:item.monto)||0;
+      if(item.cuentaId){
+        var cPrest=(S.cuentas||[]).find(function(x){return x.id===item.cuentaId;});
+        if(cPrest) cPrest.saldo=Math.round(((parseFloat(cPrest.saldo)||0)+_capPrest)*100)/100;
+      }
+      var monPrest=item.mon||"USDT";
+      if(monPrest==="VES"||monPrest==="BRL") restaurarFIFOEgreso(monPrest,_capPrest,0,item.cuentaId);
+      else if(monPrest==="USDT")             restaurarFIFOEgreso("USDT",0,_capPrest,item.cuentaId);
     }
     // Lista negra: evita que Firebase re-agregue entradas borradas en sync
     if(arr==="brl"||arr==="vzla"||arr==="eeuu"){
