@@ -889,6 +889,42 @@ let S={
 };
 
 function td(){var _d=new Date();return _d.getFullYear()+"-"+String(_d.getMonth()+1).padStart(2,"0")+"-"+String(_d.getDate()).padStart(2,"0");}
+// ── Ganancia por préstamos (interés cobrado) — se muestra como línea
+// aparte en Diario/Resumen/Cierre de Mes, sin mezclarse con la ganancia
+// de remesas. El interés de cada abono se reconoce proporcionalmente al
+// % de interés que representa sobre el total del préstamo (mismo
+// criterio para pagos parciales o totales).
+function _mesKeyDD(dstr){ // "dd/mm/yy" -> "yyyy-mm"
+  if(!dstr) return "";
+  var p=String(dstr).split("/"); if(p.length<2) return "";
+  var yy=p[2]?(p[2].length===2?"20"+p[2]:p[2]):String(new Date().getFullYear());
+  return yy+"-"+p[1].padStart(2,"0");
+}
+function _mesKeyISO(dstr){ // "yyyy-mm-dd" -> "yyyy-mm"
+  if(!dstr) return "";
+  var p=String(dstr).split("-"); if(p.length<2) return "";
+  return p[0]+"-"+p[1];
+}
+function gananciaPrestamosDelMes(mesKey){
+  var monto=0, usdt=0, cant=0;
+  (S.prestamos||[]).forEach(function(p){
+    var capital=parseFloat(p.capital!==undefined?p.capital:p.monto)||0;
+    var montoTotal=parseFloat(p.monto)||0;
+    var interesTotal=Math.max(0,Math.round((montoTotal-capital)*100)/100);
+    if(interesTotal<=0||montoTotal<=0) return;
+    var fracInteres=interesTotal/montoTotal;
+    var usdtPorUnidad=(parseFloat(p.usdt)||0)/montoTotal;
+    (p.abonos||[]).forEach(function(ab){
+      if(_mesKeyISO(ab.fecha)===mesKey){
+        var interesEnAbono=(parseFloat(ab.monto)||0)*fracInteres;
+        monto+=interesEnAbono;
+        usdt+=interesEnAbono*usdtPorUnidad;
+        cant++;
+      }
+    });
+  });
+  return {monto:Math.round(monto*100)/100,usdt:Math.round(usdt*100)/100,cant:cant};
+}
 // ── ID único real, seguro entre dispositivos (fecha+hora + parte aleatoria) ──
 // Se usa como identificador de fusión para remesas (brl/vzla/eeuu), a diferencia
 // de "n" que es solo un número de orden visual y puede repetirse si dos
@@ -1018,7 +1054,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v53";
+var APP_VERSION = "20260806_v55";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -1135,6 +1171,9 @@ function ejecutarCierreMes(mesKey, manual){
     ganBrl:        calc.ganBrl,
     ganVzla:       calc.ganVzla,
     ganEE:         calc.ganEEBruta,
+    ganPrestamos:  calc.ganPrestamos,        // ← ganancia por interés de préstamos, línea aparte
+    ganPrestamosMonto: calc.ganPrestamosMonto,
+    ganPrestamosCant:  calc.ganPrestamosCant,
     gasEEUU:       calc.gasEEUU,
     ganEENeta:     calc.ganEENeta,
     miParteEEUU:   calc.miParteEEUU,
@@ -3678,6 +3717,14 @@ function pedirCompromisoWA(id){
       p.cuotas.map(function(cu){return "• Cuota "+cu.n+": "+f2(cu.monto)+" "+monP+" — vence "+cu.fecha;}).join("\n")+"\n\n"+
       "Total a pagar: *"+f2(montoBase)+" "+monP+"*\n\n"+
       "¿Me confirmas que estás de acuerdo con este plan? Con que respondas \"Sí, confirmo\" aquí mismo ya me sirve como respaldo. ¡Gracias! 🙏";
+  } else if(p.cuotas&&p.cuotas.length===1){
+    // Pago único: mostrar también la fecha real de vencimiento (no la
+    // fecha en que se registró el préstamo, que es otra cosa) y el
+    // desglose capital + interés si aplica.
+    var cu1=p.cuotas[0];
+    msg="Hola "+p.desc+"! 👋 Te confirmo el préstamo de *"+f2(p.capital!==undefined?p.capital:montoBase)+" "+monP+"*"+(p.interesPct?" + "+p.interesPct+"% de interés":"")+", registrado el "+p.d+".\n\n"+
+      "Total a pagar: *"+f2(cu1.monto)+" "+monP+"* — vence el *"+cu1.fecha+"*\n\n"+
+      "¿Me puedes confirmar que estás de acuerdo con este monto y esa fecha, y que te comprometes a devolverlo? Con que respondas \"Sí, confirmo\" aquí mismo ya me sirve como respaldo. ¡Gracias! 🙏";
   } else {
     msg="Hola "+p.desc+"! 👋 Te confirmo el préstamo de *"+f2(saldoPend)+" "+monP+"* del "+p.d+".\n\n"+
       "¿Me puedes confirmar que estás de acuerdo con este monto y que te comprometes a devolverlo? Con que respondas \"Sí, confirmo\" aquí mismo ya me sirve como respaldo. ¡Gracias! 🙏";
@@ -8614,12 +8661,16 @@ function calcMesCompleto(mesKey, pctOverrides){
   var ganExtraM = filterByMes(S.gananciaExtra||[], mesKey);
   var ganExtraEmp = r2(ganExtraM.filter(function(g){return g.tipo==="empresa";}).reduce(function(a,g){return a+(parseFloat(g.usdt)||0);},0));
   var ganExtraPer = r2(ganExtraM.filter(function(g){return g.tipo==="personal";}).reduce(function(a,g){return a+(parseFloat(g.usdt)||0);},0));
+  // Ganancia por préstamos (interés cobrado este mes) — línea aparte, no
+  // se mezcla con la ganancia de remesas.
+  var ganPrestamosInfo = gananciaPrestamosDelMes(mesKey);
+  var ganPrestamos = r2(ganPrestamosInfo.usdt);
 
   // ── 1. Ganancia bruta total (headline · P2: lo que el usuario acumula) ──
   var ganBrl      = brlM.reduce(function(a,r){return a+(parseFloat(r.pr)||0);},0);
   var ganVzla     = vzlaM.reduce(function(a,r){return a+(parseFloat(r.pr)||0);},0);
   var ganEEBruta  = eeuuM.reduce(function(a,r){return a+(parseFloat(r.pr)||0);},0);
-  var ganBrutaTotal = r2(ganBrl+ganVzla+ganEEBruta);
+  var ganBrutaTotal = r2(ganBrl+ganVzla+ganEEBruta+ganPrestamos);
 
   // ── 2. EE.UU: gastos empresa primero, luego 50/50 (P3) ──
   var gasEEUU = filterByMes(S.gastos_eeuu||[], mesKey)
@@ -8715,6 +8766,7 @@ function calcMesCompleto(mesKey, pctOverrides){
     ops:brlM.length+vzlaM.length+eeuuM.length,
     brlOps:brlM.length,vzlaOps:vzlaM.length,eeuuOps:eeuuM.length,
     ganBrl:r2(ganBrl),ganVzla:r2(ganVzla),ganEEBruta:r2(ganEEBruta),
+    ganPrestamos:ganPrestamos,ganPrestamosMonto:r2(ganPrestamosInfo.monto),ganPrestamosCant:ganPrestamosInfo.cant,
     gasEEUU:r2(gasEEUU),ganEENeta:ganEENeta,
     miParteEEUU:miParteEEUU,
     socioNombreEE:socioNombreEE,socioPorcentajeEE:Math.round(pctEEDec*100),
@@ -9235,6 +9287,12 @@ function generarInformePDF(mesKey){
         "<div style='flex:1;font-size:12px;color:#333'>Ganancia bruta de todas las operaciones</div>"+
         "<div style='font-size:14px;font-weight:900;color:#0f6e3a'>+$"+f2l(calc.ganBrutaTotal)+" USDT</div>"+
       "</div>"+
+      // Ganancia por préstamos — línea aparte, no mezclada con remesas
+      (calc.ganPrestamos>0?"<div style='display:flex;align-items:center;margin-bottom:6px;padding-left:26px;background:#FFF3DC;border-radius:8px;padding:8px 8px 8px 34px;margin-left:26px'>"+
+        "<div style='width:16px;height:16px;background:#a06800;border-radius:4px;flex-shrink:0;margin-right:10px'></div>"+
+        "<div style='flex:1;font-size:12px;color:#7a5c00;font-weight:600'>🤝 De eso, ganancia por préstamos ("+calc.ganPrestamosCant+" abono"+(calc.ganPrestamosCant!==1?"s":"")+" cobrados)</div>"+
+        "<div style='font-size:13px;font-weight:700;color:#a06800'>$"+f2l(calc.ganPrestamos)+" USDT</div>"+
+      "</div>":"")+
       // Socios
       (calc.socioParte>0?"<div style='display:flex;align-items:center;margin-bottom:6px;padding-left:26px'>"+
         "<div style='width:16px;height:16px;background:#c0392b;border-radius:4px;flex-shrink:0;margin-right:10px'></div>"+
@@ -9996,6 +10054,7 @@ function rInformeCierre(){
     return "<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px'>"+
       card("#0f6e3a","#fff","⏳ Por cobrar","$"+f2(cobPendGan)+" USDT",cobrarPend.length+" operaciones pendientes")+
       (function(){var prestUsdtTotal=0;prestActivos.forEach(function(p){var mon=p.mon||"USDT";var monto=parseFloat(p.monto||p.sal)||0;var abos=(p.abonos||[]).reduce(function(a,ab){return a+ab.monto;},0);var pend=Math.max(0,monto-abos);var rate=getRateToUsdt(mon);prestUsdtTotal+=(mon==="USDT"?pend:(rate?pend/rate:0));});return card("#c0392b","#fff","🤝 Préstamos activos","≈$"+f2(prestUsdtTotal)+" USDT",prestActivos.length+" préstamos activos");}())+
+      (calc.ganPrestamos>0?card("#a06800","#fff","🤝 Ganancia por préstamos","$"+f2(calc.ganPrestamos)+" USDT",calc.ganPrestamosCant+" abono"+(calc.ganPrestamosCant!==1?"s":"")+" este mes"):"")+
     "</div>"+
     "<div style='background:#1a3558;border-radius:12px;padding:14px;color:#fff;margin-bottom:12px'>"+
       "<div style='font-size:12px;font-weight:700;color:#FFA31C;margin-bottom:10px'>💰 Lo que hay que apartar para el mes siguiente</div>"+
@@ -10966,6 +11025,25 @@ function rDiario(){
     "<span style='color:#d6f5e3;font-size:12px;font-weight:700'>🇧🇷 Ganancia ruta BRL · "+_dMesLabel+"</span>"+
     "<span style='color:#fff;font-size:15px;font-weight:900'>$"+f2(ganBrlPeriodoUsdt)+" USDT"+(ganBrlPeriodoReais?" ≈ R$ "+f2(ganBrlPeriodoReais):"")+"</span>"+
   "</div>";
+
+  // Ganancia por préstamos (interés cobrado) del período mostrado — línea
+  // aparte, no se mezcla con la ganancia de remesas de arriba.
+  (function(){
+    var _mesesAContar = S.diarioMes==="todos" ? getMesesDisponibles().map(function(me){return me.key;}) : [S.diarioMes];
+    var _totPrest=0, _cantPrest=0;
+    _mesesAContar.forEach(function(mk){
+      var gp=gananciaPrestamosDelMes(mk);
+      _totPrest+=gp.usdt; _cantPrest+=gp.cant;
+    });
+    _totPrest=Math.round(_totPrest*100)/100;
+    if(_totPrest>0){
+      _dHeader += "<div style='background:#4a3200;border-radius:10px;padding:10px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px'>"+
+        "<span style='color:#ffe4a8;font-size:12px;font-weight:700'>🤝 Ganancia por préstamos · "+_dMesLabel+"</span>"+
+        "<span style='color:#fff;font-size:15px;font-weight:900'>$"+f2(_totPrest)+" USDT</span>"+
+      "</div>";
+    }
+  })();
+
 
   var cards=dias.map(function(dia){
     var brlD = allBrl.filter(function(r){return r.d===dia;});
