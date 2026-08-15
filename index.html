@@ -1018,7 +1018,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v45";
+var APP_VERSION = "20260806_v46";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -3649,9 +3649,9 @@ function enviarOpcionesWA(){
   var msg=nombre+"👋 estas son tus opciones para el préstamo de *"+f2(cap)+" "+mon+"*:\n\n"+
     "📅 Pagos "+etiquetaFrec+"es, empezando el *"+fecha1Txt+"*\n\n";
   opciones.forEach(function(nc){
-    var te=(pct*nc)+extraPct;
-    var tot=Math.round((cap*(1+te/100))*100)/100;
-    var pc=Math.round((tot/nc)*100)/100;
+    var amort=calcularAmortizacion(cap,pct,nc);
+    var tot=Math.round((amort.montoTotal+(cap*(extraPct/100)))*100)/100;
+    var pc=amort.cuotaFija;
     msg+=(nc===1?"🟢 ":"▪️ ")+nc+"x de "+f2(pc)+" "+mon+" (total "+f2(tot)+")"+(nc===1?" ← menos interés":"")+"\n";
   });
   msg+="\n¿Cuál te queda mejor? 🙂";
@@ -3730,6 +3730,26 @@ function borrarCapturaPrestamo(id,idx){
   S._capturaVer=null;
   saveData();R();
 }
+// ── Amortización tipo banco (sistema francés — cuota fija) ──
+// El interés de cada cuota se calcula sobre el SALDO PENDIENTE, no sobre
+// el capital completo. Por eso la cuota da igual todos los meses, pero
+// la parte de interés baja y la de capital sube a medida que se paga —
+// exactamente como un préstamo bancario real, no como un % fijo que se
+// multiplica por el número de cuotas.
+function calcularAmortizacion(capital,tasaPct,numCuotas){
+  var i=(parseFloat(tasaPct)||0)/100; // tasa periódica en decimal
+  var n=Math.max(1,parseInt(numCuotas)||1);
+  var cuotaFija;
+  if(i<=0){
+    cuotaFija=capital/n;
+  } else {
+    cuotaFija=capital*i/(1-Math.pow(1+i,-n));
+  }
+  cuotaFija=Math.round(cuotaFija*100)/100;
+  var montoTotal=Math.round((cuotaFija*n)*100)/100;
+  var interesTotalPct=capital>0?Math.round(((montoTotal-capital)/capital)*10000)/100:0;
+  return {cuotaFija:cuotaFija,montoTotal:montoTotal,interesTotalPct:interesTotalPct};
+}
 function savePr(){
   var f=S.nPr;
   if(!f.date||!f.desc){alert("Completa fecha y nombre/descripción.");return;}
@@ -3737,26 +3757,29 @@ function savePr(){
   var capital=parseFloat(f.monto)||0;
   if(capital<=0){alert("El monto debe ser mayor a 0.");return;}
   var conInteres=!!f.conInteres;
-  var tasaInteres=conInteres?(parseFloat(f.tasaInteres)||0):0; // % POR CUOTA/período
+  var tasaInteres=conInteres?(parseFloat(f.tasaInteres)||0):0; // % periódico (sobre saldo)
   var numCuotas=Math.max(1,parseInt(f.numCuotas)||1);
   var frecuencia=f.frecuencia||"mensual";
   var periodDays = frecuencia==="semanal"?7 : frecuencia==="quincenal"?15 : 30;
   var diasExtra=Math.max(0,parseInt(f.diasExtraPrimeraCuota)||0);
-  // Interés por cuota × número de cuotas = interés total (a más cuotas,
-  // más tiempo transcurre, más interés se acumula — igual que un
-  // préstamo real, no un % fijo que se reparte). Además, si la primera
-  // cuota se alarga más allá del período normal, se cobra interés extra
-  // prorrateado por esos días de más (mientras más lejos la primera
-  // cuota, más paga el cliente).
-  var tasaEfectiva=tasaInteres*numCuotas;
+  // Amortización tipo banco: cuota fija calculada sobre el saldo
+  // pendiente (sistema francés), no un % fijo multiplicado a lo bruto.
+  var amort=calcularAmortizacion(capital,conInteres?tasaInteres:0,numCuotas);
+  var montoTotal=amort.montoTotal;
+  var tasaEfectiva=amort.interesTotalPct;
+  // Si la primera cuota se alarga más allá del período normal (días de
+  // gracia), se suma interés extra prorrateado por esos días, encima de
+  // la amortización — mientras más lejos la primera cuota, más paga.
   var tasaDiaria=periodDays?(tasaInteres/periodDays):0;
-  var interesExtraPct=conInteres?Math.round((tasaDiaria*diasExtra)*100)/100:0;
-  var montoTotal=Math.round((conInteres?capital*(1+(tasaEfectiva+interesExtraPct)/100):capital)*100)/100;
+  var interesExtra=conInteres?Math.round((capital*(tasaDiaria/100)*diasExtra)*100)/100:0;
+  montoTotal=Math.round((montoTotal+interesExtra)*100)/100;
+  tasaEfectiva=capital>0?Math.round(((montoTotal-capital)/capital)*10000)/100:0;
   // Cronograma de cuotas: la primera cuota parte del período normal MÁS
   // los días extra que se hayan agregado; las siguientes continúan a
-  // intervalos normales desde ahí.
+  // intervalos normales desde ahí. El interés extra por días de gracia
+  // se suma completo a la primera cuota (es lo que generó ese cargo).
   var cuotas=[];
-  var montoCuota=Math.round((montoTotal/numCuotas)*100)/100;
+  var montoCuotaBase=amort.cuotaFija;
   var sumaAsignada=0;
   for(var i=1;i<=numCuotas;i++){
     var fechaCuota=new Date(f.date+"T00:00:00");
@@ -3764,7 +3787,9 @@ function savePr(){
     if(frecuencia==="mensual"){ fechaCuota.setMonth(fechaCuota.getMonth()+i); fechaCuota.setDate(fechaCuota.getDate()+diasExtra); }
     else { fechaCuota.setDate(fechaCuota.getDate()+diasSumar); }
     var isoFecha=fechaCuota.getFullYear()+"-"+String(fechaCuota.getMonth()+1).padStart(2,"0")+"-"+String(fechaCuota.getDate()).padStart(2,"0");
-    var montoEsta = (i===numCuotas) ? Math.round((montoTotal-sumaAsignada)*100)/100 : montoCuota;
+    var montoEsta = montoCuotaBase + (i===1?interesExtra:0);
+    if(i===numCuotas) montoEsta = Math.round((montoTotal-sumaAsignada)*100)/100;
+    else montoEsta = Math.round(montoEsta*100)/100;
     sumaAsignada += montoEsta;
     cuotas.push({n:i,fecha:ds(isoFecha),iso:isoFecha,monto:montoEsta});
   }
@@ -14276,9 +14301,9 @@ function rPrestamos(){
             "</div>"+
             (_diasExtra>0?"<div style='font-size:10px;color:#888;margin-bottom:10px'>+"+_diasExtra+" días de gracia → +"+_extraPct+"% adicional sobre el total (proporcional al tiempo extra).</div>":"")+
             _opciones.map(function(nc){
-              var _te=(_pct*nc)+_extraPct;
-              var _to=Math.round((_cap*(1+_te/100))*100)/100;
-              var _pc=Math.round((_to/nc)*100)/100;
+              var _amortC=calcularAmortizacion(_cap,_pct,nc);
+              var _pc=_amortC.cuotaFija;
+              var _to=Math.round((_amortC.montoTotal+((_cap*(_extraPct/100))))*100)/100;
               var _sel=(parseInt(f.numCuotas)||0)===nc&&f.conInteres;
               return "<div onclick='S.nPr.numCuotas="+nc+";S.nPr.conInteres=true;S.nPr.tasaInteres="+_pct+";R()' style='display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:"+(_sel?"#1a3558":"#fff")+";border:1px solid "+(_sel?"#1a3558":"#e0e0e0")+";border-radius:9px;margin-bottom:6px;cursor:pointer'>"+
                 "<div>"+
@@ -14317,11 +14342,9 @@ function rPrestamos(){
           var _cap=parseFloat(f.monto)||0;
           if(_cap<=0) return "";
           var _nc=Math.max(1,parseInt(f.numCuotas)||1);
-          // Interés por cuota × número de cuotas = interés total (a más
-          // cuotas, más tiempo, más interés — igual que un préstamo real)
-          var _tasaEfectiva=(parseFloat(f.tasaInteres)||0)*_nc;
-          var _tot=Math.round((f.conInteres?_cap*(1+_tasaEfectiva/100):_cap)*100)/100;
-          var _porCuota=Math.round((_tot/_nc)*100)/100;
+          // Amortización tipo banco (cuota fija sobre saldo pendiente)
+          var _amort=calcularAmortizacion(_cap,f.conInteres?(parseFloat(f.tasaInteres)||0):0,_nc);
+          var _tot=_amort.montoTotal, _tasaEfectiva=_amort.interesTotalPct, _porCuota=_amort.cuotaFija;
           return "<div style='background:#EAF2FF;border-radius:9px;padding:10px 12px;font-size:12px;color:#1a3558'>"+
             (f.conInteres?"Interés total: <b>"+_tasaEfectiva+"%</b> → Total a cobrar: <b>"+f2(_tot)+" "+mon+"</b><br>":"")+
             (_nc>1?_nc+" cuotas de <b>"+f2(_porCuota)+" "+mon+"</b> c/u ("+(f.frecuencia||"mensual")+"s)":"Pago único de <b>"+f2(_tot)+" "+mon+"</b>")+
