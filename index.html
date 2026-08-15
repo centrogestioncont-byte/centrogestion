@@ -1054,7 +1054,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v59";
+var APP_VERSION = "20260806_v61";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -2040,7 +2040,7 @@ function getMonedaIcons(){
 
 // Dynamic USDT rate: uses tasasDia first, then inventory
 // Límites de sanidad por moneda — evita usar tasas del inventario que sean absurdas
-var _RATE_LIMITS={USD:[0.8,2],EUR:[0.8,2],TTD:[5,10],BRL:[3,8],COP:[3000,6000],PEN:[2.5,5.5]};
+var _RATE_LIMITS={USD:[0.8,2],EUR:[0.8,2],TTD:[5,10],BRL:[3,8],COP:[3000,6000],PEN:[2.5,5.5],VES:[50,5000]};
 function getRateToUsdt(moneda){
   if(moneda==="USDT") return 1;
   // 1. Tasa manual del usuario (máxima prioridad)
@@ -3206,7 +3206,20 @@ function setEgTipo(tipo){
   R();
 }
 function chgMon(v){S.nEg.mon=v;S.nEg.cuentaId='';S.nEg.usdt='';R();}
-function chgMonto(v){S.nEg.monto=v;var a=usdtDeGasto(S.nEg.mon||'BRL',v);if(a!==null)S.nEg.usdt=a;}
+function chgMonto(v){
+  S.nEg.monto=v;
+  var a=usdtDeGasto(S.nEg.mon||'BRL',v);
+  if(a!==null){
+    S.nEg.usdt=a;
+  } else if((S.nEg.mon==="VES"||S.nEg.mon==="BRL") && parseFloat(v)>0){
+    // La tasa guardada en el inventario está fuera de un rango razonable
+    // (probablemente corrupta) — no se usa a ciegas. Se limpia el campo
+    // para que el usuario escriba el equivalente en USDT a mano.
+    S.nEg.usdt='';
+    R();
+    alert("⚠️ La tasa de "+(S.nEg.mon)+" guardada en el inventario se ve fuera de rango — no se calculó el equivalente en USDT automáticamente. Escríbelo tú mismo en el campo USDT.");
+  }
+}
 function delEg(id){reqDel('egresos',id,'id');}
 function delEgPer(id){reqDelPersonal(id);}
 function pagEg(id){pagarEgreso(id);}
@@ -3414,8 +3427,18 @@ function getCatsPersonal(){return (S.config&&S.config.cats_personal&&S.config.ca
 function usdtDeGasto(mon,monto){
   var m=parseFloat(monto)||0;if(m<=0)return 0;
   if(mon==="USDT"||mon==="USD")return Math.round(m*100)/100;
-  if(mon==="BRL"){var t=parseFloat(getLastTasaCompra("BRL"));return t>0?Math.round(m/t*100)/100:null;}
-  if(mon==="VES"){var t2=parseFloat(getLastTasaVenta("VES"));return t2>0?Math.round(m/t2*100)/100:null;}
+  if(mon==="BRL"){
+    var t=parseFloat(getLastTasaCompra("BRL"));
+    var limB=_RATE_LIMITS.BRL;
+    if(limB&&t>0&&(t<limB[0]||t>limB[1])){t=null;} // tasa fuera de rango razonable → descartar
+    return t>0?Math.round(m/t*100)/100:null;
+  }
+  if(mon==="VES"){
+    var t2=parseFloat(getLastTasaVenta("VES"));
+    var limV=_RATE_LIMITS.VES;
+    if(limV&&t2>0&&(t2<limV[0]||t2>limV[1])){t2=null;} // tasa fuera de rango razonable → descartar
+    return t2>0?Math.round(m/t2*100)/100:null;
+  }
   return null;
 }
 function ajusteCuentaEgreso(cuentaId,delta){
@@ -14126,6 +14149,55 @@ function rCuentasCobrar(){
   return html;
 }
 
+// ── Resumen combinado por cliente: préstamos pendientes + cuentas por
+// cobrar pendientes, agrupado por nombre (sin importar mayúsculas/espacios)
+// — para ver de un vistazo cuánto te debe cada persona en total, sin
+// tener que revisar toda la lista.
+function resumenClientes(){
+  var mapa={};
+  function norm(n){return (n||"").trim().toUpperCase();}
+  function addCliente(nombreReal){
+    var k=norm(nombreReal);
+    if(!k) return null;
+    if(!mapa[k]) mapa[k]={nombre:nombreReal.trim(),prestamos:0,prestamosUsdt:0,cobrar:0,cobrarUsdt:0};
+    return mapa[k];
+  }
+  (S.prestamos||[]).filter(function(p){return p.estado!=="pagado";}).forEach(function(p){
+    var e=addCliente(p.desc); if(!e) return;
+    var totalAbonado=(p.abonos||[]).reduce(function(a,ab){return a+ab.monto;},0);
+    var montoBase=parseFloat(p.monto||p.sal)||0;
+    var pend=Math.max(0,Math.round((montoBase-totalAbonado)*100)/100);
+    if(pend<=0.001) return;
+    var mon=p.mon||"USDT";
+    var rate=getRateToUsdt(mon);
+    e.prestamos++;
+    e.prestamosUsdt+=(mon==="USDT"?pend:(rate?pend/rate:0));
+  });
+  (S.cuentasCobrar||[]).filter(function(c){return c.estado==="pendiente";}).forEach(function(c){
+    var e=addCliente(c.cliente); if(!e) return;
+    var mon=c.moneda||"USDT";
+    var rate=getRateToUsdt(mon);
+    var monto=parseFloat(c.monto)||0;
+    e.cobrar++;
+    e.cobrarUsdt+=(mon==="USDT"?monto:(rate?monto/rate:0));
+  });
+  return Object.keys(mapa).map(function(k){
+    var e=mapa[k];
+    e.totalUsdt=Math.round((e.prestamosUsdt+e.cobrarUsdt)*100)/100;
+    e.prestamosUsdt=Math.round(e.prestamosUsdt*100)/100;
+    e.cobrarUsdt=Math.round(e.cobrarUsdt*100)/100;
+    return e;
+  }).sort(function(a,b){return b.totalUsdt-a.totalUsdt;});
+}
+// Lista de nombres ya usados (préstamos + cuentas por cobrar), para
+// autocompletar y evitar que el mismo cliente quede registrado con
+// nombres distintos por error de tipeo.
+function nombresClientesConocidos(){
+  var set={};
+  (S.prestamos||[]).forEach(function(p){if(p.desc) set[p.desc.trim()]=true;});
+  (S.cuentasCobrar||[]).forEach(function(c){if(c.cliente) set[c.cliente.trim()]=true;});
+  return Object.keys(set).sort();
+}
 function rPrestamos(){
   // Combina defaults con lo que ya exista en S.nPr, en vez de reemplazarlo
   // por completo — así, si S.nPr ya existía pero incompleto (por ejemplo
@@ -14440,6 +14512,34 @@ function rPrestamos(){
       "</div>"+
     "</div>"+
     agendaHtml+
+    // Resumen por cliente — préstamos + cuentas por cobrar juntos, para
+    // ver de un vistazo cuánto te debe cada persona en total.
+    (function(){
+      var lista=resumenClientes();
+      if(!lista.length) return "";
+      var abierto=!!S._mostrarResumenClientes;
+      return "<div class='sec' style='margin-bottom:14px;border-left:3px solid #6c3483'>"+
+        "<div onclick='S._mostrarResumenClientes=!S._mostrarResumenClientes;R()' style='cursor:pointer;display:flex;justify-content:space-between;align-items:center'>"+
+          "<div class='sec-title' style='color:#6c3483;margin-bottom:0'>👥 RESUMEN POR CLIENTE ("+lista.length+")</div>"+
+          "<span style='font-size:11px;color:#6c3483;font-weight:700'>"+(abierto?"▲ ocultar":"▼ ver")+"</span>"+
+        "</div>"+
+        (abierto?"<div style='margin-top:10px'>"+
+          lista.map(function(e){
+            return "<div style='display:flex;justify-content:space-between;align-items:center;gap:8px;background:#fff;border:1px solid #e0d0f0;border-radius:10px;padding:10px 12px;margin-bottom:6px'>"+
+              "<div style='flex:1;min-width:0'>"+
+                "<div style='font-size:13px;font-weight:700;color:#1a3558;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>👤 "+e.nombre+"</div>"+
+                "<div style='font-size:10px;color:#888;margin-top:1px'>"+
+                  (e.prestamos>0?e.prestamos+" préstamo"+(e.prestamos!==1?"s":"")+" ($"+f2(e.prestamosUsdt)+")":"")+
+                  (e.prestamos>0&&e.cobrar>0?" · ":"")+
+                  (e.cobrar>0?e.cobrar+" por cobrar ($"+f2(e.cobrarUsdt)+")":"")+
+                "</div>"+
+              "</div>"+
+              "<div style='font-size:15px;font-weight:800;color:#6c3483;flex-shrink:0'>$"+f2(e.totalUsdt)+"</div>"+
+            "</div>";
+          }).join("")+
+        "</div>":"")+
+      "</div>";
+    })()+
     // Activos
     "<div class='sec' style='margin-bottom:14px;border-left:3px solid #c0392b'>"+
       "<div class='sec-title' style='color:#c0392b'>🤝 PRÉSTAMOS ACTIVOS ("+activos.length+")</div>"+
@@ -14459,7 +14559,9 @@ function rPrestamos(){
         "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Fecha</label>"+
         "<input type='date' value='"+(f.date||td())+"' onchange='S.nPr.date=this.value' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
         "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Nombre / A quién</label>"+
-        "<input type='text' placeholder='ej: Juan Pérez' value='"+(f.desc||"")+"' oninput='S.nPr.desc=this.value' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
+        "<input type='text' list='clientesConocidosList' placeholder='ej: Juan Pérez' value='"+(f.desc||"")+"' oninput='S.nPr.desc=this.value' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
+        "<datalist id='clientesConocidosList'>"+nombresClientesConocidos().map(function(n){return "<option value='"+n.replace(/'/g,"&apos;")+"'>";}).join("")+"</datalist>"+
+        "</div>"+
         "<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px'>"+
           "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Moneda</label>"+
           "<select onchange='S.nPr.mon=this.value;S.nPr.cuentaId=\"\";R()' style='width:100%;padding:12px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+monOpts+"</select></div>"+
