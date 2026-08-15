@@ -1018,7 +1018,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v43";
+var APP_VERSION = "20260806_v45";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -3664,8 +3664,20 @@ function pedirCompromisoWA(id){
   var totalAbonado=(p.abonos||[]).reduce(function(a,ab){return a+ab.monto;},0);
   var montoBase=parseFloat(p.monto||p.sal)||0;
   var saldoPend=Math.max(0,Math.round((montoBase-totalAbonado)*100)/100);
-  var msg="Hola "+p.desc+"! 👋 Te confirmo el préstamo de *"+f2(saldoPend)+" "+monP+"* del "+p.d+".\n\n"+
-    "¿Me puedes confirmar que estás de acuerdo con este monto y que te comprometes a devolverlo? Con que respondas \"Sí, confirmo\" aquí mismo ya me sirve como respaldo. ¡Gracias! 🙏";
+  var msg;
+  if(p.cuotas&&p.cuotas.length>1){
+    // Plan con cuotas: confirmar el plan COMPLETO que el cliente aceptó
+    // (no solo el total), para que quede clara la fecha y monto de cada
+    // pago acordado — esto es lo que respalda el compromiso real.
+    msg="Hola "+p.desc+"! 👋 Te confirmo el préstamo de *"+f2(p.capital!==undefined?p.capital:montoBase)+" "+monP+"* del "+p.d+(p.interesPct?", con "+p.interesPct+"% de interés":"")+".\n\n"+
+      "Quedamos en *"+p.cuotas.length+" cuotas*:\n"+
+      p.cuotas.map(function(cu){return "• Cuota "+cu.n+": "+f2(cu.monto)+" "+monP+" — vence "+cu.fecha;}).join("\n")+"\n\n"+
+      "Total a pagar: *"+f2(montoBase)+" "+monP+"*\n\n"+
+      "¿Me confirmas que estás de acuerdo con este plan? Con que respondas \"Sí, confirmo\" aquí mismo ya me sirve como respaldo. ¡Gracias! 🙏";
+  } else {
+    msg="Hola "+p.desc+"! 👋 Te confirmo el préstamo de *"+f2(saldoPend)+" "+monP+"* del "+p.d+".\n\n"+
+      "¿Me puedes confirmar que estás de acuerdo con este monto y que te comprometes a devolverlo? Con que respondas \"Sí, confirmo\" aquí mismo ya me sirve como respaldo. ¡Gracias! 🙏";
+  }
   var url="https://wa.me/?text="+encodeURIComponent(msg);
   window.open(url,"_blank");
 }
@@ -13920,7 +13932,16 @@ function rPrestamos(){
   // por completo — así, si S.nPr ya existía pero incompleto (por ejemplo
   // sin "date" tras una sincronización vieja), cada campo faltante se
   // rellena solo, sin dejar inputs en blanco.
+  // Combina defaults con lo que ya exista en S.nPr — pero solo para
+  // campos donde vacío significa "sin tocar todavía" (desc, monto,
+  // cuentaId, tasaInteres). El campo "date" es distinto: nunca debe
+  // quedar vacío de verdad, así que si viene vacío/undefined se fuerza a
+  // hoy AQUÍ MISMO en el estado (antes solo se mostraba hoy como
+  // apariencia visual sin guardarse, y por eso el botón de guardar
+  // seguía rechazando el préstamo con "completa fecha" aunque se viera
+  // lleno en pantalla).
   S.nPr=Object.assign({date:td(),desc:"",mon:"USDT",monto:"",cuentaId:"",conInteres:false,tasaInteres:"",numCuotas:1,frecuencia:"mensual"},S.nPr||{});
+  if(!S.nPr.date) S.nPr.date=td();
   var f=S.nPr;
   if(!S.nPr){S.nPr=f;}
   if(!S.prestamos)S.prestamos=[];
