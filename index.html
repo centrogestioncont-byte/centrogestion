@@ -1054,7 +1054,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v55";
+var APP_VERSION = "20260806_v57";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -2308,7 +2308,7 @@ function togglePagarPrest(id){
   S._pagarPrestId=(S._pagarPrestId===id?null:id);
   if(S._pagarPrestId){
     var pp=(S.prestamos||[]).find(function(x){return x.id===id;});
-    S.nPagarPrest={monto:"",cuentaId:"",moneda:(pp&&pp.mon)||"USDT"};
+    S.nPagarPrest={monto:"",cuentaId:"",moneda:(pp&&pp.mon)||"USDT",tasaManual:"",cuotaSel:""};
   }
   R();
 }
@@ -2324,16 +2324,25 @@ function pagarPrestamo(id){
   var monto=montoIngresado;        // monto expresado en la moneda del préstamo (para trackear saldo)
   var notaPago="";
   if(monPago!==mon){
-    var rPago=getRateToUsdt(monPago);
-    var rPrestamo=getRateToUsdt(mon);
-    if(!rPago||!rPrestamo){
-      alert("No hay tasa disponible para convertir "+monPago+" → "+mon+".\nConfigura la tasa en 🧮 Tasas, o ingresa el monto ya convertido a "+mon+".");
-      return;
+    // Si se escribió una tasa manual (cliente pagó a una tasa distinta a
+    // la registrada en el sistema), usarla en vez de la automática.
+    var tasaManual = np.tasaManual!==undefined && np.tasaManual!=="" ? parseFloat(np.tasaManual) : null;
+    if(tasaManual!==null && !isNaN(tasaManual) && tasaManual>0){
+      // tasaManual = cuánto vale 1 monPago en la moneda del préstamo (mon)
+      monto = Math.round((montoIngresado*tasaManual)*100)/100;
+      notaPago=" (pagó "+f2(montoIngresado)+" "+monPago+" a tasa manual "+f4(tasaManual)+")";
+    } else {
+      var rPago=getRateToUsdt(monPago);
+      var rPrestamo=getRateToUsdt(mon);
+      if(!rPago||!rPrestamo){
+        alert("No hay tasa disponible para convertir "+monPago+" → "+mon+".\nConfigura la tasa en 🧮 Tasas, escribe una tasa manual, o ingresa el monto ya convertido a "+mon+".");
+        return;
+      }
+      var usdtEquiv=monPago==="USDT"?montoIngresado:montoIngresado/rPago;
+      monto=mon==="USDT"?usdtEquiv:usdtEquiv*rPrestamo;
+      monto=Math.round(monto*100)/100;
+      notaPago=" (pagó "+f2(montoIngresado)+" "+monPago+")";
     }
-    var usdtEquiv=monPago==="USDT"?montoIngresado:montoIngresado/rPago;
-    monto=mon==="USDT"?usdtEquiv:usdtEquiv*rPrestamo;
-    monto=Math.round(monto*100)/100;
-    notaPago=" (pagó "+f2(montoIngresado)+" "+monPago+")";
   }
 
   if(!p.abonos) p.abonos=[];
@@ -2349,20 +2358,21 @@ function pagarPrestamo(id){
   }
   var c=(S.cuentas||[]).find(function(x){return x.id===np.cuentaId;});
   if(!np.cuentaId||!c){alert("Elige la cuenta donde entró el dinero.");return;}
-  if(!confirm("Abonar "+f2(montoIngresado)+" "+monPago+(monPago!==mon?" (≈"+f2(monto)+" "+mon+" del préstamo)":"")+" de "+p.desc+" → "+c.nombre+". ¿Confirmar?"))return;
+  var _cuotaSel = (np.cuotaSel && np.cuotaSel!=="") ? JSON.parse(np.cuotaSel) : null;
+  if(!confirm("Abonar "+f2(montoIngresado)+" "+monPago+(monPago!==mon?" (≈"+f2(monto)+" "+mon+" del préstamo)":"")+" de "+p.desc+(_cuotaSel?" · Cuota "+_cuotaSel.n:"")+" → "+c.nombre+". ¿Confirmar?"))return;
   // Acreditar la cuenta con lo REALMENTE recibido (en su propia moneda)
   ajusteCuentaEgreso(np.cuentaId,montoIngresado);
   // Trackear el abono en la moneda ORIGINAL del préstamo para que el saldo cuadre
-  p.abonos.push({id:Date.now(),fecha:td(),monto:Math.round(monto*100)/100,cuentaId:np.cuentaId,monedaPago:monPago,montoPago:Math.round(montoIngresado*100)/100});
+  p.abonos.push({id:Date.now(),fecha:td(),monto:Math.round(monto*100)/100,cuentaId:np.cuentaId,monedaPago:monPago,montoPago:Math.round(montoIngresado*100)/100,cuotaN:_cuotaSel?_cuotaSel.n:null});
   var nuevoTotal=p.abonos.reduce(function(a,ab){return a+ab.monto;},0);
   var restante=Math.round((montoBase-nuevoTotal)*100)/100;
   if(restante<=0.001){p.estado="pagado";p.fechaPago=td();p.montoCobrado=nuevoTotal;}
-  logAudit("ABONO_PRESTAMO","Abono "+f2(monto)+" "+mon+notaPago+" de "+p.desc+" → "+c.nombre+(restante>0.001?" · pendiente: "+f2(restante):" · SALDADO"));
-  S._pagarPrestId=null;S.nPagarPrest={cuentaId:"",monto:"",moneda:""};
+  logAudit("ABONO_PRESTAMO","Abono "+f2(monto)+" "+mon+notaPago+" de "+p.desc+(_cuotaSel?" (Cuota "+_cuotaSel.n+")":"")+" → "+c.nombre+(restante>0.001?" · pendiente: "+f2(restante):" · SALDADO"));
+  S._pagarPrestId=null;S.nPagarPrest={cuentaId:"",monto:"",moneda:"",tasaManual:"",cuotaSel:""};
   saveData();R();
   // Agradecimiento automático por WhatsApp al registrar el abono
   if(confirm("Abono registrado ✅\n\n¿Enviar mensaje de agradecimiento a "+p.desc+" por WhatsApp?")){
-    agradecerAbonoWA(p.desc,monto,mon);
+    agradecerAbonoWA(p,monto,mon,_cuotaSel?_cuotaSel.n:null,restante);
   }
 }
 function toggleCuenta(btn){
@@ -3660,8 +3670,25 @@ function recordarCuotaWA(id){
   }
   window.open("https://wa.me/?text="+encodeURIComponent(msg),"_blank");
 }
-function agradecerAbonoWA(desc,monto,monP){
-  var msg="¡Gracias "+desc+"! ✅ Recibí tu pago de *"+f2(monto)+" "+monP+"*. Quedó registrado. 🙌";
+function agradecerAbonoWA(p,monto,monP,cuotaN,restante){
+  var msg="¡Gracias "+p.desc+"! ✅ Recibí tu pago"+(cuotaN?" de la *cuota "+cuotaN+"*":"")+" de *"+f2(monto)+" "+monP+"*. Quedó registrado. 🙌\n\n";
+  if(restante<=0.001){
+    msg+="🎉 Con este pago quedaste *totalmente al día* — ¡préstamo saldado! Gracias por tu confianza.";
+  } else if(p.cuotas&&p.cuotas.length>1){
+    // Cuántas cuotas quedan pendientes y cuál es la próxima
+    var totalAbonado=(p.abonos||[]).reduce(function(a,ab){return a+ab.monto;},0);
+    var acumC=0, faltantes=0, proxima=null;
+    p.cuotas.forEach(function(cu){
+      acumC+=cu.monto;
+      if(totalAbonado<acumC-0.01){
+        faltantes++;
+        if(!proxima) proxima=cu;
+      }
+    });
+    msg+="Te quedan *"+faltantes+" cuota"+(faltantes!==1?"s":"")+"* pendiente"+(faltantes!==1?"s":"")+" (saldo: "+f2(restante)+" "+monP+")"+(proxima?" · próxima: "+proxima.fecha+" — "+f2(proxima.monto)+" "+monP:"")+".";
+  } else {
+    msg+="Te queda un saldo pendiente de *"+f2(restante)+" "+monP+"*.";
+  }
   window.open("https://wa.me/?text="+encodeURIComponent(msg),"_blank");
 }
 function enviarOpcionesWA(){
@@ -14147,24 +14174,48 @@ function rPrestamos(){
     if(isPaying){
       var MONEDAS_ABONO=["USDT","VES","BRL","USD","PEN","EUR","COP","TTD"];
       var montoIng=parseFloat(np.monto)||0;
+      // Próxima cuota pendiente — para poder elegir cuál se está pagando
+      // y que el monto se auto-rellene con lo que le toca (editable si el
+      // cliente paga distinto a lo pactado).
+      var _proximaCu=proximaCuotaPendiente(p);
+      var cuotasSelHtml="";
+      if(p.cuotas&&p.cuotas.length>1){
+        var acumSel=0;
+        cuotasSelHtml="<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>¿Qué cuota está pagando?</label>"+
+          "<select onchange='S.nPagarPrest=Object.assign(S.nPagarPrest||{},{cuotaSel:this.value});var _cu=JSON.parse(this.value);if(S.nPagarPrest.moneda===\""+monP+"\"||!S.nPagarPrest.moneda){S.nPagarPrest.monto=_cu.monto;}R()' style='width:100%;padding:11px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
+          "<option value=''>— Abono libre (no ligado a una cuota) —</option>"+
+          p.cuotas.map(function(cu){
+            acumSel+=cu.monto;
+            var cubierta=totalAbonado>=acumSel-0.01;
+            if(cubierta) return "";
+            return "<option value='"+JSON.stringify({n:cu.n,monto:cu.monto,fecha:cu.fecha}).replace(/'/g,"&apos;")+"'"+((_proximaCu&&_proximaCu.n===cu.n)?" selected":"")+">Cuota "+cu.n+" · "+cu.fecha+" · "+f2(cu.monto)+" "+monP+"</option>";
+          }).join("")+
+        "</select></div>";
+      }
       var previewHtml="";
+      var _tasaManual = np.tasaManual!==undefined && np.tasaManual!=="" ? parseFloat(np.tasaManual) : null;
       if(monPago!==monP){
         var rP=getRateToUsdt(monPago),rL=getRateToUsdt(monP);
-        if(rP&&rL){
-          var tasaRef=(monP==="USDT"?rP:(monPago==="USDT"?rL:rL/rP));
-          previewHtml="<div style='font-size:11px;color:#0a6b4e;background:#E3F8EC;border-radius:7px;padding:7px 10px;margin-top:6px'>💱 Tasa de referencia: 1 "+monPago+" ≈ "+f4(tasaRef)+" "+monP+"</div>";
-          if(montoIng>0){
-            var usdtEq=monPago==="USDT"?montoIng:montoIng/rP;
-            var equivalente=monP==="USDT"?usdtEq:usdtEq*rL;
-            previewHtml+="<div style='font-size:13px;font-weight:800;color:#0a6b4e;background:#E3F8EC;border-radius:7px;padding:8px 10px;margin-top:5px'>= "+f2(equivalente)+" "+monP+" del préstamo (con tasa actual)</div>";
-          }
-        } else {
-          previewHtml="<div style='font-size:11px;color:#c0392b;background:#FDECEA;border-radius:7px;padding:7px 10px;margin-top:6px'>⚠️ Sin tasa "+monPago+"→"+monP+" configurada — ve a 🧮 Tasas primero</div>";
+        // tasaAuto = cuántas unidades de "monP" (moneda del préstamo)
+        // equivale 1 unidad de "monPago" — fórmula única y consistente
+        // (getRateToUsdt("USDT")=1, así que sirve para cualquier combinación).
+        var tasaAuto=(rP&&rL)?Math.round((rL/rP)*10000)/10000:null;
+        var tasaUsar = (_tasaManual!==null && !isNaN(_tasaManual) && _tasaManual>0) ? _tasaManual : tasaAuto;
+        previewHtml="<div style='margin-top:6px'>"+
+          "<label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>💱 1 "+monPago+" = ? "+monP+" (editable si el cliente pagó a otra tasa)</label>"+
+          "<input type='number' inputmode='decimal' placeholder='"+(tasaAuto?f4(tasaAuto):"—")+"' value='"+(np.tasaManual||"")+"' oninput='S.nPagarPrest=Object.assign(S.nPagarPrest||{},{tasaManual:this.value})' onchange='R()' style='width:100%;padding:9px;font-size:13px;border:1.5px solid #ddd;border-radius:8px;font-family:inherit'>"+
+        "</div>";
+        if(tasaUsar&&montoIng>0){
+          var equivalente=Math.round((montoIng*tasaUsar)*100)/100;
+          previewHtml+="<div style='font-size:13px;font-weight:800;color:#0a6b4e;background:#E3F8EC;border-radius:7px;padding:8px 10px;margin-top:5px'>= "+f2(equivalente)+" "+monP+" del préstamo ("+(_tasaManual!==null?"tasa manual":"tasa actual")+")</div>";
+        } else if(!tasaAuto){
+          previewHtml+="<div style='font-size:11px;color:#c0392b;background:#FDECEA;border-radius:7px;padding:7px 10px;margin-top:6px'>⚠️ Sin tasa configurada — escribe la tasa manual arriba</div>";
         }
       }
       abonoForm="<div style='background:#F0FFF6;border:1px solid #a0e8c0;border-radius:10px;padding:12px;margin-top:10px'>"+
         "<div style='font-size:11px;font-weight:700;color:#0f6e3a;margin-bottom:10px'>💵 Registrar abono · Pendiente: <b>"+f2(saldoPend)+" "+monP+"</b></div>"+
         "<div style='display:flex;flex-direction:column;gap:8px;margin-bottom:10px'>"+
+          cuotasSelHtml+
           "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>¿En qué moneda te está pagando?</label>"+
           "<select onchange='S.nPagarPrest=Object.assign(S.nPagarPrest||{},{moneda:this.value,cuentaId:\"\"});R()' style='width:100%;padding:11px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
             MONEDAS_ABONO.map(function(m){return "<option value='"+m+"'"+(monPago===m?" selected":"")+">"+m+(m===monP?" (moneda del préstamo)":"")+"</option>";}).join("")+
