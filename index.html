@@ -1054,7 +1054,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v66";
+var APP_VERSION = "20260806_v67";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -2381,6 +2381,37 @@ function pagarPrestamo(id){
   if(confirm("Abono registrado ✅\n\n¿Enviar mensaje de agradecimiento a "+p.desc+" por WhatsApp?")){
     agradecerAbonoWA(p,montoIngresado,monPago,_cuotaSel?_cuotaSel.n:null,restante,_descuentoInfo);
   }
+}
+// ── Borrar/revertir un abono individual de un préstamo ──
+// Le devuelve el dinero a la cuenta donde había entrado (exactamente lo
+// que ese abono acreditó, en SU propia moneda — no el equivalente), lo
+// quita del historial, y si el préstamo se había marcado "pagado" por
+// culpa de ese abono, lo regresa a "activo". Para editar un abono: se
+// borra este y se registra uno nuevo con los datos correctos (mismo
+// patrón que ya se usa en el resto de la app).
+function borrarAbonoPrestamo(prestId,abonoId){
+  var p=(S.prestamos||[]).find(function(x){return x.id===prestId;});
+  if(!p||!p.abonos) return;
+  var ab=p.abonos.find(function(x){return x.id===abonoId;});
+  if(!ab) return;
+  var montoReal=parseFloat(ab.montoPago!==undefined?ab.montoPago:ab.monto)||0;
+  var monedaReal=ab.monedaPago||p.mon||"USDT";
+  if(!confirm("¿Borrar este abono de "+f2(montoReal)+" "+monedaReal+" ("+ab.fecha+")?\n\nSe le restará ese monto a la cuenta donde había entrado, y el préstamo vuelve a quedar pendiente por ese valor."))return;
+  showPinEdit(function(){
+    // Restar de la cuenta donde había entrado (en su moneda real)
+    if(ab.cuentaId) ajusteCuentaEgreso(ab.cuentaId,-montoReal);
+    // Quitar el abono del historial
+    p.abonos=p.abonos.filter(function(x){return x.id!==abonoId;});
+    // Recalcular estado del préstamo
+    var totalAbonado=p.abonos.reduce(function(a,x){return a+x.monto;},0);
+    var montoBase=parseFloat(p.monto||p.sal)||0;
+    var restante=Math.round((montoBase-totalAbonado)*100)/100;
+    if(restante>0.001 && p.estado==="pagado"){
+      p.estado="activo"; p.fechaPago=null; p.montoCobrado=null;
+    }
+    logAudit("BORRAR_ABONO_PRESTAMO","Borró abono de "+f2(montoReal)+" "+monedaReal+" ("+ab.fecha+") de "+p.desc+" · pendiente ahora: "+f2(restante));
+    saveData();R();
+  });
 }
 function toggleCuenta(btn){
   var cid=btn.getAttribute("data-cid");
@@ -14313,8 +14344,9 @@ function rPrestamos(){
                 "<span style='font-size:13px;font-weight:700;color:#0f6e3a'>"+f2(ab.montoPago)+" "+ab.monedaPago+"</span>"+
                 "<span style='font-size:10px;color:#888;margin-left:5px'>(= "+f2(ab.monto)+" "+monP+" del préstamo)</span>"
               :"<span style='font-size:13px;font-weight:700;color:#0f6e3a'>"+f2(ab.monto)+" "+monP+"</span>")+
-              "<div style='font-size:10px;color:#888;margin-top:1px'>"+ab.fecha+" · "+nCta+"</div>"+
+              "<div style='font-size:10px;color:#888;margin-top:1px'>"+ab.fecha+" · "+nCta+(ab.cuotaN?" · Cuota "+ab.cuotaN:"")+"</div>"+
             "</div>"+
+            "<button onclick='borrarAbonoPrestamo("+p.id+","+ab.id+")' style='background:none;border:1px solid #ffd5d5;border-radius:7px;padding:5px 8px;cursor:pointer;color:#c0392b;font-size:12px;flex-shrink:0'>🗑️</button>"+
           "</div>";
         }).join("")+
         "<div style='background:#e8e8e8;border-radius:100px;height:6px;margin-top:8px;overflow:hidden'>"+
