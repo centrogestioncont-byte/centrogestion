@@ -1054,7 +1054,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v68";
+var APP_VERSION = "20260806_v69";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -2371,27 +2371,77 @@ function pagarPrestamo(id){
   var c=(S.cuentas||[]).find(function(x){return x.id===np.cuentaId;});
   if(!np.cuentaId||!c){alert("Elige la cuenta donde entró el dinero.");return;}
   var _cuotaSel = (np.cuotaSel && np.cuotaSel!=="") ? JSON.parse(np.cuotaSel) : null;
-  // Detectar si se aplicó descuento por pronto pago: pagó una cuota que
-  // aún no vencía, por menos de lo que le tocaba originalmente.
-  var _descuentoInfo=null;
-  if(_cuotaSel&&_cuotaSel.iso&&_cuotaSel.iso>td()&&monto<_cuotaSel.monto-0.01){
-    var _diasAdel=Math.round((new Date(_cuotaSel.iso+"T00:00:00")-new Date(td()+"T00:00:00"))/86400000);
-    _descuentoInfo={monto:Math.round((_cuotaSel.monto-monto)*100)/100,dias:_diasAdel};
+
+  // Helper: descuento por pronto pago para un monto de capital dado, según
+  // cuántos días falten para la fecha "isoVence" — misma fórmula de siempre.
+  function _calcDescuentoAnticipo(montoCuota, isoVence){
+    if(!isoVence||isoVence<=td()||!p.interesPorCuota) return {descuento:0,dias:0};
+    var dias=Math.round((new Date(isoVence+"T00:00:00")-new Date(td()+"T00:00:00"))/86400000);
+    if(dias<=0) return {descuento:0,dias:0};
+    var frecuencia=p.frecuencia||"mensual";
+    var periodDays={semanal:7,quincenal:15,mensual:30}[frecuencia]||30;
+    var tasaDiaria=p.interesPorCuota/periodDays;
+    var fracInteres=p.capital&&p.monto?Math.max(0,(p.monto-p.capital)/p.monto):0;
+    var capitalCuota=montoCuota*(1-fracInteres);
+    var descuento=Math.round((capitalCuota*(tasaDiaria/100)*dias)*100)/100;
+    return {descuento:Math.max(0,descuento),dias:dias};
   }
-  if(!confirm("Abonar "+f2(montoIngresado)+" "+monPago+(monPago!==mon?" (≈"+f2(monto)+" "+mon+" del préstamo)":"")+" de "+p.desc+(_cuotaSel?" · Cuota "+_cuotaSel.n:"")+(_descuentoInfo?" · con descuento por pronto pago":"")+" → "+c.nombre+". ¿Confirmar?"))return;
+
+  var _descuentoInfo=null;   // para el mensaje: {monto, dias} del descuento aplicado
+  var _excedenteInfo=null;   // para el mensaje: {monto, cuotaN, descuento} si hubo excedente a otra cuota
+  var _abonosAregistrar=[];  // uno o dos abonos, según si hay excedente
+
+  if(_cuotaSel && monto>_cuotaSel.monto+0.01){
+    // ── Pagó MÁS de lo que tocaba en esta cuota: el excedente se aplica
+    // automáticamente a la SIGUIENTE cuota (ya registrada en el cronograma),
+    // con su propio descuento por adelanto si aún no vence. ──
+    var excedente=Math.round((monto-_cuotaSel.monto)*100)/100;
+    var siguienteCu=(p.cuotas||[]).find(function(cu){return cu.n===_cuotaSel.n+1;});
+    if(siguienteCu){
+      var _desc=_calcDescuentoAnticipo(excedente,siguienteCu.iso);
+      var creditoSiguiente=Math.round((excedente+_desc.descuento)*100)/100;
+      // Reparte el efectivo REAL recibido proporcionalmente entre las dos cuotas
+      var cashParaCuota1=Math.round((montoIngresado*(_cuotaSel.monto/monto))*100)/100;
+      var cashParaCuota2=Math.round((montoIngresado-cashParaCuota1)*100)/100;
+      _abonosAregistrar.push({monto:_cuotaSel.monto,montoPago:cashParaCuota1,cuotaN:_cuotaSel.n});
+      _abonosAregistrar.push({monto:creditoSiguiente,montoPago:cashParaCuota2,cuotaN:siguienteCu.n});
+      _excedenteInfo={monto:excedente,cuotaN:siguienteCu.n,fecha:siguienteCu.fecha,descuento:_desc.descuento,dias:_desc.dias};
+    } else {
+      // No hay siguiente cuota (era la última) — todo el excedente se
+      // registra tal cual, sin descuento (no hay a qué cuota aplicarlo).
+      _abonosAregistrar.push({monto:monto,montoPago:montoIngresado,cuotaN:_cuotaSel.n});
+    }
+  } else {
+    // Sin excedente — comportamiento normal. Si pagó MENOS que el monto de
+    // la cuota (porque le aplicaste el descuento manual con el botón
+    // "Aplicar"), se detecta igual que antes para avisar en el mensaje.
+    if(_cuotaSel&&_cuotaSel.iso&&_cuotaSel.iso>td()&&monto<_cuotaSel.monto-0.01){
+      var _d2=_calcDescuentoAnticipo(_cuotaSel.monto,_cuotaSel.iso);
+      _descuentoInfo={monto:Math.round((_cuotaSel.monto-monto)*100)/100,dias:_d2.dias};
+    }
+    _abonosAregistrar.push({monto:monto,montoPago:montoIngresado,cuotaN:_cuotaSel?_cuotaSel.n:null});
+  }
+
+  var confirmMsg="Abonar "+f2(montoIngresado)+" "+monPago+(monPago!==mon?" (≈"+f2(monto)+" "+mon+" del préstamo)":"")+" de "+p.desc+(_cuotaSel?" · Cuota "+_cuotaSel.n:"")+
+    (_descuentoInfo?" · con descuento por pronto pago":"")+
+    (_excedenteInfo?" · excedente de "+f2(_excedenteInfo.monto)+" "+mon+" se aplica a la Cuota "+_excedenteInfo.cuotaN+(_excedenteInfo.descuento>0?" (+"+f2(_excedenteInfo.descuento)+" de descuento)":""):"")+
+    " → "+c.nombre+". ¿Confirmar?";
+  if(!confirm(confirmMsg))return;
   // Acreditar la cuenta con lo REALMENTE recibido (en su propia moneda)
   ajusteCuentaEgreso(np.cuentaId,montoIngresado);
-  // Trackear el abono en la moneda ORIGINAL del préstamo para que el saldo cuadre
-  p.abonos.push({id:Date.now(),fecha:td(),monto:Math.round(monto*100)/100,cuentaId:np.cuentaId,monedaPago:monPago,montoPago:Math.round(montoIngresado*100)/100,cuotaN:_cuotaSel?_cuotaSel.n:null});
+  // Trackear el/los abono(s) en la moneda ORIGINAL del préstamo
+  _abonosAregistrar.forEach(function(ax,idx){
+    p.abonos.push({id:Date.now()+idx,fecha:td(),monto:Math.round(ax.monto*100)/100,cuentaId:np.cuentaId,monedaPago:monPago,montoPago:Math.round(ax.montoPago*100)/100,cuotaN:ax.cuotaN});
+  });
   var nuevoTotal=p.abonos.reduce(function(a,ab){return a+ab.monto;},0);
   var restante=Math.round((montoBase-nuevoTotal)*100)/100;
   if(restante<=0.001){p.estado="pagado";p.fechaPago=td();p.montoCobrado=nuevoTotal;}
-  logAudit("ABONO_PRESTAMO","Abono "+f2(monto)+" "+mon+notaPago+" de "+p.desc+(_cuotaSel?" (Cuota "+_cuotaSel.n+")":"")+(_descuentoInfo?" · descuento pronto pago: "+_descuentoInfo.monto+" "+mon:"")+" → "+c.nombre+(restante>0.001?" · pendiente: "+f2(restante):" · SALDADO"));
+  logAudit("ABONO_PRESTAMO","Abono "+f2(montoIngresado)+" "+monPago+notaPago+" de "+p.desc+(_cuotaSel?" (Cuota "+_cuotaSel.n+")":"")+(_descuentoInfo?" · descuento pronto pago: "+_descuentoInfo.monto+" "+mon:"")+(_excedenteInfo?" · excedente "+_excedenteInfo.monto+" "+mon+" → Cuota "+_excedenteInfo.cuotaN+" (+"+_excedenteInfo.descuento+" descuento)":"")+" → "+c.nombre+(restante>0.001?" · pendiente: "+f2(restante):" · SALDADO"));
   S._pagarPrestId=null;S.nPagarPrest={cuentaId:"",monto:"",moneda:"",tasaManual:"",cuotaSel:""};
   saveData();R();
   // Agradecimiento automático por WhatsApp al registrar el abono
   if(confirm("Abono registrado ✅\n\n¿Enviar mensaje de agradecimiento a "+p.desc+" por WhatsApp?")){
-    agradecerAbonoWA(p,montoIngresado,monPago,_cuotaSel?_cuotaSel.n:null,restante,_descuentoInfo);
+    agradecerAbonoWA(p,montoIngresado,monPago,_cuotaSel?_cuotaSel.n:null,restante,_descuentoInfo,_excedenteInfo);
   }
 }
 // ── Borrar/revertir un abono individual de un préstamo ──
@@ -3743,11 +3793,16 @@ function recordarCuotaWA(id){
   }
   window.open("https://wa.me/?text="+encodeURIComponent(msg),"_blank");
 }
-function agradecerAbonoWA(p,montoPagado,monPago,cuotaN,restante,descuentoInfo){
+function agradecerAbonoWA(p,montoPagado,monPago,cuotaN,restante,descuentoInfo,excedenteInfo){
   var monLoan=p.mon||"USDT";
   var msg="¡Gracias "+p.desc+"! ✅ Recibí tu pago"+(cuotaN?" de la *cuota "+cuotaN+"*":"")+" de *"+f2(montoPagado)+" "+monPago+"*. Quedó registrado. 🙌\n";
   if(descuentoInfo&&descuentoInfo.monto>0){
     msg+="🏷️ Por pagar "+descuentoInfo.dias+" día"+(descuentoInfo.dias!==1?"s":"")+" antes, te apliqué *"+f2(descuentoInfo.monto)+" "+monLoan+" de descuento*. ¡Gracias por adelantarte!\n";
+  }
+  if(excedenteInfo&&excedenteInfo.monto>0){
+    msg+="💰 Pagaste *"+f2(excedenteInfo.monto)+" "+monLoan+" de más* — ese excedente se lo apliqué a tu *cuota "+excedenteInfo.cuotaN+"*"+
+      (excedenteInfo.descuento>0?" (+ *"+f2(excedenteInfo.descuento)+" "+monLoan+" de descuento* por adelantarla "+excedenteInfo.dias+" día"+(excedenteInfo.dias!==1?"s":"")+")":"")+
+      ". ¡Gracias!\n";
   }
   msg+="\n";
   if(restante<=0.001){
@@ -14395,10 +14450,12 @@ function rPrestamos(){
         "</select></div>";
       }
       // ── Sugerencia de descuento por pago anticipado ──
-      // Si la cuota seleccionada aún no vence, se calcula cuánto interés
-      // "de más" tiene esa cuota por los días que faltan — igual que el
-      // cargo por días de gracia, pero al revés. Es solo una SUGERENCIA:
-      // tú decides si se lo aplicas o no, editando el monto a cobrar.
+      // Dos casos: (1) la cuota que eligió TODAVÍA no vence → se le puede
+      // dar descuento sobre ella completa. (2) la cuota que eligió YA
+      // vence/venció (se cobra completa, sin descuento) pero paga DE MÁS
+      // → ese excedente se aplica a la SIGUIENTE cuota, con el descuento
+      // de esa cuota siguiente por adelantarse. Es solo una SUGERENCIA:
+      // tú decides si se aplica, tocando el botón.
       var descuentoAnticipoHtml="";
       (function(){
         var _cuSelRaw=(S.nPagarPrest&&S.nPagarPrest.cuotaSel)?S.nPagarPrest.cuotaSel:"";
@@ -14406,24 +14463,35 @@ function rPrestamos(){
         var _cuSel=JSON.parse(_cuSelRaw);
         if(!_cuSel.iso) return;
         var hoyIso=td();
-        if(_cuSel.iso<=hoyIso) return; // ya venció o vence hoy, no aplica
-        var diasAdelanto=Math.round((new Date(_cuSel.iso+"T00:00:00")-new Date(hoyIso+"T00:00:00"))/86400000);
-        if(diasAdelanto<=0) return;
-        var frecuencia=p.frecuencia||"mensual";
-        var periodDays={semanal:7,quincenal:15,mensual:30}[frecuencia]||30;
-        var tasaDiaria=p.interesPorCuota/periodDays;
-        // El descuento se calcula sobre el CAPITAL proporcional de esa
-        // cuota (monto de la cuota menos su parte de interés estimada),
-        // para no descontar interés sobre interés.
-        var fracInteres=p.capital&&p.monto?Math.max(0,(p.monto-p.capital)/p.monto):0;
-        var capitalCuota=_cuSel.monto*(1-fracInteres);
-        var descuento=Math.round((capitalCuota*(tasaDiaria/100)*diasAdelanto)*100)/100;
-        if(descuento<=0) return;
-        var montoSugerido=Math.round((_cuSel.monto-descuento)*100)/100;
-        descuentoAnticipoHtml="<div style='background:#EAF6FF;border:1px solid #a8d8f0;border-radius:9px;padding:10px 12px;margin-top:-2px'>"+
-          "<div style='font-size:11px;color:#1a5f8a'>💡 Está pagando <b>"+diasAdelanto+" día"+(diasAdelanto!==1?"s":"")+" antes</b> de la fecha ("+_cuSel.fecha+"). Descuento sugerido por pronto pago: <b>"+f2(descuento)+" "+monP+"</b></div>"+
-          "<button type='button' onclick='S.nPagarPrest=Object.assign(S.nPagarPrest||{},{monto:\""+montoSugerido+"\"});R()' style='margin-top:6px;padding:8px 12px;border:none;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer;background:#1a5f8a;color:#fff;font-family:inherit'>Aplicar: cobrar "+f2(montoSugerido)+" "+monP+"</button>"+
-        "</div>";
+        if(_cuSel.iso>hoyIso){
+          // Caso 1: la cuota elegida en sí es anticipada
+          var diasAdelanto=Math.round((new Date(_cuSel.iso+"T00:00:00")-new Date(hoyIso+"T00:00:00"))/86400000);
+          if(diasAdelanto<=0) return;
+          var frecuencia=p.frecuencia||"mensual";
+          var periodDays={semanal:7,quincenal:15,mensual:30}[frecuencia]||30;
+          var tasaDiaria=p.interesPorCuota/periodDays;
+          var fracInteres=p.capital&&p.monto?Math.max(0,(p.monto-p.capital)/p.monto):0;
+          var capitalCuota=_cuSel.monto*(1-fracInteres);
+          var descuento=Math.round((capitalCuota*(tasaDiaria/100)*diasAdelanto)*100)/100;
+          if(descuento<=0) return;
+          var montoSugerido=Math.round((_cuSel.monto-descuento)*100)/100;
+          descuentoAnticipoHtml="<div style='background:#EAF6FF;border:1px solid #a8d8f0;border-radius:9px;padding:10px 12px;margin-top:-2px'>"+
+            "<div style='font-size:11px;color:#1a5f8a'>💡 Está pagando <b>"+diasAdelanto+" día"+(diasAdelanto!==1?"s":"")+" antes</b> de la fecha ("+_cuSel.fecha+"). Descuento sugerido: <b>"+f2(descuento)+" "+monP+"</b></div>"+
+            "<button type='button' onclick='S.nPagarPrest=Object.assign(S.nPagarPrest||{},{monto:\""+montoSugerido+"\"});R()' style='margin-top:6px;padding:8px 12px;border:none;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer;background:#1a5f8a;color:#fff;font-family:inherit'>Aplicar: cobrar "+f2(montoSugerido)+" "+monP+"</button>"+
+          "</div>";
+        } else if(montoIng>_cuSel.monto+0.009 && p.cuotas){
+          // Caso 2: la cuota elegida ya vence/venció (se cobra completa),
+          // y está pagando de más. pagarPrestamo() ya reparte esto
+          // automáticamente a la siguiente cuota con su descuento al
+          // confirmar — esto es solo un AVISO informativo, no hace falta
+          // botón porque no requiere que toques nada más.
+          var _siguiente=(p.cuotas||[]).find(function(cu){return cu.n===_cuSel.n+1;});
+          if(_siguiente&&_siguiente.iso&&_siguiente.iso>td()){
+            descuentoAnticipoHtml="<div style='background:#EAF6FF;border:1px solid #a8d8f0;border-radius:9px;padding:10px 12px;margin-top:-2px'>"+
+              "<div style='font-size:11px;color:#1a5f8a'>💡 Cuota "+_cuSel.n+" se cobra completa ("+f2(_cuSel.monto)+" "+monP+"). El excedente se adelantará solo a la Cuota "+_siguiente.n+" ("+_siguiente.fecha+") con descuento por pronto pago al confirmar el abono.</div>"+
+            "</div>";
+          }
+        }
       })();
       var previewHtml="";
       var _tasaManual = np.tasaManual!==undefined && np.tasaManual!=="" ? parseFloat(np.tasaManual) : null;
