@@ -1054,7 +1054,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v73";
+var APP_VERSION = "20260806_v74";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -3353,6 +3353,14 @@ function delEgPer(id){reqDelPersonal(id);}
 function pagEg(id){pagarEgreso(id);}
 
 // ── Marcar cobrado ──
+// Descripción libre para una cuenta por cobrar (aparte del nombre del
+// cliente) — se edita directo en la tarjeta, sin formulario aparte.
+function editarNotaCuentaCobrar(id,val){
+  var c=(S.cuentasCobrar||[]).find(function(x){return x.id===id;});
+  if(!c) return;
+  c.notaDesc=(val||"").trim();
+  saveData();
+}
 function toggleAbonarCobrar(id){
   S._abonarCobrarId=(S._abonarCobrarId===id?null:id);
   if(S._abonarCobrarId){
@@ -4114,7 +4122,7 @@ function savePr(){
     }
   }
   S.prestamos.push({
-    id:Date.now(),d:ds(f.date),desc:f.desc,
+    id:Date.now(),d:ds(f.date),desc:f.desc,notaDesc:(f.notaDesc||"").trim(),
     mon:mon,monto:montoTotal,capital:capital,interesPct:tasaEfectiva,interesPorCuota:tasaInteres,diasExtraPrimeraCuota:diasExtra,
     numCuotas:numCuotas,frecuencia:frecuencia,cuotas:cuotas,
     usdt:Math.round((usdt||0)*100)/100,
@@ -4125,7 +4133,7 @@ function savePr(){
     saldo:Math.round((usdt||0)*100)/100,soc:f.desc,locked:false
   });
   logAudit("PRESTAMO","Prestó "+capital+" "+mon+(conInteres?" + "+tasaInteres+"%/cuota × "+numCuotas+" = "+tasaEfectiva+"% interés total (a cobrar: "+montoTotal+")":"")+" a "+f.desc+(numCuotas>1?" en "+numCuotas+" cuotas "+frecuencia+"s":"")+(f.cuentaId?" (de "+nombreCuentaEg(f.cuentaId)+")":""));
-  S.nPr={date:td(),desc:"",mon:"USDT",monto:"",cuentaId:"",conInteres:false,tasaInteres:"",numCuotas:1,frecuencia:"mensual",monedaOrigen:"",tasaOrigen:""};
+  S.nPr={date:td(),desc:"",mon:"USDT",monto:"",cuentaId:"",conInteres:false,tasaInteres:"",numCuotas:1,frecuencia:"mensual",monedaOrigen:"",tasaOrigen:"",notaDesc:""};
   try{localStorage.removeItem("nPr_draft_v1");}catch(e){}
   saveData();R();
 }
@@ -8067,6 +8075,28 @@ function selClTx(cod,nombre){
   var c=document.getElementById("tx-cod");if(c)c.value=cod;
   var n=document.getElementById("tx-nm");if(n){n.value=nombre;n.style.background="#f0fff4";n.style.borderColor="#1a6b3c";}
   var l=document.getElementById("tx-lista");if(l)l.style.display="none";
+}
+// ── Buscador de cliente por código para Préstamos — usa la MISMA base de
+// clientes que las remesas (S.clientes), para que el nombre quede
+// consistente en todos lados (remesas, préstamos, cuentas por cobrar) en
+// vez de escribirlo distinto cada vez.
+function buscarClientePr(val){
+  S.nPr.desc=val;
+  var lista=document.getElementById("pr-cl-lista");
+  if(!lista)return;
+  var exacto=S.clientes.find(function(c){return c.cod.toLowerCase()===val.toLowerCase();});
+  if(exacto){S.nPr.desc=exacto.n;lista.style.display="none";R();return;}
+  var ql=val.toLowerCase();
+  var res=ql.length>=1?S.clientes.filter(function(c){return c.cod.toLowerCase().indexOf(ql)!==-1||c.n.toLowerCase().indexOf(ql)!==-1;}):[];
+  if(res.length&&ql.length>=1){
+    lista.innerHTML=res.slice(0,8).map(function(cl){return "<div onclick='selClPr(\""+cl.cod+"\",\""+cl.n.replace(/"/g,"&quot;")+"\")' style='padding:8px 12px;cursor:pointer;border-bottom:1px solid #f0f0f0;font-size:12px' onmouseover='this.style.background=\"#f6fffe\"' onmouseout='this.style.background=\"\"'><b style='color:#1a6b3c'>"+cl.cod+"</b> · "+cl.n+"</div>";}).join("");
+    lista.style.display="block";
+  }else{lista.style.display="none";}
+}
+function selClPr(cod,nombre){
+  S.nPr.desc=nombre;
+  var l=document.getElementById("pr-cl-lista");if(l)l.style.display="none";
+  R();
 }
 
 // Cierre automático: al cargar (2 seg) + a medianoche exacta + cada 5 min de respaldo
@@ -14331,7 +14361,7 @@ function rCuentasCobrar(){
           :"<span style='background:#D1FAE5;color:#065f46;border:1px solid #10b981;border-radius:10px;padding:3px 10px;font-size:10px;font-weight:700;white-space:nowrap'>✅ Cobrado</span>")+
       "</div>"+
       // Fila 2: cliente + monto
-      "<div style='display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px'>"+
+      "<div style='display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:2px'>"+
         "<div style='font-size:15px;font-weight:800;color:#1a3558;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>"+c.cliente+"</div>"+
         "<div style='text-align:right;flex-shrink:0'>"+
           "<div style='font-size:17px;font-weight:800;color:"+(isPend&&saldoPend<c.monto?"#c0392b":"#1a3558")+"'>"+monIcon+" "+f2(isPend&&tieneAbonos?saldoPend:c.monto)+" "+c.moneda+"</div>"+
@@ -14339,6 +14369,8 @@ function rCuentasCobrar(){
           "<div style='font-size:11px;color:#0f6e3a;font-weight:700;margin-top:1px'>$"+f2(c.ganancia)+" USDT</div>"+
         "</div>"+
       "</div>"+
+      // Descripción editable — se guarda al salir del campo
+      "<input type='text' placeholder='+ agregar descripción' value='"+(c.notaDesc||"")+"' onchange='editarNotaCuentaCobrar("+c.id+",this.value)' style='width:100%;border:none;border-bottom:1px dashed #ddd;background:transparent;font-size:11px;color:#888;font-style:italic;padding:3px 0;margin-bottom:10px;font-family:inherit'>"+
       // Fila 3: botones
       (isPend?"<div style='display:flex;gap:8px'>"+
         "<button onclick='toggleAbonarCobrar("+c.id+")' style='flex:1;padding:12px;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;background:"+(isAbonar?"#555":"#1a3558")+";color:#fff'>"+(isAbonar?"✕ Cerrar":"💵 Abonar")+"</button>"+
@@ -14457,7 +14489,7 @@ function rPrestamos(){
   // apariencia visual sin guardarse, y por eso el botón de guardar
   // seguía rechazando el préstamo con "completa fecha" aunque se viera
   // lleno en pantalla).
-  S.nPr=Object.assign({date:td(),desc:"",mon:"USDT",monto:"",cuentaId:"",conInteres:false,tasaInteres:"",numCuotas:1,frecuencia:"mensual",monedaOrigen:"",tasaOrigen:""},S.nPr||{});
+  S.nPr=Object.assign({date:td(),desc:"",mon:"USDT",monto:"",cuentaId:"",conInteres:false,tasaInteres:"",numCuotas:1,frecuencia:"mensual",monedaOrigen:"",tasaOrigen:"",notaDesc:""},S.nPr||{});
   if(!S.nPr.date) S.nPr.date=td();
   var f=S.nPr;
   if(!S.nPr){S.nPr=f;}
@@ -14700,7 +14732,7 @@ function rPrestamos(){
       // Fila 1: fecha + origen
       "<div style='font-size:10px;color:#aaa;margin-bottom:6px'>"+p.d+(p.cuentaId?" · de "+nombreCuentaEg(p.cuentaId):"")+"</div>"+
       // Fila 2: nombre + monto
-      "<div style='display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px'>"+
+      "<div style='display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:"+(p.notaDesc?"2px":"10px")+"'>"+
         "<div style='font-size:16px;font-weight:800;color:#1a3558;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>👤 "+p.desc+"</div>"+
         "<div style='text-align:right;flex-shrink:0'>"+
           "<div style='font-size:18px;font-weight:800;color:#c0392b'>"+f2(tieneAbonos?saldoPend:montoBase)+" "+monP+"</div>"+
@@ -14708,6 +14740,7 @@ function rPrestamos(){
           (p.usdt&&p.mon&&p.mon!=="USDT"?"<div style='font-size:10px;color:#aaa'>≈ $"+f2(p.usdt)+" USDT</div>":"")+
         "</div>"+
       "</div>"+
+      (p.notaDesc?"<div style='font-size:11px;color:#888;font-style:italic;margin-bottom:10px'>"+p.notaDesc+"</div>":"")+
       capturasHtml+
       // Botones fila extra: compromiso + adjuntar + recordar
       "<div style='display:flex;gap:6px;margin-bottom:8px'>"+
@@ -14864,10 +14897,13 @@ function rPrestamos(){
       "<div style='display:flex;flex-direction:column;gap:10px'>"+
         "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Fecha</label>"+
         "<input type='date' value='"+(f.date||td())+"' onchange='S.nPr.date=this.value' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
-        "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Nombre / A quién</label>"+
-        "<input type='text' list='clientesConocidosList' placeholder='ej: Juan Pérez' value='"+(f.desc||"")+"' oninput='S.nPr.desc=this.value' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
-        "<datalist id='clientesConocidosList'>"+nombresClientesConocidos().map(function(n){return "<option value='"+n.replace(/'/g,"&apos;")+"'>";}).join("")+"</datalist>"+
-        "</div>"+
+        "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Nombre / A quién (código o nombre — busca en tu base de clientes)</label>"+
+        "<div style='position:relative'>"+
+        "<input type='text' placeholder='Escribe código o nombre...' value='"+(f.desc||"")+"' autocomplete='off' oninput='buscarClientePr(this.value)' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
+        "<div id='pr-cl-lista' style='display:none;position:absolute;z-index:50;background:#fff;border:1px solid #ddd;border-radius:8px;box-shadow:0 4px 16px #0002;max-height:180px;overflow-y:auto;width:100%;margin-top:2px'></div>"+
+        "</div></div>"+
+        "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Descripción (opcional)</label>"+
+        "<input type='text' placeholder='ej: para arreglar el carro' value='"+(f.notaDesc||"")+"' oninput='S.nPr.notaDesc=this.value' style='width:100%;padding:12px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
         "<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px'>"+
           "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Moneda</label>"+
           "<select onchange='S.nPr.mon=this.value;S.nPr.cuentaId=\"\";R()' style='width:100%;padding:12px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+monOpts+"</select></div>"+
