@@ -1054,7 +1054,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v70";
+var APP_VERSION = "20260806_v71";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -2386,6 +2386,10 @@ function pagarPrestamo(id){
     var fracInteres=p.capital&&p.monto?Math.max(0,(p.monto-p.capital)/p.monto):0;
     var capitalBase=montoBase2*(1-fracInteres);
     var valor=Math.round((capitalBase*(tasaDiaria/100)*dias)*100)/100;
+    // Tope máximo de $5 por premio de anticipo — sin importar cuántos días
+    // se adelante ni de qué tamaño sea la cuota, nunca se regala más que
+    // eso (si no, con muchos días de anticipo prácticamente no se gana nada).
+    valor=Math.min(valor,5);
     return {valor:Math.max(0,valor),dias:dias};
   }
 
@@ -3797,33 +3801,41 @@ function agradecerAbonoWA(p,montoPagado,monPago,cuotaN,restante,excedenteInfo){
   // Sin emojis: en algunos teléfonos, el link de WhatsApp con emojis largos
   // llega con caracteres corruptos (se ve como "?" o cuadros raros) — texto
   // plano evita ese problema por completo y se lee bien en cualquier equipo.
-  var msg="Hola "+p.desc+"! Recibi tu pago"+(cuotaN?" de la cuota "+cuotaN:"")+" de "+f2(montoPagado)+" "+monPago+". Quedo registrado.\n";
+  var bloques=[];
+  bloques.push("Hola "+p.desc+"!\n\nRecibi tu pago"+(cuotaN?" de la cuota "+cuotaN:"")+" de "+f2(montoPagado)+" "+monPago+".\nQuedo registrado.");
   if(excedenteInfo&&excedenteInfo.creditoTotal>0){
     var partes=[];
-    if(excedenteInfo.excedente>0.009) partes.push(f2(excedenteInfo.excedente)+" "+monLoan+" que pagaste de mas");
-    if(excedenteInfo.premioActual>0.009) partes.push(f2(excedenteInfo.premioActual)+" "+monLoan+" de premio por adelantar la cuota "+excedenteInfo.cuotaActualN+" "+excedenteInfo.diasActual+" dia"+(excedenteInfo.diasActual!==1?"s":""));
-    msg+="Te adelante "+f2(excedenteInfo.creditoTotal)+" "+monLoan+" a la cuota "+excedenteInfo.cuotaN+" ("+partes.join(" + ")+"). Gracias!\n";
+    if(excedenteInfo.excedente>0.009) partes.push("- "+f2(excedenteInfo.excedente)+" "+monLoan+" que pagaste de mas");
+    if(excedenteInfo.premioActual>0.009) partes.push("- "+f2(excedenteInfo.premioActual)+" "+monLoan+" de premio por adelantar la cuota "+excedenteInfo.cuotaActualN+" ("+excedenteInfo.diasActual+" dia"+(excedenteInfo.diasActual!==1?"s":"")+")");
+    bloques.push("Te adelante "+f2(excedenteInfo.creditoTotal)+" "+monLoan+" a la cuota "+excedenteInfo.cuotaN+":\n"+partes.join("\n"));
   }
-  msg+="\n";
   if(restante<=0.001){
-    msg+="Con este pago quedaste totalmente al dia. Prestamo saldado. Gracias por tu confianza.";
+    bloques.push("Con este pago quedaste totalmente al dia.\nPrestamo saldado. Gracias por tu confianza!");
   } else if(p.cuotas&&p.cuotas.length>1){
-    // Cuántas cuotas quedan pendientes y cuál es la próxima (siempre en la
-    // MONEDA DEL PRÉSTAMO, no en la moneda con la que pagó esta vez)
+    // Cuántas cuotas quedan pendientes y cuánto falta REALMENTE de la
+    // próxima (no su valor de cara completo — si ya se le adelantó algo
+    // de crédito, aquí debe verse descontado, o el mensaje diría un
+    // número más alto de lo que en verdad falta).
     var totalAbonado=(p.abonos||[]).reduce(function(a,ab){return a+ab.monto;},0);
-    var acumC=0, faltantes=0, proxima=null;
+    var acumC=0, faltantes=0, proxima=null, proximaRestante=0;
     p.cuotas.forEach(function(cu){
+      var acumPrevio=acumC;
       acumC+=cu.monto;
       if(totalAbonado<acumC-0.01){
         faltantes++;
-        if(!proxima) proxima=cu;
+        if(!proxima){
+          proxima=cu;
+          var yaPagadoDeEsta=Math.max(0,totalAbonado-acumPrevio);
+          proximaRestante=Math.round((cu.monto-yaPagadoDeEsta)*100)/100;
+        }
       }
     });
-    msg+="Te queda"+(faltantes!==1?"n":"")+" "+faltantes+" cuota"+(faltantes!==1?"s":"")+" pendiente"+(faltantes!==1?"s":"")+".\n"+
-      (proxima?"Proxima: "+proxima.fecha+" - "+f2(proxima.monto)+" "+monLoan:"");
+    bloques.push("Te queda"+(faltantes!==1?"n":"")+" "+faltantes+" cuota"+(faltantes!==1?"s":"")+" pendiente"+(faltantes!==1?"s":"")+".\n"+
+      (proxima?"Proxima: "+proxima.fecha+" - "+f2(proximaRestante)+" "+monLoan+(proximaRestante<proxima.monto-0.009?" (ya con el adelanto aplicado)":""):""));
   } else {
-    msg+="Te queda un saldo pendiente de "+f2(restante)+" "+monLoan+".";
+    bloques.push("Te queda un saldo pendiente de "+f2(restante)+" "+monLoan+".");
   }
+  var msg=bloques.join("\n\n");
   window.open("https://wa.me/?text="+encodeURIComponent(msg),"_blank");
 }
 function enviarOpcionesWA(){
@@ -14472,7 +14484,7 @@ function rPrestamos(){
           var tasaDiaria=p.interesPorCuota/periodDays;
           var fracInteres=p.capital&&p.monto?Math.max(0,(p.monto-p.capital)/p.monto):0;
           diasActual=Math.round((new Date(_cuSel.iso+"T00:00:00")-new Date(hoyIso+"T00:00:00"))/86400000);
-          if(diasActual>0) premio=Math.round((_cuSel.monto*(1-fracInteres)*(tasaDiaria/100)*diasActual)*100)/100;
+          if(diasActual>0) premio=Math.min(5,Math.round((_cuSel.monto*(1-fracInteres)*(tasaDiaria/100)*diasActual)*100)/100);
         }
         var excedente=Math.max(0,Math.round((montoIng-_cuSel.monto)*100)/100);
         var creditoTotal=Math.round((excedente+premio)*100)/100;
@@ -14552,12 +14564,20 @@ function rPrestamos(){
       cuotasHtml="<div style='margin-top:10px;padding-top:10px;border-top:1px dashed #ddd'>"+
         "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:6px'>📅 Cronograma"+(p.interesPct?" · capital "+f2(p.capital)+" "+monP+" + "+p.interesPct+"% interés":"")+"</div>"+
         p.cuotas.map(function(cu){
+          var acumPrevio=acumCuota;
           acumCuota+=cu.monto;
           var cubierta=totalAbonado>=acumCuota-0.01;
-          var enCurso=!cubierta&&totalAbonado>(acumCuota-cu.monto+0.01);
-          return "<div style='display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:"+(cubierta?"#F0FFF6":"#FAFAFA")+";border:1px solid "+(cubierta?"#c8ecd5":"#eee")+";border-radius:8px;margin-bottom:4px;font-size:11px'>"+
-            "<span>"+(cubierta?"✅":"⬜")+" Cuota "+cu.n+" · "+cu.fecha+"</span>"+
-            "<span style='font-weight:700;color:"+(cubierta?"#0f6e3a":"#555")+"'>"+f2(cu.monto)+" "+monP+"</span>"+
+          var yaPagadoDeEsta=Math.max(0,totalAbonado-acumPrevio);
+          var restanteDeEsta=Math.round((cu.monto-yaPagadoDeEsta)*100)/100;
+          var enCurso=!cubierta&&yaPagadoDeEsta>0.009;
+          return "<div style='display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:"+(cubierta?"#F0FFF6":enCurso?"#FFF8E8":"#FAFAFA")+";border:1px solid "+(cubierta?"#c8ecd5":enCurso?"#f0d080":"#eee")+";border-radius:8px;margin-bottom:4px;font-size:11px'>"+
+            "<span>"+(cubierta?"✅":enCurso?"🟡":"⬜")+" Cuota "+cu.n+" · "+cu.fecha+"</span>"+
+            (cubierta?
+              "<span style='font-weight:700;color:#0f6e3a'>"+f2(cu.monto)+" "+monP+"</span>"
+            :enCurso?
+              "<span style='text-align:right'><span style='font-weight:700;color:#a06800'>"+f2(restanteDeEsta)+" "+monP+"</span><br><span style='font-size:9px;color:#aaa;font-weight:400'>de "+f2(cu.monto)+" — ya con "+f2(yaPagadoDeEsta)+" adelantado</span></span>"
+            :
+              "<span style='font-weight:700;color:#555'>"+f2(cu.monto)+" "+monP+"</span>")+
           "</div>";
         }).join("")+
       "</div>";
