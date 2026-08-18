@@ -1054,7 +1054,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v74";
+var APP_VERSION = "20260806_v75";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -8099,6 +8099,82 @@ function selClPr(cod,nombre){
   R();
 }
 
+// ── Editar cliente + descripción en un préstamo YA EXISTENTE ──
+function toggleEditarClientePrest(id){
+  S._editarClientePrestId=(S._editarClientePrestId===id?null:id);
+  if(S._editarClientePrestId){
+    var p=(S.prestamos||[]).find(function(x){return x.id===id;});
+    S.nEditPr={desc:(p&&p.desc)||"",notaDesc:(p&&p.notaDesc)||""};
+  }
+  R();
+}
+function buscarClienteEditPr(val){
+  S.nEditPr.desc=val;
+  var lista=document.getElementById("pr-edit-cl-lista");
+  if(!lista)return;
+  var exacto=S.clientes.find(function(c){return c.cod.toLowerCase()===val.toLowerCase();});
+  if(exacto){S.nEditPr.desc=exacto.n;lista.style.display="none";R();return;}
+  var ql=val.toLowerCase();
+  var res=ql.length>=1?S.clientes.filter(function(c){return c.cod.toLowerCase().indexOf(ql)!==-1||c.n.toLowerCase().indexOf(ql)!==-1;}):[];
+  if(res.length&&ql.length>=1){
+    lista.innerHTML=res.slice(0,8).map(function(cl){return "<div onclick='selClEditPr(\""+cl.cod+"\",\""+cl.n.replace(/"/g,"&quot;")+"\")' style='padding:8px 12px;cursor:pointer;border-bottom:1px solid #f0f0f0;font-size:12px' onmouseover='this.style.background=\"#f6fffe\"' onmouseout='this.style.background=\"\"'><b style='color:#1a6b3c'>"+cl.cod+"</b> · "+cl.n+"</div>";}).join("");
+    lista.style.display="block";
+  }else{lista.style.display="none";}
+}
+function selClEditPr(cod,nombre){
+  S.nEditPr.desc=nombre;
+  var l=document.getElementById("pr-edit-cl-lista");if(l)l.style.display="none";
+  R();
+}
+function guardarEditClientePrest(id){
+  var p=(S.prestamos||[]).find(function(x){return x.id===id;});
+  if(!p) return;
+  var d=(S.nEditPr.desc||"").trim();
+  if(!d){alert("El nombre no puede quedar vacío.");return;}
+  p.desc=d; p.notaDesc=(S.nEditPr.notaDesc||"").trim();
+  logAudit("EDITAR_PRESTAMO_CLIENTE","Editó cliente/descripción del préstamo #"+p.id+" → "+d);
+  S._editarClientePrestId=null;
+  saveData();R();
+}
+
+// ── Editar cliente + descripción en una cuenta por cobrar YA EXISTENTE ──
+function toggleEditarClienteCobrar(id){
+  S._editarClienteCobrarId=(S._editarClienteCobrarId===id?null:id);
+  if(S._editarClienteCobrarId){
+    var c=(S.cuentasCobrar||[]).find(function(x){return x.id===id;});
+    S.nEditCC={cliente:(c&&c.cliente)||"",notaDesc:(c&&c.notaDesc)||""};
+  }
+  R();
+}
+function buscarClienteEditCC(val){
+  S.nEditCC.cliente=val;
+  var lista=document.getElementById("cc-edit-cl-lista");
+  if(!lista)return;
+  var exacto=S.clientes.find(function(c){return c.cod.toLowerCase()===val.toLowerCase();});
+  if(exacto){S.nEditCC.cliente=exacto.n;lista.style.display="none";R();return;}
+  var ql=val.toLowerCase();
+  var res=ql.length>=1?S.clientes.filter(function(c){return c.cod.toLowerCase().indexOf(ql)!==-1||c.n.toLowerCase().indexOf(ql)!==-1;}):[];
+  if(res.length&&ql.length>=1){
+    lista.innerHTML=res.slice(0,8).map(function(cl){return "<div onclick='selClEditCC(\""+cl.cod+"\",\""+cl.n.replace(/"/g,"&quot;")+"\")' style='padding:8px 12px;cursor:pointer;border-bottom:1px solid #f0f0f0;font-size:12px' onmouseover='this.style.background=\"#f6fffe\"' onmouseout='this.style.background=\"\"'><b style='color:#1a6b3c'>"+cl.cod+"</b> · "+cl.n+"</div>";}).join("");
+    lista.style.display="block";
+  }else{lista.style.display="none";}
+}
+function selClEditCC(cod,nombre){
+  S.nEditCC.cliente=nombre;
+  var l=document.getElementById("cc-edit-cl-lista");if(l)l.style.display="none";
+  R();
+}
+function guardarEditClienteCobrar(id){
+  var c=(S.cuentasCobrar||[]).find(function(x){return x.id===id;});
+  if(!c) return;
+  var nom=(S.nEditCC.cliente||"").trim();
+  if(!nom){alert("El nombre no puede quedar vacío.");return;}
+  c.cliente=nom.toUpperCase(); c.notaDesc=(S.nEditCC.notaDesc||"").trim();
+  logAudit("EDITAR_COBRAR_CLIENTE","Editó cliente/descripción de cuenta por cobrar #"+c.id+" → "+c.cliente);
+  S._editarClienteCobrarId=null;
+  saveData();R();
+}
+
 // Cierre automático: al cargar (2 seg) + a medianoche exacta + cada 5 min de respaldo
 setTimeout(checkCierreAutomatico, 2000);
 setInterval(checkCierreAutomatico, 300000); // respaldo cada 5 min
@@ -14349,6 +14425,24 @@ function rCuentasCobrar(){
     }
 
     // ── Card principal ──
+    var isEditandoClienteCC=S._editarClienteCobrarId===c.id;
+    var editClienteFormCC="";
+    if(isEditandoClienteCC){
+      var feCC=S.nEditCC||{cliente:c.cliente,notaDesc:c.notaDesc||""};
+      editClienteFormCC="<div style='background:#F8F0FF;border:1px solid #d8b0ff;border-radius:9px;padding:10px;margin-bottom:10px'>"+
+        "<label style='font-size:10px;font-weight:700;color:#7b2d8b;display:block;margin-bottom:4px'>Cliente (código o nombre)</label>"+
+        "<div style='position:relative;margin-bottom:8px'>"+
+        "<input type='text' value='"+(feCC.cliente||"")+"' autocomplete='off' oninput='buscarClienteEditCC(this.value)' style='width:100%;padding:9px;font-size:13px;border:1.5px solid #ddd;border-radius:8px;font-family:inherit'>"+
+        "<div id='cc-edit-cl-lista' style='display:none;position:absolute;z-index:50;background:#fff;border:1px solid #ddd;border-radius:8px;box-shadow:0 4px 16px #0002;max-height:160px;overflow-y:auto;width:100%;margin-top:2px'></div>"+
+        "</div>"+
+        "<label style='font-size:10px;font-weight:700;color:#7b2d8b;display:block;margin-bottom:4px'>Descripción</label>"+
+        "<input type='text' value='"+(feCC.notaDesc||"")+"' oninput='S.nEditCC.notaDesc=this.value' style='width:100%;padding:9px;font-size:13px;border:1.5px solid #ddd;border-radius:8px;font-family:inherit;margin-bottom:8px'>"+
+        "<div style='display:flex;gap:8px'>"+
+          "<button onclick='guardarEditClienteCobrar("+c.id+")' style='flex:1;padding:9px;border:none;border-radius:8px;background:#7b2d8b;color:#fff;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit'>💾 Guardar</button>"+
+          "<button onclick='S._editarClienteCobrarId=null;R()' style='padding:9px 14px;border:1px solid #ddd;border-radius:8px;background:#fff;color:#555;font-size:12px;cursor:pointer;font-family:inherit'>Cancelar</button>"+
+        "</div>"+
+      "</div>";
+    }
     return "<div style='background:#fff;border:1.5px solid "+(isPend?"#F5C518":"#c8ecd5")+";border-radius:14px;padding:14px;margin-bottom:10px'>"+
       // Fila 1: fecha + ruta + estado
       "<div style='display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:8px'>"+
@@ -14362,13 +14456,17 @@ function rCuentasCobrar(){
       "</div>"+
       // Fila 2: cliente + monto
       "<div style='display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:2px'>"+
-        "<div style='font-size:15px;font-weight:800;color:#1a3558;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>"+c.cliente+"</div>"+
+        "<div style='display:flex;align-items:center;gap:6px;flex:1;min-width:0'>"+
+          "<div style='font-size:15px;font-weight:800;color:#1a3558;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>"+c.cliente+"</div>"+
+          "<button onclick='toggleEditarClienteCobrar("+c.id+")' style='flex-shrink:0;background:none;border:none;cursor:pointer;font-size:13px;opacity:.5;padding:2px'>✏️</button>"+
+        "</div>"+
         "<div style='text-align:right;flex-shrink:0'>"+
           "<div style='font-size:17px;font-weight:800;color:"+(isPend&&saldoPend<c.monto?"#c0392b":"#1a3558")+"'>"+monIcon+" "+f2(isPend&&tieneAbonos?saldoPend:c.monto)+" "+c.moneda+"</div>"+
           (isPend&&tieneAbonos?"<div style='font-size:10px;color:#aaa;text-align:right'>de "+f2(c.monto)+" total</div>":"")+
           "<div style='font-size:11px;color:#0f6e3a;font-weight:700;margin-top:1px'>$"+f2(c.ganancia)+" USDT</div>"+
         "</div>"+
       "</div>"+
+      editClienteFormCC+
       // Descripción editable — se guarda al salir del campo
       "<input type='text' placeholder='+ agregar descripción' value='"+(c.notaDesc||"")+"' onchange='editarNotaCuentaCobrar("+c.id+",this.value)' style='width:100%;border:none;border-bottom:1px dashed #ddd;background:transparent;font-size:11px;color:#888;font-style:italic;padding:3px 0;margin-bottom:10px;font-family:inherit'>"+
       // Fila 3: botones
@@ -14728,12 +14826,33 @@ function rPrestamos(){
       "</div>";
     }
 
+    var isEditandoCliente=S._editarClientePrestId===p.id;
+    var editClienteFormPrest="";
+    if(isEditandoCliente){
+      var fe=S.nEditPr||{desc:p.desc,notaDesc:p.notaDesc||""};
+      editClienteFormPrest="<div style='background:#F8F0FF;border:1px solid #d8b0ff;border-radius:9px;padding:10px;margin-bottom:10px'>"+
+        "<label style='font-size:10px;font-weight:700;color:#7b2d8b;display:block;margin-bottom:4px'>Nombre / A quién (código o nombre)</label>"+
+        "<div style='position:relative;margin-bottom:8px'>"+
+        "<input type='text' value='"+(fe.desc||"")+"' autocomplete='off' oninput='buscarClienteEditPr(this.value)' style='width:100%;padding:9px;font-size:13px;border:1.5px solid #ddd;border-radius:8px;font-family:inherit'>"+
+        "<div id='pr-edit-cl-lista' style='display:none;position:absolute;z-index:50;background:#fff;border:1px solid #ddd;border-radius:8px;box-shadow:0 4px 16px #0002;max-height:160px;overflow-y:auto;width:100%;margin-top:2px'></div>"+
+        "</div>"+
+        "<label style='font-size:10px;font-weight:700;color:#7b2d8b;display:block;margin-bottom:4px'>Descripción</label>"+
+        "<input type='text' value='"+(fe.notaDesc||"")+"' oninput='S.nEditPr.notaDesc=this.value' style='width:100%;padding:9px;font-size:13px;border:1.5px solid #ddd;border-radius:8px;font-family:inherit;margin-bottom:8px'>"+
+        "<div style='display:flex;gap:8px'>"+
+          "<button onclick='guardarEditClientePrest("+p.id+")' style='flex:1;padding:9px;border:none;border-radius:8px;background:#7b2d8b;color:#fff;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit'>💾 Guardar</button>"+
+          "<button onclick='S._editarClientePrestId=null;R()' style='padding:9px 14px;border:1px solid #ddd;border-radius:8px;background:#fff;color:#555;font-size:12px;cursor:pointer;font-family:inherit'>Cancelar</button>"+
+        "</div>"+
+      "</div>";
+    }
     return "<div style='background:#fff;border:1.5px solid #f5d5d5;border-radius:14px;padding:14px;margin-bottom:10px'>"+
       // Fila 1: fecha + origen
       "<div style='font-size:10px;color:#aaa;margin-bottom:6px'>"+p.d+(p.cuentaId?" · de "+nombreCuentaEg(p.cuentaId):"")+"</div>"+
       // Fila 2: nombre + monto
       "<div style='display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:"+(p.notaDesc?"2px":"10px")+"'>"+
-        "<div style='font-size:16px;font-weight:800;color:#1a3558;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>👤 "+p.desc+"</div>"+
+        "<div style='display:flex;align-items:center;gap:6px;flex:1;min-width:0'>"+
+          "<div style='font-size:16px;font-weight:800;color:#1a3558;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>👤 "+p.desc+"</div>"+
+          "<button onclick='toggleEditarClientePrest("+p.id+")' style='flex-shrink:0;background:none;border:none;cursor:pointer;font-size:13px;opacity:.5;padding:2px'>✏️</button>"+
+        "</div>"+
         "<div style='text-align:right;flex-shrink:0'>"+
           "<div style='font-size:18px;font-weight:800;color:#c0392b'>"+f2(tieneAbonos?saldoPend:montoBase)+" "+monP+"</div>"+
           (tieneAbonos?"<div style='font-size:10px;color:#aaa;text-align:right'>de "+f2(montoBase)+" total</div>":"")+
@@ -14741,6 +14860,7 @@ function rPrestamos(){
         "</div>"+
       "</div>"+
       (p.notaDesc?"<div style='font-size:11px;color:#888;font-style:italic;margin-bottom:10px'>"+p.notaDesc+"</div>":"")+
+      editClienteFormPrest+
       capturasHtml+
       // Botones fila extra: compromiso + adjuntar + recordar
       "<div style='display:flex;gap:6px;margin-bottom:8px'>"+
