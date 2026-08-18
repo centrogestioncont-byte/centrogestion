@@ -1054,7 +1054,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v71";
+var APP_VERSION = "20260806_v73";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -1967,26 +1967,30 @@ function rTraspasos(){
   var cOrig=S.cuentas.find(function(c){return c.id===f.cuentaOrigen;});
   var cDest=S.cuentas.find(function(c){return c.id===f.cuentaDestino;});
   var monto=parseFloat(f.monto)||0;
-  var canExec=cOrig&&cDest&&monto>0&&cOrig.id!==cDest.id&&cOrig.moneda===cDest.moneda&&cOrig.saldo>=monto;
+  var esConversion = cOrig&&cDest&&cOrig.moneda!==cDest.moneda;
+  var montoDestino = esConversion ? (parseFloat(f.montoDestino)||0) : monto;
+  var canExec = esConversion
+    ? (cOrig&&cDest&&monto>0&&montoDestino>0&&cOrig.id!==cDest.id&&cOrig.saldo>=monto)
+    : (cOrig&&cDest&&monto>0&&cOrig.id!==cDest.id&&cOrig.moneda===cDest.moneda&&cOrig.saldo>=monto);
 
   // History
   var rows=S.traspasos.slice().reverse().map(function(t){
     var co=S.cuentas.find(function(c){return c.id===t.origen;})||{nombre:t.origen};
     var cd=S.cuentas.find(function(c){return c.id===t.destino;})||{nombre:t.destino};
     return "<tr><td>"+t.fecha+"</td><td>"+co.nombre+"</td><td>→</td><td>"+cd.nombre+"</td>"+
-      "<td style='text-align:right;font-weight:700'>"+f2(t.monto)+" "+t.moneda+"</td>"+
-      "<td class='mu'>"+t.nota+"</td>"+
+      "<td style='text-align:right;font-weight:700'>"+f2(t.monto)+" "+t.moneda+(t.monedaDestino&&t.monedaDestino!==t.moneda?" → "+f2(t.montoDestino)+" "+t.monedaDestino:"")+"</td>"+
+      "<td class='mu'>"+t.nota+(t.ganancia?" · gan: "+f2(t.ganancia)+" "+t.monedaDestino:"")+"</td>"+
       "<td style='text-align:center'>"+(t.locked?"🔒":"")+"</td>"+
       "<td><button class='del-btn' onclick='reqDel(\"traspasos\","+t.id+",\"id\")'>🗑️</button></td></tr>";
   }).join("");
 
   return "<div style='background:linear-gradient(135deg,#1a2a4a,#2a5cbf);border-radius:12px;padding:14px 16px;margin-bottom:14px;color:#fff'>"+
     "<div style='font-size:12px;font-weight:700;opacity:.85;margin-bottom:8px'>🔄 TRASPASOS INTERNOS · Mover fondos entre cuentas</div>"+
-    "<div style='font-size:11px;opacity:.7'>Al ejecutar un traspaso, el saldo de la cuenta origen disminuye y el de destino aumenta automáticamente. Ambas cuentas deben tener la misma moneda.</div>"+
+    "<div style='font-size:11px;opacity:.7'>Si eliges cuentas de la MISMA moneda, es un traspaso simple. Si son de monedas DISTINTAS, se convierte — pon cuánto sale y cuánto entra, y la diferencia queda como ganancia/pérdida de ese cambio (útil para compra/venta de efectivo físico, ej. dólares en cash).</div>"+
   "</div>"+
   "<div class='sec'><div class='sec-title'>Nueva transferencia interna</div>"+
   "<div class='f2'><div class='fl'><label>Fecha</label><input type='date' value='"+(f.fecha||"")+"' onchange='S.nTraspaso.fecha=this.value'></div>"+
-  "<div class='fl'><label>Monto</label><input type='number' step='0.01' placeholder='0.00' value='"+(f.monto||"")+"' oninput='S.nTraspaso.monto=this.value'></div></div>"+
+  "<div class='fl'><label>Monto que sale</label><input type='number' step='0.01' placeholder='0.00' value='"+(f.monto||"")+"' oninput='S.nTraspaso.monto=this.value' onblur='R()'></div></div>"+
   "<div class='f2'><div class='fl'><label>Cuenta Origen</label>"+
     "<select onchange='S.nTraspaso.cuentaOrigen=this.value;R()'>"+
       "<option value=''>-- Seleccionar --</option>"+cuentaOpts+
@@ -1995,15 +1999,25 @@ function rTraspasos(){
     "<select onchange='S.nTraspaso.cuentaDestino=this.value;R()'>"+
       "<option value=''>-- Seleccionar --</option>"+cuentaDestOpts+
     "</select></div></div>"+
-  "<div class='fl'><label>Nota</label><input type='text' placeholder='ej: Fondos para P2P' value='"+(f.nota||"")+"' oninput='S.nTraspaso.nota=this.value'></div>"+
+  (esConversion?
+    "<div style='background:#FFF8E8;border:1px solid #f0d080;border-radius:8px;padding:10px 12px;margin-bottom:10px'>"+
+      "<label style='font-size:11px;font-weight:700;color:#7a5c00;display:block;margin-bottom:5px'>💱 Cambio de moneda: "+cOrig.moneda+" → "+cDest.moneda+" — ¿cuánto entró en "+cDest.moneda+"?</label>"+
+      "<input type='number' step='0.01' placeholder='0.00' value='"+(f.montoDestino||"")+"' oninput='S.nTraspaso.montoDestino=this.value' onblur='R()' style='width:100%;padding:10px;font-size:15px;border:1.5px solid #ddd;border-radius:8px;font-family:inherit'>"+
+      (monto>0&&montoDestino>0?"<div style='font-size:11px;color:#7a5c00;margin-top:6px'>Tasa efectiva: 1 "+cOrig.moneda+" = "+f4(montoDestino/monto)+" "+cDest.moneda+"</div>":"")+
+    "</div>"
+  :"")+
+  "<div class='fl'><label>Nota</label><input type='text' placeholder='ej: Compra de dólares en efectivo' value='"+(f.nota||"")+"' oninput='S.nTraspaso.nota=this.value'></div>"+
   // Preview
   (cOrig&&cDest&&monto>0?
     "<div style='background:"+(canExec?"#D6F5E3":"#FDECEA")+";border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:12px'>"+
       (canExec
-        ?"✅ <b>"+cOrig.nombre+"</b> → <b>"+f2(monto)+" "+cOrig.moneda+"</b> → <b>"+cDest.nombre+"</b><br>"+
-         "<span style='font-size:11px;color:#555'>Saldo origen después: "+f2(cOrig.saldo-monto)+" "+cOrig.moneda+"</span>"
+        ?(esConversion
+          ?"✅ <b>"+cOrig.nombre+"</b> → <b>"+f2(monto)+" "+cOrig.moneda+"</b> → <b>"+f2(montoDestino)+" "+cDest.moneda+"</b> en <b>"+cDest.nombre+"</b><br>"+
+           "<span style='font-size:11px;color:#555'>Saldo "+cOrig.nombre+" después: "+f2(cOrig.saldo-monto)+" "+cOrig.moneda+" · Saldo "+cDest.nombre+" después: "+f2(cDest.saldo+montoDestino)+" "+cDest.moneda+"</span>"
+          :"✅ <b>"+cOrig.nombre+"</b> → <b>"+f2(monto)+" "+cOrig.moneda+"</b> → <b>"+cDest.nombre+"</b><br>"+
+           "<span style='font-size:11px;color:#555'>Saldo origen después: "+f2(cOrig.saldo-monto)+" "+cOrig.moneda+"</span>")
         :"❌ "+
-         (cOrig.moneda!==cDest.moneda?"Las cuentas deben tener la misma moneda ("+cOrig.moneda+" ≠ "+cDest.moneda+")":"Saldo insuficiente en "+cOrig.nombre+" (disponible: "+f2(cOrig.saldo)+" "+cOrig.moneda+")"))+
+         (esConversion&&montoDestino<=0?"Escribe cuánto entró en "+cDest.moneda:"Saldo insuficiente en "+cOrig.nombre+" (disponible: "+f2(cOrig.saldo)+" "+cOrig.moneda+")"))+
     "</div>":"")+
   "<button class='btn-main btn-blue' onclick='saveTraspaso()' "+(canExec?"":"disabled style='opacity:.5;cursor:not-allowed'")+">🔄 Ejecutar traspaso</button></div>"+
   (rows?
@@ -2020,13 +2034,24 @@ function saveTraspaso(){
   var cD=S.cuentas.find(function(c){return c.id===f.cuentaDestino;});
   var monto=parseFloat(f.monto)||0;
   if(!cO||!cD||monto<=0){alert("Datos inválidos.");return;}
-  if(cO.moneda!==cD.moneda){alert("Las cuentas deben tener la misma moneda.");return;}
   if(cO.saldo<monto){alert("Saldo insuficiente en "+cO.nombre+" (disponible: "+f2(cO.saldo)+" "+cO.moneda+")");return;}
+  var esConv=cO.moneda!==cD.moneda;
+  var montoDest=monto;
+  var ganancia=0;
+  if(esConv){
+    montoDest=parseFloat(f.montoDestino)||0;
+    if(montoDest<=0){alert("Escribe cuánto entró en "+cD.moneda+".");return;}
+    // La "ganancia" de este cambio no se puede expresar en una sola moneda
+    // de forma exacta sin una tasa de referencia común — se registra el
+    // movimiento real de ambas cuentas, y si quieres contabilizar la
+    // ganancia de la operación, usa Egresos → Ganancia Extra con el
+    // monto que corresponda en la moneda que prefieras.
+  }
   // Execute transfer
   cO.saldo=Math.round((cO.saldo-monto)*10000)/10000;
-  cD.saldo=Math.round((cD.saldo+monto)*10000)/10000;
-  S.traspasos.push({id:Date.now(),fecha:f.fecha,origen:f.cuentaOrigen,destino:f.cuentaDestino,moneda:cO.moneda,monto:monto,nota:f.nota||"",locked:true});
-  S.nTraspaso={fecha:f.fecha,cuentaOrigen:"",cuentaDestino:"",monto:"",nota:""};
+  cD.saldo=Math.round((cD.saldo+montoDest)*10000)/10000;
+  S.traspasos.push({id:Date.now(),fecha:f.fecha,origen:f.cuentaOrigen,destino:f.cuentaDestino,moneda:cO.moneda,monto:monto,monedaDestino:cD.moneda,montoDestino:montoDest,nota:f.nota||"",locked:true});
+  S.nTraspaso={fecha:f.fecha,cuentaOrigen:"",cuentaDestino:"",monto:"",montoDestino:"",nota:""};
   saveData();R();
 }
 
@@ -3330,37 +3355,71 @@ function pagEg(id){pagarEgreso(id);}
 // ── Marcar cobrado ──
 function toggleAbonarCobrar(id){
   S._abonarCobrarId=(S._abonarCobrarId===id?null:id);
-  if(S._abonarCobrarId) S.nAbonoCobrar={monto:"",cuentaId:"",nota:""};
+  if(S._abonarCobrarId){
+    var cc=(S.cuentasCobrar||[]).find(function(x){return x.id===id;});
+    S.nAbonoCobrar={monto:"",cuentaId:"",nota:"",moneda:(cc&&cc.moneda)||"BRL",tasaManual:""};
+  }
   R();
 }
 function saveAbonoCobrar(id){
   var c=(S.cuentasCobrar||[]).find(function(x){return x.id===id;});
   if(!c) return;
-  var monto=parseFloat((S.nAbonoCobrar||{}).monto)||0;
-  if(monto<=0){alert("Pon el monto del abono.");return;}
+  var na=S.nAbonoCobrar||{};
+  var montoIngresado=parseFloat(na.monto)||0;
+  if(montoIngresado<=0){alert("Pon el monto del abono.");return;}
+  var monCobrar=c.moneda||"BRL";      // moneda ORIGINAL de la cuenta por cobrar
+  var monPago=na.moneda||monCobrar;   // moneda en la que REALMENTE está pagando
+
+  // ── Si paga en una moneda distinta a la de la cuenta por cobrar,
+  // convertir usando tasas (o la tasa manual si la escribió) ──
+  var monto=montoIngresado;
+  var notaPago="";
+  if(monPago!==monCobrar){
+    var tasaManual = na.tasaManual!==undefined && na.tasaManual!=="" ? parseFloat(na.tasaManual) : null;
+    if(tasaManual!==null && !isNaN(tasaManual) && tasaManual>0){
+      monto = Math.round((montoIngresado*tasaManual)*100)/100;
+      notaPago=" (pagó "+f2(montoIngresado)+" "+monPago+" a tasa manual "+f4(tasaManual)+")";
+    } else {
+      var rPago=getRateToUsdt(monPago);
+      var rCobrar=getRateToUsdt(monCobrar);
+      if(!rPago||!rCobrar){
+        alert("No hay tasa disponible para convertir "+monPago+" → "+monCobrar+".\nConfigura la tasa en 🧮 Tasas, escribe una tasa manual, o ingresa el monto ya convertido a "+monCobrar+".");
+        return;
+      }
+      var usdtEquiv=monPago==="USDT"?montoIngresado:montoIngresado/rPago;
+      monto=monCobrar==="USDT"?usdtEquiv:usdtEquiv*rCobrar;
+      monto=Math.round(monto*100)/100;
+      notaPago=" (pagó "+f2(montoIngresado)+" "+monPago+")";
+    }
+  }
+
   if(!c.abonos) c.abonos=[];
   var totalAbonado=c.abonos.reduce(function(a,ab){return a+ab.monto;},0);
   var pendiente=Math.round((c.monto-totalAbonado)*100)/100;
   if(monto>pendiente+0.01){
-    if(!confirm("El abono ("+f2(monto)+" "+c.moneda+") supera el saldo pendiente ("+f2(pendiente)+" "+c.moneda+").\nSe registrará solo el saldo restante ("+f2(pendiente)+").\n¿Continuar?"))return;
+    if(!confirm("El abono equivale a "+f2(monto)+" "+monCobrar+notaPago+", que supera el saldo pendiente ("+f2(pendiente)+" "+monCobrar+").\nSe ajustará al saldo restante.\n¿Continuar?"))return;
+    var factor=monto>0?(pendiente/monto):0;
+    montoIngresado=Math.round(montoIngresado*factor*100)/100;
     monto=pendiente;
   }
-  var cuentaId=(S.nAbonoCobrar||{}).cuentaId;
+  var cuentaId=na.cuentaId;
   var cta=cuentaId?(S.cuentas||[]).find(function(x){return x.id===cuentaId;}):null;
   if(cuentaId&&cta){
-    if(cta.moneda&&c.moneda&&cta.moneda!==c.moneda){
-      if(!confirm("⚠️ La cuenta \""+cta.nombre+"\" es en "+cta.moneda+" pero el abono es en "+c.moneda+".\n¿Acreditar igual?"))return;
+    if(cta.moneda&&monPago&&cta.moneda!==monPago){
+      if(!confirm("⚠️ La cuenta \""+cta.nombre+"\" es en "+cta.moneda+" pero dijiste que pagó en "+monPago+".\n¿Acreditar igual?"))return;
     } else {
-      if(!confirm("Acreditar "+f2(monto)+" "+c.moneda+" en \""+cta.nombre+"\". ¿Confirmar?"))return;
+      if(!confirm("Acreditar "+f2(montoIngresado)+" "+monPago+(monPago!==monCobrar?" (≈"+f2(monto)+" "+monCobrar+")":"")+" en \""+cta.nombre+"\". ¿Confirmar?"))return;
     }
-    ajusteCuentaEgreso(cuentaId,monto);
+    // Acreditar la cuenta con lo REALMENTE recibido, en SU propia moneda
+    ajusteCuentaEgreso(cuentaId,montoIngresado);
   }
-  c.abonos.push({id:Date.now(),fecha:td(),monto:Math.round(monto*100)/100,cuentaId:cuentaId||"",nota:(S.nAbonoCobrar||{}).nota||""});
+  // Trackear el abono en la moneda ORIGINAL de la cuenta por cobrar para que el saldo cuadre
+  c.abonos.push({id:Date.now(),fecha:td(),monto:Math.round(monto*100)/100,cuentaId:cuentaId||"",nota:na.nota||"",monedaPago:monPago,montoPago:Math.round(montoIngresado*100)/100});
   var nuevoTotal=c.abonos.reduce(function(a,ab){return a+ab.monto;},0);
   var restante=Math.round((c.monto-nuevoTotal)*100)/100;
   if(restante<=0.001){c.estado="cobrado";c.fechaCobro=td();}
-  logAudit("ABONO_COBRAR","Abono "+f2(monto)+" "+c.moneda+" de "+c.cliente+(restante>0.001?" · pendiente: "+f2(restante):" · COBRADO TOTAL"));
-  S._abonarCobrarId=null;S.nAbonoCobrar={monto:"",cuentaId:"",nota:""};
+  logAudit("ABONO_COBRAR","Abono "+f2(monto)+" "+monCobrar+notaPago+" de "+c.cliente+(restante>0.001?" · pendiente: "+f2(restante):" · COBRADO TOTAL"));
+  S._abonarCobrarId=null;S.nAbonoCobrar={monto:"",cuentaId:"",nota:"",moneda:"",tasaManual:""};
   saveData();R();
 }
 function eliminarAbonoCobrar(cobrarId,abonoId){
@@ -14150,6 +14209,13 @@ function reqDelPersonal(id){
 }
 function rCuentasCobrar(){
   var lista=S.cuentasCobrar||[];
+  // Filtro por cliente — escribes un nombre y solo se muestran sus
+  // registros, sin importar en qué fecha estén, para no tener que bajar
+  // por toda la lista buscando cuáles son de esa persona.
+  var _filtro=(S._filtroCliente||"").trim().toUpperCase();
+  if(_filtro){
+    lista=lista.filter(function(c){return (c.cliente||"").toUpperCase().indexOf(_filtro)!==-1;});
+  }
   var pendientes=lista.filter(function(c){return c.estado==="pendiente";});
   var cobradas=lista.filter(function(c){return c.estado==="cobrado";});
   // Ordenar cobradas: más reciente primero
@@ -14158,6 +14224,10 @@ function rCuentasCobrar(){
   var ganPend=pendientes.reduce(function(a,c){return a+(c.ganancia||0);},0);
   var totalCob=cobradas.reduce(function(a,c){return a+(c.monto||0);},0);
   var ganCob=cobradas.reduce(function(a,c){return a+(c.ganancia||0);},0);
+  var buscadorHtml="<div style='display:flex;gap:8px;margin-bottom:14px'>"+
+    "<input type='text' placeholder='🔍 Buscar cliente...' value='"+(S._filtroCliente||"")+"' oninput='S._filtroCliente=this.value' onblur='R()' onkeyup='if(event.key===\"Enter\")R()' style='flex:1;padding:11px 14px;font-size:14px;border:1.5px solid #ddd;border-radius:10px;font-family:inherit'>"+
+    (S._filtroCliente?"<button onclick='S._filtroCliente=\"\";R()' style='padding:11px 16px;border:none;border-radius:10px;background:#c0392b;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit'>✕</button>":"")+
+  "</div>";
 
   function rowCuenta(c){
     var isPend=c.estado==="pendiente";
@@ -14177,9 +14247,13 @@ function rCuentasCobrar(){
         "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:6px'>Abonos recibidos</div>"+
         (c.abonos||[]).map(function(ab){
           var nCta=ab.cuentaId?nombreCuentaEg(ab.cuentaId):"Sin acreditar";
+          var pagoOtraMonedaCC=(ab.monedaPago&&ab.monedaPago!==c.moneda);
           return "<div style='display:flex;justify-content:space-between;align-items:center;padding:7px 10px;background:#F0FFF6;border:1px solid #c8ecd5;border-radius:8px;margin-bottom:5px;gap:8px'>"+
             "<div style='flex:1;min-width:0'>"+
-              "<span style='font-size:13px;font-weight:700;color:#0f6e3a'>"+f2(ab.monto)+" "+c.moneda+"</span>"+
+              (pagoOtraMonedaCC?
+                "<span style='font-size:13px;font-weight:700;color:#0f6e3a'>"+f2(ab.montoPago)+" "+ab.monedaPago+"</span>"+
+                "<span style='font-size:10px;color:#888;margin-left:5px'>(= "+f2(ab.monto)+" "+c.moneda+" de la deuda)</span>"
+              :"<span style='font-size:13px;font-weight:700;color:#0f6e3a'>"+f2(ab.monto)+" "+c.moneda+"</span>")+
               "<div style='font-size:10px;color:#888;margin-top:1px'>"+ab.fecha+" · "+nCta+"</div>"+
               (ab.nota?"<div style='font-size:10px;color:#aaa;font-style:italic'>"+ab.nota+"</div>":"")+
             "</div>"+
@@ -14200,15 +14274,42 @@ function rCuentasCobrar(){
     // ── Formulario de abono inline ──
     var abonarForm="";
     if(isAbonar&&isPend){
+      var MONEDAS_COBRAR=["USDT","VES","BRL","USD","PEN","EUR","COP","TTD"];
+      var monPagoCC=na.moneda||c.moneda;
+      var montoIngCC=parseFloat(na.monto)||0;
+      var previewCC="";
+      if(monPagoCC!==c.moneda){
+        var _tmCC=(na.tasaManual&&na.tasaManual!=="")?parseFloat(na.tasaManual):null;
+        var _rPCC=getRateToUsdt(monPagoCC),_rLCC=getRateToUsdt(c.moneda);
+        var _tAutoCC=(_rPCC&&_rLCC)?Math.round((_rLCC/_rPCC)*10000)/10000:null;
+        var _tUsarCC=(_tmCC!==null&&!isNaN(_tmCC))?_tmCC:_tAutoCC;
+        previewCC="<div style='margin-top:6px'>"+
+          "<label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>1 "+monPagoCC+" = ? "+c.moneda+" (editable si pagó a otra tasa)</label>"+
+          "<input type='number' inputmode='decimal' placeholder='"+(_tAutoCC?f4(_tAutoCC):"—")+"' value='"+(na.tasaManual||"")+"' oninput='S.nAbonoCobrar=Object.assign(S.nAbonoCobrar||{},{tasaManual:this.value})' style='width:100%;padding:9px;font-size:13px;border:1.5px solid #ddd;border-radius:8px;font-family:inherit'>"+
+        "</div>";
+        if(_tUsarCC&&montoIngCC>0){
+          var equivCC=Math.round((montoIngCC*_tUsarCC)*100)/100;
+          previewCC+="<div style='font-size:13px;font-weight:800;color:#0a6b4e;background:#E3F8EC;border-radius:7px;padding:8px 10px;margin-top:5px'>= "+f2(equivCC)+" "+c.moneda+" de la cuenta por cobrar</div>";
+        } else if(!_tAutoCC){
+          previewCC+="<div style='font-size:11px;color:#c0392b;background:#FDECEA;border-radius:7px;padding:7px 10px;margin-top:6px'>⚠️ Sin tasa configurada — escribe la tasa manual arriba</div>";
+        }
+      }
+      var ctasPagoCC=(S.cuentas||[]).filter(function(x){return x.activa!==false&&x.moneda===monPagoCC;});
       abonarForm="<div style='background:#F0FFF6;border:1px solid #a0e8c0;border-radius:10px;padding:12px;margin-top:10px'>"+
         "<div style='font-size:11px;font-weight:700;color:#0f6e3a;margin-bottom:10px'>💵 Registrar abono · Pendiente: <b>"+f2(saldoPend)+" "+c.moneda+"</b></div>"+
         "<div style='display:flex;flex-direction:column;gap:8px;margin-bottom:10px'>"+
-          "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Monto a abonar ("+c.moneda+")</label>"+
-          "<input type='number' placeholder='"+f2(saldoPend)+"' value='"+(na.monto||"")+"' oninput='S.nAbonoCobrar=Object.assign(S.nAbonoCobrar||{},{monto:this.value})' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
-          "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Cuenta donde entra</label>"+
+          "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>¿En qué moneda te está pagando?</label>"+
+          "<select onchange='S.nAbonoCobrar=Object.assign(S.nAbonoCobrar||{},{moneda:this.value,cuentaId:\"\"});R()' style='width:100%;padding:11px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
+            MONEDAS_COBRAR.map(function(m){return "<option value='"+m+"'"+(monPagoCC===m?" selected":"")+">"+m+(m===c.moneda?" (moneda de la deuda)":"")+"</option>";}).join("")+
+          "</select></div>"+
+          "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Monto recibido ("+monPagoCC+")</label>"+
+          "<input type='number' placeholder='0.00' value='"+(na.monto||"")+"' oninput='S.nAbonoCobrar=Object.assign(S.nAbonoCobrar||{},{monto:this.value})' onblur='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
+          previewCC+
+          "</div>"+
+          "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Cuenta donde entra ("+monPagoCC+")</label>"+
           "<select onchange='S.nAbonoCobrar=Object.assign(S.nAbonoCobrar||{},{cuentaId:this.value})' style='width:100%;padding:12px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
             "<option value=''>— Sin acreditar —</option>"+
-            ctasMon.map(function(ct){return "<option value='"+ct.id+"'"+(na.cuentaId===ct.id?" selected":"")+">"+ct.nombre+" ("+f2(ct.saldo)+")</option>";}).join("")+
+            ctasPagoCC.map(function(ct){return "<option value='"+ct.id+"'"+(na.cuentaId===ct.id?" selected":"")+">"+ct.nombre+" ("+f2(ct.saldo)+")</option>";}).join("")+
           "</select></div>"+
           "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Nota (opcional)</label>"+
           "<input type='text' placeholder='ej: primera cuota' value='"+(na.nota||"")+"' oninput='S.nAbonoCobrar=Object.assign(S.nAbonoCobrar||{},{nota:this.value})' style='width:100%;padding:12px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
@@ -14253,6 +14354,7 @@ function rCuentasCobrar(){
   }
 
   var html = "";
+  html += buscadorHtml;
 
   // ── Resumen ───────────────────────────────────────────
   html += "<div class='mg' style='margin-bottom:16px'>";
@@ -14374,6 +14476,17 @@ function rPrestamos(){
     if(base>0){var ab=(p.abonos||[]).reduce(function(s,x){return s+(parseFloat(x.monto)||0);},0);return ab>=base-0.001;}
     return (p.ent||0)>=(p.sal||0)&&(p.sal||0)>0;
   });
+  // Filtro por cliente — igual que en Cuentas por Cobrar, para no tener
+  // que bajar por toda la lista buscando los préstamos de una persona.
+  var _filtroPrest=(S._filtroCliente||"").trim().toUpperCase();
+  if(_filtroPrest){
+    activos=activos.filter(function(p){return (p.desc||"").toUpperCase().indexOf(_filtroPrest)!==-1;});
+    pagados=pagados.filter(function(p){return (p.desc||"").toUpperCase().indexOf(_filtroPrest)!==-1;});
+  }
+  var buscadorPrestHtml="<div style='display:flex;gap:8px;margin-bottom:14px'>"+
+    "<input type='text' placeholder='🔍 Buscar cliente...' value='"+(S._filtroCliente||"")+"' oninput='S._filtroCliente=this.value' onblur='R()' onkeyup='if(event.key===\"Enter\")R()' style='flex:1;padding:11px 14px;font-size:14px;border:1.5px solid #ddd;border-radius:10px;font-family:inherit'>"+
+    (S._filtroCliente?"<button onclick='S._filtroCliente=\"\";R()' style='padding:11px 16px;border:none;border-radius:10px;background:#c0392b;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit'>✕</button>":"")+
+  "</div>";
   var totalActivoUsdt=Math.round(activos.reduce(function(a,p){
     var mon=p.mon||"USDT";
     var base=parseFloat(p.monto||p.sal)||0;
@@ -14689,6 +14802,7 @@ function rPrestamos(){
   return (
     modalCaptura+
     "<input type='file' id='inputCapturaPrestamo' accept='image/*' style='display:none' onchange='_onCapturaPrestamoSeleccionada(this)'>"+
+    buscadorPrestHtml+
     // Resumen
     "<div class='mg' style='margin-bottom:16px'>"+
       "<div class='mc' style='background:#FDECEA;border:1.5px solid #c0392b44'>"+
@@ -14716,7 +14830,7 @@ function rPrestamos(){
         "</div>"+
         (abierto?"<div style='margin-top:10px'>"+
           lista.map(function(e){
-            return "<div style='display:flex;justify-content:space-between;align-items:center;gap:8px;background:#fff;border:1px solid #e0d0f0;border-radius:10px;padding:10px 12px;margin-bottom:6px'>"+
+            return "<div onclick='S._filtroCliente="+JSON.stringify(e.nombre)+";R()' style='display:flex;justify-content:space-between;align-items:center;gap:8px;background:#fff;border:1px solid #e0d0f0;border-radius:10px;padding:10px 12px;margin-bottom:6px;cursor:pointer'>"+
               "<div style='flex:1;min-width:0'>"+
                 "<div style='font-size:13px;font-weight:700;color:#1a3558;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>👤 "+e.nombre+"</div>"+
                 "<div style='font-size:10px;color:#888;margin-top:1px'>"+
@@ -14728,6 +14842,7 @@ function rPrestamos(){
               "<div style='font-size:15px;font-weight:800;color:#6c3483;flex-shrink:0'>$"+f2(e.totalUsdt)+"</div>"+
             "</div>";
           }).join("")+
+          "<div style='font-size:10px;color:#888;text-align:center;margin-top:4px'>Toca un cliente para filtrar la lista de abajo por su nombre</div>"+
         "</div>":"")+
       "</div>";
     })()+
