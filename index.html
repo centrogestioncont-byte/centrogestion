@@ -1054,7 +1054,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v78";
+var APP_VERSION = "20260806_v79";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -4071,12 +4071,13 @@ function savePr(){
   var interesExtra=conInteres?Math.round((capital*(tasaDiaria/100)*diasExtra)*100)/100:0;
   montoTotal=Math.round((montoTotal+interesExtra)*100)/100;
   tasaEfectiva=capital>0?Math.round(((montoTotal-capital)/capital)*10000)/100:0;
-  // Cronograma de cuotas: la primera cuota parte del período normal MÁS
-  // los días extra que se hayan agregado; las siguientes continúan a
-  // intervalos normales desde ahí. El interés extra por días de gracia
-  // se suma completo a la primera cuota (es lo que generó ese cargo).
+  // Cronograma de cuotas: el TOTAL (capital + interés + cargo por días de
+  // gracia si aplica) se reparte en partes IGUALES entre todas las
+  // cuotas — así el cronograma real coincide exacto con lo que se le
+  // muestra al cliente en las opciones ("Nx de $Y cada una"), sin que la
+  // primera cuota salga más cara por dentro sin que él lo haya visto así.
   var cuotas=[];
-  var montoCuotaBase=amort.cuotaFija;
+  var montoCuotaBase=Math.round((montoTotal/numCuotas)*100)/100;
   var sumaAsignada=0;
   for(var i=1;i<=numCuotas;i++){
     var fechaCuota=new Date(f.date+"T00:00:00");
@@ -4084,9 +4085,7 @@ function savePr(){
     if(frecuencia==="mensual"){ fechaCuota.setMonth(fechaCuota.getMonth()+i); fechaCuota.setDate(fechaCuota.getDate()+diasExtra); }
     else { fechaCuota.setDate(fechaCuota.getDate()+diasSumar); }
     var isoFecha=fechaCuota.getFullYear()+"-"+String(fechaCuota.getMonth()+1).padStart(2,"0")+"-"+String(fechaCuota.getDate()).padStart(2,"0");
-    var montoEsta = montoCuotaBase + (i===1?interesExtra:0);
-    if(i===numCuotas) montoEsta = Math.round((montoTotal-sumaAsignada)*100)/100;
-    else montoEsta = Math.round(montoEsta*100)/100;
+    var montoEsta = (i===numCuotas) ? Math.round((montoTotal-sumaAsignada)*100)/100 : montoCuotaBase;
     sumaAsignada += montoEsta;
     cuotas.push({n:i,fecha:ds(isoFecha),iso:isoFecha,monto:montoEsta});
   }
