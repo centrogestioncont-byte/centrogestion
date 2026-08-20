@@ -1054,7 +1054,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v75";
+var APP_VERSION = "20260806_v78";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -3931,9 +3931,6 @@ function enviarOpcionesWA(){
   opciones.forEach(function(nc){
     var amort=calcularAmortizacion(cap,pct,nc);
     var extraFlat=Math.round((cap*(extraPct/100))*100)/100;
-    // El total real (capital + interés + cargo por días de gracia si
-    // aplica) se reparte en partes IGUALES — así "cuota × n" siempre da
-    // exacto el total mostrado, sin dejar ningún cargo "flotando" aparte.
     var totalReal=Math.round((amort.montoTotal+extraFlat)*100)/100;
     var cuotaProm=Math.round((totalReal/nc)*100)/100;
     msg+=(nc===1?"🟢 ":"▪️ ")+nc+"x de "+f2(cuotaProm)+" "+mon+" (total "+f2(totalReal)+")"+(nc===1?" ← menos interés":"")+"\n";
@@ -3948,22 +3945,30 @@ function pedirCompromisoWA(id){
   var totalAbonado=(p.abonos||[]).reduce(function(a,ab){return a+ab.monto;},0);
   var montoBase=parseFloat(p.monto||p.sal)||0;
   var saldoPend=Math.max(0,Math.round((montoBase-totalAbonado)*100)/100);
+  // Días que tiene hasta pagar la primera cuota (en vez del % de interés
+  // en el mensaje — es lo que de verdad le importa saber al cliente).
+  function _diasHastaPrimera(cu){
+    if(!cu||!cu.iso) return null;
+    return Math.max(0,Math.round((new Date(cu.iso+"T00:00:00")-new Date(p.d.split("/").reverse().join("-")+"T00:00:00"))/86400000));
+  }
   var msg;
   if(p.cuotas&&p.cuotas.length>1){
     // Plan con cuotas: confirmar el plan COMPLETO que el cliente aceptó
     // (no solo el total), para que quede clara la fecha y monto de cada
     // pago acordado — esto es lo que respalda el compromiso real.
-    msg="Hola "+p.desc+"! 👋 Te confirmo el préstamo de *"+f2(p.capital!==undefined?p.capital:montoBase)+" "+monP+"* del "+p.d+(p.interesPct?", con "+p.interesPct+"% de interés":"")+".\n\n"+
+    var _diasP=_diasHastaPrimera(p.cuotas[0]);
+    msg="Hola "+p.desc+"! 👋 Te confirmo el préstamo de *"+f2(p.capital!==undefined?p.capital:montoBase)+" "+monP+"*"+(_diasP!==null?", tienes *"+_diasP+" día"+(_diasP!==1?"s":"")+"* para pagar la primera cuota":"")+".\n\n"+
       "Quedamos en *"+p.cuotas.length+" cuotas*:\n"+
       p.cuotas.map(function(cu){return "• Cuota "+cu.n+": "+f2(cu.monto)+" "+monP+" — vence "+cu.fecha;}).join("\n")+"\n\n"+
       "Total a pagar: *"+f2(montoBase)+" "+monP+"*\n\n"+
       "¿Me confirmas que estás de acuerdo con este plan? Con que respondas \"Sí, confirmo\" aquí mismo ya me sirve como respaldo. ¡Gracias! 🙏";
   } else if(p.cuotas&&p.cuotas.length===1){
     // Pago único: mostrar también la fecha real de vencimiento (no la
-    // fecha en que se registró el préstamo, que es otra cosa) y el
-    // desglose capital + interés si aplica.
+    // fecha en que se registró el préstamo, que es otra cosa) y cuántos
+    // días tiene para pagar.
     var cu1=p.cuotas[0];
-    msg="Hola "+p.desc+"! 👋 Te confirmo el préstamo de *"+f2(p.capital!==undefined?p.capital:montoBase)+" "+monP+"*"+(p.interesPct?" + "+p.interesPct+"% de interés":"")+", registrado el "+p.d+".\n\n"+
+    var _dias1=_diasHastaPrimera(cu1);
+    msg="Hola "+p.desc+"! 👋 Te confirmo el préstamo de *"+f2(p.capital!==undefined?p.capital:montoBase)+" "+monP+"*"+(_dias1!==null?", tienes *"+_dias1+" día"+(_dias1!==1?"s":"")+"* para pagarlo":"")+", registrado el "+p.d+".\n\n"+
       "Total a pagar: *"+f2(cu1.monto)+" "+monP+"* — vence el *"+cu1.fecha+"*\n\n"+
       "¿Me puedes confirmar que estás de acuerdo con este monto y esa fecha, y que te comprometes a devolverlo? Con que respondas \"Sí, confirmo\" aquí mismo ya me sirve como respaldo. ¡Gracias! 🙏";
   } else {
@@ -15094,8 +15099,8 @@ function rPrestamos(){
               var _amortC=calcularAmortizacion(_cap,_pct,nc);
               var _extraFlat=Math.round((_cap*(_extraPct/100))*100)/100;
               var _to=Math.round((_amortC.montoTotal+_extraFlat)*100)/100;
-              var _cuotaProm=Math.round((_to/nc)*100)/100;
               var _sel=(parseInt(f.numCuotas)||0)===nc&&f.conInteres;
+              var _cuotaProm=Math.round((_to/nc)*100)/100;
               return "<div onclick='S.nPr.numCuotas="+nc+";S.nPr.conInteres=true;S.nPr.tasaInteres="+_pct+";R()' style='display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:"+(_sel?"#1a3558":"#fff")+";border:1px solid "+(_sel?"#1a3558":"#e0e0e0")+";border-radius:9px;margin-bottom:6px;cursor:pointer'>"+
                 "<div>"+
                   "<div style='font-size:13px;font-weight:800;color:"+(_sel?"#fff":"#1a3558")+"'>"+nc+"x de "+f2(_cuotaProm)+" "+mon+"</div>"+
