@@ -1054,7 +1054,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v85";
+var APP_VERSION = "20260806_v86";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -15577,16 +15577,23 @@ function _iniciarListenersTiempoReal(){
       if(!item||item[idF]===undefined||item[idF]===null) return;
       var id=item[idF];
       if(_estaBorradoMerge(campo,id)) return; // se borró localmente, no revivir
+      var itemJs=JSON.stringify(item);
+      if(!_liveSnapshot[campo]) _liveSnapshot[campo]={};
+      // Si esto es el eco de un dato que ESTE MISMO dispositivo acaba de
+      // escribir, no hace falta re-renderizar toda la pantalla — con
+      // cientos de registros subiendo de una vez, esto era lo que causaba
+      // el parpadeo y que la pantalla "se bajara sola" (un R() por cada
+      // eco). Solo actuamos si el contenido es realmente distinto.
+      if(_liveSnapshot[campo][id]===itemJs) return;
       var arr=S[campo]||(S[campo]=[]);
       var idx=arr.findIndex(function(x){return x&&x[idF]===id;});
-      if(!_liveSnapshot[campo]) _liveSnapshot[campo]={};
       if(idx===-1){
         arr.push(item);
         if(campo==="brl"||campo==="vzla"||campo==="eeuu") _renumerarPorFecha(arr);
       } else {
         arr[idx]=item; // ya existía (llegó una versión más nueva)
       }
-      _liveSnapshot[campo][id]=JSON.stringify(item);
+      _liveSnapshot[campo][id]=itemJs;
       _liveSnapshotDirty=true; _guardarLiveSnapshotCache();
       saveData();
       R();
@@ -15595,11 +15602,13 @@ function _iniciarListenersTiempoReal(){
       var item=snap.val();
       if(!item||item[idF]===undefined||item[idF]===null) return;
       var id=item[idF];
+      var itemJs=JSON.stringify(item);
+      if(!_liveSnapshot[campo]) _liveSnapshot[campo]={};
+      if(_liveSnapshot[campo][id]===itemJs) return; // eco propio, nada que hacer
       var arr=S[campo]||[];
       var idx=arr.findIndex(function(x){return x&&x[idF]===id;});
-      if(!_liveSnapshot[campo]) _liveSnapshot[campo]={};
       if(idx!==-1) arr[idx]=item; else arr.push(item);
-      _liveSnapshot[campo][id]=JSON.stringify(item);
+      _liveSnapshot[campo][id]=itemJs;
       _liveSnapshotDirty=true; _guardarLiveSnapshotCache();
       saveData();
       R();
@@ -15610,7 +15619,8 @@ function _iniciarListenersTiempoReal(){
       var id=item[idF];
       var arr=S[campo]||[];
       var idx=arr.findIndex(function(x){return x&&x[idF]===id;});
-      if(idx!==-1) arr.splice(idx,1);
+      if(idx===-1) return; // ya no estaba localmente (eco de un borrado propio)
+      arr.splice(idx,1);
       if(_liveSnapshot[campo]) delete _liveSnapshot[campo][id];
       _liveSnapshotDirty=true; _guardarLiveSnapshotCache();
       saveData();
