@@ -1054,7 +1054,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v93";
+var APP_VERSION = "20260806_v94";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -7140,7 +7140,6 @@ function fbCheckREST(){
         var dot=document.getElementById("fb-dot");
         if(dot){dot.style.background="#4ade80";dot.title="✅ Datos actualizados desde Firebase";}
         console.log("✅ Auto-sync aplicado correctamente.");
-        _limpiarCuentasCorruptas();
       }
     })
     .catch(function(e){console.warn("Auto-sync check error:", e.message); _marcarConexionFallo();});
@@ -15833,7 +15832,6 @@ function initFirebase(){
         migrarTipoEgresos(); // Corregir tipos después de recibir Firebase
         sincronizarFIFOconCuentas();
         _syncCapitalWithCuentas();
-        _limpiarCuentasCorruptas();
       } else {
         // localStorage tiene MÁS datos → fusionar: añadir lo que falte de Firebase a localStorage
         // CRÍTICO: NO sobreescribir claves de FIFO/cuentas desde Firebase — local es más nuevo
@@ -16202,23 +16200,18 @@ function mergeBaseOps(){
 }
 mergeBaseOps();
 
-// ── Limpieza de cuentas corruptas (del incidente de sincronización) ──
-// Durante el problema de sincronización que hubo, quedaron regadas
-// "cuentas" con IDs que no corresponden a ningún formato real que esta
-// app genere (ej: "c1780197056511" — una "c" seguida de puros números).
-// Esto no son datos tuyos de verdad, son basura — se detectan y se
-// eliminan, marcándolas para que no vuelvan a aparecer al sincronizar.
-function _limpiarCuentasCorruptas(){
-  if(!Array.isArray(S.cuentas)) return 0;
-  var patronCorrupto=/^c\d{9,}$/; // "c" + 9 o más dígitos — formato inválido
-  var corruptas=S.cuentas.filter(function(c){return c&&typeof c.id==="string"&&patronCorrupto.test(c.id);});
-  if(!corruptas.length) return 0;
-  S.cuentas=S.cuentas.filter(function(c){return !(c&&typeof c.id==="string"&&patronCorrupto.test(c.id));});
-  corruptas.forEach(function(c){ _marcarBorradoMerge("cuentas",c.id); });
-  console.warn("🧹 Se limpiaron "+corruptas.length+" cuenta(s) corrupta(s) del incidente anterior (IDs inválidos).");
-  return corruptas.length;
+// ── Corrección de emergencia: limpiar marcas de "borrado" puestas por
+// error sobre CUENTAS REALES ──────────────────────────────────────────
+// Una limpieza anterior (ya quitada) confundió el formato normal de tus
+// IDs de cuenta (ej: "c1780197056511") con basura, y las borró — dejando
+// esa marca de "borrado" que impedía que volvieran a aparecer al
+// sincronizar. Esto las libera para que, si otro dispositivo todavía
+// tiene la copia buena, puedan volver a completarse aquí.
+if(S._deletedMerge && S._deletedMerge.cuentas && S._deletedMerge.cuentas.length){
+  console.warn("🔧 Liberando "+S._deletedMerge.cuentas.length+" marca(s) de borrado indebidas sobre cuentas.");
+  S._deletedMerge.cuentas=[];
+  saveData();
 }
-if(_limpiarCuentasCorruptas()>0) saveData();
 
 // 4. Init Firebase — Firebase es la fuente de verdad
 (function tryInitFirebase(attempt){
