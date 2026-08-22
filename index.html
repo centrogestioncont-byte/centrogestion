@@ -1054,7 +1054,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v94";
+var APP_VERSION = "20260806_v95";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -2239,7 +2239,9 @@ function rBalancePlus(){
     "<input type='checkbox' "+(nc.esJuridica?"checked":"")+" onchange='S.nCap.esJuridica=this.checked'>"+
     "<span style='font-size:12px'><b>🏛️ Es una cuenta jurídica (CNPJ)</b> — cuenta a nombre de la empresa registrada, no a tu nombre personal. Solo es una etiqueta para identificarla; sigue contando como cuenta de empresa en todos los totales.</span>"+
   "</label>"+
-  "<button class='btn-main btn-blue' onclick='saveNewCuenta()'>💾 Agregar cuenta</button></div>"
+  "<button class='btn-main btn-blue' onclick='saveNewCuenta()'>💾 Agregar cuenta</button>"+
+  "<button onclick='recuperarCuentasConocidas()' style='width:100%;margin-top:10px;padding:11px;border:1.5px dashed #c0392b;border-radius:9px;background:#FFF5F5;color:#c0392b;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>🆘 Recuperar cuentas conocidas (por el incidente de sincronización)</button>"+
+  "</div>"
   );
 }
 
@@ -2558,6 +2560,33 @@ function guardarComision(){
 }
 function deleteCuenta(id){
   showPinEdit(function(){S.cuentas=S.cuentas.filter(function(x){return x.id!==id;});_marcarBorradoMerge("cuentas",id);saveData();R();});
+}
+// ── Recuperación de emergencia: recrear las cuentas conocidas con sus
+// IDs ORIGINALES exactos (para que las remesas viejas que las referencian
+// vuelvan a resolver el nombre correctamente). El saldo se deja en 0 —
+// hay que corregirlo a mano después, comparando con lo último que
+// recuerdes o con Balance de Cuentas para reconstruir cuánto debería
+// tener cada una según los movimientos.
+var _CUENTAS_CONOCIDAS_RECUPERACION = [
+  {id:"c1780197056511", nombre:"Banco De Venezuela", tipo:"banco", moneda:"VES"},
+  {id:"c1780535378520", nombre:"Binance Julio", tipo:"exchange", moneda:"USDT"},
+  {id:"c1780535410481", nombre:"Binance JHOSELIN", tipo:"exchange", moneda:"USDT"},
+  {id:"c1780535481341", nombre:"Nubank Jhoselin", tipo:"banco", moneda:"BRL"},
+  {id:"c1780535523372", nombre:"Kraken", tipo:"exchange", moneda:"USD"},
+  {id:"c1780535554287", nombre:"True Wallet", tipo:"banco", moneda:"USD"},
+  {id:"c1780535565164", nombre:"Zelle", tipo:"banco", moneda:"USD"},
+  {id:"c1780535587404", nombre:"Banco Banesco", tipo:"banco", moneda:"USD"}
+];
+function recuperarCuentasConocidas(){
+  var yaExistentes=(S.cuentas||[]).map(function(c){return c.id;});
+  var faltantes=_CUENTAS_CONOCIDAS_RECUPERACION.filter(function(c){return yaExistentes.indexOf(c.id)===-1;});
+  if(!faltantes.length){alert("Ya están todas — no falta ninguna de esta lista.");return;}
+  if(!confirm("Se van a recrear "+faltantes.length+" cuenta(s) con SALDO EN $0 (hay que corregirlo a mano después):\n\n"+faltantes.map(function(c){return "• "+c.nombre+" ("+c.moneda+")";}).join("\n")+"\n\n¿Continuar?"))return;
+  faltantes.forEach(function(c){
+    S.cuentas.push({id:c.id,nombre:c.nombre,tipo:c.tipo,moneda:c.moneda,saldo:0,nota:"",activa:true,esPersonal:false,esJuridica:false});
+  });
+  saveData();R();
+  alert("✅ Se recrearon "+faltantes.length+" cuenta(s). Revisa Configuración → Cuentas y corrige los saldos.");
 }
 function saveNewCuenta(){
   var f=S.nCap;
