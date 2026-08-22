@@ -1054,7 +1054,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v83";
+var APP_VERSION = "20260806_v85";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -15494,9 +15494,29 @@ function _liveRemoveRecord(campo,id){
 // módulo — para saber, en cada saveData(), qué cambió/se agregó/se borró
 // sin tener que tocar cada función de creación/edición/borrado una por
 // una (son decenas repartidas por toda la app).
+// IMPORTANTE: se guarda en localStorage y se recupera al abrir la app —
+// si esto se quedara solo en memoria, CADA VEZ que abrieras la app volvería
+// a ver "todo" como si fuera nuevo (la foto en memoria empieza vacía) y
+// trataría de resubir CIENTOS de registros de golpe, dejando la app
+// congelada/en blanco cargando — esto es justo lo que estaba pasando.
 var _liveSnapshot = {};
+try{
+  var _lsRaw=localStorage.getItem("_liveSnapshotCache_v1");
+  if(_lsRaw) _liveSnapshot=JSON.parse(_lsRaw);
+}catch(e){ _liveSnapshot={}; }
+var _liveSnapshotDirty=false;
+function _guardarLiveSnapshotCache(){
+  if(!_liveSnapshotDirty) return;
+  _liveSnapshotDirty=false;
+  try{ localStorage.setItem("_liveSnapshotCache_v1", JSON.stringify(_liveSnapshot)); }catch(e){}
+}
+var _syncEnProgreso=false;
 function _sincronizarTiempoRealTodo(){
   if(!_fbDb) return;
+  if(_syncEnProgreso) return; // ya hay una tanda corriendo, no se duplica
+  // Fase 1: calcular qué cambió — esto es rápido (solo comparar texto en
+  // memoria), no manda nada a Firebase todavía.
+  var pendientes=[];
   _MERGE_FIELDS.forEach(function(campo){
     var arr=S[campo];
     if(!Array.isArray(arr)) return;
@@ -15509,19 +15529,41 @@ function _sincronizarTiempoRealTodo(){
       var id=item[idF];
       idsVistos[id]=true;
       var js=JSON.stringify(item);
-      if(snap[id]!==js){
-        _liveWriteRecord(campo,id,item);
-        snap[id]=js;
-      }
+      if(snap[id]!==js) pendientes.push({campo:campo,id:id,accion:"set",item:item,js:js});
     });
-    // Lo que estaba en la foto pero ya no está en el array actual = se borró
     Object.keys(snap).forEach(function(id){
-      if(!idsVistos[id]){
-        _liveRemoveRecord(campo,id);
-        delete snap[id];
-      }
+      if(!idsVistos[id]) pendientes.push({campo:campo,id:id,accion:"remove"});
     });
   });
+  if(!pendientes.length) return;
+  // Fase 2: mandar los cambios a Firebase EN TANDAS PEQUEÑAS, dejando
+  // respirar al navegador entre cada una. Mandar cientos de escrituras
+  // de golpe en un solo bucle es justo lo que dejaba la página "no
+  // responde" — esto lo reparte en el tiempo para que nunca se sienta.
+  _syncEnProgreso=true;
+  var LOTE=8, i=0;
+  function procesarLote(){
+    var fin=Math.min(i+LOTE,pendientes.length);
+    for(;i<fin;i++){
+      var p=pendientes[i];
+      if(!_liveSnapshot[p.campo]) _liveSnapshot[p.campo]={};
+      if(p.accion==="set"){
+        _liveWriteRecord(p.campo,p.id,p.item);
+        _liveSnapshot[p.campo][p.id]=p.js;
+      } else {
+        _liveRemoveRecord(p.campo,p.id);
+        delete _liveSnapshot[p.campo][p.id];
+      }
+      _liveSnapshotDirty=true;
+    }
+    if(i<pendientes.length){
+      setTimeout(procesarLote,60);
+    } else {
+      _guardarLiveSnapshotCache();
+      _syncEnProgreso=false;
+    }
+  }
+  procesarLote();
 }
 var _liveListenersActivos=false;
 function _iniciarListenersTiempoReal(){
@@ -15545,6 +15587,7 @@ function _iniciarListenersTiempoReal(){
         arr[idx]=item; // ya existía (llegó una versión más nueva)
       }
       _liveSnapshot[campo][id]=JSON.stringify(item);
+      _liveSnapshotDirty=true; _guardarLiveSnapshotCache();
       saveData();
       R();
     });
@@ -15557,6 +15600,7 @@ function _iniciarListenersTiempoReal(){
       if(!_liveSnapshot[campo]) _liveSnapshot[campo]={};
       if(idx!==-1) arr[idx]=item; else arr.push(item);
       _liveSnapshot[campo][id]=JSON.stringify(item);
+      _liveSnapshotDirty=true; _guardarLiveSnapshotCache();
       saveData();
       R();
     });
@@ -15568,6 +15612,7 @@ function _iniciarListenersTiempoReal(){
       var idx=arr.findIndex(function(x){return x&&x[idF]===id;});
       if(idx!==-1) arr.splice(idx,1);
       if(_liveSnapshot[campo]) delete _liveSnapshot[campo][id];
+      _liveSnapshotDirty=true; _guardarLiveSnapshotCache();
       saveData();
       R();
     });
