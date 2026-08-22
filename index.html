@@ -1054,7 +1054,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v89";
+var APP_VERSION = "20260806_v91";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -6607,6 +6607,7 @@ var _restPendiente = false; // evita solapar guardados REST simultáneos
 // (fetch + merge + write) es demasiado lento para sobrevivir un cierre.
 function _fbFlushWriteImmediate(obj){
   try{ obj = JSON.parse(JSON.stringify(obj)); }catch(e){}
+  _marcarComoMiPropioTs(obj._ts);
   S._ts = obj._ts;
   try{
     fetch(_FB_REST, {
@@ -7367,9 +7368,12 @@ function saveData(){
     localStorage.setItem(STORAGE_KEY, json);
     localStorage.setItem(STORAGE_KEY+"_bak", json);
     fbSave(obj);
-    // Sincronización en tiempo real — Grupo 1: brl, vzla, eeuu, cuentas.
-    // (los escuchadores ahora agrupan los cambios en ráfaga, con un solo
-    // refresco de pantalla al final, para no repetir el problema anterior)
+    // Sincronización en tiempo real — REACTIVADA (Grupo 1: brl, vzla,
+    // eeuu, cuentas). Se corrigió la causa de raíz: el sistema que
+    // reconocía "esto lo guardé yo mismo" usaba una sola bandera que se
+    // gastaba con guardados rápidos seguidos; ahora se rastrea cada
+    // guardado por su propio identificador, sin importar cuántos se
+    // hagan seguidos (ver _marcarComoMiPropioTs / _esMiPropioTs).
     _sincronizarTiempoRealTodo();
     // Backup automático cada 50 guardados
     _saveCount=(_saveCount||0)+1;
@@ -7548,6 +7552,7 @@ function importData(){
         if(typeof fbSaveREST === "function"){
           var obj2={_ts:S._ts};
           DATA_KEYS.forEach(function(k){obj2[k]=S[k];});
+          _marcarComoMiPropioTs(obj2._ts);
           fbSaveREST(obj2);
         }
         // Y forzar backup inmediato
@@ -15665,7 +15670,27 @@ function _migrarTodoALiveOps(){
 }
 
 var _fbDb = null, _fbRef = null, _fbSaveTimer = null;
-var _fbMyWrite = false;   // evita que mi propio guardado rebote
+var _fbMyWrite = false;   // (ya no se usa para suprimir ecos — ver _misTimestampsPropios abajo, más robusto ante varios guardados seguidos)
+// ── Rastreo robusto de "esto lo escribí yo" ──────────────────────────
+// Antes había una sola bandera sí/no: si guardabas dos veces seguido muy
+// rápido, el eco del PRIMER guardado "gastaba" la bandera, y el eco del
+// SEGUNDO llegaba sin protección — la app lo confundía con un cambio de
+// otro dispositivo y volvía a fusionar y re-guardar, entrando en un ciclo
+// sin parar cada 2-4 segundos (esto era justo lo que causaba el
+// parpadeo). Ahora se guarda una lista de los "_ts" que este mismo
+// dispositivo acaba de escribir — así, sin importar cuántos guardados
+// se hagan seguidos, cada uno se reconoce individualmente como propio.
+var _misTimestampsPropios = [];
+function _marcarComoMiPropioTs(ts){
+  if(!ts) return;
+  _misTimestampsPropios.push(ts);
+  var ahora=Date.now();
+  // Limpiar lo de hace más de 20s, para no acumular para siempre
+  _misTimestampsPropios=_misTimestampsPropios.filter(function(t){return ahora-t<20000;});
+}
+function _esMiPropioTs(ts){
+  return !!ts && _misTimestampsPropios.indexOf(ts)!==-1;
+}
 var _fbOnline = false;
 var _FB_REST = "https://adminbrl-default-rtdb.firebaseio.com/remesasBRL_v1.json"; // usada por fbSaveREST() y fbForceLoad-adyacentes — antes NO estaba definida
 
@@ -15706,10 +15731,8 @@ function initFirebase(){
     firebase.initializeApp(_FB_CONFIG);
     _fbDb  = firebase.database();
     _fbRef = _fbDb.ref("remesasBRL_v1");
-    // Sincronización en tiempo real — Grupo 1 (brl, vzla, eeuu, cuentas).
-    // Corregido el bug de raíz: antes cada registro entrante disparaba su
-    // propio refresco de pantalla; ahora se agrupan en ráfaga y se aplican
-    // de una sola vez.
+    // Sincronización en tiempo real — REACTIVADA (Grupo 1). Se corrigió
+    // la condición de carrera de fondo (ver _marcarComoMiPropioTs).
     _iniciarListenersTiempoReal();
     try{
       if(!localStorage.getItem("_liveOpsMigrado_v2")){
@@ -15749,11 +15772,13 @@ function initFirebase(){
     // Listener en tiempo real: cuando OTRO usuario guarda, actualizamos
     _fbRef.on("value", function(snap){
       _marcarConexionOK();
-      // Si YO acabo de guardar, ignoro el rebote
-      if(_fbMyWrite){ _fbMyWrite=false; return; }
       var data = snap.val();
       if(!data) return;
       var tsRemoto = data._ts || 0;
+      // Si este _ts es uno que YO mismo acabo de escribir, es el eco de mi
+      // propio guardado — ignorarlo (sin importar cuántos guardados
+      // seguidos haya hecho, cada uno se reconoce por separado).
+      if(_esMiPropioTs(tsRemoto)) return;
       var tsLocal  = S._ts || 0;
       // Solo actualiza si los datos remotos son MÁS NUEVOS
       if(tsRemoto > 0 && tsRemoto <= tsLocal) return;
@@ -15834,8 +15859,15 @@ function initFirebase(){
           }
           // Las claves en clavesNoSobreescribir se mantienen locales (local es más nuevo)
         });
-        // Save merged result back to Firebase
-        saveData();
+        // Save merged result back to Firebase — con un pequeño seguro:
+        // no repetir este guardado si ya se hizo uno hace menos de 5s,
+        // para no crear ráfagas de guardados si llegan varios eventos
+        // "value" muy seguidos.
+        var _ahoraElse=Date.now();
+        if(!window._ultimoSaveDataListener||(_ahoraElse-window._ultimoSaveDataListener)>5000){
+          window._ultimoSaveDataListener=_ahoraElse;
+          saveData();
+        }
       }
 
       // Merge base data on top (nunca quita datos nuevos, solo agrega faltantes)
@@ -16088,7 +16120,7 @@ function _fbWriteNow(obj){
   // cualquier profundidad), así que esto limpia el objeto antes de
   // mandarlo, sin tener que perseguir campo por campo cuál quedó mal.
   try{ obj = JSON.parse(JSON.stringify(obj)); }catch(e){}
-  _fbMyWrite = true;
+  _marcarComoMiPropioTs(obj._ts);
   S._ts = obj._ts;
   if(_fbOnline){
     // WebSocket disponible → guardar por SDK (tiempo real)
@@ -16098,7 +16130,6 @@ function _fbWriteNow(obj){
     }).catch(function(e){
       console.warn("Firebase SDK error, usando REST:", e);
       fbSaveREST(obj);
-      _fbMyWrite = false;
     });
   } else {
     // WebSocket bloqueado → usar REST API (HTTPS)
