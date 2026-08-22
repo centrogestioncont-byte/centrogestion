@@ -1054,7 +1054,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v88";
+var APP_VERSION = "20260806_v89";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -15479,6 +15479,17 @@ var _FB_CONFIG = {
 var _LIVE_SYNC_RUTA = "remesasBRL_v1/live_ops_v2";
 var _LIVE_SYNC_CAMPOS = ["brl","vzla","eeuu","cuentas"]; // ← Grupo 1
 
+// Convierte un objeto a texto de forma ESTABLE (ordena las llaves antes de
+// convertir) — así, si el mismo dato vuelve de Firebase con las
+// propiedades en otro orden (puede pasar), no se detecta como "cambió
+// algo" por error. Esto era una causa real del parpadeo: se veía como un
+// cambio nuevo un dato que en realidad era idéntico.
+function _jsonEstable(obj){
+  if(obj===null||typeof obj!=="object") return JSON.stringify(obj);
+  if(Array.isArray(obj)) return "["+obj.map(_jsonEstable).join(",")+"]";
+  var keys=Object.keys(obj).sort();
+  return "{"+keys.map(function(k){return JSON.stringify(k)+":"+_jsonEstable(obj[k]);}).join(",")+"}";
+}
 function _liveWriteRecord(campo,id,obj){
   try{
     if(!_fbDb||id===undefined||id===null||!obj) return;
@@ -15511,9 +15522,18 @@ function _guardarLiveSnapshotCache(){
   try{ localStorage.setItem("_liveSnapshotCache_v2", JSON.stringify(_liveSnapshot)); }catch(e){}
 }
 var _syncEnProgreso=false;
+var _syncReintentoPendiente=false;
+var _syncSafetyTimer=null;
 function _sincronizarTiempoRealTodo(){
   if(!_fbDb) return;
-  if(_syncEnProgreso) return; // ya hay una tanda corriendo, no se duplica
+  if(_syncEnProgreso){
+    // Ya hay una tanda corriendo — en vez de simplemente ignorar este
+    // pedido (lo que antes podía hacer que un borrado se perdiera si
+    // llegaba justo mientras otra tanda estaba en curso), se marca para
+    // reintentarlo automáticamente apenas termine la tanda actual.
+    _syncReintentoPendiente=true;
+    return;
+  }
   var pendientes=[];
   _LIVE_SYNC_CAMPOS.forEach(function(campo){
     var arr=S[campo];
@@ -15526,7 +15546,7 @@ function _sincronizarTiempoRealTodo(){
       if(!item||item[idF]===undefined||item[idF]===null) return;
       var id=item[idF];
       idsVistos[id]=true;
-      var js=JSON.stringify(item);
+      var js=_jsonEstable(item);
       if(snap[id]!==js) pendientes.push({campo:campo,id:id,accion:"set",item:item,js:js});
     });
     Object.keys(snap).forEach(function(id){
@@ -15535,6 +15555,16 @@ function _sincronizarTiempoRealTodo(){
   });
   if(!pendientes.length) return;
   _syncEnProgreso=true;
+  // Red de seguridad: si por lo que sea la tanda nunca termina (un error
+  // no capturado, lo que sea), esto libera el candado a los 15s para que
+  // la sincronización no se quede trabada para siempre.
+  if(_syncSafetyTimer) clearTimeout(_syncSafetyTimer);
+  _syncSafetyTimer=setTimeout(function(){
+    if(_syncEnProgreso){
+      console.warn("⚠️ Sincronización atascada — liberando candado de seguridad");
+      _syncEnProgreso=false;
+    }
+  },15000);
   var LOTE=8, i=0;
   function procesarLote(){
     var fin=Math.min(i+LOTE,pendientes.length);
@@ -15555,6 +15585,11 @@ function _sincronizarTiempoRealTodo(){
     } else {
       _guardarLiveSnapshotCache();
       _syncEnProgreso=false;
+      if(_syncSafetyTimer){ clearTimeout(_syncSafetyTimer); _syncSafetyTimer=null; }
+      if(_syncReintentoPendiente){
+        _syncReintentoPendiente=false;
+        setTimeout(_sincronizarTiempoRealTodo,50);
+      }
     }
   }
   procesarLote();
@@ -15598,7 +15633,7 @@ function _iniciarListenersTiempoReal(){
           return;
         }
         if(_estaBorradoMerge(campo,id)) return; // se borró localmente, no revivir
-        var itemJs=JSON.stringify(c.item);
+        var itemJs=_jsonEstable(c.item);
         if(_liveSnapshot[campo][id]===itemJs) return; // eco propio, nada que hacer
         var idx=arr.findIndex(function(x){return x&&x[idF]===id;});
         if(idx===-1){
