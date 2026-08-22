@@ -1054,7 +1054,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v80";
+var APP_VERSION = "20260806_v83";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -3948,8 +3948,12 @@ function pedirCompromisoWA(id){
   // Días que tiene hasta pagar la primera cuota (en vez del % de interés
   // en el mensaje — es lo que de verdad le importa saber al cliente).
   function _diasHastaPrimera(cu){
-    if(!cu||!cu.iso) return null;
-    return Math.max(0,Math.round((new Date(cu.iso+"T00:00:00")-new Date(p.d.split("/").reverse().join("-")+"T00:00:00"))/86400000));
+    if(!cu||!cu.iso||!p.d) return null;
+    var pd=p.d.split("/"); // p.d viene como "dd/mm/yy"
+    if(pd.length<3) return null;
+    var isoBase=(pd[2].length===2?"20"+pd[2]:pd[2])+"-"+pd[1].padStart(2,"0")+"-"+pd[0].padStart(2,"0");
+    var diff=Math.round((new Date(cu.iso+"T00:00:00")-new Date(isoBase+"T00:00:00"))/86400000);
+    return isNaN(diff)?null:Math.max(0,diff);
   }
   var msg;
   if(p.cuotas&&p.cuotas.length>1){
@@ -7363,6 +7367,13 @@ function saveData(){
     localStorage.setItem(STORAGE_KEY, json);
     localStorage.setItem(STORAGE_KEY+"_bak", json);
     fbSave(obj);
+    // Sincronización en tiempo real: revisa TODOS los módulos (cuentas,
+    // préstamos, egresos, cuentas por cobrar, inventario, clientes,
+    // traspasos, remesas, etc.) y sube a Firebase, como registro
+    // independiente, cualquier cosa que se haya agregado/editado/borrado
+    // desde el último guardado — así cualquier otro dispositivo lo ve
+    // reflejado al instante, sin tocar "Actualizar".
+    _sincronizarTiempoRealTodo();
     // Backup automático cada 50 guardados
     _saveCount=(_saveCount||0)+1;
     if(_saveCount%50===0) autoBackup();
@@ -7582,6 +7593,9 @@ function reqDel(arr,id,field){
     // ── Revertir saldos según el tipo de array ──────────────────────
     if(arr==="brl"||arr==="vzla"||arr==="eeuu"){
       revertirSaldosRemesa(arr, item);
+      // Quitar también la copia en tiempo real (live_ops) para que no
+      // reaparezca en otro dispositivo que esté escuchando ese canal.
+      // (el borrado en tiempo real de este registro lo maneja _sincronizarTiempoRealTodo() automáticamente al llamar saveData())
       // Si esta remesa tenía una Cuenta por Cobrar vinculada y todavía
       // pendiente, quitarla — ya no hay remesa real detrás de ese cobro.
       var _cobrarLigada=(S.cuentasCobrar||[]).find(function(x){return x.tipo===arr&&x.refN===item.n&&x.estado==="pendiente";});
@@ -15447,6 +15461,126 @@ var _FB_CONFIG = {
   appId: "1:646124622933:web:3f60d6c160624894f8b0dc"
 };
 
+// ══════════════════════════════════════════════════════
+// SINCRONIZACIÓN EN TIEMPO REAL — TODA LA APP, TODOS LOS MÓDULOS
+// A diferencia del guardado normal (que fusiona el bloque completo de
+// datos cada cierto tiempo), esto escribe CADA registro de CADA módulo
+// (cuentas, préstamos, egresos, cuentas por cobrar, inventario, clientes,
+// traspasos, remesas, etc. — TODO lo que está en _MERGE_FIELDS) como su
+// propio dato independiente en Firebase (ruta live_ops/<módulo>/<id>), y
+// escucha en tiempo real cuando aparece/cambia/desaparece uno desde OTRO
+// dispositivo — sin tocar "Actualizar" ni cerrar/abrir la app. Como cada
+// registro tiene su propia llave única, dos dispositivos nunca se pisan
+// entre sí: cada quien escribe su propio dato, nunca "el bloque completo".
+// ══════════════════════════════════════════════════════
+function _liveWriteRecord(campo,id,obj){
+  try{
+    if(!_fbDb||id===undefined||id===null||!obj) return;
+    var clean=JSON.parse(JSON.stringify(obj));
+    _fbDb.ref("remesasBRL_v1/live_ops/"+campo+"/"+id).set(clean).catch(function(e){
+      console.warn("live_ops write falló ("+campo+"):",e.message);
+    });
+  }catch(e){ console.warn("_liveWriteRecord error:",e); }
+}
+function _liveRemoveRecord(campo,id){
+  try{
+    if(!_fbDb||id===undefined||id===null) return;
+    _fbDb.ref("remesasBRL_v1/live_ops/"+campo+"/"+id).remove().catch(function(e){
+      console.warn("live_ops remove falló ("+campo+"):",e.message);
+    });
+  }catch(e){ console.warn("_liveRemoveRecord error:",e); }
+}
+// Última "foto" (por id → JSON) de lo que ya se subió a live_ops por cada
+// módulo — para saber, en cada saveData(), qué cambió/se agregó/se borró
+// sin tener que tocar cada función de creación/edición/borrado una por
+// una (son decenas repartidas por toda la app).
+var _liveSnapshot = {};
+function _sincronizarTiempoRealTodo(){
+  if(!_fbDb) return;
+  _MERGE_FIELDS.forEach(function(campo){
+    var arr=S[campo];
+    if(!Array.isArray(arr)) return;
+    var idF=_MERGE_ID_FIELD[campo]||"id";
+    if(!_liveSnapshot[campo]) _liveSnapshot[campo]={};
+    var snap=_liveSnapshot[campo];
+    var idsVistos={};
+    arr.forEach(function(item){
+      if(!item||item[idF]===undefined||item[idF]===null) return;
+      var id=item[idF];
+      idsVistos[id]=true;
+      var js=JSON.stringify(item);
+      if(snap[id]!==js){
+        _liveWriteRecord(campo,id,item);
+        snap[id]=js;
+      }
+    });
+    // Lo que estaba en la foto pero ya no está en el array actual = se borró
+    Object.keys(snap).forEach(function(id){
+      if(!idsVistos[id]){
+        _liveRemoveRecord(campo,id);
+        delete snap[id];
+      }
+    });
+  });
+}
+var _liveListenersActivos=false;
+function _iniciarListenersTiempoReal(){
+  if(!_fbDb||_liveListenersActivos) return;
+  _liveListenersActivos=true;
+  _MERGE_FIELDS.forEach(function(campo){
+    var idF=_MERGE_ID_FIELD[campo]||"id";
+    var ref=_fbDb.ref("remesasBRL_v1/live_ops/"+campo);
+    ref.on("child_added",function(snap){
+      var item=snap.val();
+      if(!item||item[idF]===undefined||item[idF]===null) return;
+      var id=item[idF];
+      if(_estaBorradoMerge(campo,id)) return; // se borró localmente, no revivir
+      var arr=S[campo]||(S[campo]=[]);
+      var idx=arr.findIndex(function(x){return x&&x[idF]===id;});
+      if(!_liveSnapshot[campo]) _liveSnapshot[campo]={};
+      if(idx===-1){
+        arr.push(item);
+        if(campo==="brl"||campo==="vzla"||campo==="eeuu") _renumerarPorFecha(arr);
+      } else {
+        arr[idx]=item; // ya existía (llegó una versión más nueva)
+      }
+      _liveSnapshot[campo][id]=JSON.stringify(item);
+      saveData();
+      R();
+    });
+    ref.on("child_changed",function(snap){
+      var item=snap.val();
+      if(!item||item[idF]===undefined||item[idF]===null) return;
+      var id=item[idF];
+      var arr=S[campo]||[];
+      var idx=arr.findIndex(function(x){return x&&x[idF]===id;});
+      if(!_liveSnapshot[campo]) _liveSnapshot[campo]={};
+      if(idx!==-1) arr[idx]=item; else arr.push(item);
+      _liveSnapshot[campo][id]=JSON.stringify(item);
+      saveData();
+      R();
+    });
+    ref.on("child_removed",function(snap){
+      var item=snap.val();
+      if(!item||item[idF]===undefined||item[idF]===null) return;
+      var id=item[idF];
+      var arr=S[campo]||[];
+      var idx=arr.findIndex(function(x){return x&&x[idF]===id;});
+      if(idx!==-1) arr.splice(idx,1);
+      if(_liveSnapshot[campo]) delete _liveSnapshot[campo][id];
+      saveData();
+      R();
+    });
+  });
+}
+// Al cargar la app, sube todo lo que ya tenías (de antes de este cambio)
+// a los registros individuales en tiempo real, para que también quede
+// visible para otros dispositivos de aquí en adelante.
+function _migrarTodoALiveOps(){
+  if(!_fbDb) return;
+  _sincronizarTiempoRealTodo();
+}
+
 var _fbDb = null, _fbRef = null, _fbSaveTimer = null;
 var _fbMyWrite = false;   // evita que mi propio guardado rebote
 var _fbOnline = false;
@@ -15489,6 +15623,18 @@ function initFirebase(){
     firebase.initializeApp(_FB_CONFIG);
     _fbDb  = firebase.database();
     _fbRef = _fbDb.ref("remesasBRL_v1");
+    _iniciarListenersTiempoReal();
+    // Migración única: sube las remesas que ya tenías (de antes de este
+    // cambio) a los registros individuales en tiempo real, para que
+    // también se vean reflejadas para otros dispositivos.
+    try{
+      if(!localStorage.getItem("_liveOpsMigrado_v1")){
+        setTimeout(function(){
+          _migrarTodoALiveOps();
+          localStorage.setItem("_liveOpsMigrado_v1","1");
+        },3000);
+      }
+    }catch(e){}
 
     // Login con la cuenta dedicada de la app — reemplaza al login anónimo
     if(firebase.auth){
