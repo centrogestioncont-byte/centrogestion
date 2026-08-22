@@ -1054,7 +1054,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v96";
+var APP_VERSION = "20260806_v97";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -6672,6 +6672,46 @@ function fbSaveREST(obj){
   });
 }
 // ── Carga forzada desde Firebase — ignora timestamps, siempre actualiza ───────
+// ── Ver qué hay en Firebase AHORA MISMO, sin aplicar nada todavía ──
+// Esto NO compara timestamps ni decide quién gana — solo consulta
+// directo y te muestra un resumen (cuántas operaciones, de qué fecha)
+// para que decidas si vale la pena recuperarlo o no, antes de arriesgarte
+// a perder lo poco que quede localmente.
+function verFirebaseSinAplicar(){
+  var url="https://adminbrl-default-rtdb.firebaseio.com/remesasBRL_v1.json?ts="+Date.now();
+  var opciones={};
+  if(typeof _fbIdToken!=="undefined"&&_fbIdToken){ url+="&auth="+_fbIdToken; }
+  fetch(url).then(function(r){
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    return r.json();
+  }).then(function(data){
+    if(!data){ alert("Firebase respondió, pero está completamente vacío."); return; }
+    var brl=(data.brl||[]).length, vzla=(data.vzla||[]).length, eeuu=(data.eeuu||[]).length;
+    var cuentas=(data.cuentas||[]).length;
+    var cobrar=(data.cuentasCobrar||[]).length;
+    var prest=(data.prestamos||[]).length;
+    var fecha=data._ts?new Date(data._ts).toLocaleString("es-VE"):"sin fecha";
+    // Buscar la fecha de la remesa BRL más reciente guardada, para saber
+    // hasta qué día real llegan los datos que hay ahí.
+    var ultimaFechaBrl="—";
+    if(data.brl&&data.brl.length){
+      var fechas=data.brl.map(function(r){return r.d;}).filter(Boolean);
+      if(fechas.length) ultimaFechaBrl=fechas[fechas.length-1];
+    }
+    alert("🔍 ESTO HAY EN FIREBASE AHORA MISMO (sin aplicar):\n\n"+
+      "Guardado el: "+fecha+"\n\n"+
+      "BRL: "+brl+" operaciones\n"+
+      "VZLA: "+vzla+" operaciones\n"+
+      "EE.UU: "+eeuu+" operaciones\n"+
+      "Cuentas: "+cuentas+"\n"+
+      "Cuentas por cobrar: "+cobrar+"\n"+
+      "Préstamos: "+prest+"\n\n"+
+      "Última fecha de remesa BRL guardada: "+ultimaFechaBrl+"\n\n"+
+      "Si estos números se ven bien (parecidos a lo que tenías anoche), avísame para preparar el botón que sí los aplica de verdad.");
+  }).catch(function(e){
+    alert("❌ No se pudo consultar Firebase: "+e.message);
+  });
+}
 function fbForceLoad(){
   var btn=document.querySelector('[onclick="fbForceLoad()"]');
   if(btn){btn.textContent="⏳ Cargando...";btn.disabled=true;}
@@ -8882,6 +8922,7 @@ function R(){
         '<button onclick="forzarSyncFirebase()" id="btn-sync-firebase" style="background:rgba(100,200,100,.3);border:1px solid rgba(100,200,100,.5);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer;font-weight:700" title="Guardar en Firebase ahora (auto-sync ya está activo cada 30s)">📤 Guardar</button>'+
         '<button onclick="fbForceLoad()" style="background:rgba(100,200,255,.25);border:1px solid rgba(100,200,255,.4);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer;font-weight:700;margin-left:4px" title="Cargar datos más recientes de Firebase ahora">📥 Actualizar</button>'+
         '<button onclick="restoreFromBackup()" style="background:rgba(255,100,100,.25);border:1px solid rgba(255,100,100,.4);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer" title="Restaurar desde el último backup automático de Firebase">🔒 Restaurar</button>'+
+        '<button onclick="verFirebaseSinAplicar()" style="background:rgba(255,180,0,.3);border:1px solid rgba(255,180,0,.5);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer;font-weight:700" title="Ver qué hay guardado en Firebase ahora mismo, SIN aplicarlo todavía">🔍 Ver Firebase</button>'+
         '<button onclick="clearAllData()" style="background:rgba(255,100,100,.2);border:1px solid rgba(255,100,100,.35);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer" title="Borrar todo (PIN 2626)">🗑️</button>';
       tb.appendChild(d);
     },50);
