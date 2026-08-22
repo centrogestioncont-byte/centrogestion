@@ -1054,7 +1054,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v86";
+var APP_VERSION = "20260806_v88";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -7367,12 +7367,9 @@ function saveData(){
     localStorage.setItem(STORAGE_KEY, json);
     localStorage.setItem(STORAGE_KEY+"_bak", json);
     fbSave(obj);
-    // Sincronización en tiempo real: revisa TODOS los módulos (cuentas,
-    // préstamos, egresos, cuentas por cobrar, inventario, clientes,
-    // traspasos, remesas, etc.) y sube a Firebase, como registro
-    // independiente, cualquier cosa que se haya agregado/editado/borrado
-    // desde el último guardado — así cualquier otro dispositivo lo ve
-    // reflejado al instante, sin tocar "Actualizar".
+    // Sincronización en tiempo real — Grupo 1: brl, vzla, eeuu, cuentas.
+    // (los escuchadores ahora agrupan los cambios en ráfaga, con un solo
+    // refresco de pantalla al final, para no repetir el problema anterior)
     _sincronizarTiempoRealTodo();
     // Backup automático cada 50 guardados
     _saveCount=(_saveCount||0)+1;
@@ -15462,22 +15459,31 @@ var _FB_CONFIG = {
 };
 
 // ══════════════════════════════════════════════════════
-// SINCRONIZACIÓN EN TIEMPO REAL — TODA LA APP, TODOS LOS MÓDULOS
-// A diferencia del guardado normal (que fusiona el bloque completo de
-// datos cada cierto tiempo), esto escribe CADA registro de CADA módulo
-// (cuentas, préstamos, egresos, cuentas por cobrar, inventario, clientes,
-// traspasos, remesas, etc. — TODO lo que está en _MERGE_FIELDS) como su
-// propio dato independiente en Firebase (ruta live_ops/<módulo>/<id>), y
-// escucha en tiempo real cuando aparece/cambia/desaparece uno desde OTRO
-// dispositivo — sin tocar "Actualizar" ni cerrar/abrir la app. Como cada
-// registro tiene su propia llave única, dos dispositivos nunca se pisan
-// entre sí: cada quien escribe su propio dato, nunca "el bloque completo".
+// SINCRONIZACIÓN EN TIEMPO REAL — POR GRUPOS, DE 4 EN 4 MÓDULOS
+// Grupo 1 (activo ahora): brl, vzla, eeuu, cuentas.
+// Los demás grupos se agregan uno a la vez, solo después de confirmar que
+// este primero funciona bien en el uso real, sin trabar nada.
+//
+// CAUSA REAL del "Out of Memory" anterior: al conectar un escuchador,
+// Firebase dispara de golpe TODOS los registros existentes en esa ruta
+// (no solo los nuevos) — y antes, cada uno disparaba su propio saveData()
+// + R() por separado. Con cientos de registros llegando de una vez, eso
+// eran cientos de refrescos de pantalla en fracciones de segundo, lo que
+// reventó la memoria. Ahora se juntan todos los que lleguen en una ráfaga
+// corta y se aplican de una sola vez, con un solo refresco al final.
+//
+// Además se usa una ruta NUEVA (live_ops_v2) en vez de reutilizar la
+// anterior, para no arrastrar ningún dato a medio escribir que haya
+// quedado de la caída pasada.
 // ══════════════════════════════════════════════════════
+var _LIVE_SYNC_RUTA = "remesasBRL_v1/live_ops_v2";
+var _LIVE_SYNC_CAMPOS = ["brl","vzla","eeuu","cuentas"]; // ← Grupo 1
+
 function _liveWriteRecord(campo,id,obj){
   try{
     if(!_fbDb||id===undefined||id===null||!obj) return;
     var clean=JSON.parse(JSON.stringify(obj));
-    _fbDb.ref("remesasBRL_v1/live_ops/"+campo+"/"+id).set(clean).catch(function(e){
+    _fbDb.ref(_LIVE_SYNC_RUTA+"/"+campo+"/"+id).set(clean).catch(function(e){
       console.warn("live_ops write falló ("+campo+"):",e.message);
     });
   }catch(e){ console.warn("_liveWriteRecord error:",e); }
@@ -15485,39 +15491,31 @@ function _liveWriteRecord(campo,id,obj){
 function _liveRemoveRecord(campo,id){
   try{
     if(!_fbDb||id===undefined||id===null) return;
-    _fbDb.ref("remesasBRL_v1/live_ops/"+campo+"/"+id).remove().catch(function(e){
+    _fbDb.ref(_LIVE_SYNC_RUTA+"/"+campo+"/"+id).remove().catch(function(e){
       console.warn("live_ops remove falló ("+campo+"):",e.message);
     });
   }catch(e){ console.warn("_liveRemoveRecord error:",e); }
 }
 // Última "foto" (por id → JSON) de lo que ya se subió a live_ops por cada
-// módulo — para saber, en cada saveData(), qué cambió/se agregó/se borró
-// sin tener que tocar cada función de creación/edición/borrado una por
-// una (son decenas repartidas por toda la app).
-// IMPORTANTE: se guarda en localStorage y se recupera al abrir la app —
-// si esto se quedara solo en memoria, CADA VEZ que abrieras la app volvería
-// a ver "todo" como si fuera nuevo (la foto en memoria empieza vacía) y
-// trataría de resubir CIENTOS de registros de golpe, dejando la app
-// congelada/en blanco cargando — esto es justo lo que estaba pasando.
+// módulo — se guarda en localStorage para no re-subir todo de cero cada
+// vez que se abre la app.
 var _liveSnapshot = {};
 try{
-  var _lsRaw=localStorage.getItem("_liveSnapshotCache_v1");
+  var _lsRaw=localStorage.getItem("_liveSnapshotCache_v2");
   if(_lsRaw) _liveSnapshot=JSON.parse(_lsRaw);
 }catch(e){ _liveSnapshot={}; }
 var _liveSnapshotDirty=false;
 function _guardarLiveSnapshotCache(){
   if(!_liveSnapshotDirty) return;
   _liveSnapshotDirty=false;
-  try{ localStorage.setItem("_liveSnapshotCache_v1", JSON.stringify(_liveSnapshot)); }catch(e){}
+  try{ localStorage.setItem("_liveSnapshotCache_v2", JSON.stringify(_liveSnapshot)); }catch(e){}
 }
 var _syncEnProgreso=false;
 function _sincronizarTiempoRealTodo(){
   if(!_fbDb) return;
   if(_syncEnProgreso) return; // ya hay una tanda corriendo, no se duplica
-  // Fase 1: calcular qué cambió — esto es rápido (solo comparar texto en
-  // memoria), no manda nada a Firebase todavía.
   var pendientes=[];
-  _MERGE_FIELDS.forEach(function(campo){
+  _LIVE_SYNC_CAMPOS.forEach(function(campo){
     var arr=S[campo];
     if(!Array.isArray(arr)) return;
     var idF=_MERGE_ID_FIELD[campo]||"id";
@@ -15536,10 +15534,6 @@ function _sincronizarTiempoRealTodo(){
     });
   });
   if(!pendientes.length) return;
-  // Fase 2: mandar los cambios a Firebase EN TANDAS PEQUEÑAS, dejando
-  // respirar al navegador entre cada una. Mandar cientos de escrituras
-  // de golpe en un solo bucle es justo lo que dejaba la página "no
-  // responde" — esto lo reparte en el tiempo para que nunca se sienta.
   _syncEnProgreso=true;
   var LOTE=8, i=0;
   function procesarLote(){
@@ -15569,68 +15563,67 @@ var _liveListenersActivos=false;
 function _iniciarListenersTiempoReal(){
   if(!_fbDb||_liveListenersActivos) return;
   _liveListenersActivos=true;
-  _MERGE_FIELDS.forEach(function(campo){
+  _LIVE_SYNC_CAMPOS.forEach(function(campo){
     var idF=_MERGE_ID_FIELD[campo]||"id";
-    var ref=_fbDb.ref("remesasBRL_v1/live_ops/"+campo);
-    ref.on("child_added",function(snap){
-      var item=snap.val();
+    var ref=_fbDb.ref(_LIVE_SYNC_RUTA+"/"+campo);
+    // ── Buffer de cambios entrantes ──────────────────────────────────
+    // Firebase dispara "child_added" de golpe para TODOS los registros
+    // existentes al conectar el escuchador (no solo los nuevos). Antes,
+    // cada uno llamaba a saveData()+R() por separado — con cientos de
+    // golpe, eso reventaba la memoria. Ahora se acumulan en un buffer y
+    // se aplican TODOS JUNTOS, con un solo saveData()+R() al final de
+    // la ráfaga (300ms sin novedades = ráfaga terminada).
+    var buffer=[];
+    var timerBuffer=null;
+    function agregarAlBuffer(accion,item){
       if(!item||item[idF]===undefined||item[idF]===null) return;
-      var id=item[idF];
-      if(_estaBorradoMerge(campo,id)) return; // se borró localmente, no revivir
-      var itemJs=JSON.stringify(item);
+      buffer.push({accion:accion,item:item});
+      if(timerBuffer) clearTimeout(timerBuffer);
+      timerBuffer=setTimeout(procesarBuffer,300);
+    }
+    function procesarBuffer(){
+      var cambios=buffer; buffer=[]; timerBuffer=null;
+      if(!cambios.length) return;
+      var huboCambioReal=false;
       if(!_liveSnapshot[campo]) _liveSnapshot[campo]={};
-      // Si esto es el eco de un dato que ESTE MISMO dispositivo acaba de
-      // escribir, no hace falta re-renderizar toda la pantalla — con
-      // cientos de registros subiendo de una vez, esto era lo que causaba
-      // el parpadeo y que la pantalla "se bajara sola" (un R() por cada
-      // eco). Solo actuamos si el contenido es realmente distinto.
-      if(_liveSnapshot[campo][id]===itemJs) return;
       var arr=S[campo]||(S[campo]=[]);
-      var idx=arr.findIndex(function(x){return x&&x[idF]===id;});
-      if(idx===-1){
-        arr.push(item);
-        if(campo==="brl"||campo==="vzla"||campo==="eeuu") _renumerarPorFecha(arr);
-      } else {
-        arr[idx]=item; // ya existía (llegó una versión más nueva)
+      cambios.forEach(function(c){
+        var id=c.item[idF];
+        if(c.accion==="removed"){
+          var idx=arr.findIndex(function(x){return x&&x[idF]===id;});
+          if(idx===-1) return; // eco de un borrado propio, ya no estaba
+          arr.splice(idx,1);
+          delete _liveSnapshot[campo][id];
+          huboCambioReal=true;
+          return;
+        }
+        if(_estaBorradoMerge(campo,id)) return; // se borró localmente, no revivir
+        var itemJs=JSON.stringify(c.item);
+        if(_liveSnapshot[campo][id]===itemJs) return; // eco propio, nada que hacer
+        var idx=arr.findIndex(function(x){return x&&x[idF]===id;});
+        if(idx===-1){
+          arr.push(c.item);
+          if(campo==="brl"||campo==="vzla"||campo==="eeuu") _renumerarPorFecha(arr);
+        } else {
+          arr[idx]=c.item;
+        }
+        _liveSnapshot[campo][id]=itemJs;
+        huboCambioReal=true;
+      });
+      if(huboCambioReal){
+        _liveSnapshotDirty=true; _guardarLiveSnapshotCache();
+        saveData();
+        R();
       }
-      _liveSnapshot[campo][id]=itemJs;
-      _liveSnapshotDirty=true; _guardarLiveSnapshotCache();
-      saveData();
-      R();
-    });
-    ref.on("child_changed",function(snap){
-      var item=snap.val();
-      if(!item||item[idF]===undefined||item[idF]===null) return;
-      var id=item[idF];
-      var itemJs=JSON.stringify(item);
-      if(!_liveSnapshot[campo]) _liveSnapshot[campo]={};
-      if(_liveSnapshot[campo][id]===itemJs) return; // eco propio, nada que hacer
-      var arr=S[campo]||[];
-      var idx=arr.findIndex(function(x){return x&&x[idF]===id;});
-      if(idx!==-1) arr[idx]=item; else arr.push(item);
-      _liveSnapshot[campo][id]=itemJs;
-      _liveSnapshotDirty=true; _guardarLiveSnapshotCache();
-      saveData();
-      R();
-    });
-    ref.on("child_removed",function(snap){
-      var item=snap.val();
-      if(!item||item[idF]===undefined||item[idF]===null) return;
-      var id=item[idF];
-      var arr=S[campo]||[];
-      var idx=arr.findIndex(function(x){return x&&x[idF]===id;});
-      if(idx===-1) return; // ya no estaba localmente (eco de un borrado propio)
-      arr.splice(idx,1);
-      if(_liveSnapshot[campo]) delete _liveSnapshot[campo][id];
-      _liveSnapshotDirty=true; _guardarLiveSnapshotCache();
-      saveData();
-      R();
-    });
+    }
+    ref.on("child_added",function(snap){ agregarAlBuffer("added",snap.val()); });
+    ref.on("child_changed",function(snap){ agregarAlBuffer("changed",snap.val()); });
+    ref.on("child_removed",function(snap){ agregarAlBuffer("removed",snap.val()); });
   });
 }
-// Al cargar la app, sube todo lo que ya tenías (de antes de este cambio)
-// a los registros individuales en tiempo real, para que también quede
-// visible para otros dispositivos de aquí en adelante.
+// Al cargar la app, sube todo lo que ya tenías (del Grupo 1 activo) a los
+// registros individuales en tiempo real, para que también quede visible
+// para otros dispositivos de aquí en adelante.
 function _migrarTodoALiveOps(){
   if(!_fbDb) return;
   _sincronizarTiempoRealTodo();
@@ -15678,15 +15671,16 @@ function initFirebase(){
     firebase.initializeApp(_FB_CONFIG);
     _fbDb  = firebase.database();
     _fbRef = _fbDb.ref("remesasBRL_v1");
+    // Sincronización en tiempo real — Grupo 1 (brl, vzla, eeuu, cuentas).
+    // Corregido el bug de raíz: antes cada registro entrante disparaba su
+    // propio refresco de pantalla; ahora se agrupan en ráfaga y se aplican
+    // de una sola vez.
     _iniciarListenersTiempoReal();
-    // Migración única: sube las remesas que ya tenías (de antes de este
-    // cambio) a los registros individuales en tiempo real, para que
-    // también se vean reflejadas para otros dispositivos.
     try{
-      if(!localStorage.getItem("_liveOpsMigrado_v1")){
+      if(!localStorage.getItem("_liveOpsMigrado_v2")){
         setTimeout(function(){
           _migrarTodoALiveOps();
-          localStorage.setItem("_liveOpsMigrado_v1","1");
+          localStorage.setItem("_liveOpsMigrado_v2","1");
         },3000);
       }
     }catch(e){}
