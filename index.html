@@ -1054,7 +1054,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v104";
+var APP_VERSION = "20260806_v105";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -2700,6 +2700,11 @@ function rBalanceStd(){
         "<input type='number' id='calc-tc-cop' step='1' placeholder='ej: 4200' value='"+(S.calcTasa&&S.calcTasa.tcCop||"")+"' style='width:100%;padding:9px;border:1.5px solid #ddd;border-radius:8px;font-size:14px;font-weight:700' oninput='calcTasaUpdate()'></div>"+
       "</div>"+
       "<div id='calc-tasa-resultado'></div>"+
+      "<div style='background:#FFF0F5;border:1.5px dashed #e91e63;border-radius:10px;padding:12px;margin-top:6px'>"+
+        "<label style='font-size:11px;font-weight:700;color:#e91e63;display:block;margin-bottom:4px'>🎯 O escribe directo la tasa que quieres publicar (BS × BRL) — te digo a qué % de ganancia equivale</label>"+
+        "<input type='number' id='calc-tasa-objetivo' step='0.01' placeholder='ej: 132' value='"+(S.calcTasa&&S.calcTasa.objetivo||"")+"' style='width:100%;padding:9px;border:1.5px solid #e91e63;border-radius:8px;font-size:14px;font-weight:700;margin-bottom:8px' oninput='calcTasaObjetivoUpdate()'>"+
+        "<div id='calc-tasa-objetivo-resultado'></div>"+
+      "</div>"+
     "</div>"+
     "<div style='background:#f8f8f8;border-radius:10px;padding:14px;border:1px solid #eee'>"+
     "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:10px'>⚙️ Gestión de datos</div>"+
@@ -5194,7 +5199,8 @@ function calcTasaUpdate(){
     var tasaPublicar=tvVes/tcCliente;
     return "<tr><td style='padding:7px 10px;font-weight:700;color:#0f6e3a'>"+m+"%</td>"+
       "<td style='padding:7px 10px;font-weight:700;font-size:13px'>"+f2(tasaPublicar)+" BS × BRL</td>"+
-      "<td style='padding:7px 10px;font-size:11px;color:#888'>Compras a "+f4(tcBrl)+" / Vendes a "+f4(tcCliente)+" BRL/USDT</td></tr>";
+      "<td style='padding:7px 10px;font-size:11px;color:#888'>Compras a "+f4(tcBrl)+" / Vendes a "+f4(tcCliente)+" BRL/USDT</td>"+
+      "<td style='padding:7px 10px'><button onclick='guardarTasaHoyDirecto("+tasaPublicar+")' style='background:#0f6e3a;color:#fff;border:none;padding:5px 10px;border-radius:6px;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap'>💾 Usar hoy</button></td></tr>";
   }).join("");
   var rowsVzlaBrl=tvVes>0&&tcBrl>0?margenes.map(function(m){
     var tvClienteVes=tvVes*(1-m/100);
@@ -5218,17 +5224,49 @@ function calcTasaUpdate(){
       "<td style='padding:7px 10px;font-size:11px;color:#888'>COP a "+f0(tcCop)+" / vendes a "+f0(tcClienteCop)+" COP/USDT</td></tr>";
   }).join(""):null;
 
-  function tabla(title, color, rows){
+  function tabla(title, color, rows, hasAction){
     return "<div style='margin-bottom:12px'><div style='font-size:11px;font-weight:700;color:"+color+";margin-bottom:6px'>"+title+"</div>"+
       "<table style='width:100%;border-collapse:collapse;font-size:12px;background:#fff;border-radius:8px;overflow:hidden;border:1px solid #eee'>"+
-      "<thead><tr style='background:#f9f9f9'><th style='padding:7px 10px;text-align:left;color:#888;font-size:10px'>GANANCIA %</th><th style='padding:7px 10px;text-align:left;color:#888;font-size:10px'>TASA A PUBLICAR</th><th style='padding:7px 10px;text-align:left;color:#888;font-size:10px'>DETALLE</th></tr></thead>"+
+      "<thead><tr style='background:#f9f9f9'><th style='padding:7px 10px;text-align:left;color:#888;font-size:10px'>GANANCIA %</th><th style='padding:7px 10px;text-align:left;color:#888;font-size:10px'>TASA A PUBLICAR</th><th style='padding:7px 10px;text-align:left;color:#888;font-size:10px'>DETALLE</th>"+(hasAction?"<th></th>":"")+"</tr></thead>"+
       "<tbody>"+rows+"</tbody></table></div>";
   }
   el.innerHTML=
-    tabla("🇧🇷→🇻🇪 BRL → Venezuela (BS × 1 BRL)","#0f6e3a",rowsBrlVes)+
+    tabla("🇧🇷→🇻🇪 BRL → Venezuela (BS × 1 BRL)","#0f6e3a",rowsBrlVes,true)+
     (rowsVzlaBrl?tabla("🇻🇪→🇧🇷 Venezuela → BRL (BS × 1 BRL)","#c0392b",rowsVzlaBrl):"")+
     (rowsUsdVes?tabla("🇺🇸→🇻🇪 USD → Venezuela (BS × 1 USD)","#0a3d7c",rowsUsdVes):"")+
     (rowsCopVes?tabla("🇨🇴→🇻🇪 COP → Venezuela (BS × 1 COP)","#7a5c00",rowsCopVes):"");
+}
+// ── #2: Guarda la tasa BRL→VZLA de HOY directamente, desde donde sea
+// (esta calculadora), sin tener que ir hasta ⚙️ Configuración a pegarla
+// en el campo de "tasa del día". Se aplica al instante a cotizaciones y
+// registros nuevos.
+function guardarTasaHoyDirecto(valor){
+  var v=Math.round((parseFloat(valor)||0)*100)/100;
+  if(v<=0){alert("Tasa inválida.");return;}
+  if(!S.config) S.config={};
+  if(!S.config.tasasDia) S.config.tasasDia={};
+  S.config.tasasDia.tdia_brl=v;
+  saveData();
+  alert("✅ Tasa de hoy actualizada a "+f2(v)+" BS × BRL — ya se aplica a cotizaciones y registros nuevos.");
+}
+// ── #1: Al revés — escribes la tasa que QUIERES publicar y te dice a
+// qué % de ganancia equivale (en vez de ir probando porcentajes hasta
+// que el resultado te cuadre con el mercado).
+function calcTasaObjetivoUpdate(){
+  var tcBrl=parseFloat((document.getElementById("calc-tc-brl")||{}).value)||0;
+  var tvVes=parseFloat((document.getElementById("calc-tv-ves")||{}).value)||0;
+  var objetivo=parseFloat((document.getElementById("calc-tasa-objetivo")||{}).value)||0;
+  if(!S.calcTasa) S.calcTasa={};
+  if(objetivo) S.calcTasa.objetivo=objetivo;
+  var el=document.getElementById("calc-tasa-objetivo-resultado");
+  if(!el) return;
+  if(!tcBrl||!tvVes||!objetivo){ el.innerHTML="<div style='font-size:11px;color:#aaa'>Completa el precio USDT en BRL y VES arriba, y la tasa que quieres publicar.</div>"; return; }
+  // tasaPublicar = tvVes / tcCliente  →  tcCliente = tvVes / tasaPublicar
+  var tcCliente=tvVes/objetivo;
+  var margen=Math.round(((tcCliente/tcBrl-1)*100)*100)/100;
+  var colorMargen = margen<5?"#c0392b":margen<10?"#e67e22":"#0f6e3a";
+  el.innerHTML="<div style='font-size:13px;font-weight:800;color:"+colorMargen+";margin-bottom:6px'>Eso equivale a "+margen+"% de ganancia"+(margen<5?" — muy bajo, revisa si te conviene":"")+"</div>"+
+    "<button onclick='guardarTasaHoyDirecto("+objetivo+")' style='background:#e91e63;color:#fff;border:none;padding:9px 16px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;width:100%'>💾 Usar "+f2(objetivo)+" como tasa de hoy</button>";
 }
 
 // ── CAPITAL TOTAL — unifica Capital + Balance + Cierre + Reportes socios ─
@@ -10910,6 +10948,7 @@ function rDash(){
     "<span style='font-size:11px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.5px'>📊 Tasas de mercado · referencia</span>"+
     "<button onclick='cargarTasasRef()' style='border:none;background:none;cursor:pointer;font-size:11px;color:#aaa' title='Actualizar tasas'>🔄</button></div>"+
     "<div id='tasas-ref-widget'>"+_htmlTasasRef()+"</div>"+
+    "<a href='https://retorna.app/access/public/calculator?source=BR&target=VE&targetCurrency=VES' target='_blank' style='display:block;text-align:center;margin-top:10px;padding:9px;background:#F5F3FF;border:1px solid #ddd6fe;border-radius:8px;color:#6d28d9;font-size:11px;font-weight:700;text-decoration:none'>🔍 Ver tasa de Retorna (Brasil → Venezuela) ahora</a>"+
     "</div>";
 
   // ── #6 Evolución diaria + #7 Proyección mensual ──────────────────────────
