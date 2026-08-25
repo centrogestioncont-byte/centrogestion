@@ -1054,7 +1054,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v106";
+var APP_VERSION = "20260806_v107";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -12316,6 +12316,23 @@ function calcObjetivoIda(val){
   }
   R();
 }
+// Igual, pero para la VUELTA (Venezuela → Brasil): cliente = real*(1+mg/100)
+function calcObjetivoVuelta(val){
+  if(!S.calc) S.calc={};
+  S.calc.objetivoVuelta=val;
+  var cli=parseFloat(val)||0;
+  var tvI=parseFloat(S.calc.tvVentaIda)||0, tcVu=parseFloat(S.calc.tcCompraVuelta)||0;
+  if(cli>0 && tvI>0 && tcVu>0){
+    var binFee=parseFloat((S.config||{}).comision_binance)||parseFloat(S.calc.exComCompra)||0.004;
+    var tcVuEfec=tcVu*(1-binFee);
+    var realV=tvI/tcVuEfec;
+    if(realV>0){
+      var mgV=Math.round(((cli/realV-1)*100)*100)/100;
+      S.calc.margenVuelta=mgV;
+    }
+  }
+  R();
+}
 function calcSetExotico(campo,val){ S.calc[campo]=val; calcUpdateExotico(); }
 function calcSetModoCalc(modo){ S.calc.modoCalc=modo; R(); }
 function calcSetExOrig(val){
@@ -12326,6 +12343,25 @@ function calcSetExOrig(val){
   S.calc.exOrig=val; R();
 }
 function calcSetMargenExotico(val){ S.calc.exMargen=val; R(); }
+// Al revés para rutas exóticas: escribes la tasa que quieres ofrecer y
+// se calcula el % de margen equivalente, con la misma fórmula exacta de
+// _calcTasasExotico() (comisiones Binance de compra y venta incluidas).
+function calcObjetivoExotico(val){
+  if(!S.calc) S.calc={};
+  S.calc.objetivoExotico=val;
+  var cli=parseFloat(val)||0;
+  var tc=parseFloat(S.calc.exTcCompra)||0, tv=parseFloat(S.calc.exTvVenta)||0;
+  if(cli>0 && tc>0 && tv>0){
+    var comOrig=_comisionBinance("compra");
+    var comDest=_comisionBinance("venta");
+    var real=(tv*(1-comDest))/(tc*(1+comOrig));
+    if(real>0){
+      var mg=Math.round(((1-cli/real)*100)*100)/100;
+      S.calc.exMargen=mg;
+    }
+  }
+  R();
+}
 function calcSetMargenExoticoLibre(val){
   S.calc.exMargen=val;
   // Actualizar resultado sin re-renderizar (para no perder el foco)
@@ -12890,6 +12926,10 @@ function rCalculadora(){
       "<label style='font-size:10px;color:var(--ink2);font-weight:700;text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:6px'>Mi ganancia</label>"+
       "<div style='display:flex;gap:8px;margin-bottom:12px'>"+mbtn("margenVuelta","8",c.margenVuelta)+mbtn("margenVuelta","9",c.margenVuelta)+mbtn("margenVuelta","10",c.margenVuelta)+
         "<input type='number' inputmode='decimal' step='any' placeholder='otro' value='"+(c.margenVuelta||"")+"' oninput='calcSet(\"margenVuelta\",this.value)' style='flex:1;text-align:center'></div>"+
+      "<div style='background:#FFF0F5;border:1.5px dashed #e91e63;border-radius:10px;padding:10px 12px;margin-bottom:12px'>"+
+        "<label style='font-size:10px;font-weight:700;color:#e91e63;display:block;margin-bottom:4px'>🎯 O escribe la tasa que quieres cobrar (Bs por 1 R$) — calcula el % solo</label>"+
+        "<input type='number' inputmode='decimal' step='any' placeholder='ej: 150' value='"+(c.objetivoVuelta||"")+"' oninput='S.calc.objetivoVuelta=this.value' onblur='calcObjetivoVuelta(this.value)' style='width:100%;padding:9px;border:1.5px solid #e91e63;border-radius:8px;font-size:14px;font-weight:700'>"+
+      "</div>"+
       "<div class='fl'><label>💡 Simular: si el cliente envía (Bs)</label><input type='number' inputmode='decimal' step='any' placeholder='ej: 5000' value='"+(c.simVuelta||"")+"' oninput='calcSet(\"simVuelta\",this.value)'></div>"+
       "<div id='calc-res-vuelta' style='background:var(--brandSoft);border-radius:12px;padding:13px 16px;text-align:center'>"+
         _calcResHTML("vuelta",t.vuelta)+
@@ -12944,6 +12984,10 @@ function rCalculadora(){
       "<label style='font-size:10px;color:var(--ink2);font-weight:700;text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:6px'>Mi ganancia</label>"+
       "<div style='display:flex;gap:8px;margin-bottom:12px'>"+mbtnEx("8",c.exMargen)+mbtnEx("9",c.exMargen)+mbtnEx("10",c.exMargen)+
         "<input type='number' inputmode='decimal' step='any' placeholder='otro' value='"+(c.exMargen||"")+"' oninput='calcSetMargenExoticoLibre(this.value)' style='flex:1;text-align:center'></div>"+
+      "<div style='background:#FFF0F5;border:1.5px dashed #e91e63;border-radius:10px;padding:10px 12px;margin-bottom:12px'>"+
+        "<label style='font-size:10px;font-weight:700;color:#e91e63;display:block;margin-bottom:4px'>🎯 O escribe la tasa que quieres ofrecer ("+selDest+" por 1 "+selOrig+") — calcula el % solo</label>"+
+        "<input type='number' inputmode='decimal' step='any' placeholder='ej: 0.0025' value='"+(c.objetivoExotico||"")+"' oninput='S.calc.objetivoExotico=this.value' onblur='calcObjetivoExotico(this.value)' style='width:100%;padding:9px;border:1.5px solid #e91e63;border-radius:8px;font-size:14px;font-weight:700'>"+
+      "</div>"+
       "<div class='fl'><label>💡 Simular: cliente envía ("+selOrig+")</label>"+
         "<input type='number' inputmode='decimal' step='any' placeholder='ej: 500' value='"+(c.exSim||"")+"' oninput='calcSetExotico(\"exSim\",this.value)'></div>"+
       "<div id='calc-res-exotico' style='background:var(--brandSoft);border-radius:12px;padding:13px 16px'>"+
