@@ -1054,7 +1054,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v109";
+var APP_VERSION = "20260806_v110";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -12299,9 +12299,9 @@ function rTblEE(){
 // "tasa del día" — la misma que usa el Conversor rápido para clientes.
 // Antes había que ir a ⚙️ Configuración a copiarla a mano; ahora se
 // guarda con un toque, sin salir de esta pantalla.
-function guardarTasaCalcHoy(dir,valor){
+function guardarTasaCalcHoy(dir,valor,silencioso){
   var v=Math.round((parseFloat(valor)||0)*100)/100;
-  if(v<=0){alert("Tasa inválida.");return;}
+  if(v<=0){if(!silencioso)alert("Tasa inválida.");return;}
   if(!S.config) S.config={};
   if(!S.config.tasasDia) S.config.tasasDia={};
   if(dir==="ida"){
@@ -12312,7 +12312,7 @@ function guardarTasaCalcHoy(dir,valor){
     S._convTasaOverrideVuelta=null;
   }
   saveData();
-  alert("✅ Guardada: "+(dir==="ida"?"1 R$ = "+v+" Bs (ida)":v+" Bs = 1 R$ (vuelta)")+" — ya se usa en el Conversor rápido y en cotizaciones/registros nuevos.");
+  if(!silencioso) alert("✅ Guardada: "+(dir==="ida"?"1 R$ = "+v+" Bs (ida)":v+" Bs = 1 R$ (vuelta)")+" — ya se usa en el Conversor rápido y en cotizaciones/registros nuevos.");
 }
 function calcSet(campo,val){ S.calc[campo]=val; calcUpdate(); }
 // ── Al revés: escribes la tasa que quieres OFRECER al cliente y se
@@ -12513,7 +12513,22 @@ function _calcTasas(){
 
   // IDA: Brasil → Venezuela (cliente da reales, recibe bolívares)
   var tcC=parseFloat(c.tcCompra)||0, tvV=parseFloat(c.tvVenta)||0, mg=parseFloat(c.margen)||0;
-  if(tcC>0 && tvV>0){
+  var objIda=parseFloat(c.objetivoIda)||0;
+  if(objIda>0){
+    // ── Tasa escrita directamente a mano: manda ella sola, NO hace falta
+    // compra/venta para nada — es una forma alterna de trabajar, no un
+    // paso extra sobre la otra. ──
+    r.ida={ok:true,cliente:objIda,manual:true,real:(tcC>0&&tvV>0)?(tvV/(tcC*(1-binFee))):null,binFee:binFee};
+    var xR2=parseFloat(c.simIda)||0;
+    if(xR2>0){
+      r.ida.simMonto=xR2;
+      if(tcC>0&&tvV>0){
+        var usdtObtengo2=(xR2/tcC)*(1-binFee);
+        var usdtEntrego2=(xR2*objIda)/tvV;
+        r.ida.simGanUsdt=usdtObtengo2-usdtEntrego2;
+      }
+    }
+  } else if(tcC>0 && tvV>0){
     // Tasa efectiva: Binance retiene binFee al comprar USDT con BRL
     var tcEfec=tcC*(1-binFee);
     var real=tvV/tcEfec;  // costo real Bs/R$ incluyendo fee
@@ -12532,7 +12547,20 @@ function _calcTasas(){
   } else { r.ida={ok:false}; }
   // VUELTA: Venezuela → Brasil (cliente da bolívares, recibe reales)
   var tvI=parseFloat(c.tvVentaIda)||0, tcVu=parseFloat(c.tcCompraVuelta)||0, mgV=parseFloat(c.margenVuelta)||0;
-  if(tvI>0 && tcVu>0){
+  var objVuelta=parseFloat(c.objetivoVuelta)||0;
+  if(objVuelta>0){
+    r.vuelta={ok:true,cliente:objVuelta,manual:true,real:(tvI>0&&tcVu>0)?(tvI/(tcVu*(1-binFee))):null,binFee:binFee};
+    var xV2=parseFloat(c.simVuelta)||0;
+    if(xV2>0){
+      r.vuelta.simMonto=xV2;
+      if(tvI>0&&tcVu>0){
+        var brlEntrego2=xV2/objVuelta;
+        var usdtCompro2=xV2/tvI;
+        var usdtEntrego3=(brlEntrego2*tcVu)*(1+binFee);
+        r.vuelta.simGanUsdt=usdtEntrego3-usdtCompro2;
+      }
+    }
+  } else if(tvI>0 && tcVu>0){
     // Tasa efectiva: Binance retiene binFee al vender USDT por BRL
     var tcVuEfec=tcVu*(1-binFee);
     var realV=tvI/tcVuEfec;  // costo real Bs/R$ con fee
@@ -12557,9 +12585,9 @@ function _calcResHTML(dir,t){
   if(!t.ok) return "<div style='font-size:12px;color:var(--ink3);text-align:center;padding:8px'>Ingresa compra y venta para ver la tasa ↑</div>";
   var tasaTxt = dir==="ida" ? ("1 R$ = "+t.cliente.toFixed(2)+" Bs") : (t.cliente.toFixed(2)+" Bs = 1 R$");
   var feeStr = t.binFee>0 ? " <span style='color:#c0392b;font-size:9px'>(+"+( t.binFee*100).toFixed(1)+"% Binance)</span>" : "";
-  var html = "<div style='font-size:10px;color:var(--ink2);font-weight:700;text-transform:uppercase;letter-spacing:.3px'>Ofrécele a tu cliente</div>"+
+  var html = "<div style='font-size:10px;color:var(--ink2);font-weight:700;text-transform:uppercase;letter-spacing:.3px'>Ofrécele a tu cliente"+(t.manual?" <span style='color:#e91e63'>(tasa manual)</span>":"")+"</div>"+
     "<div style='font-size:30px;font-weight:900;color:var(--brandDeep);margin:3px 0'>"+tasaTxt+"</div>"+
-    "<div style='font-size:10px;color:var(--ink3)'>costo real (con fee Binance): "+t.real.toFixed(2)+" Bs/R$"+feeStr+"</div>"+
+    (t.real!==null&&t.real!==undefined?"<div style='font-size:10px;color:var(--ink3)'>costo real (con fee Binance): "+t.real.toFixed(2)+" Bs/R$"+feeStr+"</div>":"<div style='font-size:10px;color:#c0392b'>⚠️ Sin compra/venta no se puede saber tu ganancia real — solo se usará esta tasa tal cual la escribiste.</div>")+
     "<button type='button' onclick='guardarTasaCalcHoy(\""+dir+"\","+t.cliente+")' style='margin-top:8px;width:100%;padding:8px;border:none;border-radius:8px;background:#0f6e3a;color:#fff;font-size:11px;font-weight:700;cursor:pointer'>💾 Guardar como tasa de hoy (para el Conversor)</button>";
   if(t.simGanUsdt!==undefined){
     var moneda = dir==="ida" ? "R$" : "Bs";
@@ -12930,7 +12958,7 @@ function rCalculadora(){
         "<input type='number' inputmode='decimal' step='any' placeholder='otro' value='"+(c.margen||"")+"' oninput='calcSet(\"margen\",this.value)' style='flex:1;text-align:center'></div>"+
       "<div style='background:#FFF0F5;border:1.5px dashed #e91e63;border-radius:10px;padding:10px 12px;margin-bottom:12px'>"+
         "<label style='font-size:10px;font-weight:700;color:#e91e63;display:block;margin-bottom:4px'>🎯 O escribe la tasa que quieres ofrecer (Bs por 1 R$) — calcula el % solo</label>"+
-        (!(c.tcCompra&&c.tvVenta)?"<div style='font-size:10px;color:#c0392b;font-weight:700;margin-bottom:6px'>⚠️ Primero llena \"Compra\" y \"Venta\" arriba — sin esas dos no hay con qué calcular el %</div>":"")+
+        (!(c.tcCompra&&c.tvVenta)?"<div style='font-size:10px;color:#1a5f8a;font-weight:700;margin-bottom:6px'>💡 Puedes usar esto solo, sin llenar Compra/Venta — pero entonces no vas a ver cuál es tu ganancia real en USDT.</div>":"")+
         "<input type='number' inputmode='decimal' step='any' placeholder='ej: 164' value='"+(c.objetivoIda||"")+"' oninput='S.calc.objetivoIda=this.value' onblur='calcObjetivoIda(this.value)' style='width:100%;padding:9px;border:1.5px solid #e91e63;border-radius:8px;font-size:14px;font-weight:700'>"+
       "</div>"+
       "<div class='fl'><label>💡 Simular: si el cliente envía (R$)</label><input type='number' inputmode='decimal' step='any' placeholder='ej: 100' value='"+(c.simIda||"")+"' oninput='calcSet(\"simIda\",this.value)'></div>"+
@@ -12949,7 +12977,7 @@ function rCalculadora(){
         "<input type='number' inputmode='decimal' step='any' placeholder='otro' value='"+(c.margenVuelta||"")+"' oninput='calcSet(\"margenVuelta\",this.value)' style='flex:1;text-align:center'></div>"+
       "<div style='background:#FFF0F5;border:1.5px dashed #e91e63;border-radius:10px;padding:10px 12px;margin-bottom:12px'>"+
         "<label style='font-size:10px;font-weight:700;color:#e91e63;display:block;margin-bottom:4px'>🎯 O escribe la tasa que quieres cobrar (Bs por 1 R$) — calcula el % solo</label>"+
-        (!(c.tvVentaIda&&c.tcCompraVuelta)?"<div style='font-size:10px;color:#c0392b;font-weight:700;margin-bottom:6px'>⚠️ Primero llena \"Compra\" y \"Venta\" arriba — sin esas dos no hay con qué calcular el %</div>":"")+
+        (!(c.tvVentaIda&&c.tcCompraVuelta)?"<div style='font-size:10px;color:#1a5f8a;font-weight:700;margin-bottom:6px'>💡 Puedes usar esto solo, sin llenar Compra/Venta — pero entonces no vas a ver cuál es tu ganancia real en USDT.</div>":"")+
         "<input type='number' inputmode='decimal' step='any' placeholder='ej: 150' value='"+(c.objetivoVuelta||"")+"' oninput='S.calc.objetivoVuelta=this.value' onblur='calcObjetivoVuelta(this.value)' style='width:100%;padding:9px;border:1.5px solid #e91e63;border-radius:8px;font-size:14px;font-weight:700'>"+
       "</div>"+
       "<div class='fl'><label>💡 Simular: si el cliente envía (Bs)</label><input type='number' inputmode='decimal' step='any' placeholder='ej: 5000' value='"+(c.simVuelta||"")+"' oninput='calcSet(\"simVuelta\",this.value)'></div>"+
@@ -13251,6 +13279,16 @@ function generarFlyer(){
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
     }catch(e){ alert("No se pudo descargar: "+e.message); }
     document.body.removeChild(holder);
+    // Al terminar de descargar el flyer, preguntar si se guarda esta tasa
+    // como la del día — para que el Conversor rápido y las cotizaciones
+    // ya la usen sin tener que ir a otro lado a copiarla.
+    var partes=[];
+    if(t.ida.ok) partes.push("Ida: 1 R$ = "+t.ida.cliente.toFixed(2)+" Bs");
+    if(t.vuelta.ok) partes.push("Vuelta: "+t.vuelta.cliente.toFixed(2)+" Bs = 1 R$");
+    if(confirm("Flyer descargado ✅\n\n¿Guardar esta tasa como la de hoy?\n"+partes.join("\n"))){
+      if(t.ida.ok) guardarTasaCalcHoy("ida",t.ida.cliente,true);
+      if(t.vuelta.ok) guardarTasaCalcHoy("vuelta",t.vuelta.cliente,true);
+    }
   }).catch(function(e){
     document.body.removeChild(holder);
     alert("No se pudo generar el flyer: "+e.message);
