@@ -1054,7 +1054,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260806_v110";
+var APP_VERSION = "20260806_v112";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -3749,7 +3749,7 @@ function delRep(id){
   logAudit("REPOSICION_DEL","Eliminó reposición de $"+f2(r.monto)+" USDT");
   saveData();R();
 }
-function setCuentaEgreso(id,cid){var e=S.egresos.find(function(x){return x.id===id;});if(e){e.cuentaId=cid;saveData();R();}}
+function setCuentaEgreso(id,cid){var e=S.egresos.find(function(x){return x.id===id;});if(e){e.cuentaId=cid;e._mod=Date.now();saveData();R();}}
 function pagarEgreso(id){
   var e=S.egresos.find(function(x){return x.id===id;});
   if(!e||e.pagada)return;
@@ -3760,14 +3760,14 @@ function pagarEgreso(id){
   ajusteCuentaEgreso(e.cuentaId,-(parseFloat(e.monto)||0));
   // Descontar del lote FIFO
   descontarFIFOEgreso(e.mon||"BRL",e.monto,e.usdt,e.cuentaId);
-  e.pagada=true;e.fp=ds(td());
+  e.pagada=true;e.fp=ds(td());e._mod=Date.now();
   saveData();R();
 }
 function pagarEgresoSinCuenta(id){
   var e=S.egresos.find(function(x){return x.id===id;});
   if(!e||e.pagada)return;
   if(!confirm("Marcar \""+e.mot+"\" como pagada SIN descontar de ninguna cuenta (pago en efectivo/externo). ¿Confirmar?"))return;
-  e.pagada=true;e.fp=ds(td());saveData();R();
+  e.pagada=true;e.fp=ds(td());e._mod=Date.now();saveData();R();
 }
 function generarFijasMes(){
   var hoy=new Date();var mm=String(hoy.getMonth()+1).padStart(2,"0");var yy=String(hoy.getFullYear()).slice(-2);
@@ -14282,7 +14282,8 @@ function rEgresos(){
     "<div><div style='font-size:12px;font-weight:500'>"+e.mot+"</div><div style='font-size:10px;color:#aaa'>"+e.d+"</div></div>"+
     "<div style='display:flex;align-items:center;gap:6px'>"+
     "<span style='font-weight:700;color:#9a6d00'>$"+f2(e.usdt)+"</span>"+selC+
-    "<button onclick='pagEg("+JSON.stringify(e.id)+")' style='background:#0f6e3a;color:#fff;border:none;padding:5px 8px;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer'>✅</button>"+
+    "<button onclick='pagEg("+JSON.stringify(e.id)+")' style='background:#0f6e3a;color:#fff;border:none;padding:5px 8px;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer' title='Descuenta de la cuenta elegida'>✅</button>"+
+    "<button onclick='if(confirm(\"¿Ya pagaste esto y el dinero YA salió de la cuenta (por ejemplo, se te revirtió el estado por un problema de sincronización)? Esto solo marca la factura como pagada, SIN volver a descontar nada.\"))pagarEgresoSinCuenta("+JSON.stringify(e.id)+")' style='background:#fff;color:#0f6e3a;border:1.5px dashed #0f6e3a;padding:5px 8px;border-radius:7px;font-size:9px;font-weight:700;cursor:pointer' title='Ya se pagó, solo marcar (no descuenta de nuevo)'>✓ ya pagado</button>"+
     "<button onclick='delEg("+JSON.stringify(e.id)+")' style='background:none;border:none;cursor:pointer;font-size:13px'>🗑️</button></div></div>";
   }).join("");
 
@@ -14541,7 +14542,7 @@ function rMiGestion(){
           "<td><span style='background:#F0E8FF;color:#7b2d8b;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:700'>"+e.cat+"</span></td>"+
           "<td>"+e.mot+"</td>"+
           "<td style='text-align:right;font-weight:700;color:#c0392b'>$"+f2(e.usdt)+"</td>"+
-          "<td>"+(e.pagada?"<span style='color:#0f6e3a;font-size:10px;font-weight:700'>✅</span>":"<button onclick='pagarEgPersonal("+JSON.stringify(e.id)+")' style='background:#1a6b3c;color:#fff;border:none;border-radius:6px;padding:3px 8px;cursor:pointer;font-size:10px'>Pagar</button>")+"</td></tr>";
+          "<td>"+(e.pagada?"<span style='color:#0f6e3a;font-size:10px;font-weight:700'>✅</span>":"<button onclick='pagarEgPersonal("+JSON.stringify(e.id)+")' style='background:#1a6b3c;color:#fff;border:none;border-radius:6px;padding:3px 8px;cursor:pointer;font-size:10px'>Pagar</button> <button onclick='pagarEgPersonalSinCuenta("+JSON.stringify(e.id)+")' style='background:#fff;color:#1a6b3c;border:1px dashed #1a6b3c;border-radius:6px;padding:3px 6px;cursor:pointer;font-size:8px' title='Ya se pagó, solo marcar'>✓ ya pagado</button>")+"</td></tr>";
       }).join("")+"</tbody></table></div>":
       "<div style='text-align:center;color:#ccc;font-size:12px;padding:24px 0'>Sin gastos personales registrados</div>")+
     "</div>"+
@@ -14585,7 +14586,18 @@ function pagarEgPersonal(id){
   if(e.cuentaId) ajusteCuentaEgreso(e.cuentaId,-e.monto);
   // Descontar del lote FIFO
   descontarFIFOEgreso(e.mon||"BRL",e.monto,e.usdt,e.cuentaId);
-  S.egresos_personales[idx].pagada=true;S.egresos_personales[idx].fp=ds(td());
+  S.egresos_personales[idx].pagada=true;S.egresos_personales[idx].fp=ds(td());S.egresos_personales[idx]._mod=Date.now();
+  saveData();R();
+}
+// Para cuando el estado "pagado" se revirtió por un problema de
+// sincronización, pero el dinero YA salió de verdad de la cuenta —
+// marca la factura como pagada SIN volver a descontar nada.
+function pagarEgPersonalSinCuenta(id){
+  if(!S.egresos_personales) return;
+  var idx=S.egresos_personales.findIndex(function(e){return e.id===id;});
+  if(idx===-1) return;
+  if(!confirm("¿Ya pagaste esto y el dinero YA salió de la cuenta? Esto solo marca la factura como pagada, SIN volver a descontar nada."))return;
+  S.egresos_personales[idx].pagada=true;S.egresos_personales[idx].fp=ds(td());S.egresos_personales[idx]._mod=Date.now();
   saveData();R();
 }
 function reqDelPersonal(id){
