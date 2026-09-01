@@ -1053,7 +1053,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260901_v113";
+var APP_VERSION = "20260901_v114";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -7284,12 +7284,38 @@ function iniciarTasasAutoRef(){
 }
 
 
+// ── ARREGLO 8 (01/09/2026): el poll dejaba de bajar 968 KB cada 8 segundos ──
+// Antes: fetch del bloque COMPLETO cada 8 s, y de todo eso solo se usaba
+// data._ts para decidir si valia la pena mirar el resto. ~15 GB/mes contra un
+// tope gratuito de 10 GB, mas el redibujado constante (el parpadeo con dos
+// dispositivos abiertos). Ahora se piden primero unos bytes con el _ts, y el
+// bloque completo se baja SOLO cuando ese numero cambio.
+// El detector de conexion sigue latiendo igual: _marcarConexionOK/Fallo se
+// llaman sobre la peticion chica, que sale con la misma frecuencia de antes.
+// _FB_REST se define mucho mas abajo en el archivo, asi que la URL corta se
+// calcula en el momento de usarla, no aqui.
+function _fbRestTs(){ return String(_FB_REST||"").replace(/\.json$/, "/_ts.json"); }
+var _ultimoPoll = 0;
 function fbCheckREST(){
-  fetch(_FB_REST+"?ts="+Date.now()) // bust cache
+  // Pausa en segundo plano: una pestaña oculta no la mira nadie, y el listener
+  // WebSocket sigue recibiendo cambios igual. Ademas evita el falso positivo de
+  // volver a la pestaña y encontrar la pantalla de "sin internet" ya resuelta.
+  if(typeof document!=="undefined" && document.hidden) return;
+  var _ahora=Date.now();
+  if(_ahora-_ultimoPoll < 3000) return; // minimo entre disparos (ráfagas al volver)
+  _ultimoPoll=_ahora;
+  fetch(_fbRestTs()+"?ts="+_ahora) // solo el _ts: unos bytes
     .then(function(r){return r.json();})
-    .then(function(data){
+    .then(function(tsRemoto){
       _marcarConexionOK(); // llegó respuesta por HTTPS normal → sí hay internet
-      if(!data||!data._ts) return;
+      tsRemoto = tsRemoto || 0;
+      // Nada cambió: no se descarga el bloque y no se redibuja nada.
+      if(!(tsRemoto > (S._ts||0) + 500)) return null;
+      return fetch(_FB_REST+"?ts="+Date.now()).then(function(r){return r.json();});
+    })
+    .then(function(data){
+      if(!data) return;
+      if(!data._ts) return;
       var tsRemoto=data._ts||0;
       var tsLocal=S._ts||0;
       // Si Firebase tiene datos más nuevos que lo que tenemos localmente
@@ -7346,6 +7372,13 @@ function startAutoSync(){
   setTimeout(fbCheckREST, 3000);
   // Luego cada 8 segundos
   setInterval(fbCheckREST, 8000);
+  // ARREGLO 8: al volver a la pestaña, verificar YA en vez de esperar hasta 8 s.
+  // Esto ademas levanta el detector de conexion mas rapido que antes.
+  try{
+    document.addEventListener("visibilitychange", function(){
+      if(!document.hidden){ _ultimoPoll=0; fbCheckREST(); }
+    });
+  }catch(e){}
   // Renovar la sesión cada minuto mientras haya alguien logueado, para que
   // usar la app de corrido nunca te saque a mitad de camino.
   setInterval(function(){ if(S.role) _guardarSesion(); }, 60000);
