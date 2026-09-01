@@ -6719,7 +6719,7 @@ function forzarSyncFirebase(){
   S._ts=Date.now();
   S._saveForced=true;
   var obj={_ts:S._ts};
-  DATA_KEYS.forEach(function(k){obj[k]=S[k];});
+  _volcarDatos(obj);
   // Guardar en localStorage primero
   try{localStorage.setItem(STORAGE_KEY,JSON.stringify(obj));}catch(e){}
   // Enviar a Firebase por REST API (HTTPS - funciona aunque WiFi bloquee WebSocket)
@@ -6833,7 +6833,7 @@ function fbForceLoad(){
   // de registrar hace un instante (aunque todavía no haya llegado a Firebase)
   // no se pierde al actualizar.
   var obj={_ts:Date.now()};
-  DATA_KEYS.forEach(function(k){obj[k]=S[k];});
+  _volcarDatos(obj);
   var url=_FB_REST+"?ts="+Date.now();
   fetch(url)
     .then(function(r){
@@ -7312,7 +7312,12 @@ function fbCheckREST(){
             var fusionado=_mergeArrayById(remoteFiltrado, S[k], idF, tsRemoto, tsLocal);
             if(k==="brl"||k==="vzla"||k==="eeuu") _renumerarPorFecha(fusionado);
             S[k]=fusionado;
-          } else {
+          } else if(k!=="_deletedMerge"){
+            // ARREGLO 6c (01/09/2026): _deletedMerge NUNCA se reemplaza. Si el
+            // recorrido lo asigna, las marcas recien creadas se pierden y las
+            // vencidas reviven. Sintoma que lo delato: una marca del 17/07, ya
+            // vencida por la regla de 30 dias, reaparecio despues de un import.
+            // Este bloque existe DOS veces (listener y poll REST): van los dos.
             S[k]=data[k];
           }
         });
@@ -7546,7 +7551,7 @@ function saveData(){
     var obj={_ts:Date.now()};
     // Count total ops for integrity check
     obj._opsCount=(S.brl||[]).length+(S.vzla||[]).length+(S.eeuu||[]).length;
-    DATA_KEYS.forEach(function(k){ obj[k]=S[k]; });
+    _volcarDatos(obj);
     var json=JSON.stringify(obj);
     localStorage.setItem(STORAGE_KEY, json);
     localStorage.setItem(STORAGE_KEY+"_bak", json);
@@ -7627,7 +7632,7 @@ function autoBackup(){
     // 3 slots rotativos: backup_0, backup_1, backup_2
     var slot=(_saveCount||0)%3;
     var obj={_ts:Date.now(),_fecha:new Date().toLocaleString("es-VE"),_slot:slot,_total:_total};
-    DATA_KEYS.forEach(function(k){obj[k]=S[k];});
+    _volcarDatos(obj);
     _fbDb.ref("remesasBRL_backup_"+slot).set(obj).then(function(){
       // ── Regla absoluta 2: releer y verificar que lo escrito es legible ──
       return _fbDb.ref("remesasBRL_backup_"+slot).get();
@@ -7718,7 +7723,7 @@ function exportMesSel(){
 function autoBackupJSON(mesLabel){
   try{
     var obj={_version:1,_exportado:new Date().toLocaleString("es-ES"),_backup:"cierre_"+mesLabel};
-    DATA_KEYS.forEach(function(k){obj[k]=S[k];});
+    _volcarDatos(obj);
     var blob=new Blob([JSON.stringify(obj,null,2)],{type:"application/json"});
     var a=document.createElement("a");
     a.href=URL.createObjectURL(blob);
@@ -7736,7 +7741,7 @@ function autoBackupJSON(mesLabel){
 function exportData(){
   try{
     var obj={_version:1,_exportado:new Date().toLocaleString("es-ES")};
-    DATA_KEYS.forEach(function(k){obj[k]=S[k];});
+    _volcarDatos(obj);
     var blob=new Blob([JSON.stringify(obj,null,2)],{type:"application/json"});
     var a=document.createElement("a");
     a.href=URL.createObjectURL(blob);
@@ -7756,9 +7761,40 @@ function importData(){
       try{
         var obj=JSON.parse(e.target.result);
         var loaded=0;
+        // ARREGLO 6a (31/08/2026): antes importar reemplazaba los datos SIN dejar
+        // constancia de lo que sacaba. Para el resto del sistema esos registros
+        // nunca se habian borrado, asi que cualquier dispositivo que todavia los
+        // tuviera "ganaba" por tener mas registros y los volvia a subir.
+        // Ahora todo lo que desaparece en el import queda marcado como borrado,
+        // y esa marca viaja a Firebase y poda a los demas dispositivos.
+        // Se CALCULA aqui (hace falta el estado viejo) pero se ESCRIBE despues
+        // del recorrido: _deletedMerge es una de las 32 claves de DATA_KEYS, asi
+        // que el recorrido lo reemplaza con el del archivo y borraria las marcas
+        // recien creadas. Corregido el 31/08/2026 tras detectarse en pruebas.
+        var _porBorrar=[], _dkNuevas=[];
+        _PODA_CATS.forEach(function(k){
+          if(!Array.isArray(obj[k])||!Array.isArray(S[k])) return;
+          var idF=_MERGE_ID_FIELD[k]||"id";
+          var entran={};
+          obj[k].forEach(function(r){ if(r&&r[idF]!==undefined) entran[String(r[idF])]=1; });
+          S[k].forEach(function(r){
+            if(r&&r[idF]!==undefined&&!entran[String(r[idF])]){
+              _porBorrar.push([k,r[idF]]);
+              if(k==="brl"||k==="vzla"||k==="eeuu") _dkNuevas.push(r.d+"|"+(r.id||r.cl)+"|"+r.am);
+            }
+          });
+        });
         DATA_KEYS.forEach(function(k){
           if(obj[k]!==undefined){S[k]=obj[k];loaded+=Array.isArray(obj[k])?obj[k].length:1;}
         });
+        // Ahora si: sobre el estado ya reemplazado, conservando las marcas que
+        // venian dentro del archivo y sumandole las nuevas.
+        _porBorrar.forEach(function(p){ _marcarBorradoMerge(p[0],p[1]); });
+        if(_dkNuevas.length){
+          S._deleted=S._deleted||[];
+          _dkNuevas.forEach(function(dk){ if(S._deleted.indexOf(dk)===-1) S._deleted.push(dk); });
+        }
+        if(_porBorrar.length) console.log("🗑️ Import: "+_porBorrar.length+" registro(s) marcados como borrados para que no revivan.");
         // CRÍTICO: forzar timestamp nuevo para ganarle a Firebase vacío
         S._ts = Date.now();
         S._saveForced = true;
@@ -7766,7 +7802,7 @@ function importData(){
         // También guardar directo a Firebase vía REST por si WebSocket está offline
         if(typeof fbSaveREST === "function"){
           var obj2={_ts:S._ts};
-          DATA_KEYS.forEach(function(k){obj2[k]=S[k];});
+          _volcarDatos(obj2);
           _marcarComoMiPropioTs(obj2._ts);
           fbSaveREST(obj2);
         }
@@ -15982,6 +16018,22 @@ function initFirebase(){
       var fbBrl=(data.brl||[]).length, fbVzla=(data.vzla||[]).length, fbEeuu=(data.eeuu||[]).length;
       var lsBrl=S.brl.length, lsVzla=S.vzla.length, lsEeuu=S.eeuu.length;
       var fbTotal=fbBrl+fbVzla+fbEeuu;
+      // ARREGLO 6b: podar ANTES de comparar. Si este dispositivo arrastra
+      // registros ya borrados, no debe ganar la comparacion por tenerlos.
+      if(data && data._deletedMerge){
+        var _mio=S._deletedMerge||{};
+        Object.keys(data._deletedMerge).forEach(function(c){
+          _mio[c]=(_mio[c]||[]).concat(data._deletedMerge[c]||[]);
+          var vistos={};
+          _mio[c]=_mio[c].filter(function(x){
+            var kk=String(x&&x.id); if(vistos[kk])return false; vistos[kk]=1; return true;
+          });
+        });
+        S._deletedMerge=_mio;
+      }
+      if(_podarBorrados()){
+        lsBrl=(S.brl||[]).length; lsVzla=(S.vzla||[]).length; lsEeuu=(S.eeuu||[]).length;
+      }
       var lsTotal=lsBrl+lsVzla+lsEeuu;
 
       if(fbTotal >= lsTotal){
@@ -16011,7 +16063,12 @@ function initFirebase(){
             var fusionado=_mergeArrayById(filtrado, S[k], idF, tsRemoto, S._ts);
             if(k==="brl"||k==="vzla"||k==="eeuu") _renumerarPorFecha(fusionado);
             S[k]=fusionado;
-          } else {
+          } else if(k!=="_deletedMerge"){
+            // ARREGLO 6c (01/09/2026): _deletedMerge NUNCA se reemplaza. Si el
+            // recorrido lo asigna, las marcas recien creadas se pierden y las
+            // vencidas reviven. Sintoma que lo delato: una marca del 17/07, ya
+            // vencida por la regla de 30 dias, reaparecio despues de un import.
+            // Este bloque existe DOS veces (listener y poll REST): van los dos.
             S[k]=data[k];
           }
         });
@@ -16042,8 +16099,8 @@ function initFirebase(){
               S[k].sort(function(a,b){var da=a.d.split("/"),db=b.d.split("/");return (parseInt(da[1])*100+parseInt(da[0]))-(parseInt(db[1])*100+parseInt(db[0]));});
               S[k].forEach(function(r,i){r.n=i+1;});
             }
-          } else if(clavesNoSobreescribir.indexOf(k)===-1){
-            // Solo sobreescribir config/clientes que no afectan el FIFO
+          } else if(clavesNoSobreescribir.indexOf(k)===-1 && k!=="_deletedMerge"){
+            // ARREGLO 6c: _deletedMerge queda fuera aqui tambien.
             if(data[k]!==undefined) S[k]=data[k];
           }
           // Las claves en clavesNoSobreescribir se mantienen locales (local es más nuevo)
@@ -16152,6 +16209,51 @@ function _mergeArrayById(remoteArr, localArr, idField, remoteTs, localTs){
 // borrado local todavía no había llegado allá), haciendo que lo borrado
 // "reapareciera" solo. Igual que ya existe para brl/vzla/eeuu con S._deleted,
 // aquí se anota qué se borró (por 24h) para que la fusión no lo reviva.
+// ARREGLO 6b (31/08/2026): una marca de borrado impedia que un registro
+// ENTRARA, pero no sacaba el que ya estaba. Un dispositivo con datos viejos los
+// conservaba aunque recibiera la marca, seguia teniendo "mas registros" y los
+// volvia a subir. _podarBorrados() saca de la copia local todo lo marcado.
+// Alcance deliberadamente limitado a remesas y clientes: NO toca cuentas ni
+// inventario, donde ya hubo marcas de borrado indebidas.
+var _PODA_CATS=["brl","vzla","eeuu","clientes"];
+function _podarBorrados(){
+  var quitados=0;
+  try{
+    _PODA_CATS.forEach(function(k){
+      if(!Array.isArray(S[k])) return;
+      var idF=_MERGE_ID_FIELD[k]||"id";
+      var antes=S[k].length;
+      S[k]=S[k].filter(function(r){
+        return !(r && r[idF]!==undefined && _estaBorradoMerge(k,r[idF]));
+      });
+      quitados+=antes-S[k].length;
+    });
+    if(quitados) console.log("✂️ Poda: se quitaron "+quitados+" registro(s) marcados como borrados.");
+  }catch(e){}
+  return quitados;
+}
+// ARREGLO 7 (31/08/2026): Firebase RECHAZA el objeto entero si alguna clave
+// vale undefined. Claves como _tasasDiaMeta solo se crean cuando se usan, asi
+// que en un dispositivo que nunca cargo una tasa del dia el objeto salia con
+// undefined y la escritura fallaba: "value argument contains undefined".
+// Sintoma observado: el respaldo automatico NO se estaba escribiendo.
+function _volcarDatos(dest){
+  DATA_KEYS.forEach(function(k){
+    if(S[k]!==undefined) dest[k]=S[k];
+  });
+  return dest;
+}
+// ARREGLO 7 (31/08/2026): Firebase RECHAZA el objeto entero si alguna clave
+// vale undefined. Claves como _tasasDiaMeta solo se crean cuando se usan, asi
+// que en un dispositivo que nunca cargo una tasa del dia el objeto salia con
+// undefined y la escritura fallaba: "value argument contains undefined".
+// Sintoma observado: el respaldo automatico NO se estaba escribiendo.
+function _volcarDatos(dest){
+  DATA_KEYS.forEach(function(k){
+    if(S[k]!==undefined) dest[k]=S[k];
+  });
+  return dest;
+}
 function _marcarBorradoMerge(campo,id){
   try{
     if(!S._deletedMerge) S._deletedMerge={};
@@ -16334,6 +16436,8 @@ function _fbWriteNow(obj){
 // ── STARTUP ────────────────────────────────────────────
 // 1. Load localStorage for immediate display (no Firebase write)
 var _loaded=loadData();
+// ARREGLO 6b: podar tambien al arrancar, con las marcas ya guardadas en disco.
+try{ _podarBorrados(); }catch(e){}
 _restaurarSesion(); // si había sesión activa (<30 min de inactividad), no pide la clave otra vez
 // Asignar código único (_uid) a remesas ya existentes que no lo tengan aún
 // (registradas antes de este cambio) — así la fusión segura cubre TODO,
