@@ -1053,7 +1053,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260902_v131";
+var APP_VERSION = "20260902_v133";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -7386,8 +7386,26 @@ function fbCheckREST(){
             S[k]=data[k];
           }
         });
+        // ARREGLO 21 (02/09/2026): la poda corria al arrancar y en el listener de
+        // Firebase, pero NO en este camino — el poll REST, que es por donde llega
+        // la mayoria de los cambios. Un dispositivo recibia la marca de borrado y
+        // nunca la aplicaba: seguia mostrando el registro borrado. Detectado con
+        // una venta de USDT borrada en la laptop que el telefono conservaba.
+        // Primero se unen las marcas que trae el bloque, despues se poda.
+        if(data && data._deletedMerge){
+          var _mioR=S._deletedMerge||{};
+          Object.keys(data._deletedMerge).forEach(function(c){
+            _mioR[c]=(_mioR[c]||[]).concat(data._deletedMerge[c]||[]);
+            var vistosR={};
+            _mioR[c]=_mioR[c].filter(function(x){
+              var kk=String(x&&x.id); if(vistosR[kk])return false; vistosR[kk]=1; return true;
+            });
+          });
+          S._deletedMerge=_mioR;
+        }
+        _podarBorrados();
         S._ts=tsRemoto;
-        try{localStorage.setItem(STORAGE_KEY,JSON.stringify(data));}catch(e){}
+        try{localStorage.setItem(STORAGE_KEY,JSON.stringify(S));}catch(e){}
         R();
         // Mostrar indicador de actualización
         var dot=document.getElementById("fb-dot");
@@ -8128,7 +8146,7 @@ function revertirSaldosRemesa(tipo, r){
       var matches=(S.cuentas||[]).filter(function(x){return x.activa!==false&&x.moneda===moneda;});
       if(matches.length===1) c=matches[0];
     }
-    if(c) c.saldo=Math.round(((parseFloat(c.saldo)||0)+(parseFloat(delta)||0))*100)/100;
+    if(c){ c.saldo=Math.round(((parseFloat(c.saldo)||0)+(parseFloat(delta)||0))*100)/100; c._mod=Date.now(); } // ARREGLO 22: sin _mod la fusion pisa el saldo corregido con la copia vieja de otro dispositivo
   }
 
   if(tipo==="brl"){
@@ -8189,7 +8207,7 @@ function revertirSaldosInventario(r){
   function adjId(id, delta){
     if(!id||!delta) return;
     var c=(S.cuentas||[]).find(function(x){return x.id===id;});
-    if(c) c.saldo=Math.round(((parseFloat(c.saldo)||0)+(parseFloat(delta)||0))*100)/100;
+    if(c){ c.saldo=Math.round(((parseFloat(c.saldo)||0)+(parseFloat(delta)||0))*100)/100; c._mod=Date.now(); } // ARREGLO 22: sin _mod la fusion pisa el saldo corregido con la copia vieja de otro dispositivo
   }
 
   if(r.tipo==="compra"){
@@ -8211,7 +8229,7 @@ function revertirSaldosTraspaso(t){
   function adjId(id, delta){
     if(!id||!delta) return;
     var c=(S.cuentas||[]).find(function(x){return x.id===id;});
-    if(c) c.saldo=Math.round(((parseFloat(c.saldo)||0)+(parseFloat(delta)||0))*100)/100;
+    if(c){ c.saldo=Math.round(((parseFloat(c.saldo)||0)+(parseFloat(delta)||0))*100)/100; c._mod=Date.now(); } // ARREGLO 22: sin _mod la fusion pisa el saldo corregido con la copia vieja de otro dispositivo
   }
   // Traspaso había restado de origen y sumado a destino → invertir
   adjId(t.cuentaOrigen||t.origen, +monto);
