@@ -1053,7 +1053,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260901_v114";
+var APP_VERSION = "20260902_v117";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -7805,6 +7805,7 @@ function importData(){
         // que el recorrido lo reemplaza con el del archivo y borraria las marcas
         // recien creadas. Corregido el 31/08/2026 tras detectarse en pruebas.
         var _porBorrar=[], _dkNuevas=[];
+        var _dmPrevias=JSON.parse(JSON.stringify(S._deletedMerge||{})); // ARREGLO 11a
         _PODA_CATS.forEach(function(k){
           if(!Array.isArray(obj[k])||!Array.isArray(S[k])) return;
           var idF=_MERGE_ID_FIELD[k]||"id";
@@ -7822,6 +7823,26 @@ function importData(){
         });
         // Ahora si: sobre el estado ya reemplazado, conservando las marcas que
         // venian dentro del archivo y sumandole las nuevas.
+        // ARREGLO 11a (02/09/2026): unir las marcas que YA tenia este dispositivo
+        // con las que trae el archivo. Antes las marcas locales se perdian: el
+        // archivo reemplazaba _deletedMerge y solo se le agregaban las nuevas.
+        // Detectado en pruebas: 3 marcas de "eeuu" desaparecieron tras un import.
+        try{
+          var _dmArchivo=S._deletedMerge||{};
+          var _union={};
+          [_dmPrevias,_dmArchivo].forEach(function(src){
+            Object.keys(src||{}).forEach(function(c){
+              _union[c]=(_union[c]||[]).concat(src[c]||[]);
+            });
+          });
+          Object.keys(_union).forEach(function(c){
+            var vistos={};
+            _union[c]=_union[c].filter(function(x){
+              var kk=String(x&&x.id); if(vistos[kk])return false; vistos[kk]=1; return true;
+            });
+          });
+          S._deletedMerge=_union;
+        }catch(e){}
         _porBorrar.forEach(function(p){ _marcarBorradoMerge(p[0],p[1]); });
         if(_dkNuevas.length){
           S._deleted=S._deleted||[];
@@ -16248,7 +16269,13 @@ function _mergeArrayById(remoteArr, localArr, idField, remoteTs, localTs){
 // volvia a subir. _podarBorrados() saca de la copia local todo lo marcado.
 // Alcance deliberadamente limitado a remesas y clientes: NO toca cuentas ni
 // inventario, donde ya hubo marcas de borrado indebidas.
-var _PODA_CATS=["brl","vzla","eeuu","clientes"];
+// ARREGLO 10 (01/09/2026): se suman las dos categorias de inventario USDT.
+// Estaban fuera por precaucion, junto con "cuentas", donde el codigo ya traia un
+// parche que libera marcas indebidas. Pero sin marcas, una limpieza de inventario
+// no sobrevive: la fusion suma y nunca resta, asi que los lotes vuelven en el
+// siguiente ciclo. Verificado el 01/09: el import dejo 246 cerrados (bien) pero
+// los abiertos volvieron de 8 a 32. "cuentas" sigue FUERA a proposito.
+var _PODA_CATS=["brl","vzla","eeuu","clientes","inventarioUsdt","inventarioUsdt_cerrado"];
 function _podarBorrados(){
   var quitados=0;
   try{
@@ -16260,6 +16287,22 @@ function _podarBorrados(){
         return !(r && r[idF]!==undefined && _estaBorradoMerge(k,r[idF]));
       });
       quitados+=antes-S[k].length;
+      // ARREGLO 11b (02/09/2026): dos registros con el MISMO id son el mismo
+      // registro, no dos. Las marcas de borrado no pueden expresar "sacar una
+      // copia de un id que sigue existiendo", asi que las copias duplicadas se
+      // colapsan aqui, conservando la primera. Solo para inventario, que es
+      // donde aparecieron (605 registros para 246 lotes reales).
+      if(k==="inventarioUsdt"||k==="inventarioUsdt_cerrado"){
+        var vistos={}, antes2=S[k].length;
+        S[k]=S[k].filter(function(r){
+          var id=String(r&&r.id);
+          if(id==="undefined") return true;
+          if(vistos[id]) return false;
+          vistos[id]=1; return true;
+        });
+        if(antes2-S[k].length) console.log("✂️ "+k+": "+(antes2-S[k].length)+" copia(s) del mismo id colapsadas.");
+        quitados+=antes2-S[k].length;
+      }
     });
     if(quitados) console.log("✂️ Poda: se quitaron "+quitados+" registro(s) marcados como borrados.");
   }catch(e){}
