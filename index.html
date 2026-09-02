@@ -1053,7 +1053,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260902_v133";
+var APP_VERSION = "20260902_v134";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -16299,6 +16299,26 @@ function initFirebase(){
               S[k].sort(function(a,b){var da=a.d.split("/"),db=b.d.split("/");return (parseInt(da[1])*100+parseInt(da[0]))-(parseInt(db[1])*100+parseInt(db[0]));});
               S[k].forEach(function(r,i){r.n=i+1;});
             }
+          } else if(k==="cuentas" && Array.isArray(data[k])){
+            // ARREGLO 23 (02/09/2026): "cuentas" estaba entre las claves donde el
+            // local SIEMPRE gana, asi que un dispositivo nunca aceptaba un saldo
+            // corregido en otro: conservaba el suyo para siempre. Detectado con
+            // un saldo corregido en la laptop que el telefono nunca tomaba.
+            // Ahora se fusiona cuenta por cuenta y gana la que tenga el _mod mas
+            // nuevo, igual que las remesas. Si ninguna tiene _mod, gana la local
+            // (comportamiento anterior, sin riesgo).
+            var _local=S[k]||[], _remoto=data[k]||[];
+            var _porId={};
+            _local.forEach(function(c){ if(c&&c.id!==undefined) _porId[String(c.id)]=c; });
+            _remoto.forEach(function(cr){
+              if(!cr||cr.id===undefined) return;
+              var _cl=_porId[String(cr.id)];
+              if(!_cl){ _porId[String(cr.id)]=cr; return; }
+              var _tl=typeof _cl._mod==="number"?_cl._mod:0;
+              var _tr=typeof cr._mod==="number"?cr._mod:0;
+              if(_tr>_tl) _porId[String(cr.id)]=cr;
+            });
+            S[k]=Object.keys(_porId).map(function(x){return _porId[x];});
           } else if(clavesNoSobreescribir.indexOf(k)===-1 && k!=="_deletedMerge"){
             // ARREGLO 6c: _deletedMerge queda fuera aqui tambien.
             if(data[k]!==undefined) S[k]=data[k];
