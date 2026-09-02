@@ -1053,7 +1053,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260902_v117";
+var APP_VERSION = "20260902_v123";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -4259,6 +4259,13 @@ function saveCl(){
     }
   }
   if(S.role!=="eeuu"&&!c.cod){alert("Código y nombre son obligatorios.");return;}
+  // ARREGLO 12 (02/09/2026): los clientes no llevaban marca de tiempo. Ninguno
+  // de los 258 tenia _mod. Sin ella, cuando dos dispositivos tienen versiones
+  // distintas del mismo cliente la fusion no puede saber cual es la mas nueva:
+  // gana el que le toque y la edicion del otro se pierde en silencio. Medido en
+  // pruebas: una nota editada volvio al valor anterior un minuto despues.
+  // Las remesas y las cuentas ya la tenian; los clientes no.
+  c._mod = Date.now();
   if(S.editCl){S.clientes=S.clientes.map(function(x){return x.cod===S.editCl?Object.assign({},c):x;});S.editCl=null;}
   else{if(S.clientes.find(function(x){return x.cod===c.cod&&x.nota===c.nota;})){alert("Ya existe ese cliente.");return;}S.clientes.push(Object.assign({},c));}
   S.nCl={cod:"",n:"",tel:"",pais:"VENEZUELA",ruta:"BRL ↔ VZLA",nota:""};saveData();R();
@@ -9189,7 +9196,7 @@ function R(){
       else calcUpdate();
     }
   }, 0);
-  saveData();
+  _saveDataSiCambio(); // ARREGLO 9e: guarda solo si el contenido cambio
   if(S.role==="admin"){
     setTimeout(function(){
       var tb=document.querySelector(".topbar");
@@ -15914,7 +15921,19 @@ function _iniciarListenersTiempoReal(){
           return;
         }
         if(_estaBorradoMerge(campo,id)) return; // se borró localmente, no revivir
-        var itemJs=_jsonEstable(c.item);
+        // ARREGLO 9d (02/09/2026): la comparacion de ecos incluia _mod. Cuando un
+        // dispositivo guarda, actualiza _mod; el otro recibe el registro, ve un
+        // _mod distinto, lo toma como cambio real y guarda. Ping-pong infinito.
+        // Medido: 37 ciclos y 17 guardados en 4 minutos con todo quieto. Ahora
+        // la comparacion ignora _mod, _ts y n, que son metadatos que se mueven
+        // solos. El snapshot guarda la version SIN esos campos, que es la que
+        // sirve para decidir si algo cambio de verdad.
+        var _sinMeta={};
+        Object.keys(c.item||{}).sort().forEach(function(cc){
+          if(cc==="_mod"||cc==="_ts"||cc==="n") return;
+          _sinMeta[cc]=c.item[cc];
+        });
+        var itemJs=_jsonEstable(_sinMeta);
         if(_liveSnapshot[campo][id]===itemJs) return; // eco propio, nada que hacer
         var idx=arr.findIndex(function(x){return x&&x[idF]===id;});
         if(idx===-1){
@@ -16088,6 +16107,25 @@ function initFirebase(){
       if(_podarBorrados()){
         lsBrl=(S.brl||[]).length; lsVzla=(S.vzla||[]).length; lsEeuu=(S.eeuu||[]).length;
       }
+      // ARREGLO 9: huella del estado ANTES de fusionar, para saber despues si
+      // la fusion cambio algo y evitar el reenvio inutil.
+      var _huellaAntes=_huellaDatos();
+      // ARREGLO 6b: podar ANTES de comparar. Si este dispositivo arrastra
+      // registros ya borrados, no debe ganar la comparacion por tenerlos.
+      if(data && data._deletedMerge){
+        var _mio=S._deletedMerge||{};
+        Object.keys(data._deletedMerge).forEach(function(c){
+          _mio[c]=(_mio[c]||[]).concat(data._deletedMerge[c]||[]);
+          var vistos={};
+          _mio[c]=_mio[c].filter(function(x){
+            var kk=String(x&&x.id); if(vistos[kk])return false; vistos[kk]=1; return true;
+          });
+        });
+        S._deletedMerge=_mio;
+      }
+      if(_podarBorrados()){
+        lsBrl=(S.brl||[]).length; lsVzla=(S.vzla||[]).length; lsEeuu=(S.eeuu||[]).length;
+      }
       var lsTotal=lsBrl+lsVzla+lsEeuu;
 
       if(fbTotal >= lsTotal){
@@ -16159,12 +16197,28 @@ function initFirebase(){
           }
           // Las claves en clavesNoSobreescribir se mantienen locales (local es más nuevo)
         });
-        // Save merged result back to Firebase — con un pequeño seguro:
-        // no repetir este guardado si ya se hizo uno hace menos de 5s,
-        // para no crear ráfagas de guardados si llegan varios eventos
-        // "value" muy seguidos.
+        // ARREGLO 9 (01/09/2026): antes se guardaba SIEMPRE al recibir datos,
+        // aunque la fusion no hubiera cambiado nada. Ese guardado movia _ts, el
+        // otro dispositivo veia el _ts nuevo y se bajaba el bloque completo, y
+        // guardaba de vuelta: una pelota de ping-pong entre dispositivos que se
+        // repetia cada ~12 segundos. Es la causa del parpadeo con dos pestañas
+        // abiertas, y de buena parte del consumo. Ahora solo se guarda si la
+        // fusion cambio algo de verdad.
+        var _huellaDespues=_huellaDatos();
         var _ahoraElse=Date.now();
-        if(!window._ultimoSaveDataListener||(_ahoraElse-window._ultimoSaveDataListener)>5000){
+        if(_huellaDespues!==_huellaAntes){
+          try{
+            var _a=String(_huellaAntes).split("\n"), _d=String(_huellaDespues).split("\n");
+            var _difs=[];
+            for(var _i=0;_i<Math.max(_a.length,_d.length);_i++){
+              if(_a[_i]!==_d[_i]) _difs.push((_a[_i]||_d[_i]||"").split(":")[0]||("#"+_i));
+            }
+            console.log("🔎 Huella cambio en: "+_difs.join(", "));
+          }catch(e){}
+        }
+        if(_huellaDespues===_huellaAntes){
+          console.log("⏸️ Fusion sin cambios: no se reenvia a Firebase (evita el ping-pong).");
+        } else if(!window._ultimoSaveDataListener||(_ahoraElse-window._ultimoSaveDataListener)>5000){
           window._ultimoSaveDataListener=_ahoraElse;
           saveData();
         }
@@ -16329,6 +16383,95 @@ function _volcarDatos(dest){
     if(S[k]!==undefined) dest[k]=S[k];
   });
   return dest;
+}
+// ARREGLO 9b (02/09/2026): la huella sumaba los _mod de cada registro. Como la
+// fusion reemplaza el arreglo local por el remoto, bastaba que UN registro
+// trajera un _mod distinto —con el contenido identico— para que la suma cambiara
+// y la app concluyera que "algo cambio". Los dos dispositivos nunca convergian:
+// medido en pruebas, 38 movimientos de _ts en 3 minutos con todo quieto, y el
+// mensaje de "sin cambios" no aparecio ni una vez. Ahora la huella mira el
+// CONTENIDO, ignorando _mod, _ts y n, que son metadatos que cambian solos.
+// ARREGLO 9e (02/09/2026): R() —la funcion que dibuja la pantalla— llamaba a
+// saveData() SIN condicion. Cuando llegaban datos remotos, el auto-render
+// redibujaba y guardaba, el otro dispositivo recibia, redibujaba y guardaba:
+// ping-pong. Medido: 35 ciclos y 16 guardados en 4 minutos con todo quieto.
+// NO se quita la llamada, porque hay flujos que modifican datos y confian en
+// que el render guarde por ellos; sacarla los dejaria sin persistir en silencio.
+// Se vuelve condicional: guarda solo si el CONTENIDO cambio desde el ultimo
+// guardado. Cubre TODAS las claves de datos, no solo las que se fusionan, y
+// ante cualquier error guarda igual (fallar hacia guardar, nunca hacia perder).
+var _ultimaHuellaGuardada=null;
+function _huellaCompleta(){
+  return (DATA_KEYS||[]).map(function(k){
+    var v=S[k];
+    if(k==="_deletedMerge"){
+      try{
+        return k+":"+Object.keys(v||{}).sort().map(function(c){
+          return c+"="+(v[c]||[]).map(function(x){return String(x&&x.id);}).sort().join(",");
+        }).join(";");
+      }catch(e){ return k+":?"; }
+    }
+    if(Array.isArray(v)){
+      return k+":"+v.map(function(r){
+        if(!r||typeof r!=="object") return String(r);
+        var o={};
+        Object.keys(r).sort().forEach(function(c){
+          if(c==="_mod"||c==="_ts"||c==="n") return;
+          o[c]=r[c];
+        });
+        return JSON.stringify(o);
+      }).sort().join("|");
+    }
+    try{ return k+":"+JSON.stringify(v); }catch(e){ return k+":?"; }
+  }).join("\n");
+}
+// ARREGLO 9f (02/09/2026): la huella completa cuesta ~47 ms y corria en CADA
+// dibujo — mas que dibujar, en las vistas livianas, y crece con los datos.
+// Primero se compara algo barato: la cantidad de registros por clave. Si eso ya
+// difiere, hay cambio seguro y no hace falta la huella cara. Solo cuando los
+// conteos coinciden se paga la huella completa, que es la que detecta ediciones
+// sin cambio de cantidad. Ante cualquier error, guarda igual.
+var _ultimoConteo=null;
+function _conteoRapido(){
+  return (DATA_KEYS||[]).map(function(k){
+    var v=S[k];
+    return Array.isArray(v)?v.length:(v===undefined?"-":"x");
+  }).join(",");
+}
+function _saveDataSiCambio(){
+  try{
+    var c=_conteoRapido();
+    if(c!==_ultimoConteo){          // cambio de cantidad: seguro hay que guardar
+      _ultimoConteo=c;
+      _ultimaHuellaGuardada=_huellaCompleta();
+      saveData();
+      return;
+    }
+    var h=_huellaCompleta();        // mismos conteos: puede ser una edicion
+    if(h===_ultimaHuellaGuardada) return;
+    _ultimaHuellaGuardada=h;
+    saveData();
+  }catch(e){ saveData(); }          // ante la duda, guardar
+}
+function _huellaDatos(){
+  try{
+    // Las firmas se ORDENAN antes de comparar: la fusion reconstruye los
+    // arreglos y _renumerarPorFecha los reordena, asi que el mismo contenido en
+    // distinto orden daba huellas distintas. Ese era el motivo real de que el
+    // mensaje "sin cambios" no apareciera nunca en 22 ciclos medidos.
+    return (_MERGE_FIELDS||[]).map(function(k){
+      if(!Array.isArray(S[k])) return k+":0";
+      return k+":"+S[k].map(function(r){
+        if(!r||typeof r!=="object") return String(r);
+        var o={};
+        Object.keys(r).sort().forEach(function(c){
+          if(c==="_mod"||c==="_ts"||c==="n") return;
+          o[c]=r[c];
+        });
+        return JSON.stringify(o);
+      }).sort().join("|");
+    }).join("\n");
+  }catch(e){ return String(Math.random()); } // ante la duda, considerar que cambio
 }
 function _marcarBorradoMerge(campo,id){
   try{
