@@ -1053,7 +1053,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260902_v134";
+var APP_VERSION = "20260902_v135";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -16800,11 +16800,47 @@ _restaurarSesion(); // si había sesión activa (<30 min de inactividad), no pid
 // Asignar código único (_uid) a remesas ya existentes que no lo tengan aún
 // (registradas antes de este cambio) — así la fusión segura cubre TODO,
 // no solo lo nuevo.
+// ARREGLO 24 (02/09/2026): el _uid faltante se generaba AL AZAR. Un registro
+// sin _uid recibia uno distinto en cada dispositivo y en cada carga, asi que la
+// fusion lo veia como un registro nuevo y lo sumaba: 122 remesas se
+// multiplicaban solas cada vez que se abria la app. Es el mismo mecanismo que
+// duplico la contabilidad en agosto. Ahora el _uid se DERIVA DEL CONTENIDO: el
+// mismo registro recibe el mismo _uid en cualquier dispositivo, asi que la
+// fusion los reconoce como uno solo y dejan de multiplicarse.
+function _uidEstable(r){
+  try{
+    var base=[r.d,r.cl,r.am,r.id,r.rt,r.orig,r.ent,r.tc,r.tv].map(function(x){
+      return x===undefined||x===null?"":String(x);
+    }).join("\u0001");
+    var h1=5381, h2=52711;
+    for(var i=0;i<base.length;i++){
+      var c=base.charCodeAt(i);
+      h1=((h1*33)^c)>>>0;
+      h2=((h2*31)+c)>>>0;
+    }
+    return "s"+h1.toString(36)+h2.toString(36);
+  }catch(e){ return _newUid(); }
+}
 function _asignarUidsFaltantes(){
+  var puestos=0;
   ["brl","vzla","eeuu"].forEach(function(k){
-    (S[k]||[]).forEach(function(r){ if(!r._uid) r._uid=_newUid(); });
+    (S[k]||[]).forEach(function(r){ if(!r._uid){ r._uid=_uidEstable(r); puestos++; } });
   });
   (S.capital||[]).forEach(function(r){ if(!r.id) r.id=_newUid(); });
+  if(puestos) console.log("🔖 "+puestos+" registro(s) sin _uid recibieron uno derivado de su contenido (estable entre dispositivos).");
+  // Si dos registros identicos quedaron con el mismo _uid, son el mismo:
+  // se conserva uno solo. Antes se multiplicaban en cada carga.
+  ["brl","vzla","eeuu"].forEach(function(k){
+    if(!Array.isArray(S[k])) return;
+    var vistos={}, antes=S[k].length;
+    S[k]=S[k].filter(function(r){
+      var u=String(r&&r._uid||"");
+      if(!u) return true;
+      if(vistos[u]) return false;
+      vistos[u]=1; return true;
+    });
+    if(antes-S[k].length) console.log("✂️ "+k+": "+(antes-S[k].length)+" copia(s) con el mismo _uid colapsadas.");
+  });
 }
 _asignarUidsFaltantes();
 _syncCapitalWithCuentas();
