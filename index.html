@@ -1053,7 +1053,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260902_v129";
+var APP_VERSION = "20260902_v131";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -4243,7 +4243,7 @@ function savePr(){
     }
   }
   S.prestamos.push({
-    id:Date.now(),d:ds(f.date),desc:f.desc,notaDesc:(f.notaDesc||"").trim(),
+    id:Date.now(),d:ds(f.date),desc:f.desc,cod:f.cod||"",notaDesc:(f.notaDesc||"").trim(), // ARREGLO 20: cod vincula con el cliente
     mon:mon,monto:montoTotal,capital:capital,interesPct:tasaEfectiva,interesPorCuota:tasaInteres,diasExtraPrimeraCuota:diasExtra,
     numCuotas:numCuotas,frecuencia:frecuencia,cuotas:cuotas,
     usdt:Math.round((usdt||0)*100)/100,
@@ -4254,7 +4254,7 @@ function savePr(){
     saldo:Math.round((usdt||0)*100)/100,soc:f.desc,locked:false
   });
   logAudit("PRESTAMO","Prestó "+capital+" "+mon+(conInteres?" + "+tasaInteres+"%/cuota × "+numCuotas+" = "+tasaEfectiva+"% interés total (a cobrar: "+montoTotal+")":"")+" a "+f.desc+(numCuotas>1?" en "+numCuotas+" cuotas "+frecuencia+"s":"")+(f.cuentaId?" (de "+nombreCuentaEg(f.cuentaId)+")":""));
-  S.nPr={date:td(),desc:"",mon:"USDT",monto:"",cuentaId:"",conInteres:false,tasaInteres:"",numCuotas:1,frecuencia:"mensual",monedaOrigen:"",tasaOrigen:"",notaDesc:""};
+  S.nPr={date:td(),desc:"",cod:"",mon:"USDT",monto:"",cuentaId:"",conInteres:false,tasaInteres:"",numCuotas:1,frecuencia:"mensual",monedaOrigen:"",tasaOrigen:"",notaDesc:""};
   try{localStorage.removeItem("nPr_draft_v1");}catch(e){}
   saveData();R();
 }
@@ -8479,7 +8479,33 @@ function _borrarSesion(){ try{localStorage.removeItem(_SESSION_KEY);}catch(e){} 
 
 function salir(){logAudit("LOGOUT","Cerró sesión");S.role=null;S.tab="dash";S.q="";_borrarSesion();R();}
 function ssq(v){S.q=v;if(_st)clearTimeout(_st);_st=setTimeout(R,300);}
-function sscl(v){S.qCl=v;if(_st)clearTimeout(_st);_st=setTimeout(R,300);}
+// ARREGLO 19 (02/09/2026): el buscador de clientes redibujaba la pantalla
+// entera a los 300 ms de cada letra. Ese redibujado destruye el campo y crea
+// uno nuevo, asi que se perdia el foco y el cursor: habia que escribir letra
+// por letra. Ahora se marca el campo para devolverle el foco y la posicion del
+// cursor despues de dibujar.
+function sscl(v){
+  S.qCl=v;
+  if(_st)clearTimeout(_st);
+  _st=setTimeout(function(){
+    var _el=document.activeElement;
+    var _pos=(_el&&_el.tagName==="INPUT")?_el.selectionStart:null;
+    var _era=(_el&&_el.tagName==="INPUT"&&_el.getAttribute("oninput")||"").indexOf("sscl")>-1;
+    R();
+    if(_era){
+      setTimeout(function(){
+        try{
+          var _n=document.querySelector("input[oninput*='sscl']");
+          if(_n){
+            _n.focus();
+            var p=(_pos===null?String(_n.value).length:_pos);
+            _n.setSelectionRange(p,p);
+          }
+        }catch(e){}
+      },0);
+    }
+  },300);
+}
 function autoFill(val,key){var p=val.split("|");S[key].id=p[0]||"";S[key].cl=p[1]||"";var el=document.getElementById(key+"-nm");if(el&&S[key].cl)el.value=S[key].cl;}
 function setRutaTx(rt){S.tx.rt=rt;S.tx._tcLock=null;S.tx._tvLock=null;S.tx._amLock=null;S.tx._tdiaLock=null;S.tx._rtLock=null;var r=getRutas().find(function(x){return x.rt===rt;})||getRutas()[0];S.tx.pais=r.pais;R();}
 function buscarClienteTx(val){
@@ -8507,10 +8533,11 @@ function selClTx(cod,nombre){
 // vez de escribirlo distinto cada vez.
 function buscarClientePr(val){
   S.nPr.desc=val;
+  S.nPr.cod=""; // ARREGLO 20: al escribir libre se limpia; se repone al elegir
   var lista=document.getElementById("pr-cl-lista");
   if(!lista)return;
   var exacto=S.clientes.find(function(c){return c.cod.toLowerCase()===val.toLowerCase();});
-  if(exacto){S.nPr.desc=exacto.n;lista.style.display="none";R();return;}
+  if(exacto){S.nPr.cod=exacto.cod;S.nPr.desc=exacto.n;lista.style.display="none";R();return;} // ARREGLO 20
   var ql=val.toLowerCase();
   var res=ql.length>=1?S.clientes.filter(function(c){return c.cod.toLowerCase().indexOf(ql)!==-1||c.n.toLowerCase().indexOf(ql)!==-1;}):[];
   if(res.length&&ql.length>=1){
@@ -8519,6 +8546,11 @@ function buscarClientePr(val){
   }else{lista.style.display="none";}
 }
 function selClPr(cod,nombre){
+  // ARREGLO 20 (02/09/2026): antes solo se guardaba el NOMBRE escrito. Si la
+  // ficha del cliente decia "ABEL FLORES" y en el prestamo quedaba "ABEL JESUS
+  // FLORES HERNANDEZ", eran dos textos distintos y no se relacionaban: no se
+  // podia ver cuanto debe un cliente en total. Ahora se guarda tambien el codigo.
+  S.nPr.cod=cod;
   S.nPr.desc=nombre;
   var l=document.getElementById("pr-cl-lista");if(l)l.style.display="none";
   R();
@@ -15161,7 +15193,7 @@ function rPrestamos(){
   // apariencia visual sin guardarse, y por eso el botón de guardar
   // seguía rechazando el préstamo con "completa fecha" aunque se viera
   // lleno en pantalla).
-  S.nPr=Object.assign({date:td(),desc:"",mon:"USDT",monto:"",cuentaId:"",conInteres:false,tasaInteres:"",numCuotas:1,frecuencia:"mensual",monedaOrigen:"",tasaOrigen:"",notaDesc:""},S.nPr||{});
+  S.nPr=Object.assign({date:td(),desc:"",cod:"",mon:"USDT",monto:"",cuentaId:"",conInteres:false,tasaInteres:"",numCuotas:1,frecuencia:"mensual",monedaOrigen:"",tasaOrigen:"",notaDesc:""},S.nPr||{});
   if(!S.nPr.date) S.nPr.date=td();
   var f=S.nPr;
   if(!S.nPr){S.nPr=f;}
