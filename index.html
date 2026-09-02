@@ -1053,7 +1053,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260902_v127";
+var APP_VERSION = "20260902_v128";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -3577,6 +3577,22 @@ function eliminarCuenta(id){
     var cta=(S.cuentas||[]).find(function(x){return x.id===ab.cuentaId;});
     if(cta) cta.saldo=Math.round(((parseFloat(cta.saldo)||0)-(parseFloat(ab.monto)||0))*100)/100;
   });
+  // ARREGLO 17 (02/09/2026): al marcar una remesa como pendiente, la app le
+  // DESCUENTA el monto al banco (porque esa plata todavia no entro). Al eliminar
+  // el registro no se devolvia, asi que el banco quedaba corto por ese monto.
+  // Si no hubo abonos, se devuelve el total; si hubo, ya se revirtieron arriba y
+  // se devuelve lo que quedaba sin cobrar.
+  if(c.cuentaBanco){
+    var _ctaOrig=(S.cuentas||[]).find(function(x){return x.id===c.cuentaBanco;});
+    if(_ctaOrig){
+      var _pendiente=Math.round(((parseFloat(c.monto)||0)-totalAbonado)*100)/100;
+      if(_pendiente>0.001){
+        _ctaOrig.saldo=Math.round(((parseFloat(_ctaOrig.saldo)||0)+_pendiente)*100)/100;
+        _ctaOrig._mod=Date.now();
+        console.log("↩️ Se devolvieron "+_pendiente+" "+(c.moneda||"")+" a \""+_ctaOrig.nombre+"\" al eliminar la cuenta por cobrar.");
+      }
+    }
+  }
   S.cuentasCobrar=S.cuentasCobrar.filter(function(x){return x.id!==id;});
   _marcarBorradoMerge("cuentasCobrar",id);
   logAudit("CUENTA_COBRAR_ELIMINADA","Eliminó · Cliente: "+c.cliente+" · "+c.monto+" "+c.moneda);
