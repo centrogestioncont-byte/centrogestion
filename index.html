@@ -1053,7 +1053,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260902_v123";
+var APP_VERSION = "20260902_v124";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -16329,7 +16329,10 @@ function _mergeArrayById(remoteArr, localArr, idField, remoteTs, localTs){
 // no sobrevive: la fusion suma y nunca resta, asi que los lotes vuelven en el
 // siguiente ciclo. Verificado el 01/09: el import dejo 246 cerrados (bien) pero
 // los abiertos volvieron de 8 a 32. "cuentas" sigue FUERA a proposito.
-var _PODA_CATS=["brl","vzla","eeuu","clientes","inventarioUsdt","inventarioUsdt_cerrado"];
+// ARREGLO 13: "cuentas" entra a la poda. Estaba fuera por el parche de arriba,
+// que ahora solo libera marcas viejas. Sin poda, un borrado de cuenta no viaja:
+// el otro dispositivo la conserva y la repone.
+var _PODA_CATS=["brl","vzla","eeuu","clientes","inventarioUsdt","inventarioUsdt_cerrado","cuentas"];
 function _podarBorrados(){
   var quitados=0;
   try{
@@ -16722,10 +16725,20 @@ function mergeBaseOps(){
 // esa marca de "borrado" que impedía que volvieran a aparecer al
 // sincronizar. Esto las libera para que, si otro dispositivo todavía
 // tiene la copia buena, puedan volver a completarse aquí.
+// ARREGLO 13 (02/09/2026): este parche corria en CADA arranque y borraba TODAS
+// las marcas de cuentas, no solo las indebidas de aquella limpieza. Efecto: al
+// borrar una cuenta la marca duraba hasta la primera recarga, desaparecia, y el
+// otro dispositivo reponia la cuenta. Es el "borro una cuenta y vuelve" que se
+// venia arrastrando. La limpieza que lo causo ya no existe, asi que solo libera
+// marcas ANTERIORES a esta version; las nuevas se respetan.
+var _CORTE_MARCAS_CUENTAS = 1788368400000; // 02/09/2026
 if(S._deletedMerge && S._deletedMerge.cuentas && S._deletedMerge.cuentas.length){
-  console.warn("🔧 Liberando "+S._deletedMerge.cuentas.length+" marca(s) de borrado indebidas sobre cuentas.");
-  S._deletedMerge.cuentas=[];
-  saveData();
+  var _viejas=S._deletedMerge.cuentas.filter(function(x){return !x||!x.ts||x.ts<_CORTE_MARCAS_CUENTAS;});
+  if(_viejas.length){
+    console.warn("🔧 Liberando "+_viejas.length+" marca(s) de borrado indebidas sobre cuentas (anteriores al 02/09).");
+    S._deletedMerge.cuentas=S._deletedMerge.cuentas.filter(function(x){return x&&x.ts&&x.ts>=_CORTE_MARCAS_CUENTAS;});
+    saveData();
+  }
 }
 
 // 4. Init Firebase — Firebase es la fuente de verdad
