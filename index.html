@@ -1053,7 +1053,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260902_v135";
+var APP_VERSION = "20260902_v136";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -6988,6 +6988,40 @@ function _parsearOCR(txt){
   // no por posición de línea.
   var t=txt.replace(/[\r\n]+/g,' ').replace(/\s+/g,' ').trim();
   var r={tipo:'compra',moneda:'VES',comision:0};
+
+  // ── ARREGLO 25 (02/09/2026): formato "Detalles de la conversión" ─────────
+  // Es distinto del P2P y no se reconocia: el USDT trae 8 decimales, la tasa
+  // viene como "1 USDT = 5.1136 BRL" (sin la palabra Precio), el monto como
+  // "Cuenta Spot 224.56 BRL" (sin la palabra Importe), y no hay numero de orden.
+  var esConversion=/Detalles\s*de\s*la\s*conversi[oó]n|Pagar\s*desde|Cuenta\s*Spot|Fecha\s*del\s*trade/i.test(t);
+  if(esConversion){
+    // Direccion: lo que se RECIBE define si es compra o venta de USDT
+    var mA=t.match(/\bA\s+(USDT|BRL|VES|PEN|COP|EUR)\b/i);
+    var mDesde=t.match(/Cuenta\s*Spot[^\d]{0,10}([\d]+[.,]?[\d]*)\s*(USDT|BRL|VES|PEN|COP|EUR)/i);
+    if(mA) r.tipo = /USDT/i.test(mA[1]) ? 'compra' : 'venta';
+    // Tasa: "1 USDT = 5.1136 BRL"
+    var mTasa=t.match(/1\s*USDT\s*=\s*([\d]+[.,]?[\d]*)\s*(USDT|BRL|VES|PEN|COP|EUR)/i);
+    if(mTasa){ r.tasa=_normNum(mTasa[1]); r.moneda=mTasa[2].toUpperCase(); }
+    // USDT: acepta hasta 8 decimales
+    var mU8=t.match(/([\d]+[.,][\d]{1,8})\s*USDT/i);
+    if(mU8) r.usdt=_normNum(mU8[1]);
+    // Monto en fiat: el lado de "Cuenta Spot" que NO es USDT
+    if(mDesde && !/USDT/i.test(mDesde[2])){ r.monto=_normNum(mDesde[1]); r.moneda=mDesde[2].toUpperCase(); }
+    else if(r.usdt && r.tasa){ r.monto=Math.round(r.usdt*r.tasa*100)/100; }
+    // Comision: "Comisiones de transacción 0.00 USDT"
+    var mC2=t.match(/Comisi[oó]n(?:es)?\s*(?:de\s*transacci[oó]n)?[^\d]{0,12}([\d]+[.,]?[\d]*)\s*USDT/i);
+    if(mC2) r.comision=_normNum(mC2[1]);
+    // Fecha del trade
+    var mF2=t.match(/Fecha\s*del\s*trade[^\d]{0,10}(\d{4})-(\d{2})-(\d{2})/i);
+    if(mF2) r.fecha=mF2[1]+"-"+mF2[2]+"-"+mF2[3];
+    // Numero de orden propio: derivado del contenido, asi que volver a pegar
+    // el mismo comprobante genera el MISMO id y el control de duplicados actua.
+    var base=[r.fecha||"",r.tipo,r.moneda,r.usdt||"",r.tasa||"",r.monto||""].join("|");
+    var hh=5381;
+    for(var i=0;i<base.length;i++){ hh=((hh*33)^base.charCodeAt(i))>>>0; }
+    r.ordenId="CNV-"+hh.toString(36).toUpperCase();
+    return r;
+  }
 
   // ── Tipo (con límites de palabra: "comprador" no debe activar "compra") ──
   if(/\b(?:comprar|compra|buy)\b/i.test(t)) r.tipo='compra';
