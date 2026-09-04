@@ -1053,7 +1053,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260904_v139";
+var APP_VERSION = "20260904_v141";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -2350,6 +2350,14 @@ function togglePagarPrest(id){
   }
   R();
 }
+// ARREGLO 29: al escribir cuanto se quiere cobrar en la moneda del prestamo,
+// se calcula y se rellena el monto que el cliente tiene que entregar.
+function chgObjetivoPrest(v,monPrest,monPago){
+  S.nPagarPrest=Object.assign(S.nPagarPrest||{},{objetivo:v});
+  var np=S.nPagarPrest, obj=parseFloat(v)||0, tm=parseFloat(np.tasaManual)||0;
+  if(obj>0&&tm>0) np.monto=Math.round((obj/tm)*10000)/10000;
+  R();
+}
 function pagarPrestamo(id){
   var p=(S.prestamos||[]).find(function(x){return x.id===id;});if(!p)return;
   var np=S.nPagarPrest||{cuentaId:"",monto:"",moneda:""};
@@ -3431,16 +3439,37 @@ function setEgTipo(tipo){
   R();
 }
 function chgMon(v){S.nEg.mon=v;S.nEg.cuentaId='';S.nEg.usdt='';R();}
+// ARREGLO 28 (04/09/2026): cuando el sistema no tiene tasa de referencia,
+// antes borraba el campo y habia que sacar la cuenta con la calculadora. Ahora
+// hay un campo de TASA que se puede escribir a mano: la app calcula el
+// equivalente en USDT y la tasa NO se borra, queda ahi para editarla.
+function chgTasaEg(v){
+  S.nEg.tasaManual=v;
+  var m=parseFloat(S.nEg.monto)||0, t=parseFloat(v)||0;
+  if(m>0&&t>0) S.nEg.usdt=Math.round((m/t)*10000)/10000;
+  R();
+}
+function chgUsdtEg(v){
+  // Al revés: escribís los USDT y la app saca la tasa
+  S.nEg.usdt=v;
+  var m=parseFloat(S.nEg.monto)||0, u=parseFloat(v)||0;
+  if(m>0&&u>0) S.nEg.tasaManual=Math.round((m/u)*10000)/10000;
+}
 function chgMonto(v){
   S.nEg.monto=v;
+  var _tm=parseFloat(S.nEg.tasaManual)||0;
+  if(_tm>0 && parseFloat(v)>0){        // hay tasa escrita a mano: manda esa
+    S.nEg.usdt=Math.round((parseFloat(v)/_tm)*10000)/10000;
+    return;
+  }
   var a=usdtDeGasto(S.nEg.mon||'BRL',v);
   if(a!==null){
     S.nEg.usdt=a;
+    if(parseFloat(v)>0&&a>0) S.nEg.tasaManual=Math.round((parseFloat(v)/a)*10000)/10000;
   } else if((S.nEg.mon==="VES"||S.nEg.mon==="BRL") && parseFloat(v)>0){
     // La tasa guardada en el inventario está fuera de un rango razonable
     // (probablemente corrupta) — no se usa a ciegas. Se limpia el campo
     // para que el usuario escriba el equivalente en USDT a mano.
-    S.nEg.usdt='';
     R();
     alert("⚠️ La tasa de "+(S.nEg.mon)+" guardada en el inventario se ve fuera de rango — no se calculó el equivalente en USDT automáticamente. Escríbelo tú mismo en el campo USDT.");
   }
@@ -14817,6 +14846,7 @@ function rEgresos(){
         "<div style='background:#FFF8E8;border:1px solid #F0D080;border-radius:8px;padding:8px 10px;margin:-4px 0 12px;font-size:10px;color:#7a5c00'>🏦 Se descontará de esa cuenta específica y se contará contra ese \"bolsillo\", no contra tu sueldo directamente.</div>")
       :"")+
     "<div class='f2'><div class='fl'><label>Monto ("+monAct+")</label><input type='number' placeholder='0.00' value='"+(f.monto||"")+"' oninput='chgMonto(this.value)' onchange='R()'></div>"+
+    "<div class='fl'><label>Tasa ("+(f.mon||"BRL")+" por 1 USDT)</label><input type='number' step='0.0001' placeholder='ej: 5.30' value='"+(f.tasaManual!==undefined&&f.tasaManual!==""?f.tasaManual:"")+"' oninput='chgTasaEg(this.value)' style='width:100%;padding:10px;border:1.5px solid #ddd;border-radius:8px;font-size:13px'><div style='font-size:10px;color:#888;margin-top:3px'>Si el sistema no tiene tasa, escribila acá y calcula solo</div></div>"+
     "<div class='fl'><label>≈ USDT</label><input type='number' placeholder='0.00' value='"+(f.usdt!==""&&f.usdt!==undefined?f.usdt:"")+"' oninput='S.nEg.usdt=this.value'></div></div>"+
     "<div style='display:flex;gap:16px;margin-bottom:12px'>"+
     "<label style='display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer'><input type='checkbox' "+(f.fija?"checked":"")+" onchange='S.nEg.fija=this.checked;R()'> ⭐ Recurrente</label>"+
@@ -15450,6 +15480,25 @@ function rPrestamos(){
           "</select></div>"+
           "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Monto recibido ("+monPago+")</label>"+
           "<input type='number' inputmode='decimal' placeholder='0.00' value='"+(np.monto||"")+"' oninput='S.nPagarPrest=Object.assign(S.nPagarPrest||{},{monto:this.value})' onchange='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
+          // ARREGLO 29 (04/09/2026): calculo en las DOS direcciones. Antes solo se
+          // podia escribir el monto en la moneda del pago; si querias cobrar
+          // "100 reales en USDT" habia que sacar la cuenta con la calculadora.
+          // Ahora se escribe cuanto se quiere cobrar en la moneda del PRESTAMO
+          // y la app dice cuanto tiene que dar el cliente en la moneda del pago.
+          (monPago!==monP?
+            "<div style='background:#f0f7ff;border:1px solid #cfe2ff;border-radius:8px;padding:9px 10px;margin-top:8px'>"+
+              "<label style='font-size:10px;font-weight:700;color:#0a3d7c;display:block;margin-bottom:4px'>&#128207; O calculá al revés: cuánto querés cobrar en "+monP+"</label>"+
+              "<input type='number' inputmode='decimal' placeholder='ej: 100' value='"+(np.objetivo||"")+"' oninput='chgObjetivoPrest(this.value,\""+monP+"\",\""+monPago+"\")' style='width:100%;padding:10px;border:1.5px solid #cfe2ff;border-radius:8px;font-size:13px'>"+
+              (function(){
+                var obj=parseFloat(np.objetivo)||0;
+                var tm=parseFloat(np.tasaManual)||parseFloat(tasaAuto)||0;
+                if(obj>0&&tm>0){
+                  return "<div style='font-size:12px;color:#0f6e3a;font-weight:700;margin-top:6px'>&rarr; el cliente te debe dar <b>"+f4(obj/tm)+" "+monPago+"</b> (tasa "+f4(tm)+")</div>";
+                }
+                return "<div style='font-size:10px;color:#888;margin-top:4px'>Escribí la tasa arriba para ver la cuenta</div>";
+              })()+
+            "</div>"
+          :"")+
           previewHtml+
           "</div>"+
           "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Cuenta donde entra ("+monPago+")</label>"+
