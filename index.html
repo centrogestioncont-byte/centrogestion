@@ -1053,7 +1053,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260904_v143";
+var APP_VERSION = "20260904_v144";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -2352,11 +2352,21 @@ function togglePagarPrest(id){
 }
 // ARREGLO 29: al escribir cuanto se quiere cobrar en la moneda del prestamo,
 // se calcula y se rellena el monto que el cliente tiene que entregar.
+// ARREGLO 32 (04/09/2026): este campo llamaba a R() en cada letra, que
+// redibuja la pantalla y destruye el input: habia que escribir letra por letra.
+// Ahora actualiza el resultado y el campo de monto directamente, sin redibujar.
 function chgObjetivoPrest(v,monPrest,monPago){
   S.nPagarPrest=Object.assign(S.nPagarPrest||{},{objetivo:v});
   var np=S.nPagarPrest, obj=parseFloat(v)||0, tm=parseFloat(np.tasaManual)||0;
-  if(obj>0&&tm>0) np.monto=Math.round((obj/tm)*10000)/10000;
-  R();
+  if(obj>0&&tm>0){
+    np.monto=Math.round((obj/tm)*10000)/10000;
+    try{
+      var inp=document.getElementById("pp-monto");
+      if(inp && document.activeElement!==inp) inp.value=np.monto;
+      var res=document.getElementById("pp-calc");
+      if(res) res.innerHTML="&rarr; el cliente te debe dar <b>"+f4(np.monto)+" "+monPago+"</b> (tasa "+f4(tm)+")";
+    }catch(e){}
+  }
 }
 function pagarPrestamo(id){
   var p=(S.prestamos||[]).find(function(x){return x.id===id;});if(!p)return;
@@ -15497,7 +15507,7 @@ function rPrestamos(){
             MONEDAS_ABONO.map(function(m){return "<option value='"+m+"'"+(monPago===m?" selected":"")+">"+m+(m===monP?" (moneda del préstamo)":"")+"</option>";}).join("")+
           "</select></div>"+
           "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Monto recibido ("+monPago+")</label>"+
-          "<input type='number' inputmode='decimal' placeholder='0.00' value='"+(np.monto||"")+"' oninput='S.nPagarPrest=Object.assign(S.nPagarPrest||{},{monto:this.value})' onchange='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
+          "<input id='pp-monto' type='number' inputmode='decimal' placeholder='0.00' value='"+(np.monto||"")+"' oninput='S.nPagarPrest=Object.assign(S.nPagarPrest||{},{monto:this.value})' onchange='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
           // ARREGLO 29 (04/09/2026): calculo en las DOS direcciones. Antes solo se
           // podia escribir el monto en la moneda del pago; si querias cobrar
           // "100 reales en USDT" habia que sacar la cuenta con la calculadora.
@@ -15511,7 +15521,7 @@ function rPrestamos(){
                 var obj=parseFloat(np.objetivo)||0;
                 var tm=parseFloat(np.tasaManual)||parseFloat(tasaAuto)||0;
                 if(obj>0&&tm>0){
-                  return "<div style='font-size:12px;color:#0f6e3a;font-weight:700;margin-top:6px'>&rarr; el cliente te debe dar <b>"+f4(obj/tm)+" "+monPago+"</b> (tasa "+f4(tm)+")</div>";
+                  return "<div id='pp-calc' style='font-size:12px;color:#0f6e3a;font-weight:700;margin-top:6px'>&rarr; el cliente te debe dar <b>"+f4(obj/tm)+" "+monPago+"</b> (tasa "+f4(tm)+")</div>";
                 }
                 return "<div style='font-size:10px;color:#888;margin-top:4px'>Escribí la tasa arriba para ver la cuenta</div>";
               })()+
