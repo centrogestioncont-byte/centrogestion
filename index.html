@@ -1053,7 +1053,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260902_v137";
+var APP_VERSION = "20260904_v139";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
@@ -1408,7 +1408,7 @@ function getCapitalUsdtActual(){
   // Capital real ahora: solo lo que está en USDT en S.cuentas (excluye 💜 personal)
   var solo=0, total=0;
   var rm=_rateMapActual();
-  (S.cuentas||[]).filter(function(c){return c.activa!==false&&!c.esPersonal;}).forEach(function(acc){
+  (S.cuentas||[]).filter(function(c){return c.activa!==false&&!c.esPersonal&&!c.esReserva;}) /* ARREGLO 26b: las cuentas de reserva no cuentan en el capital disponible ni en el cierre de mes */.forEach(function(acc){
     var s=parseFloat(acc.saldo)||0;
     if(acc.moneda==="USDT"){ solo+=s; total+=s; }
     else if(rm[acc.moneda]) total+=s/rm[acc.moneda];
@@ -8079,6 +8079,23 @@ function reqDel(arr,id,field){
       // (ej: pactado en BRL pero dado en VES), se revierte en esa moneda
       // real (capitalOrigen/monedaOrigen), no en la moneda pactada.
       var _capPrest=parseFloat(item.capitalOrigen!==undefined?item.capitalOrigen:(item.capital!==undefined?item.capital:item.monto))||0;
+      // ARREGLO 27 (04/09/2026): borrar un prestamo DEVUELVE el capital a la
+      // cuenta, como si nunca se hubiera prestado. Si el prestamo ya fue cobrado
+      // y ese cobro se registro, la plata entra DOS veces y los saldos quedan
+      // inflados. Paso el 04/09 con 7 prestamos de julio ya pagados en agosto.
+      // Borrar NO es lo mismo que marcar como pagado: se avisa antes.
+      var _monPre=item.monedaOrigen||item.mon||"USDT";
+      var _ctaPre=(S.cuentas||[]).find(function(x){return x.id===item.cuentaId;});
+      if(_capPrest>0 && !confirm(
+          "Vas a BORRAR este préstamo:\n\n"+
+          (item.desc||"")+"\n"+f2(item.monto)+" "+(item.mon||"")+"\n\n"+
+          "Se van a DEVOLVER "+f2(_capPrest)+" "+_monPre+
+          (_ctaPre?" a la cuenta \""+_ctaPre.nombre+"\"":"")+", como si el préstamo nunca se hubiera dado.\n\n"+
+          "⚠️ Si este préstamo YA TE LO PAGARON y registraste ese cobro, la plata va a entrar dos veces y el saldo va a quedar inflado.\n"+
+          "En ese caso NO lo borres: marcálo como pagado.\n\n"+
+          "¿Igual querés borrarlo y que se devuelva el dinero?")){
+        return; // el usuario cancelo
+      }
       if(item.cuentaId){
         var cPrest=(S.cuentas||[]).find(function(x){return x.id===item.cuentaId;});
         if(cPrest) cPrest.saldo=Math.round(((parseFloat(cPrest.saldo)||0)+_capPrest)*100)/100;
@@ -8786,13 +8803,13 @@ function getInventarioStats(){
 
   // BS DISPONIBLE REAL: suma saldos reales de cuentas VES en S.cuentas
   var bsReal=(S.cuentas||[])
-    .filter(function(c){return c.moneda==="VES"&&c.activa!==false&&!c.esPersonal;})
+    .filter(function(c){return c.moneda==="VES"&&c.activa!==false&&!c.esPersonal&&!c.esReserva;}) // ARREGLO 26b
     .reduce(function(a,c){return a+(parseFloat(c.saldo)||0);},0);
   bsReal=Math.round(bsReal*100)/100;
 
   // BRL DISPONIBLE REAL: suma saldos reales de cuentas BRL
   var brlReal=(S.cuentas||[])
-    .filter(function(c){return c.moneda==="BRL"&&c.activa!==false&&!c.esPersonal;})
+    .filter(function(c){return c.moneda==="BRL"&&c.activa!==false&&!c.esPersonal&&!c.esReserva;}) // ARREGLO 26b
     .reduce(function(a,c){return a+(parseFloat(c.saldo)||0);},0);
   brlReal=Math.round(brlReal*100)/100;
 
@@ -9908,7 +9925,7 @@ function generarInformePDF(mesKey){
   var prestActivos = (_esCierrePasado && _pdfCierreGuardado.prestamosCierre)
     ? _pdfCierreGuardado.prestamosCierre
     : (S.prestamos||[]).filter(function(p){if(p.estado==="pagado"||p.estado==="saldado")return false;if(p.estado==="activo")return true;var b=parseFloat(p.monto||0);if(b>0){var ab=(p.abonos||[]).reduce(function(s,x){return s+(parseFloat(x.monto)||0);},0);return ab<b-0.001;}return (p.sal||0)>0&&(p.ent||0)<(p.sal||0);});
-  var cuentasAct=(S.cuentas||[]).filter(function(c){return c.activa!==false&&!c.esPersonal;});
+  var cuentasAct=(S.cuentas||[]).filter(function(c){return c.activa!==false&&!c.esPersonal&&!c.esReserva;}) /* ARREGLO 26b: las cuentas de reserva no cuentan en el capital disponible ni en el cierre de mes */;
   var cuentasParaInforme = (_esCierrePasado && _pdfCierreGuardado.saldosCierre && _pdfCierreGuardado.saldosCierre.length)
     ? _pdfCierreGuardado.saldosCierre
     : cuentasAct;
@@ -10641,7 +10658,7 @@ function rInformeCierre(){
   }
   var _mIcCur={USDT:"💰",BRL:"🇧🇷",VES:"🇻🇪",USD:"🇺🇸",EUR:"🇪🇺",COP:"🇨🇴",PEN:"🇵🇪",TTD:"🇹🇹"};
   function secBancos(){
-    var cuentasAct=(S.cuentas||[]).filter(function(c){return c.activa!==false&&!c.esPersonal;});
+    var cuentasAct=(S.cuentas||[]).filter(function(c){return c.activa!==false&&!c.esPersonal&&!c.esReserva;}) /* ARREGLO 26b: las cuentas de reserva no cuentan en el capital disponible ni en el cierre de mes */;
     var egPorCuenta={};
     egEmpM.filter(function(e){return e.pagada&&e.cuentaId;}).forEach(function(e){egPorCuenta[e.cuentaId]=(egPorCuenta[e.cuentaId]||0)+(parseFloat(e.usdt)||0);});
     var invUsdtSec=getInventarioStats().disponible||0;
@@ -11651,7 +11668,7 @@ function rDashEE(){
 // cambios de tasa, redondeos) queda como "otros ajustes".
 // ══════════════════════════════════════════════════════════════════════
 function _calcTotalUsdtCuentas(){
-  var cap=(S.cuentas||[]).filter(function(c){return c.activa!==false&&!c.esPersonal;});
+  var cap=(S.cuentas||[]).filter(function(c){return c.activa!==false&&!c.esPersonal&&!c.esReserva;}) /* ARREGLO 26b: las cuentas de reserva no cuentan en el capital disponible ni en el cierre de mes */;
   var total=0;
   cap.forEach(function(item){
     var saldo=parseFloat(item.saldo)||0;
