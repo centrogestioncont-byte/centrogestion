@@ -8692,7 +8692,30 @@ var PERMISOS_DEF=[
   {k:"editar",      label:"✏️ Puede editar",          desc:"Guardar cambios (sin esto: solo lectura)"},
 ];
 
+// Con sesion de la API los permisos los manda el servidor: son los que
+// guarda Mongo para ese usuario. Los perfiles locales —los de
+// S.config.usuarios, que llevan el PIN en claro— solo valen mientras exista
+// el acceso por PIN, y se van con el.
+function _permisosApi(){
+  if(!_API_ENTRO_POR_API) return null;
+  try{
+    var ses=_apiSesionGuardada();
+    if(!ses||!ses.u) return null;
+    return { rol: ses.u.rol||"lector", permisos: ses.u.permisos||{} };
+  }catch(e){ return null; }
+}
+
 function tienePermiso(perm){
+  var api=_permisosApi();
+  if(api){
+    if(api.rol==="admin") return true;
+    // El Supervisor ve todo y no modifica: eso ES el rol, tanto aca como en
+    // el servidor. Antes esta funcion solo miraba los perfiles locales, asi
+    // que un Supervisor que entraba por correo no tenia ninguno y se le
+    // negaba TODA la app: cada pestaña le mostraba "Sin acceso".
+    if(api.rol==="lector") return perm!=="editar" || !!api.permisos.editar;
+    return !!api.permisos[perm];
+  }
   if(S.role==="admin") return true;
   if(S.role==="lector"&&S.usuarioId){
     var u=getUsuarios().find(function(x){return x.id===S.usuarioId;});
@@ -8729,6 +8752,14 @@ function resolvePerfilKey(key){
   return ro?{key:key,role:ro.id,label:ro.label,ic:ro.ic,pin:getPIN(key),usuario:null}:null;
 }
 function permisoEdicion(){
+  var api=_permisosApi();
+  if(api){
+    if(api.rol==="admin") return true;
+    // Para los demas roles decide el permiso guardado en Mongo, que es el
+    // mismo que el servidor aplica en sus propias rutas. Asi la pantalla no
+    // ofrece guardar algo que la API va a rechazar con 403.
+    return !!(api.permisos && api.permisos.editar);
+  }
   if(S.usuarioId){
     var u=getUsuarios().find(function(x){return x.id===S.usuarioId;});
     if(!u) return false;
