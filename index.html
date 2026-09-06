@@ -1053,7 +1053,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260906_v147";
+var APP_VERSION = "20260906_v148";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -1214,6 +1214,7 @@ function entrarConCorreo(){
     if(res.estado===200 && res.datos && res.datos.ok){
       _apiGuardarSesion(res.datos.testigo,res.datos.usuario,true);
       _loginApiAplicar(res.datos.usuario,true);
+      cargarClientesDeApi();
       R();
       return;
     }
@@ -1266,6 +1267,154 @@ function _apiSalir(){
   }catch(e){}
   _apiBorrarSesionLocal();
   _API_ENTRO_POR_API=false;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// CLIENTES DESDE LA API  — FASE 5
+// Los clientes son la primera lista del negocio que deja de vivir dentro
+// de este archivo. Tres reglas:
+//   · Si hay sesión de la API, la lista viva es la del servidor y Firebase
+//     deja de tener voz sobre ella.
+//   · Si NO hay sesión (entrada por PIN, o servidor caído), la app sigue
+//     funcionando igual que antes con lo que tenga guardado.
+//   · Una lista VACÍA del servidor nunca reemplaza a la que ya está en
+//     pantalla. Si la carga inicial todavía no se corrió, reemplazar por
+//     vacío y guardar borraría los clientes en todos los dispositivos.
+// ══════════════════════════════════════════════════════════════════════
+
+var _CLIENTES_DESDE_API = false;   // la lista en pantalla vino del servidor
+
+// Mientras el servidor mande la lista, la copia de Firebase es la vieja:
+// fusionarla revertiría lo que se acaba de guardar en la API.
+function _apiMandaClientes(k){ return k==="clientes" && _CLIENTES_DESDE_API; }
+
+// El servidor los llama "nombre"; la app, "n". La traducción vive en un
+// solo lugar para que el resto del archivo no tenga que enterarse.
+function _clienteDeApi(c){
+  return {
+    cod:   String(c.cod||""),
+    n:     c.nombre||"",
+    tel:   c.tel||"",
+    pais:  c.pais||"",
+    ruta:  c.ruta||"",
+    nota:  c.nota||"",
+    _apiId: c.id||"",           // el id de Mongo: hace falta para editar
+    _activo: c.activo!==false
+  };
+}
+function _clienteAApi(c){
+  return {
+    cod:    String(c.cod||""),
+    nombre: c.n||"",
+    tel:    c.tel||"",
+    pais:   c.pais||"",
+    ruta:   c.ruta||"",
+    nota:   c.nota||""
+  };
+}
+
+// Los clientes dados de baja NO desaparecen de S.clientes: una remesa vieja
+// tiene que poder seguir mostrando el nombre de quien la hizo. Lo que cambia
+// es que dejan de ofrecerse para operaciones nuevas.
+function clientesVivos(){
+  return (S.clientes||[]).filter(function(c){ return c && c._activo!==false; });
+}
+
+function _clApiId(cod){
+  var c=(S.clientes||[]).find(function(x){return String(x.cod)===String(cod);});
+  return (c&&c._apiId)||"";
+}
+
+function _clApiMotivo(r,d,porDefecto){
+  if(r&&r.status===401) return "tu sesión venció; vuelve a entrar con tu correo.";
+  return (d&&d.error)||porDefecto;
+}
+
+// Trae la lista del servidor y la deja en S.clientes.
+// Devuelve una promesa que dice si la lista quedó tomada del servidor.
+function cargarClientesDeApi(){
+  if(!apiSesionActiva()||_API_BLOQUEADA) return Promise.resolve(false);
+  return apiFetch("/clientes").then(function(r){
+    if(!r.ok) return false;
+    return r.json().then(function(d){
+      if(!d||!d.ok||!Array.isArray(d.clientes)) return false;
+      if(d.clientes.length===0){
+        // Candado: ver la nota de arriba. Sin clientes en el servidor, la
+        // app NO se queda sin clientes.
+        console.warn("La API todavía no tiene clientes cargados — se mantiene la lista local.");
+        return false;
+      }
+      var previos={};
+      (S.clientes||[]).forEach(function(x){ if(x&&x.cod!==undefined) previos[String(x.cod)]=x; });
+      S.clientes=d.clientes.map(function(c){
+        var nuevo=_clienteDeApi(c);
+        var viejo=previos[nuevo.cod];
+        // Misma regla que se usa con los saldos de las cuentas: la marca de
+        // tiempo solo se mueve cuando el dato cambió de verdad. Si se moviera
+        // en cada carga, este dispositivo ganaría siempre la fusión de
+        // Firebase por ser "el más nuevo" aunque no hubiera tocado nada.
+        var igual = viejo && ["n","tel","pais","ruta","nota"].every(function(campo){
+          return String(viejo[campo]||"")===String(nuevo[campo]||"");
+        });
+        nuevo._mod = igual ? (viejo._mod||0) : Date.now();
+        return nuevo;
+      });
+      _CLIENTES_DESDE_API=true;
+      console.log("👤 "+S.clientes.length+" clientes cargados desde la API.");
+      try{ if(typeof R==="function") R(); }catch(e){}
+      return true;
+    });
+  }).catch(function(){ return false; });
+}
+
+// Alta o edición contra el servidor. Termina SIEMPRE recargando la lista:
+// lo que queda en pantalla es lo que quedó guardado, no lo que suponemos.
+function _guardarClienteEnApi(c,codEditado){
+  var esEdicion=!!codEditado;
+  var id=esEdicion?_clApiId(codEditado):"";
+  if(esEdicion&&!id){
+    alert("No se pudo identificar ese cliente en el servidor.\nActualiza la lista y vuelve a intentarlo.");
+    return Promise.resolve(false);
+  }
+  var ruta=esEdicion?("/clientes/"+encodeURIComponent(id)):"/clientes";
+  return apiFetch(ruta,{method:esEdicion?"PUT":"POST",body:_clienteAApi(c)})
+    .then(function(r){
+      return r.json().catch(function(){return null;}).then(function(d){
+        if(!r.ok||!d||!d.ok){
+          alert("No se pudo guardar el cliente: "+_clApiMotivo(r,d,"el servidor rechazó el cambio."));
+          return false;
+        }
+        return true;
+      });
+    })
+    .catch(function(){
+      alert("Sin conexión con el servidor. El cliente NO se guardó.");
+      return false;
+    })
+    .then(function(ok){
+      return cargarClientesDeApi().then(function(){ return ok; });
+    });
+}
+
+// Baja lógica. El servidor no tiene borrado de clientes a propósito: borrar
+// uno dejaría remesas apuntando a un código que ya no existe.
+function _bajaClienteEnApi(cod){
+  var id=_clApiId(cod);
+  if(!id){
+    alert("No se pudo identificar ese cliente en el servidor.\nActualiza la lista y vuelve a intentarlo.");
+    return;
+  }
+  apiFetch("/clientes/"+encodeURIComponent(id)+"/activo",{method:"PUT",body:{activo:false}})
+    .then(function(r){
+      return r.json().catch(function(){return null;}).then(function(d){
+        if(!r.ok||!d||!d.ok){
+          alert("No se pudo dar de baja al cliente: "+_clApiMotivo(r,d,"el servidor rechazó el cambio."));
+          return null;
+        }
+        return cargarClientesDeApi();
+      });
+    })
+    .catch(function(){ alert("Sin conexión con el servidor. No se dio de baja a nadie."); });
 }
 
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
@@ -4561,12 +4710,36 @@ function saveCl(){
   // pruebas: una nota editada volvio al valor anterior un minuto despues.
   // Las remesas y las cuentas ya la tenian; los clientes no.
   c._mod = Date.now();
+  // FASE 5: cuando la lista la manda el servidor, no se toca en memoria a
+  // mano. Se guarda, se recarga, y lo que queda en pantalla es lo que quedo
+  // guardado de verdad — incluido el rechazo por codigo repetido, que ahora
+  // lo decide Mongo con un indice unico y no una busqueda en el arreglo.
+  if(_CLIENTES_DESDE_API){
+    var _codEditado=S.editCl;
+    _guardarClienteEnApi(c,_codEditado).then(function(ok){
+      if(!ok) return;
+      S.editCl=null;
+      S.nCl={cod:"",n:"",tel:"",pais:"VENEZUELA",ruta:"BRL ↔ VZLA",nota:""};
+      R();
+    });
+    return;
+  }
   if(S.editCl){S.clientes=S.clientes.map(function(x){return x.cod===S.editCl?Object.assign({},c):x;});S.editCl=null;}
   else{if(S.clientes.find(function(x){return x.cod===c.cod&&x.nota===c.nota;})){alert("Ya existe ese cliente.");return;}S.clientes.push(Object.assign({},c));}
   S.nCl={cod:"",n:"",tel:"",pais:"VENEZUELA",ruta:"BRL ↔ VZLA",nota:""};saveData();R();
 }
 function editCl(cod){var c=S.clientes.find(function(x){return x.cod===cod;});if(!c)return;S.editCl=cod;S.nCl=Object.assign({},c);R();}
-function delCl(cod){if(!confirm("¿Eliminar cliente?"))return;S.clientes=S.clientes.filter(function(x){return x.cod!==cod;});_marcarBorradoMerge("clientes",cod);saveData();R();}
+function delCl(cod){
+  // FASE 5: con la lista en el servidor esto es una BAJA, no un borrado. El
+  // codigo tiene que seguir existiendo porque las remesas ya guardadas
+  // apuntan a el.
+  if(_CLIENTES_DESDE_API){
+    if(!confirm("¿Dar de baja a este cliente?\n\nDeja de aparecer para operaciones nuevas. Las remesas que ya lo nombran no se tocan.")) return;
+    _bajaClienteEnApi(cod);
+    return;
+  }
+  if(!confirm("¿Eliminar cliente?"))return;S.clientes=S.clientes.filter(function(x){return x.cod!==cod;});_marcarBorradoMerge("clientes",cod);saveData();R();
+}
 function saveIU(){
   var f=S.nIU;
   var usdt=parseFloat(f.usdt)||0,tasa=parseFloat(f.tasa)||0,com=parseFloat(f.comision)||COM();
@@ -4977,7 +5150,7 @@ function buscarClienteEE(val){
   if(!lista) return;
   var ql=val.toLowerCase().trim();
   if(!ql){lista.style.display="none";return;}
-  var results=S.clientes.filter(function(cl){
+  var results=clientesVivos().filter(function(cl){
     return cl.nota==="EEUU" && cl.n.toLowerCase().includes(ql);
   });
   if(!results.length){lista.style.display="none";return;}
@@ -5652,7 +5825,7 @@ function rConfigAdmin(){
         "<div><div style='font-size:10px;color:#888'>BRL</div><div style='font-size:22px;font-weight:800;color:#0f6e3a'>"+S.brl.length+"</div></div>"+
         "<div><div style='font-size:10px;color:#888'>VZLA</div><div style='font-size:22px;font-weight:800;color:#c0392b'>"+S.vzla.length+"</div></div>"+
         "<div><div style='font-size:10px;color:#888'>EE.UU</div><div style='font-size:22px;font-weight:800;color:#0a3d7c'>"+S.eeuu.length+"</div></div>"+
-        "<div><div style='font-size:10px;color:#888'>Clientes</div><div style='font-size:22px;font-weight:800'>"+S.clientes.length+"</div></div>"+
+        "<div><div style='font-size:10px;color:#888'>Clientes</div><div style='font-size:22px;font-weight:800'>"+clientesVivos().length+"</div></div>"+
         "<div><div style='font-size:10px;color:#888'>Cuentas</div><div style='font-size:22px;font-weight:800;color:#4B3FC7'>"+(S.cuentas||[]).length+"</div></div>"+
       "</div>"+
     "</div>";
@@ -7292,6 +7465,7 @@ function fbForceLoad(){
       // último de Firebase, borrando cualquier cosa guardada localmente que
       // aún no hubiera llegado al servidor.
       _MERGE_FIELDS.forEach(function(k){
+        if(_apiMandaClientes(k)) return;
         if(remote[k]!==undefined){
           var idF=_MERGE_ID_FIELD[k]||"id";
           var remoteFiltrado=(remote[k]||[]).filter(function(it){
@@ -7306,13 +7480,14 @@ function fbForceLoad(){
       // campo por campo para que una tasa recién guardada acá nunca se borre
       // por una versión vieja/vacía que traiga otro dispositivo.
       DATA_KEYS.forEach(function(k){
+        if(_apiMandaClientes(k)) return;
         if(k==="config"){
           if(remote.config!==undefined) obj.config=_mergeConfigSafe(remote.config,obj.config||{});
         } else if(_MERGE_FIELDS.indexOf(k)===-1 && remote[k]!==undefined){
           obj[k]=remote[k];
         }
       });
-      DATA_KEYS.forEach(function(k){ S[k]=obj[k]; });
+      DATA_KEYS.forEach(function(k){ if(_apiMandaClientes(k)) return; S[k]=obj[k]; });
       S._ts=Date.now();
       try{localStorage.setItem(STORAGE_KEY,JSON.stringify(obj));}catch(e){}
       R();
@@ -7800,6 +7975,7 @@ function fbCheckREST(){
       if(tsRemoto > tsLocal + 500){ // 500ms de margen para evitar rebotes propios
         console.log("📥 Auto-sync: datos más nuevos en Firebase (remoto="+tsRemoto+", local="+tsLocal+")");
         DATA_KEYS.forEach(function(k){
+          if(_apiMandaClientes(k)) return;
           if(data[k]===undefined) return;
           if(k==="config"){
             S.config=_mergeConfigSafe(data.config,S.config||{});
@@ -7907,7 +8083,7 @@ function mostrarOpcionesBackup(resultados){
   if(isNaN(idx)||idx<0||idx>=resultados.length){alert("Opción inválida.");return;}
   var elegido=resultados[idx];
   if(!confirm("Restaurar backup del "+elegido.fecha+"?\nEsto reemplazará los datos actuales.")) return;
-  DATA_KEYS.forEach(function(k){if(elegido.data[k]!==undefined)S[k]=elegido.data[k];});
+  DATA_KEYS.forEach(function(k){if(_apiMandaClientes(k))return;if(elegido.data[k]!==undefined)S[k]=elegido.data[k];});
   S._ts=elegido.data._ts||0;
   S._saveForced=true;
   saveData();
@@ -8323,6 +8499,7 @@ function importData(){
           });
         });
         DATA_KEYS.forEach(function(k){
+          if(_apiMandaClientes(k)) return;
           if(obj[k]!==undefined){S[k]=obj[k];loaded+=Array.isArray(obj[k])?obj[k].length:1;}
         });
         // Ahora si: sobre el estado ya reemplazado, conservando las marcas que
@@ -8378,6 +8555,10 @@ function clearAllData(){
   showPinEdit(function(){
     DATA_KEYS.forEach(function(k){S[k]=Array.isArray(S[k])?[]:(typeof S[k]==="object"&&S[k]!==null?{}:S[k]);});
     localStorage.removeItem(STORAGE_KEY);localStorage.removeItem(STORAGE_KEY+"_bak");
+    // Los clientes no son datos de este dispositivo: si hay sesion de la API
+    // vuelven del servidor en vez de quedar en cero.
+    _CLIENTES_DESDE_API=false;
+    try{ cargarClientesDeApi(); }catch(e){}
     alert("✅ Todos los datos borrados.");R();
   });
 }
@@ -8997,7 +9178,7 @@ function buscarClienteTx(val){
   var exacto=S.clientes.find(function(c){return c.cod.toLowerCase()===val.toLowerCase();});
   if(exacto){S.tx.cl=exacto.n;if(nm){nm.value=exacto.n;nm.style.background="#f0fff4";nm.style.borderColor="#1a6b3c";}lista.style.display="none";return;}
   var ql=val.toLowerCase();
-  var res=ql.length>=1?S.clientes.filter(function(c){return c.nota!=="EEUU"&&(c.cod.toLowerCase().includes(ql)||c.n.toLowerCase().includes(ql));}):[];
+  var res=ql.length>=1?clientesVivos().filter(function(c){return c.nota!=="EEUU"&&(c.cod.toLowerCase().includes(ql)||c.n.toLowerCase().includes(ql));}):[];
   if(res.length&&ql.length>=1){
     lista.innerHTML=res.map(function(cl){return "<div onclick='selClTx(\""+cl.cod+"\",\""+cl.n+"\")' style='padding:8px 12px;cursor:pointer;border-bottom:1px solid #f0f0f0;font-size:12px' onmouseover='this.style.background=\"#f6fffe\"' onmouseout='this.style.background=\"\"'><b style='color:#1a6b3c'>"+cl.cod+"</b> · "+cl.n+"</div>";}).join("");
     lista.style.display="block";
@@ -9021,7 +9202,7 @@ function buscarClientePr(val){
   var exacto=S.clientes.find(function(c){return c.cod.toLowerCase()===val.toLowerCase();});
   if(exacto){S.nPr.cod=exacto.cod;S.nPr.desc=exacto.n;lista.style.display="none";R();return;} // ARREGLO 20
   var ql=val.toLowerCase();
-  var res=ql.length>=1?S.clientes.filter(function(c){return c.cod.toLowerCase().indexOf(ql)!==-1||c.n.toLowerCase().indexOf(ql)!==-1;}):[];
+  var res=ql.length>=1?clientesVivos().filter(function(c){return c.cod.toLowerCase().indexOf(ql)!==-1||c.n.toLowerCase().indexOf(ql)!==-1;}):[];
   if(res.length&&ql.length>=1){
     lista.innerHTML=res.slice(0,8).map(function(cl){return "<div onclick='selClPr(\""+cl.cod+"\",\""+cl.n.replace(/"/g,"&quot;")+"\")' style='padding:8px 12px;cursor:pointer;border-bottom:1px solid #f0f0f0;font-size:12px' onmouseover='this.style.background=\"#f6fffe\"' onmouseout='this.style.background=\"\"'><b style='color:#1a6b3c'>"+cl.cod+"</b> · "+cl.n+"</div>";}).join("");
     lista.style.display="block";
@@ -9054,7 +9235,7 @@ function buscarClienteEditPr(val){
   var exacto=S.clientes.find(function(c){return c.cod.toLowerCase()===val.toLowerCase();});
   if(exacto){S.nEditPr.desc=exacto.n;lista.style.display="none";R();return;}
   var ql=val.toLowerCase();
-  var res=ql.length>=1?S.clientes.filter(function(c){return c.cod.toLowerCase().indexOf(ql)!==-1||c.n.toLowerCase().indexOf(ql)!==-1;}):[];
+  var res=ql.length>=1?clientesVivos().filter(function(c){return c.cod.toLowerCase().indexOf(ql)!==-1||c.n.toLowerCase().indexOf(ql)!==-1;}):[];
   if(res.length&&ql.length>=1){
     lista.innerHTML=res.slice(0,8).map(function(cl){return "<div onclick='selClEditPr(\""+cl.cod+"\",\""+cl.n.replace(/"/g,"&quot;")+"\")' style='padding:8px 12px;cursor:pointer;border-bottom:1px solid #f0f0f0;font-size:12px' onmouseover='this.style.background=\"#f6fffe\"' onmouseout='this.style.background=\"\"'><b style='color:#1a6b3c'>"+cl.cod+"</b> · "+cl.n+"</div>";}).join("");
     lista.style.display="block";
@@ -9092,7 +9273,7 @@ function buscarClienteEditCC(val){
   var exacto=S.clientes.find(function(c){return c.cod.toLowerCase()===val.toLowerCase();});
   if(exacto){S.nEditCC.cliente=exacto.n;lista.style.display="none";R();return;}
   var ql=val.toLowerCase();
-  var res=ql.length>=1?S.clientes.filter(function(c){return c.cod.toLowerCase().indexOf(ql)!==-1||c.n.toLowerCase().indexOf(ql)!==-1;}):[];
+  var res=ql.length>=1?clientesVivos().filter(function(c){return c.cod.toLowerCase().indexOf(ql)!==-1||c.n.toLowerCase().indexOf(ql)!==-1;}):[];
   if(res.length&&ql.length>=1){
     lista.innerHTML=res.slice(0,8).map(function(cl){return "<div onclick='selClEditCC(\""+cl.cod+"\",\""+cl.n.replace(/"/g,"&quot;")+"\")' style='padding:8px 12px;cursor:pointer;border-bottom:1px solid #f0f0f0;font-size:12px' onmouseover='this.style.background=\"#f6fffe\"' onmouseout='this.style.background=\"\"'><b style='color:#1a6b3c'>"+cl.cod+"</b> · "+cl.n+"</div>";}).join("");
     lista.style.display="block";
@@ -14291,7 +14472,7 @@ function rNuevaEE(){
   var prNetoEE=Math.round((pr-comUsdtVivoEE)*10000)/10000;
   var ok=am>0&&tdia>0&&tc>0&&tv>0;
   var q=(S.filtroClEE||"").toLowerCase();
-  var clsFilt=S.clientes.filter(function(cl){return cl.nota==="EEUU"&&(q===""||cl.n.toLowerCase().includes(q));});
+  var clsFilt=clientesVivos().filter(function(cl){return cl.nota==="EEUU"&&(q===""||cl.n.toLowerCase().includes(q));});
   var clientList=clsFilt.map(function(cl){return "<div onclick='selClienteEE(\""+cl.n+"\")' style='padding:8px 12px;cursor:pointer;border-bottom:1px solid #f0f0f0;font-size:12px' onmouseover='this.style.background=\"#f6fffe\"' onmouseout='this.style.background=\"\"'><b>"+cl.n+"</b></div>";}).join("");
   var banner=hasInv
     ?"<div style='background:#D6F5E3;border:1px solid #1a6b3c44;border-radius:8px;padding:9px 13px;margin-bottom:12px;font-size:11px;color:#0b4d27;display:flex;justify-content:space-between;align-items:center'><span>✅ Tasas del Inventario USDT</span><span><b>Compra: "+f4(tcAuto)+" USD/USDT</b> | <b>Venta: "+f2(tvAuto)+" BS/USDT</b></span></div>"
@@ -14827,6 +15008,7 @@ function rClientes(){
   var q=(S.qCl||"").toLowerCase();
   var fRuta=S.fRutaCl||"";
   var baseCl=S.clientes.filter(function(cl){
+    if(cl._activo===false) return false;   // dado de baja: no se lista
     if(S.role==="eeuu") return cl.nota==="EEUU";
     if(S.role==="brl"||S.role==="vzla") return cl.nota!=="EEUU";
     return true;
@@ -16745,6 +16927,7 @@ function initFirebase(){
       if(fbTotal >= lsTotal){
         // Firebase tiene igual o más datos → usar Firebase
         DATA_KEYS.forEach(function(k){
+          if(_apiMandaClientes(k)) return;
           if(data[k]===undefined) return;
           if(k==="config"){
             S.config=_mergeConfigSafe(data.config,S.config||{});
@@ -16789,6 +16972,7 @@ function initFirebase(){
         // CRÍTICO: NO sobreescribir claves de FIFO/cuentas desde Firebase — local es más nuevo
         var clavesNoSobreescribir=["inventarioUsdt","inventarioUsdt_cerrado","cuentas","movimientosCapital","reposiciones","deudas_paul","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta"];
         DATA_KEYS.forEach(function(k){
+          if(_apiMandaClientes(k)) return;
           if(data[k]===undefined) return;
           if(k==="brl"||k==="vzla"||k==="eeuu"){
             // Merge ambas fuentes
@@ -17306,6 +17490,10 @@ _restaurarSesion(); // si había sesión activa (<30 min de inactividad), no pid
 // Sesión de la API propia: si hay una guardada, se entra con ella (y se
 // verifica contra el servidor por atrás, sin bloquear el arranque).
 try{ _apiRestaurarSesion(); }catch(e){ console.warn("sesión API:",e); }
+// La lista de clientes vive en el servidor desde la Fase 5. Se pide despues
+// de restaurar la sesion y sin bloquear el arranque: si no hay sesion o el
+// servidor no contesta, la app sigue con lo que ya tenia.
+try{ cargarClientesDeApi(); }catch(e){ console.warn("clientes API:",e); }
 try{ setTimeout(_apiComprobarAmbiente,1200); }catch(e){}
 // Asignar código único (_uid) a remesas ya existentes que no lo tengan aún
 // (registradas antes de este cambio) — así la fusión segura cubre TODO,
