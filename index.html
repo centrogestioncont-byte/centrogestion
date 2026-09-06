@@ -1126,6 +1126,34 @@ function _bajaClienteEnApi(cod){
 // El espejo cumple esa misma funcion pero con datos de verdad: la ultima
 // lista buena que vio ESTE navegador. Vive en su propia clave, no viaja a
 // Firebase y no esta en el archivo publico.
+// ── Autorizacion de acciones sensibles ───────────────────────────────────
+// Hasta ahora esto era un PIN escrito en las diez llamadas que lo pedian.
+// Al estar en un archivo que Cloudflare publica, cualquiera que abriera el
+// codigo fuente lo leia y pasaba TODAS estas autorizaciones: registrar y
+// borrar gastos, cargar deudas y adelantos, corregir saldos de cierre de mes
+// y borrar los datos locales del dispositivo. Y al estar repetido en cada
+// llamada, no habia forma de cambiarlo desde la app.
+// Ahora la autorizacion es la sesion de administrador de la API: no queda
+// ninguna clave escrita en el archivo, y se puede revocar de verdad
+// —desactivando al usuario, o cambiandole la clave, que cierra sus sesiones
+// abiertas en el acto.
+function _esAdminApi(){
+  try{
+    if(!apiSesionActiva()) return false;
+    var ses=_apiSesionGuardada();
+    return !!(ses && ses.u && ses.u.rol==="admin");
+  }catch(e){ return false; }
+}
+
+// Devuelve true si se puede seguir. Si no, dice por que y corta.
+function autorizar(accion){
+  if(_esAdminApi()) return true;
+  alert("Esta acción necesita una sesión de administrador.\n\n"+
+        (accion?("Acción: "+accion+"\n\n"):"")+
+        "Entrá con tu correo y clave de administrador, y volvé a intentarlo.");
+  return false;
+}
+
 var _CLIENTES_ESPEJO_KEY = "cg_clientes_espejo_v1";
 
 // Este dispositivo ya leyo el estado de Firebase al menos una vez en esta
@@ -4646,9 +4674,7 @@ function saveGE(){
     saveData();R();
   }
   if(S.role==="admin"){ _doSaveGE(); return; }
-  var pin=prompt("🔐 Ingresa la clave de autorización para registrar este gasto:");
-  if(pin===null) return;
-  if(pin!=="2626"){alert("Clave incorrecta. No autorizado.");return;}
+  if(!autorizar("registrar este gasto")) return;
   _doSaveGE();
 }
 
@@ -4757,17 +4783,13 @@ function saveDeudaPaul(){
   var desc=document.getElementById("deuda-desc")?document.getElementById("deuda-desc").value:"";
   var monto=parseFloat(document.getElementById("deuda-monto")?document.getElementById("deuda-monto").value:0);
   if(!monto||monto<=0){alert("Ingresa un monto válido.");return;}
-  var pin=prompt("🔐 Clave de autorización para registrar deuda/adelanto:");
-  if(pin===null) return;
-  if(pin!=="2626"){alert("Clave incorrecta.");return;}
+  if(!autorizar("registrar una deuda o adelanto")) return;
   if(!S.deudas_paul) S.deudas_paul=[];
   S.deudas_paul.push({id:Date.now(),d:new Date().toLocaleDateString("es-ES",{day:"2-digit",month:"2-digit"}),desc:desc||"Adelanto",monto:monto});
   saveData();R();
 }
 function delDeudaPaul(id){
-  var pin=prompt("🔐 Clave de autorización para eliminar:");
-  if(pin===null) return;
-  if(pin!=="2626"){alert("Clave incorrecta.");return;}
+  if(!autorizar("eliminar una deuda o adelanto")) return;
   S.deudas_paul=S.deudas_paul.filter(function(x){return x.id!==id;});
   _marcarBorradoMerge("deudas_paul",id);
   saveData();R();
@@ -4790,9 +4812,7 @@ function editDeudaPaul(id){
   if(nuevo===null) return;
   var monto=parseFloat(nuevo);
   if(isNaN(monto)||monto<0){alert("Monto inválido.");return;}
-  var pin=prompt("🔐 PIN de autorización:");
-  if(pin===null) return;
-  if(pin!=="2626"){alert("PIN incorrecto.");return;}
+  if(!autorizar("editar una deuda o adelanto")) return;
   d.monto=Math.round(monto*100)/100;
   saveData();R();
   alert("✅ Deuda actualizada a $"+f2(d.monto)+" USDT");
@@ -4801,9 +4821,7 @@ function delGE(id){
   var g=S.gastos_eeuu.find(function(x){return x.id===id;});if(!g)return;
   var fn=function(){S.gastos_eeuu=S.gastos_eeuu.filter(function(x){return x.id!==id;});_marcarBorradoMerge("gastos_eeuu",id);saveData();R();};
   if(S.role==="admin"){ showPinEdit(fn); return; }
-  var pin=prompt("🔐 Clave de autorización para eliminar gasto:");
-  if(pin===null) return;
-  if(pin!=="2626"){alert("Clave incorrecta.");return;}
+  if(!autorizar("eliminar un gasto")) return;
   fn();
 }
 function agregarRutaExtra(){
@@ -4921,9 +4939,7 @@ function selClienteEE(nombre){ elegirClienteEE(nombre); }
 // ══════════════════════════════════════════════════════
 // ── Gastos asignados a un socio específico ──────────────────────────────
 function saveGastoSocio(socioId){
-  var pin=prompt("🔐 PIN de autorización:");
-  if(pin===null) return;
-  if(pin!=="2626"){alert("PIN incorrecto.");return;}
+  if(!autorizar("registrar un gasto de socio")) return;
   var f=S._nGastoSocio||{};
   var monto=parseFloat(f.monto);
   if(!monto||monto<=0){alert("Ingresa un monto válido.");return;}
@@ -4947,9 +4963,7 @@ function saveGastoSocio(socioId){
   saveData();R();
 }
 function delGastoSocio(id){
-  var pin=prompt("🔐 PIN para eliminar:");
-  if(pin===null) return;
-  if(pin!=="2626"){alert("PIN incorrecto.");return;}
+  if(!autorizar("eliminar un gasto de socio")) return;
   S.gastos_socios=(S.gastos_socios||[]).filter(function(g){return g.id!==id;});
   _marcarBorradoMerge("gastos_socios",id);
   saveData();R();
@@ -7856,8 +7870,7 @@ function mostrarOpcionesBackup(resultados){
   R();
 }
 function forzarCargaFirebase(){
-  var pin=prompt("🔐 Esta acción borra los datos locales. Ingresa el PIN de soporte:");
-  if(pin!=="2626"){alert("PIN incorrecto.");return;}
+  if(!autorizar("borrar los datos locales de este dispositivo")) return;
   if(!confirm("⚠️ ÚLTIMA CONFIRMACIÓN:\nEsto borrará los datos locales de este dispositivo.\nSolo hazlo si te lo indica el soporte.\n\n¿Confirmar?")) return;
   // Limpiar localStorage completamente
   try{
@@ -7953,9 +7966,7 @@ function saveGastoSocioForm(){
   if(!f.desc||!f.desc.trim()){alert("Ingresa una descripción.");return;}
   var monto=parseFloat(f.monto);
   if(!monto||monto<=0){alert("Ingresa un monto válido.");return;}
-  var pin=prompt("🔐 PIN de autorización:");
-  if(pin===null) return;
-  if(pin!=="2626"){alert("PIN incorrecto.");return;}
+  if(!autorizar("registrar un gasto de socio")) return;
   var socio=(S.config.socios||[]).find(function(s){return String(s.id)===String(f.socioId);});
   if(!S.gastos_socios) S.gastos_socios=[];
   var fechaStr=f.fecha||td();
@@ -7985,8 +7996,7 @@ function dsFecha(iso){
 }
 
 function corregirSaldoCierre(mesKey){
-  var pin=prompt("🔐 PIN de administrador:");
-  if(pin!=="2626"){alert("PIN incorrecto.");return;}
+  if(!autorizar("corregir el saldo de un cierre de mes")) return;
   var cierre=(S.cierresMes||[]).find(function(c){return c.mesKey===mesKey;});
   if(!cierre){alert("Cierre no encontrado.");return;}
   var val=prompt("Ingresa el saldo neto acumulado correcto para "+cierre.mesLabel+" (en USDT):\n\nEste es el total que acumuló el negocio hasta ese mes.");
