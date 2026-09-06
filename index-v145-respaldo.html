@@ -1053,221 +1053,8 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260906_v146-TEST";
+var APP_VERSION = "20260904_v145";
 console.log("Centro de Gestión · versión "+APP_VERSION);
-
-// ══════════════════════════════════════════════════════════════════════
-// ACCESO POR CORREO Y CLAVE (API propia en Railway)  — FASE 3
-// Convive con los PIN de siempre: esto AGREGA una forma de entrar, no
-// reemplaza ninguna. Si la API no existe o no responde, la app funciona
-// exactamente como antes.
-// ══════════════════════════════════════════════════════════════════════
-
-// A qué API le habla la app, por LISTA EXPLÍCITA de dominios.
-// Regla deliberada: lo desconocido cae en PRUEBAS. Un preview de
-// Cloudflare, un localhost o una rama nueva no deben poder tocar la base
-// de producción por accidente.
-var _API_POR_DOMINIO = {
-  "centrogestion.pages.dev":      {url:"https://centrogestion-api-production.up.railway.app", ambiente:"produccion"},
-  "centrogestion-test.pages.dev": {url:"https://gallant-caring-production-6c35.up.railway.app", ambiente:"pruebas"}
-};
-var _API_DEF = _API_POR_DOMINIO[String(location.hostname||"").toLowerCase()] ||
-               _API_POR_DOMINIO["centrogestion-test.pages.dev"];
-var _API_URL = _API_DEF.url;
-var _API_AMBIENTE_ESPERADO = _API_DEF.ambiente;
-var _API_AMBIENTE_REAL = null;   // lo que contesta /salud
-var _API_VIVA = null;            // null = todavía no se sabe
-var _API_MOTIVO = "";            // por qué no contesta, cuando no contesta
-var _API_BLOQUEADA = false;      // true si el ambiente no es el que corresponde
-var _API_ENTRO_POR_API = false;  // la sesión EN CURSO vino del acceso por correo
-
-// El testigo de sesión vive en su PROPIA clave del navegador, FUERA de S.
-// Esto es a propósito y es importante: S se sube entero a Firebase en cada
-// guardado, así que un testigo metido ahí terminaría publicado en la base.
-var _API_SESION_KEY = "cg_api_sesion_v1";
-// Cuánto puede durar la app entrando sola cuando la API NO CONTESTA.
-// Sin este límite, la gracia sin conexión sería para siempre: bastaría con
-// que el servidor no responda para que un testigo revocado siga sirviendo.
-// Pasado el plazo se pide entrar de nuevo — y los PIN siguen andando, así
-// que esto nunca deja a nadie afuera de la app.
-var _API_GRACIA_MS = 7*24*60*60*1000;   // 7 días desde la última verificación
-function _apiSesionGuardada(){
-  try{ var r=localStorage.getItem(_API_SESION_KEY); return r?JSON.parse(r):null; }catch(e){ return null; }
-}
-function _apiGuardarSesion(testigo,usuario,verificada){
-  try{
-    var previa=_apiSesionGuardada()||{};
-    localStorage.setItem(_API_SESION_KEY,JSON.stringify({
-      t:testigo, u:usuario, ts:previa.ts||Date.now(),
-      // "verif" = última vez que el SERVIDOR confirmó que esta sesión sirve.
-      verif: verificada ? Date.now() : (previa.verif||Date.now())
-    }));
-  }catch(e){}
-}
-function _apiGraciaVencida(ses){
-  var ultima=(ses&&(ses.verif||ses.ts))||0;
-  return (Date.now()-ultima) > _API_GRACIA_MS;
-}
-function _apiBorrarSesionLocal(){
-  try{ localStorage.removeItem(_API_SESION_KEY); }catch(e){}
-}
-function apiSesionActiva(){ var s=_apiSesionGuardada(); return !!(s&&s.t); }
-
-function apiFetch(ruta,opciones){
-  opciones=opciones||{};
-  var cab={};
-  var ses=_apiSesionGuardada();
-  if(ses&&ses.t) cab["Authorization"]="Bearer "+ses.t;
-  if(opciones.body) cab["Content-Type"]="application/json";
-  return fetch(_API_URL+ruta,{
-    method:opciones.method||"GET",
-    headers:cab,
-    body:opciones.body?JSON.stringify(opciones.body):undefined
-  });
-}
-
-// Al arrancar: preguntarle a la API qué ambiente es y avisar si no coincide
-// con el que corresponde a este dominio. Un sitio de pruebas hablando con
-// producción (o al revés) se ve al instante en vez de descubrirse tarde.
-function _apiComprobarAmbiente(){
-  fetch(_API_URL+"/salud",{cache:"no-store"}).then(function(r){
-    if(!r.ok){ _API_VIVA=false; _API_MOTIVO="el servidor respondió "+r.status; return null; }
-    return r.json();
-  }).then(function(d){
-    if(!d) return;
-    _API_VIVA=true; _API_MOTIVO="";
-    _API_AMBIENTE_REAL=(d&&d.ambiente)||null;
-    if(_API_AMBIENTE_REAL && _API_AMBIENTE_REAL!==_API_AMBIENTE_ESPERADO){
-      // Esto es grave: este sitio está hablando con la base equivocada.
-      // Se corta el acceso por correo y se cierra la sesión que hubiera.
-      // Los PIN siguen funcionando, así que la app no queda inutilizable.
-      _API_BLOQUEADA=true;
-      _apiBorrarSesionLocal();
-      // No alcanza con borrar el testigo: si esta pestaña ya entró por
-      // correo (el arranque corre antes que esta comprobación), hay que
-      // sacarla de la sesión en curso, no solo dejarla sin testigo.
-      if(_API_ENTRO_POR_API){
-        _API_ENTRO_POR_API=false;
-        S.role=null; S.usuario=""; S.usuarioId=null;
-        _borrarSesion();
-        R();
-      }
-      _apiAvisoAmbiente(_API_AMBIENTE_REAL);
-    }
-  }).catch(function(){
-    _API_VIVA=false;
-    // El navegador no distingue una cosa de la otra: en los dos casos la
-    // promesa falla igual. Se dice lo que se sabe, sin inventar.
-    _API_MOTIVO="sin conexión, o este dominio no está autorizado en esa API";
-  });
-}
-function _apiAvisoAmbiente(real){
-  try{
-    if(document.getElementById("api-amb-aviso")) return;
-    var d=document.createElement("div");
-    d.id="api-amb-aviso";
-    d.style.cssText="position:fixed;left:0;right:0;top:0;z-index:99999;background:#c0392b;color:#fff;"+
-      "padding:8px 12px;font-size:12px;font-weight:700;text-align:center;box-shadow:0 2px 10px #0006";
-    d.textContent="⚠️ Este sitio esperaba la API de "+_API_AMBIENTE_ESPERADO+
-                  " y está hablando con la de "+real+". Acceso por correo desactivado. "+
-                  "Puedes entrar con tu PIN, pero revisa la configuración antes de registrar nada.";
-    document.body.appendChild(d);
-  }catch(e){}
-}
-
-// ── Entrar con correo y clave ────────────────────────────────────────
-function mostrarLoginCorreo(){ S.loginCorreo=true; S.loginErr=""; R(); }
-function cancelLoginCorreo(){ S.loginCorreo=false; S.loginErr=""; R(); }
-
-function _loginApiAplicar(u,conAviso){
-  var base=ROLES.find(function(r){return r.id===(u&&u.rol);});
-  S.role=base?base.id:"lector";
-  S.usuario=(u&&(u.nombre||u.correo))||"";
-  S.usuarioId=null;
-  S.tab=((S.role==="admin"||S.role==="lector")?"dash":"mi_ganancia");
-  S.tblMes=getMesKeyActual();
-  S.pinRole=null; S.pinIn=""; S.pinErr=""; S.loginCorreo=false; S.loginErr="";
-  _API_ENTRO_POR_API=true;
-  _guardarSesion();
-  if(conAviso) setTimeout(function(){ logAudit("LOGIN","Ingresó con correo "+((u&&u.correo)||"")); },1000);
-}
-
-function entrarConCorreo(){
-  var ec=document.getElementById("api-correo");
-  var ek=document.getElementById("api-clave");
-  var correo=(ec?ec.value:"").trim().toLowerCase();
-  var clave=(ek?ek.value:"");
-  if(_API_BLOQUEADA){
-    S.loginErr="Este sitio está apuntando al ambiente equivocado. Entra con tu PIN.";
-    R(); return;
-  }
-  if(!correo||!clave){ S.loginErr="Escribe el correo y la clave."; R(); return; }
-  var btn=document.getElementById("api-btn");
-  if(btn){ btn.disabled=true; btn.textContent="Entrando…"; }
-  fetch(_API_URL+"/auth/entrar",{
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({correo:correo,clave:clave})
-  }).then(function(r){
-    return r.json().then(function(d){ return {estado:r.status,datos:d}; });
-  }).then(function(res){
-    if(res.estado===200 && res.datos && res.datos.ok){
-      _apiGuardarSesion(res.datos.testigo,res.datos.usuario,true);
-      _loginApiAplicar(res.datos.usuario,true);
-      R();
-      return;
-    }
-    S.loginErr=(res.datos&&res.datos.error)||"No se pudo entrar.";
-    R();
-  }).catch(function(){
-    S.loginErr="Sin conexión con el servidor. Puedes entrar con tu PIN.";
-    R();
-  });
-}
-
-// Al abrir la app, si hay una sesión guardada:
-//   · el servidor la acepta        -> entra directo
-//   · el servidor dice que venció  -> pide la clave
-//   · el servidor NO CONTESTA      -> entra igual con lo último conocido
-// Ese tercer caso es deliberado: un Railway dormido o un teléfono sin señal
-// no pueden dejar a nadie afuera de su propia contabilidad.
-function _apiRestaurarSesion(){
-  var ses=_apiSesionGuardada();
-  if(!ses||!ses.t||!ses.u) return false;
-  var vencida=_apiGraciaVencida(ses);
-  // Si la gracia sigue vigente se entra en el acto y se verifica por atrás.
-  // Si venció, NO se entra hasta que el servidor confirme.
-  if(!vencida) _loginApiAplicar(ses.u,false);
-  apiFetch("/auth/yo").then(function(r){
-    if(r.status===401){
-      _apiBorrarSesionLocal();
-      if(!vencida){ S.role=null; _borrarSesion(); }
-      R();
-      return null;
-    }
-    return r.json();
-  }).then(function(d){
-    if(d&&d.ok&&d.usuario){
-      _apiGuardarSesion(ses.t,d.usuario,true);   // verificada AHORA
-      if(vencida){ _loginApiAplicar(d.usuario,false); R(); }
-    }
-  }).catch(function(){
-    // Sin respuesta del servidor. Si la gracia seguía vigente, ya se entró
-    // y se sigue adentro a propósito. Si estaba vencida, se queda en la
-    // pantalla de acceso, donde los PIN siguen sirviendo.
-  });
-  return !vencida;
-}
-
-function _apiSalir(){
-  try{
-    var ses=_apiSesionGuardada();
-    if(ses&&ses.t){ apiFetch("/auth/salir",{method:"POST"}).catch(function(){}); }
-  }catch(e){}
-  _apiBorrarSesionLocal();
-  _API_ENTRO_POR_API=false;
-}
-
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
 
@@ -5517,14 +5304,6 @@ function rConfigAdmin(){
     _cfgAcc("permisos","🔒","Permisos por operador",null,"#1a6b3c",permisosBody,false)+
     "<div style='background:#f8f8f8;border-radius:14px;padding:14px;border:1px solid #eee'>"+
       "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:8px'>ℹ️ Sistema · versión "+APP_VERSION+"</div>"+
-      "<div style='font-size:11px;color:#555;margin-bottom:10px;padding:8px 10px;background:#fff;border:1px solid #eee;border-radius:8px;line-height:1.5'>"+
-        "<b>Ambiente esperado:</b> "+_API_AMBIENTE_ESPERADO+"<br>"+
-        "<b>Ambiente que responde:</b> "+(_API_AMBIENTE_REAL||(_API_VIVA===false?("sin respuesta — "+_API_MOTIVO):"consultando…"))+
-        ((_API_AMBIENTE_REAL&&_API_AMBIENTE_REAL!==_API_AMBIENTE_ESPERADO)?" <span style='color:#c0392b;font-weight:800'>⚠️ NO COINCIDE</span>":"")+"<br>"+
-        "<b>API:</b> <span style='font-size:10px;word-break:break-all'>"+_API_URL+"</span><br>"+
-        "<b>Sesión por correo:</b> "+(apiSesionActiva()?"activa":"no")+
-        (_API_BLOQUEADA?"<br><span style='color:#c0392b;font-weight:800'>Acceso por correo desactivado por desajuste de ambiente</span>":"")+
-      "</div>"+
       "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:10px'>"+
         "<div><div style='font-size:10px;color:#888'>BRL</div><div style='font-size:22px;font-weight:800;color:#0f6e3a'>"+S.brl.length+"</div></div>"+
         "<div><div style='font-size:10px;color:#888'>VZLA</div><div style='font-size:22px;font-weight:800;color:#c0392b'>"+S.vzla.length+"</div></div>"+
@@ -8836,7 +8615,7 @@ function _restaurarSesion(){
 }
 function _borrarSesion(){ try{localStorage.removeItem(_SESSION_KEY);}catch(e){} }
 
-function salir(){logAudit("LOGOUT","Cerró sesión");_apiSalir();S.role=null;S.tab="dash";S.q="";S.loginCorreo=false;_borrarSesion();R();}
+function salir(){logAudit("LOGOUT","Cerró sesión");S.role=null;S.tab="dash";S.q="";_borrarSesion();R();}
 function ssq(v){S.q=v;if(_st)clearTimeout(_st);_st=setTimeout(R,300);}
 // ARREGLO 19 (02/09/2026): el buscador de clientes redibujaba la pantalla
 // entera a los 300 ms de cada letra. Ese redibujado destruye el campo y crea
@@ -9662,26 +9441,6 @@ function R(){
 function spL(id){showPinLogin(id);}
 
 function rLogin(){
-  if(S.loginCorreo){
-    return '<div class="login-wrap">'+
-      '<div style="background:rgba(255,255,255,.93);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-radius:16px;padding:1.6rem;width:310px;box-shadow:0 20px 60px rgba(0,0,0,.45),0 0 0 1px rgba(255,255,255,.35);border-top:3px solid #4B3FC7">'+
-        '<div style="text-align:center;font-size:26px;margin-bottom:8px">✉️</div>'+
-        '<div style="text-align:center;font-weight:700;font-size:15px">Entrar con correo y clave</div>'+
-        '<div style="text-align:center;font-size:11px;color:#888;margin-top:3px;margin-bottom:14px">Ambiente: '+_API_AMBIENTE_ESPERADO+'</div>'+
-        '<input id="api-correo" type="email" autocomplete="username" autocapitalize="off" spellcheck="false" '+
-          'placeholder="correo" style="width:100%;padding:12px;font-size:14px;border:2px solid #ddd;border-radius:10px;outline:none;box-sizing:border-box;margin-bottom:8px" />'+
-        '<div style="position:relative;margin-bottom:12px">'+
-          '<input id="api-clave" type="password" autocomplete="current-password" placeholder="clave" '+
-            'style="width:100%;padding:12px 44px 12px 12px;font-size:14px;border:2px solid #ddd;border-radius:10px;outline:none;box-sizing:border-box" '+
-            'onkeydown="if(event.key===\'Enter\')entrarConCorreo()" />'+
-          '<button type="button" onclick="var el=document.getElementById(\'api-clave\');if(el){el.type=el.type===\'password\'?\'text\':\'password\'}" '+
-            'style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:18px">👁</button>'+
-        '</div>'+
-        '<button id="api-btn" type="button" onclick="entrarConCorreo()" style="width:100%;padding:13px;background:linear-gradient(135deg,#4B3FC7,#372c9e);color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:800;cursor:pointer;box-shadow:0 4px 16px rgba(75,63,199,.35)">🔓 Entrar</button>'+
-        '<div style="color:#c0392b;font-size:11px;margin-top:8px;min-height:18px;text-align:center">'+(S.loginErr||"")+'</div>'+
-        '<button type="button" onclick="cancelLoginCorreo()" style="margin-top:4px;width:100%;padding:9px;background:rgba(255,255,255,.3);border:1px solid #ddd;border-radius:8px;cursor:pointer;font-size:13px;color:#2D3142;font-weight:600">← Volver</button>'+
-      '</div></div>';
-  }
   if(S.pinRole){
     var ro=resolvePerfilKey(S.pinRole)||{ic:"👤",label:"Perfil"};
     var dots=[0,1,2,3,4,5].map(function(i){
@@ -9740,7 +9499,6 @@ function rLogin(){
        '<div style="text-align:right;margin-bottom:10px"><a href="javascript:void(0)" onclick="quitarHuellas()" style="font-size:10px;color:#bbb;text-decoration:none">quitar huellas de este equipo</a></div>'
       :'')+
     roleBtns+
-    '<button type="button" onclick="mostrarLoginCorreo()" style="width:100%;margin-top:10px;padding:13px;background:#EEF3FF;border:1.5px solid #4B3FC7;border-radius:12px;font-size:14px;font-weight:700;color:#372c9e;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px">✉️ Entrar con correo y clave</button>'+
     (getUsuarios().length?'<div style="margin-top:12px;padding:10px 14px;background:#EEF3FF;border:1.5px solid #90b4f5;border-radius:10px;margin-bottom:8px"><div style="font-size:10px;font-weight:800;color:#0a3d7c;letter-spacing:.5px;margin-bottom:8px">👤 ACCESO PERSONAL — HAZ CLIC EN TU NOMBRE</div>'+getUsuarios().map(function(u){
       var base=ROLES.find(function(r){return r.id===u.perfil;})||{ic:"👤",label:u.perfil,bg:"#f0f0f0"};
       return '<button class="rbtn" type="button" data-user="u_'+u.id+'" style="cursor:pointer">'+
@@ -17180,10 +16938,6 @@ var _loaded=loadData();
 // ARREGLO 6b: podar tambien al arrancar, con las marcas ya guardadas en disco.
 try{ _podarBorrados(); }catch(e){}
 _restaurarSesion(); // si había sesión activa (<30 min de inactividad), no pide la clave otra vez
-// Sesión de la API propia: si hay una guardada, se entra con ella (y se
-// verifica contra el servidor por atrás, sin bloquear el arranque).
-try{ _apiRestaurarSesion(); }catch(e){ console.warn("sesión API:",e); }
-try{ setTimeout(_apiComprobarAmbiente,1200); }catch(e){}
 // Asignar código único (_uid) a remesas ya existentes que no lo tengan aún
 // (registradas antes de este cambio) — así la fusión segura cubre TODO,
 // no solo lo nuevo.
