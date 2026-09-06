@@ -395,7 +395,6 @@ tr:last-child td{border-bottom:none}
 // PINs are now dynamic - stored in S.config, with fallback defaults
 var PINS_DEFAULT={admin:"Adm@26",brl:"Brl@26",vzla:"Vzl@26",eeuu:"Eeu@26"};
 function getPIN(role){return (S&&S.config&&S.config.pins&&S.config.pins[role])||PINS_DEFAULT[role];}
-function getEPIN(){return (S&&S.config&&S.config.pins&&S.config.pins.admin)||PINS_DEFAULT.admin;}
 const ROLES=[
   {id:"admin",label:"Administrador",  sub:"Acceso completo",          ic:"🛡️",bg:"#EEEDFE"},
   {id:"brl",  label:"Operador BRL",   sub:"Brasil · VZLA",            ic:"🇧🇷",bg:"#D6F5E3"},
@@ -1126,6 +1125,40 @@ function _bajaClienteEnApi(cod){
 // El espejo cumple esa misma funcion pero con datos de verdad: la ultima
 // lista buena que vio ESTE navegador. Vive en su propia clave, no viaja a
 // Firebase y no esta en el archivo publico.
+// ── Autorizacion de acciones sensibles ───────────────────────────────────
+// Hasta ahora esto era un PIN escrito en las diez llamadas que lo pedian.
+// Al estar en un archivo que Cloudflare publica, cualquiera que abriera el
+// codigo fuente lo leia y pasaba TODAS estas autorizaciones: registrar y
+// borrar gastos, cargar deudas y adelantos, corregir saldos de cierre de mes
+// y borrar los datos locales del dispositivo. Y al estar repetido en cada
+// llamada, no habia forma de cambiarlo desde la app.
+// Ahora la autorizacion es la sesion de administrador de la API: no queda
+// ninguna clave escrita en el archivo, y se puede revocar de verdad
+// —desactivando al usuario, o cambiandole la clave, que cierra sus sesiones
+// abiertas en el acto.
+function _esAdminApi(){
+  try{
+    // Hace falta que la sesion EN CURSO haya entrado por la API, no solo que
+    // quede un testigo guardado en este navegador. Sin esta condicion,
+    // mientras siga existiendo el acceso por PIN, alguien que entra con el
+    // PIN de un operador en un dispositivo donde antes entro el
+    // administrador heredaria sus autorizaciones.
+    if(!_API_ENTRO_POR_API) return false;
+    if(!apiSesionActiva()) return false;
+    var ses=_apiSesionGuardada();
+    return !!(ses && ses.u && ses.u.rol==="admin");
+  }catch(e){ return false; }
+}
+
+// Devuelve true si se puede seguir. Si no, dice por que y corta.
+function autorizar(accion){
+  if(_esAdminApi()) return true;
+  alert("Esta acción necesita una sesión de administrador.\n\n"+
+        (accion?("Acción: "+accion+"\n\n"):"")+
+        "Entrá con tu correo y clave de administrador, y volvé a intentarlo.");
+  return false;
+}
+
 var _CLIENTES_ESPEJO_KEY = "cg_clientes_espejo_v1";
 
 // Este dispositivo ya leyo el estado de Firebase al menos una vez en esta
@@ -2380,7 +2413,7 @@ function saveCuenta(){
 
 function editarSaldoCuenta(inp){
   var cid=inp.getAttribute("data-cid");var val=parseFloat(inp.value)||0;
-  showPinEdit(function(){updateCuentaSaldo(cid,val);});
+  autorizarYHacer(function(){updateCuentaSaldo(cid,val);});
 }
 
 function toggleCuentaPersonal(cid){
@@ -2421,7 +2454,7 @@ function editarNombreCuenta(cid){
   nuevo=nuevo.trim();
   var existe=(S.cuentas||[]).some(function(x){return x.id!==cid&&x.nombre.toLowerCase()===nuevo.toLowerCase();});
   if(existe){alert("Ya existe otra cuenta con ese nombre.");return;}
-  showPinEdit(function(){
+  autorizarYHacer(function(){
     var prev=c.nombre;
     c.nombre=nuevo;
     // Sincronizar S.capital
@@ -2607,7 +2640,7 @@ function borrarAbonoPrestamo(prestId,abonoId){
   var montoReal=parseFloat(ab.montoPago!==undefined?ab.montoPago:ab.monto)||0;
   var monedaReal=ab.monedaPago||p.mon||"USDT";
   if(!confirm("¿Borrar este abono de "+f2(montoReal)+" "+monedaReal+" ("+ab.fecha+")?\n\nSe le restará ese monto a la cuenta donde había entrado, y el préstamo vuelve a quedar pendiente por ese valor."))return;
-  showPinEdit(function(){
+  autorizarYHacer(function(){
     // Restar de la cuenta donde había entrado (en su moneda real)
     if(ab.cuentaId) ajusteCuentaEgreso(ab.cuentaId,-montoReal);
     // Quitar el abono del historial
@@ -2625,14 +2658,14 @@ function borrarAbonoPrestamo(prestId,abonoId){
 }
 function toggleCuenta(btn){
   var cid=btn.getAttribute("data-cid");
-  showPinEdit(function(){var c=(S.cuentas||[]).find(function(x){return x.id===cid;});if(c){c.activa=!c.activa;saveData();R();}});
+  autorizarYHacer(function(){var c=(S.cuentas||[]).find(function(x){return x.id===cid;});if(c){c.activa=!c.activa;saveData();R();}});
 }
 
 function eliminarCuentaConfig(btn){
   var cid=btn.getAttribute("data-cid");
   var c=(S.cuentas||[]).find(function(x){return x.id===cid;});
   if(!c) return;
-  showPinEdit(function(){
+  autorizarYHacer(function(){
     if(!confirm("¿Eliminar cuenta '"+c.nombre+"'?")) return;
     S.cuentas=S.cuentas.filter(function(x){return x.id!==cid;});
     S.capital=(S.capital||[]).filter(function(x){return x.cuentaId!==cid;});
@@ -2644,7 +2677,7 @@ function eliminarCuentaConfig(btn){
 function guardarConfigAlertas(){
   var dias=parseInt(document.getElementById("inp-dias-alerta").value)||5;
   var minU=parseFloat(document.getElementById("inp-min-usdt").value)||0;
-  showPinEdit(function(){
+  autorizarYHacer(function(){
     if(!S.config) S.config={};
     S.config.diasAlertaCobro=dias;
     S.config.minUsdt=minU;
@@ -2660,7 +2693,7 @@ function guardarComisionVES(){
   if(!inp) return;
   var v=parseFloat(inp.value);
   if(isNaN(v)||v<0){alert("Valor inválido.");return;}
-  showPinEdit(function(){
+  autorizarYHacer(function(){
     if(!S.config) S.config={};
     S.config.comision_usdt_ves=v;
     logAudit("CONFIG_COMISION_VES","Comisión VES cambiada a "+v);
@@ -2674,10 +2707,10 @@ function guardarComision(){
   if(!inp) return;
   var v=parseFloat(inp.value);
   if(!v||v<0){alert("Valor inválido.");return;}
-  showPinEdit(function(){if(!S.config)S.config={};logAudit("CONFIG_COMISION","Cambió comisión USDT a "+v);S.config.comision_usdt=v;saveData();R();alert("✅ Comisión: "+v+" USDT");});
+  autorizarYHacer(function(){if(!S.config)S.config={};logAudit("CONFIG_COMISION","Cambió comisión USDT a "+v);S.config.comision_usdt=v;saveData();R();alert("✅ Comisión: "+v+" USDT");});
 }
 function deleteCuenta(id){
-  showPinEdit(function(){S.cuentas=S.cuentas.filter(function(x){return x.id!==id;});_marcarBorradoMerge("cuentas",id);saveData();R();});
+  autorizarYHacer(function(){S.cuentas=S.cuentas.filter(function(x){return x.id!==id;});_marcarBorradoMerge("cuentas",id);saveData();R();});
 }
 // ── Recuperación de emergencia: recrear las cuentas conocidas con sus
 // IDs ORIGINALES exactos (para que las remesas viejas que las referencian
@@ -2845,9 +2878,7 @@ function editDelCell(type,n){
   return "<td style='display:flex;gap:4px'><button class='edit-btn' onclick='startEditRow(\""+type+"\"," +n+")' style='padding:3px 8px;font-size:10px'>✏️</button><button class='del-btn' onclick='reqDel(\""+type+"\"," +n+",\"n\")'>🗑️</button></td>";
 }
 function startEditRow(type,n){
-  var pin=prompt("Ingresa el PIN para editar:");
-  if(pin===null) return;
-  if(pin!==getEPIN()){alert("PIN incorrecto.");return;}
+  if(!autorizar("editar una operación ya registrada")) return;
   S.editRow={type:type,n:n};R();
 }
 function saveEditRow(){
@@ -2908,7 +2939,7 @@ function marcarRemesaPendiente(tipo,n){
   var montoOrigen=Math.round((parseFloat(r.am)||0)*100)/100;
   var nombreCta=r.cuentaBanco?((S.cuentas||[]).find(function(c){return c.id===r.cuentaBanco;})||{}).nombre:null;
   if(!confirm("¿Marcar como pago pendiente?\n\nCliente: "+r.cl+" · "+r.rt+"\nSe restará "+f2(montoOrigen)+" "+r.orig+(nombreCta?" de \""+nombreCta+"\"":"")+" y pasará a Cuentas por Cobrar hasta que la marques como cobrada."))return;
-  showPinEdit(function(){
+  autorizarYHacer(function(){
     // 1) Restar de la cuenta origen lo que se le había sumado de más
     if(r.cuentaBanco){
       var cta=(S.cuentas||[]).find(function(c){return c.id===r.cuentaBanco;});
@@ -4646,16 +4677,12 @@ function saveGE(){
     saveData();R();
   }
   if(S.role==="admin"){ _doSaveGE(); return; }
-  var pin=prompt("🔐 Ingresa la clave de autorización para registrar este gasto:");
-  if(pin===null) return;
-  if(pin!=="2626"){alert("Clave incorrecta. No autorizado.");return;}
+  if(!autorizar("registrar este gasto")) return;
   _doSaveGE();
 }
 
 function pagarPaul(){
-  var pin=prompt("🔐 Clave de administrador para confirmar liquidación:");
-  if(pin===null) return;
-  if(pin!==getEPIN()){alert("Clave incorrecta.");return;}
+  if(!autorizar("confirmar una liquidación")) return;
 
   // Usar el mes seleccionado en el panel (no el mes actual del sistema)
   var mesKey = (_opMesSel && _opMesSel.length>=6) ? _opMesSel : getMesKeyActual();
@@ -4757,17 +4784,13 @@ function saveDeudaPaul(){
   var desc=document.getElementById("deuda-desc")?document.getElementById("deuda-desc").value:"";
   var monto=parseFloat(document.getElementById("deuda-monto")?document.getElementById("deuda-monto").value:0);
   if(!monto||monto<=0){alert("Ingresa un monto válido.");return;}
-  var pin=prompt("🔐 Clave de autorización para registrar deuda/adelanto:");
-  if(pin===null) return;
-  if(pin!=="2626"){alert("Clave incorrecta.");return;}
+  if(!autorizar("registrar una deuda o adelanto")) return;
   if(!S.deudas_paul) S.deudas_paul=[];
   S.deudas_paul.push({id:Date.now(),d:new Date().toLocaleDateString("es-ES",{day:"2-digit",month:"2-digit"}),desc:desc||"Adelanto",monto:monto});
   saveData();R();
 }
 function delDeudaPaul(id){
-  var pin=prompt("🔐 Clave de autorización para eliminar:");
-  if(pin===null) return;
-  if(pin!=="2626"){alert("Clave incorrecta.");return;}
+  if(!autorizar("eliminar una deuda o adelanto")) return;
   S.deudas_paul=S.deudas_paul.filter(function(x){return x.id!==id;});
   _marcarBorradoMerge("deudas_paul",id);
   saveData();R();
@@ -4790,9 +4813,7 @@ function editDeudaPaul(id){
   if(nuevo===null) return;
   var monto=parseFloat(nuevo);
   if(isNaN(monto)||monto<0){alert("Monto inválido.");return;}
-  var pin=prompt("🔐 PIN de autorización:");
-  if(pin===null) return;
-  if(pin!=="2626"){alert("PIN incorrecto.");return;}
+  if(!autorizar("editar una deuda o adelanto")) return;
   d.monto=Math.round(monto*100)/100;
   saveData();R();
   alert("✅ Deuda actualizada a $"+f2(d.monto)+" USDT");
@@ -4800,10 +4821,7 @@ function editDeudaPaul(id){
 function delGE(id){
   var g=S.gastos_eeuu.find(function(x){return x.id===id;});if(!g)return;
   var fn=function(){S.gastos_eeuu=S.gastos_eeuu.filter(function(x){return x.id!==id;});_marcarBorradoMerge("gastos_eeuu",id);saveData();R();};
-  if(S.role==="admin"){ showPinEdit(fn); return; }
-  var pin=prompt("🔐 Clave de autorización para eliminar gasto:");
-  if(pin===null) return;
-  if(pin!=="2626"){alert("Clave incorrecta.");return;}
+  if(!autorizar("eliminar un gasto")) return;
   fn();
 }
 function agregarRutaExtra(){
@@ -4832,7 +4850,7 @@ function eliminarRutaExtra(idx){
 function guardarPctSueldo(){
   var v=parseFloat(document.getElementById('inp-pct-sueldo').value);
   if(isNaN(v)||v<0||v>100){alert("Valor inválido. Ej: 40 para 40%");return;}
-  showPinEdit(function(){
+  autorizarYHacer(function(){
     if(!S.config)S.config={};
     logAudit("CONFIG_SUELDO","Cambió % sueldo a "+v+"%");
     S.config.pct_sueldo=Math.round(v)/100;
@@ -4921,9 +4939,7 @@ function selClienteEE(nombre){ elegirClienteEE(nombre); }
 // ══════════════════════════════════════════════════════
 // ── Gastos asignados a un socio específico ──────────────────────────────
 function saveGastoSocio(socioId){
-  var pin=prompt("🔐 PIN de autorización:");
-  if(pin===null) return;
-  if(pin!=="2626"){alert("PIN incorrecto.");return;}
+  if(!autorizar("registrar un gasto de socio")) return;
   var f=S._nGastoSocio||{};
   var monto=parseFloat(f.monto);
   if(!monto||monto<=0){alert("Ingresa un monto válido.");return;}
@@ -4947,9 +4963,7 @@ function saveGastoSocio(socioId){
   saveData();R();
 }
 function delGastoSocio(id){
-  var pin=prompt("🔐 PIN para eliminar:");
-  if(pin===null) return;
-  if(pin!=="2626"){alert("PIN incorrecto.");return;}
+  if(!autorizar("eliminar un gasto de socio")) return;
   S.gastos_socios=(S.gastos_socios||[]).filter(function(g){return g.id!==id;});
   _marcarBorradoMerge("gastos_socios",id);
   saveData();R();
@@ -6625,8 +6639,7 @@ function cambiarPin(role){
   var val=inp.value.trim();
   if(val.length!==6){alert("La clave debe tener exactamente 6 caracteres (letras, números o símbolos).");return;}
   // Require current admin PIN to change any PIN
-  var actual=prompt("Ingresa tu PIN de administrador actual para confirmar el cambio:");
-  if(actual!==getEPIN()){alert("PIN de administrador incorrecto.");return;}
+  if(!autorizar("cambiar la clave de un perfil")) return;
   if(!S.config) S.config={};
   if(!S.config.pins) S.config.pins={};
   S.config.pins[role]=val;
@@ -7856,8 +7869,7 @@ function mostrarOpcionesBackup(resultados){
   R();
 }
 function forzarCargaFirebase(){
-  var pin=prompt("🔐 Esta acción borra los datos locales. Ingresa el PIN de soporte:");
-  if(pin!=="2626"){alert("PIN incorrecto.");return;}
+  if(!autorizar("borrar los datos locales de este dispositivo")) return;
   if(!confirm("⚠️ ÚLTIMA CONFIRMACIÓN:\nEsto borrará los datos locales de este dispositivo.\nSolo hazlo si te lo indica el soporte.\n\n¿Confirmar?")) return;
   // Limpiar localStorage completamente
   try{
@@ -7953,9 +7965,7 @@ function saveGastoSocioForm(){
   if(!f.desc||!f.desc.trim()){alert("Ingresa una descripción.");return;}
   var monto=parseFloat(f.monto);
   if(!monto||monto<=0){alert("Ingresa un monto válido.");return;}
-  var pin=prompt("🔐 PIN de autorización:");
-  if(pin===null) return;
-  if(pin!=="2626"){alert("PIN incorrecto.");return;}
+  if(!autorizar("registrar un gasto de socio")) return;
   var socio=(S.config.socios||[]).find(function(s){return String(s.id)===String(f.socioId);});
   if(!S.gastos_socios) S.gastos_socios=[];
   var fechaStr=f.fecha||td();
@@ -7985,8 +7995,7 @@ function dsFecha(iso){
 }
 
 function corregirSaldoCierre(mesKey){
-  var pin=prompt("🔐 PIN de administrador:");
-  if(pin!=="2626"){alert("PIN incorrecto.");return;}
+  if(!autorizar("corregir el saldo de un cierre de mes")) return;
   var cierre=(S.cierresMes||[]).find(function(c){return c.mesKey===mesKey;});
   if(!cierre){alert("Cierre no encontrado.");return;}
   var val=prompt("Ingresa el saldo neto acumulado correcto para "+cierre.mesLabel+" (en USDT):\n\nEste es el total que acumuló el negocio hasta ese mes.");
@@ -8318,7 +8327,7 @@ function importData(){
   document.body.appendChild(input);input.click();document.body.removeChild(input);
 }
 function clearAllData(){
-  showPinEdit(function(){
+  autorizarYHacer(function(){
     DATA_KEYS.forEach(function(k){S[k]=Array.isArray(S[k])?[]:(typeof S[k]==="object"&&S[k]!==null?{}:S[k]);});
     localStorage.removeItem(STORAGE_KEY);localStorage.removeItem(STORAGE_KEY+"_bak");
     // Los clientes no son datos de este dispositivo: si hay sesion de la API
@@ -8336,13 +8345,14 @@ function goCapital(){S.tab="capital_total";R();}
 function cancelPin(){S.pinIn="";S.pinErr="";S.pendingFn=null;document.getElementById("ovl").classList.remove("show");var el=document.getElementById("pin-admin-field");if(el)el.value="";}
 function cancelLogin(){S.pinRole=null;S.pinIn="";S.pinErr="";R();}
 function showPinLogin(rid){S.pinRole=rid;S.pinIn="";S.pinErr="";R();}
-function showPinEdit(fn){
-  S.pendingFn=fn;S.pinIn="";
-  document.getElementById("oi").textContent="🔐";
-  document.getElementById("ot").textContent="PIN de administrador";
-  document.getElementById("oe").textContent="";
-  document.getElementById("ovl").classList.add("show");
-  setTimeout(function(){var el=document.getElementById("pin-admin-field");if(el){el.value="";el.focus();}},80);
+// Antes esto abria un teclado y pedia el PIN de administrador, que estaba
+// escrito en el archivo publicado. Ahora la autorizacion es la sesion de
+// administrador de la API. Se conserva la forma —recibe la accion y la
+// ejecuta solo si autoriza— para no tener que tocar los catorce lugares
+// que la llaman.
+function autorizarYHacer(fn,accion){
+  if(!autorizar(accion)) return;
+  try{ fn(); }catch(e){ console.warn("La accion autorizada fallo:",e); }
 }
 function reqDel(arr,id,field){
   var item=S[arr].find(function(x){return x[field||"id"]===id;});
@@ -8486,7 +8496,7 @@ function reqDel(arr,id,field){
     S[arr]=S[arr].filter(function(x){return x[field||"id"]!==id;});
     saveData();R();
   };
-  item.locked ? showPinEdit(fn) : fn();
+  item.locked ? autorizarYHacer(fn) : fn();
 }
 
 // Revierte los saldos de cuentas cuando se elimina una operación
@@ -8682,7 +8692,30 @@ var PERMISOS_DEF=[
   {k:"editar",      label:"✏️ Puede editar",          desc:"Guardar cambios (sin esto: solo lectura)"},
 ];
 
+// Con sesion de la API los permisos los manda el servidor: son los que
+// guarda Mongo para ese usuario. Los perfiles locales —los de
+// S.config.usuarios, que llevan el PIN en claro— solo valen mientras exista
+// el acceso por PIN, y se van con el.
+function _permisosApi(){
+  if(!_API_ENTRO_POR_API) return null;
+  try{
+    var ses=_apiSesionGuardada();
+    if(!ses||!ses.u) return null;
+    return { rol: ses.u.rol||"lector", permisos: ses.u.permisos||{} };
+  }catch(e){ return null; }
+}
+
 function tienePermiso(perm){
+  var api=_permisosApi();
+  if(api){
+    if(api.rol==="admin") return true;
+    // El Supervisor ve todo y no modifica: eso ES el rol, tanto aca como en
+    // el servidor. Antes esta funcion solo miraba los perfiles locales, asi
+    // que un Supervisor que entraba por correo no tenia ninguno y se le
+    // negaba TODA la app: cada pestaña le mostraba "Sin acceso".
+    if(api.rol==="lector") return perm!=="editar" || !!api.permisos.editar;
+    return !!api.permisos[perm];
+  }
   if(S.role==="admin") return true;
   if(S.role==="lector"&&S.usuarioId){
     var u=getUsuarios().find(function(x){return x.id===S.usuarioId;});
@@ -8719,6 +8752,14 @@ function resolvePerfilKey(key){
   return ro?{key:key,role:ro.id,label:ro.label,ic:ro.ic,pin:getPIN(key),usuario:null}:null;
 }
 function permisoEdicion(){
+  var api=_permisosApi();
+  if(api){
+    if(api.rol==="admin") return true;
+    // Para los demas roles decide el permiso guardado en Mongo, que es el
+    // mismo que el servidor aplica en sus propias rutas. Asi la pantalla no
+    // ofrece guardar algo que la API va a rechazar con 403.
+    return !!(api.permisos && api.permisos.editar);
+  }
   if(S.usuarioId){
     var u=getUsuarios().find(function(x){return x.id===S.usuarioId;});
     if(!u) return false;
@@ -8819,9 +8860,7 @@ function entrarConHuella(){
   }).catch(function(e){if(e&&e.name!=="NotAllowedError")alert("Error con la huella: "+e.message);});
 }
 function quitarHuellas(){
-  var pin=prompt("PIN de administrador para quitar las huellas registradas en ESTE dispositivo:");
-  if(pin===null)return;
-  if((pin||"").trim()!==(getPIN("admin")||"").trim()){alert("PIN incorrecto.");return;}
+  if(!autorizar("quitar las huellas registradas en este dispositivo")) return;
   _hSave([]);alert("Huellas eliminadas de este dispositivo. Cada quien puede volver a activarlas entrando con su PIN.");R();
 }
 function submitPin(){
@@ -8839,13 +8878,9 @@ function submitPin(){
     else{S.pinErr="Clave incorrecta. Intenta de nuevo.";S.pinIn="";updatePinDots();var el=document.getElementById("pin-input-field");if(el){el.value="";el.focus();}var er=document.getElementById("pin-error-msg");if(er)er.textContent=S.pinErr;}
     return;
   }
-  if(S.pendingFn){
-    var afld=document.getElementById("pin-admin-field");
-    if(afld) S.pinIn=afld.value;
-    if((S.pinIn||"").trim()===(getEPIN()||"").trim()){var fn=S.pendingFn;S.pinIn="";S.pinErr="";S.pendingFn=null;document.getElementById("ovl").classList.remove("show");fn();R();}
-    else{S.pinErr="Clave incorrecta";S.pinIn="";rpd();document.getElementById("oe").textContent=S.pinErr;}
-    return;
-  }
+  // La rama del teclado del PIN de administrador se fue con el PIN: la
+  // autorizacion ahora la da la sesion de admin de la API, no una clave
+  // escrita en este archivo.
 }
 
 function updatePinDots(){
