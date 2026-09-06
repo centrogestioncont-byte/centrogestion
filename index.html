@@ -1053,7 +1053,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260906_v146-TEST";
+var APP_VERSION = "20260906_v147-TEST";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -5100,6 +5100,128 @@ function getSocioComision(rt, srcArray){
 }
 // ── Acordeón moderno para Configuración: cada sección se abre solo cuando
 // la necesitas, en vez de tener que bajar por toda la pantalla. ──────────
+// ══════════════════════════════════════════════════════════════════════
+// GESTIÓN DE USUARIOS DE LA API  — FASE 4
+// Estos usuarios NO son los mismos que los perfiles con PIN. Son dos
+// listas distintas que conviven hasta que los PIN se retiren: desactivar
+// a alguien acá NO le cierra el PIN. La pantalla lo dice en voz alta para
+// que nadie se confíe.
+// Esta pantalla necesita conexión: si la API no responde, avisa y no
+// hace nada más. Un cambio de permisos aplicado a medias es peor que uno
+// no aplicado.
+// ══════════════════════════════════════════════════════════════════════
+function cargarUsuariosApi(){
+  S._usrEstado="cargando"; S._usrError=""; R();
+  apiFetch("/usuarios").then(function(r){
+    if(r.status===401){ S._usrEstado="error"; S._usrError="Necesitas entrar con correo y clave para administrar usuarios."; R(); return null; }
+    if(r.status===403){ S._usrEstado="error"; S._usrError="Solo los administradores pueden ver esta lista."; R(); return null; }
+    return r.json();
+  }).then(function(d){
+    if(!d) return;
+    if(d.ok){ S._usrLista=d.usuarios||[]; S._usrEstado="ok"; }
+    else { S._usrEstado="error"; S._usrError=d.error||"No se pudo cargar."; }
+    R();
+  }).catch(function(){
+    S._usrEstado="error";
+    S._usrError="Sin conexión con el servidor. Vuelve a intentar cuando haya señal.";
+    R();
+  });
+}
+function _usrResultado(r,alExito){
+  return r.json().then(function(d){
+    if(r.status>=200&&r.status<300&&d&&d.ok){ if(alExito)alExito(); cargarUsuariosApi(); return; }
+    alert((d&&d.error)||"No se pudo completar la operación.");
+  });
+}
+function crearUsuarioApi(){
+  var g=function(id){var e=document.getElementById(id);return e?e.value:"";};
+  var datos={correo:g("nu-correo").trim().toLowerCase(),nombre:g("nu-nombre").trim(),
+             rol:g("nu-rol"),clave:g("nu-clave")};
+  if(!datos.correo||!datos.nombre||!datos.clave){ alert("Completa correo, nombre y clave."); return; }
+  apiFetch("/usuarios",{method:"POST",body:datos}).then(function(r){
+    return _usrResultado(r,function(){ S._usrNuevo=false; });
+  }).catch(function(){ alert("Sin conexión con el servidor."); });
+}
+function cambiarRolUsuarioApi(id,rol){
+  apiFetch("/usuarios/"+id,{method:"PUT",body:{rol:rol}}).then(function(r){
+    return _usrResultado(r);
+  }).catch(function(){ alert("Sin conexión con el servidor."); });
+}
+function activarUsuarioApi(id,activo,nombre){
+  if(!activo&&!confirm("¿Desactivar a "+nombre+"?\n\nNo va a poder entrar con su correo, y sus sesiones abiertas se cierran ahora mismo.\n\nOJO: esto NO le quita el acceso por PIN.")) return;
+  apiFetch("/usuarios/"+id,{method:"PUT",body:{activo:!!activo}}).then(function(r){
+    return _usrResultado(r);
+  }).catch(function(){ alert("Sin conexión con el servidor."); });
+}
+function claveUsuarioApi(id,nombre){
+  var nueva=prompt("Clave nueva para "+nombre+" (mínimo 8 caracteres).\n\nAnótala antes de aceptar: no se puede volver a ver.");
+  if(nueva===null) return;
+  if(String(nueva).length<8){ alert("La clave debe tener al menos 8 caracteres."); return; }
+  apiFetch("/usuarios/"+id+"/clave",{method:"POST",body:{nueva:nueva}}).then(function(r){
+    return _usrResultado(r,function(){ alert("Clave cambiada. Sus sesiones abiertas se cerraron."); });
+  }).catch(function(){ alert("Sin conexión con el servidor."); });
+}
+function rUsuariosApi(){
+  var aviso="<div style='background:#FFFBEA;border:1.5px solid #F5C518;border-radius:9px;padding:9px 12px;margin-bottom:12px;font-size:11px;color:#7a5c00;line-height:1.5'>"+
+    "Estos usuarios son los del <b>acceso por correo y clave</b>. Son una lista aparte de los perfiles con PIN: "+
+    "desactivar a alguien acá <b>no</b> le quita el PIN.</div>";
+  if(!apiSesionActiva()){
+    return aviso+"<div style='font-size:12px;color:#777'>Para administrar usuarios, sal y vuelve a entrar con <b>correo y clave</b>.</div>";
+  }
+  if(S._usrEstado===undefined){
+    setTimeout(cargarUsuariosApi,0);
+    return aviso+"<div style='font-size:12px;color:#777'>Cargando…</div>";
+  }
+  if(S._usrEstado==="cargando") return aviso+"<div style='font-size:12px;color:#777'>Cargando…</div>";
+  if(S._usrEstado==="error"){
+    return aviso+"<div style='background:#FDECEA;border:1.5px solid #e6a8a0;border-radius:9px;padding:10px 12px;font-size:12px;color:#8b1a10'>"+
+      (S._usrError||"No se pudo cargar.")+"</div>"+
+      "<button type='button' onclick='cargarUsuariosApi()' style='margin-top:10px;padding:9px 14px;border:1px solid #ddd;background:#fff;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Reintentar</button>";
+  }
+  var etiqueta={admin:"Administrador",brl:"Operador BRL",vzla:"Operador VZLA",eeuu:"Operador EE.UU",lector:"Supervisor"};
+  var filas=(S._usrLista||[]).map(function(u){
+    var opciones=["admin","brl","vzla","eeuu","lector"].map(function(r){
+      return "<option value='"+r+"'"+(u.rol===r?" selected":"")+">"+etiqueta[r]+"</option>";
+    }).join("");
+    var nombreSeguro=String(u.nombre||"").replace(/'/g,"");
+    return "<div style='border:1px solid #eee;border-radius:10px;padding:11px 12px;margin-bottom:8px;background:"+(u.activo?"#fff":"#f7f7f7")+"'>"+
+      "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'>"+
+        "<div style='flex:1;min-width:140px'>"+
+          "<div style='font-size:13px;font-weight:700;color:"+(u.activo?"#16233d":"#999")+"'>"+(u.nombre||"")+
+            (u.activo?"":" <span style='font-size:10px;font-weight:800;color:#c0392b'>· DESACTIVADO</span>")+"</div>"+
+          "<div style='font-size:10px;color:#9aa3b5;word-break:break-all'>"+(u.correo||"")+"</div>"+
+        "</div>"+
+        "<select onchange='cambiarRolUsuarioApi(\""+u.id+"\",this.value)' style='font-size:11px;padding:6px 8px;border:1px solid #ddd;border-radius:7px'>"+opciones+"</select>"+
+      "</div>"+
+      "<div style='display:flex;gap:6px;margin-top:9px;flex-wrap:wrap'>"+
+        "<button type='button' onclick='claveUsuarioApi(\""+u.id+"\",\""+nombreSeguro+"\")' style='padding:6px 10px;font-size:11px;border:1px solid #ddd;background:#fff;border-radius:7px;cursor:pointer'>🔑 Clave nueva</button>"+
+        (u.activo
+          ?"<button type='button' onclick='activarUsuarioApi(\""+u.id+"\",false,\""+nombreSeguro+"\")' style='padding:6px 10px;font-size:11px;border:1px solid #e6a8a0;background:#FDECEA;color:#8b1a10;border-radius:7px;cursor:pointer;font-weight:700'>Desactivar</button>"
+          :"<button type='button' onclick='activarUsuarioApi(\""+u.id+"\",true,\""+nombreSeguro+"\")' style='padding:6px 10px;font-size:11px;border:1px solid #7bc49a;background:#D6F5E3;color:#0b4d27;border-radius:7px;cursor:pointer;font-weight:700'>Reactivar</button>")+
+      "</div>"+
+    "</div>";
+  }).join("");
+
+  var formulario=S._usrNuevo
+    ?"<div style='border:1.5px solid #4B3FC7;border-radius:10px;padding:12px;margin-top:10px;background:#F7F6FF'>"+
+       "<div style='font-size:11px;font-weight:800;color:#372c9e;margin-bottom:8px'>NUEVO USUARIO</div>"+
+       "<input id='nu-nombre' placeholder='Nombre' style='width:100%;padding:9px;border:1px solid #ddd;border-radius:8px;margin-bottom:6px;font-size:12px;box-sizing:border-box'>"+
+       "<input id='nu-correo' type='email' autocapitalize='off' placeholder='correo' style='width:100%;padding:9px;border:1px solid #ddd;border-radius:8px;margin-bottom:6px;font-size:12px;box-sizing:border-box'>"+
+       "<select id='nu-rol' style='width:100%;padding:9px;border:1px solid #ddd;border-radius:8px;margin-bottom:6px;font-size:12px;box-sizing:border-box'>"+
+         "<option value='brl'>Operador BRL</option><option value='vzla'>Operador VZLA</option>"+
+         "<option value='eeuu'>Operador EE.UU</option><option value='lector'>Supervisor</option>"+
+         "<option value='admin'>Administrador</option></select>"+
+       "<input id='nu-clave' type='text' placeholder='clave (mínimo 8)' style='width:100%;padding:9px;border:1px solid #ddd;border-radius:8px;margin-bottom:8px;font-size:12px;box-sizing:border-box'>"+
+       "<div style='font-size:10px;color:#777;margin-bottom:8px'>Anota la clave: no se puede volver a ver. La persona puede cambiarla después.</div>"+
+       "<button type='button' onclick='crearUsuarioApi()' style='padding:9px 14px;background:#4B3FC7;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:800;cursor:pointer'>Crear</button> "+
+       "<button type='button' onclick='S._usrNuevo=false;R()' style='padding:9px 14px;background:#fff;border:1px solid #ddd;border-radius:8px;font-size:12px;cursor:pointer'>Cancelar</button>"+
+     "</div>"
+    :"<button type='button' onclick='S._usrNuevo=true;R()' style='margin-top:8px;padding:9px 14px;background:#EEF3FF;border:1.5px solid #4B3FC7;color:#372c9e;border-radius:8px;font-size:12px;font-weight:800;cursor:pointer'>+ Nuevo usuario</button>";
+
+  return aviso+(filas||"<div style='font-size:12px;color:#777'>No hay usuarios todavía.</div>")+formulario+
+    "<div style='margin-top:10px'><a href='javascript:void(0)' onclick='cargarUsuariosApi()' style='font-size:11px;color:#888'>actualizar lista</a></div>";
+}
+
 function _cfgAcc(id,icon,title,subtitle,color,bodyHtml,defaultOpen){
   if(!S._cfgOpen) S._cfgOpen={};
   var abierto = S._cfgOpen[id]!==undefined ? S._cfgOpen[id] : !!defaultOpen;
@@ -5514,6 +5636,7 @@ function rConfigAdmin(){
     _cfgAcc("rutas","🛣️","Rutas de operación",null,"#2196F3",rutasBody,false)+
     _cfgAcc("tasas","📊","Tasas del día","solo afecta nuevos registros","#e67e22",tasasHTML,false)+
     _cfgAcc("pines","🔑","Pines de acceso",null,"#4B3FC7",pinsHTML,false)+
+    _cfgAcc("usuarios_api","👥","Usuarios (correo y clave)","acceso nuevo · lista aparte de los PIN","#372c9e",rUsuariosApi(),false)+
     _cfgAcc("permisos","🔒","Permisos por operador",null,"#1a6b3c",permisosBody,false)+
     "<div style='background:#f8f8f8;border-radius:14px;padding:14px;border:1px solid #eee'>"+
       "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:8px'>ℹ️ Sistema · versión "+APP_VERSION+"</div>"+
