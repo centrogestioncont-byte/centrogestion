@@ -1205,7 +1205,6 @@ function _apiManda(k){
 }
 
 var _ESTADO_TS = 0;          // el _ts que devolvió la API la última vez
-var _ESTADO_VIVO = false;    // ya se leyó el estado del servidor al menos una vez
 
 // Aplica lo que trae el servidor. NO es un reemplazo a ciegas: se fusiona
 // igual que se fusionaba lo de Firebase, porque entre que se pidió y que
@@ -1248,7 +1247,6 @@ function _aplicarEstadoDeApi(estado, ts){
     }
   });
   _ESTADO_TS = ts||0;
-  _ESTADO_VIVO = true;
   try{ _podarBorrados(); }catch(e){}
   try{ _espejarClientes(); }catch(e){}
   return true;
@@ -1309,7 +1307,10 @@ function sondearApi(){
 
 var DOBLE_ESCRITURA = true;             // el interruptor, por si hay que apagarla
 var _DOBLE_KEY = "cg_doble_v1";
-var _DOBLE_MAX = 60;                    // cuántas comparaciones se guardan
+var _DOBLE_MAX = 30;                    // cuántas comparaciones se guardan
+// El registro comparte localStorage con los datos, el espejo de clientes y
+// el respaldo. Treinta entradas alcanzan de sobra para ver un patrón, y no
+// compiten por el espacio que necesitan las remesas.
 var _DOBLE_CORTADA = "";                // motivo, si el servidor la rechazó
 
 function _dobleLeer(){
@@ -1331,11 +1332,21 @@ function _dobleOlvidar(){
 // Compara clave por clave lo que quedó en la app (después de la fusión de
 // Firebase) contra lo que devolvió el servidor. Devuelve solo lo que NO
 // coincide: si el resultado viene vacío, los dos motores decidieron igual.
-function _dobleComparar(delServidor){
+// `mando` es el bloque que este dispositivo le envió, no S. Es importante:
+// entre que sale el PUT y vuelve la respuesta pasan cientos de milisegundos,
+// y si en ese hueco alguien registra algo, compararlo contra S lo marcaría
+// como una diferencia que no existe. Falsas alarmas ahí envenenan la única
+// señal que decide si se apaga Firebase.
+function _dobleComparar(delServidor, mando){
   var difs=[];
+  var base=mando||S;
   DATA_KEYS.forEach(function(k){
     if(k==="_deletedMerge"||k==="_deleted") return;   // control, no datos
-    var mio=S[k], suyo=delServidor?delServidor[k]:undefined;
+    // Si el bloque enviado no traía esta clave, este dispositivo no dio
+    // ninguna opinión sobre ella: no hay desacuerdo posible. Una lista vacía
+    // SÍ es una opinión y se compara.
+    if(base[k]===undefined) return;
+    var mio=base[k], suyo=delServidor?delServidor[k]:undefined;
     if(Array.isArray(mio)||Array.isArray(suyo)){
       var a=Array.isArray(mio)?mio:[], b=Array.isArray(suyo)?suyo:[];
       var idF=_MERGE_ID_FIELD[k]||"id";
@@ -1381,7 +1392,18 @@ function enviarEstadoALaApi(obj){
           return null;
         }
         if(r.status===401){ _DOBLE_CORTADA="la sesión venció"; return null; }
-        if(!r.ok){ _DOBLE_CORTADA="el servidor respondió "+r.status; return null; }
+        if(r.status===409){
+          _DOBLE_CORTADA="todavía no se corrió la carga inicial del estado";
+          return null;
+        }
+        // Todo lo demás es pasajero: un arranque en frío de Railway, un 502
+        // de un instante. Antes CUALQUIER estado no-OK detenía la comparación
+        // para el resto de la sesión, y el primer despliegue la habría matado
+        // antes de comparar nada. Se saltea este guardado y se sigue.
+        if(!r.ok){
+          console.warn("Comparación: el servidor respondió "+r.status+", se saltea este guardado.");
+          return null;
+        }
         return r.json();
       })
       .then(function(d){
@@ -1393,7 +1415,7 @@ function enviarEstadoALaApi(obj){
           if(_aplicarEstadoDeApi(d.estado, d._ts)){ try{ R(); }catch(e){} }
           return;
         }
-        var difs=_dobleComparar(d.estado);
+        var difs=_dobleComparar(d.estado, obj);
         var reg=_dobleLeer();
         reg.comparadas++;
         if(difs.length){
