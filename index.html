@@ -1211,7 +1211,13 @@ var _ESTADO_TS = 0;          // el _ts que devolvió la API la última vez
 // llegó pudo registrarse algo en este dispositivo.
 function _aplicarEstadoDeApi(estado, ts){
   if(!estado || typeof estado!=="object") return false;
-  var vacio = !DATA_KEYS.some(function(k){ return Array.isArray(estado[k]) && estado[k].length; });
+  // "clientes" no cuenta para decidir si el bloque trae algo: puede venir
+  // una copia vieja que igual se va a ignorar más abajo, y eso haría pasar
+  // por lleno a un estado que en realidad está vacío.
+  var vacio = !DATA_KEYS.some(function(k){
+    if(k==="clientes" && _CLIENTES_DESDE_API) return false;
+    return Array.isArray(estado[k]) && estado[k].length;
+  });
   if(vacio){
     // Mismo candado que con los clientes: un estado vacío no reemplaza nada.
     console.warn("La API devolvió un estado vacío — se mantiene lo que hay.");
@@ -1219,6 +1225,11 @@ function _aplicarEstadoDeApi(estado, ts){
   }
   DATA_KEYS.forEach(function(k){
     if(estado[k]===undefined) return;
+    // Los clientes tienen su propia ruta —/clientes— y esa es la buena.
+    // El bloque de estado puede traer una copia vieja (la que quedó en
+    // Firebase antes de la fase 5), y aplicarla acá pisaría la lista real
+    // con una desactualizada. Se ignora a propósito.
+    if(k==="clientes" && _CLIENTES_DESDE_API) return;
     if(k==="config"){ S.config=_mergeConfigSafe(estado.config, S.config||{}); return; }
     if(k==="_deletedMerge"){
       // Las marcas se suman, nunca se reemplazan: reemplazarlas revive lo
