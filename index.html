@@ -1195,9 +1195,12 @@ function cambiarFuente(){
       "Se le sigue escribiendo a Firebase igual, así que se puede volver cuando quieras."
     : "La app vuelve a leer de Firebase, como siempre.\n\nSolo en este dispositivo.";
   if(!confirm(aviso+"\n\n¿Seguimos?")) return;
+  // Si quedaba un bloque esperando el intervalo del freno, sale ahora: a
+  // partir del recargado se lee del servidor, y tiene que estar al día.
+  try{ _dobleForzarEnvio(); }catch(e){}
   FUENTE_API = yendoAApi;
   try{ localStorage.setItem(_FUENTE_KEY, FUENTE_API?"1":"0"); }catch(e){}
-  location.reload();
+  setTimeout(function(){ location.reload(); }, yendoAApi ? 1200 : 0);
 }
 
 // Mientras la API sea la fuente, Firebase no toca NADA: su copia es la
@@ -1392,10 +1395,60 @@ function _dobleComparar(delServidor, mando){
   return difs;
 }
 
+// ── Freno de envíos ──────────────────────────────────────────────────────
+// Cada envío es el bloque COMPLETO —hoy son 906 KB—, y Firebase guarda con
+// un debounce de 800 ms. Sin freno, una tarde de trabajo sube decenas de
+// megabytes por una comparación que no necesita tanta frecuencia.
+//
+// El freno no puede ser "descartar": el bloque que se manda es también lo
+// que mantiene al día la copia del servidor, y esa copia es de la que se va
+// a leer cuando se dé vuelta la fuente. Así que lo que se saltea NO se
+// pierde: queda pendiente y sale solo cuando el intervalo se cumple.
+//
+// Como cada envío lleva el bloque entero, un solo envío pone al servidor
+// completamente al día. El atraso máximo es el intervalo, nunca un hueco.
+var _DOBLE_INTERVALO = 3 * 60 * 1000;   // 3 minutos entre envíos
+var _dobleUltimoEnvio = 0;
+var _doblePendiente = null;             // el último bloque que quedó esperando
+var _dobleTimer = null;
+
+// Saca lo pendiente ya mismo, sin esperar el intervalo. Se usa antes de dar
+// vuelta la fuente: ahí el servidor tiene que estar al día, no casi al día.
+function _dobleForzarEnvio(){
+  if(_dobleTimer){ clearTimeout(_dobleTimer); _dobleTimer=null; }
+  var obj=_doblePendiente; _doblePendiente=null;
+  if(obj) _dobleEnviarAhora(obj);
+}
+
 // Manda el mismo bloque que se acaba de guardar en Firebase.
 function enviarEstadoALaApi(obj){
   if(!DOBLE_ESCRITURA || _DOBLE_CORTADA) return;
   if(!apiSesionActiva() || _API_BLOQUEADA || !_API_ENTRO_POR_API) return;
+  // Con la fuente dada vuelta esto ya no es una copia para comparar: es LA
+  // escritura. Frenarla haría que los demás dispositivos tarden en ver el
+  // cambio. El freno vale solo mientras se compara.
+  if(FUENTE_API){ _dobleEnviarAhora(obj); return; }
+  var falta = _DOBLE_INTERVALO - (Date.now() - _dobleUltimoEnvio);
+  if(falta > 0){
+    // Todavía no toca. Se guarda este bloque —pisando al anterior, porque el
+    // más nuevo ya contiene lo que traía el viejo— y se programa la salida.
+    _doblePendiente = obj;
+    if(!_dobleTimer){
+      _dobleTimer = setTimeout(function(){
+        _dobleTimer = null;
+        var pend = _doblePendiente; _doblePendiente = null;
+        if(pend) _dobleEnviarAhora(pend);
+      }, falta);
+    }
+    return;
+  }
+  _dobleEnviarAhora(obj);
+}
+
+function _dobleEnviarAhora(obj){
+  if(!DOBLE_ESCRITURA || _DOBLE_CORTADA) return;
+  if(!apiSesionActiva() || _API_BLOQUEADA || !_API_ENTRO_POR_API) return;
+  _dobleUltimoEnvio = Date.now();
   try{
     apiFetch("/estado",{method:"PUT",body:{estado:obj,_ts:obj._ts}})
       .then(function(r){
