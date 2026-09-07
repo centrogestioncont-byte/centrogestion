@@ -731,7 +731,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260906_v150";
+var APP_VERSION = "20260906_v152";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -963,10 +963,6 @@ function _apiSalir(){
 
 var _CLIENTES_DESDE_API = false;   // la lista en pantalla vino del servidor
 
-// Mientras el servidor mande la lista, la copia de Firebase es la vieja:
-// fusionarla revertiría lo que se acaba de guardar en la API.
-function _apiMandaClientes(k){ return k==="clientes" && _CLIENTES_DESDE_API; }
-
 // El servidor los llama "nombre"; la app, "n". La traducción vive en un
 // solo lugar para que el resto del archivo no tenga que enterarse.
 function _clienteDeApi(c){
@@ -1169,6 +1165,356 @@ function _restaurarEspejoClientes(){
   S.clientes=esp;
   console.log("\ud83d\udc64 "+esp.length+" clientes recuperados del espejo local.");
   return true;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// LA API COMO FUENTE  — FASE 7.3
+// Da vuelta la lectura: la app pasa a leer de la API y Firebase queda de
+// respaldo pasivo (se le sigue escribiendo, pero ya nadie lee de ahí).
+//
+// Viene detrás de un interruptor a propósito. Durante la doble escritura
+// los dos lados tienen los MISMOS datos, así que se puede encender en un
+// solo dispositivo y ver cómo se comporta, sin tocar a los demás y sin
+// desplegar nada. Y si algo sale mal, volver es apagarlo — no revertir un
+// despliegue.
+//
+// Solo lo enciende un administrador, y queda guardado en ESE navegador.
+// ══════════════════════════════════════════════════════════════════════
+
+var _FUENTE_KEY = "cg_fuente_api_v1";
+var FUENTE_API = (function(){
+  try{ return localStorage.getItem(_FUENTE_KEY)==="1"; }catch(e){ return false; }
+})();
+
+function cambiarFuente(){
+  if(!autorizar("cambiar la fuente de datos de la app")) return;
+  var yendoAApi = !FUENTE_API;
+  var aviso = yendoAApi
+    ? "La app va a LEER de la API en vez de Firebase.\n\n"+
+      "Solo en este dispositivo. Los demás siguen como están.\n"+
+      "Se le sigue escribiendo a Firebase igual, así que se puede volver cuando quieras."
+    : "La app vuelve a leer de Firebase, como siempre.\n\nSolo en este dispositivo.";
+  if(!confirm(aviso+"\n\n¿Seguimos?")) return;
+  FUENTE_API = yendoAApi;
+  try{ localStorage.setItem(_FUENTE_KEY, FUENTE_API?"1":"0"); }catch(e){}
+  location.reload();
+}
+
+// Mientras la API sea la fuente, Firebase no toca NADA: su copia es la
+// vieja. Antes de la fase 7.3 esto valía solo para los clientes.
+function _apiManda(k){
+  if(FUENTE_API) return true;
+  return k==="clientes" && _CLIENTES_DESDE_API;
+}
+
+var _ESTADO_TS = 0;          // el _ts que devolvió la API la última vez
+
+// Aplica lo que trae el servidor. NO es un reemplazo a ciegas: se fusiona
+// igual que se fusionaba lo de Firebase, porque entre que se pidió y que
+// llegó pudo registrarse algo en este dispositivo.
+function _aplicarEstadoDeApi(estado, ts){
+  if(!estado || typeof estado!=="object") return false;
+  // "clientes" no cuenta para decidir si el bloque trae algo: puede venir
+  // una copia vieja que igual se va a ignorar más abajo, y eso haría pasar
+  // por lleno a un estado que en realidad está vacío.
+  var vacio = !DATA_KEYS.some(function(k){
+    if(k==="clientes" && _CLIENTES_DESDE_API) return false;
+    return Array.isArray(estado[k]) && estado[k].length;
+  });
+  if(vacio){
+    // Mismo candado que con los clientes: un estado vacío no reemplaza nada.
+    console.warn("La API devolvió un estado vacío — se mantiene lo que hay.");
+    return false;
+  }
+  DATA_KEYS.forEach(function(k){
+    if(estado[k]===undefined) return;
+    // Los clientes tienen su propia ruta —/clientes— y esa es la buena.
+    // El bloque de estado puede traer una copia vieja (la que quedó en
+    // Firebase antes de la fase 5), y aplicarla acá pisaría la lista real
+    // con una desactualizada. Se ignora a propósito.
+    if(k==="clientes" && _CLIENTES_DESDE_API) return;
+    if(k==="config"){ S.config=_mergeConfigSafe(estado.config, S.config||{}); return; }
+    if(k==="_deletedMerge"){
+      // Las marcas se suman, nunca se reemplazan: reemplazarlas revive lo
+      // borrado. Es el ARREGLO 6c, que ya costó una vez.
+      var mias=S._deletedMerge||{};
+      Object.keys(estado._deletedMerge||{}).forEach(function(c){
+        mias[c]=(mias[c]||[]).concat(estado._deletedMerge[c]||[]);
+        var vistos={};
+        mias[c]=mias[c].filter(function(x){
+          var kk=String(x&&x.id); if(vistos[kk])return false; vistos[kk]=1; return true;
+        });
+      });
+      S._deletedMerge=mias;
+      return;
+    }
+    if(_MERGE_FIELDS.indexOf(k)!==-1 && Array.isArray(estado[k])){
+      var idF=_MERGE_ID_FIELD[k]||"id";
+      var filtrado=estado[k].filter(function(it){
+        return !(it && it[idF]!==undefined && _estaBorradoMerge(k,it[idF]));
+      });
+      var fus=_mergeArrayById(filtrado, S[k], idF, ts, S._ts);
+      if(k==="brl"||k==="vzla"||k==="eeuu") _renumerarPorFecha(fus);
+      S[k]=fus;
+    } else {
+      S[k]=estado[k];
+    }
+  });
+  _ESTADO_TS = ts||0;
+  try{ _podarBorrados(); }catch(e){}
+  try{ _espejarClientes(); }catch(e){}
+  return true;
+}
+
+// Trae el bloque completo del servidor.
+function cargarEstadoDeApi(){
+  if(!FUENTE_API) return Promise.resolve(false);
+  if(!apiSesionActiva() || _API_BLOQUEADA || !_API_ENTRO_POR_API) return Promise.resolve(false);
+  return apiFetch("/estado").then(function(r){
+    if(!r.ok) return false;
+    return r.json().then(function(d){
+      if(!d || !d.ok || !d.estado) return false;
+      var aplicado=_aplicarEstadoDeApi(d.estado, d._ts);
+      if(aplicado){
+        console.log("📥 Estado cargado desde la API · _ts:", d._ts);
+        try{ if(typeof R==="function") R(); }catch(e){}
+      }
+      return aplicado;
+    });
+  }).catch(function(){ return false; });
+}
+
+// El sondeo, contra la API: primero el resumen —que trae el _ts y unos
+// conteos— y solo si cambió se baja el bloque. Es la misma idea del sondeo
+// de Firebase, que pedía el _ts suelto antes de bajar nada.
+function sondearApi(){
+  if(!FUENTE_API) return;
+  if(typeof document!=="undefined" && document.hidden) return;
+  if(!apiSesionActiva() || _API_BLOQUEADA || !_API_ENTRO_POR_API) return;
+  apiFetch("/estado/resumen").then(function(r){
+    if(!r.ok) return null;
+    return r.json();
+  }).then(function(d){
+    if(!d || !d.ok) return;
+    _marcarConexionOK();
+    if(!(d._ts > _ESTADO_TS)) return;    // nada nuevo: no se baja el bloque
+    return cargarEstadoDeApi();
+  }).catch(function(){ _marcarConexionFallo(); });
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// DOBLE ESCRITURA Y COMPARACIÓN  — FASE 7.2
+// La app sigue guardando en Firebase y leyendo de Firebase, exactamente
+// como hasta ahora. Además le manda el mismo bloque a la API, que fusiona
+// por su cuenta y devuelve SU resultado. Los dos se comparan y la
+// diferencia (si la hay) queda anotada.
+//
+// La API todavía no manda nada: solo recibe y contesta. Por eso esto se
+// puede desplegar sin riesgo — si el motor del servidor resolviera mal un
+// caso, aparece acá en un informe, con datos reales, sin que nadie dependa
+// del resultado.
+//
+// Nada de esto puede romper un guardado: todo va envuelto, es a ciegas
+// (no se espera la respuesta para seguir) y ante cualquier problema se
+// calla y sigue.
+// ══════════════════════════════════════════════════════════════════════
+
+var DOBLE_ESCRITURA = true;             // el interruptor, por si hay que apagarla
+var _DOBLE_KEY = "cg_doble_v1";
+var _DOBLE_MAX = 30;                    // cuántas comparaciones se guardan
+// El registro comparte localStorage con los datos, el espejo de clientes y
+// el respaldo. Treinta entradas alcanzan de sobra para ver un patrón, y no
+// compiten por el espacio que necesitan las remesas.
+var _DOBLE_CORTADA = "";                // motivo, si el servidor la rechazó
+
+function _dobleLeer(){
+  try{
+    var r=localStorage.getItem(_DOBLE_KEY);
+    var d=r?JSON.parse(r):null;
+    return (d&&typeof d==="object")?d:{comparadas:0,conDiferencia:0,desde:Date.now(),ultimas:[]};
+  }catch(e){ return {comparadas:0,conDiferencia:0,desde:Date.now(),ultimas:[]}; }
+}
+function _dobleGuardar(d){
+  try{ localStorage.setItem(_DOBLE_KEY,JSON.stringify(d)); }catch(e){}
+}
+function _dobleOlvidar(){
+  try{ localStorage.removeItem(_DOBLE_KEY); }catch(e){}
+  _DOBLE_CORTADA="";
+  R();
+}
+
+// Compara clave por clave lo que quedó en la app (después de la fusión de
+// Firebase) contra lo que devolvió el servidor. Devuelve solo lo que NO
+// coincide: si el resultado viene vacío, los dos motores decidieron igual.
+// `mando` es el bloque que este dispositivo le envió, no S. Es importante:
+// entre que sale el PUT y vuelve la respuesta pasan cientos de milisegundos,
+// y si en ese hueco alguien registra algo, compararlo contra S lo marcaría
+// como una diferencia que no existe. Falsas alarmas ahí envenenan la única
+// señal que decide si se apaga Firebase.
+function _dobleComparar(delServidor, mando){
+  var difs=[];
+  var base=mando||S;
+  DATA_KEYS.forEach(function(k){
+    if(k==="_deletedMerge"||k==="_deleted") return;   // control, no datos
+    // Si el bloque enviado no traía esta clave, este dispositivo no dio
+    // ninguna opinión sobre ella: no hay desacuerdo posible. Una lista vacía
+    // SÍ es una opinión y se compara.
+    if(base[k]===undefined) return;
+    var mio=base[k], suyo=delServidor?delServidor[k]:undefined;
+    if(Array.isArray(mio)||Array.isArray(suyo)){
+      var a=Array.isArray(mio)?mio:[], b=Array.isArray(suyo)?suyo:[];
+      var idF=_MERGE_ID_FIELD[k]||"id";
+      var idsA={}, idsB={};
+      a.forEach(function(r){ if(r&&r[idF]!==undefined&&r[idF]!==null) idsA[r[idF]]=r; });
+      b.forEach(function(r){ if(r&&r[idF]!==undefined&&r[idF]!==null) idsB[r[idF]]=r; });
+      var soloAca=Object.keys(idsA).filter(function(id){ return !(id in idsB); });
+      var soloAlla=Object.keys(idsB).filter(function(id){ return !(id in idsA); });
+      var distintos=Object.keys(idsA).filter(function(id){
+        if(!(id in idsB)) return false;
+        // El "n" de las remesas lo pone la renumeración por fecha en los dos
+        // lados; no es un dato que alguien haya escrito, así que no cuenta.
+        var x=Object.assign({},idsA[id]), y=Object.assign({},idsB[id]);
+        delete x.n; delete y.n;
+        return JSON.stringify(x)!==JSON.stringify(y);
+      });
+      if(soloAca.length||soloAlla.length||distintos.length){
+        difs.push({clave:k, aca:a.length, alla:b.length,
+                   soloAca:soloAca.slice(0,5), soloAlla:soloAlla.slice(0,5),
+                   distintos:distintos.slice(0,5),
+                   nSoloAca:soloAca.length, nSoloAlla:soloAlla.length, nDistintos:distintos.length});
+      }
+    } else if(mio!==undefined||suyo!==undefined){
+      if(JSON.stringify(mio)!==JSON.stringify(suyo)){
+        difs.push({clave:k, aca:"—", alla:"—", objeto:true});
+      }
+    }
+  });
+  return difs;
+}
+
+// Manda el mismo bloque que se acaba de guardar en Firebase.
+function enviarEstadoALaApi(obj){
+  if(!DOBLE_ESCRITURA || _DOBLE_CORTADA) return;
+  if(!apiSesionActiva() || _API_BLOQUEADA || !_API_ENTRO_POR_API) return;
+  try{
+    apiFetch("/estado",{method:"PUT",body:{estado:obj,_ts:obj._ts}})
+      .then(function(r){
+        if(r.status===403){
+          // Este usuario no puede escribir. No es un fallo de la comparación:
+          // simplemente no hay nada que comparar desde acá.
+          _DOBLE_CORTADA="tu usuario no tiene permiso de edición en la API";
+          return null;
+        }
+        if(r.status===401){ _DOBLE_CORTADA="la sesión venció"; return null; }
+        if(r.status===409){
+          _DOBLE_CORTADA="todavía no se corrió la carga inicial del estado";
+          return null;
+        }
+        // Todo lo demás es pasajero: un arranque en frío de Railway, un 502
+        // de un instante. Antes CUALQUIER estado no-OK detenía la comparación
+        // para el resto de la sesión, y el primer despliegue la habría matado
+        // antes de comparar nada. Se saltea este guardado y se sigue.
+        if(!r.ok){
+          console.warn("Comparación: el servidor respondió "+r.status+", se saltea este guardado.");
+          return null;
+        }
+        return r.json();
+      })
+      .then(function(d){
+        if(!d||!d.ok||!d.estado) return;
+        if(FUENTE_API){
+          // Fase 7.3: el servidor es el arbitro. Lo que devuelve NO se
+          // compara, se adopta: es el resultado de fusionar lo que mando
+          // este dispositivo contra lo que ya habia.
+          if(_aplicarEstadoDeApi(d.estado, d._ts)){ try{ R(); }catch(e){} }
+          return;
+        }
+        var difs=_dobleComparar(d.estado, obj);
+        var reg=_dobleLeer();
+        reg.comparadas++;
+        if(difs.length){
+          reg.conDiferencia++;
+          reg.ultimas.unshift({ts:Date.now(), difs:difs});
+          reg.ultimas=reg.ultimas.slice(0,_DOBLE_MAX);
+          console.warn("⚖️ La API decidió distinto que Firebase en: "+
+                       difs.map(function(x){return x.clave;}).join(", "), difs);
+        }
+        _dobleGuardar(reg);
+      })
+      .catch(function(){ /* sin red: no es una diferencia, es una ausencia */ });
+  }catch(e){}
+}
+
+// Informe para la pantalla de Ajustes.
+function rComparacionApi(){
+  var reg=_dobleLeer();
+  var pct=reg.comparadas?Math.round((reg.comparadas-reg.conDiferencia)/reg.comparadas*1000)/10:0;
+  var estado, color;
+  if(_DOBLE_CORTADA){ estado="⏸️ Detenida: "+_DOBLE_CORTADA; color="#B87800"; }
+  else if(!DOBLE_ESCRITURA){ estado="⏸️ Apagada"; color="#888"; }
+  else if(!reg.comparadas){ estado="⏳ Sin guardados comparados todavía"; color="#888"; }
+  else if(reg.conDiferencia){ estado="⚠️ Hay diferencias que revisar"; color="#c0392b"; }
+  else { estado="✅ Los dos motores deciden igual"; color="#0f6e3a"; }
+
+  var html="<div style='font-size:11px;color:#666;margin-bottom:12px;line-height:1.6'>"+
+    "Mientras dure la migración, cada guardado va a Firebase <b>y</b> a la API. "+
+    "La app se queda con lo de Firebase, como siempre; lo de la API solo se compara. "+
+    "Cuando esto lleve varios días sin una sola diferencia, se puede dar vuelta la lectura.</div>";
+
+  html+="<div style='background:"+color+"12;border:1.5px solid "+color+"55;border-radius:10px;padding:12px 14px;margin-bottom:12px'>"+
+    "<div style='font-size:13px;font-weight:800;color:"+color+"'>"+estado+"</div>"+
+    "<div style='display:flex;gap:20px;margin-top:9px;flex-wrap:wrap'>"+
+      "<div><div style='font-size:9px;color:#888;letter-spacing:.5px'>COMPARADOS</div>"+
+        "<div style='font-size:19px;font-weight:800'>"+reg.comparadas+"</div></div>"+
+      "<div><div style='font-size:9px;color:#888;letter-spacing:.5px'>CON DIFERENCIA</div>"+
+        "<div style='font-size:19px;font-weight:800;color:"+(reg.conDiferencia?"#c0392b":"inherit")+"'>"+reg.conDiferencia+"</div></div>"+
+      "<div><div style='font-size:9px;color:#888;letter-spacing:.5px'>COINCIDEN</div>"+
+        "<div style='font-size:19px;font-weight:800'>"+pct+"%</div></div>"+
+      "<div><div style='font-size:9px;color:#888;letter-spacing:.5px'>DESDE</div>"+
+        "<div style='font-size:13px;font-weight:700;padding-top:4px'>"+
+        (reg.desde?new Date(reg.desde).toLocaleDateString("es-VE"):"—")+"</div></div>"+
+    "</div></div>";
+
+  if(reg.ultimas&&reg.ultimas.length){
+    html+="<div style='font-size:10px;font-weight:800;color:#888;letter-spacing:.5px;margin-bottom:7px'>ÚLTIMAS DIFERENCIAS</div>";
+    html+="<div style='max-height:280px;overflow-y:auto;border:1px solid var(--line);border-radius:8px'>";
+    reg.ultimas.slice(0,12).forEach(function(u,i){
+      html+="<div style='padding:9px 12px;"+(i?"border-top:1px solid #f0f0f0;":"")+"font-size:11px'>"+
+        "<div style='color:#888;font-size:10px;margin-bottom:4px'>"+new Date(u.ts).toLocaleString("es-VE")+"</div>";
+      u.difs.forEach(function(x){
+        html+="<div style='margin-bottom:3px'><b>"+x.clave+"</b> — acá "+x.aca+", API "+x.alla;
+        if(x.nSoloAca) html+=" · <span style='color:#c0392b'>"+x.nSoloAca+" solo acá</span>";
+        if(x.nSoloAlla) html+=" · <span style='color:#c0392b'>"+x.nSoloAlla+" solo en la API</span>";
+        if(x.nDistintos) html+=" · <span style='color:#B87800'>"+x.nDistintos+" con distinto contenido</span>";
+        var ids=[].concat(x.soloAca||[],x.soloAlla||[],x.distintos||[]);
+        if(ids.length) html+="<div style='color:#888;font-size:10px'>"+ids.join(", ")+"</div>";
+        html+="</div>";
+      });
+      html+="</div>";
+    });
+    html+="</div>";
+  }
+
+  html+="<div style='background:"+(FUENTE_API?"#EEF3FF":"#f8f8f8")+";border:1.5px solid "+
+    (FUENTE_API?"#90b4f5":"#e5e5e5")+";border-radius:10px;padding:11px 13px;margin-top:12px'>"+
+    "<div style='font-size:12px;font-weight:800;color:#1a3558'>"+
+      (FUENTE_API?"📥 Este dispositivo LEE de la API":"📥 Este dispositivo lee de Firebase")+"</div>"+
+    "<div style='font-size:10px;color:#666;margin-top:4px;line-height:1.5'>"+
+      "Mientras dure la doble escritura los dos lados tienen los mismos datos, "+
+      "así que se puede probar acá sin tocar los demás dispositivos. "+
+      "A Firebase se le sigue escribiendo igual: volver es apagar esto.</div>"+
+    "<button class='btn-main' style='width:100%;margin-top:9px;font-size:12px;padding:9px;background:"+
+      (FUENTE_API?"#8B0000":"#1a3558")+";color:#fff' onclick='cambiarFuente()'>"+
+      (FUENTE_API?"↩️ Volver a leer de Firebase":"📥 Leer de la API en este dispositivo")+"</button>"+
+  "</div>";
+
+  html+="<div style='display:flex;gap:8px;margin-top:12px;flex-wrap:wrap'>"+
+    "<button class='btn-main btn-gray' style='flex:1;min-width:130px;font-size:12px;padding:10px' "+
+      "onclick='_dobleOlvidar()'>🧹 Empezar de cero</button>"+
+    "<button class='btn-main btn-gray' style='flex:1;min-width:130px;font-size:12px;padding:10px' "+
+      "onclick='DOBLE_ESCRITURA=!DOBLE_ESCRITURA;R()'>"+(DOBLE_ESCRITURA?"⏸️ Apagar":"▶️ Encender")+"</button>"+
+    "</div>";
+  return html;
 }
 
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
@@ -5507,7 +5853,8 @@ function rConfigAdmin(){
     _cfgAcc("categorias","🏷️","Categorías","empresa y personales","#7b2d8b",categoriasBody,false)+
     _cfgAcc("rutas","🛣️","Rutas de operación",null,"#2196F3",rutasBody,false)+
     _cfgAcc("tasas","📊","Tasas del día","solo afecta nuevos registros","#e67e22",tasasHTML,false)+
-    _cfgAcc("usuarios_api","👥","Usuarios (correo y clave)","acceso nuevo · lista aparte de los PIN","#372c9e",rUsuariosApi(),false)+
+    _cfgAcc("usuarios_api","👥","Usuarios","correo y clave · la unica forma de entrar","#372c9e",rUsuariosApi(),false)+
+    _cfgAcc("comparacion_api","⚖️","Comparación con la API","control de la migración","#b8752a",rComparacionApi(),false)+
     _cfgAcc("permisos","🔒","Permisos por operador",null,"#1a6b3c",permisosBody,false)+
     "<div style='background:#f8f8f8;border-radius:14px;padding:14px;border:1px solid #eee'>"+
       "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:8px'>ℹ️ Sistema · versión "+APP_VERSION+"</div>"+
@@ -7186,7 +7533,7 @@ function fbForceLoad(){
       // último de Firebase, borrando cualquier cosa guardada localmente que
       // aún no hubiera llegado al servidor.
       _MERGE_FIELDS.forEach(function(k){
-        if(_apiMandaClientes(k)) return;
+        if(_apiManda(k)) return;
         if(remote[k]!==undefined){
           var idF=_MERGE_ID_FIELD[k]||"id";
           var remoteFiltrado=(remote[k]||[]).filter(function(it){
@@ -7201,14 +7548,14 @@ function fbForceLoad(){
       // campo por campo para que una tasa recién guardada acá nunca se borre
       // por una versión vieja/vacía que traiga otro dispositivo.
       DATA_KEYS.forEach(function(k){
-        if(_apiMandaClientes(k)) return;
+        if(_apiManda(k)) return;
         if(k==="config"){
           if(remote.config!==undefined) obj.config=_mergeConfigSafe(remote.config,obj.config||{});
         } else if(_MERGE_FIELDS.indexOf(k)===-1 && remote[k]!==undefined){
           obj[k]=remote[k];
         }
       });
-      DATA_KEYS.forEach(function(k){ if(_apiMandaClientes(k)) return; S[k]=obj[k]; });
+      DATA_KEYS.forEach(function(k){ if(_apiManda(k)) return; S[k]=obj[k]; });
       S._ts=Date.now();
       try{localStorage.setItem(STORAGE_KEY,JSON.stringify(obj));}catch(e){}
       R();
@@ -7675,6 +8022,8 @@ function fbCheckREST(){
   // WebSocket sigue recibiendo cambios igual. Ademas evita el falso positivo de
   // volver a la pestaña y encontrar la pantalla de "sin internet" ya resuelta.
   if(typeof document!=="undefined" && document.hidden) return;
+  // Fase 7.3: con la API de fuente, se sondea la API y no Firebase.
+  if(FUENTE_API){ return sondearApi(); }
   var _ahora=Date.now();
   if(_ahora-_ultimoPoll < 3000) return; // minimo entre disparos (ráfagas al volver)
   _ultimoPoll=_ahora;
@@ -7697,7 +8046,7 @@ function fbCheckREST(){
       if(tsRemoto > tsLocal + 500){ // 500ms de margen para evitar rebotes propios
         console.log("📥 Auto-sync: datos más nuevos en Firebase (remoto="+tsRemoto+", local="+tsLocal+")");
         DATA_KEYS.forEach(function(k){
-          if(_apiMandaClientes(k)) return;
+          if(_apiManda(k)) return;
           if(data[k]===undefined) return;
           if(k==="config"){
             S.config=_mergeConfigSafe(data.config,S.config||{});
@@ -7805,7 +8154,7 @@ function mostrarOpcionesBackup(resultados){
   if(isNaN(idx)||idx<0||idx>=resultados.length){alert("Opción inválida.");return;}
   var elegido=resultados[idx];
   if(!confirm("Restaurar backup del "+elegido.fecha+"?\nEsto reemplazará los datos actuales.")) return;
-  DATA_KEYS.forEach(function(k){if(_apiMandaClientes(k))return;if(elegido.data[k]!==undefined)S[k]=elegido.data[k];});
+  DATA_KEYS.forEach(function(k){if(_apiManda(k))return;if(elegido.data[k]!==undefined)S[k]=elegido.data[k];});
   S._ts=elegido.data._ts||0;
   S._saveForced=true;
   saveData();
@@ -8218,7 +8567,7 @@ function importData(){
           });
         });
         DATA_KEYS.forEach(function(k){
-          if(_apiMandaClientes(k)) return;
+          if(_apiManda(k)) return;
           if(obj[k]!==undefined){S[k]=obj[k];loaded+=Array.isArray(obj[k])?obj[k].length:1;}
         });
         // Ahora si: sobre el estado ya reemplazado, conservando las marcas que
@@ -16432,7 +16781,7 @@ function initFirebase(){
       if(fbTotal >= lsTotal){
         // Firebase tiene igual o más datos → usar Firebase
         DATA_KEYS.forEach(function(k){
-          if(_apiMandaClientes(k)) return;
+          if(_apiManda(k)) return;
           if(data[k]===undefined) return;
           if(k==="config"){
             S.config=_mergeConfigSafe(data.config,S.config||{});
@@ -16477,7 +16826,7 @@ function initFirebase(){
         // CRÍTICO: NO sobreescribir claves de FIFO/cuentas desde Firebase — local es más nuevo
         var clavesNoSobreescribir=["inventarioUsdt","inventarioUsdt_cerrado","cuentas","movimientosCapital","reposiciones","deudas_paul","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta"];
         DATA_KEYS.forEach(function(k){
-          if(_apiMandaClientes(k)) return;
+          if(_apiManda(k)) return;
           if(data[k]===undefined) return;
           if(k==="brl"||k==="vzla"||k==="eeuu"){
             // Merge ambas fuentes
@@ -16945,7 +17294,7 @@ function _fbMergeAndWrite(obj){
       _FB_RECIBIDO = true;   // la lectura previa al guardado tambien cuenta
       if(remote){
         _MERGE_FIELDS.forEach(function(k){
-          if(_apiMandaClientes(k)) return;
+          if(_apiManda(k)) return;
           if(remote[k]!==undefined){
             var idF=_MERGE_ID_FIELD[k]||"id";
             var remoteFiltrado=(remote[k]||[]).filter(function(it){
@@ -16989,6 +17338,9 @@ function _fbWriteNow(obj){
   try{ obj = JSON.parse(JSON.stringify(obj)); }catch(e){}
   _marcarComoMiPropioTs(obj._ts);
   S._ts = obj._ts;
+  // FASE 7.2: el mismo bloque va tambien a la API, que fusiona por su cuenta.
+  // Va a ciegas, sin esperar: la app no cambia de comportamiento por esto.
+  enviarEstadoALaApi(obj);
   if(_fbOnline){
     // WebSocket disponible → guardar por SDK (tiempo real)
     _fbRef.update(obj).then(function(){
@@ -17041,6 +17393,9 @@ try{ if(_purgarPerfilesLocales()) saveData(); }catch(e){ console.warn("purga de 
 // arranca sin lista (instalacion nueva, o localStorage limpiado) se usa el
 // espejo hasta que llegue la de la API o la de Firebase.
 try{ _restaurarEspejoClientes(); }catch(e){ console.warn("espejo clientes:",e); }
+// Fase 7.3: si este dispositivo tiene la API como fuente, el estado viene de
+// alla. Si no, esto no hace nada y todo sigue viniendo de Firebase.
+try{ cargarEstadoDeApi(); }catch(e){ console.warn("estado API:",e); }
 try{ setTimeout(_apiComprobarAmbiente,1200); }catch(e){}
 // Asignar código único (_uid) a remesas ya existentes que no lo tengan aún
 // (registradas antes de este cambio) — así la fusión segura cubre TODO,
