@@ -351,10 +351,6 @@ tr:last-child td{border-bottom:none}
 #flujo-modal.open{display:flex;}
 #flujo-box{background:#fff;border-radius:14px;padding:24px;max-width:480px;width:90%;max-height:85vh;overflow-y:auto;}
 </style>
-  <!-- Firebase SDK -->
-  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <!-- html2canvas: para generar el flyer como imagen con emojis reales -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <!-- SheetJS: para exportar Excel del cierre mensual -->
@@ -866,8 +862,7 @@ function _loginApiAplicar(u,conAviso){
   _API_ENTRO_POR_API=true;
   _guardarSesion();
   // Recien ahora hay sesion, asi que recien ahora /fb/token va a entregar
-  // el permiso para entrar a Firebase.
-  try{ entrarAFirebaseConLaApi(); }catch(e){}
+
   if(conAviso) setTimeout(function(){ logAudit("LOGIN","Ingresó con correo "+((u&&u.correo)||"")); },1000);
 }
 
@@ -1182,26 +1177,11 @@ function _restaurarEspejoClientes(){
 // ══════════════════════════════════════════════════════════════════════
 
 var _FUENTE_KEY = "cg_fuente_api_v1";
-var FUENTE_API = (function(){
-  try{ return localStorage.getItem(_FUENTE_KEY)==="1"; }catch(e){ return false; }
-})();
+// Ya no es un interruptor: Firebase se apago y la API es la unica fuente.
+// Queda en true —y la constante queda— para no tocar los lugares que la
+// consultan; el boton de "cambiar la fuente" se retiro de Ajustes.
+var FUENTE_API = true;
 
-function cambiarFuente(){
-  if(!autorizar("cambiar la fuente de datos de la app")) return;
-  var yendoAApi = !FUENTE_API;
-  var aviso = yendoAApi
-    ? "La app va a LEER de la API en vez de Firebase.\n\n"+
-      "Solo en este dispositivo. Los demás siguen como están.\n"+
-      "Se le sigue escribiendo a Firebase igual, así que se puede volver cuando quieras."
-    : "La app vuelve a leer de Firebase, como siempre.\n\nSolo en este dispositivo.";
-  if(!confirm(aviso+"\n\n¿Seguimos?")) return;
-  // Si quedaba un bloque esperando el intervalo del freno, sale ahora: a
-  // partir del recargado se lee del servidor, y tiene que estar al día.
-  try{ _dobleForzarEnvio(); }catch(e){}
-  FUENTE_API = yendoAApi;
-  try{ localStorage.setItem(_FUENTE_KEY, FUENTE_API?"1":"0"); }catch(e){}
-  setTimeout(function(){ location.reload(); }, yendoAApi ? 1200 : 0);
-}
 
 // Mientras la API sea la fuente, Firebase no toca NADA: su copia es la
 // vieja. Antes de la fase 7.3 esto valía solo para los clientes.
@@ -1359,6 +1339,17 @@ function _dobleOlvidar(){
 // y si en ese hueco alguien registra algo, compararlo contra S lo marcaría
 // como una diferencia que no existe. Falsas alarmas ahí envenenan la única
 // señal que decide si se apaga Firebase.
+// Convierte un objeto a texto de forma ESTABLE: ordena las claves antes de
+// convertir. JSON.stringify depende del ORDEN, y un mismo dato que fue y
+// volvio por JSON y por diccionarios de Python vuelve con otro orden: sin
+// esto, el comparador marcaba diferencia en algo identico.
+function _jsonEstable(obj){
+  if(obj===null||typeof obj!=="object") return JSON.stringify(obj);
+  if(Array.isArray(obj)) return "["+obj.map(_jsonEstable).join(",")+"]";
+  var keys=Object.keys(obj).sort();
+  return "{"+keys.map(function(k){return JSON.stringify(k)+":"+_jsonEstable(obj[k]);}).join(",")+"}";
+}
+
 function _dobleComparar(delServidor, mando){
   var difs=[];
   var base=mando||S;
@@ -1569,17 +1560,13 @@ function rComparacionApi(){
     html+="</div>";
   }
 
-  html+="<div style='background:"+(FUENTE_API?"#EEF3FF":"#f8f8f8")+";border:1.5px solid "+
-    (FUENTE_API?"#90b4f5":"#e5e5e5")+";border-radius:10px;padding:11px 13px;margin-top:12px'>"+
-    "<div style='font-size:12px;font-weight:800;color:#1a3558'>"+
-      (FUENTE_API?"📥 Este dispositivo LEE de la API":"📥 Este dispositivo lee de Firebase")+"</div>"+
+  // El interruptor de fuente se retiro: Firebase se apago y la API es la
+  // unica. No hay a que volver.
+  html+="<div style='background:#EEF3FF;border:1.5px solid #90b4f5;border-radius:10px;padding:11px 13px;margin-top:12px'>"+
+    "<div style='font-size:12px;font-weight:800;color:#1a3558'>📥 Los datos viven en el servidor</div>"+
     "<div style='font-size:10px;color:#666;margin-top:4px;line-height:1.5'>"+
-      "Mientras dure la doble escritura los dos lados tienen los mismos datos, "+
-      "así que se puede probar acá sin tocar los demás dispositivos. "+
-      "A Firebase se le sigue escribiendo igual: volver es apagar esto.</div>"+
-    "<button class='btn-main' style='width:100%;margin-top:9px;font-size:12px;padding:9px;background:"+
-      (FUENTE_API?"#8B0000":"#1a3558")+";color:#fff' onclick='cambiarFuente()'>"+
-      (FUENTE_API?"↩️ Volver a leer de Firebase":"📥 Leer de la API en este dispositivo")+"</button>"+
+      "Firebase se retiró. La app lee y escribe contra la API, y la base es "+
+      "MongoDB.</div>"+
   "</div>";
 
   html+="<div style='display:flex;gap:8px;margin-top:12px;flex-wrap:wrap'>"+
@@ -7434,7 +7421,7 @@ function _showSyncBadge(){
   badge.onclick=function(){
     badge.remove();
     var dot2=document.getElementById("fb-dot");
-    if(dot2) dot2.style.background=_fbOnline?"#4ade80":"#f87171";
+    if(dot2) dot2.style.background=_hayConexionReal?"#4ade80":"#f87171";
     R();
   };
   document.body.appendChild(badge);
@@ -7492,236 +7479,85 @@ function confirmDeleteOp(arr,n){
     reqDel(arr,n,"n");
   }
 }
-function forzarSyncFirebase(){
+// Boton "Guardar ahora": manda lo que tiene este dispositivo y adopta lo que
+// devuelva el servidor. El servidor FUSIONA, no reemplaza, asi que mandar una
+// foto vieja no puede borrar lo que cargaron los demas.
+function guardarEnServidorYa(){
   var totalOps=(S.brl||[]).length+(S.vzla||[]).length+(S.eeuu||[]).length;
   if(totalOps===0){alert("No hay datos para sincronizar.");return;}
-  // Candado: este boton tambien escribe con PUT, o sea REEMPLAZA el nodo
-  // entero. Es el mismo riesgo que ya frenan _fbFlushWriteImmediate y
-  // fbSaveREST, y este camino se habia quedado afuera. Si todavia no se leyo
-  // Firebase en esta sesion, lo que hay en memoria puede ser una foto vieja
-  // de este dispositivo: publicarla borra lo que cargaron los demas.
-  // Aca el aviso es un alert y no un console.warn porque el boton lo aprieta
-  // una persona: tiene que enterarse de por que no se hizo y que hacer.
-  if(!_FB_RECIBIDO){
-    alert("Todavia no se leyo Firebase en esta sesion.\n\n"+
-          "Sincronizar ahora publicaria lo que tiene este dispositivo y "+
-          "borraria lo que hayan cargado los demas.\n\n"+
-          "Toca primero \u2b07\ufe0f Cargar de Firebase y volve a intentarlo.");
-    return;
-  }
-  // Mostrar progreso
-  var btn=document.getElementById("btn-sync-firebase");
+  if(!apiSesionActiva()){alert("Primero entra con tu correo y clave.");return;}
+  var btn=document.getElementById("btn-guardar-ya");
   if(btn){btn.textContent="⏳ Enviando...";btn.disabled=true;}
-  // Preparar objeto con todos los datos
   S._ts=Date.now();
-  S._saveForced=true;
   var obj={_ts:S._ts};
   _volcarDatos(obj);
-  // Guardar en localStorage primero
   try{localStorage.setItem(STORAGE_KEY,JSON.stringify(obj));}catch(e){}
-  // Enviar a Firebase por REST API (HTTPS - funciona aunque WiFi bloquee WebSocket)
-  var url="https://adminbrl-default-rtdb.firebaseio.com/remesasBRL_v1.json";
-  fetch(url,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(obj)})
-    .then(function(r){
-      if(btn){btn.textContent="📡 Sincronizar Firebase";btn.disabled=false;}
-      if(r.ok){
-        alert("✅ "+totalOps+" operaciones enviadas a Firebase.\n\nAhora abre la app en la computadora — debería verse todo.");
-        var dot=document.getElementById("fb-dot");
-        if(dot)dot.style.background="#4ade80";
-      }else{
-        alert("❌ Error al sincronizar (código "+r.status+"). Intenta desde datos móviles.");
+  try{ obj=JSON.parse(JSON.stringify(obj)); }catch(e){}
+  apiFetch("/estado",{method:"PUT",body:{estado:obj,_ts:obj._ts}})
+    .then(function(r){ return r.json().then(function(d){return {estado:r.status,datos:d};}); })
+    .then(function(res){
+      if(btn){btn.textContent="📤 Guardar";btn.disabled=false;}
+      if(res.estado!==200 || !res.datos || !res.datos.ok){
+        alert("❌ No se pudo guardar: "+((res.datos&&res.datos.error)||("el servidor respondio "+res.estado)));
+        return;
       }
+      _marcarConexionOK();
+      if(_aplicarEstadoDeApi(res.datos.estado, res.datos._ts)){ try{ R(); }catch(e){} }
+      alert("✅ "+totalOps+" operaciones enviadas y fusionadas en el servidor.");
     })
     .catch(function(e){
-      if(btn){btn.textContent="📡 Sincronizar Firebase";btn.disabled=false;}
-      alert("❌ No se pudo conectar con Firebase.\nIntenta desactivar el VPN o usar datos móviles.");
+      if(btn){btn.textContent="📤 Guardar";btn.disabled=false;}
+      _marcarConexionFallo();
+      alert("❌ No se pudo conectar con el servidor.");
     });
 }
-var _restPendiente = false; // evita solapar guardados REST simultáneos
-// ── Guardado DIRECTO E INMEDIATO para cuando la app se está cerrando ──
-// A diferencia de _fbMergeAndWrite (que primero TRAE el estado remoto y
-// luego guarda — dos viajes de red), esto escribe de una sola vez con
-// `keepalive:true`, que le pide al navegador que complete la petición
-// aunque la pestaña ya se haya cerrado. Es la única forma confiable de
-// no perder el último cambio al cerrar el navegador — el camino normal
-// (fetch + merge + write) es demasiado lento para sobrevivir un cierre.
-function _fbFlushWriteImmediate(obj){
-  // Candado: un PUT REEMPLAZA el nodo entero de Firebase, no fusiona como el
-  // camino normal. Escribir antes de haber leido que hay del otro lado
-  // publica la foto parcial de ESTE dispositivo y borra todo lo demas: es
-  // como se pierden las remesas de los otros telefonos. Ahora no se escribe
-  // por aca hasta haber leido Firebase al menos una vez en esta sesion.
-  // No se pierde nada por esperar: el dato ya quedo en localStorage y viaja
-  // en el proximo guardado. Y si Firebase esta caido, este PUT tampoco
-  // habria llegado.
-  try{ obj = JSON.parse(JSON.stringify(obj)); }catch(e){}
-  S._ts = obj._ts;
-  // La API primero, y pase lo que pase con Firebase. Este camino no la
-  // llamaba nunca: al cerrar la pestaña con cambios pendientes, lo ultimo
-  // que se hizo se guardaba en Firebase y no en Mongo.
-  //
-  // Sin keepalive a proposito: el bloque entero pasa los 64 KB que aceptan
-  // los navegadores para keepalive, y arriba de ese tope lo descartan en
-  // silencio. Sin keepalive no esta garantizado que sobreviva al cierre,
-  // pero muchas veces alcanza —y callarse seria peor.
-  try{ enviarEstadoALaApi(obj); }catch(e){}
-  if(!_FB_RECIBIDO){
-    // Candado de Firebase: un PUT REEMPLAZA el nodo entero, no fusiona.
-    // Publicar la foto de este dispositivo sin haber leido lo que hay del
-    // otro lado borra lo que cargaron los demas.
-    console.warn("\ud83d\uded1 Guardado por PUT a Firebase cancelado: todavia no se leyo Firebase en esta sesion.");
-    return;
-  }
-  _marcarComoMiPropioTs(obj._ts);
-  try{
-    fetch(_FB_REST, {
-      method:"PUT",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify(obj),
-      keepalive:true
-    }).catch(function(e){ console.warn("Flush inmediato falló:", e.message); });
-    console.log("⚡ Guardado directo (keepalive) al cerrar — sin merge previo por seguridad");
-  }catch(e){ console.warn("Flush inmediato error:", e); }
+
+// Ver que hay en el servidor AHORA MISMO, sin aplicar nada. Usa el resumen,
+// que trae los conteos sin bajarse el bloque entero.
+function verQueHayEnServidor(){
+  if(!apiSesionActiva()){ alert("Primero entra con tu correo y clave."); return; }
+  apiFetch("/estado/resumen")
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(!d||!d.ok){ alert("❌ No se pudo consultar el servidor."); return; }
+      var c=d.conteo||{};
+      var fecha=d._ts?new Date(d._ts).toLocaleString("es-VE"):"sin fecha";
+      alert("🔍 ESTO HAY EN EL SERVIDOR AHORA MISMO (sin aplicar):\n\n"+
+        "Ultimo guardado: "+fecha+"\n\n"+
+        "BRL: "+(c.brl||0)+"\nVZLA: "+(c.vzla||0)+"\nEE.UU: "+(c.eeuu||0)+"\n"+
+        "Cuentas: "+(c.cuentas||0)+"\nPor cobrar: "+(c.cuentasCobrar||0)+"\n"+
+        "Prestamos: "+(c.prestamos||0));
+    })
+    .catch(function(e){ alert("❌ No se pudo consultar el servidor: "+e.message); });
 }
-function fbSaveREST(obj){
-  // Candado: un PUT REEMPLAZA el nodo entero de Firebase, no fusiona como el
-  // camino normal. Escribir antes de haber leido que hay del otro lado
-  // publica la foto parcial de ESTE dispositivo y borra todo lo demas: es
-  // como se pierden las remesas de los otros telefonos. Ahora no se escribe
-  // por aca hasta haber leido Firebase al menos una vez en esta sesion.
-  // No se pierde nada por esperar: el dato ya quedo en localStorage y viaja
-  // en el proximo guardado. Y si Firebase esta caido, este PUT tampoco
-  // habria llegado.
-  if(!_FB_RECIBIDO){
-    console.warn("\ud83d\uded1 Guardado por PUT cancelado: todavia no se leyo Firebase en esta sesion.");
-    return;
-  }
-  if(_restPendiente) return; // ya hay un save en curso
-  _restPendiente = true;
-  fetch(_FB_REST, {
-    method:"PUT",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify(obj)
-  }).then(function(r){
-    _restPendiente = false;
-    if(r.ok){
-      _marcarConexionOK();
-      console.log("✅ Firebase REST: guardado correctamente");
-      var dot=document.getElementById("fb-dot");
-      if(dot) dot.style.background="#4ade80";
-    } else {
-      console.warn("❌ Firebase REST error:", r.status);
-    }
-  }).catch(function(e){
-    _restPendiente = false;
-    console.warn("❌ Firebase REST no disponible:", e.message);
-    _marcarConexionFallo();
-  });
-}
-// ── Carga forzada desde Firebase — ignora timestamps, siempre actualiza ───────
-// ── Ver qué hay en Firebase AHORA MISMO, sin aplicar nada todavía ──
-// Esto NO compara timestamps ni decide quién gana — solo consulta
-// directo y te muestra un resumen (cuántas operaciones, de qué fecha)
-// para que decidas si vale la pena recuperarlo o no, antes de arriesgarte
-// a perder lo poco que quede localmente.
-function verFirebaseSinAplicar(){
-  var url="https://adminbrl-default-rtdb.firebaseio.com/remesasBRL_v1.json?ts="+Date.now();
-  var opciones={};
-  if(typeof _fbIdToken!=="undefined"&&_fbIdToken){ url+="&auth="+_fbIdToken; }
-  fetch(url).then(function(r){
-    if(!r.ok) throw new Error("HTTP "+r.status);
-    return r.json();
-  }).then(function(data){
-    if(!data){ alert("Firebase respondió, pero está completamente vacío."); return; }
-    var brl=(data.brl||[]).length, vzla=(data.vzla||[]).length, eeuu=(data.eeuu||[]).length;
-    var cuentas=(data.cuentas||[]).length;
-    var cobrar=(data.cuentasCobrar||[]).length;
-    var prest=(data.prestamos||[]).length;
-    var fecha=data._ts?new Date(data._ts).toLocaleString("es-VE"):"sin fecha";
-    // Buscar la fecha de la remesa BRL más reciente guardada, para saber
-    // hasta qué día real llegan los datos que hay ahí.
-    var ultimaFechaBrl="—";
-    if(data.brl&&data.brl.length){
-      var fechas=data.brl.map(function(r){return r.d;}).filter(Boolean);
-      if(fechas.length) ultimaFechaBrl=fechas[fechas.length-1];
-    }
-    alert("🔍 ESTO HAY EN FIREBASE AHORA MISMO (sin aplicar):\n\n"+
-      "Guardado el: "+fecha+"\n\n"+
-      "BRL: "+brl+" operaciones\n"+
-      "VZLA: "+vzla+" operaciones\n"+
-      "EE.UU: "+eeuu+" operaciones\n"+
-      "Cuentas: "+cuentas+"\n"+
-      "Cuentas por cobrar: "+cobrar+"\n"+
-      "Préstamos: "+prest+"\n\n"+
-      "Última fecha de remesa BRL guardada: "+ultimaFechaBrl+"\n\n"+
-      "Si estos números se ven bien (parecidos a lo que tenías anoche), avísame para preparar el botón que sí los aplica de verdad.");
-  }).catch(function(e){
-    alert("❌ No se pudo consultar Firebase: "+e.message);
-  });
-}
+
+// Traer el bloque del servidor ahora mismo, sin esperar al sondeo. Se fusiona
+// contra lo que hay en memoria, asi que lo que acabas de cargar en este
+// dispositivo y todavia no salio no se pierde.
 function fbForceLoad(){
   var btn=document.querySelector('[onclick="fbForceLoad()"]');
   if(btn){btn.textContent="⏳ Cargando...";btn.disabled=true;}
-  // Capturar el estado LOCAL actual antes de traer nada — así lo que acabas
-  // de registrar hace un instante (aunque todavía no haya llegado a Firebase)
-  // no se pierde al actualizar.
-  var obj={_ts:Date.now()};
-  _volcarDatos(obj);
-  var url=_FB_REST+"?ts="+Date.now();
-  fetch(url)
-    .then(function(r){
-      if(!r.ok) throw new Error("HTTP "+r.status);
-      return r.json();
-    })
-    .then(function(remote){
-      _FB_RECIBIDO = true;
-      if(!remote){throw new Error("Firebase devolvió datos vacíos");}
-      // Campos "registro" (remesas, cuentas, egresos, etc.) — SIEMPRE se fusionan
-      // por id, nunca se sobrescriben a ciegas. Esto es lo que faltaba: antes,
-      // este botón ignoraba por completo la fusión y reemplazaba todo con lo
-      // último de Firebase, borrando cualquier cosa guardada localmente que
-      // aún no hubiera llegado al servidor.
-      _MERGE_FIELDS.forEach(function(k){
-        if(_apiManda(k)) return;
-        if(remote[k]!==undefined){
-          var idF=_MERGE_ID_FIELD[k]||"id";
-          var remoteFiltrado=(remote[k]||[]).filter(function(it){
-            return !(it && it[idF]!==undefined && _estaBorradoMerge(k,it[idF]));
-          });
-          obj[k]=_mergeArrayById(remoteFiltrado,obj[k],idF,remote._ts,S._ts);
-          if(k==="brl"||k==="vzla"||k==="eeuu") _renumerarPorFecha(obj[k]);
-        }
-      });
-      // El resto (configuración, tasas, etc. — no son listas de registros)
-      // sí toman la versión de Firebase, EXCEPTO "config": ese se fusiona
-      // campo por campo para que una tasa recién guardada acá nunca se borre
-      // por una versión vieja/vacía que traiga otro dispositivo.
-      DATA_KEYS.forEach(function(k){
-        if(_apiManda(k)) return;
-        if(k==="config"){
-          if(remote.config!==undefined) obj.config=_mergeConfigSafe(remote.config,obj.config||{});
-        } else if(_MERGE_FIELDS.indexOf(k)===-1 && remote[k]!==undefined){
-          obj[k]=remote[k];
-        }
-      });
-      DATA_KEYS.forEach(function(k){ if(_apiManda(k)) return; S[k]=obj[k]; });
-      S._ts=Date.now();
-      try{localStorage.setItem(STORAGE_KEY,JSON.stringify(obj));}catch(e){}
-      R();
+  if(!apiSesionActiva()){
+    if(btn){btn.textContent="📥 Actualizar";btn.disabled=false;}
+    alert("Primero entra con tu correo y clave.");
+    return;
+  }
+  cargarEstadoDeApi({forzar:true})
+    .then(function(aplicado){
       if(btn){btn.textContent="📥 Actualizar";btn.disabled=false;}
-      var dot=document.getElementById("fb-dot");
-      if(dot){dot.style.background="#4ade80";dot.title="✅ Datos actualizados (fusionados) desde Firebase";}
-      console.log("✅ Carga forzada OK — fusionada, _ts:",S._ts);
-      // Reflejar la fusión también en Firebase, por si el servidor no tenía
-      // todavía lo que estaba solo en este dispositivo.
-      _fbWriteNow(obj);
+      _marcarConexionOK();
+      var t=(S.brl||[]).length+(S.vzla||[]).length+(S.eeuu||[]).length;
+      alert("✅ Datos actualizados desde el servidor.\n\n"+t+" operaciones en total.");
+      saveData();   // devuelve al servidor lo que estaba solo aca
     })
     .catch(function(e){
       if(btn){btn.textContent="📥 Actualizar";btn.disabled=false;}
-      alert("❌ No se pudo conectar con Firebase.\nError: "+e.message+"\n\nIntenta con datos móviles si el WiFi bloquea Firebase.");
-      console.warn("fbForceLoad error:",e);
+      _marcarConexionFallo();
+      alert("❌ No se pudo conectar con el servidor.\nError: "+e.message);
     });
 }
+
+var _restPendiente = false; // evita solapar guardados REST simultáneos
 
 
 // ── Parsear texto pegado del comprobante y rellenar el formulario ─────────────
@@ -8164,101 +8000,17 @@ function iniciarTasasAutoRef(){
 // llaman sobre la peticion chica, que sale con la misma frecuencia de antes.
 // _FB_REST se define mucho mas abajo en el archivo, asi que la URL corta se
 // calcula en el momento de usarla, no aqui.
-function _fbRestTs(){ return String(_FB_REST||"").replace(/\.json$/, "/_ts.json"); }
 var _ultimoPoll = 0;
+// El sondeo, contra la API y nada mas. Antes esta funcion tenia dos caminos
+// —Firebase o la API, segun un interruptor— y el de Firebase era ademas el
+// detector de conexion de la app. Con Firebase apagado queda uno solo.
 function fbCheckREST(){
-  // Pausa en segundo plano: una pestaña oculta no la mira nadie, y el listener
-  // WebSocket sigue recibiendo cambios igual. Ademas evita el falso positivo de
-  // volver a la pestaña y encontrar la pantalla de "sin internet" ya resuelta.
+  // Una pestaña oculta no la mira nadie.
   if(typeof document!=="undefined" && document.hidden) return;
-  // Fase 7.3: con la API de fuente, se sondea la API y no Firebase.
-  if(FUENTE_API){ return sondearApi(); }
-  var _ahora=Date.now();
-  if(_ahora-_ultimoPoll < 3000) return; // minimo entre disparos (ráfagas al volver)
-  _ultimoPoll=_ahora;
-  fetch(_fbRestTs()+"?ts="+_ahora) // solo el _ts: unos bytes
-    .then(function(r){return r.json();})
-    .then(function(tsRemoto){
-      _marcarConexionOK(); // llegó respuesta por HTTPS normal → sí hay internet
-      _FB_RECIBIDO = true;     // ya sabemos que hay en Firebase: los PUT quedan habilitados
-      tsRemoto = tsRemoto || 0;
-      // Nada cambió: no se descarga el bloque y no se redibuja nada.
-      if(!(tsRemoto > (S._ts||0) + 500)) return null;
-      return fetch(_FB_REST+"?ts="+Date.now()).then(function(r){return r.json();});
-    })
-    .then(function(data){
-      if(!data) return;
-      if(!data._ts) return;
-      var tsRemoto=data._ts||0;
-      var tsLocal=S._ts||0;
-      // Si Firebase tiene datos más nuevos que lo que tenemos localmente
-      if(tsRemoto > tsLocal + 500){ // 500ms de margen para evitar rebotes propios
-        console.log("📥 Auto-sync: datos más nuevos en Firebase (remoto="+tsRemoto+", local="+tsLocal+")");
-        DATA_KEYS.forEach(function(k){
-          if(_apiManda(k)) return;
-          if(data[k]===undefined) return;
-          if(k==="config"){
-            S.config=_mergeConfigSafe(data.config,S.config||{});
-            return;
-          }
-          if(_MERGE_FIELDS.indexOf(k)!==-1 && Array.isArray(data[k])){
-            // Respetar la lista negra de borrados: no revivir lo que se
-            // borró intencionalmente a propósito solo porque Firebase
-            // todavía tiene la versión vieja.
-            var idF=_MERGE_ID_FIELD[k]||"id";
-            var remoteFiltrado=data[k].filter(function(it){
-              return !(it && it[idF]!==undefined && _estaBorradoMerge(k,it[idF]));
-            });
-            var fusionado=_mergeArrayById(remoteFiltrado, S[k], idF, tsRemoto, tsLocal);
-            if(k==="brl"||k==="vzla"||k==="eeuu") _renumerarPorFecha(fusionado);
-            S[k]=fusionado;
-          } else if(k!=="_deletedMerge"){
-            // ARREGLO 6c (01/09/2026): _deletedMerge NUNCA se reemplaza. Si el
-            // recorrido lo asigna, las marcas recien creadas se pierden y las
-            // vencidas reviven. Sintoma que lo delato: una marca del 17/07, ya
-            // vencida por la regla de 30 dias, reaparecio despues de un import.
-            // Este bloque existe DOS veces (listener y poll REST): van los dos.
-            S[k]=data[k];
-          }
-        });
-        // ARREGLO 21 (02/09/2026): la poda corria al arrancar y en el listener de
-        // Firebase, pero NO en este camino — el poll REST, que es por donde llega
-        // la mayoria de los cambios. Un dispositivo recibia la marca de borrado y
-        // nunca la aplicaba: seguia mostrando el registro borrado. Detectado con
-        // una venta de USDT borrada en la laptop que el telefono conservaba.
-        // Primero se unen las marcas que trae el bloque, despues se poda.
-        if(data && data._deletedMerge){
-          var _mioR=S._deletedMerge||{};
-          Object.keys(data._deletedMerge).forEach(function(c){
-            _mioR[c]=(_mioR[c]||[]).concat(data._deletedMerge[c]||[]);
-            var vistosR={};
-            _mioR[c]=_mioR[c].filter(function(x){
-              var kk=String(x&&x.id); if(vistosR[kk])return false; vistosR[kk]=1; return true;
-            });
-          });
-          S._deletedMerge=_mioR;
-        }
-        _podarBorrados();
-        S._ts=tsRemoto;
-        try{localStorage.setItem(STORAGE_KEY,JSON.stringify(S));}catch(e){}
-        R();
-        // Mostrar indicador de actualización
-        var dot=document.getElementById("fb-dot");
-        if(dot){dot.style.background="#4ade80";dot.title="✅ Datos actualizados desde Firebase";}
-        console.log("✅ Auto-sync aplicado correctamente.");
-      }
-    })
-    .catch(function(e){
-      // Firebase no contesta. Antes esto contaba derecho como "no hay
-      // internet", y a los tres intentos la app se tapaba entera con la
-      // pantalla de sin conexion —con internet andando perfecto—. El dia que
-      // Firebase se apague, cada dispositivo que no tenga la fase 7.3
-      // encendida quedaria inutilizable de esa forma.
-      // Ahora se le pregunta a la API: si contesta, hay internet, y ademas
-      // hay de donde sincronizar.
-      console.warn("Firebase no contesta ("+e.message+"), se cae a la API.");
-      sondearApi({forzar:true});
-    });
+  var ahora=Date.now();
+  if(ahora-_ultimoPoll < 3000) return;   // minimo entre disparos
+  _ultimoPoll=ahora;
+  sondearApi({forzar:true});
 }
 
 // ── AUTO-POLL: revisar Firebase cada 8 segundos automáticamente ──────
@@ -8286,18 +8038,37 @@ function startAutoSync(){
   setInterval(function(){ if(S.role) _guardarSesion(); }, 60000);
   console.log("🔄 Auto-sync cada 8 segundos activado");
 }
-function reconectarFirebase(){
-  if(!_fbDb) return;
-  try{
-    console.log("🔄 Intentando reconectar Firebase...");
-    var dot=document.getElementById("fb-dot");
-    if(dot) dot.style.background="#FFA31C"; // naranja = intentando
-    _fbDb.goOffline();
-    setTimeout(function(){
-      _fbDb.goOnline();
-    }, 1000);
-  }catch(e){ console.warn("Reconexión error:", e); }
+// Baja el respaldo completo de la base desde la API y lo guarda como archivo.
+// Ya no hay menu de slots: en Firebase habia tres copias rotativas porque el
+// guardado podia dejar el nodo a medias. Aca hay una sola base y el respaldo
+// sale de ella entero.
+//
+// Restaurar NO se dispara desde aca a proposito: pisar los datos vivos es una
+// operacion para hacer a mano, mirando lo que se hace.
+function restoreFromBackup(){
+  if(!apiSesionActiva()){ alert("Primero entra con tu correo y clave."); return; }
+  if(!confirm("Se va a descargar el respaldo completo de la base.\n\n¿Continuar?")) return;
+  apiFetch("/respaldo")
+    .then(function(r){
+      if(r.status===403) throw new Error("solo un administrador puede bajar el respaldo");
+      if(!r.ok) throw new Error("el servidor respondio "+r.status);
+      return r.text();
+    })
+    .then(function(texto){
+      var blob=new Blob([texto],{type:"application/json"});
+      var a=document.createElement("a");
+      a.href=URL.createObjectURL(blob);
+      var d=new Date();
+      a.download="respaldo-centrogestion-"+d.getFullYear()+
+        String(d.getMonth()+1).padStart(2,"0")+String(d.getDate()).padStart(2,"0")+"-"+
+        String(d.getHours()).padStart(2,"0")+String(d.getMinutes()).padStart(2,"0")+".json";
+      document.body.appendChild(a);a.click();
+      setTimeout(function(){document.body.removeChild(a);URL.revokeObjectURL(a.href);},1000);
+      alert("✅ Respaldo descargado.\n\nGuardalo fuera del telefono.");
+    })
+    .catch(function(e){ alert("❌ No se pudo bajar el respaldo: "+e.message); });
 }
+
 function mostrarOpcionesBackup(resultados){
   if(!resultados.length){alert("No hay backups disponibles.");return;}
   resultados.sort(function(a,b){return b.ts-a.ts;});
@@ -8320,7 +8091,7 @@ function mostrarOpcionesBackup(resultados){
   alert("✅ Datos restaurados desde backup del "+elegido.fecha);
   R();
 }
-function forzarCargaFirebase(){
+function borrarDatosLocales(){
   if(!autorizar("borrar los datos locales de este dispositivo")) return;
   if(!confirm("⚠️ ÚLTIMA CONFIRMACIÓN:\nEsto borrará los datos locales de este dispositivo.\nSolo hazlo si te lo indica el soporte.\n\n¿Confirmar?")) return;
   // Limpiar localStorage completamente
@@ -8332,7 +8103,7 @@ function forzarCargaFirebase(){
   // Mostrar pantalla de espera
   document.body.innerHTML="<div style='display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:system-ui;background:#F5F5F7'>"+
     "<div style='font-size:48px;margin-bottom:20px'>🔄</div>"+
-    "<div style='font-size:20px;font-weight:700;color:#1a3558;margin-bottom:10px'>Recuperando datos desde Firebase...</div>"+
+    "<div style='font-size:20px;font-weight:700;color:#1a3558;margin-bottom:10px'>Recuperando datos desde el servidor...</div>"+
     "<div style='font-size:14px;color:#888;margin-bottom:30px'>Espera unos segundos</div>"+
     "<div style='width:200px;height:6px;background:#eee;border-radius:10px;overflow:hidden'>"+
       "<div style='width:100%;height:100%;background:#FFA31C;border-radius:10px;animation:prog 2s ease-in-out infinite'></div>"+
@@ -8524,8 +8295,8 @@ function loadData(){
     var storedVersion = localStorage.getItem("app_version");
     if(storedVersion !== APP_VERSION){
       localStorage.setItem("app_version", APP_VERSION);
-      S._ts = 0; // Fuerza que Firebase gane en el primer sync
-      console.log("🆕 Nuevo archivo detectado ("+APP_VERSION+") — priorizando Firebase");
+      S._ts = 0; // Fuerza que el servidor gane en el primer sync
+      console.log("🆕 Nuevo archivo detectado ("+APP_VERSION+") — priorizando el servidor");
     }
 
     // ── Borrador del formulario de préstamo (no se sincroniza a Firebase,
@@ -8604,25 +8375,6 @@ function autoBackup(){
   }catch(e){ console.warn("⚠️ autoBackup error:",e); }
 }
 
-function restoreFromBackup(){
-  if(!_fbDb){alert("Sin conexión a Firebase.");return;}
-  var slots=["remesasBRL_backup","remesasBRL_backup_0","remesasBRL_backup_1","remesasBRL_backup_2"];
-  var resultados=[];
-  var pendientes=slots.length;
-  slots.forEach(function(key){
-    _fbDb.ref(key).get().then(function(snap){
-      var d=snap.val();
-      if(d&&d._ts&&!resultados.find(function(r){return r.ts===d._ts;})){
-        resultados.push({key:key,ts:d._ts,fecha:d._fecha||"sin fecha",data:d});
-      }
-      pendientes--;
-      if(pendientes===0) mostrarOpcionesBackup(resultados);
-    }).catch(function(){
-      pendientes--;
-      if(pendientes===0) mostrarOpcionesBackup(resultados);
-    });
-  });
-}
 function exportMesSel(){
   try{
     var mesKey=(typeof _opMesSel!=="undefined"&&_opMesSel&&_opMesSel.length>=6)?_opMesSel:getMesKeyActual();
@@ -8766,17 +8518,10 @@ function importData(){
         S._ts = Date.now();
         S._saveForced = true;
         saveData();
-        // También guardar directo a Firebase vía REST por si WebSocket está offline
-        if(typeof fbSaveREST === "function"){
-          var obj2={_ts:S._ts};
-          _volcarDatos(obj2);
-          _marcarComoMiPropioTs(obj2._ts);
-          fbSaveREST(obj2);
-        }
         // Y forzar backup inmediato
         if(typeof autoBackup === "function") autoBackup();
         R();
-        alert("✅ "+loaded+" registros importados y enviados a Firebase.\nTodos los dispositivos se actualizarán en unos segundos.");
+        alert("✅ "+loaded+" registros importados y enviados al servidor.\nLos demás dispositivos se actualizan en unos segundos.");
       }catch(ex){alert("Error al importar: "+ex.message);}
     };
     reader.readAsText(file);
@@ -9173,7 +8918,7 @@ function st(t){
     var b=document.getElementById("sync-badge");
     if(b) b.remove();
     var dot=document.getElementById("fb-dot");
-    if(dot) dot.style.background=_fbOnline?"#4ade80":"#f87171";
+    if(dot) dot.style.background=_hayConexionReal?"#4ade80":"#f87171";
   }
   R();
 }
@@ -10008,10 +9753,10 @@ function R(){
       d.style.cssText="display:flex;gap:6px;align-items:center;margin-left:6px;flex-wrap:wrap";
       d.innerHTML='<button onclick="exportData()" style="background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.35);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer">💾 Exportar</button>'+
         '<button onclick="importData()" style="background:rgba(255,215,0,.25);border:1px solid rgba(255,215,0,.4);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer">📂 Importar</button>'+
-        '<button onclick="forzarSyncFirebase()" id="btn-sync-firebase" style="background:rgba(100,200,100,.3);border:1px solid rgba(100,200,100,.5);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer;font-weight:700" title="Guardar en Firebase ahora (auto-sync ya está activo cada 30s)">📤 Guardar</button>'+
-        '<button onclick="fbForceLoad()" style="background:rgba(100,200,255,.25);border:1px solid rgba(100,200,255,.4);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer;font-weight:700;margin-left:4px" title="Cargar datos más recientes de Firebase ahora">📥 Actualizar</button>'+
-        '<button onclick="restoreFromBackup()" style="background:rgba(255,100,100,.25);border:1px solid rgba(255,100,100,.4);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer" title="Restaurar desde el último backup automático de Firebase">🔒 Restaurar</button>'+
-        '<button onclick="verFirebaseSinAplicar()" style="background:rgba(255,180,0,.3);border:1px solid rgba(255,180,0,.5);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer;font-weight:700" title="Ver qué hay guardado en Firebase ahora mismo, SIN aplicarlo todavía">🔍 Ver Firebase</button>'+
+        '<button onclick="guardarEnServidorYa()" id="btn-guardar-ya" style="background:rgba(100,200,100,.3);border:1px solid rgba(100,200,100,.5);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer;font-weight:700" title="Guardar en el servidor ahora (el auto-sync corre cada 8s)">📤 Guardar</button>'+
+        '<button onclick="fbForceLoad()" style="background:rgba(100,200,255,.25);border:1px solid rgba(100,200,255,.4);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer;font-weight:700;margin-left:4px" title="Traer los datos más recientes del servidor ahora">📥 Actualizar</button>'+
+        '<button onclick="restoreFromBackup()" style="background:rgba(255,100,100,.25);border:1px solid rgba(255,100,100,.4);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer" title="Descargar el respaldo completo de la base">🔒 Restaurar</button>'+
+        '<button onclick="verQueHayEnServidor()" style="background:rgba(255,180,0,.3);border:1px solid rgba(255,180,0,.5);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer;font-weight:700" title="Ver qué hay guardado en el servidor ahora mismo, SIN aplicarlo todavía">🔍 Ver servidor</button>'+
         '<button onclick="clearAllData()" style="background:rgba(255,100,100,.2);border:1px solid rgba(255,100,100,.35);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer" title="Borrar todo (PIN 2626)">🗑️</button>';
       tb.appendChild(d);
     },50);
@@ -16519,15 +16264,6 @@ var _EEUU_CLIENTS=null; // datos reales ELIMINADOS del archivo (29/08/2026)
 // ══════════════════════════════════════════════════════
 // FIREBASE — Sincronización en tiempo real
 // ══════════════════════════════════════════════════════
-var _FB_CONFIG = {
-  apiKey: "AIzaSyASfVfzHVDfSkvp2Ws978CQP7DisQld5Bc",
-  authDomain: "adminbrl.firebaseapp.com",
-  databaseURL: "https://adminbrl-default-rtdb.firebaseio.com",
-  projectId: "adminbrl",
-  storageBucket: "adminbrl.firebasestorage.app",
-  messagingSenderId: "646124622933",
-  appId: "1:646124622933:web:3f60d6c160624894f8b0dc"
-};
 
 // ══════════════════════════════════════════════════════
 // SINCRONIZACIÓN EN TIEMPO REAL — POR GRUPOS, DE 4 EN 4 MÓDULOS
@@ -16547,37 +16283,7 @@ var _FB_CONFIG = {
 // anterior, para no arrastrar ningún dato a medio escribir que haya
 // quedado de la caída pasada.
 // ══════════════════════════════════════════════════════
-var _LIVE_SYNC_RUTA = "remesasBRL_v1/live_ops_v2";
-var _LIVE_SYNC_CAMPOS = ["brl","vzla","eeuu","cuentas"]; // ← Grupo 1
 
-// Convierte un objeto a texto de forma ESTABLE (ordena las llaves antes de
-// convertir) — así, si el mismo dato vuelve de Firebase con las
-// propiedades en otro orden (puede pasar), no se detecta como "cambió
-// algo" por error. Esto era una causa real del parpadeo: se veía como un
-// cambio nuevo un dato que en realidad era idéntico.
-function _jsonEstable(obj){
-  if(obj===null||typeof obj!=="object") return JSON.stringify(obj);
-  if(Array.isArray(obj)) return "["+obj.map(_jsonEstable).join(",")+"]";
-  var keys=Object.keys(obj).sort();
-  return "{"+keys.map(function(k){return JSON.stringify(k)+":"+_jsonEstable(obj[k]);}).join(",")+"}";
-}
-function _liveWriteRecord(campo,id,obj){
-  try{
-    if(!_fbDb||id===undefined||id===null||!obj) return;
-    var clean=JSON.parse(JSON.stringify(obj));
-    _fbDb.ref(_LIVE_SYNC_RUTA+"/"+campo+"/"+id).set(clean).catch(function(e){
-      console.warn("live_ops write falló ("+campo+"):",e.message);
-    });
-  }catch(e){ console.warn("_liveWriteRecord error:",e); }
-}
-function _liveRemoveRecord(campo,id){
-  try{
-    if(!_fbDb||id===undefined||id===null) return;
-    _fbDb.ref(_LIVE_SYNC_RUTA+"/"+campo+"/"+id).remove().catch(function(e){
-      console.warn("live_ops remove falló ("+campo+"):",e.message);
-    });
-  }catch(e){ console.warn("_liveRemoveRecord error:",e); }
-}
 // Última "foto" (por id → JSON) de lo que ya se subió a live_ops por cada
 // módulo — se guarda en localStorage para no re-subir todo de cero cada
 // vez que se abre la app.
@@ -16587,168 +16293,12 @@ try{
   if(_lsRaw) _liveSnapshot=JSON.parse(_lsRaw);
 }catch(e){ _liveSnapshot={}; }
 var _liveSnapshotDirty=false;
-function _guardarLiveSnapshotCache(){
-  if(!_liveSnapshotDirty) return;
-  _liveSnapshotDirty=false;
-  try{ localStorage.setItem("_liveSnapshotCache_v2", JSON.stringify(_liveSnapshot)); }catch(e){}
-}
 var _syncEnProgreso=false;
 var _syncReintentoPendiente=false;
 var _syncSafetyTimer=null;
-function _sincronizarTiempoRealTodo(){
-  if(!_fbDb) return;
-  if(_syncEnProgreso){
-    // Ya hay una tanda corriendo — en vez de simplemente ignorar este
-    // pedido (lo que antes podía hacer que un borrado se perdiera si
-    // llegaba justo mientras otra tanda estaba en curso), se marca para
-    // reintentarlo automáticamente apenas termine la tanda actual.
-    _syncReintentoPendiente=true;
-    return;
-  }
-  var pendientes=[];
-  _LIVE_SYNC_CAMPOS.forEach(function(campo){
-    var arr=S[campo];
-    if(!Array.isArray(arr)) return;
-    var idF=_MERGE_ID_FIELD[campo]||"id";
-    if(!_liveSnapshot[campo]) _liveSnapshot[campo]={};
-    var snap=_liveSnapshot[campo];
-    var idsVistos={};
-    arr.forEach(function(item){
-      if(!item||item[idF]===undefined||item[idF]===null) return;
-      var id=item[idF];
-      idsVistos[id]=true;
-      var js=_jsonEstable(item);
-      if(snap[id]!==js) pendientes.push({campo:campo,id:id,accion:"set",item:item,js:js});
-    });
-    Object.keys(snap).forEach(function(id){
-      if(!idsVistos[id]) pendientes.push({campo:campo,id:id,accion:"remove"});
-    });
-  });
-  if(!pendientes.length) return;
-  _syncEnProgreso=true;
-  // Red de seguridad: si por lo que sea la tanda nunca termina (un error
-  // no capturado, lo que sea), esto libera el candado a los 15s para que
-  // la sincronización no se quede trabada para siempre.
-  if(_syncSafetyTimer) clearTimeout(_syncSafetyTimer);
-  _syncSafetyTimer=setTimeout(function(){
-    if(_syncEnProgreso){
-      console.warn("⚠️ Sincronización atascada — liberando candado de seguridad");
-      _syncEnProgreso=false;
-    }
-  },15000);
-  var LOTE=8, i=0;
-  function procesarLote(){
-    var fin=Math.min(i+LOTE,pendientes.length);
-    for(;i<fin;i++){
-      var p=pendientes[i];
-      if(!_liveSnapshot[p.campo]) _liveSnapshot[p.campo]={};
-      if(p.accion==="set"){
-        _liveWriteRecord(p.campo,p.id,p.item);
-        _liveSnapshot[p.campo][p.id]=p.js;
-      } else {
-        _liveRemoveRecord(p.campo,p.id);
-        delete _liveSnapshot[p.campo][p.id];
-      }
-      _liveSnapshotDirty=true;
-    }
-    if(i<pendientes.length){
-      setTimeout(procesarLote,60);
-    } else {
-      _guardarLiveSnapshotCache();
-      _syncEnProgreso=false;
-      if(_syncSafetyTimer){ clearTimeout(_syncSafetyTimer); _syncSafetyTimer=null; }
-      if(_syncReintentoPendiente){
-        _syncReintentoPendiente=false;
-        setTimeout(_sincronizarTiempoRealTodo,50);
-      }
-    }
-  }
-  procesarLote();
-}
 var _liveListenersActivos=false;
-function _iniciarListenersTiempoReal(){
-  if(!_fbDb||_liveListenersActivos) return;
-  _liveListenersActivos=true;
-  _LIVE_SYNC_CAMPOS.forEach(function(campo){
-    var idF=_MERGE_ID_FIELD[campo]||"id";
-    var ref=_fbDb.ref(_LIVE_SYNC_RUTA+"/"+campo);
-    // ── Buffer de cambios entrantes ──────────────────────────────────
-    // Firebase dispara "child_added" de golpe para TODOS los registros
-    // existentes al conectar el escuchador (no solo los nuevos). Antes,
-    // cada uno llamaba a saveData()+R() por separado — con cientos de
-    // golpe, eso reventaba la memoria. Ahora se acumulan en un buffer y
-    // se aplican TODOS JUNTOS, con un solo saveData()+R() al final de
-    // la ráfaga (300ms sin novedades = ráfaga terminada).
-    var buffer=[];
-    var timerBuffer=null;
-    function agregarAlBuffer(accion,item){
-      if(!item||item[idF]===undefined||item[idF]===null) return;
-      buffer.push({accion:accion,item:item});
-      if(timerBuffer) clearTimeout(timerBuffer);
-      timerBuffer=setTimeout(procesarBuffer,300);
-    }
-    function procesarBuffer(){
-      var cambios=buffer; buffer=[]; timerBuffer=null;
-      if(!cambios.length) return;
-      var huboCambioReal=false;
-      if(!_liveSnapshot[campo]) _liveSnapshot[campo]={};
-      var arr=S[campo]||(S[campo]=[]);
-      cambios.forEach(function(c){
-        var id=c.item[idF];
-        if(c.accion==="removed"){
-          var idx=arr.findIndex(function(x){return x&&x[idF]===id;});
-          if(idx===-1) return; // eco de un borrado propio, ya no estaba
-          arr.splice(idx,1);
-          delete _liveSnapshot[campo][id];
-          huboCambioReal=true;
-          return;
-        }
-        if(_estaBorradoMerge(campo,id)) return; // se borró localmente, no revivir
-        // ARREGLO 9d (02/09/2026): la comparacion de ecos incluia _mod. Cuando un
-        // dispositivo guarda, actualiza _mod; el otro recibe el registro, ve un
-        // _mod distinto, lo toma como cambio real y guarda. Ping-pong infinito.
-        // Medido: 37 ciclos y 17 guardados en 4 minutos con todo quieto. Ahora
-        // la comparacion ignora _mod, _ts y n, que son metadatos que se mueven
-        // solos. El snapshot guarda la version SIN esos campos, que es la que
-        // sirve para decidir si algo cambio de verdad.
-        var _sinMeta={};
-        Object.keys(c.item||{}).sort().forEach(function(cc){
-          if(cc==="_mod"||cc==="_ts"||cc==="n") return;
-          _sinMeta[cc]=c.item[cc];
-        });
-        var itemJs=_jsonEstable(_sinMeta);
-        if(_liveSnapshot[campo][id]===itemJs) return; // eco propio, nada que hacer
-        var idx=arr.findIndex(function(x){return x&&x[idF]===id;});
-        if(idx===-1){
-          arr.push(c.item);
-          if(campo==="brl"||campo==="vzla"||campo==="eeuu") _renumerarPorFecha(arr);
-        } else {
-          arr[idx]=c.item;
-        }
-        _liveSnapshot[campo][id]=itemJs;
-        huboCambioReal=true;
-      });
-      if(huboCambioReal){
-        _liveSnapshotDirty=true; _guardarLiveSnapshotCache();
-        saveData();
-        R();
-      }
-    }
-    ref.on("child_added",function(snap){ agregarAlBuffer("added",snap.val()); });
-    ref.on("child_changed",function(snap){ agregarAlBuffer("changed",snap.val()); });
-    ref.on("child_removed",function(snap){ agregarAlBuffer("removed",snap.val()); });
-  });
-}
-// Al cargar la app, sube todo lo que ya tenías (del Grupo 1 activo) a los
-// registros individuales en tiempo real, para que también quede visible
-// para otros dispositivos de aquí en adelante.
-function _migrarTodoALiveOps(){
-  if(!_fbDb) return;
-  _sincronizarTiempoRealTodo();
-}
 
-var _fbDb = null, _fbRef = null, _fbSaveTimer = null;
-var _fbMyWrite = false;   // (ya no se usa para suprimir ecos — ver _misTimestampsPropios abajo, más robusto ante varios guardados seguidos)
+var _fbSaveTimer = null;
 // ── Rastreo robusto de "esto lo escribí yo" ──────────────────────────
 // Antes había una sola bandera sí/no: si guardabas dos veces seguido muy
 // rápido, el eco del PRIMER guardado "gastaba" la bandera, y el eco del
@@ -16758,55 +16308,13 @@ var _fbMyWrite = false;   // (ya no se usa para suprimir ecos — ver _misTimest
 // parpadeo). Ahora se guarda una lista de los "_ts" que este mismo
 // dispositivo acaba de escribir — así, sin importar cuántos guardados
 // se hagan seguidos, cada uno se reconoce individualmente como propio.
-var _misTimestampsPropios = [];
-function _marcarComoMiPropioTs(ts){
-  if(!ts) return;
-  _misTimestampsPropios.push(ts);
-  var ahora=Date.now();
-  // Limpiar lo de hace más de 20s, para no acumular para siempre
-  _misTimestampsPropios=_misTimestampsPropios.filter(function(t){return ahora-t<20000;});
-}
-function _esMiPropioTs(ts){
-  return !!ts && _misTimestampsPropios.indexOf(ts)!==-1;
-}
-var _fbOnline = false;
-var _FB_REST = "https://adminbrl-default-rtdb.firebaseio.com/remesasBRL_v1.json"; // usada por fbSaveREST() y fbForceLoad-adyacentes — antes NO estaba definida
+
+
 
 // Pide a /fb/token el permiso para entrar a Firebase y entra con el.
 // Se llama al arrancar y otra vez cuando alguien entra con su correo, porque
 // la ruta exige sesion: sin sesion no hay token, y eso es deliberado.
-var _fbEntrando = false;
-function entrarAFirebaseConLaApi(){
-  try{
-    if(_fbEntrando) return;
-    if(!window.firebase || !firebase.auth) return;
-    var ses=_apiSesionGuardada();
-    if(!ses || !ses.t){
-      console.log("Firebase: todavia sin sesion de la app; se entra al iniciar sesion.");
-      return;
-    }
-    if(firebase.auth().currentUser) return;   // ya estamos dentro
-    _fbEntrando = true;
-    fetch("/fb/token",{headers:{Authorization:"Bearer "+ses.t},cache:"no-store"})
-      .then(function(r){ return r.json().then(function(d){ return {estado:r.status,datos:d}; }); })
-      .then(function(res){
-        if(res.estado!==200 || !res.datos || !res.datos.ok || !res.datos.token){
-          console.warn("Firebase: /fb/token no entrego permiso ("+res.estado+"): "+
-                       ((res.datos&&res.datos.error)||"sin detalle"));
-          _fbEntrando = false;
-          return;
-        }
-        return firebase.auth().signInWithCustomToken(res.datos.token).then(function(){
-          _fbEntrando = false;
-          console.log("Firebase: sesion iniciada con permiso de vida corta.");
-        });
-      })
-      .catch(function(e){
-        _fbEntrando = false;
-        console.warn("Firebase: no se pudo pedir el permiso:", e && e.message);
-      });
-  }catch(e){ _fbEntrando = false; }
-}
+
 
 // ══════════════════════════════════════════════════════
 // SEGURIDAD: autenticación con cuenta dedicada (email/contraseña) + interceptor de fetch
@@ -16824,276 +16332,7 @@ function entrarAFirebaseConLaApi(){
 // Cloudflare: el navegador le pide a /fb/token un permiso de vida corta, y
 // esa ruta solo lo entrega si quien pide tiene una sesion valida en la API.
 // ══════════════════════════════════════════════════════
-var _fbIdToken = "";
-function _fbAppendAuth(url){
-  if(!_fbIdToken) return url;
-  if(url.indexOf("adminbrl-default-rtdb.firebaseio.com")===-1) return url;
-  var sep = url.indexOf("?")>-1 ? "&" : "?";
-  return url + sep + "auth=" + _fbIdToken;
-}
-(function(){
-  if(typeof window==="undefined"||!window.fetch||window._fbFetchPatched) return;
-  window._fbFetchPatched = true;
-  var _origFetch = window.fetch.bind(window);
-  window.fetch = function(input, init){
-    try{
-      if(typeof input === "string"){ input = _fbAppendAuth(input); }
-    }catch(e){}
-    return _origFetch(input, init);
-  };
-})();
 
-function initFirebase(){
-  try{
-    if(!firebase||!firebase.initializeApp) return;
-    firebase.initializeApp(_FB_CONFIG);
-    _fbDb  = firebase.database();
-    _fbRef = _fbDb.ref("remesasBRL_v1");
-    // Sincronización en tiempo real — APAGADA POR COMPLETO. Causó pérdida
-    // de datos reales (operaciones de agosto). No se vuelve a tocar esto
-    // sin aprobación explícita.
-    // _iniciarListenersTiempoReal();
-    /*
-    try{
-      if(!localStorage.getItem("_liveOpsMigrado_v2")){
-        setTimeout(function(){
-          _migrarTodoALiveOps();
-          localStorage.setItem("_liveOpsMigrado_v2","1");
-        },3000);
-      }
-    }catch(e){}
-    */
-
-    // Login con la cuenta dedicada de la app — reemplaza al login anónimo
-    if(firebase.auth){
-      firebase.auth().onIdTokenChanged(function(user){
-        if(user){
-          user.getIdToken().then(function(tok){ _fbIdToken = tok; });
-        } else {
-          _fbIdToken = "";
-        }
-      });
-      entrarAFirebaseConLaApi();
-    }
-
-    // Indicador de conexión en topbar + bloqueo total de la app sin internet
-    _fbDb.ref(".info/connected").on("value", function(snap){
-      var estabaOnline=_fbOnline;
-      _fbOnline = snap.val()===true;
-      var dot = document.getElementById("fb-dot");
-      var badge=document.getElementById("sync-badge");
-      if(dot && !badge) dot.style.background = _fbOnline ? "#4ade80" : "#f87171";
-      // Si cambió el estado de conexión, re-renderizar para mostrar u
-      // ocultar el bloqueo de pantalla completa.
-      if(estabaOnline!==_fbOnline && typeof R==="function") R();
-    });
-
-    // Listener en tiempo real: cuando OTRO usuario guarda, actualizamos
-    _fbRef.on("value", function(snap){
-      _marcarConexionOK();
-      _FB_RECIBIDO = true;
-      var data = snap.val();
-      if(!data) return;
-      var tsRemoto = data._ts || 0;
-      // Si este _ts es uno que YO mismo acabo de escribir, es el eco de mi
-      // propio guardado — ignorarlo (sin importar cuántos guardados
-      // seguidos haya hecho, cada uno se reconoce por separado).
-      if(_esMiPropioTs(tsRemoto)) return;
-      var tsLocal  = S._ts || 0;
-      // Solo actualiza si los datos remotos son MÁS NUEVOS
-      if(tsRemoto > 0 && tsRemoto <= tsLocal) return;
-      // Protección: no aplicar si Firebase tiene MENOS operaciones que local
-      var fbOps=(data.brl||[]).length+(data.vzla||[]).length+(data.eeuu||[]).length;
-      var localOps=S.brl.length+S.vzla.length+S.eeuu.length;
-      if(fbOps > 0 && fbOps < localOps - 5){
-        console.warn("⚠️ Firebase tiene menos ops ("+fbOps+") que local ("+localOps+") — ignorando para proteger datos");
-        return;
-      }
-      // Comparar Firebase vs localStorage — ganar el que tenga MÁS datos
-      var fbBrl=(data.brl||[]).length, fbVzla=(data.vzla||[]).length, fbEeuu=(data.eeuu||[]).length;
-      var lsBrl=S.brl.length, lsVzla=S.vzla.length, lsEeuu=S.eeuu.length;
-      var fbTotal=fbBrl+fbVzla+fbEeuu;
-      // ARREGLO 6b: podar ANTES de comparar. Si este dispositivo arrastra
-      // registros ya borrados, no debe ganar la comparacion por tenerlos.
-      if(data && data._deletedMerge){
-        var _mio=S._deletedMerge||{};
-        Object.keys(data._deletedMerge).forEach(function(c){
-          _mio[c]=(_mio[c]||[]).concat(data._deletedMerge[c]||[]);
-          var vistos={};
-          _mio[c]=_mio[c].filter(function(x){
-            var kk=String(x&&x.id); if(vistos[kk])return false; vistos[kk]=1; return true;
-          });
-        });
-        S._deletedMerge=_mio;
-      }
-      if(_podarBorrados()){
-        lsBrl=(S.brl||[]).length; lsVzla=(S.vzla||[]).length; lsEeuu=(S.eeuu||[]).length;
-      }
-      // ARREGLO 9: huella del estado ANTES de fusionar, para saber despues si
-      // la fusion cambio algo y evitar el reenvio inutil.
-      var _huellaAntes=_huellaDatos();
-      // ARREGLO 6b: podar ANTES de comparar. Si este dispositivo arrastra
-      // registros ya borrados, no debe ganar la comparacion por tenerlos.
-      if(data && data._deletedMerge){
-        var _mio=S._deletedMerge||{};
-        Object.keys(data._deletedMerge).forEach(function(c){
-          _mio[c]=(_mio[c]||[]).concat(data._deletedMerge[c]||[]);
-          var vistos={};
-          _mio[c]=_mio[c].filter(function(x){
-            var kk=String(x&&x.id); if(vistos[kk])return false; vistos[kk]=1; return true;
-          });
-        });
-        S._deletedMerge=_mio;
-      }
-      if(_podarBorrados()){
-        lsBrl=(S.brl||[]).length; lsVzla=(S.vzla||[]).length; lsEeuu=(S.eeuu||[]).length;
-      }
-      var lsTotal=lsBrl+lsVzla+lsEeuu;
-
-      if(fbTotal >= lsTotal){
-        // Firebase tiene igual o más datos → usar Firebase
-        DATA_KEYS.forEach(function(k){
-          if(_apiManda(k)) return;
-          if(data[k]===undefined) return;
-          if(k==="config"){
-            S.config=_mergeConfigSafe(data.config,S.config||{});
-            return;
-          }
-          if(_MERGE_FIELDS.indexOf(k)!==-1 && Array.isArray(data[k])){
-            var idF=_MERGE_ID_FIELD[k]||"id";
-            var filtrado=data[k].filter(function(it){
-              return !(it && it[idF]!==undefined && _estaBorradoMerge(k,it[idF]));
-            });
-            // CRÍTICO: antes esto sobrescribía TODO el array de golpe
-            // (S[k]=filtrado), ignorando la marca "_mod" que cada registro
-            // trae para saber cuál versión es más nueva. Eso permitía que
-            // una cuenta recién actualizada en ESTE dispositivo (con saldo
-            // correcto) se revirtiera a una copia vieja que llegaba de
-            // Firebase desde otro dispositivo, solo porque ese snapshot
-            // tenía "igual o más operaciones" en total — sin importar que
-            // el campo puntual (el saldo de ESA cuenta) fuera más viejo.
-            // Ahora se pasa por la misma fusión por-registro que ya se usa
-            // al guardar, para que gane siempre el dato más nuevo campo a
-            // campo, no el array completo de un solo lado.
-            var fusionado=_mergeArrayById(filtrado, S[k], idF, tsRemoto, S._ts);
-            if(k==="brl"||k==="vzla"||k==="eeuu") _renumerarPorFecha(fusionado);
-            S[k]=fusionado;
-          } else if(k!=="_deletedMerge"){
-            // ARREGLO 6c (01/09/2026): _deletedMerge NUNCA se reemplaza. Si el
-            // recorrido lo asigna, las marcas recien creadas se pierden y las
-            // vencidas reviven. Sintoma que lo delato: una marca del 17/07, ya
-            // vencida por la regla de 30 dias, reaparecio despues de un import.
-            // Este bloque existe DOS veces (listener y poll REST): van los dos.
-            S[k]=data[k];
-          }
-        });
-        S._ts = tsRemoto;
-        if(S.tx){S.tx._tcLock=null;S.tx._tvLock=null;S.tx._amLock=null;S.tx._tdiaLock=null;S.tx._rtLock=null;}
-        if(S.txE){S.txE._tcLock=null;S.txE._tvLock=null;S.txE._amLock=null;S.txE._tdiaLock=null;}
-        migrarTipoEgresos(); // Corregir tipos después de recibir Firebase
-        sincronizarFIFOconCuentas();
-        _syncCapitalWithCuentas();
-      } else {
-        // localStorage tiene MÁS datos → fusionar: añadir lo que falte de Firebase a localStorage
-        // CRÍTICO: NO sobreescribir claves de FIFO/cuentas desde Firebase — local es más nuevo
-        var clavesNoSobreescribir=["inventarioUsdt","inventarioUsdt_cerrado","cuentas","movimientosCapital","reposiciones","deudas_paul","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta"];
-        DATA_KEYS.forEach(function(k){
-          if(_apiManda(k)) return;
-          if(data[k]===undefined) return;
-          if(k==="brl"||k==="vzla"||k==="eeuu"){
-            // Merge ambas fuentes
-            var localArr=S[k]||[];
-            var fbArr=data[k]||[];
-            var localIds=localArr.map(function(r){return r.d+"|"+(r.id||r.cl)+"|"+r.am;});
-            var _delList=S._deleted||[];
-            var toAdd=fbArr.filter(function(r){
-              var rk=r.d+"|"+(r.id||r.cl)+"|"+r.am;
-              return localIds.indexOf(rk)===-1&&_delList.indexOf(rk)===-1;
-            });
-            if(toAdd.length>0){
-              S[k]=localArr.concat(toAdd);
-              S[k].sort(function(a,b){var da=a.d.split("/"),db=b.d.split("/");return (parseInt(da[1])*100+parseInt(da[0]))-(parseInt(db[1])*100+parseInt(db[0]));});
-              S[k].forEach(function(r,i){r.n=i+1;});
-            }
-          } else if(k==="cuentas" && Array.isArray(data[k])){
-            // ARREGLO 23 (02/09/2026): "cuentas" estaba entre las claves donde el
-            // local SIEMPRE gana, asi que un dispositivo nunca aceptaba un saldo
-            // corregido en otro: conservaba el suyo para siempre. Detectado con
-            // un saldo corregido en la laptop que el telefono nunca tomaba.
-            // Ahora se fusiona cuenta por cuenta y gana la que tenga el _mod mas
-            // nuevo, igual que las remesas. Si ninguna tiene _mod, gana la local
-            // (comportamiento anterior, sin riesgo).
-            var _local=S[k]||[], _remoto=data[k]||[];
-            var _porId={};
-            _local.forEach(function(c){ if(c&&c.id!==undefined) _porId[String(c.id)]=c; });
-            _remoto.forEach(function(cr){
-              if(!cr||cr.id===undefined) return;
-              var _cl=_porId[String(cr.id)];
-              if(!_cl){ _porId[String(cr.id)]=cr; return; }
-              var _tl=typeof _cl._mod==="number"?_cl._mod:0;
-              var _tr=typeof cr._mod==="number"?cr._mod:0;
-              if(_tr>_tl) _porId[String(cr.id)]=cr;
-            });
-            S[k]=Object.keys(_porId).map(function(x){return _porId[x];});
-          } else if(clavesNoSobreescribir.indexOf(k)===-1 && k!=="_deletedMerge"){
-            // ARREGLO 6c: _deletedMerge queda fuera aqui tambien.
-            if(data[k]!==undefined) S[k]=data[k];
-          }
-          // Las claves en clavesNoSobreescribir se mantienen locales (local es más nuevo)
-        });
-        // ARREGLO 9 (01/09/2026): antes se guardaba SIEMPRE al recibir datos,
-        // aunque la fusion no hubiera cambiado nada. Ese guardado movia _ts, el
-        // otro dispositivo veia el _ts nuevo y se bajaba el bloque completo, y
-        // guardaba de vuelta: una pelota de ping-pong entre dispositivos que se
-        // repetia cada ~12 segundos. Es la causa del parpadeo con dos pestañas
-        // abiertas, y de buena parte del consumo. Ahora solo se guarda si la
-        // fusion cambio algo de verdad.
-        var _huellaDespues=_huellaDatos();
-        var _ahoraElse=Date.now();
-        if(_huellaDespues!==_huellaAntes){
-          try{
-            var _a=String(_huellaAntes).split("\n"), _d=String(_huellaDespues).split("\n");
-            var _difs=[];
-            for(var _i=0;_i<Math.max(_a.length,_d.length);_i++){
-              if(_a[_i]!==_d[_i]) _difs.push((_a[_i]||_d[_i]||"").split(":")[0]||("#"+_i));
-            }
-            console.log("🔎 Huella cambio en: "+_difs.join(", "));
-          }catch(e){}
-        }
-        if(_huellaDespues===_huellaAntes){
-          console.log("⏸️ Fusion sin cambios: no se reenvia a Firebase (evita el ping-pong).");
-        } else if(!window._ultimoSaveDataListener||(_ahoraElse-window._ultimoSaveDataListener)>5000){
-          window._ultimoSaveDataListener=_ahoraElse;
-          saveData();
-        }
-      }
-
-      // mergeBaseClients()/mergeBaseOps() DESACTIVADOS (29/08/2026): corrian en
-      // cada llegada de datos remotos y reponian lo borrado, anulando el filtro
-      // de S._deleted que se aplica 25 lineas mas arriba.
-
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(S));
-      // Auto-render: actualizar pantalla cuando llegan datos de OTRO usuario
-      // Debounce 300ms para no parpadear si llegan varios cambios seguidos
-      if(S.role){
-        clearTimeout(window._syncRenderTimer);
-        window._syncRenderTimer = setTimeout(function(){
-          R();
-          var dot2=document.getElementById("fb-dot");
-          if(dot2){dot2.style.background="#4ade80";dot2.title="✅ Sincronizado con Firebase";}
-          console.log("✅ Pantalla actualizada automáticamente desde Firebase");
-        }, 300);
-      }
-      console.log("🔄 Sync desde Firebase · ts:", tsRemoto);
-    }, function(err){
-      console.warn("Firebase listener error:", err.code, err.message);
-    });
-
-    console.log("✅ Firebase conectado");
-  }catch(e){
-    console.warn("Firebase init error:", e);
-  }
-}
 
 // Guarda en Firebase — por clave individual para evitar conflictos multi-usuario
 // ── Fusiona un array remoto con el local por campo id: conserva TODO lo local
@@ -17410,25 +16649,11 @@ function fbSave(obj){
   }, 800);
 }
 
-// El bloque va a los dos lados, y el envio a la API NO depende de que
-// Firebase este.
+// El bloque va a la API, y no hay otro lado.
 //
-// Antes fbSave arrancaba con "if(!_fbRef) return;" y el envio a la API
-// colgaba de _fbWriteNow, o sea del final del camino de Firebase. Si el SDK
-// no cargaba —una red que bloquea el CDN, o el dia que Firebase se apague—
-// la app dejaba de guardar en Mongo TAMBIEN, y sin decir nada: localStorage
-// se actualizaba, la pantalla mostraba el dato, y al servidor no llegaba.
-// Es la forma mas silenciosa posible de perder datos.
+// Un "undefined" a cualquier profundidad rompe el JSON entero; una pasada
+// por JSON.stringify los saca todos sin perseguirlos campo por campo.
 function _guardarBloque(obj){
-  if(_fbRef){
-    // Con Firebase: el camino de siempre, que al final manda a la API.
-    _fbMergeAndWrite(obj);
-    return;
-  }
-  // Sin Firebase: derecho a la API. Se hace el mismo trabajo previo que
-  // hace _fbWriteNow —sacar los "undefined" y correr el reloj—, salvo
-  // _marcarComoMiPropioTs, que existe solo para ignorar el eco del
-  // escuchador de Firebase: sin Firebase no hay escuchador ni eco.
   try{ obj = JSON.parse(JSON.stringify(obj)); }catch(e){}
   S._ts = obj._ts;
   enviarEstadoALaApi(obj);
@@ -17444,12 +16669,11 @@ function fbFlushNow(){
     var obj = _fbPendingObj;
     _fbPendingObj = null;
     console.log("⚡ Guardado forzado — la app se está cerrando/ocultando con cambios pendientes");
-    // IMPORTANTE: aquí NO se usa _fbMergeAndWrite (que primero trae el
-    // estado remoto antes de guardar) — ese camino necesita dos viajes de
-    // red seguidos, y el navegador puede cortar la conexión a mitad de
-    // camino al cerrar la pestaña, perdiendo el guardado por completo.
-    // Se usa el guardado directo con keepalive, que sí sobrevive el cierre.
-    _fbFlushWriteImmediate(obj);
+    // Sin keepalive a proposito: el bloque entero pasa los 64 KB que aceptan
+    // los navegadores para keepalive, y arriba de ese tope lo descartan en
+    // silencio. Sin keepalive no esta garantizado que sobreviva al cierre,
+    // pero muchas veces alcanza —y callarse seria peor.
+    _guardarBloque(obj);
   }
 }
 // Detecta cierre de pestaña/app, minimizar, cambiar de app en el celular, etc.
@@ -17486,77 +16710,7 @@ function _mergeConfigSafe(remoteCfg, localCfg){
   });
   return out;
 }
-function _fbMergeAndWrite(obj){
-  // Antes de escribir: traer el estado remoto y fusionar los campos críticos
-  // para no borrar cuentas/compromisos/egresos agregados desde otro dispositivo.
-  fetch(_FB_REST+"?ts="+Date.now())
-    .then(function(r){ return r.ok?r.json():null; })
-    .then(function(remote){
-      _FB_RECIBIDO = true;   // la lectura previa al guardado tambien cuenta
-      if(remote){
-        _MERGE_FIELDS.forEach(function(k){
-          if(_apiManda(k)) return;
-          if(remote[k]!==undefined){
-            var idF=_MERGE_ID_FIELD[k]||"id";
-            var remoteFiltrado=(remote[k]||[]).filter(function(it){
-              return !(it && it[idF]!==undefined && _estaBorradoMerge(k,it[idF]));
-            });
-            // OJO: se fusiona contra el estado VIVO actual (S[k]), no contra
-            // la foto vieja que se tomó cuando ESTE guardado empezó (obj[k]).
-            // Antes, si editabas otra cosa mientras este guardado todavía
-            // esperaba la respuesta de Firebase (así sea 1 segundo), esa
-            // edición nueva se perdía al llegar la respuesta, porque se
-            // pisaba TODO con la foto vieja. Usando S[k] (que ya incluye
-            // cualquier edición hecha mientras tanto) como base, nada de
-            // lo más reciente se pierde.
-            obj[k] = _mergeArrayById(remoteFiltrado, S[k], idF, remote._ts, obj._ts);
-            if(k==="brl"||k==="vzla"||k==="eeuu") _renumerarPorFecha(obj[k]);
-            S[k] = obj[k]; // reflejar la fusión también en el estado local/UI
-          }
-        });
-        if(remote.config!==undefined){
-          obj.config = _mergeConfigSafe(remote.config, S.config||{});
-          S.config = obj.config;
-        }
-      }
-    })
-    .catch(function(e){
-      console.warn("fbMergeAndWrite: no se pudo leer remoto antes de guardar, se guarda solo con datos locales:", e.message);
-    })
-    .finally(function(){
-      _fbWriteNow(obj);
-    });
-}
 
-function _fbWriteNow(obj){
-  // Firebase rechaza CUALQUIER guardado si algún campo (a cualquier nivel)
-  // trae "undefined" en vez de un valor real o null — y eso hace fallar
-  // TODO el guardado completo, dejando el teléfono y la PC desincronizados
-  // aunque le hayas dado "Guardar"/"Actualizar" en ambos. JSON.stringify
-  // elimina automáticamente cualquier propiedad en "undefined" (a
-  // cualquier profundidad), así que esto limpia el objeto antes de
-  // mandarlo, sin tener que perseguir campo por campo cuál quedó mal.
-  try{ obj = JSON.parse(JSON.stringify(obj)); }catch(e){}
-  _marcarComoMiPropioTs(obj._ts);
-  S._ts = obj._ts;
-  // FASE 7.2: el mismo bloque va tambien a la API, que fusiona por su cuenta.
-  // Va a ciegas, sin esperar: la app no cambia de comportamiento por esto.
-  enviarEstadoALaApi(obj);
-  if(_fbOnline){
-    // WebSocket disponible → guardar por SDK (tiempo real)
-    _fbRef.update(obj).then(function(){
-      _marcarConexionOK();
-      console.log("💾 Firebase SDK guardado (fusionado) · ts:", obj._ts);
-    }).catch(function(e){
-      console.warn("Firebase SDK error, usando REST:", e);
-      fbSaveREST(obj);
-    });
-  } else {
-    // WebSocket bloqueado → usar REST API (HTTPS)
-    console.log("📡 Firebase offline — guardando via REST API...");
-    fbSaveREST(obj);
-  }
-}
 
 
 // ── STARTUP ────────────────────────────────────────────
@@ -17714,16 +16868,6 @@ if(S._deletedMerge && S._deletedMerge.cuentas && S._deletedMerge.cuentas.length)
   }
 }
 
-// 4. Init Firebase — Firebase es la fuente de verdad
-(function tryInitFirebase(attempt){
-  if(typeof firebase !== "undefined"){
-    initFirebase();
-  } else if(attempt < 20){
-    setTimeout(function(){ tryInitFirebase(attempt+1); }, 250);
-  } else {
-    console.warn("Firebase SDK no disponible después de 5s — funcionando sin sync");
-  }
-})(0);
 
 // ── AUTO-SYNC: polling automático al cargar ───────────────────────────
 setTimeout(startAutoSync, 3000);
