@@ -1433,13 +1433,18 @@ function _dobleForzarEnvio(){
 }
 
 // Manda el mismo bloque que se acaba de guardar en Firebase.
+// Esto ya no es una copia para comparar: es LA escritura, y la unica. Sale
+// siempre y sin freno.
+//
+// Antes tenia dos candados que hoy son peligrosos: el interruptor
+// DOBLE_ESCRITURA y el freno de 3 minutos. Los dos tenian sentido cuando esto
+// era una copia en paralelo de lo que iba a Firebase; ahora apagarlo o
+// frenarlo significa que el dato no llega a ningun lado.
 function enviarEstadoALaApi(obj){
-  if(!DOBLE_ESCRITURA || _DOBLE_CORTADA) return;
   if(!apiSesionActiva() || _API_BLOQUEADA || !_API_ENTRO_POR_API) return;
-  // Con la fuente dada vuelta esto ya no es una copia para comparar: es LA
-  // escritura. Frenarla haría que los demás dispositivos tarden en ver el
-  // cambio. El freno vale solo mientras se compara.
-  if(FUENTE_API){ _dobleEnviarAhora(obj); return; }
+  _dobleEnviarAhora(obj);
+  return;
+  // Lo de abajo quedo sin uso: el freno solo valia mientras se comparaba.
   var falta = _DOBLE_INTERVALO - (Date.now() - _dobleUltimoEnvio);
   if(falta > 0){
     // Todavía no toca. Se guarda este bloque —pisando al anterior, porque el
@@ -1458,21 +1463,30 @@ function enviarEstadoALaApi(obj){
 }
 
 function _dobleEnviarAhora(obj){
-  if(!DOBLE_ESCRITURA || _DOBLE_CORTADA) return;
   if(!apiSesionActiva() || _API_BLOQUEADA || !_API_ENTRO_POR_API) return;
   _dobleUltimoEnvio = Date.now();
   try{
     apiFetch("/estado",{method:"PUT",body:{estado:obj,_ts:obj._ts}})
       .then(function(r){
+        // Estos tres se ANOTAN para que se vean en Ajustes, pero NO trancan
+        // el guardado: el proximo lo vuelve a intentar. Antes se trababan
+        // para el resto de la sesion, y con esta siendo la unica escritura
+        // eso significaba dejar de guardar hasta recargar la pagina —por un
+        // 401 pasajero, por ejemplo, que se arregla solo cuando la sesion se
+        // renueva.
         if(r.status===403){
-          // Este usuario no puede escribir. No es un fallo de la comparación:
-          // simplemente no hay nada que comparar desde acá.
-          _DOBLE_CORTADA="tu usuario no tiene permiso de edición en la API";
+          _DOBLE_CORTADA="tu usuario no tiene permiso de edición";
+          console.warn("Guardado rechazado: sin permiso de edición.");
           return null;
         }
-        if(r.status===401){ _DOBLE_CORTADA="la sesión venció"; return null; }
+        if(r.status===401){
+          _DOBLE_CORTADA="la sesión venció";
+          console.warn("Guardado rechazado: la sesión venció.");
+          return null;
+        }
         if(r.status===409){
-          _DOBLE_CORTADA="todavía no se corrió la carga inicial del estado";
+          _DOBLE_CORTADA="falta la carga inicial del estado";
+          console.warn("Guardado rechazado: falta la carga inicial (POST /estado/importar).");
           return null;
         }
         // Todo lo demás es pasajero: un arranque en frío de Railway, un 502
@@ -1487,6 +1501,7 @@ function _dobleEnviarAhora(obj){
       })
       .then(function(d){
         if(!d||!d.ok||!d.estado) return;
+        _DOBLE_CORTADA="";   // salio bien: se limpia el aviso anterior
         if(FUENTE_API){
           // Fase 7.3: el servidor es el arbitro. Lo que devuelve NO se
           // compara, se adopta: es el resultado de fusionar lo que mando
@@ -1572,8 +1587,9 @@ function rComparacionApi(){
   html+="<div style='display:flex;gap:8px;margin-top:12px;flex-wrap:wrap'>"+
     "<button class='btn-main btn-gray' style='flex:1;min-width:130px;font-size:12px;padding:10px' "+
       "onclick='_dobleOlvidar()'>🧹 Empezar de cero</button>"+
-    "<button class='btn-main btn-gray' style='flex:1;min-width:130px;font-size:12px;padding:10px' "+
-      "onclick='DOBLE_ESCRITURA=!DOBLE_ESCRITURA;R()'>"+(DOBLE_ESCRITURA?"⏸️ Apagar":"▶️ Encender")+"</button>"+
+    // El boton de apagar se retiro: cuando esto era una copia en paralelo,
+    // apagarlo no costaba nada. Ahora es la unica escritura, y apagarlo
+    // significa que la app deja de guardar sin avisar.
     "</div>";
   return html;
 }
