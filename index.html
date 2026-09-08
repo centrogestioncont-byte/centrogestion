@@ -4211,27 +4211,36 @@ function eliminarCuenta(id){
 }
 
 // ── Sistema de Auditoría ──
-var _auditRef=null;
-function _getAuditRef(){
-  if(_auditRef) return _auditRef;
-  try{if(typeof firebase!=="undefined"&&firebase.database){_auditRef=firebase.database().ref("audit_log");}}catch(e){}
-  return _auditRef;
-}
+// La auditoria vive en la API desde la migracion a Mongo. Antes se escribia
+// directo a un nodo de Firebase (audit_log) desde el navegador, y era lo
+// ULTIMO que le escribia: mientras siguiera asi, apagar Firebase significaba
+// perder el registro de quien hizo que.
+//
+// Ademas el navegador decia con que nombre firmaba cada accion. Ahora el
+// usuario y el rol los pone el servidor a partir de la sesion: nadie puede
+// firmar sus actos con el nombre de otro, que es justo lo que un log de
+// auditoria no puede permitir.
 function logAudit(accion,detalle){
   try{
-    var ref=_getAuditRef();
-    if(!ref) return;
-    var entry={ts:Date.now(),fecha:new Date().toLocaleString("es-VE",{timeZone:"America/Caracas"}),usuario:S.usuario||S.role||"?",role:S.role||"?",accion:accion,detalle:detalle||""};
-    ref.push(entry);
-    try{var lim=Date.now()-(90*24*60*60*1000);ref.orderByChild("ts").endAt(lim).limitToFirst(30).once("value",function(sn){sn.forEach(function(ch){ch.ref.remove();});});}catch(e2){}
+    if(!apiSesionActiva()) return;
+    // A ciegas y envuelto: no poder anotar una accion nunca puede impedirla.
+    apiFetch("/auditoria",{method:"POST",body:{accion:accion,detalle:detalle||""}})
+      .catch(function(){});
   }catch(e){}
 }
+
+// El detalle lleva texto que escribio una persona (nombres de clientes,
+// conceptos de egreso) y termina dentro de innerHTML. Se escapa: un cliente
+// llamado "<img onerror=...>" no tiene por que ejecutar nada en la pantalla
+// del que revisa la auditoria.
+function _escAud(t){
+  return String(t==null?"":t)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+}
+
 function rAuditoria(){
-  setTimeout(function(){
-    var ref=_getAuditRef();
-    if(!ref){var el=document.getElementById("aud-tabla");if(el)el.innerHTML="<div style='text-align:center;color:#aaa;padding:40px'>Firebase no disponible</div>";return;}
-    _cargarAudit();
-  },300);
+  setTimeout(_cargarAudit,300);
   return "<div class='sec'>"+
     "<div class='sec-title'>📋 Log de Auditoría — últimos 90 días</div>"+
     "<div style='display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap'>"+
@@ -4255,35 +4264,47 @@ function rAuditoria(){
     "</div>";
 }
 function _cargarAudit(){
-  var ref=_getAuditRef();
-  if(!ref){var el=document.getElementById("aud-tabla");if(el)el.innerHTML="<div style='text-align:center;color:#aaa;padding:40px'>Sin conexión a Firebase</div>";return;}
+  var el=document.getElementById("aud-tabla");
+  if(!apiSesionActiva()){
+    if(el) el.innerHTML="<div style='text-align:center;color:#aaa;padding:40px'>Entra con tu correo para ver la auditoría</div>";
+    return;
+  }
   var rF=document.getElementById("aud-role")?document.getElementById("aud-role").value:"";
   var tF=document.getElementById("aud-tipo")?document.getElementById("aud-tipo").value:"";
-  ref.orderByChild("ts").limitToLast(300).once("value",function(snap){
-    var entries=[];
-    snap.forEach(function(c){entries.push(c.val());});
-    entries.reverse();
-    if(rF) entries=entries.filter(function(e){return e.role===rF;});
-    if(tF) entries=entries.filter(function(e){return (e.accion||"").indexOf(tF)>=0;});
-    var colores={LOGIN:"#D6F5E3",LOGOUT:"#f5f5f5",REMESA:"#DDEEFF",EGRESO:"#FFF8DC",COBRO:"#E8F0FF",CONFIG:"#F0E8FF",BORRAR:"#FDECEA"};
-    var html="";
-    if(!entries.length){
-      html="<div style='text-align:center;color:#aaa;padding:40px;font-size:13px'>Sin registros aún — las acciones aparecerán aquí desde ahora</div>";
-    } else {
-      html="<div class='tw'><table><thead><tr><th>FECHA/HORA</th><th>USUARIO</th><th>ACCIÓN</th><th>DETALLE</th></tr></thead><tbody>";
-      entries.forEach(function(e){
-        var tipo=(e.accion||"").split("_")[0];
-        var bg=colores[tipo]||"#f9f9f9";
-        html+="<tr style='background:"+bg+"'><td style='font-size:11px;white-space:nowrap;color:#555'>"+e.fecha+"</td>"+
-          "<td><span style='background:#1a3558;color:#fff;padding:2px 8px;border-radius:5px;font-size:10px;font-weight:700'>"+e.usuario+"</span></td>"+
-          "<td style='font-size:11px;font-weight:700;color:#1a1a2e'>"+e.accion+"</td>"+
-          "<td style='font-size:11px;color:#555'>"+e.detalle+"</td></tr>";
-      });
-      html+="</tbody></table></div>";
-    }
-    var el=document.getElementById("aud-tabla");
-    if(el) el.innerHTML=html;
-  });
+  // Los filtros van en la consulta: filtrar del lado del servidor evita
+  // bajarse 300 entradas para mostrar tres.
+  var q=[];
+  if(rF) q.push("role="+encodeURIComponent(rF));
+  if(tF) q.push("tipo="+encodeURIComponent(tF));
+  apiFetch("/auditoria"+(q.length?"?"+q.join("&"):""))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(!d||!d.ok){
+        if(el) el.innerHTML="<div style='text-align:center;color:#aaa;padding:40px'>No se pudo leer la auditoría</div>";
+        return;
+      }
+      var entries=d.entradas||[];
+      var colores={LOGIN:"#D6F5E3",LOGOUT:"#f5f5f5",REMESA:"#DDEEFF",EGRESO:"#FFF8DC",COBRO:"#E8F0FF",CONFIG:"#F0E8FF",BORRAR:"#FDECEA"};
+      var html="";
+      if(!entries.length){
+        html="<div style='text-align:center;color:#aaa;padding:40px;font-size:13px'>Sin registros aún — las acciones aparecerán aquí desde ahora</div>";
+      } else {
+        html="<div class='tw'><table><thead><tr><th>FECHA/HORA</th><th>USUARIO</th><th>ACCIÓN</th><th>DETALLE</th></tr></thead><tbody>";
+        entries.forEach(function(e){
+          var tipo=(e.accion||"").split("_")[0];
+          var bg=colores[tipo]||"#f9f9f9";
+          html+="<tr style='background:"+bg+"'><td style='font-size:11px;white-space:nowrap;color:#555'>"+_escAud(e.fecha)+"</td>"+
+            "<td><span style='background:#1a3558;color:#fff;padding:2px 8px;border-radius:5px;font-size:10px;font-weight:700'>"+_escAud(e.usuario)+"</span></td>"+
+            "<td style='font-size:11px;font-weight:700;color:#1a1a2e'>"+_escAud(e.accion)+"</td>"+
+            "<td style='font-size:11px;color:#555'>"+_escAud(e.detalle)+"</td></tr>";
+        });
+        html+="</tbody></table></div>";
+      }
+      if(el) el.innerHTML=html;
+    })
+    .catch(function(){
+      if(el) el.innerHTML="<div style='text-align:center;color:#aaa;padding:40px'>Sin conexión con el servidor</div>";
+    });
 }
 
 // ── Cats config ──
