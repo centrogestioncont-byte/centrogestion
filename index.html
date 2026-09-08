@@ -1307,7 +1307,6 @@ function sondearApi(opciones){
 // calla y sigue.
 // ══════════════════════════════════════════════════════════════════════
 
-var DOBLE_ESCRITURA = true;             // el interruptor, por si hay que apagarla
 var _DOBLE_KEY = "cg_doble_v1";
 var _DOBLE_MAX = 30;                    // cuántas comparaciones se guardan
 // El registro comparte localStorage con los datos, el espejo de clientes y
@@ -1412,59 +1411,22 @@ function _dobleComparar(delServidor, mando){
 // un debounce de 800 ms. Sin freno, una tarde de trabajo sube decenas de
 // megabytes por una comparación que no necesita tanta frecuencia.
 //
-// El freno no puede ser "descartar": el bloque que se manda es también lo
-// que mantiene al día la copia del servidor, y esa copia es de la que se va
-// a leer cuando se dé vuelta la fuente. Así que lo que se saltea NO se
-// pierde: queda pendiente y sale solo cuando el intervalo se cumple.
-//
-// Como cada envío lleva el bloque entero, un solo envío pone al servidor
-// completamente al día. El atraso máximo es el intervalo, nunca un hueco.
-var _DOBLE_INTERVALO = 3 * 60 * 1000;   // 3 minutos entre envíos
-var _dobleUltimoEnvio = 0;
-var _doblePendiente = null;             // el último bloque que quedó esperando
-var _dobleTimer = null;
-
-// Saca lo pendiente ya mismo, sin esperar el intervalo. Se usa antes de dar
-// vuelta la fuente: ahí el servidor tiene que estar al día, no casi al día.
-function _dobleForzarEnvio(){
-  if(_dobleTimer){ clearTimeout(_dobleTimer); _dobleTimer=null; }
-  var obj=_doblePendiente; _doblePendiente=null;
-  if(obj) _dobleEnviarAhora(obj);
-}
-
 // Manda el mismo bloque que se acaba de guardar en Firebase.
 // Esto ya no es una copia para comparar: es LA escritura, y la unica. Sale
 // siempre y sin freno.
 //
-// Antes tenia dos candados que hoy son peligrosos: el interruptor
-// DOBLE_ESCRITURA y el freno de 3 minutos. Los dos tenian sentido cuando esto
-// era una copia en paralelo de lo que iba a Firebase; ahora apagarlo o
-// frenarlo significa que el dato no llega a ningun lado.
+// Antes tenia dos candados que hoy serian peligrosos: un interruptor para
+// apagarla y un freno de 3 minutos entre envios. Los dos tenian sentido
+// cuando esto era una copia en paralelo de lo que iba a Firebase; con esta
+// siendo la unica escritura, apagarla o frenarla significa que el dato no
+// llega a ningun lado. Los dos se retiraron.
 function enviarEstadoALaApi(obj){
   if(!apiSesionActiva() || _API_BLOQUEADA || !_API_ENTRO_POR_API) return;
-  _dobleEnviarAhora(obj);
-  return;
-  // Lo de abajo quedo sin uso: el freno solo valia mientras se comparaba.
-  var falta = _DOBLE_INTERVALO - (Date.now() - _dobleUltimoEnvio);
-  if(falta > 0){
-    // Todavía no toca. Se guarda este bloque —pisando al anterior, porque el
-    // más nuevo ya contiene lo que traía el viejo— y se programa la salida.
-    _doblePendiente = obj;
-    if(!_dobleTimer){
-      _dobleTimer = setTimeout(function(){
-        _dobleTimer = null;
-        var pend = _doblePendiente; _doblePendiente = null;
-        if(pend) _dobleEnviarAhora(pend);
-      }, falta);
-    }
-    return;
-  }
   _dobleEnviarAhora(obj);
 }
 
 function _dobleEnviarAhora(obj){
   if(!apiSesionActiva() || _API_BLOQUEADA || !_API_ENTRO_POR_API) return;
-  _dobleUltimoEnvio = Date.now();
   try{
     apiFetch("/estado",{method:"PUT",body:{estado:obj,_ts:obj._ts}})
       .then(function(r){
@@ -1531,7 +1493,6 @@ function rComparacionApi(){
   var pct=reg.comparadas?Math.round((reg.comparadas-reg.conDiferencia)/reg.comparadas*1000)/10:0;
   var estado, color;
   if(_DOBLE_CORTADA){ estado="⏸️ Detenida: "+_DOBLE_CORTADA; color="#B87800"; }
-  else if(!DOBLE_ESCRITURA){ estado="⏸️ Apagada"; color="#888"; }
   else if(!reg.comparadas){ estado="⏳ Sin guardados comparados todavía"; color="#888"; }
   else if(reg.conDiferencia){ estado="⚠️ Hay diferencias que revisar"; color="#c0392b"; }
   else { estado="✅ Los dos motores deciden igual"; color="#0f6e3a"; }
