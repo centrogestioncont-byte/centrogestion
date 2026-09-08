@@ -2785,8 +2785,7 @@ function saveCuenta(){
   var nueva={id:"c"+Date.now(),nombre:nc.nombre.trim(),tipo:nc.tipo||"fiat",moneda:nc.moneda,
     institucion:nc.institucion||nc.nombre.trim(),saldo:parseFloat(nc.saldo)||0,operador:nc.operador||"general",activa:true};
   S.cuentas.push(nueva);
-  S.capital=S.capital||[];
-  S.capital.push({id:_newUid(),nombre:nueva.nombre,tipo:nueva.tipo,moneda:nueva.moneda,saldo:nueva.saldo,nota:"",cuentaId:nueva.id});
+  _asegurarFilaCapital(nueva);
   S.nCuenta={nombre:"",tipo:"fiat",moneda:"USD",institucion:"",saldo:0,operador:"general"};
   saveData();R();
   alert("✅ Cuenta '"+nueva.nombre+"' agregada.");
@@ -3138,7 +3137,10 @@ function recuperarCuentasConocidas(){
     S.cuentas.push(nueva);
     // Igual que saveCuenta(): también debe existir en S.capital para que
     // aparezca correctamente en Capital & Reportes / Inventario USDT.
-    S.capital.push({id:_newUid(),nombre:nueva.nombre,tipo:nueva.tipo,moneda:nueva.moneda,saldo:nueva.saldo,nota:"",cuentaId:nueva.id});
+    // Por _asegurarFilaCapital y no con un push directo: este boton se
+    // aprieta justamente cuando faltan cuentas, y con el push suelto cada
+    // corrida dejaba una tanda nueva de duplicados.
+    _asegurarFilaCapital(nueva);
   });
   existentesActualizar.forEach(function(e){
     e.actual.saldo=e.conocida.saldo;
@@ -3152,6 +3154,46 @@ function recuperarCuentasConocidas(){
   saveData();R();
   alert("✅ Listo — "+faltantes.length+" nueva(s) agregada(s), "+existentesActualizar.length+" actualizada(s) con el saldo correcto.");
 }
+// ── Una cuenta, UNA fila en capital ──────────────────────────────────────
+// Cada cuenta del negocio tiene que tener exactamente una fila en S.capital.
+// Antes, cada camino que creaba una cuenta empujaba una fila nueva con
+// _newUid() sin fijarse si ya existia. Como capital se fusiona por "id" y
+// cada corrida generaba ids distintos, la fusion las tomaba por registros
+// nuevos y las unia entre dispositivos en vez de reconocerlas. Asi se
+// acumularon doce tandas de duplicados, y como getCapitalBalance() suma
+// S.capital entero sin deduplicar, el saldo quedo inflado —en el export del
+// 07/09, VES daba 311.350 cuando lo real eran 85.721.
+function _capitalDeCuenta(cuenta){
+  if(!Array.isArray(S.capital)) return null;
+  // Primero por cuentaId, que es el vinculo explicito.
+  var porId=S.capital.find(function(k){ return k.cuentaId && k.cuentaId===cuenta.id; });
+  if(porId) return porId;
+  // Y si no, por nombre+moneda: las filas creadas antes de que existiera
+  // cuentaId no lo tienen, y son justo las que se venian duplicando.
+  var n=String(cuenta.nombre||"").trim().toUpperCase();
+  return S.capital.find(function(k){
+    return String(k.nombre||"").trim().toUpperCase()===n && k.moneda===cuenta.moneda;
+  }) || null;
+}
+
+// Deja la fila de capital de esta cuenta al dia. Si ya existe la actualiza;
+// solo crea una cuando de verdad no habia ninguna.
+function _asegurarFilaCapital(cuenta){
+  S.capital=S.capital||[];
+  var fila=_capitalDeCuenta(cuenta);
+  if(fila){
+    fila.nombre=cuenta.nombre;
+    fila.moneda=cuenta.moneda;
+    fila.saldo=cuenta.saldo;
+    fila.cuentaId=cuenta.id;   // deja el vinculo puesto para la proxima vez
+    return fila;
+  }
+  fila={id:_newUid(),nombre:cuenta.nombre,tipo:cuenta.tipo,moneda:cuenta.moneda,
+        saldo:cuenta.saldo,nota:"",cuentaId:cuenta.id};
+  S.capital.push(fila);
+  return fila;
+}
+
 function saveNewCuenta(){
   var f=S.nCap;
   if(!f.nombre||!f.moneda){alert("Completa nombre y moneda.");return;}
