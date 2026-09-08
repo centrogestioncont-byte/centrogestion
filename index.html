@@ -1270,8 +1270,8 @@ function _aplicarEstadoDeApi(estado, ts){
 }
 
 // Trae el bloque completo del servidor.
-function cargarEstadoDeApi(){
-  if(!FUENTE_API) return Promise.resolve(false);
+function cargarEstadoDeApi(opciones){
+  if(!FUENTE_API && !(opciones && opciones.forzar)) return Promise.resolve(false);
   if(!apiSesionActiva() || _API_BLOQUEADA || !_API_ENTRO_POR_API) return Promise.resolve(false);
   return apiFetch("/estado").then(function(r){
     if(!r.ok) return false;
@@ -1290,8 +1290,13 @@ function cargarEstadoDeApi(){
 // El sondeo, contra la API: primero el resumen —que trae el _ts y unos
 // conteos— y solo si cambió se baja el bloque. Es la misma idea del sondeo
 // de Firebase, que pedía el _ts suelto antes de bajar nada.
-function sondearApi(){
-  if(!FUENTE_API) return;
+// "forzar" lo usa el camino de Firebase cuando Firebase no contesta: en ese
+// caso se sondea la API aunque este dispositivo todavia no tenga dada vuelta
+// la fuente. Los dos lados tienen lo mismo mientras dura la doble escritura,
+// asi que traer de la API es correcto —y es mucho mejor que quedarse sin
+// sincronizar o, peor, tapado por la pantalla de "sin internet".
+function sondearApi(opciones){
+  if(!FUENTE_API && !(opciones && opciones.forzar)) return;
   if(typeof document!=="undefined" && document.hidden) return;
   if(!apiSesionActiva() || _API_BLOQUEADA || !_API_ENTRO_POR_API) return;
   apiFetch("/estado/resumen").then(function(r){
@@ -1301,7 +1306,7 @@ function sondearApi(){
     if(!d || !d.ok) return;
     _marcarConexionOK();
     if(!(d._ts > _ESTADO_TS)) return;    // nada nuevo: no se baja el bloque
-    return cargarEstadoDeApi();
+    return cargarEstadoDeApi(opciones);
   }).catch(function(){ _marcarConexionFallo(); });
 }
 
@@ -8243,7 +8248,17 @@ function fbCheckREST(){
         console.log("✅ Auto-sync aplicado correctamente.");
       }
     })
-    .catch(function(e){console.warn("Auto-sync check error:", e.message); _marcarConexionFallo();});
+    .catch(function(e){
+      // Firebase no contesta. Antes esto contaba derecho como "no hay
+      // internet", y a los tres intentos la app se tapaba entera con la
+      // pantalla de sin conexion —con internet andando perfecto—. El dia que
+      // Firebase se apague, cada dispositivo que no tenga la fase 7.3
+      // encendida quedaria inutilizable de esa forma.
+      // Ahora se le pregunta a la API: si contesta, hay internet, y ademas
+      // hay de donde sincronizar.
+      console.warn("Firebase no contesta ("+e.message+"), se cae a la API.");
+      sondearApi({forzar:true});
+    });
 }
 
 // ── AUTO-POLL: revisar Firebase cada 8 segundos automáticamente ──────
@@ -8541,49 +8556,54 @@ var _saveCount = (function(){ try{ return parseInt(localStorage.getItem("_saveCo
 function _registrarRespaldo(info){
   try{ localStorage.setItem("_backup_last_v1", JSON.stringify(info)); }catch(e){}
 }
+// El respaldo ya no lo escribe el navegador en Firebase.
+//
+// Antes copiaba el bloque entero a tres nodos rotativos y despues los releia
+// para comprobar que lo escrito era legible. Hacia falta porque el PUT
+// reemplazaba el nodo: si salia mal, no quedaba nada. Y ademas se iba a
+// apagar con Firebase, en silencio: "if(!_fbDb) return".
+//
+// Hoy la base es Mongo, cada guardado escribe clave por clave con fusion del
+// lado del servidor, y el servidor devuelve lo que quedo guardado. Copiar eso
+// a otro rincon de la MISMA base no protege de nada.
+//
+// Lo que si sigue haciendo falta es comprobar que el servidor tiene de verdad
+// lo que este dispositivo cree haberle mandado. Eso es lo que hace ahora. El
+// archivo descargable sale del boton Restaurar, que baja GET /respaldo.
 function autoBackup(){
-  if(!_fbDb) return;
   try{
-    // ── Regla absoluta 1: nunca escribir un respaldo vacío ──────────────
-    // Si la memoria está en 0 registros, escribir pisaría el respaldo bueno
-    // con nada. Es la hipótesis de por qué los respaldos aparecieron vacíos.
-    var _total=0;
-    DATA_KEYS.forEach(function(k){ if(Array.isArray(S[k])) _total+=S[k].length; });
-    if(_total===0){
-      console.warn("🛑 Respaldo CANCELADO: 0 registros en memoria. No se pisa el respaldo anterior.");
+    var total=0;
+    DATA_KEYS.forEach(function(k){ if(Array.isArray(S[k])) total+=S[k].length; });
+    if(total===0){
+      console.warn("🛑 Verificacion salteada: 0 registros en memoria.");
       _registrarRespaldo({ok:false,motivo:"0 registros en memoria",fecha:new Date().toLocaleString("es-VE"),ts:Date.now()});
       return;
     }
-    // 3 slots rotativos: backup_0, backup_1, backup_2
-    var slot=(_saveCount||0)%3;
-    var obj={_ts:Date.now(),_fecha:new Date().toLocaleString("es-VE"),_slot:slot,_total:_total};
-    _volcarDatos(obj);
-    _fbDb.ref("remesasBRL_backup_"+slot).set(obj).then(function(){
-      // ── Regla absoluta 2: releer y verificar que lo escrito es legible ──
-      return _fbDb.ref("remesasBRL_backup_"+slot).get();
-    }).then(function(snap){
-      var d=snap&&snap.val();
-      var leido=0;
-      if(d) DATA_KEYS.forEach(function(k){ if(Array.isArray(d[k])) leido+=d[k].length; });
-      var ok=!!(d && d._ts===obj._ts && leido===_total);
-      if(ok){
-        console.log("🔒 Respaldo slot "+slot+" VERIFICADO — "+obj._fecha+" ("+_total+" registros)");
-      }else{
-        console.warn("⚠️ Respaldo slot "+slot+" NO verificado: se escribieron "+_total+" registros y se releyeron "+leido);
-      }
-      // navigator.onLine: sin esto la etiqueta miente. El .get() de RTDB cae al
-      // caché local si el dispositivo está offline, y justo después de un .set()
-      // ese caché tiene el valor sí o sí — daría "verificado" para un respaldo
-      // que nunca salió del teléfono.
-      _registrarRespaldo({ok:ok,online:navigator.onLine,slot:slot,escritos:_total,leidos:leido,fecha:obj._fecha,ts:obj._ts});
-    }).catch(function(e){
-      console.warn("⚠️ Respaldo falló:",e);
-      _registrarRespaldo({ok:false,motivo:String((e&&e.message)||e),fecha:obj._fecha,ts:obj._ts});
-    });
-    // También mantener el backup principal (compatibilidad con Restaurar)
-    _fbDb.ref("remesasBRL_backup").set(obj).catch(function(e){console.warn("⚠️ Respaldo principal falló:",e);});
+    if(!apiSesionActiva()) return;
+    apiFetch("/estado/resumen")
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        var fecha=new Date().toLocaleString("es-VE");
+        if(!d||!d.ok){
+          _registrarRespaldo({ok:false,motivo:"el servidor no contesto el resumen",fecha:fecha,ts:Date.now()});
+          return;
+        }
+        var c=d.conteo||{}, enServidor=0;
+        DATA_KEYS.forEach(function(k){ if(Array.isArray(S[k])) enServidor+=(c[k]||0); });
+        // El servidor puede tener MAS que este dispositivo —otro cargo algo
+        // que todavia no bajo— y eso esta bien. Preocupa que tenga MENOS:
+        // seria un guardado que no llego.
+        var ok = enServidor >= total;
+        if(ok) console.log("🔒 Verificado contra el servidor — "+fecha+" (local "+total+", servidor "+enServidor+")");
+        else   console.warn("⚠️ El servidor tiene MENOS registros que este dispositivo: local "+total+", servidor "+enServidor);
+        _registrarRespaldo({ok:ok,online:navigator.onLine,escritos:total,leidos:enServidor,fecha:fecha,ts:d._ts||Date.now()});
+      })
+      .catch(function(e){
+        _registrarRespaldo({ok:false,motivo:String((e&&e.message)||e),fecha:new Date().toLocaleString("es-VE"),ts:Date.now()});
+      });
   }catch(e){ console.warn("⚠️ autoBackup error:",e); }
 }
+
 function restoreFromBackup(){
   if(!_fbDb){alert("Sin conexión a Firebase.");return;}
   var slots=["remesasBRL_backup","remesasBRL_backup_0","remesasBRL_backup_1","remesasBRL_backup_2"];
@@ -9913,9 +9933,16 @@ function registrarMovimientoCapital(opts){
 // aunque sí haya internet). Esto es lo que decide si se bloquea la pantalla.
 var _hayConexionReal = true; // optimista al inicio — se corrige rápido si falla
 var _fallosConsecutivosRest = 0;
+function _pintarPuntoConexion(){
+  var dot=document.getElementById("fb-dot");
+  if(!dot) return;
+  dot.style.background = _hayConexionReal ? "#4ade80" : "#f87171";
+  dot.title = _hayConexionReal ? "Conectado con el servidor" : "Sin conexión con el servidor";
+}
 function _marcarConexionOK(){
   _fallosConsecutivosRest = 0;
   if(!_hayConexionReal){ _hayConexionReal = true; if(typeof R==="function") R(); }
+  _pintarPuntoConexion();
 }
 function _marcarConexionFallo(){
   _fallosConsecutivosRest++;
@@ -9925,6 +9952,7 @@ function _marcarConexionFallo(){
     _hayConexionReal = false;
     if(typeof R==="function") R();
   }
+  _pintarPuntoConexion();
 }
 function _rOfflineBlock(){
   return "<div style='position:fixed;inset:0;background:#0f1c2e;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:32px;z-index:99999;font-family:inherit'>"+
@@ -10112,7 +10140,7 @@ function rMain(){
       "<div style='width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center;font-size:17px'>"+ro.ic+"</div>"+
       "<div><div style='font-weight:700;font-size:14px'>"+(S.usuario?S.usuario+" ("+ro.label+")":ro.label)+" · Centro de Gestión</div>"+
       "<div style='font-size:11px;opacity:.85'>"+sub+"</div></div></div>"+
-    "<div style='display:flex;align-items:center;gap:8px'>"+"<div style='display:flex;align-items:center;gap:6px'>"+"<div id='fb-dot' title='Firebase' style='width:9px;height:9px;border-radius:50%;background:#f87171;border:1.5px solid rgba(255,255,255,.5)'></div>"+(S.role==="admin"?"<button onclick='st(\"config_admin\")' title='Configuración Admin' style='background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);color:#fff;padding:5px 9px;border-radius:7px;font-size:13px;cursor:pointer'>⚙️</button>":"")+"<button onclick='salir()' style='background:rgba(255,255,255,.2);border:none;color:#fff;padding:6px 13px;border-radius:8px;font-weight:600;cursor:pointer'>Salir</button>"+"</div>"+"</div>"+
+    "<div style='display:flex;align-items:center;gap:8px'>"+"<div style='display:flex;align-items:center;gap:6px'>"+"<div id='fb-dot' title='"+(_hayConexionReal?"Conectado con el servidor":"Sin conexión con el servidor")+"' style='width:9px;height:9px;border-radius:50%;background:"+(_hayConexionReal?"#4ade80":"#f87171")+";border:1.5px solid rgba(255,255,255,.5)'></div>"+(S.role==="admin"?"<button onclick='st(\"config_admin\")' title='Configuración Admin' style='background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);color:#fff;padding:5px 9px;border-radius:7px;font-size:13px;cursor:pointer'>⚙️</button>":"")+"<button onclick='salir()' style='background:rgba(255,255,255,.2);border:none;color:#fff;padding:6px 13px;border-radius:8px;font-weight:600;cursor:pointer'>Salir</button>"+"</div>"+"</div>"+
   "</div><div class='panel' style='flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;-webkit-overflow-scrolling:touch'>"+
     "<div class='navbar3'>"+
       "<button class='menubtn' onclick='document.getElementById(\"navMenuWrap\").classList.add(\"show\")'>☰ Menú</button>"+
