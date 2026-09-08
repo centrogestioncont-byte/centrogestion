@@ -7549,13 +7549,25 @@ function _fbFlushWriteImmediate(obj){
   // No se pierde nada por esperar: el dato ya quedo en localStorage y viaja
   // en el proximo guardado. Y si Firebase esta caido, este PUT tampoco
   // habria llegado.
+  try{ obj = JSON.parse(JSON.stringify(obj)); }catch(e){}
+  S._ts = obj._ts;
+  // La API primero, y pase lo que pase con Firebase. Este camino no la
+  // llamaba nunca: al cerrar la pestaña con cambios pendientes, lo ultimo
+  // que se hizo se guardaba en Firebase y no en Mongo.
+  //
+  // Sin keepalive a proposito: el bloque entero pasa los 64 KB que aceptan
+  // los navegadores para keepalive, y arriba de ese tope lo descartan en
+  // silencio. Sin keepalive no esta garantizado que sobreviva al cierre,
+  // pero muchas veces alcanza —y callarse seria peor.
+  try{ enviarEstadoALaApi(obj); }catch(e){}
   if(!_FB_RECIBIDO){
-    console.warn("\ud83d\uded1 Guardado por PUT cancelado: todavia no se leyo Firebase en esta sesion.");
+    // Candado de Firebase: un PUT REEMPLAZA el nodo entero, no fusiona.
+    // Publicar la foto de este dispositivo sin haber leido lo que hay del
+    // otro lado borra lo que cargaron los demas.
+    console.warn("\ud83d\uded1 Guardado por PUT a Firebase cancelado: todavia no se leyo Firebase en esta sesion.");
     return;
   }
-  try{ obj = JSON.parse(JSON.stringify(obj)); }catch(e){}
   _marcarComoMiPropioTs(obj._ts);
-  S._ts = obj._ts;
   try{
     fetch(_FB_REST, {
       method:"PUT",
@@ -17361,14 +17373,37 @@ function _renumerarPorFecha(arr){
 var _fbPendingObj = null; // referencia al último guardado pendiente, para poder forzarlo si la app se cierra/oculta antes del debounce
 
 function fbSave(obj){
-  if(!_fbRef) return;
   _fbPendingObj = obj;
   if(_fbSaveTimer) clearTimeout(_fbSaveTimer);
   _fbSaveTimer = setTimeout(function(){
     _fbSaveTimer = null;
     _fbPendingObj = null;
-    _fbMergeAndWrite(obj);
+    _guardarBloque(obj);
   }, 800);
+}
+
+// El bloque va a los dos lados, y el envio a la API NO depende de que
+// Firebase este.
+//
+// Antes fbSave arrancaba con "if(!_fbRef) return;" y el envio a la API
+// colgaba de _fbWriteNow, o sea del final del camino de Firebase. Si el SDK
+// no cargaba —una red que bloquea el CDN, o el dia que Firebase se apague—
+// la app dejaba de guardar en Mongo TAMBIEN, y sin decir nada: localStorage
+// se actualizaba, la pantalla mostraba el dato, y al servidor no llegaba.
+// Es la forma mas silenciosa posible de perder datos.
+function _guardarBloque(obj){
+  if(_fbRef){
+    // Con Firebase: el camino de siempre, que al final manda a la API.
+    _fbMergeAndWrite(obj);
+    return;
+  }
+  // Sin Firebase: derecho a la API. Se hace el mismo trabajo previo que
+  // hace _fbWriteNow —sacar los "undefined" y correr el reloj—, salvo
+  // _marcarComoMiPropioTs, que existe solo para ignorar el eco del
+  // escuchador de Firebase: sin Firebase no hay escuchador ni eco.
+  try{ obj = JSON.parse(JSON.stringify(obj)); }catch(e){}
+  S._ts = obj._ts;
+  enviarEstadoALaApi(obj);
 }
 
 // ── Fuerza el guardado YA MISMO si hay uno pendiente — se llama al cerrar,
