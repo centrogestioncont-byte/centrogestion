@@ -1372,13 +1372,23 @@ function _dobleComparar(delServidor, mando){
       b.forEach(function(r){ if(r&&r[idF]!==undefined&&r[idF]!==null) idsB[r[idF]]=r; });
       var soloAca=Object.keys(idsA).filter(function(id){ return !(id in idsB); });
       var soloAlla=Object.keys(idsB).filter(function(id){ return !(id in idsA); });
+      // El "n" de las REMESAS lo pone la renumeración por fecha en los dos
+      // lados; no es un dato que alguien haya escrito, así que no cuenta.
+      // Pero solo en las remesas: en "clientes", "n" es el NOMBRE. Borrarlo
+      // en todas las claves dejaba al comparador ciego a un cliente
+      // renombrado —justo una de las cosas que esta comparación existe para
+      // detectar—. La renumeración corre para brl, vzla y eeuu y nada más.
+      var esRemesa = (k==="brl"||k==="vzla"||k==="eeuu");
       var distintos=Object.keys(idsA).filter(function(id){
         if(!(id in idsB)) return false;
-        // El "n" de las remesas lo pone la renumeración por fecha en los dos
-        // lados; no es un dato que alguien haya escrito, así que no cuenta.
         var x=Object.assign({},idsA[id]), y=Object.assign({},idsB[id]);
-        delete x.n; delete y.n;
-        return JSON.stringify(x)!==JSON.stringify(y);
+        if(esRemesa){ delete x.n; delete y.n; }
+        // _jsonEstable y no JSON.stringify: este ultimo depende del ORDEN de
+        // las claves, y el registro va y vuelve por JSON y por diccionarios
+        // de Python, que no conservan el orden del navegador. El mismo
+        // registro daba "distinto" por como quedo escrito, no por lo que
+        // dice. Es el mismo motivo por el que existe _jsonEstable.
+        return _jsonEstable(x)!==_jsonEstable(y);
       });
       if(soloAca.length||soloAlla.length||distintos.length){
         difs.push({clave:k, aca:a.length, alla:b.length,
@@ -1387,7 +1397,13 @@ function _dobleComparar(delServidor, mando){
                    nSoloAca:soloAca.length, nSoloAlla:soloAlla.length, nDistintos:distintos.length});
       }
     } else if(mio!==undefined||suyo!==undefined){
-      if(JSON.stringify(mio)!==JSON.stringify(suyo)){
+      // Aca vivia el falso positivo que hacia que el informe nunca llegara a
+      // 0%: "config" es un objeto anidado y se comparaba con JSON.stringify,
+      // que depende del orden de las claves. Los dos lados tenian lo mismo y
+      // salia distinto en TODAS las comparaciones, sin excepcion. Con ese
+      // ruido adentro, "varios dias sin una sola diferencia" era inalcanzable
+      // por construccion.
+      if(_jsonEstable(mio)!==_jsonEstable(suyo)){
         difs.push({clave:k, aca:"—", alla:"—", objeto:true});
       }
     }
