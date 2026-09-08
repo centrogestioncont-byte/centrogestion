@@ -8445,23 +8445,78 @@ function importData(){
         // del recorrido: _deletedMerge es una de las 32 claves de DATA_KEYS, asi
         // que el recorrido lo reemplaza con el del archivo y borraria las marcas
         // recien creadas. Corregido el 31/08/2026 tras detectarse en pruebas.
+        // Un archivo exportado por la app puede no traer _uid: solo lo llevan
+        // los registros creados de agosto en adelante. Como el identificador
+        // de fusion de las remesas ES _uid, compararlo a secas daba conjunto
+        // vacio, TODO lo vivo quedaba marcado como borrado y el import vaciaba
+        // la base entera. Se compara por _uid y, si el archivo no lo trae, por
+        // contenido, que es justo lo que reconoce el mismo registro venga de
+        // donde venga. Verificado en pruebas: antes un archivo de 2 registros
+        // borraba los 3 que habia, incluido el que el propio archivo traia.
+        function _clavesImport(k,r){
+          if(!r) return [];
+          var idF=_MERGE_ID_FIELD[k]||"id", cs=[];
+          if(r[idF]!==undefined&&r[idF]!=="") cs.push(idF+":"+String(r[idF]));
+          if(k==="brl"||k==="vzla"||k==="eeuu") cs.push("c:"+_uidEstable(r));
+          return cs;
+        }
         var _porBorrar=[], _dkNuevas=[];
         var _dmPrevias=JSON.parse(JSON.stringify(S._deletedMerge||{})); // ARREGLO 11a
+        var _previo={};
+        ["brl","vzla","eeuu"].forEach(function(k){ _previo[k]=(S[k]||[]).slice(); });
         _PODA_CATS.forEach(function(k){
           if(!Array.isArray(obj[k])||!Array.isArray(S[k])) return;
+          if(k==="clientes"&&_CLIENTES_DESDE_API) return;   // tienen su propia ruta
           var idF=_MERGE_ID_FIELD[k]||"id";
           var entran={};
-          obj[k].forEach(function(r){ if(r&&r[idF]!==undefined) entran[String(r[idF])]=1; });
+          obj[k].forEach(function(r){ _clavesImport(k,r).forEach(function(c){ entran[c]=1; }); });
           S[k].forEach(function(r){
-            if(r&&r[idF]!==undefined&&!entran[String(r[idF])]){
-              _porBorrar.push([k,r[idF]]);
-              if(k==="brl"||k==="vzla"||k==="eeuu") _dkNuevas.push(r.d+"|"+(r.id||r.cl)+"|"+r.am);
-            }
+            if(!r||r[idF]===undefined) return;
+            if(_clavesImport(k,r).some(function(c){ return entran[c]; })) return;
+            _porBorrar.push([k,r[idF]]);
+            if(k==="brl"||k==="vzla"||k==="eeuu") _dkNuevas.push(r.d+"|"+(r.id||r.cl)+"|"+r.am);
           });
         });
+        // Ultimo freno antes de tocar nada: si el archivo saca mas de lo que
+        // trae, se dice con numeros y se pide confirmacion. Un archivo viejo,
+        // recortado o de otra cuenta se nota aca y no despues.
+        var _traeTotal=DATA_KEYS.reduce(function(n,k){
+          return n+(Array.isArray(obj[k])?obj[k].length:0);
+        },0);
+        if(_porBorrar.length&&_porBorrar.length>=_traeTotal){
+          if(!confirm("\u26a0\ufe0f Este archivo trae "+_traeTotal+" registro(s) y borraria "+
+                      _porBorrar.length+" de los que hay ahora.\n\n\u00bfSeguro que es el archivo correcto?")) return;
+        }
         DATA_KEYS.forEach(function(k){
-          if(_apiManda(k)) return;
+          // Los clientes van por /clientes, no por el bloque de estado. El
+          // resto si entra: antes esto era _apiManda(k), que con la API como
+          // fuente daba true para TODAS las claves y no importaba nada — pero
+          // las marcas de borrado de arriba se aplicaban igual.
+          if(k==="clientes"&&_CLIENTES_DESDE_API) return;
           if(obj[k]!==undefined){S[k]=obj[k];loaded+=Array.isArray(obj[k])?obj[k].length:1;}
+        });
+        // Lo que entra sin _uid tiene que reencontrar el suyo, o el servidor lo
+        // toma por nuevo y queda duplicado. Se busca por contenido entre los
+        // que ya habia; si hay varias copias iguales cada una toma un _uid
+        // distinto, y la que sobra recibe uno nuevo de verdad. Derivar el _uid
+        // del contenido —como se hacia— colapsaba en una sola dos operaciones
+        // realmente iguales, que en remesas son normales.
+        var _uidsPrevios={};
+        ["brl","vzla","eeuu"].forEach(function(k){
+          _uidsPrevios[k]={};
+          (_previo[k]||[]).forEach(function(r){
+            if(!r||!r._uid) return;
+            var c=_uidEstable(r);
+            (_uidsPrevios[k][c]=_uidsPrevios[k][c]||[]).push(r._uid);
+          });
+        });
+        ["brl","vzla","eeuu"].forEach(function(k){
+          if(!Array.isArray(S[k])) return;
+          S[k].forEach(function(r){
+            if(!r||r._uid) return;
+            var cola=_uidsPrevios[k][_uidEstable(r)];
+            r._uid=(cola&&cola.length)?cola.shift():_newUid();
+          });
         });
         // Ahora si: sobre el estado ya reemplazado, conservando las marcas que
         // venian dentro del archivo y sumandole las nuevas.
@@ -16756,7 +16811,20 @@ function _uidEstable(r){
 function _asignarUidsFaltantes(){
   var puestos=0;
   ["brl","vzla","eeuu"].forEach(function(k){
-    (S[k]||[]).forEach(function(r){ if(!r._uid){ r._uid=_uidEstable(r); puestos++; } });
+    // El _uid derivado del contenido sale igual en todos los dispositivos, y
+    // por eso se prefiere: es lo que hace que el mismo registro se reconozca
+    // venga de donde venga. Pero dos remesas REALMENTE iguales —mismo dia,
+    // mismo cliente, mismo monto, misma tasa— dan el mismo _uid, y la poda de
+    // aca abajo se comia una de las dos en cada arranque. La segunda recibe
+    // uno propio: son dos operaciones, no una repetida.
+    var tomados={};
+    (S[k]||[]).forEach(function(r){ if(r&&r._uid) tomados[r._uid]=1; });
+    (S[k]||[]).forEach(function(r){
+      if(!r||r._uid) return;
+      var u=_uidEstable(r);
+      if(tomados[u]) u=_newUid();
+      tomados[u]=1; r._uid=u; puestos++;
+    });
   });
   (S.capital||[]).forEach(function(r){ if(!r.id) r.id=_newUid(); });
   if(puestos) console.log("🔖 "+puestos+" registro(s) sin _uid recibieron uno derivado de su contenido (estable entre dispositivos).");
