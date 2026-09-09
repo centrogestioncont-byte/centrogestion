@@ -100,7 +100,6 @@
 }
 .tab.on{color:var(--brand);border-bottom-color:var(--brand);}
 .tab:hover{color:var(--brandDark);}
-.dot.on{background:var(--brand);border-color:var(--brand);}
 .rbtn:hover{background:var(--brandSoft);border-color:#ff8a0044;}
 .sec-title{border-left:3px solid var(--brand);padding-left:8px;color:var(--ink);font-weight:800;}
 .login-card{border-top:4px solid var(--brand);background:rgba(255,255,255,.93) !important;backdrop-filter:blur(24px) !important;-webkit-backdrop-filter:blur(24px) !important;box-shadow:0 24px 60px rgba(0,0,0,.4),0 0 0 1px rgba(255,255,255,.4) !important;}
@@ -176,16 +175,6 @@ input::placeholder{color:var(--ink3)}
 .login-card{background:#fff;border-radius:var(--radius-lg);padding:2rem;width:100%;max-width:420px;box-shadow:var(--shadow-md)}
 .rbtn{width:100%;padding:14px 16px;border:1.5px solid var(--line);border-radius:var(--radius-sm);background:var(--card);display:flex;align-items:center;gap:12px;margin-bottom:9px;text-align:left;cursor:pointer;transition:all .15s}
 .rbtn:hover{background:var(--brandSoft);border-color:#ff8a0044;transform:translateY(-1px)}
-
-/* ── PIN PAD ── */
-.pdots{display:flex;justify-content:center;gap:10px;margin:16px 0}
-.dot{width:14px;height:14px;border-radius:50%;border:2px solid var(--line);transition:all .15s}
-.dot.on{background:var(--brand);border-color:var(--brand)}
-.pgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-width:220px;margin:0 auto}
-.pkey{padding:16px;border:1.5px solid var(--line);border-radius:var(--radius-sm);background:var(--card);font-size:19px;font-weight:600;color:var(--ink);cursor:pointer;touch-action:manipulation;transition:all .12s}
-.pkey:hover,.pkey:active{background:var(--brandSoft);border-color:var(--brand);transform:scale(.97)}
-.pkey.del{color:var(--neg)}
-.perr{color:var(--neg);font-size:11px;margin-top:8px;min-height:18px}
 
 /* ── TABS ── */
 .tabs{display:flex;flex-wrap:wrap;border-bottom:1.5px solid var(--line);margin-bottom:14px;gap:6px;flex-shrink:0;padding-bottom:8px}
@@ -371,7 +360,8 @@ tr:last-child td{border-bottom:none}
   </div>
 </div>
 <script>
-// PINs are now dynamic - stored in S.config, with fallback defaults
+// Los roles. Ya no llevan PIN: quien entra lo hace con correo y clave
+// contra la API, y el rol sale del usuario que guarda Mongo.
 const ROLES=[
   {id:"admin",label:"Administrador",  sub:"Acceso completo",          ic:"🛡️",bg:"#EEEDFE"},
   {id:"brl",  label:"Operador BRL",   sub:"Brasil · VZLA",            ic:"🇧🇷",bg:"#D6F5E3"},
@@ -732,9 +722,8 @@ console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
 // ACCESO POR CORREO Y CLAVE (API propia en Railway)  — FASE 3
-// Convive con los PIN de siempre: esto AGREGA una forma de entrar, no
-// reemplaza ninguna. Si la API no existe o no responde, la app funciona
-// exactamente como antes.
+// Es la unica forma de entrar. El acceso por PIN se retiro: las claves de
+// los cuatro roles estaban escritas en este archivo, que Cloudflare publica.
 // ══════════════════════════════════════════════════════════════════════
 
 // A qué API le habla la app, por LISTA EXPLÍCITA de dominios.
@@ -762,8 +751,7 @@ var _API_SESION_KEY = "cg_api_sesion_v1";
 // Cuánto puede durar la app entrando sola cuando la API NO CONTESTA.
 // Sin este límite, la gracia sin conexión sería para siempre: bastaría con
 // que el servidor no responda para que un testigo revocado siga sirviendo.
-// Pasado el plazo se pide entrar de nuevo — y los PIN siguen andando, así
-// que esto nunca deja a nadie afuera de la app.
+// Pasado el plazo se pide entrar de nuevo contra el servidor.
 var _API_GRACIA_MS = 7*24*60*60*1000;   // 7 días desde la última verificación
 function _apiSesionGuardada(){
   try{ var r=localStorage.getItem(_API_SESION_KEY); return r?JSON.parse(r):null; }catch(e){ return null; }
@@ -814,7 +802,8 @@ function _apiComprobarAmbiente(){
     if(_API_AMBIENTE_REAL && _API_AMBIENTE_REAL!==_API_AMBIENTE_ESPERADO){
       // Esto es grave: este sitio está hablando con la base equivocada.
       // Se corta el acceso por correo y se cierra la sesión que hubiera.
-      // Los PIN siguen funcionando, así que la app no queda inutilizable.
+      // No hay otra forma de entrar: es a proposito. Registrar contra la
+      // base equivocada es peor que no poder registrar.
       _API_BLOQUEADA=true;
       _apiBorrarSesionLocal();
       // No alcanza con borrar el testigo: si esta pestaña ya entró por
@@ -844,7 +833,7 @@ function _apiAvisoAmbiente(real){
       "padding:8px 12px;font-size:12px;font-weight:700;text-align:center;box-shadow:0 2px 10px #0006";
     d.textContent="⚠️ Este sitio esperaba la API de "+_API_AMBIENTE_ESPERADO+
                   " y está hablando con la de "+real+". Acceso por correo desactivado. "+
-                  "Puedes entrar con tu PIN, pero revisa la configuración antes de registrar nada.";
+                  "El acceso queda cerrado hasta que la configuración esté bien.";
     document.body.appendChild(d);
   }catch(e){}
 }
@@ -872,7 +861,7 @@ function entrarConCorreo(){
   var correo=(ec?ec.value:"").trim().toLowerCase();
   var clave=(ek?ek.value:"");
   if(_API_BLOQUEADA){
-    S.loginErr="Este sitio está apuntando al ambiente equivocado. Entra con tu PIN.";
+    S.loginErr="Este sitio está apuntando al ambiente equivocado. El acceso queda cerrado hasta que se corrija.";
     R(); return;
   }
   if(!correo||!clave){ S.loginErr="Escribe el correo y la clave."; R(); return; }
@@ -895,7 +884,7 @@ function entrarConCorreo(){
     S.loginErr=(res.datos&&res.datos.error)||"No se pudo entrar.";
     R();
   }).catch(function(){
-    S.loginErr="Sin conexión con el servidor. Puedes entrar con tu PIN.";
+    S.loginErr="Sin conexión con el servidor. Probá de nuevo en un momento.";
     R();
   });
 }
@@ -929,7 +918,7 @@ function _apiRestaurarSesion(){
   }).catch(function(){
     // Sin respuesta del servidor. Si la gracia seguía vigente, ya se entró
     // y se sigue adentro a propósito. Si estaba vencida, se queda en la
-    // pantalla de acceso, donde los PIN siguen sirviendo.
+    // pantalla de acceso, esperando al servidor.
   });
   return !vencida;
 }
@@ -949,7 +938,7 @@ function _apiSalir(){
 // de este archivo. Tres reglas:
 //   · Si hay sesión de la API, la lista viva es la del servidor y Firebase
 //     deja de tener voz sobre ella.
-//   · Si NO hay sesión (entrada por PIN, o servidor caído), la app sigue
+//   · Si NO hay sesión (servidor caído), la app sigue
 //     funcionando igual que antes con lo que tenga guardado.
 //   · Una lista VACÍA del servidor nunca reemplaza a la que ya está en
 //     pantalla. Si la carga inicial todavía no se corrió, reemplazar por
@@ -1111,11 +1100,10 @@ function _bajaClienteEnApi(cod){
 // abiertas en el acto.
 function _esAdminApi(){
   try{
-    // Hace falta que la sesion EN CURSO haya entrado por la API, no solo que
-    // quede un testigo guardado en este navegador. Sin esta condicion,
-    // mientras siga existiendo el acceso por PIN, alguien que entra con el
-    // PIN de un operador en un dispositivo donde antes entro el
-    // administrador heredaria sus autorizaciones.
+    // Hace falta que la sesion EN CURSO haya entrado por la API, no solo
+    // que quede un testigo guardado en este navegador: si no, quien abre la
+    // app en un dispositivo donde antes entro el administrador heredaria
+    // sus autorizaciones sin haber puesto su clave.
     if(!_API_ENTRO_POR_API) return false;
     if(!apiSesionActiva()) return false;
     var ses=_apiSesionGuardada();
@@ -1130,6 +1118,21 @@ function autorizar(accion){
         (accion?("Acción: "+accion+"\n\n"):"")+
         "Entrá con tu correo y clave de administrador, y volvé a intentarlo.");
   return false;
+}
+
+// ── Restos del acceso por PIN dentro de config ───────────────────────────
+// Los perfiles locales guardaban el nombre y el PIN de cada persona SIN
+// CIFRAR dentro de S.config, y config viaja al servidor en cada guardado.
+// Nadie lee ya esas claves, pero mientras sigan ahi los PIN andan en claro
+// por todos los dispositivos.
+var _CONFIG_PROHIBIDO = ["usuarios","pins"];
+function _limpiarConfig(cfg){
+  if(!cfg || typeof cfg!=="object") return 0;
+  var n=0;
+  _CONFIG_PROHIBIDO.forEach(function(k){
+    if(cfg[k]!==undefined){ delete cfg[k]; n++; }
+  });
+  return n;
 }
 
 var _CLIENTES_ESPEJO_KEY = "cg_clientes_espejo_v1";
@@ -1216,7 +1219,14 @@ function _aplicarEstadoDeApi(estado, ts){
     // Firebase antes de la fase 5), y aplicarla acá pisaría la lista real
     // con una desactualizada. Se ignora a propósito.
     if(k==="clientes" && _CLIENTES_DESDE_API) return;
-    if(k==="config"){ S.config=_mergeConfigSafe(estado.config, S.config||{}); return; }
+    if(k==="config"){
+      S.config=_mergeConfigSafe(estado.config, S.config||{});
+      // Borrarlos al arrancar no alcanza: _mergeConfigSafe arranca de lo
+      // local y le AGREGA las claves que no tiene, asi que una que el
+      // servidor todavia traiga vuelve en la lectura siguiente.
+      _limpiarConfig(S.config);
+      return;
+    }
     if(k==="_deletedMerge"){
       // Las marcas se suman, nunca se reemplazan: reemplazarlas revive lo
       // borrado. Es el ARREGLO 6c, que ya costó una vez.
@@ -2424,7 +2434,7 @@ function rOpDiario(){
 
   return "<div style='background:#f0f8ff;border:1px solid #c0d0f0;border-radius:10px;padding:12px 16px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'>"+
     "<div><div style='font-size:13px;font-weight:700'>📋 Mis operaciones · "+mesLabel+"</div>"+
-    "<div style='font-size:11px;color:#666;margin-top:2px'>Operaciones del mes actual · Edición y eliminación requieren PIN</div></div>"+
+    "<div style='font-size:11px;color:#666;margin-top:2px'>Operaciones del mes actual · Edición y eliminación requieren sesión de administrador</div></div>"+
     "<div style='font-size:20px;font-weight:800;color:#0f6e3a'>"+fil.length+"/"+opMes.length+" · $"+f2(ganMes)+"</div>"+
   "</div>"+filterBar+
   (rows?
@@ -5101,7 +5111,7 @@ function saveGE(){
   var nota=document.getElementById("ge-n")?document.getElementById("ge-n").value:"";
   var monto=parseFloat(document.getElementById("ge-v")?document.getElementById("ge-v").value:0);
   if(!monto||monto<=0){alert("Ingresa un monto válido.");return;}
-  // Si es operador (no admin), pedir PIN
+  // Si no es admin, hace falta autorizacion de administrador.
   function _doSaveGE(){
     S.gastos_eeuu.push({id:Date.now(),d:new Date().toLocaleDateString("es-ES",{day:"2-digit",month:"2-digit"}),motivo:m2,monto:monto,nota:nota,locked:true});
     saveData();R();
@@ -5365,7 +5375,7 @@ function selClienteEE(nombre){ elegirClienteEE(nombre); }
 
 
 // ══════════════════════════════════════════════════════
-// ADMIN CONFIG: PINs, permisos, módulos
+// ADMIN CONFIG: tasas, permisos, módulos
 // ══════════════════════════════════════════════════════
 // ── Gastos asignados a un socio específico ──────────────────────────────
 function saveGastoSocio(socioId){
@@ -5458,10 +5468,8 @@ function getSocioComision(rt, srcArray){
 // la necesitas, en vez de tener que bajar por toda la pantalla. ──────────
 // ══════════════════════════════════════════════════════════════════════
 // GESTIÓN DE USUARIOS DE LA API  — FASE 4
-// Estos usuarios NO son los mismos que los perfiles con PIN. Son dos
-// listas distintas que conviven hasta que los PIN se retiren: desactivar
-// a alguien acá NO le cierra el PIN. La pantalla lo dice en voz alta para
-// que nadie se confíe.
+// Es la única lista de usuarios: los perfiles locales con PIN se retiraron
+// y desactivar a alguien acá le cierra el acceso de verdad.
 // Esta pantalla necesita conexión: si la API no responde, avisa y no
 // hace nada más. Un cambio de permisos aplicado a medias es peor que uno
 // no aplicado.
@@ -5504,7 +5512,7 @@ function cambiarRolUsuarioApi(id,rol){
   }).catch(function(){ alert("Sin conexión con el servidor."); });
 }
 function activarUsuarioApi(id,activo,nombre){
-  if(!activo&&!confirm("¿Desactivar a "+nombre+"?\n\nNo va a poder entrar con su correo, y sus sesiones abiertas se cierran ahora mismo.\n\nOJO: esto NO le quita el acceso por PIN.")) return;
+  if(!activo&&!confirm("¿Desactivar a "+nombre+"?\n\nNo va a poder entrar con su correo, y sus sesiones abiertas se cierran ahora mismo.")) return;
   apiFetch("/usuarios/"+id,{method:"PUT",body:{activo:!!activo}}).then(function(r){
     return _usrResultado(r);
   }).catch(function(){ alert("Sin conexión con el servidor."); });
@@ -5519,8 +5527,8 @@ function claveUsuarioApi(id,nombre){
 }
 function rUsuariosApi(){
   var aviso="<div style='background:#FFFBEA;border:1.5px solid #F5C518;border-radius:9px;padding:9px 12px;margin-bottom:12px;font-size:11px;color:#7a5c00;line-height:1.5'>"+
-    "Estos usuarios son los del <b>acceso por correo y clave</b>. Son una lista aparte de los perfiles con PIN: "+
-    "desactivar a alguien acá <b>no</b> le quita el PIN.</div>";
+    "Ésta es la lista completa de quienes pueden entrar. Desactivar a alguien acá le "+
+    "<b>cierra el acceso</b> y le corta las sesiones abiertas en el acto.</div>";
   if(!apiSesionActiva()){
     return aviso+"<div style='font-size:12px;color:#777'>Para administrar usuarios, sal y vuelve a entrar con <b>correo y clave</b>.</div>";
   }
@@ -5595,7 +5603,6 @@ function _cfgAcc(id,icon,title,subtitle,color,bodyHtml,defaultOpen){
 }
 function rConfigAdmin(){
   if(!S.config) S.config={};
-  if(!S.config.pins) S.config.pins={};
   if(!S.config.modulos) S.config.modulos={};
   if(!S.config.tasasDia) S.config.tasasDia={};
   if(!S.config.socios) S.config.socios=[];
@@ -5736,8 +5743,6 @@ function rConfigAdmin(){
     "</div>"+
     "<button onclick='saveTasasConfig()' style='background:#e67e22;color:#fff;border:none;padding:11px 20px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;width:100%'>💾 Guardar tasas del día</button>";
 
-  // PINs
-
   // Permisos
   var mods=S.config.modulos||{};
   var permRows=["nueva","clientes","egresos"].map(function(mod){
@@ -5799,7 +5804,7 @@ function rConfigAdmin(){
     "<p style='font-size:12px;color:#888;margin:0 0 10px'>Instala la app <b>ntfy</b> en tu teléfono, suscríbete a tu canal secreto y recibirás una notificación cada vez que se registre una remesa.</p>"+
     "<label style='font-size:11px;font-weight:700;color:#555;display:block;margin-bottom:5px'>Nombre de tu canal secreto</label>"+
     "<div style='display:flex;gap:8px'>"+
-    "<input type='text' placeholder='ej: remesasya-2626-secreto' value='"+canal+"' id='ntfy-canal-inp' oninput='if(!S.config)S.config={};S.config.ntfyCanal=this.value' style='flex:1;padding:10px;border:1.5px solid #ddd;border-radius:9px;font-size:13px;font-family:inherit'>"+
+    "<input type='text' placeholder='ej: centrogestion-avisos-7f3k9' value='"+canal+"' id='ntfy-canal-inp' oninput='if(!S.config)S.config={};S.config.ntfyCanal=this.value' style='flex:1;padding:10px;border:1.5px solid #ddd;border-radius:9px;font-size:13px;font-family:inherit'>"+
     "<button onclick='guardarCanalNtfy()' style='padding:10px 16px;background:#1a3558;color:#fff;border:none;border-radius:9px;font-size:13px;font-weight:700;cursor:pointer'>💾 Guardar</button>"+
     "</div>"+
     (canal?
@@ -8610,7 +8615,7 @@ function clearAllData(){
   });
 }
 
-// ── PIN SYSTEM ────────────────────────────────────────
+// ── ACCIONES QUE PIDEN ADMINISTRADOR ──────────────────
 function goCapital(){S.tab="capital_total";R();}
 // Antes esto abria un teclado y pedia el PIN de administrador, que estaba
 // escrito en el archivo publicado. Ahora la autorizacion es la sesion de
@@ -8929,10 +8934,9 @@ function revertirSaldosTraspaso(t){
 
 // ── Permisos granulares ────────────────────────────────────────────
 
-// Con sesion de la API los permisos los manda el servidor: son los que
-// guarda Mongo para ese usuario. Los perfiles locales —los de
-// S.config.usuarios, que llevan el PIN en claro— solo valen mientras exista
-// el acceso por PIN, y se van con el.
+// Los permisos los manda el servidor: son los que guarda Mongo para ese
+// usuario. Los perfiles locales —los de S.config.usuarios, que llevaban el
+// PIN en claro— se retiraron con el acceso por PIN.
 function _permisosApi(){
   if(!_API_ENTRO_POR_API) return null;
   try{
@@ -9827,7 +9831,7 @@ function R(){
         '<button onclick="fbForceLoad()" style="background:rgba(100,200,255,.25);border:1px solid rgba(100,200,255,.4);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer;font-weight:700;margin-left:4px" title="Traer los datos más recientes del servidor ahora">📥 Actualizar</button>'+
         '<button onclick="restoreFromBackup()" style="background:rgba(255,100,100,.25);border:1px solid rgba(255,100,100,.4);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer" title="Descargar el respaldo completo de la base">🔒 Restaurar</button>'+
         '<button onclick="verQueHayEnServidor()" style="background:rgba(255,180,0,.3);border:1px solid rgba(255,180,0,.5);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer;font-weight:700" title="Ver qué hay guardado en el servidor ahora mismo, SIN aplicarlo todavía">🔍 Ver servidor</button>'+
-        '<button onclick="clearAllData()" style="background:rgba(255,100,100,.2);border:1px solid rgba(255,100,100,.35);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer" title="Borrar todo (PIN 2626)">🗑️</button>';
+        '<button onclick="clearAllData()" style="background:rgba(255,100,100,.2);border:1px solid rgba(255,100,100,.35);color:#fff;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer" title="Borrar todo (pide sesión de administrador)">🗑️</button>';
       tb.appendChild(d);
     },50);
   }
@@ -14231,7 +14235,7 @@ function rNueva(){
     "<div id='cp-tx' class='result-box"+(ok&&prNeto>0&&tc>0&&tv>0?" gain":"")+"'>"+
     (ok&&tc>0&&tv>0?"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:6px'><div style='font-size:11px;font-weight:700;color:#888'>GANANCIA = USDT comprados − USDT vendidos</div><div style='font-size:22px;font-weight:800;color:"+(prNeto>0?"#0f6e3a":"#c0392b")+"'>"+(prNeto>0?"+ ":"")+f2(prNeto)+" USDT</div></div><div style='font-size:11px;color:#666'>"+f2(uc)+" − "+f2(uv)+""+(comUsdtVivo>0?" − "+f2(comUsdtVivo)+" (3% banco)": "")+" = <b style='color:"+(prNeto>0?"#0f6e3a":"#c0392b")+"'>"+f2(prNeto)+"</b></div>":"<div style='text-align:center;color:#aaa;font-size:12px;padding:8px'>Completa monto, tasa del día y tasas USDT</div>")+
     "</div>"+
-    "<div style='font-size:11px;color:#999;margin-bottom:10px'>🔒 Al guardar queda bloqueado. Modificar requiere PIN de administrador.</div>"+
+    "<div style='font-size:11px;color:#999;margin-bottom:10px'>🔒 Al guardar queda bloqueado. Modificar requiere sesión de administrador.</div>"+
     "<div style='background:#FFF8DC;border:1.5px solid #F5C518;border-radius:10px;padding:12px 14px;margin-bottom:12px'>"+ 
     "<label style='display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;font-weight:600'>"+ 
     "<input type='checkbox' id='chk-pendiente' "+(S.tx.pendiente?"checked":"")+" onchange='S.tx.pendiente=this.checked;R()' style='width:18px;height:18px;cursor:pointer'>"+
@@ -14371,7 +14375,7 @@ function rNuevaEE(){
     "<div id='cp-txE' class='result-box"+(ok&&prNetoEE>0&&tc>0&&tv>0?" gain":"")+"' style='"+(ok&&prNetoEE>0&&tc>0&&tv>0?"border-color:#0a3d7c;background:#EEF4FF":"")+"'>"+
     (ok&&tc>0&&tv>0?"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px'><div style='font-size:11px;font-weight:700;color:#888'>GANANCIA BRUTA</div><div style='font-size:22px;font-weight:800;color:"+(prNetoEE>0?"#0a3d7c":"#c0392b")+"'>"+(prNetoEE>0?"+ ":"")+f2(prNetoEE)+" USDT</div></div><div style='display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px'><div style='background:#DDEEFF;border-radius:8px;padding:10px;text-align:center'><div style='font-size:11px;color:#0a3d7c;font-weight:700'>👤 JULIO ~50%</div><div style='font-size:18px;font-weight:800;color:#0a3d7c'>≈$"+f2(prNetoEE*0.5)+"</div></div><div style='background:#DDEEFF;border-radius:8px;padding:10px;text-align:center'><div style='font-size:11px;color:#0a3d7c;font-weight:700'>👤 PAUL ~50%</div><div style='font-size:18px;font-weight:800;color:#0a3d7c'>≈$"+f2(prNetoEE*0.5)+"</div></div></div>":"<div style='text-align:center;color:#aaa;font-size:12px;padding:8px'>Completa monto, tasa del día y tasas USDT</div>")+
     "</div>"+
-    "<div style='font-size:11px;color:#999;margin-bottom:10px'>🔒 Al guardar queda bloqueado. Requiere PIN de administrador.</div>"+
+    "<div style='font-size:11px;color:#999;margin-bottom:10px'>🔒 Al guardar queda bloqueado. Requiere sesión de administrador.</div>"+
     "<div style='background:#FFF8DC;border:1.5px solid #F5C518;border-radius:10px;padding:12px 14px;margin-bottom:12px'>"+
     "<label style='display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;font-weight:600'>"+
     "<input type='checkbox' id='chk-pendiente-ee' "+(S.txE.pendiente?"checked":"")+" onchange='S.txE.pendiente=this.checked;R()' style='width:18px;height:18px;cursor:pointer'>"+
@@ -16796,16 +16800,13 @@ try{ _apiRestaurarSesion(); }catch(e){ console.warn("sesión API:",e); }
 // servidor no contesta, la app sigue con lo que ya tenia.
 try{ cargarClientesDeApi(); }catch(e){ console.warn("clientes API:",e); }
 // Los perfiles locales y los PIN de rol se retiraron con el acceso por PIN.
-// Lo que quedo guardado se borra al arrancar: config viaja a Firebase en cada
-// guardado, asi que mientras siga ahi el nombre y el PIN de cada persona
-// siguen dando vueltas sin cifrar. El proximo guardado publica el config ya
-// limpio y los deja fuera de Firebase para todos los dispositivos.
+// Lo que quedo guardado se borra al arrancar. Esto solo limpia ESTE
+// dispositivo: el borrado definitivo lo hace la API, que los saca al fusionar,
+// al leer y al armar el respaldo. Sin eso volvian solos, porque la fusion
+// arranca de lo guardado y le agrega las claves que el dispositivo no trae.
 function _purgarPerfilesLocales(){
   if(!S.config) return false;
-  var habia=false;
-  ["usuarios","pins"].forEach(function(k){
-    if(S.config[k]!==undefined){ delete S.config[k]; habia=true; }
-  });
+  var habia=_limpiarConfig(S.config)>0;
   if(habia){
     S.usuarioId=null;
     console.log("\ud83e\uddf9 Perfiles y PIN locales borrados de la configuracion: los usuarios viven en la API.");
