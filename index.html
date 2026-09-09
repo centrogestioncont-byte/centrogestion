@@ -1498,9 +1498,10 @@ function rComparacionApi(){
   else { estado="✅ Los dos motores deciden igual"; color="#0f6e3a"; }
 
   var html="<div style='font-size:11px;color:#666;margin-bottom:12px;line-height:1.6'>"+
-    "Mientras dure la migración, cada guardado va a Firebase <b>y</b> a la API. "+
-    "La app se queda con lo de Firebase, como siempre; lo de la API solo se compara. "+
-    "Cuando esto lleve varios días sin una sola diferencia, se puede dar vuelta la lectura.</div>";
+    "Cada guardado va a la API y el servidor devuelve el resultado de la fusión. "+
+    "Acá se compara ese resultado con el que habría calculado la app por su cuenta: "+
+    "sirve para detectar si el motor del servidor y el del navegador dejan de "+
+    "coincidir.</div>";
 
   html+="<div style='background:"+color+"12;border:1.5px solid "+color+"55;border-radius:10px;padding:12px 14px;margin-bottom:12px'>"+
     "<div style='font-size:13px;font-weight:800;color:"+color+"'>"+estado+"</div>"+
@@ -5967,6 +5968,18 @@ function rConfigAdmin(){
         "<b>Sesión por correo:</b> "+(apiSesionActiva()?"activa":"no")+
         (_API_BLOQUEADA?"<br><span style='color:#c0392b;font-weight:800'>Acceso por correo desactivado por desajuste de ambiente</span>":"")+
       "</div>"+
+      // Si el servidor esta rechazando los guardados hay que decirlo ACA,
+      // que es donde se mira cuando algo anda raro. Antes esto solo se
+      // veia dentro del acordeon "Comparación con la API", cerrado por
+      // omision: la app sabia que no estaba guardando nada y no habia
+      // forma practica de enterarse.
+      (_DOBLE_CORTADA
+        ? "<div style='background:#B8780012;border:1.5px solid #B8780055;border-radius:10px;"+
+          "padding:10px 12px;margin-bottom:12px;font-size:12px;color:#B87800;font-weight:700'>"+
+          "\u23f8\ufe0f El servidor no está aceptando los guardados: "+_escAud(_DOBLE_CORTADA)+
+          "<div style='font-weight:400;color:#666;margin-top:5px;font-size:11px'>"+
+          "Lo que cargues queda en este dispositivo y no llega a los demás.</div></div>"
+        : "")+
       "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:10px'>"+
         "<div><div style='font-size:10px;color:#888'>BRL</div><div style='font-size:22px;font-weight:800;color:#0f6e3a'>"+S.brl.length+"</div></div>"+
         "<div><div style='font-size:10px;color:#888'>VZLA</div><div style='font-size:22px;font-weight:800;color:#c0392b'>"+S.vzla.length+"</div></div>"+
@@ -8240,9 +8253,16 @@ function saveData(){
     obj._opsCount=(S.brl||[]).length+(S.vzla||[]).length+(S.eeuu||[]).length;
     _volcarDatos(obj);
     _espejarClientes();
+    // A que ambiente pertenece esto. Va SOLO al almacenamiento de este
+    // navegador, no al servidor: es para que la copia local de pruebas no
+    // se confunda con la de produccion. Paso de verdad —el navegador tenia
+    // 637 registros reales y al abrir el sitio de pruebas los subio solos—
+    // y no se noto hasta contar los registros del servidor.
+    obj._ambiente=_API_AMBIENTE_ESPERADO;
     var json=JSON.stringify(obj);
     localStorage.setItem(STORAGE_KEY, json);
     localStorage.setItem(STORAGE_KEY+"_bak", json);
+    delete obj._ambiente;   // al servidor no le hace falta
     fbSave(obj);
     // Sincronización en tiempo real — APAGADA POR COMPLETO. Causó pérdida
     // de datos reales (operaciones de agosto). No se vuelve a tocar esto
@@ -8259,6 +8279,24 @@ function loadData(){
   if(!raw) return 0;
   try{
     var saved=JSON.parse(raw);
+    // Lo guardado en este navegador puede ser de OTRO ambiente: pasa al
+    // abrir el sitio de pruebas en la misma maquina donde se usa el de
+    // produccion. Cargarlo seria peor que no tener nada, porque el
+    // guardado automatico lo sube al servidor equivocado a los pocos
+    // segundos. Se descarta y se le pide todo al servidor, que es la
+    // fuente desde que existe MongoDB.
+    // Lo guardado ANTES de este cambio no lleva marca: eso se carga como
+    // siempre, para no dejar sin datos a quien abra sin conexion.
+    if(saved._ambiente && saved._ambiente!==_API_AMBIENTE_ESPERADO){
+      console.warn("El estado guardado en este navegador es de \""+saved._ambiente+
+        "\" y esta pantalla habla con \""+_API_AMBIENTE_ESPERADO+
+        "\": se descarta y se pide todo al servidor.");
+      try{
+        localStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(STORAGE_KEY+"_bak");
+      }catch(e){}
+      return 0;
+    }
     var loaded=0;
     DATA_KEYS.forEach(function(k){
       if(saved[k]!==undefined){S[k]=saved[k];loaded+=Array.isArray(saved[k])?saved[k].length:1;}
