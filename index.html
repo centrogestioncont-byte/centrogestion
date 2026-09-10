@@ -1024,7 +1024,10 @@ function _clienteDeApi(c){
     ruta:  c.ruta||"",
     nota:  c.nota||"",
     _apiId: c.id||"",           // el id de Mongo: hace falta para editar
-    _activo: c.activo!==false
+    _activo: c.activo!==false,
+    // La marca de tiempo la pone el SERVIDOR en cada escritura. Antes no
+    // viajaba, y el navegador se la inventaba al cargar: ver abajo.
+    _mod: (typeof c._mod==="number" ? c._mod : 0)
   };
 }
 function _clienteAApi(c){
@@ -1069,19 +1072,29 @@ function cargarClientesDeApi(){
         console.warn("La API todavía no tiene clientes cargados — se mantiene la lista local.");
         return false;
       }
+      // La marca de tiempo viene del servidor y se usa tal cual.
+      //
+      // Antes se calculaba acá: si el contenido difería de la copia local se
+      // ponía Date.now(). O sea que el dispositivo estampaba la hora de
+      // CARGAR sobre un cambio que no había hecho —lo había hecho otro—, y
+      // dos dispositivos que cargaban la misma lista se marcaban los dos
+      // como recién tocados. Después ganaba el que sincronizaba último.
+      //
+      // El servidor pone la marca en cada escritura, y para los clientes
+      // viejos que no la tienen la deriva de su ObjectId. Un solo reloj
+      // decide, que es lo que hacía falta: los clientes nunca se editan solo
+      // en el navegador —toda edición pasa por _guardarClienteEnApi— así que
+      // el servidor siempre sabe cuándo fue la última.
       var previos={};
       (S.clientes||[]).forEach(function(x){ if(x&&x.cod!==undefined) previos[String(x.cod)]=x; });
       S.clientes=d.clientes.map(function(c){
         var nuevo=_clienteDeApi(c);
-        var viejo=previos[nuevo.cod];
-        // Misma regla que se usa con los saldos de las cuentas: la marca de
-        // tiempo solo se mueve cuando el dato cambió de verdad. Si se moviera
-        // en cada carga, este dispositivo ganaría siempre la fusión de
-        // Firebase por ser "el más nuevo" aunque no hubiera tocado nada.
-        var igual = viejo && ["n","tel","pais","ruta","nota"].every(function(campo){
-          return String(viejo[campo]||"")===String(nuevo[campo]||"");
-        });
-        nuevo._mod = igual ? (viejo._mod||0) : Date.now();
+        if(!nuevo._mod){
+          // Servidor viejo, todavía sin la marca: se conserva la que hubiera
+          // en este dispositivo para no perder la que ya venía andando.
+          var viejo=previos[nuevo.cod];
+          nuevo._mod = (viejo && viejo._mod) || 0;
+        }
         return nuevo;
       });
       _CLIENTES_DESDE_API=true;
