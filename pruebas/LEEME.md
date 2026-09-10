@@ -34,3 +34,12 @@ La logica del negocio. Para eso hace falta la API corriendo, una base y un
 navegador de verdad: guardado entre dos dispositivos, fusion sin pisarse,
 importacion. Esas pruebas existen pero se corren a mano, fuera de este
 repositorio, porque necesitan tambien el repositorio de la API.
+
+## Nota: el repositorio es privado
+
+Desde el 09/09/2026 los dos repositorios son privados. Cloudflare Pages
+sigue construyendo desde aca: la integracion con GitHub sobrevive al cambio
+de visibilidad mientras la aplicacion de Cloudflare conserve acceso al
+repositorio. Si algun dia un despliegue falla al clonar, el lugar donde se
+revoca o se devuelve ese acceso es GitHub -> Settings -> Integrations ->
+Cloudflare Workers and Pages -> Repository access.
