@@ -717,7 +717,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // IMPORTANTE: Cada vez que Claude entregue un archivo nuevo, este número cambia.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20260906_v152";
+var APP_VERSION = "20260910_v153-TEST";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -727,21 +727,44 @@ console.log("Centro de Gestión · versión "+APP_VERSION);
 // ══════════════════════════════════════════════════════════════════════
 
 // A qué API le habla la app, por LISTA EXPLÍCITA de dominios.
-// Regla deliberada: lo desconocido cae en PRUEBAS. Un preview de
-// Cloudflare, un localhost o una rama nueva no deben poder tocar la base
-// de producción por accidente.
+// Producción SOLO desde su dominio exacto. Los previews de Cloudflare
+// (subdominios de cualquiera de los dos proyectos) y el desarrollo local
+// caen en PRUEBAS: una rama nueva no debe poder tocar la base real.
+// Lo que no es ninguna de esas cosas NO habla con ninguna API. Antes caía
+// en pruebas en silencio, y eso se vio en vivo: un proyecto de Pages
+// olvidado (remesasbrl.pages.dev) servía la app entera diciendo
+// "Ambiente: pruebas". Entrar no se podía, porque la API de pruebas no
+// autoriza ese origen, pero la pantalla no decía que la dirección
+// estuviera mal: decía que no había datos, que es otra cosa.
 var _API_POR_DOMINIO = {
   "centrogestion.pages.dev":      {url:"https://centrogestion-api-production.up.railway.app", ambiente:"produccion"},
   "centrogestion-test.pages.dev": {url:"https://gallant-caring-production-6c35.up.railway.app", ambiente:"pruebas"}
 };
-var _API_DEF = _API_POR_DOMINIO[String(location.hostname||"").toLowerCase()] ||
-               _API_POR_DOMINIO["centrogestion-test.pages.dev"];
+// Los previews de Cloudflare son <algo>.<proyecto>.pages.dev. Se comparan
+// CON EL PUNTO ADELANTE a propósito: "otrocentrogestion.pages.dev" no es
+// un preview nuestro y no debe colarse por parecerse al nombre.
+var _API_PREVIEW_DE = [".centrogestion.pages.dev", ".centrogestion-test.pages.dev"];
+var _API_LOCAL = ["localhost", "127.0.0.1", "[::1]", ""];
+function _apiDefPorDominio(host){
+  var h = String(host||"").toLowerCase(), i;
+  if(_API_POR_DOMINIO[h]) return _API_POR_DOMINIO[h];
+  var pruebas = _API_POR_DOMINIO["centrogestion-test.pages.dev"];
+  for(i=0;i<_API_PREVIEW_DE.length;i++){
+    var suf=_API_PREVIEW_DE[i];
+    if(h.length>suf.length && h.slice(-suf.length)===suf) return pruebas;
+  }
+  for(i=0;i<_API_LOCAL.length;i++){ if(h===_API_LOCAL[i]) return pruebas; }
+  return null;   // dominio desconocido: sin API, y la app queda cerrada
+}
+var _API_DEF = _apiDefPorDominio(location.hostname);
+var _API_DOMINIO_DESCONOCIDO = !_API_DEF;
+if(_API_DOMINIO_DESCONOCIDO) _API_DEF = {url:"", ambiente:"no autorizado"};
 var _API_URL = _API_DEF.url;
 var _API_AMBIENTE_ESPERADO = _API_DEF.ambiente;
 var _API_AMBIENTE_REAL = null;   // lo que contesta /salud
 var _API_VIVA = null;            // null = todavía no se sabe
 var _API_MOTIVO = "";            // por qué no contesta, cuando no contesta
-var _API_BLOQUEADA = false;      // true si el ambiente no es el que corresponde
+var _API_BLOQUEADA = _API_DOMINIO_DESCONOCIDO;  // ambiente equivocado, o dominio fuera de la lista
 var _API_ENTRO_POR_API = false;  // la sesión EN CURSO vino del acceso por correo
 
 // El testigo de sesión vive en su PROPIA clave del navegador, FUERA de S.
@@ -776,6 +799,18 @@ function _apiBorrarSesionLocal(){
 function apiSesionActiva(){ var s=_apiSesionGuardada(); return !!(s&&s.t); }
 
 function apiFetch(ruta,opciones){
+  // Dominio fuera de la lista: no hay API y _API_URL es la cadena vacia, asi
+  // que cada llamada terminaria pidiendole la ruta al PROPIO sitio —un 404 de
+  // Cloudflare— y mandandole el testigo de sesion en la cabecera a un servidor
+  // que no es la API. Los diecinueve llamadores estan gateados hoy, pero el
+  // invariante no puede depender de que sigan estandolo: se corta aca, que es
+  // el unico lugar por el que pasan todos. Se devuelve una respuesta con la
+  // forma que ya saben leer, para no romper ningun .then que espere un status.
+  if(_API_DOMINIO_DESCONOCIDO){
+    return Promise.resolve(new Response(
+      JSON.stringify({ok:false,error:"esta direccion no esta autorizada"}),
+      {status:403,headers:{"Content-Type":"application/json"}}));
+  }
   opciones=opciones||{};
   var cab={};
   var ses=_apiSesionGuardada();
@@ -792,6 +827,14 @@ function apiFetch(ruta,opciones){
 // con el que corresponde a este dominio. Un sitio de pruebas hablando con
 // producción (o al revés) se ve al instante en vez de descubrirse tarde.
 function _apiComprobarAmbiente(){
+  // Sin dominio autorizado no hay API a la que preguntarle. Se avisa y se
+  // corta: pedirle /salud a la cadena vacía solo daría un error confuso.
+  if(_API_DOMINIO_DESCONOCIDO){
+    _API_VIVA=false;
+    _API_MOTIVO="esta dirección no está autorizada";
+    _apiAvisoDominio();
+    return;
+  }
   fetch(_API_URL+"/salud",{cache:"no-store"}).then(function(r){
     if(!r.ok){ _API_VIVA=false; _API_MOTIVO="el servidor respondió "+r.status; return null; }
     return r.json();
@@ -823,6 +866,21 @@ function _apiComprobarAmbiente(){
     // promesa falla igual. Se dice lo que se sabe, sin inventar.
     _API_MOTIVO="sin conexión, o este dominio no está autorizado en esa API";
   });
+}
+// Aviso del dominio que no está en la lista. Es distinto del desajuste de
+// ambiente: allá la app habla con la API equivocada; acá no habla con
+// ninguna, y lo único útil que se puede decir es por dónde hay que entrar.
+function _apiAvisoDominio(){
+  try{
+    if(document.getElementById("api-amb-aviso")) return;
+    var d=document.createElement("div");
+    d.id="api-amb-aviso";
+    d.style.cssText="position:fixed;left:0;right:0;top:0;z-index:99999;background:#c0392b;color:#fff;"+
+      "padding:8px 12px;font-size:12px;font-weight:700;text-align:center;box-shadow:0 2px 10px #0006";
+    d.textContent="\u26a0\ufe0f Esta dirección ("+String(location.hostname||"")+") no es la del sistema. "+
+                  "Entra por centrogestion.pages.dev.";
+    document.body.appendChild(d);
+  }catch(e){}
 }
 function _apiAvisoAmbiente(real){
   try{
@@ -861,7 +919,9 @@ function entrarConCorreo(){
   var correo=(ec?ec.value:"").trim().toLowerCase();
   var clave=(ek?ek.value:"");
   if(_API_BLOQUEADA){
-    S.loginErr="Este sitio está apuntando al ambiente equivocado. El acceso queda cerrado hasta que se corrija.";
+    S.loginErr=_API_DOMINIO_DESCONOCIDO
+      ? "Esta dirección no es la del sistema. Entra por centrogestion.pages.dev."
+      : "Este sitio está apuntando al ambiente equivocado. El acceso queda cerrado hasta que se corrija.";
     R(); return;
   }
   if(!correo||!clave){ S.loginErr="Escribe el correo y la clave."; R(); return; }
@@ -896,6 +956,12 @@ function entrarConCorreo(){
 // Ese tercer caso es deliberado: un Railway dormido o un teléfono sin señal
 // no pueden dejar a nadie afuera de su propia contabilidad.
 function _apiRestaurarSesion(){
+  // Dominio fuera de la lista: no se restaura nada. Sin esta guarda, un
+  // testigo ya guardado en el navegador dejaba entrar igual por la gracia
+  // sin conexión —la comprobación de ambiente corre 1200 ms más tarde— y
+  // la persona terminaba trabajando en una dirección que no es el sistema,
+  // creyendo que sí lo era.
+  if(_API_DOMINIO_DESCONOCIDO){ _apiAvisoDominio(); return false; }
   var ses=_apiSesionGuardada();
   if(!ses||!ses.t||!ses.u) return false;
   var vencida=_apiGraciaVencida(ses);
@@ -5971,7 +6037,7 @@ function rConfigAdmin(){
         ((_API_AMBIENTE_REAL&&_API_AMBIENTE_REAL!==_API_AMBIENTE_ESPERADO)?" <span style='color:#c0392b;font-weight:800'>⚠️ NO COINCIDE</span>":"")+"<br>"+
         "<b>API:</b> <span style='font-size:10px;word-break:break-all'>"+_API_URL+"</span><br>"+
         "<b>Sesión por correo:</b> "+(apiSesionActiva()?"activa":"no")+
-        (_API_BLOQUEADA?"<br><span style='color:#c0392b;font-weight:800'>Acceso por correo desactivado por desajuste de ambiente</span>":"")+
+        (_API_BLOQUEADA?"<br><span style='color:#c0392b;font-weight:800'>Acceso por correo desactivado — "+(_API_DOMINIO_DESCONOCIDO?"esta dirección no está autorizada":"desajuste de ambiente")+"</span>":"")+
       "</div>"+
       // Si el servidor esta rechazando los guardados hay que decirlo ACA,
       // que es donde se mira cuando algo anda raro. Antes esto solo se
@@ -9862,7 +9928,7 @@ function rLogin(){
          '<div style="font-size:12px;font-weight:700;color:#7a5c00">⚠️ No se encontraron datos. Contacta al Administrador.</div>'+
        '</div>')+
     (_API_BLOQUEADA
-      ?'<div style="background:#FDECEA;border:1.5px solid #e74c3c;border-radius:9px;padding:10px 14px;margin-bottom:12px;font-size:11px;color:#7c1c0c;font-weight:700">⚠️ Este sitio está apuntando al ambiente equivocado. Revisa la configuración antes de registrar nada.</div>'
+      ?'<div style="background:#FDECEA;border:1.5px solid #e74c3c;border-radius:9px;padding:10px 14px;margin-bottom:12px;font-size:11px;color:#7c1c0c;font-weight:700">'+(_API_DOMINIO_DESCONOCIDO?'⚠️ Esta dirección no es la del sistema. Entra por <b>centrogestion.pages.dev</b>.':'⚠️ Este sitio está apuntando al ambiente equivocado. Revisa la configuración antes de registrar nada.')+'</div>'
       :'')+
     '<div style="font-size:10px;font-weight:700;letter-spacing:.6px;color:#888;margin-bottom:10px">ENTRA CON TU CORREO</div>'+
     '<input id="api-correo" type="email" autocomplete="username" autocapitalize="off" spellcheck="false" '+
