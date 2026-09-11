@@ -700,8 +700,14 @@ function gananciaPrestamosDelMes(mesKey){
       (p.abonos||[]).forEach(function(ab){
         if(_mesKeyISO(ab.fecha)===mesKey){
           var interesEnAbono=(parseFloat(ab.monto)||0)*fracInteres;
-          monto+=interesEnAbono;
-          usdt+=interesEnAbono*usdtPorUnidad;
+          // El "premio" por adelantar no es dinero que haya entrado: es un
+          // descuento que le rebaja la siguiente cuota. Contaba como
+          // interes cobrado e inflaba la ganancia del mes con plata que no
+          // existia. Es un costo, asi que se resta.
+          var premio=parseFloat(ab.premio)||0;
+          var neto=interesEnAbono-premio;
+          monto+=neto;
+          usdt+=neto*usdtPorUnidad;
           cant++;
         }
       });
@@ -3175,10 +3181,11 @@ function pagarPrestamo(id){
     var fracInteres=p.capital&&p.monto?Math.max(0,(p.monto-p.capital)/p.monto):0;
     var capitalBase=montoBase2*(1-fracInteres);
     var valor=Math.round((capitalBase*(tasaDiaria/100)*dias)*100)/100;
-    // Tope máximo de $5 por premio de anticipo — sin importar cuántos días
-    // se adelante ni de qué tamaño sea la cuota, nunca se regala más que
-    // eso (si no, con muchos días de anticipo prácticamente no se gana nada).
-    valor=Math.min(valor,5);
+    // Tope máximo equivalente a 5 USDT por premio de anticipo — sin
+    // importar cuántos días se adelante ni de qué tamaño sea la cuota,
+    // nunca se regala más que eso (si no, con muchos días de anticipo
+    // prácticamente no se gana nada).
+    valor=Math.min(valor,topePremioAnticipo(mon));
     return {valor:Math.max(0,valor),dias:dias};
   }
 
@@ -3201,7 +3208,7 @@ function pagarPrestamo(id){
       var cashParaCuota1=monto>0?Math.round((montoIngresado*(_cuotaSel.monto/monto))*100)/100:montoIngresado;
       var cashParaCuota2=Math.round((montoIngresado-cashParaCuota1)*100)/100;
       _abonosAregistrar.push({monto:_cuotaSel.monto,montoPago:cashParaCuota1,cuotaN:_cuotaSel.n});
-      _abonosAregistrar.push({monto:creditoTotal,montoPago:cashParaCuota2,cuotaN:siguienteCu.n});
+      _abonosAregistrar.push({monto:creditoTotal,montoPago:cashParaCuota2,cuotaN:siguienteCu.n,premio:_premioActual.valor});
       _excedenteInfo={cuotaActualN:_cuotaSel.n,excedente:excedente,premioActual:_premioActual.valor,diasActual:_premioActual.dias,
         cuotaN:siguienteCu.n,fecha:siguienteCu.fecha,creditoTotal:creditoTotal};
     } else {
@@ -3242,7 +3249,7 @@ function pagarPrestamo(id){
   }
   // Trackear el/los abono(s) en la moneda ORIGINAL del préstamo
   _abonosAregistrar.forEach(function(ax,idx){
-    p.abonos.push({id:Date.now()+idx,fecha:td(),monto:Math.round(ax.monto*100)/100,cuentaId:np.cuentaId,monedaPago:monPago,montoPago:Math.round(ax.montoPago*100)/100,cuotaN:ax.cuotaN});
+    p.abonos.push({id:Date.now()+idx,fecha:td(),monto:Math.round(ax.monto*100)/100,cuentaId:np.cuentaId,monedaPago:monPago,montoPago:Math.round(ax.montoPago*100)/100,cuotaN:ax.cuotaN,premio:ax.premio||0});
   });
   var nuevoTotal=p.abonos.reduce(function(a,ab){return a+ab.monto;},0);
   var restante=Math.round((montoBase-nuevoTotal)*100)/100;
@@ -5226,6 +5233,15 @@ function tasaAnualEfectiva(tasaPeriodicaPct,periodDays){
   var d=parseInt(periodDays)||30;
   if(i<=0||d<=0) return 0;
   return Math.round((Math.pow(1+i,365/d)-1)*10000)/100;
+}
+// Tope del premio por adelantar, expresado SIEMPRE en el equivalente a
+// 5 USDT. Antes era un "5" pelado: en un prestamo en BRL premiaba con un
+// dolar y en VES con un centavo, sin que eso lo hubiera decidido nadie.
+function topePremioAnticipo(mon){
+  if(mon==="USDT") return 5;
+  var r=getRateToUsdt(mon);
+  if(!r||isNaN(r)) return 5;          // sin tasa, se queda como estaba
+  return Math.round((5*r)*100)/100;
 }
 function _periodDaysDe(frecuencia){
   return {semanal:7,quincenal:15,mensual:30}[frecuencia||"mensual"]||30;
@@ -16608,7 +16624,7 @@ function rPrestamos(){
           var tasaDiaria=p.interesPorCuota/periodDays;
           var fracInteres=p.capital&&p.monto?Math.max(0,(p.monto-p.capital)/p.monto):0;
           diasActual=Math.round((new Date(_cuSel.iso+"T00:00:00")-new Date(hoyIso+"T00:00:00"))/86400000);
-          if(diasActual>0) premio=Math.min(5,Math.round((_cuSel.monto*(1-fracInteres)*(tasaDiaria/100)*diasActual)*100)/100);
+          if(diasActual>0) premio=Math.min(topePremioAnticipo(monP),Math.round((_cuSel.monto*(1-fracInteres)*(tasaDiaria/100)*diasActual)*100)/100);
         }
         var excedente=Math.max(0,Math.round((montoIng-_cuSel.monto)*100)/100);
         var creditoTotal=Math.round((excedente+premio)*100)/100;
@@ -17134,6 +17150,13 @@ function rPrestamos(){
             "</div>"+
             (_refTxt?"<div style='font-size:10px;color:"+_refColor+";font-weight:600;margin-bottom:4px'>"+_refTxt+"</div>":"")+
             (_pct>0?"<div style='font-size:10px;color:#777;margin-bottom:10px'>Equivale a un <b>"+f2(tasaAnualEfectiva(_pct,_periodDays))+"%</b> anual efectivo (CET).</div>":"")+
+            "<div style='display:flex;align-items:center;gap:8px;margin-bottom:4px'>"+
+              "<label style='font-size:11px;color:#555;white-space:nowrap'>Cada cuánto paga:</label>"+
+              "<select onchange='S.nPr.frecuencia=this.value;R()' style='flex:1;padding:9px;font-size:14px;border:1.5px solid #ccc;border-radius:8px;font-family:inherit'>"+
+                ["semanal","quincenal","mensual"].map(function(fr){return "<option value='"+fr+"'"+((f.frecuencia||"mensual")===fr?" selected":"")+">"+fr.charAt(0).toUpperCase()+fr.slice(1)+"</option>";}).join("")+
+              "</select>"+
+            "</div>"+
+            "<div style='font-size:10px;color:#888;margin-bottom:10px'>Cada cuota vence "+_periodDays+" días después de la anterior"+((parseInt(f.numCuotas)||1)<=1?" — con 1 sola cuota, es el plazo total del préstamo":"")+".</div>"+
             "<div style='display:flex;align-items:center;gap:8px;margin-bottom:10px'>"+
               "<label style='font-size:11px;color:#555;white-space:nowrap'>Días extra antes de la 1ra cuota:</label>"+
               "<input type='number' min='0' inputmode='numeric' value='"+(f.diasExtraPrimeraCuota||0)+"' oninput='S.nPr.diasExtraPrimeraCuota=this.value' onblur='R()' style='width:70px;padding:9px;font-size:14px;border:1.5px solid #ccc;border-radius:8px;font-family:inherit'>"+
@@ -17168,13 +17191,11 @@ function rPrestamos(){
             "<div style='font-size:9px;color:#999;margin-top:3px'>Se aplica por cada cuota — a más cuotas, más interés total (como un préstamo real).</div></div>"
           :"")+
         "</div>"+
-        "<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px'>"+
+        "<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:end'>"+
           "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Número de cuotas</label>"+
           "<input type='number' min='1' step='1' inputmode='numeric' value='"+(f.numCuotas||1)+"' oninput='S.nPr.numCuotas=this.value' onblur='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
           "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Frecuencia</label>"+
-          "<select onchange='S.nPr.frecuencia=this.value;R()' style='width:100%;padding:12px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'"+((parseInt(f.numCuotas)||1)<=1?" disabled":"")+">"+
-            ["semanal","quincenal","mensual"].map(function(fr){return "<option value='"+fr+"'"+((f.frecuencia||"mensual")===fr?" selected":"")+">"+fr.charAt(0).toUpperCase()+fr.slice(1)+"</option>";}).join("")+
-          "</select></div>"+
+          "<div style='padding:12px;font-size:14px;border:1.5px solid #eee;border-radius:9px;background:#f4f4f6;color:#777'>"+((f.frecuencia||"mensual").charAt(0).toUpperCase()+(f.frecuencia||"mensual").slice(1))+" <span style='font-size:10px;color:#aaa'>— se cambia arriba</span></div></div>"+
         "</div>"+
         (function(){
           var _cap=parseFloat(f.monto)||0;
