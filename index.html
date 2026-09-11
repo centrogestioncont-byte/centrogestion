@@ -2132,6 +2132,128 @@ function getGananciaUsdtMes(mesKey){
     ganExtraEmp: c.ganExtraEmp||0
   };
 }
+// ══════════════════════════════════════════════════════════════════
+// CONCILIACION DE CAPITAL
+// ══════════════════════════════════════════════════════════════════
+// Responde a una pregunta que la app no sabia contestar: "¿de verdad
+// gano lo que el sistema me dice?".
+//
+// No intenta reconstruir la historia. Los datos viejos arrastran el
+// desastre de registros borrados y duplicados, asi que reconstruir desde
+// el principio daria un numero en el que no se puede confiar. En vez de
+// eso se traza una raya: se cuenta el dinero REAL un dia, eso queda como
+// saldo de apertura, y desde ahi la diferencia empieza en cero. Si se
+// mantiene en cero, la contabilidad esta sana; si crece, hay una fuga y
+// se sabe desde que mes.
+
+// Todo el dinero de la empresa, mires donde mires. A diferencia de
+// getCapitalUsdtActual(), esta SI cuenta:
+//   · las cuatro monedas, no solo los USDT
+//   · las cuentas de reserva (estaban fuera de todos los totales)
+//   · el dinero en la calle: cobros pendientes y prestamos activos
+function capitalRealTotal(){
+  var enCuentas=0, enReserva=0, sinTasa=[];
+  (S.cuentas||[]).filter(function(c){return c.activa!==false&&!c.esPersonal;}).forEach(function(acc){
+    var saldo=parseFloat(acc.saldo)||0;
+    if(!saldo) return;
+    var usdt;
+    if(acc.moneda==="USDT"||acc.moneda==="USD") usdt=saldo;
+    else {
+      var r=getRateToUsdt(acc.moneda);
+      if(!r||isNaN(r)){ sinTasa.push(acc.moneda); return; }
+      usdt=saldo/r;
+    }
+    if(acc.esReserva) enReserva+=usdt; else enCuentas+=usdt;
+  });
+  var porCobrar=0;
+  (S.cuentasCobrar||[]).forEach(function(c){
+    if(c.estado!=="pendiente") return;
+    var abon=(c.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);
+    var pend=Math.max(0,(parseFloat(c.monto)||0)-abon);
+    if(pend<=0) return;
+    var mon=c.moneda||"USDT";
+    if(mon==="USDT"||mon==="USD"){ porCobrar+=pend; return; }
+    var r=getRateToUsdt(mon);
+    if(!r||isNaN(r)){ sinTasa.push(mon); return; }
+    porCobrar+=pend/r;
+  });
+  var enPrestamos=0;
+  (S.prestamos||[]).forEach(function(p){
+    if(p.estado==="pagado"||p.estado==="saldado") return;
+    var abon=(p.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);
+    var pend=Math.max(0,(parseFloat(p.monto||p.sal)||0)-abon-(parseFloat(p.ent)||0));
+    if(pend<=0) return;
+    var mon=p.mon||"USDT";
+    if(mon==="USDT"||mon==="USD"){ enPrestamos+=pend; return; }
+    var r=getRateToUsdt(mon);
+    if(!r||isNaN(r)){ sinTasa.push(mon); return; }
+    enPrestamos+=pend/r;
+  });
+  var r2v=function(n){return Math.round(n*100)/100;};
+  var total=r2v(enCuentas+enReserva+porCobrar+enPrestamos);
+  return {enCuentas:r2v(enCuentas), enReserva:r2v(enReserva), porCobrar:r2v(porCobrar),
+          enPrestamos:r2v(enPrestamos), enLaCalle:r2v(porCobrar+enPrestamos), total:total,
+          sinTasa:sinTasa.filter(function(m,i,a){return a.indexOf(m)===i;})};
+}
+
+// Lista de meses desde la apertura hasta hoy, en orden.
+function _mesesDesde(fechaIso){
+  var out=[];
+  if(!fechaIso) return out;
+  var d=new Date(String(fechaIso)+"T00:00:00");
+  if(isNaN(d.getTime())) return out;
+  var hoy=new Date();
+  var y=d.getFullYear(), m=d.getMonth();
+  for(var i=0;i<240;i++){
+    out.push(y+"-"+String(m+1).padStart(2,"0"));
+    if(y>hoy.getFullYear()||(y===hoy.getFullYear()&&m>=hoy.getMonth())) break;
+    m++; if(m>11){m=0;y++;}
+  }
+  return out;
+}
+
+// La conciliacion en si.
+//
+//   apertura + ganancia bruta − egresos empresa − egresos personales
+//   − pagos a socios  =  lo que deberias tener
+//
+// Los egresos PERSONALES se restan aunque no sean gasto de la empresa:
+// son dinero que salio de la caja. En la utilidad no van (no son costo
+// del negocio) pero en el capital si, y por no estar en ningun lado
+// desaparecian sin dejar rastro.
+function conciliacionCapital(){
+  var cfg=S.config||{};
+  var apertura=parseFloat(cfg.aperturaUsdt);
+  var desde=cfg.aperturaFecha||"";
+  var real=capitalRealTotal();
+  if(isNaN(apertura)||!desde){
+    return {configurada:false, real:real};
+  }
+  var meses=_mesesDesde(desde);
+  var bruta=0, egEmpresa=0, egPersonal=0, egPersonalSin=0, socios=0;
+  meses.forEach(function(mk){
+    var c=calcMesCompleto(mk)||{};
+    bruta     += parseFloat(c.ganBrutaTotal)||0;
+    bruta     += parseFloat(c.ganExtraEmp)||0;
+    egEmpresa += parseFloat(c.egEmpPag)||0;
+    socios    += parseFloat(c.totalCom)||0;
+    egPersonal   += parseFloat(c.egPerPagPropio)||0;   // salieron de una cuenta
+    egPersonalSin+= parseFloat(c.egPerPag)||0;          // sin cuenta asignada
+  });
+  var r2v=function(n){return Math.round(n*100)/100;};
+  var deberias=r2v(apertura+bruta-egEmpresa-egPersonal-socios);
+  var diferencia=r2v(real.total-deberias);
+  return {
+    configurada:true, apertura:r2v(apertura), desde:desde, meses:meses.length,
+    bruta:r2v(bruta), egEmpresa:r2v(egEmpresa), egPersonal:r2v(egPersonal),
+    egPersonalSin:r2v(egPersonalSin), socios:r2v(socios),
+    deberias:deberias, real:real, diferencia:diferencia,
+    // Un desvio de menos del 2% del capital es ruido de tasas de cambio,
+    // no una fuga: los saldos se convierten a USDT a la tasa de HOY.
+    tolerancia:r2v(Math.max(5,real.total*0.02))
+  };
+}
+
 function getCapitalUsdtActual(){
   // Capital real ahora: solo lo que está en USDT en S.cuentas (excluye 💜 personal)
   var solo=0, total=0;
@@ -3362,6 +3484,30 @@ function guardarCostoOportunidad(){
     logAudit("CONFIG_COSTO_OPORTUNIDAD","Costo de oportunidad del capital: "+v+"% mensual");
     saveData();R();
     alert("✅ Guardado. Tu punto de equilibrio pasa a ser "+puntoEquilibrio().pct+"% por cuota.");
+  });
+}
+
+function fijarAperturaHoy(){
+  var cap=capitalRealTotal();
+  if(cap.sinTasa.length){
+    if(!confirm("Ojo: no hay tasa para "+cap.sinTasa.join(", ")+", así que ese dinero NO está contado en los $"+f2(cap.total)+".\n\n¿Fijar igual la apertura?")) return;
+  }
+  var msg="Se va a guardar como saldo de apertura:\n\n"+
+    "En cuentas:   $"+f2(cap.enCuentas)+"\n"+
+    (cap.enReserva>0?"En reserva:   $"+f2(cap.enReserva)+"\n":"")+
+    (cap.porCobrar>0?"Por cobrar:   $"+f2(cap.porCobrar)+"\n":"")+
+    (cap.enPrestamos>0?"En préstamos: $"+f2(cap.enPrestamos)+"\n":"")+
+    "─────────────────\nTOTAL:        $"+f2(cap.total)+" USDT\n\n"+
+    "Desde hoy la app compara cada mes lo que deberías tener contra lo que tienes.\n\n"+
+    "Antes de confirmar: ¿los saldos de tus cuentas son los de verdad?";
+  if(!confirm(msg)) return;
+  autorizarYHacer(function(){
+    if(!S.config) S.config={};
+    S.config.aperturaUsdt=cap.total;
+    S.config.aperturaFecha=td();
+    logAudit("APERTURA_CAPITAL","Saldo de apertura fijado en $"+f2(cap.total)+" USDT (cuentas "+f2(cap.enCuentas)+", reserva "+f2(cap.enReserva)+", calle "+f2(cap.enLaCalle)+")");
+    saveData();R();
+    alert("✅ Apertura fijada en $"+f2(cap.total)+" USDT.\n\nLa diferencia arranca en cero. Si dentro de un mes sigue en cero, tu contabilidad está sana.");
   });
 }
 
@@ -7328,7 +7474,69 @@ function rCapitalTotal(){
         : "<div style='background:#E3F8EC;border-radius:8px;padding:8px 12px;font-size:11px;color:#0f6e3a;font-weight:700'>✅ Todas las tasas actualizadas</div>") +
     "</div>";
 
+  // ── Conciliacion: ¿de verdad gano lo que el sistema dice? ──────────
+  var conciliacionHtml=(function(){
+    var co=conciliacionCapital();
+    var R=co.real;
+    var lineaReal=
+      "<div style='font-size:11px;color:#555;line-height:1.7'>"+
+        "<div style='display:flex;justify-content:space-between'><span>En cuentas (las 4 monedas)</span><b>$"+f2(R.enCuentas)+"</b></div>"+
+        (R.enReserva>0?"<div style='display:flex;justify-content:space-between'><span>En reserva</span><b>$"+f2(R.enReserva)+"</b></div>":"")+
+        (R.porCobrar>0?"<div style='display:flex;justify-content:space-between'><span>Por cobrar</span><b>$"+f2(R.porCobrar)+"</b></div>":"")+
+        (R.enPrestamos>0?"<div style='display:flex;justify-content:space-between'><span>En préstamos</span><b>$"+f2(R.enPrestamos)+"</b></div>":"")+
+        "<div style='display:flex;justify-content:space-between;border-top:1px solid #ddd;margin-top:5px;padding-top:5px;font-size:13px'><b>Tienes de verdad</b><b>$"+f2(R.total)+"</b></div>"+
+        (R.sinTasa.length?"<div style='color:#c0392b;font-size:10px;margin-top:4px'>⚠️ Sin tasa para "+R.sinTasa.join(", ")+": ese dinero no está contado.</div>":"")+
+      "</div>";
+
+    if(!co.configurada){
+      return "<div style='background:#FFF8E8;border:1.5px solid #f0d080;border-radius:12px;padding:14px;margin-bottom:12px'>"+
+        "<div style='font-size:13px;font-weight:800;color:#7a5c00;margin-bottom:6px'>🧾 ¿De verdad ganas lo que el sistema dice?</div>"+
+        "<div style='font-size:11px;color:#7a5c00;line-height:1.6;margin-bottom:10px'>"+
+          "Para saberlo hace falta un punto de partida. Cuenta tu dinero real hoy, guárdalo como <b>saldo de apertura</b>, y desde ahí la app compara cada mes lo que deberías tener contra lo que tienes.<br>"+
+          "No se reconstruye el pasado a propósito: si hubo datos borrados o duplicados, ese número sería mentira. Se traza una raya y se mide desde aquí."+
+        "</div>"+
+        lineaReal+
+        "<button onclick='fijarAperturaHoy()' style='width:100%;margin-top:10px;padding:11px;border:none;border-radius:9px;background:#7a5c00;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit'>📌 Usar estos $"+f2(R.total)+" como saldo de apertura</button>"+
+        "<div style='font-size:10px;color:#a08040;margin-top:6px'>Antes de tocarlo, revisa que los saldos de tus cuentas de abajo sean los de verdad. Si alguno está desactualizado, corrígelo primero.</div>"+
+      "</div>";
+    }
+
+    var dif=co.diferencia, tol=co.tolerancia;
+    var sano=Math.abs(dif)<=tol;
+    var col=sano?"#0f6e3a":(dif<0?"#c0392b":"#a06800");
+    var bg =sano?"#E3F8EC":(dif<0?"#FDECEA":"#FFF8E8");
+    var brd=sano?"#b6e0c4":(dif<0?"#f0b0a8":"#f0d080");
+    return "<div style='background:"+bg+";border:1.5px solid "+brd+";border-radius:12px;padding:14px;margin-bottom:12px'>"+
+      "<div style='display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px'>"+
+        "<div><div style='font-size:13px;font-weight:800;color:"+col+"'>🧾 Conciliación de capital</div>"+
+        "<div style='font-size:10px;color:#888;margin-top:2px'>Desde el "+ds(co.desde)+" · "+co.meses+" mes(es)</div></div>"+
+        "<div style='text-align:right'><div style='font-size:22px;font-weight:900;color:"+col+";line-height:1'>"+(dif>=0?"+":"")+"$"+f2(dif)+"</div>"+
+        "<div style='font-size:9px;color:#888'>diferencia</div></div>"+
+      "</div>"+
+      "<div style='background:#fff;border-radius:9px;padding:10px 12px;margin-bottom:8px;font-size:11px;color:#555;line-height:1.7'>"+
+        "<div style='display:flex;justify-content:space-between'><span>Saldo de apertura</span><b>$"+f2(co.apertura)+"</b></div>"+
+        "<div style='display:flex;justify-content:space-between;color:#0f6e3a'><span>+ Ganancia bruta</span><b>+$"+f2(co.bruta)+"</b></div>"+
+        (co.egEmpresa>0?"<div style='display:flex;justify-content:space-between;color:#c0392b'><span>− Egresos empresa</span><b>−$"+f2(co.egEmpresa)+"</b></div>":"")+
+        (co.egPersonal>0?"<div style='display:flex;justify-content:space-between;color:#c0392b'><span>− Gastos personales (de una cuenta)</span><b>−$"+f2(co.egPersonal)+"</b></div>":"")+
+        (co.socios>0?"<div style='display:flex;justify-content:space-between;color:#c0392b'><span>− Pagos a socios</span><b>−$"+f2(co.socios)+"</b></div>":"")+
+        "<div style='display:flex;justify-content:space-between;border-top:1px solid #ddd;margin-top:5px;padding-top:5px;font-size:13px'><b>Deberías tener</b><b>$"+f2(co.deberias)+"</b></div>"+
+      "</div>"+
+      "<div style='background:#fff;border-radius:9px;padding:10px 12px;margin-bottom:8px'>"+lineaReal+"</div>"+
+      "<div style='font-size:11px;color:"+col+";font-weight:700;line-height:1.6'>"+
+        (sano
+          ? "✅ Cuadra. La diferencia está dentro de lo que mueven las tasas de cambio (±$"+f2(tol)+"). Tu contabilidad está sana."
+          : dif<0
+            ? "⚠️ Te faltan $"+f2(Math.abs(dif))+" respecto a lo que deberías tener. Esto es dinero que salió sin quedar registrado — lo más común es lo que sacas para ti sin anotarlo."
+            : "⚠️ Tienes $"+f2(dif)+" de más. Suele significar que entró dinero que no se registró como ganancia, o que un saldo de cuenta se corrigió a mano.")+
+      "</div>"+
+      (co.egPersonalSin>0?"<div style='font-size:10px;color:#888;margin-top:7px;line-height:1.5'>Nota: hay $"+f2(co.egPersonalSin)+" de gastos personales sin cuenta asignada. No se restan porque no salieron de ningún saldo registrado — si en realidad sí salieron de una cuenta, edítalos y asígnasela.</div>":"")+
+      "<div style='font-size:10px;color:#aaa;margin-top:7px'>Tu sueldo no se resta aquí: la app lo calcula como un % de la utilidad, no registra lo que de verdad sacaste. Lo que sacas se anota como gasto personal con su cuenta.</div>"+
+      "<button onclick='fijarAperturaHoy()' style='width:100%;margin-top:9px;padding:8px;border:1px solid "+brd+";border-radius:8px;background:#fff;color:#666;font-size:11px;cursor:pointer;font-family:inherit'>Volver a fijar la apertura con el dinero de hoy</button>"+
+    "</div>";
+  })();
+
   return "<div style='padding:8px'>"+
+  conciliacionHtml+
   "<div style='position:sticky;top:0;z-index:10;background:#1a3558;border-radius:12px;padding:12px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap'>"+
       "<div>"+
         "<div style='font-size:10px;font-weight:700;color:#FFA31C;text-transform:uppercase;margin-bottom:2px'>🏢 Total empresa (USDT equiv.)</div>"+
