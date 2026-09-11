@@ -40,7 +40,8 @@ const NECESARIAS = ["td", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
                     "puntoEquilibrio", "tasaSugerida", "_conDiaDelMes",
                     "cronogramaCuotas", "_fechaPrimeraCuota", "diasPrimeraCuota",
                     "ajusteDiasPrimeraCuota", "interesPorAjusteDias",
-                    "cuotasRecomendadas", "limiteCredito"];
+                    "cuotasRecomendadas", "limiteCredito",
+                    "costoOperativoPorPrestamo", "pctCostoOperativo"];
 // S es el estado global de la app; aca solo hacen falta config y prestamos.
 const S = { config: {}, prestamos: [] };
 // Tasas de mentira para no depender de la configuracion real. getRateToUsdt
@@ -362,6 +363,56 @@ S.prestamos = []; S.config = { limiteClienteNuevoUsdt: 100 };
 const lBrl = F.limiteCredito("Nadie", "", "BRL");
 ok(casi(lBrl.tope, 540, 1), "100 USDT de tope son 540 BRL", lBrl.tope);
 ok(lBrl.topeUsdt === 100, "y por dentro sigue siendo 100 USDT");
+S.config = {}; S.prestamos = [];
+
+// ── Costo operativo por prestamo ────────────────────────────────────
+console.log("\nCosto de hacer el prestamo");
+S.config = {}; S.prestamos = [];
+ok(F.costoOperativoPorPrestamo().usdt === 0, "sin configurar no cobra nada de mas");
+ok(F.costoOperativoPorPrestamo().configurado === false, "y avisa que no esta configurado");
+
+S.config = { minutosPorPrestamo: 30, valorHoraUsdt: 5, comisionPorPrestamoUsdt: 0 };
+ok(F.costoOperativoPorPrestamo().usdt === 2.5, "media hora a 5 la hora son 2,50",
+   F.costoOperativoPorPrestamo().usdt);
+S.config = { minutosPorPrestamo: 30, valorHoraUsdt: 5, comisionPorPrestamoUsdt: 1.5 };
+ok(F.costoOperativoPorPrestamo().usdt === 4, "las comisiones se suman al tiempo");
+
+console.log("\nEl costo fijo pesa mas en los prestamos chicos");
+S.config = { minutosPorPrestamo: 30, valorHoraUsdt: 5, comisionPorPrestamoUsdt: 0 };  // 2,50
+ok(casi(F.pctCostoOperativo(25, "USDT", 1), 10, 0.1),
+   "2,50 sobre 25 USDT es el 10% del capital", F.pctCostoOperativo(25, "USDT", 1));
+ok(casi(F.pctCostoOperativo(250, "USDT", 1), 1, 0.1),
+   "sobre 250 USDT es el 1%", F.pctCostoOperativo(250, "USDT", 1));
+ok(F.pctCostoOperativo(25, "USDT", 1) > F.pctCostoOperativo(250, "USDT", 1),
+   "prestar poco cuesta proporcionalmente mas");
+ok(casi(F.pctCostoOperativo(250, "USDT", 5), 0.2, 0.05),
+   "a mas cuotas se amortiza entre mas periodos", F.pctCostoOperativo(250, "USDT", 5));
+// 134 BRL a la tasa de prueba (5,4 BRL por USDT) son 24,81 USDT
+ok(casi(F.pctCostoOperativo(134, "BRL", 1), 10.1, 0.3),
+   "convierte a USDT antes de comparar", F.pctCostoOperativo(134, "BRL", 1));
+ok(F.pctCostoOperativo(100, "XYZ", 1) === 0, "sin tasa de la moneda no inventa nada");
+ok(F.pctCostoOperativo(0, "USDT", 1) === 0, "sin capital no divide por cero");
+
+console.log("\nY entra en el piso de la tasa sugerida");
+S.prestamos = [];
+const sinOp = (() => { S.config = { costoOportunidadMes: 3 }; return F.tasaSugerida("X","",1,"USDT","mensual",25); })();
+const conOp = (() => { S.config = { costoOportunidadMes: 3, minutosPorPrestamo: 30, valorHoraUsdt: 5 };
+                       return F.tasaSugerida("X","",1,"USDT","mensual",25); })();
+ok(conOp.piso > sinOp.piso, "contar el costo sube el piso", sinOp.piso + " → " + conOp.piso);
+ok(conOp.sugerida > sinOp.sugerida, "y sube la tasa sugerida");
+const chico = F.tasaSugerida("X","",1,"USDT","mensual",25);
+const grande = F.tasaSugerida("X","",1,"USDT","mensual",250);
+ok(chico.sugerida > grande.sugerida,
+   "al mismo cliente, un prestamo chico pide mas tasa que uno grande",
+   chico.sugerida + "% vs " + grande.sugerida + "%");
+ok(chico.min >= chico.piso, "el minimo del rango sigue sin bajar del piso");
+// Cuando el tiempo pesa mas que el dinero, el problema es el tamaño del
+// prestamo y no la tasa: sugerir 21,9% es una cuenta, no un consejo.
+ok(chico.demasiadoChico === true, "avisa que 25 USDT es demasiado chico para el trabajo que da");
+ok(grande.demasiadoChico === false, "250 USDT no dispara el aviso");
+S.config = { costoOportunidadMes: 3 };
+ok(F.tasaSugerida("X","",1,"USDT","mensual",25).demasiadoChico === false,
+   "sin costo configurado nunca avisa");
 S.config = {}; S.prestamos = [];
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

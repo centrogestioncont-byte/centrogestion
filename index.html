@@ -3365,6 +3365,27 @@ function guardarCostoOportunidad(){
   });
 }
 
+function guardarCostoOperativo(){
+  var min=parseFloat(document.getElementById("inp-minutos-prestamo").value);
+  var hora=parseFloat(document.getElementById("inp-valor-hora").value);
+  var com=parseFloat(document.getElementById("inp-comision-prestamo").value);
+  if(isNaN(min)||min<0){alert("Los minutos no son válidos.");return;}
+  if(isNaN(hora)||hora<0) hora=0;
+  if(isNaN(com)||com<0) com=0;
+  autorizarYHacer(function(){
+    if(!S.config) S.config={};
+    S.config.minutosPorPrestamo=min;
+    S.config.valorHoraUsdt=hora;
+    S.config.comisionPorPrestamoUsdt=com;
+    var op=costoOperativoPorPrestamo();
+    logAudit("CONFIG_COSTO_OPERATIVO",min+" min × $"+hora+"/h + $"+com+" = $"+op.usdt+" por préstamo");
+    saveData();R();
+    alert(op.usdt>0
+      ? "✅ Cada préstamo te cuesta $"+f2(op.usdt)+" USDT.\n\nEso ya entra en la tasa sugerida: en préstamos chicos la sube, en grandes casi no se nota."
+      : "✅ Guardado. Con la hora y las comisiones en 0, el costo operativo no entra en el cálculo.");
+  });
+}
+
 function guardarLimiteClienteNuevo(){
   var v=parseFloat(document.getElementById("inp-limite-nuevo").value);
   if(isNaN(v)||v<0){alert("Valor inválido.");return;}
@@ -5369,16 +5390,60 @@ function puntoEquilibrio(){
           impagoPct:Math.round(pd*10000)/100, medido:medido, prestamos:total, caidos:caidos};
 }
 
+// ── COSTO OPERATIVO POR PRESTAMO ───────────────────────────────────
+// Lo que cuesta HACER el prestamo, aparte del dinero: acordarlo por
+// WhatsApp, registrarlo, recordar y cobrar. Casi todo es tiempo — en Brasil
+// el PIX es gratis — y por eso se calcula desde los minutos que lleva y lo
+// que vale la hora, en vez de pedir un numero que nadie tiene a mano.
+//
+// Importa porque es un costo FIJO por prestamo: 2,50 USDT sobre un prestamo
+// de 25 USDT son el 10% del capital, y sobre uno de 250 son el 1%. Sin esto,
+// el punto de equilibrio decia lo mismo para los dos y los prestamos chicos
+// salian a perdida sin que se viera.
+function costoOperativoPorPrestamo(){
+  var c=S.config||{};
+  var min=c.minutosPorPrestamo!==undefined?(parseFloat(c.minutosPorPrestamo)||0):30;
+  var hora=c.valorHoraUsdt!==undefined?(parseFloat(c.valorHoraUsdt)||0):0;
+  var com=c.comisionPorPrestamoUsdt!==undefined?(parseFloat(c.comisionPorPrestamoUsdt)||0):0;
+  return {
+    usdt:Math.round(((min/60)*hora+com)*100)/100,
+    minutos:min, valorHora:hora, comision:com,
+    configurado:(hora>0||com>0)
+  };
+}
+// Cuanto pesa ese costo fijo por periodo, como porcentaje del capital.
+// Se reparte entre las cuotas: un prestamo a 6 meses lo amortiza en 6.
+function pctCostoOperativo(capital,moneda,numCuotas){
+  var op=costoOperativoPorPrestamo();
+  if(op.usdt<=0) return 0;
+  var cap=parseFloat(capital)||0;
+  if(cap<=0) return 0;
+  var capUsdt=cap;
+  if(moneda&&moneda!=="USDT"){
+    var r=getRateToUsdt(moneda);
+    if(!r||isNaN(r)) return 0;      // sin tasa no se inventa nada
+    capUsdt=cap/r;
+  }
+  if(capUsdt<=0) return 0;
+  var nc=Math.max(1,parseInt(numCuotas)||1);
+  return Math.round(((op.usdt/capUsdt)/nc)*1000)/10;
+}
+
 // ── TASA SUGERIDA ──────────────────────────────────────────────────
 // Piso de la empresa + prima segun la banda del cliente + ajustes por
 // plazo y por moneda. Devuelve tambien el porque, que es lo que hace que
 // el numero se pueda defender delante del cliente.
-function tasaSugerida(desc,cod,numCuotas,moneda,frecuencia){
+function tasaSugerida(desc,cod,numCuotas,moneda,frecuencia,capital){
   var perfil=perfilRiesgoCliente(desc,cod);
   var eq=puntoEquilibrio();
   var PRIMAS={A:1,B:2.5,C:4,D:7,E:0};
-  var base=eq.pct+(PRIMAS[perfil.banda]||4);
   var ajustes=[];
+  // El costo de hacer el prestamo se reparte sobre ESTE capital: cuanto mas
+  // chico el prestamo, mas pesa. Va dentro del piso, no de la prima de
+  // riesgo, porque es un costo — no depende del cliente.
+  var opPct=pctCostoOperativo(capital,moneda,numCuotas);
+  var piso=Math.round((eq.pct+opPct)*10)/10;
+  var base=piso+(PRIMAS[perfil.banda]||4);
   // Mas cuotas = mas tiempo expuesto = mas riesgo.
   var nc=Math.max(1,parseInt(numCuotas)||1);
   if(nc>3){
@@ -5393,9 +5458,13 @@ function tasaSugerida(desc,cod,numCuotas,moneda,frecuencia){
   var periodDays=_periodDaysDe(frecuencia);
   return {
     perfil:perfil, equilibrio:eq, ajustes:ajustes,
-    piso:Math.round(eq.pct*10)/10,
+    piso:piso, costoOpPct:opPct, costoOp:costoOperativoPorPrestamo(),
     sugerida:sugerida,
-    min:Math.round(Math.max(eq.pct,sugerida-1.5)*10)/10,
+    // El costo de hacerlo pesa mas que el costo del dinero: el prestamo es
+    // demasiado chico para el trabajo que da, y ninguna tasa razonable lo
+    // arregla.
+    demasiadoChico:opPct>eq.pct,
+    min:Math.round(Math.max(piso,sugerida-1.5)*10)/10,
     max:Math.round((sugerida+1.5)*10)/10,
     anual:tasaAnualEfectiva(sugerida,periodDays),
     prestar:perfil.banda!=="E"
@@ -6711,6 +6780,34 @@ function rConfigAdmin(){
             "<input type='number' id='inp-costo-oport' min='0' max='50' step='0.5' value='"+(((S.config||{}).costoOportunidadMes!==undefined)?S.config.costoOportunidadMes:3)+"' style='flex:1;padding:9px;border:1.5px solid #ddd;border-radius:8px;font-size:14px'>"+
             "<span style='font-size:12px;color:#555;white-space:nowrap'>% al mes</span>"+
             "<button onclick='guardarCostoOportunidad()' style='padding:9px 14px;background:#14603a;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
+          "</div>"+
+          "<div style='margin-top:14px;padding-top:12px;border-top:1px dashed #e4e4e4'>"+
+            "<div style='font-size:11px;font-weight:700;color:#555;margin-bottom:4px'>⏱️ Lo que te cuesta HACER un préstamo</div>"+
+            "<div style='font-size:11px;color:#888;margin-bottom:10px'>Aparte del dinero prestado: acordarlo, registrarlo, recordar y cobrar. Casi todo es tu tiempo. Es un costo fijo, así que en un préstamo chico pesa mucho más que en uno grande — por eso la tasa sugerida sube cuando prestas poco.</div>"+
+            "<div style='display:grid;grid-template-columns:repeat(3,1fr);gap:10px'>"+
+              "<div>"+
+                "<label style='font-size:10px;font-weight:700;color:#555;text-transform:uppercase;display:block;margin-bottom:4px'>Minutos por préstamo</label>"+
+                "<input type='number' id='inp-minutos-prestamo' min='0' step='5' value='"+(((S.config||{}).minutosPorPrestamo!==undefined)?S.config.minutosPorPrestamo:30)+"' style='width:100%;padding:9px;border:1.5px solid #ddd;border-radius:8px;font-size:14px'>"+
+                "<div style='font-size:9px;color:#aaa;margin-top:3px'>De principio a fin, sumando todo</div>"+
+              "</div>"+
+              "<div>"+
+                "<label style='font-size:10px;font-weight:700;color:#555;text-transform:uppercase;display:block;margin-bottom:4px'>Vale tu hora (USDT)</label>"+
+                "<input type='number' id='inp-valor-hora' min='0' step='0.5' placeholder='ej: 5' value='"+(((S.config||{}).valorHoraUsdt!==undefined)?S.config.valorHoraUsdt:"")+"' style='width:100%;padding:9px;border:1.5px solid #ddd;border-radius:8px;font-size:14px'>"+
+                "<div style='font-size:9px;color:#aaa;margin-top:3px'>$800 al mes ÷ 160 h = $5</div>"+
+              "</div>"+
+              "<div>"+
+                "<label style='font-size:10px;font-weight:700;color:#555;text-transform:uppercase;display:block;margin-bottom:4px'>Comisiones (USDT)</label>"+
+                "<input type='number' id='inp-comision-prestamo' min='0' step='0.1' value='"+(((S.config||{}).comisionPorPrestamoUsdt!==undefined)?S.config.comisionPorPrestamoUsdt:0)+"' style='width:100%;padding:9px;border:1.5px solid #ddd;border-radius:8px;font-size:14px'>"+
+                "<div style='font-size:9px;color:#aaa;margin-top:3px'>Transferencias. Con PIX suele ser 0</div>"+
+              "</div>"+
+            "</div>"+
+            "<button onclick='guardarCostoOperativo()' style='margin-top:10px;padding:9px 16px;background:#14603a;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>💾 Guardar costo</button>"+
+            (function(){
+              var op=costoOperativoPorPrestamo();
+              if(!op.configurado) return "<div style='font-size:11px;color:#a06800;font-weight:700;margin-top:8px'>Todavía sin configurar: la app está prestando como si hacer un préstamo no te costara nada.</div>";
+              return "<div style='font-size:11px;color:#14603a;font-weight:700;margin-top:8px'>Cada préstamo te cuesta ≈ $"+f2(op.usdt)+" USDT.</div>"+
+                     "<div style='font-size:10px;color:#888;margin-top:2px'>Sobre un préstamo de $25 USDT eso es "+f2(op.usdt/25*100)+"% del capital; sobre uno de $250, "+f2(op.usdt/250*100)+"%. Por eso el piso sube en los chicos.</div>";
+            })()+
           "</div>"+
           "<div style='font-size:11px;color:#888;margin:12px 0 6px'>Cuánto es lo máximo que le prestas a alguien que nunca te ha devuelto nada. A partir de ahí, el límite de cada cliente lo calcula la app con lo que ya demostró que puede pagar.</div>"+
           "<div style='display:flex;gap:8px;align-items:center;max-width:340px'>"+
@@ -17280,7 +17377,7 @@ function rPrestamos(){
         (function(){
           var _cap=parseFloat(f.monto)||0;
           if(_cap<=0) return "";
-          var sg=tasaSugerida(f.desc,f.cod,f.numCuotas,mon,f.frecuencia);
+          var sg=tasaSugerida(f.desc,f.cod,f.numCuotas,mon,f.frecuencia,_cap);
           var pf=sg.perfil, eq=sg.equilibrio;
           var COLOR={A:"#1a7a3a",B:"#1a6fb8",C:"#a06800",D:"#d35400",E:"#c0392b"};
           var col=COLOR[pf.banda]||"#a06800";
@@ -17313,7 +17410,21 @@ function rPrestamos(){
               "Sale de "+eq.costoOportunidadPct+"% que te rinde ese dinero en el negocio + "+eq.impagoPct+"% de riesgo de impago "+
               (eq.medido?"a partir de tus "+eq.prestamos+" préstamos ("+eq.caidos+" caído"+(eq.caidos!==1?"s":"")+")":"— con menos de 5 préstamos manda la estimación prudente, no tu historial")+
               ", recuperando la mitad de lo caído."+
+              (sg.costoOpPct>0
+                ? "<br><b>+ "+sg.costoOpPct+"%</b> porque hacer este préstamo te cuesta "+f2(sg.costoOp.usdt)+" USDT de tu tiempo, y sobre "+f2(_cap)+" "+mon+" eso es lo que pesa."+
+                  (_cap>0?" En un préstamo del doble pesaría la mitad.":"")
+                : (sg.costoOp.configurado
+                    ? ""
+                    : "<br><span style='color:#a06800'>No estás contando lo que te cuesta hacer el préstamo (tu tiempo). Se configura en ⚙️ Configuración y en préstamos chicos cambia mucho el número.</span>"))+
             "</div>"+
+            (sg.demasiadoChico
+              ? "<div style='background:#FFF4E5;border:1.5px solid #f0c080;border-radius:8px;padding:9px 11px;font-size:11px;color:#7a5c00;line-height:1.6;margin-top:7px'>"+
+                  "<b>⚠️ Este préstamo es muy chico para el trabajo que da.</b><br>"+
+                  "Tu tiempo pesa más que el riesgo: de ese "+sg.piso+"% de piso, "+sg.costoOpPct+"% es solo el costo de gestionarlo. "+
+                  "Cobrar el "+sg.sugerida+"% que sale de la cuenta espantaría a cualquiera, y cobrar menos es trabajar gratis.<br>"+
+                  "Lo sano es prestar un monto mayor, juntarlo con otro préstamo del mismo cliente, o cobrar una comisión fija en vez de un porcentaje."+
+                "</div>"
+              :"")+
             "<div style='font-size:10px;color:"+(_pctActual<sg.piso?"#c0392b":(_pctActual>sg.max?"#d35400":"#14603a"))+";font-weight:700;margin-top:7px'>"+
               (_pctActual<=0?"Escribe un % abajo para comparar."
                :_pctActual<sg.piso?"⚠️ El "+_pctActual+"% que tienes puesto está por DEBAJO de tu punto de equilibrio: con este préstamo pierdes."
