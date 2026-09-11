@@ -42,17 +42,23 @@ const NECESARIAS = ["td", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
                     "ajusteDiasPrimeraCuota", "interesPorAjusteDias",
                     "cuotasRecomendadas", "limiteCredito",
                     "costoOperativoPorPrestamo", "pctCostoOperativo",
-                    "capitalRealTotal", "_mesesDesde"];
+                    "capitalRealTotal", "_mesesDesde", "_acumuladosMes",
+                    "conciliacionCapital", "getMesKeyActual"];
 // S es el estado global de la app; aca solo hacen falta config y prestamos.
 const S = { config: {}, prestamos: [] };
 // Tasas de mentira para no depender de la configuracion real. getRateToUsdt
 // devuelve cuantas unidades de esa moneda vale 1 USDT.
 const TASAS = { USDT: 1, BRL: 5.4, VES: 200 };
 const getRateToUsdt = (m) => TASAS[m] || null;
-const F = new Function("S", "getRateToUsdt",
+// calcMesCompleto es una funcion enorme con media app detras. Aqui se
+// inyecta una falsa para poder fijar a mano lo que movio cada mes y
+// comprobar la aritmetica de la conciliacion.
+const MESES_FALSOS = {};
+const calcMesCompleto = (mk) => MESES_FALSOS[mk] || {};
+const F = new Function("S", "getRateToUsdt", "calcMesCompleto",
   CONSTANTES.map(sacarConstante).join("\n") + "\n" +
   NECESARIAS.map(sacarFuncion).join("\n") +
-  "\nreturn {" + NECESARIAS.join(",") + "};")(S, getRateToUsdt);
+  "\nreturn {" + NECESARIAS.join(",") + "};")(S, getRateToUsdt, calcMesCompleto);
 
 let fallos = 0;
 function ok(cond, msg, dato) {
@@ -467,6 +473,65 @@ const cruce = F._mesesDesde("2025-11-15");
 ok(cruce[0] === "2025-11" && cruce[1] === "2025-12" && cruce[2] === "2026-01",
    "cruza bien el cambio de anio", cruce.slice(0, 3).join());
 S.cuentas = []; S.config = {};
+
+// ── Conciliacion: la apertura no puede contar dos veces ─────────────
+console.log("\nConciliacion desde la apertura");
+const mesHoy = F.getMesKeyActual();
+const limpiar = () => { Object.keys(MESES_FALSOS).forEach(k => delete MESES_FALSOS[k]); };
+
+S.cuentas = [{ id:"a", nombre:"CAJA", moneda:"USDT", saldo:1000, activa:true }];
+S.cuentasCobrar = []; S.prestamos = [];
+S.config = {};
+ok(F.conciliacionCapital().configurada === false, "sin apertura fijada no concilia nada");
+ok(F.conciliacionCapital().real.total === 1000, "pero ya dice cuanto hay de verdad");
+
+// El bug: se fija la apertura a media semana, cuando el mes ya movio algo.
+// Ese dinero YA esta dentro de los 1000 contados.
+limpiar();
+MESES_FALSOS[mesHoy] = { ganBrutaTotal: 2.54 };
+S.config = { aperturaUsdt: 1000, aperturaFecha: new Date().toISOString().slice(0,10) };
+ok(F.conciliacionCapital().diferencia === -2.54,
+   "sin la foto del mes, la ganancia ya cobrada se cuenta dos veces",
+   F.conciliacionCapital().diferencia);
+
+// Con la foto que guarda fijarAperturaHoy(), arranca en cero.
+S.config.aperturaBase = F._acumuladosMes(mesHoy);
+ok(F.conciliacionCapital().diferencia === 0,
+   "con la foto del mes en curso, la diferencia arranca EN CERO",
+   F.conciliacionCapital().diferencia);
+
+// Y lo que se gane despues si cuenta.
+MESES_FALSOS[mesHoy] = { ganBrutaTotal: 12.54 };   // 10 mas
+ok(F.conciliacionCapital().deberias === 1010,
+   "lo ganado despues de la apertura si suma", F.conciliacionCapital().deberias);
+ok(F.conciliacionCapital().diferencia === -10,
+   "y si ese dinero no aparece en las cuentas, lo canta", F.conciliacionCapital().diferencia);
+S.cuentas[0].saldo = 1010;
+ok(F.conciliacionCapital().diferencia === 0, "cuando entra a la cuenta, vuelve a cuadrar");
+
+// Una apertura guardada antes del arreglo no trae la foto: hay que avisar,
+// porque no se puede reconstruir cuanto iba del mes aquel dia.
+S.config = { aperturaUsdt: 1000, aperturaFecha: new Date().toISOString().slice(0,10) };
+ok(F.conciliacionCapital().baseFaltante === true, "detecta una apertura vieja sin foto");
+S.config.aperturaBase = {};
+ok(F.conciliacionCapital().baseFaltante === false, "con foto, aunque este vacia, no avisa");
+
+console.log("\nQue se resta y que no");
+limpiar();
+S.cuentas = [{ id:"a", nombre:"CAJA", moneda:"USDT", saldo:1000, activa:true }];
+MESES_FALSOS[mesHoy] = { ganBrutaTotal: 100, egEmpPag: 30, egPerPagPropio: 20, egPerPag: 15, totalCom: 10 };
+S.config = { aperturaUsdt: 1000, aperturaFecha: new Date().toISOString().slice(0,10), aperturaBase: {} };
+const co = F.conciliacionCapital();
+ok(co.deberias === 1040, "1000 + 100 − 30 − 20 − 10 = 1040 (el sin-cuenta no resta)", co.deberias);
+ok(co.egPersonalSin === 15, "pero se muestra aparte para que se vea", co.egPersonalSin);
+ok(co.bruta === 100 && co.egEmpresa === 30 && co.socios === 10, "cada linea sale por separado");
+
+console.log("\nTolerancia");
+ok(F.conciliacionCapital().tolerancia >= 5, "nunca baja de 5 USDT");
+S.cuentas = [{ id:"a", nombre:"CAJA", moneda:"USDT", saldo:10000, activa:true }];
+ok(casi(F.conciliacionCapital().tolerancia, 200, 1), "en carteras grandes es el 2% del capital",
+   F.conciliacionCapital().tolerancia);
+limpiar(); S.config = {}; S.cuentas = [];
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

@@ -2221,6 +2221,20 @@ function _mesesDesde(fechaIso){
 // son dinero que salio de la caja. En la utilidad no van (no son costo
 // del negocio) pero en el capital si, y por no estar en ningun lado
 // desaparecian sin dejar rastro.
+// Lo que movio un mes: ganancia y salidas. Se saca aqui una sola vez
+// porque lo usan dos sitios —la conciliacion y la foto que se guarda al
+// fijar la apertura— y tienen que contar exactamente lo mismo.
+function _acumuladosMes(mk){
+  var c=calcMesCompleto(mk)||{};
+  return {
+    bruta:      (parseFloat(c.ganBrutaTotal)||0)+(parseFloat(c.ganExtraEmp)||0),
+    egEmpresa:  parseFloat(c.egEmpPag)||0,
+    egPersonal: parseFloat(c.egPerPagPropio)||0,
+    egPersonalSin: parseFloat(c.egPerPag)||0,
+    socios:     parseFloat(c.totalCom)||0
+  };
+}
+
 function conciliacionCapital(){
   var cfg=S.config||{};
   var apertura=parseFloat(cfg.aperturaUsdt);
@@ -2232,19 +2246,30 @@ function conciliacionCapital(){
   var meses=_mesesDesde(desde);
   var bruta=0, egEmpresa=0, egPersonal=0, egPersonalSin=0, socios=0;
   meses.forEach(function(mk){
-    var c=calcMesCompleto(mk)||{};
-    bruta     += parseFloat(c.ganBrutaTotal)||0;
-    bruta     += parseFloat(c.ganExtraEmp)||0;
-    egEmpresa += parseFloat(c.egEmpPag)||0;
-    socios    += parseFloat(c.totalCom)||0;
-    egPersonal   += parseFloat(c.egPerPagPropio)||0;   // salieron de una cuenta
-    egPersonalSin+= parseFloat(c.egPerPag)||0;          // sin cuenta asignada
+    var a=_acumuladosMes(mk);
+    bruta        += a.bruta;
+    egEmpresa    += a.egEmpresa;
+    egPersonal   += a.egPersonal;      // salieron de una cuenta
+    egPersonalSin+= a.egPersonalSin;   // sin cuenta asignada
+    socios       += a.socios;
   });
+  // La apertura se fija a media semana, no el dia 1: el dinero contado YA
+  // incluye lo que iba del mes. Sumar el mes entero encima lo contaba dos
+  // veces y la diferencia arrancaba en −(ganancia de esos dias) en vez de
+  // en cero. Se descuenta la foto que se guardo al fijarla.
+  var base=cfg.aperturaBase||{};
+  var baseFaltante=!cfg.aperturaBase;
+  bruta        -= parseFloat(base.bruta)||0;
+  egEmpresa    -= parseFloat(base.egEmpresa)||0;
+  egPersonal   -= parseFloat(base.egPersonal)||0;
+  egPersonalSin-= parseFloat(base.egPersonalSin)||0;
+  socios       -= parseFloat(base.socios)||0;
   var r2v=function(n){return Math.round(n*100)/100;};
   var deberias=r2v(apertura+bruta-egEmpresa-egPersonal-socios);
   var diferencia=r2v(real.total-deberias);
   return {
     configurada:true, apertura:r2v(apertura), desde:desde, meses:meses.length,
+    baseFaltante:baseFaltante,
     bruta:r2v(bruta), egEmpresa:r2v(egEmpresa), egPersonal:r2v(egPersonal),
     egPersonalSin:r2v(egPersonalSin), socios:r2v(socios),
     deberias:deberias, real:real, diferencia:diferencia,
@@ -3505,6 +3530,9 @@ function fijarAperturaHoy(){
     if(!S.config) S.config={};
     S.config.aperturaUsdt=cap.total;
     S.config.aperturaFecha=td();
+    // Foto de lo que va del mes en curso: ya esta dentro del dinero
+    // contado, asi que no se puede volver a sumar.
+    S.config.aperturaBase=_acumuladosMes(getMesKeyActual());
     logAudit("APERTURA_CAPITAL","Saldo de apertura fijado en $"+f2(cap.total)+" USDT (cuentas "+f2(cap.enCuentas)+", reserva "+f2(cap.enReserva)+", calle "+f2(cap.enLaCalle)+")");
     saveData();R();
     alert("✅ Apertura fijada en $"+f2(cap.total)+" USDT.\n\nLa diferencia arranca en cero. Si dentro de un mes sigue en cero, tu contabilidad está sana.");
@@ -7529,6 +7557,9 @@ function rCapitalTotal(){
             ? "⚠️ Te faltan $"+f2(Math.abs(dif))+" respecto a lo que deberías tener. Esto es dinero que salió sin quedar registrado — lo más común es lo que sacas para ti sin anotarlo."
             : "⚠️ Tienes $"+f2(dif)+" de más. Suele significar que entró dinero que no se registró como ganancia, o que un saldo de cuenta se corrigió a mano.")+
       "</div>"+
+      (co.baseFaltante?"<div style='background:#FFF4E5;border:1px solid #f0c080;border-radius:8px;padding:9px 11px;font-size:11px;color:#7a5c00;line-height:1.6;margin-top:8px'>"+
+        "<b>⚠️ Vuelve a fijar la apertura.</b> Esta se guardó antes de un arreglo: contaba dos veces lo que ya llevabas ganado el mes en que la fijaste, así que la diferencia arranca torcida. Un clic en el botón de abajo lo deja en cero."+
+      "</div>":"")+
       (co.egPersonalSin>0?"<div style='font-size:10px;color:#888;margin-top:7px;line-height:1.5'>Nota: hay $"+f2(co.egPersonalSin)+" de gastos personales sin cuenta asignada. No se restan porque no salieron de ningún saldo registrado — si en realidad sí salieron de una cuenta, edítalos y asígnasela.</div>":"")+
       "<div style='font-size:10px;color:#aaa;margin-top:7px'>Tu sueldo no se resta aquí: la app lo calcula como un % de la utilidad, no registra lo que de verdad sacaste. Lo que sacas se anota como gasto personal con su cuenta.</div>"+
       "<button onclick='fijarAperturaHoy()' style='width:100%;margin-top:9px;padding:8px;border:1px solid "+brd+";border-radius:8px;background:#fff;color:#666;font-size:11px;cursor:pointer;font-family:inherit'>Volver a fijar la apertura con el dinero de hoy</button>"+
