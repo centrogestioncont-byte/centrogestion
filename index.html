@@ -692,15 +692,28 @@ function gananciaPrestamosDelMes(mesKey){
   (S.prestamos||[]).forEach(function(p){
     var capital=parseFloat(p.capital!==undefined?p.capital:p.monto)||0;
     var montoTotal=parseFloat(p.monto)||0;
-    var interesTotal=Math.max(0,Math.round((montoTotal-capital)*100)/100);
-    if(interesTotal<=0||montoTotal<=0) return;
-    var fracInteres=interesTotal/montoTotal;
+    if(montoTotal<=0) return;
     var usdtPorUnidad=(parseFloat(p.usdt)||0)/montoTotal;
-    (p.abonos||[]).forEach(function(ab){
-      if(_mesKeyISO(ab.fecha)===mesKey){
-        var interesEnAbono=(parseFloat(ab.monto)||0)*fracInteres;
-        monto+=interesEnAbono;
-        usdt+=interesEnAbono*usdtPorUnidad;
+    var interesTotal=Math.max(0,Math.round((montoTotal-capital)*100)/100);
+    if(interesTotal>0){
+      var fracInteres=interesTotal/montoTotal;
+      (p.abonos||[]).forEach(function(ab){
+        if(_mesKeyISO(ab.fecha)===mesKey){
+          var interesEnAbono=(parseFloat(ab.monto)||0)*fracInteres;
+          monto+=interesEnAbono;
+          usdt+=interesEnAbono*usdtPorUnidad;
+          cant++;
+        }
+      });
+    }
+    // La mora cobrada es ganancia integra: no devuelve capital, es un
+    // cargo por el atraso. Va aparte de p.abonos justamente para que no
+    // descuadre el saldo pendiente del prestamo en el resto de la app.
+    ((p.mora&&p.mora.historial)||[]).forEach(function(m){
+      if(_mesKeyISO(m.fecha)===mesKey){
+        var mm=parseFloat(m.monto)||0;
+        monto+=mm;
+        usdt+=mm*usdtPorUnidad;
         cant++;
       }
     });
@@ -3048,11 +3061,16 @@ function togglePagarPrest(id){
     // por eso el descuento por pronto pago no se activaba con la cuota
     // que ya venía elegida de entrada).
     var _cuInicial = pp ? proximaCuotaPendiente(pp) : null;
+    // Si hay mora pendiente se viene marcada por defecto y el monto
+    // sugerido ya la incluye: lo normal es cobrarla, no olvidarla.
+    var _moraIni = pp ? moraPendiente(pp) : 0;
+    var _sugerido = (_cuInicial?_cuInicial.monto:0) + _moraIni;
     S.nPagarPrest={
-      monto:_cuInicial?String(_cuInicial.monto):"",
+      monto:_sugerido>0?String(Math.round(_sugerido*100)/100):"",
       cuentaId:"",
       moneda:(pp&&pp.mon)||"USDT",
       tasaManual:"",
+      cobrarMora:_moraIni>0.009,
       cuotaSel:_cuInicial?JSON.stringify({n:_cuInicial.n,monto:_cuInicial.monto,fecha:_cuInicial.fecha,iso:_cuInicial.iso}):""
     };
   }
@@ -3110,6 +3128,25 @@ function pagarPrestamo(id){
   }
 
   if(!p.abonos) p.abonos=[];
+
+  // ── MORA ──────────────────────────────────────────────────────────
+  // Se congela lo devengado hasta hoy (para que no se evapore al saldar
+  // la cuota atrasada) y, si se marco cobrarla, se descuenta PRIMERO del
+  // dinero recibido: lo que quede es lo que va contra las cuotas. La
+  // mora vive en p.mora y NO en p.abonos, porque no baja el saldo del
+  // prestamo — es un cargo aparte. Asi ningun total de la app se
+  // descuadra por haberla cobrado.
+  congelarMora(p);
+  var _moraPend=moraPendiente(p);
+  var _cobraMora=(np.cobrarMora!==false) && _moraPend>0.009 && monto>0.009;
+  var _moraCobradaAhora=0, _moraCashAhora=0;
+  if(_cobraMora){
+    _moraCobradaAhora=Math.round(Math.min(_moraPend,monto)*100)/100;
+    _moraCashAhora=monto>0?Math.round((montoIngresado*(_moraCobradaAhora/monto))*100)/100:0;
+    monto=Math.round((monto-_moraCobradaAhora)*100)/100;
+    montoIngresado=Math.round((montoIngresado-_moraCashAhora)*100)/100;
+  }
+
   var totalAbonado=p.abonos.reduce(function(a,ab){return a+ab.monto;},0);
   var montoBase=parseFloat(p.monto||p.sal)||0;
   var saldoPend=Math.max(0,Math.round((montoBase-totalAbonado)*100)/100);
@@ -3178,21 +3215,46 @@ function pagarPrestamo(id){
     _abonosAregistrar.push({monto:monto,montoPago:montoIngresado,cuotaN:_cuotaSel?_cuotaSel.n:null});
   }
 
-  var confirmMsg="Abonar "+f2(montoIngresado)+" "+monPago+(monPago!==mon?" (≈"+f2(monto)+" "+mon+" del préstamo)":"")+" de "+p.desc+(_cuotaSel?" · Cuota "+_cuotaSel.n:"")+
-    (_excedenteInfo?" · se adelanta "+f2(_excedenteInfo.creditoTotal)+" "+mon+" a la Cuota "+_excedenteInfo.cuotaN:"")+
-    " → "+c.nombre+". ¿Confirmar?";
+  // Si todo el dinero se fue en mora no queda nada que abonar a cuotas:
+  // un abono de 0 solo ensuciaria el historial.
+  _abonosAregistrar=_abonosAregistrar.filter(function(a){return (parseFloat(a.monto)||0)>0.009;});
+
+  // Efectivo que de verdad se acredita: la parte que va a cuotas (ya
+  // recortada si superaba el saldo) mas la parte que se fue en mora.
+  var _cashAcreditado=Math.round((montoIngresado+_moraCashAhora)*100)/100;
+  var confirmMsg="Recibir "+f2(_cashAcreditado)+" "+monPago+" de "+p.desc+"\n\n"+
+    (_moraCobradaAhora>0.009?"· Mora por atraso: "+f2(_moraCobradaAhora)+" "+mon+"\n":"")+
+    (monto>0.009?"· Abono al préstamo: "+f2(monto)+" "+mon+(_cuotaSel?" (Cuota "+_cuotaSel.n+")":"")+"\n":"")+
+    (_excedenteInfo?"· Se adelanta "+f2(_excedenteInfo.creditoTotal)+" "+mon+" a la Cuota "+_excedenteInfo.cuotaN+"\n":"")+
+    "\n→ entra en "+c.nombre+". ¿Confirmar?";
   if(!confirm(confirmMsg))return;
-  // Acreditar la cuenta con lo REALMENTE recibido (en su propia moneda)
-  ajusteCuentaEgreso(np.cuentaId,montoIngresado);
+  // Acreditar la cuenta con lo REALMENTE recibido (en su propia moneda),
+  // mora incluida — el efectivo entra completo aunque por dentro se
+  // reparta entre mora y cuotas.
+  ajusteCuentaEgreso(np.cuentaId,_cashAcreditado);
+  // Registrar la mora cobrada (aparte de los abonos, ver nota arriba)
+  if(_moraCobradaAhora>0.009){
+    if(!p.mora) p.mora={cobrada:0,porCuota:{},historial:[]};
+    if(!p.mora.historial) p.mora.historial=[];
+    p.mora.historial.push({id:Date.now()+900,fecha:td(),monto:_moraCobradaAhora,
+      montoPago:_moraCashAhora,monedaPago:monPago,cuentaId:np.cuentaId});
+    p.mora.cobrada=Math.round(((parseFloat(p.mora.cobrada)||0)+_moraCobradaAhora)*100)/100;
+  }
   // Trackear el/los abono(s) en la moneda ORIGINAL del préstamo
   _abonosAregistrar.forEach(function(ax,idx){
     p.abonos.push({id:Date.now()+idx,fecha:td(),monto:Math.round(ax.monto*100)/100,cuentaId:np.cuentaId,monedaPago:monPago,montoPago:Math.round(ax.montoPago*100)/100,cuotaN:ax.cuotaN});
   });
   var nuevoTotal=p.abonos.reduce(function(a,ab){return a+ab.monto;},0);
   var restante=Math.round((montoBase-nuevoTotal)*100)/100;
-  if(restante<=0.001){p.estado="pagado";p.fechaPago=td();p.montoCobrado=nuevoTotal;}
-  logAudit("ABONO_PRESTAMO","Abono "+f2(montoIngresado)+" "+monPago+notaPago+" de "+p.desc+(_cuotaSel?" (Cuota "+_cuotaSel.n+")":"")+(_excedenteInfo?" · adelanto "+_excedenteInfo.creditoTotal+" "+mon+" → Cuota "+_excedenteInfo.cuotaN+" (excedente "+_excedenteInfo.excedente+" + premio "+_excedenteInfo.premioActual+")":"")+" → "+c.nombre+(restante>0.001?" · pendiente: "+f2(restante):" · SALDADO"));
-  S._pagarPrestId=null;S.nPagarPrest={cuentaId:"",monto:"",moneda:"",tasaManual:"",cuotaSel:""};
+  // Solo se cierra si tambien quedo saldada la mora: si no, un cliente
+  // atrasado cerraria el prestamo pagando las cuotas y dejando la mora.
+  var _moraQueda=moraPendiente(p);
+  if(restante<=0.001&&_moraQueda<=0.009){p.estado="pagado";p.fechaPago=td();p.montoCobrado=nuevoTotal;}
+  if(_abonosAregistrar.length) logAudit("ABONO_PRESTAMO","Abono "+f2(montoIngresado)+" "+monPago+notaPago+" de "+p.desc+(_cuotaSel?" (Cuota "+_cuotaSel.n+")":"")+(_excedenteInfo?" · adelanto "+_excedenteInfo.creditoTotal+" "+mon+" → Cuota "+_excedenteInfo.cuotaN+" (excedente "+_excedenteInfo.excedente+" + premio "+_excedenteInfo.premioActual+")":"")+" → "+c.nombre+(restante>0.001?" · pendiente: "+f2(restante):" · SALDADO"));
+  if(_moraCobradaAhora>0.009){
+    logAudit("MORA_PRESTAMO","Cobró "+f2(_moraCobradaAhora)+" "+mon+" de mora de "+p.desc+" ("+_moraPend.toFixed(2)+" devengada) → "+c.nombre);
+  }
+  S._pagarPrestId=null;S.nPagarPrest={cuentaId:"",monto:"",moneda:"",tasaManual:"",cuotaSel:"",cobrarMora:false};
   saveData();R();
   // Agradecimiento automático por WhatsApp al registrar el abono
   if(confirm("Abono registrado.\n\n¿Enviar mensaje de agradecimiento a "+p.desc+" por WhatsApp?")){
@@ -3261,6 +3323,28 @@ function guardarConfigAlertas(){
   });
 }
 
+
+function guardarConfigMora(){
+  var activa=!!document.getElementById("inp-mora-activa").checked;
+  var multa=parseFloat(document.getElementById("inp-mora-multa").value);
+  var juros=parseFloat(document.getElementById("inp-mora-juros").value);
+  var gracia=parseInt(document.getElementById("inp-mora-gracia").value);
+  if(isNaN(multa)||multa<0){alert("Multa inválida.");return;}
+  if(isNaN(juros)||juros<0){alert("Juros de mora inválidos.");return;}
+  if(isNaN(gracia)||gracia<0) gracia=0;
+  autorizarYHacer(function(){
+    if(!S.config) S.config={};
+    S.config.moraActiva=activa;
+    S.config.moraMultaPct=multa;
+    S.config.moraJurosPctMes=juros;
+    S.config.moraDiasGracia=gracia;
+    logAudit("CONFIG_MORA","Mora "+(activa?"activa":"desactivada")+": multa "+multa+"% + juros "+juros+"%/mes, gracia "+gracia+"d");
+    saveData();R();
+    alert(activa
+      ? "✅ Mora activa:\n· Multa: "+multa+"% sobre lo vencido\n· Juros: "+juros+"% al mes prorrateado por día\n· Gracia: "+gracia+" día(s)"
+      : "✅ Mora desactivada — las cuotas vencidas no generarán ningún cargo.");
+  });
+}
 
 function guardarComisionVES(){
   var inp=document.getElementById("inp-com-ves");
@@ -4783,6 +4867,87 @@ function proximaCuotaPendiente(p){
   }
   return null; // todas cubiertas
 }
+// ── MORA POR ATRASO ────────────────────────────────────────────────
+// Hasta ahora una cuota vencida solo pintaba un chip rojo: el cliente
+// que pagaba 60 dias tarde pagaba exactamente lo mismo que el puntual, y
+// encima el sistema premiaba adelantar. Esto cierra ese hueco.
+//
+// Se usa el estandar brasileño (el mismo que aplica Nubank y que la ley
+// de consumo permite): multa fija sobre el valor vencido + juros de mora
+// mensuales prorrateados por dia. Los dos porcentajes y los dias de
+// gracia se configuran en ⚙️ Configuracion.
+function cfgMora(){
+  var c=S.config||{};
+  return {
+    activa:      c.moraActiva!==false,
+    multaPct:    c.moraMultaPct   !==undefined ? (parseFloat(c.moraMultaPct)||0)    : 2,
+    jurosPctMes: c.moraJurosPctMes!==undefined ? (parseFloat(c.moraJurosPctMes)||0) : 1,
+    diasGracia:  c.moraDiasGracia !==undefined ? (parseInt(c.moraDiasGracia)||0)    : 3
+  };
+}
+function _diasIso(isoDesde,isoHasta){
+  var d=Math.round((new Date(isoHasta+"T00:00:00")-new Date(isoDesde+"T00:00:00"))/86400000);
+  return isNaN(d)?0:d;
+}
+// Mora devengada, cuota por cuota. Una cuota ya saldada deja de generar
+// mora NUEVA, pero la que ya habia generado no se borra: queda congelada
+// en p.mora.porCuota al momento de cobrarla. Por eso se toma el mayor
+// entre la mora viva y la congelada — si no, al cliente le bastaria con
+// pagar la cuota atrasada para que la mora desapareciera sola.
+function detalleMora(p,hoyIso){
+  var cfg=cfgMora();
+  var out={activa:cfg.activa,multa:0,juros:0,total:0,cuotas:[],diasMax:0,cfg:cfg};
+  if(!cfg.activa||!p||!p.cuotas||!p.cuotas.length) return out;
+  var hoy=hoyIso||td();
+  var congeladas=(p.mora&&p.mora.porCuota)||{};
+  var totalAbonado=(p.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);
+  var acum=0;
+  p.cuotas.forEach(function(cu){
+    var antesDeEsta=acum;
+    var montoCu=parseFloat(cu.monto)||0;
+    acum+=montoCu;
+    var vMulta=0,vJuros=0,dias=0,pendiente=0;
+    if(cu.iso&&cu.iso<hoy){
+      // Misma regla de "cobertura acumulada" que usa proximaCuotaPendiente:
+      // esta cuota esta cubierta con lo que sobro de las anteriores.
+      var cubierto=Math.min(Math.max(0,totalAbonado-antesDeEsta),montoCu);
+      pendiente=Math.round((montoCu-cubierto)*100)/100;
+      dias=_diasIso(cu.iso,hoy);
+      if(pendiente>0.009&&dias>cfg.diasGracia){
+        vMulta=Math.round(pendiente*(cfg.multaPct/100)*100)/100;
+        vJuros=Math.round(pendiente*(cfg.jurosPctMes/100)*(dias/30)*100)/100;
+      }
+    }
+    var cong=congeladas[cu.n]||{};
+    var multa=Math.max(vMulta,parseFloat(cong.multa)||0);
+    var juros=Math.max(vJuros,parseFloat(cong.juros)||0);
+    var tot=Math.round((multa+juros)*100)/100;
+    if(tot<=0.009) return;
+    out.multa+=multa; out.juros+=juros;
+    out.cuotas.push({n:cu.n,fecha:cu.fecha,iso:cu.iso,pendiente:pendiente,dias:dias,
+                     multa:multa,juros:juros,total:tot,saldada:pendiente<=0.009});
+    if(dias>out.diasMax) out.diasMax=dias;
+  });
+  out.multa=Math.round(out.multa*100)/100;
+  out.juros=Math.round(out.juros*100)/100;
+  out.total=Math.round((out.multa+out.juros)*100)/100;
+  return out;
+}
+// Mora que todavia esta por cobrar = devengada − ya cobrada.
+function moraPendiente(p,hoyIso){
+  var dev=detalleMora(p,hoyIso).total;
+  var cob=parseFloat((p.mora&&p.mora.cobrada)||0)||0;
+  return Math.max(0,Math.round((dev-cob)*100)/100);
+}
+// Congela la mora devengada hasta hoy para que no se evapore cuando el
+// cliente salde la cuota atrasada. Se llama justo antes de tocar abonos.
+function congelarMora(p,hoyIso){
+  var det=detalleMora(p,hoyIso);
+  if(!p.mora) p.mora={cobrada:0,porCuota:{},historial:[]};
+  if(!p.mora.porCuota) p.mora.porCuota={};
+  det.cuotas.forEach(function(c){ p.mora.porCuota[c.n]={multa:c.multa,juros:c.juros}; });
+  return det;
+}
 function recordarCuotaWA(id){
   var p=(S.prestamos||[]).find(function(x){return x.id===id;});
   if(!p) return;
@@ -4794,7 +4959,13 @@ function recordarCuotaWA(id){
   var esPasada = cu.iso && cu.iso<hoy;
   var msg;
   if(esPasada){
-    msg="Hola "+p.desc+"! 👋 Te escribo porque la cuota "+cu.n+" de "+f2(cu.monto)+" "+monP+" venció el "+cu.fecha+" y no la veo reflejada aún. ¿Me puedes confirmar cuándo la pasas? 🙏";
+    // Si ya corre mora, se le dice con transparencia cuánto y por qué —
+    // que se entere al cobrarle es la mejor forma de perder al cliente.
+    var _mp=moraPendiente(p);
+    var _diasAtr=_diasIso(cu.iso,hoy);
+    msg="Hola "+p.desc+"! 👋 Te escribo porque la cuota "+cu.n+" de "+f2(cu.monto)+" "+monP+" venció el "+cu.fecha+" y no la veo reflejada aún."+
+      (_mp>0.009?"\n\nPor los "+_diasAtr+" días de atraso se sumó una mora de *"+f2(_mp)+" "+monP+"* ("+cfgMora().multaPct+"% de multa + "+cfgMora().jurosPctMes+"% al mes por día), así que quedaría en *"+f2(Math.round((cu.monto+_mp)*100)/100)+" "+monP+"*. Mientras más esperemos, más sube — si hoy no puedes, dime qué día sí y lo acomodamos.":"")+
+      "\n\n¿Me puedes confirmar cuándo la pasas? 🙏";
   } else if(esHoy){
     msg="Hola "+p.desc+"! 👋 Hoy es la fecha de tu cuota "+cu.n+" de *"+f2(cu.monto)+" "+monP+"*. Cuando puedas la confirmas por aquí. ¡Gracias! 🙏";
   } else {
@@ -4860,9 +5031,9 @@ function enviarOpcionesWA(){
   // Fecha de la 1ª cuota (igual para todas las opciones, ya que todas
   // arrancan el mismo día — solo cambia cuántas cuotas hay).
   var f1=new Date(fechaBase+"T00:00:00");
-  if(frecuencia==="mensual"){ f1.setMonth(f1.getMonth()+1); f1.setDate(f1.getDate()+diasExtra); }
+  if(frecuencia==="mensual"){ f1=_sumarMeses(f1,1); f1.setDate(f1.getDate()+diasExtra); }
   else { f1.setDate(f1.getDate()+periodDays+diasExtra); }
-  var fecha1Txt=ds(f1.getFullYear()+"-"+String(f1.getMonth()+1).padStart(2,"0")+"-"+String(f1.getDate()).padStart(2,"0"));
+  var fecha1Txt=ds(_isoDeFecha(f1));
   var opciones=[1,2,3,4,5,6,7,8,9,10];
   var nombre=f.desc?f.desc+", ":"Hola! ";
   var msg=nombre+"👋 estas son tus opciones para el préstamo de *"+f2(cap)+" "+mon+"*:\n\n"+
@@ -4921,6 +5092,27 @@ function pedirCompromisoWA(id){
   var url="https://wa.me/?text="+encodeURIComponent(msg);
   window.open(url,"_blank");
 }
+// ── Revertir un cobro de mora equivocado ──────────────────────────
+// Mismo criterio que borrarAbonoPrestamo: se le quita el dinero a la
+// cuenta donde entro y la mora vuelve a quedar por cobrar.
+function borrarMoraPrestamo(prestId,moraId){
+  var p=(S.prestamos||[]).find(function(x){return x.id===prestId;});
+  if(!p||!p.mora||!p.mora.historial) return;
+  var m=p.mora.historial.find(function(x){return x.id===moraId;});
+  if(!m) return;
+  var montoReal=parseFloat(m.montoPago)||0;
+  var monedaReal=m.monedaPago||p.mon||"USDT";
+  if(!confirm("¿Borrar este cobro de mora de "+f2(montoReal)+" "+monedaReal+" ("+m.fecha+")?\n\nSe le restará ese monto a la cuenta donde había entrado y la mora vuelve a quedar pendiente."))return;
+  autorizarYHacer(function(){
+    if(m.cuentaId) ajusteCuentaEgreso(m.cuentaId,-montoReal);
+    p.mora.historial=p.mora.historial.filter(function(x){return x.id!==moraId;});
+    p.mora.cobrada=Math.max(0,Math.round(((parseFloat(p.mora.cobrada)||0)-(parseFloat(m.monto)||0))*100)/100);
+    // Si el prestamo se habia cerrado, vuelve a abrirse: aun debe mora.
+    if(p.estado==="pagado"&&moraPendiente(p)>0.009){ p.estado="activo"; p.fechaPago=null; p.montoCobrado=null; }
+    logAudit("BORRAR_MORA_PRESTAMO","Borró cobro de mora de "+f2(montoReal)+" "+monedaReal+" ("+m.fecha+") de "+p.desc);
+    saveData();R();
+  });
+}
 function adjuntarCapturaPrestamo(id){
   S._capturaTargetId=id;
   var inp=document.getElementById("inputCapturaPrestamo");
@@ -4976,6 +5168,25 @@ function borrarCapturaPrestamo(id,idx){
 // la parte de interés baja y la de capital sube a medida que se paga —
 // exactamente como un préstamo bancario real, no como un % fijo que se
 // multiplica por el número de cuotas.
+// ── Suma meses a una fecha SIN desbordar al mes siguiente ──────────
+// setMonth() a secas es una trampa de JavaScript: el 31/01 + 1 mes da
+// 03/03, no 28/02, porque el 31 de febrero no existe y el motor sigue
+// contando hacia adelante. Eso rompia el cronograma de cualquier
+// prestamo hecho un 29, 30 o 31: la cuota 1 caia en marzo, a 28 dias de
+// la cuota 2 en vez de 30, y el cliente ganaba dias gratis.
+// Un banco recorta al ultimo dia del mes destino; esto hace lo mismo.
+function _sumarMeses(fecha,meses){
+  var d=new Date(fecha.getTime());
+  var diaOriginal=d.getDate();
+  d.setDate(1);                                   // evita el desborde
+  d.setMonth(d.getMonth()+meses);
+  var ultimoDiaDelMes=new Date(d.getFullYear(),d.getMonth()+1,0).getDate();
+  d.setDate(Math.min(diaOriginal,ultimoDiaDelMes));
+  return d;
+}
+function _isoDeFecha(d){
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+}
 function calcularAmortizacion(capital,tasaPct,numCuotas){
   var i=(parseFloat(tasaPct)||0)/100; // tasa periódica en decimal
   var n=Math.max(1,parseInt(numCuotas)||1);
@@ -5024,10 +5235,9 @@ function savePr(){
   var sumaAsignada=0;
   for(var i=1;i<=numCuotas;i++){
     var fechaCuota=new Date(f.date+"T00:00:00");
-    var diasSumar = (frecuencia==="mensual") ? 0 : (periodDays*i + diasExtra);
-    if(frecuencia==="mensual"){ fechaCuota.setMonth(fechaCuota.getMonth()+i); fechaCuota.setDate(fechaCuota.getDate()+diasExtra); }
-    else { fechaCuota.setDate(fechaCuota.getDate()+diasSumar); }
-    var isoFecha=fechaCuota.getFullYear()+"-"+String(fechaCuota.getMonth()+1).padStart(2,"0")+"-"+String(fechaCuota.getDate()).padStart(2,"0");
+    if(frecuencia==="mensual"){ fechaCuota=_sumarMeses(fechaCuota,i); fechaCuota.setDate(fechaCuota.getDate()+diasExtra); }
+    else { fechaCuota.setDate(fechaCuota.getDate()+(periodDays*i+diasExtra)); }
+    var isoFecha=_isoDeFecha(fechaCuota);
     var montoEsta = (i===numCuotas) ? Math.round((montoTotal-sumaAsignada)*100)/100 : montoCuotaBase;
     sumaAsignada += montoEsta;
     cuotas.push({n:i,fecha:ds(isoFecha),iso:isoFecha,monto:montoEsta});
@@ -6083,6 +6293,40 @@ function rConfigAdmin(){
             "</div>"+
           "</div>"+
           "<button onclick='guardarConfigAlertas()' style='margin-top:8px;padding:9px 16px;background:#1a3558;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>💾 Guardar alertas</button>"+
+        "</div>"+
+        "<div style='margin-top:14px;padding-top:14px;border-top:1px solid #eee'>"+
+          "<div style='font-size:12px;font-weight:700;color:#555;margin-bottom:6px'>⏳ Mora por atraso en préstamos</div>"+
+          "<div style='font-size:11px;color:#888;margin-bottom:10px'>Lo que se le suma a una cuota cuando el cliente se pasa de la fecha. Los valores por defecto (2% + 1% al mes) son el estándar brasileño de consumo: suficientes para que atrasarse cueste, suaves para no espantar a nadie.</div>"+
+          "<label style='display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:#333;margin-bottom:10px;cursor:pointer'>"+
+            "<input type='checkbox' id='inp-mora-activa' "+(((S.config||{}).moraActiva!==false)?"checked":"")+" style='width:17px;height:17px'> Cobrar mora por atraso"+
+          "</label>"+
+          "<div style='display:grid;grid-template-columns:repeat(3,1fr);gap:10px'>"+
+            "<div>"+
+              "<label style='font-size:10px;font-weight:700;color:#555;text-transform:uppercase;display:block;margin-bottom:4px'>Multa única</label>"+
+              "<div style='display:flex;gap:5px;align-items:center'>"+
+                "<input type='number' id='inp-mora-multa' min='0' max='20' step='0.5' value='"+(((S.config||{}).moraMultaPct!==undefined)?S.config.moraMultaPct:2)+"' style='flex:1;padding:9px;border:1.5px solid #ddd;border-radius:8px;font-size:14px'>"+
+                "<span style='font-size:12px;color:#555'>%</span>"+
+              "</div>"+
+              "<div style='font-size:9px;color:#aaa;margin-top:3px'>Sobre lo vencido, una sola vez</div>"+
+            "</div>"+
+            "<div>"+
+              "<label style='font-size:10px;font-weight:700;color:#555;text-transform:uppercase;display:block;margin-bottom:4px'>Juros de mora</label>"+
+              "<div style='display:flex;gap:5px;align-items:center'>"+
+                "<input type='number' id='inp-mora-juros' min='0' max='30' step='0.5' value='"+(((S.config||{}).moraJurosPctMes!==undefined)?S.config.moraJurosPctMes:1)+"' style='flex:1;padding:9px;border:1.5px solid #ddd;border-radius:8px;font-size:14px'>"+
+                "<span style='font-size:12px;color:#555;white-space:nowrap'>%/mes</span>"+
+              "</div>"+
+              "<div style='font-size:9px;color:#aaa;margin-top:3px'>Prorrateado por día</div>"+
+            "</div>"+
+            "<div>"+
+              "<label style='font-size:10px;font-weight:700;color:#555;text-transform:uppercase;display:block;margin-bottom:4px'>Días de gracia</label>"+
+              "<div style='display:flex;gap:5px;align-items:center'>"+
+                "<input type='number' id='inp-mora-gracia' min='0' max='30' step='1' value='"+(((S.config||{}).moraDiasGracia!==undefined)?S.config.moraDiasGracia:3)+"' style='flex:1;padding:9px;border:1.5px solid #ddd;border-radius:8px;font-size:14px'>"+
+                "<span style='font-size:12px;color:#555'>días</span>"+
+              "</div>"+
+              "<div style='font-size:9px;color:#aaa;margin-top:3px'>Antes no se cobra nada</div>"+
+            "</div>"+
+          "</div>"+
+          "<button onclick='guardarConfigMora()' style='margin-top:10px;padding:9px 16px;background:#c0392b;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>💾 Guardar mora</button>"+
         "</div>"+
         "<div style='margin-top:14px;padding-top:14px;border-top:1px solid #eee'>"+
           "<div style='font-size:12px;font-weight:700;color:#555;margin-bottom:8px'>💼 % de sueldo mensual (sobre ganancia neta Julio)</div>"+
@@ -16092,6 +16336,11 @@ function rPrestamos(){
     var saldoPend=Math.max(0,Math.round((montoBase-totalAbonado)*100)/100);
     var tieneAbonos=p.abonos.length>0;
     var pct=montoBase>0?Math.min(100,Math.round(totalAbonado/montoBase*100)):0;
+    // Mora: se calcula una sola vez y se reutiliza en el chip, en el
+    // formulario de abono y en el total a cobrar hoy.
+    var _moraDet=detalleMora(p);
+    var _moraPend=moraPendiente(p);
+    var _moraCobrada=parseFloat((p.mora&&p.mora.cobrada)||0)||0;
 
     // Historial abonos
     var abonosHtml="";
@@ -16122,6 +16371,25 @@ function rPrestamos(){
       "</div>";
     }
 
+    // Historial de mora cobrada — aparte de los abonos porque no baja el
+    // saldo del préstamo: es ganancia por el atraso.
+    if(_moraCobrada>0.009){
+      abonosHtml+="<div style='margin-top:10px;padding-top:10px;border-top:1px dashed #f0c0bb'>"+
+        "<div style='font-size:10px;font-weight:700;color:#c0392b;text-transform:uppercase;margin-bottom:6px'>Mora cobrada</div>"+
+        ((p.mora&&p.mora.historial)||[]).map(function(m){
+          var nCtaM=m.cuentaId?nombreCuentaEg(m.cuentaId):"Sin acreditar";
+          return "<div style='display:flex;justify-content:space-between;align-items:center;padding:7px 11px;background:#FFF6F5;border:1px solid #f3d0cc;border-radius:8px;margin-bottom:5px;gap:8px'>"+
+            "<div style='flex:1;min-width:0'>"+
+              "<span style='font-size:13px;font-weight:700;color:#c0392b'>"+f2(m.monto)+" "+monP+"</span>"+
+              (m.monedaPago&&m.monedaPago!==monP?"<span style='font-size:10px;color:#888;margin-left:5px'>(recibido "+f2(m.montoPago)+" "+m.monedaPago+")</span>":"")+
+              "<div style='font-size:10px;color:#a88;margin-top:1px'>"+m.fecha+" · "+nCtaM+"</div>"+
+            "</div>"+
+            "<button onclick='borrarMoraPrestamo("+p.id+","+m.id+")' class='bk-btn icon danger' style='flex-shrink:0'>🗑</button>"+
+          "</div>";
+        }).join("")+
+      "</div>";
+    }
+
     // Formulario de abono (columna única, inputs grandes)
     var abonoForm="";
     if(isPaying){
@@ -16135,7 +16403,7 @@ function rPrestamos(){
       if(p.cuotas&&p.cuotas.length>1){
         var acumSel=0;
         cuotasSelHtml="<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>¿Qué cuota está pagando?</label>"+
-          "<select onchange='S.nPagarPrest=Object.assign(S.nPagarPrest||{},{cuotaSel:this.value});var _cu=JSON.parse(this.value);if(S.nPagarPrest.moneda===\""+monP+"\"||!S.nPagarPrest.moneda){S.nPagarPrest.monto=_cu.monto;}R()' style='width:100%;padding:11px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
+          "<select onchange='S.nPagarPrest=Object.assign(S.nPagarPrest||{},{cuotaSel:this.value});var _cu=this.value?JSON.parse(this.value):null;if(_cu&&(S.nPagarPrest.moneda===\""+monP+"\"||!S.nPagarPrest.moneda)){S.nPagarPrest.monto=Math.round((_cu.monto+("+_moraPend+"&&S.nPagarPrest.cobrarMora!==false?"+_moraPend+":0))*100)/100;}R()' style='width:100%;padding:11px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
           "<option value=''>— Abono libre (no ligado a una cuota) —</option>"+
           p.cuotas.map(function(cu){
             acumSel+=cu.monto;
@@ -16200,9 +16468,30 @@ function rPrestamos(){
           previewHtml+="<div style='font-size:11px;color:#c0392b;background:#FDECEA;border-radius:7px;padding:7px 10px;margin-top:6px'>⚠️ Sin tasa configurada — escribe la tasa manual arriba</div>";
         }
       }
+      // ── Caja de mora: solo aparece si de verdad hay atraso cobrable ──
+      var moraFormHtml="";
+      if(_moraPend>0.009){
+        var _chkMora=(np.cobrarMora!==false);
+        moraFormHtml="<div style='background:#FDECEA;border:1.5px solid #e74c3c;border-radius:10px;padding:11px;margin-bottom:2px'>"+
+          "<label style='display:flex;align-items:flex-start;gap:9px;cursor:pointer'>"+
+            "<input type='checkbox' "+(_chkMora?"checked":"")+" onchange='S.nPagarPrest=Object.assign(S.nPagarPrest||{},{cobrarMora:this.checked});R()' style='width:17px;height:17px;margin-top:1px;flex-shrink:0'>"+
+            "<div style='flex:1;min-width:0'>"+
+              "<div style='font-size:12px;font-weight:800;color:#c0392b'>Cobrar mora por atraso: "+f2(_moraPend)+" "+monP+"</div>"+
+              "<div style='font-size:10px;color:#a03328;margin-top:3px'>"+
+                _moraDet.cuotas.map(function(mc){
+                  return "Cuota "+mc.n+" · "+mc.dias+" día"+(mc.dias!==1?"s":"")+" de atraso · multa "+f2(mc.multa)+" + juros "+f2(mc.juros);
+                }).join("<br>")+
+              "</div>"+
+              "<div style='font-size:9px;color:#c98b84;margin-top:4px'>"+_moraDet.cfg.multaPct+"% de multa + "+_moraDet.cfg.jurosPctMes+"% al mes prorrateado por día"+(_moraDet.cfg.diasGracia>0?" · "+_moraDet.cfg.diasGracia+" días de gracia":"")+" — se ajusta en ⚙️ Configuración</div>"+
+              (_chkMora?"<div style='font-size:10px;color:#7a1f18;font-weight:700;margin-top:5px'>Del dinero que recibas se descuenta primero la mora; el resto va contra la cuota.</div>":"<div style='font-size:10px;color:#888;margin-top:5px'>Desmarcada: la mora queda registrada y pendiente para cobrarla después.</div>")+
+            "</div>"+
+          "</label>"+
+        "</div>";
+      }
       abonoForm="<div style='background:#FAFBFD;border:1px solid var(--line);border-left:3px solid var(--posDeep);border-radius:10px;padding:13px;margin-top:11px'>"+
-        "<div style='font-size:10px;font-weight:800;color:var(--ink2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:11px'>Registrar abono · pendiente <b style='color:var(--ink)'>"+f2(saldoPend)+" "+monP+"</b></div>"+
+        "<div style='font-size:10px;font-weight:800;color:var(--ink2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:11px'>Registrar abono · pendiente <b style='color:var(--ink)'>"+f2(saldoPend)+" "+monP+"</b>"+(_moraPend>0.009?" <span style='color:#c0392b'>+ "+f2(_moraPend)+" de mora</span>":"")+"</div>"+
         "<div style='display:flex;flex-direction:column;gap:8px;margin-bottom:10px'>"+
+          moraFormHtml+
           cuotasSelHtml+
           descuentoAnticipoHtml+
           "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>¿En qué moneda te está pagando?</label>"+
@@ -16312,10 +16601,12 @@ function rPrestamos(){
     var _hoyPr=td();
     var _vencidaPr=!!(_cuPr&&_cuPr.iso&&_cuPr.iso<_hoyPr);
     var _hoyVencePr=!!(_cuPr&&_cuPr.iso&&_cuPr.iso===_hoyPr);
-    var chipPr=_vencidaPr?"<span class='bk-chip due'>⚠ Vencida</span>"
+    var _diasAtraso=_vencidaPr?_diasIso(_cuPr.iso,_hoyPr):0;
+    var chipPr=_vencidaPr?"<span class='bk-chip due'>⚠ Vencida "+_diasAtraso+"d</span>"
       :_hoyVencePr?"<span class='bk-chip pend'>● Vence hoy</span>"
       :tieneAbonos?"<span class='bk-chip part'>◐ Abonado "+pct+"%</span>"
       :"<span class='bk-chip pend'>● Activo</span>";
+    if(_moraPend>0.009) chipPr+="<span class='bk-chip due' style='margin-left:5px'>+ mora "+f2(_moraPend)+" "+monP+"</span>";
     return "<div class='bk-item "+(_vencidaPr?"is-due":"is-pend")+"'>"+
       "<div class='bk-item-top'>"+
         "<div style='flex:1;min-width:0'>"+
@@ -16331,6 +16622,7 @@ function rPrestamos(){
         "<div class='bk-item-amt bk-num'>"+f2(tieneAbonos?saldoPend:montoBase)+" "+monP+
           (monP!=="USDT"&&equivUsdtPr>0?"<small>≈ $"+f2(equivUsdtPr)+" USDT</small>":"")+
           (tieneAbonos?"<small>de "+f2(montoBase)+" "+monP+"</small>":"")+
+          (_moraPend>0.009?"<small style='color:#c0392b;font-weight:800'>+ "+f2(_moraPend)+" mora = "+f2(Math.round(((tieneAbonos?saldoPend:montoBase)+_moraPend)*100)/100)+" "+monP+"</small>":"")+
         "</div>"+
       "</div>"+
       editClienteFormPrest+
