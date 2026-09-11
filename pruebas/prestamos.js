@@ -41,7 +41,8 @@ const NECESARIAS = ["td", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
                     "cronogramaCuotas", "_fechaPrimeraCuota", "diasPrimeraCuota",
                     "ajusteDiasPrimeraCuota", "interesPorAjusteDias",
                     "cuotasRecomendadas", "limiteCredito",
-                    "costoOperativoPorPrestamo", "pctCostoOperativo"];
+                    "costoOperativoPorPrestamo", "pctCostoOperativo",
+                    "capitalRealTotal", "_mesesDesde"];
 // S es el estado global de la app; aca solo hacen falta config y prestamos.
 const S = { config: {}, prestamos: [] };
 // Tasas de mentira para no depender de la configuracion real. getRateToUsdt
@@ -414,6 +415,58 @@ S.config = { costoOportunidadMes: 3 };
 ok(F.tasaSugerida("X","",1,"USDT","mensual",25).demasiadoChico === false,
    "sin costo configurado nunca avisa");
 S.config = {}; S.prestamos = [];
+
+// ── Conciliacion de capital ─────────────────────────────────────────
+console.log("\nCapital real: cuenta TODO el dinero");
+S.config = {}; S.prestamos = []; S.cuentasCobrar = [];
+S.cuentas = [
+  { id:"a", nombre:"USDT",    moneda:"USDT", saldo:100, activa:true },
+  { id:"b", nombre:"BRL",     moneda:"BRL",  saldo:540, activa:true },              // 100 USDT
+  { id:"c", nombre:"RESERVA", moneda:"BRL",  saldo:540, activa:true, esReserva:true },
+  { id:"d", nombre:"MIA",     moneda:"USDT", saldo:999, activa:true, esPersonal:true },
+  { id:"e", nombre:"CERRADA", moneda:"USDT", saldo:50,  activa:false }
+];
+let cap = F.capitalRealTotal();
+ok(casi(cap.enCuentas, 200, 0.5), "suma las monedas, no solo los USDT", cap.enCuentas);
+ok(casi(cap.enReserva, 100, 0.5), "la reserva se cuenta aparte, pero se cuenta", cap.enReserva);
+ok(cap.total === cap.enCuentas + cap.enReserva, "y entra en el total");
+ok(cap.enCuentas < 999, "las cuentas personales no son dinero de la empresa");
+
+S.cuentasCobrar = [
+  { id:1, estado:"pendiente", monto:54,  moneda:"BRL", abonos:[] },                  // 10 USDT
+  { id:2, estado:"pendiente", monto:100, moneda:"USDT", abonos:[{monto:40}] },        // 60
+  { id:3, estado:"pagado",    monto:500, moneda:"USDT", abonos:[] }
+];
+S.prestamos = [
+  { id:1, estado:"activo", mon:"USDT", monto:80, abonos:[{monto:30}] },               // 50
+  { id:2, estado:"pagado", mon:"USDT", monto:500, abonos:[{monto:500}] }
+];
+cap = F.capitalRealTotal();
+ok(casi(cap.porCobrar, 70, 0.5), "descuenta abonos y salta lo ya pagado", cap.porCobrar);
+ok(casi(cap.enPrestamos, 50, 0.5), "lo mismo con los prestamos", cap.enPrestamos);
+ok(casi(cap.enLaCalle, 120, 0.5), "el dinero en la calle es parte del capital", cap.enLaCalle);
+ok(casi(cap.total, 420, 0.5), "total = cuentas + reserva + calle", cap.total);
+
+S.cuentas = [{ id:"x", nombre:"RARO", moneda:"XYZ", saldo:100, activa:true }];
+S.cuentasCobrar = []; S.prestamos = [];
+cap = F.capitalRealTotal();
+ok(cap.sinTasa.indexOf("XYZ") >= 0, "avisa de las monedas sin tasa en vez de inventar un valor");
+ok(cap.total === 0, "y no las suma");
+
+console.log("\nMeses desde la apertura");
+ok(F._mesesDesde("").length === 0, "sin fecha no hay meses");
+ok(F._mesesDesde("no-es-fecha").length === 0, "una fecha invalida no cuelga");
+const hoyMes = new Date().getFullYear() + "-" + String(new Date().getMonth() + 1).padStart(2, "0");
+const ms = F._mesesDesde(new Date().toISOString().slice(0, 10));
+ok(ms.length === 1 && ms[0] === hoyMes, "abrir hoy da un solo mes: el actual", ms.join());
+const d = new Date(); d.setMonth(d.getMonth() - 3);
+ok(F._mesesDesde(d.toISOString().slice(0, 10)).length === 4,
+   "tres meses atras dan cuatro meses contando el actual",
+   F._mesesDesde(d.toISOString().slice(0, 10)).length);
+const cruce = F._mesesDesde("2025-11-15");
+ok(cruce[0] === "2025-11" && cruce[1] === "2025-12" && cruce[2] === "2026-01",
+   "cruza bien el cambio de anio", cruce.slice(0, 3).join());
+S.cuentas = []; S.config = {};
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
