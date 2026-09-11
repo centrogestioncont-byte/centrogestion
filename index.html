@@ -7412,22 +7412,32 @@ function rCapitalTotal(){
   }).join("");
 
   // ── Panel salud de cartera ────────────────────────────────────────
-  var porCobrarPend = (S.cuentasCobrar||[]).filter(function(x){return !x.cobrado;});
-  // Convertir cada cobro pendiente a USDT según su moneda real (no sumar BRL/USD como si fueran USDT)
+  // Antes filtraba por "!x.cobrado", pero ese campo no existe en ningún
+  // registro: la app marca los cobros con estado "pendiente"/"cobrado". Al no
+  // descartar nada, la tarjeta sumaba TODO el historial de cobros (ya cobrados
+  // incluidos) y decía "594,66 USDT · 37 pendientes" cuando en la calle solo
+  // había 28,16. Ahora usa el mismo filtro que conciliacionCapital().
+  var porCobrarPend = (S.cuentasCobrar||[]).filter(function(x){
+    if(x.estado!=="pendiente") return false;
+    var abos=(x.abonos||[]).reduce(function(s,ab){return s+(parseFloat(ab.monto)||0);},0);
+    return (parseFloat(x.monto)||0)-abos > 0;
+  });
+  // Convertir cada cobro pendiente a USDT según su moneda real (no sumar BRL/USD como si fueran USDT).
+  // La moneda por defecto es USDT, igual que en la conciliación: asumir BRL
+  // aquí y USDT allá daba dos totales distintos para el mismo dinero.
   var totalPorCobrar = porCobrarPend.reduce(function(a,x){
-    var mon = x.moneda||"BRL";
+    var mon = x.moneda||"USDT";
     var m = parseFloat(x.monto)||0;
     var abos = (x.abonos||[]).reduce(function(s,ab){return s+(parseFloat(ab.monto)||0);},0);
     var pend = Math.max(0, m - abos);
+    if(mon==="USDT"||mon==="USD") return a + pend;
     var rate = getRateToUsdt(mon);
-    return a + (mon==="USDT" ? pend : (rate ? Math.round(pend/rate*100)/100 : 0));
+    return a + (rate ? Math.round(pend/rate*100)/100 : 0);
   },0);
   totalPorCobrar = Math.round(totalPorCobrar*100)/100;
-  var prestPend = (S.prestamos||[]).filter(function(x){return !x.saldado;});
-  var totalPrestPend = prestPend.reduce(function(a,x){
-    var pagado=(x.pagos||[]).reduce(function(s,p){return s+(parseFloat(p.monto)||0);},0);
-    return a+Math.max(0,(parseFloat(x.monto)||0)-pagado);
-  },0);
+  // (aquí había un cálculo de préstamos pendientes que nadie mostraba y que
+  //  además leía campos inexistentes — "x.saldado" y "x.pagos" en vez de
+  //  "x.estado" y "x.abonos". Se quitó para que nadie lo dé por bueno.)
 
   // Distribución por moneda en USDT
   var distMon = {};
@@ -8010,11 +8020,22 @@ function reporteJulio(mesKey){
   var porCobrarBrl = (S.cuentasCobrar||[]).filter(function(p){
     return (p.tipo==="brl"||p.tipo==="vzla")&&filterByMes([{d:p.fecha}],mesKey).length>0&&p.estado==="pendiente";
   });
-  var totalPorCobrar = porCobrarBrl.reduce(function(a,p){return a+(parseFloat(p.monto||p.am)||0);},0);
+  var _pendCobro=function(p){var abon=(p.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);return Math.max(0,(parseFloat(p.monto||p.am)||0)-abon);};
+  var totalPorCobrar = porCobrarBrl.reduce(function(a,p){return a+_pendCobro(p);},0);
 
   // Préstamos pendientes activos
-  var prestPend = (S.prestamos||[]).filter(function(p){return !p.pagado;});
-  var totalPrest = prestPend.reduce(function(a,p){return a+(parseFloat(p.monto||p.saldo)||0);},0);
+  // Mismo error que en Salud de cartera: "p.pagado" no existe, el estado real
+  // es "pagado"/"saldado". Contaba préstamos ya cobrados y por el monto
+  // original, sin restar los abonos.
+  var prestPend = (S.prestamos||[]).filter(function(p){
+    if(p.estado==="pagado"||p.estado==="saldado") return false;
+    var abon=(p.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);
+    return (parseFloat(p.monto||p.sal||p.saldo)||0)-abon-(parseFloat(p.ent)||0) > 0;
+  });
+  var totalPrest = prestPend.reduce(function(a,p){
+    var abon=(p.abonos||[]).reduce(function(x,ab){return x+(parseFloat(ab.monto)||0);},0);
+    return a+Math.max(0,(parseFloat(p.monto||p.sal||p.saldo)||0)-abon-(parseFloat(p.ent)||0));
+  },0);
 
   // Ganancia total Julio
   var ganTotal = ganBrl + ganVzla + ganJulio50;
@@ -8085,13 +8106,13 @@ function reporteJulio(mesKey){
     // Por cobrar
     (porCobrarBrl.length?"<h2>⏳ Por Cobrar BRL/VZLA</h2>"+
     "<table><tr><th>Fecha</th><th>Cliente</th><th>Monto</th></tr>"+
-    porCobrarBrl.map(function(p){return "<tr><td>"+dFmt(p.d||p.fecha)+"</td><td>"+(p.cl||p.cliente)+"</td><td style='color:#e67e22;font-weight:700'>$"+f2(parseFloat(p.monto||p.am)||0)+"</td></tr>";}).join("")+
+    porCobrarBrl.map(function(p){return "<tr><td>"+dFmt(p.d||p.fecha)+"</td><td>"+(p.cl||p.cliente)+"</td><td style='color:#e67e22;font-weight:700'>$"+f2(_pendCobro(p))+"</td></tr>";}).join("")+
     "</table>":"")+
 
     // Préstamos activos
     (prestPend.length?"<h2>🤝 Préstamos Activos</h2>"+
     "<table><tr><th>Cliente</th><th>Monto</th><th>Fecha</th></tr>"+
-    prestPend.map(function(p){return "<tr><td>"+(p.cl||p.nombre||"")+"</td><td style='color:#e67e22;font-weight:700'>$"+f2(parseFloat(p.monto||p.saldo)||0)+"</td><td>"+(p.d||p.fecha||"")+"</td></tr>";}).join("")+
+    prestPend.map(function(p){var abon=(p.abonos||[]).reduce(function(x,ab){return x+(parseFloat(ab.monto)||0);},0);var pend=Math.max(0,(parseFloat(p.monto||p.sal||p.saldo)||0)-abon-(parseFloat(p.ent)||0));return "<tr><td>"+(p.cl||p.nombre||"")+"</td><td style='color:#e67e22;font-weight:700'>$"+f2(pend)+"</td><td>"+(p.d||p.fecha||"")+"</td></tr>";}).join("")+
     "</table>":"")+
 
     // Resumen final
@@ -8130,10 +8151,11 @@ function reportePaul(mesKey){
   var porCobrar=(S.cuentasCobrar||[]).filter(function(p){
     return p.tipo==="eeuu"&&filterByMes([{d:p.fecha}],mesKey).length>0&&p.estado==="pendiente";
   });
-  var totalPorCobrar=porCobrar.reduce(function(a,p){return a+(parseFloat(p.monto)||parseFloat(p.am)||0);},0);
+  var _pendCobroEE=function(p){var abon=(p.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);return Math.max(0,(parseFloat(p.monto)||parseFloat(p.am)||0)-abon);};
+  var totalPorCobrar=porCobrar.reduce(function(a,p){return a+_pendCobroEE(p);},0);
 
-  // Préstamos pendientes
-  var prestamos=(S.prestamos||[]).filter(function(p){return !p.pagado;});
+  // (aquí se filtraban "préstamos pendientes" con el campo inexistente
+  //  "p.pagado" y la variable no se mostraba en ningún lado. Se quitó.)
 
   // Neto final de Paul
   var netoPaul=ganPaul-totalDeudas;
@@ -8194,7 +8216,7 @@ function reportePaul(mesKey){
     // Por cobrar
     (porCobrar.length?"<h2>⏳ Clientes Por Cobrar EE.UU</h2>"+
     "<table><tr><th>Fecha</th><th>Cliente</th><th>Monto</th></tr>"+
-    porCobrar.map(function(p){return "<tr><td>"+dFmt(p.d||p.fecha)+"</td><td>"+(p.cl||p.cliente)+"</td><td style='color:#e67e22;font-weight:700'>$"+f2(parseFloat(p.monto||p.am)||0)+"</td></tr>";}).join("")+
+    porCobrar.map(function(p){return "<tr><td>"+dFmt(p.d||p.fecha)+"</td><td>"+(p.cl||p.cliente)+"</td><td style='color:#e67e22;font-weight:700'>$"+f2(_pendCobroEE(p))+"</td></tr>";}).join("")+
     "</table>":"")+
 
     // Resumen final
