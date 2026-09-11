@@ -3265,7 +3265,7 @@ function pagarPrestamo(id){
   saveData();R();
   // Agradecimiento automático por WhatsApp al registrar el abono
   if(confirm("Abono registrado.\n\n¿Enviar mensaje de agradecimiento a "+p.desc+" por WhatsApp?")){
-    agradecerAbonoWA(p,montoIngresado,monPago,_cuotaSel?_cuotaSel.n:null,restante,_excedenteInfo);
+    agradecerAbonoWA(p,_cashAcreditado,monPago,_cuotaSel?_cuotaSel.n:null,restante,_excedenteInfo,_moraCashAhora);
   }
 }
 // ── Borrar/revertir un abono individual de un préstamo ──
@@ -4995,7 +4995,7 @@ function recordarCuotaWA(id){
     var _mp=moraPendiente(p);
     var _diasAtr=_diasIso(cu.iso,hoy);
     msg="Hola "+p.desc+"! 👋 Te escribo porque la cuota "+cu.n+" de "+f2(cu.monto)+" "+monP+" venció el "+cu.fecha+" y no la veo reflejada aún."+
-      (_mp>0.009?"\n\nPor los "+_diasAtr+" días de atraso se sumó una mora de *"+f2(_mp)+" "+monP+"* ("+cfgMora().multaPct+"% de multa + "+cfgMora().jurosPctMes+"% al mes por día), así que quedaría en *"+f2(Math.round((cu.monto+_mp)*100)/100)+" "+monP+"*. Mientras más esperemos, más sube — si hoy no puedes, dime qué día sí y lo acomodamos.":"")+
+      (_mp>0.009?"\n\nPor los "+_diasAtr+" días de atraso se sumó una mora de *"+f2(_mp)+" "+monP+"* ("+cfgMora().multaPct+"% de multa + "+cfgMora().jurosPctMes+"% al mes, prorrateado por día), así que quedaría en *"+f2(Math.round((cu.monto+_mp)*100)/100)+" "+monP+"*. Mientras más esperemos, más sube — si hoy no puedes, dime qué día sí y lo acomodamos.":"")+
       "\n\n¿Me puedes confirmar cuándo la pasas? 🙏";
   } else if(esHoy){
     msg="Hola "+p.desc+"! 👋 Hoy es la fecha de tu cuota "+cu.n+" de *"+f2(cu.monto)+" "+monP+"*. Cuando puedas la confirmas por aquí. ¡Gracias! 🙏";
@@ -5004,13 +5004,21 @@ function recordarCuotaWA(id){
   }
   window.open("https://wa.me/?text="+encodeURIComponent(msg),"_blank");
 }
-function agradecerAbonoWA(p,montoPagado,monPago,cuotaN,restante,excedenteInfo){
+function agradecerAbonoWA(p,montoPagado,monPago,cuotaN,restante,excedenteInfo,moraCobrada){
   var monLoan=p.mon||"USDT";
   // Sin emojis: en algunos teléfonos, el link de WhatsApp con emojis largos
   // llega con caracteres corruptos (se ve como "?" o cuadros raros) — texto
   // plano evita ese problema por completo y se lee bien en cualquier equipo.
   var bloques=[];
-  bloques.push("Hola "+p.desc+"!\n\nRecibi tu pago"+(cuotaN?" de la cuota "+cuotaN:"")+" de "+f2(montoPagado)+" "+monPago+".\nQuedo registrado.");
+  var _mora=parseFloat(moraCobrada)||0;
+  var _recibo="Hola "+p.desc+"!\n\nRecibi tu pago"+(cuotaN?" de la cuota "+cuotaN:"")+" de "+f2(montoPagado)+" "+monPago+".";
+  // Si parte de lo que pago fue mora, se dice. Un monto sin explicar es lo
+  // que hace que el cliente vuelva preguntando por que le cobraste de mas.
+  if(_mora>0.009){
+    var _cuota=Math.round((montoPagado-_mora)*100)/100;
+    _recibo+="\n\nSe reparte asi:\n- "+f2(_cuota)+" "+monPago+" a la cuota\n- "+f2(_mora)+" "+monPago+" de mora por el atraso\n";
+  }
+  bloques.push(_recibo+"\nQuedo registrado.");
   if(excedenteInfo&&excedenteInfo.creditoTotal>0){
     var partes=[];
     if(excedenteInfo.excedente>0.009) partes.push("- "+f2(excedenteInfo.excedente)+" "+monLoan+" que pagaste de mas");
@@ -5056,28 +5064,38 @@ function enviarOpcionesWA(){
   var periodDays={semanal:7,quincenal:15,mensual:30}[frecuencia]||30;
   var fechaBase=f.date||td();
   var diaPago=parseInt(f.diaPago)||0;
-  var diasExtra=diasGraciaEfectivos(fechaBase,frecuencia,f.diasExtraPrimeraCuota,diaPago);
-  var tasaDiaria=periodDays?(pct/periodDays):0;
-  var extraPct=Math.round((tasaDiaria*diasExtra)*100)/100;
+  // Plazo REAL de la primera cuota. Se saca de la MISMA funcion que usa
+  // savePr, para que lo que el cliente acepta por WhatsApp sea exacto a lo
+  // que queda registrado.
+  var diasPlazo=diasPrimeraCuota(fechaBase,frecuencia,f.diasExtraPrimeraCuota,diaPago,f.fechaVence);
+  var ajusteDias=diasPlazo-periodDays;
   var etiquetaFrec={semanal:"semanal",quincenal:"quincenal",mensual:"mensual"}[frecuencia]||"mensual";
-  // Fecha de la 1ª cuota (igual para todas las opciones, ya que todas
-  // arrancan el mismo día — solo cambia cuántas cuotas hay). Se saca del
-  // MISMO cronograma que guarda savePr, para que lo que acepta el cliente
-  // por WhatsApp sea exactamente lo que queda registrado.
-  var fecha1Txt=ds(_isoDeFecha(cronogramaCuotas(fechaBase,1,frecuencia,diasExtra,diaPago)[0]));
+  var fecha1Txt=ds(_isoDeFecha(_fechaPrimeraCuota(fechaBase,frecuencia,f.diasExtraPrimeraCuota,diaPago,f.fechaVence)));
+  var ncRecom=cuotasRecomendadas(f.desc,f.cod);
   var opciones=[1,2,3,4,5,6,7,8,9,10];
   var nombre=f.desc?f.desc+", ":"Hola! ";
   var msg=nombre+"👋 estas son tus opciones para el préstamo de *"+f2(cap)+" "+mon+"*:\n\n"+
-    "📅 Pagos "+etiquetaFrec+"es, empezando el *"+fecha1Txt+"*\n\n";
+    "📅 Primer pago el *"+fecha1Txt+"* — "+diasPlazo+" día"+(diasPlazo!==1?"s":"")+" de plazo"+
+    ((parseInt(f.numCuotas)||1)>1||opciones.length>1?", y de ahí en adelante cada "+(frecuencia==="mensual"?"mes":frecuencia==="quincenal"?"quincena":"semana"):"")+"\n\n";
+  var total1x=0;
   opciones.forEach(function(nc){
     var amort=calcularAmortizacion(cap,pct,nc);
-    var extraFlat=Math.round((cap*(extraPct/100))*100)/100;
-    var totalReal=Math.round((amort.montoTotal+extraFlat)*100)/100;
+    var extraFlat=interesPorAjusteDias(cap,pct,frecuencia,ajusteDias);
+    var totalReal=Math.round(Math.max(cap,amort.montoTotal+extraFlat)*100)/100;
+    if(nc===1) total1x=totalReal;
     var cuotaProm=Math.round((totalReal/nc)*100)/100;
-    msg+=(nc===1?"🟢 ":"▪️ ")+nc+"x de "+f2(cuotaProm)+" "+mon+" (total "+f2(totalReal)+")"+(nc===1?" ← menos interés":"")+"\n";
+    msg+=(nc===ncRecom?"🟢 ":"▪️ ")+nc+"x de "+f2(cuotaProm)+" "+mon+" (total "+f2(totalReal)+")"+(nc===ncRecom?" ← te la recomiendo":"")+"\n";
   });
-  var _cetWA=tasaAnualEfectiva(pct,periodDays);
-  if(_cetWA>0) msg+="\n_Interés "+pct+"% por cuota (costo efectivo anual "+f2(_cetWA)+"%)._\n";
+  // El interes que se anuncia tiene que ser el que de verdad paga. Antes
+  // decia "8.2% por cuota" aunque el plazo fuera del doble y el cliente
+  // terminara pagando 16,4%: el numero del mensaje contradecia la factura.
+  if(pct>0&&cap>0&&total1x>0){
+    var intPct=Math.round(((total1x-cap)/cap)*1000)/10;
+    var cetReal=diasPlazo>0?Math.round((Math.pow(total1x/cap,365/diasPlazo)-1)*1000)/10:0;
+    msg+="\n_Interés: "+pct+"% al "+(frecuencia==="mensual"?"mes":frecuencia==="quincenal"?"quincena":"semana")+
+         ", prorrateado por los días reales. En pago único son "+f2(total1x-cap)+" "+mon+" por "+diasPlazo+" días"+
+         (cetReal>0?" (costo efectivo anual "+f2(cetReal)+"%)":"")+"._\n";
+  }
   msg+="\n¿Cuál te queda mejor? 🙂";
   window.open("https://wa.me/?text="+encodeURIComponent(msg),"_blank");
 }
@@ -5402,38 +5420,92 @@ function _conDiaDelMes(anio,mes,dia){
 // La primera cuota nunca cae antes de un periodo completo: si no, un
 // prestamo dado el dia 5 con pago el 10 cobraria un mes de interes por
 // cinco dias de plazo.
-function cronogramaCuotas(fechaIso,numCuotas,frecuencia,diasExtra,diaPago){
-  var periodDays=_periodDaysDe(frecuencia);
+// Plazo minimo de la primera cuota. Antes se exigia un PERIODO COMPLETO
+// y eso salia carisimo para el cliente: un prestamo del 11 con pago "todo
+// dia 10" caia al 10 del mes SIGUIENTE —60 dias— porque al 10 de este mes
+// le faltaba un dia para el periodo. Pagaba el doble de interes por un dia
+// de diferencia. Ahora basta con un plazo razonable y el interes se
+// prorratea por los dias que de verdad tiene.
+var MIN_DIAS_PRIMERA_CUOTA = 3;
+
+// ── FECHA DE LA PRIMERA CUOTA ──────────────────────────────────────
+// Tres formas de decidirla, en este orden:
+//   1. fechaVence: el dueño eligio el dia a mano ("me paga el 30"). Manda.
+//   2. diaPago: "todo dia N del mes".
+//   3. Por defecto: un periodo completo desde la fecha del prestamo.
+function _fechaPrimeraCuota(fechaIso,frecuencia,diasExtra,diaPago,fechaVence){
   var base=new Date(fechaIso+"T00:00:00");
-  var n=Math.max(1,parseInt(numCuotas)||1);
+  if(fechaVence){
+    var fv=new Date(String(fechaVence)+"T00:00:00");
+    if(!isNaN(fv.getTime())&&fv>base) return fv;
+  }
+  var periodDays=_periodDaysDe(frecuencia);
   var dp=parseInt(diaPago)||0;
-  var fechas=[];
   if(frecuencia==="mensual"&&dp>=1&&dp<=31){
     var minimo=new Date(base.getTime());
-    minimo.setDate(minimo.getDate()+periodDays);
+    minimo.setDate(minimo.getDate()+MIN_DIAS_PRIMERA_CUOTA);
     var cand=_conDiaDelMes(minimo.getFullYear(),minimo.getMonth(),dp);
     if(cand<minimo) cand=_conDiaDelMes(minimo.getFullYear(),minimo.getMonth()+1,dp);
-    for(var i=0;i<n;i++) fechas.push(_conDiaDelMes(cand.getFullYear(),cand.getMonth()+i,dp));
+    return cand;
+  }
+  var f=new Date(base.getTime());
+  if(frecuencia==="mensual"){ f=_sumarMeses(f,1); f.setDate(f.getDate()+(parseInt(diasExtra)||0)); }
+  else { f.setDate(f.getDate()+(periodDays+(parseInt(diasExtra)||0))); }
+  return f;
+}
+// Cronograma completo: la primera cuota manda y las siguientes van a un
+// periodo de distancia, conservando el dia del mes cuando es mensual.
+function cronogramaCuotas(fechaIso,numCuotas,frecuencia,diasExtra,diaPago,fechaVence){
+  var n=Math.max(1,parseInt(numCuotas)||1);
+  var periodDays=_periodDaysDe(frecuencia);
+  var base=new Date(fechaIso+"T00:00:00");
+  var ex=parseInt(diasExtra)||0;
+  var dp=parseInt(diaPago)||0;
+  var fvOk=false;
+  if(fechaVence){ var fv=new Date(String(fechaVence)+"T00:00:00"); fvOk=!isNaN(fv.getTime())&&fv>base; }
+  var fechas=[];
+  if(frecuencia==="mensual"&&(fvOk||(dp>=1&&dp<=31))){
+    // Anclado a un dia del mes concreto: el que se eligio, o el de la fecha
+    // que se escribio a mano.
+    var primera=_fechaPrimeraCuota(fechaIso,frecuencia,diasExtra,diaPago,fechaVence);
+    var dia=(dp>=1&&dp<=31)?dp:primera.getDate();
+    for(var i=0;i<n;i++) fechas.push(_conDiaDelMes(primera.getFullYear(),primera.getMonth()+i,dia));
   } else {
+    // Por defecto se cuentan periodos desde la fecha del prestamo,
+    // conservando SU dia del mes: un prestamo del 31 da 28/02 y vuelve al
+    // 31/03. Anclar al dia de la primera cuota lo perdia, porque febrero ya
+    // lo habia recortado a 28.
     for(var j=1;j<=n;j++){
       var f=new Date(base.getTime());
-      if(frecuencia==="mensual"){ f=_sumarMeses(f,j); f.setDate(f.getDate()+(parseInt(diasExtra)||0)); }
-      else { f.setDate(f.getDate()+(periodDays*j+(parseInt(diasExtra)||0))); }
+      if(frecuencia==="mensual"){ f=_sumarMeses(f,j); f.setDate(f.getDate()+ex); }
+      else { f.setDate(f.getDate()+(periodDays*j+ex)); }
       fechas.push(f);
     }
   }
   return fechas;
 }
-// Dias de plazo extra que realmente tiene la primera cuota respecto a un
-// periodo normal. Con dia fijo sale del calendario en vez de escribirse a
-// mano, y es lo que se cobra como interes por el tiempo de mas.
-function diasGraciaEfectivos(fechaIso,frecuencia,diasExtra,diaPago){
-  var dp=parseInt(diaPago)||0;
-  if(!(frecuencia==="mensual"&&dp>=1&&dp<=31)) return Math.max(0,parseInt(diasExtra)||0);
-  var primera=cronogramaCuotas(fechaIso,1,frecuencia,0,dp)[0];
+// Dias de plazo de la primera cuota (los reales, contados del calendario).
+function diasPrimeraCuota(fechaIso,frecuencia,diasExtra,diaPago,fechaVence){
+  var primera=_fechaPrimeraCuota(fechaIso,frecuencia,diasExtra,diaPago,fechaVence);
   var base=new Date(fechaIso+"T00:00:00");
-  var dias=Math.round((primera-base)/86400000)-_periodDaysDe(frecuencia);
-  return Math.max(0,dias);
+  return Math.max(0,Math.round((primera-base)/86400000));
+}
+// Diferencia CON SIGNO entre el plazo real de la primera cuota y un periodo
+// normal. Negativa si el plazo es mas corto — y entonces se cobra MENOS.
+//
+// Esto es lo que faltaba: antes solo se podia alargar el plazo, nunca
+// acortarlo, asi que un prestamo a 20 dias pagaba el mismo interes que uno
+// a 30. Al mismo cliente le salia un 50% mas caro sin motivo, y no habia
+// forma de que dos prestamos suyos se sintieran cobrados con la misma vara.
+function ajusteDiasPrimeraCuota(fechaIso,frecuencia,diasExtra,diaPago,fechaVence){
+  return diasPrimeraCuota(fechaIso,frecuencia,diasExtra,diaPago,fechaVence)-_periodDaysDe(frecuencia);
+}
+// Interes por ese ajuste, en la moneda del prestamo. Puede ser negativo.
+function interesPorAjusteDias(capital,tasaPct,frecuencia,ajusteDias){
+  var periodDays=_periodDaysDe(frecuencia);
+  if(!periodDays) return 0;
+  var tasaDiaria=(parseFloat(tasaPct)||0)/periodDays;
+  return Math.round(((parseFloat(capital)||0)*(tasaDiaria/100)*ajusteDias)*100)/100;
 }
 
 // ── LIMITE DE CREDITO POR CLIENTE ──────────────────────────────────
@@ -5488,6 +5560,15 @@ function limiteCredito(desc,cod,mon){
           tope:enMoneda(topeUsdt),expuesto:enMoneda(expuestoUsdt),disponible:enMoneda(disponibleUsdt),
           baseNuevoUsdt:baseNuevoUsdt};
 }
+// Cuantas cuotas recomendar. Antes se marcaba SIEMPRE la de 1 cuota como
+// "menor interes": empujaba al cliente a la opcion que menos gana la
+// empresa y que mas riesgo concentra en un solo pago. Ahora se recomienda
+// segun lo que el historial del cliente aguanta, y el total de cada opcion
+// sigue a la vista para que el compare solo.
+function cuotasRecomendadas(desc,cod){
+  var banda=(perfilRiesgoCliente(desc,cod)||{}).banda||"C";
+  return {A:6,B:4,C:3,D:1,E:1}[banda]||3;
+}
 function savePr(){
   var f=S.nPr;
   if(!f.date||!f.desc){alert("Completa fecha y nombre/descripción.");return;}
@@ -5500,21 +5581,22 @@ function savePr(){
   var frecuencia=f.frecuencia||"mensual";
   var periodDays = frecuencia==="semanal"?7 : frecuencia==="quincenal"?15 : 30;
   var diaPago=parseInt(f.diaPago)||0;
-  // Con dia fijo del mes el plazo extra sale del calendario, no de un
-  // campo escrito a mano: es la diferencia real entre la primera cuota y
-  // un periodo normal.
-  var diasExtra=diasGraciaEfectivos(f.date,frecuencia,f.diasExtraPrimeraCuota,diaPago);
+  var fechaVence=f.fechaVence||"";
+  // Plazo REAL de la primera cuota y su diferencia con un periodo normal.
+  // El ajuste lleva signo: mas corto cobra menos, mas largo cobra mas.
+  var diasPlazo=diasPrimeraCuota(f.date,frecuencia,f.diasExtraPrimeraCuota,diaPago,fechaVence);
+  var ajusteDias=ajusteDiasPrimeraCuota(f.date,frecuencia,f.diasExtraPrimeraCuota,diaPago,fechaVence);
   // Amortización tipo banco: cuota fija calculada sobre el saldo
   // pendiente (sistema francés), no un % fijo multiplicado a lo bruto.
   var amort=calcularAmortizacion(capital,conInteres?tasaInteres:0,numCuotas);
   var montoTotal=amort.montoTotal;
   var tasaEfectiva=amort.interesTotalPct;
-  // Si la primera cuota se alarga más allá del período normal (días de
-  // gracia), se suma interés extra prorrateado por esos días, encima de
-  // la amortización — mientras más lejos la primera cuota, más paga.
-  var tasaDiaria=periodDays?(tasaInteres/periodDays):0;
-  var interesExtra=conInteres?Math.round((capital*(tasaDiaria/100)*diasExtra)*100)/100:0;
-  montoTotal=Math.round((montoTotal+interesExtra)*100)/100;
+  // El interés se ajusta por los días REALES de la primera cuota, en las
+  // dos direcciones: un plazo más largo paga más, uno más corto paga
+  // menos. Antes solo sumaba, así que un préstamo a 20 días costaba lo
+  // mismo que uno a 30 y el mismo cliente sentía dos varas distintas.
+  var interesExtra=conInteres?interesPorAjusteDias(capital,tasaInteres,frecuencia,ajusteDias):0;
+  montoTotal=Math.round(Math.max(capital,montoTotal+interesExtra)*100)/100;
   tasaEfectiva=capital>0?Math.round(((montoTotal-capital)/capital)*10000)/100:0;
   // Cronograma de cuotas: el TOTAL (capital + interés + cargo por días de
   // gracia si aplica) se reparte en partes IGUALES entre todas las
@@ -5524,7 +5606,7 @@ function savePr(){
   var cuotas=[];
   var montoCuotaBase=Math.round((montoTotal/numCuotas)*100)/100;
   var sumaAsignada=0;
-  var _fechasCuota=cronogramaCuotas(f.date,numCuotas,frecuencia,diasExtra,diaPago);
+  var _fechasCuota=cronogramaCuotas(f.date,numCuotas,frecuencia,f.diasExtraPrimeraCuota,diaPago,fechaVence);
   for(var i=1;i<=numCuotas;i++){
     var isoFecha=_isoDeFecha(_fechasCuota[i-1]);
     var montoEsta = (i===numCuotas) ? Math.round((montoTotal-sumaAsignada)*100)/100 : montoCuotaBase;
@@ -5577,8 +5659,9 @@ function savePr(){
   }
   S.prestamos.push({
     id:Date.now(),d:ds(f.date),desc:f.desc,cod:f.cod||"",notaDesc:(f.notaDesc||"").trim(), // ARREGLO 20: cod vincula con el cliente
-    mon:mon,monto:montoTotal,capital:capital,interesPct:tasaEfectiva,interesPorCuota:tasaInteres,diasExtraPrimeraCuota:diasExtra,
+    mon:mon,monto:montoTotal,capital:capital,interesPct:tasaEfectiva,interesPorCuota:tasaInteres,diasExtraPrimeraCuota:ajusteDias,
     numCuotas:numCuotas,frecuencia:frecuencia,cuotas:cuotas,diaPago:diaPago||0,
+    diasPlazoPrimera:diasPlazo,ajusteDiasPrimera:ajusteDias,
     usdt:Math.round((usdt||0)*100)/100,
     cuentaId:f.cuentaId||"",estado:"activo",
     monedaOrigen:monedaOrigen,capitalOrigen:capitalOrigen,tasaOrigen:tasaOrigen,
@@ -5587,7 +5670,7 @@ function savePr(){
     saldo:Math.round((usdt||0)*100)/100,soc:f.desc,locked:false
   });
   logAudit("PRESTAMO","Prestó "+capital+" "+mon+(conInteres?" + "+tasaInteres+"%/cuota × "+numCuotas+" = "+tasaEfectiva+"% interés total (a cobrar: "+montoTotal+")":"")+" a "+f.desc+(numCuotas>1?" en "+numCuotas+" cuotas "+frecuencia+"s":"")+(f.cuentaId?" (de "+nombreCuentaEg(f.cuentaId)+")":""));
-  S.nPr={date:td(),desc:"",cod:"",mon:"USDT",monto:"",cuentaId:"",conInteres:false,tasaInteres:"",numCuotas:1,frecuencia:"mensual",monedaOrigen:"",tasaOrigen:"",notaDesc:"",diaPago:0,diasExtraPrimeraCuota:0,tasaComparador:undefined};
+  S.nPr={date:td(),desc:"",cod:"",mon:"USDT",monto:"",cuentaId:"",conInteres:false,tasaInteres:"",numCuotas:1,frecuencia:"mensual",monedaOrigen:"",tasaOrigen:"",notaDesc:"",diaPago:0,diasExtraPrimeraCuota:0,fechaVence:"",tasaComparador:undefined};
   try{localStorage.removeItem("nPr_draft_v1");}catch(e){}
   saveData();R();
 }
@@ -17279,13 +17362,17 @@ function rPrestamos(){
           // tiempo antes de empezar a pagar, se le suma interés
           // proporcional a esos días (el dinero está "en la calle" más
           // tiempo sin generar nada).
+          var _frec=f.frecuencia||"mensual";
           var _diaPago=parseInt(f.diaPago)||0;
-          var _conDiaFijo=((f.frecuencia||"mensual")==="mensual")&&_diaPago>=1&&_diaPago<=31;
-          var _diasExtra=diasGraciaEfectivos(f.date,f.frecuencia||"mensual",f.diasExtraPrimeraCuota,_diaPago);
-          var _periodDays={semanal:7,quincenal:15,mensual:30}[f.frecuencia||"mensual"]||30;
-          var _fecha1=f.date?ds(_isoDeFecha(cronogramaCuotas(f.date,1,f.frecuencia||"mensual",_diasExtra,_diaPago)[0])):"";
-          var _tasaDiaria=_periodDays?(_pct/_periodDays):0;
-          var _extraPct=Math.round((_tasaDiaria*_diasExtra)*100)/100;
+          var _periodDays=_periodDaysDe(_frec);
+          // Plazo REAL de la primera cuota, del calendario. El ajuste lleva
+          // signo: mas corto cobra menos, mas largo cobra mas.
+          var _fecha1Iso=f.date?_isoDeFecha(_fechaPrimeraCuota(f.date,_frec,f.diasExtraPrimeraCuota,_diaPago,f.fechaVence)):"";
+          var _fecha1=_fecha1Iso?ds(_fecha1Iso):"";
+          var _diasPlazo=f.date?diasPrimeraCuota(f.date,_frec,f.diasExtraPrimeraCuota,_diaPago,f.fechaVence):_periodDays;
+          var _diasExtra=_diasPlazo-_periodDays;
+          var _extraPct=Math.round(((_pct/_periodDays)*_diasExtra)*100)/100;
+          var _ncRecom=cuotasRecomendadas(f.desc,f.cod);
           return "<div style='background:#EAF2FF;border:1.5px solid #b8d0f0;border-radius:10px;padding:12px'>"+
             "<div style='font-size:12px;font-weight:800;color:#1a3558;margin-bottom:8px'>📊 Comparar opciones de pago</div>"+
             "<div style='display:flex;align-items:center;gap:8px;margin-bottom:6px'>"+
@@ -17301,26 +17388,31 @@ function rPrestamos(){
               "</select>"+
             "</div>"+
             "<div style='font-size:10px;color:#888;margin-bottom:10px'>Cada cuota vence "+_periodDays+" días después de la anterior"+((parseInt(f.numCuotas)||1)<=1?" — con 1 sola cuota, es el plazo total del préstamo":"")+".</div>"+
-            ((f.frecuencia||"mensual")==="mensual"?
-              "<div style='display:flex;align-items:center;gap:8px;margin-bottom:6px'>"+
-                "<label style='font-size:11px;color:#555;white-space:nowrap'>Día fijo de pago:</label>"+
-                "<select onchange='S.nPr.diaPago=this.value;R()' style='flex:1;padding:9px;font-size:14px;border:1.5px solid #ccc;border-radius:8px;font-family:inherit'>"+
-                  "<option value='0'"+(!_diaPago?" selected":"")+">— contar desde hoy (30 días) —</option>"+
-                  Array.from({length:31},function(_,k){var d=k+1;return "<option value='"+d+"'"+(_diaPago===d?" selected":"")+">Todo día "+d+" del mes</option>";}).join("")+
-                "</select>"+
-              "</div>"
-            :"")+
+            // Un solo control para el plazo: la fecha en que te paga. Antes
+            // habia dos campos ("dia fijo del mes" y "dias extra") y ninguno
+            // servia para el caso mas comun —"me paga el 30 de este mes"—,
+            // porque los dias extra solo sumaban y nunca acortaban.
             "<div style='display:flex;align-items:center;gap:8px;margin-bottom:6px'>"+
-              "<label style='font-size:11px;color:"+(_conDiaFijo?"#bbb":"#555")+";white-space:nowrap'>Días extra antes de la 1ra cuota:</label>"+
-              "<input type='number' min='0' inputmode='numeric' "+(_conDiaFijo?"disabled ":"")+"value='"+(_conDiaFijo?_diasExtra:(f.diasExtraPrimeraCuota||0))+"' oninput='S.nPr.diasExtraPrimeraCuota=this.value' onblur='R()' style='width:70px;padding:9px;font-size:14px;border:1.5px solid "+(_conDiaFijo?"#eee":"#ccc")+";border-radius:8px;font-family:inherit;background:"+(_conDiaFijo?"#f4f4f6":"#fff")+"'>"+
-              (_conDiaFijo?"<span style='font-size:10px;color:#888'>lo fija el calendario</span>":"")+
+              "<label style='font-size:11px;color:#555;white-space:nowrap'>¿Qué día te paga"+((parseInt(f.numCuotas)||1)>1?" la 1ª cuota":"")+"?</label>"+
+              "<input type='date' value='"+_fecha1Iso+"' onchange='S.nPr.fechaVence=this.value;R()' style='flex:1;padding:9px;font-size:14px;border:1.5px solid #ccc;border-radius:8px;font-family:inherit'>"+
+              (f.fechaVence?"<button type='button' onclick='S.nPr.fechaVence=\"\";R()' style='padding:8px 10px;border:1px solid #ccc;border-radius:8px;background:#fff;color:#666;font-size:11px;cursor:pointer;font-family:inherit'>Auto</button>":"")+
             "</div>"+
-            (_fecha1?"<div style='font-size:11px;color:#1a3558;font-weight:700;margin-bottom:4px'>📅 Primera cuota: "+_fecha1+"</div>":"")+
-            (_diasExtra>0?"<div style='font-size:10px;color:#888;margin-bottom:10px'>+"+_diasExtra+" día"+(_diasExtra!==1?"s":"")+" de plazo extra → +"+_extraPct+"% adicional sobre el total (proporcional al tiempo de más).</div>":"<div style='margin-bottom:10px'></div>")+
+            (_fecha1?
+              "<div style='font-size:11px;font-weight:700;color:"+(_diasExtra<0?"#1a7a3a":(_diasExtra>0?"#a06800":"#1a3558"))+";margin-bottom:4px'>"+
+                "📅 "+_diasPlazo+" día"+(_diasPlazo!==1?"s":"")+" de plazo · vence el "+_fecha1+
+              "</div>"+
+              "<div style='font-size:10px;color:#888;margin-bottom:10px'>"+
+                (_diasExtra===0
+                  ? "Plazo normal: se cobra el "+_pct+"% completo."
+                  : _diasExtra>0
+                    ? "Son "+_diasExtra+" día"+(_diasExtra!==1?"s":"")+" más que un período normal, así que se suma "+_extraPct+"% proporcional."
+                    : "Son "+Math.abs(_diasExtra)+" día"+(Math.abs(_diasExtra)!==1?"s":"")+" menos que un período normal, así que se descuenta "+Math.abs(_extraPct)+"%: el cliente paga solo por el tiempo que tuvo el dinero.")+
+              "</div>"
+            :"<div style='margin-bottom:10px'></div>")+
             _opciones.map(function(nc){
               var _amortC=calcularAmortizacion(_cap,_pct,nc);
-              var _extraFlat=Math.round((_cap*(_extraPct/100))*100)/100;
-              var _to=Math.round((_amortC.montoTotal+_extraFlat)*100)/100;
+              var _extraFlat=interesPorAjusteDias(_cap,_pct,_frec,_diasExtra);
+              var _to=Math.round(Math.max(_cap,_amortC.montoTotal+_extraFlat)*100)/100;
               var _sel=(parseInt(f.numCuotas)||0)===nc&&f.conInteres;
               var _cuotaProm=Math.round((_to/nc)*100)/100;
               return "<div onclick='S.nPr.numCuotas="+nc+";S.nPr.conInteres=true;S.nPr.tasaInteres="+_pct+";R()' style='display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:"+(_sel?"#1a3558":"#fff")+";border:1px solid "+(_sel?"#1a3558":"#e0e0e0")+";border-radius:9px;margin-bottom:6px;cursor:pointer'>"+
@@ -17328,7 +17420,7 @@ function rPrestamos(){
                   "<div style='font-size:13px;font-weight:800;color:"+(_sel?"#fff":"#1a3558")+"'>"+nc+"x de "+f2(_cuotaProm)+" "+mon+"</div>"+
                   "<div style='font-size:10px;color:"+(_sel?"#cdd8e8":"#999")+"'>Total: "+f2(_to)+" "+mon+"</div>"+
                 "</div>"+
-                (nc===1?"<span style='font-size:9px;font-weight:700;color:"+(_sel?"#a8d8b8":"#1a7a3a")+"'>MENOR INTERÉS</span>":"")+
+                (nc===_ncRecom?"<span style='font-size:9px;font-weight:700;color:"+(_sel?"#a8d8b8":"#1a7a3a")+"'>RECOMENDADA</span>":"")+
                 (_sel?"<span style='font-size:16px'>✅</span>":"")+
               "</div>";
             }).join("")+
@@ -17365,10 +17457,10 @@ function rPrestamos(){
           // al de la opción que ya habías seleccionado arriba.
           var _frecuencia2=f.frecuencia||"mensual";
           var _periodDays2={semanal:7,quincenal:15,mensual:30}[_frecuencia2]||30;
-          var _diasExtra2=diasGraciaEfectivos(f.date,_frecuencia2,f.diasExtraPrimeraCuota,f.diaPago);
+          var _diasExtra2=f.date?ajusteDiasPrimeraCuota(f.date,_frecuencia2,f.diasExtraPrimeraCuota,f.diaPago,f.fechaVence):0;
           var _tasaDiaria2=_periodDays2?(_tasaInt/_periodDays2):0;
-          var _extraFlat2=f.conInteres?Math.round((_cap*(_tasaDiaria2/100)*_diasExtra2)*100)/100:0;
-          var _tot=Math.round((_amort.montoTotal+_extraFlat2)*100)/100;
+          var _extraFlat2=f.conInteres?interesPorAjusteDias(_cap,_tasaInt,_frecuencia2,_diasExtra2):0;
+          var _tot=Math.round(Math.max(_cap,_amort.montoTotal+_extraFlat2)*100)/100;
           var _tasaEfectiva=_cap>0?Math.round(((_tot-_cap)/_cap)*10000)/100:0;
           var _porCuota=Math.round((_tot/_nc)*100)/100;
           // CET: lo que de verdad estas cobrando al año. Un 10% "por
