@@ -50,6 +50,17 @@ Que mira:
    multa sea unica y los juros crezcan por dia, que corra solo sobre la
    parte impaga de la cuota, que no se evapore cuando el cliente salda la
    cuota atrasada, y que los interruptores de Configuracion la apaguen.
+3. **Dia fijo de pago.** Que las cuotas se anclen al dia elegido, que ese
+   dia se recorte en los meses que no lo tienen y vuelva a su sitio en los
+   que si, y que la primera cuota nunca caiga antes de un periodo completo.
+4. **Tasa sugerida.** Las bandas de riesgo del cliente, que el historial de
+   un cliente no ensucie el de otro, que a mas cuotas y en moneda que se
+   devalua la tasa suba, y que nunca sugiera por debajo del punto de
+   equilibrio. Tambien el suavizado del impago: una racha corta sin caidas
+   no es riesgo cero, y un solo impago no dispara el piso.
+5. **Limite de credito.** Que el tope salga de lo que el cliente ya
+   devolvio, que lo que debe hoy recorte el margen, y que la conversion
+   entre monedas cuadre.
 
 ## Lo que esto NO prueba
 

@@ -27,11 +27,16 @@ function sacarFuncion(nombre) {
 const NECESARIAS = ["td", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
                     "congelarMora", "_sumarMeses", "_isoDeFecha", "calcularAmortizacion",
                     "tasaAnualEfectiva", "_periodDaysDe", "perfilRiesgoCliente",
-                    "puntoEquilibrio", "tasaSugerida"];
-// S es el estado global de la app; aca solo hace falta S.config.
+                    "puntoEquilibrio", "tasaSugerida", "_conDiaDelMes",
+                    "cronogramaCuotas", "diasGraciaEfectivos", "limiteCredito"];
+// S es el estado global de la app; aca solo hacen falta config y prestamos.
 const S = { config: {}, prestamos: [] };
-const F = new Function("S", NECESARIAS.map(sacarFuncion).join("\n") +
-  "\nreturn {" + NECESARIAS.join(",") + "};")(S);
+// Tasas de mentira para no depender de la configuracion real. getRateToUsdt
+// devuelve cuantas unidades de esa moneda vale 1 USDT.
+const TASAS = { USDT: 1, BRL: 5.4, VES: 200 };
+const getRateToUsdt = (m) => TASAS[m] || null;
+const F = new Function("S", "getRateToUsdt", NECESARIAS.map(sacarFuncion).join("\n") +
+  "\nreturn {" + NECESARIAS.join(",") + "};")(S, getRateToUsdt);
 
 let fallos = 0;
 function ok(cond, msg, dato) {
@@ -231,6 +236,68 @@ ok(F.puntoEquilibrio().impagoPct < 50, "un solo impago no dispara el piso al 100
 S.prestamos = Array.from({ length: 20 }, () => prestamoCerrado("Limpio", 0)).concat([caido, caido]);
 ok(F.puntoEquilibrio().impagoPct < eqLimpio.impagoPct + 5,
    "con mas historia manda tu numero real, no el prior");
+S.config = {}; S.prestamos = [];
+
+// ── Dia fijo de vencimiento ─────────────────────────────────────────
+const iso = (d) => F._isoDeFecha(d);
+const crono = (f, n, fr, ex, dp) => F.cronogramaCuotas(f, n, fr, ex, dp).map(iso);
+
+console.log("\nDia fijo de pago del mes");
+ok(crono("2026-01-05", 3, "mensual", 0, 10).join() === "2026-02-10,2026-03-10,2026-04-10",
+   "prestamo del 05/01 con pago el 10 arranca el 10/02", crono("2026-01-05", 3, "mensual", 0, 10).join());
+// El 05/01 + 30 dias cae el 04/02, asi que el dia 3 ya paso: va al de marzo.
+ok(crono("2026-01-05", 2, "mensual", 0, 3).join() === "2026-03-03,2026-04-03",
+   "nunca adelanta la primera cuota antes de un periodo completo",
+   crono("2026-01-05", 2, "mensual", 0, 3).join());
+ok(crono("2026-01-15", 3, "mensual", 0, 31).join() === "2026-02-28,2026-03-31,2026-04-30",
+   "el dia 31 se recorta en los meses cortos y vuelve al 31 cuando existe",
+   crono("2026-01-15", 3, "mensual", 0, 31).join());
+ok(crono("2026-01-15", 2, "semanal", 0, 10).join() === "2026-01-22,2026-01-29",
+   "el dia fijo no aplica a prestamos semanales");
+ok(crono("2026-01-31", 3, "mensual", 0, 0).join() === "2026-02-28,2026-03-31,2026-04-30",
+   "sin dia fijo se mantiene el comportamiento de siempre");
+
+console.log("\nPlazo extra: sale del calendario, no de un campo a mano");
+ok(F.diasGraciaEfectivos("2026-01-05", "mensual", 0, 10) === 6,
+   "del 04/02 (un periodo) al 10/02 hay 6 dias de mas",
+   F.diasGraciaEfectivos("2026-01-05", "mensual", 0, 10));
+ok(F.diasGraciaEfectivos("2026-01-05", "mensual", 99, 10) === 6,
+   "con dia fijo manda el calendario, no el campo escrito");
+ok(F.diasGraciaEfectivos("2026-01-05", "mensual", 7, 0) === 7,
+   "sin dia fijo manda el campo escrito");
+ok(F.diasGraciaEfectivos("2026-01-05", "mensual", 0, 0) === 0, "y por defecto no hay plazo extra");
+
+// ── Limite de credito ───────────────────────────────────────────────
+console.log("\nLimite de credito por cliente");
+S.config = { limiteClienteNuevoUsdt: 100 }; S.prestamos = [];
+const lNuevo = F.limiteCredito("Nadie", "", "USDT");
+ok(lNuevo.tope === 100, "cliente nuevo: rige el tope de entrada", lNuevo.tope);
+ok(lNuevo.disponible === 100, "sin nada prestado, el margen es el tope entero");
+
+S.prestamos = [prestamoCerrado("Ana", 0), prestamoCerrado("Ana", 0)];
+const lAna = F.limiteCredito("Ana", "", "USDT");
+ok(lAna.banda === "A", "Ana sigue en banda A");
+// Sus prestamos fueron de 180 BRL de capital = 33,33 USDT; x3 por banda A
+// son 100, que empata con el tope de entrada.
+ok(lAna.tope >= 100, "un cliente probado nunca queda por debajo del tope de entrada", lAna.tope);
+
+S.prestamos = [prestamoCerrado("Rico", 0), prestamoCerrado("Rico", 0)];
+S.prestamos.forEach((p) => { p.capital = 1080; p.monto = 1200; });   // 200 USDT
+const lRico = F.limiteCredito("Rico", "", "USDT");
+ok(casi(lRico.tope, 600, 1), "banda A escala x3 el mayor prestamo devuelto", lRico.tope);
+
+// Lo que ya debe recorta el margen disponible.
+S.prestamos.push({ id: 50, desc: "Rico", cod: "", mon: "BRL", capital: 540, monto: 540,
+                   estado: "activo", abonos: [], cuotas: [] });
+const lRico2 = F.limiteCredito("Rico", "", "USDT");
+ok(casi(lRico2.expuestoUsdt, 100, 1), "cuenta lo que ya le debe", lRico2.expuestoUsdt);
+ok(casi(lRico2.disponible, lRico2.tope - 100, 1), "y lo descuenta del margen");
+
+console.log("\nLimite: conversion de moneda");
+S.prestamos = []; S.config = { limiteClienteNuevoUsdt: 100 };
+const lBrl = F.limiteCredito("Nadie", "", "BRL");
+ok(casi(lBrl.tope, 540, 1), "100 USDT de tope son 540 BRL", lBrl.tope);
+ok(lBrl.topeUsdt === 100, "y por dentro sigue siendo 100 USDT");
 S.config = {}; S.prestamos = [];
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

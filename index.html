@@ -3365,6 +3365,18 @@ function guardarCostoOportunidad(){
   });
 }
 
+function guardarLimiteClienteNuevo(){
+  var v=parseFloat(document.getElementById("inp-limite-nuevo").value);
+  if(isNaN(v)||v<0){alert("Valor inválido.");return;}
+  autorizarYHacer(function(){
+    if(!S.config) S.config={};
+    S.config.limiteClienteNuevoUsdt=v;
+    logAudit("CONFIG_LIMITE_NUEVO","Tope de entrada para cliente nuevo: $"+v+" USDT");
+    saveData();R();
+    alert("✅ A un cliente sin historial se le prestará como máximo $"+v+" USDT (o su equivalente).");
+  });
+}
+
 function guardarComisionVES(){
   var inp=document.getElementById("inp-com-ves");
   if(!inp) return;
@@ -5042,17 +5054,17 @@ function enviarOpcionesWA(){
   if(cap<=0) return;
   var frecuencia=f.frecuencia||"mensual";
   var periodDays={semanal:7,quincenal:15,mensual:30}[frecuencia]||30;
-  var diasExtra=Math.max(0,parseInt(f.diasExtraPrimeraCuota)||0);
+  var fechaBase=f.date||td();
+  var diaPago=parseInt(f.diaPago)||0;
+  var diasExtra=diasGraciaEfectivos(fechaBase,frecuencia,f.diasExtraPrimeraCuota,diaPago);
   var tasaDiaria=periodDays?(pct/periodDays):0;
   var extraPct=Math.round((tasaDiaria*diasExtra)*100)/100;
-  var fechaBase=f.date||td();
   var etiquetaFrec={semanal:"semanal",quincenal:"quincenal",mensual:"mensual"}[frecuencia]||"mensual";
   // Fecha de la 1ª cuota (igual para todas las opciones, ya que todas
-  // arrancan el mismo día — solo cambia cuántas cuotas hay).
-  var f1=new Date(fechaBase+"T00:00:00");
-  if(frecuencia==="mensual"){ f1=_sumarMeses(f1,1); f1.setDate(f1.getDate()+diasExtra); }
-  else { f1.setDate(f1.getDate()+periodDays+diasExtra); }
-  var fecha1Txt=ds(_isoDeFecha(f1));
+  // arrancan el mismo día — solo cambia cuántas cuotas hay). Se saca del
+  // MISMO cronograma que guarda savePr, para que lo que acepta el cliente
+  // por WhatsApp sea exactamente lo que queda registrado.
+  var fecha1Txt=ds(_isoDeFecha(cronogramaCuotas(fechaBase,1,frecuencia,diasExtra,diaPago)[0]));
   var opciones=[1,2,3,4,5,6,7,8,9,10];
   var nombre=f.desc?f.desc+", ":"Hola! ";
   var msg=nombre+"👋 estas son tus opciones para el préstamo de *"+f2(cap)+" "+mon+"*:\n\n"+
@@ -5375,6 +5387,107 @@ function tasaSugerida(desc,cod,numCuotas,moneda,frecuencia){
     prestar:perfil.banda!=="E"
   };
 }
+// Devuelve la fecha con el dia del mes pedido, recortado si ese mes no
+// lo tiene (dia 31 en febrero -> 28).
+function _conDiaDelMes(anio,mes,dia){
+  var ultimo=new Date(anio,mes+1,0).getDate();
+  return new Date(anio,mes,Math.min(dia,ultimo));
+}
+// ── CRONOGRAMA DE CUOTAS ───────────────────────────────────────────
+// Dos modos. Sin dia fijo, se cuentan periodos desde la fecha del
+// prestamo (lo de siempre). Con dia fijo —"todo dia 10", como deja
+// elegir Nubank— las cuotas se anclan a ese dia del mes, que es lo que
+// pide un cliente que cobra siempre la misma fecha.
+//
+// La primera cuota nunca cae antes de un periodo completo: si no, un
+// prestamo dado el dia 5 con pago el 10 cobraria un mes de interes por
+// cinco dias de plazo.
+function cronogramaCuotas(fechaIso,numCuotas,frecuencia,diasExtra,diaPago){
+  var periodDays=_periodDaysDe(frecuencia);
+  var base=new Date(fechaIso+"T00:00:00");
+  var n=Math.max(1,parseInt(numCuotas)||1);
+  var dp=parseInt(diaPago)||0;
+  var fechas=[];
+  if(frecuencia==="mensual"&&dp>=1&&dp<=31){
+    var minimo=new Date(base.getTime());
+    minimo.setDate(minimo.getDate()+periodDays);
+    var cand=_conDiaDelMes(minimo.getFullYear(),minimo.getMonth(),dp);
+    if(cand<minimo) cand=_conDiaDelMes(minimo.getFullYear(),minimo.getMonth()+1,dp);
+    for(var i=0;i<n;i++) fechas.push(_conDiaDelMes(cand.getFullYear(),cand.getMonth()+i,dp));
+  } else {
+    for(var j=1;j<=n;j++){
+      var f=new Date(base.getTime());
+      if(frecuencia==="mensual"){ f=_sumarMeses(f,j); f.setDate(f.getDate()+(parseInt(diasExtra)||0)); }
+      else { f.setDate(f.getDate()+(periodDays*j+(parseInt(diasExtra)||0))); }
+      fechas.push(f);
+    }
+  }
+  return fechas;
+}
+// Dias de plazo extra que realmente tiene la primera cuota respecto a un
+// periodo normal. Con dia fijo sale del calendario en vez de escribirse a
+// mano, y es lo que se cobra como interes por el tiempo de mas.
+function diasGraciaEfectivos(fechaIso,frecuencia,diasExtra,diaPago){
+  var dp=parseInt(diaPago)||0;
+  if(!(frecuencia==="mensual"&&dp>=1&&dp<=31)) return Math.max(0,parseInt(diasExtra)||0);
+  var primera=cronogramaCuotas(fechaIso,1,frecuencia,0,dp)[0];
+  var base=new Date(fechaIso+"T00:00:00");
+  var dias=Math.round((primera-base)/86400000)-_periodDaysDe(frecuencia);
+  return Math.max(0,dias);
+}
+
+// ── LIMITE DE CREDITO POR CLIENTE ──────────────────────────────────
+// Nada impedia prestarle 5.000 a alguien que nunca devolvio nada. El tope
+// sale de lo que ESE cliente ya demostro que puede devolver: el mayor
+// prestamo que te salda, multiplicado segun su banda. Sin historial se usa
+// un tope de entrada configurable.
+function limiteCredito(desc,cod,mon){
+  var pf=perfilRiesgoCliente(desc,cod);
+  var nombre=String(desc||"").trim().toLowerCase();
+  var codigo=String(cod||"").trim();
+  var baseNuevoUsdt=((S.config||{}).limiteClienteNuevoUsdt!==undefined)
+    ? (parseFloat(S.config.limiteClienteNuevoUsdt)||0) : 100;
+  function aUsdt(m,moneda){
+    if(moneda==="USDT") return m;
+    var r=getRateToUsdt(moneda);
+    return (r&&!isNaN(r))?(m/r):null;
+  }
+  var mayorSaldadoUsdt=0, expuestoUsdt=0, sinTasa=false;
+  (S.prestamos||[]).forEach(function(p){
+    var mismo=(codigo&&p.cod&&String(p.cod).trim()===codigo)||
+              (nombre&&String(p.desc||"").trim().toLowerCase()===nombre);
+    if(!mismo) return;
+    var monP=p.mon||"USDT";
+    var capital=parseFloat(p.capital!==undefined?p.capital:p.monto)||0;
+    var capUsdt=aUsdt(capital,monP);
+    if(capUsdt===null){ sinTasa=true; return; }
+    if(p.estado==="pagado"||p.estado==="saldado"){
+      if(capUsdt>mayorSaldadoUsdt) mayorSaldadoUsdt=capUsdt;
+    } else {
+      var abon=(p.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);
+      var pend=Math.max(0,(parseFloat(p.monto)||0)-abon);
+      var pendUsdt=aUsdt(pend,monP);
+      if(pendUsdt===null) sinTasa=true; else expuestoUsdt+=pendUsdt;
+    }
+  });
+  var MULT={A:3,B:2,C:1.25,D:1,E:0};
+  var topeUsdt;
+  if(pf.banda==="E") topeUsdt=0;
+  else if(mayorSaldadoUsdt>0) topeUsdt=Math.max(baseNuevoUsdt,mayorSaldadoUsdt*(MULT[pf.banda]||1));
+  else topeUsdt=baseNuevoUsdt*(pf.banda==="D"?0.5:1);
+  topeUsdt=Math.round(topeUsdt*100)/100;
+  expuestoUsdt=Math.round(expuestoUsdt*100)/100;
+  var disponibleUsdt=Math.round(Math.max(0,topeUsdt-expuestoUsdt)*100)/100;
+  var tasaMon=(mon&&mon!=="USDT")?getRateToUsdt(mon):1;
+  var enMoneda=function(u){
+    if(!mon||mon==="USDT") return u;
+    return (tasaMon&&!isNaN(tasaMon))?Math.round(u*tasaMon*100)/100:null;
+  };
+  return {banda:pf.banda,topeUsdt:topeUsdt,expuestoUsdt:expuestoUsdt,disponibleUsdt:disponibleUsdt,
+          mayorSaldadoUsdt:Math.round(mayorSaldadoUsdt*100)/100,sinTasa:sinTasa,
+          tope:enMoneda(topeUsdt),expuesto:enMoneda(expuestoUsdt),disponible:enMoneda(disponibleUsdt),
+          baseNuevoUsdt:baseNuevoUsdt};
+}
 function savePr(){
   var f=S.nPr;
   if(!f.date||!f.desc){alert("Completa fecha y nombre/descripción.");return;}
@@ -5386,7 +5499,11 @@ function savePr(){
   var numCuotas=Math.max(1,parseInt(f.numCuotas)||1);
   var frecuencia=f.frecuencia||"mensual";
   var periodDays = frecuencia==="semanal"?7 : frecuencia==="quincenal"?15 : 30;
-  var diasExtra=Math.max(0,parseInt(f.diasExtraPrimeraCuota)||0);
+  var diaPago=parseInt(f.diaPago)||0;
+  // Con dia fijo del mes el plazo extra sale del calendario, no de un
+  // campo escrito a mano: es la diferencia real entre la primera cuota y
+  // un periodo normal.
+  var diasExtra=diasGraciaEfectivos(f.date,frecuencia,f.diasExtraPrimeraCuota,diaPago);
   // Amortización tipo banco: cuota fija calculada sobre el saldo
   // pendiente (sistema francés), no un % fijo multiplicado a lo bruto.
   var amort=calcularAmortizacion(capital,conInteres?tasaInteres:0,numCuotas);
@@ -5407,11 +5524,9 @@ function savePr(){
   var cuotas=[];
   var montoCuotaBase=Math.round((montoTotal/numCuotas)*100)/100;
   var sumaAsignada=0;
+  var _fechasCuota=cronogramaCuotas(f.date,numCuotas,frecuencia,diasExtra,diaPago);
   for(var i=1;i<=numCuotas;i++){
-    var fechaCuota=new Date(f.date+"T00:00:00");
-    if(frecuencia==="mensual"){ fechaCuota=_sumarMeses(fechaCuota,i); fechaCuota.setDate(fechaCuota.getDate()+diasExtra); }
-    else { fechaCuota.setDate(fechaCuota.getDate()+(periodDays*i+diasExtra)); }
-    var isoFecha=_isoDeFecha(fechaCuota);
+    var isoFecha=_isoDeFecha(_fechasCuota[i-1]);
     var montoEsta = (i===numCuotas) ? Math.round((montoTotal-sumaAsignada)*100)/100 : montoCuotaBase;
     sumaAsignada += montoEsta;
     cuotas.push({n:i,fecha:ds(isoFecha),iso:isoFecha,monto:montoEsta});
@@ -5434,6 +5549,14 @@ function savePr(){
     if(!tasaOrigen){alert("No hay tasa para convertir "+mon+" → "+monedaOrigen+". Escribe la tasa manual en el recuadro amarillo.");return;}
     capitalOrigen=Math.round((capital*tasaOrigen)*100)/100;
   }
+  // Aviso (no bloqueo) si el prestamo pasa el margen del cliente.
+  var _lim=limiteCredito(f.desc,f.cod,mon);
+  if(_lim.disponible!==null&&capital>_lim.disponible+0.01){
+    var _msgLim=(_lim.banda==="E")
+      ? "⚠️ "+f.desc+" tiene un préstamo caído sin saldar.\n\nPrestarle de nuevo ahora es tirar dinero encima de un problema que ya existe."
+      : "⚠️ Estás por prestarle "+f2(capital)+" "+mon+" a "+f.desc+", y su margen disponible es "+f2(_lim.disponible)+" "+mon+" (límite "+f2(_lim.tope)+(_lim.expuesto>0.01?", ya te debe "+f2(_lim.expuesto):"")+").";
+    if(!confirm(_msgLim+"\n\n¿Continuar igual?")) return;
+  }
   if(f.cuentaId){
     var c=(S.cuentas||[]).find(function(x){return x.id===f.cuentaId;});
     if(c){
@@ -5455,7 +5578,7 @@ function savePr(){
   S.prestamos.push({
     id:Date.now(),d:ds(f.date),desc:f.desc,cod:f.cod||"",notaDesc:(f.notaDesc||"").trim(), // ARREGLO 20: cod vincula con el cliente
     mon:mon,monto:montoTotal,capital:capital,interesPct:tasaEfectiva,interesPorCuota:tasaInteres,diasExtraPrimeraCuota:diasExtra,
-    numCuotas:numCuotas,frecuencia:frecuencia,cuotas:cuotas,
+    numCuotas:numCuotas,frecuencia:frecuencia,cuotas:cuotas,diaPago:diaPago||0,
     usdt:Math.round((usdt||0)*100)/100,
     cuentaId:f.cuentaId||"",estado:"activo",
     monedaOrigen:monedaOrigen,capitalOrigen:capitalOrigen,tasaOrigen:tasaOrigen,
@@ -5464,7 +5587,7 @@ function savePr(){
     saldo:Math.round((usdt||0)*100)/100,soc:f.desc,locked:false
   });
   logAudit("PRESTAMO","Prestó "+capital+" "+mon+(conInteres?" + "+tasaInteres+"%/cuota × "+numCuotas+" = "+tasaEfectiva+"% interés total (a cobrar: "+montoTotal+")":"")+" a "+f.desc+(numCuotas>1?" en "+numCuotas+" cuotas "+frecuencia+"s":"")+(f.cuentaId?" (de "+nombreCuentaEg(f.cuentaId)+")":""));
-  S.nPr={date:td(),desc:"",cod:"",mon:"USDT",monto:"",cuentaId:"",conInteres:false,tasaInteres:"",numCuotas:1,frecuencia:"mensual",monedaOrigen:"",tasaOrigen:"",notaDesc:""};
+  S.nPr={date:td(),desc:"",cod:"",mon:"USDT",monto:"",cuentaId:"",conInteres:false,tasaInteres:"",numCuotas:1,frecuencia:"mensual",monedaOrigen:"",tasaOrigen:"",notaDesc:"",diaPago:0,diasExtraPrimeraCuota:0,tasaComparador:undefined};
   try{localStorage.removeItem("nPr_draft_v1");}catch(e){}
   saveData();R();
 }
@@ -6509,6 +6632,12 @@ function rConfigAdmin(){
             "<input type='number' id='inp-costo-oport' min='0' max='50' step='0.5' value='"+(((S.config||{}).costoOportunidadMes!==undefined)?S.config.costoOportunidadMes:3)+"' style='flex:1;padding:9px;border:1.5px solid #ddd;border-radius:8px;font-size:14px'>"+
             "<span style='font-size:12px;color:#555;white-space:nowrap'>% al mes</span>"+
             "<button onclick='guardarCostoOportunidad()' style='padding:9px 14px;background:#14603a;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
+          "</div>"+
+          "<div style='font-size:11px;color:#888;margin:12px 0 6px'>Cuánto es lo máximo que le prestas a alguien que nunca te ha devuelto nada. A partir de ahí, el límite de cada cliente lo calcula la app con lo que ya demostró que puede pagar.</div>"+
+          "<div style='display:flex;gap:8px;align-items:center;max-width:340px'>"+
+            "<input type='number' id='inp-limite-nuevo' min='0' step='10' value='"+(((S.config||{}).limiteClienteNuevoUsdt!==undefined)?S.config.limiteClienteNuevoUsdt:100)+"' style='flex:1;padding:9px;border:1.5px solid #ddd;border-radius:8px;font-size:14px'>"+
+            "<span style='font-size:12px;color:#555;white-space:nowrap'>USDT a cliente nuevo</span>"+
+            "<button onclick='guardarLimiteClienteNuevo()' style='padding:9px 14px;background:#14603a;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
           "</div>"+
           (function(){
             var eq=puntoEquilibrio();
@@ -17112,6 +17241,18 @@ function rPrestamos(){
                :_pctActual>sg.max?"⚠️ El "+_pctActual+"% que tienes puesto está por encima de lo que este cliente necesita — te arriesgas a que se vaya."
                :"✅ El "+_pctActual+"% que tienes puesto está en el rango adecuado para este cliente.")+
             "</div>"+
+            (function(){
+              var lim=limiteCredito(f.desc,f.cod,mon);
+              if(lim.tope===null) return "<div style='font-size:10px;color:#a06800;margin-top:7px'>Sin tasa de "+mon+" para calcular el límite de crédito.</div>";
+              var pasado=_cap>lim.disponible+0.01;
+              return "<div style='background:"+(pasado?"#FFF4E5":"#fff")+";border:1px solid "+(pasado?"#f0c080":"#d8ecdf")+";border-radius:8px;padding:8px 10px;font-size:10px;color:#555;line-height:1.6;margin-top:7px'>"+
+                "<b>Límite sugerido para este cliente: "+f2(lim.tope)+" "+mon+"</b>"+
+                (lim.expuesto>0.01?" · ya te debe "+f2(lim.expuesto)+" · te queda margen por <b>"+f2(lim.disponible)+"</b>":" · sin nada prestado ahora mismo")+
+                (lim.mayorSaldadoUsdt>0?"<br>Sale del mayor préstamo que ya te devolvió (≈$"+f2(lim.mayorSaldadoUsdt)+" USDT), escalado por su banda."
+                                       :"<br>Nunca te ha devuelto nada todavía, así que rige el tope de entrada (≈$"+f2(lim.baseNuevoUsdt)+" USDT, se cambia en ⚙️ Configuración).")+
+                (pasado?"<div style='color:#c0392b;font-weight:700;margin-top:5px'>⚠️ Los "+f2(_cap)+" "+mon+" que quieres prestar pasan ese margen. Se puede hacer igual, pero es una excepción, no la regla.</div>":"")+
+              "</div>";
+            })()+
             "<button type='button' onclick='S.nPr.tasaComparador="+sg.sugerida+";S.nPr.tasaInteres="+sg.sugerida+";S.nPr.conInteres=true;R()' style='width:100%;margin-top:9px;padding:9px;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;background:#14603a;color:#fff'>Usar "+sg.sugerida+"%</button>"+
           "</div>";
         })()+
@@ -17138,8 +17279,11 @@ function rPrestamos(){
           // tiempo antes de empezar a pagar, se le suma interés
           // proporcional a esos días (el dinero está "en la calle" más
           // tiempo sin generar nada).
-          var _diasExtra=parseFloat(f.diasExtraPrimeraCuota)||0;
+          var _diaPago=parseInt(f.diaPago)||0;
+          var _conDiaFijo=((f.frecuencia||"mensual")==="mensual")&&_diaPago>=1&&_diaPago<=31;
+          var _diasExtra=diasGraciaEfectivos(f.date,f.frecuencia||"mensual",f.diasExtraPrimeraCuota,_diaPago);
           var _periodDays={semanal:7,quincenal:15,mensual:30}[f.frecuencia||"mensual"]||30;
+          var _fecha1=f.date?ds(_isoDeFecha(cronogramaCuotas(f.date,1,f.frecuencia||"mensual",_diasExtra,_diaPago)[0])):"";
           var _tasaDiaria=_periodDays?(_pct/_periodDays):0;
           var _extraPct=Math.round((_tasaDiaria*_diasExtra)*100)/100;
           return "<div style='background:#EAF2FF;border:1.5px solid #b8d0f0;border-radius:10px;padding:12px'>"+
@@ -17157,11 +17301,22 @@ function rPrestamos(){
               "</select>"+
             "</div>"+
             "<div style='font-size:10px;color:#888;margin-bottom:10px'>Cada cuota vence "+_periodDays+" días después de la anterior"+((parseInt(f.numCuotas)||1)<=1?" — con 1 sola cuota, es el plazo total del préstamo":"")+".</div>"+
-            "<div style='display:flex;align-items:center;gap:8px;margin-bottom:10px'>"+
-              "<label style='font-size:11px;color:#555;white-space:nowrap'>Días extra antes de la 1ra cuota:</label>"+
-              "<input type='number' min='0' inputmode='numeric' value='"+(f.diasExtraPrimeraCuota||0)+"' oninput='S.nPr.diasExtraPrimeraCuota=this.value' onblur='R()' style='width:70px;padding:9px;font-size:14px;border:1.5px solid #ccc;border-radius:8px;font-family:inherit'>"+
+            ((f.frecuencia||"mensual")==="mensual"?
+              "<div style='display:flex;align-items:center;gap:8px;margin-bottom:6px'>"+
+                "<label style='font-size:11px;color:#555;white-space:nowrap'>Día fijo de pago:</label>"+
+                "<select onchange='S.nPr.diaPago=this.value;R()' style='flex:1;padding:9px;font-size:14px;border:1.5px solid #ccc;border-radius:8px;font-family:inherit'>"+
+                  "<option value='0'"+(!_diaPago?" selected":"")+">— contar desde hoy (30 días) —</option>"+
+                  Array.from({length:31},function(_,k){var d=k+1;return "<option value='"+d+"'"+(_diaPago===d?" selected":"")+">Todo día "+d+" del mes</option>";}).join("")+
+                "</select>"+
+              "</div>"
+            :"")+
+            "<div style='display:flex;align-items:center;gap:8px;margin-bottom:6px'>"+
+              "<label style='font-size:11px;color:"+(_conDiaFijo?"#bbb":"#555")+";white-space:nowrap'>Días extra antes de la 1ra cuota:</label>"+
+              "<input type='number' min='0' inputmode='numeric' "+(_conDiaFijo?"disabled ":"")+"value='"+(_conDiaFijo?_diasExtra:(f.diasExtraPrimeraCuota||0))+"' oninput='S.nPr.diasExtraPrimeraCuota=this.value' onblur='R()' style='width:70px;padding:9px;font-size:14px;border:1.5px solid "+(_conDiaFijo?"#eee":"#ccc")+";border-radius:8px;font-family:inherit;background:"+(_conDiaFijo?"#f4f4f6":"#fff")+"'>"+
+              (_conDiaFijo?"<span style='font-size:10px;color:#888'>lo fija el calendario</span>":"")+
             "</div>"+
-            (_diasExtra>0?"<div style='font-size:10px;color:#888;margin-bottom:10px'>+"+_diasExtra+" días de gracia → +"+_extraPct+"% adicional sobre el total (proporcional al tiempo extra).</div>":"")+
+            (_fecha1?"<div style='font-size:11px;color:#1a3558;font-weight:700;margin-bottom:4px'>📅 Primera cuota: "+_fecha1+"</div>":"")+
+            (_diasExtra>0?"<div style='font-size:10px;color:#888;margin-bottom:10px'>+"+_diasExtra+" día"+(_diasExtra!==1?"s":"")+" de plazo extra → +"+_extraPct+"% adicional sobre el total (proporcional al tiempo de más).</div>":"<div style='margin-bottom:10px'></div>")+
             _opciones.map(function(nc){
               var _amortC=calcularAmortizacion(_cap,_pct,nc);
               var _extraFlat=Math.round((_cap*(_extraPct/100))*100)/100;
@@ -17210,7 +17365,7 @@ function rPrestamos(){
           // al de la opción que ya habías seleccionado arriba.
           var _frecuencia2=f.frecuencia||"mensual";
           var _periodDays2={semanal:7,quincenal:15,mensual:30}[_frecuencia2]||30;
-          var _diasExtra2=Math.max(0,parseInt(f.diasExtraPrimeraCuota)||0);
+          var _diasExtra2=diasGraciaEfectivos(f.date,_frecuencia2,f.diasExtraPrimeraCuota,f.diaPago);
           var _tasaDiaria2=_periodDays2?(_tasaInt/_periodDays2):0;
           var _extraFlat2=f.conInteres?Math.round((_cap*(_tasaDiaria2/100)*_diasExtra2)*100)/100:0;
           var _tot=Math.round((_amort.montoTotal+_extraFlat2)*100)/100;
