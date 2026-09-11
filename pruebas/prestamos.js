@@ -24,18 +24,32 @@ function sacarFuncion(nombre) {
   throw new Error("la funcion " + nombre + " no cierra");
 }
 
+// Algunas funciones dependen de constantes sueltas de index.html. Se sacan
+// igual que las funciones, para no tener que duplicar su valor aca (una copia
+// se desactualiza en silencio y la prueba pasa probando otra cosa).
+function sacarConstante(nombre) {
+  const m = HTML.match(new RegExp("^\\s*var\\s+" + nombre + "\\s*=\\s*[^;\\n]+;", "m"));
+  if (!m) throw new Error("no encuentro la constante " + nombre + " en index.html");
+  return m[0].trim();
+}
+const CONSTANTES = ["MIN_DIAS_PRIMERA_CUOTA"];
+
 const NECESARIAS = ["td", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
                     "congelarMora", "_sumarMeses", "_isoDeFecha", "calcularAmortizacion",
                     "tasaAnualEfectiva", "_periodDaysDe", "perfilRiesgoCliente",
                     "puntoEquilibrio", "tasaSugerida", "_conDiaDelMes",
-                    "cronogramaCuotas", "diasGraciaEfectivos", "limiteCredito"];
+                    "cronogramaCuotas", "_fechaPrimeraCuota", "diasPrimeraCuota",
+                    "ajusteDiasPrimeraCuota", "interesPorAjusteDias",
+                    "cuotasRecomendadas", "limiteCredito"];
 // S es el estado global de la app; aca solo hacen falta config y prestamos.
 const S = { config: {}, prestamos: [] };
 // Tasas de mentira para no depender de la configuracion real. getRateToUsdt
 // devuelve cuantas unidades de esa moneda vale 1 USDT.
 const TASAS = { USDT: 1, BRL: 5.4, VES: 200 };
 const getRateToUsdt = (m) => TASAS[m] || null;
-const F = new Function("S", "getRateToUsdt", NECESARIAS.map(sacarFuncion).join("\n") +
+const F = new Function("S", "getRateToUsdt",
+  CONSTANTES.map(sacarConstante).join("\n") + "\n" +
+  NECESARIAS.map(sacarFuncion).join("\n") +
   "\nreturn {" + NECESARIAS.join(",") + "};")(S, getRateToUsdt);
 
 let fallos = 0;
@@ -240,16 +254,17 @@ S.config = {}; S.prestamos = [];
 
 // ── Dia fijo de vencimiento ─────────────────────────────────────────
 const iso = (d) => F._isoDeFecha(d);
-const crono = (f, n, fr, ex, dp) => F.cronogramaCuotas(f, n, fr, ex, dp).map(iso);
+const crono = (f, n, fr, ex, dp, fv) => F.cronogramaCuotas(f, n, fr, ex, dp, fv).map(iso);
 
 console.log("\nDia fijo de pago del mes");
-ok(crono("2026-01-05", 3, "mensual", 0, 10).join() === "2026-02-10,2026-03-10,2026-04-10",
-   "prestamo del 05/01 con pago el 10 arranca el 10/02", crono("2026-01-05", 3, "mensual", 0, 10).join());
-// El 05/01 + 30 dias cae el 04/02, asi que el dia 3 ya paso: va al de marzo.
-ok(crono("2026-01-05", 2, "mensual", 0, 3).join() === "2026-03-03,2026-04-03",
-   "nunca adelanta la primera cuota antes de un periodo completo",
+ok(crono("2026-01-05", 3, "mensual", 0, 10).join() === "2026-01-10,2026-02-10,2026-03-10",
+   "prestamo del 05/01 con pago el 10 arranca en el 10 de ESE mes",
+   crono("2026-01-05", 3, "mensual", 0, 10).join());
+// El dia 3 ya paso cuando se presta el 05/01, asi que va al de febrero.
+ok(crono("2026-01-05", 2, "mensual", 0, 3).join() === "2026-02-03,2026-03-03",
+   "si el dia ya paso, arranca el mes siguiente",
    crono("2026-01-05", 2, "mensual", 0, 3).join());
-ok(crono("2026-01-15", 3, "mensual", 0, 31).join() === "2026-02-28,2026-03-31,2026-04-30",
+ok(crono("2026-01-15", 3, "mensual", 0, 31).join() === "2026-01-31,2026-02-28,2026-03-31",
    "el dia 31 se recorta en los meses cortos y vuelve al 31 cuando existe",
    crono("2026-01-15", 3, "mensual", 0, 31).join());
 ok(crono("2026-01-15", 2, "semanal", 0, 10).join() === "2026-01-22,2026-01-29",
@@ -257,15 +272,64 @@ ok(crono("2026-01-15", 2, "semanal", 0, 10).join() === "2026-01-22,2026-01-29",
 ok(crono("2026-01-31", 3, "mensual", 0, 0).join() === "2026-02-28,2026-03-31,2026-04-30",
    "sin dia fijo se mantiene el comportamiento de siempre");
 
-console.log("\nPlazo extra: sale del calendario, no de un campo a mano");
-ok(F.diasGraciaEfectivos("2026-01-05", "mensual", 0, 10) === 6,
-   "del 04/02 (un periodo) al 10/02 hay 6 dias de mas",
-   F.diasGraciaEfectivos("2026-01-05", "mensual", 0, 10));
-ok(F.diasGraciaEfectivos("2026-01-05", "mensual", 99, 10) === 6,
-   "con dia fijo manda el calendario, no el campo escrito");
-ok(F.diasGraciaEfectivos("2026-01-05", "mensual", 7, 0) === 7,
-   "sin dia fijo manda el campo escrito");
-ok(F.diasGraciaEfectivos("2026-01-05", "mensual", 0, 0) === 0, "y por defecto no hay plazo extra");
+console.log("\nFecha de vencimiento elegida a mano");
+// El caso que no se podia expresar: "le presto hoy y me paga el 30".
+ok(crono("2026-09-10", 1, "mensual", 0, 0, "2026-09-30")[0] === "2026-09-30",
+   "la fecha elegida manda sobre todo lo demas");
+ok(crono("2026-09-10", 3, "mensual", 0, 0, "2026-09-30").join() === "2026-09-30,2026-10-30,2026-11-30",
+   "las siguientes cuotas conservan ese dia del mes",
+   crono("2026-09-10", 3, "mensual", 0, 0, "2026-09-30").join());
+ok(crono("2026-09-10", 1, "mensual", 0, 0, "2026-09-05")[0] !== "2026-09-05",
+   "una fecha anterior al prestamo se ignora");
+ok(F.diasPrimeraCuota("2026-09-10", "mensual", 0, 0, "2026-09-30") === 20,
+   "cuenta los dias reales de plazo", F.diasPrimeraCuota("2026-09-10", "mensual", 0, 0, "2026-09-30"));
+
+console.log("\nAjuste de interes: cobra por los dias que de verdad tuvo el dinero");
+// Antes solo se podia ALARGAR el plazo. Un prestamo a 20 dias pagaba el
+// mismo interes que uno a 30, y al mismo cliente le salia 50% mas caro.
+ok(F.ajusteDiasPrimeraCuota("2026-09-10", "mensual", 0, 0, "2026-09-30") === -10,
+   "20 dias de plazo son 10 MENOS que un periodo",
+   F.ajusteDiasPrimeraCuota("2026-09-10", "mensual", 0, 0, "2026-09-30"));
+ok(F.ajusteDiasPrimeraCuota("2026-09-10", "mensual", 0, 0, "2026-10-25") > 0,
+   "un plazo mas largo da ajuste positivo");
+ok(F.ajusteDiasPrimeraCuota("2026-09-10", "mensual", 0, 0, "") === 0,
+   "sin fecha elegida, el plazo es exactamente un periodo");
+
+// El caso real: 134 BRL al 10% mensual, prestado el 10/09 y cobrado el 30/09.
+const ajuste134 = F.ajusteDiasPrimeraCuota("2026-09-10", "mensual", 0, 0, "2026-09-30");
+const interes134 = F.calcularAmortizacion(134, 10, 1).montoTotal - 134
+                 + F.interesPorAjusteDias(134, 10, "mensual", ajuste134);
+// Al centimo: el comparador redondeaba el PORCENTAJE antes de aplicarlo y
+// daba 142,94 donde savePr daba 142,93. Un centimo, pero es el numero que el
+// cliente ya acepto por WhatsApp. Los cuatro caminos salen de la misma funcion.
+ok(casi(interes134, 8.93, 0.005),
+   "134 BRL al 10% mensual por 20 dias cobran 8,93 exactos (no 13,40)", interes134.toFixed(4));
+ok(casi(134 + interes134, 142.93, 0.005),
+   "el total del caso real es 142,93 al centimo", (134 + interes134).toFixed(4));
+ok(F.interesPorAjusteDias(134, 10, "mensual", ajuste134) < 0,
+   "el ajuste de un plazo corto es un DESCUENTO");
+ok(F.interesPorAjusteDias(134, 10, "mensual", 0) === 0, "un periodo exacto no ajusta nada");
+
+console.log("\nDia fijo: un dia de diferencia ya no cuesta un mes entero");
+// Prestamo del 11/09 con pago "todo dia 10": antes se iba al 10/11 (60 dias,
+// el doble de interes) porque al 10/10 le faltaba un dia para el periodo.
+const conDiaFijo = crono("2026-09-11", 1, "mensual", 0, 10, "")[0];
+ok(conDiaFijo === "2026-10-10", "cae en el 10 de octubre, no en noviembre", conDiaFijo);
+ok(F.diasPrimeraCuota("2026-09-11", "mensual", 0, 10, "") === 29,
+   "29 dias de plazo, y el interes se prorratea a eso");
+// Pero un plazo absurdamente corto si se empuja al mes siguiente.
+ok(crono("2026-09-09", 1, "mensual", 0, 10, "")[0] === "2026-10-10",
+   "un dia de plazo no vale: se va al mes siguiente",
+   crono("2026-09-09", 1, "mensual", 0, 10, "")[0]);
+
+console.log("\nCuotas recomendadas segun la banda");
+S.prestamos = [prestamoCerrado("Ana", 0), prestamoCerrado("Ana", 0)];
+ok(F.cuotasRecomendadas("Ana", "") > F.cuotasRecomendadas("Nuevo", ""),
+   "al cliente probado se le recomiendan mas cuotas que al desconocido",
+   F.cuotasRecomendadas("Ana", "") + " vs " + F.cuotasRecomendadas("Nuevo", ""));
+S.prestamos = [prestamoCerrado("Tarde", 25)];
+ok(F.cuotasRecomendadas("Tarde", "") === 1, "al que paga tarde, una sola cuota");
+S.prestamos = [];
 
 // ── Limite de credito ───────────────────────────────────────────────
 console.log("\nLimite de credito por cliente");
