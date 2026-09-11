@@ -3346,6 +3346,18 @@ function guardarConfigMora(){
   });
 }
 
+function guardarCostoOportunidad(){
+  var v=parseFloat(document.getElementById("inp-costo-oport").value);
+  if(isNaN(v)||v<0){alert("Valor inválido.");return;}
+  autorizarYHacer(function(){
+    if(!S.config) S.config={};
+    S.config.costoOportunidadMes=v;
+    logAudit("CONFIG_COSTO_OPORTUNIDAD","Costo de oportunidad del capital: "+v+"% mensual");
+    saveData();R();
+    alert("✅ Guardado. Tu punto de equilibrio pasa a ser "+puntoEquilibrio().pct+"% por cuota.");
+  });
+}
+
 function guardarComisionVES(){
   var inp=document.getElementById("inp-com-ves");
   if(!inp) return;
@@ -5045,6 +5057,8 @@ function enviarOpcionesWA(){
     var cuotaProm=Math.round((totalReal/nc)*100)/100;
     msg+=(nc===1?"🟢 ":"▪️ ")+nc+"x de "+f2(cuotaProm)+" "+mon+" (total "+f2(totalReal)+")"+(nc===1?" ← menos interés":"")+"\n";
   });
+  var _cetWA=tasaAnualEfectiva(pct,periodDays);
+  if(_cetWA>0) msg+="\n_Interés "+pct+"% por cuota (costo efectivo anual "+f2(_cetWA)+"%)._\n";
   msg+="\n¿Cuál te queda mejor? 🙂";
   window.open("https://wa.me/?text="+encodeURIComponent(msg),"_blank");
 }
@@ -5074,7 +5088,8 @@ function pedirCompromisoWA(id){
     msg="Hola "+p.desc+"! 👋 Te confirmo el préstamo de *"+f2(p.capital!==undefined?p.capital:montoBase)+" "+monP+"*"+(_diasP!==null?", tienes *"+_diasP+" día"+(_diasP!==1?"s":"")+"* para pagar la primera cuota":"")+".\n\n"+
       "Quedamos en *"+p.cuotas.length+" cuotas*:\n"+
       p.cuotas.map(function(cu){return "• Cuota "+cu.n+": "+f2(cu.monto)+" "+monP+" — vence "+cu.fecha;}).join("\n")+"\n\n"+
-      "Total a pagar: *"+f2(montoBase)+" "+monP+"*\n\n"+
+      "Total a pagar: *"+f2(montoBase)+" "+monP+"*"+
+      (p.interesPorCuota?"\n_Interés "+p.interesPorCuota+"% por cuota — costo efectivo anual "+f2(tasaAnualEfectiva(p.interesPorCuota,_periodDaysDe(p.frecuencia)))+"%._":"")+"\n\n"+
       "¿Me confirmas que estás de acuerdo con este plan? Con que respondas \"Sí, confirmo\" aquí mismo ya me sirve como respaldo. ¡Gracias! 🙏";
   } else if(p.cuotas&&p.cuotas.length===1){
     // Pago único: mostrar también la fecha real de vencimiento (no la
@@ -5200,6 +5215,149 @@ function calcularAmortizacion(capital,tasaPct,numCuotas){
   var montoTotal=Math.round((cuotaFija*n)*100)/100;
   var interesTotalPct=capital>0?Math.round(((montoTotal-capital)/capital)*10000)/100:0;
   return {cuotaFija:cuotaFija,montoTotal:montoTotal,interesTotalPct:interesTotalPct};
+}
+// ── TASA ANUAL EFECTIVA (CET) ──────────────────────────────────────
+// Un 10% "por cuota" mensual suena inofensivo y son 219% al año. Nubank
+// esta obligado a mostrarlo y aca hacia falta por dos razones: para que
+// tu veas de verdad lo que estas cobrando, y para que el cliente no
+// pueda decir despues que no lo sabia.
+function tasaAnualEfectiva(tasaPeriodicaPct,periodDays){
+  var i=(parseFloat(tasaPeriodicaPct)||0)/100;
+  var d=parseInt(periodDays)||30;
+  if(i<=0||d<=0) return 0;
+  return Math.round((Math.pow(1+i,365/d)-1)*10000)/100;
+}
+function _periodDaysDe(frecuencia){
+  return {semanal:7,quincenal:15,mensual:30}[frecuencia||"mensual"]||30;
+}
+
+// ── PERFIL DE RIESGO DEL CLIENTE ───────────────────────────────────
+// Todo sale de datos que la app ya guardaba y no miraba: cuantos
+// prestamos le diste, cuantos cerro, y cuantos dias tardo de media en
+// pagar cada cuota respecto a su fecha pactada.
+function perfilRiesgoCliente(desc,cod){
+  var nombre=String(desc||"").trim().toLowerCase();
+  var codigo=String(cod||"").trim();
+  var out={prestamos:0,saldados:0,activos:0,atrasoProm:null,atrasoMax:0,
+           cuotasPagadas:0,vencidosAhora:0,diasVencidoMax:0,impago:false,
+           banda:"C",etiqueta:"Cliente nuevo",motivos:[]};
+  if(!nombre&&!codigo){ out.motivos.push("Todavía no elegiste al cliente."); return out; }
+  var hoy=td();
+  var atrasos=[];
+  (S.prestamos||[]).forEach(function(p){
+    var mismo = (codigo && p.cod && String(p.cod).trim()===codigo) ||
+                (nombre && String(p.desc||"").trim().toLowerCase()===nombre);
+    if(!mismo) return;
+    out.prestamos++;
+    if(p.estado==="pagado"||p.estado==="saldado") out.saldados++; else out.activos++;
+    // Puntualidad: cada abono ligado a una cuota contra la fecha pactada.
+    (p.abonos||[]).forEach(function(ab){
+      if(!ab.cuotaN||!ab.fecha) return;
+      var cu=(p.cuotas||[]).find(function(c){return c.n===ab.cuotaN;});
+      if(!cu||!cu.iso) return;
+      var d=_diasIso(cu.iso,ab.fecha);
+      atrasos.push(d);
+      out.cuotasPagadas++;
+      if(d>out.atrasoMax) out.atrasoMax=d;
+    });
+    // Cuotas vencidas ahora mismo
+    if(p.estado!=="pagado"&&p.estado!=="saldado"){
+      var det=detalleMora(p,hoy);
+      det.cuotas.forEach(function(mc){
+        if(mc.saldada) return;
+        out.vencidosAhora++;
+        if(mc.dias>out.diasVencidoMax) out.diasVencidoMax=mc.dias;
+      });
+    }
+  });
+  if(atrasos.length) out.atrasoProm=Math.round((atrasos.reduce(function(a,b){return a+b;},0)/atrasos.length)*10)/10;
+  // Impago: algo vencido hace mas de 60 dias y sin saldar.
+  out.impago=out.diasVencidoMax>60;
+
+  // ── Banda ──
+  if(out.impago){
+    out.banda="E"; out.etiqueta="Tiene un préstamo caído";
+    out.motivos.push("Le queda una cuota vencida hace "+out.diasVencidoMax+" días sin saldar.");
+  } else if(out.diasVencidoMax>15 || out.atrasoMax>15 || (out.atrasoProm!==null&&out.atrasoProm>15)){
+    out.banda="D"; out.etiqueta="Paga tarde";
+    if(out.diasVencidoMax>15) out.motivos.push("Hoy tiene una cuota vencida hace "+out.diasVencidoMax+" días.");
+    if(out.atrasoProm!==null) out.motivos.push("Histórico: paga a los "+out.atrasoProm+" días de la fecha pactada.");
+  } else if(out.saldados>=2 && out.atrasoProm!==null && out.atrasoProm<=2){
+    out.banda="A"; out.etiqueta="Cliente probado";
+    out.motivos.push(out.saldados+" préstamos saldados, paga "+(out.atrasoProm<=0?"antes de la fecha":"a "+out.atrasoProm+" días")+".");
+  } else if(out.saldados>=1 && out.atrasoProm!==null && out.atrasoProm<=7){
+    out.banda="B"; out.etiqueta="Buen cliente";
+    out.motivos.push(out.saldados+" préstamo(s) saldado(s), atraso promedio "+out.atrasoProm+" días.");
+  } else if(out.prestamos===0){
+    out.banda="C"; out.etiqueta="Cliente nuevo";
+    out.motivos.push("Nunca le prestaste: no hay con qué medirlo.");
+  } else {
+    out.banda="C"; out.etiqueta="Historial corto";
+    out.motivos.push(out.prestamos+" préstamo(s), "+out.saldados+" saldado(s)"+(out.atrasoProm!==null?", atraso promedio "+out.atrasoProm+" días":", todavía sin cuotas pagadas")+".");
+  }
+  return out;
+}
+
+// ── PUNTO DE EQUILIBRIO DE LA EMPRESA ──────────────────────────────
+// Por debajo de esta tasa prestar te cuesta plata: no cubre ni lo que ese
+// mismo dinero rendiria en el negocio ni lo que se pierde con los que no
+// pagan.   i = (costo de oportunidad + perdida esperada) / (1 − impago)
+function puntoEquilibrio(){
+  var co=((S.config||{}).costoOportunidadMes!==undefined)
+    ? (parseFloat(S.config.costoOportunidadMes)||0)/100 : 0.03;
+  // Probabilidad de impago, medida sobre tu propia cartera pero suavizada:
+  // pd = (caidos + 1) / (total + 12). Sin datos da 8,3%, que es lo prudente
+  // en prestamo informal, y cuanta mas historia tengas mas manda tu numero
+  // real. La division cruda (caidos/total) mentia en los dos extremos: con
+  // 6 prestamos sin caidas daba 0% de riesgo —no existe tal cosa— y con un
+  // solo impago temprano se disparaba.
+  var total=0, caidos=0, hoy=td();
+  (S.prestamos||[]).forEach(function(p){
+    total++;
+    if(p.estado==="pagado"||p.estado==="saldado") return;
+    var det=detalleMora(p,hoy);
+    if(det.diasMax>60) caidos++;
+  });
+  var medido=total>=5;
+  var pd=(caidos+1)/(total+12);
+  var recuperacion=0.5;                    // se recupera la mitad de lo caido
+  var perdida=pd*(1-recuperacion);
+  var i=(co+perdida)/Math.max(0.01,1-pd);
+  return {pct:Math.round(i*10000)/100, costoOportunidadPct:Math.round(co*10000)/100,
+          impagoPct:Math.round(pd*10000)/100, medido:medido, prestamos:total, caidos:caidos};
+}
+
+// ── TASA SUGERIDA ──────────────────────────────────────────────────
+// Piso de la empresa + prima segun la banda del cliente + ajustes por
+// plazo y por moneda. Devuelve tambien el porque, que es lo que hace que
+// el numero se pueda defender delante del cliente.
+function tasaSugerida(desc,cod,numCuotas,moneda,frecuencia){
+  var perfil=perfilRiesgoCliente(desc,cod);
+  var eq=puntoEquilibrio();
+  var PRIMAS={A:1,B:2.5,C:4,D:7,E:0};
+  var base=eq.pct+(PRIMAS[perfil.banda]||4);
+  var ajustes=[];
+  // Mas cuotas = mas tiempo expuesto = mas riesgo.
+  var nc=Math.max(1,parseInt(numCuotas)||1);
+  if(nc>3){
+    var extra=Math.min(2,Math.round((nc-3)*0.3*10)/10);
+    base+=extra; ajustes.push("+"+extra+"% por ser "+nc+" cuotas (más plazo, más expuesto)");
+  }
+  // Monedas que se devaluan mientras el dinero esta prestado.
+  var riesgoMonPr={USDT:0,USD:0,EUR:0,BRL:0,PEN:0.5,COP:0.5,TTD:0.5,VES:1.5};
+  var rm=riesgoMonPr[moneda]!==undefined?riesgoMonPr[moneda]:0.5;
+  if(rm>0){ base+=rm; ajustes.push("+"+rm+"% porque el préstamo es en "+moneda); }
+  var sugerida=Math.round(base*10)/10;
+  var periodDays=_periodDaysDe(frecuencia);
+  return {
+    perfil:perfil, equilibrio:eq, ajustes:ajustes,
+    piso:Math.round(eq.pct*10)/10,
+    sugerida:sugerida,
+    min:Math.round(Math.max(eq.pct,sugerida-1.5)*10)/10,
+    max:Math.round((sugerida+1.5)*10)/10,
+    anual:tasaAnualEfectiva(sugerida,periodDays),
+    prestar:perfil.banda!=="E"
+  };
 }
 function savePr(){
   var f=S.nPr;
@@ -6327,6 +6485,20 @@ function rConfigAdmin(){
             "</div>"+
           "</div>"+
           "<button onclick='guardarConfigMora()' style='margin-top:10px;padding:9px 16px;background:#c0392b;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>💾 Guardar mora</button>"+
+        "</div>"+
+        "<div style='margin-top:14px;padding-top:14px;border-top:1px solid #eee'>"+
+          "<div style='font-size:12px;font-weight:700;color:#555;margin-bottom:6px'>🎯 Sugerencia de tasa de préstamo</div>"+
+          "<div style='font-size:11px;color:#888;margin-bottom:10px'>Cuánto te rinde al mes ese mismo dinero cuando NO está prestado (moviendo remesas). Es el suelo del cálculo: si un préstamo rinde menos que esto, te conviene no prestarlo. El % de impago no se configura — la app lo mide de tus propios préstamos.</div>"+
+          "<div style='display:flex;gap:8px;align-items:center;max-width:340px'>"+
+            "<input type='number' id='inp-costo-oport' min='0' max='50' step='0.5' value='"+(((S.config||{}).costoOportunidadMes!==undefined)?S.config.costoOportunidadMes:3)+"' style='flex:1;padding:9px;border:1.5px solid #ddd;border-radius:8px;font-size:14px'>"+
+            "<span style='font-size:12px;color:#555;white-space:nowrap'>% al mes</span>"+
+            "<button onclick='guardarCostoOportunidad()' style='padding:9px 14px;background:#14603a;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
+          "</div>"+
+          (function(){
+            var eq=puntoEquilibrio();
+            return "<div style='font-size:11px;color:#14603a;font-weight:700;margin-top:8px'>Con esto, tu punto de equilibrio hoy es "+eq.pct+"% por cuota mensual.</div>"+
+                   "<div style='font-size:10px;color:#aaa;margin-top:2px'>Riesgo de impago: "+eq.impagoPct+"%"+(eq.medido?" — llevas "+eq.caidos+" caído"+(eq.caidos!==1?"s":"")+" de "+eq.prestamos+" préstamos":" — estimación prudente; hacen falta 5 préstamos para que pese tu historial")+". No se mide como una división simple: se suaviza, porque una racha corta sin caídas no significa riesgo cero ni un solo impago significa que todo va mal.</div>";
+          })()+
         "</div>"+
         "<div style='margin-top:14px;padding-top:14px;border-top:1px solid #eee'>"+
           "<div style='font-size:12px;font-weight:700;color:#555;margin-bottom:8px'>💼 % de sueldo mensual (sobre ganancia neta Julio)</div>"+
@@ -16877,6 +17049,56 @@ function rPrestamos(){
         "</div>"+
         "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>¿De qué cuenta sale? (opcional) — en "+monOrigen+"</label>"+
         "<select onchange='S.nPr.cuentaId=this.value' style='width:100%;padding:12px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+ctaOpts+"</select></div>"+
+        // ── Sugerencia de tasa ────────────────────────────────────
+        // Antes este campo estaba vacío y había que adivinar el %. Ahora
+        // la app propone uno mirando el historial real del cliente y el
+        // punto de equilibrio de la empresa, y explica de dónde sale.
+        (function(){
+          var _cap=parseFloat(f.monto)||0;
+          if(_cap<=0) return "";
+          var sg=tasaSugerida(f.desc,f.cod,f.numCuotas,mon,f.frecuencia);
+          var pf=sg.perfil, eq=sg.equilibrio;
+          var COLOR={A:"#1a7a3a",B:"#1a6fb8",C:"#a06800",D:"#d35400",E:"#c0392b"};
+          var col=COLOR[pf.banda]||"#a06800";
+          var _pctActual=parseFloat(f.tasaComparador!==undefined?f.tasaComparador:(f.tasaInteres||10));
+          if(isNaN(_pctActual)) _pctActual=0;
+          if(!sg.prestar){
+            return "<div style='background:#FDECEA;border:2px solid #c0392b;border-radius:10px;padding:12px'>"+
+              "<div style='font-size:13px;font-weight:800;color:#c0392b;margin-bottom:5px'>🚫 Ojo: "+pf.etiqueta+"</div>"+
+              "<div style='font-size:11px;color:#a03328;line-height:1.5'>"+pf.motivos.join("<br>")+"</div>"+
+              "<div style='font-size:11px;color:#7a1f18;font-weight:700;margin-top:7px'>Antes de prestarle otra vez, lo sano es cobrar lo que está caído o pedir una garantía. Si igual quieres seguir, escribe el % a mano abajo.</div>"+
+            "</div>";
+          }
+          return "<div style='background:#F2FBF5;border:1.5px solid #b6e0c4;border-radius:10px;padding:12px'>"+
+            "<div style='display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:8px'>"+
+              "<div style='min-width:0'>"+
+                "<div style='font-size:12px;font-weight:800;color:#14603a'>🎯 Tasa sugerida</div>"+
+                "<div style='font-size:10px;font-weight:700;color:"+col+";margin-top:3px'>Banda "+pf.banda+" · "+pf.etiqueta+"</div>"+
+              "</div>"+
+              "<div style='text-align:right;flex-shrink:0'>"+
+                "<div style='font-size:22px;font-weight:900;color:#14603a;line-height:1'>"+sg.sugerida+"%</div>"+
+                "<div style='font-size:9px;color:#6a9a7c'>por cuota · rango "+sg.min+"–"+sg.max+"%</div>"+
+              "</div>"+
+            "</div>"+
+            "<div style='font-size:10px;color:#4a7a5c;line-height:1.55;margin-bottom:8px'>"+
+              pf.motivos.map(function(m){return "• "+m;}).join("<br>")+
+              (sg.ajustes.length?"<br>"+sg.ajustes.map(function(a){return "• "+a;}).join("<br>"):"")+
+            "</div>"+
+            "<div style='background:#fff;border:1px solid #d8ecdf;border-radius:8px;padding:8px 10px;font-size:10px;color:#555;line-height:1.6'>"+
+              "<b>Tu punto de equilibrio: "+sg.piso+"%</b> por cuota. Por debajo de ahí, prestar te cuesta plata.<br>"+
+              "Sale de "+eq.costoOportunidadPct+"% que te rinde ese dinero en el negocio + "+eq.impagoPct+"% de riesgo de impago "+
+              (eq.medido?"a partir de tus "+eq.prestamos+" préstamos ("+eq.caidos+" caído"+(eq.caidos!==1?"s":"")+")":"— con menos de 5 préstamos manda la estimación prudente, no tu historial")+
+              ", recuperando la mitad de lo caído."+
+            "</div>"+
+            "<div style='font-size:10px;color:"+(_pctActual<sg.piso?"#c0392b":(_pctActual>sg.max?"#d35400":"#14603a"))+";font-weight:700;margin-top:7px'>"+
+              (_pctActual<=0?"Escribe un % abajo para comparar."
+               :_pctActual<sg.piso?"⚠️ El "+_pctActual+"% que tienes puesto está por DEBAJO de tu punto de equilibrio: con este préstamo pierdes."
+               :_pctActual>sg.max?"⚠️ El "+_pctActual+"% que tienes puesto está por encima de lo que este cliente necesita — te arriesgas a que se vaya."
+               :"✅ El "+_pctActual+"% que tienes puesto está en el rango adecuado para este cliente.")+
+            "</div>"+
+            "<button type='button' onclick='S.nPr.tasaComparador="+sg.sugerida+";S.nPr.tasaInteres="+sg.sugerida+";S.nPr.conInteres=true;R()' style='width:100%;margin-top:9px;padding:9px;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;background:#14603a;color:#fff'>Usar "+sg.sugerida+"%</button>"+
+          "</div>";
+        })()+
         // ── Comparador: PRIMERO se comparan opciones, sin tener que
         // decidir el % de antemano — así el cliente elige cómo pagar. Solo
         // depende de que haya un monto cargado, no de marcar "con interés".
@@ -16910,7 +17132,8 @@ function rPrestamos(){
               "<label style='font-size:11px;color:#555;white-space:nowrap'>Interés por cuota (%):</label>"+
               "<input type='number' inputmode='decimal' value='"+_pct+"' oninput='S.nPr.tasaComparador=this.value' onblur='R()' style='flex:1;padding:9px;font-size:14px;border:1.5px solid #ccc;border-radius:8px;font-family:inherit'>"+
             "</div>"+
-            (_refTxt?"<div style='font-size:10px;color:"+_refColor+";font-weight:600;margin-bottom:10px'>"+_refTxt+"</div>":"")+
+            (_refTxt?"<div style='font-size:10px;color:"+_refColor+";font-weight:600;margin-bottom:4px'>"+_refTxt+"</div>":"")+
+            (_pct>0?"<div style='font-size:10px;color:#777;margin-bottom:10px'>Equivale a un <b>"+f2(tasaAnualEfectiva(_pct,_periodDays))+"%</b> anual efectivo (CET).</div>":"")+
             "<div style='display:flex;align-items:center;gap:8px;margin-bottom:10px'>"+
               "<label style='font-size:11px;color:#555;white-space:nowrap'>Días extra antes de la 1ra cuota:</label>"+
               "<input type='number' min='0' inputmode='numeric' value='"+(f.diasExtraPrimeraCuota||0)+"' oninput='S.nPr.diasExtraPrimeraCuota=this.value' onblur='R()' style='width:70px;padding:9px;font-size:14px;border:1.5px solid #ccc;border-radius:8px;font-family:inherit'>"+
@@ -16972,9 +17195,13 @@ function rPrestamos(){
           var _tot=Math.round((_amort.montoTotal+_extraFlat2)*100)/100;
           var _tasaEfectiva=_cap>0?Math.round(((_tot-_cap)/_cap)*10000)/100:0;
           var _porCuota=Math.round((_tot/_nc)*100)/100;
+          // CET: lo que de verdad estas cobrando al año. Un 10% "por
+          // cuota" mensual son 213% anual, y eso no se veia en ningun lado.
+          var _cet=f.conInteres?tasaAnualEfectiva(_tasaInt,_periodDays2):0;
           return "<div style='background:#EAF2FF;border-radius:9px;padding:10px 12px;font-size:12px;color:#1a3558'>"+
             (f.conInteres?"Interés total: <b>"+_tasaEfectiva+"%</b> → Total a cobrar: <b>"+f2(_tot)+" "+mon+"</b><br>":"")+
             (_nc>1?_nc+" cuotas de <b>"+f2(_porCuota)+" "+mon+"</b> c/u ("+(f.frecuencia||"mensual")+"s)":"Pago único de <b>"+f2(_tot)+" "+mon+"</b>")+
+            (_cet>0?"<div style='font-size:10px;color:"+(_cet>300?"#c0392b":"#5a7a9a")+";margin-top:5px'>Costo efectivo anual (CET): <b>"+f2(_cet)+"%</b> — es "+_tasaInt+"% cada "+_periodDays2+" días"+(_cet>300?" · muy por encima de cualquier banco":"")+"</div>":"")+
           "</div>";
         })()+
         "<button onclick='savePr()' style='width:100%;padding:14px;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;background:#1a3558;color:#fff;font-family:inherit'>💾 Registrar préstamo</button>"+

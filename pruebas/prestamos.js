@@ -25,9 +25,11 @@ function sacarFuncion(nombre) {
 }
 
 const NECESARIAS = ["td", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
-                    "congelarMora", "_sumarMeses", "_isoDeFecha", "calcularAmortizacion"];
+                    "congelarMora", "_sumarMeses", "_isoDeFecha", "calcularAmortizacion",
+                    "tasaAnualEfectiva", "_periodDaysDe", "perfilRiesgoCliente",
+                    "puntoEquilibrio", "tasaSugerida"];
 // S es el estado global de la app; aca solo hace falta S.config.
-const S = { config: {} };
+const S = { config: {}, prestamos: [] };
 const F = new Function("S", NECESARIAS.map(sacarFuncion).join("\n") +
   "\nreturn {" + NECESARIAS.join(",") + "};")(S);
 
@@ -134,6 +136,102 @@ S.config = { moraActiva: true, moraMultaPct: 0, moraJurosPctMes: 5, moraDiasGrac
 const cfg = F.detalleMora(prestamo(), "2026-02-16");
 ok(cfg.multa === 0 && cfg.juros > 0, "sin multa, solo juros, sin dias de gracia");
 S.config = {};
+
+// ── Costo efectivo anual (CET) ──────────────────────────────────────
+console.log("\nCosto efectivo anual");
+ok(casi(F.tasaAnualEfectiva(10, 30), 218.86, 0.5),
+   "10% mensual son ~219% anual, no 120%", F.tasaAnualEfectiva(10, 30));
+ok(F.tasaAnualEfectiva(10, 7) > F.tasaAnualEfectiva(10, 30),
+   "el mismo % cobrado semanal cuesta mucho mas al anio");
+ok(F.tasaAnualEfectiva(0, 30) === 0, "sin interes no hay CET");
+
+// ── Perfil de riesgo y tasa sugerida ────────────────────────────────
+// Un prestamo cerrado, con las cuotas pagadas con N dias de atraso.
+function prestamoCerrado(quien, atrasoDias) {
+  const cuotas = [{ n: 1, iso: "2026-02-15", fecha: "15/02/26", monto: 100 },
+                  { n: 2, iso: "2026-03-15", fecha: "15/03/26", monto: 100 }];
+  const conAtraso = (iso) => {
+    const d = new Date(iso + "T00:00:00");
+    d.setDate(d.getDate() + atrasoDias);
+    return F._isoDeFecha(d);
+  };
+  return { id: Math.random(), desc: quien, cod: "", mon: "BRL", capital: 180, monto: 200,
+           interesPorCuota: 10, frecuencia: "mensual", numCuotas: 2, estado: "pagado",
+           cuotas, abonos: cuotas.map((c, i) => ({ id: i, fecha: conAtraso(c.iso), monto: 100, cuotaN: c.n })) };
+}
+
+console.log("\nPerfil de riesgo del cliente");
+S.config = {}; S.prestamos = [];
+ok(F.perfilRiesgoCliente("Nadie", "").banda === "C", "cliente sin historial cae en C");
+
+S.prestamos = [prestamoCerrado("Ana", 0), prestamoCerrado("Ana", 0)];
+const ana = F.perfilRiesgoCliente("Ana", "");
+ok(ana.banda === "A", "2 prestamos saldados y puntual -> banda A", ana.banda);
+ok(ana.saldados === 2, "cuenta los saldados", ana.saldados);
+ok(ana.atrasoProm === 0, "atraso promedio 0", ana.atrasoProm);
+
+S.prestamos = [prestamoCerrado("Beto", 5)];
+ok(F.perfilRiesgoCliente("Beto", "").banda === "B", "1 saldado con 5 dias de atraso -> B");
+
+S.prestamos = [prestamoCerrado("Dani", 20)];
+const dani = F.perfilRiesgoCliente("Dani", "");
+ok(dani.banda === "D", "atraso de 20 dias -> D", dani.banda);
+ok(dani.atrasoProm === 20, "mide bien el atraso promedio", dani.atrasoProm);
+
+// Una cuota vencida hace mas de 60 dias y sin saldar = prestamo caido.
+S.prestamos = [{ id: 7, desc: "Caido", cod: "", mon: "BRL", capital: 100, monto: 110,
+                 interesPorCuota: 10, frecuencia: "mensual", numCuotas: 1, estado: "activo",
+                 abonos: [], cuotas: [{ n: 1, iso: "2026-01-10", fecha: "10/01/26", monto: 110 }] }];
+ok(F.perfilRiesgoCliente("Caido", "").banda === "E", "cuota caida hace meses -> E");
+ok(F.tasaSugerida("Caido", "", 1, "BRL", "mensual").prestar === false, "en banda E avisa de no prestar");
+
+console.log("\nEl nombre no se confunde con otro cliente");
+S.prestamos = [prestamoCerrado("Ana", 0), prestamoCerrado("Ana", 0), prestamoCerrado("Beto", 25)];
+ok(F.perfilRiesgoCliente("Ana", "").banda === "A", "el historial de Beto no ensucia el de Ana");
+ok(F.perfilRiesgoCliente("ana", "").banda === "A", "no distingue mayusculas");
+
+console.log("\nTasa sugerida");
+S.prestamos = [prestamoCerrado("Ana", 0), prestamoCerrado("Ana", 0)];
+S.config = { costoOportunidadMes: 3 };
+const tA = F.tasaSugerida("Ana", "", 1, "BRL", "mensual");
+const tC = F.tasaSugerida("Nuevo", "", 1, "BRL", "mensual");
+const tD = F.tasaSugerida("Dani2", "", 1, "BRL", "mensual");
+ok(tA.sugerida < tC.sugerida, "el cliente probado paga menos que el nuevo",
+   tA.sugerida + " vs " + tC.sugerida);
+ok(tA.sugerida > tA.piso, "nunca sugiere por debajo del punto de equilibrio",
+   tA.sugerida + " vs piso " + tA.piso);
+ok(tA.min >= tA.piso, "el minimo del rango tampoco baja del piso");
+ok(F.tasaSugerida("Ana", "", 10, "BRL", "mensual").sugerida > tA.sugerida,
+   "a mas cuotas, mas tasa");
+ok(F.tasaSugerida("Ana", "", 1, "VES", "mensual").sugerida > tA.sugerida,
+   "prestar en VES sube la tasa");
+ok(tA.anual > tA.sugerida, "devuelve tambien el CET anual", tA.anual);
+
+console.log("\nPunto de equilibrio");
+S.prestamos = []; S.config = { costoOportunidadMes: 3 };
+const eqVacio = F.puntoEquilibrio();
+ok(eqVacio.medido === false, "sin 5 prestamos avisa que el impago es estimado");
+ok(eqVacio.pct > 3, "el piso siempre supera al costo de oportunidad solo", eqVacio.pct);
+S.config = { costoOportunidadMes: 10 };
+ok(F.puntoEquilibrio().pct > eqVacio.pct, "si el dinero rinde mas fuera, el piso sube");
+
+// El impago se suaviza: una cartera chica y limpia NO significa riesgo cero,
+// y un solo impago temprano no puede disparar el piso.
+S.config = { costoOportunidadMes: 3 };
+S.prestamos = Array.from({ length: 6 }, () => prestamoCerrado("Limpio", 0));
+const eqLimpio = F.puntoEquilibrio();
+ok(eqLimpio.impagoPct > 0, "6 prestamos sin caidas no dan 0% de riesgo", eqLimpio.impagoPct);
+ok(eqLimpio.pct > eqLimpio.costoOportunidadPct, "el piso queda por encima del costo de oportunidad");
+const caido = { id: 99, desc: "Malo", cod: "", mon: "BRL", capital: 100, monto: 110,
+                interesPorCuota: 10, frecuencia: "mensual", numCuotas: 1, estado: "activo",
+                abonos: [], cuotas: [{ n: 1, iso: "2026-01-10", fecha: "10/01/26", monto: 110 }] };
+S.prestamos = [caido];
+ok(F.puntoEquilibrio().impagoPct < 50, "un solo impago no dispara el piso al 100%",
+   F.puntoEquilibrio().impagoPct);
+S.prestamos = Array.from({ length: 20 }, () => prestamoCerrado("Limpio", 0)).concat([caido, caido]);
+ok(F.puntoEquilibrio().impagoPct < eqLimpio.impagoPct + 5,
+   "con mas historia manda tu numero real, no el prior");
+S.config = {}; S.prestamos = [];
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
