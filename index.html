@@ -3974,9 +3974,10 @@ function marcarRemesaPendiente(tipo,n){
       fechaCobro:"",
       cuentaBanco:r.cuentaBanco||"",
       cuentaDest:r.cuentaDest||"",
-      // Lo que costó en USDT lo entregado, para que el lote nazca con el costo
-      // del día en que se pactó y no con el del día del pago.
-      usdtCosto:parseFloat(r.uv)||0
+      // Lo que VALE en USDT el dinero que va a entrar (uc, no uv — ver
+      // crearLoteRecibido), para que el lote nazca con el valor del día en que
+      // se pactó y no con el del día del pago.
+      usdtValor:parseFloat(r.uc)||0
     });
     logAudit("MARCAR_PENDIENTE","Marcó operación #"+r.n+" ("+r.cl+") como pago pendiente");
     saveData();R();
@@ -4157,7 +4158,7 @@ function saveTx(){
   // cliente paga después, el lote nace el día que se cobre, igual que el saldo
   // de la cuenta.
   if((ruta.orig==="VES" || ruta.orig==="BRL") && !f.pendiente){
-    crearLoteRecibido(ruta.orig, res.am, res.uv, f.cuentaBanco||"", ds(f.date), nuevaRemesa._uid);
+    crearLoteRecibido(ruta.orig, res.am, res.uc, f.cuentaBanco||"", ds(f.date), nuevaRemesa._uid);
   }
   // Guardar referencia de tasas para la próxima operación
   // Crear cuenta por cobrar si el pago es pendiente
@@ -4179,10 +4180,10 @@ function saveTx(){
       fechaCobro:"",
       cuentaBanco:f.cuentaBanco||"",   // cuenta donde entra el pago al cobrar
       cuentaDest:f.cuentaDest||"",     // cuenta VES que entrega los bolívares
-      // Lo que costó en USDT lo que se entregó a cambio. Se guarda aquí para que
-      // el lote que nazca al cobrar lleve el costo del día en que se pactó la
-      // operación, no el del día en que el cliente pague.
-      usdtCosto:res.uv
+      // Lo que VALE en USDT el dinero que va a entrar (ver crearLoteRecibido:
+      // es "uc", no "uv"). Se guarda aquí para que el lote que nazca al cobrar
+      // lleve el valor del día en que se pactó, no el del día del pago.
+      usdtValor:res.uc
     });
   }
   // Actualizar saldos y guardar movimientos exactos en la remesa para reversion precisa
@@ -10884,25 +10885,37 @@ function toggleLotes(n,tipo){
 // hacía nada y no avisaba; y buscaba por "cuentaId" cuando el consumo FIFO y las
 // tasas buscan por "cuentaDestinoId", así que casi nunca encontraba nada.
 //
-// LA TASA — decisión de la dueña: ese dinero vale lo que costaron los reales que
-// entregó por él. En cTx(), "uv" son los USDT que costó lo entregado, así que:
+// LA TASA — se guarda a lo que ese dinero VALE (uc), no a lo que costó (uv).
 //
-//     tasa = lo que entró ÷ uv
+// La regla de la dueña es "esos bolívares valen lo que costaron los reales que
+// entregué por ellos", y esto parece contradecirla. No la contradice: la
+// completa. gV() suma el "pr" de TODA remesa VZLA, se compren USDT o no, así
+// que la app ya le apuntó la ganancia en el momento de recibirlos. Y como
 //
-// Con "tc" en su lugar, el lote diría que costó menos de lo que costó, y al
-// gastarlo la app volvería a apuntar una ganancia que ya apuntó en esta misma
-// remesa. Con "uv" la ganancia se cuenta UNA vez, aquí.
+//     pr = uc − uv
+//
+// guardar el lote a "uv" lo deja valiendo exactamente "pr" menos de lo que la
+// app acaba de decir que vale. Ese "pr" no se pierde: reaparece como ganancia
+// el día que se gasten. Contado dos veces.
+//
+// Medido con sus cifras (entran 138.000 Bs, entrega 836 BRL):
+//     uc 158,6207 − uv 154,8748 = 3,7459 = lo que la remesa ya apuntó
+//     ida y vuelta con el lote a uv → apuntado 3,7459 · real 0,7407
+//
+// Con "uc" el lote queda a valor de mercado, la ganancia se cuenta UNA vez —en
+// la remesa que la generó— y el ida y vuelta cuadra. Que es lo que la dueña
+// pide de fondo: el sistema no puede decirle una ganancia que nunca tuvo.
 //
 // El lote va marcado como "Remesa" para que se distinga de una compra o venta de
 // USDT de verdad: el inventario es de USDT, y esto no lo es.
-function crearLoteRecibido(moneda, monto, usdtCosto, cuentaDestinoId, fecha, refUid){
+function crearLoteRecibido(moneda, monto, usdtValor, cuentaDestinoId, fecha, refUid){
   var m = Math.round((parseFloat(monto)||0)*100)/100;
   if(m<=0) return null;
   // Sin cuenta no se puede emparejar: el consumo FIFO filtra por cuentaDestinoId
   // y un lote suelto se lo comería cualquier operación de esa moneda.
   if(!cuentaDestinoId) return null;
-  var u = Math.round((parseFloat(usdtCosto)||0)*10000)/10000;
-  // Sin costo no hay tasa, y un lote con tasa 0 envenenaría las tasas que la app
+  var u = Math.round((parseFloat(usdtValor)||0)*10000)/10000;
+  // Sin valor no hay tasa, y un lote con tasa 0 envenenaría las tasas que la app
   // sugiere después. Mejor no crearlo que crearlo mintiendo.
   if(u<=0) return null;
   var lote = {
@@ -10926,15 +10939,15 @@ function crearLoteRecibido(moneda, monto, usdtCosto, cuentaDestinoId, fecha, ref
   return lote;
 }
 // Cuando por fin entra el dinero de un cobro pendiente, nace su lote. El monto
-// puede ser parcial (un abono), así que el costo en USDT va a prorrata.
+// puede ser parcial (un abono), así que el valor en USDT va a prorrata.
 function _loteAlCobrar(c, montoEntrado, cuentaDestinoId){
   if(!c || !(montoEntrado>0) || !cuentaDestinoId) return null;
   if(c.moneda!=="VES" && c.moneda!=="BRL") return null;   // solo monedas con lotes
   var total=parseFloat(c.monto)||0;
-  var costo=parseFloat(c.usdtCosto)||0;
-  if(costo<=0) return null;          // cobro viejo, sin costo guardado
+  var valor=parseFloat(c.usdtValor)||0;
+  if(valor<=0) return null;          // cobro viejo, sin valor guardado
   var parte=total>0 ? (montoEntrado/total) : 1;
-  return crearLoteRecibido(c.moneda, montoEntrado, costo*parte,
+  return crearLoteRecibido(c.moneda, montoEntrado, valor*parte,
                            cuentaDestinoId, td(), c.refUid||"");
 }
 // Quita el lote que creó una remesa. Se usa al borrarla y al pasarla a

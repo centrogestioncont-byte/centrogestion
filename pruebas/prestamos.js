@@ -60,7 +60,8 @@ const NECESARIAS = ["r4", "f2", "td", "cfgMora", "_diasIso", "detalleMora", "mor
                     "_marcarTodoLoQueSeFusiona", "_marcarObjetosCambiados",
                     "_mergeObjetoPorClave", "_unirHistorial", "_unirMarcasCampos",
                     "_huellaCompleta", "_conteoRapido",
-                    "crearLoteRecibido", "quitarLoteDeRemesa", "_loteAlCobrar"];
+                    "crearLoteRecibido", "quitarLoteDeRemesa", "_loteAlCobrar",
+                    "ordenFIFO", "normalizarInventarioFIFO", "simularConsumoFIFO"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
 global.window = global.window || {};
 // S es el estado global de la app; aca solo hacen falta config y prestamos.
@@ -809,18 +810,19 @@ ok(F._huellaCompleta() === huella2, "y marcar un registro tampoco");
 S.cuentasCobrar = []; S.config = {}; S._modCampos = {};
 
 // ── El dinero que entra y se queda en la cuenta ─────────────────────────────
-// Regla de la dueña: esos bolívares valen lo que costaron los reales que
-// entrego por ellos. En cTx(), "uv" son los USDT que costo lo entregado, asi
-// que la tasa del lote es (lo que entro / uv). Con "tc" en su lugar el lote
-// diria que costo menos de lo que costo, y al gastarlo la app volveria a
-// apuntar una ganancia que ya apunto en esa misma remesa.
-console.log("\nEl dinero que entra vale lo que costo lo que se entrego");
+// Regla de la duena: esos bolivares valen lo que costaron los reales que
+// entrego por ellos. En cTx() ese valor es "uc" —los USDT que vale lo que
+// entro—, NO "uv" —lo que costo lo que se entrego—. La diferencia entre los
+// dos es "pr", la ganancia que la remesa ya apunto: guardar el lote a "uv" la
+// deja dentro del lote y la app la vuelve a apuntar el dia que se gaste.
+// Contada dos veces. Lo prueba el ida y vuelta, mas abajo.
+console.log("\nEl dinero que entra vale lo que la app dijo que valia");
 S.inventarioUsdt = [];
 const l1 = F.crearLoteRecibido("VES", 20010, 21.3563, "bdv", "12/09", "uid-1");
 ok(l1 !== null, "se crea el lote");
 ok(l1.bs === 20010 && l1.bsRestante === 20010, "con lo que entro");
 ok(casi(l1.tasa, 936.9601, 0.0001), "tasa = 20010 / 21,3563", l1.tasa);
-ok(l1.usdt === 21.3563, "y guarda lo que costo en USDT");
+ok(l1.usdt === 21.3563, "y guarda lo que vale en USDT");
 ok(l1.cuentaDestinoId === "bdv",
    "ligado por cuentaDestinoId, que es por donde busca el consumo FIFO");
 ok(l1.plataforma === "Remesa", "marcado como venido de una remesa, no de USDT");
@@ -830,11 +832,11 @@ ok(typeof l1.id === "number", "id numerico: ordenFIFO compara numeros");
 // Sin costo no hay tasa. Un lote con tasa 0 envenenaria las tasas que la app
 // sugiere, y eso es peor que no tener el lote.
 ok(F.crearLoteRecibido("VES", 20010, 0, "bdv", "12/09", "x") === null,
-   "sin costo no se inventa un lote con tasa 0");
+   "sin valor no se inventa un lote con tasa 0");
 ok(F.crearLoteRecibido("VES", 100, 5, "", "12/09", "x") === null, "sin cuenta no se crea");
 ok(F.crearLoteRecibido("VES", 0, 5, "bdv", "12/09", "x") === null, "con monto cero tampoco");
 
-// Dos entradas distintas no se mezclan: cada una con su costo.
+// Dos entradas distintas no se mezclan: cada una con su valor.
 S.inventarioUsdt = [];
 F.crearLoteRecibido("VES", 20010, 21.3563, "bdv", "12/09", "a");
 F.crearLoteRecibido("VES", 10000, 12, "bdv", "12/09", "b");
@@ -852,21 +854,76 @@ ok(S.inventarioUsdt.length === 1, "que sigue ahi");
 
 console.log("\nCuando por fin se cobra");
 S.inventarioUsdt = [];
-const pend = { monto: 20010, moneda: "VES", usdtCosto: 21.3563, refUid: "uid-5" };
+const pend = { monto: 20010, moneda: "VES", usdtValor: 21.3563, refUid: "uid-5" };
 const todo = F._loteAlCobrar(pend, 20010, "bdv");
 ok(todo && todo.bs === 20010, "el cobro completo trae todo el dinero");
-ok(casi(todo.tasa, 936.9601, 0.0001), "con el costo del dia en que se pacto");
+ok(casi(todo.tasa, 936.9601, 0.0001), "con el valor del dia en que se pacto");
 S.inventarioUsdt = [];
 const mitad = F._loteAlCobrar(pend, 10005, "bdv");
 ok(mitad && mitad.bs === 10005, "un abono trae solo su parte");
-ok(casi(mitad.usdt, 10.678, 0.001), "y el costo va a prorrata", mitad.usdt);
-ok(casi(mitad.tasa, 936.9601, 0.01), "a la misma tasa: la parte no cambia el costo unitario");
+ok(casi(mitad.usdt, 10.678, 0.001), "y el valor va a prorrata", mitad.usdt);
+ok(casi(mitad.tasa, 936.9601, 0.01), "a la misma tasa: la parte no cambia el valor unitario");
 S.inventarioUsdt = [];
 ok(F._loteAlCobrar({ monto: 500, moneda: "VES", refUid: "z" }, 500, "bdv") === null,
-   "un cobro viejo sin costo guardado no crea lote");
-ok(F._loteAlCobrar({ monto: 500, moneda: "USDT", usdtCosto: 1, refUid: "z" }, 500, "bdv") === null,
+   "un cobro viejo sin valor guardado no crea lote");
+ok(F._loteAlCobrar({ monto: 500, moneda: "USDT", usdtValor: 1, refUid: "z" }, 500, "bdv") === null,
    "y una moneda que no lleva lotes se deja en paz");
 S.inventarioUsdt = [];
+
+// ── El ida y vuelta: la ganancia se cuenta UNA sola vez ─────────────────────
+// Esta es la prueba que faltaba, y por eso el error paso. Las de arriba miran
+// UNA remesa: con el lote a "uv" todas pasaban, porque el desfase no aparece
+// hasta que ese mismo dinero SALE. Hay que seguirlo hasta el final.
+//
+//   Remesa A (VES→BRL): entran 138.000 Bs · ella entrega 836 BRL
+//       uc 158,6207 = lo que vale lo que entro
+//       uv 154,8748 = lo que costo lo que entrego
+//       pr   3,7459 = uc − uv  ← la app YA apunto esta ganancia, en la remesa A
+//   Esos 138.000 Bs se quedan en la cuenta: nace su lote.
+//   Remesa B (BRL→VES): paga esos mismos 138.000 Bs. El FIFO los consume a la
+//   tasa del lote, asi que lo que la app dice que costo gastarlos = 138.000 /
+//   tasa del lote.
+//
+// Con el lote a "uc", gastarlo cuesta lo mismo que valia al entrar: el dinero
+// entra y sale por el mismo valor y la unica ganancia del ida y vuelta es la
+// que de verdad hubo. Con el lote a "uv" gastarlo sale "pr" mas barato, y ese
+// "pr" reaparece como ganancia en la remesa B. Contado dos veces.
+console.log("\nEl ida y vuelta: la ganancia se cuenta una sola vez");
+const AM_A = 138000, UC_A = 158.6207, UV_A = 154.8748;
+const PR_A = F.r4(UC_A - UV_A);
+
+// Lo que la app dira que costo gastar esos bolivares, segun a cuanto se guardo
+// el lote. Usa el consumo FIFO de verdad, no la tasa del lote a mano: asi la
+// prueba cubre tambien que el lote quede donde el FIFO lo encuentra.
+function costoDeGastarlo(valorDelLote) {
+  S.inventarioUsdt = [];
+  F.crearLoteRecibido("VES", AM_A, valorDelLote, "bdv", "12/09", "ida");
+  const gasto = F.simularConsumoFIFO("BRL", 0, "VES", AM_A, "", "bdv");
+  if (gasto.ventas.length !== 1) return NaN;
+  return AM_A / gasto.ventas[0].tasa;
+}
+
+const conUc = costoDeGastarlo(UC_A);
+ok(casi(conUc, UC_A, 0.01),
+   "con el lote a 'uc' gastarlo cuesta lo mismo que valia al entrar", conUc);
+const conUv = costoDeGastarlo(UV_A);
+ok(casi(conUc - conUv, PR_A, 0.01),
+   "con el lote a 'uv' gastarlo sale mas barato, y por exactamente el 'pr' de A",
+   conUc - conUv);
+ok(conUv < conUc, "que es el desfase que hacia contar la ganancia dos veces");
+S.inventarioUsdt = [];
+
+// Lo de arriba prueba la aritmetica. Esto prueba que index.html le pasa el
+// numero correcto, que es justo lo que estaba mal: la funcion era buena, la
+// llamada le daba "uv". Si alguien vuelve a ponerlo, la prueba lo canta.
+ok(/crearLoteRecibido\(ruta\.orig,\s*res\.am,\s*res\.uc\s*,/.test(HTML),
+   "saveTx crea el lote con 'uc'");
+ok(/usdtValor\s*:\s*res\.uc\b/.test(HTML),
+   "y el cobro pendiente guarda 'uc' para cuando nazca el lote");
+ok(/usdtValor\s*:\s*parseFloat\(r\.uc\)/.test(HTML),
+   "pasar una remesa a pendiente, igual");
+ok(!/crearLoteRecibido\([^)]*\buv\b/.test(HTML),
+   "y a crearLoteRecibido no se le pasa 'uv' en ningun sitio");
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
