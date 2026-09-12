@@ -56,11 +56,11 @@ const NECESARIAS = ["r4", "f2", "td", "cfgMora", "_diasIso", "detalleMora", "mor
                     "capitalRealTotal", "_mesesDesde", "_acumuladosMes",
                     "conciliacionCapital", "getMesKeyActual",
                     "montoAUsdt", "montoConMoneda", "_unicos",
-                    "_marcarCambiados", "_olvidarFotos", "_mergeArrayById",
+                    "_marcarCambiados", "_refotografiar", "_mergeArrayById",
                     "_marcarTodoLoQueSeFusiona", "_marcarObjetosCambiados",
                     "_mergeObjetoPorClave", "_unirHistorial", "_unirMarcasCampos",
                     "_huellaCompleta", "_conteoRapido"];
-// _olvidarFotos escribe en window; en Node no existe, se le pone uno vacio.
+// _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
 global.window = global.window || {};
 // S es el estado global de la app; aca solo hacen falta config y prestamos.
 const S = { config: {}, prestamos: [] };
@@ -613,8 +613,20 @@ const sinId = { cliente: "SIN ID" };
 F._marcarCambiados([sinId], memo);
 ok(sinId._mod === undefined, "un registro sin id se deja en paz");
 
-F._olvidarFotos();
-ok(Object.keys(global.window._fotoPorCampo || {}).length === 0, "tras fusionar se olvidan las fotos");
+// Tras sincronizar NO se borran las fotos: se vuelven a sacar. Borrarlas dejaba
+// a la app sin punto de comparacion, y como esto corre con la respuesta de CADA
+// guardado, el SIGUIENTE cambio del usuario no llevaba marca. En produccion eso
+// hizo que dos cobros recien marcados volvieran a "pendiente".
+S.cuentasCobrar = [{ id: 77, cliente: "EVELYN", estado: "pendiente" }];
+F._refotografiar();
+ok(S.cuentasCobrar[0]._mod === undefined, "refotografiar no marca nada de golpe");
+ok(Object.keys(global.window._fotoPorCampo || {}).length > 0,
+   "pero deja fotos nuevas, no las tira");
+S.cuentasCobrar[0].estado = "cobrado";       // el usuario lo marca justo despues
+F._marcarTodoLoQueSeFusiona();
+ok(typeof S.cuentasCobrar[0]._mod === "number",
+   "y el cambio que viene DESPUES de sincronizar si se marca");
+S.cuentasCobrar = [];
 
 // ── Y ahora para TODOS los campos, no solo dos ──────────────────────────────
 // La auditoria encontro que de los 23 campos que se fusionan, doce no tenian
@@ -628,7 +640,7 @@ const campoId = (k) => ID[k] || "id";
 
 // Un registro de mentira por cada campo, con SU campo de identidad.
 function sembrar(){
-  F._olvidarFotos();
+  F._refotografiar();
   F._MERGE_FIELDS.forEach(function(k){
     const r = { estado: "antes" };
     r[campoId(k)] = "x1";
@@ -657,7 +669,7 @@ ok(sinMarcar.length === 0,
 });
 
 // Un registro cuyo campo de identidad no coincide no se toca ni rompe nada.
-F._olvidarFotos();
+F._refotografiar();
 S.compromisos = [{ id: "c1", pagado: false }, { sinIdentidad: true }];
 F._marcarTodoLoQueSeFusiona();
 S.compromisos[0].pagado = true;
@@ -665,7 +677,7 @@ F._marcarTodoLoQueSeFusiona();
 ok(typeof S.compromisos[0]._mod === "number", "un compromiso pagado queda marcado");
 ok(S.compromisos[1]._mod === undefined, "y uno sin identidad se deja en paz");
 
-F._olvidarFotos();
+F._refotografiar();
 F._MERGE_FIELDS.forEach((k) => { S[k] = []; });
 
 console.log("\nLa fusion con otro dispositivo");

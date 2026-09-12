@@ -157,9 +157,14 @@ Lo que sí tienes que respetar:
 - **Los historiales se unen, nunca se reemplazan.** `histBalance`,
   `histTasas` y `histSaldos` están indexados por fecha: reemplazar borra los
   días que este aparato no tiene y el otro sí.
-- **Después de fusionar se llama `_olvidarFotos()`.** Lo que cambió lo
-  cambió el servidor, no este dispositivo; marcarlo como propio sería
-  mentir.
+- **Después de fusionar se llama `_refotografiar()`, que NO borra las fotos:
+  las vuelve a sacar.** Lo que cambió lo cambió el servidor, así que ese es
+  el nuevo punto de partida. Borrarlas a secas fue un error que costó caro:
+  `_marcarCambiados()` solo marca cuando hay foto previa, y esto corre con la
+  respuesta de **cada** guardado, así que la app se quedaba sin punto de
+  comparación y **el siguiente cambio del usuario no llevaba marca**. En
+  producción, con eso puesto, no se marcaba prácticamente nada: dos cobros
+  recién marcados volvieron a "pendiente" al día siguiente.
 
 Cuando el dueño diga que algo "se revirtió solo" o "volvió a aparecer",
 **empieza por aquí**: casi siempre es un dato que llegó sin marca.
