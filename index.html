@@ -1473,6 +1473,7 @@ function _aplicarEstadoDeApi(estado, ts){
   _ESTADO_TS = ts||0;
   try{ _podarBorrados(); }catch(e){}
   try{ _espejarClientes(); }catch(e){}
+  try{ _olvidarFotos(); }catch(e){}
   return true;
 }
 
@@ -9500,6 +9501,13 @@ function saveData(){
       }
       window._ultimoSaldoPorCuenta[c.id]=actual;
     });
+    // Lo mismo para cobros y préstamos (ver _marcarCambiados): sin esta
+    // marca, un cobro que acabas de cerrar vuelve a salir pendiente cuando
+    // se fusiona con la copia de otro dispositivo.
+    if(!window._ultimoCobroPorId) window._ultimoCobroPorId={};
+    if(!window._ultimoPrestamoPorId) window._ultimoPrestamoPorId={};
+    _marcarCambiados(S.cuentasCobrar, window._ultimoCobroPorId);
+    _marcarCambiados(S.prestamos, window._ultimoPrestamoPorId);
     var obj={_ts:Date.now()};
     // Count total ops for integrity check
     obj._opsCount=(S.brl||[]).length+(S.vzla||[]).length+(S.eeuu||[]).length;
@@ -18034,6 +18042,51 @@ var _fbSaveTimer = null;
 // ── Fusiona un array remoto con el local por campo id: conserva TODO lo local
 // y AGREGA lo que exista remotamente pero no localmente (agregado desde otro
 // dispositivo). Nunca elimina nada — solo suma lo que falte. ──────────────
+// ── Marca de "esto lo toqué yo, aquí, ahora" para cobros y préstamos ───────
+// De los campos que se fusionan entre dispositivos (_MERGE_FIELDS), cuentas,
+// egresos, remesas e inventario ya ponían _mod cada vez que se tocaban —
+// justo para que una copia vieja de otro dispositivo no les pasara por
+// encima. A cuentasCobrar y prestamos nunca se les puso, y son los dos
+// únicos que quedaron sin protección.
+//
+// Lo que se veía: marcabas un cobro como cobrado en la PC. Ese registro
+// salía sin marca. Después llegaba la copia del teléfono —también sin
+// marca, y con el cobro todavía pendiente—. Sin marcas puntuales la fusión
+// se cae a la hora general del dispositivo, la copia vieja parecía más
+// nueva, y el cobro volvía a "pendiente" solo. Es el mismo error del
+// ARREGLO 33 de las cuentas ("el telefono revirtio los saldos corregidos
+// en la laptop", tres veces el 04/09), en otro módulo.
+//
+// Se marca AQUÍ, en un solo sitio, y no en cada función que toca un cobro
+// o un préstamo: son más de quince, y la que se olvide reabre el agujero.
+// Se compara la foto del registro contra la del guardado anterior; si
+// cambió de verdad, lleva marca.
+function _marcarCambiados(arr, memo){
+  if(!Array.isArray(arr)||!memo) return;
+  arr.forEach(function(it){
+    if(!it||it.id===undefined||it.id===null) return;
+    // _mod se deja fuera de la foto: si entrara, marcar cambiaría la foto,
+    // la foto distinta volvería a marcar, y no pararía nunca.
+    var copia={};
+    for(var k in it){ if(k!=="_mod") copia[k]=it[k]; }
+    var foto=JSON.stringify(copia);
+    var previo=memo[it.id];
+    // Sin foto previa solo se anota, no se marca. Si se marcara, el PRIMER
+    // guardado después de abrir la app marcaría todo, y un dispositivo con
+    // datos viejos le ganaría la fusión a uno al día solo por haber
+    // guardado una vez. Eso es exactamente lo que pasó con las cuentas.
+    if(previo!==undefined && previo!==foto) it._mod=Date.now();
+    memo[it.id]=foto;
+  });
+}
+// Después de traer datos del servidor, las fotos que teníamos son de antes
+// de esa fusión: lo que cambió lo cambió el servidor, no este dispositivo,
+// y marcarlo como propio sería mentir. Se vuelve a empezar.
+function _olvidarFotos(){
+  window._ultimoCobroPorId={};
+  window._ultimoPrestamoPorId={};
+}
+
 function _mergeArrayById(remoteArr, localArr, idField, remoteTs, localTs){
   idField = idField || "id";
   if(!Array.isArray(remoteArr)) return localArr;
