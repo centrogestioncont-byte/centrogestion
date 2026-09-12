@@ -27,13 +27,23 @@ function sacarFuncion(nombre) {
 // Algunas funciones dependen de constantes sueltas de index.html. Se sacan
 // igual que las funciones, para no tener que duplicar su valor aca (una copia
 // se desactualiza en silencio y la prueba pasa probando otra cosa).
+// Acepta tambien las que ocupan varias lineas (DATA_KEYS es una de ellas):
+// se corta en el primer ";" que quede fuera de comillas.
 function sacarConstante(nombre) {
-  const m = HTML.match(new RegExp("^\\s*var\\s+" + nombre + "\\s*=\\s*[^;\\n]+;", "m"));
-  if (!m) throw new Error("no encuentro la constante " + nombre + " en index.html");
-  return m[0].trim();
+  const i = HTML.search(new RegExp("^\\s*var\\s+" + nombre + "\\s*=", "m"));
+  if (i < 0) throw new Error("no encuentro la constante " + nombre + " en index.html");
+  let comilla = null;
+  for (let j = i; j < HTML.length; j++) {
+    const c = HTML[j];
+    if (comilla) { if (c === "\\") j++; else if (c === comilla) comilla = null; continue; }
+    if (c === '"' || c === "'") { comilla = c; continue; }
+    if (c === ";") return HTML.slice(i, j + 1).trim();
+  }
+  throw new Error("la constante " + nombre + " no termina en ';'");
 }
 const CONSTANTES = ["MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
-                    "_MERGE_OBJETOS", "_MERGE_HISTORIAL"];
+                    "_MERGE_OBJETOS", "_MERGE_HISTORIAL",
+                    "DATA_KEYS", "_CLAVES_QUE_NO_SON_DATOS"];
 
 const NECESARIAS = ["r4", "f2", "td", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
                     "congelarMora", "_sumarMeses", "_isoDeFecha", "calcularAmortizacion",
@@ -48,7 +58,8 @@ const NECESARIAS = ["r4", "f2", "td", "cfgMora", "_diasIso", "detalleMora", "mor
                     "montoAUsdt", "montoConMoneda", "_unicos",
                     "_marcarCambiados", "_olvidarFotos", "_mergeArrayById",
                     "_marcarTodoLoQueSeFusiona", "_marcarObjetosCambiados",
-                    "_mergeObjetoPorClave", "_unirHistorial", "_unirMarcasCampos"];
+                    "_mergeObjetoPorClave", "_unirHistorial", "_unirMarcasCampos",
+                    "_huellaCompleta", "_conteoRapido"];
 // _olvidarFotos escribe en window; en Node no existe, se le pone uno vacio.
 global.window = global.window || {};
 // S es el estado global de la app; aca solo hacen falta config y prestamos.
@@ -754,6 +765,35 @@ ok(S._modCampos.config.b === 500, "no se pierde una marca propia");
 ok(S._modCampos.config.c === 700, "se trae una marca que solo tenia el otro");
 ok(S._modCampos.tasasDia.BRL === 50, "y un campo entero que no teniamos");
 S._modCampos = {}; S.config = {};
+
+// ── Las marcas no cuentan como "cambio de datos" ────────────────────────────
+// _huellaCompleta() contesta "¿cambio algo, hay que guardar?". Si las marcas de
+// tiempo entran ahi, la respuesta es que si cada vez que cambia la marca de que
+// algo cambio: la app guarda de mas, el guardado sube la hora del servidor, el
+// otro aparato se lo baja y repinta. El codigo ya excluia "_mod" de cada
+// registro por esta misma razon; _modCampos tiene que quedar fuera igual.
+console.log("\nLas marcas no son datos");
+ok(F.DATA_KEYS.indexOf("_modCampos") !== -1,
+   "_modCampos se guarda (si no, las marcas no sobreviven a recargar)");
+ok(F._CLAVES_QUE_NO_SON_DATOS.indexOf("_modCampos") !== -1,
+   "pero no cuenta como dato para decidir si hay que guardar");
+
+F._MERGE_FIELDS.forEach((k) => { S[k] = []; });
+S.config = { aperturaUsdt: 2372.71 };
+S._modCampos = { config: { aperturaUsdt: 111 } };
+const huella1 = F._huellaCompleta();
+const conteo1 = F._conteoRapido();
+S._modCampos = { config: { aperturaUsdt: 999999 } };   // solo cambia la marca
+ok(F._huellaCompleta() === huella1, "cambiar solo una marca no cambia la huella");
+ok(F._conteoRapido() === conteo1, "ni el conteo rapido");
+S.config.aperturaUsdt = 9999;                          // ahora si cambia un dato
+ok(F._huellaCompleta() !== huella1, "pero cambiar un dato de verdad si la cambia");
+// Un registro marcado tampoco cuenta: "_mod" ya estaba excluido, se deja fijado.
+S.cuentasCobrar = [{ id: 1, estado: "cobrado" }];
+const huella2 = F._huellaCompleta();
+S.cuentasCobrar[0]._mod = Date.now();
+ok(F._huellaCompleta() === huella2, "y marcar un registro tampoco");
+S.cuentasCobrar = []; S.config = {}; S._modCampos = {};
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

@@ -1429,6 +1429,17 @@ function _aplicarEstadoDeApi(estado, ts){
     console.warn("La API devolvió un estado vacío — se mantiene lo que hay.");
     return false;
   }
+  // Lo que se devuelve es "¿cambió algo de verdad?", y quien llama lo usa para
+  // decidir si repinta. Antes se devolvía true siempre, y eso salía caro:
+  // esta función corre también con la RESPUESTA de cada guardado (el servidor
+  // es el árbitro y lo que contesta se adopta). Como casi siempre contesta lo
+  // mismo que se le acaba de mandar, cada guardado repintaba la pantalla
+  // entera; y R() termina llamando a _saveDataSiCambio(), que podía guardar
+  // otra vez y empezar de nuevo. Eso es el parpadeo —y el salto al inicio de
+  // la pantalla, porque repintar rehace todo el HTML— que se veía en los dos
+  // aparatos a la vez, cada uno haciéndoselo a sí mismo.
+  var _huellaAntes;
+  try{ _huellaAntes=_huellaCompleta(); }catch(e){ _huellaAntes=null; }
   DATA_KEYS.forEach(function(k){
     if(estado[k]===undefined) return;
     // Los clientes tienen su propia ruta —/clientes— y esa es la buena.
@@ -1502,7 +1513,12 @@ function _aplicarEstadoDeApi(estado, ts){
   try{ _podarBorrados(); }catch(e){}
   try{ _espejarClientes(); }catch(e){}
   try{ _olvidarFotos(); }catch(e){}
-  return true;
+  // _ESTADO_TS se actualiza pase lo que pase: si no, el sondeo vuelve a bajar
+  // el mismo bloque cada ocho segundos para siempre.
+  // Si no se pudo calcular la huella, se dice que sí cambió: repintar de más
+  // es molesto, no repintar cuando había algo nuevo es un dato que no se ve.
+  if(_huellaAntes===null) return true;
+  try{ return _huellaCompleta()!==_huellaAntes; }catch(e){ return true; }
 }
 
 // Trae el bloque completo del servidor.
@@ -18402,8 +18418,19 @@ function _volcarDatos(dest){
 // guardado. Cubre TODAS las claves de datos, no solo las que se fusionan, y
 // ante cualquier error guarda igual (fallar hacia guardar, nunca hacia perder).
 var _ultimaHuellaGuardada=null;
+// Claves que viajan en DATA_KEYS pero NO son datos del negocio: son la
+// contabilidad interna de la fusión. No pueden entrar en la huella de
+// "¿cambió algo, hay que guardar?", porque entonces la respuesta es que sí
+// cada vez que cambia la marca de que algo cambió. Medido: con datos
+// idénticos y solo las marcas distintas —que es justo lo que llega del otro
+// aparato— la app guardaba igual, y ese guardado le hace bajar y repintar al
+// otro. Es la misma razón por la que "_mod" ya se excluye de cada registro
+// unas líneas más abajo.
+var _CLAVES_QUE_NO_SON_DATOS = ["_modCampos"];
+
 function _huellaCompleta(){
   return (DATA_KEYS||[]).map(function(k){
+    if(_CLAVES_QUE_NO_SON_DATOS.indexOf(k)!==-1) return k+":-";
     var v=S[k];
     if(k==="_deletedMerge"){
       try{
@@ -18435,6 +18462,7 @@ function _huellaCompleta(){
 var _ultimoConteo=null;
 function _conteoRapido(){
   return (DATA_KEYS||[]).map(function(k){
+    if(_CLAVES_QUE_NO_SON_DATOS.indexOf(k)!==-1) return k+":-";
     var v=S[k];
     return Array.isArray(v)?v.length:(v===undefined?"-":"x");
   }).join(",");
