@@ -6211,7 +6211,7 @@ function saveIU(){
   if(ordenId&&(S.inventarioUsdt||[]).some(function(l){return l.ordenId&&l.ordenId===ordenId;})){
     if(!confirm('⚠️ Ya existe un lote con Order ID '+ordenId+'\n¿Continuar de todas formas?')) return;
   }
-  var fecha=f.fecha.slice(5).replace("-","/");
+  var fecha=_fechaLote(f.fecha);
   var cuentaAfectada=f.cuentaId||"";
 
   if(f.tipo==="compra"){
@@ -10753,6 +10753,11 @@ function sincronizarFIFOconCuentas(){
 // ╚══════════════════════════════════════════════════════════════╝
 function normalizarInventarioFIFO(){
   (S.inventarioUsdt||[]).forEach(function(r){
+    // Los lotes guardados antes de unificar la fecha llevan dd/mm/aa o ISO y
+    // ordenFIFO los coloca donde no van. Se corrigen aquí, que es por donde
+    // pasa todo el que va a leer o consumir el inventario. No hace falta
+    // marcarlos a mano: saveData() compara contra la foto anterior y los marca.
+    if(r.fecha){ var fn=_fechaLote(r.fecha); if(fn!==r.fecha) r.fecha=fn; }
     if(r.tipo==="compra"){
       if(r.restante===undefined||r.restante===null) r.restante=parseFloat(r.usdt)||0;
     }else{
@@ -10761,6 +10766,35 @@ function normalizarInventarioFIFO(){
   });
 }
 // Orden cronológico ascendente (fecha MM/DD, luego id) — la más vieja primero
+// La fecha de un lote se guarda SIEMPRE como "mm/dd", que es lo que ordenFIFO
+// sabe leer. Esto existe porque cada sitio la escribía a su manera y el orden
+// FIFO salía mal:
+//
+//     venta de USDT (saveIU) ....... "09/12"      → ordenFIFO ve   912
+//     lote de remesa (saveTx) ...... "12/09/26"   → ordenFIFO ve  1209
+//     lote al cobrar ............... "2026-09-12" → ordenFIFO ve 202600
+//
+// Los tres son el MISMO día, el 12 de septiembre. Como 912 < 1209, la app creía
+// que una venta de USDT de la tarde era más vieja que unos bolívares que habían
+// entrado por la mañana, y se la comía primero. Pasó el 12/09: los lotes de
+// 11.000 y 33.000 Bs de dos remesas quedaron enteros mientras se consumía la
+// venta de 300.000 que era posterior. Y de ahí salen las tasas que la app
+// sugiere, así que el desorden no es cosmético.
+//
+// Acepta los tres formatos para poder arreglar de paso los lotes ya guardados:
+// tres partes solo las escribe ds(), que es dd/mm/aa; dos partes ya es mm/dd.
+function _fechaLote(f){
+  if(!f) return "";
+  var s=String(f).trim();
+  if(s.indexOf("-")>-1){                 // ISO: 2026-09-12
+    var p=s.split("-");
+    return p.length===3 ? p[1].padStart(2,"0")+"/"+p[2].padStart(2,"0") : s;
+  }
+  var q=s.split("/");
+  if(q.length===3) return q[1].padStart(2,"0")+"/"+q[0].padStart(2,"0");  // dd/mm/aa
+  if(q.length===2) return q[0].padStart(2,"0")+"/"+q[1].padStart(2,"0");  // ya es mm/dd
+  return s;
+}
 function ordenFIFO(a,b){
   function v(f){if(!f)return 0;var p=String(f).split("/");return (parseInt(p[0],10)||0)*100+(parseInt(p[1],10)||0);}
   return (v(a.fecha)-v(b.fecha))||((a.id||0)-(b.id||0));
@@ -10993,7 +11027,7 @@ function crearLoteRecibido(moneda, monto, usdtValor, cuentaDestinoId, fecha, ref
     // id numérico: ordenFIFO ordena comparando (fecha, id) como números, así que
     // aquí no sirve _newUid(), que devuelve texto.
     id: Date.now()+Math.floor(Math.random()*100),
-    tipo:"venta", fecha:fecha, moneda:moneda,
+    tipo:"venta", fecha:_fechaLote(fecha), moneda:moneda,
     montOrigen:0, usdt:u, neto:u,
     tasa: Math.round((m/u)*10000)/10000,
     comision:0,                      // ya está dentro de uv
