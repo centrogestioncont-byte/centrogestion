@@ -1429,6 +1429,17 @@ function _aplicarEstadoDeApi(estado, ts){
     console.warn("La API devolvió un estado vacío — se mantiene lo que hay.");
     return false;
   }
+  // Lo que se devuelve es "¿cambió algo de verdad?", y quien llama lo usa para
+  // decidir si repinta. Antes se devolvía true siempre, y eso salía caro:
+  // esta función corre también con la RESPUESTA de cada guardado (el servidor
+  // es el árbitro y lo que contesta se adopta). Como casi siempre contesta lo
+  // mismo que se le acaba de mandar, cada guardado repintaba la pantalla
+  // entera; y R() termina llamando a _saveDataSiCambio(), que podía guardar
+  // otra vez y empezar de nuevo. Eso es el parpadeo —y el salto al inicio de
+  // la pantalla, porque repintar rehace todo el HTML— que se veía en los dos
+  // aparatos a la vez, cada uno haciéndoselo a sí mismo.
+  var _huellaAntes;
+  try{ _huellaAntes=_huellaCompleta(); }catch(e){ _huellaAntes=null; }
   DATA_KEYS.forEach(function(k){
     if(estado[k]===undefined) return;
     // Los clientes tienen su propia ruta —/clientes— y esa es la buena.
@@ -1437,7 +1448,16 @@ function _aplicarEstadoDeApi(estado, ts){
     // con una desactualizada. Se ignora a propósito.
     if(k==="clientes" && _CLIENTES_DESDE_API) return;
     if(k==="config"){
-      S.config=_mergeConfigSafe(estado.config, S.config||{});
+      // Antes: _mergeConfigSafe a secas, que congela lo local y nunca deja
+      // llegar un cambio del otro aparato (ver _mergeObjetoPorClave). Ahora
+      // decide la marca de cada clave, y solo cuando no hay marcas de ningún
+      // lado se cae al criterio viejo — para que una instalación que todavía
+      // no tiene marcas guardadas no cambie de comportamiento de golpe.
+      S.config=_mergeObjetoPorClave(estado.config, S.config||{}, "config",
+        estado._modCampos,
+        function(clave, valorRemoto, valorLocal){
+          return valorLocal===undefined||valorLocal===null||valorLocal===""||valorLocal===0;
+        });
       // Borrarlos al arrancar no alcanza: _mergeConfigSafe arranca de lo
       // local y le AGREGA las claves que no tiene, asi que una que el
       // servidor todavia traiga vuelve en la lectura siguiente.
@@ -1458,6 +1478,25 @@ function _aplicarEstadoDeApi(estado, ts){
       S._deletedMerge=mias;
       return;
     }
+    if(k==="_modCampos"){
+      _unirMarcasCampos(estado._modCampos);
+      return;
+    }
+    if(_MERGE_HISTORIAL.indexOf(k)!==-1){
+      // Unir, nunca reemplazar: reemplazar borra los días que este aparato
+      // no tiene y el otro sí.
+      S[k]=_unirHistorial(estado[k], S[k]||{});
+      return;
+    }
+    if(_MERGE_OBJETOS.indexOf(k)!==-1 && estado[k] && typeof estado[k]==="object" && !Array.isArray(estado[k])){
+      // Tasas del día y equivalentes: clave por clave. Sin marcas de ningún
+      // lado se respeta el criterio de siempre (manda el guardado más nuevo
+      // del aparato), para no cambiarle el comportamiento a lo ya instalado.
+      var _remotoMasNuevo=(typeof ts==="number"&&typeof S._ts==="number")?(ts>S._ts):false;
+      S[k]=_mergeObjetoPorClave(estado[k], S[k]||{}, k, estado._modCampos,
+        function(){ return _remotoMasNuevo; });
+      return;
+    }
     if(_MERGE_FIELDS.indexOf(k)!==-1 && Array.isArray(estado[k])){
       var idF=_MERGE_ID_FIELD[k]||"id";
       var filtrado=estado[k].filter(function(it){
@@ -1474,7 +1513,12 @@ function _aplicarEstadoDeApi(estado, ts){
   try{ _podarBorrados(); }catch(e){}
   try{ _espejarClientes(); }catch(e){}
   try{ _olvidarFotos(); }catch(e){}
-  return true;
+  // _ESTADO_TS se actualiza pase lo que pase: si no, el sondeo vuelve a bajar
+  // el mismo bloque cada ocho segundos para siempre.
+  // Si no se pudo calcular la huella, se dice que sí cambió: repintar de más
+  // es molesto, no repintar cuando había algo nuevo es un dato que no se ve.
+  if(_huellaAntes===null) return true;
+  try{ return _huellaCompleta()!==_huellaAntes; }catch(e){ return true; }
 }
 
 // Trae el bloque completo del servidor.
@@ -1785,7 +1829,7 @@ function rComparacionApi(){
 }
 
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
-  "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo"];
+  "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo","_modCampos"];
 
 // ══════════════════════════════════════════════════════════════════════
 // SISTEMA DE CIERRE AUTOMÁTICO DE MES
@@ -9476,38 +9520,26 @@ function corregirSaldoCierre(mesKey){
 function saveData(){
   if(!permisoEdicion()){return;} // Solo lectura — no guarda, no interrumpe
   try{
-    // Marcar qué cuentas cambiaron de saldo desde el último guardado — un
-    // solo punto central en vez de tocar cada lugar del código que ajusta
-    // saldos (son decenas). Sin esto, un saldo recién actualizado (ej: al
-    // registrar una venta de USDT) podía perderse en la sincronización con
-    // otro dispositivo, exactamente igual que pasaba con los lotes de
-    // inventario — porque las cuentas nunca tenían una marca de "cuándo se
-    // tocó esta en particular" para que la fusión supiera cuál es la más
-    // nueva.
-    // ARREGLO 33 (04/09/2026): decia "si no tengo referencia previa, marcar como
-    // modificado". Eso hacia que el PRIMER guardado despues de abrir la app
-    // marcara TODAS las cuentas como recien cambiadas, aunque no se hubiera
-    // tocado ninguna. Un dispositivo con saldos viejos abria, guardaba una vez,
-    // y sus saldos ganaban la fusion por tener la marca mas nueva. Paso tres
-    // veces el 04/09: el telefono revirtio los saldos corregidos en la laptop.
-    // Ahora, sin referencia previa solo se ANOTA el valor; la marca se pone
-    // unicamente cuando el saldo cambia de verdad.
-    if(!window._ultimoSaldoPorCuenta) window._ultimoSaldoPorCuenta={};
-    (S.cuentas||[]).forEach(function(c){
-      var actual=parseFloat(c.saldo)||0;
-      var previo=window._ultimoSaldoPorCuenta[c.id];
-      if(previo!==undefined && Math.abs(previo-actual)>0.001){
-        c._mod=Date.now();   // cambio real en ESTE dispositivo
-      }
-      window._ultimoSaldoPorCuenta[c.id]=actual;
-    });
-    // Lo mismo para cobros y préstamos (ver _marcarCambiados): sin esta
-    // marca, un cobro que acabas de cerrar vuelve a salir pendiente cuando
-    // se fusiona con la copia de otro dispositivo.
-    if(!window._ultimoCobroPorId) window._ultimoCobroPorId={};
-    if(!window._ultimoPrestamoPorId) window._ultimoPrestamoPorId={};
-    _marcarCambiados(S.cuentasCobrar, window._ultimoCobroPorId);
-    _marcarCambiados(S.prestamos, window._ultimoPrestamoPorId);
+    // Marcar TODO lo que se fusiona entre dispositivos y cambió en este
+    // guardado — un solo punto central, en vez de tocar cada función que
+    // modifica datos (son más de cien). Sin esta marca, lo que acabas de
+    // hacer aquí pierde contra una copia vieja del teléfono y "vuelve" solo:
+    // un cobro cerrado que reaparece pendiente, un compromiso pagado que
+    // sigue por pagar, un saldo corregido que se deshace.
+    //
+    // Aquí vivía un bloque que marcaba SOLO las cuentas, y solo cuando les
+    // cambiaba el saldo. Se quitó porque _marcarTodoLoQueSeFusiona() hace
+    // eso y más: cubre las cuentas enteras (también un cambio de nombre o de
+    // moneda, que el bloque viejo no veía) y los otros veinte campos, que no
+    // tenían nada. La lección que dejó aquel bloque sigue en pie y está
+    // escrita en _marcarCambiados(): sin referencia previa se ANOTA, no se
+    // marca — marcar en el primer guardado tras abrir la app hacía que un
+    // dispositivo con datos viejos ganara la fusión por haber guardado una
+    // vez (ARREGLO 33, 04/09/2026: "el telefono revirtio los saldos
+    // corregidos en la laptop", tres veces el mismo día).
+    _marcarTodoLoQueSeFusiona();
+    // Y lo que no son listas: configuración, tasas e historiales.
+    _marcarObjetosCambiados();
     var obj={_ts:Date.now()};
     // Count total ops for integrity check
     obj._opsCount=(S.brl||[]).length+(S.vzla||[]).length+(S.eeuu||[]).length;
@@ -18061,30 +18093,148 @@ var _fbSaveTimer = null;
 // o un préstamo: son más de quince, y la que se olvide reabre el agujero.
 // Se compara la foto del registro contra la del guardado anterior; si
 // cambió de verdad, lleva marca.
-function _marcarCambiados(arr, memo){
+function _marcarCambiados(arr, memo, idField){
   if(!Array.isArray(arr)||!memo) return;
+  idField = idField || "id";
   arr.forEach(function(it){
-    if(!it||it.id===undefined||it.id===null) return;
+    if(!it) return;
+    var id=it[idField];
+    if(id===undefined||id===null) return;
     // _mod se deja fuera de la foto: si entrara, marcar cambiaría la foto,
     // la foto distinta volvería a marcar, y no pararía nunca.
     var copia={};
     for(var k in it){ if(k!=="_mod") copia[k]=it[k]; }
     var foto=JSON.stringify(copia);
-    var previo=memo[it.id];
+    var previo=memo[id];
     // Sin foto previa solo se anota, no se marca. Si se marcara, el PRIMER
     // guardado después de abrir la app marcaría todo, y un dispositivo con
     // datos viejos le ganaría la fusión a uno al día solo por haber
     // guardado una vez. Eso es exactamente lo que pasó con las cuentas.
     if(previo!==undefined && previo!==foto) it._mod=Date.now();
-    memo[it.id]=foto;
+    memo[id]=foto;
+  });
+}
+// ── La marca, para TODOS los campos que se fusionan ────────────────────────
+// Esto es lo que cierra el agujero de raíz. Antes se marcaba a mano dentro de
+// cada función que tocaba datos, y se auditó: de las funciones que guardan y
+// tocan un campo compartido, NINGÚN módulo estaba cubierto entero. Doce de
+// veintiuno no tenían una sola marca — compromisos entre ellos, que es por lo
+// que un pago al contador ya hecho volvía a salir "por pagar" al abrir desde
+// el teléfono.
+//
+// Marcar función por función no funciona y ya se demostró tres veces: son más
+// de cien sitios, siempre falta uno, y el que falta es el que borra trabajo.
+// Aquí se recorren los campos de _MERGE_FIELDS enteros, con el campo de
+// identidad que cada uno usa (id, cod, _uid, mesKey). Una función nueva que
+// se escriba mañana queda cubierta sola, sin que nadie se acuerde de nada.
+function _marcarTodoLoQueSeFusiona(){
+  if(!window._fotoPorCampo) window._fotoPorCampo={};
+  var campos=(typeof _MERGE_FIELDS!=="undefined"&&_MERGE_FIELDS)||[];
+  var ids=(typeof _MERGE_ID_FIELD!=="undefined"&&_MERGE_ID_FIELD)||{};
+  campos.forEach(function(k){
+    if(!Array.isArray(S[k])) return;
+    if(!window._fotoPorCampo[k]) window._fotoPorCampo[k]={};
+    _marcarCambiados(S[k], window._fotoPorCampo[k], ids[k]||"id");
   });
 }
 // Después de traer datos del servidor, las fotos que teníamos son de antes
 // de esa fusión: lo que cambió lo cambió el servidor, no este dispositivo,
 // y marcarlo como propio sería mentir. Se vuelve a empezar.
 function _olvidarFotos(){
-  window._ultimoCobroPorId={};
-  window._ultimoPrestamoPorId={};
+  window._fotoPorCampo={};
+  window._fotoPorClave={};
+}
+
+// ── Lo que no son listas: configuración, tasas e historiales ───────────────
+// Las listas se fusionan registro por registro con _mergeArrayById. Lo demás
+// no tenía nada equivalente, y cada caso fallaba a su manera:
+//
+// · config — _mergeConfigSafe dice "si local ya tiene un valor real, se queda
+//   tal cual". Eso no es fusionar, es congelar: cambias el saldo de apertura
+//   en la PC y el teléfono NUNCA se entera, porque ya tiene un valor propio.
+//   Medido: teléfono con apertura 2.505,37, servidor con 2.372,71 → el
+//   teléfono se queda con 2.505,37 para siempre. Dos aparatos que nunca más
+//   coinciden en cuánto deberías tener.
+// · tasasDia, tasasCambio — se reemplazaban enteras por lo remoto: la tasa
+//   que acabas de escribir la pisa la del otro aparato.
+// · histBalance/histTasas/histSaldos — igual, y ahí duele distinto: son el
+//   historial día por día, así que reemplazar BORRA los días que el otro
+//   aparato tenía y este no.
+//
+// La marca por clave vive aparte, en S._modCampos, y no dentro del propio
+// objeto: config y tasasDia se recorren con for..in en varios sitios y una
+// clave "_mod" colada ahí se leería como si fuera una tasa o un ajuste.
+var _MERGE_OBJETOS = ["config","tasasDia","_tasasDiaMeta","tasasCambio"];
+var _MERGE_HISTORIAL = ["histBalance","histTasas","histSaldos"];
+
+function _marcarObjetosCambiados(){
+  if(!window._fotoPorClave) window._fotoPorClave={};
+  if(!S._modCampos) S._modCampos={};
+  var ahora=Date.now();
+  _MERGE_OBJETOS.forEach(function(campo){
+    var obj=S[campo];
+    if(!obj||typeof obj!=="object"||Array.isArray(obj)) return;
+    if(!window._fotoPorClave[campo]) window._fotoPorClave[campo]={};
+    if(!S._modCampos[campo]) S._modCampos[campo]={};
+    var memo=window._fotoPorClave[campo], marcas=S._modCampos[campo];
+    Object.keys(obj).forEach(function(k){
+      var foto=JSON.stringify(obj[k]);
+      // Misma regla que en las listas: sin foto previa se anota, no se marca.
+      if(memo[k]!==undefined && memo[k]!==foto) marcas[k]=ahora;
+      memo[k]=foto;
+    });
+  });
+}
+
+// Fusiona clave por clave. Con marcas de los dos lados gana la más nueva; con
+// marca de un solo lado gana ese; sin marcas se usa "respaldo", que es lo que
+// hacía ese campo antes de existir las marcas — así una instalación vieja, que
+// todavía no tiene ninguna marca guardada, se comporta igual que siempre hasta
+// que alguien toque algo.
+function _mergeObjetoPorClave(remoto, local, campo, marcasRemotas, respaldo){
+  if(!remoto||typeof remoto!=="object") return local;
+  if(!local||typeof local!=="object") return remoto;
+  var out={}; Object.keys(local).forEach(function(k){ out[k]=local[k]; });
+  var mLoc=(S._modCampos&&S._modCampos[campo])||{};
+  var mRem=(marcasRemotas&&marcasRemotas[campo])||{};
+  Object.keys(remoto).forEach(function(k){
+    if(!(k in out)){ out[k]=remoto[k]; return; }   // solo lo tiene el otro aparato
+    if(JSON.stringify(out[k])===JSON.stringify(remoto[k])) return;
+    var tr=mRem[k], tl=mLoc[k], ganaRemoto;
+    if(typeof tr==="number"&&typeof tl==="number") ganaRemoto=tr>tl;
+    else if(typeof tl==="number") ganaRemoto=false;
+    else if(typeof tr==="number") ganaRemoto=true;
+    else ganaRemoto=respaldo(k, remoto[k], out[k]);
+    if(ganaRemoto) out[k]=remoto[k];
+  });
+  return out;
+}
+
+// Los historiales se UNEN, nunca se reemplazan. Están indexados por fecha, así
+// que un día que solo tiene el otro aparato es un día que este perdió. En un
+// empate se queda el de este aparato, que es el que acaba de calcularlo.
+// Se poda a 120 días, el mismo tope que usa _capturarBalanceHoy().
+function _unirHistorial(remoto, local){
+  var out={}; Object.keys(local||{}).forEach(function(k){ out[k]=local[k]; });
+  Object.keys(remoto||{}).forEach(function(k){ if(!(k in out)) out[k]=remoto[k]; });
+  var keys=Object.keys(out).sort();
+  if(keys.length>120) keys.slice(0,keys.length-120).forEach(function(k){ delete out[k]; });
+  return out;
+}
+
+// Las marcas por clave también se fusionan, quedándose con la más nueva de
+// cada una. Reemplazarlas perdería el rastro de lo que tocó el otro aparato.
+function _unirMarcasCampos(remotas){
+  if(!remotas||typeof remotas!=="object") return;
+  if(!S._modCampos) S._modCampos={};
+  Object.keys(remotas).forEach(function(campo){
+    if(!S._modCampos[campo]) S._modCampos[campo]={};
+    var mias=S._modCampos[campo], suyas=remotas[campo]||{};
+    Object.keys(suyas).forEach(function(k){
+      if(typeof suyas[k]!=="number") return;
+      if(typeof mias[k]!=="number"||suyas[k]>mias[k]) mias[k]=suyas[k];
+    });
+  });
 }
 
 function _mergeArrayById(remoteArr, localArr, idField, remoteTs, localTs){
@@ -18268,8 +18418,19 @@ function _volcarDatos(dest){
 // guardado. Cubre TODAS las claves de datos, no solo las que se fusionan, y
 // ante cualquier error guarda igual (fallar hacia guardar, nunca hacia perder).
 var _ultimaHuellaGuardada=null;
+// Claves que viajan en DATA_KEYS pero NO son datos del negocio: son la
+// contabilidad interna de la fusión. No pueden entrar en la huella de
+// "¿cambió algo, hay que guardar?", porque entonces la respuesta es que sí
+// cada vez que cambia la marca de que algo cambió. Medido: con datos
+// idénticos y solo las marcas distintas —que es justo lo que llega del otro
+// aparato— la app guardaba igual, y ese guardado le hace bajar y repintar al
+// otro. Es la misma razón por la que "_mod" ya se excluye de cada registro
+// unas líneas más abajo.
+var _CLAVES_QUE_NO_SON_DATOS = ["_modCampos"];
+
 function _huellaCompleta(){
   return (DATA_KEYS||[]).map(function(k){
+    if(_CLAVES_QUE_NO_SON_DATOS.indexOf(k)!==-1) return k+":-";
     var v=S[k];
     if(k==="_deletedMerge"){
       try{
@@ -18301,6 +18462,7 @@ function _huellaCompleta(){
 var _ultimoConteo=null;
 function _conteoRapido(){
   return (DATA_KEYS||[]).map(function(k){
+    if(_CLAVES_QUE_NO_SON_DATOS.indexOf(k)!==-1) return k+":-";
     var v=S[k];
     return Array.isArray(v)?v.length:(v===undefined?"-":"x");
   }).join(",");

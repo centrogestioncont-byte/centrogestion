@@ -27,12 +27,23 @@ function sacarFuncion(nombre) {
 // Algunas funciones dependen de constantes sueltas de index.html. Se sacan
 // igual que las funciones, para no tener que duplicar su valor aca (una copia
 // se desactualiza en silencio y la prueba pasa probando otra cosa).
+// Acepta tambien las que ocupan varias lineas (DATA_KEYS es una de ellas):
+// se corta en el primer ";" que quede fuera de comillas.
 function sacarConstante(nombre) {
-  const m = HTML.match(new RegExp("^\\s*var\\s+" + nombre + "\\s*=\\s*[^;\\n]+;", "m"));
-  if (!m) throw new Error("no encuentro la constante " + nombre + " en index.html");
-  return m[0].trim();
+  const i = HTML.search(new RegExp("^\\s*var\\s+" + nombre + "\\s*=", "m"));
+  if (i < 0) throw new Error("no encuentro la constante " + nombre + " en index.html");
+  let comilla = null;
+  for (let j = i; j < HTML.length; j++) {
+    const c = HTML[j];
+    if (comilla) { if (c === "\\") j++; else if (c === comilla) comilla = null; continue; }
+    if (c === '"' || c === "'") { comilla = c; continue; }
+    if (c === ";") return HTML.slice(i, j + 1).trim();
+  }
+  throw new Error("la constante " + nombre + " no termina en ';'");
 }
-const CONSTANTES = ["MIN_DIAS_PRIMERA_CUOTA"];
+const CONSTANTES = ["MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
+                    "_MERGE_OBJETOS", "_MERGE_HISTORIAL",
+                    "DATA_KEYS", "_CLAVES_QUE_NO_SON_DATOS"];
 
 const NECESARIAS = ["r4", "f2", "td", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
                     "congelarMora", "_sumarMeses", "_isoDeFecha", "calcularAmortizacion",
@@ -45,7 +56,10 @@ const NECESARIAS = ["r4", "f2", "td", "cfgMora", "_diasIso", "detalleMora", "mor
                     "capitalRealTotal", "_mesesDesde", "_acumuladosMes",
                     "conciliacionCapital", "getMesKeyActual",
                     "montoAUsdt", "montoConMoneda", "_unicos",
-                    "_marcarCambiados", "_olvidarFotos", "_mergeArrayById"];
+                    "_marcarCambiados", "_olvidarFotos", "_mergeArrayById",
+                    "_marcarTodoLoQueSeFusiona", "_marcarObjetosCambiados",
+                    "_mergeObjetoPorClave", "_unirHistorial", "_unirMarcasCampos",
+                    "_huellaCompleta", "_conteoRapido"];
 // _olvidarFotos escribe en window; en Node no existe, se le pone uno vacio.
 global.window = global.window || {};
 // S es el estado global de la app; aca solo hacen falta config y prestamos.
@@ -62,7 +76,9 @@ const calcMesCompleto = (mk) => MESES_FALSOS[mk] || {};
 const F = new Function("S", "getRateToUsdt", "calcMesCompleto",
   CONSTANTES.map(sacarConstante).join("\n") + "\n" +
   NECESARIAS.map(sacarFuncion).join("\n") +
-  "\nreturn {" + NECESARIAS.join(",") + "};")(S, getRateToUsdt, calcMesCompleto);
+  // Las constantes tambien se devuelven: las pruebas de la marca recorren
+  // _MERGE_FIELDS entero, para que un campo nuevo no se quede sin cubrir.
+  "\nreturn {" + NECESARIAS.concat(CONSTANTES).join(",") + "};")(S, getRateToUsdt, calcMesCompleto);
 
 let fallos = 0;
 function ok(cond, msg, dato) {
@@ -598,7 +614,59 @@ F._marcarCambiados([sinId], memo);
 ok(sinId._mod === undefined, "un registro sin id se deja en paz");
 
 F._olvidarFotos();
-ok(Object.keys(global.window._ultimoCobroPorId).length === 0, "tras fusionar se olvidan las fotos");
+ok(Object.keys(global.window._fotoPorCampo || {}).length === 0, "tras fusionar se olvidan las fotos");
+
+// ── Y ahora para TODOS los campos, no solo dos ──────────────────────────────
+// La auditoria encontro que de los 23 campos que se fusionan, doce no tenian
+// ni una sola marca — compromisos entre ellos, que es por lo que un pago al
+// contador ya hecho volvia a salir "por pagar". Estas pruebas recorren la
+// lista entera: si manana se agrega un campo a _MERGE_FIELDS y no queda
+// cubierto, aqui falla.
+console.log("\nLa marca cubre todos los campos que se fusionan, no dos");
+const ID = F._MERGE_ID_FIELD || {};
+const campoId = (k) => ID[k] || "id";
+
+// Un registro de mentira por cada campo, con SU campo de identidad.
+function sembrar(){
+  F._olvidarFotos();
+  F._MERGE_FIELDS.forEach(function(k){
+    const r = { estado: "antes" };
+    r[campoId(k)] = "x1";
+    S[k] = [r];
+  });
+  F._marcarTodoLoQueSeFusiona();          // primer guardado: solo la foto
+}
+
+sembrar();
+const sinMarcaAlPrincipio = F._MERGE_FIELDS.filter((k) => S[k][0]._mod !== undefined);
+ok(sinMarcaAlPrincipio.length === 0, "ningun campo se marca en el primer guardado",
+   sinMarcaAlPrincipio.join(","));
+
+F._MERGE_FIELDS.forEach((k) => { S[k][0].estado = "despues"; });
+F._marcarTodoLoQueSeFusiona();
+const sinMarcar = F._MERGE_FIELDS.filter((k) => typeof S[k][0]._mod !== "number");
+ok(sinMarcar.length === 0,
+   "los " + F._MERGE_FIELDS.length + " campos quedan marcados al cambiar",
+   sinMarcar.length ? "sin marcar: " + sinMarcar.join(", ") : "");
+
+// Los cuatro campos que NO usan "id" son los que se rompen si alguien asume id.
+["clientes", "brl", "vzla", "eeuu", "cierresMes"].forEach(function(k){
+  if (F._MERGE_FIELDS.indexOf(k) === -1) return;
+  ok(typeof S[k][0]._mod === "number",
+     k + " se marca por su propio campo de identidad (" + campoId(k) + ")");
+});
+
+// Un registro cuyo campo de identidad no coincide no se toca ni rompe nada.
+F._olvidarFotos();
+S.compromisos = [{ id: "c1", pagado: false }, { sinIdentidad: true }];
+F._marcarTodoLoQueSeFusiona();
+S.compromisos[0].pagado = true;
+F._marcarTodoLoQueSeFusiona();
+ok(typeof S.compromisos[0]._mod === "number", "un compromiso pagado queda marcado");
+ok(S.compromisos[1]._mod === undefined, "y uno sin identidad se deja en paz");
+
+F._olvidarFotos();
+F._MERGE_FIELDS.forEach((k) => { S[k] = []; });
 
 console.log("\nLa fusion con otro dispositivo");
 // PC: cobrado y marcado. Servidor: copia vieja, pendiente, sin marca, y con
@@ -622,6 +690,110 @@ ok(F._mergeArrayById(remotoB, localA, "id", 1, 9999)[0].estado === "pendiente",
 // Un registro que solo existe en el otro dispositivo no se pierde.
 const fus2 = F._mergeArrayById([{ id: 7, estado: "pendiente" }], local, "id", 1, 1);
 ok(fus2.length === 2, "lo que solo esta en el otro dispositivo se trae igual");
+
+// ── Lo que no son listas: config, tasas e historiales ───────────────────────
+// config no se reemplazaba: se CONGELABA. _mergeConfigSafe decia "si local ya
+// tiene un valor real, se queda tal cual", asi que un cambio hecho en la PC no
+// llegaba nunca al telefono. Medido antes del arreglo: telefono con apertura
+// 2.505,37, servidor con 2.372,71, y el telefono se quedaba con 2.505,37 para
+// siempre. Dos aparatos que nunca mas coinciden en cuanto deberias tener.
+console.log("\nLa configuracion se sincroniza, no se congela");
+const respaldoViejo = (k, r, l) => l===undefined||l===null||l===""||l===0;
+
+S._modCampos = {};
+global.window._fotoPorClave = {};
+S.config = { aperturaUsdt: 2505.37, comision_usdt: 0.06 };
+F._marcarObjetosCambiados();               // primer guardado: solo la foto
+ok(Object.keys(S._modCampos.config || {}).length === 0,
+   "el primer guardado no marca ninguna clave");
+
+S.config.aperturaUsdt = 2372.71;           // el usuario la cambia en la PC
+F._marcarObjetosCambiados();
+ok(typeof S._modCampos.config.aperturaUsdt === "number", "cambiarla si la marca");
+ok(S._modCampos.config.comision_usdt === undefined, "y no marca lo que no tocaste");
+
+// El telefono: tiene la vieja sin marca, el servidor trae la nueva marcada.
+const marcasPC = JSON.parse(JSON.stringify(S._modCampos));
+S._modCampos = {};                                     // el telefono no marco nada
+const enTelefono = F._mergeObjetoPorClave(
+  { aperturaUsdt: 2372.71, comision_usdt: 0.06 },      // lo que trae el servidor
+  { aperturaUsdt: 2505.37, comision_usdt: 0.06 },      // lo que tiene el telefono
+  "config", { config: marcasPC.config }, respaldoViejo);
+ok(enTelefono.aperturaUsdt === 2372.71,
+   "la apertura cambiada en la PC si llega al telefono", enTelefono.aperturaUsdt);
+
+// Y al reves: lo que tocaste AQUI no lo pisa una copia sin marcar.
+S._modCampos = { config: { aperturaUsdt: 5000 } };
+const aqui = F._mergeObjetoPorClave({ aperturaUsdt: 2372.71 }, { aperturaUsdt: 9999 },
+  "config", {}, respaldoViejo);
+ok(aqui.aperturaUsdt === 9999, "y lo que tocaste aqui no lo pisa una copia sin marca");
+
+// Dos marcas: gana la mas nueva.
+S._modCampos = { config: { x: 100 } };
+ok(F._mergeObjetoPorClave({ x: "nuevo" }, { x: "viejo" }, "config",
+     { config: { x: 200 } }, respaldoViejo).x === "nuevo",
+   "entre dos marcas gana la mas nueva");
+ok(F._mergeObjetoPorClave({ x: "nuevo" }, { x: "viejo" }, "config",
+     { config: { x: 50 } }, respaldoViejo).x === "viejo",
+   "y la vieja no gana aunque venga del servidor");
+
+// Sin marcas de ningun lado se respeta el criterio de siempre.
+S._modCampos = {};
+ok(F._mergeObjetoPorClave({ a: 7 }, { a: 0 }, "config", {}, respaldoViejo).a === 7,
+   "sin marcas, un 0 local sigue cediendo (como antes)");
+ok(F._mergeObjetoPorClave({ a: 7 }, { a: 3 }, "config", {}, respaldoViejo).a === 3,
+   "sin marcas, un valor real local sigue mandando (como antes)");
+// Una clave que solo tiene el otro aparato entra siempre.
+ok(F._mergeObjetoPorClave({ nueva: 1 }, {}, "config", {}, respaldoViejo).nueva === 1,
+   "una clave que solo tiene el otro aparato se trae");
+
+console.log("\nLos historiales se unen, no se reemplazan");
+const hUnido = F._unirHistorial({ "2026-09-10": 100, "2026-09-11": 200 },
+                                { "2026-09-11": 999, "2026-09-12": 300 });
+ok(hUnido["2026-09-10"] === 100, "el dia que solo tenia el otro aparato se recupera");
+ok(hUnido["2026-09-12"] === 300, "el dia propio no se pierde");
+ok(hUnido["2026-09-11"] === 999, "en empate manda el de este aparato");
+const muchos = {};
+for (let i = 0; i < 200; i++) muchos["2026-01-" + String(i).padStart(3, "0")] = i;
+ok(Object.keys(F._unirHistorial(muchos, {})).length === 120, "se poda a 120 dias");
+
+console.log("\nLas marcas por clave se suman");
+S._modCampos = { config: { a: 100, b: 500 } };
+F._unirMarcasCampos({ config: { a: 300, c: 700 }, tasasDia: { BRL: 50 } });
+ok(S._modCampos.config.a === 300, "se queda la marca mas nueva");
+ok(S._modCampos.config.b === 500, "no se pierde una marca propia");
+ok(S._modCampos.config.c === 700, "se trae una marca que solo tenia el otro");
+ok(S._modCampos.tasasDia.BRL === 50, "y un campo entero que no teniamos");
+S._modCampos = {}; S.config = {};
+
+// ── Las marcas no cuentan como "cambio de datos" ────────────────────────────
+// _huellaCompleta() contesta "¿cambio algo, hay que guardar?". Si las marcas de
+// tiempo entran ahi, la respuesta es que si cada vez que cambia la marca de que
+// algo cambio: la app guarda de mas, el guardado sube la hora del servidor, el
+// otro aparato se lo baja y repinta. El codigo ya excluia "_mod" de cada
+// registro por esta misma razon; _modCampos tiene que quedar fuera igual.
+console.log("\nLas marcas no son datos");
+ok(F.DATA_KEYS.indexOf("_modCampos") !== -1,
+   "_modCampos se guarda (si no, las marcas no sobreviven a recargar)");
+ok(F._CLAVES_QUE_NO_SON_DATOS.indexOf("_modCampos") !== -1,
+   "pero no cuenta como dato para decidir si hay que guardar");
+
+F._MERGE_FIELDS.forEach((k) => { S[k] = []; });
+S.config = { aperturaUsdt: 2372.71 };
+S._modCampos = { config: { aperturaUsdt: 111 } };
+const huella1 = F._huellaCompleta();
+const conteo1 = F._conteoRapido();
+S._modCampos = { config: { aperturaUsdt: 999999 } };   // solo cambia la marca
+ok(F._huellaCompleta() === huella1, "cambiar solo una marca no cambia la huella");
+ok(F._conteoRapido() === conteo1, "ni el conteo rapido");
+S.config.aperturaUsdt = 9999;                          // ahora si cambia un dato
+ok(F._huellaCompleta() !== huella1, "pero cambiar un dato de verdad si la cambia");
+// Un registro marcado tampoco cuenta: "_mod" ya estaba excluido, se deja fijado.
+S.cuentasCobrar = [{ id: 1, estado: "cobrado" }];
+const huella2 = F._huellaCompleta();
+S.cuentasCobrar[0]._mod = Date.now();
+ok(F._huellaCompleta() === huella2, "y marcar un registro tampoco");
+S.cuentasCobrar = []; S.config = {}; S._modCampos = {};
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
