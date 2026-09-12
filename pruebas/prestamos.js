@@ -981,5 +981,29 @@ ok(!/var v=parseFloat\(val\)\|\|0;/.test(HTML),
 ok(/if\(!confirm\(_avisoCambioSaldo\(c,antes,v,delta\)\)\)/.test(HTML),
    "y confirma antes de aplicar, igual que la otra pantalla");
 
+// ── El lote solo nace con bolivares ────────────────────────────────────────
+// Una remesa Brasil→Venezuela metia en el inventario un "vendi 30 BRL a 5,1424"
+// que nadie hizo. No era solo ruido: consumirInventarioFIFO se lo comia en la
+// siguiente remesa VZLA→BRL que pagara por esa cuenta.
+console.log("\nEl lote solo nace con bolivares");
+S.inventarioUsdt = [];
+ok(F.crearLoteRecibido("BRL", 30, 5.8339, "pagbank", "12/09", "x") === null,
+   "los reales que entran NO crean lote");
+ok(S.inventarioUsdt.length === 0, "y no queda nada en el inventario");
+ok(F.crearLoteRecibido("USD", 100, 100, "zelle", "12/09", "x") === null,
+   "ninguna otra moneda tampoco");
+ok(F.crearLoteRecibido("VES", 20010, 21.3563, "bdv", "12/09", "x") !== null,
+   "los bolivares si, que es lo unico que se acordo");
+S.inventarioUsdt = [];
+ok(F._loteAlCobrar({ monto:500, moneda:"BRL", usdtValor:98, refUid:"z" }, 500, "pagbank") === null,
+   "y al cobrar un pendiente en reales, tampoco");
+ok(S.inventarioUsdt.length === 0, "sigue sin quedar nada");
+S.inventarioUsdt = [];
+// Y que saveTx solo lo llame con bolivares: el fallo estaba en la condicion.
+ok(/if\(ruta\.orig==="VES" && !f\.pendiente\)/.test(HTML),
+   "saveTx crea el lote solo cuando lo que entra son bolivares");
+ok(!/ruta\.orig==="BRL"[^)]*\)\s*\{\s*\n\s*crearLoteRecibido/.test(HTML),
+   "y ya no con reales");
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

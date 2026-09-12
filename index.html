@@ -4213,11 +4213,12 @@ function saveTx(){
   if(_lotesSnap.compras.length||_lotesSnap.ventas.length) nuevaRemesa._lotesConsumidos=_lotesSnap;
   // Consumir inventario FIFO (más viejo primero): USDT comprados y bolívares de ventas
   consumirInventarioFIFO(ruta.orig,res.uc,ruta.dest==="VES"?"VES":ruta.dest,res.cant,f.cuentaBanco,f.cuentaDest);
-  // El dinero que entra crea su propio lote, valorado a lo que costó lo que se
-  // entregó a cambio (ver crearLoteRecibido). Solo si de verdad entró: si el
-  // cliente paga después, el lote nace el día que se cobre, igual que el saldo
-  // de la cuenta.
-  if((ruta.orig==="VES" || ruta.orig==="BRL") && !f.pendiente){
+  // Los BOLÍVARES que entran y se quedan en la cuenta crean su propio lote, con
+  // lo que la app dijo que valen (ver crearLoteRecibido). Solo bolívares: los
+  // reales que entran se convierten en USDT y esa compra se registra aparte.
+  // Y solo si de verdad entraron: si el cliente paga después, el lote nace el
+  // día que se cobre, igual que el saldo de la cuenta.
+  if(ruta.orig==="VES" && !f.pendiente){
     crearLoteRecibido(ruta.orig, res.am, res.uc, f.cuentaBanco||"", ds(f.date), nuevaRemesa._uid);
   }
   // Guardar referencia de tasas para la próxima operación
@@ -10969,6 +10970,16 @@ function toggleLotes(n,tipo){
 // El lote va marcado como "Remesa" para que se distinga de una compra o venta de
 // USDT de verdad: el inventario es de USDT, y esto no lo es.
 function crearLoteRecibido(moneda, monto, usdtValor, cuentaDestinoId, fecha, refUid){
+  // SOLO bolívares. El inventario es de compra y venta de USDT; lo único que se
+  // acordó meter aquí que no lo sea son los bolívares que entran por una remesa
+  // y se quedan parados en la cuenta, para saber a qué valor se gastan después.
+  // Los reales NO: esos ella los convierte en USDT y esa compra la registra
+  // aparte, así que un lote de reales es una venta que nunca ocurrió. Y no era
+  // solo ruido en la pantalla: consumirInventarioFIFO se lo comía como si fuera
+  // real en la siguiente remesa VZLA→BRL que pagara por esa cuenta, y de esos
+  // lotes salen las tasas que la app sugiere. Pasó el 12/09 con una remesa de
+  // 30 reales: apareció un "vendí 30 BRL a 5,1424" que nadie hizo.
+  if(moneda!=="VES") return null;
   var m = Math.round((parseFloat(monto)||0)*100)/100;
   if(m<=0) return null;
   // Sin cuenta no se puede emparejar: el consumo FIFO filtra por cuentaDestinoId
@@ -11002,7 +11013,7 @@ function crearLoteRecibido(moneda, monto, usdtValor, cuentaDestinoId, fecha, ref
 // puede ser parcial (un abono), así que el valor en USDT va a prorrata.
 function _loteAlCobrar(c, montoEntrado, cuentaDestinoId){
   if(!c || !(montoEntrado>0) || !cuentaDestinoId) return null;
-  if(c.moneda!=="VES" && c.moneda!=="BRL") return null;   // solo monedas con lotes
+  if(c.moneda!=="VES") return null;   // solo los bolívares llevan lote (ver crearLoteRecibido)
   var total=parseFloat(c.monto)||0;
   var valor=parseFloat(c.usdtValor)||0;
   if(valor<=0) return null;          // cobro viejo, sin valor guardado
