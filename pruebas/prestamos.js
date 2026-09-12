@@ -34,7 +34,7 @@ function sacarConstante(nombre) {
 }
 const CONSTANTES = ["MIN_DIAS_PRIMERA_CUOTA"];
 
-const NECESARIAS = ["td", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
+const NECESARIAS = ["r4", "f2", "td", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
                     "congelarMora", "_sumarMeses", "_isoDeFecha", "calcularAmortizacion",
                     "tasaAnualEfectiva", "_periodDaysDe", "perfilRiesgoCliente",
                     "puntoEquilibrio", "tasaSugerida", "_conDiaDelMes",
@@ -43,7 +43,8 @@ const NECESARIAS = ["td", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
                     "cuotasRecomendadas", "limiteCredito",
                     "costoOperativoPorPrestamo", "pctCostoOperativo",
                     "capitalRealTotal", "_mesesDesde", "_acumuladosMes",
-                    "conciliacionCapital", "getMesKeyActual"];
+                    "conciliacionCapital", "getMesKeyActual",
+                    "montoAUsdt", "montoConMoneda", "_unicos"];
 // S es el estado global de la app; aca solo hacen falta config y prestamos.
 const S = { config: {}, prestamos: [] };
 // Tasas de mentira para no depender de la configuracion real. getRateToUsdt
@@ -532,6 +533,37 @@ S.cuentas = [{ id:"a", nombre:"CAJA", moneda:"USDT", saldo:10000, activa:true }]
 ok(casi(F.conciliacionCapital().tolerancia, 200, 1), "en carteras grandes es el 2% del capital",
    F.conciliacionCapital().tolerancia);
 limpiar(); S.config = {}; S.cuentas = [];
+
+// ── Convertir antes de sumar ────────────────────────────────────────────────
+// Los informes del mes sumaban reales, bolivares y USDT en crudo bajo un "$".
+// 100 BRL + 40 USDT + 5840 VES daban "5.980" — un numero que no es ninguna
+// moneda. montoAUsdt convierte cada uno con su tasa antes de sumar.
+console.log("\nConvertir a USDT antes de sumar");
+ok(F.montoAUsdt(100, "USDT") === 100, "USDT se queda igual");
+ok(F.montoAUsdt(100, "USD") === 100, "USD va 1:1, como en conciliacionCapital()");
+ok(F.montoAUsdt(100, null) === 100, "sin moneda se asume USDT");
+ok(casi(F.montoAUsdt(540, "BRL"), 100, 0.01), "540 BRL a 5,4 son 100 USDT", F.montoAUsdt(540, "BRL"));
+ok(casi(F.montoAUsdt(5840, "VES"), 29.2, 0.01), "divide, no multiplica", F.montoAUsdt(5840, "VES"));
+ok(F.montoAUsdt(9000, "COP") === null, "sin tasa devuelve null, no inventa un numero");
+ok(F.montoAUsdt(0, "COP") === null, "tampoco con monto cero: la moneda sigue sin tasa");
+ok(F.montoAUsdt("", "BRL") === 0, "un monto vacio es cero, no NaN");
+
+// El total de un informe: 100 BRL + 40 USDT + 5840 VES, con un cobro en COP
+// que no tiene tasa. Lo que no se puede convertir NO se suma; se avisa aparte.
+const _filas = [[100,"BRL"], [40,"USDT"], [5840,"VES"], [9000,"COP"]];
+let _sinTasa = [], _total = 0;
+_filas.forEach(function (f) {
+  const u = F.montoAUsdt(f[0], f[1]);
+  if (u === null) _sinTasa.push(f[1]); else _total += u;
+});
+ok(casi(_total, 87.72, 0.01), "el total suma solo lo convertible", _total);
+ok(_sinTasa.join() === "COP", "y dice cual moneda se quedo fuera", _sinTasa.join());
+ok(_total !== 14980, "no es la suma cruda que salia antes");
+
+console.log("\nComo se muestra cada fila");
+ok(F.montoConMoneda(100, "BRL") === "100,00 BRL", "se ve la moneda pactada", F.montoConMoneda(100, "BRL"));
+ok(F.montoConMoneda(40, null) === "40,00 USDT", "sin moneda, USDT");
+ok(["BRL","BRL","VES"].filter(F._unicos).join() === "BRL,VES", "el aviso no repite monedas");
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
