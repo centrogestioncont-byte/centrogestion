@@ -61,7 +61,8 @@ const NECESARIAS = ["r4", "f2", "td", "cfgMora", "_diasIso", "detalleMora", "mor
                     "_mergeObjetoPorClave", "_unirHistorial", "_unirMarcasCampos",
                     "_huellaCompleta", "_conteoRapido",
                     "crearLoteRecibido", "quitarLoteDeRemesa", "_loteAlCobrar",
-                    "ordenFIFO", "normalizarInventarioFIFO", "simularConsumoFIFO"];
+                    "ordenFIFO", "normalizarInventarioFIFO", "simularConsumoFIFO",
+                    "f4", "f0", "_leerNumero", "_avisoCambioSaldo"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
 global.window = global.window || {};
 // S es el estado global de la app; aca solo hacen falta config y prestamos.
@@ -924,6 +925,85 @@ ok(/usdtValor\s*:\s*parseFloat\(r\.uc\)/.test(HTML),
    "pasar una remesa a pendiente, igual");
 ok(!/crearLoteRecibido\([^)]*\buv\b/.test(HTML),
    "y a crearLoteRecibido no se le pasa 'uv' en ningun sitio");
+
+// ── Leer un número tecleado como se escribe aqui ───────────────────────────
+// El 12/09 el Banco de Venezuela paso de 218.629,90 a 198,89 con un tecleo: se
+// leia con parseFloat(txt.replace(",",".")), que parte el numero en el PRIMER
+// punto, asi que "198.619,90" entraba como 198,619. La remesa siguiente dejo la
+// cuenta en negativo. Esto fija como se lee cada formato.
+console.log("\nNumeros tecleados");
+const L = (t, m) => F._leerNumero(t, m);
+ok(L("198.619,90") === 198619.9, "198.619,90 (como se escribe aqui)", L("198.619,90"));
+ok(L("198619,90")  === 198619.9, "198619,90 (sin punto de miles)", L("198619,90"));
+ok(L("198619.90")  === 198619.9, "198619.90 (punto decimal)", L("198619.90"));
+ok(L("1.000.000")  === 1000000,  "1.000.000 (varios puntos, todos de miles)", L("1.000.000"));
+ok(L("198.619")    === 198619,   "198.619 (un punto con tres cifras = miles)", L("198.619"));
+ok(L("193.399,90") === 193399.9, "193.399,90 tampoco se parte", L("193.399,90"));
+ok(L("-5.036,77")  === -5036.77, "y los negativos", L("-5.036,77"));
+ok(L("5.220,00 Bs")=== 5220,     "con la moneda pegada detras", L("5.220,00 Bs"));
+ok(L("0,5")        === 0.5,      "coma decimal suelta", L("0,5"));
+ok(L("306.2367","USDT") === 306.2367,
+   "en USDT el punto SI es decimal: se manejan cuatro", L("306.2367","USDT"));
+ok(L("123.295","USDT")  === 123.295,
+   "y tres decimales tambien, que es como estan los lotes", L("123.295","USDT"));
+ok(isNaN(L("")) && isNaN(L("abc")) && isNaN(L(null)),
+   "lo que no es un numero se rechaza, no se convierte en 0");
+
+// El aviso es la red de seguridad: el punto suelto es ambiguo y ninguna regla
+// lo acierta siempre, asi que lo que de verdad protege es ver lo que se leyo.
+console.log("\nEl aviso antes de tocar un saldo");
+const cta = { nombre:"BANCO DE VENEZUELA", moneda:"VES" };
+const avisoMalo = F._avisoCambioSaldo(cta, 218629.9, 198.89, 198.89 - 218629.9);
+ok(avisoMalo.indexOf("218.629,90") > -1, "enseña lo que hay ahora");
+ok(avisoMalo.indexOf("198,89") > -1, "y lo que va a quedar");
+ok(avisoMalo.indexOf("veces MENOS") > -1, "y canta el salto de mil veces", avisoMalo);
+ok(avisoMalo.indexOf("punto de miles") > -1, "diciendo donde mirar");
+const avisoNormal = F._avisoCambioSaldo(cta, 218629.9, 193399.9, 193399.9 - 218629.9);
+ok(avisoNormal.indexOf("⚠️") === -1,
+   "un cambio normal no lleva aviso, para que el aviso signifique algo");
+// Y que el editor de saldo lo use de verdad: el fallo no estaba en como se lee
+// un numero, estaba en quien lo leia.
+ok(/var num=_leerNumero\(nv,c\.moneda\);/.test(HTML),
+   "el editor de saldo lee con _leerNumero");
+ok(/if\(!confirm\(_avisoCambioSaldo\(/.test(HTML),
+   "y no aplica nada sin confirmar antes");
+ok(!/parseFloat\(nv\.replace\(","/.test(HTML),
+   "ya no queda el parseFloat que partia el numero en el primer punto");
+// La otra pantalla de saldos (la tabla de cuentas) pasa por updateCuentaSaldo.
+// Alli el fallo era el "||0": un campo vacio o un numero que el navegador no
+// acepta dejaba la cuenta en CERO. 27 de sus 106 ajustes acabaron en 0.
+ok(/var v=_leerNumero\(val,c\.moneda\);/.test(HTML),
+   "updateCuentaSaldo tambien lee con _leerNumero");
+ok(/if\(isNaN\(v\)\)\{ alert/.test(HTML),
+   "y lo que no entiende no lo convierte en 0: no toca la cuenta");
+ok(!/var v=parseFloat\(val\)\|\|0;/.test(HTML),
+   "ya no queda el \"||0\" que vaciaba cuentas");
+ok(/if\(!confirm\(_avisoCambioSaldo\(c,antes,v,delta\)\)\)/.test(HTML),
+   "y confirma antes de aplicar, igual que la otra pantalla");
+
+// ── El lote solo nace con bolivares ────────────────────────────────────────
+// Una remesa Brasil→Venezuela metia en el inventario un "vendi 30 BRL a 5,1424"
+// que nadie hizo. No era solo ruido: consumirInventarioFIFO se lo comia en la
+// siguiente remesa VZLA→BRL que pagara por esa cuenta.
+console.log("\nEl lote solo nace con bolivares");
+S.inventarioUsdt = [];
+ok(F.crearLoteRecibido("BRL", 30, 5.8339, "pagbank", "12/09", "x") === null,
+   "los reales que entran NO crean lote");
+ok(S.inventarioUsdt.length === 0, "y no queda nada en el inventario");
+ok(F.crearLoteRecibido("USD", 100, 100, "zelle", "12/09", "x") === null,
+   "ninguna otra moneda tampoco");
+ok(F.crearLoteRecibido("VES", 20010, 21.3563, "bdv", "12/09", "x") !== null,
+   "los bolivares si, que es lo unico que se acordo");
+S.inventarioUsdt = [];
+ok(F._loteAlCobrar({ monto:500, moneda:"BRL", usdtValor:98, refUid:"z" }, 500, "pagbank") === null,
+   "y al cobrar un pendiente en reales, tampoco");
+ok(S.inventarioUsdt.length === 0, "sigue sin quedar nada");
+S.inventarioUsdt = [];
+// Y que saveTx solo lo llame con bolivares: el fallo estaba en la condicion.
+ok(/if\(ruta\.orig==="VES" && !f\.pendiente\)/.test(HTML),
+   "saveTx crea el lote solo cuando lo que entra son bolivares");
+ok(!/ruta\.orig==="BRL"[^)]*\)\s*\{\s*\n\s*crearLoteRecibido/.test(HTML),
+   "y ya no con reales");
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
