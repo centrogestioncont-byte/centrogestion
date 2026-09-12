@@ -32,7 +32,7 @@ function sacarConstante(nombre) {
   if (!m) throw new Error("no encuentro la constante " + nombre + " en index.html");
   return m[0].trim();
 }
-const CONSTANTES = ["MIN_DIAS_PRIMERA_CUOTA"];
+const CONSTANTES = ["MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD"];
 
 const NECESARIAS = ["r4", "f2", "td", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
                     "congelarMora", "_sumarMeses", "_isoDeFecha", "calcularAmortizacion",
@@ -45,7 +45,8 @@ const NECESARIAS = ["r4", "f2", "td", "cfgMora", "_diasIso", "detalleMora", "mor
                     "capitalRealTotal", "_mesesDesde", "_acumuladosMes",
                     "conciliacionCapital", "getMesKeyActual",
                     "montoAUsdt", "montoConMoneda", "_unicos",
-                    "_marcarCambiados", "_olvidarFotos", "_mergeArrayById"];
+                    "_marcarCambiados", "_olvidarFotos", "_mergeArrayById",
+                    "_marcarTodoLoQueSeFusiona"];
 // _olvidarFotos escribe en window; en Node no existe, se le pone uno vacio.
 global.window = global.window || {};
 // S es el estado global de la app; aca solo hacen falta config y prestamos.
@@ -62,7 +63,9 @@ const calcMesCompleto = (mk) => MESES_FALSOS[mk] || {};
 const F = new Function("S", "getRateToUsdt", "calcMesCompleto",
   CONSTANTES.map(sacarConstante).join("\n") + "\n" +
   NECESARIAS.map(sacarFuncion).join("\n") +
-  "\nreturn {" + NECESARIAS.join(",") + "};")(S, getRateToUsdt, calcMesCompleto);
+  // Las constantes tambien se devuelven: las pruebas de la marca recorren
+  // _MERGE_FIELDS entero, para que un campo nuevo no se quede sin cubrir.
+  "\nreturn {" + NECESARIAS.concat(CONSTANTES).join(",") + "};")(S, getRateToUsdt, calcMesCompleto);
 
 let fallos = 0;
 function ok(cond, msg, dato) {
@@ -598,7 +601,59 @@ F._marcarCambiados([sinId], memo);
 ok(sinId._mod === undefined, "un registro sin id se deja en paz");
 
 F._olvidarFotos();
-ok(Object.keys(global.window._ultimoCobroPorId).length === 0, "tras fusionar se olvidan las fotos");
+ok(Object.keys(global.window._fotoPorCampo || {}).length === 0, "tras fusionar se olvidan las fotos");
+
+// ── Y ahora para TODOS los campos, no solo dos ──────────────────────────────
+// La auditoria encontro que de los 23 campos que se fusionan, doce no tenian
+// ni una sola marca — compromisos entre ellos, que es por lo que un pago al
+// contador ya hecho volvia a salir "por pagar". Estas pruebas recorren la
+// lista entera: si manana se agrega un campo a _MERGE_FIELDS y no queda
+// cubierto, aqui falla.
+console.log("\nLa marca cubre todos los campos que se fusionan, no dos");
+const ID = F._MERGE_ID_FIELD || {};
+const campoId = (k) => ID[k] || "id";
+
+// Un registro de mentira por cada campo, con SU campo de identidad.
+function sembrar(){
+  F._olvidarFotos();
+  F._MERGE_FIELDS.forEach(function(k){
+    const r = { estado: "antes" };
+    r[campoId(k)] = "x1";
+    S[k] = [r];
+  });
+  F._marcarTodoLoQueSeFusiona();          // primer guardado: solo la foto
+}
+
+sembrar();
+const sinMarcaAlPrincipio = F._MERGE_FIELDS.filter((k) => S[k][0]._mod !== undefined);
+ok(sinMarcaAlPrincipio.length === 0, "ningun campo se marca en el primer guardado",
+   sinMarcaAlPrincipio.join(","));
+
+F._MERGE_FIELDS.forEach((k) => { S[k][0].estado = "despues"; });
+F._marcarTodoLoQueSeFusiona();
+const sinMarcar = F._MERGE_FIELDS.filter((k) => typeof S[k][0]._mod !== "number");
+ok(sinMarcar.length === 0,
+   "los " + F._MERGE_FIELDS.length + " campos quedan marcados al cambiar",
+   sinMarcar.length ? "sin marcar: " + sinMarcar.join(", ") : "");
+
+// Los cuatro campos que NO usan "id" son los que se rompen si alguien asume id.
+["clientes", "brl", "vzla", "eeuu", "cierresMes"].forEach(function(k){
+  if (F._MERGE_FIELDS.indexOf(k) === -1) return;
+  ok(typeof S[k][0]._mod === "number",
+     k + " se marca por su propio campo de identidad (" + campoId(k) + ")");
+});
+
+// Un registro cuyo campo de identidad no coincide no se toca ni rompe nada.
+F._olvidarFotos();
+S.compromisos = [{ id: "c1", pagado: false }, { sinIdentidad: true }];
+F._marcarTodoLoQueSeFusiona();
+S.compromisos[0].pagado = true;
+F._marcarTodoLoQueSeFusiona();
+ok(typeof S.compromisos[0]._mod === "number", "un compromiso pagado queda marcado");
+ok(S.compromisos[1]._mod === undefined, "y uno sin identidad se deja en paz");
+
+F._olvidarFotos();
+F._MERGE_FIELDS.forEach((k) => { S[k] = []; });
 
 console.log("\nLa fusion con otro dispositivo");
 // PC: cobrado y marcado. Servidor: copia vieja, pendiente, sin marca, y con

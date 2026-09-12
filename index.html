@@ -9476,38 +9476,24 @@ function corregirSaldoCierre(mesKey){
 function saveData(){
   if(!permisoEdicion()){return;} // Solo lectura — no guarda, no interrumpe
   try{
-    // Marcar qué cuentas cambiaron de saldo desde el último guardado — un
-    // solo punto central en vez de tocar cada lugar del código que ajusta
-    // saldos (son decenas). Sin esto, un saldo recién actualizado (ej: al
-    // registrar una venta de USDT) podía perderse en la sincronización con
-    // otro dispositivo, exactamente igual que pasaba con los lotes de
-    // inventario — porque las cuentas nunca tenían una marca de "cuándo se
-    // tocó esta en particular" para que la fusión supiera cuál es la más
-    // nueva.
-    // ARREGLO 33 (04/09/2026): decia "si no tengo referencia previa, marcar como
-    // modificado". Eso hacia que el PRIMER guardado despues de abrir la app
-    // marcara TODAS las cuentas como recien cambiadas, aunque no se hubiera
-    // tocado ninguna. Un dispositivo con saldos viejos abria, guardaba una vez,
-    // y sus saldos ganaban la fusion por tener la marca mas nueva. Paso tres
-    // veces el 04/09: el telefono revirtio los saldos corregidos en la laptop.
-    // Ahora, sin referencia previa solo se ANOTA el valor; la marca se pone
-    // unicamente cuando el saldo cambia de verdad.
-    if(!window._ultimoSaldoPorCuenta) window._ultimoSaldoPorCuenta={};
-    (S.cuentas||[]).forEach(function(c){
-      var actual=parseFloat(c.saldo)||0;
-      var previo=window._ultimoSaldoPorCuenta[c.id];
-      if(previo!==undefined && Math.abs(previo-actual)>0.001){
-        c._mod=Date.now();   // cambio real en ESTE dispositivo
-      }
-      window._ultimoSaldoPorCuenta[c.id]=actual;
-    });
-    // Lo mismo para cobros y préstamos (ver _marcarCambiados): sin esta
-    // marca, un cobro que acabas de cerrar vuelve a salir pendiente cuando
-    // se fusiona con la copia de otro dispositivo.
-    if(!window._ultimoCobroPorId) window._ultimoCobroPorId={};
-    if(!window._ultimoPrestamoPorId) window._ultimoPrestamoPorId={};
-    _marcarCambiados(S.cuentasCobrar, window._ultimoCobroPorId);
-    _marcarCambiados(S.prestamos, window._ultimoPrestamoPorId);
+    // Marcar TODO lo que se fusiona entre dispositivos y cambió en este
+    // guardado — un solo punto central, en vez de tocar cada función que
+    // modifica datos (son más de cien). Sin esta marca, lo que acabas de
+    // hacer aquí pierde contra una copia vieja del teléfono y "vuelve" solo:
+    // un cobro cerrado que reaparece pendiente, un compromiso pagado que
+    // sigue por pagar, un saldo corregido que se deshace.
+    //
+    // Aquí vivía un bloque que marcaba SOLO las cuentas, y solo cuando les
+    // cambiaba el saldo. Se quitó porque _marcarTodoLoQueSeFusiona() hace
+    // eso y más: cubre las cuentas enteras (también un cambio de nombre o de
+    // moneda, que el bloque viejo no veía) y los otros veinte campos, que no
+    // tenían nada. La lección que dejó aquel bloque sigue en pie y está
+    // escrita en _marcarCambiados(): sin referencia previa se ANOTA, no se
+    // marca — marcar en el primer guardado tras abrir la app hacía que un
+    // dispositivo con datos viejos ganara la fusión por haber guardado una
+    // vez (ARREGLO 33, 04/09/2026: "el telefono revirtio los saldos
+    // corregidos en la laptop", tres veces el mismo día).
+    _marcarTodoLoQueSeFusiona();
     var obj={_ts:Date.now()};
     // Count total ops for integrity check
     obj._opsCount=(S.brl||[]).length+(S.vzla||[]).length+(S.eeuu||[]).length;
@@ -18061,30 +18047,55 @@ var _fbSaveTimer = null;
 // o un préstamo: son más de quince, y la que se olvide reabre el agujero.
 // Se compara la foto del registro contra la del guardado anterior; si
 // cambió de verdad, lleva marca.
-function _marcarCambiados(arr, memo){
+function _marcarCambiados(arr, memo, idField){
   if(!Array.isArray(arr)||!memo) return;
+  idField = idField || "id";
   arr.forEach(function(it){
-    if(!it||it.id===undefined||it.id===null) return;
+    if(!it) return;
+    var id=it[idField];
+    if(id===undefined||id===null) return;
     // _mod se deja fuera de la foto: si entrara, marcar cambiaría la foto,
     // la foto distinta volvería a marcar, y no pararía nunca.
     var copia={};
     for(var k in it){ if(k!=="_mod") copia[k]=it[k]; }
     var foto=JSON.stringify(copia);
-    var previo=memo[it.id];
+    var previo=memo[id];
     // Sin foto previa solo se anota, no se marca. Si se marcara, el PRIMER
     // guardado después de abrir la app marcaría todo, y un dispositivo con
     // datos viejos le ganaría la fusión a uno al día solo por haber
     // guardado una vez. Eso es exactamente lo que pasó con las cuentas.
     if(previo!==undefined && previo!==foto) it._mod=Date.now();
-    memo[it.id]=foto;
+    memo[id]=foto;
+  });
+}
+// ── La marca, para TODOS los campos que se fusionan ────────────────────────
+// Esto es lo que cierra el agujero de raíz. Antes se marcaba a mano dentro de
+// cada función que tocaba datos, y se auditó: de las funciones que guardan y
+// tocan un campo compartido, NINGÚN módulo estaba cubierto entero. Doce de
+// veintiuno no tenían una sola marca — compromisos entre ellos, que es por lo
+// que un pago al contador ya hecho volvía a salir "por pagar" al abrir desde
+// el teléfono.
+//
+// Marcar función por función no funciona y ya se demostró tres veces: son más
+// de cien sitios, siempre falta uno, y el que falta es el que borra trabajo.
+// Aquí se recorren los campos de _MERGE_FIELDS enteros, con el campo de
+// identidad que cada uno usa (id, cod, _uid, mesKey). Una función nueva que
+// se escriba mañana queda cubierta sola, sin que nadie se acuerde de nada.
+function _marcarTodoLoQueSeFusiona(){
+  if(!window._fotoPorCampo) window._fotoPorCampo={};
+  var campos=(typeof _MERGE_FIELDS!=="undefined"&&_MERGE_FIELDS)||[];
+  var ids=(typeof _MERGE_ID_FIELD!=="undefined"&&_MERGE_ID_FIELD)||{};
+  campos.forEach(function(k){
+    if(!Array.isArray(S[k])) return;
+    if(!window._fotoPorCampo[k]) window._fotoPorCampo[k]={};
+    _marcarCambiados(S[k], window._fotoPorCampo[k], ids[k]||"id");
   });
 }
 // Después de traer datos del servidor, las fotos que teníamos son de antes
 // de esa fusión: lo que cambió lo cambió el servidor, no este dispositivo,
 // y marcarlo como propio sería mentir. Se vuelve a empezar.
 function _olvidarFotos(){
-  window._ultimoCobroPorId={};
-  window._ultimoPrestamoPorId={};
+  window._fotoPorCampo={};
 }
 
 function _mergeArrayById(remoteArr, localArr, idField, remoteTs, localTs){
