@@ -62,7 +62,7 @@ const NECESARIAS = ["r4", "f2", "td", "cfgMora", "_diasIso", "detalleMora", "mor
                     "_huellaCompleta", "_conteoRapido",
                     "crearLoteRecibido", "quitarLoteDeRemesa", "_loteAlCobrar",
                     "ordenFIFO", "normalizarInventarioFIFO", "simularConsumoFIFO",
-                    "f4", "f0", "_leerNumero", "_avisoCambioSaldo"];
+                    "f4", "f0", "_leerNumero", "_avisoCambioSaldo", "_fechaLote", "_idLoteNuevo"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
 global.window = global.window || {};
 // S es el estado global de la app; aca solo hacen falta config y prestamos.
@@ -1004,6 +1004,85 @@ ok(/if\(ruta\.orig==="VES" && !f\.pendiente\)/.test(HTML),
    "saveTx crea el lote solo cuando lo que entra son bolivares");
 ok(!/ruta\.orig==="BRL"[^)]*\)\s*\{\s*\n\s*crearLoteRecibido/.test(HTML),
    "y ya no con reales");
+
+// ── La fecha del lote, y con ella el orden FIFO ─────────────────────────────
+// El 12/09 los lotes de 11.000 y 33.000 Bs que habian entrado por la manana se
+// quedaron enteros mientras se consumia una venta de 300.000 de la tarde. La
+// causa: cada sitio escribia la fecha a su manera y ordenFIFO lee dia*100+mes.
+//     "09/12" (venta USDT) = 912   ·   "12/09/26" (remesa) = 1209
+// 912 < 1209, asi que la venta parecia mas vieja. Todas del MISMO dia.
+console.log("\nLa fecha del lote: un solo formato");
+ok(F._fechaLote("2026-09-12") === "09/12", "ISO → mm/dd", F._fechaLote("2026-09-12"));
+ok(F._fechaLote("12/09/26")   === "09/12", "dd/mm/aa → mm/dd", F._fechaLote("12/09/26"));
+ok(F._fechaLote("09/12")      === "09/12", "mm/dd se deja como esta", F._fechaLote("09/12"));
+ok(F._fechaLote("1/9/26")     === "09/01", "y rellena con cero", F._fechaLote("1/9/26"));
+ok(F._fechaLote("") === "" && F._fechaLote(null) === "", "sin fecha no inventa una");
+// Idempotente: normalizarInventarioFIFO lo corre en cada lectura.
+ok(F._fechaLote(F._fechaLote("12/09/26")) === "09/12", "pasarlo dos veces no lo cambia");
+
+console.log("\nY el orden FIFO con los tres sitios mezclados");
+// Mismo dia, creados por los tres caminos: el orden lo tiene que decidir el id,
+// no el formato.
+const tres = [
+  { fecha: F._fechaLote("2026-09-12"), id: 3 },   // cobro de un pendiente
+  { fecha: F._fechaLote("12/09/26"),   id: 1 },   // lote de remesa
+  { fecha: F._fechaLote("09/12"),      id: 2 }    // venta de USDT
+];
+ok(tres.every(x => x.fecha === "09/12"), "los tres quedan con la misma fecha");
+ok(tres.slice().sort(F.ordenFIFO).map(x => x.id).join() === "1,2,3",
+   "y entonces manda el orden en que se crearon",
+   tres.slice().sort(F.ordenFIFO).map(x => x.id).join());
+// Sin normalizar, el de la remesa se iba al final aunque fuera el primero.
+ok([{fecha:"12/09/26",id:1},{fecha:"09/12",id:2}].sort(F.ordenFIFO)[0].id === 2,
+   "(asi era antes: la venta de USDT se colaba delante)");
+
+console.log("\nEl caso del 12/09, con sus numeros");
+S.inventarioUsdt = [];
+// Por la manana entran bolivares de dos remesas VZLA→BRL
+F.crearLoteRecibido("VES", 11000, 11.4631, "bdv", "12/09/26", "kayrelis");
+F.crearLoteRecibido("VES", 33000, 34.3893, "bdv", "12/09/26", "julio");
+// Por la tarde vende USDT por 300.000 Bs
+S.inventarioUsdt.push({ id: F._idLoteNuevo(), tipo:"venta", fecha:"09/12", moneda:"VES",
+  usdt:314.19, tasa:955, bs:300000, bsRestante:300000, cuentaDestinoId:"bdv",
+  plataforma:"Binance P2P", restante:0 });
+ok(S.inventarioUsdt.every(l => l.fecha === "09/12"), "los tres lotes, misma fecha");
+const gasto = F.simularConsumoFIFO("BRL", 0, "VES", 20000, "", "bdv");
+ok(gasto.ventas.length === 2, "una remesa de 20.000 Bs toca dos lotes", gasto.ventas.length);
+// Sin el "||{}" un fallo aqui revienta el proceso y esconde las comprobaciones
+// que vienen detras, que es justo cuando mas falta hacen.
+const v0 = gasto.ventas[0] || {}, v1 = gasto.ventas[1] || {};
+ok(v0.bs === 11000 && casi(v0.tasa, 959.6008, 0.001),
+   "primero los 11.000 de la manana, a su tasa", JSON.stringify(v0));
+ok(v1.bs === 9000 && casi(v1.tasa, 959.6008, 0.001),
+   "y el resto de los 33.000, no la venta de la tarde", JSON.stringify(v1));
+S.inventarioUsdt = [];
+
+// El id tambien decide el orden cuando la fecha empata, asi que tiene que ir
+// siempre hacia adelante. Antes llevaba un Math.random() de hasta 99 y podia
+// dejar un lote nuevo por detras del anterior.
+console.log("\nEl id de un lote va siempre hacia adelante");
+S.inventarioUsdt = [];
+const ids = [];
+for (let i = 0; i < 50; i++) {
+  const l = F.crearLoteRecibido("VES", 100, 1, "bdv", "09/12", "u" + i);
+  ids.push(l.id);
+}
+ok(ids.every((v, i) => i === 0 || v > ids[i - 1]), "cincuenta seguidos, cada uno mayor");
+ok(new Set(ids).size === 50, "y ninguno repetido");
+ok(S.inventarioUsdt.map(l => l.id).join() === ids.join(),
+   "asi que el FIFO los gasta en el orden en que se crearon");
+S.inventarioUsdt = [];
+
+// Y que los tres sitios de index.html usen la funcion: el fallo estaba en la
+// llamada, no en el orden.
+ok(/var fecha=_fechaLote\(f\.fecha\);/.test(HTML),
+   "saveIU pone la fecha del lote con _fechaLote");
+ok(/tipo:"venta", fecha:_fechaLote\(fecha\), moneda:moneda,/.test(HTML),
+   "crearLoteRecibido la normaliza dentro, para quien la llame manana");
+ok(/if\(r\.fecha\)\{ var fn=_fechaLote\(r\.fecha\); if\(fn!==r\.fecha\) r\.fecha=fn; \}/.test(HTML),
+   "y los lotes ya guardados se corrigen al leer el inventario");
+ok(!/f\.fecha\.slice\(5\)\.replace\("-","\/"\)/.test(HTML),
+   "ya no queda el recorte a mano que se desincronizaba");
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
