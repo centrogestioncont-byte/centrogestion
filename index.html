@@ -1512,7 +1512,7 @@ function _aplicarEstadoDeApi(estado, ts){
   _ESTADO_TS = ts||0;
   try{ _podarBorrados(); }catch(e){}
   try{ _espejarClientes(); }catch(e){}
-  try{ _olvidarFotos(); }catch(e){}
+  try{ _refotografiar(); }catch(e){}
   // _ESTADO_TS se actualiza pase lo que pase: si no, el sondeo vuelve a bajar
   // el mismo bloque cada ocho segundos para siempre.
   // Si no se pudo calcular la huella, se dice que sí cambió: repintar de más
@@ -18137,12 +18137,27 @@ function _marcarTodoLoQueSeFusiona(){
     _marcarCambiados(S[k], window._fotoPorCampo[k], ids[k]||"id");
   });
 }
-// Después de traer datos del servidor, las fotos que teníamos son de antes
-// de esa fusión: lo que cambió lo cambió el servidor, no este dispositivo,
-// y marcarlo como propio sería mentir. Se vuelve a empezar.
-function _olvidarFotos(){
+// Después de traer datos del servidor, las fotos que teníamos son de antes de
+// esa fusión: lo que cambió lo cambió el servidor, no este dispositivo, y
+// marcarlo como propio sería mentir.
+//
+// Pero BORRARLAS a secas fue un error, y costó caro. _marcarCambiados() solo
+// marca cuando hay foto previa —sin ella anota y se calla, que es lo correcto
+// para no marcar todo de golpe—. Y esta función corre con la respuesta de CADA
+// guardado, porque el servidor es el árbitro y lo que contesta se adopta. O
+// sea que después de cada guardado la app se quedaba sin punto de comparación,
+// y el SIGUIENTE cambio del usuario no llevaba marca. En producción eso hizo
+// que dos cobros recién marcados volvieran a "pendiente": iban sin marca, y
+// sin marca pierden contra cualquier copia del otro aparato.
+//
+// Lo que había que hacer es volver a sacarlas, no tirarlas: este es el nuevo
+// punto de partida. Se borran y se vuelven a tomar en el acto — sin fotos
+// previas, las dos funciones solo anotan y no marcan nada.
+function _refotografiar(){
   window._fotoPorCampo={};
   window._fotoPorClave={};
+  try{ _marcarTodoLoQueSeFusiona(); }catch(e){}
+  try{ _marcarObjetosCambiados(); }catch(e){}
 }
 
 // ── Lo que no son listas: configuración, tasas e historiales ───────────────
@@ -18532,6 +18547,10 @@ function _estaBorradoMerge(campo,id){
 var _MERGE_FIELDS = ["cuentas","compromisos","egresos","egresos_personales","prestamos","cuentasCobrar","clientes","inventarioUsdt","brl","vzla","eeuu","traspasos","reposiciones","gastos_eeuu","deudas_paul","movimientosCapital","pagosSocios","gananciaExtra","gastos_socios","inventarioUsdt_cerrado","cierresMes","capital","ajustesSaldo"];
 // clientes usa "cod"; brl/vzla/eeuu usan "_uid"; cierresMes usa "mesKey" (el resto ya usa "id")
 var _MERGE_ID_FIELD = {clientes:"cod",brl:"_uid",vzla:"_uid",eeuu:"_uid",cierresMes:"mesKey"};
+// Primera foto, ya con las listas declaradas y con lo que loadData() dejó en S.
+// Sin esto, el primer cambio del usuario tras abrir la app tampoco tendría con
+// qué compararse, y volvería a salir sin marca.
+try{ _refotografiar(); }catch(e){}
 // Después de fusionar remesas hay que renumerar "n" (0,1,2...) para que no
 // queden números repetidos ni huecos — "n" sigue usándose para editar/borrar
 // filas y para el desglose de lotes FIFO en pantalla, pero ya no decide el
