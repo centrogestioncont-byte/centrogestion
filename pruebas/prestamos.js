@@ -62,7 +62,7 @@ const NECESARIAS = ["r4", "f2", "td", "cfgMora", "_diasIso", "detalleMora", "mor
                     "_huellaCompleta", "_conteoRapido",
                     "crearLoteRecibido", "quitarLoteDeRemesa", "_loteAlCobrar",
                     "ordenFIFO", "normalizarInventarioFIFO", "simularConsumoFIFO",
-                    "f4", "f0", "_leerNumero", "_avisoCambioSaldo", "_fechaLote"];
+                    "f4", "f0", "_leerNumero", "_avisoCambioSaldo", "_fechaLote", "_idLoteNuevo"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
 global.window = global.window || {};
 // S es el estado global de la app; aca solo hacen falta config y prestamos.
@@ -1042,7 +1042,7 @@ S.inventarioUsdt = [];
 F.crearLoteRecibido("VES", 11000, 11.4631, "bdv", "12/09/26", "kayrelis");
 F.crearLoteRecibido("VES", 33000, 34.3893, "bdv", "12/09/26", "julio");
 // Por la tarde vende USDT por 300.000 Bs
-S.inventarioUsdt.push({ id: Date.now()+5000, tipo:"venta", fecha:"09/12", moneda:"VES",
+S.inventarioUsdt.push({ id: F._idLoteNuevo(), tipo:"venta", fecha:"09/12", moneda:"VES",
   usdt:314.19, tasa:955, bs:300000, bsRestante:300000, cuentaDestinoId:"bdv",
   plataforma:"Binance P2P", restante:0 });
 ok(S.inventarioUsdt.every(l => l.fecha === "09/12"), "los tres lotes, misma fecha");
@@ -1055,6 +1055,22 @@ ok(v0.bs === 11000 && casi(v0.tasa, 959.6008, 0.001),
    "primero los 11.000 de la manana, a su tasa", JSON.stringify(v0));
 ok(v1.bs === 9000 && casi(v1.tasa, 959.6008, 0.001),
    "y el resto de los 33.000, no la venta de la tarde", JSON.stringify(v1));
+S.inventarioUsdt = [];
+
+// El id tambien decide el orden cuando la fecha empata, asi que tiene que ir
+// siempre hacia adelante. Antes llevaba un Math.random() de hasta 99 y podia
+// dejar un lote nuevo por detras del anterior.
+console.log("\nEl id de un lote va siempre hacia adelante");
+S.inventarioUsdt = [];
+const ids = [];
+for (let i = 0; i < 50; i++) {
+  const l = F.crearLoteRecibido("VES", 100, 1, "bdv", "09/12", "u" + i);
+  ids.push(l.id);
+}
+ok(ids.every((v, i) => i === 0 || v > ids[i - 1]), "cincuenta seguidos, cada uno mayor");
+ok(new Set(ids).size === 50, "y ninguno repetido");
+ok(S.inventarioUsdt.map(l => l.id).join() === ids.join(),
+   "asi que el FIFO los gasta en el orden en que se crearon");
 S.inventarioUsdt = [];
 
 // Y que los tres sitios de index.html usen la funcion: el fallo estaba en la

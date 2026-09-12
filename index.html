@@ -10795,6 +10795,15 @@ function _fechaLote(f){
   if(q.length===2) return q[0].padStart(2,"0")+"/"+q[1].padStart(2,"0");  // ya es mm/dd
   return s;
 }
+// Un id de lote nuevo: numérico, único y siempre mayor que los que ya están,
+// porque ordenFIFO desempata por id cuando la fecha es la misma.
+function _idLoteNuevo(){
+  var id=Date.now();
+  var usados={};
+  (S.inventarioUsdt||[]).forEach(function(r){ usados[r.id]=1; });
+  while(usados[id]) id++;
+  return id;
+}
 function ordenFIFO(a,b){
   function v(f){if(!f)return 0;var p=String(f).split("/");return (parseInt(p[0],10)||0)*100+(parseInt(p[1],10)||0);}
   return (v(a.fecha)-v(b.fecha))||((a.id||0)-(b.id||0));
@@ -11025,8 +11034,11 @@ function crearLoteRecibido(moneda, monto, usdtValor, cuentaDestinoId, fecha, ref
   if(u<=0) return null;
   var lote = {
     // id numérico: ordenFIFO ordena comparando (fecha, id) como números, así que
-    // aquí no sirve _newUid(), que devuelve texto.
-    id: Date.now()+Math.floor(Math.random()*100),
+    // aquí no sirve _newUid(), que devuelve texto. Y tiene que ir SIEMPRE hacia
+    // adelante: antes llevaba un Math.random() de hasta 99 para no repetirse, y
+    // eso podía darle a un lote nuevo un id menor que el del anterior, o sea
+    // colarlo delante en el FIFO. Se busca el primer hueco libre hacia arriba.
+    id: _idLoteNuevo(),
     tipo:"venta", fecha:_fechaLote(fecha), moneda:moneda,
     montOrigen:0, usdt:u, neto:u,
     tasa: Math.round((m/u)*10000)/10000,
