@@ -32,7 +32,8 @@ function sacarConstante(nombre) {
   if (!m) throw new Error("no encuentro la constante " + nombre + " en index.html");
   return m[0].trim();
 }
-const CONSTANTES = ["MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD"];
+const CONSTANTES = ["MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
+                    "_MERGE_OBJETOS", "_MERGE_HISTORIAL"];
 
 const NECESARIAS = ["r4", "f2", "td", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
                     "congelarMora", "_sumarMeses", "_isoDeFecha", "calcularAmortizacion",
@@ -46,7 +47,8 @@ const NECESARIAS = ["r4", "f2", "td", "cfgMora", "_diasIso", "detalleMora", "mor
                     "conciliacionCapital", "getMesKeyActual",
                     "montoAUsdt", "montoConMoneda", "_unicos",
                     "_marcarCambiados", "_olvidarFotos", "_mergeArrayById",
-                    "_marcarTodoLoQueSeFusiona"];
+                    "_marcarTodoLoQueSeFusiona", "_marcarObjetosCambiados",
+                    "_mergeObjetoPorClave", "_unirHistorial", "_unirMarcasCampos"];
 // _olvidarFotos escribe en window; en Node no existe, se le pone uno vacio.
 global.window = global.window || {};
 // S es el estado global de la app; aca solo hacen falta config y prestamos.
@@ -677,6 +679,81 @@ ok(F._mergeArrayById(remotoB, localA, "id", 1, 9999)[0].estado === "pendiente",
 // Un registro que solo existe en el otro dispositivo no se pierde.
 const fus2 = F._mergeArrayById([{ id: 7, estado: "pendiente" }], local, "id", 1, 1);
 ok(fus2.length === 2, "lo que solo esta en el otro dispositivo se trae igual");
+
+// ── Lo que no son listas: config, tasas e historiales ───────────────────────
+// config no se reemplazaba: se CONGELABA. _mergeConfigSafe decia "si local ya
+// tiene un valor real, se queda tal cual", asi que un cambio hecho en la PC no
+// llegaba nunca al telefono. Medido antes del arreglo: telefono con apertura
+// 2.505,37, servidor con 2.372,71, y el telefono se quedaba con 2.505,37 para
+// siempre. Dos aparatos que nunca mas coinciden en cuanto deberias tener.
+console.log("\nLa configuracion se sincroniza, no se congela");
+const respaldoViejo = (k, r, l) => l===undefined||l===null||l===""||l===0;
+
+S._modCampos = {};
+global.window._fotoPorClave = {};
+S.config = { aperturaUsdt: 2505.37, comision_usdt: 0.06 };
+F._marcarObjetosCambiados();               // primer guardado: solo la foto
+ok(Object.keys(S._modCampos.config || {}).length === 0,
+   "el primer guardado no marca ninguna clave");
+
+S.config.aperturaUsdt = 2372.71;           // el usuario la cambia en la PC
+F._marcarObjetosCambiados();
+ok(typeof S._modCampos.config.aperturaUsdt === "number", "cambiarla si la marca");
+ok(S._modCampos.config.comision_usdt === undefined, "y no marca lo que no tocaste");
+
+// El telefono: tiene la vieja sin marca, el servidor trae la nueva marcada.
+const marcasPC = JSON.parse(JSON.stringify(S._modCampos));
+S._modCampos = {};                                     // el telefono no marco nada
+const enTelefono = F._mergeObjetoPorClave(
+  { aperturaUsdt: 2372.71, comision_usdt: 0.06 },      // lo que trae el servidor
+  { aperturaUsdt: 2505.37, comision_usdt: 0.06 },      // lo que tiene el telefono
+  "config", { config: marcasPC.config }, respaldoViejo);
+ok(enTelefono.aperturaUsdt === 2372.71,
+   "la apertura cambiada en la PC si llega al telefono", enTelefono.aperturaUsdt);
+
+// Y al reves: lo que tocaste AQUI no lo pisa una copia sin marcar.
+S._modCampos = { config: { aperturaUsdt: 5000 } };
+const aqui = F._mergeObjetoPorClave({ aperturaUsdt: 2372.71 }, { aperturaUsdt: 9999 },
+  "config", {}, respaldoViejo);
+ok(aqui.aperturaUsdt === 9999, "y lo que tocaste aqui no lo pisa una copia sin marca");
+
+// Dos marcas: gana la mas nueva.
+S._modCampos = { config: { x: 100 } };
+ok(F._mergeObjetoPorClave({ x: "nuevo" }, { x: "viejo" }, "config",
+     { config: { x: 200 } }, respaldoViejo).x === "nuevo",
+   "entre dos marcas gana la mas nueva");
+ok(F._mergeObjetoPorClave({ x: "nuevo" }, { x: "viejo" }, "config",
+     { config: { x: 50 } }, respaldoViejo).x === "viejo",
+   "y la vieja no gana aunque venga del servidor");
+
+// Sin marcas de ningun lado se respeta el criterio de siempre.
+S._modCampos = {};
+ok(F._mergeObjetoPorClave({ a: 7 }, { a: 0 }, "config", {}, respaldoViejo).a === 7,
+   "sin marcas, un 0 local sigue cediendo (como antes)");
+ok(F._mergeObjetoPorClave({ a: 7 }, { a: 3 }, "config", {}, respaldoViejo).a === 3,
+   "sin marcas, un valor real local sigue mandando (como antes)");
+// Una clave que solo tiene el otro aparato entra siempre.
+ok(F._mergeObjetoPorClave({ nueva: 1 }, {}, "config", {}, respaldoViejo).nueva === 1,
+   "una clave que solo tiene el otro aparato se trae");
+
+console.log("\nLos historiales se unen, no se reemplazan");
+const hUnido = F._unirHistorial({ "2026-09-10": 100, "2026-09-11": 200 },
+                                { "2026-09-11": 999, "2026-09-12": 300 });
+ok(hUnido["2026-09-10"] === 100, "el dia que solo tenia el otro aparato se recupera");
+ok(hUnido["2026-09-12"] === 300, "el dia propio no se pierde");
+ok(hUnido["2026-09-11"] === 999, "en empate manda el de este aparato");
+const muchos = {};
+for (let i = 0; i < 200; i++) muchos["2026-01-" + String(i).padStart(3, "0")] = i;
+ok(Object.keys(F._unirHistorial(muchos, {})).length === 120, "se poda a 120 dias");
+
+console.log("\nLas marcas por clave se suman");
+S._modCampos = { config: { a: 100, b: 500 } };
+F._unirMarcasCampos({ config: { a: 300, c: 700 }, tasasDia: { BRL: 50 } });
+ok(S._modCampos.config.a === 300, "se queda la marca mas nueva");
+ok(S._modCampos.config.b === 500, "no se pierde una marca propia");
+ok(S._modCampos.config.c === 700, "se trae una marca que solo tenia el otro");
+ok(S._modCampos.tasasDia.BRL === 50, "y un campo entero que no teniamos");
+S._modCampos = {}; S.config = {};
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
