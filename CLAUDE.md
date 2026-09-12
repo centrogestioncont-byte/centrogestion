@@ -113,3 +113,57 @@ base con otros datos.
   Cierre de Mes. La "Ganancia" del encabezado suma solo remesas.
 - Los montos se guardan en la moneda pactada del préstamo; para sumar entre
   monedas se convierte a USDT con `getRateToUsdt()` (divide, no multiplica).
+
+---
+
+## Sincronización entre dispositivos — la regla que más ha costado
+
+El dueño usa la app desde la PC y desde el teléfono. Los dos guardan contra
+el mismo `PUT /estado`, así que **todo lo que se escribe se tiene que
+fusionar**, y la fusión tiene que saber quién tocó qué y cuándo.
+
+El mismo error se arregló y volvió **cuatro veces**: saldos que se
+revertían, un cobro que volvía a "pendiente", un pago al contador que
+seguía apareciendo "por pagar". Siempre la misma causa y siempre un módulo
+distinto, porque se venía parchando **función por función** — y son más de
+cien funciones que escriben datos.
+
+**No vuelvas a marcar a mano dentro de una función.** Está resuelto en un
+solo sitio, dentro de `saveData()`:
+
+```js
+_marcarTodoLoQueSeFusiona();   // listas  → _MERGE_FIELDS
+_marcarObjetosCambiados();     // objetos → _MERGE_OBJETOS
+```
+
+Comparan cada registro contra la foto del guardado anterior y marcan solo
+lo que cambió de verdad. Una función nueva queda cubierta sola.
+
+Lo que sí tienes que respetar:
+
+- **Un campo nuevo que se sincronice va en la lista que le toca** —
+  `_MERGE_FIELDS` si es una lista, `_MERGE_OBJETOS` si es un objeto por
+  clave, `_MERGE_HISTORIAL` si está indexado por fecha — **y también en
+  `DATA_KEYS`**. Si no está en ninguna, el remoto lo reemplaza entero y se
+  pierde lo que hiciste aquí. `pruebas/prestamos.js` recorre `_MERGE_FIELDS`
+  entero: si agregas uno y no queda cubierto, la prueba falla.
+- **No todos usan `id`.** `clientes` usa `cod`, `brl`/`vzla`/`eeuu` usan
+  `_uid`, `cierresMes` usa `mesKey`. Está en `_MERGE_ID_FIELD`.
+- **Sin foto previa se anota, no se marca.** Marcar en el primer guardado
+  tras abrir la app hace que un dispositivo con datos viejos gane la fusión
+  solo por haber guardado una vez (ARREGLO 33 — pasó tres veces el 04/09).
+- **`_mod` queda fuera de la foto.** Si entrara, marcar cambiaría la foto,
+  la foto distinta volvería a marcar, y no pararía nunca.
+- **Los historiales se unen, nunca se reemplazan.** `histBalance`,
+  `histTasas` y `histSaldos` están indexados por fecha: reemplazar borra los
+  días que este aparato no tiene y el otro sí.
+- **Después de fusionar se llama `_olvidarFotos()`.** Lo que cambió lo
+  cambió el servidor, no este dispositivo; marcarlo como propio sería
+  mentir.
+
+Cuando el dueño diga que algo "se revirtió solo" o "volvió a aparecer",
+**empieza por aquí**: casi siempre es un dato que llegó sin marca.
+
+Y cuando arregles algo de esto: **el arreglo no repara los registros ya
+pisados.** Hay que volver a hacerlos a mano una vez. Díselo, no lo des por
+entendido.
