@@ -44,7 +44,10 @@ const NECESARIAS = ["r4", "f2", "td", "cfgMora", "_diasIso", "detalleMora", "mor
                     "costoOperativoPorPrestamo", "pctCostoOperativo",
                     "capitalRealTotal", "_mesesDesde", "_acumuladosMes",
                     "conciliacionCapital", "getMesKeyActual",
-                    "montoAUsdt", "montoConMoneda", "_unicos"];
+                    "montoAUsdt", "montoConMoneda", "_unicos",
+                    "_marcarCambiados", "_olvidarFotos", "_mergeArrayById"];
+// _olvidarFotos escribe en window; en Node no existe, se le pone uno vacio.
+global.window = global.window || {};
 // S es el estado global de la app; aca solo hacen falta config y prestamos.
 const S = { config: {}, prestamos: [] };
 // Tasas de mentira para no depender de la configuracion real. getRateToUsdt
@@ -564,6 +567,61 @@ console.log("\nComo se muestra cada fila");
 ok(F.montoConMoneda(100, "BRL") === "100,00 BRL", "se ve la moneda pactada", F.montoConMoneda(100, "BRL"));
 ok(F.montoConMoneda(40, null) === "40,00 USDT", "sin moneda, USDT");
 ok(["BRL","BRL","VES"].filter(F._unicos).join() === "BRL,VES", "el aviso no repite monedas");
+
+// ── Que lo que tocas aqui no lo pise una copia vieja ────────────────────────
+// El caso real: se marca un cobro como cobrado en la PC y al rato vuelve a
+// salir pendiente. cuentasCobrar y prestamos se fusionan entre dispositivos
+// pero nunca ponian _mod, asi que la fusion no tenia con que decidir y se
+// caia a la hora general del aparato: la copia vieja ganaba.
+console.log("\nLa marca de 'esto lo toque yo'");
+const memo = {};
+const cobro = { id: 1, cliente: "EVELYN", monto: 100, estado: "pendiente" };
+
+F._marcarCambiados([cobro], memo);
+ok(cobro._mod === undefined, "el primer guardado tras abrir no marca nada");
+
+cobro.estado = "cobrado";
+F._marcarCambiados([cobro], memo);
+ok(typeof cobro._mod === "number", "pero un cambio de verdad si se marca");
+
+const marcaPrimera = cobro._mod;
+F._marcarCambiados([cobro], memo);
+ok(cobro._mod === marcaPrimera, "guardar sin tocar nada no vuelve a marcar");
+
+// Si _mod entrara en la foto, marcar cambiaria la foto y no pararia nunca.
+F._marcarCambiados([cobro], memo);
+F._marcarCambiados([cobro], memo);
+ok(cobro._mod === marcaPrimera, "y no se marca solo en bucle");
+
+const sinId = { cliente: "SIN ID" };
+F._marcarCambiados([sinId], memo);
+ok(sinId._mod === undefined, "un registro sin id se deja en paz");
+
+F._olvidarFotos();
+ok(Object.keys(global.window._ultimoCobroPorId).length === 0, "tras fusionar se olvidan las fotos");
+
+console.log("\nLa fusion con otro dispositivo");
+// PC: cobrado y marcado. Servidor: copia vieja, pendiente, sin marca, y con
+// una hora general MAS NUEVA — que es justo lo que hacia perder al bueno.
+const local  = [{ id: 1, cliente: "EVELYN", estado: "cobrado",   _mod: 2000 }];
+const remoto = [{ id: 1, cliente: "EVELYN", estado: "pendiente" }];
+const fus = F._mergeArrayById(remoto, local, "id", 9999, 1);
+ok(fus[0].estado === "cobrado", "el cobro marcado le gana a la copia vieja", fus[0].estado);
+
+// Sin la marca —como estaba antes— gana la copia vieja: el error de Evelyn.
+const localViejo = [{ id: 1, cliente: "EVELYN", estado: "cobrado" }];
+const fusViejo = F._mergeArrayById(remoto, localViejo, "id", 9999, 1);
+ok(fusViejo[0].estado === "pendiente", "sin marca se pierde (asi era el error)", fusViejo[0].estado);
+
+// Dos marcas: gana la mas nueva, venga de donde venga.
+const localA = [{ id: 1, estado: "cobrado", _mod: 100 }];
+const remotoB = [{ id: 1, estado: "pendiente", _mod: 200 }];
+ok(F._mergeArrayById(remotoB, localA, "id", 1, 9999)[0].estado === "pendiente",
+   "entre dos marcas gana la mas nueva, no la hora del aparato");
+
+// Un registro que solo existe en el otro dispositivo no se pierde.
+const fus2 = F._mergeArrayById([{ id: 7, estado: "pendiente" }], local, "id", 1, 1);
+ok(fus2.length === 2, "lo que solo esta en el otro dispositivo se trae igual");
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
