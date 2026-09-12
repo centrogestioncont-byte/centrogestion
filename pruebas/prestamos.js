@@ -34,24 +34,32 @@ function sacarConstante(nombre) {
 }
 const CONSTANTES = ["MIN_DIAS_PRIMERA_CUOTA"];
 
-const NECESARIAS = ["td", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
+const NECESARIAS = ["r4", "f2", "td", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
                     "congelarMora", "_sumarMeses", "_isoDeFecha", "calcularAmortizacion",
                     "tasaAnualEfectiva", "_periodDaysDe", "perfilRiesgoCliente",
                     "puntoEquilibrio", "tasaSugerida", "_conDiaDelMes",
                     "cronogramaCuotas", "_fechaPrimeraCuota", "diasPrimeraCuota",
                     "ajusteDiasPrimeraCuota", "interesPorAjusteDias",
                     "cuotasRecomendadas", "limiteCredito",
-                    "costoOperativoPorPrestamo", "pctCostoOperativo"];
+                    "costoOperativoPorPrestamo", "pctCostoOperativo",
+                    "capitalRealTotal", "_mesesDesde", "_acumuladosMes",
+                    "conciliacionCapital", "getMesKeyActual",
+                    "montoAUsdt", "montoConMoneda", "_unicos"];
 // S es el estado global de la app; aca solo hacen falta config y prestamos.
 const S = { config: {}, prestamos: [] };
 // Tasas de mentira para no depender de la configuracion real. getRateToUsdt
 // devuelve cuantas unidades de esa moneda vale 1 USDT.
 const TASAS = { USDT: 1, BRL: 5.4, VES: 200 };
 const getRateToUsdt = (m) => TASAS[m] || null;
-const F = new Function("S", "getRateToUsdt",
+// calcMesCompleto es una funcion enorme con media app detras. Aqui se
+// inyecta una falsa para poder fijar a mano lo que movio cada mes y
+// comprobar la aritmetica de la conciliacion.
+const MESES_FALSOS = {};
+const calcMesCompleto = (mk) => MESES_FALSOS[mk] || {};
+const F = new Function("S", "getRateToUsdt", "calcMesCompleto",
   CONSTANTES.map(sacarConstante).join("\n") + "\n" +
   NECESARIAS.map(sacarFuncion).join("\n") +
-  "\nreturn {" + NECESARIAS.join(",") + "};")(S, getRateToUsdt);
+  "\nreturn {" + NECESARIAS.join(",") + "};")(S, getRateToUsdt, calcMesCompleto);
 
 let fallos = 0;
 function ok(cond, msg, dato) {
@@ -414,6 +422,148 @@ S.config = { costoOportunidadMes: 3 };
 ok(F.tasaSugerida("X","",1,"USDT","mensual",25).demasiadoChico === false,
    "sin costo configurado nunca avisa");
 S.config = {}; S.prestamos = [];
+
+// ── Conciliacion de capital ─────────────────────────────────────────
+console.log("\nCapital real: cuenta TODO el dinero");
+S.config = {}; S.prestamos = []; S.cuentasCobrar = [];
+S.cuentas = [
+  { id:"a", nombre:"USDT",    moneda:"USDT", saldo:100, activa:true },
+  { id:"b", nombre:"BRL",     moneda:"BRL",  saldo:540, activa:true },              // 100 USDT
+  { id:"c", nombre:"RESERVA", moneda:"BRL",  saldo:540, activa:true, esReserva:true },
+  { id:"d", nombre:"MIA",     moneda:"USDT", saldo:999, activa:true, esPersonal:true },
+  { id:"e", nombre:"CERRADA", moneda:"USDT", saldo:50,  activa:false }
+];
+let cap = F.capitalRealTotal();
+ok(casi(cap.enCuentas, 200, 0.5), "suma las monedas, no solo los USDT", cap.enCuentas);
+ok(casi(cap.enReserva, 100, 0.5), "la reserva se cuenta aparte, pero se cuenta", cap.enReserva);
+ok(cap.total === cap.enCuentas + cap.enReserva, "y entra en el total");
+ok(cap.enCuentas < 999, "las cuentas personales no son dinero de la empresa");
+
+S.cuentasCobrar = [
+  { id:1, estado:"pendiente", monto:54,  moneda:"BRL", abonos:[] },                  // 10 USDT
+  { id:2, estado:"pendiente", monto:100, moneda:"USDT", abonos:[{monto:40}] },        // 60
+  { id:3, estado:"pagado",    monto:500, moneda:"USDT", abonos:[] }
+];
+S.prestamos = [
+  { id:1, estado:"activo", mon:"USDT", monto:80, abonos:[{monto:30}] },               // 50
+  { id:2, estado:"pagado", mon:"USDT", monto:500, abonos:[{monto:500}] }
+];
+cap = F.capitalRealTotal();
+ok(casi(cap.porCobrar, 70, 0.5), "descuenta abonos y salta lo ya pagado", cap.porCobrar);
+ok(casi(cap.enPrestamos, 50, 0.5), "lo mismo con los prestamos", cap.enPrestamos);
+ok(casi(cap.enLaCalle, 120, 0.5), "el dinero en la calle es parte del capital", cap.enLaCalle);
+ok(casi(cap.total, 420, 0.5), "total = cuentas + reserva + calle", cap.total);
+
+S.cuentas = [{ id:"x", nombre:"RARO", moneda:"XYZ", saldo:100, activa:true }];
+S.cuentasCobrar = []; S.prestamos = [];
+cap = F.capitalRealTotal();
+ok(cap.sinTasa.indexOf("XYZ") >= 0, "avisa de las monedas sin tasa en vez de inventar un valor");
+ok(cap.total === 0, "y no las suma");
+
+console.log("\nMeses desde la apertura");
+ok(F._mesesDesde("").length === 0, "sin fecha no hay meses");
+ok(F._mesesDesde("no-es-fecha").length === 0, "una fecha invalida no cuelga");
+const hoyMes = new Date().getFullYear() + "-" + String(new Date().getMonth() + 1).padStart(2, "0");
+const ms = F._mesesDesde(new Date().toISOString().slice(0, 10));
+ok(ms.length === 1 && ms[0] === hoyMes, "abrir hoy da un solo mes: el actual", ms.join());
+const d = new Date(); d.setMonth(d.getMonth() - 3);
+ok(F._mesesDesde(d.toISOString().slice(0, 10)).length === 4,
+   "tres meses atras dan cuatro meses contando el actual",
+   F._mesesDesde(d.toISOString().slice(0, 10)).length);
+const cruce = F._mesesDesde("2025-11-15");
+ok(cruce[0] === "2025-11" && cruce[1] === "2025-12" && cruce[2] === "2026-01",
+   "cruza bien el cambio de anio", cruce.slice(0, 3).join());
+S.cuentas = []; S.config = {};
+
+// ── Conciliacion: la apertura no puede contar dos veces ─────────────
+console.log("\nConciliacion desde la apertura");
+const mesHoy = F.getMesKeyActual();
+const limpiar = () => { Object.keys(MESES_FALSOS).forEach(k => delete MESES_FALSOS[k]); };
+
+S.cuentas = [{ id:"a", nombre:"CAJA", moneda:"USDT", saldo:1000, activa:true }];
+S.cuentasCobrar = []; S.prestamos = [];
+S.config = {};
+ok(F.conciliacionCapital().configurada === false, "sin apertura fijada no concilia nada");
+ok(F.conciliacionCapital().real.total === 1000, "pero ya dice cuanto hay de verdad");
+
+// El bug: se fija la apertura a media semana, cuando el mes ya movio algo.
+// Ese dinero YA esta dentro de los 1000 contados.
+limpiar();
+MESES_FALSOS[mesHoy] = { ganBrutaTotal: 2.54 };
+S.config = { aperturaUsdt: 1000, aperturaFecha: new Date().toISOString().slice(0,10) };
+ok(F.conciliacionCapital().diferencia === -2.54,
+   "sin la foto del mes, la ganancia ya cobrada se cuenta dos veces",
+   F.conciliacionCapital().diferencia);
+
+// Con la foto que guarda fijarAperturaHoy(), arranca en cero.
+S.config.aperturaBase = F._acumuladosMes(mesHoy);
+ok(F.conciliacionCapital().diferencia === 0,
+   "con la foto del mes en curso, la diferencia arranca EN CERO",
+   F.conciliacionCapital().diferencia);
+
+// Y lo que se gane despues si cuenta.
+MESES_FALSOS[mesHoy] = { ganBrutaTotal: 12.54 };   // 10 mas
+ok(F.conciliacionCapital().deberias === 1010,
+   "lo ganado despues de la apertura si suma", F.conciliacionCapital().deberias);
+ok(F.conciliacionCapital().diferencia === -10,
+   "y si ese dinero no aparece en las cuentas, lo canta", F.conciliacionCapital().diferencia);
+S.cuentas[0].saldo = 1010;
+ok(F.conciliacionCapital().diferencia === 0, "cuando entra a la cuenta, vuelve a cuadrar");
+
+// Una apertura guardada antes del arreglo no trae la foto: hay que avisar,
+// porque no se puede reconstruir cuanto iba del mes aquel dia.
+S.config = { aperturaUsdt: 1000, aperturaFecha: new Date().toISOString().slice(0,10) };
+ok(F.conciliacionCapital().baseFaltante === true, "detecta una apertura vieja sin foto");
+S.config.aperturaBase = {};
+ok(F.conciliacionCapital().baseFaltante === false, "con foto, aunque este vacia, no avisa");
+
+console.log("\nQue se resta y que no");
+limpiar();
+S.cuentas = [{ id:"a", nombre:"CAJA", moneda:"USDT", saldo:1000, activa:true }];
+MESES_FALSOS[mesHoy] = { ganBrutaTotal: 100, egEmpPag: 30, egPerPagPropio: 20, egPerPag: 15, totalCom: 10 };
+S.config = { aperturaUsdt: 1000, aperturaFecha: new Date().toISOString().slice(0,10), aperturaBase: {} };
+const co = F.conciliacionCapital();
+ok(co.deberias === 1040, "1000 + 100 − 30 − 20 − 10 = 1040 (el sin-cuenta no resta)", co.deberias);
+ok(co.egPersonalSin === 15, "pero se muestra aparte para que se vea", co.egPersonalSin);
+ok(co.bruta === 100 && co.egEmpresa === 30 && co.socios === 10, "cada linea sale por separado");
+
+console.log("\nTolerancia");
+ok(F.conciliacionCapital().tolerancia >= 5, "nunca baja de 5 USDT");
+S.cuentas = [{ id:"a", nombre:"CAJA", moneda:"USDT", saldo:10000, activa:true }];
+ok(casi(F.conciliacionCapital().tolerancia, 200, 1), "en carteras grandes es el 2% del capital",
+   F.conciliacionCapital().tolerancia);
+limpiar(); S.config = {}; S.cuentas = [];
+
+// ── Convertir antes de sumar ────────────────────────────────────────────────
+// Los informes del mes sumaban reales, bolivares y USDT en crudo bajo un "$".
+// 100 BRL + 40 USDT + 5840 VES daban "5.980" — un numero que no es ninguna
+// moneda. montoAUsdt convierte cada uno con su tasa antes de sumar.
+console.log("\nConvertir a USDT antes de sumar");
+ok(F.montoAUsdt(100, "USDT") === 100, "USDT se queda igual");
+ok(F.montoAUsdt(100, "USD") === 100, "USD va 1:1, como en conciliacionCapital()");
+ok(F.montoAUsdt(100, null) === 100, "sin moneda se asume USDT");
+ok(casi(F.montoAUsdt(540, "BRL"), 100, 0.01), "540 BRL a 5,4 son 100 USDT", F.montoAUsdt(540, "BRL"));
+ok(casi(F.montoAUsdt(5840, "VES"), 29.2, 0.01), "divide, no multiplica", F.montoAUsdt(5840, "VES"));
+ok(F.montoAUsdt(9000, "COP") === null, "sin tasa devuelve null, no inventa un numero");
+ok(F.montoAUsdt(0, "COP") === null, "tampoco con monto cero: la moneda sigue sin tasa");
+ok(F.montoAUsdt("", "BRL") === 0, "un monto vacio es cero, no NaN");
+
+// El total de un informe: 100 BRL + 40 USDT + 5840 VES, con un cobro en COP
+// que no tiene tasa. Lo que no se puede convertir NO se suma; se avisa aparte.
+const _filas = [[100,"BRL"], [40,"USDT"], [5840,"VES"], [9000,"COP"]];
+let _sinTasa = [], _total = 0;
+_filas.forEach(function (f) {
+  const u = F.montoAUsdt(f[0], f[1]);
+  if (u === null) _sinTasa.push(f[1]); else _total += u;
+});
+ok(casi(_total, 87.72, 0.01), "el total suma solo lo convertible", _total);
+ok(_sinTasa.join() === "COP", "y dice cual moneda se quedo fuera", _sinTasa.join());
+ok(_total !== 14980, "no es la suma cruda que salia antes");
+
+console.log("\nComo se muestra cada fila");
+ok(F.montoConMoneda(100, "BRL") === "100,00 BRL", "se ve la moneda pactada", F.montoConMoneda(100, "BRL"));
+ok(F.montoConMoneda(40, null) === "40,00 USDT", "sin moneda, USDT");
+ok(["BRL","BRL","VES"].filter(F._unicos).join() === "BRL,VES", "el aviso no repite monedas");
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

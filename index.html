@@ -2132,6 +2132,153 @@ function getGananciaUsdtMes(mesKey){
     ganExtraEmp: c.ganExtraEmp||0
   };
 }
+// ══════════════════════════════════════════════════════════════════
+// CONCILIACION DE CAPITAL
+// ══════════════════════════════════════════════════════════════════
+// Responde a una pregunta que la app no sabia contestar: "¿de verdad
+// gano lo que el sistema me dice?".
+//
+// No intenta reconstruir la historia. Los datos viejos arrastran el
+// desastre de registros borrados y duplicados, asi que reconstruir desde
+// el principio daria un numero en el que no se puede confiar. En vez de
+// eso se traza una raya: se cuenta el dinero REAL un dia, eso queda como
+// saldo de apertura, y desde ahi la diferencia empieza en cero. Si se
+// mantiene en cero, la contabilidad esta sana; si crece, hay una fuga y
+// se sabe desde que mes.
+
+// Todo el dinero de la empresa, mires donde mires. A diferencia de
+// getCapitalUsdtActual(), esta SI cuenta:
+//   · las cuatro monedas, no solo los USDT
+//   · las cuentas de reserva (estaban fuera de todos los totales)
+//   · el dinero en la calle: cobros pendientes y prestamos activos
+function capitalRealTotal(){
+  var enCuentas=0, enReserva=0, sinTasa=[];
+  (S.cuentas||[]).filter(function(c){return c.activa!==false&&!c.esPersonal;}).forEach(function(acc){
+    var saldo=parseFloat(acc.saldo)||0;
+    if(!saldo) return;
+    var usdt;
+    if(acc.moneda==="USDT"||acc.moneda==="USD") usdt=saldo;
+    else {
+      var r=getRateToUsdt(acc.moneda);
+      if(!r||isNaN(r)){ sinTasa.push(acc.moneda); return; }
+      usdt=saldo/r;
+    }
+    if(acc.esReserva) enReserva+=usdt; else enCuentas+=usdt;
+  });
+  var porCobrar=0;
+  (S.cuentasCobrar||[]).forEach(function(c){
+    if(c.estado!=="pendiente") return;
+    var abon=(c.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);
+    var pend=Math.max(0,(parseFloat(c.monto)||0)-abon);
+    if(pend<=0) return;
+    var mon=c.moneda||"USDT";
+    if(mon==="USDT"||mon==="USD"){ porCobrar+=pend; return; }
+    var r=getRateToUsdt(mon);
+    if(!r||isNaN(r)){ sinTasa.push(mon); return; }
+    porCobrar+=pend/r;
+  });
+  var enPrestamos=0;
+  (S.prestamos||[]).forEach(function(p){
+    if(p.estado==="pagado"||p.estado==="saldado") return;
+    var abon=(p.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);
+    var pend=Math.max(0,(parseFloat(p.monto||p.sal)||0)-abon-(parseFloat(p.ent)||0));
+    if(pend<=0) return;
+    var mon=p.mon||"USDT";
+    if(mon==="USDT"||mon==="USD"){ enPrestamos+=pend; return; }
+    var r=getRateToUsdt(mon);
+    if(!r||isNaN(r)){ sinTasa.push(mon); return; }
+    enPrestamos+=pend/r;
+  });
+  var r2v=function(n){return Math.round(n*100)/100;};
+  var total=r2v(enCuentas+enReserva+porCobrar+enPrestamos);
+  return {enCuentas:r2v(enCuentas), enReserva:r2v(enReserva), porCobrar:r2v(porCobrar),
+          enPrestamos:r2v(enPrestamos), enLaCalle:r2v(porCobrar+enPrestamos), total:total,
+          sinTasa:sinTasa.filter(function(m,i,a){return a.indexOf(m)===i;})};
+}
+
+// Lista de meses desde la apertura hasta hoy, en orden.
+function _mesesDesde(fechaIso){
+  var out=[];
+  if(!fechaIso) return out;
+  var d=new Date(String(fechaIso)+"T00:00:00");
+  if(isNaN(d.getTime())) return out;
+  var hoy=new Date();
+  var y=d.getFullYear(), m=d.getMonth();
+  for(var i=0;i<240;i++){
+    out.push(y+"-"+String(m+1).padStart(2,"0"));
+    if(y>hoy.getFullYear()||(y===hoy.getFullYear()&&m>=hoy.getMonth())) break;
+    m++; if(m>11){m=0;y++;}
+  }
+  return out;
+}
+
+// La conciliacion en si.
+//
+//   apertura + ganancia bruta − egresos empresa − egresos personales
+//   − pagos a socios  =  lo que deberias tener
+//
+// Los egresos PERSONALES se restan aunque no sean gasto de la empresa:
+// son dinero que salio de la caja. En la utilidad no van (no son costo
+// del negocio) pero en el capital si, y por no estar en ningun lado
+// desaparecian sin dejar rastro.
+// Lo que movio un mes: ganancia y salidas. Se saca aqui una sola vez
+// porque lo usan dos sitios —la conciliacion y la foto que se guarda al
+// fijar la apertura— y tienen que contar exactamente lo mismo.
+function _acumuladosMes(mk){
+  var c=calcMesCompleto(mk)||{};
+  return {
+    bruta:      (parseFloat(c.ganBrutaTotal)||0)+(parseFloat(c.ganExtraEmp)||0),
+    egEmpresa:  parseFloat(c.egEmpPag)||0,
+    egPersonal: parseFloat(c.egPerPagPropio)||0,
+    egPersonalSin: parseFloat(c.egPerPag)||0,
+    socios:     parseFloat(c.totalCom)||0
+  };
+}
+
+function conciliacionCapital(){
+  var cfg=S.config||{};
+  var apertura=parseFloat(cfg.aperturaUsdt);
+  var desde=cfg.aperturaFecha||"";
+  var real=capitalRealTotal();
+  if(isNaN(apertura)||!desde){
+    return {configurada:false, real:real};
+  }
+  var meses=_mesesDesde(desde);
+  var bruta=0, egEmpresa=0, egPersonal=0, egPersonalSin=0, socios=0;
+  meses.forEach(function(mk){
+    var a=_acumuladosMes(mk);
+    bruta        += a.bruta;
+    egEmpresa    += a.egEmpresa;
+    egPersonal   += a.egPersonal;      // salieron de una cuenta
+    egPersonalSin+= a.egPersonalSin;   // sin cuenta asignada
+    socios       += a.socios;
+  });
+  // La apertura se fija a media semana, no el dia 1: el dinero contado YA
+  // incluye lo que iba del mes. Sumar el mes entero encima lo contaba dos
+  // veces y la diferencia arrancaba en −(ganancia de esos dias) en vez de
+  // en cero. Se descuenta la foto que se guardo al fijarla.
+  var base=cfg.aperturaBase||{};
+  var baseFaltante=!cfg.aperturaBase;
+  bruta        -= parseFloat(base.bruta)||0;
+  egEmpresa    -= parseFloat(base.egEmpresa)||0;
+  egPersonal   -= parseFloat(base.egPersonal)||0;
+  egPersonalSin-= parseFloat(base.egPersonalSin)||0;
+  socios       -= parseFloat(base.socios)||0;
+  var r2v=function(n){return Math.round(n*100)/100;};
+  var deberias=r2v(apertura+bruta-egEmpresa-egPersonal-socios);
+  var diferencia=r2v(real.total-deberias);
+  return {
+    configurada:true, apertura:r2v(apertura), desde:desde, meses:meses.length,
+    baseFaltante:baseFaltante,
+    bruta:r2v(bruta), egEmpresa:r2v(egEmpresa), egPersonal:r2v(egPersonal),
+    egPersonalSin:r2v(egPersonalSin), socios:r2v(socios),
+    deberias:deberias, real:real, diferencia:diferencia,
+    // Un desvio de menos del 2% del capital es ruido de tasas de cambio,
+    // no una fuga: los saldos se convierten a USDT a la tasa de HOY.
+    tolerancia:r2v(Math.max(5,real.total*0.02))
+  };
+}
+
 function getCapitalUsdtActual(){
   // Capital real ahora: solo lo que está en USDT en S.cuentas (excluye 💜 personal)
   var solo=0, total=0;
@@ -2811,6 +2958,26 @@ function getRateToUsdt(moneda){
   return null;
 }
 
+// Convierte un monto a su equivalente en USDT. Devuelve null si no hay tasa
+// para esa moneda: quien llame tiene que avisarlo en pantalla en vez de
+// inventar un numero. Los informes del mes sumaban reales, bolivares y USDT
+// en crudo, como si 1 real fuera 1 dolar, y daban totales que no existian.
+// USD se toma 1:1 con USDT, igual que en conciliacionCapital(), para que las
+// dos pantallas no den cifras distintas por el mismo dinero.
+function montoAUsdt(monto, moneda){
+  var m=parseFloat(monto)||0;
+  var mon=moneda||"USDT";
+  if(mon==="USDT"||mon==="USD") return Math.round(m*100)/100;
+  var r=getRateToUsdt(mon);
+  if(!r||isNaN(r)||r<=0) return null;
+  return Math.round(m/r*100)/100;
+}
+// "150,00 BRL" — se muestra siempre al lado del equivalente, para no perder
+// de vista lo que el cliente debe de verdad en su moneda.
+function montoConMoneda(monto, moneda){ return f2(parseFloat(monto)||0)+" "+(moneda||"USDT"); }
+// Para listar las monedas sin tasa sin repetirlas: .filter(_unicos)
+function _unicos(v,i,a){ return a.indexOf(v)===i; }
+
 function guardarTasaFila(moneda){var inp=document.getElementById("tasa_inp_"+moneda);if(inp)setTasaDia(moneda,inp.value);S._editTasaCuenta=null;R();}
 function setTasaDia(moneda, tasa){
   if(!S.tasasDia) S.tasasDia={};
@@ -3362,6 +3529,33 @@ function guardarCostoOportunidad(){
     logAudit("CONFIG_COSTO_OPORTUNIDAD","Costo de oportunidad del capital: "+v+"% mensual");
     saveData();R();
     alert("✅ Guardado. Tu punto de equilibrio pasa a ser "+puntoEquilibrio().pct+"% por cuota.");
+  });
+}
+
+function fijarAperturaHoy(){
+  var cap=capitalRealTotal();
+  if(cap.sinTasa.length){
+    if(!confirm("Ojo: no hay tasa para "+cap.sinTasa.join(", ")+", así que ese dinero NO está contado en los $"+f2(cap.total)+".\n\n¿Fijar igual la apertura?")) return;
+  }
+  var msg="Se va a guardar como saldo de apertura:\n\n"+
+    "En cuentas:   $"+f2(cap.enCuentas)+"\n"+
+    (cap.enReserva>0?"En reserva:   $"+f2(cap.enReserva)+"\n":"")+
+    (cap.porCobrar>0?"Por cobrar:   $"+f2(cap.porCobrar)+"\n":"")+
+    (cap.enPrestamos>0?"En préstamos: $"+f2(cap.enPrestamos)+"\n":"")+
+    "─────────────────\nTOTAL:        $"+f2(cap.total)+" USDT\n\n"+
+    "Desde hoy la app compara cada mes lo que deberías tener contra lo que tienes.\n\n"+
+    "Antes de confirmar: ¿los saldos de tus cuentas son los de verdad?";
+  if(!confirm(msg)) return;
+  autorizarYHacer(function(){
+    if(!S.config) S.config={};
+    S.config.aperturaUsdt=cap.total;
+    S.config.aperturaFecha=td();
+    // Foto de lo que va del mes en curso: ya esta dentro del dinero
+    // contado, asi que no se puede volver a sumar.
+    S.config.aperturaBase=_acumuladosMes(getMesKeyActual());
+    logAudit("APERTURA_CAPITAL","Saldo de apertura fijado en $"+f2(cap.total)+" USDT (cuentas "+f2(cap.enCuentas)+", reserva "+f2(cap.enReserva)+", calle "+f2(cap.enLaCalle)+")");
+    saveData();R();
+    alert("✅ Apertura fijada en $"+f2(cap.total)+" USDT.\n\nLa diferencia arranca en cero. Si dentro de un mes sigue en cero, tu contabilidad está sana.");
   });
 }
 
@@ -7238,22 +7432,32 @@ function rCapitalTotal(){
   }).join("");
 
   // ── Panel salud de cartera ────────────────────────────────────────
-  var porCobrarPend = (S.cuentasCobrar||[]).filter(function(x){return !x.cobrado;});
-  // Convertir cada cobro pendiente a USDT según su moneda real (no sumar BRL/USD como si fueran USDT)
+  // Antes filtraba por "!x.cobrado", pero ese campo no existe en ningún
+  // registro: la app marca los cobros con estado "pendiente"/"cobrado". Al no
+  // descartar nada, la tarjeta sumaba TODO el historial de cobros (ya cobrados
+  // incluidos) y decía "594,66 USDT · 37 pendientes" cuando en la calle solo
+  // había 28,16. Ahora usa el mismo filtro que conciliacionCapital().
+  var porCobrarPend = (S.cuentasCobrar||[]).filter(function(x){
+    if(x.estado!=="pendiente") return false;
+    var abos=(x.abonos||[]).reduce(function(s,ab){return s+(parseFloat(ab.monto)||0);},0);
+    return (parseFloat(x.monto)||0)-abos > 0;
+  });
+  // Convertir cada cobro pendiente a USDT según su moneda real (no sumar BRL/USD como si fueran USDT).
+  // La moneda por defecto es USDT, igual que en la conciliación: asumir BRL
+  // aquí y USDT allá daba dos totales distintos para el mismo dinero.
   var totalPorCobrar = porCobrarPend.reduce(function(a,x){
-    var mon = x.moneda||"BRL";
+    var mon = x.moneda||"USDT";
     var m = parseFloat(x.monto)||0;
     var abos = (x.abonos||[]).reduce(function(s,ab){return s+(parseFloat(ab.monto)||0);},0);
     var pend = Math.max(0, m - abos);
+    if(mon==="USDT"||mon==="USD") return a + pend;
     var rate = getRateToUsdt(mon);
-    return a + (mon==="USDT" ? pend : (rate ? Math.round(pend/rate*100)/100 : 0));
+    return a + (rate ? Math.round(pend/rate*100)/100 : 0);
   },0);
   totalPorCobrar = Math.round(totalPorCobrar*100)/100;
-  var prestPend = (S.prestamos||[]).filter(function(x){return !x.saldado;});
-  var totalPrestPend = prestPend.reduce(function(a,x){
-    var pagado=(x.pagos||[]).reduce(function(s,p){return s+(parseFloat(p.monto)||0);},0);
-    return a+Math.max(0,(parseFloat(x.monto)||0)-pagado);
-  },0);
+  // (aquí había un cálculo de préstamos pendientes que nadie mostraba y que
+  //  además leía campos inexistentes — "x.saldado" y "x.pagos" en vez de
+  //  "x.estado" y "x.abonos". Se quitó para que nadie lo dé por bueno.)
 
   // Distribución por moneda en USDT
   var distMon = {};
@@ -7328,7 +7532,72 @@ function rCapitalTotal(){
         : "<div style='background:#E3F8EC;border-radius:8px;padding:8px 12px;font-size:11px;color:#0f6e3a;font-weight:700'>✅ Todas las tasas actualizadas</div>") +
     "</div>";
 
+  // ── Conciliacion: ¿de verdad gano lo que el sistema dice? ──────────
+  var conciliacionHtml=(function(){
+    var co=conciliacionCapital();
+    var R=co.real;
+    var lineaReal=
+      "<div style='font-size:11px;color:#555;line-height:1.7'>"+
+        "<div style='display:flex;justify-content:space-between'><span>En cuentas (las 4 monedas)</span><b>$"+f2(R.enCuentas)+"</b></div>"+
+        (R.enReserva>0?"<div style='display:flex;justify-content:space-between'><span>En reserva</span><b>$"+f2(R.enReserva)+"</b></div>":"")+
+        (R.porCobrar>0?"<div style='display:flex;justify-content:space-between'><span>Por cobrar</span><b>$"+f2(R.porCobrar)+"</b></div>":"")+
+        (R.enPrestamos>0?"<div style='display:flex;justify-content:space-between'><span>En préstamos</span><b>$"+f2(R.enPrestamos)+"</b></div>":"")+
+        "<div style='display:flex;justify-content:space-between;border-top:1px solid #ddd;margin-top:5px;padding-top:5px;font-size:13px'><b>Tienes de verdad</b><b>$"+f2(R.total)+"</b></div>"+
+        (R.sinTasa.length?"<div style='color:#c0392b;font-size:10px;margin-top:4px'>⚠️ Sin tasa para "+R.sinTasa.join(", ")+": ese dinero no está contado.</div>":"")+
+      "</div>";
+
+    if(!co.configurada){
+      return "<div style='background:#FFF8E8;border:1.5px solid #f0d080;border-radius:12px;padding:14px;margin-bottom:12px'>"+
+        "<div style='font-size:13px;font-weight:800;color:#7a5c00;margin-bottom:6px'>🧾 ¿De verdad ganas lo que el sistema dice?</div>"+
+        "<div style='font-size:11px;color:#7a5c00;line-height:1.6;margin-bottom:10px'>"+
+          "Para saberlo hace falta un punto de partida. Cuenta tu dinero real hoy, guárdalo como <b>saldo de apertura</b>, y desde ahí la app compara cada mes lo que deberías tener contra lo que tienes.<br>"+
+          "No se reconstruye el pasado a propósito: si hubo datos borrados o duplicados, ese número sería mentira. Se traza una raya y se mide desde aquí."+
+        "</div>"+
+        lineaReal+
+        "<button onclick='fijarAperturaHoy()' style='width:100%;margin-top:10px;padding:11px;border:none;border-radius:9px;background:#7a5c00;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit'>📌 Usar estos $"+f2(R.total)+" como saldo de apertura</button>"+
+        "<div style='font-size:10px;color:#a08040;margin-top:6px'>Antes de tocarlo, revisa que los saldos de tus cuentas de abajo sean los de verdad. Si alguno está desactualizado, corrígelo primero.</div>"+
+      "</div>";
+    }
+
+    var dif=co.diferencia, tol=co.tolerancia;
+    var sano=Math.abs(dif)<=tol;
+    var col=sano?"#0f6e3a":(dif<0?"#c0392b":"#a06800");
+    var bg =sano?"#E3F8EC":(dif<0?"#FDECEA":"#FFF8E8");
+    var brd=sano?"#b6e0c4":(dif<0?"#f0b0a8":"#f0d080");
+    return "<div style='background:"+bg+";border:1.5px solid "+brd+";border-radius:12px;padding:14px;margin-bottom:12px'>"+
+      "<div style='display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px'>"+
+        "<div><div style='font-size:13px;font-weight:800;color:"+col+"'>🧾 Conciliación de capital</div>"+
+        "<div style='font-size:10px;color:#888;margin-top:2px'>Desde el "+ds(co.desde)+" · "+co.meses+" mes(es)</div></div>"+
+        "<div style='text-align:right'><div style='font-size:22px;font-weight:900;color:"+col+";line-height:1'>"+(dif>=0?"+":"")+"$"+f2(dif)+"</div>"+
+        "<div style='font-size:9px;color:#888'>diferencia</div></div>"+
+      "</div>"+
+      "<div style='background:#fff;border-radius:9px;padding:10px 12px;margin-bottom:8px;font-size:11px;color:#555;line-height:1.7'>"+
+        "<div style='display:flex;justify-content:space-between'><span>Saldo de apertura</span><b>$"+f2(co.apertura)+"</b></div>"+
+        "<div style='display:flex;justify-content:space-between;color:#0f6e3a'><span>+ Ganancia bruta</span><b>+$"+f2(co.bruta)+"</b></div>"+
+        (co.egEmpresa>0?"<div style='display:flex;justify-content:space-between;color:#c0392b'><span>− Egresos empresa</span><b>−$"+f2(co.egEmpresa)+"</b></div>":"")+
+        (co.egPersonal>0?"<div style='display:flex;justify-content:space-between;color:#c0392b'><span>− Gastos personales (de una cuenta)</span><b>−$"+f2(co.egPersonal)+"</b></div>":"")+
+        (co.socios>0?"<div style='display:flex;justify-content:space-between;color:#c0392b'><span>− Pagos a socios</span><b>−$"+f2(co.socios)+"</b></div>":"")+
+        "<div style='display:flex;justify-content:space-between;border-top:1px solid #ddd;margin-top:5px;padding-top:5px;font-size:13px'><b>Deberías tener</b><b>$"+f2(co.deberias)+"</b></div>"+
+      "</div>"+
+      "<div style='background:#fff;border-radius:9px;padding:10px 12px;margin-bottom:8px'>"+lineaReal+"</div>"+
+      "<div style='font-size:11px;color:"+col+";font-weight:700;line-height:1.6'>"+
+        (sano
+          ? "✅ Cuadra. La diferencia está dentro de lo que mueven las tasas de cambio (±$"+f2(tol)+"). Tu contabilidad está sana."
+          : dif<0
+            ? "⚠️ Te faltan $"+f2(Math.abs(dif))+" respecto a lo que deberías tener. Esto es dinero que salió sin quedar registrado — lo más común es lo que sacas para ti sin anotarlo."
+            : "⚠️ Tienes $"+f2(dif)+" de más. Suele significar que entró dinero que no se registró como ganancia, o que un saldo de cuenta se corrigió a mano.")+
+      "</div>"+
+      (co.baseFaltante?"<div style='background:#FFF4E5;border:1px solid #f0c080;border-radius:8px;padding:9px 11px;font-size:11px;color:#7a5c00;line-height:1.6;margin-top:8px'>"+
+        "<b>⚠️ Vuelve a fijar la apertura.</b> Esta se guardó antes de un arreglo: contaba dos veces lo que ya llevabas ganado el mes en que la fijaste, así que la diferencia arranca torcida. Un clic en el botón de abajo lo deja en cero."+
+      "</div>":"")+
+      (co.egPersonalSin>0?"<div style='font-size:10px;color:#888;margin-top:7px;line-height:1.5'>Nota: hay $"+f2(co.egPersonalSin)+" de gastos personales sin cuenta asignada. No se restan porque no salieron de ningún saldo registrado — si en realidad sí salieron de una cuenta, edítalos y asígnasela.</div>":"")+
+      "<div style='font-size:10px;color:#aaa;margin-top:7px'>Tu sueldo no se resta aquí: la app lo calcula como un % de la utilidad, no registra lo que de verdad sacaste. Lo que sacas se anota como gasto personal con su cuenta.</div>"+
+      "<button onclick='fijarAperturaHoy()' style='width:100%;margin-top:9px;padding:8px;border:1px solid "+brd+";border-radius:8px;background:#fff;color:#666;font-size:11px;cursor:pointer;font-family:inherit'>Volver a fijar la apertura con el dinero de hoy</button>"+
+    "</div>";
+  })();
+
   return "<div style='padding:8px'>"+
+  conciliacionHtml+
   "<div style='position:sticky;top:0;z-index:10;background:#1a3558;border-radius:12px;padding:12px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap'>"+
       "<div>"+
         "<div style='font-size:10px;font-weight:700;color:#FFA31C;text-transform:uppercase;margin-bottom:2px'>🏢 Total empresa (USDT equiv.)</div>"+
@@ -7771,11 +8040,43 @@ function reporteJulio(mesKey){
   var porCobrarBrl = (S.cuentasCobrar||[]).filter(function(p){
     return (p.tipo==="brl"||p.tipo==="vzla")&&filterByMes([{d:p.fecha}],mesKey).length>0&&p.estado==="pendiente";
   });
-  var totalPorCobrar = porCobrarBrl.reduce(function(a,p){return a+(parseFloat(p.monto||p.am)||0);},0);
+  var _pendCobro=function(p){var abon=(p.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);return Math.max(0,(parseFloat(p.monto||p.am)||0)-abon);};
+  // Cada cobro se pasa a USDT con su tasa. Antes se sumaban reales y bolívares
+  // en crudo bajo un "$", así que el total no era ninguna moneda de verdad.
+  var _sinTasaCobro=[];
+  var totalPorCobrar = porCobrarBrl.reduce(function(a,p){
+    var pend=_pendCobro(p);
+    if(pend<=0) return a;
+    var u=montoAUsdt(pend, p.moneda);
+    if(u===null){ _sinTasaCobro.push(p.moneda||"?"); return a; }
+    return a+u;
+  },0);
+  totalPorCobrar = Math.round(totalPorCobrar*100)/100;
 
   // Préstamos pendientes activos
-  var prestPend = (S.prestamos||[]).filter(function(p){return !p.pagado;});
-  var totalPrest = prestPend.reduce(function(a,p){return a+(parseFloat(p.monto||p.saldo)||0);},0);
+  // Mismo error que en Salud de cartera: "p.pagado" no existe, el estado real
+  // es "pagado"/"saldado". Contaba préstamos ya cobrados y por el monto
+  // original, sin restar los abonos.
+  var prestPend = (S.prestamos||[]).filter(function(p){
+    if(p.estado==="pagado"||p.estado==="saldado") return false;
+    var abon=(p.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);
+    return (parseFloat(p.monto||p.sal||p.saldo)||0)-abon-(parseFloat(p.ent)||0) > 0;
+  });
+  var _pendPrest=function(p){
+    var abon=(p.abonos||[]).reduce(function(x,ab){return x+(parseFloat(ab.monto)||0);},0);
+    return Math.max(0,(parseFloat(p.monto||p.sal||p.saldo)||0)-abon-(parseFloat(p.ent)||0));
+  };
+  // Mismo caso: los préstamos se guardan en la moneda pactada, hay que
+  // convertir antes de sumar (getRateToUsdt divide, no multiplica).
+  var _sinTasaPrest=[];
+  var totalPrest = prestPend.reduce(function(a,p){
+    var pend=_pendPrest(p);
+    if(pend<=0) return a;
+    var u=montoAUsdt(pend, p.mon);
+    if(u===null){ _sinTasaPrest.push(p.mon||"?"); return a; }
+    return a+u;
+  },0);
+  totalPrest = Math.round(totalPrest*100)/100;
 
   // Ganancia total Julio
   var ganTotal = ganBrl + ganVzla + ganJulio50;
@@ -7809,8 +8110,8 @@ function reporteJulio(mesKey){
       "<div class='card blue'><div class='label'>🇺🇸 EE.UU mi 50% neto</div><div class='value'>$"+f2(ganJulio50)+"</div><div style='font-size:11px;color:#555'>Bruta $"+f2(ganEEbruta)+(gastosEE>0?" · Gastos -$"+f2(gastosEE):"")+"</div></div>"+
       (egPag>0?"<div class='card red'><div class='label'>💸 Egresos propios pagados</div><div class='value'>-$"+f2(egPag)+"</div><div style='font-size:11px'>"+egM.filter(function(e){return e.pagada;}).length+" items</div></div>":"")+
       (egPend>0?"<div class='card orange'><div class='label'>⚠️ Egresos pendientes</div><div class='value'>$"+f2(egPend)+"</div><div style='font-size:11px;color:#e67e22'>Por pagar</div></div>":"")+
-      (totalPorCobrar>0?"<div class='card orange'><div class='label'>⏳ Por cobrar BRL/VZLA</div><div class='value'>$"+f2(totalPorCobrar)+"</div><div style='font-size:11px'>"+porCobrarBrl.length+" clientes</div></div>":"")+
-      (totalPrest>0?"<div class='card orange'><div class='label'>🤝 Préstamos activos</div><div class='value'>$"+f2(totalPrest)+"</div><div style='font-size:11px'>"+prestPend.length+" prestamos</div></div>":"")+
+      (totalPorCobrar>0?"<div class='card orange'><div class='label'>⏳ Por cobrar BRL/VZLA</div><div class='value'>≈$"+f2(totalPorCobrar)+"</div><div style='font-size:11px'>"+porCobrarBrl.length+" clientes · USDT"+(_sinTasaCobro.length?" · ⚠️ falta tasa "+_sinTasaCobro.filter(_unicos).join(", "):"")+"</div></div>":"")+
+      (totalPrest>0?"<div class='card orange'><div class='label'>🤝 Préstamos activos</div><div class='value'>≈$"+f2(totalPrest)+"</div><div style='font-size:11px'>"+prestPend.length+" prestamos · USDT"+(_sinTasaPrest.length?" · ⚠️ falta tasa "+_sinTasaPrest.filter(_unicos).join(", "):"")+"</div></div>":"")+
       "<div class='card gold'><div class='label'>✅ NETO JULIO</div><div class='value'>$"+f2(netoJulio)+"</div><div style='font-size:11px;color:#555'>Paul recibe: $"+f2(ganPaul50)+"</div></div>"+
     "</div>"+
 
@@ -7845,14 +8146,14 @@ function reporteJulio(mesKey){
 
     // Por cobrar
     (porCobrarBrl.length?"<h2>⏳ Por Cobrar BRL/VZLA</h2>"+
-    "<table><tr><th>Fecha</th><th>Cliente</th><th>Monto</th></tr>"+
-    porCobrarBrl.map(function(p){return "<tr><td>"+dFmt(p.d||p.fecha)+"</td><td>"+(p.cl||p.cliente)+"</td><td style='color:#e67e22;font-weight:700'>$"+f2(parseFloat(p.monto||p.am)||0)+"</td></tr>";}).join("")+
+    "<table><tr><th>Fecha</th><th>Cliente</th><th>Monto</th><th>≈ USDT</th></tr>"+
+    porCobrarBrl.map(function(p){var pend=_pendCobro(p);var u=montoAUsdt(pend,p.moneda);return "<tr><td>"+dFmt(p.d||p.fecha)+"</td><td>"+(p.cl||p.cliente)+"</td><td style='color:#e67e22;font-weight:700'>"+montoConMoneda(pend,p.moneda)+"</td><td style='text-align:right'>"+(u!==null?"$"+f2(u):"⚠️ sin tasa")+"</td></tr>";}).join("")+
     "</table>":"")+
 
     // Préstamos activos
     (prestPend.length?"<h2>🤝 Préstamos Activos</h2>"+
-    "<table><tr><th>Cliente</th><th>Monto</th><th>Fecha</th></tr>"+
-    prestPend.map(function(p){return "<tr><td>"+(p.cl||p.nombre||"")+"</td><td style='color:#e67e22;font-weight:700'>$"+f2(parseFloat(p.monto||p.saldo)||0)+"</td><td>"+(p.d||p.fecha||"")+"</td></tr>";}).join("")+
+    "<table><tr><th>Cliente</th><th>Monto</th><th>≈ USDT</th><th>Fecha</th></tr>"+
+    prestPend.map(function(p){var pend=_pendPrest(p);var u=montoAUsdt(pend,p.mon);return "<tr><td>"+(p.cl||p.nombre||p.desc||"")+"</td><td style='color:#e67e22;font-weight:700'>"+montoConMoneda(pend,p.mon)+"</td><td style='text-align:right'>"+(u!==null?"$"+f2(u):"⚠️ sin tasa")+"</td><td>"+(p.d||p.fecha||"")+"</td></tr>";}).join("")+
     "</table>":"")+
 
     // Resumen final
@@ -7891,10 +8192,21 @@ function reportePaul(mesKey){
   var porCobrar=(S.cuentasCobrar||[]).filter(function(p){
     return p.tipo==="eeuu"&&filterByMes([{d:p.fecha}],mesKey).length>0&&p.estado==="pendiente";
   });
-  var totalPorCobrar=porCobrar.reduce(function(a,p){return a+(parseFloat(p.monto)||parseFloat(p.am)||0);},0);
+  var _pendCobroEE=function(p){var abon=(p.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);return Math.max(0,(parseFloat(p.monto)||parseFloat(p.am)||0)-abon);};
+  // Los cobros de EE.UU casi siempre son USD, pero no todos: se convierte cada
+  // uno con su tasa en vez de dar por hecho que ya están en dólares.
+  var _sinTasaEE=[];
+  var totalPorCobrar=porCobrar.reduce(function(a,p){
+    var pend=_pendCobroEE(p);
+    if(pend<=0) return a;
+    var u=montoAUsdt(pend, p.moneda);
+    if(u===null){ _sinTasaEE.push(p.moneda||"?"); return a; }
+    return a+u;
+  },0);
+  totalPorCobrar=Math.round(totalPorCobrar*100)/100;
 
-  // Préstamos pendientes
-  var prestamos=(S.prestamos||[]).filter(function(p){return !p.pagado;});
+  // (aquí se filtraban "préstamos pendientes" con el campo inexistente
+  //  "p.pagado" y la variable no se mostraba en ningún lado. Se quitó.)
 
   // Neto final de Paul
   var netoPaul=ganPaul-totalDeudas;
@@ -7927,7 +8239,7 @@ function reportePaul(mesKey){
       "<div class='card'><div class='label'>🤝 Neta compartida</div><div class='value'>$"+f2(ganEEneta)+"</div><div style='font-size:11px;color:#555'>Bruta − gastos</div></div>"+
       "<div class='card green'><div class='label'>✅ Tu 50% bruto</div><div class='value'>$"+f2(ganPaul)+"</div></div>"+
       (totalDeudas>0?"<div class='card red'><div class='label'>💰 Adelantos / deudas</div><div class='value'>-$"+f2(totalDeudas)+"</div><div style='font-size:11px'>"+deudas.length+" registros</div></div>":"")+
-      (totalPorCobrar>0?"<div class='card orange'><div class='label'>⏳ Por cobrar</div><div class='value'>$"+f2(totalPorCobrar)+"</div><div style='font-size:11px'>"+porCobrar.length+" clientes</div></div>":"")+
+      (totalPorCobrar>0?"<div class='card orange'><div class='label'>⏳ Por cobrar</div><div class='value'>≈$"+f2(totalPorCobrar)+"</div><div style='font-size:11px'>"+porCobrar.length+" clientes · USDT"+(_sinTasaEE.length?" · ⚠️ falta tasa "+_sinTasaEE.filter(_unicos).join(", "):"")+"</div></div>":"")+
       "<div class='card gold'><div class='label'>💵 NETO A PAGAR A PAUL</div><div class='value'>$"+f2(netoPaul)+"</div><div style='font-size:11px;color:#555'>50% − adelantos</div></div>"+
     "</div>"+
 
@@ -7954,8 +8266,8 @@ function reportePaul(mesKey){
 
     // Por cobrar
     (porCobrar.length?"<h2>⏳ Clientes Por Cobrar EE.UU</h2>"+
-    "<table><tr><th>Fecha</th><th>Cliente</th><th>Monto</th></tr>"+
-    porCobrar.map(function(p){return "<tr><td>"+dFmt(p.d||p.fecha)+"</td><td>"+(p.cl||p.cliente)+"</td><td style='color:#e67e22;font-weight:700'>$"+f2(parseFloat(p.monto||p.am)||0)+"</td></tr>";}).join("")+
+    "<table><tr><th>Fecha</th><th>Cliente</th><th>Monto</th><th>≈ USDT</th></tr>"+
+    porCobrar.map(function(p){var pend=_pendCobroEE(p);var u=montoAUsdt(pend,p.moneda);return "<tr><td>"+dFmt(p.d||p.fecha)+"</td><td>"+(p.cl||p.cliente)+"</td><td style='color:#e67e22;font-weight:700'>"+montoConMoneda(pend,p.moneda)+"</td><td style='text-align:right'>"+(u!==null?"$"+f2(u):"⚠️ sin tasa")+"</td></tr>";}).join("")+
     "</table>":"")+
 
     // Resumen final
