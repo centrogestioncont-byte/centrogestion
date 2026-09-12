@@ -249,8 +249,41 @@ A veces entra una remesa en bolívares y ella **no** compra USDT con ellos: los
 deja en la cuenta. Después llega una remesa Brasil → Venezuela y paga con esos
 mismos bolívares que ya tenía.
 
-**Esos bolívares valen lo que costaron los reales que entregó por ellos.** Esa
-es la regla, y la decidió ella. Cuando se gasten, esa es su base de costo.
+La regla que ella dio: **esos bolívares valen lo que costaron los reales que
+entregó por ellos.** Se implementó así y **hubo que corregirlo**, porque con el
+resto del sistema esa regla contaba la ganancia dos veces. Explicado, para que
+nadie lo vuelva a poner como estaba:
+
+En `cTx()` hay dos números por remesa:
+
+```
+uc = lo que VALE en USDT el dinero que entró
+uv = lo que COSTÓ en USDT el dinero que se entregó
+pr = uc − uv   ← la ganancia, y la app la apunta YA, en esa misma remesa
+```
+
+Si el lote nace valiendo `uv` —el costo—, nace valiendo exactamente `pr` menos
+de lo que la app acaba de decir que vale. Ese `pr` no desaparece: reaparece como
+ganancia el día que esos bolívares se gasten. Contado dos veces.
+
+Medido con sus cifras (entran 138.000 Bs, entrega 836 BRL, y después esos mismos
+bolívares pagan otra remesa):
+
+```
+lote a uv → apuntado 4,3626 USDT · real 0,7407 · se inventaba 3,62
+lote a uc → apuntado 0,6166 USDT · real 0,7407 · la diferencia son las comisiones
+```
+
+Por eso **el lote nace valiendo `uc`**, no `uv`. Es la misma idea de fondo que
+ella pidió —el dinero parado vale lo que valió la operación que lo trajo— con la
+cuenta cuadrada. Lo cubre `pruebas/prestamos.js` con la prueba del ida y vuelta:
+si alguien vuelve a poner `uv`, falla.
+
+La otra forma de cuadrarlo sería dejar el lote a `uv` y **no** apuntar ganancia
+en la remesa de entrada, esperando a que el dinero salga. Es una decisión suya,
+no del código: cambia los números de ganancia que ve hoy en Diario, Resumen y
+Cierre de Mes. Si alguna vez lo pide, es ahí donde hay que tocar (`gV()`), no
+en el lote.
 
 ### Cómo se mueve su dinero — el sesgo del negocio
 
