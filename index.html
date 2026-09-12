@@ -735,6 +735,57 @@ function r4(n){ // Round to max 4 significant decimals, no floating point artifa
   var v=parseFloat(n)||0;
   return Math.round(v*10000)/10000;
 }
+// Lee un número escrito como se escribe aquí: 193.399,90 — punto de miles, coma
+// de decimales. Antes se hacía con parseFloat(txt.replace(",",".")), y eso parte
+// el número en el PRIMER punto: "198.619,90" entraba como 198,619. El 12/09 así
+// se vació el Banco de Venezuela —218.629,90 quedaron en 198,89— y la remesa
+// siguiente dejó la cuenta en negativo sin que nada avisara.
+// Un punto suelto ("198.619") es ambiguo y ninguna regla lo acierta siempre, por
+// eso quien llama tiene que CONFIRMAR enseñando lo que se leyó.
+function _leerNumero(txt, moneda){
+  if(txt===null||txt===undefined) return NaN;
+  var s=String(txt).replace(/\s/g,"").replace(/[^0-9.,\-]/g,"");   // quita Bs, $, USDT...
+  if(!s) return NaN;
+  var neg=s.charAt(0)==="-";
+  s=s.replace(/-/g,"");
+  var iCom=s.lastIndexOf(","), iPun=s.lastIndexOf(".");
+  if(iCom>-1 && iPun>-1){
+    // Están los dos: manda el ÚLTIMO, el otro es separador de miles.
+    if(iCom>iPun) s=s.replace(/\./g,"").replace(",",".");
+    else          s=s.replace(/,/g,"");
+  }else if(iCom>-1){
+    // Solo comas: aquí la coma es el decimal; si hay varias, las de delante son miles.
+    s=s.replace(/,(?=.*,)/g,"").replace(",",".");
+  }else if(iPun>-1){
+    var puntos=(s.match(/\./g)||[]).length;
+    var decimales=s.length-iPun-1;
+    // Varios puntos → todos de miles (1.000.000). Uno solo con exactamente tres
+    // cifras detrás → también de miles (198.619), salvo en USDT, que sí se lleva
+    // con tres y cuatro decimales de verdad (306.2367).
+    if(puntos>1 || (decimales===3 && moneda!=="USDT" && iPun>0)) s=s.replace(/\./g,"");
+  }
+  var n=parseFloat(s);
+  if(isNaN(n)) return NaN;
+  return neg?-n:n;
+}
+// El texto que se le enseña antes de tocar un saldo. Siempre, no solo cuando el
+// cambio es raro: lo que hace falta ver es el número que la app entendió.
+function _avisoCambioSaldo(c,antes,nuevo,delta){
+  var fmt=(c.moneda==="USDT")?f4:f2, m=" "+(c.moneda||"");
+  var txt="Vas a dejar \""+c.nombre+"\" en:\n\n"+
+          "        "+fmt(nuevo)+m+"\n\n"+
+          "   ahora:   "+fmt(antes)+m+"\n"+
+          "   cambio:  "+(delta>0?"+":"")+fmt(delta)+m+"\n";
+  var ratio=(antes&&nuevo)?Math.max(Math.abs(antes/nuevo),Math.abs(nuevo/antes)):0;
+  if(ratio>=10){
+    // Un salto de diez veces o más casi siempre es el punto de los miles.
+    txt+="\n⚠️ Eso es "+f0(ratio)+" veces "+(Math.abs(nuevo)<Math.abs(antes)?"MENOS":"MÁS")+
+         " de lo que hay ahora.\nSi lo escribiste con punto de miles, mira arriba si dice lo que querías.\n";
+  }else if(Math.abs(delta)>Math.abs(antes)*0.5 && Math.abs(delta)>1){
+    txt+="\n⚠️ Es más de la mitad del saldo.\n";
+  }
+  return txt+"\n¿Correcto?";
+}
 function f2(n){return r4(n).toLocaleString("es-VE",{minimumFractionDigits:2,maximumFractionDigits:2});}
 function f4(n){return r4(n).toLocaleString("es-VE",{minimumFractionDigits:2,maximumFractionDigits:4});}
 function f0(n){return r4(n).toLocaleString("es-VE",{minimumFractionDigits:0,maximumFractionDigits:0});}
@@ -3187,10 +3238,18 @@ function rBalancePlus(){
 function updateCuentaSaldo(id, val){
   var c=(S.cuentas||[]).find(function(x){return x.id===id;});
   if(!c) return;
-  var v=parseFloat(val)||0;
+  // Antes era parseFloat(val)||0. Ese "||0" es el que vacía cuentas: si el campo
+  // se queda vacío, o el navegador rechaza lo tecleado —pasa al escribir
+  // 198.619,90 en un campo numérico—, el saldo se ponía en CERO sin avisar. De
+  // los 106 ajustes manuales guardados, 27 dejaron una cuenta en 0.
+  var v=_leerNumero(val,c.moneda);
+  if(isNaN(v)){ alert("No entendí \""+val+"\" como un número.\n\n\""+c.nombre+"\" se queda como está."); R(); return; }
   var antes=parseFloat(c.saldo)||0;
   var delta=Math.round((v-antes)*10000)/10000;
   if(Math.abs(delta)>0.0001){
+    // Se confirma aquí, que es por donde pasan las dos pantallas que editan
+    // saldos. Antes no preguntaba nada y el cambio se aplicaba de un tecleo.
+    if(!confirm(_avisoCambioSaldo(c,antes,v,delta))){ R(); return; }
     S.ajustesSaldo=S.ajustesSaldo||[];
     S.ajustesSaldo.push({id:_newUid(),fecha:ds(td()),cuentaId:id,delta:delta,saldoAntes:antes,saldoDespues:v,motivo:"Ajuste manual de saldo"});
   }
@@ -3217,8 +3276,9 @@ function saveCuenta(){
 }
 
 function editarSaldoCuenta(inp){
-  var cid=inp.getAttribute("data-cid");var val=parseFloat(inp.value)||0;
-  autorizarYHacer(function(){updateCuentaSaldo(cid,val);});
+  var cid=inp.getAttribute("data-cid");
+  // El valor va tal cual: updateCuentaSaldo lo lee y lo confirma.
+  autorizarYHacer(function(){updateCuentaSaldo(cid,inp.value);});
 }
 
 function toggleCuentaPersonal(cid){
@@ -4153,11 +4213,12 @@ function saveTx(){
   if(_lotesSnap.compras.length||_lotesSnap.ventas.length) nuevaRemesa._lotesConsumidos=_lotesSnap;
   // Consumir inventario FIFO (más viejo primero): USDT comprados y bolívares de ventas
   consumirInventarioFIFO(ruta.orig,res.uc,ruta.dest==="VES"?"VES":ruta.dest,res.cant,f.cuentaBanco,f.cuentaDest);
-  // El dinero que entra crea su propio lote, valorado a lo que costó lo que se
-  // entregó a cambio (ver crearLoteRecibido). Solo si de verdad entró: si el
-  // cliente paga después, el lote nace el día que se cobre, igual que el saldo
-  // de la cuenta.
-  if((ruta.orig==="VES" || ruta.orig==="BRL") && !f.pendiente){
+  // Los BOLÍVARES que entran y se quedan en la cuenta crean su propio lote, con
+  // lo que la app dijo que valen (ver crearLoteRecibido). Solo bolívares: los
+  // reales que entran se convierten en USDT y esa compra se registra aparte.
+  // Y solo si de verdad entraron: si el cliente paga después, el lote nace el
+  // día que se cobre, igual que el saldo de la cuenta.
+  if(ruta.orig==="VES" && !f.pendiente){
     crearLoteRecibido(ruta.orig, res.am, res.uc, f.cuentaBanco||"", ds(f.date), nuevaRemesa._uid);
   }
   // Guardar referencia de tasas para la próxima operación
@@ -6426,7 +6487,7 @@ function editDeudaPaul(id){
   if(!d) return;
   var nuevo=prompt("Nuevo monto para \""+d.desc+"\" (actual: $"+f2(d.monto)+"):");
   if(nuevo===null) return;
-  var monto=parseFloat(nuevo);
+  var monto=_leerNumero(nuevo);
   if(isNaN(monto)||monto<0){alert("Monto inválido.");return;}
   if(!autorizar("editar una deuda o adelanto")) return;
   d.monto=Math.round(monto*100)/100;
@@ -9593,7 +9654,7 @@ function corregirSaldoCierre(mesKey){
   if(!cierre){alert("Cierre no encontrado.");return;}
   var val=prompt("Ingresa el saldo neto acumulado correcto para "+cierre.mesLabel+" (en USDT):\n\nEste es el total que acumuló el negocio hasta ese mes.");
   if(val===null) return;
-  var monto=parseFloat(val.replace(",","."));
+  var monto=_leerNumero(val,"USDT");
   if(isNaN(monto)){alert("Monto inválido.");return;}
   cierre.saldoAcumulado=monto;
   cierre.netoFinal=monto; // para cierres viejos, netoFinal = saldoAcumulado
@@ -10909,6 +10970,16 @@ function toggleLotes(n,tipo){
 // El lote va marcado como "Remesa" para que se distinga de una compra o venta de
 // USDT de verdad: el inventario es de USDT, y esto no lo es.
 function crearLoteRecibido(moneda, monto, usdtValor, cuentaDestinoId, fecha, refUid){
+  // SOLO bolívares. El inventario es de compra y venta de USDT; lo único que se
+  // acordó meter aquí que no lo sea son los bolívares que entran por una remesa
+  // y se quedan parados en la cuenta, para saber a qué valor se gastan después.
+  // Los reales NO: esos ella los convierte en USDT y esa compra la registra
+  // aparte, así que un lote de reales es una venta que nunca ocurrió. Y no era
+  // solo ruido en la pantalla: consumirInventarioFIFO se lo comía como si fuera
+  // real en la siguiente remesa VZLA→BRL que pagara por esa cuenta, y de esos
+  // lotes salen las tasas que la app sugiere. Pasó el 12/09 con una remesa de
+  // 30 reales: apareció un "vendí 30 BRL a 5,1424" que nadie hizo.
+  if(moneda!=="VES") return null;
   var m = Math.round((parseFloat(monto)||0)*100)/100;
   if(m<=0) return null;
   // Sin cuenta no se puede emparejar: el consumo FIFO filtra por cuentaDestinoId
@@ -10942,7 +11013,7 @@ function crearLoteRecibido(moneda, monto, usdtValor, cuentaDestinoId, fecha, ref
 // puede ser parcial (un abono), así que el valor en USDT va a prorrata.
 function _loteAlCobrar(c, montoEntrado, cuentaDestinoId){
   if(!c || !(montoEntrado>0) || !cuentaDestinoId) return null;
-  if(c.moneda!=="VES" && c.moneda!=="BRL") return null;   // solo monedas con lotes
+  if(c.moneda!=="VES") return null;   // solo los bolívares llevan lote (ver crearLoteRecibido)
   var total=parseFloat(c.monto)||0;
   var valor=parseFloat(c.usdtValor)||0;
   if(valor<=0) return null;          // cobro viejo, sin valor guardado
@@ -11004,10 +11075,13 @@ function editarSaldoCuentaEnConfig(cid){
   }
   var nv=prompt(msg+"Nuevo saldo:");
   if(nv===null)return;
-  var num=parseFloat(nv.replace(",","."));
+  var num=_leerNumero(nv,c.moneda);
   if(isNaN(num)){alert("Número inválido.");return;}
   var antesCfg=parseFloat(c.saldo)||0;
   var deltaCfg=Math.round((num-antesCfg)*10000)/10000;
+  // Confirmar SIEMPRE, enseñando lo que se entendió. Antes se aplicaba a ciegas
+  // y un tecleo dejaba una cuenta en la milésima parte sin decir nada.
+  if(!confirm(_avisoCambioSaldo(c,antesCfg,num,deltaCfg)))return;
   if(Math.abs(deltaCfg)>0.0001){
     S.ajustesSaldo=S.ajustesSaldo||[];
     S.ajustesSaldo.push({id:_newUid(),fecha:ds(td()),cuentaId:cid,delta:deltaCfg,saldoAntes:antesCfg,saldoDespues:num,motivo:"Ajuste manual de saldo"});
