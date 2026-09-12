@@ -172,3 +172,138 @@ Cuando el dueño diga que algo "se revirtió solo" o "volvió a aparecer",
 Y cuando arregles algo de esto: **el arreglo no repara los registros ya
 pisados.** Hay que volver a hacerlos a mano una vez. Díselo, no lo des por
 entendido.
+
+---
+
+## El negocio de verdad — léelo antes de tocar saldos, lotes o ganancias
+
+Esto lo explicó la dueña. Si vas a cambiar algo que toque cuentas, inventario
+FIFO o el cálculo de ganancia, **esta sección manda sobre tu intuición**.
+
+### Qué hace
+
+Mueve remesas entre Brasil y Venezuela, en las dos direcciones.
+
+```
+Brasil → Venezuela:  entra dinero del cliente en REALES · ella entrega BOLÍVARES
+Venezuela → Brasil:  entra dinero del cliente en BOLÍVARES · ella entrega REALES
+```
+
+### Cómo gana — y es lo único que cuenta
+
+Con los reales que entran **compra USDT**. Esos USDT los **vende por bolívares**.
+
+> **La ganancia es la diferencia entre lo que le costó el USDT y a cuánto lo
+> vendió.** No hay otra fuente de ganancia.
+
+Por eso todo esto es delicado: **el sistema no puede reportarle una ganancia que
+nunca tuvo.** Un número inventado aquí es peor que no tener número.
+
+### El inventario FIFO es SOLO compra y venta de USDT
+
+No es un libro de todo el dinero que se mueve. Es la lista de sus operaciones de
+USDT, y las tasas guardadas ahí son las que calculan la ganancia.
+
+- Un lote **nace** solo cuando ella compra o vende USDT.
+- Un lote **se gasta** cuando paga con ese dinero, descontando **de la cuenta que
+  corresponde** (`cuentaDestinoId`), para que cada unidad gastada lleve la tasa a
+  la que se consiguió.
+- El saldo del lote dice **qué queda disponible** de esa compra o de esa venta.
+
+**El dinero que entra por una remesa NO crea ni engorda un lote.** Hubo una
+función (`aumentarLoteRecibido`) que lo intentaba: metía el dinero dentro de un
+lote existente **sin tocar su tasa**, así que ese lote pasaba a afirmar que todo
+lo suyo costó una tasa que solo valía para una parte — y de ahí salen las tasas
+que la app sugiere. Se contaminaban solas.
+
+### El orden de registro es parte del método, no un detalle
+
+Ella registra **primero todas las compras y ventas de USDT del día**, y
+**después** las remesas. Así cada remesa va consumiendo los lotes en orden:
+
+```
+lote de la mañana  →  lote de la tarde  →  lote de la noche
+```
+
+Si una remesa se registra antes que la operación de USDT que le corresponde,
+consume del lote equivocado —o de ninguno— y la ganancia sale mal. **Registrar
+una remesa sin lote disponible tiene que avisarle.**
+
+### Pagos pendientes
+
+Cuando el cliente todavía no ha pagado, ella lo marca como pendiente. En
+cualquiera de las dos direcciones. La regla es una sola:
+
+- El dinero que **ella sí entregó** se descuenta **de donde salió, en el
+  momento**. Ya salió de su banco de verdad.
+- El dinero **del cliente** no entra hasta que ella marque que llegó. Ahí se
+  adjudica.
+
+Ejemplo real (la remesa de 20.010): Brasil → Venezuela, pendiente. Los 115
+reales del cliente **no entran** todavía; los 20.010 bolívares **sí salen** del
+Banco de Venezuela en el acto.
+
+### Bolívares que entran y se quedan quietos
+
+A veces entra una remesa en bolívares y ella **no** compra USDT con ellos: los
+deja en la cuenta. Después llega una remesa Brasil → Venezuela y paga con esos
+mismos bolívares que ya tenía.
+
+La regla que ella dio: **esos bolívares valen lo que costaron los reales que
+entregó por ellos.** Se implementó así y **hubo que corregirlo**, porque con el
+resto del sistema esa regla contaba la ganancia dos veces. Explicado, para que
+nadie lo vuelva a poner como estaba:
+
+En `cTx()` hay dos números por remesa:
+
+```
+uc = lo que VALE en USDT el dinero que entró
+uv = lo que COSTÓ en USDT el dinero que se entregó
+pr = uc − uv   ← la ganancia, y la app la apunta YA, en esa misma remesa
+```
+
+Si el lote nace valiendo `uv` —el costo—, nace valiendo exactamente `pr` menos
+de lo que la app acaba de decir que vale. Ese `pr` no desaparece: reaparece como
+ganancia el día que esos bolívares se gasten. Contado dos veces.
+
+Medido con sus cifras (entran 138.000 Bs, entrega 836 BRL, y después esos mismos
+bolívares pagan otra remesa):
+
+```
+lote a uv → apuntado 4,3626 USDT · real 0,7407 · se inventaba 3,62
+lote a uc → apuntado 0,6166 USDT · real 0,7407 · la diferencia son las comisiones
+```
+
+Por eso **el lote nace valiendo `uc`**, no `uv`. Es la misma idea de fondo que
+ella pidió —el dinero parado vale lo que valió la operación que lo trajo— con la
+cuenta cuadrada. Lo cubre `pruebas/prestamos.js` con la prueba del ida y vuelta:
+si alguien vuelve a poner `uv`, falla.
+
+La otra forma de cuadrarlo sería dejar el lote a `uv` y **no** apuntar ganancia
+en la remesa de entrada, esperando a que el dinero salga. Es una decisión suya,
+no del código: cambia los números de ganancia que ve hoy en Diario, Resumen y
+Cierre de Mes. Si alguna vez lo pide, es ahí donde hay que tocar (`gV()`), no
+en el lote.
+
+### Cómo se mueve su dinero — el sesgo del negocio
+
+- **Vende más USDT por bolívares de lo que compra USDT con reales.**
+- Tener reales parados en la cuenta **no le perjudica**.
+- Tener muchos bolívares parados **sí le perjudica**, por la devaluación.
+- Compra USDT con reales sobre todo en dos casos: cuando ya tiene mucho en la
+  cuenta y necesita USDT para vender por bolívares, o cuando la remesa es tan
+  grande que necesita USDT para cubrirla.
+
+Esto explica por qué un saldo en bolívares que se queda alto es una señal de
+alarma para ella, y un saldo alto en reales no lo es.
+
+### Una advertencia, pagada con errores
+
+En una sola sesión se dieron **tres diagnósticos equivocados** sobre estos
+saldos, por deducir las reglas del negocio en vez de preguntarlas. Cada uno
+costó tiempo y confianza.
+
+**No supongas cómo funciona su operación. Pregúntale.** Y antes de afirmar una
+causa, reprodúcela: la app se puede cargar en Chromium y se le puede pasar el
+caso exacto con sus cifras. Si el número que sale no es el suyo al céntimo, la
+explicación todavía no es la correcta.

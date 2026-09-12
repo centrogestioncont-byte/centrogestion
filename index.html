@@ -3950,6 +3950,9 @@ function marcarRemesaPendiente(tipo,n){
     // de _mov, donde la fusión no lo miraría. Sin esta línea, esta remesa
     // editada podía perder contra una copia vieja de otro dispositivo.
     r._mod=Date.now();
+    // 2b) Quitar el lote que creó esta remesa: si pasa a pendiente es porque ese
+    //     dinero todavía NO entró. Nace otra vez el día que se marque cobrada.
+    quitarLoteDeRemesa(r._uid);
     // 3) Crear el registro en Cuentas por Cobrar — mismo formato que "+ Nueva"
     S.cuentasCobrar.push({
       id:Date.now(),
@@ -3970,13 +3973,28 @@ function marcarRemesaPendiente(tipo,n){
       estado:"pendiente",
       fechaCobro:"",
       cuentaBanco:r.cuentaBanco||"",
-      cuentaDest:r.cuentaDest||""
+      cuentaDest:r.cuentaDest||"",
+      // Lo que VALE en USDT el dinero que va a entrar (uc, no uv — ver
+      // crearLoteRecibido), para que el lote nazca con el valor del día en que
+      // se pactó y no con el del día del pago.
+      usdtValor:parseFloat(r.uc)||0
     });
     logAudit("MARCAR_PENDIENTE","Marcó operación #"+r.n+" ("+r.cl+") como pago pendiente");
     saveData();R();
   });
 }
-function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaDestId, cant, skipOrigen){
+// Buzón donde actualizarCuentasPorRemesa() deja las cuentas que no pudo
+// encontrar. Se vacía al empezar cada llamada y quien llama lo lee justo
+// después — así no hace falta cambiar lo que la función devuelve, que es la
+// lista de movimientos y la usan varios sitios para poder revertir.
+var _cuentasNoEncontradas = [];
+
+// "soloComprobar" hace el mismo recorrido sin tocar ni un saldo: sirve para
+// saber, ANTES de guardar, si alguna cuenta no se va a encontrar. Se usa el
+// mismo camino a propósito — una comprobación escrita aparte se separa del
+// cálculo de verdad con el primer cambio, y entonces avisa de lo que no es.
+function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaDestId, cant, skipOrigen, soloComprobar){
+  _cuentasNoEncontradas = [];
   // Actualiza saldos de cuentas para CUALQUIER moneda automáticamente.
   // Retorna _mov: lista de movimientos realizados para que saveTx los guarde en la remesa
   // y revertirSaldosRemesa pueda revertirlos exactamente sin adivinar.
@@ -3996,10 +4014,21 @@ function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaD
       c=(S.cuentas||[]).find(function(x){return x.activa!==false&&x.moneda===moneda&&x.nombre.toLowerCase().includes(kw);});
     }
     if(c){
+      if(soloComprobar) return;   // solo queríamos saber si existe
       c.saldo=Math.round(((parseFloat(c.saldo)||0)+(parseFloat(delta)||0))*100)/100;
       // Guardar el movimiento exacto para poder revertirlo despues
       movimientos.push({cuentaId: c.id, delta: Math.round((parseFloat(delta)||0)*100)/100});
+      return;
     }
+    // No se encontró la cuenta. Antes esto era un return mudo, y costaba caro:
+    // la remesa se guardaba sin mover un céntimo, el dinero salía del banco de
+    // verdad y en la app no salía de ningún lado. Pasó con una remesa que
+    // apuntaba a una cuenta que ya no existía: la app se quedó con 20.010 Bs de
+    // más y nadie se enteró hasta mirar el banco. Ahora se anota para que quien
+    // llama pueda avisar.
+    _cuentasNoEncontradas.push({
+      cuenta: idOrKey, moneda: moneda||"", delta: Math.round((parseFloat(delta)||0)*100)/100
+    });
   }
 
   var rutaObj = getRutas().find(function(r){ return r.rt===ruta; });
@@ -4066,9 +4095,53 @@ function saveTx(){
   if(!rates.hasRates){
     var fd=ds(f.date);
     S.inventarioUsdt.push({id:Date.now(),tipo:"compra",fecha:fd,moneda:ruta.orig,montOrigen:0,usdt:0,tasa:tcF,comision:COM(),bs:0,plataforma:"Operación",pais:"",restante:0,locked:false});
-    S.inventarioUsdt.push({id:Date.now()+1,tipo:"venta",fecha:fd,moneda:"VES",montOrigen:0,usdt:0,tasa:tvF,comision:COM(),bs:0,plataforma:"Operación",pais:"",restante:0,locked:false});
+    // La VENTA es en la moneda de DESTINO, no siempre en VES. Estaba escrito
+    // "VES" a pelo, así que en una remesa VZLA→BRL —donde lo que se vende son
+    // reales— quedaba un lote marcado VES con la tasa de los reales dentro.
+    // Medido: después de una de esas, la app sugería 5,4 como tasa de bolívares
+    // por USDT. Con eso se pricea mal la siguiente remesa y la ganancia sale
+    // mal, que es justo lo que no se puede permitir aquí.
+    // En las de EE.UU (USD→VES) el destino sí es VES y ese sitio no cambia.
+    S.inventarioUsdt.push({id:Date.now()+1,tipo:"venta",fecha:fd,moneda:ruta.dest||"VES",montOrigen:0,usdt:0,tasa:tvF,comision:COM(),bs:0,plataforma:"Operación",pais:"",restante:0,locked:false});
   }
   var res=cTx();
+
+  // ── Dos comprobaciones ANTES de guardar ─────────────────────────────────
+  // 1) ¿Existen las cuentas que esta remesa va a mover? Si una no se encuentra,
+  //    el dinero sale del banco de verdad y en la app no sale de ningún lado.
+  //    Pasó: una remesa apuntaba a una cuenta que ya no existía, se guardó sin
+  //    mover un céntimo, y la app se quedó con 20.010 Bs de más hasta que se
+  //    miró el banco. Se usa el mismo recorrido en modo "solo comprobar".
+  actualizarCuentasPorRemesa(f.rt,res.am,res.tc,res.tv,res.pr,f.cuentaBanco||"",
+                             f.cuentaDest||"",res.cant,f.pendiente===true,true);
+  if(_cuentasNoEncontradas.length){
+    var _faltan=_cuentasNoEncontradas.map(function(x){
+      return "• "+(x.moneda?x.moneda+" · ":"")+"\""+x.cuenta+"\"  ("+(x.delta>0?"+":"")+f2(x.delta)+")";
+    }).join("\n");
+    if(!confirm("⚠️ No encuentro esta(s) cuenta(s):\n\n"+_faltan+
+      "\n\nSi continúas, la remesa se guarda pero ESE saldo NO se mueve: el dinero "+
+      "saldrá de tu banco de verdad y en la app no saldrá de ningún lado.\n\n"+
+      "¿Guardar de todas formas?")) return;
+  }
+  // 2) ¿Hay saldo FIFO para cubrirla? simularConsumoFIFO solo lee, no toca nada.
+  //    El orden de registro es parte del método —primero las operaciones de USDT
+  //    del día, después las remesas—, así que una remesa que no encuentra lote
+  //    casi siempre significa que falta registrar una compra o una venta.
+  var _simPrev=simularConsumoFIFO(ruta.orig,res.uc,ruta.dest==="VES"?"VES":ruta.dest,
+                                  res.cant,f.cuentaBanco,f.cuentaDest);
+  var _sum=function(a,k){return a.reduce(function(t,x){return t+(parseFloat(x[k])||0);},0);};
+  var _faltaU=Math.round(((parseFloat(res.uc)||0)-_sum(_simPrev.compras,"usdt"))*10000)/10000;
+  var _faltaB=Math.round(((parseFloat(res.cant)||0)-_sum(_simPrev.ventas,"bs"))*100)/100;
+  if(_faltaU>0.0001 || _faltaB>0.01){
+    var _av="⚠️ No hay saldo suficiente en el inventario FIFO:\n\n";
+    if(_faltaU>0.0001) _av+="• Faltan "+f2(_faltaU)+" USDT de compras en "+ruta.orig+"\n";
+    if(_faltaB>0.01)   _av+="• Faltan "+f2(_faltaB)+" "+(ruta.dest||"VES")+" de ventas\n";
+    _av+="\n¿Ya registraste las compras y ventas de USDT de hoy?\n\n"+
+         "Si continúas, esta parte de la remesa queda sin tasa de respaldo y su "+
+         "ganancia no será fiable.\n\n¿Guardar de todas formas?";
+    if(!confirm(_av)) return;
+  }
+
   var isV=ruta.orig==="VES";var arr=isV?S.vzla:S.brl;
   var nn=arr.length?Math.max.apply(null,arr.map(function(x){return x.n;}))+1:1;
   var nuevaRemesa={n:nn,_uid:_newUid(),d:ds(f.date),id:f.id,cl:f.cl.toUpperCase(),rt:f.rt,am:res.am,orig:ruta.orig,dest:ruta.dest,tdia:res.tdia,cant:res.cant,tc:res.tc,uc:res.uc,pais:f.pais,uv:res.uv,tv:res.tv,total:res.cant,pr:res.pr,cuentaBanco:f.cuentaBanco||"",cuentaDest:f.cuentaDest||"",locked:true};
@@ -4080,11 +4153,12 @@ function saveTx(){
   if(_lotesSnap.compras.length||_lotesSnap.ventas.length) nuevaRemesa._lotesConsumidos=_lotesSnap;
   // Consumir inventario FIFO (más viejo primero): USDT comprados y bolívares de ventas
   consumirInventarioFIFO(ruta.orig,res.uc,ruta.dest==="VES"?"VES":ruta.dest,res.cant,f.cuentaBanco,f.cuentaDest);
-  // Si la operación RECIBE bolívares o reales (la moneda de origen entra a tu banco),
-  // aumentar el saldo disponible del lote de inventario de esa moneda, emparejado con la cuenta donde entró.
-  // Ej: una remesa VZLA→BRL hace entrar bolívares (VES) → sube el bsRestante del lote VES de esa cuenta.
-  if(ruta.orig==="VES" || ruta.orig==="BRL"){
-    aumentarLoteRecibido(ruta.orig, res.am, f.cuentaBanco||"");
+  // El dinero que entra crea su propio lote, valorado a lo que costó lo que se
+  // entregó a cambio (ver crearLoteRecibido). Solo si de verdad entró: si el
+  // cliente paga después, el lote nace el día que se cobre, igual que el saldo
+  // de la cuenta.
+  if((ruta.orig==="VES" || ruta.orig==="BRL") && !f.pendiente){
+    crearLoteRecibido(ruta.orig, res.am, res.uc, f.cuentaBanco||"", ds(f.date), nuevaRemesa._uid);
   }
   // Guardar referencia de tasas para la próxima operación
   // Crear cuenta por cobrar si el pago es pendiente
@@ -4101,10 +4175,15 @@ function saveTx(){
       ganancia:res.pr,
       tipo:isV?"vzla":"brl",
       refN:nn,
+      refUid:nuevaRemesa._uid,
       estado:"pendiente",
       fechaCobro:"",
       cuentaBanco:f.cuentaBanco||"",   // cuenta donde entra el pago al cobrar
-      cuentaDest:f.cuentaDest||""      // cuenta VES que entrega los bolívares
+      cuentaDest:f.cuentaDest||"",     // cuenta VES que entrega los bolívares
+      // Lo que VALE en USDT el dinero que va a entrar (ver crearLoteRecibido:
+      // es "uc", no "uv"). Se guarda aquí para que el lote que nazca al cobrar
+      // lleve el valor del día en que se pactó, no el del día del pago.
+      usdtValor:res.uc
     });
   }
   // Actualizar saldos y guardar movimientos exactos en la remesa para reversion precisa
@@ -4697,6 +4776,8 @@ function saveAbonoCobrar(id){
     }
     // Acreditar la cuenta con lo REALMENTE recibido, en SU propia moneda
     ajusteCuentaEgreso(cuentaId,montoIngresado);
+    // Un abono también es dinero que entró: nace su lote por la parte que trajo.
+    _loteAlCobrar(c, monto, cuentaId);
   }
   // Trackear el abono en la moneda ORIGINAL de la cuenta por cobrar para que el saldo cuadre
   c.abonos.push({id:Date.now(),fecha:td(),monto:Math.round(monto*100)/100,cuentaId:cuentaId||"",nota:na.nota||"",monedaPago:monPago,montoPago:Math.round(montoIngresado*100)/100});
@@ -4733,6 +4814,8 @@ function marcarCobrado(id){
         if(!confirm("Marcar como cobrado y acreditar "+f2(c.monto)+" "+c.moneda+" en \""+cta.nombre+"\".\n¿Confirmar?"))return;
       }
       cta.saldo=Math.round(((parseFloat(cta.saldo)||0)+(parseFloat(c.monto)||0))*100)/100;
+      // Ahora sí entró: nace su lote, con el costo del día en que se pactó.
+      _loteAlCobrar(c, parseFloat(c.monto)||0, cta.id);
     }
   }
   c.estado="cobrado";
@@ -10060,6 +10143,9 @@ function reqDel(arr,id,field){
 
 // Revierte los saldos de cuentas cuando se elimina una operación
 function revertirSaldosRemesa(tipo, r){
+  // El lote que creó esta remesa se va con ella: ese dinero deja de existir en
+  // el inventario igual que deja de existir en la cuenta.
+  quitarLoteDeRemesa(r._uid);
   // Si la remesa tiene _mov (registro exacto de movimientos), revertir con precision total
   if(r._mov && r._mov.length){
     r._mov.forEach(function(m){
@@ -10707,7 +10793,7 @@ function consumirInventarioFIFO(monedaOrig, usdtUsados, monedaDest, bsEntregados
   if(u>0){
     var comprasTodas=S.inventarioUsdt.filter(function(r){return r.tipo==="compra"&&r.moneda===monedaOrig;}).sort(ordenFIFO);
     // Si se indica cuenta, consumir SOLO los lotes de esa cuenta — nunca los de otra
-    // (igual que aumentarLoteRecibido: sin mezclar cuentas, aunque quede sin consumir).
+    // (igual que crearLoteRecibido: sin mezclar cuentas, aunque quede sin consumir).
     var compras=cuentaOrigenId?comprasTodas.filter(function(r){return r.cuentaOrigenId===cuentaOrigenId;}):comprasTodas;
     for(var i=0;i<compras.length&&u>0.0001;i++){
       var disp=parseFloat(compras[i].restante)||0;
@@ -10785,21 +10871,93 @@ function toggleLotes(n,tipo){
 // (ej: Banesco, que no usas siempre para vender USDT), NO se toca ningún lote.
 // El saldo de esa cuenta sí sube (lo hace actualizarCuentasPorRemesa), pero los
 // bolívares quedan simplemente disponibles en la cuenta, sin afectar ningún lote.
-function aumentarLoteRecibido(monedaRecibida, montoRecibido, cuentaId){
-  normalizarInventarioFIFO();
-  var monto = Math.round((parseFloat(montoRecibido)||0)*100)/100;
-  if(monto<=0) return;
-  // Sin cuenta seleccionada no podemos emparejar con seguridad → no tocar lotes.
-  if(!cuentaId) return;
-  // Buscar SOLO un lote de venta de esa moneda ligado EXACTAMENTE a la cuenta donde entró el dinero.
-  var objetivo = (S.inventarioUsdt||[]).filter(function(r){
-    return r.tipo==="venta" && r.moneda===monedaRecibida && r.cuentaId===cuentaId;
-  }).sort(ordenFIFO)[0] || null;
-  // Si NO hay lote para esa cuenta, no aumentamos ningún lote (no inventamos ni mezclamos cuentas).
-  // El saldo de la cuenta ya se actualiza aparte; los bolívares quedan disponibles en la cuenta.
-  if(!objetivo) return;
-  var actual = parseFloat(objetivo.bsRestante)||0;
-  objetivo.bsRestante = Math.round((actual + monto)*100)/100;
+// ── El dinero que ENTRA y se queda en la cuenta ────────────────────────────
+// A veces entra una remesa en bolívares y la dueña NO compra USDT con ellos:
+// los deja quietos. Después llega una remesa Brasil → Venezuela y paga con esos
+// mismos bolívares. Ese dinero tiene un costo real —los reales que entregó— y
+// hasta ahora no se guardaba en ningún lado, así que al gastarlo no había tasa
+// que adjudicarle y su ganancia salía sin base.
+//
+// Antes de esto existía aumentarLoteRecibido(), que lo intentaba y fallaba de
+// tres maneras: metía el dinero DENTRO de un lote ajeno sin tocar su tasa (ese
+// lote pasaba a afirmar que todo lo suyo costó una tasa que solo valía para una
+// parte, y de ahí salen las tasas que la app sugiere); si no encontraba lote no
+// hacía nada y no avisaba; y buscaba por "cuentaId" cuando el consumo FIFO y las
+// tasas buscan por "cuentaDestinoId", así que casi nunca encontraba nada.
+//
+// LA TASA — se guarda a lo que ese dinero VALE (uc), no a lo que costó (uv).
+//
+// La regla de la dueña es "esos bolívares valen lo que costaron los reales que
+// entregué por ellos", y esto parece contradecirla. No la contradice: la
+// completa. gV() suma el "pr" de TODA remesa VZLA, se compren USDT o no, así
+// que la app ya le apuntó la ganancia en el momento de recibirlos. Y como
+//
+//     pr = uc − uv
+//
+// guardar el lote a "uv" lo deja valiendo exactamente "pr" menos de lo que la
+// app acaba de decir que vale. Ese "pr" no se pierde: reaparece como ganancia
+// el día que se gasten. Contado dos veces.
+//
+// Medido con sus cifras (entran 138.000 Bs, entrega 836 BRL):
+//     uc 158,6207 − uv 154,8748 = 3,7459 = lo que la remesa ya apuntó
+//     ida y vuelta con el lote a uv → apuntado 3,7459 · real 0,7407
+//
+// Con "uc" el lote queda a valor de mercado, la ganancia se cuenta UNA vez —en
+// la remesa que la generó— y el ida y vuelta cuadra. Que es lo que la dueña
+// pide de fondo: el sistema no puede decirle una ganancia que nunca tuvo.
+//
+// El lote va marcado como "Remesa" para que se distinga de una compra o venta de
+// USDT de verdad: el inventario es de USDT, y esto no lo es.
+function crearLoteRecibido(moneda, monto, usdtValor, cuentaDestinoId, fecha, refUid){
+  var m = Math.round((parseFloat(monto)||0)*100)/100;
+  if(m<=0) return null;
+  // Sin cuenta no se puede emparejar: el consumo FIFO filtra por cuentaDestinoId
+  // y un lote suelto se lo comería cualquier operación de esa moneda.
+  if(!cuentaDestinoId) return null;
+  var u = Math.round((parseFloat(usdtValor)||0)*10000)/10000;
+  // Sin valor no hay tasa, y un lote con tasa 0 envenenaría las tasas que la app
+  // sugiere después. Mejor no crearlo que crearlo mintiendo.
+  if(u<=0) return null;
+  var lote = {
+    // id numérico: ordenFIFO ordena comparando (fecha, id) como números, así que
+    // aquí no sirve _newUid(), que devuelve texto.
+    id: Date.now()+Math.floor(Math.random()*100),
+    tipo:"venta", fecha:fecha, moneda:moneda,
+    montOrigen:0, usdt:u, neto:u,
+    tasa: Math.round((m/u)*10000)/10000,
+    comision:0,                      // ya está dentro de uv
+    bs:m, bsRestante:m,
+    plataforma:"Remesa", ordenId:"",
+    cuentaId:"",                     // no salió USDT de ninguna cuenta
+    cuentaDestinoId:cuentaDestinoId, // aquí entró — es por donde busca el consumo
+    restante:0, locked:false,
+    origenRemesa:refUid||"",
+    _mod:Date.now()
+  };
+  S.inventarioUsdt=S.inventarioUsdt||[];
+  S.inventarioUsdt.push(lote);
+  return lote;
+}
+// Cuando por fin entra el dinero de un cobro pendiente, nace su lote. El monto
+// puede ser parcial (un abono), así que el valor en USDT va a prorrata.
+function _loteAlCobrar(c, montoEntrado, cuentaDestinoId){
+  if(!c || !(montoEntrado>0) || !cuentaDestinoId) return null;
+  if(c.moneda!=="VES" && c.moneda!=="BRL") return null;   // solo monedas con lotes
+  var total=parseFloat(c.monto)||0;
+  var valor=parseFloat(c.usdtValor)||0;
+  if(valor<=0) return null;          // cobro viejo, sin valor guardado
+  var parte=total>0 ? (montoEntrado/total) : 1;
+  return crearLoteRecibido(c.moneda, montoEntrado, valor*parte,
+                           cuentaDestinoId, td(), c.refUid||"");
+}
+// Quita el lote que creó una remesa. Se usa al borrarla y al pasarla a
+// pendiente: en los dos casos ese dinero no entró, así que su lote no existe.
+function quitarLoteDeRemesa(refUid){
+  if(!refUid) return 0;
+  var inv=S.inventarioUsdt||[];
+  var antes=inv.length;
+  S.inventarioUsdt=inv.filter(function(r){return r.origenRemesa!==refUid;});
+  return antes-S.inventarioUsdt.length;
 }
 
 // Ajuste manual del restante de un lote (ej: bolívares ya gastados antes de esta versión)
