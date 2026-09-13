@@ -64,7 +64,7 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "ordenFIFO", "normalizarInventarioFIFO", "simularConsumoFIFO",
                     "f4", "f0", "_leerNumero", "_avisoCambioSaldo", "_fechaLote", "_idLoteNuevo",
                     "_diasEnElFuturo", "confirmarFechaFutura",
-                    "comisionBancoVES", "etiquetaComisionBanco"];
+                    "comisionBancoVES", "etiquetaComisionBanco", "salidaDeCuentaEntrega"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
 global.window = global.window || {};
 // S es el estado global de la app; aca solo hacen falta config y prestamos.
@@ -1216,6 +1216,54 @@ ok(!/parseFloat\(\(S\.config\|\|\{\}\)\.comision_banco_vzla\)\|\|0\.03/.test(HTM
 ok((HTML.match(/comisionBancoVES\(/g) || []).length >= 5,
    "y los sitios que la necesitan llaman a la funcion",
    (HTML.match(/comisionBancoVES\(/g) || []).length);
+
+// ── Cuando la entrega la hace un aliado ────────────────────────────────────
+// Brasil → Colombia: entran los reales, se compran USDT, se le mandan al aliado
+// descontada la ganancia, y el aliado le paga al cliente en pesos. Ella no
+// toca pesos en ningun momento.
+//
+// Antes: el formulario ni ofrecia cuenta de entrega —no hay cuentas en COP— asi
+// que la remesa se guardaba SIN descontar nada y el saldo de Binance decia tener
+// los USDT que ya se habian enviado. Dos remesas asi dejaron 115 USDT de mas.
+// Y elegir la cuenta de USDT a mano era peor: le restaba los 122.900 PESOS.
+console.log("\nLa entrega la hace un aliado y se le paga en USDT");
+const cUsdt = { id:"bjulio", nombre:"BINANCE JULIO", moneda:"USDT" };
+const cVes  = { id:"bdv", nombre:"BANCO DE VENEZUELA", moneda:"VES" };
+// El caso real: 250 R$ → 122.900 COP, uv 45,00 USDT
+const sAli = F.salidaDeCuentaEntrega(cUsdt, 122900, 45, "COP");
+ok(sAli.monto === 45 && sAli.moneda === "USDT",
+   "de la cuenta salen los 45 USDT que costo, no los 122.900 pesos",
+   JSON.stringify(sAli));
+const sNor = F.salidaDeCuentaEntrega(cVes, 20010, 21.29, "VES");
+ok(sNor.monto === 20010 && sNor.moneda === "VES",
+   "y una remesa normal sigue sacando bolivares de su banco", JSON.stringify(sNor));
+// Sin cuenta elegida se comporta como siempre: la moneda de destino.
+const sSin = F.salidaDeCuentaEntrega(null, 20010, 21.29, "VES");
+ok(sSin.monto === 20010 && sSin.moneda === "VES", "sin cuenta, igual que antes");
+// Redondeos: los USDT a cuatro decimales, el resto a dos.
+ok(F.salidaDeCuentaEntrega(cUsdt, 1, 45.00005, "COP").monto === 45.0001 ||
+   F.salidaDeCuentaEntrega(cUsdt, 1, 45.00005, "COP").monto === 45,
+   "los USDT se redondean a cuatro decimales",
+   F.salidaDeCuentaEntrega(cUsdt, 1, 45.00005, "COP").monto);
+ok(F.salidaDeCuentaEntrega(cVes, 20010.005, 1, "VES").monto === 20010.01,
+   "y la moneda de destino a dos",
+   F.salidaDeCuentaEntrega(cVes, 20010.005, 1, "VES").monto);
+// Sin uv no se inventa una salida
+ok(F.salidaDeCuentaEntrega(cUsdt, 122900, 0, "COP").monto === 0,
+   "sin uv no sale nada, y el aviso de cuenta sin encontrar hace el resto");
+
+// Y que actualizarCuentasPorRemesa la use y reciba el uv de quien la llama.
+ok(/var _sal=salidaDeCuentaEntrega\(_cDest, vesEntregado, uvUsdt, monDest\);/.test(HTML),
+   "actualizarCuentasPorRemesa decide con esa funcion");
+// Las llamadas ocupan varias lineas y llevan parentesis dentro, asi que se
+// busca por ventana, no por "todo menos parentesis".
+const _llamadas = HTML.match(/actualizarCuentasPorRemesa\([\s\S]{0,300}?\);/g) || [];
+ok(_llamadas.length === 3, "hay tres llamadas a actualizarCuentasPorRemesa", _llamadas.length);
+ok(_llamadas.every(c => c.indexOf("res.uv)") > -1),
+   "y las tres le pasan el uv: sin el, una entrega de aliado no descuenta nada",
+   _llamadas.filter(c => c.indexOf("res.uv)") === -1).length + " sin uv");
+ok(/La entrega la hace un aliado — ¿de qué cuenta salen los USDT\?/.test(HTML),
+   "el formulario ofrece la cuenta de USDT cuando no hay en la moneda de destino");
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

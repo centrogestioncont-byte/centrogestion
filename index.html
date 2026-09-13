@@ -4084,6 +4084,27 @@ function marcarRemesaPendiente(tipo,n){
     saveData();R();
   });
 }
+// Qué sale de la cuenta de entrega de una remesa.
+//
+// Normalmente, la moneda que recibe el cliente: bolívares de su banco, reales
+// de PagBank. Pero cuando la entrega la hace un ALIADO y se le paga en USDT,
+// esa moneda no pasa por ninguna cuenta suya — lo que sale son los USDT que
+// costó la entrega, que es "uv".
+//
+// La regla mira la CUENTA, no la ruta: si la cuenta de entrega está en USDT,
+// sale uv. Así vale para Colombia hoy y para cualquier aliado mañana, sin
+// tocar nada de Venezuela ni de Brasil.
+//
+// Sin esto, una remesa a Colombia se guardaba sin descontar nada —el formulario
+// ni ofrecía cuenta de destino, porque ella no tiene cuentas en pesos— y el
+// saldo de Binance decía tener unos USDT que ya había enviado. Dos remesas así
+// dejaron 115 USDT de más. Y elegir a mano la cuenta de USDT era peor: le
+// restaba los 122.900 PESOS al saldo en USDT.
+function salidaDeCuentaEntrega(cuenta, cantDestino, uvUsdt, monDest){
+  if(cuenta && cuenta.moneda==="USDT")
+    return { monto: Math.round((parseFloat(uvUsdt)||0)*10000)/10000, moneda:"USDT" };
+  return { monto: Math.round((parseFloat(cantDestino)||0)*100)/100, moneda: monDest };
+}
 // Buzón donde actualizarCuentasPorRemesa() deja las cuentas que no pudo
 // encontrar. Se vacía al empezar cada llamada y quien llama lo lee justo
 // después — así no hace falta cambiar lo que la función devuelve, que es la
@@ -4094,7 +4115,7 @@ var _cuentasNoEncontradas = [];
 // saber, ANTES de guardar, si alguna cuenta no se va a encontrar. Se usa el
 // mismo camino a propósito — una comprobación escrita aparte se separa del
 // cálculo de verdad con el primer cambio, y entonces avisa de lo que no es.
-function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaDestId, cant, skipOrigen, soloComprobar){
+function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaDestId, cant, skipOrigen, soloComprobar, uvUsdt){
   _cuentasNoEncontradas = [];
   // Actualiza saldos de cuentas para CUALQUIER moneda automáticamente.
   // Retorna _mov: lista de movimientos realizados para que saveTx los guarde en la remesa
@@ -4154,8 +4175,22 @@ function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaD
   if(!skipOrigen) adj(cOrigen, +montoOrigen, monOrig);
 
   // 2) Cuenta DESTINO baja (sale el dinero que le pagamos al cliente)
+  //
+  // Salvo cuando la entrega la hace un aliado y se le paga en USDT. Ahí lo que
+  // sale de la cuenta NO es la moneda que recibe el cliente —esa no pasa por
+  // ninguna cuenta suya— sino los USDT que costó la entrega, que es "uv".
+  // Pasó con Colombia: ella no maneja pesos, así que el formulario ni siquiera
+  // le ofrecía cuenta de destino, la remesa se guardaba sin descontar nada y el
+  // saldo de Binance decía tener unos USDT que ya había enviado. Dos remesas
+  // así dejaron 115 USDT de más.
+  //
+  // La regla es la cuenta, no la ruta: si la cuenta de entrega está en USDT,
+  // sale "uv" en USDT. Vale para Colombia hoy y para cualquier aliado mañana,
+  // sin tocar nada de Venezuela ni de Brasil.
   if(cuentaDestId){
-    adj(cuentaDestId, -vesEntregado, monDest);
+    var _cDest=(S.cuentas||[]).find(function(x){return x.id===cuentaDestId;});
+    var _sal=salidaDeCuentaEntrega(_cDest, vesEntregado, uvUsdt, monDest);
+    adj(cuentaDestId, -_sal.monto, _sal.moneda);
   } else {
     var defaultDest = { VES:"banco de venezuela", BRL:"nubank", USD:"zelle" };
     var kd = defaultDest[monDest];
@@ -4217,7 +4252,7 @@ function saveTx(){
   //    mover un céntimo, y la app se quedó con 20.010 Bs de más hasta que se
   //    miró el banco. Se usa el mismo recorrido en modo "solo comprobar".
   actualizarCuentasPorRemesa(f.rt,res.am,res.tc,res.tv,res.pr,f.cuentaBanco||"",
-                             f.cuentaDest||"",res.cant,f.pendiente===true,true);
+                             f.cuentaDest||"",res.cant,f.pendiente===true,true,res.uv);
   if(_cuentasNoEncontradas.length){
     var _faltan=_cuentasNoEncontradas.map(function(x){
       return "• "+(x.moneda?x.moneda+" · ":"")+"\""+x.cuenta+"\"  ("+(x.delta>0?"+":"")+f2(x.delta)+")";
@@ -4294,7 +4329,7 @@ function saveTx(){
   // Actualizar saldos y guardar movimientos exactos en la remesa para reversion precisa
   // Si es pendiente por cobrar: NO sumar a cuenta origen (el dinero aún no entró al banco)
   // Si pendiente: skipOrigen=true para NO sumar a la cuenta hasta que se marque cobrado
-  var _mov = actualizarCuentasPorRemesa(f.rt, res.am, res.tc, res.tv, res.pr, f.cuentaBanco||"", f.cuentaDest||"", res.cant, f.pendiente===true);
+  var _mov = actualizarCuentasPorRemesa(f.rt, res.am, res.tc, res.tv, res.pr, f.cuentaBanco||"", f.cuentaDest||"", res.cant, f.pendiente===true, false, res.uv);
   if(_mov && _mov.length) nuevaRemesa._mov = _mov;
   // Comisión bancaria VES: lo que cobra el banco por sacar los bolívares.
   // Sale de comisionBancoVES(), que es el único sitio que sabe las tarifas.
@@ -4398,7 +4433,7 @@ function saveTxEE(){
     pais:"VENEZUELA"};
   // Actualizar saldos y guardar movimientos exactos para reversion precisa
   // Si pendiente: skipOrigen=true para NO sumar a la cuenta hasta que se marque cobrado
-  var _movEE = actualizarCuentasPorRemesa("EEUU", res.am, parseFloat(f.tc_manual)||1.01, res.tv, res.pr, f.cuentaBanco||"", f.cuentaDest||"", res.cant, f.pendiente===true);
+  var _movEE = actualizarCuentasPorRemesa("EEUU", res.am, parseFloat(f.tc_manual)||1.01, res.tv, res.pr, f.cuentaBanco||"", f.cuentaDest||"", res.cant, f.pendiente===true, false, res.uv);
   if(_movEE && _movEE.length) nuevaRemesaEE._mov = _movEE;
   // Comisión bancaria VES en remesas EE.UU
   if(f.comisionBanco && esBancoVES(f.cuentaDest)){
@@ -15851,6 +15886,26 @@ function rNueva(){
           }).join("");
           html+="<div class='fl'><label>📤 ¿De qué cuenta salen los "+destMon+"? </label>"+
             "<select onchange='S.tx.cuentaDest=this.value'>"+optsD+"</select></div>";
+        } else if(destMon!=="USDT"&&!cuentasDest.length){
+          // Sin cuentas en la moneda de destino, la entrega la hace un aliado y
+          // se le paga en USDT. Antes aquí no se ofrecía nada: la remesa se
+          // guardaba sin descontar y el saldo de USDT decía tener lo que ya se
+          // había enviado. Se ofrecen las cuentas en USDT y sale "uv".
+          var cuentasUsdt=(S.cuentas||[]).filter(function(c){
+            return c.activa!==false && !c.esPersonal && c.moneda==="USDT";
+          });
+          if(cuentasUsdt.length){
+            var _uvSal=(function(){ try{ var r=cTx(); return parseFloat(r.uv)||0; }catch(e){ return 0; } })();
+            var optsU="<option value=''>-- No registrar --</option>"+cuentasUsdt.map(function(c){
+              var s=parseFloat(c.saldo)||0;
+              return "<option value='"+c.id+"'"+(S.tx.cuentaDest===c.id?" selected":"")+">"+
+                c.nombre+" ("+f2(s)+" USDT)"+(s<0?" ⚠️":"")+"</option>";
+            }).join("");
+            html+="<div class='fl'><label>📤 La entrega la hace un aliado — ¿de qué cuenta salen los USDT?</label>"+
+              "<select onchange='S.tx.cuentaDest=this.value'>"+optsU+"</select>"+
+              (_uvSal>0?"<div style='font-size:11px;color:#922b21;margin-top:5px'>Saldrán <b>"+f2(_uvSal)+" USDT</b> — no pasan "+destMon+" por ninguna cuenta tuya.</div>":"")+
+              "</div>";
+          }
         }
         html+="</div></div>";
       }
