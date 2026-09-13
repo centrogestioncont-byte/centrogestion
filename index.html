@@ -10303,6 +10303,27 @@ function reqDel(arr,id,field){
 }
 
 // Revierte los saldos de cuentas cuando se elimina una operación
+// Las monedas de una remesa salen de LA REMESA, no del array donde está
+// guardada. Antes se deducían así, en los dos sitios que revierten:
+//
+//     monOrig = tipo==="brl" ? "BRL" : tipo==="vzla" ? "VES" : "USD"
+//     monDest = tipo==="vzla" ? "BRL" : "VES"
+//
+// y eso da por hecho que todo lo que sale de Brasil entrega bolívares. Con una
+// remesa a Colombia, borrarla le devolvía al lote de bolívares los 122.900
+// PESOS que nunca salieron de ahí: medido, un lote pasaba de 51.043,97 a
+// 173.943,97. Lo mismo con Perú, y con cualquier ruta que no acabe en VES.
+//
+// Cada remesa guarda su "orig" y su "dest"; si faltan (registros viejos) se
+// busca por la ruta, y solo si tampoco está se usa la deducción de siempre.
+function monedasDeRemesa(tipo, r){
+  if(r && r.orig && r.dest) return { orig:r.orig, dest:r.dest };
+  var ruta=(r&&r.rt&&typeof getRutas==="function")
+    ? getRutas().find(function(x){return x.rt===r.rt;}) : null;
+  if(ruta) return { orig:ruta.orig, dest:ruta.dest||"VES" };
+  return { orig: tipo==="brl"?"BRL":tipo==="vzla"?"VES":"USD",
+           dest: tipo==="vzla"?"BRL":"VES" };
+}
 function revertirSaldosRemesa(tipo, r){
   // El lote que creó esta remesa se va con ella: ese dinero deja de existir en
   // el inventario igual que deja de existir en la cuenta.
@@ -10316,8 +10337,8 @@ function revertirSaldosRemesa(tipo, r){
     // Restaurar lotes FIFO: devolver USDT al lote de compra y BS al lote de venta
     var uc=parseFloat(r.uc)||parseFloat(r.pr)||0;
     var cant=parseFloat(r.cant)||0;
-    var monOrig=tipo==="brl"?"BRL":tipo==="vzla"?"VES":"USD";
-    var monDest=tipo==="vzla"?"BRL":"VES";
+    var _mon=monedasDeRemesa(tipo,r);
+    var monOrig=_mon.orig, monDest=_mon.dest;
     normalizarInventarioFIFO();
     // Restaurar USDT al lote de compra — primero a los de la MISMA cuenta que
     // se usó (más nuevo primero), igual criterio que consumirInventarioFIFO.
@@ -10391,8 +10412,8 @@ function revertirSaldosRemesa(tipo, r){
     if(r.cuentaDest) adj(r.cuentaDest, +cant, "VES");
   }
   // Restaurar lotes FIFO en el fallback también — respetando la cuenta, igual que arriba
-  var monOrig=tipo==="brl"?"BRL":tipo==="vzla"?"VES":"USD";
-  var monDest=tipo==="vzla"?"BRL":"VES";
+  var _mon2=monedasDeRemesa(tipo,r);
+  var monOrig=_mon2.orig, monDest=_mon2.dest;
   normalizarInventarioFIFO();
   var uc=parseFloat(r.uc)||0;
   if(uc>0){
