@@ -63,7 +63,8 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "crearLoteRecibido", "quitarLoteDeRemesa", "_loteAlCobrar",
                     "ordenFIFO", "normalizarInventarioFIFO", "simularConsumoFIFO",
                     "f4", "f0", "_leerNumero", "_avisoCambioSaldo", "_fechaLote", "_idLoteNuevo",
-                    "_diasEnElFuturo", "confirmarFechaFutura"];
+                    "_diasEnElFuturo", "confirmarFechaFutura",
+                    "comisionBancoVES", "etiquetaComisionBanco"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
 global.window = global.window || {};
 // S es el estado global de la app; aca solo hacen falta config y prestamos.
@@ -1174,6 +1175,47 @@ delete global.confirm;
 ok((HTML.match(/if\(!confirmarFechaFutura\(/g) || []).length === 3,
    "los tres: remesa, remesa EE.UU y compra/venta de USDT",
    (HTML.match(/if\(!confirmarFechaFutura\(/g) || []).length);
+
+// ── Lo que cobra el banco venezolano ───────────────────────────────────────
+// Tarifario del BCV: pago movil a otro banco 0,3% con MINIMO Bs 14;
+// transferencia a otro banco Bs 54 fijos; dentro del mismo banco, nada.
+// El minimo es el que faltaba: el 0,3% no llega a 14 hasta los 4.667 Bs, asi
+// que toda remesa por debajo se quedaba corta. El 12/09 una de 4.325 dejo la
+// cuenta 1,02 Bs por encima de lo que decia el banco.
+console.log("\nLa comision del banco VES");
+S.config = { comision_banco_vzla: 0.003, comision_banco_vzla_min: 14,
+             comision_banco_transferencia: 54 };
+const C = (t, bs) => F.comisionBancoVES(t, bs);
+ok(C("", 50000) === 0, "dentro del mismo banco no se cobra nada");
+ok(C(false, 50000) === 0, "ni cuando no se marca");
+ok(C("movil", 25056) === 75.17, "pago movil grande: el 0,3%", C("movil", 25056));
+ok(C("movil", 4325) === 14, "y uno pequeno: el minimo de 14, no 12,97", C("movil", 4325));
+ok(C("movil", 4666) === 14, "justo por debajo del umbral, el minimo", C("movil", 4666));
+ok(C("movil", 4667) === 14.001 || C("movil", 4667) === 14,
+   "y en el umbral empieza a mandar el porcentaje", C("movil", 4667));
+ok(C("movil", 10000) === 30, "10.000 → 30", C("movil", 10000));
+ok(C("transf", 25056) === 54 && C("transf", 4325) === 54,
+   "la transferencia son 54 fijos, no depende del monto");
+// El caso real que lo destapo
+ok(casi(C("movil", 4325) - 12.98, 1.02, 0.001),
+   "el caso de JOSE LUIS: 1,02 Bs mas de lo que cobraba antes",
+   C("movil", 4325) - 12.98);
+// Las remesas guardadas antes llevaban true/false: aquel true era el pago movil.
+ok(C(true, 25056) === 75.17, "una remesa vieja con true sigue saliendo igual");
+ok(F.etiquetaComisionBanco(true) === "pago movil a otro banco" ||
+   F.etiquetaComisionBanco(true).indexOf("vil") > -1, "y tiene su nombre");
+// Si no hay configuracion, los valores del tarifario
+S.config = {};
+ok(C("movil", 4325) === 14 && C("movil", 25056) === 75.17 && C("transf", 1) === 54,
+   "sin configuracion usa las tarifas del BCV");
+S.config = {};
+
+// Un solo sitio calcula la comision: antes habia ocho repitiendo "cant × %".
+ok(!/parseFloat\(\(S\.config\|\|\{\}\)\.comision_banco_vzla\)\|\|0\.03/.test(HTML),
+   "ya no queda ningun calculo suelto con el 3% de antes");
+ok((HTML.match(/comisionBancoVES\(/g) || []).length >= 5,
+   "y los sitios que la necesitan llaman a la funcion",
+   (HTML.match(/comisionBancoVES\(/g) || []).length);
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
