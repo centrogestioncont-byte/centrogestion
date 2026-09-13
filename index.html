@@ -602,7 +602,9 @@ let S={
   config:{
     comision_usdt: 0.06,
     comision_usdt_ves: 0,    // exonerada por terremotos Venezuela
-    comision_banco_vzla: 0.03,
+    comision_banco_vzla: 0.003,        // pago móvil a otro banco (BCV: 0,3%)
+    comision_banco_vzla_min: 14,       // mínimo obligatorio por operación
+    comision_banco_transferencia: 54,  // transferencia a otro banco, fijo
     pct_sueldo: 0.05,
     rutasExtra: [],
     cats_empresa:["GASTOS FIJOS EMPRESA","SERVICIOS DIGITALES","GASTOS OPERATIVOS","GASTOS EXTRAORD. EMPRESA"],
@@ -866,6 +868,45 @@ function cTxE(){
   return{am:am,tdia:td2,cant:am*td2,tc:tc,uc:uc,tv:tv,uv:uv,pr:pr,com:comOtrEE,comUc:comOtrEE,comUv:comVesEE};
 }
 // ── COMMISSION HELPER ────────────────────────────────
+// Lo que el banco venezolano cobra por entregar bolívares. Antes había ocho
+// sitios calculando "cant × %" cada uno por su cuenta, y ninguno contemplaba
+// que hay DOS tarifas distintas ni el mínimo obligatorio. Tarifario del BCV:
+//
+//   pago móvil a otro banco ... 0,3% del monto, MÍNIMO Bs 14
+//   transferencia a otro banco  Bs 54 fijos, sin porcentaje
+//   dentro del mismo banco .... nada
+//
+// El mínimo es el que se colaba: el 0,3% no llega a 14 Bs hasta los 4.667, así
+// que toda remesa por debajo de eso se quedaba corta. El 12/09, una de 4.325
+// dejó la cuenta 1,02 Bs por encima de lo que decía el banco.
+//
+// "tipo" es lo que se marcó en la remesa: "movil", "transf", o nada. Las
+// remesas viejas guardaban true/false, y ese true era el pago móvil.
+function comisionBancoVES(tipo, montoBs){
+  if(tipo===true) tipo="movil";          // remesas guardadas antes de separarlas
+  var bs=parseFloat(montoBs)||0;
+  var cfg=S.config||{};
+  if(tipo==="movil"){
+    var pct=parseFloat(cfg.comision_banco_vzla);
+    if(isNaN(pct)) pct=0.003;
+    var min=parseFloat(cfg.comision_banco_vzla_min);
+    if(isNaN(min)) min=14;
+    return Math.max(Math.round(bs*pct*100)/100, min);
+  }
+  if(tipo==="transf"){
+    var fijo=parseFloat(cfg.comision_banco_transferencia);
+    if(isNaN(fijo)) fijo=54;
+    return fijo;
+  }
+  return 0;
+}
+// Cómo se llama cada una, para no repetir el texto en cada pantalla.
+function etiquetaComisionBanco(tipo){
+  if(tipo===true) tipo="movil";
+  if(tipo==="movil")  return "pago móvil a otro banco";
+  if(tipo==="transf") return "transferencia a otro banco";
+  return "";
+}
 function esBancoVES(cuentaId){
   // Retorna true si la cuenta es un banco venezolano (VES)
   if(!cuentaId) return false;
@@ -4127,6 +4168,7 @@ function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaD
 function saveTx(){
   var f=S.tx;
   if(!f.date||!f.cl||!f.am||!f.tdia){alert("Completa: fecha, cliente, monto y tasa del día.");return;}
+  if(!confirmarFechaFutura(f.date,"Esta remesa")) return;
   // ⚠️ Aviso si el mes ya fue cerrado (no bloquea — permite registrar olvidados)
   var _txMesKey=f.date.substring(0,7);
   var _txCierreMes=(S.cierresMes||[]).find(function(c){return c.mesKey===_txMesKey;});
@@ -4254,11 +4296,10 @@ function saveTx(){
   // Si pendiente: skipOrigen=true para NO sumar a la cuenta hasta que se marque cobrado
   var _mov = actualizarCuentasPorRemesa(f.rt, res.am, res.tc, res.tv, res.pr, f.cuentaBanco||"", f.cuentaDest||"", res.cant, f.pendiente===true);
   if(_mov && _mov.length) nuevaRemesa._mov = _mov;
-  // Comisión bancaria VES: si el usuario marcó que es transferencia a otro banco,
-  // descontar el 3% de la cuenta VES destino y restar de la ganancia
+  // Comisión bancaria VES: lo que cobra el banco por sacar los bolívares.
+  // Sale de comisionBancoVES(), que es el único sitio que sabe las tarifas.
   if(f.comisionBanco && esBancoVES(f.cuentaDest)){
-    var tasaComBanco=parseFloat((S.config||{}).comision_banco_vzla)||0.03;
-    var comVes=Math.round(res.cant*tasaComBanco*100)/100;
+    var comVes=comisionBancoVES(f.comisionBanco, res.cant);
     // Descontar comisión extra de la cuenta VES
     var cDstB=(S.cuentas||[]).find(function(x){return x.id===f.cuentaDest;});
     if(cDstB){
@@ -4271,6 +4312,7 @@ function saveTx(){
     var comUsdt=res.tv>0?Math.round(comVes/res.tv*10000)/10000:0;
     nuevaRemesa.pr=Math.round((nuevaRemesa.pr-comUsdt)*10000)/10000;
     nuevaRemesa.comisionBancoVes=comVes;
+    nuevaRemesa.comisionBancoTipo=(f.comisionBanco===true?"movil":f.comisionBanco);
   }
   S.tx={date:f.date,id:"",cl:"",rt:f.rt,am:"",
     tdia:f.tdia,
@@ -4294,6 +4336,7 @@ function saveTx(){
 function saveTxEE(){
   var f=S.txE;
   if(!f.date||!f.am||!f.tdia){alert("Completa: fecha, monto y tasa del día.");return;}
+  if(!confirmarFechaFutura(f.date,"Esta remesa")) return;
   // ⚠️ Aviso si el mes ya fue cerrado (no bloquea — permite registrar olvidados)
   var _txeMesKey=f.date.substring(0,7);
   var _txeCierreMes=(S.cierresMes||[]).find(function(c){return c.mesKey===_txeMesKey;});
@@ -4359,8 +4402,7 @@ function saveTxEE(){
   if(_movEE && _movEE.length) nuevaRemesaEE._mov = _movEE;
   // Comisión bancaria VES en remesas EE.UU
   if(f.comisionBanco && esBancoVES(f.cuentaDest)){
-    var tasaComBancoEE=parseFloat((S.config||{}).comision_banco_vzla)||0.03;
-    var comVesEE=Math.round(res.cant*tasaComBancoEE*100)/100;
+    var comVesEE=comisionBancoVES(f.comisionBanco, res.cant);
     var cDstBEE=(S.cuentas||[]).find(function(x){return x.id===f.cuentaDest;});
     if(cDstBEE){
       cDstBEE.saldo=Math.round(((parseFloat(cDstBEE.saldo)||0)-comVesEE)*100)/100;
@@ -4370,6 +4412,7 @@ function saveTxEE(){
     var comUsdtEE=res.tv>0?Math.round(comVesEE/res.tv*10000)/10000:0;
     nuevaRemesaEE.pr=Math.round((nuevaRemesaEE.pr-comUsdtEE)*10000)/10000;
     nuevaRemesaEE.comisionBancoVes=comVesEE;
+    nuevaRemesaEE.comisionBancoTipo=(f.comisionBanco===true?"movil":f.comisionBanco);
   }
   S.txE={date:f.date,id:"",cl:"",am:"",
     tdia:f.tdia,
@@ -6194,6 +6237,7 @@ function saveIU(){
   var f=S.nIU;
   var usdt=parseFloat(f.usdt)||0,tasa=parseFloat(f.tasa)||0,com=parseFloat(f.comision)||COM();
   if(!f.fecha||!usdt||!tasa){alert("Completa: fecha, USDT y tasa.");return;}
+  if(!confirmarFechaFutura(f.fecha,"Esta operación")) return;
   // Confirmación con resumen — para detectar a tiempo si la moneda/cuenta
   // seleccionada no es la que realmente usaste (ej: dejar VES puesto de la
   // operación anterior cuando en realidad pagaste con BRL).
@@ -6566,10 +6610,18 @@ function delCatPersonal(cat){
   saveData();R();
 }
 function guardarComisionBanco(){
-  var v=parseFloat(document.getElementById("inp-com-banco").value);
-  if(isNaN(v)||v<0||v>0.5){alert("Valor inválido. Usa ej: 0.03 para 3%");return;}
-  if(!S.config)S.config={};S.config.comision_banco_vzla=v;saveData();R();
-  alert("✅ Comisión bancaria VE guardada: "+(v*100).toFixed(1)+"%");
+  var v=_leerNumero(document.getElementById("inp-com-banco").value);
+  if(isNaN(v)||v<0||v>0.5){alert("Porcentaje inválido. Usa ej: 0.003 para 0,3%");return;}
+  var mn=_leerNumero(document.getElementById("inp-com-banco-min").value);
+  if(isNaN(mn)||mn<0){alert("Mínimo inválido.");return;}
+  var tr=_leerNumero(document.getElementById("inp-com-banco-transf").value);
+  if(isNaN(tr)||tr<0){alert("Comisión de transferencia inválida.");return;}
+  if(!S.config)S.config={};
+  S.config.comision_banco_vzla=v;
+  S.config.comision_banco_vzla_min=mn;
+  S.config.comision_banco_transferencia=tr;
+  saveData();R();
+  alert("✅ Comisiones del banco VE guardadas:\n\nPago móvil: "+(v*100).toFixed(2)+"% (mínimo "+f2(mn)+" Bs)\nTransferencia: "+f2(tr)+" Bs");
 }
 function editComision(){
   var actual=COM();
@@ -7098,11 +7150,20 @@ function rConfigAdmin(){
         "</div>"+
         "<div style='margin-top:14px;padding-top:14px;border-top:1px solid #eee'>"+
           "<div style='font-size:12px;font-weight:700;color:#555;margin-bottom:8px'>🏦 Comisión bancaria Venezuela (otro banco)</div>"+
-          "<div style='font-size:11px;color:#888;margin-bottom:6px'>Se aplica al pagar en Bs a otro banco. Tú asumes el costo.</div>"+
-          "<div style='display:flex;gap:8px;align-items:center;max-width:300px'>"+
-            "<input type='number' id='inp-com-banco' step='0.001' value='"+(((S.config||{}).comision_banco_vzla!==undefined)?S.config.comision_banco_vzla:0.03)+"' style='flex:1;padding:9px;border:1.5px solid #ddd;border-radius:8px;font-size:14px'>"+
-            "<button onclick='guardarComisionBanco()' style='padding:9px 14px;background:#c0392b;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
+          "<div style='font-size:11px;color:#888;margin-bottom:8px'>Lo que cobra el banco por pagar en Bs a otro banco. Tú asumes el costo. Tarifario del BCV: pago móvil 0,3% con mínimo 14 Bs · transferencia 54 Bs fijos.</div>"+
+          "<div style='display:flex;gap:8px;align-items:center;max-width:420px;margin-bottom:6px'>"+
+            "<span style='font-size:11px;color:#555;min-width:116px'>Pago móvil · %</span>"+
+            "<input type='number' id='inp-com-banco' step='0.001' value='"+(((S.config||{}).comision_banco_vzla!==undefined)?S.config.comision_banco_vzla:0.003)+"' style='flex:1;padding:9px;border:1.5px solid #ddd;border-radius:8px;font-size:14px'>"+
           "</div>"+
+          "<div style='display:flex;gap:8px;align-items:center;max-width:420px;margin-bottom:6px'>"+
+            "<span style='font-size:11px;color:#555;min-width:116px'>Pago móvil · mínimo</span>"+
+            "<input type='number' id='inp-com-banco-min' step='0.01' value='"+(((S.config||{}).comision_banco_vzla_min!==undefined)?S.config.comision_banco_vzla_min:14)+"' style='flex:1;padding:9px;border:1.5px solid #ddd;border-radius:8px;font-size:14px'>"+
+          "</div>"+
+          "<div style='display:flex;gap:8px;align-items:center;max-width:420px;margin-bottom:8px'>"+
+            "<span style='font-size:11px;color:#555;min-width:116px'>Transferencia · fijo</span>"+
+            "<input type='number' id='inp-com-banco-transf' step='0.01' value='"+(((S.config||{}).comision_banco_transferencia!==undefined)?S.config.comision_banco_transferencia:54)+"' style='flex:1;padding:9px;border:1.5px solid #ddd;border-radius:8px;font-size:14px'>"+
+          "</div>"+
+          "<button onclick='guardarComisionBanco()' style='padding:9px 14px;background:#c0392b;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
         "</div>"+
         "<div style='margin-top:14px;padding-top:14px;border-top:1px solid #eee'>"+
           "<div style='font-size:12px;font-weight:700;color:#555;margin-bottom:6px'>🚨 Alertas inteligentes</div>"+
@@ -10798,6 +10859,28 @@ function _fechaLote(f){
   if(q.length===3) return q[1].padStart(2,"0")+"/"+q[0].padStart(2,"0");  // dd/mm/aa
   if(q.length===2) return q[0].padStart(2,"0")+"/"+q[1].padStart(2,"0");  // ya es mm/dd
   return s;
+}
+// Cuántos días por delante de hoy está una fecha ISO. Negativo si es pasada.
+function _diasEnElFuturo(iso){
+  if(!iso) return 0;
+  var hoy=new Date(td()+"T00:00:00");
+  var f=new Date(String(iso).slice(0,10)+"T00:00:00");
+  if(isNaN(f.getTime())) return 0;
+  return Math.round((f-hoy)/86400000);
+}
+// Aviso —que no bloqueo— al registrar algo con fecha futura. Un registro
+// adelantado se queda el ÚLTIMO de la cola del inventario hasta que llegue ese
+// día: el dinero ya está en la cuenta pero el FIFO no lo toca, así que las
+// remesas siguientes gastan de otros lotes y a otra tasa. Pasó el 12/09
+// poniendo 18/09 sin querer. No bloquea porque a veces se adelanta a propósito,
+// igual que el aviso del mes ya cerrado.
+function confirmarFechaFutura(iso, que){
+  var d=_diasEnElFuturo(iso);
+  if(d<=0) return true;
+  return confirm("⚠️ Estás poniendo el "+ds(iso)+", que "+
+    (d===1?"es mañana":"son "+d+" días por delante de hoy")+".\n\n"+
+    (que||"Esta operación")+" se quedará la última en la cola del inventario "+
+    "hasta que llegue ese día.\n\n¿Es correcto?");
 }
 // Un id de lote nuevo: numérico, único y siempre mayor que los que ya están,
 // porque ordenFIFO desempata por id cuando la fecha es la misma.
@@ -15694,9 +15777,16 @@ function rNueva(){
   var uc=tc>0?r4(am/tc-_comPlat):0;
   var uv=tv>0?r4(cant/tv+_comPlat):0;
   var pr=r4(uc-uv);
-  // Comisión bancaria VES 3%: se suma al descuento cuando la casilla está marcada
-  var tasaCom=(parseFloat((S.config||{}).comision_banco_vzla)||0.03);
-  var comVesVivo=(f.comisionBanco&&ruta.dest==="VES")?Math.round(cant*tasaCom*100)/100:0;
+  // Comisión bancaria VES: se suma al descuento según la forma de pago elegida
+  var comVesVivo=(f.comisionBanco&&ruta.dest==="VES")?comisionBancoVES(f.comisionBanco,cant):0;
+  // Tarifas para enseñarlas en el desplegable — las de verdad las aplica
+  // comisionBancoVES(), esto es solo el texto.
+  var _cfgCom=S.config||{};
+  var _pctCom=parseFloat(_cfgCom.comision_banco_vzla); if(isNaN(_pctCom)) _pctCom=0.003;
+  var _minCom=parseFloat(_cfgCom.comision_banco_vzla_min); if(isNaN(_minCom)) _minCom=14;
+  var _fijoCom=parseFloat(_cfgCom.comision_banco_transferencia); if(isNaN(_fijoCom)) _fijoCom=54;
+  var _ctTx=(S.tx.comisionBanco===true?"movil":S.tx.comisionBanco);
+  var _cvTx=_ctTx?comisionBancoVES(_ctTx,(parseFloat(S.tx.cant2)||cant)):0;
   var comUsdtVivo=(comVesVivo>0&&tv>0)?Math.round(comVesVivo/tv*10000)/10000:0;
   var prNeto=Math.round((pr-comUsdtVivo)*10000)/10000;
   var ok=am>0&&tdia>0&&tc>0&&tv>0;
@@ -15821,10 +15911,13 @@ function rNueva(){
     (S.tx.pendiente?"<div style='margin-top:8px;font-size:11px;color:#7a5c00'>💡 Se creará una <b>cuenta por cobrar</b> con el monto y la comisión. Cuando el cliente pague, lo marcas como cobrado en la sección 💳 Por Cobrar.</div>":"")+
     "</div>"+
     (ruta.dest==="VES"?"<div style='background:#FFF0EE;border:1.5px solid #e74c3c88;border-radius:10px;padding:12px 14px;margin-bottom:12px'>"+
-    "<label style='display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;font-weight:600'>"+
-    "<input type='checkbox' id='chk-com-banco' "+(S.tx.comisionBanco?"checked":"")+" onchange=\"S.tx.comisionBanco=this.checked;R()\" style='width:18px;height:18px;cursor:pointer'>"+
-    "🏦 Transferencia a OTRO banco VES (cobra comisión "+(((S.config||{}).comision_banco_vzla||0.03)*100).toFixed(0)+"%)</label>"+
-    (S.tx.comisionBanco?"<div style='margin-top:8px;font-size:11px;color:#922b21'>📌 Comisión: "+f2(Math.round(((parseFloat(S.tx.cant2)||cant)*((S.config||{}).comision_banco_vzla||0.03))*100)/100)+" Bs — la asumes tú, se descuenta de tu ganancia.</div>":"")+
+"<div style='font-size:13px;font-weight:700;color:#922b21;margin-bottom:8px'>🏦 ¿Cómo le pagas los bolívares?</div>"+
+    "<select onchange=\"S.tx.comisionBanco=this.value;R()\" style='width:100%;padding:9px;border:1.5px solid #e74c3c88;border-radius:8px;font-size:13px;background:#fff'>"+
+      "<option value=''"+(!_ctTx?" selected":"")+">Dentro del mismo banco — sin comisión</option>"+
+      "<option value='movil'"+(_ctTx==="movil"?" selected":"")+">Pago móvil a otro banco — "+(_pctCom*100).toFixed(2).replace(".",",")+"%, mínimo "+f2(_minCom)+" Bs</option>"+
+      "<option value='transf'"+(_ctTx==="transf"?" selected":"")+">Transferencia a otro banco — "+f2(_fijoCom)+" Bs fijos</option>"+
+    "</select>"+
+    (_cvTx>0?"<div style='margin-top:8px;font-size:11px;color:#922b21'>📌 Comisión: "+f2(_cvTx)+" Bs — la asumes tú, se descuenta de tu ganancia.</div>":"")+
     "</div>":"")+
     "<button class='btn-main btn-green' onclick='saveTx()'>💾 Guardar y bloquear</button></div>";
 }
@@ -15850,8 +15943,15 @@ function rNuevaEE(){
   var uc=tc>0?r4(am/tc-_comPlatEE):0;
   var uv=tv>0?r4(cant/tv+_comPlatEE):0;
   var pr=r4(uc-uv);
-  var tasaComEE=(parseFloat((S.config||{}).comision_banco_vzla)||0.03);
-  var comVesVivoEE=(f.comisionBanco)?Math.round(cant*tasaComEE*100)/100:0;
+  var comVesVivoEE=(f.comisionBanco)?comisionBancoVES(f.comisionBanco,cant):0;
+  // Tarifas para enseñarlas en el desplegable — las de verdad las aplica
+  // comisionBancoVES(), esto es solo el texto.
+  var _cfgCom=S.config||{};
+  var _pctCom=parseFloat(_cfgCom.comision_banco_vzla); if(isNaN(_pctCom)) _pctCom=0.003;
+  var _minCom=parseFloat(_cfgCom.comision_banco_vzla_min); if(isNaN(_minCom)) _minCom=14;
+  var _fijoCom=parseFloat(_cfgCom.comision_banco_transferencia); if(isNaN(_fijoCom)) _fijoCom=54;
+  var _ctEE=(S.txE.comisionBanco===true?"movil":S.txE.comisionBanco);
+  var _cvEE=_ctEE?comisionBancoVES(_ctEE,cant):0;
   var comUsdtVivoEE=(comVesVivoEE>0&&tv>0)?Math.round(comVesVivoEE/tv*10000)/10000:0;
   var prNetoEE=Math.round((pr-comUsdtVivoEE)*10000)/10000;
   var ok=am>0&&tdia>0&&tc>0&&tv>0;
@@ -15961,10 +16061,13 @@ function rNuevaEE(){
     (S.txE.pendiente?"<div style='margin-top:8px;font-size:11px;color:#7a5c00'>💡 Se creará una <b>cuenta por cobrar</b>. Márcala como cobrada desde 💳 Por Cobrar cuando recibas el pago.</div>":"")+
     "</div>"+
     "<div style='background:#FFF0EE;border:1.5px solid #e74c3c88;border-radius:10px;padding:12px 14px;margin-bottom:12px'>"+
-    "<label style='display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;font-weight:600'>"+
-    "<input type='checkbox' id='chk-com-banco-ee' "+(S.txE.comisionBanco?"checked":"")+" onchange=\"S.txE.comisionBanco=this.checked;R()\" style='width:18px;height:18px;cursor:pointer'>"+
-    "🏦 Transferencia a OTRO banco VES (cobra comisión "+(((S.config||{}).comision_banco_vzla||0.03)*100).toFixed(0)+"%)</label>"+
-    (S.txE.comisionBanco?"<div style='margin-top:8px;font-size:11px;color:#922b21'>📌 Comisión: "+f2(Math.round((cant*((S.config||{}).comision_banco_vzla||0.03))*100)/100)+" Bs — la asumes tú, se descuenta de tu ganancia.</div>":"")+
+"<div style='font-size:13px;font-weight:700;color:#922b21;margin-bottom:8px'>🏦 ¿Cómo le pagas los bolívares?</div>"+
+    "<select onchange=\"S.txE.comisionBanco=this.value;R()\" style='width:100%;padding:9px;border:1.5px solid #e74c3c88;border-radius:8px;font-size:13px;background:#fff'>"+
+      "<option value=''"+(!_ctEE?" selected":"")+">Dentro del mismo banco — sin comisión</option>"+
+      "<option value='movil'"+(_ctEE==="movil"?" selected":"")+">Pago móvil a otro banco — "+(_pctCom*100).toFixed(2).replace(".",",")+"%, mínimo "+f2(_minCom)+" Bs</option>"+
+      "<option value='transf'"+(_ctEE==="transf"?" selected":"")+">Transferencia a otro banco — "+f2(_fijoCom)+" Bs fijos</option>"+
+    "</select>"+
+    (_cvEE>0?"<div style='margin-top:8px;font-size:11px;color:#922b21'>📌 Comisión: "+f2(_cvEE)+" Bs — la asumes tú, se descuenta de tu ganancia.</div>":"")+
     "</div>" +
     "<button class='btn-main btn-blue' onclick='saveTxEE()'>💾 Guardar operación EE.UU</button></div>";
   // ── Añadir sección Ganancia Extra al final de rNueva ──────────
