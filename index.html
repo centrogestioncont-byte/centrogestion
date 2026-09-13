@@ -4127,6 +4127,7 @@ function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaD
 function saveTx(){
   var f=S.tx;
   if(!f.date||!f.cl||!f.am||!f.tdia){alert("Completa: fecha, cliente, monto y tasa del día.");return;}
+  if(!confirmarFechaFutura(f.date,"Esta remesa")) return;
   // ⚠️ Aviso si el mes ya fue cerrado (no bloquea — permite registrar olvidados)
   var _txMesKey=f.date.substring(0,7);
   var _txCierreMes=(S.cierresMes||[]).find(function(c){return c.mesKey===_txMesKey;});
@@ -4294,6 +4295,7 @@ function saveTx(){
 function saveTxEE(){
   var f=S.txE;
   if(!f.date||!f.am||!f.tdia){alert("Completa: fecha, monto y tasa del día.");return;}
+  if(!confirmarFechaFutura(f.date,"Esta remesa")) return;
   // ⚠️ Aviso si el mes ya fue cerrado (no bloquea — permite registrar olvidados)
   var _txeMesKey=f.date.substring(0,7);
   var _txeCierreMes=(S.cierresMes||[]).find(function(c){return c.mesKey===_txeMesKey;});
@@ -6194,6 +6196,7 @@ function saveIU(){
   var f=S.nIU;
   var usdt=parseFloat(f.usdt)||0,tasa=parseFloat(f.tasa)||0,com=parseFloat(f.comision)||COM();
   if(!f.fecha||!usdt||!tasa){alert("Completa: fecha, USDT y tasa.");return;}
+  if(!confirmarFechaFutura(f.fecha,"Esta operación")) return;
   // Confirmación con resumen — para detectar a tiempo si la moneda/cuenta
   // seleccionada no es la que realmente usaste (ej: dejar VES puesto de la
   // operación anterior cuando en realidad pagaste con BRL).
@@ -10798,6 +10801,28 @@ function _fechaLote(f){
   if(q.length===3) return q[1].padStart(2,"0")+"/"+q[0].padStart(2,"0");  // dd/mm/aa
   if(q.length===2) return q[0].padStart(2,"0")+"/"+q[1].padStart(2,"0");  // ya es mm/dd
   return s;
+}
+// Cuántos días por delante de hoy está una fecha ISO. Negativo si es pasada.
+function _diasEnElFuturo(iso){
+  if(!iso) return 0;
+  var hoy=new Date(td()+"T00:00:00");
+  var f=new Date(String(iso).slice(0,10)+"T00:00:00");
+  if(isNaN(f.getTime())) return 0;
+  return Math.round((f-hoy)/86400000);
+}
+// Aviso —que no bloqueo— al registrar algo con fecha futura. Un registro
+// adelantado se queda el ÚLTIMO de la cola del inventario hasta que llegue ese
+// día: el dinero ya está en la cuenta pero el FIFO no lo toca, así que las
+// remesas siguientes gastan de otros lotes y a otra tasa. Pasó el 12/09
+// poniendo 18/09 sin querer. No bloquea porque a veces se adelanta a propósito,
+// igual que el aviso del mes ya cerrado.
+function confirmarFechaFutura(iso, que){
+  var d=_diasEnElFuturo(iso);
+  if(d<=0) return true;
+  return confirm("⚠️ Estás poniendo el "+ds(iso)+", que "+
+    (d===1?"es mañana":"son "+d+" días por delante de hoy")+".\n\n"+
+    (que||"Esta operación")+" se quedará la última en la cola del inventario "+
+    "hasta que llegue ese día.\n\n¿Es correcto?");
 }
 // Un id de lote nuevo: numérico, único y siempre mayor que los que ya están,
 // porque ordenFIFO desempata por id cuando la fecha es la misma.
