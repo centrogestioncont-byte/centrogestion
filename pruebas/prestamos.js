@@ -45,7 +45,7 @@ const CONSTANTES = ["MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD"
                     "_MERGE_OBJETOS", "_MERGE_HISTORIAL",
                     "DATA_KEYS", "_CLAVES_QUE_NO_SON_DATOS"];
 
-const NECESARIAS = ["r4", "f2", "td", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
+const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
                     "congelarMora", "_sumarMeses", "_isoDeFecha", "calcularAmortizacion",
                     "tasaAnualEfectiva", "_periodDaysDe", "perfilRiesgoCliente",
                     "puntoEquilibrio", "tasaSugerida", "_conDiaDelMes",
@@ -62,7 +62,8 @@ const NECESARIAS = ["r4", "f2", "td", "cfgMora", "_diasIso", "detalleMora", "mor
                     "_huellaCompleta", "_conteoRapido",
                     "crearLoteRecibido", "quitarLoteDeRemesa", "_loteAlCobrar",
                     "ordenFIFO", "normalizarInventarioFIFO", "simularConsumoFIFO",
-                    "f4", "f0", "_leerNumero", "_avisoCambioSaldo", "_fechaLote", "_idLoteNuevo"];
+                    "f4", "f0", "_leerNumero", "_avisoCambioSaldo", "_fechaLote", "_idLoteNuevo",
+                    "_diasEnElFuturo", "confirmarFechaFutura"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
 global.window = global.window || {};
 // S es el estado global de la app; aca solo hacen falta config y prestamos.
@@ -1133,6 +1134,46 @@ ok(mezclados.slice().sort(F.ordenFIFO).map(x => x.id).join() === "1,2,3",
 // Entre meses: el 13 de septiembre va antes que el 20, escritos como sea.
 ok(F.ordenFIFO({fecha:"13/09/26",id:1},{fecha:"09/20",id:2}) < 0,
    "un lote del 13/09 se gasta antes que uno del 20/09");
+
+// ── Aviso al registrar con fecha futura ────────────────────────────────────
+// Un registro adelantado se queda el ULTIMO de la cola del inventario hasta que
+// llegue ese dia: el dinero ya esta en la cuenta pero el FIFO no lo toca, asi
+// que las remesas siguientes gastan de otros lotes y a otra tasa. Paso el 12/09
+// poniendo 18/09 sin querer.
+console.log("\nFechas por delante de hoy");
+const _iso = (d) => { const x = new Date(); x.setDate(x.getDate() + d);
+  return x.getFullYear() + "-" + String(x.getMonth()+1).padStart(2,"0") + "-" +
+         String(x.getDate()).padStart(2,"0"); };
+ok(F._diasEnElFuturo(_iso(0))  === 0, "hoy son cero dias", F._diasEnElFuturo(_iso(0)));
+ok(F._diasEnElFuturo(_iso(5))  === 5, "dentro de cinco dias", F._diasEnElFuturo(_iso(5)));
+ok(F._diasEnElFuturo(_iso(1))  === 1, "manana", F._diasEnElFuturo(_iso(1)));
+ok(F._diasEnElFuturo(_iso(-3)) === -3, "y el pasado sale negativo", F._diasEnElFuturo(_iso(-3)));
+ok(F._diasEnElFuturo("") === 0 && F._diasEnElFuturo("no es fecha") === 0,
+   "lo que no es una fecha no inventa dias");
+
+// No bloquea: pregunta, y lo que decida el usuario es lo que vale.
+let preguntado = null;
+global.confirm = (t) => { preguntado = t; return true; };
+ok(F.confirmarFechaFutura(_iso(0), "Esta remesa") === true && preguntado === null,
+   "con la fecha de hoy no pregunta nada");
+ok(F.confirmarFechaFutura(_iso(-10), "Esta remesa") === true && preguntado === null,
+   "con una fecha pasada tampoco: registrar olvidados es normal");
+ok(F.confirmarFechaFutura(_iso(5), "Esta remesa") === true && preguntado !== null,
+   "con una futura si pregunta");
+ok(preguntado.indexOf("5 días por delante") > -1, "y dice cuantos dias", preguntado);
+ok(preguntado.indexOf("la última en la cola") > -1, "y por que importa");
+preguntado = null;
+F.confirmarFechaFutura(_iso(1), "Esta remesa");
+ok(preguntado.indexOf("es mañana") > -1, "manana lo dice con palabras", preguntado);
+global.confirm = () => false;
+ok(F.confirmarFechaFutura(_iso(5), "Esta remesa") === false,
+   "y si dice que no, no se guarda");
+delete global.confirm;
+
+// Y que los tres sitios que registran una operacion lo llamen.
+ok((HTML.match(/if\(!confirmarFechaFutura\(/g) || []).length === 3,
+   "los tres: remesa, remesa EE.UU y compra/venta de USDT",
+   (HTML.match(/if\(!confirmarFechaFutura\(/g) || []).length);
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
