@@ -1032,9 +1032,12 @@ ok(tres.every(x => x.fecha === "09/12"), "los tres quedan con la misma fecha");
 ok(tres.slice().sort(F.ordenFIFO).map(x => x.id).join() === "1,2,3",
    "y entonces manda el orden en que se crearon",
    tres.slice().sort(F.ordenFIFO).map(x => x.id).join());
-// Sin normalizar, el de la remesa se iba al final aunque fuera el primero.
-ok([{fecha:"12/09/26",id:1},{fecha:"09/12",id:2}].sort(F.ordenFIFO)[0].id === 2,
-   "(asi era antes: la venta de USDT se colaba delante)");
+// Antes, sin normalizar, el de la remesa se iba al final aunque fuera el
+// primero. Ahora ordenFIFO normaliza el mismo, asi que ni siquiera hace falta
+// que se lo hayan pasado limpio.
+ok([{fecha:"12/09/26",id:1},{fecha:"09/12",id:2}].sort(F.ordenFIFO)[0].id === 1,
+   "y con las fechas crudas mezcladas, manda el id",
+   [{fecha:"12/09/26",id:1},{fecha:"09/12",id:2}].sort(F.ordenFIFO)[0].id);
 
 console.log("\nEl caso del 12/09, con sus numeros");
 S.inventarioUsdt = [];
@@ -1083,6 +1086,53 @@ ok(/if\(r\.fecha\)\{ var fn=_fechaLote\(r\.fecha\); if\(fn!==r\.fecha\) r\.fecha
    "y los lotes ya guardados se corrigen al leer el inventario");
 ok(!/f\.fecha\.slice\(5\)\.replace\("-","\/"\)/.test(HTML),
    "ya no queda el recorte a mano que se desincronizaba");
+
+// ── TODOS los sitios que meten un lote, no solo los que me acordé ───────────
+// Esta es la prueba que faltaba de verdad. La anterior miraba tres llamadas
+// concretas y por eso se me pasaron cuatro: los lotes "Operación" y
+// "Operación EE.UU" seguían escribiendo ds(f.date), que es dd/mm/aa. En vez de
+// listar sitios a mano, se recorre el archivo y se exige que la fecha de CADA
+// push salga de _fechaLote(). Si alguien añade uno nuevo mañana, falla aquí.
+console.log("\nTodos los sitios que crean un lote usan la misma fecha");
+// Cada "inventarioUsdt.push(" del archivo, sin listarlos a mano.
+const posiciones = [...HTML.matchAll(/inventarioUsdt\.push\(/g)].map(m => m.index);
+ok(posiciones.length >= 7, "se encuentran los siete sitios que meten lotes",
+   posiciones.length);
+// Variables ya normalizadas: las que se asignan con _fechaLote(...)
+const limpias = new Set(
+  [...HTML.matchAll(/var\s+([A-Za-z_$][\w$]*)\s*=\s*_fechaLote\(/g)].map(m => m[1]));
+const sucios = [];
+posiciones.forEach(i => {
+  const trozo = HTML.slice(i, i + 700);
+  const campo = /fecha\s*:\s*([^,}\n]+)/.exec(trozo);
+  if (!campo) {
+    // push(lote): el objeto se arma en crearLoteRecibido, ya comprobado arriba.
+    if (!/inventarioUsdt\.push\([A-Za-z_$][\w$]*\)/.test(trozo)) sucios.push("(push sin fecha)");
+    return;
+  }
+  const val = campo[1].trim();
+  if (val.startsWith("_fechaLote(") || limpias.has(val)) return;
+  sucios.push(val);
+});
+ok(sucios.length === 0, "ninguno escribe la fecha por su cuenta", sucios.join(" · "));
+ok(!/var\s+fd\s*=\s*ds\(/.test(HTML),
+   "y no queda ningun lote naciendo con ds(), que devuelve dd/mm/aa");
+
+// Y ordenFIFO normaliza él mismo, para no depender de que alguien lo haya hecho
+// antes: habia dos sitios que ordenaban sin normalizar, uno de ellos el
+// historial que se ve en pantalla.
+console.log("\nordenFIFO no depende de que le normalicen la entrada");
+const mezclados = [
+  { fecha: "2026-09-13", id: 3 },   // ISO, sin tocar
+  { fecha: "13/09/26",   id: 1 },   // dd/mm/aa, sin tocar
+  { fecha: "09/13",      id: 2 }    // mm/dd
+];
+ok(mezclados.slice().sort(F.ordenFIFO).map(x => x.id).join() === "1,2,3",
+   "ordena bien los tres formatos crudos, sin normalizarlos antes",
+   mezclados.slice().sort(F.ordenFIFO).map(x => x.id).join());
+// Entre meses: el 13 de septiembre va antes que el 20, escritos como sea.
+ok(F.ordenFIFO({fecha:"13/09/26",id:1},{fecha:"09/20",id:2}) < 0,
+   "un lote del 13/09 se gasta antes que uno del 20/09");
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
