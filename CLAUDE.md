@@ -189,6 +189,8 @@ Brasil → Venezuela:  entra dinero del cliente en REALES · ella entrega BOLÍV
 Venezuela → Brasil:  entra dinero del cliente en BOLÍVARES · ella entrega REALES
 ```
 
+Y también a **Colombia y Perú**, que funcionan distinto — ver más abajo.
+
 ### Cómo gana — y es lo único que cuenta
 
 Con los reales que entran **compra USDT**. Esos USDT los **vende por bolívares**.
@@ -285,6 +287,108 @@ no del código: cambia los números de ganancia que ve hoy en Diario, Resumen y
 Cierre de Mes. Si alguna vez lo pide, es ahí donde hay que tocar (`gV()`), no
 en el lote.
 
+### Colombia: la entrega la hace un aliado y se le paga en USDT
+
+Esto **ningún chat lo va a adivinar** mirando el código, así que léelo antes de
+tocar una remesa que no sea a Venezuela.
+
+```
+1. El cliente en Brasil le da REALES        → entran a su cuenta
+2. Con esos reales compra USDT              → compra normal, su lote y su tasa
+3. Le manda USDT a un ALIADO                → lo que vale la remesa MENOS su ganancia
+4. El aliado le paga al cliente en PESOS    → ella no toca pesos nunca
+```
+
+Su ganancia sigue siendo la de siempre: lo que valen los USDT que consiguió
+menos los que entregó.
+
+**Lo que sale de su cuenta son USDT, no pesos.** La app modelaba la entrega como
+"sale la moneda de destino de una cuenta tuya en esa moneda", y de pesos no
+tiene ninguna: el formulario ni ofrecía cuenta de entrega, la remesa se guardaba
+**sin descontar nada** y el saldo de Binance decía tener los USDT que ya había
+mandado. Dos remesas así dejaron 115 USDT de más.
+
+Está resuelto en `salidaDeCuentaEntrega()`, y **la regla mira la cuenta, no la
+ruta**: si la cuenta de entrega está en USDT, sale `uv`; si no, la moneda de
+destino. Así vale para cualquier aliado futuro sin tocar nada de Venezuela ni
+de Brasil.
+
+De qué cuenta de USDT sale **depende de dónde haya**, así que se elige cada vez.
+
+### Lo que cobra el banco venezolano
+
+Tarifario del BCV. Está en `comisionBancoVES()`, en un solo sitio, y los tres
+valores se editan en Configuración:
+
+```
+pago móvil a otro banco ... 0,3% del monto, MÍNIMO Bs 14
+transferencia a otro banco  Bs 54 fijos, sin porcentaje
+dentro del mismo banco .... nada
+```
+
+Usa las dos formas, **según la cuenta del cliente**, por eso se elige al
+registrar la remesa y no es una casilla de sí/no.
+
+**El mínimo de 14 es el que se cuela.** El 0,3% no llega a 14 Bs hasta los
+4.667, así que toda remesa por debajo se queda corta si no se aplica.
+
+Y ojo: **la comisión baja la cuenta pero no el lote.** Es correcto — el lote
+lleva los bolívares que se le entregaron al cliente, y la comisión es un cobro
+aparte del banco. Por eso la cuenta va siempre un poco por debajo del FIFO,
+justo lo que se llevó el banco. No lo "arregles".
+
+### La fecha de un lote va SIEMPRE en mm/dd
+
+`ordenFIFO` la lee como `mes×100 + día`. Hubo hasta tres formatos conviviendo
+—`09/12`, `12/09/26` e `2026-09-12`— y con eso la app creía que una venta de
+USDT de la tarde era más vieja que unos bolívares que habían entrado por la
+mañana, y se la comía primero. De los lotes salen las tasas que sugiere, así
+que el desorden no es cosmético.
+
+Está resuelto en `_fechaLote()`, que se aplica dentro de `crearLoteRecibido` y
+en `saveIU`, y **`ordenFIFO` normaliza él mismo** para no depender de que
+alguien lo haya hecho antes. `pruebas/prestamos.js` recorre el archivo entero y
+exige que **cada** `inventarioUsdt.push(` saque su fecha de ahí: si añades un
+sitio nuevo, falla.
+
+Pendiente, y se rompe en enero: `mm/dd` no lleva año, así que un lote del 01/01
+se ordenará antes que uno del 31/12 anterior.
+
+### Al borrar una remesa, las monedas salen de la remesa
+
+No del array donde está guardada. Se deducían así:
+
+```js
+monDest = tipo==="vzla" ? "BRL" : "VES"   // todo lo de Brasil entrega bolívares
+```
+
+Con una remesa a Colombia eso es falso, y borrarla le devolvía al lote de
+bolívares los **pesos** que nunca salieron de ahí: medido, un lote pasaba de
+51.043,97 a 173.943,97. Cada remesa guarda su `orig` y su `dest`; se leen de
+ahí (`monedasDeRemesa()`).
+
+### Registra la operación — no escribas el saldo
+
+**La regla que más costó el 12/09**, y se rompió tres veces en un día.
+
+Cuando un saldo no cuadra, la tentación es escribirlo a mano. Eso cuadra la
+pantalla y le borra a la app la historia: el dinero desaparece sin decir adónde
+fue, la conciliación de capital salta, y el lote FIFO se queda como estaba.
+
+- ¿Salió dinero por una operación? **Regístrala**, y deja que el saldo baje solo.
+- ¿Te cobró el banco algo que la app no contempla? **Un egreso**, con su cuenta.
+  Baja la cuenta, baja el lote y baja también "deberías tener", así que la
+  conciliación no salta.
+- **El saldo a mano es solo** para cuando el banco y la app discrepan y ya sabes
+  por qué.
+
+Y cuando un saldo se escriba a mano, que se vea: `updateCuentaSaldo()` enseña
+el número que entendió, el saldo de ahora y el cambio, y avisa fuerte si el
+salto es de diez veces o más. Eso existe porque un tecleo dejó el Banco de
+Venezuela en 198,89 cuando debía quedar en 198.619,90 — el `parseFloat` partía
+el número en el primer punto. De 106 ajustes manuales guardados, **27 dejaron
+una cuenta en 0**.
+
 ### Cómo se mueve su dinero — el sesgo del negocio
 
 - **Vende más USDT por bolívares de lo que compra USDT con reales.**
@@ -307,3 +411,10 @@ costó tiempo y confianza.
 causa, reprodúcela: la app se puede cargar en Chromium y se le puede pasar el
 caso exacto con sus cifras. Si el número que sale no es el suyo al céntimo, la
 explicación todavía no es la correcta.
+
+Y si te pasa un export, **úsalo**: `ajustesSaldo` guarda cada corrección manual
+con el saldo de antes y el de después, y el `_mov` de cada remesa guarda el
+movimiento exacto que hizo sobre cada cuenta. Con eso se reconstruye un día
+entero en vez de teorizar. (Limitación conocida: `ajustesSaldo` guarda la fecha
+pero **no la hora**, así que no se puede saber qué remesas entraron antes de
+una corrección y cuáles después.)
