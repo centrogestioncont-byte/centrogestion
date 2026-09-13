@@ -1087,6 +1087,37 @@ ok(/if\(r\.fecha\)\{ var fn=_fechaLote\(r\.fecha\); if\(fn!==r\.fecha\) r\.fecha
 ok(!/f\.fecha\.slice\(5\)\.replace\("-","\/"\)/.test(HTML),
    "ya no queda el recorte a mano que se desincronizaba");
 
+// ── TODOS los sitios que meten un lote, no solo los que me acordé ───────────
+// Esta es la prueba que faltaba de verdad. La anterior miraba tres llamadas
+// concretas y por eso se me pasaron cuatro: los lotes "Operación" y
+// "Operación EE.UU" seguían escribiendo ds(f.date), que es dd/mm/aa. En vez de
+// listar sitios a mano, se recorre el archivo y se exige que la fecha de CADA
+// push salga de _fechaLote(). Si alguien añade uno nuevo mañana, falla aquí.
+console.log("\nTodos los sitios que crean un lote usan la misma fecha");
+// Cada "inventarioUsdt.push(" del archivo, sin listarlos a mano.
+const posiciones = [...HTML.matchAll(/inventarioUsdt\.push\(/g)].map(m => m.index);
+ok(posiciones.length >= 7, "se encuentran los siete sitios que meten lotes",
+   posiciones.length);
+// Variables ya normalizadas: las que se asignan con _fechaLote(...)
+const limpias = new Set(
+  [...HTML.matchAll(/var\s+([A-Za-z_$][\w$]*)\s*=\s*_fechaLote\(/g)].map(m => m[1]));
+const sucios = [];
+posiciones.forEach(i => {
+  const trozo = HTML.slice(i, i + 700);
+  const campo = /fecha\s*:\s*([^,}\n]+)/.exec(trozo);
+  if (!campo) {
+    // push(lote): el objeto se arma en crearLoteRecibido, ya comprobado arriba.
+    if (!/inventarioUsdt\.push\([A-Za-z_$][\w$]*\)/.test(trozo)) sucios.push("(push sin fecha)");
+    return;
+  }
+  const val = campo[1].trim();
+  if (val.startsWith("_fechaLote(") || limpias.has(val)) return;
+  sucios.push(val);
+});
+ok(sucios.length === 0, "ninguno escribe la fecha por su cuenta", sucios.join(" · "));
+ok(!/var\s+fd\s*=\s*ds\(/.test(HTML),
+   "y no queda ningun lote naciendo con ds(), que devuelve dd/mm/aa");
+
 // Y ordenFIFO normaliza él mismo, para no depender de que alguien lo haya hecho
 // antes: habia dos sitios que ordenaban sin normalizar, uno de ellos el
 // historial que se ve en pantalla.
