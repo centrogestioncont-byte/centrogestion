@@ -64,7 +64,8 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "ordenFIFO", "normalizarInventarioFIFO", "simularConsumoFIFO",
                     "f4", "f0", "_leerNumero", "_avisoCambioSaldo", "_fechaLote", "_idLoteNuevo",
                     "_diasEnElFuturo", "confirmarFechaFutura",
-                    "comisionBancoVES", "etiquetaComisionBanco", "salidaDeCuentaEntrega"];
+                    "comisionBancoVES", "etiquetaComisionBanco", "salidaDeCuentaEntrega",
+                    "monedasDeRemesa"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
 global.window = global.window || {};
 // S es el estado global de la app; aca solo hacen falta config y prestamos.
@@ -1264,6 +1265,39 @@ ok(_llamadas.every(c => c.indexOf("res.uv)") > -1),
    _llamadas.filter(c => c.indexOf("res.uv)") === -1).length + " sin uv");
 ok(/La entrega la hace un aliado — ¿de qué cuenta salen los USDT\?/.test(HTML),
    "el formulario ofrece la cuenta de USDT cuando no hay en la moneda de destino");
+
+// ── Al borrar una remesa, las monedas salen de la remesa ───────────────────
+// Antes se deducian del array donde estaba guardada:
+//     monDest = tipo==="vzla" ? "BRL" : "VES"
+// o sea, todo lo que sale de Brasil entrega bolivares. Con una remesa a
+// Colombia, borrarla le devolvia al lote de bolivares los 122.900 PESOS que
+// nunca salieron de ahi: medido, un lote pasaba de 51.043,97 a 173.943,97.
+console.log("\nLas monedas de una remesa salen de la remesa");
+ok(JSON.stringify(F.monedasDeRemesa("brl", {orig:"BRL",dest:"COP",rt:"BRL ↔ COP"})) ===
+   JSON.stringify({orig:"BRL",dest:"COP"}),
+   "una a Colombia entrega COP, no bolivares",
+   JSON.stringify(F.monedasDeRemesa("brl", {orig:"BRL",dest:"COP"})));
+ok(F.monedasDeRemesa("brl", {orig:"BRL",dest:"PEN"}).dest === "PEN",
+   "una a Peru entrega soles");
+ok(F.monedasDeRemesa("brl", {orig:"BRL",dest:"VES"}).dest === "VES",
+   "y una a Venezuela sigue entregando bolivares");
+ok(F.monedasDeRemesa("vzla", {orig:"VES",dest:"BRL"}).orig === "VES" &&
+   F.monedasDeRemesa("vzla", {orig:"VES",dest:"BRL"}).dest === "BRL",
+   "Venezuela → Brasil, igual que siempre");
+// Registros viejos sin orig/dest: la deduccion de antes, para no romperlos.
+const viejo = F.monedasDeRemesa("brl", {n:1});
+ok(viejo.orig === "BRL" && viejo.dest === "VES",
+   "un registro viejo sin orig/dest se deduce como antes", JSON.stringify(viejo));
+const viejoV = F.monedasDeRemesa("vzla", {n:2});
+ok(viejoV.orig === "VES" && viejoV.dest === "BRL", "y uno de Venezuela tambien");
+ok(F.monedasDeRemesa("eeuu", {n:3}).orig === "USD", "y los de EE.UU");
+
+// Y que los dos sitios que revierten la usen.
+ok((HTML.match(/monedasDeRemesa\(tipo,r\)/g) || []).length === 2,
+   "los dos caminos de reversion preguntan por las monedas de la remesa",
+   (HTML.match(/monedasDeRemesa\(tipo,r\)/g) || []).length);
+ok(!/var monDest=tipo==="vzla"\?"BRL":"VES";/.test(HTML),
+   "ya no queda la deduccion que daba bolivares por sentado");
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
