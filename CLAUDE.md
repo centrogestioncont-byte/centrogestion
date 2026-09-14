@@ -590,6 +590,63 @@ Comprobado contra su export: **ningún abono anterior se cobró en otra moneda**
 ni de préstamos ni de cuentas por cobrar. Este habría sido el primero, así que
 no hay nada guardado que rehacer.
 
+### El cierre de mes tiene que contar el mismo dinero en todas partes
+
+El módulo son ~1.700 líneas repartidas en la pantalla (`rInformeCierre`, con
+8 sub-pestañas), el PDF (`generarInformePDF`) y los cálculos
+(`calcMesCompleto`). Auditado el 14/09/2026 con su export; esto es lo que
+salió y no hay que deshacer.
+
+**El PDF inventaba un agujero de −546,29 USDT.** Comparaba "cierre del mes
+anterior + neto de este mes" contra **solo lo que hay en cuentas bancarias**,
+y se disculpaba debajo: *"puede deberse a tasas del momento o cobros
+pendientes"*. El hueco no existe: deja fuera la reserva (176,82), lo que le
+deben (66,70) y lo prestado (1.010,93) — 1.254,45 que son suyos y no están en
+un banco. Es el mismo error que ya se quitó de Evolución, y aquí además salía
+en el informe que se manda fuera. Ahora va **de qué se compone el capital** y
+se manda a la conciliación, que es la que responde "¿me falta dinero?".
+**No vuelvas a poner un "deberías tener" aquí**: dos respuestas distintas a la
+misma pregunta son peores que una.
+
+**El capital sale de `capitalRealTotal()`, no de una suma a mano.** El PDF
+sumaba "cuentas + afuera" y se dejaba la reserva: 2.302,34 donde Balance de
+Cuentas dice 2.479,17.
+
+**Los intereses de préstamos entran en `ganBrutaTotal` pero NO en
+`miGanOperaciones`.** Por eso el desglose saltaba de 226,89 a 221,50 sin una
+fila que lo explicara, y la pestaña Operaciones enseñaba 221,50 mientras el
+Resumen enseñaba 226,89 — dos ganancias brutas distintas en el mismo módulo.
+Ahora la fila está y dice lo que pasa: el interés se apunta aparte y no llega
+a la utilidad de la empresa. **Si eso debe cambiar —que el interés cuente para
+la utilidad y por tanto para el sueldo— es decisión suya, y se toca en
+`calcMesCompleto`, no en la pantalla.**
+
+**Apartar un número negativo no significa nada.** Si el socio debe a la
+empresa, su saldo es negativo: eso es un cobro, no algo que apartar. La
+pantalla lo sumaba tal cual ("TOTAL A APARTAR −120,00") mientras el PDF ya lo
+hacía bien.
+
+**Las cuentas en cero se apartan, no se esconden.** 6 de sus 15 lo están. En
+Bancos solo se apartan si además no tuvieron ni un movimiento en el mes, y van
+nombradas al final: un saldo en cero que debería tener dinero es justo lo que
+ella querría ver.
+
+**Un socio sin nada este mes no ocupa media pantalla de ceros** (ARREGLO 58).
+Sus palabras: *"ya todas esas cuentas quedaron saldadas, no debería de aparecer
+nada de Paul"*. La regla es una (`_socioVacio`): se calla solo si no hay
+ganancia de sus rutas, ni deuda viva, ni saldo, ni pagos del mes. **Si queda
+una deuda, sí sale** — eso es dinero de verdad, y esconderlo sería peor que el
+ruido. Y el socio dormido va **nombrado** al final, no borrado.
+
+Ojo con esto al diagnosticar: las deudas viven en `deudas_paul` con
+`cobrada:false`, y se marcan pagadas desde el panel de EE.UU. (💸 DEDUCCIONES
+DE …, botón ✅). Si ella dice que está saldado y la app lo sigue enseñando,
+casi seguro es que falta ese clic — no un fallo del cierre.
+
+**`rCierreMes()` e `imprimirRelatorioContador()` están muertas** — 313 líneas
+que nadie llama, con fórmulas viejas y en portugués. El peligro no es el peso:
+es que alguien las lea y crea que son las buenas.
+
 ### Registra la operación — no escribas el saldo
 
 **La regla que más costó el 12/09**, y se rompió tres veces en un día.

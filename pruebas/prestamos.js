@@ -2286,5 +2286,73 @@ ok(/monto = _deudaCubierta\(montoIngresado,tasaManual\);/.test(HTML),
 ok(!/_montoACobrar\(montoIngresado/.test(HTML),
    "y el monto que entra a la cuenta no pasa por el redondeo");
 
+// ── ARREGLO 57: el cierre de mes no puede enseñar numeros que no cuadran ──
+// Guardias estructurales: estas cosas se comprobaron en el navegador con su
+// export, y aqui se fijan para que no vuelvan.
+console.log("\nArreglo 57 · el cierre de mes cuenta el mismo dinero en todas partes");
+
+// El agujero inventado: comparaba "cierre anterior + neto del mes" contra solo
+// lo que hay en cuentas bancarias y cantaba −546,29 USDT que no existian.
+ok(!/Debería haber en caja/.test(HTML),
+   "el PDF ya no tiene el 'deberia haber en caja' que inventaba el agujero");
+ok(!/puede deberse a tasas del momento o cobros pendientes/.test(HTML),
+   "ni la disculpa que lo acompañaba");
+ok(/DE QUÉ SE COMPONE EL CAPITAL|De qué se compone el capital/.test(HTML),
+   "en su sitio va de que se compone el capital");
+ok(/conciliación de capital/.test(HTML),
+   "y manda a la conciliacion, que si responde si falta dinero");
+// El capital sale de una sola funcion, para que dos pantallas no cuenten
+// distinto el mismo dinero (faltaba la reserva: 2.302,34 contra 2.479,17).
+ok(/var _capReal=\(typeof capitalRealTotal==="function"\)\?capitalRealTotal\(\):null;/.test(HTML),
+   "el capital del PDF sale de capitalRealTotal(), la misma de Balance de Cuentas");
+ok(/var siCobrasTodo=_capReal\?_capReal\.total:/.test(HTML),
+   "y el 'potencial total' es ese mismo numero, no una suma a mano");
+
+// Los intereses de prestamos entran en ganBrutaTotal y NO en miGanOperaciones:
+// el desglose saltaba de 226,89 a 221,50 sin una fila que lo explicara, y la
+// pestaña Operaciones enseñaba otra ganancia bruta distinta.
+ok((HTML.match(/Intereses de préstamos \("\+calc\.ganPrestamosCant/g)||[]).length===2,
+   "los intereses de prestamos tienen su fila en la pantalla y en el PDF");
+ok(/Solo remesas\. Los <b>\$"\+f2\(calc\.ganPrestamos\)/.test(HTML),
+   "y Operaciones avisa de que su total son solo remesas");
+
+// Apartar un numero negativo no significa nada: si el socio debe, es un cobro.
+ok(/var _socioAPagar=Math\.max\(0,calc\.socioFinalEE\);/.test(HTML),
+   "lo que se aparta para el socio nunca es negativo");
+ok(/te debe \(no se le paga este mes\)/.test(HTML),
+   "y cuando debe, la pantalla lo dice igual que el PDF");
+
+// Ruido que estorbaba la lectura.
+ok(!/mes anterior encontrado/.test(HTML),
+   "fuera la linea de depuracion que se veia en produccion");
+ok(/salieron de tus cuentas personales/.test(HTML),
+   "se explica por que unos gastos personales no bajan el disponible");
+// El cierre vivo, en español. (rCierreMes/imprimirRelatorioContador siguen en
+// portugues, pero son codigo muerto que nadie llama; se borran aparte.)
+// Se quitan los comentarios antes de mirar: un comentario que CUENTA el
+// arreglo nombra las palabras viejas, y si no, la prueba se acusa a si misma.
+const _vivo = HTML.slice(HTML.indexOf("function calcMesCompleto"))
+                  .split("\n").filter(function(l){return !/^\s*\/\//.test(l);}).join("\n");
+ok(!/Saídas|Fluxo líquido|Relatório Financeiro|todas as contas/.test(_vivo),
+   "no queda portugues suelto en el cierre vivo");
+ok(/En cero y sin movimiento este mes/.test(HTML) && / más en cero, sin saldo que informar/.test(HTML),
+   "las cuentas en cero se apartan pero se siguen nombrando");
+
+// ── ARREGLO 58: un socio sin nada no llena media pantalla de ceros ──────
+// Sus palabras: "ya todas esas cuentas quedaron saldadas, no deberia de
+// aparecer nada de Paul". Pero si queda una deuda viva, SI tiene que salir:
+// es dinero de verdad.
+console.log("\nArreglo 58 · un socio sin movimiento este mes no ocupa la pantalla");
+ok(/function _socioVacio\(bruta,deudas,final,socioId\)/.test(HTML),
+   "hay una sola regla para decidir si un socio tiene algo que enseñar");
+ok(/Math\.abs\(bruta\)<0\.009 && Math\.abs\(deudas\)<0\.009 && Math\.abs\(final\)<0\.009 && Math\.abs\(pagos\)<0\.009/.test(HTML),
+   "y solo se calla si no hay ganancia, ni deuda, ni saldo, ni pagos");
+ok(/sin operaciones, sin deudas y sin pagos este mes/.test(HTML),
+   "el socio dormido sale nombrado, no borrado");
+ok(/calc\.socioFinalEE>0\.009\?"<tr><td>Pagar /.test(HTML),
+   "el PDF no escribe una fila 'Pagar X \$0,00'");
+ok(/Math\.abs\(calc\.ganEEBruta\)>0\.009 \|\| Math\.abs\(calc\.deudasSocioEE\)>0\.009/.test(HTML),
+   "y la seccion de liquidacion de socios no se dibuja si no hay nada que liquidar");
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
