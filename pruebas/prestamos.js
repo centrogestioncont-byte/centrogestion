@@ -1593,6 +1593,20 @@ ok(/Esta remesa se cobró de varias formas/.test(HTML),
 ok(/if\(p\.cuentaId===PAGO_DEBE\) return;/.test(HTML),
    "la fila de prestamo no acredita ninguna cuenta");
 // Los montos del desglose se escriben a mano: type=number se comeria la coma.
+// Los bolivares que ENTRAN crean su propio lote FIFO, y ese lote nace pegado a
+// UNA cuenta. Repartidos entre varias, el lote afirmaria tener bolivares que
+// estan en otra parte — y de los lotes salen las tasas que la app sugiere.
+// Medido antes de la guardia: entrando 150.000 al Banco de Venezuela y 40.000 a
+// Banesco, nacia un lote de 190.000 entero pegado al Banco de Venezuela.
+ok(/if\(ruta\.orig==="VES"\)\{[\s\S]{0,600}?crean su propio lote/.test(HTML),
+   "el desglose se para donde lo que entra son bolivares");
+ok(/es en "\+_malMoneda\.moneda\+", pero esta remesa entra en/.test(HTML),
+   "y una fila con cuenta de otra moneda no deja guardar");
+ok(/var _puedeDesglosar = origMon!=="VES";/.test(HTML),
+   "y ahi ni siquiera se ofrece");
+ok(/if\(!_puedeDesglosar && S\.tx\.pagosMulti\) S\.tx\.pagosMulti=false;/.test(HTML),
+   "si cambia de ruta con el desglose puesto, se apaga solo");
+
 ok(/inputmode='decimal'[^>]*onc?input='txPagoSet/.test(HTML) ||
    /txPagoSet\([^)]*\\"monto\\"/.test(HTML) && !/type='number'[^>]*txPagoSet/.test(HTML),
    "los montos del desglose no son type=number");

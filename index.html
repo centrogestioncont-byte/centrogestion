@@ -4342,6 +4342,34 @@ function saveTx(){
   // remesa como cuentaBanco. Se fija aquí y no solo en la pantalla, para que no
   // dependa de por dónde se haya llegado al formulario.
   if(f.pagosMulti){
+    // El desglose NO vale cuando lo que entra son bolívares. Los bolívares que
+    // entran crean su propio lote FIFO (ver crearLoteRecibido), y ese lote nace
+    // pegado a UNA cuenta: con el dinero repartido entre varias, el lote
+    // afirmaría tener bolívares que están en otra parte. Medido: entrando
+    // 150.000 al Banco de Venezuela y 40.000 a Banesco, nacía un lote de
+    // 190.000 entero pegado al Banco de Venezuela. Y de los lotes salen las
+    // tasas que la app sugiere, así que eso no es cosmético.
+    // Sólo se pidió para Brasil → Venezuela, donde lo que entra son reales y no
+    // crean lote. Si algún día hace falta al revés, hay que partir el lote
+    // también, y eso se hace con calma y con su prueba.
+    if(ruta.orig==="VES"){
+      alert("En esta ruta lo que entra son bolívares, y los bolívares crean su propio lote de inventario, que va pegado a UNA sola cuenta.\n\nSi los repartes entre varias, ese lote diría tener bolívares que están en otra cuenta — y de ahí salen las tasas que te sugiere la app.\n\nRegístrala con una sola cuenta de entrada. Si necesitas el desglose también aquí, dímelo y lo hacemos bien.");
+      return;
+    }
+    // Y que cada fila apunte a una cuenta de la moneda que entra. La pantalla
+    // solo ofrece las de esa moneda, pero si se arma el desglose y DESPUÉS se
+    // cambia de ruta, las filas se quedan con las cuentas de antes y el dinero
+    // acabaría en una cuenta de otra moneda sin que nada avisara.
+    var _malMoneda=null;
+    (f.pagos||[]).forEach(function(p){
+      if(!p.cuentaId||p.cuentaId===PAGO_DEBE) return;
+      var _c=(S.cuentas||[]).find(function(x){return x.id===p.cuentaId;});
+      if(_c&&_c.moneda&&ruta.orig&&_c.moneda!==ruta.orig) _malMoneda=_c;
+    });
+    if(_malMoneda){
+      alert("La cuenta \""+_malMoneda.nombre+"\" es en "+_malMoneda.moneda+", pero esta remesa entra en "+ruta.orig+".\n\nSuele pasar por armar el desglose y cambiar de ruta después. Revisa las filas.");
+      return;
+    }
     var _primCta=(f.pagos||[]).find(function(p){return p.cuentaId&&p.cuentaId!==PAGO_DEBE;});
     f.cuentaBanco=_primCta?_primCta.cuentaId:"";
   }
@@ -16230,10 +16258,13 @@ function rNueva(){
           // ARREGLO 44: el cliente que paga de varias formas — una parte en
           // efectivo, otra por Pix, y otra que queda debiendo. Apagado, esto es
           // exactamente lo de siempre: una sola cuenta.
+          // Sólo donde lo que entra NO son bolívares: ver la guardia de saveTx.
+          var _puedeDesglosar = origMon!=="VES";
+          if(!_puedeDesglosar && S.tx.pagosMulti) S.tx.pagosMulti=false;  // cambió de ruta con el desglose puesto
           if(!S.tx.pagosMulti){
             html+="<div class='fl'><label>📥 ¿A qué cuenta entró el pago? ("+origMon+")</label>"+
               "<select onchange='S.tx.cuentaBanco=this.value'>"+optsO+"</select>"+
-              "<div onclick='txPagosToggle()' style='font-size:11px;color:#9b59b6;cursor:pointer;margin-top:6px;font-weight:600'>➕ Pagó de varias formas</div></div>";
+              (_puedeDesglosar?"<div onclick='txPagosToggle()' style='font-size:11px;color:#9b59b6;cursor:pointer;margin-top:6px;font-weight:600'>➕ Pagó de varias formas</div>":"")+"</div>";
           } else {
             html+="<div class='fl' style='grid-column:1/-1'>"+_txPagosHTML(cuentasOrig,origMon)+"</div>";
           }
