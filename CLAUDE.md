@@ -631,6 +631,18 @@ Bancos solo se apartan si además no tuvieron ni un movimiento en el mes, y van
 nombradas al final: un saldo en cero que debería tener dinero es justo lo que
 ella querría ver.
 
+**Un socio sin nada este mes no ocupa media pantalla de ceros** (ARREGLO 58).
+Sus palabras: *"ya todas esas cuentas quedaron saldadas, no debería de aparecer
+nada de Paul"*. La regla es una (`_socioVacio`): se calla solo si no hay
+ganancia de sus rutas, ni deuda viva, ni saldo, ni pagos del mes. **Si queda
+una deuda, sí sale** — eso es dinero de verdad, y esconderlo sería peor que el
+ruido. Y el socio dormido va **nombrado** al final, no borrado.
+
+Ojo con esto al diagnosticar: las deudas viven en `deudas_paul` con
+`cobrada:false`, y se marcan pagadas desde el panel de EE.UU. (💸 DEDUCCIONES
+DE …, botón ✅). Si ella dice que está saldado y la app lo sigue enseñando,
+casi seguro es que falta ese clic — no un fallo del cierre.
+
 **`rCierreMes()` e `imprimirRelatorioContador()` están muertas** — 313 líneas
 que nadie llama, con fórmulas viejas y en portugués. El peligro no es el peso:
 es que alguien las lea y crea que son las buenas.

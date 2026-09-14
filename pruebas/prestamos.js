@@ -2338,5 +2338,21 @@ ok(!/Saídas|Fluxo líquido|Relatório Financeiro|todas as contas/.test(_vivo),
 ok(/En cero y sin movimiento este mes/.test(HTML) && / más en cero, sin saldo que informar/.test(HTML),
    "las cuentas en cero se apartan pero se siguen nombrando");
 
+// ── ARREGLO 58: un socio sin nada no llena media pantalla de ceros ──────
+// Sus palabras: "ya todas esas cuentas quedaron saldadas, no deberia de
+// aparecer nada de Paul". Pero si queda una deuda viva, SI tiene que salir:
+// es dinero de verdad.
+console.log("\nArreglo 58 · un socio sin movimiento este mes no ocupa la pantalla");
+ok(/function _socioVacio\(bruta,deudas,final,socioId\)/.test(HTML),
+   "hay una sola regla para decidir si un socio tiene algo que enseñar");
+ok(/Math\.abs\(bruta\)<0\.009 && Math\.abs\(deudas\)<0\.009 && Math\.abs\(final\)<0\.009 && Math\.abs\(pagos\)<0\.009/.test(HTML),
+   "y solo se calla si no hay ganancia, ni deuda, ni saldo, ni pagos");
+ok(/sin operaciones, sin deudas y sin pagos este mes/.test(HTML),
+   "el socio dormido sale nombrado, no borrado");
+ok(/calc\.socioFinalEE>0\.009\?"<tr><td>Pagar /.test(HTML),
+   "el PDF no escribe una fila 'Pagar X \$0,00'");
+ok(/Math\.abs\(calc\.ganEEBruta\)>0\.009 \|\| Math\.abs\(calc\.deudasSocioEE\)>0\.009/.test(HTML),
+   "y la seccion de liquidacion de socios no se dibuja si no hay nada que liquidar");
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
