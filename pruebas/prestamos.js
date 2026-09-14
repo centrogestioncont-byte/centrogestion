@@ -61,11 +61,13 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "_mergeObjetoPorClave", "_unirHistorial", "_unirMarcasCampos",
                     "_huellaCompleta", "_conteoRapido",
                     "crearLoteRecibido", "quitarLoteDeRemesa", "_loteAlCobrar",
-                    "ordenFIFO", "normalizarInventarioFIFO", "simularConsumoFIFO",
+                    "ordenFIFO", "normalizarInventarioFIFO", "simularConsumoFIFO", "_tasaEfectivaLote",
                     "f4", "f0", "_leerNumero", "_avisoCambioSaldo", "_fechaLote", "_idLoteNuevo",
                     "_diasEnElFuturo", "confirmarFechaFutura",
                     "comisionBancoVES", "etiquetaComisionBanco", "salidaDeCuentaEntrega",
-                    "monedasDeRemesa"];
+                    "monedasDeRemesa",
+                    "COM", "_comIU", "_localeOCR", "_numOCR",
+                    "_candUSDT", "_candFiat", "_cuadrarP2P", "_parsearOCR", "_parsearConLocale", "_numLegible"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
 global.window = global.window || {};
 // S es el estado global de la app; aca solo hacen falta config y prestamos.
@@ -1298,6 +1300,205 @@ ok((HTML.match(/monedasDeRemesa\(tipo,r\)/g) || []).length === 2,
    (HTML.match(/monedasDeRemesa\(tipo,r\)/g) || []).length);
 ok(!/var monDest=tipo==="vzla"\?"BRL":"VES";/.test(HTML),
    "ya no queda la deduccion que daba bolivares por sentado");
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// La comision de Binance: un 0 es un 0 (ARREGLO 40, 14/09/2026)
+// ─────────────────────────────────────────────────────────────────────────────
+console.log("\n— Comision de Binance —");
+
+// Un cero de comision leido de verdad es un cero. Antes `parseFloat(x)||COM()`
+// lo descartaba por "falsy" y metia 0,06: la compra CNV-PG6CG3 acredito
+// 196,0073 USDT cuando Binance habia entregado 196,0673.
+ok(F._comIU(0) === 0, "_comIU(0) respeta el cero", F._comIU(0));
+ok(F._comIU("0") === 0, "_comIU('0') tambien", F._comIU("0"));
+ok(F._comIU("") === F.COM(), "sin comision escrita, la de por defecto", F._comIU(""));
+ok(F._comIU(undefined) === F.COM(), "y sin campo, igual", F._comIU(undefined));
+ok(!/parseFloat\(f\.comision\)\|\|COM\(\)/.test(HTML),
+   "no vuelve el ||COM() que se comia el cero");
+ok((HTML.match(/_comIU\(f\.comision\)/g) || []).length === 2,
+   "los dos sitios que leen la comision pasan por _comIU",
+   (HTML.match(/_comIU\(f\.comision\)/g) || []).length);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Leer el comprobante de Binance (ARREGLO 40, 14/09/2026)
+//
+// Ella fotografia la pantalla de Binance, la pasa por el lector de imagenes de
+// Google y pega el texto en la app. Dos cosas salian mal y las dos tocaban
+// dinero, asi que los dos comprobantes de abajo son SUYOS, textuales.
+// ─────────────────────────────────────────────────────────────────────────────
+console.log("\n— Comprobantes de Binance —");
+
+// Comprobante real de una venta P2P. Fijarse en el desorden: el lector pone las
+// dos etiquetas juntas y despues los tres numeros, asi que buscar el numero que
+// sigue a la palabra "Comision" se llevaba 20,83 (que es la cantidad liberada).
+const OCR_P2P = [
+  "6:58", "20,5", "63", "Detalles de la orden", "-20.89 USDT", "Completada",
+  "Vender USDT", "Chat", "Importe en fiat", "Bs 19,996.8", "Precio", "Bs 960",
+  "Cantidad total", "Cantidad liberada", "20.89 USDT", "Comisión",
+  "20.83 USDT", "0.06 USDT", "Método de pago", "Banco de Venezuela VES",
+  "N.º de orden", "22932584057963716608", "Hora de creación",
+  "2026-09-13 18:42:50", "Alias del comprador", "miracrip"
+].join("\n\n");
+
+// Comprobante real de la conversion que quedo guardada mal (CNV-PG6CG3).
+const OCR_CONV = [
+  "Detalles de la conversión", "196.06730581 USDT", "Tipo LIMIT",
+  "Pagar desde Cuenta Spot 1002.1 BRL", "1 USDT = 5.111 BRL", "A USDT",
+  "Comisiones de transacción 0.00 USDT", "Fecha del trade 2026-09-12 21:24"
+].join("\n");
+
+// El mismo texto tal y como sale cuando el telefono esta en espanol: el lector
+// cambia los separadores y "Bs 19.996,8" se leia como 19,996 — 19.977 Bs menos.
+const OCR_P2P_ES = OCR_P2P.replace("Bs 19,996.8", "Bs 19.996,8")
+                          .replace(/(\d+)\.(\d\d) USDT/g, "$1,$2 USDT");
+const OCR_CONV_ES = OCR_CONV.replace("196.06730581", "196,06730581")
+                            .replace("1002.1 BRL", "1.002,10 BRL")
+                            .replace("5.111 BRL", "5,111 BRL")
+                            .replace("0.00 USDT", "0,00 USDT");
+
+function comprobante(nombre, txt, esperado) {
+  const r = F._parsearOCR(txt);
+  Object.keys(esperado).forEach(function (k) {
+    ok(String(r[k]) === String(esperado[k]), nombre + " · " + k, r[k]);
+  });
+}
+
+comprobante("venta P2P (texto real)", OCR_P2P, {
+  tipo: "venta", moneda: "VES", usdt: 20.89, liberado: 20.83, comision: 0.06,
+  tasa: 960, monto: 19996.8, cuadra: true,
+  ordenId: "22932584057963716608", fecha: "2026-09-13" });
+comprobante("venta P2P (lector en espanol)", OCR_P2P_ES, {
+  tipo: "venta", usdt: 20.89, liberado: 20.83, comision: 0.06,
+  tasa: 960, monto: 19996.8, cuadra: true });
+comprobante("conversion (texto real)", OCR_CONV, {
+  tipo: "compra", moneda: "BRL", usdt: 196.06730581, comision: 0,
+  tasa: 5.111, monto: 1002.1, cuadra: true, fecha: "2026-09-12" });
+comprobante("conversion (lector en espanol)", OCR_CONV_ES, {
+  tipo: "compra", usdt: 196.06730581, comision: 0, tasa: 5.111,
+  monto: 1002.1, cuadra: true });
+
+// El otro modelo de comprobante no cobra comision: un 0 tiene que llegar como 0.
+comprobante("venta P2P sin comision", [
+  "Vender USDT", "Cantidad total 100.00 USDT", "Cantidad liberada 100.00 USDT",
+  "Comisión 0.00 USDT", "Precio Bs 960", "Importe en fiat Bs 96,000", "2026-09-13"
+].join("\n"), { tipo: "venta", usdt: 100, comision: 0, tasa: 960, monto: 96000, cuadra: true });
+
+// ARREGLO 41: a veces el lector no deja NINGUNA pista del idioma — ningun
+// numero trae los dos separadores. Con un comprobante en espanol se leia al
+// reves: "Bs 96.000" daba 96 y "100,00 USDT" daba 10.000. Lo desvela la propia
+// comprobacion del comprobante: si no cuadra, se prueba el otro idioma.
+comprobante("venta en espanol sin pistas de idioma", [
+  "Vender USDT", "Cantidad total 100,00 USDT", "Cantidad liberada 100,00 USDT",
+  "Comisión 0,00 USDT", "Precio Bs 960", "Importe en fiat Bs 96.000", "2026-09-13"
+].join("\n"), { tipo: "venta", usdt: 100, comision: 0, tasa: 960, monto: 96000, cuadra: true });
+// Y el mismo comprobante escrito en ingles no se rompe por el cambio.
+comprobante("y el mismo en ingles sigue igual", [
+  "Vender USDT", "Cantidad total 100.00 USDT", "Cantidad liberada 100.00 USDT",
+  "Comisión 0.00 USDT", "Precio Bs 960", "Importe en fiat Bs 96,000", "2026-09-13"
+].join("\n"), { tipo: "venta", usdt: 100, comision: 0, tasa: 960, monto: 96000, cuadra: true });
+ok(/_parsearConLocale\(t, r\._dec/.test(HTML),
+   "el segundo intento usa el idioma contrario al del primero");
+
+// Cuando nada cuadra, el parser tiene que DECIRLO en vez de rellenar callado.
+ok(F._parsearOCR([
+  "Vender USDT", "Cantidad total 50.00 USDT", "Comisión 7.00 USDT",
+  "Precio Bs 900", "Importe en fiat Bs 12,345.67"
+].join("\n")).cuadra === false, "un comprobante incoherente se marca como dudoso");
+
+// Los numeros, en las dos escrituras.
+ok(F._localeOCR("Bs 19,996.8") === ".", "con 19,996.8 el decimal es el punto");
+ok(F._localeOCR("Bs 19.996,8") === ",", "con 19.996,8 el decimal es la coma");
+[["19,996.8", ".", 19996.8], ["19.996,8", ",", 19996.8],
+ ["1.234.567,89", ",", 1234567.89], ["1,234,567.89", ".", 1234567.89],
+ ["5.111", ".", 5.111], ["5,111", ",", 5.111], ["960", ".", 960]
+].forEach(function (c) {
+  ok(F._numOCR(c[0], c[1]) === c[2], "_numOCR(" + c[0] + ") = " + c[2], F._numOCR(c[0], c[1]));
+});
+
+// El numero de orden no puede tragarse el ano de la fecha: con el id
+// contaminado, el aviso de comprobante repetido no saltaba nunca.
+ok(F._parsearOCR(OCR_P2P).ordenId === "22932584057963716608",
+   "el numero de orden sale limpio, sin el ano pegado detras",
+   F._parsearOCR(OCR_P2P).ordenId);
+
+// Y los dos caminos (pegar texto y leer imagen) tienen que pedir confirmacion
+// por el mismo sitio, para que ensenen el mismo desglose.
+ok((HTML.match(/[^n] _?_?rellenarDesdePegado\(parsed\)|!_rellenarDesdePegado\(parsed\)|\(_rellenarDesdePegado\(parsed\)/g) || []).length === 2,
+   "el pegado y el OCR de imagen rellenan por la misma puerta",
+   (HTML.match(/!_rellenarDesdePegado\(parsed\)|\(_rellenarDesdePegado\(parsed\)/g) || []).length);
+ok(/confirm\(_resumenPegado\(parsed\)\)/.test(HTML),
+   "y esa puerta pide confirmacion antes de tocar el formulario");
+// La tasa se enseña entera: f2 le comeria el cuarto decimal, que es con el que
+// se calcula la ganancia.
+ok(F._numLegible(5.111) === "5,111", "la tasa se lee 5,111, no cinco mil ciento once", F._numLegible(5.111));
+ok(F._numLegible(0.06) === "0,06", "y la comision igual", F._numLegible(0.06));
+ok(F._numLegible(960) === "960", "un entero se queda como esta", F._numLegible(960));
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// La tasa que de VERDAD quedó (ARREGLO 42, 14/09/2026)
+//
+// El lote guarda la tasa de Binance, que vale para lo que se LIBERÓ, no para
+// lo que salió de la cuenta. De ahí salen la tasa que la app sugiere y lo que
+// cuestan en USDT los bolívares que se gastan, así que la diferencia se le
+// convertía en ganancia que no tuvo.
+// ─────────────────────────────────────────────────────────────────────────────
+console.log("\n— La tasa que de verdad quedo —");
+
+// Su venta real del 13/09: salieron 20,89 USDT y entraron 19.996,80 Bs.
+const VENTA_REAL = { tipo: "venta", moneda: "VES", usdt: 20.89, neto: 20.83,
+  tasa: 960, comision: 0.06, bs: 19996.80, bsRestante: 19996.80 };
+ok(F._tasaEfectivaLote(VENTA_REAL) === 9572427 / 10000,
+   "vendiendo quedan 957,2427 Bs/USDT, no los 960 de Binance",
+   F._tasaEfectivaLote(VENTA_REAL));
+
+// Su conversion real: pago 1.002,10 BRL y recibio 196,0073 USDT netos.
+const COMPRA_REAL = { tipo: "compra", moneda: "BRL", montOrigen: 1002.10,
+  usdt: 196.0073, tasa: 5.111, comision: 0.06, restante: 196.0073 };
+ok(F._tasaEfectivaLote(COMPRA_REAL) === 5.1126,
+   "comprando cuesta 5,1126 BRL/USDT, no los 5,111 de la lista",
+   F._tasaEfectivaLote(COMPRA_REAL));
+
+// Sin comision las dos coinciden: no hay nada que corregir.
+ok(F._tasaEfectivaLote({ tipo: "venta", usdt: 100, bs: 96000, tasa: 960 }) === 960,
+   "sin comision, la efectiva y la de Binance son la misma");
+
+// Los lotes de relleno (los que crea una Operacion) no traen con que calcularla:
+// tienen que quedarse con la suya, no con un 0.
+ok(F._tasaEfectivaLote({ tipo: "venta", usdt: 0, bs: 0, tasa: 285 }) === 285,
+   "un lote de relleno se queda con su tasa", F._tasaEfectivaLote({tipo:"venta",usdt:0,bs:0,tasa:285}));
+ok(F._tasaEfectivaLote({ tipo: "compra", usdt: 0, montOrigen: 0, tasa: 5.4 }) === 5.4,
+   "y el de compra igual");
+ok(F._tasaEfectivaLote(null) === 0, "y sin lote, 0, sin reventar");
+
+// Un lote viejo, guardado antes de este arreglo, no necesita migracion:
+// la efectiva sale de lo que ya tiene guardado.
+ok(F._tasaEfectivaLote({ tipo: "venta", usdt: 50.06, bs: 47000, tasa: 940 }) ===
+   Math.round((47000 / 50.06) * 10000) / 10000,
+   "un lote viejo tambien da su tasa efectiva, sin migrar nada");
+
+// Las cuatro funciones que dan las tasas tienen que leer la efectiva.
+["getLastTasaCompra", "getLastTasaVenta", "getTasaCompraPonderada",
+ "getTasaVentaPonderada", "simularConsumoFIFO"].forEach(function (fn) {
+  const i = HTML.indexOf("function " + fn + "(");
+  let prof = 0, k = HTML.indexOf("{", i), fin = k;
+  for (; fin < HTML.length; fin++) {
+    if (HTML[fin] === "{") prof++;
+    else if (HTML[fin] === "}" && --prof === 0) break;
+  }
+  const cuerpo = HTML.slice(i, fin + 1);
+  ok(/_tasaEfectivaLote\(/.test(cuerpo), fn + " pregunta por la tasa efectiva");
+  ok(!/return\s+(todas|arr|propias|lotes)\[[^\]]+\]\.tasa\s*;/.test(cuerpo),
+     "y " + fn + " ya no devuelve la de Binance a pelo");
+});
+
+// Y la comision fija no se puede sumar encima: la tasa del lote ya la trae
+// dentro. Sumarla otra vez es contarla dos veces.
+ok(/var comUc = tcDeLote \? 0 :/.test(HTML) && /var comUv = tvDeLote \? 0 :/.test(HTML),
+   "con tasa de lote no se vuelve a cobrar la comision");
+ok(/var tcDeLote = !tcMan && !!rates\.tc;/.test(HTML),
+   "pero si la tasa se escribio a mano, la comision si se aplica");
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
