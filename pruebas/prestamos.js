@@ -67,7 +67,7 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "comisionBancoVES", "etiquetaComisionBanco", "salidaDeCuentaEntrega",
                     "monedasDeRemesa",
                     "COM", "_comIU", "_localeOCR", "_numOCR",
-                    "_candUSDT", "_candFiat", "_cuadrarP2P", "_parsearOCR", "_numLegible"];
+                    "_candUSDT", "_candFiat", "_cuadrarP2P", "_parsearOCR", "_parsearConLocale", "_numLegible"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
 global.window = global.window || {};
 // S es el estado global de la app; aca solo hacen falta config y prestamos.
@@ -1383,6 +1383,22 @@ comprobante("venta P2P sin comision", [
   "Vender USDT", "Cantidad total 100.00 USDT", "Cantidad liberada 100.00 USDT",
   "Comisión 0.00 USDT", "Precio Bs 960", "Importe en fiat Bs 96,000", "2026-09-13"
 ].join("\n"), { tipo: "venta", usdt: 100, comision: 0, tasa: 960, monto: 96000, cuadra: true });
+
+// ARREGLO 41: a veces el lector no deja NINGUNA pista del idioma — ningun
+// numero trae los dos separadores. Con un comprobante en espanol se leia al
+// reves: "Bs 96.000" daba 96 y "100,00 USDT" daba 10.000. Lo desvela la propia
+// comprobacion del comprobante: si no cuadra, se prueba el otro idioma.
+comprobante("venta en espanol sin pistas de idioma", [
+  "Vender USDT", "Cantidad total 100,00 USDT", "Cantidad liberada 100,00 USDT",
+  "Comisión 0,00 USDT", "Precio Bs 960", "Importe en fiat Bs 96.000", "2026-09-13"
+].join("\n"), { tipo: "venta", usdt: 100, comision: 0, tasa: 960, monto: 96000, cuadra: true });
+// Y el mismo comprobante escrito en ingles no se rompe por el cambio.
+comprobante("y el mismo en ingles sigue igual", [
+  "Vender USDT", "Cantidad total 100.00 USDT", "Cantidad liberada 100.00 USDT",
+  "Comisión 0.00 USDT", "Precio Bs 960", "Importe en fiat Bs 96,000", "2026-09-13"
+].join("\n"), { tipo: "venta", usdt: 100, comision: 0, tasa: 960, monto: 96000, cuadra: true });
+ok(/_parsearConLocale\(t, r\._dec/.test(HTML),
+   "el segundo intento usa el idioma contrario al del primero");
 
 // Cuando nada cuadra, el parser tiene que DECIRLO en vez de rellenar callado.
 ok(F._parsearOCR([
