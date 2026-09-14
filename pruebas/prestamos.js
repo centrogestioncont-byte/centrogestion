@@ -1427,6 +1427,33 @@ comprobante("y el mismo en ingles sigue igual", [
 ok(/_parsearConLocale\(t, r\._dec/.test(HTML),
    "el segundo intento usa el idioma contrario al del primero");
 
+// ARREGLO 45: comprobante real del 13/09. El lector le perdio un digito al
+// precio (Binance dice 960,79 y el texto trae 960,7), asi que NINGUNA
+// combinacion cuadra clavada y pasaban dos dentro de la tolerancia:
+//   total 103,10 = liberado 103,04 + comision 0,06  -> error  9,47  (la buena)
+//   total 103,10 = liberado 103,10 + comision 0     -> error 48,17  (la falsa)
+// Exigir que fuera unica hacia que se rindiera y cayera a la lectura por
+// etiqueta, que es justo la que el lector desordena: se llevaba 103,04 de
+// comision donde eran 0,06. Ahora se queda con la que MEJOR cuadra.
+comprobante("venta P2P con el precio a medio leer", [
+  "10:13", "19,3", "39", "Detalles de la orden", "-103.1 USDT", "Completada",
+  "Vender USDT", "Chat", "Importe en fiat", "Bs 99,000", "Precio",
+  "Cantidad total", "Bs 960.7", "Cantidad liberada", "103.10 USDT",
+  "Comisión", "103.04 USDT", "0.06 USDT", "Método de pago",
+  "Banco de Venezuela VES", "N.º de orden", "22932635847161954304",
+  "Hora de creación", "2026-09-13 22:08:37", "Alias del comprador", "faroexchange"
+].join("\n\n"), { tipo: "venta", moneda: "VES", usdt: 103.10, liberado: 103.04,
+  comision: 0.06, monto: 99000, cuadra: true,
+  ordenId: "22932635847161954304", fecha: "2026-09-13" });
+
+// La tasa que de verdad queda sale del importe entre los USDT que salen de la
+// cuenta, asi que es correcta aunque el precio de lista venga a medio leer.
+ok(F._tasaEfectivaLote({ tipo: "venta", usdt: 103.10, bs: 99000, tasa: 960.7 }) === 960.2328,
+   "y la tasa efectiva sale bien igual: 99.000 / 103,10 = 960,2328",
+   F._tasaEfectivaLote({ tipo: "venta", usdt: 103.10, bs: 99000, tasa: 960.7 }));
+ok(/Te queda \.\.\.\.\.\.\.\.\.\.\. /.test(HTML),
+   "el cuadro de confirmacion la enseña");
+
 // Cuando nada cuadra, el parser tiene que DECIRLO en vez de rellenar callado.
 ok(F._parsearOCR([
   "Vender USDT", "Cantidad total 50.00 USDT", "Comisión 7.00 USDT",

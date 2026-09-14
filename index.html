@@ -9416,23 +9416,43 @@ function _candFiat(t, dec){
 // Sólo una combinación de los números leídos cumple las dos. Si hay más de una,
 // o ninguna, se devuelve null y el parser avisa en vez de rellenar a ciegas.
 function _cuadrarP2P(U, F){
-  var vistas={}, sol=null, a,b,c,i,j;
+  // ARREGLO 45 (14/09/2026): antes se exigía que cuadrara UNA sola combinación.
+  // Con un comprobante real de la dueña cuadraban dos y el parser se rendía:
+  //
+  //   total 103,10 = liberado 103,04 + comisión 0,06  →  error 9,47   ← la buena
+  //   total 103,10 = liberado 103,10 + comisión 0     →  error 48,17  ← la falsa
+  //
+  // Las dos pasaban la tolerancia, así que al no ser única se caía a la lectura
+  // por etiqueta — que es justo la que el lector desordena — y se llevaba 103,04
+  // de comisión donde eran 0,06.
+  //
+  // El error de 9,47 no es del comprobante: el lector perdió un dígito del
+  // precio (Binance dice 960,79 y el texto trae 960,7). Por eso no se puede
+  // exigir que cuadre clavado — hay que quedarse con la que MEJOR cuadra.
+  // Sólo se da por dudoso si dos combinaciones distintas empatan en error.
+  var mejor=null, empates=0, a,b,c,i,j;
   for(a=0;a<U.length;a++) for(b=0;b<U.length;b++) for(c=0;c<U.length;c++){
     if(a===b||a===c||b===c) continue;
     var tot=U[a], lib=U[b], com=U[c];
     if(!(tot>0)||!(lib>0)||!(com>=0)) continue;
     if(com>=lib) continue;                              // la comisión nunca supera lo liberado
-    if(Math.abs(tot-(lib+com))>0.005) continue;
+    if(Math.abs(tot-(lib+com))>0.005) continue;         // ésta sí es exacta en el comprobante
     for(i=0;i<F.length;i++) for(j=0;j<F.length;j++){
       if(i===j) continue;
       var imp=F[i], pre=F[j];
       if(!(imp>0)||!(pre>0)) continue;
-      if(Math.abs(imp-lib*pre)>Math.max(0.05, imp*0.002)) continue;
+      var err=Math.abs(imp-lib*pre);
+      if(err>Math.max(0.05, imp*0.002)) continue;
       var firma=tot+'|'+lib+'|'+com+'|'+imp+'|'+pre;
-      if(!vistas[firma]){ vistas[firma]=1; sol={usdt:tot,liberado:lib,comision:com,monto:imp,tasa:pre}; }
+      if(!mejor || err < mejor.err-0.0001){
+        mejor={usdt:tot,liberado:lib,comision:com,monto:imp,tasa:pre,err:err,firma:firma};
+        empates=1;
+      } else if(Math.abs(err-mejor.err)<=0.0001 && firma!==mejor.firma){
+        empates++;
+      }
     }
   }
-  return Object.keys(vistas).length===1?sol:null;
+  return (mejor && empates===1) ? mejor : null;
 }
 
 function _parsearOCR(txt){
@@ -9578,9 +9598,14 @@ function _resumenPegado(p){
   if(lib!==p.usdt) L.push('Liberado ........... '+f2(lib||0)+' USDT');
   L.push('Precio ............. '+_numLegible(p.tasa||0));
   L.push('Importe ............ '+f2(p.monto||0)+' '+(p.moneda||''));
+  // La tasa que de VERDAD queda: el importe entre los USDT que salen de la
+  // cuenta. Es la que decide la ganancia (ver _tasaEfectivaLote), y sale bien
+  // aunque el lector pierda un dígito del precio de lista.
+  if(p.monto&&p.usdt) L.push('Te queda ........... '+_numLegible(Math.round((p.monto/p.usdt)*10000)/10000)+
+    ' '+(p.moneda||'')+' por USDT');
   L.push('');
   L.push(p.cuadra
-    ? '✔ Cuadra: '+f2(lib||0)+' × '+_numLegible(p.tasa||0)+' = '+f2(p.monto||0)
+    ? '✔ Cuadra: '+f2(lib||0)+' × '+_numLegible(p.tasa||0)+' ≈ '+f2(p.monto||0)
     : '⚠️ NO CUADRA con el propio comprobante ('+f2(lib||0)+' × '+_numLegible(p.tasa||0)+' = '+
       f2((lib||0)*(p.tasa||0))+', no '+f2(p.monto||0)+').\nRevisa cada campo a mano antes de guardar.');
   if(p.ordenId) L.push('Orden .............. '+p.ordenId);
