@@ -2418,6 +2418,10 @@ function _isoDeDDMMAA(f){
 function ajustesDesdeApertura(desdeIso){
   var r={total:0, n:0, mismoDia:0, nMismoDia:0, sinTasa:false};
   if(!desdeIso) return r;
+  // ARREGLO 50: si el ajuste y la apertura llevan hora, ya no hay que adivinar.
+  // Los de antes de la foto no se cuentan —ya están dentro de la apertura— y los
+  // de después suman. "En el aire" queda solo lo viejo, que de verdad no se sabe.
+  var apTs=parseFloat((S.config||{}).aperturaTs)||0;
   (S.ajustesSaldo||[]).forEach(function(a){
     var iso=_isoDeDDMMAA(a.fecha);
     if(!iso || iso<desdeIso) return;
@@ -2430,8 +2434,10 @@ function ajustesDesdeApertura(desdeIso){
       if(!t||isNaN(t)||t<=0){ r.sinTasa=true; return; }
       u=d/t;
     }
-    if(iso>desdeIso){ r.total+=u; r.n++; }
-    else { r.mismoDia+=u; r.nMismoDia++; }
+    if(iso>desdeIso){ r.total+=u; r.n++; return; }
+    var ts=parseFloat(a.ts)||0;
+    if(apTs&&ts){ if(ts>apTs){ r.total+=u; r.n++; } return; }   // con hora: no hay duda
+    r.mismoDia+=u; r.nMismoDia++;                                // sin hora: en el aire
   });
   r.total=Math.round(r.total*100)/100;
   r.mismoDia=Math.round(r.mismoDia*100)/100;
@@ -3576,7 +3582,11 @@ function updateCuentaSaldo(id, val){
     // saldos. Antes no preguntaba nada y el cambio se aplicaba de un tecleo.
     if(!confirm(_avisoCambioSaldo(c,antes,v,delta))){ R(); return; }
     S.ajustesSaldo=S.ajustesSaldo||[];
-    S.ajustesSaldo.push({id:_newUid(),fecha:ds(td()),cuentaId:id,delta:delta,saldoAntes:antes,saldoDespues:v,motivo:"Ajuste manual de saldo"});
+    // ARREGLO 50: la hora. Sin ella, un ajuste del mismo día que la apertura no
+    // se puede situar —¿antes o después de la foto?— y la conciliación tiene que
+    // dejarlo "en el aire". El 11/09 fueron 7 ajustes por −230,87 sin poder
+    // contarlos ni descartarlos. Un número que la app guarda gratis.
+    S.ajustesSaldo.push({id:_newUid(),fecha:ds(td()),ts:Date.now(),cuentaId:id,delta:delta,saldoAntes:antes,saldoDespues:v,motivo:"Ajuste manual de saldo"});
   }
   c.saldo=v;
   if(c.moneda==="USDT") c.manual_override=true;
@@ -8458,7 +8468,7 @@ function rCapitalTotal(){
       "</div>"+
       (S._concDetalle?
         "<div style='background:#fff;border-radius:9px;padding:11px 12px;margin-top:7px;font-size:10px;color:#888;line-height:1.55'>"+
-          (aj.nMismoDia>0?"<div style='color:#a06800;margin-bottom:7px'>Hay "+aj.nMismoDia+" ajuste(s) del mismo día que fijaste la apertura, por "+(aj.mismoDia<0?"−":"+")+"$"+f2(Math.abs(aj.mismoDia))+". No se cuentan porque los ajustes guardan la fecha pero no la hora, y no hay forma de saber si fueron antes o después de la foto.</div>":"")+
+          (aj.nMismoDia>0?"<div style='color:#a06800;margin-bottom:7px'>Hay "+aj.nMismoDia+" ajuste(s) del mismo día que fijaste la apertura, por "+(aj.mismoDia<0?"−":"+")+"$"+f2(Math.abs(aj.mismoDia))+". No se cuentan porque son de antes de que la app guardara la hora, y sin ella no hay forma de saber si fueron antes o después de la foto. Los de ahora en adelante ya se sitúan solos.</div>":"")+
           (hayTasas?"<div style='margin-bottom:7px'>El desfase de las tasas es aritmética, no dinero: compras USDT a una tasa y vendes a otra, pero tus saldos se valoran a la tasa del día. "+(Math.abs(ta.usdt)>0.005?"Compra/venta de USDT "+(ta.usdt<0?"−":"+")+"$"+f2(Math.abs(ta.usdt))+". ":"")+(Math.abs(ta.remesas)>0.005?"Remesas "+(ta.remesas<0?"−":"+")+"$"+f2(Math.abs(ta.remesas))+".":"")+"</div>":"")+
           "<div style='margin-bottom:7px'>Un ajuste a mano sube o baja lo que tienes sin tocar lo que deberías tener, así que explica parte de la diferencia. <b>Lo que queda sin explicar es lo único que hay que perseguir</b> — volver a fijar la apertura lo esconde, no lo arregla.</div>"+
           "<div style='margin-bottom:7px'>Lo que se pasa a una cuenta 💜 personal sale del capital de la empresa aunque no sea un gasto, por eso baja los dos lados y no aparece como diferencia.</div>"+
@@ -12044,7 +12054,8 @@ function editarSaldoCuentaEnConfig(cid){
   if(!confirm(_avisoCambioSaldo(c,antesCfg,num,deltaCfg)))return;
   if(Math.abs(deltaCfg)>0.0001){
     S.ajustesSaldo=S.ajustesSaldo||[];
-    S.ajustesSaldo.push({id:_newUid(),fecha:ds(td()),cuentaId:cid,delta:deltaCfg,saldoAntes:antesCfg,saldoDespues:num,motivo:"Ajuste manual de saldo"});
+    // ARREGLO 50: con su hora, igual que el otro sitio que edita saldos.
+    S.ajustesSaldo.push({id:_newUid(),fecha:ds(td()),ts:Date.now(),cuentaId:cid,delta:deltaCfg,saldoAntes:antesCfg,saldoDespues:num,motivo:"Ajuste manual de saldo"});
   }
   c.saldo=Math.round(num*100)/100;
   // Sincronizar capital

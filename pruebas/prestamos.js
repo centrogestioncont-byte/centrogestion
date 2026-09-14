@@ -1717,6 +1717,35 @@ ok(ajs.nMismoDia === 1 && ajs.mismoDia === -7,
    "los del mismo dia van aparte: sin hora no se sabe si fue antes o despues");
 ok(F.ajustesDesdeApertura("").n === 0, "sin apertura no cuenta nada");
 
+// ── ARREGLO 50: con la hora ya no hay que adivinar ───────────────────────
+// El 11/09 hubo 7 ajustes del mismo dia que la apertura, por −230,87, y la
+// conciliacion tuvo que dejarlos "en el aire": ajustesSaldo guardaba la fecha
+// pero no la hora, asi que no habia forma de saber si fueron antes o despues
+// de la foto. Ahora los dos llevan hora.
+const APT = Date.parse("2026-09-11T18:00:00Z");
+S.config = { aperturaTs: APT };
+S.ajustesSaldo = [
+  { fecha: "11/09/26", cuentaId: "cusdt", delta: -7, ts: APT - 3600e3 },  // antes de la foto
+  { fecha: "11/09/26", cuentaId: "cusdt", delta: 20, ts: APT + 3600e3 },  // despues
+  { fecha: "11/09/26", cuentaId: "cusdt", delta: -5 },                    // viejo, sin hora
+  { fecha: "12/09/26", cuentaId: "cusdt", delta: 1,  ts: APT + 99e6 }     // otro dia
+];
+const aj2 = F.ajustesDesdeApertura("2026-09-11");
+ok(aj2.total === 21, "suma el de despues de la foto y el del dia siguiente", aj2.total);
+ok(aj2.n === 2, "y son dos, no cuatro", aj2.n);
+ok(aj2.nMismoDia === 1 && aj2.mismoDia === -5,
+   "el de antes de la foto no cuenta —ya esta en la apertura— y solo el viejo queda en el aire",
+   aj2.nMismoDia + "/" + aj2.mismoDia);
+// Sin hora en la apertura (las fijadas antes de este arreglo) se sigue como antes.
+S.config = {};
+const aj3 = F.ajustesDesdeApertura("2026-09-11");
+ok(aj3.nMismoDia === 3 && aj3.n === 1,
+   "sin hora en la apertura, los tres del mismo dia vuelven al aire",
+   aj3.nMismoDia + "/" + aj3.n);
+ok(/ts:Date\.now\(\)/.test(HTML) && (HTML.match(/S\.ajustesSaldo\.push\(\{id:_newUid\(\),fecha:ds\(td\(\)\),ts:Date\.now\(\)/g)||[]).length === 2,
+   "los dos sitios que editan saldos guardan la hora");
+S.config = {}; S.ajustesSaldo = [];
+
 // 4. El semaforo tiene que mirar lo que queda SIN EXPLICAR, no la diferencia
 //    bruta. Decia "tu contabilidad esta sana" justo debajo de un "sin explicar
 //    +116,09" — que es lo que hacia inutil la pantalla.
