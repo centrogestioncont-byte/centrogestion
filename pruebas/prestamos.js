@@ -1836,5 +1836,20 @@ ok(/S\.config\.aperturaSaldos=/.test(HTML) && /S\.config\.aperturaTs=/.test(HTML
 ok(/desfase de las tasas del día/i.test(HTML),
    "el desfase de las tasas sale como linea propia en el desglose");
 
+// 6. ARREGLO 48: la explicación va plegada. Las cifras se miran a diario, el
+//    texto se lee una vez — ocupaba media pantalla siempre.
+ok(/S\._concDetalle=!S\._concDetalle;R\(\)/.test(HTML),
+   "la explicación se puede plegar y desplegar");
+ok(/\(S\._concDetalle\?/.test(HTML),
+   "y su contenido solo se dibuja cuando está abierta");
+// Los avisos de verdad no se pliegan: un aviso escondido no es un aviso.
+var _blq = HTML.slice(HTML.indexOf("var conciliacionHtml="), HTML.indexOf("S._concDetalle=!S._concDetalle"));
+ok(/Algún ajuste es de una moneda sin tasa/.test(_blq),
+   "el aviso de moneda sin tasa queda fuera del desplegable");
+ok(/Vuelve a fijar la apertura/.test(_blq),
+   "y el de apertura vieja tambien");
+ok(/Cuadra\. Lo que queda sin explicar/.test(_blq),
+   "el veredicto tambien se ve siempre: es la respuesta a la pregunta");
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
