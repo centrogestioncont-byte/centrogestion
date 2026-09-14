@@ -65,7 +65,9 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "f4", "f0", "_leerNumero", "_avisoCambioSaldo", "_fechaLote", "_idLoteNuevo",
                     "_diasEnElFuturo", "confirmarFechaFutura",
                     "comisionBancoVES", "etiquetaComisionBanco", "salidaDeCuentaEntrega",
-                    "monedasDeRemesa", "COM", "_comIU"];
+                    "monedasDeRemesa",
+                    "COM", "_comIU", "_localeOCR", "_numOCR",
+                    "_candUSDT", "_candFiat", "_cuadrarP2P", "_parsearOCR", "_numLegible"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
 global.window = global.window || {};
 // S es el estado global de la app; aca solo hacen falta config y prestamos.
@@ -1299,6 +1301,7 @@ ok((HTML.match(/monedasDeRemesa\(tipo,r\)/g) || []).length === 2,
 ok(!/var monDest=tipo==="vzla"\?"BRL":"VES";/.test(HTML),
    "ya no queda la deduccion que daba bolivares por sentado");
 
+
 // ─────────────────────────────────────────────────────────────────────────────
 // La comision de Binance: un 0 es un 0 (ARREGLO 40, 14/09/2026)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1316,6 +1319,105 @@ ok(!/parseFloat\(f\.comision\)\|\|COM\(\)/.test(HTML),
 ok((HTML.match(/_comIU\(f\.comision\)/g) || []).length === 2,
    "los dos sitios que leen la comision pasan por _comIU",
    (HTML.match(/_comIU\(f\.comision\)/g) || []).length);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Leer el comprobante de Binance (ARREGLO 40, 14/09/2026)
+//
+// Ella fotografia la pantalla de Binance, la pasa por el lector de imagenes de
+// Google y pega el texto en la app. Dos cosas salian mal y las dos tocaban
+// dinero, asi que los dos comprobantes de abajo son SUYOS, textuales.
+// ─────────────────────────────────────────────────────────────────────────────
+console.log("\n— Comprobantes de Binance —");
+
+// Comprobante real de una venta P2P. Fijarse en el desorden: el lector pone las
+// dos etiquetas juntas y despues los tres numeros, asi que buscar el numero que
+// sigue a la palabra "Comision" se llevaba 20,83 (que es la cantidad liberada).
+const OCR_P2P = [
+  "6:58", "20,5", "63", "Detalles de la orden", "-20.89 USDT", "Completada",
+  "Vender USDT", "Chat", "Importe en fiat", "Bs 19,996.8", "Precio", "Bs 960",
+  "Cantidad total", "Cantidad liberada", "20.89 USDT", "Comisión",
+  "20.83 USDT", "0.06 USDT", "Método de pago", "Banco de Venezuela VES",
+  "N.º de orden", "22932584057963716608", "Hora de creación",
+  "2026-09-13 18:42:50", "Alias del comprador", "miracrip"
+].join("\n\n");
+
+// Comprobante real de la conversion que quedo guardada mal (CNV-PG6CG3).
+const OCR_CONV = [
+  "Detalles de la conversión", "196.06730581 USDT", "Tipo LIMIT",
+  "Pagar desde Cuenta Spot 1002.1 BRL", "1 USDT = 5.111 BRL", "A USDT",
+  "Comisiones de transacción 0.00 USDT", "Fecha del trade 2026-09-12 21:24"
+].join("\n");
+
+// El mismo texto tal y como sale cuando el telefono esta en espanol: el lector
+// cambia los separadores y "Bs 19.996,8" se leia como 19,996 — 19.977 Bs menos.
+const OCR_P2P_ES = OCR_P2P.replace("Bs 19,996.8", "Bs 19.996,8")
+                          .replace(/(\d+)\.(\d\d) USDT/g, "$1,$2 USDT");
+const OCR_CONV_ES = OCR_CONV.replace("196.06730581", "196,06730581")
+                            .replace("1002.1 BRL", "1.002,10 BRL")
+                            .replace("5.111 BRL", "5,111 BRL")
+                            .replace("0.00 USDT", "0,00 USDT");
+
+function comprobante(nombre, txt, esperado) {
+  const r = F._parsearOCR(txt);
+  Object.keys(esperado).forEach(function (k) {
+    ok(String(r[k]) === String(esperado[k]), nombre + " · " + k, r[k]);
+  });
+}
+
+comprobante("venta P2P (texto real)", OCR_P2P, {
+  tipo: "venta", moneda: "VES", usdt: 20.89, liberado: 20.83, comision: 0.06,
+  tasa: 960, monto: 19996.8, cuadra: true,
+  ordenId: "22932584057963716608", fecha: "2026-09-13" });
+comprobante("venta P2P (lector en espanol)", OCR_P2P_ES, {
+  tipo: "venta", usdt: 20.89, liberado: 20.83, comision: 0.06,
+  tasa: 960, monto: 19996.8, cuadra: true });
+comprobante("conversion (texto real)", OCR_CONV, {
+  tipo: "compra", moneda: "BRL", usdt: 196.06730581, comision: 0,
+  tasa: 5.111, monto: 1002.1, cuadra: true, fecha: "2026-09-12" });
+comprobante("conversion (lector en espanol)", OCR_CONV_ES, {
+  tipo: "compra", usdt: 196.06730581, comision: 0, tasa: 5.111,
+  monto: 1002.1, cuadra: true });
+
+// El otro modelo de comprobante no cobra comision: un 0 tiene que llegar como 0.
+comprobante("venta P2P sin comision", [
+  "Vender USDT", "Cantidad total 100.00 USDT", "Cantidad liberada 100.00 USDT",
+  "Comisión 0.00 USDT", "Precio Bs 960", "Importe en fiat Bs 96,000", "2026-09-13"
+].join("\n"), { tipo: "venta", usdt: 100, comision: 0, tasa: 960, monto: 96000, cuadra: true });
+
+// Cuando nada cuadra, el parser tiene que DECIRLO en vez de rellenar callado.
+ok(F._parsearOCR([
+  "Vender USDT", "Cantidad total 50.00 USDT", "Comisión 7.00 USDT",
+  "Precio Bs 900", "Importe en fiat Bs 12,345.67"
+].join("\n")).cuadra === false, "un comprobante incoherente se marca como dudoso");
+
+// Los numeros, en las dos escrituras.
+ok(F._localeOCR("Bs 19,996.8") === ".", "con 19,996.8 el decimal es el punto");
+ok(F._localeOCR("Bs 19.996,8") === ",", "con 19.996,8 el decimal es la coma");
+[["19,996.8", ".", 19996.8], ["19.996,8", ",", 19996.8],
+ ["1.234.567,89", ",", 1234567.89], ["1,234,567.89", ".", 1234567.89],
+ ["5.111", ".", 5.111], ["5,111", ",", 5.111], ["960", ".", 960]
+].forEach(function (c) {
+  ok(F._numOCR(c[0], c[1]) === c[2], "_numOCR(" + c[0] + ") = " + c[2], F._numOCR(c[0], c[1]));
+});
+
+// El numero de orden no puede tragarse el ano de la fecha: con el id
+// contaminado, el aviso de comprobante repetido no saltaba nunca.
+ok(F._parsearOCR(OCR_P2P).ordenId === "22932584057963716608",
+   "el numero de orden sale limpio, sin el ano pegado detras",
+   F._parsearOCR(OCR_P2P).ordenId);
+
+// Y los dos caminos (pegar texto y leer imagen) tienen que pedir confirmacion
+// por el mismo sitio, para que ensenen el mismo desglose.
+ok((HTML.match(/[^n] _?_?rellenarDesdePegado\(parsed\)|!_rellenarDesdePegado\(parsed\)|\(_rellenarDesdePegado\(parsed\)/g) || []).length === 2,
+   "el pegado y el OCR de imagen rellenan por la misma puerta",
+   (HTML.match(/!_rellenarDesdePegado\(parsed\)|\(_rellenarDesdePegado\(parsed\)/g) || []).length);
+ok(/confirm\(_resumenPegado\(parsed\)\)/.test(HTML),
+   "y esa puerta pide confirmacion antes de tocar el formulario");
+// La tasa se enseña entera: f2 le comeria el cuarto decimal, que es con el que
+// se calcula la ganancia.
+ok(F._numLegible(5.111) === "5,111", "la tasa se lee 5,111, no cinco mil ciento once", F._numLegible(5.111));
+ok(F._numLegible(0.06) === "0,06", "y la comision igual", F._numLegible(0.06));
+ok(F._numLegible(960) === "960", "un entero se queda como esta", F._numLegible(960));
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
