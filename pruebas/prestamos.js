@@ -61,7 +61,7 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "_mergeObjetoPorClave", "_unirHistorial", "_unirMarcasCampos",
                     "_huellaCompleta", "_conteoRapido",
                     "crearLoteRecibido", "quitarLoteDeRemesa", "_loteAlCobrar",
-                    "ordenFIFO", "normalizarInventarioFIFO", "simularConsumoFIFO",
+                    "ordenFIFO", "normalizarInventarioFIFO", "simularConsumoFIFO", "_tasaEfectivaLote",
                     "f4", "f0", "_leerNumero", "_avisoCambioSaldo", "_fechaLote", "_idLoteNuevo",
                     "_diasEnElFuturo", "confirmarFechaFutura",
                     "comisionBancoVES", "etiquetaComisionBanco", "salidaDeCuentaEntrega",
@@ -1434,6 +1434,71 @@ ok(/confirm\(_resumenPegado\(parsed\)\)/.test(HTML),
 ok(F._numLegible(5.111) === "5,111", "la tasa se lee 5,111, no cinco mil ciento once", F._numLegible(5.111));
 ok(F._numLegible(0.06) === "0,06", "y la comision igual", F._numLegible(0.06));
 ok(F._numLegible(960) === "960", "un entero se queda como esta", F._numLegible(960));
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// La tasa que de VERDAD quedó (ARREGLO 42, 14/09/2026)
+//
+// El lote guarda la tasa de Binance, que vale para lo que se LIBERÓ, no para
+// lo que salió de la cuenta. De ahí salen la tasa que la app sugiere y lo que
+// cuestan en USDT los bolívares que se gastan, así que la diferencia se le
+// convertía en ganancia que no tuvo.
+// ─────────────────────────────────────────────────────────────────────────────
+console.log("\n— La tasa que de verdad quedo —");
+
+// Su venta real del 13/09: salieron 20,89 USDT y entraron 19.996,80 Bs.
+const VENTA_REAL = { tipo: "venta", moneda: "VES", usdt: 20.89, neto: 20.83,
+  tasa: 960, comision: 0.06, bs: 19996.80, bsRestante: 19996.80 };
+ok(F._tasaEfectivaLote(VENTA_REAL) === 9572427 / 10000,
+   "vendiendo quedan 957,2427 Bs/USDT, no los 960 de Binance",
+   F._tasaEfectivaLote(VENTA_REAL));
+
+// Su conversion real: pago 1.002,10 BRL y recibio 196,0073 USDT netos.
+const COMPRA_REAL = { tipo: "compra", moneda: "BRL", montOrigen: 1002.10,
+  usdt: 196.0073, tasa: 5.111, comision: 0.06, restante: 196.0073 };
+ok(F._tasaEfectivaLote(COMPRA_REAL) === 5.1126,
+   "comprando cuesta 5,1126 BRL/USDT, no los 5,111 de la lista",
+   F._tasaEfectivaLote(COMPRA_REAL));
+
+// Sin comision las dos coinciden: no hay nada que corregir.
+ok(F._tasaEfectivaLote({ tipo: "venta", usdt: 100, bs: 96000, tasa: 960 }) === 960,
+   "sin comision, la efectiva y la de Binance son la misma");
+
+// Los lotes de relleno (los que crea una Operacion) no traen con que calcularla:
+// tienen que quedarse con la suya, no con un 0.
+ok(F._tasaEfectivaLote({ tipo: "venta", usdt: 0, bs: 0, tasa: 285 }) === 285,
+   "un lote de relleno se queda con su tasa", F._tasaEfectivaLote({tipo:"venta",usdt:0,bs:0,tasa:285}));
+ok(F._tasaEfectivaLote({ tipo: "compra", usdt: 0, montOrigen: 0, tasa: 5.4 }) === 5.4,
+   "y el de compra igual");
+ok(F._tasaEfectivaLote(null) === 0, "y sin lote, 0, sin reventar");
+
+// Un lote viejo, guardado antes de este arreglo, no necesita migracion:
+// la efectiva sale de lo que ya tiene guardado.
+ok(F._tasaEfectivaLote({ tipo: "venta", usdt: 50.06, bs: 47000, tasa: 940 }) ===
+   Math.round((47000 / 50.06) * 10000) / 10000,
+   "un lote viejo tambien da su tasa efectiva, sin migrar nada");
+
+// Las cuatro funciones que dan las tasas tienen que leer la efectiva.
+["getLastTasaCompra", "getLastTasaVenta", "getTasaCompraPonderada",
+ "getTasaVentaPonderada", "simularConsumoFIFO"].forEach(function (fn) {
+  const i = HTML.indexOf("function " + fn + "(");
+  let prof = 0, k = HTML.indexOf("{", i), fin = k;
+  for (; fin < HTML.length; fin++) {
+    if (HTML[fin] === "{") prof++;
+    else if (HTML[fin] === "}" && --prof === 0) break;
+  }
+  const cuerpo = HTML.slice(i, fin + 1);
+  ok(/_tasaEfectivaLote\(/.test(cuerpo), fn + " pregunta por la tasa efectiva");
+  ok(!/return\s+(todas|arr|propias|lotes)\[[^\]]+\]\.tasa\s*;/.test(cuerpo),
+     "y " + fn + " ya no devuelve la de Binance a pelo");
+});
+
+// Y la comision fija no se puede sumar encima: la tasa del lote ya la trae
+// dentro. Sumarla otra vez es contarla dos veces.
+ok(/var comUc = tcDeLote \? 0 :/.test(HTML) && /var comUv = tvDeLote \? 0 :/.test(HTML),
+   "con tasa de lote no se vuelve a cobrar la comision");
+ok(/var tcDeLote = !tcMan && !!rates\.tc;/.test(HTML),
+   "pero si la tasa se escribio a mano, la comision si se aplica");
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

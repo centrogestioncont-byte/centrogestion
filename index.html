@@ -836,14 +836,22 @@ function cTx(){
   // el cálculo de USDT coincida con lo que realmente se libera en Binance P2P
   var cant = isVzla ? (td2>0 ? Math.round(r4(am/td2)) : 0) : Math.floor(r4(am*td2));
   var rates = getAutoRates(ruta.orig, ruta.dest||"VES", am, cant, f.cuentaBanco, f.cuentaDest);
-  var tc=parseFloat(f.tc_manual)||rates.tc||parseFloat(f.tc)||0;
-  var tv=parseFloat(f.tv_manual)||rates.tv||parseFloat(f.tv)||0;
+  var tcMan=parseFloat(f.tc_manual)||0, tvMan=parseFloat(f.tv_manual)||0;
+  var tc=tcMan||rates.tc||parseFloat(f.tc)||0;
+  var tv=tvMan||rates.tv||parseFloat(f.tv)||0;
   // Comisión diferenciada: lado VES (exonerada) vs lado fiat extranjero
   var comVes=COMVES(), comOtr=COM();
+  // ARREGLO 42 (14/09/2026): la tasa que viene de un lote YA lleva dentro lo
+  // que cobró Binance — es los bolívares recibidos entre los USDT que salieron
+  // de verdad de la cuenta. Restarle además la comisión fija la contaría dos
+  // veces. Por eso sólo se aplica cuando la tasa se escribió a mano o salió del
+  // histórico de remesas: ésas son de lista y no llevan la comisión dentro.
+  var tcDeLote = !tcMan && !!rates.tc;
+  var tvDeLote = !tvMan && !!rates.tv;
   // isVzla=true → orig=VES (VZLA↔BRL): uc usa VES, uv usa BRL
   // isVzla=false → dest=VES (BRL↔VZLA): uc usa BRL, uv usa VES
-  var comUc = isVzla ? comVes : comOtr;
-  var comUv = isVzla ? comOtr : comVes;
+  var comUc = tcDeLote ? 0 : (isVzla ? comVes : comOtr);
+  var comUv = tvDeLote ? 0 : (isVzla ? comOtr : comVes);
   if(!tc||!tv) return{am:am,tdia:td2,cant:cant,tc:tc,uc:0,tv:tv,uv:0,pr:0,com:comOtr,comUc:comUc,comUv:comUv};
   var uc_r = am/tc - comUc;
   var uv_r = isVzla ? (cant/tv + comUv) : (am*td2)/tv + comUv;
@@ -855,10 +863,13 @@ function cTx(){
 function cTxE(){
   var f=S.txE,am=parseFloat(f.am)||0,td2=parseFloat(f.tdia)||0;
   var rates=getAutoRates("USD","VES",am,am*td2,f.cuentaBanco,f.cuentaDest);
-  var tc=parseFloat(f.tc_manual)||rates.tc||parseFloat(f.tc)||0;
-  var tv=parseFloat(f.tv_manual)||rates.tv||parseFloat(f.tv)||0;
+  var tcManE=parseFloat(f.tc_manual)||0, tvManE=parseFloat(f.tv_manual)||0;
+  var tc=tcManE||rates.tc||parseFloat(f.tc)||0;
+  var tv=tvManE||rates.tv||parseFloat(f.tv)||0;
   // EE.UU: compra con USD (comOtr), vende USDT por VES (comVES)
-  var comVesEE=COMVES(), comOtrEE=COM();
+  // Misma regla que cTx (ARREGLO 42): si la tasa viene de un lote ya trae la
+  // comisión dentro, así que no se vuelve a sumar.
+  var comVesEE=(!tvManE&&rates.tv)?0:COMVES(), comOtrEE=(!tcManE&&rates.tc)?0:COM();
   if(!tc||!tv) return{am:am,tdia:td2,cant:am*td2,tc:tc,uc:0,tv:tv,uv:0,pr:0,com:comOtrEE,comUc:comOtrEE,comUv:comVesEE};
   var uc_r = am/tc - comOtrEE;
   var uv_r = (am*td2)/tv + comVesEE;
@@ -11088,16 +11099,45 @@ function getLastTasaCompra(moneda,cuentaOrigenId){
   if(cuentaOrigenId){
     var propias=todas.filter(function(r){return r.cuentaOrigenId===cuentaOrigenId;});
     if(propias.length){
-      for(var p=0;p<propias.length;p++){ if((parseFloat(propias[p].restante)||0)>0.01) return propias[p].tasa; }
-      return propias[propias.length-1].tasa; // esta cuenta ya consumió todo lo suyo → su propia última tasa como referencia
+      for(var p=0;p<propias.length;p++){ if((parseFloat(propias[p].restante)||0)>0.01) return _tasaEfectivaLote(propias[p]); }
+      return _tasaEfectivaLote(propias[propias.length-1]); // esta cuenta ya consumió todo lo suyo → su propia última tasa como referencia
     }
     // Esta cuenta nunca ha comprado en esta moneda (cuenta nueva) → cae al pool general de abajo
   }
   if(!todas.length) return null;
   for(var i=0;i<todas.length;i++){
-    if((parseFloat(todas[i].restante)||0)>0.01) return todas[i].tasa;
+    if((parseFloat(todas[i].restante)||0)>0.01) return _tasaEfectivaLote(todas[i]);
   }
-  return todas[todas.length-1].tasa; // todo consumido → última como referencia
+  return _tasaEfectivaLote(todas[todas.length-1]); // todo consumido → última como referencia
+}
+// ── La tasa que de VERDAD quedó ─────────────────────────────────────────────
+// ARREGLO 42 (14/09/2026): el lote guarda la tasa de Binance, y esa vale para
+// lo que se liberó — no para lo que salió de la cuenta. En la venta del 13/09
+// salieron 20,89 USDT de Binance y entraron 19.996,80 Bs:
+//
+//     Binance dice ....... 960,00 Bs/USDT   (sobre los 20,83 liberados)
+//     lo que quedó ....... 957,24 Bs/USDT   (19.996,80 ÷ 20,89)
+//
+// De estas tasas salen dos cosas: la que la app sugiere al registrar una
+// remesa, y lo que cuestan en USDT los bolívares que se gastan. Con la de
+// Binance, esos bolívares parecían costar 20,83 cuando costaron 20,89, y la
+// ganancia salía 0,06 USDT por encima de la real. La app no puede apuntarle
+// una ganancia que no tuvo.
+//
+// No hace falta guardar nada nuevo ni migrar los lotes viejos: sale de lo que
+// ya tienen. Comprando es al revés y también en su contra — paga un pelo más
+// por USDT del que dice la lista.
+function _tasaEfectivaLote(r){
+  if(!r) return 0;
+  var listada=parseFloat(r.tasa)||0;
+  if(r.tipo==="venta"){
+    var bs=parseFloat(r.bs)||0, salieron=parseFloat(r.usdt)||0;
+    if(bs>0&&salieron>0) return Math.round((bs/salieron)*10000)/10000;
+  }else{
+    var pago=parseFloat(r.montOrigen)||0, entraron=parseFloat(r.usdt)||0;
+    if(pago>0&&entraron>0) return Math.round((pago/entraron)*10000)/10000;
+  }
+  return listada; // lote sin los datos para calcularla (o de los de relleno)
 }
 // TV: tasa de la venta MÁS VIEJA con bolívares disponibles (FIFO), sin importar plataforma/operador
 function getLastTasaVenta(monedaDest,cuentaDestinoId){
@@ -11107,8 +11147,8 @@ function getLastTasaVenta(monedaDest,cuentaDestinoId){
   if(cuentaDestinoId){
     var propias=arr.filter(function(r){return r.cuentaDestinoId===cuentaDestinoId;});
     if(propias.length){
-      for(var p=0;p<propias.length;p++){ if((parseFloat(propias[p].bsRestante)||0)>0.01) return propias[p].tasa; }
-      return propias[propias.length-1].tasa; // esta cuenta ya consumió lo suyo → su propia última tasa
+      for(var p=0;p<propias.length;p++){ if((parseFloat(propias[p].bsRestante)||0)>0.01) return _tasaEfectivaLote(propias[p]); }
+      return _tasaEfectivaLote(propias[propias.length-1]); // esta cuenta ya consumió lo suyo → su propia última tasa
     }
     // Esta cuenta nunca ha recibido ventas en esta moneda (cuenta nueva) → sigue con el pool general de abajo
   }
@@ -11130,14 +11170,14 @@ function getLastTasaVenta(monedaDest,cuentaDestinoId){
       return null;
     }
     for(var j=0;j<todas.length;j++){
-      if((parseFloat(todas[j].bsRestante)||0)>0.01) return todas[j].tasa;
+      if((parseFloat(todas[j].bsRestante)||0)>0.01) return _tasaEfectivaLote(todas[j]);
     }
-    return todas[todas.length-1].tasa;
+    return _tasaEfectivaLote(todas[todas.length-1]);
   }
   for(var i=0;i<arr.length;i++){
-    if((parseFloat(arr[i].bsRestante)||0)>0.01) return arr[i].tasa;
+    if((parseFloat(arr[i].bsRestante)||0)>0.01) return _tasaEfectivaLote(arr[i]);
   }
-  return arr[arr.length-1].tasa;
+  return _tasaEfectivaLote(arr[arr.length-1]);
 }
 // Consume FIFO los lotes al registrar una operación:
 //  - compras: descuenta 'usdtUsados' del USDT restante (lote más viejo primero)
@@ -11211,7 +11251,7 @@ function simularConsumoFIFO(monedaOrig, usdtUsados, monedaDest, bsEntregados, cu
       var disp=parseFloat(compras[i].restante)||0;
       if(disp<=0) continue;
       var usar=Math.min(disp,u);
-      resCompras.push({fecha:compras[i].fecha,tasa:parseFloat(compras[i].tasa)||0,usdt:Math.round(usar*10000)/10000});
+      resCompras.push({fecha:compras[i].fecha,tasa:_tasaEfectivaLote(compras[i]),usdt:Math.round(usar*10000)/10000});
       u-=usar;
     }
   }
@@ -11223,7 +11263,7 @@ function simularConsumoFIFO(monedaOrig, usdtUsados, monedaDest, bsEntregados, cu
       var dispB=parseFloat(ventas[k].bsRestante)||0;
       if(dispB<=0) continue;
       var usarB=Math.min(dispB,b);
-      resVentas.push({fecha:ventas[k].fecha,tasa:parseFloat(ventas[k].tasa)||0,bs:Math.round(usarB*100)/100});
+      resVentas.push({fecha:ventas[k].fecha,tasa:_tasaEfectivaLote(ventas[k]),bs:Math.round(usarB*100)/100});
       b-=usarB;
     }
   }
@@ -11519,14 +11559,15 @@ function getTasaCompraPonderada(moneda,montoOrigen,cuentaOrigenId){
   for(var i=0;i<lotes.length&&rest>0.0001;i++){
     var disp=parseFloat(lotes[i].restante)||0;
     if(disp<=0) continue;
-    var tasa=parseFloat(lotes[i].tasa);
+    var tasa=_tasaEfectivaLote(lotes[i]);
+    if(!(tasa>0)) continue;
     var capOrigen=disp*tasa;              // cuánto del monto cubre este lote
     var usar=Math.min(capOrigen,rest);
     usdt+=usar/tasa;
     rest-=usar;
   }
   if(rest>0.0001){ // lotes insuficientes → el excedente se valora a la tasa más nueva conocida
-    var tNueva=parseFloat(lotes[lotes.length-1].tasa)||parseFloat(base)||0;
+    var tNueva=_tasaEfectivaLote(lotes[lotes.length-1])||parseFloat(base)||0;
     if(tNueva>0) usdt+=rest/tNueva;
   }
   if(usdt<=0) return base;
@@ -11553,13 +11594,14 @@ function getTasaVentaPonderada(monedaDest,montoBs,cuentaDestinoId){
   for(var i=0;i<lotes.length&&rest>0.01;i++){
     var disp=parseFloat(lotes[i].bsRestante)||0;
     if(disp<=0) continue;
-    var tasa=parseFloat(lotes[i].tasa);
+    var tasa=_tasaEfectivaLote(lotes[i]);
+    if(!(tasa>0)) continue;
     var usar=Math.min(disp,rest);
     usdt+=usar/tasa;
     rest-=usar;
   }
   if(rest>0.01){ // bolívares insuficientes → el excedente se valora a la tasa más nueva conocida
-    var tNuevaV=parseFloat(lotes[lotes.length-1].tasa)||parseFloat(base)||0;
+    var tNuevaV=_tasaEfectivaLote(lotes[lotes.length-1])||parseFloat(base)||0;
     if(tNuevaV>0) usdt+=rest/tNuevaV;
   }
   if(usdt<=0) return base;
