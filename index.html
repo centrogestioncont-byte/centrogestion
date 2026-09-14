@@ -12995,13 +12995,15 @@ function exportarReporteContadorCSV(mesKey){
   if(!rep){alert("Abre primero la pestaña 'Contador' en Cierre Mensual para generar el reporte.");return;}
   var partsK=mesKey.split("-");
   var mesLabel=getMesLabel(partsK[1],partsK[0]);
-  var linhas=["Relatório Financeiro · "+mesLabel];
-  Object.keys(rep).forEach(function(k){ linhas.push(k+";"+rep[k]); });
-  var csv=linhas.join("\n");
+  // ARREGLO 57: el informe salia en portugues ("Relatório Financeiro",
+  // "Saídas", "Fluxo líquido") dentro de una app que esta toda en español.
+  var lineas=["Informe financiero · "+mesLabel];
+  Object.keys(rep).forEach(function(k){ lineas.push(k+";"+rep[k]); });
+  var csv=lineas.join("\n");
   var blob=new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8;"});
   var url=URL.createObjectURL(blob);
   var a=document.createElement("a");
-  a.href=url; a.download="relatorio_contador_"+mesKey+".csv";
+  a.href=url; a.download="informe_contador_"+mesKey+".csv";
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
@@ -13230,13 +13232,20 @@ function generarInformePDF(mesKey){
   // BANCOS
   sec("🏦 Saldos de cuentas al "+fechaSaldosInforme+(_esCierrePasado?" <span style='font-weight:400;font-size:9.5px;color:#999'>(cierre de "+mesLabel+")</span>":""),
     "<div class='tabla-scroll'><table><tr><th>Cuenta</th><th>Moneda</th><th>Saldo actual</th><th>≈ USDT</th></tr>"+
-    cuentasParaInforme.map(function(c){
+    // ARREGLO 57: 6 de sus 15 cuentas estan en cero y llenaban la tabla. No
+    // aportan nada al total (cero es cero) y en un informe que se manda fuera
+    // solo hacen ruido. Se cuentan al pie para que se sepa que estan.
+    cuentasParaInforme.filter(function(c){return Math.abs(parseFloat(c.saldo)||0)>0.009;}).map(function(c){
       var rate=getRateToUsdt(c.moneda);
       var usdt=c.moneda==="USDT"?(parseFloat(c.saldo)||0):(rate?((parseFloat(c.saldo)||0)/rate):null);
       return "<tr><td>"+c.nombre+"</td><td style='text-align:center'>"+c.moneda+"</td>"+
         "<td style='text-align:right;font-weight:700'>"+f2l(parseFloat(c.saldo)||0)+"</td>"+
         "<td style='text-align:right;color:#0a3d7c'>"+(usdt!==null?"≈ "+f2l(usdt):"<span style=\'color:#c0392b\'>Sin tasa</span>")+"</td></tr>";
     }).join("")+
+    (function(){
+      var vacias=cuentasParaInforme.filter(function(c){return Math.abs(parseFloat(c.saldo)||0)<=0.009;}).length;
+      return vacias?"<tr><td colspan='4' style='font-size:10px;color:#999;font-style:italic'>"+vacias+" cuenta"+(vacias!==1?"s":"")+" más en cero, sin saldo que informar</td></tr>":"";
+    })()+
     "<tr style='background:#f0f0f0'><td colspan='3' style='font-size:10px;color:#888'>Inventario USDT disponible</td><td style='text-align:right;color:#888'>$"+f2l(invUsdtPDF)+"</td></tr>"+
     "<tr style='background:#FFF8DC'><td colspan='3'><b>TOTAL EQUIVALENTE EN USDT</b></td><td style='text-align:right;font-weight:900;color:#7a5c00'>$"+f2l(totalUsdtCuentas)+"</td></tr>"+
     "</table></div>")+
@@ -13716,9 +13725,23 @@ function rInformeCierre(){
     "<div style='background:#fff;border:1px solid #eee;border-radius:12px;overflow:hidden;margin-bottom:12px'>"+
       "<div style='background:#f5f5f7;padding:8px 12px;font-size:10px;font-weight:700;color:#888;text-transform:uppercase'>Lo que puedes gastar ahora — solo lo ya cobrado</div>"+
       "<div style='display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#555'>Acumulado de meses ya cerrados</span><b style='font-size:13px;color:#0f6e3a'>$"+f2(calc.saldoPersonalAcumuladoPrevio)+"</b></div>"+
-      "<div style='padding:6px 12px;font-size:9.5px;color:#aaa;background:#fafafa;font-family:monospace'>🔍 mes anterior encontrado: "+(calc._diagAcum.mesEncontrado||"ninguno")+" · su sueldo guardado: "+(calc._diagAcum.sueldoGuardado!==null&&calc._diagAcum.sueldoGuardado!==undefined?"$"+f2(calc._diagAcum.sueldoGuardado):"no tiene")+" · ¿tenía el campo nuevo?: "+(calc._diagAcum.campoExistia===null?"—":(calc._diagAcum.campoExistia?"sí":"no, se reconstruyó"))+"</div>"+
+      // ARREGLO 57: aqui habia una linea de depuracion —"🔍 mes anterior
+      // encontrado: 2026-08 · su sueldo guardado... ¿tenia el campo nuevo?"—
+      // visible en produccion. Servia para cazar un fallo del acumulado que ya
+      // esta resuelto; lo que queda es ruido en la pantalla que ella mira.
       (calc.repTotal>0?wrow("+ Reposiciones",calc.repTotal,"#0f6e3a"):"")+
       wrow("− Gastos personales pagados este mes",calc.egPerPag,"#c0392b")+
+      // ARREGLO 57: lo pagado desde una cuenta PERSONAL no baja lo disponible
+      // —es dinero suyo, no de la empresa— y eso es correcto, pero la pantalla
+      // enseñaba "−$0,00" justo encima de una lista de $471,13 en gastos
+      // personales del mes, sin decir por que. Visto asi parece un error.
+      (function(){
+        var ctasPers=(S.cuentas||[]).filter(function(c){return c.esPersonal;}).map(function(c){return c.id;});
+        var desdePers=egPerM.filter(function(e){return e.pagada&&ctasPers.indexOf(e.cuentaId)!==-1;});
+        var sumaPers=desdePers.reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0);
+        if(sumaPers<=0.009) return "";
+        return "<div style='padding:8px 12px;font-size:10.5px;color:#777;background:#FAFBFD;border-top:1px solid #f5f5f5'>Otros <b>$"+f2(sumaPers)+"</b> en "+desdePers.length+" gasto"+(desdePers.length!==1?"s":"")+" personal"+(desdePers.length!==1?"es":"")+" salieron de tus cuentas personales, así que no bajan este disponible: ese dinero ya era tuyo.</div>";
+      })()+
       (function(){
         var cuentasPersId=(S.cuentas||[]).filter(function(c){return c.esPersonal;}).map(function(c){return c.id;});
         var itemsCount=egPerM.filter(function(e){return e.pagada&&cuentasPersId.indexOf(e.cuentaId)===-1;});
@@ -13880,6 +13903,17 @@ function rInformeCierre(){
     var invUsdtSec=getInventarioStats().disponible||0;
     var totalUsdt=invUsdtSec;
     cuentasAct.forEach(function(c){var s=parseFloat(c.saldo)||0;var rate=getRateToUsdt(c.moneda);if(c.moneda==="USDT")totalUsdt+=s;else if(rate)totalUsdt+=s/rate;});
+    // ARREGLO 57: una cuenta en cero Y sin un solo movimiento en el mes no
+    // tiene nada que contar. Se aparta, pero NO se esconde: va nombrada al
+    // final, porque un saldo en cero que deberia tener dinero es justo lo que
+    // ella querria ver.
+    var _vacias=cuentasAct.filter(function(c){
+      if(Math.abs(parseFloat(c.saldo)||0)>0.009) return false;
+      var f=_flujoCuentaMes(c.id,mesKey);
+      return (f.totalE+f.totalS)<=0.009;
+    });
+    var _vaciasIds=_vacias.map(function(c){return c.id;});
+    cuentasAct=cuentasAct.filter(function(c){return _vaciasIds.indexOf(c.id)===-1;});
     var rows=cuentasAct.map(function(c){
       var isNeg=(parseFloat(c.saldo)||0)<0;
       var usdtEq=c.moneda==="USDT"?parseFloat(c.saldo)||0:(getRateToUsdt(c.moneda)?((parseFloat(c.saldo)||0)/getRateToUsdt(c.moneda)):null);
@@ -13935,6 +13969,10 @@ function rInformeCierre(){
       "</div>";
     }).join("");
     return rows+
+      (_vacias.length?"<div style='background:#FAFBFD;border:1px dashed #dde3ec;border-radius:12px;padding:10px 13px;margin-bottom:8px'>"+
+        "<div style='font-size:10px;font-weight:700;color:#9aa3b5;text-transform:uppercase;letter-spacing:.3px'>En cero y sin movimiento este mes</div>"+
+        "<div style='font-size:11.5px;color:#7a8497;margin-top:4px'>"+_vacias.map(function(c){return c.nombre+" ("+c.moneda+")";}).join(" · ")+"</div>"+
+      "</div>":"")+
       "<div style='background:linear-gradient(135deg,#1a3558,#132840);border-radius:16px;padding:16px 18px;color:#fff;display:flex;justify-content:space-between;align-items:center;margin-top:8px;box-shadow:0 4px 14px rgba(19,40,64,.25)'>"+
         "<div><div style='font-size:10px;color:#FFA31C;font-weight:800;text-transform:uppercase;letter-spacing:.4px'>💎 Total en todas las cuentas</div>"+
         "<div style='font-size:10px;color:rgba(255,255,255,.5);margin-top:3px'>Incluye inventario USDT ($"+f2(invUsdtSec)+") + equivalente de todas las cuentas</div></div>"+
@@ -13984,11 +14022,11 @@ function rInformeCierre(){
     var reporte={"Mês":mesLabel};
     flujosPorCuenta.forEach(function(x){
       reporte["Entradas — "+x.cuenta.nombre]=_fmtBRL(x.flujo.totalE);
-      reporte["Saídas — "+x.cuenta.nombre]=_fmtBRL(x.flujo.totalS);
+      reporte["Salidas — "+x.cuenta.nombre]=_fmtBRL(x.flujo.totalS);
     });
-    reporte["Total Entradas (todas as contas BRL)"]=_fmtBRL(totalEntradas);
-    reporte["Total Saídas (todas as contas BRL)"]=_fmtBRL(totalSalidas);
-    reporte["Fluxo de Caixa Líquido"]=_fmtBRL(flujoNeto);
+    reporte["Total Entradas (todas las cuentas BRL)"]=_fmtBRL(totalEntradas);
+    reporte["Total Salidas (todas las cuentas BRL)"]=_fmtBRL(totalSalidas);
+    reporte["Flujo de caja neto"]=_fmtBRL(flujoNeto);
     reporte["Lucro Bruto das Operações (em Reais)"]=_fmtBRL(ganBrlReais);
     reporte["(−) Gastos Fixos da Empresa (em Reais)"]=_fmtBRL(gastosEmpresaReais);
     reporte["(−) Salário (em Reais)"]=_fmtBRL(sueldoReais);
@@ -14005,9 +14043,9 @@ function rInformeCierre(){
         "</div>"+
         "<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px'>"+
           "<div style='background:#F3FAF5;border-radius:10px;padding:8px 10px'><div style='font-size:8.5px;color:#0f6e3a;font-weight:800;text-transform:uppercase;letter-spacing:.3px'>↑ Entradas</div><div style='font-size:15px;font-weight:900;color:#0f6e3a;margin-top:1px'>"+_fmtBRL(f.totalE)+"</div></div>"+
-          "<div style='background:#FDF4F4;border-radius:10px;padding:8px 10px'><div style='font-size:8.5px;color:#c0392b;font-weight:800;text-transform:uppercase;letter-spacing:.3px'>↓ Saídas</div><div style='font-size:15px;font-weight:900;color:#c0392b;margin-top:1px'>"+_fmtBRL(f.totalS)+"</div></div>"+
+          "<div style='background:#FDF4F4;border-radius:10px;padding:8px 10px'><div style='font-size:8.5px;color:#c0392b;font-weight:800;text-transform:uppercase;letter-spacing:.3px'>↓ Salidas</div><div style='font-size:15px;font-weight:900;color:#c0392b;margin-top:1px'>"+_fmtBRL(f.totalS)+"</div></div>"+
         "</div>"+
-        "<div style='display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding-top:8px;border-top:1px dashed #eee'><span style='font-size:10px;color:#9aa3b5;font-weight:600'>Fluxo líquido</span><b style='font-size:13px;color:"+(neto>=0?"#0f6e3a":"#c0392b")+"'>"+_fmtBRL(neto)+"</b></div>"+
+        "<div style='display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding-top:8px;border-top:1px dashed #eee'><span style='font-size:10px;color:#9aa3b5;font-weight:600'>Flujo neto</span><b style='font-size:13px;color:"+(neto>=0?"#0f6e3a":"#c0392b")+"'>"+_fmtBRL(neto)+"</b></div>"+
       "</div>";
     }
 
@@ -14021,7 +14059,7 @@ function rInformeCierre(){
       (cuentasBRL.length>1?
         "<div style='background:linear-gradient(135deg,#1a3558,#132840);border-radius:14px;padding:14px 16px;color:#fff;margin-top:6px;box-shadow:0 4px 14px rgba(19,40,64,.2)'>"+
           "<div style='font-size:9.5px;color:#FFA31C;font-weight:800;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px'>Total — todas las cuentas BRL</div>"+
-          "<div style='display:flex;justify-content:space-between;font-size:11.5px;color:rgba(255,255,255,.75)'><span>Entradas: "+_fmtBRL(totalEntradas)+"</span><span>Saídas: "+_fmtBRL(totalSalidas)+"</span></div>"+
+          "<div style='display:flex;justify-content:space-between;font-size:11.5px;color:rgba(255,255,255,.75)'><span>Entradas: "+_fmtBRL(totalEntradas)+"</span><span>Salidas: "+_fmtBRL(totalSalidas)+"</span></div>"+
           "<div style='font-size:19px;font-weight:900;margin-top:5px;color:#FFD700'>Neto: "+_fmtBRL(flujoNeto)+"</div>"+
         "</div>":"")+
     "</div>"+
@@ -14200,7 +14238,14 @@ function rInformeCierre(){
   // ── PENDIENTES Y SALDOS ────────────────────────────────────────
   function secPendientes(){
     var cobPendGan=cobrarPend.reduce(function(a,c){return a+(parseFloat(c.ganancia)||0);},0);
-    var totalApartar=calc.socioFinalEE+calc.totalCom+calc.egEmpPend;
+    // ARREGLO 57: si el socio DEBE a la empresa, su saldo es negativo y no es
+    // algo que apartar — es algo que cobrar. Sumandolo tal cual, la pantalla
+    // enseñaba "Pagar Paul −120,00 · TOTAL A APARTAR −120,00": apartar un
+    // numero negativo no significa nada, y el PDF ya decia otra cosa (0,00 mas
+    // el aviso de la deuda). Se usa la misma cuenta que el PDF.
+    var _socioAPagar=Math.max(0,calc.socioFinalEE);
+    var _socioDebe=calc.socioFinalEE<0?Math.abs(calc.socioFinalEE):0;
+    var totalApartar=_socioAPagar+calc.totalCom+calc.egEmpPend;
     return "<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px'>"+
       card("#0f6e3a","#fff","⏳ Por cobrar","$"+f2(cobPendGan)+" USDT",cobrarPend.length+" operaciones pendientes")+
       (function(){var prestUsdtTotal=0;prestActivos.forEach(function(p){var mon=p.mon||"USDT";var monto=parseFloat(p.monto||p.sal)||0;var abos=(p.abonos||[]).reduce(function(a,ab){return a+ab.monto;},0);var pend=Math.max(0,monto-abos);var rate=getRateToUsdt(mon);prestUsdtTotal+=(mon==="USDT"?pend:(rate?pend/rate:0));});return card("#c0392b","#fff","🤝 Préstamos activos","≈$"+f2(prestUsdtTotal)+" USDT",prestActivos.length+" préstamos activos");}())+
@@ -14208,10 +14253,12 @@ function rInformeCierre(){
     "</div>"+
     "<div style='background:#1a3558;border-radius:12px;padding:14px;color:#fff;margin-bottom:12px'>"+
       "<div style='font-size:12px;font-weight:700;color:#FFA31C;margin-bottom:10px'>💰 Lo que hay que apartar para el mes siguiente</div>"+
-      "<div style='display:flex;justify-content:space-between;font-size:12px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.1)'><span>Pagar "+calc.socioNombreEE+"</span><b>$"+f2(calc.socioFinalEE)+"</b></div>"+
+      (_socioAPagar>0?"<div style='display:flex;justify-content:space-between;font-size:12px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.1)'><span>Pagar "+calc.socioNombreEE+"</span><b>$"+f2(_socioAPagar)+"</b></div>":"")+
+      (_socioDebe>0?"<div style='display:flex;justify-content:space-between;font-size:12px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.1)'><span style='color:#ffd5d5'>"+calc.socioNombreEE+" te debe (no se le paga este mes)</span><b style='color:#ffd5d5'>$"+f2(_socioDebe)+"</b></div>":"")+
       calc.comisionesSocios.map(function(s){return "<div style='display:flex;justify-content:space-between;font-size:12px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.1)'><span>Pagar "+s.nombre+"</span><b>$"+f2(s.monto)+"</b></div>";}).join("")+
       (calc.egEmpPend>0?"<div style='display:flex;justify-content:space-between;font-size:12px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.1)'><span>Egresos empresa pendientes</span><b>$"+f2(calc.egEmpPend)+"</b></div>":"")+
       "<div style='display:flex;justify-content:space-between;font-size:15px;font-weight:900;padding:10px 0 4px'><span>TOTAL A APARTAR</span><span style='color:#FFA31C'>$"+f2(totalApartar)+"</span></div>"+
+      (totalApartar<=0.009?"<div style='font-size:10.5px;color:rgba(255,255,255,.6)'>Nada que apartar este mes.</div>":"")+
     "</div>"+
     (cobrarPend.length?"<div style='background:#FFF8DC;border:1px solid #F5C518;border-radius:11px;padding:12px;margin-bottom:10px'>"+
       "<div style='font-size:10px;font-weight:700;color:#7a5c00;text-transform:uppercase;margin-bottom:8px'>⏳ Operaciones por cobrar</div>"+
