@@ -1958,6 +1958,12 @@ function rComparacionApi(){
   return html;
 }
 
+// ARREGLO 59 (14/09/2026): la razon social y el CNPJ vivian SOLO dentro de una
+// pantalla que ya nadie llamaba (rCierreMes, borrada en este mismo arreglo).
+// El contador los necesita en cualquier papel que se le mande, asi que viven
+// aqui, en un solo sitio.
+var EMPRESA_RAZON = "SAIPHA SERVIÇOS DIGITAIS";
+var EMPRESA_CNPJ  = "66.994.057/0001-61";
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo","_modCampos"];
 
@@ -9463,320 +9469,6 @@ function saveTasasConfig(){
 // ══════════════════════════════════════════════════════
 // CIERRE MENSUAL — Reporte completo admin
 // ══════════════════════════════════════════════════════
-function rCierreMes(){
-  var meses=getMesesDisponibles();
-  var selMes=S.filtroMes||(meses.length?meses[0].key:"");
-  if(!selMes) return "<div style='text-align:center;padding:40px;color:#aaa'>No hay datos disponibles</div>";
-  var parts=selMes.split("-");
-  var mesLabel=getMesLabel(parts[1],parts[0]);
-  var mesOpts=meses.map(function(m){return "<option value='"+m.key+"'"+(selMes===m.key?" selected":"")+">"+getMesLabel(m.mes,m.anio)+"</option>";}).join("");
-
-  var brlM=filterByMes(S.brl,selMes);
-  var vzlaM=filterByMes(S.vzla,selMes);
-  var eeuuM=filterByMes(S.eeuu,selMes);
-  var egM=filterByMes(S.egresos,selMes);
-  var invM=filterByMes(S.inventarioUsdt,selMes);
-
-  // ── Ganancias ───────────────────────────────────────
-  var ganBrl=brlM.reduce(function(a,r){return a+r.pr;},0);
-  var ganVzla=vzlaM.reduce(function(a,r){return a+r.pr;},0);
-  var ganEEbruta=eeuuM.reduce(function(a,r){return a+r.pr;},0);
-  var gasEE=filterByMes(S.gastos_eeuu||[],selMes).reduce(function(a,g){return a+(parseFloat(g.monto)||0);},0);
-  var ganEEneta=ganEEbruta-gasEE;
-  var ganJulio=ganEEneta*0.5;
-  var deudaPaul=(S.deudas_paul||[]).filter(function(d){return !d.cobrada;}).reduce(function(a,d){return a+(parseFloat(d.monto)||0);},0);
-  var ganPaul=ganEEneta*0.5-deudaPaul;
-  var ganTotal=ganBrl+ganVzla+ganJulio;
-
-  // ── Egresos ─────────────────────────────────────────
-  var egPag=egM.filter(function(e){return e.pagada;}).reduce(function(a,e){return a+e.usdt;},0);
-  var egPend=egM.filter(function(e){return !e.pagada;}).reduce(function(a,e){return a+e.usdt;},0);
-
-  // ── USDT ────────────────────────────────────────────
-  var compM=invM.filter(function(r){return r.tipo==="compra";});
-  var ventM=invM.filter(function(r){return r.tipo==="venta";});
-  var totalComp=compM.reduce(function(a,r){return a+(parseFloat(r.usdt)||0);},0);
-  var totalVend=ventM.reduce(function(a,r){return a+(parseFloat(r.usdt)||0);},0);
-  var totalBsRec=ventM.reduce(function(a,r){return a+(parseFloat(r.bs)||0);},0);
-  var usdtDisp=totalComp-totalVend;
-
-  // ── Operaciones ─────────────────────────────────────
-  var totalOps=brlM.length+vzlaM.length+eeuuM.length;
-  // Top clientes
-  var clStats={};
-  [].concat(brlM.map(function(r){return{cl:r.cl,pr:r.pr};}),
-            vzlaM.map(function(r){return{cl:r.cl,pr:r.pr};}),
-            eeuuM.map(function(r){return{cl:r.cl,pr:r.pr/2};}))
-    .forEach(function(r){if(!clStats[r.cl])clStats[r.cl]={cl:r.cl,pr:0,txs:0};clStats[r.cl].pr+=r.pr;clStats[r.cl].txs++;});
-  var topCl=Object.values(clStats).sort(function(a,b){return b.pr-a.pr;}).slice(0,5);
-
-  // ── Ganancia líquida = neta - egresos pagados ────────
-  var ganNeta=ganBrl+ganVzla+ganEEneta;
-  var ganLiquida=ganTotal-egPag-egPend;
-
-  function mc(bg,label,val,sub){
-    return "<div style='background:"+bg+";border-radius:10px;padding:12px 14px'>"+
-      "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:4px'>"+label+"</div>"+
-      "<div style='font-size:20px;font-weight:800;color:#0f6e3a'>"+val+"</div>"+
-      (sub?"<div style='font-size:10px;color:#888;margin-top:2px'>"+sub+"</div>":"")+
-    "</div>";
-  }
-
-  var html=
-  // Header
-  "<div style='background:linear-gradient(135deg,#1a2a4a,#2c2c6e);border-radius:12px;padding:16px 20px;margin-bottom:16px;color:#fff'>"+
-    "<div style='display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px'>"+
-      "<div><div style='font-size:16px;font-weight:800'>📋 CIERRE MENSUAL</div>"+
-      "<div style='font-size:12px;opacity:.8;margin-top:3px'>"+mesLabel+" · "+totalOps+" operaciones totales</div></div>"+
-      "<select onchange='S.filtroMes=this.value;R()' style='border-radius:8px;padding:8px 12px;border:none;font-size:13px;background:rgba(255,255,255,.2);color:#fff;cursor:pointer'>"+mesOpts+"</select>"+
-    "</div>"+
-  "</div>"+
-
-  // ── Ganancias por operador ─────────────────────────
-  "<div class='sec' style='border-left:3px solid #0f6e3a'>"+
-    "<div class='sec-title' style='color:#0f6e3a'>💰 GANANCIAS POR OPERADOR</div>"+
-    "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:10px'>"+
-      mc("#D6F5E3","🇧🇷 BRL","$"+f2(ganBrl)+" USDT",brlM.length+" operaciones")+
-      mc("#FFF0E8","🇻🇪 VZLA","$"+f2(ganVzla)+" USDT",vzlaM.length+" operaciones")+
-      mc("#DDEEFF","🇺🇸 EE.UU bruta","$"+f2(ganEEbruta)+" USDT",eeuuM.length+" operaciones")+
-      mc("#FFF8DC","🇺🇸 EE.UU gastos","−$"+f2(gasEE)+" USDT","deducidos")+
-      mc("#E8F5E9","🇺🇸 EE.UU neta","$"+f2(ganEEneta)+" USDT","después de gastos")+
-    "</div>"+
-    "<div style='background:#f9f9f9;border-radius:8px;padding:12px;border:1px solid #eee'>"+
-      "<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:6px'>"+
-        "<span style='font-size:12px;font-weight:600'>Ganancia total del mes (BRL+VZLA+50% EE.UU)</span>"+
-        "<span style='font-size:22px;font-weight:900;color:#0f6e3a'>$"+f2(ganTotal)+" USDT</span>"+
-      "</div>"+
-    "</div>"+
-  "</div>"+
-
-  // ── Distribución socios ────────────────────────────
-  "<div class='sec' style='border-left:3px solid #0a3d7c'>"+
-    "<div class='sec-title' style='color:#0a3d7c'>👥 DISTRIBUCIÓN DE SOCIOS</div>"+
-    "<div style='display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:10px'>"+
-      "<div style='background:#1a3558;border-radius:10px;padding:14px;color:#fff'>"+
-        "<div style='font-size:12px;font-weight:700;margin-bottom:8px'>👤 JULIO (BRL+VZLA+50% EE.UU)</div>"+
-        "<div style='font-size:11px;opacity:.8;margin-bottom:4px'>BRL/VZLA: $"+f2(ganBrl+ganVzla)+"</div>"+
-        "<div style='font-size:11px;opacity:.8;margin-bottom:8px'>EE.UU (50%): $"+f2(ganJulio)+"</div>"+
-        "<div style='font-size:26px;font-weight:900;color:#90EE90'>$"+f2(ganTotal)+" USDT</div>"+
-        "<div style='font-size:10px;opacity:.6;margin-top:3px'>Ganancia total a cobrar</div>"+
-      "</div>"+
-      "<div style='background:#3a1a58;border-radius:10px;padding:14px;color:#fff'>"+
-        "<div style='font-size:12px;font-weight:700;margin-bottom:8px'>👤 PAUL (50% EE.UU)</div>"+
-        "<div style='font-size:11px;opacity:.8;margin-bottom:2px'>EE.UU 50%: $"+f2(ganEEneta*0.5)+"</div>"+
-        (deudaPaul>0?"<div style='font-size:11px;color:#ffaaaa;margin-bottom:2px'>Adelantos: −$"+f2(deudaPaul)+"</div>":"")+
-        "<div style='margin:6px 0;border-bottom:1px solid rgba(255,255,255,.2)'></div>"+
-        "<div style='font-size:26px;font-weight:900;color:"+(ganPaul>=0?"#90EE90":"#ffaaaa")+"'>$"+f2(ganPaul)+" USDT</div>"+
-        "<div style='font-size:10px;opacity:.6;margin-top:3px'>"+(deudaPaul>0?"Después de descontar adelantos":"Ganancia a cobrar")+"</div>"+
-      "</div>"+
-    "</div>"+
-  "</div>"+
-
-  // ── Egresos ─────────────────────────────────────────
-  "<div class='sec' style='border-left:3px solid #c0392b'>"+
-    "<div class='sec-title' style='color:#c0392b'>💸 EGRESOS DEL MES</div>"+
-    "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:10px'>"+
-      "<div style='background:#FDECEA;border-radius:8px;padding:12px'><div style='font-size:10px;color:#888;font-weight:700'>PAGADOS</div><div style='font-size:20px;font-weight:800;color:#c0392b'>$"+f2(egPag)+"</div></div>"+
-      "<div style='background:#FFF8DC;border-radius:8px;padding:12px'><div style='font-size:10px;color:#888;font-weight:700'>PENDIENTES</div><div style='font-size:20px;font-weight:800;color:#e67e22'>$"+f2(egPend)+"</div><div style='font-size:9px;color:#888'>APARTAR para pagar</div></div>"+
-      "<div style='background:#f0f0f0;border-radius:8px;padding:12px'><div style='font-size:10px;color:#888;font-weight:700'>TOTAL EGRESOS</div><div style='font-size:20px;font-weight:800;color:#555'>$"+f2(egPag+egPend)+"</div></div>"+
-    "</div>"+
-  "</div>"+
-
-  // ── Inventario USDT ──────────────────────────────────
-  "<div class='sec' style='border-left:3px solid #F5C518'>"+
-    "<div class='sec-title' style='color:#7a5c00'>💰 INVENTARIO USDT DEL MES</div>"+
-    "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:10px'>"+
-      "<div style='background:#FFF8DC;border-radius:8px;padding:12px'><div style='font-size:10px;color:#888;font-weight:700'>USDT COMPRADOS</div><div style='font-size:18px;font-weight:800;color:#0f6e3a'>+"+f4(totalComp)+"</div><div style='font-size:9px;color:#888'>"+compM.length+" compras</div></div>"+
-      "<div style='background:#FFF8DC;border-radius:8px;padding:12px'><div style='font-size:10px;color:#888;font-weight:700'>USDT VENDIDOS</div><div style='font-size:18px;font-weight:800;color:#c0392b'>−"+f4(totalVend)+"</div><div style='font-size:9px;color:#888'>"+ventM.length+" ventas</div></div>"+
-      "<div style='background:#FFF8DC;border-radius:8px;padding:12px'><div style='font-size:10px;color:#888;font-weight:700'>BS RECIBIDOS</div><div style='font-size:18px;font-weight:800;color:#0a3d7c'>"+f2(totalBsRec)+"</div></div>"+
-      "<div style='background:#FFFBEA;border:2px solid #F5C518;border-radius:8px;padding:12px'><div style='font-size:10px;color:#7a5c00;font-weight:700'>USDT RESTANTES</div><div style='font-size:18px;font-weight:800;color:#7a5c00'>"+f4(usdtDisp)+"</div><div style='font-size:9px;color:#888'>Lleva al siguiente mes</div></div>"+
-    "</div>"+
-  "</div>"+
-
-  // ── Resumen final ────────────────────────────────────
-  "<div style='background:linear-gradient(135deg,#0f3020,#1a6b3c);border-radius:12px;padding:16px 20px;color:#fff;margin-bottom:16px'>"+
-    "<div style='font-size:12px;font-weight:700;opacity:.8;margin-bottom:14px;text-transform:uppercase;letter-spacing:.5px'>📊 RESUMEN FINANCIERO FINAL</div>"+
-    "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px'>"+
-      "<div style='background:rgba(255,255,255,.12);border-radius:8px;padding:12px;text-align:center'>"+
-        "<div style='font-size:10px;opacity:.7;margin-bottom:4px'>GANANCIA BRUTA TOTAL</div>"+
-        "<div style='font-size:20px;font-weight:800'>$"+f2(ganBrl+ganVzla+ganEEbruta)+"</div>"+
-      "</div>"+
-      "<div style='background:rgba(255,255,255,.12);border-radius:8px;padding:12px;text-align:center'>"+
-        "<div style='font-size:10px;opacity:.7;margin-bottom:4px'>GASTOS OPERATIVOS</div>"+
-        "<div style='font-size:20px;font-weight:800;color:#ffaaaa'>−$"+f2(egPag+egPend+gasEE)+"</div>"+
-      "</div>"+
-      "<div style='background:rgba(255,215,0,.2);border:1.5px solid rgba(255,215,0,.5);border-radius:8px;padding:12px;text-align:center'>"+
-        "<div style='font-size:10px;color:#FFD700;font-weight:700;margin-bottom:4px'>GANANCIA NETA (Julio)</div>"+
-        "<div style='font-size:24px;font-weight:900;color:#FFD700'>$"+f2(ganTotal-egPag-egPend)+"</div>"+
-      "</div>"+
-    "</div>"+
-    "<div style='background:rgba(0,0,0,.2);border-radius:8px;padding:10px 14px;font-size:11px;opacity:.9'>"+
-      "📌 <b>Para el siguiente mes:</b> Llevar USDT disponibles ("+f4(usdtDisp)+") + capital en cuentas. "+
-      (egPend>0?"⚠️ Apartar <b>$"+f2(egPend)+" USDT</b> para egresos pendientes. ":"")+
-      "Pagar a Paul <b>$"+f2(ganPaul)+" USDT</b> y cerrar deudas."+
-    "</div>"+
-  "</div>"+
-
-  // ── Top clientes ─────────────────────────────────────
-  (topCl.length?"<div class='sec' style='border-left:3px solid #4B3FC7'><div class='sec-title' style='color:#4B3FC7'>🏆 TOP 5 CLIENTES DEL MES</div>"+
-    "<div style='border:1px solid #eee;border-radius:10px;overflow:hidden'>"+
-    "<table style='width:100%;border-collapse:collapse;font-size:12px'>"+
-    "<thead><tr style='background:#f9f9f9'><th style='padding:8px 10px;text-align:left;color:#888'>#</th><th style='padding:8px 10px;text-align:left;color:#888'>CLIENTE</th><th style='padding:8px 10px;text-align:center;color:#888'>OPERACIONES</th><th style='padding:8px 10px;text-align:right;color:#0f6e3a'>GANANCIA</th></tr></thead><tbody>"+
-    topCl.map(function(cl,i){var medals=["🥇","🥈","🥉","4°","5°"];return "<tr><td style='padding:8px 10px;font-weight:700'>"+medals[i]+"</td><td style='padding:8px 10px;font-weight:600'>"+cl.cl+"</td><td style='padding:8px 10px;text-align:center'>"+cl.txs+"</td><td style='padding:8px 10px;text-align:right;font-weight:700;color:#0f6e3a'>$"+f2(cl.pr)+"</td></tr>";}).join("")+
-    "</tbody></table></div></div>":"");
-
-  // ── Reporte para el Contador (solo operaciones en BRL) ─────────────────
-  // Operaciones que entran Reales al banco:
-  // 1) BRL → VES: cliente paga en BRL (entra al banco)
-  // 2) USD → BRL: cliente paga USD, se entrega BRL (entra BRL al banco)
-  // 3) VZLA → BRL: cliente paga VES, se entrega BRL (entra BRL al banco)
-  var brlVesM      = brlM.filter(function(r){ return r.orig==="BRL"; });
-  var usdBrlM      = brlM.filter(function(r){ return r.orig==="USD" && r.dest==="BRL"; });
-  var vzlaUsdBrlM  = vzlaM.filter(function(r){ return r.dest==="BRL"; });
-
-  // Monto recibido en BRL (lo que entró al banco)
-  var volBrlVes    = brlVesM.reduce(function(a,r){ return a+r.am; }, 0);
-  var volUsdBrl    = usdBrlM.reduce(function(a,r){ return a+(r.cant||0); }, 0);
-  var volVzlaBrl   = vzlaUsdBrlM.reduce(function(a,r){ return a+(r.cant||0); }, 0);
-  var totalEntBrl  = volBrlVes + volUsdBrl + volVzlaBrl;
-
-  // Ganancia en BRL (pr en USDT × tc BRL/USDT)
-  var ganBrlVesBRL = brlVesM.reduce(function(a,r){ return a + r.pr*(r.tc||5); }, 0);
-  var ganUsdBrlBRL = usdBrlM.reduce(function(a,r){ return a + r.pr*(r.tc||5); }, 0);
-  var ganVzlaBRL   = vzlaUsdBrlM.reduce(function(a,r){ return a + r.pr*(r.tv||5); }, 0);
-  var totalGanBRL  = ganBrlVesBRL + ganUsdBrlBRL + ganVzlaBRL;
-  var opsCtd       = brlVesM.length + usdBrlM.length + vzlaUsdBrlM.length;
-
-  html +=
-  "<div id='relatorio-contador' style='background:linear-gradient(135deg,#0a1628,#1a3558);border-radius:12px;padding:18px 20px;color:#fff;margin-top:8px'>"+
-    "<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px'>"+
-      "<div>"+
-        "<div style='font-size:14px;font-weight:800'>📄 RELATÓRIO PARA O CONTADOR</div>"+
-        "<div style='font-size:11px;opacity:.7;margin-top:2px'>SAIPHA SERVIÇOS DIGITAIS — CNPJ 66.994.057/0001-61</div>"+
-      "</div>"+
-      "<button onclick='imprimirRelatorioContador()' style='background:#F5C518;color:#000;border:none;padding:9px 16px;border-radius:8px;font-size:12px;font-weight:800;cursor:pointer'>🖨️ Imprimir / PDF</button>"+
-    "</div>"+
-
-    "<div style='background:rgba(255,255,255,.08);border-radius:10px;padding:14px;margin-bottom:12px'>"+
-      "<div style='font-size:10px;font-weight:700;opacity:.7;text-transform:uppercase;margin-bottom:10px'>📋 IDENTIFICACIÓN DEL PERÍODO</div>"+
-      "<div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;font-size:11px'>"+
-        "<div><div style='opacity:.6;margin-bottom:2px'>Empresa</div><div style='font-weight:700'>SAIPHA SERVIÇOS DIGITAIS</div></div>"+
-        "<div><div style='opacity:.6;margin-bottom:2px'>CNPJ</div><div style='font-weight:700'>66.994.057/0001-61</div></div>"+
-        "<div><div style='opacity:.6;margin-bottom:2px'>Período</div><div style='font-weight:700'>"+mesLabel+"</div></div>"+
-        "<div><div style='opacity:.6;margin-bottom:2px'>Porte</div><div style='font-weight:700'>ME — Simples Nacional</div></div>"+
-        "<div><div style='opacity:.6;margin-bottom:2px'>CNAE Principal</div><div style='font-weight:700'>63.19-4-00</div></div>"+
-        "<div><div style='opacity:.6;margin-bottom:2px'>Municipio</div><div style='font-weight:700'>Pacaraima — RR</div></div>"+
-      "</div>"+
-    "</div>"+
-
-    "<div style='background:rgba(255,255,255,.08);border-radius:10px;padding:14px;margin-bottom:12px'>"+
-      "<div style='font-size:10px;font-weight:700;opacity:.7;text-transform:uppercase;margin-bottom:10px'>💼 DESCRIPCIÓN DE LA ACTIVIDAD</div>"+
-      "<div style='font-size:11px;line-height:1.7;opacity:.9'>"+
-        "Prestación de servicio de <b>intermediación digital</b> — gestión de adquisición de producto digital "+
-        "por cuenta y orden de los contratantes. La empresa actúa como agente intermediario, "+
-        "recibiendo valores en Reales Brasileños (BRL) y proveyendo la entrega digital al destinatario indicado, "+
-        "cobrando comisión en Reales por el servicio prestado."+
-      "</div>"+
-    "</div>"+
-
-    "<div style='background:rgba(255,255,255,.08);border-radius:10px;padding:14px;margin-bottom:12px'>"+
-      "<div style='font-size:10px;font-weight:700;opacity:.7;text-transform:uppercase;margin-bottom:10px'>📊 MOVIMIENTO DEL MES — "+mesLabel+"</div>"+
-      "<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px'>"+
-        "<div style='background:rgba(255,255,255,.08);border-radius:8px;padding:12px'>"+
-          "<div style='font-size:10px;opacity:.6;margin-bottom:4px'>Total de operaciones (entradas en BRL)</div>"+
-          "<div style='font-size:26px;font-weight:900'>"+opsCtd+"</div>"+
-          "<div style='font-size:10px;opacity:.6;margin-top:3px'>"+
-            (brlVesM.length ? "BRL→VES: "+brlVesM.length+"  " : "")+
-            (usdBrlM.length ? "USD→BRL: "+usdBrlM.length+"  " : "")+
-            (vzlaUsdBrlM.length ? "VZLA→BRL: "+vzlaUsdBrlM.length : "")+
-          "</div>"+
-        "</div>"+
-        "<div style='background:rgba(255,255,255,.08);border-radius:8px;padding:12px'>"+
-          "<div style='font-size:10px;opacity:.6;margin-bottom:4px'>Total recibido en cuenta bancaria</div>"+
-          "<div style='font-size:24px;font-weight:900;color:#90EE90'>R$ "+f2(totalEntBrl)+"</div>"+
-          "<div style='font-size:10px;opacity:.6;margin-top:3px'>Reales ingresados al banco</div>"+
-        "</div>"+
-      "</div>"+
-    "</div>"+
-
-    "<div style='background:rgba(255,215,0,.15);border:1px solid rgba(255,215,0,.4);border-radius:10px;padding:14px;margin-bottom:12px'>"+
-      "<div style='font-size:10px;font-weight:700;color:#FFD700;text-transform:uppercase;margin-bottom:10px'>💰 INGRESOS Y GANANCIAS EN REALES (R$)</div>"+
-      "<table style='width:100%;border-collapse:collapse;font-size:11px'>"+
-        "<tr style='border-bottom:1px solid rgba(255,255,255,.2)'>"+
-          "<th style='padding:8px;text-align:left;opacity:.7;font-weight:600'>Servicio</th>"+
-          "<th style='padding:8px;text-align:right;opacity:.7;font-weight:600'>Ops.</th>"+
-          "<th style='padding:8px;text-align:right;opacity:.7;font-weight:600'>Recibido en banco (R$)</th>"+
-          "<th style='padding:8px;text-align:right;opacity:.7;font-weight:600'>Ganancia (R$)</th>"+
-        "</tr>"+
-        (brlVesM.length ?
-        "<tr style='border-bottom:1px solid rgba(255,255,255,.08)'>"+
-          "<td style='padding:9px 8px'>Intermediación BRL → VES</td>"+
-          "<td style='text-align:right;padding:9px 8px'>"+brlVesM.length+"</td>"+
-          "<td style='text-align:right;padding:9px 8px;font-weight:700;color:#90EE90'>R$ "+f2(volBrlVes)+"</td>"+
-          "<td style='text-align:right;padding:9px 8px;font-weight:700;color:#FFD700'>R$ "+f2(ganBrlVesBRL)+"</td>"+
-        "</tr>" : "")+
-        (usdBrlM.length ?
-        "<tr style='border-bottom:1px solid rgba(255,255,255,.08)'>"+
-          "<td style='padding:9px 8px'>Intermediación USD → BRL</td>"+
-          "<td style='text-align:right;padding:9px 8px'>"+usdBrlM.length+"</td>"+
-          "<td style='text-align:right;padding:9px 8px;font-weight:700;color:#90EE90'>R$ "+f2(volUsdBrl)+"</td>"+
-          "<td style='text-align:right;padding:9px 8px;font-weight:700;color:#FFD700'>R$ "+f2(ganUsdBrlBRL)+"</td>"+
-        "</tr>" : "")+
-        (vzlaUsdBrlM.length ?
-        "<tr style='border-bottom:1px solid rgba(255,255,255,.08)'>"+
-          "<td style='padding:9px 8px'>Intermediación VZLA → BRL</td>"+
-          "<td style='text-align:right;padding:9px 8px'>"+vzlaUsdBrlM.length+"</td>"+
-          "<td style='text-align:right;padding:9px 8px;font-weight:700;color:#90EE90'>R$ "+f2(volVzlaBrl)+"</td>"+
-          "<td style='text-align:right;padding:9px 8px;font-weight:700;color:#FFD700'>R$ "+f2(ganVzlaBRL)+"</td>"+
-        "</tr>" : "")+
-        "<tr style='background:rgba(255,215,0,.2)'>"+
-          "<td style='padding:11px 8px;font-weight:900;color:#FFD700;font-size:12px'>TOTAL DEL MES</td>"+
-          "<td style='text-align:right;padding:11px 8px;font-weight:900;color:#FFD700'>"+opsCtd+"</td>"+
-          "<td style='text-align:right;padding:11px 8px;font-weight:900;font-size:15px;color:#90EE90'>R$ "+f2(totalEntBrl)+"</td>"+
-          "<td style='text-align:right;padding:11px 8px;font-weight:900;font-size:15px;color:#FFD700'>R$ "+f2(totalGanBRL)+"</td>"+
-        "</tr>"+
-      "</table>"+
-    "</div>"+
-
-    "<div style='background:rgba(144,238,144,.15);border:2px solid rgba(144,238,144,.4);border-radius:10px;padding:16px'>"+
-      "<div style='font-size:10px;font-weight:700;color:#90EE90;text-transform:uppercase;margin-bottom:12px'>✅ RESUMEN FINAL DEL MES</div>"+
-      "<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px'>"+
-        "<div style='background:rgba(255,255,255,.08);border-radius:8px;padding:14px'>"+
-          "<div style='font-size:10px;opacity:.7;margin-bottom:6px'>💳 Entró al banco (R$)</div>"+
-          "<div style='font-size:26px;font-weight:900;color:#90EE90'>R$ "+f2(totalEntBrl)+"</div>"+
-          "<div style='font-size:10px;opacity:.6;margin-top:4px'>"+opsCtd+" operaciones del mes</div>"+
-        "</div>"+
-        "<div style='background:rgba(255,255,255,.08);border-radius:8px;padding:14px'>"+
-          "<div style='font-size:10px;opacity:.7;margin-bottom:6px'>💰 Ganancia neta (R$)</div>"+
-          "<div style='font-size:26px;font-weight:900;color:#FFD700'>R$ "+f2(totalGanBRL)+"</div>"+
-          "<div style='font-size:10px;opacity:.6;margin-top:4px'>Comisión cobrada en Reales</div>"+
-        "</div>"+
-      "</div>"+
-      "<div style='font-size:10px;opacity:.6;line-height:1.6'>"+
-        "⚠️ Este reporte está basado en los registros del sistema Centro de Gestión y debe ser revisado por el contador responsable. "+
-        "Solo se incluyen las operaciones donde el ingreso llega en Reales Brasileños (BRL) a la cuenta bancaria."+
-      "</div>"+
-    "</div>"+
-
-  "</div>";
-  return html;
-}
-
-function imprimirRelatorioContador(){
-  var el=document.getElementById('relatorio-contador');
-  if(!el){alert('Selecione um mês primeiro.');return;}
-  var w=window.open('','_blank','width=780,height=950');
-  w.document.write('<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">'+
-    '<title>Relatório Contador — SAIPHA</title>'+
-    '<style>body{font-family:Arial,sans-serif;font-size:12px;background:#0a1628;color:#fff;padding:20px;max-width:720px;margin:0 auto}'+
-    'h1{font-size:16px}table{width:100%;border-collapse:collapse}'+
-    'th,td{padding:8px;border-bottom:1px solid rgba(255,255,255,.2);font-size:11px}'+
-    '@media print{body{padding:5px}button{display:none}}</style></head><body>'+
-    el.innerHTML+
-    '<script>window.print();<\/script></body></html>');
-  w.document.close();
-}
-
 function _showSyncBadge(){
   // Punto azul en fb-dot
   var dot=document.getElementById("fb-dot");
@@ -13531,11 +13223,16 @@ function generarInformePDF(mesKey){
           "</tr>";
         }).join("")+
         "<tr style='background:#FFF8DC'><td colspan='2' style='padding:7px 10px;font-size:11px;font-weight:800;color:#7a5c00'>TOTAL A COBRAR</td><td colspan='2' style='padding:7px 10px;text-align:right;font-size:13px;font-weight:900;color:#7a5c00'>$"+f2l(totalCobrarUsdt)+" USDT</td></tr>"+
-      "</table></div>"+
-    "</div>":"<div style='margin-bottom:20px;padding:12px 16px;background:#E3F8EC;border-radius:10px;border:1.5px solid #0f6e3a;font-size:12px;color:#0f6e3a;font-weight:700'>✅ Sin cobros pendientes — todas las operaciones están cobradas</div>")+
+      // ARREGLO 59: aqui habia un "</div>" de mas. Cerraba .cuerpo y .hoja
+      // antes de tiempo, asi que TODO lo que se pusiera despues en el informe
+      // se quedaba fuera de #reporteCapture — y html2canvas solo captura lo
+      // que hay dentro. No se notaba porque no habia nada despues; al añadir
+      // la hoja del contador y el detalle del mes, desaparecian sin error.
+      "</table></div>"
+    :"<div style='margin-bottom:20px;padding:12px 16px;background:#E3F8EC;border-radius:10px;border:1.5px solid #0f6e3a;font-size:12px;color:#0f6e3a;font-weight:700'>✅ Sin cobros pendientes — todas las operaciones están cobradas</div>")+
 
     // ── PRÉSTAMOS ACTIVOS ──────────────────────────────────────────────
-    (prestActivos.length>0?"<div style='margin-bottom:20px;border:2px solid #c0392b;border-radius:12px;overflow:hidden'>"+"<div style='background:#c0392b;padding:12px 16px;display:flex;justify-content:space-between;align-items:center'>"+"<div style='font-size:13px;font-weight:800;color:#fff'>🤝 Préstamos activos</div>"+"<div style='font-size:12px;color:#ffd5d5'>Total: <b>≈$"+f2l(totalPrestamosUsdt)+" USDT</b> · "+prestActivos.length+" préstamo(s)</div>"+"</div>"+"<table style='width:100%;border-collapse:collapse'>"+"<tr style='background:#FDECEA'><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b'>Descripción</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b'>Moneda</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b;text-align:right'>Prestado</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b;text-align:right'>Recuperado</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b;text-align:right'>Pendiente</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b;text-align:right'>≈ USDT</th></tr>"+prestActivos.map(function(p,i){var mon=p.mon||"USDT";var base=parseFloat(p.monto||p.sal)||0;var abos=(p.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);var ent=parseFloat(p.ent)||0;var rec=Math.round((abos+ent)*100)/100;var pend=Math.max(0,Math.round((base-rec)*100)/100);var rate=getRateToUsdt(mon);var pendUsdt=(mon==="USDT"?pend:(rate?Math.round(pend/rate*100)/100:null));return "<tr style='background:"+(i%2===0?"#fff":"#fff5f5")+"'>"+"<td style='padding:7px 10px;font-size:12px;font-weight:600'>"+p.desc+"</td>"+"<td style='padding:7px 10px;font-size:11px;color:#888'>"+mon+"</td>"+"<td style='padding:7px 10px;font-size:12px;text-align:right'>"+f2l(base)+"</td>"+"<td style='padding:7px 10px;font-size:12px;text-align:right;color:#0f6e3a'>"+f2l(rec)+"</td>"+"<td style='padding:7px 10px;font-size:12px;text-align:right;font-weight:700;color:#c0392b'>"+f2l(pend)+"</td>"+"<td style='padding:7px 10px;font-size:12px;text-align:right;color:#1a3558;font-weight:700'>"+(pendUsdt!==null?"$"+f2l(pendUsdt):"—")+"</td>"+"</tr>";}).join("")+"<tr style='background:#FDECEA'><td colspan='4' style='padding:7px 10px;font-size:11px;font-weight:800;color:#c0392b'>TOTAL PRÉSTAMOS PENDIENTES</td><td colspan='2' style='padding:7px 10px;text-align:right;font-size:13px;font-weight:900;color:#c0392b'>≈$"+f2l(totalPrestamosUsdt)+" USDT</td></tr>"+"</table></div>"+"</div>":"")+
+    (prestActivos.length>0?"<div style='margin-bottom:20px;border:2px solid #c0392b;border-radius:12px;overflow:hidden'>"+"<div style='background:#c0392b;padding:12px 16px;display:flex;justify-content:space-between;align-items:center'>"+"<div style='font-size:13px;font-weight:800;color:#fff'>🤝 Préstamos activos</div>"+"<div style='font-size:12px;color:#ffd5d5'>Total: <b>≈$"+f2l(totalPrestamosUsdt)+" USDT</b> · "+prestActivos.length+" préstamo(s)</div>"+"</div>"+"<table style='width:100%;border-collapse:collapse'>"+"<tr style='background:#FDECEA'><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b'>Descripción</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b'>Moneda</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b;text-align:right'>Prestado</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b;text-align:right'>Recuperado</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b;text-align:right'>Pendiente</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b;text-align:right'>≈ USDT</th></tr>"+prestActivos.map(function(p,i){var mon=p.mon||"USDT";var base=parseFloat(p.monto||p.sal)||0;var abos=(p.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);var ent=parseFloat(p.ent)||0;var rec=Math.round((abos+ent)*100)/100;var pend=Math.max(0,Math.round((base-rec)*100)/100);var rate=getRateToUsdt(mon);var pendUsdt=(mon==="USDT"?pend:(rate?Math.round(pend/rate*100)/100:null));return "<tr style='background:"+(i%2===0?"#fff":"#fff5f5")+"'>"+"<td style='padding:7px 10px;font-size:12px;font-weight:600'>"+p.desc+"</td>"+"<td style='padding:7px 10px;font-size:11px;color:#888'>"+mon+"</td>"+"<td style='padding:7px 10px;font-size:12px;text-align:right'>"+f2l(base)+"</td>"+"<td style='padding:7px 10px;font-size:12px;text-align:right;color:#0f6e3a'>"+f2l(rec)+"</td>"+"<td style='padding:7px 10px;font-size:12px;text-align:right;font-weight:700;color:#c0392b'>"+f2l(pend)+"</td>"+"<td style='padding:7px 10px;font-size:12px;text-align:right;color:#1a3558;font-weight:700'>"+(pendUsdt!==null?"$"+f2l(pendUsdt):"—")+"</td>"+"</tr>";}).join("")+"<tr style='background:#FDECEA'><td colspan='4' style='padding:7px 10px;font-size:11px;font-weight:800;color:#c0392b'>TOTAL PRÉSTAMOS PENDIENTES</td><td colspan='2' style='padding:7px 10px;text-align:right;font-size:13px;font-weight:900;color:#c0392b'>≈$"+f2l(totalPrestamosUsdt)+" USDT</td></tr>"+"</table></div>":"")+   // ARREGLO 59: mismo "</div>" de mas que arriba
 
     // ── RESUMEN COMPLETO: DINERO AFUERA + SI COBRAS TODO ──────────────
     (totalAfuera>0?"<div style='margin-bottom:20px;background:linear-gradient(135deg,#1a3558,#0a2744);border-radius:14px;padding:18px;color:#fff'>"+"<div style='font-size:13px;font-weight:800;color:#FFA31C;margin-bottom:14px'>💼 Visión completa del dinero de la empresa</div>"+"<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px'>"+"<div style='background:rgba(255,255,255,.08);border-radius:10px;padding:14px'>"+"<div style='font-size:9px;color:rgba(255,255,255,.6);text-transform:uppercase;font-weight:700;margin-bottom:4px'>💵 En cuentas ahora</div>"+"<div style='font-size:22px;font-weight:900;color:#fff'>$"+f2l(totalUsdtCuentas)+" USDT</div></div>"+"<div style='background:rgba(255,163,28,.15);border-radius:10px;padding:14px;border:1px solid rgba(255,163,28,.4)'>"+"<div style='font-size:9px;color:#FFA31C;text-transform:uppercase;font-weight:700;margin-bottom:4px'>📤 Total afuera</div>"+"<div style='font-size:22px;font-weight:900;color:#FFA31C'>$"+f2l(totalAfuera)+" USDT</div>"+(cobrarPend.length>0?"<div style='font-size:9px;color:rgba(255,255,255,.5);margin-top:4px'>💳 Cobros: $"+f2l(totalCobrarUsdt)+" USDT</div>":"")+""+(prestActivos.length>0?"<div style='font-size:9px;color:rgba(255,255,255,.5);margin-top:2px'>🤝 Préstamos: $"+f2l(totalPrestamosUsdt)+" USDT</div>":"")+""+"</div></div>"+"<div style='border-top:1px solid rgba(255,255,255,.15);padding-top:14px;display:flex;justify-content:space-between;align-items:center'>"+"<div>"+"<div style='font-size:10px;color:rgba(255,255,255,.6);margin-bottom:2px'>Si cobras todo lo que te deben…</div>"+"<div style='font-size:11px;color:rgba(255,255,255,.5)'>En cuentas ($"+f2l(totalUsdtCuentas)+")"+(enReservaPDF>0.009?" + Reserva ($"+f2l(enReservaPDF)+")":"")+" + Afuera ($"+f2l(totalAfuera)+")</div>"+"</div>"+"<div style='text-align:right'>"+"<div style='font-size:9px;color:#4ade80;text-transform:uppercase;font-weight:700'>Potencial total</div>"+"<div style='font-size:28px;font-weight:900;color:#4ade80'>$"+f2l(siCobrasTodo)+" USDT</div>"+"</div></div>"+"</div>":"")+
@@ -13624,6 +13321,12 @@ function generarInformePDF(mesKey){
         "<td>"+e.cuenta+"</td><td style='text-align:right;font-weight:700'>"+brl(e.monto)+"</td></tr>";
     }).join("");
     return sec("🧾 Hoja para el contador · "+rc.mesLabel,
+      // ARREGLO 59: el papel dice de quien es. Un informe fiscal sin razon
+      // social ni CNPJ le obliga al contador a preguntar de que empresa es.
+      "<div style='border:1.5px solid #1a3558;border-radius:10px;padding:10px 14px;margin-bottom:10px;background:#f7f9fc'>"+
+        "<div style='font-size:13px;font-weight:800;color:#1a3558'>"+EMPRESA_RAZON+"</div>"+
+        "<div style='font-size:11px;color:#5a6a85;margin-top:2px'>CNPJ "+EMPRESA_CNPJ+" · Período: "+rc.mesLabel+"</div>"+
+      "</div>"+
       "<div style='background:#F3FAF5;border:1px solid #cfe9db;border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:11.5px;color:#14503a;line-height:1.5'>"+
         "Solo lo que entró <b>en reales</b> y la ganancia que dejó. Cada operación convertida con <b>su propia tasa de compra</b>, no con una tasa única del mes."+
       "</div>"+
@@ -14134,22 +13837,11 @@ function rInformeCierre(){
     var totalSalidas=flujosPorCuenta.reduce(function(a,x){return a+x.flujo.totalS;},0);
     var flujoNeto=totalEntradas-totalSalidas;
 
-    var tasaBRLUSDT=(S._contadorTasaBRL!==undefined&&S._contadorTasaBRL!==""&&S._contadorTasaBRL!==null)?(parseFloat(S._contadorTasaBRL)||0):(getRateToUsdt("BRL")||0);
-    // OJO: se usa calc.miGanOperaciones (todas las rutas juntas, ya con
-    // ganancias extra sumadas y socios restados) — NO calc.ganBrl (que es
-    // solo la ruta BRL). Antes se restaba el gasto y sueldo de TODA la
-    // empresa contra la ganancia de UNA sola ruta, lo que podía dar un
-    // "Lucro líquido" negativo aunque el negocio completo fuera positivo.
-    var ganBrlUsdt=parseFloat(calc.miGanOperaciones)||0;
-    var ganBrlReais=tasaBRLUSDT?ganBrlUsdt*tasaBRLUSDT:0;
-    // Gastos fijos y sueldo de la EMPRESA (nunca lo personal) — ya vienen
-    // calculados en USDT desde calcMesCompleto()/el cierre; se convierten a
-    // Reais con la misma tasa para que el contador vea todo en una sola moneda.
-    var gastosEmpresaUsdt=parseFloat(calc.egEmpPag)||0;
-    var sueldoUsdt=parseFloat(calc.sueldo)||0;
-    var gastosEmpresaReais=tasaBRLUSDT?gastosEmpresaUsdt*tasaBRLUSDT:0;
-    var sueldoReais=tasaBRLUSDT?sueldoUsdt*tasaBRLUSDT:0;
-    var lucroFinalReais=ganBrlReais-gastosEmpresaReais-sueldoReais;
+    // ARREGLO 59: aqui se calculaba el "lucro" convirtiendo la ganancia de
+    // TODAS las rutas con UNA tasa del dia y restando gastos y sueldo de toda
+    // la empresa. Se fue con el bloque que lo enseñaba: la hoja del contador
+    // sale de resumenContador(), cada operacion con su tasa y solo lo que
+    // entro en reales.
 
     // ── CSV / objeto para exportar ──
     var reporte={"Mês":mesLabel};
@@ -14160,10 +13852,23 @@ function rInformeCierre(){
     reporte["Total Entradas (todas las cuentas BRL)"]=_fmtBRL(totalEntradas);
     reporte["Total Salidas (todas las cuentas BRL)"]=_fmtBRL(totalSalidas);
     reporte["Flujo de caja neto"]=_fmtBRL(flujoNeto);
-    reporte["Lucro Bruto das Operações (em Reais)"]=_fmtBRL(ganBrlReais);
-    reporte["(−) Gastos Fixos da Empresa (em Reais)"]=_fmtBRL(gastosEmpresaReais);
-    reporte["(−) Salário (em Reais)"]=_fmtBRL(sueldoReais);
-    reporte["Lucro Líquido Final (em Reais)"]=_fmtBRL(lucroFinalReais);
+    // ARREGLO 59: el CSV lleva lo mismo que la hoja y que el PDF, sacado de
+    // resumenContador(). Antes llevaba un "Lucro Bruto das Operações"
+    // convertido con UNA tasa del dia y con los gastos de toda la empresa
+    // restados: otro numero distinto para la misma pregunta, y en portugues.
+    (function(){
+      var rc=resumenContador(mesKey);
+      reporte["Empresa"]=EMPRESA_RAZON;
+      reporte["CNPJ"]=EMPRESA_CNPJ;
+      reporte["Operaciones que entraron en reales"]=rc.operaciones;
+      reporte["Entró en las cuentas (R$)"]=_fmtBRL(rc.entroReales);
+      reporte["Ganancia de esas operaciones (R$)"]=_fmtBRL(rc.ganReales);
+      reporte["(−) Egresos de la empresa en reales (R$)"]=_fmtBRL(rc.egresosRealesTotal);
+      reporte["Resultado del mes (R$)"]=_fmtBRL(rc.resultadoReales);
+      rc.egresosReales.forEach(function(e,i){
+        reporte["Egreso "+(i+1)+" — "+e.fecha+" "+(e.mot||e.cat||"")]=_fmtBRL(e.monto);
+      });
+    })();
     S._reporteContadorActual=reporte;
 
     function filaCuenta(x){
@@ -14196,22 +13901,46 @@ function rInformeCierre(){
           "<div style='font-size:19px;font-weight:900;margin-top:5px;color:#FFD700'>Neto: "+_fmtBRL(flujoNeto)+"</div>"+
         "</div>":"")+
     "</div>"+
-    "<div style='background:#fff;border-radius:18px;box-shadow:0 1px 4px rgba(20,30,60,.06);padding:18px;margin-bottom:16px'>"+
-      "<div style='display:flex;align-items:center;gap:10px;margin-bottom:4px'>"+
-        "<div style='width:34px;height:34px;border-radius:11px;background:#F3FAF5;display:flex;align-items:center;justify-content:center;font-size:16px'>💹</div>"+
-        "<div style='font-size:13.5px;font-weight:800;color:#16233d'>Ganancia real de operaciones (en Reais)</div>"+
-      "</div>"+
-      "<div style='font-size:10.5px;color:#9aa3b5;margin:6px 0 14px;line-height:1.4'>Ya con los gastos fijos y sueldo de la empresa descontados (no incluye nada personal) — este es el número final para el contador.</div>"+
-      "<div style='display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#7c8aa8;font-weight:600'>Tasa BRL/USDT usada</span><span style='display:flex;align-items:center;gap:6px'><input type='number' step='0.0001' inputmode='decimal' value='"+(S._contadorTasaBRL!==undefined&&S._contadorTasaBRL!==null?S._contadorTasaBRL:f4(tasaBRLUSDT))+"' onchange='S._contadorTasaBRL=this.value;R()' style='width:80px;font-size:13px;padding:5px 8px;border:1px solid #e2e6ef;border-radius:8px;text-align:right;font-weight:700;color:#1a3558'>"+(S._contadorTasaBRL!==undefined&&S._contadorTasaBRL!==""&&S._contadorTasaBRL!==null?"<button onclick='S._contadorTasaBRL=undefined;R()' style='background:none;border:none;color:#9aa3b5;font-size:10px;cursor:pointer;text-decoration:underline'>usar auto</button>":"")+"</span></div>"+
-      "<div style='display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#0f6e3a;font-weight:700'>Mi ganancia de operaciones (todas las rutas)</span><b style='font-size:15px;color:#0f6e3a'>"+_fmtBRL(ganBrlReais)+"</b></div>"+
-      "<div style='display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#c0392b;font-weight:600'>(−) Gastos fijos de la empresa</span><b style='font-size:13.5px;color:#c0392b'>"+_fmtBRL(gastosEmpresaReais)+"</b></div>"+
-      "<div style='display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#c0392b;font-weight:600'>(−) Sueldo</span><b style='font-size:13.5px;color:#c0392b'>"+_fmtBRL(sueldoReais)+"</b></div>"+
-      "<div style='display:flex;justify-content:space-between;align-items:center;padding:14px 16px;background:linear-gradient(135deg,#1a3558,#132840);border-radius:14px;margin-top:10px;box-shadow:0 4px 14px rgba(19,40,64,.2)'><span style='font-size:11.5px;color:#FFA31C;font-weight:700;text-transform:uppercase;letter-spacing:.3px'>Lucro Líquido Final</span><b style='font-size:20px;color:#FFD700'>"+_fmtBRL(lucroFinalReais)+"</b></div>"+
-      "<button onclick='exportarReporteContadorCSV(\""+mesKey+"\")' style='width:100%;margin-top:14px;padding:13px;background:#0f6e3a;color:#fff;border:none;border-radius:12px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px rgba(15,110,58,.25)'>⬇️ Descargar CSV para el contador</button>"+
-    "</div>"+
+    // ── ARREGLO 59: la misma hoja que va al PDF ────────────────────────
+    // Aqui habia un "Ganancia real de operaciones (en Reais)" que convertia
+    // la ganancia de TODAS las rutas con UNA sola tasa del dia, y le restaba
+    // los gastos y el sueldo de toda la empresa. Tres problemas: contaba
+    // rutas que no entran en reales, usaba una tasa que no es la de ninguna
+    // operacion, y daba un numero distinto al de la hoja del PDF. Ahora la
+    // pantalla y el PDF salen de resumenContador(): cada operacion con SU
+    // tasa, solo lo que entro en reales.
+    (function(){
+      var rc=resumenContador(mesKey);
+      function brl(v){ return _fmtBRL(v); }
+      function fila(lbl,val,col,neg){
+        return "<div style='display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #f5f5f5'>"+
+          "<span style='font-size:12px;color:"+(col||"#555")+"'>"+lbl+"</span>"+
+          "<span style='font-size:13px;font-weight:800;color:"+(col||"#16233d")+"'>"+(neg?"−":"")+brl(Math.abs(val))+"</span></div>";
+      }
+      return "<div style='background:#fff;border-radius:18px;box-shadow:0 1px 4px rgba(20,30,60,.06);padding:18px;margin-bottom:16px'>"+
+        "<div style='display:flex;align-items:center;gap:10px;margin-bottom:4px'>"+
+          "<div style='width:34px;height:34px;border-radius:11px;background:#F3FAF5;display:flex;align-items:center;justify-content:center;font-size:16px'>🧾</div>"+
+          "<div style='font-size:13.5px;font-weight:800;color:#16233d'>Hoja para el contador</div>"+
+        "</div>"+
+        "<div style='font-size:10.5px;color:#9aa3b5;margin:6px 0 12px;line-height:1.4'>"+EMPRESA_RAZON+" · CNPJ "+EMPRESA_CNPJ+" · "+rc.mesLabel+"<br>Solo lo que entró en reales, cada operación con su propia tasa. Es lo mismo que sale en el PDF.</div>"+
+        "<div style='display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#555'>Operaciones que entraron en reales</span><span style='font-size:13px;font-weight:800;color:#16233d'>"+rc.operaciones+"</span></div>"+
+        fila("Entró en las cuentas",rc.entroReales)+
+        fila("Ganancia de esas operaciones",rc.ganReales,"#0f6e3a")+
+        fila("(−) Egresos de la empresa pagados en reales",rc.egresosRealesTotal,"#c0392b",true)+
+        "<div style='display:flex;justify-content:space-between;align-items:center;padding:14px 16px;background:linear-gradient(135deg,#1a3558,#132840);border-radius:12px;margin-top:10px;color:#fff'>"+
+          "<span style='font-size:12px;font-weight:800'>= Resultado del mes</span>"+
+          "<span style='font-size:19px;font-weight:900;color:"+(rc.resultadoReales>=0?"#4ade80":"#ff9a9a")+"'>"+brl(rc.resultadoReales)+"</span>"+
+        "</div>"+
+        (rc.sinTasa>0?"<div style='background:#FFF8DC;border:1px solid #F5C518;border-radius:8px;padding:8px 12px;margin-top:10px;font-size:10.5px;color:#7a5c00'>⚠️ "+rc.sinTasa+" operación(es) sin tasa guardada: su ganancia no está convertida a reales.</div>":"")+
+        "<button onclick='exportarReporteContadorCSV(\""+mesKey+"\")' style='width:100%;margin-top:14px;padding:13px;background:#0f6e3a;color:#fff;border:none;border-radius:12px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px rgba(15,110,58,.25)'>⬇️ Descargar CSV para el contador</button>"+
+      "</div>";
+    })()+
+    // ARREGLO 59: este pie repetia el "lucro liquido" de la tasa unica, que ya
+    // no existe. Se queda con lo que si es suyo y no esta en ningun otro
+    // sitio: el flujo de caja, que es lo que tiene que cuadrar con el banco.
     "<div style='background:#FFFBEA;border:1.5px solid #F5C518;border-radius:12px;padding:14px 16px'>"+
       "<div style='font-size:10px;font-weight:800;color:#7a5c00;text-transform:uppercase;margin-bottom:6px'>🔒 Solo para ti — control interno</div>"+
-      "<div style='font-size:13px;color:#5c4400;line-height:1.5'>El flujo de caja de tus cuentas BRL este mes es de <b>"+_fmtBRL(flujoNeto)+"</b> (entradas − salidas), y el lucro líquido final (después de gastos fijos y sueldo) es de <b>"+_fmtBRL(lucroFinalReais)+"</b>.</div>"+
+      "<div style='font-size:13px;color:#5c4400;line-height:1.5'>El flujo de caja de tus cuentas BRL este mes es de <b>"+_fmtBRL(flujoNeto)+"</b> (entradas − salidas). Ese número tiene que cuadrar con el extracto del banco; la ganancia es otra cosa y está arriba.</div>"+
     "</div>";
   }
 
