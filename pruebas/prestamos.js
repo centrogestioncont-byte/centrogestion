@@ -65,7 +65,7 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "f4", "f0", "_leerNumero", "_avisoCambioSaldo", "_fechaLote", "_idLoteNuevo",
                     "_diasEnElFuturo", "confirmarFechaFutura",
                     "comisionBancoVES", "etiquetaComisionBanco", "salidaDeCuentaEntrega",
-                    "monedasDeRemesa"];
+                    "monedasDeRemesa", "COM", "_comIU"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
 global.window = global.window || {};
 // S es el estado global de la app; aca solo hacen falta config y prestamos.
@@ -1298,6 +1298,24 @@ ok((HTML.match(/monedasDeRemesa\(tipo,r\)/g) || []).length === 2,
    (HTML.match(/monedasDeRemesa\(tipo,r\)/g) || []).length);
 ok(!/var monDest=tipo==="vzla"\?"BRL":"VES";/.test(HTML),
    "ya no queda la deduccion que daba bolivares por sentado");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// La comision de Binance: un 0 es un 0 (ARREGLO 40, 14/09/2026)
+// ─────────────────────────────────────────────────────────────────────────────
+console.log("\n— Comision de Binance —");
+
+// Un cero de comision leido de verdad es un cero. Antes `parseFloat(x)||COM()`
+// lo descartaba por "falsy" y metia 0,06: la compra CNV-PG6CG3 acredito
+// 196,0073 USDT cuando Binance habia entregado 196,0673.
+ok(F._comIU(0) === 0, "_comIU(0) respeta el cero", F._comIU(0));
+ok(F._comIU("0") === 0, "_comIU('0') tambien", F._comIU("0"));
+ok(F._comIU("") === F.COM(), "sin comision escrita, la de por defecto", F._comIU(""));
+ok(F._comIU(undefined) === F.COM(), "y sin campo, igual", F._comIU(undefined));
+ok(!/parseFloat\(f\.comision\)\|\|COM\(\)/.test(HTML),
+   "no vuelve el ||COM() que se comia el cero");
+ok((HTML.match(/_comIU\(f\.comision\)/g) || []).length === 2,
+   "los dos sitios que leen la comision pasan por _comIU",
+   (HTML.match(/_comIU\(f\.comision\)/g) || []).length);
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
