@@ -57,7 +57,7 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "conciliacionCapital", "getMesKeyActual", "ajustesDesdeApertura", "_isoDeDDMMAA",
                     "traspasosAPersonal", "efectoTasasDesde", "_isoDeFechaLote",
                     "tasaDeReferencia", "_tasaFijadaAMano", "setTasaDia", "soltarTasaDia",
-                    "_isoDeLote", "_fechaLoteIso",
+                    "_isoDeLote", "_fechaLoteIso", "_num",
                     "_diasDesdeLote", "_fechaLoteLegible", "getLastTasaVenta",
                     "montoAUsdt", "montoConMoneda", "_unicos",
                     "_marcarCambiados", "_refotografiar", "_mergeArrayById",
@@ -2069,6 +2069,45 @@ ok(F._fechaLoteIso("") === "", "y lo vacio no revienta");
 ok(F.ordenFIFO({fecha:"09/12", id:2}, {fecha:"09/12", id:1}) > 0,
    "mismo dia: manda el id");
 S.inventarioUsdt = []; S.tasasDia = {}; S._tasasDiaMeta = {};
+
+
+// ── ARREGLO 52: el campo se comía la coma decimal ────────────────────────
+// type="number" descarta en silencio lo que el navegador no considera un
+// numero, y con el teclado en español la coma decimal es justo eso. Por ahi se
+// perdio el 0,003 de la comision del banco: el campo se quedaba con "0003".
+// Pasarlo a texto sin mas es PEOR, porque cada parseFloat de mas abajo leeria
+// "5,22" como 5. Por eso se normaliza en la puerta, con _num().
+console.log("\nARREGLO 52 · la coma decimal");
+[["244,50","244.5"],["5,22","5.22"],["0,003","0.003"],["19.996,80","19996.8"],
+ ["960,7","960.7"],["1.030,5","1030.5"],
+ ["244.50","244.5"],["0.003","0.003"],["19996.80","19996.8"],   // con punto, como antes
+ ["1200","1200"],["0","0"]
+].forEach(function(par){
+  ok(F._num(par[0]) === par[1], '"'+par[0]+'" se guarda como '+par[1], F._num(par[0]));
+});
+// A medio teclear no se puede tirar lo que va escrito: se deja tal cual y ya lo
+// leera el parseFloat de abajo cuando este completo.
+["", "-", ",", "abc"].forEach(function(v){
+  ok(F._num(v) === v, "lo que todavia no es un numero se deja como esta: "+JSON.stringify(v), F._num(v));
+});
+// Y que ningun campo de las pantallas donde ella teclea dinero vuelva a
+// type="number": ahi es donde se pierden los centimos.
+["rNueva","rNuevaEE","rInventarioUsdt","rEgresos","rTraspasos","rPrestamos",
+ "rCuentasCobrar","rTabSocios","rTabCompromisos"].forEach(function(fn){
+  const i = HTML.indexOf("function "+fn+"(");
+  if(i<0) return;
+  const j = HTML.indexOf("\nfunction ", i+10);
+  const trozo = HTML.slice(i, j<0?HTML.length:j);
+  // numCuotas es un contador, no dinero: no tiene decimales que perder.
+  const dinero = trozo.replace(/<input[^>]*inputmode='numeric'[^>]*>/g, "");
+  ok(!/type='number'/.test(dinero), fn+" no tiene ningun campo de dinero que se coma la coma");
+  ok(!/inputmode='decimal' inputmode='decimal'/.test(trozo),
+     "  y sin atributos duplicados");
+  const conValor = (dinero.match(/inputmode='decimal'/g)||[]).length;
+  const conNum   = (dinero.match(/_num\(this\.value\)/g)||[]).length;
+  ok(conValor === 0 || conNum >= conValor,
+     "  y todos los suyos pasan por _num()", conValor+" campos / "+conNum+" normalizados");
+});
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

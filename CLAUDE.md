@@ -452,6 +452,29 @@ bolívares los **pesos** que nunca salieron de ahí: medido, un lote pasaba de
 51.043,97 a 173.943,97. Cada remesa guarda su `orig` y su `dest`; se leen de
 ahí (`monedasDeRemesa()`).
 
+### El campo se come la coma decimal
+
+`type="number"` descarta en silencio lo que el navegador no considera un
+número, y con el teclado en español **la coma decimal es justo eso**. Por ahí
+se perdió el `0,003` de la comisión del banco: el campo se quedaba con `0003`.
+
+Un campo de dinero va `type="text" inputmode="decimal"`, y lo que guarda pasa
+por **`_num()`**. Las dos mitades son obligatorias: pasar el campo a texto sin
+normalizar es *peor* que dejarlo como estaba, porque los cien `parseFloat` que
+hay detrás leerían `"5,22"` como **5**. `_num()` normaliza en la puerta —deja
+`"5.22"` en `S.*`— para que todo lo de abajo siga funcionando sin tocarlo, y si
+todavía está a medio teclear devuelve el texto tal cual.
+
+`pruebas/prestamos.js` recorre las pantallas donde ella teclea dinero y exige
+que no quede ningún `type="number"` y que cada campo pase por `_num()`.
+
+**Quedan 68 sin convertir**, y no por olvido: son los que **otro sitio lee por
+`getElementById(...).value`**. Convertir el campo sin arreglar también su
+lector cambiaría "no acepta la coma" por "acepta la coma y se queda con 5 en
+vez de 5,22" — de un fallo que se ve a uno que no. Están en Configuración, la
+edición en línea de una remesa ya guardada, la calculadora y el conversor BCV.
+Cuando se toquen, hay que cambiar el lector a `_leerNumero()` en la misma pasada.
+
 ### Registra la operación — no escribas el saldo
 
 **La regla que más costó el 12/09**, y se rompió tres veces en un día.

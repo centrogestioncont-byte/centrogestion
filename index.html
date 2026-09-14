@@ -744,6 +744,21 @@ function r4(n){ // Round to max 4 significant decimals, no floating point artifa
 // siguiente dejó la cuenta en negativo sin que nada avisara.
 // Un punto suelto ("198.619") es ambiguo y ninguna regla lo acierta siempre, por
 // eso quien llama tiene que CONFIRMAR enseñando lo que se leyó.
+// ── El número tal y como ella lo teclea ─────────────────────────────────────
+// ARREGLO 52 (14/09/2026): los campos `type="number"` descartan en silencio lo
+// que el navegador no considera un número, y con el teclado en español la coma
+// decimal es justo eso. Por ahí se perdió el 0,003 de la comisión del banco: el
+// campo se quedaba con "0003". Y pasar el campo a texto sin más es peor, porque
+// cada parseFloat de más abajo leería "5,22" como 5.
+//
+// Así que se normaliza en la puerta: el campo guarda lo que ella escribió,
+// entendido, y los cien parseFloat que hay detrás siguen funcionando igual.
+// Si todavía no es un número —está a medio teclear— se deja el texto tal cual,
+// que es lo que había antes.
+function _num(v){
+  var n=_leerNumero(v);
+  return isNaN(n) ? v : String(n);
+}
 function _leerNumero(txt, moneda){
   if(txt===null||txt===undefined) return NaN;
   var s=String(txt).replace(/\s/g,"").replace(/[^0-9.,\-]/g,"");   // quita Bs, $, USDT...
@@ -3202,7 +3217,7 @@ function rTraspasos(){
   "</div>"+
   "<div class='sec'><div class='sec-title'>Nueva transferencia interna</div>"+
   "<div class='f2'><div class='fl'><label>Fecha</label><input type='date' value='"+(f.fecha||"")+"' onchange='S.nTraspaso.fecha=this.value'></div>"+
-  "<div class='fl'><label>Monto que sale</label><input type='number' step='0.01' placeholder='0.00' value='"+(f.monto||"")+"' oninput='S.nTraspaso.monto=this.value' onblur='R()'></div></div>"+
+  "<div class='fl'><label>Monto que sale</label><input type='text' inputmode='decimal' step='0.01' placeholder='0.00' value='"+(f.monto||"")+"' oninput='S.nTraspaso.monto=_num(this.value)' onblur='R()'></div></div>"+
   "<div class='f2'><div class='fl'><label>Cuenta Origen</label>"+
     "<select onchange='S.nTraspaso.cuentaOrigen=this.value;R()'>"+
       "<option value=''>-- Seleccionar --</option>"+cuentaOpts+
@@ -3214,7 +3229,7 @@ function rTraspasos(){
   (esConversion?
     "<div style='background:#FFF8E8;border:1px solid #f0d080;border-radius:8px;padding:10px 12px;margin-bottom:10px'>"+
       "<label style='font-size:11px;font-weight:700;color:#7a5c00;display:block;margin-bottom:5px'>💱 Cambio de moneda: "+cOrig.moneda+" → "+cDest.moneda+" — ¿cuánto entró en "+cDest.moneda+"?</label>"+
-      "<input type='number' step='0.01' placeholder='0.00' value='"+(f.montoDestino||"")+"' oninput='S.nTraspaso.montoDestino=this.value' onblur='R()' style='width:100%;padding:10px;font-size:15px;border:1.5px solid #ddd;border-radius:8px;font-family:inherit'>"+
+      "<input type='text' inputmode='decimal' step='0.01' placeholder='0.00' value='"+(f.montoDestino||"")+"' oninput='S.nTraspaso.montoDestino=_num(this.value)' onblur='R()' style='width:100%;padding:10px;font-size:15px;border:1.5px solid #ddd;border-radius:8px;font-family:inherit'>"+
       (monto>0&&montoDestino>0?"<div style='font-size:11px;color:#7a5c00;margin-top:6px'>Tasa efectiva: 1 "+cOrig.moneda+" = "+f4(montoDestino/monto)+" "+cDest.moneda+"</div>":"")+
     "</div>"
   :"")+
@@ -3496,7 +3511,7 @@ function rBalancePlus(){
         "<td style='text-align:center'>"+ic+" "+c.moneda+"</td>"+
         "<td style='text-align:right;font-size:14px;font-weight:700;color:#0f6e3a'>"+f2(parseFloat(c.saldo)||0)+"</td>"+
         "<td style='text-align:right;background:#FFFBEA;font-weight:700;color:#0a3d7c'>"+(usdt!==null?"≈ "+f2(usdt)+" USDT":"<span style='color:#aaa;font-size:10px'>sin tasa</span>")+"</td>"+
-        "<td><input type='number' value='"+(parseFloat(c.saldo)||0)+"' step='0.01' onchange='updateCuentaSaldo(\""+c.id+"\",this.value)' style='width:100px;font-size:12px;text-align:right;padding:4px 7px;border:1px solid #ddd;border-radius:6px'></td>"+
+        "<td><input type='text' inputmode='decimal' value='"+(parseFloat(c.saldo)||0)+"' step='0.01' onchange='updateCuentaSaldo(\""+c.id+"\",_num(this.value))' style='width:100px;font-size:12px;text-align:right;padding:4px 7px;border:1px solid #ddd;border-radius:6px'></td>"+
         "<td><button class='del-btn' onclick='deleteCuenta(\""+c.id+"\")'>🗑️</button></td>"+
       "</tr>";
     }).join("");
@@ -3558,7 +3573,7 @@ function rBalancePlus(){
   "<div class='f3'><div class='fl'><label>Nombre</label><input type='text' placeholder='ej: Binance Julio, Nubank...' value='"+(nc.nombre||"")+"' oninput='S.nCap.nombre=this.value'></div>"+
   "<div class='fl'><label>Tipo</label><select onchange='S.nCap.tipo=this.value'>"+tipoOpts+"</select></div>"+
   "<div class='fl'><label>Moneda</label><select onchange='S.nCap.moneda=this.value;R()'>"+monedaOpts+"</select></div></div>"+
-  "<div class='f2'><div class='fl'><label>Saldo actual ("+nc.moneda+")</label><input type='number' step='0.01' placeholder='0.00' value='"+(nc.saldo||"")+"' oninput='S.nCap.saldo=this.value'></div>"+
+  "<div class='f2'><div class='fl'><label>Saldo actual ("+nc.moneda+")</label><input type='text' inputmode='decimal' step='0.01' placeholder='0.00' value='"+(nc.saldo||"")+"' oninput='S.nCap.saldo=_num(this.value)'></div>"+
   "<div class='fl'><label>Nota</label><input type='text' placeholder='ej: cuenta principal' value='"+(nc.nota||"")+"' oninput='S.nCap.nota=this.value'></div></div>"+
   "<label style='display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:9px 12px;background:#F3F0FF;border-radius:9px;cursor:pointer'>"+
     "<input type='checkbox' "+(nc.esPersonal?"checked":"")+" onchange='S.nCap.esPersonal=this.checked'>"+
@@ -5290,7 +5305,7 @@ function rTabCompromisos(){
             "<div class='fl'><label>Nombre / Descripción</label><input placeholder='ej: Impuesto IVA, Netflix, Seguro...' value='"+(f.nombre||"")+"' oninput='(S.nCmp=S.nCmp||{}).nombre=this.value'></div>"+
           "</div>"+
           "<div class='f2'>"+
-            "<div class='fl'><label>Monto</label><input type='number' step='any' placeholder='0.00' value='"+(f.monto||"")+"' oninput='(S.nCmp=S.nCmp||{}).monto=this.value'></div>"+
+            "<div class='fl'><label>Monto</label><input type='text' inputmode='decimal' step='any' placeholder='0.00' value='"+(f.monto||"")+"' oninput='(S.nCmp=S.nCmp||{}).monto=_num(this.value)'></div>"+
             "<div class='fl'><label>Moneda</label><select onchange='(S.nCmp=S.nCmp||{}).moneda=this.value;S.nCmp.cuentaId=\"\";R()'>"+
               MONEDAS_CMP.map(function(m){return "<option value='"+m+"'"+((f.moneda||"USDT")===m?" selected":"")+">"+m+"</option>";}).join("")+
             "</select></div>"+
@@ -5305,7 +5320,7 @@ function rTabCompromisos(){
             "</select></div>"+
           "</div>"+
           "<div class='f2'>"+
-            "<div class='fl'><label>Día del mes que vence</label><input type='number' min='1' max='28' placeholder='15' value='"+(f.diaVence||"")+"' oninput='(S.nCmp=S.nCmp||{}).diaVence=this.value'></div>"+
+            "<div class='fl'><label>Día del mes que vence</label><input type='text' inputmode='decimal' min='1' max='28' placeholder='15' value='"+(f.diaVence||"")+"' oninput='(S.nCmp=S.nCmp||{}).diaVence=_num(this.value)'></div>"+
             "<div class='fl'><label>Cuenta de pago</label><select onchange='(S.nCmp=S.nCmp||{}).cuentaId=this.value'>"+
               "<option value=''>— elegir cuenta —</option>"+
               (S.cuentas||[]).filter(function(c){return c.activa!==false&&c.moneda===(f.moneda||"USDT");}).map(function(c){return "<option value='"+c.id+"'"+(f.cuentaId===c.id?" selected":"")+">"+c.nombre+" ($"+f2(c.saldo)+")</option>";}).join("")+
@@ -7656,7 +7671,7 @@ function rConfigAdmin(){
             "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Nombre del socio</label>"+
             "<input type='text' placeholder='ej: Colega Perú' value='"+(ns2.nombre||"")+"' oninput='S._nSocio=Object.assign(S._nSocio||{},{nombre:this.value})' style='width:100%;padding:11px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
             "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Porcentaje que le corresponde (%)</label>"+
-            "<input type='number' placeholder='50' min='1' max='100' value='"+(ns2.pct||"")+"' oninput='S._nSocio=Object.assign(S._nSocio||{},{pct:this.value})' style='width:100%;padding:11px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
+            "<input type='text' inputmode='decimal' placeholder='50' min='1' max='100' value='"+(ns2.pct||"")+"' oninput='S._nSocio=Object.assign(S._nSocio||{},{pct:_num(this.value)})' style='width:100%;padding:11px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
             "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Rutas (separadas por coma)</label>"+
             "<input type='text' placeholder='ej: PEN ↔ VZLA, PEN ↔ BRL' value='"+(ns2.rutas||"")+"' oninput='S._nSocio=Object.assign(S._nSocio||{},{rutas:this.value})' style='width:100%;padding:11px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
             (todasRutas2.length?"<div style='display:flex;flex-wrap:wrap;gap:5px;margin-top:6px'>"+todasRutas2.map(function(rt){return "<span onclick='S._nSocio=Object.assign(S._nSocio||{},{rutas:(S._nSocio.rutas||\"\")?S._nSocio.rutas+\", \"+rt:rt});R()' style='background:#f0f0f0;border-radius:8px;padding:3px 9px;font-size:10px;cursor:pointer;color:#555'>"+rt+"</span>";}).join("")+"</div>":"")+"</div>"+
@@ -7695,7 +7710,7 @@ function rConfigAdmin(){
         "<div class='f3'>"+
           "<div class='fl'><label>Institución</label><input type='text' placeholder='ej: Binance, Nubank...' value='"+(nc.institucion||"")+"' oninput='(S.nCuenta=S.nCuenta||{}).institucion=this.value'></div>"+
           "<div class='fl'><label>Operador</label><select onchange='(S.nCuenta=S.nCuenta||{}).operador=this.value'>"+opOpts+"</select></div>"+
-          "<div class='fl'><label>Saldo inicial ("+nc.moneda+")</label><input type='number' step='0.01' placeholder='0.00' value='"+(nc.saldo||"")+"' oninput='(S.nCuenta=S.nCuenta||{}).saldo=parseFloat(this.value)||0'></div>"+
+          "<div class='fl'><label>Saldo inicial ("+nc.moneda+")</label><input type='text' inputmode='decimal' step='0.01' placeholder='0.00' value='"+(nc.saldo||"")+"' oninput='(S.nCuenta=S.nCuenta||{}).saldo=parseFloat(_num(this.value))||0'></div>"+
         "</div>"+
         "<button class='btn-main' onclick='saveCuenta()' style='background:#1a3558;color:#fff'>➕ Agregar cuenta</button>"+
         "<button onclick='recuperarCuentasConocidas()' style='width:100%;margin-top:10px;padding:11px;border:1.5px dashed #c0392b;border-radius:9px;background:#FFF5F5;color:#c0392b;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>🆘 Recuperar cuentas conocidas (por el incidente de sincronización)</button>"+
@@ -10417,9 +10432,9 @@ function rTabSocios(socios, gsMes, mesKey){
     "<div><label style='font-size:10px;color:#666;font-weight:600'>Fecha</label>"+
     "<input type='date' value='"+(f.fecha||td())+"' onchange='S._nGastoSocio=Object.assign(S._nGastoSocio||{},{fecha:dsFecha(this.value)})' style='width:100%;padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;margin-top:3px;box-sizing:border-box'></div>"+
     "<div><label style='font-size:10px;color:#666;font-weight:600'>Monto USD</label>"+
-    "<input type='number' placeholder='0.00' value='"+(f.monto||"")+"' oninput='S._nGastoSocio=Object.assign(S._nGastoSocio||{},{monto:this.value,usdt:this.value})' style='width:100%;padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;margin-top:3px;box-sizing:border-box'></div>"+
+    "<input type='text' inputmode='decimal' placeholder='0.00' value='"+(f.monto||"")+"' oninput='S._nGastoSocio=Object.assign(S._nGastoSocio||{},{monto:_num(this.value),usdt:this.value})' style='width:100%;padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;margin-top:3px;box-sizing:border-box'></div>"+
     "<div><label style='font-size:10px;color:#666;font-weight:600'>≈ USDT</label>"+
-    "<input type='number' placeholder='auto' value='"+(f.usdt||"")+"' oninput='S._nGastoSocio=Object.assign(S._nGastoSocio||{},{usdt:this.value})' style='width:100%;padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;margin-top:3px;box-sizing:border-box'></div>"+
+    "<input type='text' inputmode='decimal' placeholder='auto' value='"+(f.usdt||"")+"' oninput='S._nGastoSocio=Object.assign(S._nGastoSocio||{},{usdt:_num(this.value)})' style='width:100%;padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;margin-top:3px;box-sizing:border-box'></div>"+
     "</div>"+
     "<button onclick='saveGastoSocioForm()' style='width:100%;margin-top:10px;padding:11px;border:none;border-radius:9px;font-size:13px;font-weight:700;cursor:pointer;background:#0a6b4e;color:#fff'>🤝 Guardar gasto de socio</button>"+
   "</div>";
@@ -16760,8 +16775,8 @@ function rNueva(){
       return html;
     })()+
     "<div class='sec' style='border-left:3px solid #0a3d7c'><div class='sec-title' style='color:#0a3d7c'>1️⃣ Monto recibido en "+ruta.orig+" · Tasa del día</div>"+
-    "<div class='f2'><div class='fl'><label>Valor de transacción ("+ruta.orig+")</label><input type='number' placeholder='ej: 50' value='"+(f.am||"")+"' oninput='S.tx.am=this.value;upC(\"tx\")'></div>"+
-    "<div class='fl'><label>"+ruta.lDia+(defTdia&&!f.tdia?" <span style='font-size:10px;color:#e67e22;font-weight:600'>← Config: "+defTdia+"</span>":"")+"</label><input type='number' step='0.001' placeholder='"+(defTdia?"Config: "+defTdia:"ej: 629")+"' value='"+tdiaVal+"' oninput='S.tx.tdia=this.value;upC(\"tx\")'></div></div>"+
+    "<div class='f2'><div class='fl'><label>Valor de transacción ("+ruta.orig+")</label><input type='text' inputmode='decimal' placeholder='ej: 50' value='"+(f.am||"")+"' oninput='S.tx.am=_num(this.value);upC(\"tx\")'></div>"+
+    "<div class='fl'><label>"+ruta.lDia+(defTdia&&!f.tdia?" <span style='font-size:10px;color:#e67e22;font-weight:600'>← Config: "+defTdia+"</span>":"")+"</label><input type='text' inputmode='decimal' step='0.001' placeholder='"+(defTdia?"Config: "+defTdia:"ej: 629")+"' value='"+tdiaVal+"' oninput='S.tx.tdia=_num(this.value);upC(\"tx\")'></div></div>"+
     "<div id='s1-tx'>"+(ok?"<div class='step-box' style='background:#DDEEFF;border:1px solid #0a3d7c33'><span style='font-size:11px;color:#0a3d7c'>"+(ruta.orig==="VES"?(f2(am)+" "+ruta.orig+" ÷ "+f2(tdia)):(f2(am)+" "+ruta.orig+" × "+f2(tdia)))+" = </span><span style='font-weight:700;font-size:14px;color:#0a3d7c'>📦 "+f0(cant)+" "+ruta.dest+" a entregar</span></div>":"")+"</div></div>"+
     "<div class='sec' style='border-left:3px solid #0f6e3a;background:"+(hasInv?"#f8fffe":"#fff")+"'><div class='sec-title' style='color:#0f6e3a'>2️⃣ Tasas USDT"+
     (hasInv?"<span style='background:#D6F5E3;color:#0f6e3a;font-size:10px;padding:2px 8px;border-radius:10px;margin-left:8px;font-weight:600'>✅ Auto desde inventario</span>":"<span style='background:#FDECEA;color:#c0392b;font-size:10px;padding:2px 8px;border-radius:10px;margin-left:8px'>Sin inventario</span>")+
@@ -16783,8 +16798,8 @@ function rNueva(){
     // Campos manuales - solo si showTasas está activo
     (S.tx.showTasas?
       "<div class='f2' style='margin-bottom:8px'>"+
-        "<div class='fl'><label>Tasa compra USDT ("+ruta.orig+"/USDT)</label><input id='tcman-tx' type='number' step='0.0001' placeholder='ej: 4.980' value='"+(f.tc_manual||tcAuto||"")+"' oninput='S.tx.tc_manual=this.value;upC(\"tx\")'></div>"+
-        "<div class='fl'><label>Tasa venta USDT ("+ruta.dest+"/USDT)</label><input type='number' step='0.0001' placeholder='ej: 629.000' value='"+(f.tv_manual||tvAuto||"")+"' oninput='S.tx.tv_manual=this.value;upC(\"tx\")'></div>"+
+        "<div class='fl'><label>Tasa compra USDT ("+ruta.orig+"/USDT)</label><input id='tcman-tx' type='text' inputmode='decimal' step='0.0001' placeholder='ej: 4.980' value='"+(f.tc_manual||tcAuto||"")+"' oninput='S.tx.tc_manual=_num(this.value);upC(\"tx\")'></div>"+
+        "<div class='fl'><label>Tasa venta USDT ("+ruta.dest+"/USDT)</label><input type='text' inputmode='decimal' step='0.0001' placeholder='ej: 629.000' value='"+(f.tv_manual||tvAuto||"")+"' oninput='S.tx.tv_manual=_num(this.value);upC(\"tx\")'></div>"+
       "</div>"+
       (function(){
         var recientes=_ultimasTasasCompra(ruta.orig,4);
@@ -16914,8 +16929,8 @@ function rNuevaEE(){
       return html;
     })()+
     "<div class='sec' style='border-left:3px solid #0a3d7c'><div class='sec-title' style='color:#0a3d7c'>1️⃣ Monto USD · Tasa del día</div>"+
-    "<div class='f2'><div class='fl'><label>Monto recibido (USD)</label><input type='number' placeholder='ej: 100' value='"+(f.am||"")+"' oninput='S.txE.am=this.value;upC(\"txE\")'></div>"+
-    "<div class='fl'><label>Tasa día (BS × 1 USD)"+(defTdiaEE&&!f.tdia?" <span style='font-size:10px;color:#e67e22;font-weight:600'>← Config: "+defTdiaEE+"</span>":"")+"</label><input type='number' placeholder='"+(defTdiaEE?"Config: "+defTdiaEE:"ej: 629")+"' value='"+tdiaEEVal+"' oninput='S.txE.tdia=this.value;upC(\"txE\")'></div></div>"+
+    "<div class='f2'><div class='fl'><label>Monto recibido (USD)</label><input type='text' inputmode='decimal' placeholder='ej: 100' value='"+(f.am||"")+"' oninput='S.txE.am=_num(this.value);upC(\"txE\")'></div>"+
+    "<div class='fl'><label>Tasa día (BS × 1 USD)"+(defTdiaEE&&!f.tdia?" <span style='font-size:10px;color:#e67e22;font-weight:600'>← Config: "+defTdiaEE+"</span>":"")+"</label><input type='text' inputmode='decimal' placeholder='"+(defTdiaEE?"Config: "+defTdiaEE:"ej: 629")+"' value='"+tdiaEEVal+"' oninput='S.txE.tdia=_num(this.value);upC(\"txE\")'></div></div>"+
     "<div id='s1-txE'>"+(ok?"<div class='step-box' style='background:#DDEEFF;border:1px solid #0a3d7c33'><span style='font-size:11px;color:#0a3d7c'>"+f2(am)+" USD × "+f2(tdia)+" = </span><span style='font-weight:700;font-size:14px;color:#0a3d7c'>📦 "+f0(cant)+" BS a entregar</span></div>":"")+"</div></div>"+
     "<div class='sec' style='border-left:3px solid #0f6e3a;background:"+(hasInv?"#f8fffe":"#fff")+"'><div class='sec-title' style='color:#0f6e3a'>2️⃣ Tasas USDT"+
     (hasInv?"<span style='background:#D6F5E3;color:#0f6e3a;font-size:10px;padding:2px 8px;border-radius:10px;margin-left:8px;font-weight:600'>✅ Auto desde inventario</span>":"<span style='background:#FDECEA;color:#c0392b;font-size:10px;padding:2px 8px;border-radius:10px;margin-left:8px'>Sin inventario</span>")+
@@ -16933,8 +16948,8 @@ function rNuevaEE(){
     )+
     (S.txE.showTasas?
       "<div class='f2' style='margin-bottom:8px'>"+
-        "<div class='fl'><label>Tasa compra USDT (USD/USDT)</label><input id='tcman-txE' type='number' step='0.0001' placeholder='ej: 1.010' value='"+(f.tc_manual||tcAuto||"")+"' oninput='S.txE.tc_manual=this.value;upC(\"txE\")'></div>"+
-        "<div class='fl'><label>Tasa venta USDT (BS/USDT)</label><input type='number' step='0.0001' placeholder='ej: 630.890' value='"+(f.tv_manual||tvAuto||"")+"' oninput='S.txE.tv_manual=this.value;upC(\"txE\")'></div>"+
+        "<div class='fl'><label>Tasa compra USDT (USD/USDT)</label><input id='tcman-txE' type='text' inputmode='decimal' step='0.0001' placeholder='ej: 1.010' value='"+(f.tc_manual||tcAuto||"")+"' oninput='S.txE.tc_manual=_num(this.value);upC(\"txE\")'></div>"+
+        "<div class='fl'><label>Tasa venta USDT (BS/USDT)</label><input type='text' inputmode='decimal' step='0.0001' placeholder='ej: 630.890' value='"+(f.tv_manual||tvAuto||"")+"' oninput='S.txE.tv_manual=_num(this.value);upC(\"txE\")'></div>"+
       "</div>"+
       (function(){
         var recientes=_ultimasTasasCompra("USD",4);
@@ -16998,10 +17013,10 @@ function rNuevaEE(){
               MONS_GE.map(function(m){return "<option value='"+m+"'"+(ge.mon===m?" selected":"")+">"+m+"</option>";}).join("")+
             "</select></div>"+
             "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Monto ("+ge.mon+")</label>"+
-            "<input type='number' placeholder='0.00' value='"+(ge.monto||"")+"' oninput='S._nGanExtra=Object.assign(S._nGanExtra||{},{monto:this.value,usdt:\"\"})' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
+            "<input type='text' inputmode='decimal' placeholder='0.00' value='"+(ge.monto||"")+"' oninput='S._nGanExtra=Object.assign(S._nGanExtra||{},{monto:_num(this.value),usdt:\"\"})' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
           "</div>"+
           "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Equivalente USDT <span style=\"font-size:9px;color:#aaa\">(auto si dejas vacío)</span></label>"+
-          "<input type='number' placeholder='Auto' value='"+(ge.usdt||"")+"' oninput='S._nGanExtra=Object.assign(S._nGanExtra||{},{usdt:this.value})' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
+          "<input type='text' inputmode='decimal' placeholder='Auto' value='"+(ge.usdt||"")+"' oninput='S._nGanExtra=Object.assign(S._nGanExtra||{},{usdt:_num(this.value)})' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
           "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Cuenta donde entró</label>"+
           "<select onchange='S._nGanExtra=Object.assign(S._nGanExtra||{},{cuentaId:this.value})' style='width:100%;padding:12px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
             "<option value=''>— Sin acreditar —</option>"+
@@ -17212,10 +17227,10 @@ function rInventarioUsdt(){
     (function(){
       if(f.tipo==="compra"){
         return "<div style='display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:10px'>"+
-          "<div class='fl'><label>Monto gastado ("+(f.moneda||"BRL")+")</label><input type='number' step='0.01' placeholder='ej: 300' value='"+(f.montOrigen||"")+"' oninput='S.nIU.montOrigen=this.value'></div>"+
-          "<div class='fl'><label>USDT recibidos</label><input type='number' step='0.01' placeholder='ej: 300' value='"+(f.usdt||"")+"' oninput='S.nIU.usdt=this.value'></div>"+
-          "<div class='fl'><label>Tasa ("+(f.moneda||"BRL")+"/USDT)</label><input type='number' step='0.0001' placeholder='ej: 5.08' value='"+(f.tasa||"")+"' oninput='S.nIU.tasa=this.value'></div>"+
-          "<div class='fl'><label>Comisión (USDT)</label><input type='number' step='0.001' value='"+(f.comision!==undefined?f.comision:0.06)+"' oninput='S.nIU.comision=parseFloat(this.value)||0'></div>"+
+          "<div class='fl'><label>Monto gastado ("+(f.moneda||"BRL")+")</label><input type='text' inputmode='decimal' step='0.01' placeholder='ej: 300' value='"+(f.montOrigen||"")+"' oninput='S.nIU.montOrigen=_num(this.value)'></div>"+
+          "<div class='fl'><label>USDT recibidos</label><input type='text' inputmode='decimal' step='0.01' placeholder='ej: 300' value='"+(f.usdt||"")+"' oninput='S.nIU.usdt=_num(this.value)'></div>"+
+          "<div class='fl'><label>Tasa ("+(f.moneda||"BRL")+"/USDT)</label><input type='text' inputmode='decimal' step='0.0001' placeholder='ej: 5.08' value='"+(f.tasa||"")+"' oninput='S.nIU.tasa=_num(this.value)'></div>"+
+          "<div class='fl'><label>Comisión (USDT)</label><input type='text' inputmode='decimal' step='0.001' value='"+(f.comision!==undefined?f.comision:0.06)+"' oninput='S.nIU.comision=parseFloat(_num(this.value))||0'></div>"+
         "</div>";
       } else {
         var total=parseFloat(f.usdt)||0;
@@ -17239,10 +17254,10 @@ function rInventarioUsdt(){
           "</div>";
         }
         return "<div style='display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:10px'>"+
-          "<div class='fl'><label>💰 Total liberado en Binance (USDT)</label><input type='number' step='0.01' placeholder='ej: 273.57' value='"+(f.usdt||"")+"' oninput='S.nIU.usdt=this.value' style='font-weight:700;border-color:#1a3558'></div>"+
-          "<div class='fl'><label>Comisión Binance (USDT)</label><input type='number' step='0.001' placeholder='ej: 0.06' value='"+(f.comision!==undefined?f.comision:0.06)+"' oninput='S.nIU.comision=parseFloat(this.value)||0'></div>"+
-          "<div class='fl'><label>Tasa ("+(f.monedaVenta||"VES")+"/USDT)</label><input type='number' step='0.01' placeholder='ej: 731.23' value='"+(f.tasa||"")+"' oninput='S.nIU.tasa=this.value'></div>"+
-          "<div class='fl'><label>"+(f.monedaVenta||"VES")+" reales recibidos</label><input type='number' step='0.01' placeholder='ej: 200000' value='"+(f.bsRecibidos||"")+"' oninput='S.nIU.bsRecibidos=this.value' style='background:#FFFBEA;border-color:#F5C518'></div>"+
+          "<div class='fl'><label>💰 Total liberado en Binance (USDT)</label><input type='text' inputmode='decimal' step='0.01' placeholder='ej: 273.57' value='"+(f.usdt||"")+"' oninput='S.nIU.usdt=_num(this.value)' style='font-weight:700;border-color:#1a3558'></div>"+
+          "<div class='fl'><label>Comisión Binance (USDT)</label><input type='text' inputmode='decimal' step='0.001' placeholder='ej: 0.06' value='"+(f.comision!==undefined?f.comision:0.06)+"' oninput='S.nIU.comision=parseFloat(_num(this.value))||0'></div>"+
+          "<div class='fl'><label>Tasa ("+(f.monedaVenta||"VES")+"/USDT)</label><input type='text' inputmode='decimal' step='0.01' placeholder='ej: 731.23' value='"+(f.tasa||"")+"' oninput='S.nIU.tasa=_num(this.value)'></div>"+
+          "<div class='fl'><label>"+(f.monedaVenta||"VES")+" reales recibidos</label><input type='text' inputmode='decimal' step='0.01' placeholder='ej: 200000' value='"+(f.bsRecibidos||"")+"' oninput='S.nIU.bsRecibidos=_num(this.value)' style='background:#FFFBEA;border-color:#F5C518'></div>"+
         "</div>"+resumen;
       }
     })()+
@@ -17359,7 +17374,7 @@ function rCapital(){
       "<td style='text-align:right;font-size:15px;font-weight:800;color:#0f6e3a'>"+f2(parseFloat(item.saldo)||0)+"</td>"+
       "<td style='text-align:right;background:#FFFBEA;border-left:2px solid #F5C51822'>"+(usdt!==null?"<span style='font-size:12px;font-weight:700;color:#0a3d7c'>≈ "+f4(usdt)+" USDT</span><div style='font-size:9px;color:#888'>÷ "+f2(rate)+"</div>":"<span style='font-size:10px;color:#aaa'>Sin tasa</span>")+"</td>"+
       "<td class='mu' style='font-size:10px'>"+item.nota+"</td>"+
-      "<td style='text-align:right'><input type='number' value='"+(parseFloat(item.saldo)||0)+"' step='0.01' onchange='S.capital["+idx+"].saldo=parseFloat(this.value)||0;saveData();R()' style='width:100px;font-size:12px;text-align:right;padding:4px 7px;border:1px solid #ddd;border-radius:6px'></td>"+
+      "<td style='text-align:right'><input type='text' inputmode='decimal' value='"+(parseFloat(item.saldo)||0)+"' step='0.01' onchange='S.capital["+idx+"].saldo=parseFloat(_num(this.value))||0;saveData();R()' style='width:100px;font-size:12px;text-align:right;padding:4px 7px;border:1px solid #ddd;border-radius:6px'></td>"+
       "<td><button class='del-btn' onclick='var _delId=(S.capital["+idx+"]||{}).id;S.capital=S.capital.filter(function(x,i){return i!=="+idx+";});_marcarBorradoMerge(\"capital\",_delId);saveData();R()'>🗑️</button></td></tr>";
   }).join("");
   var monOpts=["USDT","BRL","VES","USD","EUR","COP","PEN","TTD"].map(function(m){return "<option value='"+m+"'"+(f.moneda===m?" selected":"")+">"+m+"</option>";}).join("");
@@ -17388,7 +17403,7 @@ function rCapital(){
   "<div class='f3'><div class='fl'><label>Nombre de la cuenta</label><input type='text' placeholder='ej: Binance, Nubank, BDV, KRAKEN...' value='"+(f.nombre||"")+"' oninput='S.nCap.nombre=this.value'></div>"+
   "<div class='fl'><label>Tipo</label><select onchange='S.nCap.tipo=this.value'>"+tipoOpts+"</select></div>"+
   "<div class='fl'><label>Moneda</label><select onchange='S.nCap.moneda=this.value;R()'>"+monOpts+"</select></div></div>"+
-  "<div class='f2'><div class='fl'><label>Saldo actual ("+f.moneda+")</label><input type='number' step='0.01' placeholder='0.00' value='"+(f.saldo||"")+"' oninput='S.nCap.saldo=this.value'></div>"+
+  "<div class='f2'><div class='fl'><label>Saldo actual ("+f.moneda+")</label><input type='text' inputmode='decimal' step='0.01' placeholder='0.00' value='"+(f.saldo||"")+"' oninput='S.nCap.saldo=_num(this.value)'></div>"+
   "<div class='fl'><label>Nota (opcional)</label><input type='text' placeholder='ej: cuenta principal, p2p...' value='"+(f.nota||"")+"' oninput='S.nCap.nota=this.value'></div></div>"+
   (f.saldo&&parseFloat(f.saldo)>0&&rateMap[f.moneda]?"<div style='background:#FFFBEA;border:1px solid #F5C518;border-radius:8px;padding:9px 13px;margin-bottom:10px;font-size:12px;color:#7a5c00'>💡 "+f2(parseFloat(f.saldo))+" "+f.moneda+" ÷ "+f2(rateMap[f.moneda])+" = <b>≈ "+f4(parseFloat(f.saldo)/rateMap[f.moneda])+" USDT</b></div>":"")+
   "<button class='btn-main' onclick='saveCap()' style='background:#1a2a4a;color:#fff'>💾 Agregar cuenta</button></div>";
@@ -17594,7 +17609,7 @@ function rEgresos(){
           "<div style='font-size:10px;color:#888;margin-bottom:9px'>Pones dinero de vuelta en una cuenta USDT de la empresa (devolver lo que gastaste o saldar lo que te excediste). Sube el saldo de esa cuenta y tu disponible. No afecta el inventario.</div>"+
           (ctasUsdt.length?
             "<div class='f2'><div class='fl'><label>Cuenta USDT</label><select onchange='S.nRep=Object.assign(S.nRep||{},{cuentaId:this.value})'><option value=''>— elegir —</option>"+ctasUsdt.map(function(c){return "<option value='"+c.id+"'"+(nr.cuentaId===c.id?" selected":"")+">"+c.nombre+" ($"+f2(c.saldo)+")</option>";}).join("")+"</select></div>"+
-            "<div class='fl'><label>Monto (USDT)</label><input type='number' placeholder='0.00' value='"+(nr.monto||"")+"' oninput='S.nRep=Object.assign(S.nRep||{},{monto:this.value})'></div></div>"+
+            "<div class='fl'><label>Monto (USDT)</label><input type='text' inputmode='decimal' placeholder='0.00' value='"+(nr.monto||"")+"' oninput='S.nRep=Object.assign(S.nRep||{},{monto:_num(this.value)})'></div></div>"+
             "<div class='fl' style='margin-bottom:10px'><label>Nota (opcional)</label><input type='text' placeholder='ej: devolución gasto personal' value='"+(nr.nota||"")+"' oninput='S.nRep=Object.assign(S.nRep||{},{nota:this.value})'></div>"+
             "<button type='button' onclick='saveRep()' style='width:100%;padding:11px;border:none;border-radius:9px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;background:#0f6e3a;color:#fff'>💵 Guardar reposición</button>"
             :"<div style='font-size:11px;color:#c0392b;text-align:center;padding:8px'>No tienes cuentas USDT activas. Crea una en ⚙️ Configuración.</div>")+
@@ -17817,14 +17832,14 @@ function rEgresos(){
         "<div style='background:#F8F0FF;border:1px solid #D8B0FF;border-radius:8px;padding:8px 10px;margin:-4px 0 12px;font-size:10px;color:#7b2d8b'>💼 Sin cuenta seleccionada → este gasto se resta directo de <b>tu sueldo</b> (💼 MI SUELDO 30%), sin tocar ninguna cuenta bancaria. Úsalo cuando ya vendiste/gastaste el dinero por fuera (ej: vendiste USDT de tu sueldo y gastaste los reales).</div>":
         "<div style='background:#FFF8E8;border:1px solid #F0D080;border-radius:8px;padding:8px 10px;margin:-4px 0 12px;font-size:10px;color:#7a5c00'>🏦 Se descontará de esa cuenta específica y se contará contra ese \"bolsillo\", no contra tu sueldo directamente.</div>")
       :"")+
-    "<div class='f2'><div class='fl'><label>Monto ("+monAct+")</label><input type='number' placeholder='0.00' value='"+(f.monto||"")+"' oninput='chgMonto(this.value)'></div>"+
-    "<div class='fl'><label>Tasa ("+(f.mon||"BRL")+" por 1 USDT)</label><input id='eg-tasa' type='number' step='0.0001' placeholder='ej: 5.30' value='"+(f.tasaManual!==undefined&&f.tasaManual!==""?f.tasaManual:"")+"' oninput='chgTasaEg(this.value)' style='width:100%;padding:10px;border:1.5px solid #ddd;border-radius:8px;font-size:13px'><div style='font-size:10px;color:#888;margin-top:3px'>Si el sistema no tiene tasa, escribila acá y calcula solo</div>"+
+    "<div class='f2'><div class='fl'><label>Monto ("+monAct+")</label><input type='text' inputmode='decimal' placeholder='0.00' value='"+(f.monto||"")+"' oninput='chgMonto(_num(this.value))'></div>"+
+    "<div class='fl'><label>Tasa ("+(f.mon||"BRL")+" por 1 USDT)</label><input id='eg-tasa' type='text' inputmode='decimal' step='0.0001' placeholder='ej: 5.30' value='"+(f.tasaManual!==undefined&&f.tasaManual!==""?f.tasaManual:"")+"' oninput='chgTasaEg(_num(this.value))' style='width:100%;padding:10px;border:1.5px solid #ddd;border-radius:8px;font-size:13px'><div style='font-size:10px;color:#888;margin-top:3px'>Si el sistema no tiene tasa, escribila acá y calcula solo</div>"+
       "<div id='eg-aviso-tasa' style='display:none;font-size:10px;color:#b8860b;background:#fffbea;border:1px solid #f5c518;border-radius:6px;padding:5px 7px;margin-top:4px'></div></div>"+
-    "<div class='fl'><label>≈ USDT</label><input id='eg-usdt' type='number' placeholder='0.00' value='"+(f.usdt!==""&&f.usdt!==undefined?f.usdt:"")+"' oninput='S.nEg.usdt=this.value'></div></div>"+
+    "<div class='fl'><label>≈ USDT</label><input id='eg-usdt' type='text' inputmode='decimal' placeholder='0.00' value='"+(f.usdt!==""&&f.usdt!==undefined?f.usdt:"")+"' oninput='S.nEg.usdt=_num(this.value)'></div></div>"+
     "<div style='display:flex;gap:16px;margin-bottom:12px'>"+
     "<label style='display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer'><input type='checkbox' "+(f.fija?"checked":"")+" onchange='S.nEg.fija=this.checked;R()'> ⭐ Recurrente</label>"+
     "<label style='display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer'><input type='checkbox' "+(f.pagada?"checked":"")+" onchange='S.nEg.pagada=this.checked'> ✅ Ya pagado</label></div>"+
-    (f.fija?"<div class='fl' style='margin-bottom:12px'><label>📅 Día de pago (1-28)</label><input type='number' min='1' max='28' value='"+(f.diaPago||"")+"' oninput='S.nEg.diaPago=this.value'></div>":"")+
+    (f.fija?"<div class='fl' style='margin-bottom:12px'><label>📅 Día de pago (1-28)</label><input type='text' inputmode='decimal' min='1' max='28' value='"+(f.diaPago||"")+"' oninput='S.nEg.diaPago=_num(this.value)'></div>":"")+
     "<button onclick='saveEg()' style='width:100%;padding:13px;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;background:"+(esPersonal?"#7b2d8b":"#1a3558")+";color:#fff'>💾 Guardar "+(esPersonal?"gasto personal":"egreso empresa")+"</button></div>"+
 
     // ══ PESTAÑAS ══
@@ -18162,7 +18177,7 @@ function rCuentasCobrar(){
         var _tUsarCC=(_tmCC!==null&&!isNaN(_tmCC))?_tmCC:_tAutoCC;
         previewCC="<div style='margin-top:6px'>"+
           "<label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>1 "+monPagoCC+" = ? "+c.moneda+" (editable si pagó a otra tasa)</label>"+
-          "<input type='number' inputmode='decimal' placeholder='"+(_tAutoCC?f4(_tAutoCC):"—")+"' value='"+(na.tasaManual||"")+"' oninput='S.nAbonoCobrar=Object.assign(S.nAbonoCobrar||{},{tasaManual:this.value})' style='width:100%;padding:9px;font-size:13px;border:1.5px solid #ddd;border-radius:8px;font-family:inherit'>"+
+          "<input type='text' inputmode='decimal' placeholder='"+(_tAutoCC?f4(_tAutoCC):"—")+"' value='"+(na.tasaManual||"")+"' oninput='S.nAbonoCobrar=Object.assign(S.nAbonoCobrar||{},{tasaManual:_num(this.value)})' style='width:100%;padding:9px;font-size:13px;border:1.5px solid #ddd;border-radius:8px;font-family:inherit'>"+
         "</div>";
         if(_tUsarCC&&montoIngCC>0){
           var equivCC=Math.round((montoIngCC*_tUsarCC)*100)/100;
@@ -18180,7 +18195,7 @@ function rCuentasCobrar(){
             MONEDAS_COBRAR.map(function(m){return "<option value='"+m+"'"+(monPagoCC===m?" selected":"")+">"+m+(m===c.moneda?" (moneda de la deuda)":"")+"</option>";}).join("")+
           "</select></div>"+
           "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Monto recibido ("+monPagoCC+")</label>"+
-          "<input type='number' placeholder='0.00' value='"+(na.monto||"")+"' oninput='S.nAbonoCobrar=Object.assign(S.nAbonoCobrar||{},{monto:this.value})' onblur='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
+          "<input type='text' inputmode='decimal' placeholder='0.00' value='"+(na.monto||"")+"' oninput='S.nAbonoCobrar=Object.assign(S.nAbonoCobrar||{},{monto:_num(this.value)})' onblur='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
           previewCC+
           "</div>"+
           "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Cuenta donde entra ("+monPagoCC+")</label>"+
@@ -18601,7 +18616,7 @@ function rPrestamos(){
         var tasaUsar = (_tasaManual!==null && !isNaN(_tasaManual) && _tasaManual>0) ? _tasaManual : tasaAuto;
         previewHtml="<div style='margin-top:6px'>"+
           "<label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>💱 1 "+monPago+" = ? "+monP+" (editable si el cliente pagó a otra tasa)</label>"+
-          "<input type='number' inputmode='decimal' placeholder='"+(tasaAuto?f4(tasaAuto):"—")+"' value='"+(np.tasaManual||"")+"' oninput='S.nPagarPrest=Object.assign(S.nPagarPrest||{},{tasaManual:this.value})' onchange='R()' style='width:100%;padding:9px;font-size:13px;border:1.5px solid #ddd;border-radius:8px;font-family:inherit'>"+
+          "<input type='text' inputmode='decimal' placeholder='"+(tasaAuto?f4(tasaAuto):"—")+"' value='"+(np.tasaManual||"")+"' oninput='S.nPagarPrest=Object.assign(S.nPagarPrest||{},{tasaManual:_num(this.value)})' onchange='R()' style='width:100%;padding:9px;font-size:13px;border:1.5px solid #ddd;border-radius:8px;font-family:inherit'>"+
         "</div>";
         if(tasaUsar&&montoIng>0){
           var equivalente=Math.round((montoIng*tasaUsar)*100)/100;
@@ -18641,7 +18656,7 @@ function rPrestamos(){
             MONEDAS_ABONO.map(function(m){return "<option value='"+m+"'"+(monPago===m?" selected":"")+">"+m+(m===monP?" (moneda del préstamo)":"")+"</option>";}).join("")+
           "</select></div>"+
           "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Monto recibido ("+monPago+")</label>"+
-          "<input id='pp-monto' type='number' inputmode='decimal' placeholder='0.00' value='"+(np.monto||"")+"' oninput='S.nPagarPrest=Object.assign(S.nPagarPrest||{},{monto:this.value})' onchange='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
+          "<input id='pp-monto' type='text' inputmode='decimal' placeholder='0.00' value='"+(np.monto||"")+"' oninput='S.nPagarPrest=Object.assign(S.nPagarPrest||{},{monto:_num(this.value)})' onchange='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
           // ARREGLO 29 (04/09/2026): calculo en las DOS direcciones. Antes solo se
           // podia escribir el monto en la moneda del pago; si querias cobrar
           // "100 reales en USDT" habia que sacar la cuenta con la calculadora.
@@ -18650,7 +18665,7 @@ function rPrestamos(){
           (monPago!==monP?
             "<div style='background:#f0f7ff;border:1px solid #cfe2ff;border-radius:8px;padding:9px 10px;margin-top:8px'>"+
               "<label style='font-size:10px;font-weight:700;color:#0a3d7c;display:block;margin-bottom:4px'>&#128207; O calculá al revés: cuánto querés cobrar en "+monP+"</label>"+
-              "<input type='number' inputmode='decimal' placeholder='ej: 100' value='"+(np.objetivo||"")+"' oninput='chgObjetivoPrest(this.value,\""+monP+"\",\""+monPago+"\")' style='width:100%;padding:10px;border:1.5px solid #cfe2ff;border-radius:8px;font-size:13px'>"+
+              "<input type='text' inputmode='decimal' placeholder='ej: 100' value='"+(np.objetivo||"")+"' oninput='chgObjetivoPrest(_num(this.value),\""+monP+"\",\""+monPago+"\")' style='width:100%;padding:10px;border:1.5px solid #cfe2ff;border-radius:8px;font-size:13px'>"+
               (function(){
                 var obj=parseFloat(np.objetivo)||0;
                 var tm=parseFloat(np.tasaManual)||parseFloat(tasaAuto)||0;
@@ -18996,7 +19011,7 @@ function rPrestamos(){
           "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Moneda</label>"+
           "<select onchange='S.nPr.mon=this.value;S.nPr.cuentaId=\"\";R()' style='width:100%;padding:12px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+monOpts+"</select></div>"+
           "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Monto ("+mon+")</label>"+
-          "<input type='number' placeholder='0.00' value='"+(f.monto||"")+"' oninput='S.nPr.monto=this.value' onblur='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
+          "<input type='text' inputmode='decimal' placeholder='0.00' value='"+(f.monto||"")+"' oninput='S.nPr.monto=_num(this.value)' onblur='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
         "</div>"+
         // Moneda de origen real + cuenta — se dejan FIJAS aquí, justo
         // después del monto, para que no se muevan de lugar cuando el
@@ -19008,7 +19023,7 @@ function rPrestamos(){
           "<select onchange='S.nPr.monedaOrigen=this.value;S.nPr.cuentaId=\"\";R()' style='width:100%;padding:11px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit;margin-bottom:"+(monOrigen!==mon?"8px":"0")+"'>"+monOrigenOpts+"</select>"+
           (monOrigen!==mon?
             "<label style='font-size:10px;font-weight:700;color:#7a5c00;display:block;margin-bottom:4px'>1 "+mon+" = ? "+monOrigen+" (tasa a la que convertiste)</label>"+
-            "<input type='number' inputmode='decimal' placeholder='"+(_tasaOrigenAuto?f4(_tasaOrigenAuto):"—")+"' value='"+(f.tasaOrigen||"")+"' oninput='S.nPr.tasaOrigen=this.value' onblur='R()' style='width:100%;padding:10px;font-size:14px;border:1.5px solid #ddd;border-radius:8px;font-family:inherit'>"+
+            "<input type='text' inputmode='decimal' placeholder='"+(_tasaOrigenAuto?f4(_tasaOrigenAuto):"—")+"' value='"+(f.tasaOrigen||"")+"' oninput='S.nPr.tasaOrigen=_num(this.value)' onblur='R()' style='width:100%;padding:10px;font-size:14px;border:1.5px solid #ddd;border-radius:8px;font-family:inherit'>"+
             (_capitalActual>0?(function(){
               var _tOr=(f.tasaOrigen&&!isNaN(parseFloat(f.tasaOrigen)))?parseFloat(f.tasaOrigen):_tasaOrigenAuto;
               if(!_tOr) return "<div style='font-size:11px;color:#c0392b;margin-top:6px'>⚠️ Sin tasa disponible — escríbela arriba</div>";
@@ -19133,7 +19148,7 @@ function rPrestamos(){
             "<div style='font-size:12px;font-weight:800;color:#1a3558;margin-bottom:8px'>📊 Comparar opciones de pago</div>"+
             "<div style='display:flex;align-items:center;gap:8px;margin-bottom:6px'>"+
               "<label style='font-size:11px;color:#555;white-space:nowrap'>Interés por cuota (%):</label>"+
-              "<input type='number' inputmode='decimal' value='"+_pct+"' oninput='S.nPr.tasaComparador=this.value' onblur='R()' style='flex:1;padding:9px;font-size:14px;border:1.5px solid #ccc;border-radius:8px;font-family:inherit'>"+
+              "<input type='text' inputmode='decimal' value='"+_pct+"' oninput='S.nPr.tasaComparador=_num(this.value)' onblur='R()' style='flex:1;padding:9px;font-size:14px;border:1.5px solid #ccc;border-radius:8px;font-family:inherit'>"+
             "</div>"+
             (_refTxt?"<div style='font-size:10px;color:"+_refColor+";font-weight:600;margin-bottom:4px'>"+_refTxt+"</div>":"")+
             (_pct>0?"<div style='font-size:10px;color:#777;margin-bottom:10px'>Equivale a un <b>"+f2(tasaAnualEfectiva(_pct,_periodDays))+"%</b> anual efectivo (CET).</div>":"")+
@@ -19190,7 +19205,7 @@ function rPrestamos(){
           "</label>"+
           (f.conInteres?
             "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Interés por cuota/período (%)</label>"+
-            "<input type='number' inputmode='decimal' placeholder='ej: 10' value='"+(f.tasaInteres||"")+"' oninput='S.nPr.tasaInteres=this.value' onblur='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
+            "<input type='text' inputmode='decimal' placeholder='ej: 10' value='"+(f.tasaInteres||"")+"' oninput='S.nPr.tasaInteres=_num(this.value)' onblur='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
             "<div style='font-size:9px;color:#999;margin-top:3px'>Se aplica por cada cuota — a más cuotas, más interés total (como un préstamo real).</div></div>"
           :"")+
         "</div>"+
