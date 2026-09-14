@@ -553,6 +553,35 @@ Tres cosas que sostienen el arreglo y no hay que quitar:
   cajitas (`pp-calc`, `pp-eq`, `pp-dir`, `pp-inv`) desde el mismo sitio que
   las dibuja.
 
+**Lo que se le pide va redondeado hacia arriba** (ARREGLO 56). Sus palabras:
+*"muy poco la gente paga con decimales"*. Pedirle 497,246 reales no tiene
+sentido —nadie entrega esos centavos— y bajarlo la deja corta, así que
+`_montoACobrar()` sube a la unidad entera. **USDT es la excepción**: no es
+efectivo, se transfiere exacto, y subir a la unidad entera serían más de cinco
+reales de un salto; ahí se redondea al céntimo.
+
+Tres límites de ese redondeo, y ninguno es cosmético:
+
+- **Toca lo que se le PIDE, nunca lo que se apunta.** El monto que entra a la
+  cuenta es el que de verdad llegó al banco. `_deudaCubierta()` sigue
+  convirtiendo exacto.
+- **Nunca se le pide más de lo que debe.** Si la cuota elegida se pasa del
+  saldo que queda —pasa cuando ya abonó de más antes— se cobra el saldo. Si se
+  le pidiera la cuota entera, al registrarlo el abono se recorta contra el
+  saldo pendiente **y `montoIngresado` se recorta con él**, así que la cuenta
+  se quedaría por debajo de lo que de verdad entró al banco.
+- **El último pago es el único que puede llevar céntimos.** Redondear hacia
+  arriba ahí le pediría más de lo que debe y no hay dónde acreditarle el
+  sobrante, así que se le pide el exacto.
+
+Y el texto cuenta lo mismo que la cuenta: cuando se recorta al saldo lo dice
+(*"de la cuota de 93,82 ya solo debe 87,80"*), no lo disfraza de redondeo. Un
+número recortado presentado como un redondeo se lee como un error de la app.
+
+Decisión suya: **la diferencia del redondeo se le acredita al cliente**. Lo que
+pague baja su deuda entero y el sobrante va a la cuota siguiente, como siempre.
+El redondeo quita centavos, no le cobra de más.
+
 `pruebas/prestamos.js` fija la dirección con guardias estructurales: el rótulo
 tiene que preguntar por la moneda del pago, y ningún sitio puede volver a
 multiplicar `montoIngresado * tasaManual`.

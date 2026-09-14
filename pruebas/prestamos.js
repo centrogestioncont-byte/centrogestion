@@ -73,7 +73,9 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "COM", "_comIU", "_localeOCR", "_numOCR",
                     "_candUSDT", "_candFiat", "_cuadrarP2P", "_parsearOCR", "_parsearConLocale", "_numLegible",
                     "_tasaAutoPago", "_deudaCubierta", "_htmlTasaInvertida",
-                    "_htmlTasaEnPalabras", "_htmlEquivAbono", "_htmlCalcPago"];
+                    "_htmlTasaEnPalabras", "_htmlEquivAbono", "_htmlCalcPago",
+                    "_pasoRedondeoCobro", "_montoACobrar", "_fMontoCobro",
+                    "_deudaACobrar"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
 global.window = global.window || {};
 // setTasaDia/soltarTasaDia guardan y repintan, y avisan por alert(). Aqui no
@@ -2194,8 +2196,9 @@ ok(F._htmlTasaEnPalabras(0, 5.30, "USDT", "BRL") === "",
    "y no aparece si todavia no hay de que hablar");
 ok(/87,80 USDT/.test(F._htmlEquivAbono(465.34, 5.30, "USDT", true, "del prestamo")),
    "el recuadro verde divide, ya no multiplica");
-ok(/465,34 BRL/.test(F._htmlCalcPago(87.80, 5.30, "BRL")),
-   "y la calculadora al reves multiplica, ya no divide");
+const _calc = F._htmlCalcPago(87.80, 5.30, "BRL");
+ok(/465,34/.test(_calc) && /466 BRL/.test(_calc),
+   "y la calculadora al reves multiplica, ya no divide", _calc);
 
 // Guardias estructurales: que nadie vuelva a voltear la direccion.
 ok(/1 "\+monP\+" = \? "\+monPago\+"/.test(HTML),
@@ -2209,14 +2212,79 @@ ok(!/monto = Math\.round\(\(montoIngresado\*tasaManual\)\*100\)\/100;/.test(HTML
    "ni un solo sitio multiplica el monto recibido por la tasa manual");
 ok((HTML.match(/_deudaCubierta\(montoIngresado,tasaManual\)/g) || []).length === 2,
    "prestamos y cuentas por cobrar convierten por el mismo sitio");
-ok(/np\.monto=Math\.round\(\(obj\*tm\)\*10000\)\/10000;/.test(HTML),
-   "la calculadora al reves multiplica");
+ok(/np\.monto=_montoACobrar\(obj,tm,monPago,techo\);/.test(HTML),
+   "la calculadora al reves multiplica y redondea por el mismo sitio");
+ok(!/np\.monto=Math\.round\(\(obj\/tm\)/.test(HTML),
+   "y no queda rastro de la division vieja");
 // El recuadro verde se quedaba con la cuenta vieja porque solo se refrescaba
 // el monto: la pantalla ensenaba 16.566 arriba y 2.635,43 abajo.
 ok(/id='pp-eq'/.test(HTML) && /getElementById\("pp-eq"\)/.test(HTML),
    "el recuadro verde se refresca en vivo, no se queda viejo");
 ok(/id='pp-dir'/.test(HTML) && /id='pp-inv'/.test(HTML),
    "la linea en palabras y el aviso tienen su sitio en pantalla");
+
+// ── ARREGLO 56: lo que se le pide al cliente va redondeado hacia arriba ──
+// "Muy poco la gente paga con decimales": pedirle 497,246 reales no tiene
+// sentido, y bajarlo la deja corta. Se redondea HACIA ARRIBA a la unidad, y
+// lo que pague se le acredita completo — decision suya: el redondeo quita
+// centavos, no le cobra de mas.
+console.log("\nArreglo 56 · lo que se le pide va redondeado hacia arriba");
+ok(F._pasoRedondeoCobro("BRL") === 1 && F._pasoRedondeoCobro("VES") === 1,
+   "reales y bolivares se piden en unidades enteras");
+ok(F._pasoRedondeoCobro("USDT") === 0.01,
+   "USDT no: se transfiere exacto y la unidad entera serian mas de 5 reales");
+ok(casi(F._montoACobrar(93.82, 5.30, "BRL"), 498),
+   "93,82 USDT a 5,30 son 497,246 -> se le piden 498", F._montoACobrar(93.82, 5.30, "BRL"));
+ok(casi(F._montoACobrar(87.80, 5.30, "BRL"), 466),
+   "y 465,34 sube a 466, nunca baja a 465", F._montoACobrar(87.80, 5.30, "BRL"));
+ok(casi(F._montoACobrar(100, 5, "BRL"), 500),
+   "un resultado ya entero se queda como esta, no sube uno de balde");
+ok(casi(F._montoACobrar(20, 0.1887, "USDT"), 3.78),
+   "en USDT se redondea al centimo: 3,774 -> 3,78", F._montoACobrar(20, 0.1887, "USDT"));
+ok(F._montoACobrar(50, 0, "BRL") === 0 && F._montoACobrar(0, 5.3, "BRL") === 0,
+   "sin tasa o sin deuda no inventa un numero");
+
+// El ultimo pago es el unico que puede llevar centavos: redondear hacia
+// arriba ahi le pediria mas de lo que debe, y no hay donde acreditarselo.
+ok(casi(F._montoACobrar(87.80, 5.30, "BRL", 87.80), 465.34),
+   "si 466 se pasa de lo que debe, se le pide el exacto (465,34)",
+   F._montoACobrar(87.80, 5.30, "BRL", 87.80));
+ok(casi(F._montoACobrar(50, 5.30, "BRL", 87.80), 265),
+   "pero mientras quede deuda por debajo del techo, se redondea igual",
+   F._montoACobrar(50, 5.30, "BRL", 87.80));
+// Si la cuota elegida se pasa del saldo que queda, se cobra el saldo: pedirle
+// la cuota entera le sacaria dinero que no debe, y al registrarlo el abono se
+// recorta y la cuenta se queda por debajo de lo que entro al banco de verdad.
+ok(casi(F._montoACobrar(93.82, 5.30, "BRL", 87.80), 465.34),
+   "una cuota mayor que el saldo se cobra al saldo, no a la cuota",
+   F._montoACobrar(93.82, 5.30, "BRL", 87.80));
+ok(casi(F._montoACobrar(93.82, 5.30, "BRL", 120), 498),
+   "con saldo de sobra, la cuota se redondea como toca",
+   F._montoACobrar(93.82, 5.30, "BRL", 120));
+
+// La multiplicacion se enseña entera: un numero redondeado presentado como
+// el resultado de la cuenta se lee como un error de la app.
+const _pal56 = F._htmlTasaEnPalabras(93.82, 5.30, "USDT", "BRL");
+ok(/497,25/.test(_pal56) && /498 BRL/.test(_pal56) && /p&iacute;dele/.test(_pal56),
+   "la linea enseña la cuenta exacta Y lo que hay que pedir", _pal56);
+ok(/eso es lo que te tiene que dar/.test(F._htmlTasaEnPalabras(100, 5, "USDT", "BRL")),
+   "y cuando no hay que redondear no habla de redondeo");
+ok(F._fMontoCobro(498, "BRL") === "498" && F._fMontoCobro(3.78, "USDT") === "3,78",
+   "los importes enteros salen sin el ',00' de mas",
+   F._fMontoCobro(498, "BRL"));
+// Cuando la cuota se recorta al saldo, el texto lo dice: enseñarlo como si
+// fuera un redondeo se lee como un error de la app.
+const _pal56b = F._htmlTasaEnPalabras(93.82, 5.30, "USDT", "BRL", 87.80);
+ok(/ya solo debe/.test(_pal56b) && /87,80 USDT &times; 5,3/.test(_pal56b) && /465,34 BRL/.test(_pal56b),
+   "y si se recorta al saldo, la cuenta que enseña es la del saldo", _pal56b);
+ok(!/497,25 BRL &mdash;/.test(_pal56b) && !/p&iacute;dele/.test(_pal56b),
+   "sin fingir que 465,34 sale de redondear 497,25");
+
+// Guardias: el redondeo toca lo que se PIDE, nunca lo que se apunta.
+ok(/monto = _deudaCubierta\(montoIngresado,tasaManual\);/.test(HTML),
+   "lo recibido se convierte exacto, sin redondeos de por medio");
+ok(!/_montoACobrar\(montoIngresado/.test(HTML),
+   "y el monto que entra a la cuenta no pasa por el redondeo");
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
