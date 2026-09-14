@@ -1829,6 +1829,10 @@ ok(/tasas:tasas/.test(HTML) && /traspPers:traspPers/.test(HTML),
    "conciliacionCapital devuelve el desfase de tasas y lo pasado a lo personal");
 ok(/var sinExplicar=r2v\(diferencia-ajustes\.total-tasas\.total\);/.test(HTML),
    "y 'sin explicar' descuenta las dos cosas");
+ok(/function corregirApertura\(/.test(HTML) && /onclick='corregirApertura\(\)'/.test(HTML),
+   "se puede corregir la apertura sin volver a fijarla");
+ok(/S\.config\.aperturaSaldos=/.test(HTML) && /S\.config\.aperturaTs=/.test(HTML),
+   "al fijar la apertura se guarda la foto de los saldos y la hora");
 ok(/desfase de las tasas del día/i.test(HTML),
    "el desfase de las tasas sale como linea propia en el desglose");
 

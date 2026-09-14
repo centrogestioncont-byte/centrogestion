@@ -3883,12 +3883,59 @@ function fijarAperturaHoy(){
     if(!S.config) S.config={};
     S.config.aperturaUsdt=cap.total;
     S.config.aperturaFecha=td();
+    // ARREGLO 47: hasta ahora solo se guardaba el total, y cuando la diferencia
+    // no cuadraba no había con qué comparar: un número suelto no dice qué cuenta
+    // se movió. Se guarda también la foto de cada saldo y la hora exacta.
+    // La hora importa porque los ajustes de saldo sí la llevan, y sin ella los
+    // del mismo día quedan en el aire (es justo lo que pasó el 11/09).
+    S.config.aperturaSaldos=(S.cuentas||[]).reduce(function(a,c){ a[c.id]=parseFloat(c.saldo)||0; return a; },{});
+    S.config.aperturaTs=Date.now();
     // Foto de lo que va del mes en curso: ya esta dentro del dinero
     // contado, asi que no se puede volver a sumar.
     S.config.aperturaBase=_acumuladosMes(getMesKeyActual());
     logAudit("APERTURA_CAPITAL","Saldo de apertura fijado en $"+f2(cap.total)+" USDT (cuentas "+f2(cap.enCuentas)+", reserva "+f2(cap.enReserva)+", calle "+f2(cap.enLaCalle)+")");
     saveData();R();
     alert("✅ Apertura fijada en $"+f2(cap.total)+" USDT.\n\nLa diferencia arranca en cero. Si dentro de un mes sigue en cero, tu contabilidad está sana.");
+  });
+}
+
+// ── Corregir la apertura sin volver a fijarla ───────────────────────────────
+// ARREGLO 47 (14/09/2026): cuando el número guardado no es el que tocaba, la
+// única salida era "volver a fijar la apertura con el dinero de hoy" — que no
+// corrige nada: borra la diferencia poniéndola a cero y la esconde. Ella lo dijo
+// mejor: "no tiene chiste que lo tenga que hacer todos los días, pierde la
+// lógica de para qué está eso ahí".
+//
+// Pasó de verdad: la apertura del 11/09 se guardó en 2.372,71, y rodando hacia
+// atrás cada operación registrada, ese día el capital estuvo entre 2.545 y
+// 2.670 a cualquier hora. Esos ~172 USDT ya estaban dentro del número el día
+// que se fijó; no se perdieron después. Lo que hace falta es poder corregir el
+// número dejando la fecha —y por tanto toda la medición— donde está.
+function corregirApertura(){
+  var cfg=S.config||{};
+  var act=parseFloat(cfg.aperturaUsdt);
+  if(isNaN(act)||!cfg.aperturaFecha){ alert("Todavía no hay una apertura fijada."); return; }
+  var t=prompt(
+    "Corregir el saldo de apertura del "+ds(cfg.aperturaFecha)+".\n\n"+
+    "Ahora vale $"+f2(act)+" USDT.\n\n"+
+    "Escribe el número correcto. La fecha no cambia, así que todo lo medido desde entonces se mantiene.",
+    f2(act));
+  if(t===null) return;
+  var v=_leerNumero(t,"USDT");
+  if(isNaN(v)||v<=0){ alert("Número inválido. Escribe solo la cantidad en USDT, por ejemplo 2544,79"); return; }
+  var dif=v-act;
+  if(!confirm(
+    "Saldo de apertura del "+ds(cfg.aperturaFecha)+"\n\n"+
+    "Antes:   $"+f2(act)+"\n"+
+    "Después: $"+f2(v)+"\n"+
+    "Cambio:  "+(dif>=0?"+":"−")+"$"+f2(Math.abs(dif))+"\n\n"+
+    "La diferencia de la conciliación se moverá "+(dif>=0?"−":"+")+"$"+f2(Math.abs(dif))+".\n\n¿Confirmas?")) return;
+  autorizarYHacer(function(){
+    if(!S.config) S.config={};
+    S.config.aperturaUsdt=Math.round(v*100)/100;
+    logAudit("APERTURA_CORREGIDA","Apertura del "+cfg.aperturaFecha+": $"+f2(act)+" → $"+f2(v)+" USDT");
+    saveData();R();
+    alert("✅ Apertura corregida a $"+f2(v)+" USDT.\n\nLa fecha sigue siendo el "+ds(cfg.aperturaFecha)+".");
   });
 }
 
@@ -8282,14 +8329,17 @@ function rCapitalTotal(){
           ? "✅ Cuadra. Lo que queda sin explicar está dentro del ruido normal (±$"+f2(tol)+"). Tu contabilidad está sana."
           : sinExp<0
             ? "⚠️ Faltan $"+f2(Math.abs(sinExp))+" que no explican ni los ajustes a mano ni el desfase de las tasas. Es dinero que salió sin quedar registrado — lo más común es lo que sacas para ti sin anotarlo. Búscalo entre las operaciones desde el "+ds(co.desde)+": volver a fijar la apertura solo lo esconde."
-            : "⚠️ Sobran $"+f2(sinExp)+" que no explican ni los ajustes a mano ni el desfase de las tasas. Suele ser dinero que entró sin registrarse como ganancia. Búscalo entre las operaciones desde el "+ds(co.desde)+": volver a fijar la apertura solo lo esconde.")+
+            : "⚠️ Sobran $"+f2(sinExp)+" que no explican ni los ajustes a mano ni el desfase de las tasas. Suele ser dinero que entró sin registrarse como ganancia, o una apertura que se guardó más baja de lo que tocaba — si fue eso, corrígela con el botón de abajo en vez de volver a fijarla.")+
       "</div>"+
       (co.baseFaltante?"<div style='background:#FFF4E5;border:1px solid #f0c080;border-radius:8px;padding:9px 11px;font-size:11px;color:#7a5c00;line-height:1.6;margin-top:8px'>"+
         "<b>⚠️ Vuelve a fijar la apertura.</b> Esta se guardó antes de un arreglo: contaba dos veces lo que ya llevabas ganado el mes en que la fijaste, así que la diferencia arranca torcida. Un clic en el botón de abajo lo deja en cero."+
       "</div>":"")+
       (co.egPersonalSin>0?"<div style='font-size:10px;color:#888;margin-top:7px;line-height:1.5'>Nota: hay $"+f2(co.egPersonalSin)+" de gastos personales sin cuenta asignada. No se restan porque no salieron de ningún saldo registrado — si en realidad sí salieron de una cuenta, edítalos y asígnasela.</div>":"")+
       "<div style='font-size:10px;color:#aaa;margin-top:7px'>Tu sueldo no se resta aquí: la app lo calcula como un % de la utilidad, no registra lo que de verdad sacaste. Lo que sacas se anota como gasto personal con su cuenta.</div>"+
-      "<button onclick='fijarAperturaHoy()' style='width:100%;margin-top:9px;padding:8px;border:1px solid "+brd+";border-radius:8px;background:#fff;color:#666;font-size:11px;cursor:pointer;font-family:inherit'>Volver a fijar la apertura con el dinero de hoy</button>"+
+      "<div style='display:flex;gap:7px;margin-top:9px'>"+
+        "<button onclick='corregirApertura()' style='flex:1;padding:8px;border:1px solid "+brd+";border-radius:8px;background:#fff;color:#666;font-size:11px;cursor:pointer;font-family:inherit'>✏️ Corregir la apertura ($"+f2(co.apertura)+")</button>"+
+        "<button onclick='fijarAperturaHoy()' style='flex:1;padding:8px;border:1px solid "+brd+";border-radius:8px;background:#fff;color:#666;font-size:11px;cursor:pointer;font-family:inherit'>Volver a fijarla con el dinero de hoy</button>"+
+      "</div>"+
     "</div>";
   })();
 
