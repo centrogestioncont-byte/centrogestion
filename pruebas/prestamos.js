@@ -56,6 +56,7 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "capitalRealTotal", "_mesesDesde", "_acumuladosMes",
                     "conciliacionCapital", "getMesKeyActual", "ajustesDesdeApertura", "_isoDeDDMMAA",
                     "traspasosAPersonal", "efectoTasasDesde", "_isoDeFechaLote",
+                    "getLastTasaVenta",
                     "montoAUsdt", "montoConMoneda", "_unicos",
                     "_marcarCambiados", "_refotografiar", "_mergeArrayById",
                     "_marcarTodoLoQueSeFusiona", "_marcarObjetosCambiados",
@@ -1850,6 +1851,25 @@ ok(/Vuelve a fijar la apertura/.test(_blq),
    "y el de apertura vieja tambien");
 ok(/Cuadra\. Lo que queda sin explicar/.test(_blq),
    "el veredicto tambien se ve siempre: es la respuesta a la pregunta");
+
+
+// ── ARREGLO 49: la tasa de una moneda no puede salir de otra ─────────────
+// Pidiendo la tasa del PEN, la app devolvia 960,2328 —la del bolivar— porque
+// al no hallar lotes en soles se iba al rescate de "todas las ventas". Con una
+// sola moneda de destino nunca se noto; con Colombia y Peru si.
+console.log("\nARREGLO 49 · la tasa no se presta entre monedas");
+S.brl = []; S.vzla = []; S.eeuu = []; S.inventarioUsdt_cerrado = [];
+S.inventarioUsdt = [
+  { id: 1, tipo:"venta", moneda:"VES", fecha:"09/13", usdt:100, neto:100, bs:96000, tasa:960, bsRestante:96000 }
+];
+ok(F.getLastTasaVenta("PEN") === null, "en soles no hay lotes: no se presta la del bolivar",
+   F.getLastTasaVenta("PEN"));
+ok(F.getLastTasaVenta("COP") === null, "ni en pesos", F.getLastTasaVenta("COP"));
+ok(F.getLastTasaVenta("VES") === 960, "pero los bolivares siguen teniendo la suya",
+   F.getLastTasaVenta("VES"));
+ok(/if\(dest!=="VES"\) return null;/.test(HTML),
+   "el rescate de 'todas las ventas' queda solo para bolivares");
+S.inventarioUsdt = [];
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
