@@ -430,10 +430,13 @@ operación y qué porcentaje de la bruta se llevan los egresos. Eso es lo que
 enseña que en agosto los egresos se comieron el 76 % y que lo que deja cada
 operación cayó de 4,34 a 2,33.
 
-**Los cierres del formato viejo se enseñan pero no suman.** Ella lo dijo:
-*"muchos datos de meses anteriores no están del todo correctos"*. Un cierre sin
-`ganBrutaTotal` ni `utilidadEmpresa` es de antes de que la app calculara bien:
-sale marcado, no entra en el acumulado y no marca la escala de las barras.
+**El acumulado cuenta TODOS los meses que la pantalla lista.** Un cierre sin
+`ganBrutaTotal` ni `utilidadEmpresa` es del formato viejo, de antes de que la
+app calculara bien, y sale marcado —ella avisó de que *"muchos datos de meses
+anteriores no están del todo correctos"*— **pero suma igual**. Dejarlo fuera se
+probó y ella lo cazó enseguida: el total dejaba de cuadrar con lo que se ve en
+pantalla, y un total que no se puede sumar a mano es peor que uno aproximado.
+La marca está para saber cuál mirar con lupa, no para descontarlo.
 
 ### La fecha de un lote va SIEMPRE en mm/dd
 

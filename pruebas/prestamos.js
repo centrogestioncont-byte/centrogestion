@@ -2136,15 +2136,18 @@ ok(/Deja cada operación/.test(HTML) && /Se llevan los egresos/.test(HTML),
    "y ensena los dos numeros que explican por que un mes cae");
 ok(/De eso, préstamos/.test(HTML), "la ganancia de prestamos va aparte");
 
-// Los cierres del formato viejo son de antes de que la app calculara bien:
-// se ensenan, pero no suman.
-ok(/datos de antes · no suman/.test(HTML),
+// Los cierres del formato viejo se marcan —"muchos datos de meses anteriores
+// no estan del todo correctos"— pero SI suman: el acumulado tiene que poder
+// sumarse a mano con lo que hay en pantalla. Dejar uno fuera hace que el total
+// no cuadre con la lista, que es peor que un numero aproximado.
+ok(/cierre del formato viejo/.test(HTML),
    "un cierre viejo se marca");
-ok(/var viejo = \(c\.ganBrutaTotal===undefined && c\.utilidadEmpresa===undefined\);/.test(HTML) &&
-   /if\(!viejo\) sumaTotal \+= neto;/.test(HTML),
-   "y no entra en el acumulado");
-ok(/return f\.viejo\?m:Math\.max/.test(HTML),
-   "ni marca la escala de las barras");
+ok(/var viejo = \(c\.ganBrutaTotal===undefined && c\.utilidadEmpresa===undefined\);/.test(HTML),
+   "se sabe cual es");
+ok(!/if\(!viejo\) sumaTotal/.test(HTML) && !/return f\.viejo\?m:Math\.max/.test(HTML),
+   "pero cuenta en el acumulado y en la escala, como todos");
+ok(/var desdeLabel = \(filas\[0\]\|\|\{\}\)\.label/.test(HTML),
+   "y el 'desde' es el primer mes que se ve");
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
