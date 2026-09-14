@@ -2547,12 +2547,20 @@ function efectoTasasDesde(desdeIso){
 // deja el lote en el futuro se entiende que es del año pasado. Es lo mismo que
 // asume ordenFIFO, y aquí solo decide si un lote entra o no en la ventana.
 function _isoDeFechaLote(f){
-  var p=String(f||"").split("/");
-  if(p.length<2) return "";
+  var p=String(_fechaLote(f)||"").split("/");
+  if(p.length!==2) return "";
   var mm=String(p[0]).padStart(2,"0"), dd=String(p[1]).slice(0,2).padStart(2,"0");
   if(!/^\d{2}$/.test(mm)||!/^\d{2}$/.test(dd)) return "";
-  var hoy=td(), iso=hoy.slice(0,4)+"-"+mm+"-"+dd;
-  if(iso>hoy) iso=(parseInt(hoy.slice(0,4),10)-1)+"-"+mm+"-"+dd;
+  var hoy=td(), a=parseInt(hoy.slice(0,4),10), iso=a+"-"+mm+"-"+dd;
+  // ARREGLO 51: 30 días de margen, no "cualquier cosa futura es del año
+  // pasado". Un lote adelantado a propósito es de este año; uno que cae once
+  // meses por delante es de diciembre del anterior.
+  if(_diasEnElFuturo(iso)>30) return (a-1)+"-"+mm+"-"+dd;
+  // Y el caso al revés, que solo aparece en el cambio de año: el 29 de
+  // diciembre, un lote "01/05" está a once meses hacia atrás si se lee de este
+  // año y a una semana hacia delante si se lee del siguiente. Lo segundo es lo
+  // que pasó de verdad.
+  if(_diasEnElFuturo(iso)<-300 && _diasEnElFuturo((a+1)+"-"+mm+"-"+dd)<=30) return (a+1)+"-"+mm+"-"+dd;
   return iso;
 }
 
@@ -3316,7 +3324,7 @@ function tasaDeReferencia(moneda){
     for(var i=0;i<(arr||[]).length;i++){
       var l=arr[i];
       if(l.moneda!==moneda || !((parseFloat(l.usdt)||0)>0)) continue;
-      var f=_fechaLote(l.fecha), id=parseFloat(l.id)||0;
+      var f=_isoDeLote(l), id=parseFloat(l.id)||0;
       if(!u || f>uF || (f===uF && id>=uId)){ u=l; uF=f; uId=id; }
     }
   }
@@ -4709,8 +4717,8 @@ function saveTx(){
   if(!rates.hasRates){
     // La fecha de un lote va SIEMPRE en mm/dd, como todas las demás: ds()
     // devuelve dd/mm/aa y ordenFIFO lo leía como otro día.
-    var fd=_fechaLote(f.date);
-    S.inventarioUsdt.push({id:Date.now(),tipo:"compra",fecha:fd,moneda:ruta.orig,montOrigen:0,usdt:0,tasa:tcF,comision:COM(),bs:0,plataforma:"Operación",pais:"",restante:0,locked:false});
+    var fd=_fechaLote(f.date), fdIso=_fechaLoteIso(f.date);   // ARREGLO 51: el año, aparte
+    S.inventarioUsdt.push({id:Date.now(),tipo:"compra",fecha:fd,fechaIso:fdIso,moneda:ruta.orig,montOrigen:0,usdt:0,tasa:tcF,comision:COM(),bs:0,plataforma:"Operación",pais:"",restante:0,locked:false});
     // La VENTA es en la moneda de DESTINO, no siempre en VES. Estaba escrito
     // "VES" a pelo, así que en una remesa VZLA→BRL —donde lo que se vende son
     // reales— quedaba un lote marcado VES con la tasa de los reales dentro.
@@ -4718,7 +4726,7 @@ function saveTx(){
     // por USDT. Con eso se pricea mal la siguiente remesa y la ganancia sale
     // mal, que es justo lo que no se puede permitir aquí.
     // En las de EE.UU (USD→VES) el destino sí es VES y ese sitio no cambia.
-    S.inventarioUsdt.push({id:Date.now()+1,tipo:"venta",fecha:fd,moneda:ruta.dest||"VES",montOrigen:0,usdt:0,tasa:tvF,comision:COM(),bs:0,plataforma:"Operación",pais:"",restante:0,locked:false});
+    S.inventarioUsdt.push({id:Date.now()+1,tipo:"venta",fecha:fd,fechaIso:fdIso,moneda:ruta.dest||"VES",montOrigen:0,usdt:0,tasa:tvF,comision:COM(),bs:0,plataforma:"Operación",pais:"",restante:0,locked:false});
   }
   var res=cTx();
   // ARREGLO 44: si el cliente pagó de varias formas, las filas tienen que sumar
@@ -4922,9 +4930,9 @@ function saveTxEE(){
   if(!rates.hasRates){
     // La fecha de un lote va SIEMPRE en mm/dd, como todas las demás: ds()
     // devuelve dd/mm/aa y ordenFIFO lo leía como otro día.
-    var fd=_fechaLote(f.date);
-    S.inventarioUsdt.push({id:Date.now(),tipo:"compra",fecha:fd,moneda:"USD",montOrigen:0,usdt:0,tasa:tcF,comision:COM(),bs:0,plataforma:"Operación EE.UU",pais:"",restante:0,locked:false});
-    S.inventarioUsdt.push({id:Date.now()+1,tipo:"venta",fecha:fd,moneda:"VES",montOrigen:0,usdt:0,tasa:tvF,comision:COM(),bs:0,plataforma:"Operación EE.UU",pais:"",restante:0,locked:false});
+    var fd=_fechaLote(f.date), fdIso=_fechaLoteIso(f.date);   // ARREGLO 51: el año, aparte
+    S.inventarioUsdt.push({id:Date.now(),tipo:"compra",fecha:fd,fechaIso:fdIso,moneda:"USD",montOrigen:0,usdt:0,tasa:tcF,comision:COM(),bs:0,plataforma:"Operación EE.UU",pais:"",restante:0,locked:false});
+    S.inventarioUsdt.push({id:Date.now()+1,tipo:"venta",fecha:fd,fechaIso:fdIso,moneda:"VES",montOrigen:0,usdt:0,tasa:tvF,comision:COM(),bs:0,plataforma:"Operación EE.UU",pais:"",restante:0,locked:false});
   }
   var res=cTxE();
   var nn2=S.eeuu.length?Math.max.apply(null,S.eeuu.map(function(x){return x.n;}))+1:1;
@@ -6826,7 +6834,7 @@ function saveIU(){
   if(ordenId&&(S.inventarioUsdt||[]).some(function(l){return l.ordenId&&l.ordenId===ordenId;})){
     if(!confirm('⚠️ Ya existe un lote con Order ID '+ordenId+'\n¿Continuar de todas formas?')) return;
   }
-  var fecha=_fechaLote(f.fecha);
+  var fecha=_fechaLote(f.fecha), fechaIso=_fechaLoteIso(f.fecha);   // ARREGLO 51: el año, aparte
   var cuentaAfectada=f.cuentaId||"";
 
   if(f.tipo==="compra"){
@@ -6835,7 +6843,7 @@ function saveIU(){
     // el bruto (usdt) y la comisión quedaba solo anotada sin restarse realmente,
     // haciendo que la cuenta quedara con más USDT del que en verdad hay en Binance.
     var usdtNeto=Math.round((usdt-com)*10000)/10000;
-    S.inventarioUsdt.push({id:Date.now(),tipo:"compra",fecha:fecha,moneda:f.moneda||"BRL",
+    S.inventarioUsdt.push({id:Date.now(),tipo:"compra",fecha:fecha,fechaIso:fechaIso,moneda:f.moneda||"BRL",
       montOrigen:Math.round(mo*100)/100,usdt:usdtNeto,tasa:tasa,comision:com,bs:0,
       plataforma:f.plataforma||"",ordenId:ordenId,cuentaId:cuentaAfectada,
       cuentaOrigenId:f.cuentaOrigenId||"",  // cuenta que pagó (BRL/USD)
@@ -6854,7 +6862,7 @@ function saveIU(){
     var neto = usdt - com;
     var bs = neto * tasa;
     var bsFinal = (f.bsRecibidos && parseFloat(f.bsRecibidos)>0) ? parseFloat(f.bsRecibidos) : bs;
-    S.inventarioUsdt.push({id:Date.now(),tipo:"venta",fecha:fecha,moneda:f.monedaVenta||"VES",
+    S.inventarioUsdt.push({id:Date.now(),tipo:"venta",fecha:fecha,fechaIso:fechaIso,moneda:f.monedaVenta||"VES",
       montOrigen:0,usdt:usdt,neto:neto,tasa:tasa,comision:com,
       bs:Math.round(bsFinal*1000)/1000,
       bsRestante:Math.round(bsFinal*1000)/1000,
@@ -11641,6 +11649,40 @@ function normalizarInventarioFIFO(){
 //
 // Acepta los tres formatos para poder arreglar de paso los lotes ya guardados:
 // tres partes solo las escribe ds(), que es dd/mm/aa; dos partes ya es mm/dd.
+// ── El año que a mm/dd le falta ─────────────────────────────────────────────
+// ARREGLO 51 (14/09/2026): _fechaLote() guarda mm/dd y ordenFIFO lo lee como
+// mes×100+día. Sin año, el 1 de enero un lote del 31/12 se ordena DESPUÉS de
+// uno del 01/01, y durante todo enero la app trata lo de diciembre como más
+// nuevo. Ya no es solo qué lote se consume primero —de ahí sale su ganancia—:
+// tasaDeReferencia() compara las mismas cadenas, así que en enero valoraría
+// todo su dinero con la tasa de diciembre. Reproducido con lotes del 28/12 a
+// 5,22 y del 05/01 a 5,00: elegía el de diciembre.
+//
+// Los lotes nuevos guardan el año aparte, en fechaIso. Los ~290 que ya existen
+// no lo llevan y no se les va a reescribir: se deduce. La deducción tiene una
+// trampa que hay que respetar — un lote puede llevar fecha adelantada a
+// propósito (confirmarFechaFutura lo permite, y pasó el 12/09 con un 18/09),
+// así que "en el futuro" no significa "del año pasado". Se admiten 30 días por
+// delante; más allá sí es del año anterior.
+function _fechaLoteIso(f){
+  if(!f) return "";
+  var s=String(f).trim();
+  if(/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0,10);          // ISO: ya viene entera
+  var q=s.split("/");
+  if(q.length===3){                                               // dd/mm/aa o dd/mm/aaaa
+    var a=q[2].length===2?("20"+q[2]):q[2];
+    return a+"-"+String(q[1]).padStart(2,"0")+"-"+String(q[0]).padStart(2,"0");
+  }
+  return _isoDeFechaLote(s);                                      // mm/dd: hay que deducirlo
+}
+// El ISO de un lote guardado: el suyo si lo lleva, deducido si es de los viejos.
+function _isoDeLote(l){
+  if(l && typeof l==="object"){
+    if(/^\d{4}-\d{2}-\d{2}$/.test(String(l.fechaIso||""))) return l.fechaIso;
+    return _isoDeFechaLote(l.fecha);
+  }
+  return _isoDeFechaLote(l);
+}
 function _fechaLote(f){
   if(!f) return "";
   var s=String(f).trim();
@@ -11690,12 +11732,11 @@ function ordenFIFO(a,b){
   // que no lo hacían: el ajuste del lote de una cuenta y —el que se ve— el
   // historial del Inventario USDT, que por eso enseñaba las filas desordenadas
   // aunque el consumo sí fuera correcto.
-  function v(f){
-    if(!f)return 0;
-    var p=String(_fechaLote(f)).split("/");
-    return (parseInt(p[0],10)||0)*100+(parseInt(p[1],10)||0);
-  }
-  return (v(a.fecha)-v(b.fecha))||((a.id||0)-(b.id||0));
+  // ARREGLO 51: compara el ISO completo, con año. Antes era mes×100+día y en
+  // enero ponía lo de diciembre por delante de lo de enero.
+  var ia=_isoDeLote(a), ib=_isoDeLote(b);
+  if(ia!==ib) return ia<ib?-1:1;
+  return (a.id||0)-(b.id||0);
 }
 // TC: tasa de la compra MÁS VIEJA con USDT restante (FIFO), respetando la cuenta si se indica
 function getLastTasaCompra(moneda,cuentaOrigenId){
@@ -11963,7 +12004,7 @@ function crearLoteRecibido(moneda, monto, usdtValor, cuentaDestinoId, fecha, ref
     // eso podía darle a un lote nuevo un id menor que el del anterior, o sea
     // colarlo delante en el FIFO. Se busca el primer hueco libre hacia arriba.
     id: _idLoteNuevo(),
-    tipo:"venta", fecha:_fechaLote(fecha), moneda:moneda,
+    tipo:"venta", fecha:_fechaLote(fecha), fechaIso:_fechaLoteIso(fecha), moneda:moneda,
     montOrigen:0, usdt:u, neto:u,
     tasa: Math.round((m/u)*10000)/10000,
     comision:0,                      // ya está dentro de uv

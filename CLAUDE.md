@@ -422,11 +422,22 @@ alguien lo haya hecho antes. `pruebas/prestamos.js` recorre el archivo entero y
 exige que **cada** `inventarioUsdt.push(` saque su fecha de ahí: si añades un
 sitio nuevo, falla.
 
-**Pendiente, y se rompe en enero:** `mm/dd` no lleva año, así que un lote del
-01/01 se ordenará antes que uno del 31/12 anterior. Ya no es solo el orden del
-FIFO: `tasaDeReferencia()` compara las mismas cadenas, así que durante todo
-enero valoraría el dinero con la tasa de diciembre. Reproducido con lotes del
-28/12 a 5,22 y del 05/01 a 5,00: la app elige el de diciembre.
+**El año va aparte, en `fechaIso`** (ARREGLO 51). Sin él, `ordenFIFO` leía
+`mes×100 + día` y en enero ponía lo de diciembre por delante de lo de enero —y
+desde el arreglo 49 eso también decidía la tasa con la que se valora todo.
+
+Los lotes nuevos lo guardan. Los ~290 que ya existen no, y **no se les
+reescribe**: `_isoDeLote()` lo deduce, y la deducción tiene dos trampas que hay
+que respetar. Un lote puede llevar fecha **adelantada a propósito**
+(`confirmarFechaFutura` lo permite, y pasó el 12/09 con un 18/09), así que "en
+el futuro" no significa "del año pasado": se admiten 30 días por delante. Y en
+el cambio de año pasa lo contrario — el 29 de diciembre, un `01/05` está a once
+meses hacia atrás si se lee de este año y a una semana hacia delante si se lee
+del siguiente; es del siguiente.
+
+Comprobado con sus 288 lotes reales: el orden FIFO, las tasas sugeridas y el
+consumo salen **idénticos** a antes. El arreglo solo se nota en el cambio de
+año, que es para lo que está.
 
 ### Al borrar una remesa, las monedas salen de la remesa
 

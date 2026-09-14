@@ -57,6 +57,7 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "conciliacionCapital", "getMesKeyActual", "ajustesDesdeApertura", "_isoDeDDMMAA",
                     "traspasosAPersonal", "efectoTasasDesde", "_isoDeFechaLote",
                     "tasaDeReferencia", "_tasaFijadaAMano", "setTasaDia", "soltarTasaDia",
+                    "_isoDeLote", "_fechaLoteIso",
                     "_diasDesdeLote", "_fechaLoteLegible", "getLastTasaVenta",
                     "montoAUsdt", "montoConMoneda", "_unicos",
                     "_marcarCambiados", "_refotografiar", "_mergeArrayById",
@@ -1119,10 +1120,17 @@ S.inventarioUsdt = [];
 
 // Y que los tres sitios de index.html usen la funcion: el fallo estaba en la
 // llamada, no en el orden.
-ok(/var fecha=_fechaLote\(f\.fecha\);/.test(HTML),
-   "saveIU pone la fecha del lote con _fechaLote");
-ok(/tipo:"venta", fecha:_fechaLote\(fecha\), moneda:moneda,/.test(HTML),
-   "crearLoteRecibido la normaliza dentro, para quien la llame manana");
+ok(/var fecha=_fechaLote\(f\.fecha\), fechaIso=_fechaLoteIso\(f\.fecha\);/.test(HTML),
+   "saveIU pone la fecha del lote con _fechaLote, y el año con _fechaLoteIso");
+ok(/tipo:"venta", fecha:_fechaLote\(fecha\), fechaIso:_fechaLoteIso\(fecha\), moneda:moneda,/.test(HTML),
+   "crearLoteRecibido las normaliza dentro, para quien la llame manana");
+// ARREGLO 51: y que NINGUN sitio meta un lote sin su año. mm/dd solo no basta:
+// en enero, un lote de diciembre se ordenaba por delante de uno de enero.
+ok((HTML.match(/inventarioUsdt\.push\(/g)||[]).length ===
+   (HTML.match(/fechaIso:/g)||[]).length,
+   "cada sitio que crea un lote le pone tambien el año",
+   (HTML.match(/inventarioUsdt\.push\(/g)||[]).length + " push / " +
+   (HTML.match(/fechaIso:/g)||[]).length + " con año");
 ok(/if\(r\.fecha\)\{ var fn=_fechaLote\(r\.fecha\); if\(fn!==r\.fecha\) r\.fecha=fn; \}/.test(HTML),
    "y los lotes ya guardados se corrigen al leer el inventario");
 ok(!/f\.fecha\.slice\(5\)\.replace\("-","\/"\)/.test(HTML),
@@ -1999,6 +2007,68 @@ ok(/if\(dest!=="VES"\) return null;/.test(HTML),
    "el rescate de 'todas las ventas' es solo para bolivares");
 
 S.tasasDia = {}; S._tasasDiaMeta = {}; S.inventarioUsdt = []; S.inventarioUsdt_cerrado = [];
+
+
+// ── ARREGLO 51: a mm/dd le faltaba el año, y en enero se notaba ──────────
+// ordenFIFO leia la fecha como mes×100+dia. El 1 de enero, un lote del 31/12
+// se ordenaba DESPUES de uno del 01/01: durante todo enero la app trataba lo
+// de diciembre como lo mas nuevo. De ahi sale que lote se consume primero —y
+// con el, su ganancia— y desde el arreglo 49 tambien la tasa con la que se
+// valora todo su dinero.
+console.log("\nARREGLO 51 · el año que a mm/dd le faltaba");
+
+const dic = { id: 1, tipo:"compra", moneda:"BRL", fecha:"12/28", fechaIso:"2026-12-28",
+              montOrigen:1044, usdt:200, tasa:5.22, restante:200 };
+const ene = { id: 2, tipo:"compra", moneda:"BRL", fecha:"01/05", fechaIso:"2027-01-05",
+              montOrigen:1000, usdt:200, tasa:5.00, restante:200 };
+ok(F.ordenFIFO(dic, ene) < 0, "diciembre va antes que el enero siguiente");
+ok(F.ordenFIFO(ene, dic) > 0, "y al reves tambien");
+S.inventarioUsdt = [ene, dic]; S.inventarioUsdt_cerrado = [];
+S.tasasDia = {}; S._tasasDiaMeta = {};
+ok(F.tasaDeReferencia("BRL").tasa === 5,
+   "y la tasa sale del de enero, que es el mas nuevo", F.tasaDeReferencia("BRL").tasa);
+
+// Sin año guardado (los ~290 lotes que ya existen) se deduce, y la deduccion
+// tiene una trampa: un lote puede llevar fecha adelantada A PROPOSITO
+// (confirmarFechaFutura lo permite, y paso el 12/09 con un 18/09). "En el
+// futuro" no significa "del año pasado": se admiten 30 dias por delante.
+const enDias = (n) => { const d = new Date(Date.now() + n*86400000);
+  return String(d.getMonth()+1).padStart(2,"0") + "/" + String(d.getDate()).padStart(2,"0"); };
+const anioHoy = parseInt(F.td().slice(0,4), 10);
+ok(F._isoDeLote({ fecha: enDias(5) }).slice(0,4) === String(anioHoy),
+   "un lote adelantado cinco dias es de este año", F._isoDeLote({ fecha: enDias(5) }));
+// La regla, dicha como invariante para que valga se corra el dia que se corra:
+// ninguna fecha deducida puede quedar a mas de 30 dias por delante de hoy.
+[7, 45, 120, 200, 300].forEach(function(n){
+  const iso = F._isoDeLote({ fecha: enDias(n) });
+  ok(F._diasEnElFuturo(iso) <= 30,
+     "un lote a " + n + " dias por delante no se deduce mas alla de 30", iso);
+  ok(iso.slice(5) === enDias(n).split("/")[0] + "-" + enDias(n).split("/")[1],
+     "  y conserva su dia y su mes", iso + " vs " + enDias(n));
+  ok(iso.slice(0,4) === String(anioHoy) || iso.slice(0,4) === String(anioHoy - 1),
+     "  y cae en este año o en el anterior, nunca mas lejos", iso);
+});
+ok(F._isoDeLote({ fecha: "09/12", fechaIso: "2024-09-12" }) === "2024-09-12",
+   "y si el lote trae su año, manda el suyo y no se deduce nada");
+// El caso al reves, que solo aparece en el cambio de año: un lote que se lee
+// once meses hacia atras en este año y a pocos dias hacia delante en el que
+// viene es del que viene. El 29 de diciembre, "01/05" es del enero siguiente.
+ok(F._isoDeLote({ fecha: enDias(-360) }).slice(0,4) === String(anioHoy + 1) ||
+   F._diasEnElFuturo(F._isoDeLote({ fecha: enDias(-360) })) <= 30,
+   "un lote de hace 360 dias no se confunde con uno de dentro de cinco",
+   F._isoDeLote({ fecha: enDias(-360) }));
+
+// _fechaLoteIso entiende lo mismo que _fechaLote, pero con año.
+ok(F._fechaLoteIso("2026-09-12") === "2026-09-12", "ISO entra y sale igual");
+ok(F._fechaLoteIso("12/09/26") === "2026-09-12", "dd/mm/aa se convierte entero",
+   F._fechaLoteIso("12/09/26"));
+ok(F._fechaLoteIso("") === "", "y lo vacio no revienta");
+
+// El desempate por id sigue en pie: dos lotes del mismo dia solo se distinguen
+// por el orden en que se registraron.
+ok(F.ordenFIFO({fecha:"09/12", id:2}, {fecha:"09/12", id:1}) > 0,
+   "mismo dia: manda el id");
+S.inventarioUsdt = []; S.tasasDia = {}; S._tasasDiaMeta = {};
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
