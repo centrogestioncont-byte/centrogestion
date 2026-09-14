@@ -954,6 +954,33 @@ ok(L("123.295","USDT")  === 123.295,
 ok(isNaN(L("")) && isNaN(L("abc")) && isNaN(L(null)),
    "lo que no es un numero se rechaza, no se convierte en 0");
 
+// ARREGLO 43 (14/09/2026): la regla de "tres cifras detras del punto = miles"
+// (la que evita que 198.619,90 se parta en 198) tambien se tragaba 0.003 y la
+// devolvia como 3. Con eso, Configuracion rechazaba la comision del banco por
+// pasarse del 0,5 maximo, y la dueña NO PODIA quitarse el 3% que le estaba
+// comiendo media ganancia en cada remesa a Venezuela — ni escribiendolo bien.
+// Nadie escribe 0.003 queriendo decir tres mil: si empieza por "0.", es decimal.
+ok(L("0.003") === 0.003, "0.003 es tres milesimas, no tres mil", L("0.003"));
+ok(L("0,003") === 0.003, "y con coma igual", L("0,003"));
+ok(L(".003")  === 0.003, "y sin el cero delante", L(".003"));
+ok(L("-0.003") === -0.003, "y en negativo", L("-0.003"));
+ok(L("0.000") === 0, "cero escrito con tres ceros sigue siendo cero", L("0.000"));
+ok(L("0.5") === 0.5 && L("0.06") === 0.06,
+   "y los decimales cortos no cambian");
+// Y que la salvedad NO se lleve por delante lo que ya estaba bien.
+ok(L("198.619") === 198619 && L("1.000") === 1000 && L("10.000") === 10000,
+   "un numero que no empieza por cero sigue leyendose con miles");
+
+// Los tres campos de la comision del banco no pueden ser type=number: el
+// navegador se come la coma decimal antes de que el codigo vea nada, asi que
+// "0,003" le llegaba como "0003" = 3. Van como texto y los lee _leerNumero.
+["inp-com-banco", "inp-com-banco-min", "inp-com-banco-transf"].forEach(function (id) {
+  ok(new RegExp("type='text' inputmode='decimal' id='" + id + "'").test(HTML),
+     id + " acepta la coma decimal");
+  ok(!new RegExp("type='number' id='" + id + "'").test(HTML),
+     "y ya no es type=number, que se la comia");
+});
+
 // El aviso es la red de seguridad: el punto suelto es ambiguo y ninguna regla
 // lo acierta siempre, asi que lo que de verdad protege es ver lo que se leyo.
 console.log("\nEl aviso antes de tocar un saldo");
