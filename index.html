@@ -3264,22 +3264,77 @@ function getMonedaIcons(){
 // Dynamic USDT rate: uses tasasDia first, then inventory
 // Límites de sanidad por moneda — evita usar tasas del inventario que sean absurdas
 var _RATE_LIMITS={USD:[0.8,2],EUR:[0.8,2],TTD:[5,10],BRL:[3,8],COP:[3000,6000],PEN:[2.5,5.5],VES:[50,5000]};
-function getRateToUsdt(moneda){
-  if(moneda==="USDT") return 1;
-  // 1. Tasa manual del usuario (máxima prioridad)
-  if(S.tasasDia&&S.tasasDia[moneda]) return parseFloat(S.tasasDia[moneda]);
-  // 2. Del inventario FIFO
-  var tc=getLastTasaCompra(moneda)||getLastTasaVenta(moneda);
-  if(tc){
-    // Sanity check: si la tasa está fuera del rango esperado, descartarla
-    var lim=_RATE_LIMITS[moneda];
-    if(lim&&(tc<lim[0]||tc>lim[1])){
-      // Tasa del inventario parece incorrecta para esta moneda — ignorar, esperar tasa manual
-      return null;
+// ── La tasa con la que se valora el dinero parado ───────────────────────────
+// ARREGLO 49 (14/09/2026): la tasa la escribía ella a mano y mandaba para
+// siempre. Sus palabras: "casi nunca me da tiempo de editarla todos los días".
+// Así que el 5,22 y el 940 que escribió una vez seguían valorando todo, mientras
+// compraba USDT a 5,11 y vendía a 960. Ese hueco es justo lo que la conciliación
+// enseña como "desfase de las tasas del día".
+//
+// Ahora sale sola de la ÚLTIMA operación de USDT de esa misma moneda. Tres
+// cosas que no son obvias y que costaron medida:
+//
+//  1. La MÁS NUEVA, no la del frente del FIFO. getLastTasaCompra() devuelve el
+//     lote más viejo que todavía tiene saldo —correcto para costear lo que se
+//     gasta, falso para valorar lo que hay—. Con sus datos daba BRL 5,163 (lote
+//     del 12/09 con 124 USDT sin gastar) cuando su compra más reciente fue a
+//     5,1126.
+//  2. Mira también los lotes CERRADOS. Si no, una moneda pierde su tasa en
+//     cuanto se consume todo lo que tenía.
+//  3. NUNCA la tasa de otra moneda. Pidiendo la del PEN, la app devolvía
+//     960,2328 —la del bolívar— porque al no hallar lotes en soles se iba a
+//     "todas las ventas". Hoy lo tapa el filtro de rangos, pero estaba ahí.
+//
+// Lo que ella fija a mano (📌) sigue mandando: es una decisión suya, no un
+// olvido. Por eso se marca aparte, con su fecha, para que se vea envejecer.
+function _tasaFijadaAMano(moneda){
+  var meta=(S._tasasDiaMeta||{})[moneda]||{};
+  if(!meta.fijada) return null;
+  var v=parseFloat((S.tasasDia||{})[moneda]);
+  return (v>0)?v:null;
+}
+function tasaDeReferencia(moneda){
+  if(moneda==="USDT") return {tasa:1, origen:"usdt"};
+  var fija=_tasaFijadaAMano(moneda);
+  if(fija!==null) return {tasa:fija, origen:"fijada", meta:(S._tasasDiaMeta||{})[moneda]||{}};
+  // La última operación de ESA moneda, abiertos y cerrados, por fecha y luego
+  // por id: dos lotes del mismo día solo se distinguen por el orden en que se
+  // registraron.
+  //
+  // Va en una pasada, sin concat ni sort: esto lo llama getRateToUsdt(), y
+  // getRateToUsdt() lo llama todo. Con una apertura de tres meses, la
+  // conciliación pedía la tasa unas dos mil veces y ordenar 288 lotes en cada
+  // una costaba 280 ms de dibujo. Así son 7.
+  var u=null, uF="", uId=0;
+  function _mirar(arr){
+    for(var i=0;i<(arr||[]).length;i++){
+      var l=arr[i];
+      if(l.moneda!==moneda || !((parseFloat(l.usdt)||0)>0)) continue;
+      var f=_fechaLote(l.fecha), id=parseFloat(l.id)||0;
+      if(!u || f>uF || (f===uF && id>=uId)){ u=l; uF=f; uId=id; }
     }
-    return tc;
   }
-  return null;
+  _mirar(S.inventarioUsdt); _mirar(S.inventarioUsdt_cerrado);
+  if(u){
+    var t=_tasaEfectivaLote(u);
+    var lim=_RATE_LIMITS[moneda];
+    if(t>0 && !(lim&&(t<lim[0]||t>lim[1])))
+      return {tasa:t, origen:"auto", fecha:u.fecha, tipo:u.tipo, meta:{}};
+  }
+  // Sin operaciones en esa moneda: lo último que escribió, aunque no lo fijara.
+  var v=parseFloat((S.tasasDia||{})[moneda]);
+  if(v>0) return {tasa:v, origen:"escrita", meta:(S._tasasDiaMeta||{})[moneda]||{}};
+  return {tasa:null, origen:"ninguna"};
+}
+
+function getRateToUsdt(moneda){
+  // ARREGLO 49: el orden lo decide tasaDeReferencia() — fijada a mano, si no la
+  // última operación de esa moneda, si no lo último que escribió.
+  var r=tasaDeReferencia(moneda);
+  if(!r.tasa||isNaN(r.tasa)) return null;
+  var lim=_RATE_LIMITS[moneda];
+  if(lim&&(r.tasa<lim[0]||r.tasa>lim[1])) return null;  // fuera de rango: mejor sin tasa que con una falsa
+  return r.tasa;
 }
 
 // Convierte un monto a su equivalente en USDT. Devuelve null si no hay tasa
@@ -3303,10 +3358,49 @@ function montoConMoneda(monto, moneda){ return f2(parseFloat(monto)||0)+" "+(mon
 function _unicos(v,i,a){ return a.indexOf(v)===i; }
 
 function guardarTasaFila(moneda){var inp=document.getElementById("tasa_inp_"+moneda);if(inp)setTasaDia(moneda,inp.value);S._editTasaCuenta=null;R();}
+// ARREGLO 49: escribir una tasa a mano ahora es FIJARLA — una decisión, no un
+// número que se queda pegado sin que nadie se acuerde. Se guarda con su fecha
+// para que el panel la enseñe envejecer, y se suelta con un toque.
 function setTasaDia(moneda, tasa){
+  var v=_leerNumero(tasa, moneda);
+  if(!(v>0)){ soltarTasaDia(moneda); return; }   // borrar el campo = volver a automática
+  var lim=_RATE_LIMITS[moneda];
+  if(lim&&(v<lim[0]||v>lim[1])){
+    alert("Esa tasa no parece de "+moneda+".\n\nSe espera algo entre "+f2(lim[0])+" y "+f2(lim[1])+" "+moneda+" por USDT, y escribiste "+f2(v)+".\n\nRevisa el punto y la coma: 5,11 no es lo mismo que 511.");
+    R(); return;
+  }
   if(!S.tasasDia) S.tasasDia={};
-  S.tasasDia[moneda]=parseFloat(tasa)||0;
+  if(!S._tasasDiaMeta) S._tasasDiaMeta={};
+  S.tasasDia[moneda]=v;
+  S._tasasDiaMeta[moneda]={
+    fecha:new Date().toLocaleDateString("es-VE"),
+    hora:new Date().toLocaleTimeString("es-VE",{hour:"2-digit",minute:"2-digit"}),
+    fijada:true, iso:td()
+  };
   saveData();R();
+}
+// Vuelve a la tasa que sale sola de la última operación de esa moneda.
+function soltarTasaDia(moneda){
+  if(S._tasasDiaMeta&&S._tasasDiaMeta[moneda]) delete S._tasasDiaMeta[moneda].fijada;
+  var r=tasaDeReferencia(moneda);
+  saveData();R();
+  if(r.origen==="auto") alert("🔄 "+moneda+" vuelve a salir sola: "+(r.tasa<100?f4(r.tasa):f2(r.tasa))+" "+moneda+"/USDT, de tu "+(r.tipo==="compra"?"compra":"venta")+" de USDT del "+_fechaLoteLegible(r.fecha)+".");
+  else alert("🔄 "+moneda+" ya no está fijada.\n\nTodavía no hay ninguna operación de USDT en "+moneda+", así que se sigue usando el último valor que escribiste hasta que registres una.");
+}
+// Hace cuántos días fue esa operación. Una tasa automática también envejece:
+// si su lote es de hace cinco semanas, valorar con ella no es mejor que
+// escribirla a mano — solo lo parece.
+function _diasDesdeLote(f){
+  var iso=_isoDeFechaLote(f);
+  if(!iso) return null;
+  var d=Math.round((new Date(td()+"T00:00:00")-new Date(iso+"T00:00:00"))/86400000);
+  return isNaN(d)?null:d;
+}
+// La fecha de un lote va en mm/dd (ver _fechaLote). Para enseñarla se le da la
+// vuelta, que es como ella lee las fechas en el resto de la app.
+function _fechaLoteLegible(f){
+  var p=String(_fechaLote(f)||"").split("/");
+  return p.length===2 ? p[1]+"/"+p[0] : String(f||"");
 }
 
 // Expanded rBalance that also shows accounts + rates
@@ -3341,7 +3435,8 @@ function rBalancePlus(){
       "</div>"+
       "<div style='display:flex;flex-direction:column;gap:8px'>"+
       Object.keys(monedasEnCuentas).sort().map(function(mon){
-        var curTasa=S.tasasDia&&S.tasasDia[mon]&&_tasaEsValida(mon)?S.tasasDia[mon]:"";
+        var ref=tasaDeReferencia(mon);
+        var curTasa=(ref.origen!=="auto"&&S.tasasDia&&S.tasasDia[mon]&&_tasaEsValida(mon))?S.tasasDia[mon]:"";
         var meta=tdMeta[mon]||{};
         var hint={USD:"ej: 1.00 (USD ≈ USDT)",EUR:"ej: 0.93",BRL:"ej: 5.30",PEN:"ej: 3.80",COP:"ej: 4100",TTD:"ej: 6.80"}[mon]||"cuántos "+mon+"=1 USDT";
         var tieneRate=_tasaEsValida(mon);
@@ -3353,11 +3448,13 @@ function rBalancePlus(){
             "</div>"+
           "</div>"+
           "<div style='display:flex;align-items:center;gap:8px'>"+
-            "<input type='number' step='0.001' placeholder='"+hint+"' value='"+(curTasa||"")+"' "+
-              "onchange='(function(v){if(!S.tasasDia)S.tasasDia={};if(!S._tasasDiaMeta)S._tasasDiaMeta={};S.tasasDia[\"'+mon+'\"]=parseFloat(v)||0;S._tasasDiaMeta[\"'+mon+'\"]={fecha:new Date().toLocaleDateString(\"es-VE\"),hora:new Date().toLocaleTimeString(\"es-VE\",{hour:\"2-digit\",minute:\"2-digit\"})};saveData();R();})(this.value)' "+
+            "<input type='text' inputmode='decimal' placeholder='"+hint+"' value='"+(curTasa||"")+"' "+
+              "onchange='setTasaDia(\"'+mon+'\",this.value)' "+
               "style='flex:1;padding:9px 11px;font-size:14px;border:1.5px solid "+(tieneRate?"#a0e8c0":"#F5C518")+";border-radius:7px;font-family:inherit'>"+
-            "<div style='font-size:9px;color:#aaa;text-align:right;min-width:70px'>"+
-              (meta.fecha?""+meta.fecha+"<br>"+meta.hora:"nunca actualizada")+
+            "<div style='font-size:9px;color:#aaa;text-align:right;min-width:82px'>"+
+              (ref.origen==="auto" ? "🔄 sale sola<br>"+(ref.tipo==="compra"?"compra":"venta")+" "+_fechaLoteLegible(ref.fecha)
+               : ref.origen==="fijada" ? "📌 fijada<br>"+(meta.fecha||"")
+               : (meta.fecha?""+meta.fecha+"<br>"+meta.hora:"nunca actualizada"))+
             "</div>"+
           "</div>"+
         "</div>";
@@ -8004,24 +8101,40 @@ function rCapitalTotal(){
       var r=getRateToUsdt(mon);
       var lim=_RATE_LIMITS[mon];
       var ok=r&&(!lim||(r>=lim[0]&&r<=lim[1]));
+      var ref=tasaDeReferencia(mon);
       var meta=(S._tasasDiaMeta||{})[mon]||{};
-      return "<div style='display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #efe6c0'>"+
-        "<div style='min-width:44px;background:"+(ok?"#0f6e3a":"#c0392b")+";color:#fff;border-radius:7px;padding:4px 8px;font-size:11px;font-weight:700;text-align:center'>"+mon+"</div>"+
-        "<input id='tasa_"+mon+"' type='number' step='0.001' "+
-          "placeholder='"+({"USD":"≈1.00","BRL":"≈5.30","PEN":"≈3.80","VES":"≈790","EUR":"≈0.93","COP":"≈4100"}[mon]||"X "+mon+"=1 USDT")+"' "+
-          "value='"+(S.tasasDia&&S.tasasDia[mon]||"")+"' "+
-          "onchange='setTasaDia(\""+mon+"\",this.value)' "+
-          "style='flex:1;padding:9px;font-size:15px;border:1.5px solid "+(ok?"#a0e8c0":"#F5C518")+";border-radius:8px;font-family:inherit'>"+
-        "<div style='font-size:10px;color:#888;min-width:60px;text-align:right'>"+
-          (ok?"$"+f2(r):"")+
-          (meta.fecha?"<br><span style='color:#bbb'>"+meta.fecha+"</span>":"")+
+      // ARREGLO 49: de dónde sale el número, y de cuándo. Una tasa fijada a mano
+      // envejece en silencio — el 5,22 llevaba semanas valorándolo todo.
+      var origen = ref.origen==="fijada"
+          ? "📌 <b>La fijaste tú</b>"+(meta.fecha?" el "+meta.fecha:"")
+          : ref.origen==="auto"
+            ? "🔄 Sale sola de tu "+(ref.tipo==="compra"?"compra":"venta")+" de USDT del "+_fechaLoteLegible(ref.fecha)+
+              ((_diasDesdeLote(ref.fecha)||0)>7?" <b style='color:#a06800'>· de hace "+_diasDesdeLote(ref.fecha)+" días</b>":"")
+            : ref.origen==="escrita"
+              ? "✏️ Lo último que escribiste"+(meta.fecha?" el "+meta.fecha:"")+" · todavía no hay operaciones en "+mon
+              : "⚠️ Sin tasa";
+      return "<div style='padding:8px 0;border-bottom:1px solid #efe6c0'>"+
+        "<div style='display:flex;align-items:center;gap:8px'>"+
+          "<div style='min-width:44px;background:"+(ok?"#0f6e3a":"#c0392b")+";color:#fff;border-radius:7px;padding:4px 8px;font-size:11px;font-weight:700;text-align:center'>"+mon+"</div>"+
+          "<input id='tasa_"+mon+"' type='text' inputmode='decimal' "+
+            "placeholder='"+({"USD":"≈1.00","BRL":"≈5.30","PEN":"≈3.80","VES":"≈790","EUR":"≈0.93","COP":"≈4100"}[mon]||"X "+mon+"=1 USDT")+"' "+
+            "value='"+(ref.origen==="auto"?"":(S.tasasDia&&S.tasasDia[mon]||""))+"' "+
+            "onchange='setTasaDia(\""+mon+"\",this.value)' "+
+            "style='flex:1;padding:9px;font-size:15px;border:1.5px solid "+(ok?"#a0e8c0":"#F5C518")+";border-radius:8px;font-family:inherit'>"+
+          "<div style='font-size:13px;font-weight:800;color:"+(ok?"#0f6e3a":"#c0392b")+";min-width:74px;text-align:right'>"+(ok?(r<100?f4(r):f2(r)):"—")+"</div>"+
+        "</div>"+
+        "<div style='display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:4px;padding-left:52px'>"+
+          "<span style='font-size:10px;color:#7a5c00'>"+origen+"</span>"+
+          (ref.origen==="fijada"
+            ? "<button onclick='soltarTasaDia(\""+mon+"\")' style='background:#fff;border:1px solid #d8c890;color:#7a5c00;border-radius:6px;padding:3px 8px;font-size:10px;cursor:pointer;font-family:inherit;white-space:nowrap'>🔄 Que salga sola</button>"
+            : "")+
         "</div>"+
       "</div>";
     }).join("");
     panelTasas=
       "<div style='background:#FFF8DC;border:2px solid #F5C518;border-radius:12px;padding:12px 14px;margin-bottom:12px'>"+
         "<div style='font-size:13px;font-weight:800;color:#7a5c00;margin-bottom:4px'>💱 Tasas de referencia</div>"+
-        "<div style='font-size:10px;color:#7a5c00;margin-bottom:10px'>Escríbela aquí una sola vez. Aplica en <b>todas las pantallas</b>.</div>"+
+        "<div style='font-size:10px;color:#7a5c00;margin-bottom:10px;line-height:1.5'>Salen solas de tu última compra o venta de USDT de cada moneda. Escribe una aquí solo si quieres <b>fijarla</b> tú; queda marcada 📌 con su fecha hasta que la sueltes.</div>"+
         filasTasas+
       "</div>";
   }
@@ -11636,13 +11749,11 @@ function getLastTasaVenta(monedaDest,cuentaDestinoId){
     // Esta cuenta nunca ha recibido ventas en esta moneda (cuenta nueva) → sigue con el pool general de abajo
   }
   if(!arr.length){
-    // ARREGLO 49 (14/09/2026): estos rescates son de bolívares y SOLO valen para
-    // bolívares. Pidiendo la tasa del PEN se iba a "todas las ventas" y devolvía
-    // 960,2328 —la del bolívar— como si un sol valiera lo mismo que un bolívar.
-    // Con una sola moneda de destino nunca se notó; con Colombia y Perú sí.
-    // Hoy lo tapa el filtro de rangos de getRateToUsdt, pero getAutoRates ya
-    // llevaba su propio parche para lo mismo: mejor cortarlo en el origen.
-    // Mejor sin tasa que con la de otra moneda.
+    // ARREGLO 49: estos rescates son de bolívares y SOLO valen para bolívares.
+    // Pidiendo la tasa del PEN se iba a "todas las ventas" y devolvía 960,2328
+    // —la del bolívar— como si un sol valiera lo mismo que un bolívar. Con una
+    // sola moneda de destino nunca se notó; con Colombia y Perú sí. Mejor sin
+    // tasa que con la de otra moneda.
     if(dest!=="VES") return null;
     // Sin lote de venta VES: buscar en todas las ventas
     var todas=S.inventarioUsdt.filter(function(r){return r.tipo==="venta";}).sort(ordenFIFO);

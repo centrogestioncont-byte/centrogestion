@@ -42,7 +42,7 @@ function sacarConstante(nombre) {
   throw new Error("la constante " + nombre + " no termina en ';'");
 }
 const CONSTANTES = ["MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
-                    "_MERGE_OBJETOS", "_MERGE_HISTORIAL",
+                    "_MERGE_OBJETOS", "_MERGE_HISTORIAL", "_RATE_LIMITS",
                     "DATA_KEYS", "_CLAVES_QUE_NO_SON_DATOS", "PAGO_DEBE"];
 
 const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
@@ -56,7 +56,8 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "capitalRealTotal", "_mesesDesde", "_acumuladosMes",
                     "conciliacionCapital", "getMesKeyActual", "ajustesDesdeApertura", "_isoDeDDMMAA",
                     "traspasosAPersonal", "efectoTasasDesde", "_isoDeFechaLote",
-                    "getLastTasaVenta",
+                    "tasaDeReferencia", "_tasaFijadaAMano", "setTasaDia", "soltarTasaDia",
+                    "_diasDesdeLote", "_fechaLoteLegible", "getLastTasaVenta",
                     "montoAUsdt", "montoConMoneda", "_unicos",
                     "_marcarCambiados", "_refotografiar", "_mergeArrayById",
                     "_marcarTodoLoQueSeFusiona", "_marcarObjetosCambiados",
@@ -72,6 +73,12 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "_candUSDT", "_candFiat", "_cuadrarP2P", "_parsearOCR", "_parsearConLocale", "_numLegible"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
 global.window = global.window || {};
+// setTasaDia/soltarTasaDia guardan y repintan, y avisan por alert(). Aqui no
+// hay pantalla: se anota lo que habrian dicho para poder comprobarlo.
+global.avisos = [];
+global.saveData = () => {};
+global.R = () => {};
+global.alert = (m) => { global.avisos.push(String(m)); };
 // S es el estado global de la app; aca solo hacen falta config y prestamos.
 const S = { config: {}, prestamos: [] };
 // Tasas de mentira para no depender de la configuracion real. getRateToUsdt
@@ -1853,23 +1860,116 @@ ok(/Cuadra\. Lo que queda sin explicar/.test(_blq),
    "el veredicto tambien se ve siempre: es la respuesta a la pregunta");
 
 
-// ── ARREGLO 49: la tasa de una moneda no puede salir de otra ─────────────
-// Pidiendo la tasa del PEN, la app devolvia 960,2328 —la del bolivar— porque
-// al no hallar lotes en soles se iba al rescate de "todas las ventas". Con una
-// sola moneda de destino nunca se noto; con Colombia y Peru si.
-console.log("\nARREGLO 49 · la tasa no se presta entre monedas");
-S.brl = []; S.vzla = []; S.eeuu = []; S.inventarioUsdt_cerrado = [];
+// ── ARREGLO 49: la tasa sale sola de la ultima operacion ─────────────────
+// Ella escribia la tasa a mano y mandaba para siempre: "casi nunca me da
+// tiempo de editarla todos los dias". El 5,22 que escribio una vez seguia
+// valorando todo mientras compraba USDT a 5,11.
+console.log("\nARREGLO 49 · la tasa de referencia");
+
+const hoyLote = (() => { const d = new Date();
+  return String(d.getMonth()+1).padStart(2,"0") + "/" + String(d.getDate()).padStart(2,"0"); })();
+const loteDe = (dias) => { const d = new Date(Date.now() - dias*86400000);
+  return String(d.getMonth()+1).padStart(2,"0") + "/" + String(d.getDate()).padStart(2,"0"); };
+
+S.tasasDia = {}; S._tasasDiaMeta = {}; S.brl = []; S.vzla = []; S.eeuu = [];
+S.inventarioUsdt_cerrado = [];
 S.inventarioUsdt = [
-  { id: 1, tipo:"venta", moneda:"VES", fecha:"09/13", usdt:100, neto:100, bs:96000, tasa:960, bsRestante:96000 }
+  // dos compras del MISMO dia: solo el id las ordena
+  { id: 1, tipo:"compra", moneda:"BRL", fecha:hoyLote, montOrigen:1040, usdt:200, tasa:5.2, restante:200 },
+  { id: 2, tipo:"compra", moneda:"BRL", fecha:hoyLote, montOrigen:1020, usdt:200, tasa:5.1, restante:200 },
+  { id: 3, tipo:"venta",  moneda:"VES", fecha:hoyLote, usdt:100, neto:100, bs:96000, tasa:960, bsRestante:96000 }
 ];
-ok(F.getLastTasaVenta("PEN") === null, "en soles no hay lotes: no se presta la del bolivar",
-   F.getLastTasaVenta("PEN"));
-ok(F.getLastTasaVenta("COP") === null, "ni en pesos", F.getLastTasaVenta("COP"));
-ok(F.getLastTasaVenta("VES") === 960, "pero los bolivares siguen teniendo la suya",
-   F.getLastTasaVenta("VES"));
+ok(F.tasaDeReferencia("BRL").tasa === 5.1 && F.tasaDeReferencia("BRL").origen === "auto",
+   "toma la compra mas reciente, no la primera del dia", JSON.stringify(F.tasaDeReferencia("BRL")));
+ok(F.tasaDeReferencia("VES").tasa === 960 && F.tasaDeReferencia("VES").tipo === "venta",
+   "y en bolivares toma la venta");
+ok(F.tasaDeReferencia("USDT").tasa === 1, "USDT es 1 y no se discute");
+
+// La mas NUEVA, no la del frente del FIFO. getLastTasaCompra devuelve el lote
+// mas viejo con saldo —correcto para costear, falso para valorar—: con sus
+// datos daba 5,163 cuando su compra mas reciente fue a 5,1126.
+S.inventarioUsdt[1].restante = 0;      // la nueva ya se consumio entera
+ok(F.tasaDeReferencia("BRL").tasa === 5.1,
+   "aunque ya este gastada: sigue siendo la ultima que hizo", F.tasaDeReferencia("BRL").tasa);
+
+// Mira tambien los lotes cerrados: si no, una moneda pierde su tasa en cuanto
+// se consume todo lo que tenia.
+S.inventarioUsdt_cerrado = [{ id: 4, tipo:"compra", moneda:"BRL", fecha:hoyLote,
+                              montOrigen:1000, usdt:200, tasa:5.0, restante:0, _cerrado:true }];
+ok(F.tasaDeReferencia("BRL").tasa === 5,
+   "un lote cerrado tambien cuenta si es el mas reciente", F.tasaDeReferencia("BRL").tasa);
+
+// La tasa real es la que QUEDO, no la que dijo Binance (ARREGLO 42).
+S.inventarioUsdt_cerrado = [];
+S.inventarioUsdt[2] = { id: 9, tipo:"venta", moneda:"VES", fecha:hoyLote,
+                        usdt:20.89, neto:20.83, bs:19996.8, tasa:960, bsRestante:19996.8 };
+ok(casi(F.tasaDeReferencia("VES").tasa, 957.2427, 0.001),
+   "usa lo que de verdad quedo (19.996,80 / 20,89), no el 960 de Binance",
+   F.tasaDeReferencia("VES").tasa);
+
+// Nunca la de otra moneda. Pidiendo la del PEN devolvia 960,2328 —la del
+// bolivar— porque al no hallar lotes en soles se iba a "todas las ventas".
+ok(F.getLastTasaVenta("PEN") === null && F.getLastTasaVenta("COP") === null,
+   "sin lotes en esa moneda no se presta la del bolivar",
+   F.getLastTasaVenta("PEN") + "/" + F.getLastTasaVenta("COP"));
+ok(F.getLastTasaVenta("VES") !== null, "pero los bolivares siguen teniendo la suya");
+ok(F.tasaDeReferencia("PEN").origen === "ninguna",
+   "y sin nada escrito, el PEN se queda sin tasa en vez de valer 960");
+
+// Fuera de rango no se acepta: mejor sin tasa que con una falsa.
+S.inventarioUsdt.push({ id: 10, tipo:"compra", moneda:"BRL", fecha:hoyLote,
+                        montOrigen:104000, usdt:200, tasa:520, restante:200 });
+ok(F.tasaDeReferencia("BRL").origen !== "auto",
+   "una tasa disparatada (520 BRL/USDT) no se usa", JSON.stringify(F.tasaDeReferencia("BRL")));
+S.inventarioUsdt.pop();
+
+// Lo que ella fija a mano manda: es una decision, no un olvido.
+global.avisos = [];
+F.setTasaDia("BRL", "5,3333");
+ok(F.tasaDeReferencia("BRL").tasa === 5.3333 && F.tasaDeReferencia("BRL").origen === "fijada",
+   "escribir una tasa la FIJA, y la fijada gana", JSON.stringify(F.tasaDeReferencia("BRL")));
+ok(S._tasasDiaMeta.BRL.fijada === true && !!S._tasasDiaMeta.BRL.fecha,
+   "y queda marcada con su fecha, para que se vea envejecer");
+F.setTasaDia("VES", "1.030,5");
+ok(S.tasasDia.VES === 1030.5, "lee el punto de miles y la coma decimal", S.tasasDia.VES);
+global.avisos = [];
+F.setTasaDia("VES", "5");
+ok(S.tasasDia.VES === 1030.5 && /no parece de VES/.test(global.avisos[0] || ""),
+   "y rechaza un disparate sin tocar la que habia", S.tasasDia.VES);
+F.setTasaDia("VES", "");
+ok(F.tasaDeReferencia("VES").origen === "auto",
+   "borrar el campo la suelta: vuelve a salir sola");
+global.avisos = [];
+F.soltarTasaDia("BRL");
+ok(F.tasaDeReferencia("BRL").origen === "auto" && F.tasaDeReferencia("BRL").tasa === 5.1,
+   "el boton de soltar tambien", F.tasaDeReferencia("BRL").tasa);
+ok(/vuelve a salir sola/.test(global.avisos[0] || ""), "y le dice de que operacion sale");
+
+// Sin operaciones en esa moneda, lo ultimo que escribio sigue valiendo: no se
+// le puede quitar la tasa del PEN por soltarla.
+S.tasasDia.PEN = 3.48; S._tasasDiaMeta.PEN = { fecha:"01/09/2026", fijada:true };
+F.soltarTasaDia("PEN");
+ok(F.tasaDeReferencia("PEN").tasa === 3.48 && F.tasaDeReferencia("PEN").origen === "escrita",
+   "una moneda sin operaciones conserva lo que escribio", JSON.stringify(F.tasaDeReferencia("PEN")));
+
+// Una tasa automatica tambien envejece.
+ok(F._diasDesdeLote(loteDe(0)) === 0 && F._diasDesdeLote(loteDe(9)) === 9,
+   "sabe de hace cuantos dias es el lote", F._diasDesdeLote(loteDe(9)));
+ok(F._diasDesdeLote("") === null, "y lo que no es fecha no revienta");
+ok(F._fechaLoteLegible("09/12") === "12/09", "la fecha mm/dd se enseña al derecho",
+   F._fechaLoteLegible("09/12"));
+
+// Estructura: que el panel siga contando de donde sale cada numero.
+ok(/getRateToUsdt\(moneda\)\{[\s\S]{0,400}tasaDeReferencia\(moneda\)/.test(HTML),
+   "getRateToUsdt pasa por tasaDeReferencia");
+ok(!/if\(S\.tasasDia&&S\.tasasDia\[moneda\]\) return parseFloat/.test(HTML),
+   "y ya no da prioridad ciega a lo escrito a mano");
+ok(/Sale sola de tu/.test(HTML) && /La fijaste tú/.test(HTML) && /Que salga sola/.test(HTML),
+   "el panel dice el origen y deja soltarla");
 ok(/if\(dest!=="VES"\) return null;/.test(HTML),
-   "el rescate de 'todas las ventas' queda solo para bolivares");
-S.inventarioUsdt = [];
+   "el rescate de 'todas las ventas' es solo para bolivares");
+
+S.tasasDia = {}; S._tasasDiaMeta = {}; S.inventarioUsdt = []; S.inventarioUsdt_cerrado = [];
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
