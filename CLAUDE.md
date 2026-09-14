@@ -408,6 +408,33 @@ número suelto no se puede perseguir, así que la diferencia viene desglosada, y
   tasa, apertura vieja— y el veredicto se ven siempre. Un aviso escondido no es
   un aviso.
 
+### Evolución mide la tendencia, no el capital
+
+Tenía un "Resumen total" que restaba la ganancia sumada de los meses menos lo
+que hay en las cuentas de USDT y llamaba **Diferencia** al resultado. Esos dos
+números no tienen por qué parecerse:
+
+- la suma de los meses es **ganancia**, no capital — no lleva con lo que
+  empezó, ni lo que metió, ni lo que sacó;
+- "lo que está en USDT" eran **802,78 de sus 2.479,17**, porque deja fuera sus
+  reales, sus bolívares, lo que le deben y 1.010,93 prestados.
+
+La app lo sabía y tenía que disculparse debajo con *"puede ser dinero en BRL,
+VES o retiros no registrados"*. Un número que necesita una disculpa no sirve
+para perseguir nada, y esa pregunta —cuánto debería tener— **ya la responde la
+conciliación**, que sí cuenta todo el capital.
+
+Aquí queda lo que ninguna otra pantalla hace: **cómo va el negocio mes a mes**.
+Variación contra el mes anterior, barra de tendencia, cuánto deja cada
+operación y qué porcentaje de la bruta se llevan los egresos. Eso es lo que
+enseña que en agosto los egresos se comieron el 76 % y que lo que deja cada
+operación cayó de 4,34 a 2,33.
+
+**Los cierres del formato viejo se enseñan pero no suman.** Ella lo dijo:
+*"muchos datos de meses anteriores no están del todo correctos"*. Un cierre sin
+`ganBrutaTotal` ni `utilidadEmpresa` es de antes de que la app calculara bien:
+sale marcado, no entra en el acumulado y no marca la escala de las barras.
+
 ### La fecha de un lote va SIEMPRE en mm/dd
 
 `ordenFIFO` la lee como `mes×100 + día`. Hubo hasta tres formatos conviviendo

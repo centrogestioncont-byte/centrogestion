@@ -2109,5 +2109,42 @@ console.log("\nARREGLO 52 · la coma decimal");
      "  y todos los suyos pasan por _num()", conValor+" campos / "+conNum+" normalizados");
 });
 
+
+// ── ARREGLO 53: Evolución comparaba peras con manzanas ───────────────────
+// El "Resumen total" restaba la ganancia sumada de los meses menos lo que hay
+// en las cuentas de USDT y llamaba "Diferencia" al resultado. Esos dos numeros
+// no tienen por que parecerse: la suma de los meses es GANANCIA, no capital, y
+// "lo que esta en USDT" eran 802,78 de sus 2.479,17 porque deja fuera reales,
+// bolivares, lo que le deben y 1.010,93 prestados. La app lo sabia y tenia que
+// disculparse debajo. Esa pregunta la responde la conciliacion.
+console.log("\nARREGLO 53 · Evolucion");
+ok(!/DEBERÍAS TENER<\/div>[\s\S]{0,200}suma de todos los meses/.test(HTML),
+   "ya no compara la ganancia sumada contra las cuentas de USDT");
+ok(!/>solo lo que está en USDT</.test(HTML) && !/TIENES AHORA/.test(HTML),
+   "ni ensena ese 'tienes ahora' que dejaba fuera casi todo su dinero");
+ok(!/Tienes menos USDT de lo calculado/.test(HTML),
+   "ni tiene que disculparse por el numero que acaba de dar");
+ok(/GANANCIA ACUMULADA|Ganancia acumulada/.test(HTML) &&
+   /Esto es lo que <b>ganaste<\/b>, no lo que <b>tienes<\/b>/.test(HTML),
+   "en su sitio dice lo que es: ganancia, no capital");
+ok(/onclick='S\.tab=\\"capital_total\\";R\(\)'/.test(HTML),
+   "y manda a la conciliacion, que si cuenta todo el capital");
+
+// Lo que esta pantalla si puede decir y no decia: como va mes a mes.
+ok(/vs el mes anterior/.test(HTML), "cada mes se compara con el anterior");
+ok(/Deja cada operación/.test(HTML) && /Se llevan los egresos/.test(HTML),
+   "y ensena los dos numeros que explican por que un mes cae");
+ok(/De eso, préstamos/.test(HTML), "la ganancia de prestamos va aparte");
+
+// Los cierres del formato viejo son de antes de que la app calculara bien:
+// se ensenan, pero no suman.
+ok(/datos de antes · no suman/.test(HTML),
+   "un cierre viejo se marca");
+ok(/var viejo = \(c\.ganBrutaTotal===undefined && c\.utilidadEmpresa===undefined\);/.test(HTML) &&
+   /if\(!viejo\) sumaTotal \+= neto;/.test(HTML),
+   "y no entra en el acumulado");
+ok(/return f\.viejo\?m:Math\.max/.test(HTML),
+   "ni marca la escala de las barras");
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
