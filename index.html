@@ -3770,23 +3770,187 @@ function togglePagarPrest(id){
   }
   R();
 }
+// ── ARREGLO 55 (14/09/2026): la tasa de un abono se escribe como ella la
+// dice, no al reves ──────────────────────────────────────────────────────
+// El campo pedia "1 BRL = ? USDT" y esperaba 0,1956. Ella escribe 5,30, que
+// es "1 USDT = 5,30 BRL": como se cotiza en su negocio, y como ya lo pedia
+// la pantalla de egresos ("Tasa (BRL por 1 USDT)"). La app le hacia caso al
+// pie de la letra: para cobrar 87,80 USDT de un prestamo le decia que el
+// cliente tenia que darle 87,80 / 5,30 = 16,566 reales en vez de
+// 87,80 x 5,30 = 465,34.
+// Lo peligroso era lo que NO chirriaba: al confirmar, el prestamo quedaba
+// bien (16,566 x 5,30 = 87,80 USDT) pero a la cuenta en reales le entraban
+// R$ 16,57 de los R$ 465,34 que el cliente entrego de verdad.
+// Desde aqui la tasa es SIEMPRE "cuantas unidades de la moneda del PAGO
+// vale 1 unidad de la moneda de la DEUDA", y para convertir se DIVIDE.
+function _tasaAutoPago(monDeuda,monPago){
+  var rPago=getRateToUsdt(monPago), rDeuda=getRateToUsdt(monDeuda);
+  if(!rPago||!rDeuda) return null;
+  return Math.round((rPago/rDeuda)*10000)/10000;
+}
+// ── ARREGLO 56 (14/09/2026): lo que se le pide al cliente va redondeado
+// HACIA ARRIBA ──────────────────────────────────────────────────────────
+// Sus palabras: "muy poco la gente paga con decimales". Pedirle 497,246
+// reales no tiene sentido — nadie entrega esos centavos, y bajarlo la deja
+// corta. Se redondea hacia arriba a la unidad, y lo que pague se le acredita
+// completo (decision suya): el redondeo evita centavos, no le cobra de mas.
+// USDT es la excepcion: no es efectivo, se transfiere exacto, y subir a la
+// unidad entera serian mas de 5 reales de un salto.
+function _pasoRedondeoCobro(mon){ return mon==="USDT" ? 0.01 : 1; }
+// techo = lo maximo que el cliente todavia puede deber, en la moneda de la
+// deuda. Sirve para el ULTIMO pago: si redondear hacia arriba se pasa de lo
+// que debe, no hay donde acreditarle el sobrante, asi que ahi se le pide el
+// exacto. Es el unico numero que puede llevar centavos.
+// Lo que de verdad hay que cobrar: la cuota, o el saldo si la cuota ya se
+// pasa de el. Sale aparte para que el texto de la pantalla cuente lo mismo
+// que la cuenta — un numero recortado explicado como un redondeo se lee como
+// un error de la app.
+function _deudaACobrar(deuda,techo){
+  return (techo>0 && deuda>techo) ? techo : deuda;
+}
+function _montoACobrar(deuda,tasa,monPago,techo){
+  if(!(tasa>0)||!(deuda>0)) return 0;
+  // Nunca se le pide mas de lo que debe. Si la cuota elegida se pasa del
+  // saldo que queda —pasa cuando ya abono de mas antes— lo que hay que
+  // cobrar es el saldo, no la cuota: pedirle la cuota entera le sacaria
+  // dinero que no debe, y al registrarlo el abono se recorta y la cuenta se
+  // queda por debajo de lo que de verdad entro al banco.
+  if(techo>0 && deuda>techo) deuda=techo;
+  var bruto=deuda*tasa;
+  var paso=_pasoRedondeoCobro(monPago);
+  var redondo=Math.round(Math.ceil(bruto/paso-1e-9)*paso*10000)/10000;
+  // Ultimo pago: si redondear hacia arriba se pasa de lo que todavia debe,
+  // no hay donde acreditarle el sobrante, asi que se le pide el exacto (al
+  // centimo hacia arriba). Es el unico numero que puede llevar centavos.
+  if(techo>0 && _deudaCubierta(redondo,tasa)>techo+0.005){
+    return Math.ceil(bruto*100-1e-6)/100;
+  }
+  return redondo;
+}
+// Los importes enteros se enseñan sin ",00": ese cero de mas es justo lo que
+// se quiso quitar de en medio.
+function _fMontoCobro(v,mon){
+  return (_pasoRedondeoCobro(mon)===1 && Math.abs(v-Math.round(v))<0.005) ? f0(v) : f2(v);
+}
+// Cuanto de la deuda cubre el dinero que recibio.
+function _deudaCubierta(montoPago,tasa){
+  if(!(tasa>0)) return 0;
+  return Math.round((montoPago/tasa)*100)/100;
+}
+// La cuenta escrita con palabras, siempre a la vista: la direccion de una
+// tasa no se puede adivinar mirando un numero suelto, y equivocarse cuesta
+// el cuadrado de la tasa (con 5,30 el error es de 28 veces).
+function _htmlTasaEnPalabras(ref,tasa,monDeuda,monPago,techo){
+  if(!(tasa>0)||!(ref>0)) return "";
+  var ef=_deudaACobrar(ref,techo);
+  var exacto=Math.round(ef*tasa*100)/100;
+  var pedir=_montoACobrar(ref,tasa,monPago,techo);
+  // La multiplicacion se enseña entera y sin trampa; el redondeo va aparte,
+  // detras de la flecha.
+  var cola=(Math.abs(pedir-exacto)<0.005)
+    ? " &mdash; eso es lo que te tiene que dar"
+    : " &rarr; p&iacute;dele <b>"+_fMontoCobro(pedir,monPago)+" "+monPago+"</b>";
+  var tope=(ef<ref-0.005)
+    ? "<div style='margin-bottom:3px'>De la cuota de "+f2(ref)+" "+monDeuda+" ya solo debe <b>"+f2(ef)+"</b>.</div>"
+    : "";
+  return "<div style='font-size:11px;color:#0a3d7c;background:#f0f7ff;border:1px solid #cfe2ff;border-radius:7px;padding:7px 9px;margin-top:5px'>"+tope+"&#128208; "+f2(ef)+" "+monDeuda+" &times; "+f4(tasa)+" = "+f2(exacto)+" "+monPago+cola+"</div>";
+}
+// Aviso de tasa al reves, con la misma idea que el aviso de salto de 10x al
+// escribir un saldo a mano: si el numero esta mucho mas cerca de 1/auto que
+// de la automatica, casi seguro se escribio invertida.
+function _htmlTasaInvertida(tasa,tasaAuto,monDeuda,monPago){
+  if(!(tasa>0)||!(tasaAuto>0)) return "";
+  if(tasaAuto>0.5&&tasaAuto<2) return "";   // con tasas cerca de 1 las dos direcciones se parecen
+  var dRecta=Math.abs(Math.log(tasa/tasaAuto)), dAlReves=Math.abs(Math.log(tasa*tasaAuto));
+  if(dAlReves>=dRecta) return "";
+  return "<div style='font-size:11px;color:#8a5a00;background:#FFF6E0;border:1px solid #f0d79a;border-radius:7px;padding:7px 9px;margin-top:5px'>&#9888;&#65039; &iquest;La tasa al rev&eacute;s? Escribiste <b>"+f4(tasa)+"</b>, y eso son "+monDeuda+" por cada "+monPago+". Aqu&iacute; va cu&aacute;ntos <b>"+monPago+"</b> vale 1 "+monDeuda+" &mdash; &iquest;quer&iacute;as decir <b>"+f4(tasaAuto)+"</b>?</div>";
+}
+// El recuadro verde con lo que cubre el abono. Lo comparten prestamos y
+// cuentas por cobrar para que no se separen nunca.
+function _htmlEquivAbono(montoPago,tasa,monDeuda,esManual,cola){
+  if(!(tasa>0)||!(montoPago>0)) return "";
+  return "<div style='font-size:13px;font-weight:800;color:#0a6b4e;background:#E3F8EC;border-radius:7px;padding:8px 10px;margin-top:5px'>= "+f2(_deudaCubierta(montoPago,tasa))+" "+monDeuda+" "+cola+" ("+(esManual?"tasa manual":"tasa actual")+")</div>";
+}
+function _htmlCalcPago(objetivo,tasa,monPago,techo){
+  if(!(tasa>0)||!(objetivo>0)) return "<div style='font-size:10px;color:#888;margin-top:4px'>Escrib&iacute; la tasa arriba para ver la cuenta</div>";
+  var ef=_deudaACobrar(objetivo,techo);
+  var exacto=Math.round(ef*tasa*100)/100;
+  var pedir=_montoACobrar(objetivo,tasa,monPago,techo);
+  var nota=(ef<objetivo-0.005)
+    ? " <span style='font-weight:400;color:#5a8a72'>(ajustado a lo que todav&iacute;a debe)</span>"
+    : ((Math.abs(pedir-exacto)<0.005)?"":" <span style='font-weight:400;color:#5a8a72'>(de "+f2(exacto)+", redondeado hacia arriba)</span>");
+  return "<div style='font-size:12px;color:#0f6e3a;font-weight:700;margin-top:6px'>&rarr; el cliente te debe dar <b>"+_fMontoCobro(pedir,monPago)+" "+monPago+"</b> (tasa "+f4(tasa)+")"+nota+"</div>";
+}
 // ARREGLO 29: al escribir cuanto se quiere cobrar en la moneda del prestamo,
 // se calcula y se rellena el monto que el cliente tiene que entregar.
 // ARREGLO 32 (04/09/2026): este campo llamaba a R() en cada letra, que
 // redibuja la pantalla y destruye el input: habia que escribir letra por letra.
 // Ahora actualiza el resultado y el campo de monto directamente, sin redibujar.
-function chgObjetivoPrest(v,monPrest,monPago){
+// ARREGLO 55: ademas de voltear la cuenta (obj x tasa, ya no obj / tasa),
+// se refrescan TODAS las cajitas que dependen de la tasa. Antes solo se
+// rellenaba el monto y el recuadro verde se quedaba con la cuenta vieja:
+// la pantalla ensenaba 16.566 arriba y 2.635,43 abajo, dos numeros que no
+// cuadraban entre si y que no habia forma de entender.
+function chgObjetivoPrest(v,monPrest,monPago,ref,techo){
   S.nPagarPrest=Object.assign(S.nPagarPrest||{},{objetivo:v});
-  var np=S.nPagarPrest, obj=parseFloat(v)||0, tm=parseFloat(np.tasaManual)||0;
-  if(obj>0&&tm>0){
-    np.monto=Math.round((obj/tm)*10000)/10000;
-    try{
-      var inp=document.getElementById("pp-monto");
-      if(inp && document.activeElement!==inp) inp.value=np.monto;
-      var res=document.getElementById("pp-calc");
-      if(res) res.innerHTML="&rarr; el cliente te debe dar <b>"+f4(np.monto)+" "+monPago+"</b> (tasa "+f4(tm)+")";
-    }catch(e){}
-  }
+  _rellenarMontoPrest(monPrest,monPago,techo);
+  _refrescarAbonoPrest(monPrest,monPago,ref,techo);
+}
+function chgTasaPrest(v,monPrest,monPago,ref,techo){
+  S.nPagarPrest=Object.assign(S.nPagarPrest||{},{tasaManual:v});
+  // Si venia usando la calculadora al reves, el monto se rehace solo: si no,
+  // se quedaba el de la tasa anterior y el abono entraba con el monto viejo.
+  _rellenarMontoPrest(monPrest,monPago,techo);
+  _refrescarAbonoPrest(monPrest,monPago,ref,techo);
+}
+function _rellenarMontoPrest(monPrest,monPago,techo){
+  var np=S.nPagarPrest||{};
+  var obj=parseFloat(np.objetivo)||0;
+  var tm=parseFloat(np.tasaManual)||_tasaAutoPago(monPrest,monPago)||0;
+  if(!(obj>0&&tm>0)) return;
+  // ARREGLO 56: el campo se rellena con lo que de verdad se le va a pedir,
+  // ya redondeado. Antes ponia 497,246 y ella tenia que arreglarlo a mano.
+  np.monto=_montoACobrar(obj,tm,monPago,techo);
+  try{
+    var inp=document.getElementById("pp-monto");
+    if(inp && document.activeElement!==inp) inp.value=np.monto;
+  }catch(e){}
+}
+// ARREGLO 32: nada de esto puede llamar a R(), que redibuja la pantalla y
+// destruye el input mientras se teclea.
+function _refrescarAbonoPrest(monPrest,monPago,ref,techo){
+  try{
+    var np=S.nPagarPrest||{};
+    var tasaAuto=_tasaAutoPago(monPrest,monPago);
+    var tm=parseFloat(np.tasaManual)||0;
+    var tasaUsar=tm>0?tm:(tasaAuto||0);
+    var obj=parseFloat(np.objetivo)||0, mi=parseFloat(np.monto)||0;
+    var refUsar=obj>0?obj:(parseFloat(ref)||0);
+    var el;
+    if((el=document.getElementById("pp-calc"))) el.innerHTML=_htmlCalcPago(obj,tasaUsar,monPago,techo);
+    if((el=document.getElementById("pp-eq")))   el.innerHTML=_htmlEquivAbono(mi,tasaUsar,monPrest,tm>0,"del pr&eacute;stamo");
+    if((el=document.getElementById("pp-dir")))  el.innerHTML=_htmlTasaEnPalabras(refUsar,tasaUsar,monPrest,monPago,techo);
+    if((el=document.getElementById("pp-inv")))  el.innerHTML=_htmlTasaInvertida(tm,tasaAuto,monPrest,monPago);
+  }catch(e){}
+}
+// Gemelo de chgTasaPrest para cuentas por cobrar (ARREGLO 55).
+function chgTasaCobrar(v,monDeuda,monPago,ref){
+  S.nAbonoCobrar=Object.assign(S.nAbonoCobrar||{},{tasaManual:v});
+  _refrescarAbonoCobrar(monDeuda,monPago,ref);
+}
+// El techo de una cuenta por cobrar es lo que queda pendiente, que es el
+// mismo numero que la referencia: no hay cuotas de por medio.
+function _refrescarAbonoCobrar(monDeuda,monPago,ref){
+  try{
+    var na=S.nAbonoCobrar||{};
+    var tasaAuto=_tasaAutoPago(monDeuda,monPago);
+    var tm=parseFloat(na.tasaManual)||0;
+    var tasaUsar=tm>0?tm:(tasaAuto||0);
+    var mi=parseFloat(na.monto)||0, el;
+    if((el=document.getElementById("cc-eq")))  el.innerHTML=_htmlEquivAbono(mi,tasaUsar,monDeuda,tm>0,"de la cuenta por cobrar");
+    if((el=document.getElementById("cc-dir"))) el.innerHTML=_htmlTasaEnPalabras(parseFloat(ref)||0,tasaUsar,monDeuda,monPago,parseFloat(ref)||0);
+    if((el=document.getElementById("cc-inv"))) el.innerHTML=_htmlTasaInvertida(tm,tasaAuto,monDeuda,monPago);
+  }catch(e){}
 }
 function pagarPrestamo(id){
   var p=(S.prestamos||[]).find(function(x){return x.id===id;});if(!p)return;
@@ -3804,9 +3968,14 @@ function pagarPrestamo(id){
     // la registrada en el sistema), usarla en vez de la automática.
     var tasaManual = np.tasaManual!==undefined && np.tasaManual!=="" ? parseFloat(np.tasaManual) : null;
     if(tasaManual!==null && !isNaN(tasaManual) && tasaManual>0){
-      // tasaManual = cuánto vale 1 monPago en la moneda del préstamo (mon)
-      monto = Math.round((montoIngresado*tasaManual)*100)/100;
-      notaPago=" (pagó "+f2(montoIngresado)+" "+monPago+" a tasa manual "+f4(tasaManual)+")";
+      // ARREGLO 55: tasaManual = cuántas unidades de monPago vale 1 unidad
+      // de la moneda del préstamo, así que se DIVIDE (465,34 BRL a 5,30 son
+      // 87,80 USDT). Antes se multiplicaba, y con la tasa escrita como ella
+      // la dice el abono entraba 28 veces mal.
+      monto = _deudaCubierta(montoIngresado,tasaManual);
+      // La nota lleva la dirección escrita para que dentro de un mes se
+      // pueda releer sin adivinar.
+      notaPago=" (pagó "+f2(montoIngresado)+" "+monPago+" a "+f4(tasaManual)+" "+monPago+" por "+mon+")";
     } else {
       var rPago=getRateToUsdt(monPago);
       var rPrestamo=getRateToUsdt(mon);
@@ -5497,8 +5666,10 @@ function saveAbonoCobrar(id){
   if(monPago!==monCobrar){
     var tasaManual = na.tasaManual!==undefined && na.tasaManual!=="" ? parseFloat(na.tasaManual) : null;
     if(tasaManual!==null && !isNaN(tasaManual) && tasaManual>0){
-      monto = Math.round((montoIngresado*tasaManual)*100)/100;
-      notaPago=" (pagó "+f2(montoIngresado)+" "+monPago+" a tasa manual "+f4(tasaManual)+")";
+      // ARREGLO 55: misma dirección que en préstamos — la tasa dice cuántas
+      // unidades de monPago vale 1 de la moneda de la deuda, y se divide.
+      monto = _deudaCubierta(montoIngresado,tasaManual);
+      notaPago=" (pagó "+f2(montoIngresado)+" "+monPago+" a "+f4(tasaManual)+" "+monPago+" por "+monCobrar+")";
     } else {
       var rPago=getRateToUsdt(monPago);
       var rCobrar=getRateToUsdt(monCobrar);
@@ -18229,18 +18400,20 @@ function rCuentasCobrar(){
       var montoIngCC=parseFloat(na.monto)||0;
       var previewCC="";
       if(monPagoCC!==c.moneda){
+        // ARREGLO 55: misma dirección que en préstamos. Aquí la tasa invertida
+        // era todavía más fácil de colar porque no hay calculadora al revés
+        // que enseñe un número raro: el abono entraba mal y en silencio.
         var _tmCC=(na.tasaManual&&na.tasaManual!=="")?parseFloat(na.tasaManual):null;
-        var _rPCC=getRateToUsdt(monPagoCC),_rLCC=getRateToUsdt(c.moneda);
-        var _tAutoCC=(_rPCC&&_rLCC)?Math.round((_rLCC/_rPCC)*10000)/10000:null;
-        var _tUsarCC=(_tmCC!==null&&!isNaN(_tmCC))?_tmCC:_tAutoCC;
+        var _tAutoCC=_tasaAutoPago(c.moneda,monPagoCC);
+        var _tUsarCC=(_tmCC!==null&&!isNaN(_tmCC)&&_tmCC>0)?_tmCC:_tAutoCC;
         previewCC="<div style='margin-top:6px'>"+
-          "<label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>1 "+monPagoCC+" = ? "+c.moneda+" (editable si pagó a otra tasa)</label>"+
-          "<input type='text' inputmode='decimal' placeholder='"+(_tAutoCC?f4(_tAutoCC):"—")+"' value='"+(na.tasaManual||"")+"' oninput='S.nAbonoCobrar=Object.assign(S.nAbonoCobrar||{},{tasaManual:_num(this.value)})' style='width:100%;padding:9px;font-size:13px;border:1.5px solid #ddd;border-radius:8px;font-family:inherit'>"+
+          "<label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>💱 1 "+c.moneda+" = ? "+monPagoCC+" (lo que te paga por cada "+c.moneda+")</label>"+
+          "<input type='text' inputmode='decimal' placeholder='"+(_tAutoCC?f4(_tAutoCC):"—")+"' value='"+(na.tasaManual||"")+"' oninput='chgTasaCobrar(_num(this.value),\""+c.moneda+"\",\""+monPagoCC+"\","+saldoPend+")' style='width:100%;padding:9px;font-size:13px;border:1.5px solid #ddd;border-radius:8px;font-family:inherit'>"+
+          "<div id='cc-inv'>"+_htmlTasaInvertida(_tmCC||0,_tAutoCC,c.moneda,monPagoCC)+"</div>"+
+          "<div id='cc-dir'>"+_htmlTasaEnPalabras(saldoPend,_tUsarCC,c.moneda,monPagoCC,saldoPend)+"</div>"+
         "</div>";
-        if(_tUsarCC&&montoIngCC>0){
-          var equivCC=Math.round((montoIngCC*_tUsarCC)*100)/100;
-          previewCC+="<div style='font-size:13px;font-weight:800;color:#0a6b4e;background:#E3F8EC;border-radius:7px;padding:8px 10px;margin-top:5px'>= "+f2(equivCC)+" "+c.moneda+" de la cuenta por cobrar</div>";
-        } else if(!_tAutoCC){
+        previewCC+="<div id='cc-eq'>"+_htmlEquivAbono(montoIngCC,_tUsarCC,c.moneda,_tmCC!==null,"de la cuenta por cobrar")+"</div>";
+        if(!_tAutoCC&&!(_tUsarCC>0)){
           previewCC+="<div style='font-size:11px;color:#c0392b;background:#FDECEA;border-radius:7px;padding:7px 10px;margin-top:6px'>⚠️ Sin tasa configurada — escribe la tasa manual arriba</div>";
         }
       }
@@ -18253,7 +18426,7 @@ function rCuentasCobrar(){
             MONEDAS_COBRAR.map(function(m){return "<option value='"+m+"'"+(monPagoCC===m?" selected":"")+">"+m+(m===c.moneda?" (moneda de la deuda)":"")+"</option>";}).join("")+
           "</select></div>"+
           "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Monto recibido ("+monPagoCC+")</label>"+
-          "<input type='text' inputmode='decimal' placeholder='0.00' value='"+(na.monto||"")+"' oninput='S.nAbonoCobrar=Object.assign(S.nAbonoCobrar||{},{monto:_num(this.value)})' onblur='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
+          "<input type='text' inputmode='decimal' placeholder='0.00' value='"+(na.monto||"")+"' oninput='S.nAbonoCobrar=Object.assign(S.nAbonoCobrar||{},{monto:_num(this.value)});_refrescarAbonoCobrar(\""+c.moneda+"\",\""+monPagoCC+"\","+saldoPend+")' onblur='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
           previewCC+
           "</div>"+
           "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Cuenta donde entra ("+monPagoCC+")</label>"+
@@ -18665,21 +18838,38 @@ function rPrestamos(){
       })();
       var previewHtml="";
       var _tasaManual = np.tasaManual!==undefined && np.tasaManual!=="" ? parseFloat(np.tasaManual) : null;
+      var _refPend=saldoPend;
+      // Techo: lo maximo que puede deber hoy — lo pendiente mas la mora si la
+      // va a cobrar. Es lo que impide que el redondeo hacia arriba le pida de
+      // mas en el ultimo pago, cuando ya no hay deuda donde acreditarselo.
+      var _techoPend=Math.round((saldoPend+((_moraPend>0.009&&np.cobrarMora!==false)?_moraPend:0))*100)/100;
       if(monPago!==monP){
-        var rP=getRateToUsdt(monPago),rL=getRateToUsdt(monP);
-        // tasaAuto = cuántas unidades de "monP" (moneda del préstamo)
-        // equivale 1 unidad de "monPago" — fórmula única y consistente
-        // (getRateToUsdt("USDT")=1, así que sirve para cualquier combinación).
-        var tasaAuto=(rP&&rL)?Math.round((rL/rP)*10000)/10000:null;
+        // ARREGLO 55: la tasa se pide como ella la escribe — cuántos "monPago"
+        // vale 1 unidad de la moneda del préstamo. Antes se pedía al revés
+        // (1 BRL = ? USDT, o sea 0,1956) y ella escribía 5,30.
+        var tasaAuto=_tasaAutoPago(monP,monPago);
         var tasaUsar = (_tasaManual!==null && !isNaN(_tasaManual) && _tasaManual>0) ? _tasaManual : tasaAuto;
+        // Referencia de la cuenta con palabras: la cuota que está pagando
+        // (con su mora si la va a cobrar) o, si es abono libre, lo pendiente.
+        (function(){
+          try{
+            var raw=(S.nPagarPrest&&S.nPagarPrest.cuotaSel)?S.nPagarPrest.cuotaSel:"";
+            if(!raw) return;
+            var cu=JSON.parse(raw);
+            if(cu&&cu.monto>0) _refPend=Math.round((cu.monto+((_moraPend>0.009&&np.cobrarMora!==false)?_moraPend:0))*100)/100;
+          }catch(e){}
+        })();
         previewHtml="<div style='margin-top:6px'>"+
-          "<label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>💱 1 "+monPago+" = ? "+monP+" (editable si el cliente pagó a otra tasa)</label>"+
-          "<input type='text' inputmode='decimal' placeholder='"+(tasaAuto?f4(tasaAuto):"—")+"' value='"+(np.tasaManual||"")+"' oninput='S.nPagarPrest=Object.assign(S.nPagarPrest||{},{tasaManual:_num(this.value)})' onchange='R()' style='width:100%;padding:9px;font-size:13px;border:1.5px solid #ddd;border-radius:8px;font-family:inherit'>"+
+          "<label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>💱 1 "+monP+" = ? "+monPago+" (lo que te paga por cada "+monP+")</label>"+
+          "<input type='text' inputmode='decimal' placeholder='"+(tasaAuto?f4(tasaAuto):"—")+"' value='"+(np.tasaManual||"")+"' oninput='chgTasaPrest(_num(this.value),\""+monP+"\",\""+monPago+"\","+_refPend+","+_techoPend+")' onchange='R()' style='width:100%;padding:9px;font-size:13px;border:1.5px solid #ddd;border-radius:8px;font-family:inherit'>"+
+          // Los tres avisos van en divs con id propio y SIN estilo: el estilo
+          // viaja dentro del contenido, para que al vaciarlos no quede una
+          // caja de color vacía en pantalla.
+          "<div id='pp-inv'>"+_htmlTasaInvertida(_tasaManual||0,tasaAuto,monP,monPago)+"</div>"+
+          "<div id='pp-dir'>"+_htmlTasaEnPalabras(_refPend,tasaUsar,monP,monPago,_techoPend)+"</div>"+
         "</div>";
-        if(tasaUsar&&montoIng>0){
-          var equivalente=Math.round((montoIng*tasaUsar)*100)/100;
-          previewHtml+="<div style='font-size:13px;font-weight:800;color:#0a6b4e;background:#E3F8EC;border-radius:7px;padding:8px 10px;margin-top:5px'>= "+f2(equivalente)+" "+monP+" del préstamo ("+(_tasaManual!==null?"tasa manual":"tasa actual")+")</div>";
-        } else if(!tasaAuto){
+        previewHtml+="<div id='pp-eq'>"+_htmlEquivAbono(montoIng,tasaUsar,monP,_tasaManual!==null,"del préstamo")+"</div>";
+        if(!tasaAuto&&!(tasaUsar>0)){
           previewHtml+="<div style='font-size:11px;color:#c0392b;background:#FDECEA;border-radius:7px;padding:7px 10px;margin-top:6px'>⚠️ Sin tasa configurada — escribe la tasa manual arriba</div>";
         }
       }
@@ -18714,7 +18904,7 @@ function rPrestamos(){
             MONEDAS_ABONO.map(function(m){return "<option value='"+m+"'"+(monPago===m?" selected":"")+">"+m+(m===monP?" (moneda del préstamo)":"")+"</option>";}).join("")+
           "</select></div>"+
           "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Monto recibido ("+monPago+")</label>"+
-          "<input id='pp-monto' type='text' inputmode='decimal' placeholder='0.00' value='"+(np.monto||"")+"' oninput='S.nPagarPrest=Object.assign(S.nPagarPrest||{},{monto:_num(this.value)})' onchange='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
+          "<input id='pp-monto' type='text' inputmode='decimal' placeholder='0.00' value='"+(np.monto||"")+"' oninput='S.nPagarPrest=Object.assign(S.nPagarPrest||{},{monto:_num(this.value)});_refrescarAbonoPrest(\""+monP+"\",\""+monPago+"\","+_refPend+","+_techoPend+")' onchange='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
           // ARREGLO 29 (04/09/2026): calculo en las DOS direcciones. Antes solo se
           // podia escribir el monto en la moneda del pago; si querias cobrar
           // "100 reales en USDT" habia que sacar la cuenta con la calculadora.
@@ -18723,15 +18913,11 @@ function rPrestamos(){
           (monPago!==monP?
             "<div style='background:#f0f7ff;border:1px solid #cfe2ff;border-radius:8px;padding:9px 10px;margin-top:8px'>"+
               "<label style='font-size:10px;font-weight:700;color:#0a3d7c;display:block;margin-bottom:4px'>&#128207; O calculá al revés: cuánto querés cobrar en "+monP+"</label>"+
-              "<input type='text' inputmode='decimal' placeholder='ej: 100' value='"+(np.objetivo||"")+"' oninput='chgObjetivoPrest(_num(this.value),\""+monP+"\",\""+monPago+"\")' style='width:100%;padding:10px;border:1.5px solid #cfe2ff;border-radius:8px;font-size:13px'>"+
-              (function(){
-                var obj=parseFloat(np.objetivo)||0;
-                var tm=parseFloat(np.tasaManual)||parseFloat(tasaAuto)||0;
-                if(obj>0&&tm>0){
-                  return "<div id='pp-calc' style='font-size:12px;color:#0f6e3a;font-weight:700;margin-top:6px'>&rarr; el cliente te debe dar <b>"+f4(obj/tm)+" "+monPago+"</b> (tasa "+f4(tm)+")</div>";
-                }
-                return "<div style='font-size:10px;color:#888;margin-top:4px'>Escribí la tasa arriba para ver la cuenta</div>";
-              })()+
+              "<input type='text' inputmode='decimal' placeholder='ej: 100' value='"+(np.objetivo||"")+"' oninput='chgObjetivoPrest(_num(this.value),\""+monP+"\",\""+monPago+"\","+_refPend+","+_techoPend+")' style='width:100%;padding:10px;border:1.5px solid #cfe2ff;border-radius:8px;font-size:13px'>"+
+              // El div existe SIEMPRE, aunque esté vacío: si solo se dibujaba
+              // cuando ya había cuenta, la primera tecla no tenía dónde
+              // escribir el resultado y no se veía nada hasta redibujar.
+              "<div id='pp-calc'>"+_htmlCalcPago(parseFloat(np.objetivo)||0,parseFloat(np.tasaManual)||parseFloat(tasaAuto)||0,monPago,_techoPend)+"</div>"+
             "</div>"
           :"")+
           previewHtml+

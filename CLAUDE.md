@@ -505,6 +505,91 @@ vez de 5,22" — de un fallo que se ve a uno que no. Están en Configuración, l
 edición en línea de una remesa ya guardada, la calculadora y el conversor BCV.
 Cuando se toquen, hay que cambiar el lector a `_leerNumero()` en la misma pasada.
 
+### La tasa de un abono se escribe como ella la dice: 1 USDT = 5,30 BRL
+
+Cuando un cliente paga un préstamo —o una cuenta por cobrar— en una moneda
+distinta a la de la deuda, hay un campo para la tasa. Pedía lo contrario de lo
+que ella escribe:
+
+```
+      pedía ......  1 BRL = ? USDT   →  0,1956
+ella escribe ...... 1 USDT = ? BRL   →  5,30
+```
+
+Y la app le hacía caso al pie de la letra. Para cobrar los 87,80 USDT
+pendientes de un préstamo le decía que el cliente tenía que darle
+87,80 / 5,30 = **16,566 reales**, en vez de 87,80 × 5,30 = **465,34**.
+
+**Lo peligroso no era el número absurdo, era el que sí cuadraba.** Al
+confirmar, el préstamo quedaba bien —16,566 × 5,30 = 87,80 USDT— así que nada
+chirriaba; pero a la cuenta en reales le entraban **R$ 16,57** de los
+**R$ 465,34** que el cliente entregó de verdad. El error va al cuadrado de la
+tasa: con 5,30 son 28 veces.
+
+Desde el ARREGLO 55 la tasa es **siempre** "cuántas unidades de la moneda del
+**pago** vale 1 unidad de la moneda de la **deuda**", y para convertir se
+**divide** (`_deudaCubierta()`). Es la misma dirección que ya pedía la pantalla
+de egresos ("Tasa (BRL por 1 USDT)"), que era la única que hablaba su idioma.
+
+Tres cosas que sostienen el arreglo y no hay que quitar:
+
+- **La cuenta escrita con palabras, siempre visible** (`_htmlTasaEnPalabras()`):
+  *"87,80 USDT × 5,30 = 465,34 BRL — eso es lo que te tiene que dar"*. Un
+  número suelto no dice en qué dirección está escrito; la multiplicación
+  entera sí.
+- **El aviso de tasa al revés** (`_htmlTasaInvertida()`), con la misma idea que
+  el aviso de salto de 10× al escribir un saldo a mano: si lo tecleado está
+  mucho más cerca de 1/automática que de la automática, se le pregunta si
+  quería decir la otra. Se calla cuando la automática anda cerca de 1, porque
+  ahí las dos direcciones se parecen y el aviso sería ruido. Esto es lo que
+  salva el caso incómodo: una deuda en reales pagada en USDT sí lleva 0,1956,
+  y si escribe 5,30 el aviso le da el número bueno.
+- **El recuadro verde se refresca en vivo.** La calculadora al revés no puede
+  llamar a `R()` (ARREGLO 32: redibuja y destruye el input mientras teclea),
+  así que actualizaba solo el monto y dejaba el recuadro con la cuenta
+  anterior: su pantalla enseñaba 16.566 arriba y 2.635,43 abajo, dos números
+  que no cuadraban entre sí y que no había forma de entender. Ahora
+  `_refrescarAbonoPrest()` / `_refrescarAbonoCobrar()` rehacen las cuatro
+  cajitas (`pp-calc`, `pp-eq`, `pp-dir`, `pp-inv`) desde el mismo sitio que
+  las dibuja.
+
+**Lo que se le pide va redondeado hacia arriba** (ARREGLO 56). Sus palabras:
+*"muy poco la gente paga con decimales"*. Pedirle 497,246 reales no tiene
+sentido —nadie entrega esos centavos— y bajarlo la deja corta, así que
+`_montoACobrar()` sube a la unidad entera. **USDT es la excepción**: no es
+efectivo, se transfiere exacto, y subir a la unidad entera serían más de cinco
+reales de un salto; ahí se redondea al céntimo.
+
+Tres límites de ese redondeo, y ninguno es cosmético:
+
+- **Toca lo que se le PIDE, nunca lo que se apunta.** El monto que entra a la
+  cuenta es el que de verdad llegó al banco. `_deudaCubierta()` sigue
+  convirtiendo exacto.
+- **Nunca se le pide más de lo que debe.** Si la cuota elegida se pasa del
+  saldo que queda —pasa cuando ya abonó de más antes— se cobra el saldo. Si se
+  le pidiera la cuota entera, al registrarlo el abono se recorta contra el
+  saldo pendiente **y `montoIngresado` se recorta con él**, así que la cuenta
+  se quedaría por debajo de lo que de verdad entró al banco.
+- **El último pago es el único que puede llevar céntimos.** Redondear hacia
+  arriba ahí le pediría más de lo que debe y no hay dónde acreditarle el
+  sobrante, así que se le pide el exacto.
+
+Y el texto cuenta lo mismo que la cuenta: cuando se recorta al saldo lo dice
+(*"de la cuota de 93,82 ya solo debe 87,80"*), no lo disfraza de redondeo. Un
+número recortado presentado como un redondeo se lee como un error de la app.
+
+Decisión suya: **la diferencia del redondeo se le acredita al cliente**. Lo que
+pague baja su deuda entero y el sobrante va a la cuota siguiente, como siempre.
+El redondeo quita centavos, no le cobra de más.
+
+`pruebas/prestamos.js` fija la dirección con guardias estructurales: el rótulo
+tiene que preguntar por la moneda del pago, y ningún sitio puede volver a
+multiplicar `montoIngresado * tasaManual`.
+
+Comprobado contra su export: **ningún abono anterior se cobró en otra moneda**,
+ni de préstamos ni de cuentas por cobrar. Este habría sido el primero, así que
+no hay nada guardado que rehacer.
+
 ### Registra la operación — no escribas el saldo
 
 **La regla que más costó el 12/09**, y se rompió tres veces en un día.
