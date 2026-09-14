@@ -13014,17 +13014,28 @@ function _cargarH2PDF(cb){
   s.onload=cb;
   s.onerror=function(){
     alert("No se pudo cargar el generador de PDF. Revisa tu conexión e intenta de nuevo.");
-    var btn=document.getElementById("btnCompartirInforme");
-    if(btn){btn.textContent="📤 Compartir";btn.disabled=false;}
+    // Se devuelven los DOS botones a su sitio: el de descargar y el de
+    // compartir usan el mismo generador, y antes solo se reponía el de
+    // compartir — el otro se quedaba en "⏳ Cargando..." y deshabilitado
+    // para siempre.
+    var bD=document.getElementById("btnDescargarInforme");
+    if(bD){bD.textContent="⬇️ Descargar PDF";bD.disabled=false;}
+    var bC=document.getElementById("btnCompartirInforme");
+    if(bC){bC.textContent="📤 Compartir";bC.disabled=false;}
   };
   document.head.appendChild(s);
 }
-function _compartirInformeImg(){
-  var btn=document.getElementById("btnCompartirInforme");
+// Descargar y compartir salen del MISMO PDF: cambia solo qué se hace con
+// el archivo al final. Estaban escritos por separado y el de descargar ni
+// existía — el botón llamaba a una función que no estaba.
+function _pdfInforme(btnId,modo){
+  var btn=document.getElementById(btnId);
+  if(!btn) return;
   var t0=btn.textContent; btn.textContent="⏳ Cargando..."; btn.disabled=true;
   _cargarH2PDF(function(){
     btn.textContent="⏳ Generando PDF...";
     var nombreMes=(window._informeMesLabelActual||"Informe").replace(/\s/g,"_");
+    var nombreArch="Informe_"+nombreMes+".pdf";
     var el=document.getElementById("reporteCapture");
     // Fix8: html2canvas NO respeta los estilos de @media print (esos solo
     // aplican al botón nativo de Imprimir). Aquí .hoja tiene overflow:hidden
@@ -13037,25 +13048,31 @@ function _compartirInformeImg(){
     var alturaReal=el.scrollHeight;
     var opciones={
       margin:8,
-      filename:"Informe_"+nombreMes+".pdf",
+      filename:nombreArch,
       image:{type:"jpeg",quality:0.95},
       html2canvas:{scale:2,useCORS:true,scrollY:0,windowHeight:alturaReal,height:alturaReal},
       jsPDF:{unit:"mm",format:"a4",orientation:"portrait"},
       pagebreak:{mode:["css","legacy"]}
     };
+    function guardar(blob){
+      var url=URL.createObjectURL(blob);
+      var a=document.createElement("a"); a.href=url; a.download=nombreArch; a.click();
+      setTimeout(function(){URL.revokeObjectURL(url);},2000);
+    }
     html2pdf().set(opciones).from(el).toPdf().output("blob").then(function(blob){
       el.style.overflow=_overflowPrev;
-      var archivo=new File([blob],"Informe_"+nombreMes+".pdf",{type:"application/pdf"});
-      if(navigator.canShare && navigator.canShare({files:[archivo]})){
-        navigator.share({files:[archivo],title:"Informe "+(window._informeMesLabelActual||"")}).catch(function(){});
+      // Compartir: se intenta la hoja de compartir del teléfono (WhatsApp,
+      // correo). Si el navegador no la tiene, se descarga y se avisa.
+      // Descargar: siempre al archivo, sin preguntar.
+      if(modo==="compartir" && navigator.canShare && navigator.canShare({files:[new File([blob],nombreArch,{type:"application/pdf"})]})){
+        navigator.share({files:[new File([blob],nombreArch,{type:"application/pdf"})],title:"Informe "+(window._informeMesLabelActual||"")}).catch(function(){});
         btn.textContent=t0; btn.disabled=false;
-      } else {
-        var url=URL.createObjectURL(blob);
-        var a=document.createElement("a"); a.href=url; a.download=archivo.name; a.click();
-        setTimeout(function(){URL.revokeObjectURL(url);},2000);
-        btn.textContent="✅ PDF descargado — compártelo desde tus archivos"; btn.disabled=false;
-        setTimeout(function(){btn.textContent=t0;},4000);
+        return;
       }
+      guardar(blob);
+      btn.textContent=(modo==="compartir")?"✅ PDF descargado — compártelo desde tus archivos":"✅ PDF descargado";
+      btn.disabled=false;
+      setTimeout(function(){btn.textContent=t0;},4000);
     }).catch(function(e){
       el.style.overflow=_overflowPrev;
       alert("No se pudo generar el PDF: "+e.message);
@@ -13063,6 +13080,8 @@ function _compartirInformeImg(){
     });
   });
 }
+function _descargarInformePDF(){ _pdfInforme("btnDescargarInforme","descargar"); }
+function _compartirInformeImg(){ _pdfInforme("btnCompartirInforme","compartir"); }
 function generarInformePDF(mesKey){
  try{
   var partsK=mesKey.split("-");
@@ -13176,8 +13195,12 @@ function generarInformePDF(mesKey){
   "<div id='informePdfOverlay'><div class='contenido'>"+
   "<button class='btnCerrar' onclick='document.getElementById(\"informePdfOverlay\").remove();document.getElementById(\"estiloInformePdf\").remove()' style='position:absolute;top:12px;right:14px;background:#fff;border:none;border-radius:50%;width:36px;height:36px;font-size:16px;cursor:pointer;z-index:2;box-shadow:0 2px 8px rgba(0,0,0,.15)'>✕</button>"+
   "<div class='btnBar' style='display:flex;flex-direction:column;gap:8px;margin-bottom:16px;margin-top:36px'>"+
+    // ARREGLO 54: descargar y compartir son dos cosas. El único botón compartía
+    // y solo descargaba si el móvil no sabía compartir — así que para guardarlo
+    // en el teléfono había que pasar por el menú de compartir.
+    "<button class='btn' id='btnDescargarInforme' onclick='_descargarInformePDF()'>⬇️ Descargar PDF</button>"+
     "<button class='btn btnShare' id='btnCompartirInforme' onclick='_compartirInformeImg()'>📤 Compartir</button>"+
-    "<button class='btn' onclick='window.print()'>🖨️ Imprimir / PDF</button>"+
+    "<button class='btn' onclick='window.print()'>🖨️ Imprimir</button>"+
   "</div>"+
   "<div class='hoja' id='reporteCapture'>"+
   "<div class='ticket-top'>"+
@@ -13577,6 +13600,106 @@ function generarInformePDF(mesKey){
 
     return sec("🎯 Resumen Ejecutivo Final",html2);
   }())+
+
+  // ── HOJA PARA EL CONTADOR ──────────────────────────────────────────
+  // ARREGLO 54: lo que él necesita para la declaración, y nada más. Las reglas
+  // están en resumenContador(); aquí solo se dibuja.
+  (function(){
+    var rc=resumenContador(mesKey);
+    function brl(v){ return "R$ "+f2l(v); }
+    var filaDest=rc.porDestino.map(function(d){
+      return "<tr><td>"+d.dest+"</td><td style='text-align:center'>"+d.n+"</td>"+
+        "<td style='text-align:right'>"+brl(d.entro)+"</td>"+
+        "<td style='text-align:right;color:#0f6e3a;font-weight:700'>"+brl(d.ganReales)+"</td></tr>";
+    }).join("");
+    var filaCta=rc.porCuenta.map(function(c){
+      return "<tr><td>"+c.nombre+"</td><td style='text-align:center'>"+c.n+"</td>"+
+        "<td style='text-align:right;font-weight:700'>"+brl(c.entro)+"</td></tr>";
+    }).join("");
+    var filaSal=rc.salidas.map(function(x){
+      return "<tr><td>"+x.concepto+"</td><td style='text-align:right'>"+brl(x.monto)+"</td></tr>";
+    }).join("");
+    var filaEg=rc.egresosReales.map(function(e){
+      return "<tr><td>"+ds(_isoDeDDMMAA(e.fecha))+"</td><td>"+e.cat+"</td><td>"+e.mot+"</td>"+
+        "<td>"+e.cuenta+"</td><td style='text-align:right;font-weight:700'>"+brl(e.monto)+"</td></tr>";
+    }).join("");
+    return sec("🧾 Hoja para el contador · "+rc.mesLabel,
+      "<div style='background:#F3FAF5;border:1px solid #cfe9db;border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:11.5px;color:#14503a;line-height:1.5'>"+
+        "Solo lo que entró <b>en reales</b> y la ganancia que dejó. Cada operación convertida con <b>su propia tasa de compra</b>, no con una tasa única del mes."+
+      "</div>"+
+      "<div class='tabla-scroll'><table>"+
+        "<tr><th>Concepto</th><th>Monto</th></tr>"+
+        "<tr><td>Operaciones que entraron en reales</td><td style='text-align:right;font-weight:700'>"+rc.operaciones+"</td></tr>"+
+        "<tr><td>Entró en las cuentas</td><td style='text-align:right;font-weight:700'>"+brl(rc.entroReales)+"</td></tr>"+
+        "<tr><td style='color:#0f6e3a;font-weight:700'>Ganancia de esas operaciones</td><td style='text-align:right;font-weight:800;color:#0f6e3a'>"+brl(rc.ganReales)+"</td></tr>"+
+        "<tr><td style='color:#c0392b'>(−) Egresos de la empresa pagados en reales</td><td style='text-align:right;font-weight:700;color:#c0392b'>"+brl(rc.egresosRealesTotal)+"</td></tr>"+
+        "<tr><td style='font-weight:800;border-top:2px solid #ddd'>= Resultado del mes</td><td style='text-align:right;font-weight:900;border-top:2px solid #ddd;color:"+(rc.resultadoReales>=0?"#0f6e3a":"#c0392b")+"'>"+brl(rc.resultadoReales)+"</td></tr>"+
+      "</table></div>"+
+      (rc.sinTasa>0?"<div style='background:#FFF8DC;border:1px solid #F5C518;border-radius:8px;padding:8px 12px;margin-top:10px;font-size:10.5px;color:#7a5c00'>⚠️ "+rc.sinTasa+" operación(es) sin tasa de compra guardada: su ganancia no se pudo pasar a reales y no está en el total.</div>":"")+
+      (rc.resultadoReales<0?"<div style='background:#FDECEA;border:1px solid #f0b0a8;border-radius:8px;padding:8px 12px;margin-top:10px;font-size:10.5px;color:#a6402f'>Este mes los egresos en reales fueron mayores que la ganancia de la ruta. No es un error del sistema: es lo que pasó.</div>":"")+
+      "<h3 style='font-size:11px;font-weight:800;color:#1a3558;margin:18px 0 8px'>Por destino</h3>"+
+      "<div class='tabla-scroll'><table><tr><th>Destino</th><th>Ops</th><th>Entró</th><th>Ganancia</th></tr>"+filaDest+"</table></div>"+
+      "<h3 style='font-size:11px;font-weight:800;color:#1a3558;margin:18px 0 8px'>En qué cuenta entró</h3>"+
+      "<div class='tabla-scroll'><table><tr><th>Cuenta</th><th>Ops</th><th>Entró</th></tr>"+filaCta+"</table></div>"+
+      "<h3 style='font-size:11px;font-weight:800;color:#1a3558;margin:18px 0 8px'>Salidas de las cuentas en reales · "+brl(rc.salidasTotal)+"</h3>"+
+      "<div class='tabla-scroll'><table><tr><th>En qué se fue</th><th>Monto</th></tr>"+filaSal+"</table></div>"+
+      "<h3 style='font-size:11px;font-weight:800;color:#1a3558;margin:18px 0 8px'>Egresos de la empresa, partida por partida</h3>"+
+      (filaEg?"<div class='tabla-scroll'><table><tr><th>Fecha</th><th>Categoría</th><th>En qué se gastó</th><th>Cuenta</th><th>Monto</th></tr>"+filaEg+
+        "<tr><td colspan='4' style='font-weight:800;text-align:right'>Total en reales</td><td style='text-align:right;font-weight:900'>"+brl(rc.egresosRealesTotal)+"</td></tr>"+
+        "</table></div>":"<div style='font-size:11px;color:#999'>Ningún egreso pagado en reales este mes.</div>")+
+      (rc.egresosOtras.length?
+        "<div style='font-size:10.5px;color:#7c8aa8;margin-top:10px;line-height:1.5'><b>Pagados en otra moneda</b> (no entran en el resultado en reales):<br>"+
+        rc.egresosOtras.map(function(e){return "· "+ds(_isoDeDDMMAA(e.fecha))+" — "+e.mot+" — "+f2l(e.monto)+" "+e.mon+" ("+e.cuenta+")";}).join("<br>")+
+        "</div>":"")
+    );
+  }())+
+
+  // ── DETALLE DEL MES ────────────────────────────────────────────────
+  // "con todo a detalle de todo el movimiento del mes": un resumen no se puede
+  // auditar, una lista sí.
+  (function(){
+    var dm=detalleMes(mesKey);
+    function tabla(titulo, cabeceras, filas){
+      if(!filas) return "";
+      return "<h3 style='font-size:11px;font-weight:800;color:#1a3558;margin:18px 0 8px'>"+titulo+"</h3>"+
+        "<div class='tabla-scroll'><table><tr>"+cabeceras.map(function(h){return "<th>"+h+"</th>";}).join("")+"</tr>"+filas+"</table></div>";
+    }
+    var fRem=dm.remesas.map(function(x){
+      return "<tr><td>"+x.fecha+"</td><td>"+x.cliente+"</td><td>"+x.ruta+"</td>"+
+        "<td style='text-align:right'>"+f2l(x.entro)+" "+x.monEntro+"</td>"+
+        "<td style='text-align:right'>"+f2l(x.entrego)+" "+x.monEntrego+"</td>"+
+        "<td>"+x.cuenta+"</td>"+
+        "<td style='text-align:right;color:"+(x.ganUsdt>=0?"#0f6e3a":"#c0392b")+";font-weight:700'>$"+f2l(x.ganUsdt)+"</td></tr>";
+    }).join("");
+    var fUsdt=dm.usdt.map(function(x){
+      return "<tr><td>"+x.fecha+"</td><td>"+(x.tipo==="compra"?"Compra":"Venta")+"</td>"+
+        "<td style='text-align:right'>"+(x.tipo==="compra"?f2l(x.montOrigen)+" "+x.moneda:f2l(x.usdt)+" USDT")+"</td>"+
+        "<td style='text-align:right'>"+(x.tipo==="compra"?f2l(x.usdt)+" USDT":f2l(x.bs)+" "+x.moneda)+"</td>"+
+        "<td style='text-align:right'>"+f4(x.tasa)+"</td><td>"+x.cuenta+"</td></tr>";
+    }).join("");
+    var fEg=dm.egresos.map(function(x){
+      return "<tr><td>"+x.fecha+"</td><td>"+(x.tipo==="personal"?"💜 personal":"empresa")+"</td><td>"+x.cat+"</td><td>"+x.mot+"</td>"+
+        "<td>"+x.cuenta+"</td><td style='text-align:right;font-weight:700'>"+f2l(x.monto)+" "+x.mon+"</td></tr>";
+    }).join("");
+    var fTr=dm.traspasos.map(function(x){
+      return "<tr><td>"+ds(x.fecha)+"</td><td>"+x.origen+"</td><td>"+x.destino+"</td>"+
+        "<td style='text-align:right;font-weight:700'>"+f2l(x.monto)+" "+x.moneda+"</td><td>"+x.nota+"</td></tr>";
+    }).join("");
+    var fPr=dm.prestamos.map(function(x){
+      return "<tr><td>"+x.fecha+"</td><td>"+x.desc+"</td><td>"+x.cuenta+"</td>"+
+        "<td style='text-align:right;font-weight:700'>"+f2l(x.monto)+" "+x.mon+"</td></tr>";
+    }).join("");
+    return sec("📋 Detalle del mes · todo el movimiento",
+      "<div style='font-size:10.5px;color:#7c8aa8;margin-bottom:10px'>"+
+        dm.remesas.length+" remesas · "+dm.usdt.length+" operaciones de USDT · "+dm.egresos.length+" egresos · "+
+        dm.traspasos.length+" traspasos · "+dm.prestamos.length+" préstamos</div>"+
+      tabla("Remesas",["Fecha","Cliente","Ruta","Entró","Entregó","Cuenta","Ganancia"],fRem)+
+      tabla("Compras y ventas de USDT",["Fecha","Tipo","Salió","Entró","Tasa","Cuenta"],fUsdt)+
+      tabla("Egresos",["Fecha","Tipo","Categoría","Concepto","Cuenta","Monto"],fEg)+
+      tabla("Traspasos entre cuentas",["Fecha","Desde","Hacia","Monto","Nota"],fTr)+
+      tabla("Préstamos entregados",["Fecha","A quién","Cuenta","Monto"],fPr)
+    );
+  }())+
   "</div>"+ // cierra .cuerpo
   "</div>"+ // cierra .hoja / #reporteCapture
   "</div></div>"; // cierra .contenido y #informePdfOverlay
@@ -13845,7 +13968,11 @@ function rInformeCierre(){
       if(g.pagada && g.cuentaId===cuentaId && mesKeyDe(g.fp||g.d)===mk) s.egresos+=(parseFloat(g.monto)||0);
     });
     // Inventario USDT: compra (sale de cuentaOrigenId) · venta (entra a cuentaId)
-    (S.inventarioUsdt||[]).forEach(function(iu){
+    // ARREGLO 54: también los CERRADOS. Solo se miraban los abiertos, así que
+    // en un mes ya cerrado desaparecían todas las compras: agosto enseñaba R$0
+    // de R$11.763,96 que salieron de PagBank, y el extracto del banco no podía
+    // cuadrar nunca. Cuanto más viejo el mes, más faltaba.
+    (S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[]).forEach(function(iu){
       if(mesKeyDeInv(iu.fecha,mk)!==mk) return;
       if(iu.tipo==="compra" && iu.cuentaOrigenId===cuentaId) s.compraUsdt+=(parseFloat(iu.montOrigen)||0);
       if(iu.tipo==="venta" && iu.cuentaDestinoId===cuentaId) e.ventaUsdt+=(parseFloat(iu.bs)||0);
@@ -19596,6 +19723,170 @@ function getMesAnio(d){
   // "dd/mm" — assume current year
   var now=new Date();
   return{mes:parts[1]||"",anio:String(now.getFullYear())};
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  LO QUE NECESITA EL CONTADOR  ·  ARREGLO 54 (14/09/2026)
+// ══════════════════════════════════════════════════════════════════════════
+// Sus palabras: "el contador necesita saber cuánto me gané para poder hacer la
+// declaración de impuestos" y "la remesa de Brasil a Colombia sí, todo lo que
+// entra en reales y me genere una ganancia".
+//
+// De ahí salen las reglas, y ninguna es obvia:
+//
+//  1. "Lo que entra en reales" es `orig === "BRL"`, NO "está en la lista de
+//     Brasil". En S.brl hay remesas cuyo origen es otra moneda —medido: una de
+//     50 USDT→VES en agosto y una de 70 PEN→VES en septiembre—, y contarlas
+//     inflaba las operaciones y la ganancia de la declaración.
+//  2. Colombia entra. La ganancia no depende de a dónde salga el dinero sino
+//     de que haya entrado en reales y haya dejado margen.
+//  3. Cada operación se convierte a reales con SU PROPIA tasa de compra
+//     (`pr × tc`), no con una tasa única del mes. Es lo mismo que hace
+//     Evolución y es lo exacto: en un mes la tasa se mueve.
+//  4. Los egresos pagados en reales van en la cuenta del resultado; los de
+//     otras monedas se listan aparte, para que se vean sin mezclarse con lo
+//     que declara una empresa en Brasil.
+//
+// Devuelve datos, no conclusiones: el resultado puede salir negativo —agosto
+// dio −R$195,38 porque gastó en reales más de lo que dejó la ruta— y eso es un
+// hecho que tiene que ver, no un número que haya que maquillar.
+function _mesDeFecha(f){
+  var iso=_isoDeDDMMAA(f);
+  if(iso) return iso.slice(0,7);
+  var s=String(f||"");
+  return /^\d{4}-\d{2}/.test(s) ? s.slice(0,7) : "";
+}
+// El movimiento del mes, operación por operación. Es lo que ella pidió que
+// llevara el PDF: "con todo a detalle de todo el movimiento del mes". Un
+// resumen no se puede auditar; esto sí.
+function detalleMes(mesKey){
+  var mk=mesKey||getMesKeyActual();
+  function nom(id){ var c=(S.cuentas||[]).find(function(x){return x.id===id;}); return c?c.nombre:""; }
+  var d={remesas:[], usdt:[], egresos:[], traspasos:[], prestamos:[]};
+  [].concat(S.brl||[], S.vzla||[], S.eeuu||[]).forEach(function(x){
+    if(_mesDeFecha(x.d)!==mk) return;
+    d.remesas.push({fecha:x.d, n:x.n, cliente:x.cl||"", ruta:(x.orig||"")+"→"+(x.dest||""),
+      entro:parseFloat(x.am)||0, monEntro:x.orig||"", entrego:parseFloat(x.cant)||0, monEntrego:x.dest||"",
+      cuenta:nom(x.cuentaBanco), ganUsdt:parseFloat(x.pr)||0, tc:parseFloat(x.tc)||0});
+  });
+  (S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[]).forEach(function(l){
+    if(_isoDeLote(l).slice(0,7)!==mk) return;
+    if(l.plataforma==="Remesa"||l.origenRemesa) return;   // no es una operación suya: la creó una remesa
+    d.usdt.push({fecha:_fechaLoteLegible(l.fecha), tipo:l.tipo, moneda:l.moneda||"",
+      montOrigen:parseFloat(l.montOrigen)||0, usdt:parseFloat(l.usdt)||0, bs:parseFloat(l.bs)||0,
+      tasa:_tasaEfectivaLote(l)||0, cuenta:nom(l.tipo==="compra"?l.cuentaOrigenId:l.cuentaId)});
+  });
+  (S.egresos||[]).concat(S.egresos_personales||[]).forEach(function(e){
+    if(!e.pagada || _mesDeFecha(e.fp||e.d)!==mk) return;
+    d.egresos.push({fecha:e.fp||e.d, tipo:e.tipo||"empresa", cat:e.cat||"", mot:e.mot||"",
+      monto:parseFloat(e.monto)||0, mon:e.mon||"USDT", usdt:parseFloat(e.usdt)||0, cuenta:nom(e.cuentaId)});
+  });
+  (S.traspasos||[]).forEach(function(t){
+    if(String(t.fecha||"").slice(0,7)!==mk) return;
+    d.traspasos.push({fecha:t.fecha, origen:nom(t.origen), destino:nom(t.destino),
+      monto:parseFloat(t.monto)||0, moneda:t.moneda||"", nota:t.nota||""});
+  });
+  (S.prestamos||[]).forEach(function(p){
+    if(_mesDeFecha(p.d)!==mk) return;
+    d.prestamos.push({fecha:p.d, desc:p.desc||"", monto:parseFloat(p.monto)||0,
+      mon:p.mon||"USDT", cuenta:nom(p.cuentaId)});
+  });
+  function porFecha(a,b){ var x=_isoDeDDMMAA(a.fecha)||String(a.fecha), y=_isoDeDDMMAA(b.fecha)||String(b.fecha); return x<y?-1:x>y?1:0; }
+  d.remesas.sort(porFecha); d.egresos.sort(porFecha); d.traspasos.sort(porFecha); d.prestamos.sort(porFecha);
+  return d;
+}
+
+function resumenContador(mesKey){
+  var mk=mesKey||getMesKeyActual();
+  var p=mk.split("-");
+  var r={ mesKey:mk, mesLabel:getMesLabel(p[1],p[0]),
+          operaciones:0, entroReales:0, ganUsdt:0, ganReales:0,
+          porDestino:[], porCuenta:[], salidas:[], salidasTotal:0,
+          egresosReales:[], egresosOtras:[], egresosRealesTotal:0,
+          resultadoReales:0, sinTasa:0 };
+
+  // ── 1. Las operaciones que entraron en reales ──
+  var dest={}, cta={};
+  [].concat(S.brl||[], S.vzla||[], S.eeuu||[]).forEach(function(x){
+    if(x.orig!=="BRL") return;                 // la regla, dicha por ella
+    if(_mesDeFecha(x.d)!==mk) return;
+    var am=parseFloat(x.am)||0, pr=parseFloat(x.pr)||0, tc=parseFloat(x.tc)||0;
+    r.operaciones++; r.entroReales+=am; r.ganUsdt+=pr;
+    if(tc>0) r.ganReales+=pr*tc; else r.sinTasa++;
+    var d=x.dest||"?";
+    dest[d]=dest[d]||{dest:d,n:0,entro:0,ganUsdt:0,ganReales:0};
+    dest[d].n++; dest[d].entro+=am; dest[d].ganUsdt+=pr; if(tc>0) dest[d].ganReales+=pr*tc;
+    var c=x.cuentaBanco||"";
+    cta[c]=cta[c]||{cuentaId:c,n:0,entro:0};
+    cta[c].n++; cta[c].entro+=am;
+  });
+  function nom(id){ var c=(S.cuentas||[]).find(function(x){return x.id===id;}); return c?c.nombre:"(sin cuenta)"; }
+  r.porDestino=Object.keys(dest).map(function(k){ var d=dest[k];
+    d.entro=Math.round(d.entro*100)/100; d.ganUsdt=Math.round(d.ganUsdt*10000)/10000;
+    d.ganReales=Math.round(d.ganReales*100)/100; return d; })
+    .sort(function(a,b){return b.ganReales-a.ganReales;});
+  r.porCuenta=Object.keys(cta).map(function(k){ var c=cta[k];
+    c.nombre=nom(k); c.entro=Math.round(c.entro*100)/100; return c; })
+    .sort(function(a,b){return b.entro-a.entro;});
+
+  // ── 2. Lo que salió de las cuentas en reales, por concepto ──
+  // El contador pregunta "¿y esto en qué se fue?", así que no vale un total.
+  var ctasBRL=(S.cuentas||[]).filter(function(c){return c.moneda==="BRL"&&!c.esPersonal;})
+                             .map(function(c){return c.id;});
+  function esBRL(id){ return ctasBRL.indexOf(id)>-1; }
+  var sal={};
+  function sumSal(concepto, monto){
+    if(!(monto>0)) return;
+    sal[concepto]=(sal[concepto]||0)+monto;
+  }
+  [].concat(S.brl||[], S.vzla||[], S.eeuu||[]).forEach(function(x){
+    if(_mesDeFecha(x.d)!==mk) return;
+    if(esBRL(x.cuentaDest)) sumSal("Entregado a clientes", parseFloat(x.cant)||0);
+  });
+  // Compras de USDT: abiertas Y cerradas. Solo miraba las abiertas, así que en
+  // un mes ya cerrado desaparecían todas — medido: agosto enseñaba R$0 de
+  // R$11.763,96, y el extracto del banco no cuadraba nunca.
+  (S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[]).forEach(function(l){
+    if(l.tipo!=="compra") return;
+    if(_isoDeLote(l).slice(0,7)!==mk) return;
+    if(esBRL(l.cuentaOrigenId)) sumSal("Compra de USDT", parseFloat(l.montOrigen)||0);
+  });
+  (S.egresos||[]).concat(S.egresos_personales||[]).forEach(function(e){
+    if(!e.pagada || _mesDeFecha(e.fp||e.d)!==mk) return;
+    if(esBRL(e.cuentaId)) sumSal(e.tipo==="personal"?"Gastos personales":"Egresos de la empresa", parseFloat(e.monto)||0);
+  });
+  (S.prestamos||[]).forEach(function(pr){
+    if(esBRL(pr.cuentaId) && _mesDeFecha(pr.d)===mk) sumSal("Préstamos entregados", parseFloat(pr.monto)||0);
+  });
+  (S.traspasos||[]).forEach(function(t){
+    if(String(t.fecha||"").slice(0,7)!==mk) return;
+    if(esBRL(t.origen) && !esBRL(t.destino)) sumSal("Traspasos a otras cuentas", parseFloat(t.monto)||0);
+  });
+  (S.pagosSocios||[]).forEach(function(x){
+    if(String(x.fecha||"").slice(0,7)!==mk) return;
+    if(esBRL(x.cuentaId)) sumSal("Pagos a socios", parseFloat(x.monto)||0);
+  });
+  r.salidas=Object.keys(sal).map(function(k){return {concepto:k, monto:Math.round(sal[k]*100)/100};})
+                            .sort(function(a,b){return b.monto-a.monto;});
+  r.salidasTotal=Math.round(r.salidas.reduce(function(a,x){return a+x.monto;},0)*100)/100;
+
+  // ── 3. Los egresos, partida por partida ──
+  (S.egresos||[]).forEach(function(e){
+    if(!e.pagada || _mesDeFecha(e.fp||e.d)!==mk) return;
+    var fila={fecha:e.fp||e.d, cat:e.cat||"", mot:e.mot||"", monto:parseFloat(e.monto)||0,
+              mon:e.mon||"USDT", usdt:parseFloat(e.usdt)||0, cuenta:nom(e.cuentaId)};
+    if(fila.mon==="BRL"){ r.egresosReales.push(fila); r.egresosRealesTotal+=fila.monto; }
+    else r.egresosOtras.push(fila);
+  });
+  function porFecha(a,b){ var x=_isoDeDDMMAA(a.fecha), y=_isoDeDDMMAA(b.fecha); return x<y?-1:x>y?1:0; }
+  r.egresosReales.sort(porFecha); r.egresosOtras.sort(porFecha);
+
+  r.entroReales=Math.round(r.entroReales*100)/100;
+  r.ganUsdt=Math.round(r.ganUsdt*10000)/10000;
+  r.ganReales=Math.round(r.ganReales*100)/100;
+  r.egresosRealesTotal=Math.round(r.egresosRealesTotal*100)/100;
+  r.resultadoReales=Math.round((r.ganReales-r.egresosRealesTotal)*100)/100;
+  return r;
 }
 
 function getMesLabel(mes,anio){
