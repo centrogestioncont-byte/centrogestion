@@ -55,6 +55,7 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "costoOperativoPorPrestamo", "pctCostoOperativo",
                     "capitalRealTotal", "_mesesDesde", "_acumuladosMes",
                     "conciliacionCapital", "getMesKeyActual", "ajustesDesdeApertura", "_isoDeDDMMAA",
+                    "traspasosAPersonal", "efectoTasasDesde", "_isoDeFechaLote",
                     "montoAUsdt", "montoConMoneda", "_unicos",
                     "_marcarCambiados", "_refotografiar", "_mergeArrayById",
                     "_marcarTodoLoQueSeFusiona", "_marcarObjetosCambiados",
@@ -1719,6 +1720,117 @@ ok(/sinExplicar:sinExplicar/.test(HTML) && /ajustes:ajustes/.test(HTML),
    "conciliacionCapital devuelve el desglose");
 ok(/volver a fijar la apertura solo lo esconde/.test(HTML),
    "y le dice que refijar la apertura no arregla nada");
+
+
+// ── ARREGLO 47: la diferencia tiene que poder explicarse sola ────────────
+// Los tres agujeros que quedaban despues del 46, medidos en el export del
+// 14/09: la plata que se pasa a una cuenta personal, el desfase entre la tasa
+// del dia y la tasa a la que de verdad compra y vende, y una apertura que se
+// guardo mas baja de lo que tocaba y solo se podia "arreglar" escondiendola.
+console.log("\nARREGLO 47 · de que esta hecha la diferencia");
+
+// 1. Traspaso a una cuenta personal: sale del capital sin ser un egreso.
+S.cuentas = [
+  { id: "cemp",  nombre: "Binance empresa", moneda: "USDT" },
+  { id: "cbrl",  nombre: "PagBank",         moneda: "BRL"  },
+  { id: "cper",  nombre: "Mi sueldo",       moneda: "USDT", esPersonal: true }
+];
+S.traspasos = [
+  { fecha: "2026-09-10", origen: "cemp", destino: "cper", monto: 100, montoDestino: 100 }, // antes
+  { fecha: "2026-09-11", origen: "cemp", destino: "cper", monto: 9,   montoDestino: 9   }, // mismo dia
+  { fecha: "2026-09-12", origen: "cemp", destino: "cper", monto: 51.52, montoDestino: 51.52 },
+  { fecha: "2026-09-13", origen: "cemp", destino: "cbrl", monto: 10,  montoDestino: 54  }  // entre cuentas de la empresa
+];
+const tp = F.traspasosAPersonal("2026-09-11");
+ok(tp.n === 1 && tp.total === 51.52,
+   "solo cuenta lo que se fue a una cuenta personal despues de la apertura", tp.n + "/" + tp.total);
+ok(tp.nMismoDia === 1 && tp.mismoDia === 9,
+   "los del mismo dia van aparte, igual que los ajustes");
+S.traspasos.push({ fecha: "2026-09-13", origen: "cper", destino: "cemp", monto: 20, montoDestino: 20 });
+ok(F.traspasosAPersonal("2026-09-11").total === 31.52,
+   "y lo que ella METE de su bolsillo resta, no suma", F.traspasosAPersonal("2026-09-11").total);
+S.traspasos = [];
+
+// 2. El desfase de las tasas. Compra USDT a 5,20 reales cuando la tasa del dia
+//    es 5,40: los mismos reales valen menos en la cuenta que lo que le dieron
+//    en USDT, y esa diferencia no la apunta ningun "pr".
+S.brl = []; S.vzla = []; S.eeuu = []; S.cuentasCobrar = [];
+S.inventarioUsdt = [
+  { tipo: "compra", fecha: (new Date().getMonth()+1+"").padStart(2,"0") + "/" +
+                           (new Date().getDate()+"").padStart(2,"0"),
+    montOrigen: 1040, usdt: 200, cuentaOrigenId: "cbrl", cuentaId: "cemp", plataforma: "Binance P2P" }
+];
+S.inventarioUsdt_cerrado = [];
+const hoyIso = F.td();
+const ayerIso = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+const et = F.efectoTasasDesde(ayerIso);
+// 200 USDT recibidos − 1040 BRL / 5,4 = 200 − 192,59 = +7,41
+ok(casi(et.usdt, 7.41), "una compra a mejor tasa que la del dia suma capital aparente", et.usdt);
+ok(et.remesas === 0 && et.n === 1, "y no toca el lado de las remesas");
+S.inventarioUsdt.push({ tipo: "venta", fecha: "01/01", bs: 1000, usdt: 5,
+                        cuentaId: "cemp", cuentaDestinoId: "cbrl", plataforma: "Remesa",
+                        origenRemesa: "x" });
+ok(F.efectoTasasDesde(ayerIso).n === 1,
+   "el lote que nace de una remesa no cuenta: no movio ninguna cuenta");
+
+// Una remesa: entran 540 BRL, salen 20.000 VES, apunto 4 USDT de ganancia.
+// Movimiento real a tasas de hoy: 540/5,4 − 20.000/200 = 100 − 100 = 0.
+// Apunto 4 → el hueco es −4.
+S.inventarioUsdt = [];
+const dHoy = (new Date().getDate()+"").padStart(2,"0") + "/" +
+             (new Date().getMonth()+1+"").padStart(2,"0") + "/" +
+             (new Date().getFullYear()+"").slice(2);
+S.brl = [{ n: 1, d: dHoy, pr: 4,
+           _mov: [{ cuentaId: "cbrl", delta: 540 }, { cuentaId: "cves", delta: -20000 }] }];
+S.cuentas.push({ id: "cves", nombre: "Banco VES", moneda: "VES" });
+ok(casi(F.efectoTasasDesde(ayerIso).remesas, -4),
+   "una remesa que apunta mas ganancia de la que movio deja hueco negativo",
+   F.efectoTasasDesde(ayerIso).remesas);
+
+// Si el cliente quedo a deber, el dinero sigue siendo suyo: esta en "por
+// cobrar" hoy o ya entro a la cuenta cuando lo marco cobrado. Sin esto, toda
+// remesa pendiente parecia un agujero del tamano de lo que el cliente debe.
+S.brl = [{ n: 2, d: dHoy, pr: 4, _mov: [{ cuentaId: "cves", delta: -20000 }] }];
+S.cuentasCobrar = [{ tipo: "brl", refN: 2, monto: 540, moneda: "BRL", estado: "pendiente" }];
+ok(casi(F.efectoTasasDesde(ayerIso).remesas, -4),
+   "una remesa pendiente no es un agujero: lo que el cliente debe sigue contando",
+   F.efectoTasasDesde(ayerIso).remesas);
+S.brl = []; S.cuentasCobrar = []; S.inventarioUsdt = []; S.inventarioUsdt_cerrado = [];
+
+// 3. La fecha de los lotes va en mm/dd y sin año (ver _fechaLote).
+ok(F._isoDeFechaLote("09/12") === F.td().slice(0,4) + "-09-12" ||
+   F._isoDeFechaLote("09/12") === (parseInt(F.td().slice(0,4),10)-1) + "-09-12",
+   "un lote mm/dd se ubica en el año que le toca", F._isoDeFechaLote("09/12"));
+ok(F._isoDeFechaLote("") === "" && F._isoDeFechaLote("raro") === "",
+   "y lo que no es fecha de lote, no revienta");
+
+// 4. Los dos lados de la conciliacion bajan igual cuando se pasa dinero a lo
+//    personal: la diferencia no se mueve. Antes solo bajaba "lo que tienes" y
+//    aparecia como una fuga sin explicacion.
+S.cuentas = [{ id: "cemp", nombre: "Binance", moneda: "USDT", saldo: 900 }];
+S.cuentasCobrar = []; S.prestamos = []; S.ajustesSaldo = []; S.brl = []; S.vzla = []; S.eeuu = [];
+S.inventarioUsdt = []; S.inventarioUsdt_cerrado = [];
+S.traspasos = [];
+S.config = { aperturaUsdt: 1000, aperturaFecha: "2026-09-11", aperturaBase: {} };
+const sinTrasp = F.conciliacionCapital();
+ok(sinTrasp.diferencia === -100, "faltan 100 y no hay nada que los explique", sinTrasp.diferencia);
+ok(sinTrasp.sinExplicar === -100, "asi que quedan sin explicar", sinTrasp.sinExplicar);
+S.cuentas.push({ id: "cper", nombre: "Mi sueldo", moneda: "USDT", saldo: 100, esPersonal: true });
+S.traspasos = [{ fecha: "2026-09-12", origen: "cemp", destino: "cper", monto: 100, montoDestino: 100 }];
+const conTrasp = F.conciliacionCapital();
+ok(conTrasp.deberias === 900, "lo que se paso a lo personal baja 'deberias tener'", conTrasp.deberias);
+ok(conTrasp.diferencia === 0 && conTrasp.sinExplicar === 0,
+   "y la diferencia se queda en cero: ya no es una fuga",
+   conTrasp.diferencia + "/" + conTrasp.sinExplicar);
+
+// 5. Estructura: que el desglose y el boton de corregir no se caigan de la
+//    pantalla en un refactor.
+ok(/tasas:tasas/.test(HTML) && /traspPers:traspPers/.test(HTML),
+   "conciliacionCapital devuelve el desfase de tasas y lo pasado a lo personal");
+ok(/var sinExplicar=r2v\(diferencia-ajustes\.total-tasas\.total\);/.test(HTML),
+   "y 'sin explicar' descuenta las dos cosas");
+ok(/desfase de las tasas del día/i.test(HTML),
+   "el desfase de las tasas sale como linea propia en el desglose");
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

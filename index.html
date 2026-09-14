@@ -2437,6 +2437,119 @@ function ajustesDesdeApertura(desdeIso){
   r.mismoDia=Math.round(r.mismoDia*100)/100;
   return r;
 }
+// ── Lo que sale del capital sin ser un gasto ────────────────────────────────
+// ARREGLO 47 (14/09/2026): un traspaso a una cuenta 💜 personal saca dinero de
+// la empresa, pero no es un egreso ni un pago a socio, así que "deberías tener"
+// ni se enteraba. Medido en su export del 14/09: 51,52 USDT se fueron de
+// BINANCE SAIPA a MI SUELDO BINANCE y salieron silenciosos — la conciliación
+// los apuntaba como si fueran una fuga sin explicación.
+//
+// Se restan de "deberías tener" porque ya no están en "lo que tienes": así los
+// dos lados bajan igual y la diferencia no se mueve. Al revés también: meter
+// dinero personal en una cuenta de la empresa lo sube.
+function traspasosAPersonal(desdeIso){
+  var r={total:0, n:0, mismoDia:0, nMismoDia:0};
+  if(!desdeIso) return r;
+  function esPers(id){ var c=(S.cuentas||[]).find(function(x){return x.id===id;}); return c?!!c.esPersonal:false; }
+  function enUsdt(id, monto){
+    var c=(S.cuentas||[]).find(function(x){return x.id===id;});
+    if(!c) return 0;
+    if(c.moneda==="USDT"||c.moneda==="USD") return monto;
+    var t=getRateToUsdt(c.moneda);
+    return (!t||isNaN(t)||t<=0)?0:monto/t;
+  }
+  (S.traspasos||[]).forEach(function(t){
+    var iso=String(t.fecha||"").slice(0,10);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(iso) || iso<desdeIso) return;
+    var oP=esPers(t.origen), dP=esPers(t.destino);
+    if(oP===dP) return;                         // ni sale ni entra de lo personal
+    var u = dP
+      ? enUsdt(t.destino, parseFloat(t.montoDestino!=null?t.montoDestino:t.monto)||0)   // se fue
+      : -enUsdt(t.origen, parseFloat(t.monto)||0);                                      // entró
+    if(iso>desdeIso){ r.total+=u; r.n++; } else { r.mismoDia+=u; r.nMismoDia++; }
+  });
+  r.total=Math.round(r.total*100)/100;
+  r.mismoDia=Math.round(r.mismoDia*100)/100;
+  return r;
+}
+
+// ── Lo que mueven las tasas, y que ningún apunte registra ───────────────────
+// ARREGLO 47: ella compra USDT a 5,09–5,16 reales y los vende a 955–960
+// bolívares, pero "lo que tienes" valora TODOS los saldos a la tasa del día
+// (5,22 y 940). Así que cada operación crea o destruye capital aparente que no
+// corresponde a ninguna ganancia apuntada:
+//
+//   lo que de verdad se movió en las cuentas (a tasas de hoy)  −  el "pr" que apuntó
+//
+// Medido en su export del 14/09, del 12 al 13 de septiembre: +28,89 USDT en las
+// 10 operaciones de Binance y −24,72 en las 25 remesas. Eso no es una fuga, es
+// aritmética de conversión, y mientras no se enseñe la conciliación nunca puede
+// dar cero. Por eso sale como línea propia y no dentro de "sin explicar".
+function efectoTasasDesde(desdeIso){
+  var r={remesas:0, usdt:0, total:0, n:0};
+  if(!desdeIso) return r;
+  function enUsdt(id, monto){
+    var c=(S.cuentas||[]).find(function(x){return x.id===id;});
+    if(!c||c.esPersonal||c.activa===false) return 0;
+    if(c.moneda==="USDT"||c.moneda==="USD") return monto;
+    var t=getRateToUsdt(c.moneda);
+    return (!t||isNaN(t)||t<=0)?0:monto/t;
+  }
+  ["brl","vzla","eeuu"].forEach(function(k){
+    (S[k]||[]).forEach(function(x){
+      var iso=_isoDeDDMMAA(x.d);
+      if(!iso || iso<=desdeIso) return;
+      var mueve=0;
+      (x._mov||[]).forEach(function(m){ mueve+=enUsdt(m.cuentaId, parseFloat(m.delta)||0); });
+      // Si el cliente quedó a deber, ese dinero sigue siendo suyo: está en "por
+      // cobrar" hoy, o ya entró a la cuenta el día que lo marcó cobrado. En los
+      // dos casos cuenta igual, por eso no se mira el estado.
+      var cc=(S.cuentasCobrar||[]).find(function(c){return c.tipo===k&&c.refN===x.n;});
+      if(cc){
+        var mon=cc.moneda||"USDT", mt=parseFloat(cc.monto)||0;
+        if(mon==="USDT"||mon==="USD") mueve+=mt;
+        else { var tc=getRateToUsdt(mon); if(tc&&!isNaN(tc)&&tc>0) mueve+=mt/tc; }
+      }
+      r.remesas += mueve-(parseFloat(x.pr)||0);
+      r.n++;
+    });
+  });
+  (S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[]).forEach(function(l){
+    // El lote que nace de una remesa no mueve ninguna cuenta: lo hizo la remesa.
+    if(l.plataforma==="Remesa"||l.origenRemesa) return;
+    var iso=_isoDeFechaLote(l.fecha);
+    if(!iso || iso<=desdeIso) return;
+    var mueve=0;
+    if(l.tipo==="compra"){
+      mueve -= enUsdt(l.cuentaOrigenId, parseFloat(l.montOrigen)||0);
+      if(l.cuentaId) mueve += enUsdt(l.cuentaId, parseFloat(l.usdt)||0);
+    } else {
+      if(l.cuentaId) mueve -= enUsdt(l.cuentaId, parseFloat(l.usdt)||0);
+      mueve += enUsdt(l.cuentaDestinoId, parseFloat(l.bs)||0);
+    }
+    r.usdt += mueve;   // una compra o una venta no apunta ganancia: el hueco es entero
+    r.n++;
+  });
+  r.remesas=Math.round(r.remesas*100)/100;
+  r.usdt=Math.round(r.usdt*100)/100;
+  r.total=Math.round((r.remesas+r.usdt)*100)/100;
+  return r;
+}
+
+// La fecha de un lote va en mm/dd y sin año (ver _fechaLote). Para compararla
+// con la fecha de la apertura hace falta un año: se toma el actual, y si eso
+// deja el lote en el futuro se entiende que es del año pasado. Es lo mismo que
+// asume ordenFIFO, y aquí solo decide si un lote entra o no en la ventana.
+function _isoDeFechaLote(f){
+  var p=String(f||"").split("/");
+  if(p.length<2) return "";
+  var mm=String(p[0]).padStart(2,"0"), dd=String(p[1]).slice(0,2).padStart(2,"0");
+  if(!/^\d{2}$/.test(mm)||!/^\d{2}$/.test(dd)) return "";
+  var hoy=td(), iso=hoy.slice(0,4)+"-"+mm+"-"+dd;
+  if(iso>hoy) iso=(parseInt(hoy.slice(0,4),10)-1)+"-"+mm+"-"+dd;
+  return iso;
+}
+
 function conciliacionCapital(){
   var cfg=S.config||{};
   var apertura=parseFloat(cfg.aperturaUsdt);
@@ -2467,19 +2580,23 @@ function conciliacionCapital(){
   egPersonalSin-= parseFloat(base.egPersonalSin)||0;
   socios       -= parseFloat(base.socios)||0;
   var r2v=function(n){return Math.round(n*100)/100;};
-  var deberias=r2v(apertura+bruta-egEmpresa-egPersonal-socios);
+  // ARREGLO 47: lo que se fue a una cuenta personal salió del capital igual que
+  // un gasto, aunque no esté anotado como tal. Baja los dos lados a la vez.
+  var traspPers=traspasosAPersonal(desde);
+  var deberias=r2v(apertura+bruta-egEmpresa-egPersonal-socios-traspPers.total);
   var diferencia=r2v(real.total-deberias);
-  // De qué está hecha esa diferencia: los ajustes a mano se explican solos, lo
-  // que quede es lo único que hay que perseguir.
+  // De qué está hecha esa diferencia: los ajustes a mano y el desfase de las
+  // tasas se explican solos, lo que quede es lo único que hay que perseguir.
   var ajustes=ajustesDesdeApertura(desde);
-  var sinExplicar=r2v(diferencia-ajustes.total);
+  var tasas=efectoTasasDesde(desde);
+  var sinExplicar=r2v(diferencia-ajustes.total-tasas.total);
   return {
     configurada:true, apertura:r2v(apertura), desde:desde, meses:meses.length,
     baseFaltante:baseFaltante,
     bruta:r2v(bruta), egEmpresa:r2v(egEmpresa), egPersonal:r2v(egPersonal),
     egPersonalSin:r2v(egPersonalSin), socios:r2v(socios),
     deberias:deberias, real:real, diferencia:diferencia,
-    ajustes:ajustes, sinExplicar:sinExplicar,
+    ajustes:ajustes, tasas:tasas, traspPers:traspPers, sinExplicar:sinExplicar,
     // Un desvio de menos del 2% del capital es ruido de tasas de cambio,
     // no una fuga: los saldos se convierten a USDT a la tasa de HOY.
     tolerancia:r2v(Math.max(5,real.total*0.02))
@@ -8123,7 +8240,7 @@ function rCapitalTotal(){
       "<div style='display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px'>"+
         "<div><div style='font-size:13px;font-weight:800;color:"+col+"'>🧾 Conciliación de capital</div>"+
         "<div style='font-size:10px;color:#888;margin-top:2px'>Desde el "+ds(co.desde)+" · "+co.meses+" mes(es)</div></div>"+
-        "<div style='text-align:right'><div style='font-size:22px;font-weight:900;color:"+col+";line-height:1'>"+(dif>=0?"+":"")+"$"+f2(dif)+"</div>"+
+        "<div style='text-align:right'><div style='font-size:22px;font-weight:900;color:"+col+";line-height:1'>"+(dif>=0?"+$":"−$")+f2(Math.abs(dif))+"</div>"+
         "<div style='font-size:9px;color:#888'>diferencia</div></div>"+
       "</div>"+
       "<div style='background:#fff;border-radius:9px;padding:10px 12px;margin-bottom:8px;font-size:11px;color:#555;line-height:1.7'>"+
@@ -8132,6 +8249,7 @@ function rCapitalTotal(){
         (co.egEmpresa>0?"<div style='display:flex;justify-content:space-between;color:#c0392b'><span>− Egresos empresa</span><b>−$"+f2(co.egEmpresa)+"</b></div>":"")+
         (co.egPersonal>0?"<div style='display:flex;justify-content:space-between;color:#c0392b'><span>− Gastos personales (de una cuenta)</span><b>−$"+f2(co.egPersonal)+"</b></div>":"")+
         (co.socios>0?"<div style='display:flex;justify-content:space-between;color:#c0392b'><span>− Pagos a socios</span><b>−$"+f2(co.socios)+"</b></div>":"")+
+        ((co.traspPers&&Math.abs(co.traspPers.total)>0.005)?"<div style='display:flex;justify-content:space-between;color:"+(co.traspPers.total>0?"#c0392b":"#0f6e3a")+"'><span>"+(co.traspPers.total>0?"− Pasado a cuentas personales":"+ Metido desde cuentas personales")+" ("+co.traspPers.n+")</span><b>"+(co.traspPers.total>0?"−":"+")+"$"+f2(Math.abs(co.traspPers.total))+"</b></div>":"")+
         "<div style='display:flex;justify-content:space-between;border-top:1px solid #ddd;margin-top:5px;padding-top:5px;font-size:13px'><b>Deberías tener</b><b>$"+f2(co.deberias)+"</b></div>"+
       "</div>"+
       "<div style='background:#fff;border-radius:9px;padding:10px 12px;margin-bottom:8px'>"+lineaReal+"</div>"+
@@ -8140,26 +8258,31 @@ function rCapitalTotal(){
       // lo único que hay que buscar.
       (Math.abs(dif)>0.005 ? (function(){
         var aj=co.ajustes||{total:0,n:0,mismoDia:0,nMismoDia:0};
+        var ta=co.tasas||{total:0,remesas:0,usdt:0,n:0};
         var se=co.sinExplicar||0;
         var colSE=Math.abs(se)<=tol?"#0f6e3a":"#a06800";
         return "<div style='background:#fff;border-radius:9px;padding:10px 12px;margin-bottom:8px;font-size:11px;color:#555;line-height:1.7'>"+
           "<div style='font-size:10px;font-weight:800;color:#888;text-transform:uppercase;letter-spacing:.3px;margin-bottom:5px'>De qué está hecha la diferencia</div>"+
-          "<div style='display:flex;justify-content:space-between'><span>Diferencia total</span><b>"+(dif>=0?"+":"")+"$"+f2(dif)+"</b></div>"+
+          "<div style='display:flex;justify-content:space-between'><span>Diferencia total</span><b>"+(dif>=0?"+$":"−$")+f2(Math.abs(dif))+"</b></div>"+
           (aj.n>0
-            ? "<div style='display:flex;justify-content:space-between'><span>− Ajustes de saldo a mano ("+aj.n+")</span><b>"+(aj.total<0?"−":"+")+"$"+f2(Math.abs(aj.total))+"</b></div>"
+            ? "<div style='display:flex;justify-content:space-between'><span>De eso, ajustes de saldo a mano ("+aj.n+")</span><b>"+(aj.total<0?"−":"+")+"$"+f2(Math.abs(aj.total))+"</b></div>"
             : "<div style='display:flex;justify-content:space-between;color:#aaa'><span>Ajustes de saldo a mano</span><b>ninguno</b></div>")+
+          ((ta.n>0||Math.abs(ta.total)>0.005)
+            ? "<div style='display:flex;justify-content:space-between'><span>De eso, desfase de las tasas del día ("+ta.n+" op.)</span><b>"+(ta.total<0?"−":"+")+"$"+f2(Math.abs(ta.total))+"</b></div>"
+            : "")+
           "<div style='display:flex;justify-content:space-between;border-top:1px solid #ddd;margin-top:5px;padding-top:5px;font-size:13px;color:"+colSE+"'><b>"+(Math.abs(se)<=tol?"✅ ":"⚠️ ")+"Sin explicar</b><b>"+(se<0?"−":"+")+"$"+f2(Math.abs(se))+"</b></div>"+
           (aj.nMismoDia>0?"<div style='font-size:10px;color:#a06800;margin-top:6px;line-height:1.5'>Hay "+aj.nMismoDia+" ajuste(s) del mismo día que fijaste la apertura, por "+(aj.mismoDia<0?"−":"+")+"$"+f2(Math.abs(aj.mismoDia))+". No se cuentan porque los ajustes guardan la fecha pero no la hora, y no hay forma de saber si fueron antes o después de la foto.</div>":"")+
           (aj.sinTasa?"<div style='font-size:10px;color:#c0392b;margin-top:6px'>⚠️ Algún ajuste es de una moneda sin tasa y no está contado aquí.</div>":"")+
+          ((ta.n>0||Math.abs(ta.total)>0.005)?"<div style='font-size:10px;color:#888;margin-top:6px;line-height:1.5'>El desfase de las tasas es aritmética, no dinero: compras USDT a una tasa y vendes a otra, pero tus saldos se valoran a la tasa del día. "+(Math.abs(ta.usdt)>0.005?"Compra/venta de USDT "+(ta.usdt<0?"−":"+")+"$"+f2(Math.abs(ta.usdt))+". ":"")+(Math.abs(ta.remesas)>0.005?"Remesas "+(ta.remesas<0?"−":"+")+"$"+f2(Math.abs(ta.remesas))+".":"")+"</div>":"")+
           "<div style='font-size:10px;color:#888;margin-top:6px;line-height:1.5'>Un ajuste a mano sube o baja lo que tienes sin tocar lo que deberías tener, así que explica parte de la diferencia. <b>Lo que queda sin explicar es lo único que hay que perseguir</b> — volver a fijar la apertura lo esconde, no lo arregla.</div>"+
         "</div>";
       })() : "")+
       "<div style='font-size:11px;color:"+col+";font-weight:700;line-height:1.6'>"+
         (sano
-          ? "✅ Cuadra. Lo que queda sin explicar está dentro de lo que mueven las tasas de cambio (±$"+f2(tol)+"). Tu contabilidad está sana."
+          ? "✅ Cuadra. Lo que queda sin explicar está dentro del ruido normal (±$"+f2(tol)+"). Tu contabilidad está sana."
           : sinExp<0
-            ? "⚠️ Faltan $"+f2(Math.abs(sinExp))+" que no explica ningún ajuste a mano. Es dinero que salió sin quedar registrado — lo más común es lo que sacas para ti sin anotarlo. Búscalo entre las operaciones desde el "+ds(co.desde)+": volver a fijar la apertura solo lo esconde."
-            : "⚠️ Sobran $"+f2(sinExp)+" que no explica ningún ajuste a mano. Suele ser dinero que entró sin registrarse como ganancia. Búscalo entre las operaciones desde el "+ds(co.desde)+": volver a fijar la apertura solo lo esconde.")+
+            ? "⚠️ Faltan $"+f2(Math.abs(sinExp))+" que no explican ni los ajustes a mano ni el desfase de las tasas. Es dinero que salió sin quedar registrado — lo más común es lo que sacas para ti sin anotarlo. Búscalo entre las operaciones desde el "+ds(co.desde)+": volver a fijar la apertura solo lo esconde."
+            : "⚠️ Sobran $"+f2(sinExp)+" que no explican ni los ajustes a mano ni el desfase de las tasas. Suele ser dinero que entró sin registrarse como ganancia. Búscalo entre las operaciones desde el "+ds(co.desde)+": volver a fijar la apertura solo lo esconde.")+
       "</div>"+
       (co.baseFaltante?"<div style='background:#FFF4E5;border:1px solid #f0c080;border-radius:8px;padding:9px 11px;font-size:11px;color:#7a5c00;line-height:1.6;margin-top:8px'>"+
         "<b>⚠️ Vuelve a fijar la apertura.</b> Esta se guardó antes de un arreglo: contaba dos veces lo que ya llevabas ganado el mes en que la fijaste, así que la diferencia arranca torcida. Un clic en el botón de abajo lo deja en cero."+
