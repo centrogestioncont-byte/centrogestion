@@ -42,7 +42,7 @@ function sacarConstante(nombre) {
   throw new Error("la constante " + nombre + " no termina en ';'");
 }
 const CONSTANTES = ["MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
-                    "_MERGE_OBJETOS", "_MERGE_HISTORIAL", "_RATE_LIMITS",
+                    "_MERGE_OBJETOS", "_MERGE_BLOQUES", "_MERGE_HISTORIAL", "_RATE_LIMITS",
                     "DATA_KEYS", "_CLAVES_QUE_NO_SON_DATOS", "PAGO_DEBE"];
 
 const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
@@ -2353,6 +2353,66 @@ ok(/calc\.socioFinalEE>0\.009\?"<tr><td>Pagar /.test(HTML),
    "el PDF no escribe una fila 'Pagar X \$0,00'");
 ok(/Math\.abs\(calc\.ganEEBruta\)>0\.009 \|\| Math\.abs\(calc\.deudasSocioEE\)>0\.009/.test(HTML),
    "y la seccion de liquidacion de socios no se dibuja si no hay nada que liquidar");
+
+// ── ARREGLO 60: la apertura viaja entera o no viaja ─────────────────────
+// La apertura son cinco claves dentro de config, y _mergeObjetoPorClave decide
+// clave por clave: con dos aparatos se quedaba la FECHA de uno y el MONTO del
+// otro. Reproducido con sus dos pantallas del 14/09 —telefono 11/09 · 2.544,79
+// y PC 12/09 · 2.450,20— que fusionaban a 12/09 · 2.544,79: una apertura que no
+// existio en ninguno de los dos, y contra la que mide toda la conciliacion.
+console.log("\nArreglo 60 · la apertura no se mezcla entre aparatos");
+ok(Array.isArray(F._MERGE_BLOQUES && F._MERGE_BLOQUES.config),
+   "config tiene bloques de claves que viajan juntas");
+(function(){
+  const bloque = (F._MERGE_BLOQUES.config||[])[0]||[];
+  ["aperturaUsdt","aperturaFecha","aperturaSaldos","aperturaTs","aperturaBase"].forEach(function(k){
+    ok(bloque.indexOf(k)!==-1, "  "+k+" va en el bloque de la apertura");
+  });
+})();
+
+const T1 = 1789412461727, T2 = T1 + 3600000;
+function fusionarConfig(local, mLoc, remoto, mRem){
+  S._modCampos = {config:mLoc};
+  return F._mergeObjetoPorClave(remoto, local, "config", {config:mRem}, function(){ return false; });
+}
+// El caso exacto: el monto marcado aqui, la fecha marcada alla.
+const _mezcla = fusionarConfig(
+  {aperturaUsdt:2544.79, aperturaFecha:"2026-09-11"},
+  {aperturaUsdt:T2, aperturaFecha:T1},
+  {aperturaUsdt:2450.20, aperturaFecha:"2026-09-12", aperturaSaldos:{c1:10}, aperturaTs:T2},
+  {aperturaUsdt:T1, aperturaFecha:T2, aperturaSaldos:T2, aperturaTs:T2});
+ok((_mezcla.aperturaFecha==="2026-09-12" && _mezcla.aperturaUsdt===2450.20) ||
+   (_mezcla.aperturaFecha==="2026-09-11" && _mezcla.aperturaUsdt===2544.79),
+   "la fecha y el monto salen SIEMPRE del mismo aparato",
+   _mezcla.aperturaFecha+" con "+_mezcla.aperturaUsdt);
+// Si la del otro aparato es mas nueva, entra entera —foto incluida—.
+const _entera = fusionarConfig(
+  {aperturaUsdt:2544.79, aperturaFecha:"2026-09-11"},
+  {aperturaUsdt:T1, aperturaFecha:T1},
+  {aperturaUsdt:2450.20, aperturaFecha:"2026-09-12", aperturaSaldos:{c1:10}, aperturaTs:T2},
+  {aperturaUsdt:T2, aperturaFecha:T2, aperturaSaldos:T2, aperturaTs:T2});
+ok(_entera.aperturaFecha==="2026-09-12" && _entera.aperturaUsdt===2450.20 && !!_entera.aperturaSaldos,
+   "y cuando entra la del otro, entra con su foto y su hora");
+// En un empate manda la de este aparato: no se pisa lo que se acaba de hacer.
+const _empate = fusionarConfig(
+  {aperturaUsdt:2544.79, aperturaFecha:"2026-09-11"}, {aperturaUsdt:T2, aperturaFecha:T2},
+  {aperturaUsdt:2450.20, aperturaFecha:"2026-09-12"}, {aperturaUsdt:T2, aperturaFecha:T2});
+ok(_empate.aperturaUsdt===2544.79, "en un empate se queda la de este aparato");
+// El resto de config se sigue fusionando clave por clave, como siempre.
+const _resto = fusionarConfig(
+  {moraMultaPct:2, ntfyCanal:"a"}, {moraMultaPct:T2, ntfyCanal:T1},
+  {moraMultaPct:5, ntfyCanal:"b"}, {moraMultaPct:T1, ntfyCanal:T2});
+ok(_resto.moraMultaPct===2 && _resto.ntfyCanal==="b",
+   "lo demas de config no cambia de comportamiento", JSON.stringify(_resto));
+
+// La tarjeta: el numero grande es lo que hay que perseguir, y los avisos no se
+// pliegan (7 ajustes por −233,46 estaban dentro de un desplegable cerrado).
+ok(/>sin explicar</.test(HTML), "el titular de la conciliacion dice 'sin explicar'");
+ok(/f2\(Math\.abs\(co\.sinExplicar\|\|0\)\)/.test(HTML),
+   "y el numero grande es sinExplicar, no la diferencia bruta");
+ok(/que no se pueden situar/.test(HTML), "el aviso de los ajustes en el aire esta fuera del desplegable");
+ok(/aperturaSaldos:\(S\.config\|\|\{\}\)\.aperturaSaldos/.test(HTML),
+   "la conciliacion dice si la apertura tiene foto de saldos");
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

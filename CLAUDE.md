@@ -169,6 +169,23 @@ Lo que sí tienes que respetar:
   producción, con eso puesto, no se marcaba prácticamente nada: dos cobros
   recién marcados volvieron a "pendiente" al día siguiente.
 
+**Y hay claves que tienen que viajar JUNTAS** (`_MERGE_BLOQUES`, ARREGLO 60).
+La apertura no es un dato, son cinco: `aperturaUsdt`, `aperturaFecha`,
+`aperturaSaldos`, `aperturaTs` y `aperturaBase`. `_mergeObjetoPorClave` decide
+clave por clave, cada una con su marca, así que con dos aparatos se quedaba **la
+fecha de uno y el monto del otro**. Reproducido con sus dos pantallas del 14/09:
+
+```
+teléfono  11/09 · $2.544,79
+PC        12/09 · $2.450,20
+fusión    12/09 · $2.544,79   ← una apertura que no existió en ninguno
+```
+
+Y de ahí salían dos conciliaciones distintas: con la apertura del 11 los ajustes
+de ese día cuentan (−85,55, diferencia −76,38); con la del 12 quedan antes de la
+apertura y la pantalla dice "ninguno" (+11,85). **Si un grupo de claves solo
+tiene sentido junto, va en `_MERGE_BLOQUES`**: entra entero o no entra.
+
 Cuando el dueño diga que algo "se revirtió solo" o "volvió a aparecer",
 **empieza por aquí**: casi siempre es un dato que llegó sin marca.
 
@@ -407,6 +424,17 @@ número suelto no se puede perseguir, así que la diferencia viene desglosada, y
   porque se lee una vez y estorba las otras cien, pero los avisos —moneda sin
   tasa, apertura vieja— y el veredicto se ven siempre. Un aviso escondido no es
   un aviso.
+- **El número grande es lo SIN EXPLICAR, no la diferencia bruta** (ARREGLO 60).
+  El titular decía −$76,38 mientras el veredicto debajo decía "cuadra": dos
+  mensajes opuestos en la misma tarjeta, y el que asusta es el grande. La
+  diferencia bruta incluye lo que ya tiene explicación —los ajustes a mano,
+  sobre todo—; lo que hay que perseguir es el resto.
+- **Los ajustes que no se pueden situar se ven sin desplegar nada.** Los del
+  mismo día en que se fijó la apertura no llevan hora, así que ni cuentan ni se
+  descartan: con sus datos son 7 por −$233,46. Estaban dentro del desplegable.
+- **La tarjeta dice contra qué apertura mide** —fecha, monto y si tiene foto de
+  saldos—. Una apertura sin foto no permite comparar cuenta por cuenta cuando
+  algo no cuadra, y eso no se veía en ninguna parte.
 
 ### Evolución mide la tendencia, no el capital
 
