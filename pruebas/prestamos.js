@@ -43,7 +43,7 @@ function sacarConstante(nombre) {
 }
 const CONSTANTES = ["MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
                     "_MERGE_OBJETOS", "_MERGE_HISTORIAL",
-                    "DATA_KEYS", "_CLAVES_QUE_NO_SON_DATOS"];
+                    "DATA_KEYS", "_CLAVES_QUE_NO_SON_DATOS", "PAGO_DEBE"];
 
 const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
                     "congelarMora", "_sumarMeses", "_isoDeFecha", "calcularAmortizacion",
@@ -65,7 +65,7 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "f4", "f0", "_leerNumero", "_avisoCambioSaldo", "_fechaLote", "_idLoteNuevo",
                     "_diasEnElFuturo", "confirmarFechaFutura",
                     "comisionBancoVES", "etiquetaComisionBanco", "salidaDeCuentaEntrega",
-                    "monedasDeRemesa",
+                    "monedasDeRemesa", "pagosDeRemesa", "sumaPagos", "pagosDebe",
                     "COM", "_comIU", "_localeOCR", "_numOCR",
                     "_candUSDT", "_candFiat", "_cuadrarP2P", "_parsearOCR", "_parsearConLocale", "_numLegible"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
@@ -1526,6 +1526,76 @@ ok(/var comUc = tcDeLote \? 0 :/.test(HTML) && /var comUv = tvDeLote \? 0 :/.tes
    "con tasa de lote no se vuelve a cobrar la comision");
 ok(/var tcDeLote = !tcMan && !!rates\.tc;/.test(HTML),
    "pero si la tasa se escribio a mano, la comision si se aplica");
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// El cliente que paga de varias formas (ARREGLO 44, 14/09/2026)
+//
+// Pasa seguido: una parte en efectivo, otra por Pix y otra que queda debiendo.
+// Las filas tienen que sumar EXACTAMENTE lo que envía el cliente — cuadrar a
+// ojo y guardar descuadrado es lo que deja un saldo sin explicación.
+// ─────────────────────────────────────────────────────────────────────────────
+console.log("\n— El cliente que paga de varias formas —");
+// La marca de la fila que NO entra en ninguna cuenta la pone index.html; se
+// saca de ahi para que un renombrado no deje estas pruebas probando otra cosa.
+const PAGO_DEBE = F.PAGO_DEBE;
+ok(PAGO_DEBE === "__debe__", "la fila de prestamo se marca con __debe__", PAGO_DEBE);
+
+const F1 = { pagosMulti: true, pagos: [
+  { cuentaId: "cef", monto: "500" },
+  { cuentaId: "cnu", monto: "400" },
+  { cuentaId: PAGO_DEBE, monto: "100" } ] };
+
+ok(F.pagosDeRemesa({ pagosMulti: false, pagos: F1.pagos }) === null,
+   "apagado, no hay desglose y todo va por el camino de siempre");
+ok(F.pagosDeRemesa({ pagosMulti: true, pagos: [] }) === null,
+   "encendido pero sin filas, tampoco");
+const filas = F.pagosDeRemesa(F1);
+ok(filas && filas.length === 3, "lee las tres filas", filas && filas.length);
+ok(F.sumaPagos(filas) === 1000, "y suman los 1.000 que envía el cliente", F.sumaPagos(filas));
+ok(F.pagosDebe(filas) === 100, "de los que 100 quedan debiendo", F.pagosDebe(filas));
+
+// Los montos se leen con _leerNumero, asi que la coma decimal vale igual que
+// el punto — el teclado del movil pone coma y no se puede perder un centimo.
+const conComa = F.pagosDeRemesa({ pagosMulti: true, pagos: [
+  { cuentaId: "cef", monto: "500,25" }, { cuentaId: "cnu", monto: "500,25" } ] });
+ok(F.sumaPagos(conComa) === 1000.5, "500,25 + 500,25 = 1.000,50", F.sumaPagos(conComa));
+const conPunto = F.pagosDeRemesa({ pagosMulti: true, pagos: [
+  { cuentaId: "cef", monto: "500.25" }, { cuentaId: "cnu", monto: "500.25" } ] });
+ok(F.sumaPagos(conPunto) === 1000.5, "y con punto igual", F.sumaPagos(conPunto));
+
+// Las filas a medio llenar no cuentan: sin cuenta o sin monto no es un pago.
+const aMedias = F.pagosDeRemesa({ pagosMulti: true, pagos: [
+  { cuentaId: "cef", monto: "500" }, { cuentaId: "", monto: "300" }, { cuentaId: "cnu", monto: "" } ] });
+ok(aMedias.length === 1 && F.sumaPagos(aMedias) === 500,
+   "una fila sin cuenta o sin monto no suma", JSON.stringify(aMedias));
+ok(F.pagosDebe(F.pagosDeRemesa({ pagosMulti: true, pagos: [{ cuentaId: "cef", monto: "900" }] })) === 0,
+   "sin fila de prestamo, no queda nada debiendo");
+
+// Y que saveTx lo use de verdad: no vale que los ayudantes esten bien si el
+// guardado sigue metiendo la entrada entera en una sola cuenta.
+ok(/if\(f\.pagosMulti\)\{[\s\S]{0,400}?alert\("Las formas de pago no cuadran/.test(HTML) ||
+   /Las formas de pago no cuadran/.test(HTML),
+   "saveTx no deja guardar si las filas no cuadran");
+ok(/var _saltarOrigen = f\.pendiente===true \|\| !!_pagos;/.test(HTML),
+   "con desglose, la entrada NO la hace actualizarCuentasPorRemesa");
+ok(/if\(_pagos\) acreditarPagos\(_pagos, _mov\);/.test(HTML),
+   "la hace acreditarPagos, que anota cada parte en _mov");
+ok(/mov\.push\(\{cuentaId:c\.id, delta:p\.monto\}\)/.test(HTML),
+   "y por eso el borrado de la remesa revierte solo, sin tocar nada mas");
+ok(/if\(_debe>0\.01\)\{/.test(HTML) && /parcial:true/.test(HTML),
+   "lo que queda debiendo va a Cuentas por Cobrar, marcado como parcial");
+ok(/las dos a la vez no/.test(HTML),
+   "no se puede mezclar el desglose con marcar la remesa entera pendiente");
+ok(/Esta remesa se cobró de varias formas/.test(HTML),
+   "y marcarRemesaPendiente se para si la remesa tiene desglose");
+// La fila de prestamo no puede acreditar ninguna cuenta: ese dinero no entro.
+ok(/if\(p\.cuentaId===PAGO_DEBE\) return;/.test(HTML),
+   "la fila de prestamo no acredita ninguna cuenta");
+// Los montos del desglose se escriben a mano: type=number se comeria la coma.
+ok(/inputmode='decimal'[^>]*onc?input='txPagoSet/.test(HTML) ||
+   /txPagoSet\([^)]*\\"monto\\"/.test(HTML) && !/type='number'[^>]*txPagoSet/.test(HTML),
+   "los montos del desglose no son type=number");
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

@@ -648,7 +648,7 @@ let S={
   traspasos:[],
   nTraspaso:{fecha:"",cuentaOrig:"",cuentaDest:"",monto:"",nota:""},
   nCuenta:{nombre:"",tipo:"fiat",moneda:"USD",institucion:"",saldo:0,operador:"general"},
-  tx:{date:"",id:"",cl:"",rt:"BRL ↔ VZLA",am:"",tdia:"",tc:"",tv:"",tc_manual:"",tv_manual:"",pais:"VENEZUELA",_savedDate:"",_tcLock:null,_tvLock:null,_amLock:null,_tdiaLock:null,_rtLock:null},
+  tx:{date:"",id:"",cl:"",rt:"BRL ↔ VZLA",am:"",tdia:"",tc:"",tv:"",tc_manual:"",tv_manual:"",pais:"VENEZUELA",pagosMulti:false,pagos:[],_savedDate:"",_tcLock:null,_tvLock:null,_amLock:null,_tdiaLock:null,_rtLock:null},
   calc:{tcCompra:"",tvVenta:"",margen:"10",tvVentaIda:"",tcCompraVuelta:"",margenVuelta:"10",simIda:"100",simVuelta:"100",modoCalc:"fijas",exOrig:"BRL",exDest:"VES",exTcCompra:"",exTvVenta:"",exMargen:"9",exSim:"",exComCompra:"0.004",exComVenta:"0.004"},
   txE:{date:"",id:"",cl:"",am:"",tdia:"",tc:"1.010",tv:"",tc_manual:"",tv_manual:"",pais:"VENEZUELA"},
   nEg:{date:"",cat:"GASTOS FIJOS EMPRESA",mot:"",monto:"",usdt:"",fija:false,pagada:false,tipo:"empresa"},
@@ -4052,6 +4052,13 @@ function marcarRemesaPendiente(tipo,n){
     return c.refN===n;
   });
   if(yaExiste){alert("Esta operación ya está en Cuentas por Cobrar como pendiente.");return;}
+  // ARREGLO 44: esta función resta el total de UNA cuenta. Si la remesa se cobró
+  // de varias formas, eso dejaría a esa cuenta con un agujero por el dinero que
+  // en realidad entró en las otras. Se para aquí y se dice qué hacer en su lugar.
+  if(r.pagos&&r.pagos.length){
+    alert("Esta remesa se cobró de varias formas, así que no se puede marcar entera como pendiente:\nal restar el total de una sola cuenta quedaría un agujero en las demás.\n\nSi el cliente te quedó debiendo una parte, bórrala y vuelve a registrarla con su fila \"le presto\".");
+    return;
+  }
   var montoOrigen=Math.round((parseFloat(r.am)||0)*100)/100;
   var nombreCta=r.cuentaBanco?((S.cuentas||[]).find(function(c){return c.id===r.cuentaBanco;})||{}).nombre:null;
   if(!confirm("¿Marcar como pago pendiente?\n\nCliente: "+r.cl+" · "+r.rt+"\nSe restará "+f2(montoOrigen)+" "+r.orig+(nombreCta?" de \""+nombreCta+"\"":"")+" y pasará a Cuentas por Cobrar hasta que la marques como cobrada."))return;
@@ -4138,6 +4145,99 @@ var _cuentasNoEncontradas = [];
 // saber, ANTES de guardar, si alguna cuenta no se va a encontrar. Se usa el
 // mismo camino a propósito — una comprobación escrita aparte se separa del
 // cálculo de verdad con el primer cambio, y entonces avisa de lo que no es.
+// ── Cuando el cliente paga de varias formas ──────────────────────────────────
+// ARREGLO 44 (14/09/2026): hasta ahora una remesa tenía UNA cuenta de entrada.
+// Pero pasa seguido que el cliente paga una parte en efectivo, otra por Pix y
+// otra se la queda debiendo. Con una sola cuenta había que meter la entrada
+// entera en una y arreglarlo después con traspasos, y entre paso y paso los
+// saldos decían cosas que no eran.
+//
+// Las filas tienen que sumar EXACTAMENTE lo que envía el cliente — si no, no
+// deja guardar. La fila PAGO_DEBE es la que no entra en ninguna cuenta: es lo
+// que ella le presta, y va a Cuentas por Cobrar igual que una remesa pendiente,
+// que es exactamente lo que es.
+var PAGO_DEBE="__debe__";
+// La pantalla del desglose. Enseña SIEMPRE cuánto llevas asignado y cuánto
+// falta, porque cuadrarlo de cabeza es justo donde se cuelan los descuadres.
+function txPagosToggle(){
+  S.tx.pagosMulti=!S.tx.pagosMulti;
+  if(S.tx.pagosMulti && !(S.tx.pagos||[]).length){
+    // Arranca con la cuenta que ya estuviera elegida, para no empezar en blanco
+    S.tx.pagos=[{cuentaId:S.tx.cuentaBanco||"",monto:""},{cuentaId:"",monto:""}];
+  }
+  R();
+}
+function txPagoSet(i,campo,val){
+  S.tx.pagos=S.tx.pagos||[];
+  if(!S.tx.pagos[i]) S.tx.pagos[i]={cuentaId:"",monto:""};
+  S.tx.pagos[i][campo]=val;
+  // La primera cuenta de verdad manda: es la que elige la tasa del lote y la
+  // que queda como cuentaBanco de la remesa, igual que cuando hay una sola.
+  var prim=(S.tx.pagos||[]).find(function(p){return p.cuentaId&&p.cuentaId!==PAGO_DEBE;});
+  S.tx.cuentaBanco=prim?prim.cuentaId:"";
+  if(campo==="cuentaId") R();
+}
+function txPagoAdd(){ S.tx.pagos=(S.tx.pagos||[]).concat([{cuentaId:"",monto:""}]); R(); }
+function txPagoDel(i){ S.tx.pagos=(S.tx.pagos||[]).filter(function(_,k){return k!==i;}); txPagoSet(0,"_",""); R(); }
+function _txPagosHTML(cuentasOrig,origMon){
+  var filas=S.tx.pagos||[];
+  var total=Math.round((parseFloat(S.tx.am)||0)*100)/100;
+  var asignado=sumaPagos(filas.map(function(p){return {cuentaId:p.cuentaId||"x",monto:Math.round((_leerNumero(p.monto)||0)*100)/100};}));
+  var falta=Math.round((total-asignado)*100)/100;
+  var h="<label>📥 ¿Cómo te pagó el cliente? ("+origMon+")</label>"+
+    "<div style='background:#FAF5FF;border:1px solid #d8bfe8;border-radius:10px;padding:10px'>";
+  filas.forEach(function(p,i){
+    var opts="<option value=''>-- elige --</option>"+
+      cuentasOrig.map(function(c){
+        return "<option value='"+c.id+"'"+(p.cuentaId===c.id?" selected":"")+">"+c.nombre+"</option>";
+      }).join("")+
+      "<option value='"+PAGO_DEBE+"'"+(p.cuentaId===PAGO_DEBE?" selected":"")+">🤝 Le presto (queda por cobrar)</option>";
+    h+="<div style='display:flex;gap:6px;align-items:center;margin-bottom:6px'>"+
+         "<select onchange='txPagoSet("+i+",\"cuentaId\",this.value)' style='flex:2;padding:8px;border:1.5px solid #ddd;border-radius:8px;font-size:13px;font-family:inherit'>"+opts+"</select>"+
+         "<input type='text' inputmode='decimal' placeholder='0,00' value='"+(p.monto||"")+"' oninput='txPagoSet("+i+",\"monto\",this.value)' onblur='R()' style='flex:1;min-width:70px;padding:8px;border:1.5px solid #ddd;border-radius:8px;font-size:13px;font-family:inherit'>"+
+         (filas.length>1?"<button type='button' onclick='txPagoDel("+i+")' style='border:none;background:#FDECEA;color:#c0392b;border-radius:7px;padding:7px 9px;cursor:pointer'>✕</button>":"")+
+       "</div>";
+  });
+  if(filas.length<4) h+="<div onclick='txPagoAdd()' style='font-size:11px;color:#9b59b6;cursor:pointer;font-weight:600;margin-bottom:8px'>➕ Otra forma de pago</div>";
+  var col=Math.abs(falta)<0.005?"#0f6e3a":"#c0392b";
+  h+="<div style='border-top:1px dashed #d8bfe8;padding-top:7px;font-size:12px;display:flex;justify-content:space-between'>"+
+       "<span style='color:#777'>Asignado</span><b>"+f2(asignado)+" "+origMon+"</b></div>"+
+     "<div style='font-size:12px;display:flex;justify-content:space-between'>"+
+       "<span style='color:#777'>Envía el cliente</span><b>"+f2(total)+" "+origMon+"</b></div>"+
+     "<div style='font-size:13px;display:flex;justify-content:space-between;margin-top:3px;color:"+col+"'>"+
+       "<b>"+(Math.abs(falta)<0.005?"✔ Cuadra":(falta>0?"Falta":"Sobra"))+"</b>"+
+       "<b>"+(Math.abs(falta)<0.005?"":f2(Math.abs(falta))+" "+origMon)+"</b></div>"+
+     "<div onclick='txPagosToggle()' style='font-size:11px;color:#888;cursor:pointer;margin-top:8px'>↩️ Volver a una sola cuenta</div>"+
+   "</div>";
+  return h;
+}
+function pagosDeRemesa(f){
+  if(!f||!f.pagosMulti) return null;
+  var filas=(f.pagos||[]).map(function(p){
+    return {cuentaId:(p.cuentaId||""), monto:Math.round((_leerNumero(p.monto)||0)*100)/100};
+  }).filter(function(p){ return p.cuentaId && p.monto>0; });
+  return filas.length?filas:null;
+}
+function sumaPagos(filas){
+  return Math.round((filas||[]).reduce(function(a,p){return a+(parseFloat(p.monto)||0);},0)*100)/100;
+}
+function pagosDebe(filas){
+  return Math.round((filas||[]).filter(function(p){return p.cuentaId===PAGO_DEBE;})
+    .reduce(function(a,p){return a+(parseFloat(p.monto)||0);},0)*100)/100;
+}
+// Acredita cada parte en su cuenta y deja el movimiento anotado en _mov, que es
+// de donde sale la reversión exacta cuando se borra la remesa. Por eso no hace
+// falta tocar nada del borrado: ya sabe deshacer lo que encuentre ahí.
+function acreditarPagos(filas, mov){
+  (filas||[]).forEach(function(p){
+    if(p.cuentaId===PAGO_DEBE) return;   // esa parte no entró en ningún banco
+    var c=(S.cuentas||[]).find(function(x){return x.id===p.cuentaId;});
+    if(!c) return;
+    c.saldo=Math.round(((parseFloat(c.saldo)||0)+p.monto)*100)/100;
+    c._mod=Date.now();   // sin esto la fusión puede pisar este saldo con una copia vieja
+    mov.push({cuentaId:c.id, delta:p.monto});
+  });
+}
 function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaDestId, cant, skipOrigen, soloComprobar, uvUsdt){
   _cuentasNoEncontradas = [];
   // Actualiza saldos de cuentas para CUALQUIER moneda automáticamente.
@@ -4237,6 +4337,14 @@ function saveTx(){
   }
 
   var ruta=getRutas().find(function(r){return r.rt===f.rt;})||getRutas()[0];
+  // ARREGLO 44: con varias formas de pago, la PRIMERA cuenta de verdad manda:
+  // es la que decide de qué lote sale la tasa y la que queda guardada en la
+  // remesa como cuentaBanco. Se fija aquí y no solo en la pantalla, para que no
+  // dependa de por dónde se haya llegado al formulario.
+  if(f.pagosMulti){
+    var _primCta=(f.pagos||[]).find(function(p){return p.cuentaId&&p.cuentaId!==PAGO_DEBE;});
+    f.cuentaBanco=_primCta?_primCta.cuentaId:"";
+  }
   // ── Validación: cuenta bancaria debe coincidir con moneda de la ruta ──
   if(f.cuentaBanco){
     var _ctaSel=(S.cuentas||[]).find(function(c){return c.id===f.cuentaBanco;});
@@ -4267,6 +4375,23 @@ function saveTx(){
     S.inventarioUsdt.push({id:Date.now()+1,tipo:"venta",fecha:fd,moneda:ruta.dest||"VES",montOrigen:0,usdt:0,tasa:tvF,comision:COM(),bs:0,plataforma:"Operación",pais:"",restante:0,locked:false});
   }
   var res=cTx();
+  // ARREGLO 44: si el cliente pagó de varias formas, las filas tienen que sumar
+  // exactamente lo que envía. Cuadrar a ojo y guardar descuadrado es justo lo
+  // que deja un saldo sin explicación, así que aquí no se guarda a medias.
+  var _pagos=pagosDeRemesa(f);
+  if(f.pagosMulti){
+    if(!_pagos){ alert("Pon al menos una forma de pago con su monto, o apaga \"pagó de varias formas\"."); return; }
+    if(f.pendiente){ alert("O marcas la remesa entera como pendiente, o desglosas las formas de pago con su fila \"le presto\" — las dos a la vez no.\n\nApaga una de las dos."); return; }
+    var _difP=Math.round((sumaPagos(_pagos)-res.am)*100)/100;
+    if(Math.abs(_difP)>0.01){
+      alert("Las formas de pago no cuadran con lo que envía el cliente.\n\n"+
+            "Envía:    "+f2(res.am)+" "+ruta.orig+"\n"+
+            "Sumado:   "+f2(sumaPagos(_pagos))+" "+ruta.orig+"\n"+
+            (_difP<0?"Faltan:   ":"Sobran:   ")+f2(Math.abs(_difP))+" "+ruta.orig+"\n\n"+
+            "Ajusta los montos hasta que cuadre.");
+      return;
+    }
+  }
 
   // ── Dos comprobaciones ANTES de guardar ─────────────────────────────────
   // 1) ¿Existen las cuentas que esta remesa va a mover? Si una no se encuentra,
@@ -4307,6 +4432,7 @@ function saveTx(){
   var isV=ruta.orig==="VES";var arr=isV?S.vzla:S.brl;
   var nn=arr.length?Math.max.apply(null,arr.map(function(x){return x.n;}))+1:1;
   var nuevaRemesa={n:nn,_uid:_newUid(),d:ds(f.date),id:f.id,cl:f.cl.toUpperCase(),rt:f.rt,am:res.am,orig:ruta.orig,dest:ruta.dest,tdia:res.tdia,cant:res.cant,tc:res.tc,uc:res.uc,pais:f.pais,uv:res.uv,tv:res.tv,total:res.cant,pr:res.pr,cuentaBanco:f.cuentaBanco||"",cuentaDest:f.cuentaDest||"",locked:true};
+  if(_pagos) nuevaRemesa.pagos=_pagos;   // el desglose, para verlo y para revertirlo
   arr.push(nuevaRemesa);
   arr.sort(function(a,b){var da=a.d.split("/"),db=b.d.split("/");return (parseInt(da[1])*100+parseInt(da[0]))-(parseInt(db[1])*100+parseInt(db[0]))||a.n-b.n;});
   registrarMovimientoCapital({fecha:ds(f.date),rutaOrig:ruta.orig,rutaDest:ruta.dest,amOrigen:res.am,amDestino:res.cant,concepto:f.cl+" · "+f.rt,remesaId:nn});
@@ -4322,6 +4448,34 @@ function saveTx(){
   // día que se cobre, igual que el saldo de la cuenta.
   if(ruta.orig==="VES" && !f.pendiente){
     crearLoteRecibido(ruta.orig, res.am, res.uc, f.cuentaBanco||"", ds(f.date), nuevaRemesa._uid);
+  }
+  // ARREGLO 44: la parte que el cliente queda debiendo. Va a Cuentas por Cobrar
+  // porque es de la misma naturaleza que una remesa pendiente — dinero de una
+  // remesa que todavía no entró — y así se marca cobrada o se le meten abonos
+  // con lo que ya existe. La ganancia se prorratea a esa parte: la remesa ya
+  // apuntó la suya entera, esto es solo lo que se enseña en la pantalla de cobros.
+  var _debe = _pagos ? pagosDebe(_pagos) : 0;
+  if(_debe>0.01){
+    var _ctaCobro="";
+    (_pagos||[]).some(function(p){ if(p.cuentaId!==PAGO_DEBE){_ctaCobro=p.cuentaId;return true;} return false; });
+    S.cuentasCobrar.push({
+      id:Date.now()+7,
+      fecha:ds(f.date),
+      cliente:(f.cl||"").toUpperCase(),
+      ruta:f.rt,
+      monto:_debe,
+      moneda:ruta.orig,
+      ganancia:Math.round((res.pr*(res.am>0?_debe/res.am:0))*10000)/10000,
+      tipo:isV?"vzla":"brl",
+      refN:nn,
+      refUid:nuevaRemesa._uid,
+      estado:"pendiente",
+      fechaCobro:"",
+      cuentaBanco:_ctaCobro,          // donde entrará cuando pague; se confirma al cobrar
+      cuentaDest:f.cuentaDest||"",
+      usdtValor:Math.round((res.uc*(res.am>0?_debe/res.am:0))*10000)/10000,
+      parcial:true                    // no es la remesa entera, solo lo que le fio
+    });
   }
   // Guardar referencia de tasas para la próxima operación
   // Crear cuenta por cobrar si el pago es pendiente
@@ -4352,7 +4506,14 @@ function saveTx(){
   // Actualizar saldos y guardar movimientos exactos en la remesa para reversion precisa
   // Si es pendiente por cobrar: NO sumar a cuenta origen (el dinero aún no entró al banco)
   // Si pendiente: skipOrigen=true para NO sumar a la cuenta hasta que se marque cobrado
-  var _mov = actualizarCuentasPorRemesa(f.rt, res.am, res.tc, res.tv, res.pr, f.cuentaBanco||"", f.cuentaDest||"", res.cant, f.pendiente===true, false, res.uv);
+  // ARREGLO 44: con varias formas de pago la entrada NO la hace
+  // actualizarCuentasPorRemesa (que solo sabe de una cuenta): se le dice que se
+  // salte el origen y se acredita aquí cada parte en la suya. Todo queda anotado
+  // en _mov, que es de donde sale la reversión exacta al borrar la remesa.
+  var _saltarOrigen = f.pendiente===true || !!_pagos;
+  var _mov = actualizarCuentasPorRemesa(f.rt, res.am, res.tc, res.tv, res.pr, f.cuentaBanco||"", f.cuentaDest||"", res.cant, _saltarOrigen, false, res.uv);
+  _mov = _mov || [];
+  if(_pagos) acreditarPagos(_pagos, _mov);
   if(_mov && _mov.length) nuevaRemesa._mov = _mov;
   // Comisión bancaria VES: lo que cobra el banco por sacar los bolívares.
   // Sale de comisionBancoVES(), que es el único sitio que sabe las tarifas.
@@ -4382,6 +4543,8 @@ function saveTx(){
     showTasas:false,
     cuentaBanco:"",
     cuentaDest:"",
+    pagosMulti:false,
+    pagos:[],
     pais:f.pais,
     _tcLock:null,_tvLock:null,_amLock:null,_tdiaLock:null,_rtLock:null};
   logAudit("REMESA_GUARDAR","Remesa "+f.rt+" · "+f.cl+" · $"+f2(res.pr)+" USDT");
@@ -16064,8 +16227,16 @@ function rNueva(){
             return "<option value='"+c.id+"'"+(S.tx.cuentaBanco===c.id?" selected":"")+">"+
               c.nombre+" ("+f2(s)+" "+origMon+")"+(s<0?" ⚠️":"")+"</option>";
           }).join("");
-          html+="<div class='fl'><label>📥 ¿A qué cuenta entró el pago? ("+origMon+")</label>"+
-            "<select onchange='S.tx.cuentaBanco=this.value'>"+optsO+"</select></div>";
+          // ARREGLO 44: el cliente que paga de varias formas — una parte en
+          // efectivo, otra por Pix, y otra que queda debiendo. Apagado, esto es
+          // exactamente lo de siempre: una sola cuenta.
+          if(!S.tx.pagosMulti){
+            html+="<div class='fl'><label>📥 ¿A qué cuenta entró el pago? ("+origMon+")</label>"+
+              "<select onchange='S.tx.cuentaBanco=this.value'>"+optsO+"</select>"+
+              "<div onclick='txPagosToggle()' style='font-size:11px;color:#9b59b6;cursor:pointer;margin-top:6px;font-weight:600'>➕ Pagó de varias formas</div></div>";
+          } else {
+            html+="<div class='fl' style='grid-column:1/-1'>"+_txPagosHTML(cuentasOrig,origMon)+"</div>";
+          }
         }
         if(destMon!=="USDT"&&cuentasDest.length){
           var optsD="<option value=''>-- No registrar --</option>"+cuentasDest.map(function(c){
