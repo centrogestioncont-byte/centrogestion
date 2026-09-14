@@ -2395,6 +2395,48 @@ function _acumuladosMes(mk){
   };
 }
 
+// ── Lo que movió el dinero sin ser una operación ────────────────────────────
+// ARREGLO 46 (14/09/2026): la conciliación enseñaba un número suelto y un
+// semáforo, y cuando la diferencia no era cero lo único que se podía hacer era
+// volver a fijar la apertura — o sea, esconderla. Eso le quita el sentido a la
+// pantalla: está para DETECTAR una fuga, no para taparla cada mañana.
+//
+// Los ajustes de saldo a mano suben o bajan "lo que tienes" sin tocar "lo que
+// deberías tener", así que son parte de la diferencia. Separándolos queda a la
+// vista lo que de verdad no tiene explicación, que es lo único que hay que
+// perseguir.
+//
+// Los del MISMO día de la apertura se cuentan aparte: ajustesSaldo guarda la
+// fecha pero no la hora, así que no se puede saber si fueron antes o después de
+// la foto. Decir que sí o que no sería inventarse la mitad del dato.
+function _isoDeDDMMAA(f){
+  var p=String(f||"").split("/");
+  if(p.length!==3) return "";
+  var a=p[2].length===2?("20"+p[2]):p[2];
+  return a+"-"+String(p[1]).padStart(2,"0")+"-"+String(p[0]).padStart(2,"0");
+}
+function ajustesDesdeApertura(desdeIso){
+  var r={total:0, n:0, mismoDia:0, nMismoDia:0, sinTasa:false};
+  if(!desdeIso) return r;
+  (S.ajustesSaldo||[]).forEach(function(a){
+    var iso=_isoDeDDMMAA(a.fecha);
+    if(!iso || iso<desdeIso) return;
+    var c=(S.cuentas||[]).find(function(x){return x.id===a.cuentaId;});
+    if(!c || c.esPersonal) return;      // lo personal no es dinero de la empresa
+    var d=parseFloat(a.delta)||0, u;
+    if(c.moneda==="USDT"||c.moneda==="USD") u=d;
+    else {
+      var t=getRateToUsdt(c.moneda);
+      if(!t||isNaN(t)||t<=0){ r.sinTasa=true; return; }
+      u=d/t;
+    }
+    if(iso>desdeIso){ r.total+=u; r.n++; }
+    else { r.mismoDia+=u; r.nMismoDia++; }
+  });
+  r.total=Math.round(r.total*100)/100;
+  r.mismoDia=Math.round(r.mismoDia*100)/100;
+  return r;
+}
 function conciliacionCapital(){
   var cfg=S.config||{};
   var apertura=parseFloat(cfg.aperturaUsdt);
@@ -2427,12 +2469,17 @@ function conciliacionCapital(){
   var r2v=function(n){return Math.round(n*100)/100;};
   var deberias=r2v(apertura+bruta-egEmpresa-egPersonal-socios);
   var diferencia=r2v(real.total-deberias);
+  // De qué está hecha esa diferencia: los ajustes a mano se explican solos, lo
+  // que quede es lo único que hay que perseguir.
+  var ajustes=ajustesDesdeApertura(desde);
+  var sinExplicar=r2v(diferencia-ajustes.total);
   return {
     configurada:true, apertura:r2v(apertura), desde:desde, meses:meses.length,
     baseFaltante:baseFaltante,
     bruta:r2v(bruta), egEmpresa:r2v(egEmpresa), egPersonal:r2v(egPersonal),
     egPersonalSin:r2v(egPersonalSin), socios:r2v(socios),
     deberias:deberias, real:real, diferencia:diferencia,
+    ajustes:ajustes, sinExplicar:sinExplicar,
     // Un desvio de menos del 2% del capital es ruido de tasas de cambio,
     // no una fuga: los saldos se convierten a USDT a la tasa de HOY.
     tolerancia:r2v(Math.max(5,real.total*0.02))
@@ -8063,7 +8110,12 @@ function rCapitalTotal(){
     }
 
     var dif=co.diferencia, tol=co.tolerancia;
-    var sano=Math.abs(dif)<=tol;
+    // ARREGLO 46: el semáforo mira lo que queda SIN EXPLICAR, no la diferencia
+    // bruta. Con la bruta decía "tu contabilidad está sana" justo debajo de un
+    // "sin explicar +116,09" — que es lo que hacía inútil esta pantalla: un
+    // verde encima de una fuga.
+    var sinExp=(co.sinExplicar!==undefined&&co.sinExplicar!==null)?co.sinExplicar:dif;
+    var sano=Math.abs(sinExp)<=tol;
     var col=sano?"#0f6e3a":(dif<0?"#c0392b":"#a06800");
     var bg =sano?"#E3F8EC":(dif<0?"#FDECEA":"#FFF8E8");
     var brd=sano?"#b6e0c4":(dif<0?"#f0b0a8":"#f0d080");
@@ -8083,12 +8135,31 @@ function rCapitalTotal(){
         "<div style='display:flex;justify-content:space-between;border-top:1px solid #ddd;margin-top:5px;padding-top:5px;font-size:13px'><b>Deberías tener</b><b>$"+f2(co.deberias)+"</b></div>"+
       "</div>"+
       "<div style='background:#fff;border-radius:9px;padding:10px 12px;margin-bottom:8px'>"+lineaReal+"</div>"+
+      // ARREGLO 46: de qué está hecha la diferencia. Un número suelto no se
+      // puede perseguir; separando lo que ya tiene explicación queda a la vista
+      // lo único que hay que buscar.
+      (Math.abs(dif)>0.005 ? (function(){
+        var aj=co.ajustes||{total:0,n:0,mismoDia:0,nMismoDia:0};
+        var se=co.sinExplicar||0;
+        var colSE=Math.abs(se)<=tol?"#0f6e3a":"#a06800";
+        return "<div style='background:#fff;border-radius:9px;padding:10px 12px;margin-bottom:8px;font-size:11px;color:#555;line-height:1.7'>"+
+          "<div style='font-size:10px;font-weight:800;color:#888;text-transform:uppercase;letter-spacing:.3px;margin-bottom:5px'>De qué está hecha la diferencia</div>"+
+          "<div style='display:flex;justify-content:space-between'><span>Diferencia total</span><b>"+(dif>=0?"+":"")+"$"+f2(dif)+"</b></div>"+
+          (aj.n>0
+            ? "<div style='display:flex;justify-content:space-between'><span>− Ajustes de saldo a mano ("+aj.n+")</span><b>"+(aj.total<0?"−":"+")+"$"+f2(Math.abs(aj.total))+"</b></div>"
+            : "<div style='display:flex;justify-content:space-between;color:#aaa'><span>Ajustes de saldo a mano</span><b>ninguno</b></div>")+
+          "<div style='display:flex;justify-content:space-between;border-top:1px solid #ddd;margin-top:5px;padding-top:5px;font-size:13px;color:"+colSE+"'><b>"+(Math.abs(se)<=tol?"✅ ":"⚠️ ")+"Sin explicar</b><b>"+(se<0?"−":"+")+"$"+f2(Math.abs(se))+"</b></div>"+
+          (aj.nMismoDia>0?"<div style='font-size:10px;color:#a06800;margin-top:6px;line-height:1.5'>Hay "+aj.nMismoDia+" ajuste(s) del mismo día que fijaste la apertura, por "+(aj.mismoDia<0?"−":"+")+"$"+f2(Math.abs(aj.mismoDia))+". No se cuentan porque los ajustes guardan la fecha pero no la hora, y no hay forma de saber si fueron antes o después de la foto.</div>":"")+
+          (aj.sinTasa?"<div style='font-size:10px;color:#c0392b;margin-top:6px'>⚠️ Algún ajuste es de una moneda sin tasa y no está contado aquí.</div>":"")+
+          "<div style='font-size:10px;color:#888;margin-top:6px;line-height:1.5'>Un ajuste a mano sube o baja lo que tienes sin tocar lo que deberías tener, así que explica parte de la diferencia. <b>Lo que queda sin explicar es lo único que hay que perseguir</b> — volver a fijar la apertura lo esconde, no lo arregla.</div>"+
+        "</div>";
+      })() : "")+
       "<div style='font-size:11px;color:"+col+";font-weight:700;line-height:1.6'>"+
         (sano
-          ? "✅ Cuadra. La diferencia está dentro de lo que mueven las tasas de cambio (±$"+f2(tol)+"). Tu contabilidad está sana."
-          : dif<0
-            ? "⚠️ Te faltan $"+f2(Math.abs(dif))+" respecto a lo que deberías tener. Esto es dinero que salió sin quedar registrado — lo más común es lo que sacas para ti sin anotarlo."
-            : "⚠️ Tienes $"+f2(dif)+" de más. Suele significar que entró dinero que no se registró como ganancia, o que un saldo de cuenta se corrigió a mano.")+
+          ? "✅ Cuadra. Lo que queda sin explicar está dentro de lo que mueven las tasas de cambio (±$"+f2(tol)+"). Tu contabilidad está sana."
+          : sinExp<0
+            ? "⚠️ Faltan $"+f2(Math.abs(sinExp))+" que no explica ningún ajuste a mano. Es dinero que salió sin quedar registrado — lo más común es lo que sacas para ti sin anotarlo. Búscalo entre las operaciones desde el "+ds(co.desde)+": volver a fijar la apertura solo lo esconde."
+            : "⚠️ Sobran $"+f2(sinExp)+" que no explica ningún ajuste a mano. Suele ser dinero que entró sin registrarse como ganancia. Búscalo entre las operaciones desde el "+ds(co.desde)+": volver a fijar la apertura solo lo esconde.")+
       "</div>"+
       (co.baseFaltante?"<div style='background:#FFF4E5;border:1px solid #f0c080;border-radius:8px;padding:9px 11px;font-size:11px;color:#7a5c00;line-height:1.6;margin-top:8px'>"+
         "<b>⚠️ Vuelve a fijar la apertura.</b> Esta se guardó antes de un arreglo: contaba dos veces lo que ya llevabas ganado el mes en que la fijaste, así que la diferencia arranca torcida. Un clic en el botón de abajo lo deja en cero."+
@@ -19057,10 +19128,28 @@ function _marcarObjetosCambiados(){
     if(!window._fotoPorClave[campo]) window._fotoPorClave[campo]={};
     if(!S._modCampos[campo]) S._modCampos[campo]={};
     var memo=window._fotoPorClave[campo], marcas=S._modCampos[campo];
+    // ¿Ya se había fotografiado este objeto? Se mira ANTES de tocar la foto.
+    var habiaFoto=Object.keys(memo).length>0;
     Object.keys(obj).forEach(function(k){
       var foto=JSON.stringify(obj[k]);
-      // Misma regla que en las listas: sin foto previa se anota, no se marca.
-      if(memo[k]!==undefined && memo[k]!==foto) marcas[k]=ahora;
+      if(memo[k]!==undefined){
+        if(memo[k]!==foto) marcas[k]=ahora;
+      } else if(habiaFoto){
+        // ARREGLO 46 (14/09/2026): una clave NUEVA dentro de un objeto que YA
+        // estaba fotografiado es un cambio, y hay que marcarla.
+        //
+        // Antes se anotaba sin marcar, por la regla de "sin foto previa se
+        // anota" (ARREGLO 33). Pero esa regla está para el primer guardado tras
+        // abrir la app, cuando no hay foto de NADA — no para una clave que
+        // acaba de nacer. Y una clave sin marca pierde contra la copia del otro
+        // aparato: la dueña fijaba la apertura, el otro aparato mandaba la
+        // vieja, y la apertura recién fijada se perdía. Pulsaba el botón, la
+        // diferencia volvía, y no había manera de que se quedara.
+        //
+        // Si no había foto de nada, se sigue sin marcar: eso es ARREGLO 33 y no
+        // se toca.
+        marcas[k]=ahora;
+      }
       memo[k]=foto;
     });
   });
