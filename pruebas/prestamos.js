@@ -71,7 +71,9 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "comisionBancoVES", "etiquetaComisionBanco", "salidaDeCuentaEntrega",
                     "monedasDeRemesa", "pagosDeRemesa", "sumaPagos", "pagosDebe",
                     "COM", "_comIU", "_localeOCR", "_numOCR",
-                    "_candUSDT", "_candFiat", "_cuadrarP2P", "_parsearOCR", "_parsearConLocale", "_numLegible"];
+                    "_candUSDT", "_candFiat", "_cuadrarP2P", "_parsearOCR", "_parsearConLocale", "_numLegible",
+                    "_tasaAutoPago", "_deudaCubierta", "_htmlTasaInvertida",
+                    "_htmlTasaEnPalabras", "_htmlEquivAbono", "_htmlCalcPago"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
 global.window = global.window || {};
 // setTasaDia/soltarTasaDia guardan y repintan, y avisan por alert(). Aqui no
@@ -2148,6 +2150,73 @@ ok(!/if\(!viejo\) sumaTotal/.test(HTML) && !/return f\.viejo\?m:Math\.max/.test(
    "pero cuenta en el acumulado y en la escala, como todos");
 ok(/var desdeLabel = \(filas\[0\]\|\|\{\}\)\.label/.test(HTML),
    "y el 'desde' es el primer mes que se ve");
+
+// ── ARREGLO 55: la direccion de la tasa al cobrar en otra moneda ─────
+// Su caso real (14/09/2026): prestamo de 192,80 USDT, pendiente 87,80, el
+// cliente paga en reales a 5,30. El campo pedia la tasa al reves ("1 BRL =
+// ? USDT", 0,1956) y ella escribia 5,30, asi que la app le decia que el
+// cliente tenia que darle 87,80 / 5,30 = 16,566 reales. Lo peligroso no era
+// ese numero absurdo sino el que si cuadraba: al confirmar, el prestamo
+// quedaba bien (16,566 x 5,30 = 87,80 USDT) y a la cuenta en reales le
+// entraban R$ 16,57 de los R$ 465,34 que el cliente entrego.
+console.log("\nArreglo 55 · la tasa se escribe como se dice: 1 USDT = 5,30 BRL");
+ok(casi(F._tasaAutoPago("USDT", "BRL"), 5.4),
+   "la automatica dice cuantos BRL vale 1 USDT, no al reves", F._tasaAutoPago("USDT", "BRL"));
+ok(casi(F._tasaAutoPago("BRL", "VES"), 200 / 5.4, 0.01),
+   "y sirve para cualquier par, no solo contra USDT", F._tasaAutoPago("BRL", "VES"));
+ok(F._tasaAutoPago("USDT", "COP") === null,
+   "sin tasa en esa moneda devuelve null, no una prestada");
+// Su cuenta, en las dos direcciones.
+ok(casi(F._deudaCubierta(465.34, 5.30), 87.80),
+   "465,34 BRL a 5,30 cubren 87,80 USDT del prestamo", F._deudaCubierta(465.34, 5.30));
+ok(casi(Math.round(87.80 * 5.30 * 10000) / 10000, 465.34),
+   "y para cobrar 87,80 USDT el cliente da 465,34 BRL");
+ok(F._deudaCubierta(465.34, 0) === 0, "sin tasa no inventa una conversion");
+
+// El aviso de tasa al reves, misma idea que el del salto de 10x al escribir
+// un saldo a mano: el numero solo no dice en que direccion esta escrito.
+ok(F._htmlTasaInvertida(0.1956, 5.1126, "USDT", "BRL").length > 0,
+   "escribir 0,1956 cuando toca 5,1126 avisa");
+ok(F._htmlTasaInvertida(5.30, 5.1126, "USDT", "BRL") === "",
+   "escribir 5,30 no avisa: es la direccion buena");
+ok(F._htmlTasaInvertida(0.00104, 960, "USDT", "VES").length > 0,
+   "y avisa igual con bolivares");
+ok(F._htmlTasaInvertida(1.02, 1.0, "USDT", "USD") === "",
+   "con tasas cerca de 1 se calla: las dos direcciones se parecen");
+ok(F._htmlTasaInvertida(0, 5.1126, "USDT", "BRL") === "",
+   "y con el campo vacio no molesta");
+
+// La cuenta escrita con palabras: es lo unico que hace visible la direccion.
+const _pal = F._htmlTasaEnPalabras(87.80, 5.30, "USDT", "BRL");
+ok(/465,34 BRL/.test(_pal) && /87,80 USDT/.test(_pal),
+   "la linea en palabras ensena la multiplicacion entera", _pal);
+ok(F._htmlTasaEnPalabras(0, 5.30, "USDT", "BRL") === "",
+   "y no aparece si todavia no hay de que hablar");
+ok(/87,80 USDT/.test(F._htmlEquivAbono(465.34, 5.30, "USDT", true, "del prestamo")),
+   "el recuadro verde divide, ya no multiplica");
+ok(/465,34 BRL/.test(F._htmlCalcPago(87.80, 5.30, "BRL")),
+   "y la calculadora al reves multiplica, ya no divide");
+
+// Guardias estructurales: que nadie vuelva a voltear la direccion.
+ok(/1 "\+monP\+" = \? "\+monPago\+"/.test(HTML),
+   "el rotulo del prestamo pregunta por la moneda del PAGO");
+ok(/1 "\+c\.moneda\+" = \? "\+monPagoCC\+"/.test(HTML),
+   "el de cuentas por cobrar tambien");
+ok(!/1 "\+monPago\+" = \? "\+monP\+"/.test(HTML) &&
+   !/1 "\+monPagoCC\+" = \? "\+c\.moneda\+"/.test(HTML),
+   "y no queda ningun rotulo con la direccion vieja");
+ok(!/monto = Math\.round\(\(montoIngresado\*tasaManual\)\*100\)\/100;/.test(HTML),
+   "ni un solo sitio multiplica el monto recibido por la tasa manual");
+ok((HTML.match(/_deudaCubierta\(montoIngresado,tasaManual\)/g) || []).length === 2,
+   "prestamos y cuentas por cobrar convierten por el mismo sitio");
+ok(/np\.monto=Math\.round\(\(obj\*tm\)\*10000\)\/10000;/.test(HTML),
+   "la calculadora al reves multiplica");
+// El recuadro verde se quedaba con la cuenta vieja porque solo se refrescaba
+// el monto: la pantalla ensenaba 16.566 arriba y 2.635,43 abajo.
+ok(/id='pp-eq'/.test(HTML) && /getElementById\("pp-eq"\)/.test(HTML),
+   "el recuadro verde se refresca en vivo, no se queda viejo");
+ok(/id='pp-dir'/.test(HTML) && /id='pp-inv'/.test(HTML),
+   "la linea en palabras y el aviso tienen su sitio en pantalla");
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
