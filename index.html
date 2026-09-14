@@ -915,6 +915,12 @@ function esBancoVES(cuentaId){
   return c.moneda==="VES" && (c.tipo==="banco" || c.tipo==="fiat");
 }
 function COM(){return parseFloat((S.config&&S.config.comision_usdt)||0.06);}
+// ARREGLO 40 (14/09/2026): un cero de verdad es un cero. Antes se escribía
+// `parseFloat(...) || COM()` y el 0 se descartaba por ser "falsy", así que
+// entraba la comisión por defecto (0,06). Con una conversión de Binance sin
+// comisión el lote quedaba cobrando 0,06 USDT que nunca se pagaron: la compra
+// CNV-PG6CG3 acreditó 196,0073 USDT cuando Binance entregó 196,0673.
+function _comIU(v){ var n=parseFloat(v); return isNaN(n)?COM():n; }
 // Comisión lado VES (Binance Venezuela) — configurable, actualmente exonerada = 0
 function COMVES(){var v=(S.config&&S.config.comision_usdt_ves);return v!==undefined?parseFloat(v):COM();}
 
@@ -6270,7 +6276,7 @@ function delCl(cod){
 }
 function saveIU(){
   var f=S.nIU;
-  var usdt=parseFloat(f.usdt)||0,tasa=parseFloat(f.tasa)||0,com=parseFloat(f.comision)||COM();
+  var usdt=parseFloat(f.usdt)||0,tasa=parseFloat(f.tasa)||0,com=_comIU(f.comision);
   if(!f.fecha||!usdt||!tasa){alert("Completa: fecha, USDT y tasa.");return;}
   if(!confirmarFechaFutura(f.fecha,"Esta operación")) return;
   // Confirmación con resumen — para detectar a tiempo si la moneda/cuenta
@@ -9097,51 +9103,128 @@ function _abrirPegado(){
   if(!txt||!txt.trim()) return;
   var parsed=_parsearOCR(txt.trim());
   if(parsed&&(parsed.usdt||parsed.tasa||parsed.monto)){
-    // Llenar S.nIU directamente — es el formulario con las cuentas
-    S.nIU.tipo      = parsed.tipo  ||'compra';
-    S.nIU.plataforma  = 'Binance P2P';
-    if(parsed.tasa)  S.nIU.tasa       = parsed.tasa;
-    if(parsed.usdt)  S.nIU.usdt       = parsed.usdt;
-    if(parsed.ordenId) S.nIU.ordenId  = parsed.ordenId;
-    if(parsed.comision!==undefined) S.nIU.comision = parsed.comision;
-    // Compra y venta usan campos DISTINTOS para la moneda y el monto fiat:
-    // COMPRA → moneda + montOrigen (lo que pagaste)
-    // VENTA  → monedaVenta + bsRecibidos (lo que recibiste)
-    if(parsed.tipo==='venta'){
-      S.nIU.monedaVenta = parsed.moneda||'VES';
-      if(parsed.monto) S.nIU.bsRecibidos = parsed.monto;
-    } else {
-      S.nIU.moneda = parsed.moneda||'VES';
-      if(parsed.monto) S.nIU.montOrigen = parsed.monto;
-    }
-    if(parsed.fecha) S.nIU.fecha = parsed.fecha;
-    else if(!S.nIU.fecha){
-      var h=new Date();
-      S.nIU.fecha=h.getFullYear()+'-'+String(h.getMonth()+1).padStart(2,'0')+'-'+String(h.getDate()).padStart(2,'0');
-    }
-    S._pasteOk='✅ '+( parsed.tipo==='compra'?'Compra':'Venta')+' '+
-      (parsed.moneda||'')+(parsed.monto?' · '+parsed.monto:'')+(parsed.usdt?' · '+parsed.usdt+' USDT':'')+(parsed.tasa?' · Tasa: '+parsed.tasa:'')+
-      ' — Selecciona las cuentas y guarda';
-    S._pasteErr=null;
+    if(!_rellenarDesdePegado(parsed)) return;
   } else {
     S._pasteOk=null;
     S._pasteErr='No identifiqué los datos. Texto recibido: "'+txt.substring(0,80)+'"';
   }
   R();
 }
+
+// ── Pasar al formulario lo leído, previa confirmación ────────────────────────
+// Lo usan el pegado de texto y la lectura de imagen, para que los dos caminos
+// enseñen exactamente lo mismo. Devuelve false si ella dice que no cuadra.
+function _rellenarDesdePegado(parsed){
+  if(!confirm(_resumenPegado(parsed))){
+    S._pasteOk=null;
+    S._pasteErr='Pegado cancelado — no se tocó ningún campo. Corrige el texto y vuelve a pegarlo, o llena los campos a mano.';
+    R(); return false;
+  }
+  // Llenar S.nIU directamente — es el formulario con las cuentas
+  S.nIU.tipo      = parsed.tipo  ||'compra';
+  S.nIU.plataforma  = 'Binance P2P';
+  if(parsed.tasa)  S.nIU.tasa       = parsed.tasa;
+  if(parsed.usdt)  S.nIU.usdt       = parsed.usdt;
+  if(parsed.ordenId) S.nIU.ordenId  = parsed.ordenId;
+  if(parsed.comision!==undefined) S.nIU.comision = parsed.comision;
+  // Compra y venta usan campos DISTINTOS para la moneda y el monto fiat:
+  // COMPRA → moneda + montOrigen (lo que pagaste)
+  // VENTA  → monedaVenta + bsRecibidos (lo que recibiste)
+  if(parsed.tipo==='venta'){
+    S.nIU.monedaVenta = parsed.moneda||'VES';
+    if(parsed.monto) S.nIU.bsRecibidos = parsed.monto;
+  } else {
+    S.nIU.moneda = parsed.moneda||'VES';
+    if(parsed.monto) S.nIU.montOrigen = parsed.monto;
+  }
+  if(parsed.fecha) S.nIU.fecha = parsed.fecha;
+  else if(!S.nIU.fecha){
+    var h=new Date();
+    S.nIU.fecha=h.getFullYear()+'-'+String(h.getMonth()+1).padStart(2,'0')+'-'+String(h.getDate()).padStart(2,'0');
+  }
+  S._pasteOk=(parsed.cuadra?'✅ ':'⚠️ ')+( parsed.tipo==='compra'?'Compra':'Venta')+' '+
+    (parsed.moneda||'')+(parsed.monto?' · '+parsed.monto:'')+(parsed.usdt?' · '+parsed.usdt+' USDT':'')+
+    (parsed.tasa?' · Tasa: '+parsed.tasa:'')+' · Comisión: '+(parsed.comision||0)+' USDT'+
+    (parsed.cuadra?' — Selecciona las cuentas y guarda'
+                  :' — NO cuadra con el comprobante, revisa los campos antes de guardar');
+  S._pasteErr=null;
+  return true;
+}
 function _limpiarPaste(){S._pasteOk=null;S._pasteErr=null;R();}
 
-function _normNum(s){
-  s=String(s||'').trim().replace(/\s/g,'');
-  // Binance usa consistentemente: coma=separador de miles, punto=decimal
-  // Confirmado con comprobantes reales: "Bs 10,000"→10000  "R$ 5.244"→5.244
-  // Excepción rara: coma+1-2 dígitos AL FINAL sin más comas → es decimal (10,70)
-  if(/,\d{1,2}$/.test(s) && !/,\d{3}/.test(s) && (s.match(/,/g)||[]).length===1){
-    s=s.replace(',','.');
-  } else {
-    s=s.replace(/,/g,''); // todas las demás comas son separador de miles
+// ── Leer los números de un comprobante de Binance ─────────────────────────────
+// ARREGLO 40 (14/09/2026): antes esto daba por hecho que Binance SIEMPRE escribe
+// coma=miles y punto=decimal. Es cierto en la app en inglés, pero al fotografiar
+// la pantalla y pasarla por el lector de imágenes de Google el texto sale en
+// español, y entonces "Bs 19.996,8" se leía como 19,996 — se perdían 19.977 Bs.
+// Ahora el idioma se deduce UNA vez del propio texto: cualquier número que traiga
+// los dos separadores lo desvela, porque el ÚLTIMO de los dos es el decimal.
+function _localeOCR(t){
+  var m=String(t||'').match(/\d[\d.,]*[.,]\d+/g)||[];
+  for(var i=0;i<m.length;i++){
+    var iC=m[i].lastIndexOf(','), iP=m[i].lastIndexOf('.');
+    if(iC>-1&&iP>-1) return iC>iP?',':'.';
   }
-  return parseFloat(s)||0;
+  return '.'; // sin pistas, el formato propio de Binance: punto=decimal
+}
+function _numOCR(s, dec){
+  s=String(s||'').replace(/\s/g,'').replace(/[^0-9.,\-]/g,'');
+  if(!s) return 0;
+  var neg=s.charAt(0)==='-'; s=s.replace(/-/g,'');
+  var mil=(dec===',')?'.':',';
+  s=s.split(mil).join('');           // fuera los separadores de miles
+  if(dec!=='.') s=s.split(dec).join('.');
+  var n=parseFloat(s);
+  if(isNaN(n)) return 0;
+  return neg?-n:n;
+}
+
+// ── Todos los números que el comprobante enseña, sin mirar etiquetas ──────────
+// El lector de imágenes DESORDENA las etiquetas: en un comprobante real salió
+//   "Cantidad total / Cantidad liberada / 20.89 USDT / Comisión / 20.83 USDT / 0.06 USDT"
+// y buscar el número que sigue a la palabra "Comisión" se llevaba 20,83 (que es
+// la cantidad liberada). Con eso el lote nacía diciendo que se vendieron 6
+// céntimos de USDT. Por eso ahora se recogen todos los candidatos y se decide
+// con la aritmética del propio comprobante, no con la cercanía de la etiqueta.
+function _candUSDT(t, dec){
+  var out=[], m, re=/(-?[\d][\d.,]*)\s*USDT/gi;
+  while((m=re.exec(t))!==null) out.push(Math.abs(_numOCR(m[1],dec)));
+  out.push(0); // la comisión puede ser 0 aunque el lector no la haya leído
+  return out;
+}
+function _candFiat(t, dec){
+  var out=[], m, i;
+  var res=[/(?:Bs\.?|R\$|S\/\.?|US\$)\s*(-?[\d][\d.,]*)/gi,
+           /(-?[\d][\d.,]*)\s*(?:BRL|VES|PEN|COP|EUR|USD)\b/gi,
+           /(?:Importe|Monto|Amount|Precio|Price|Cantidad\s*en\s*fiat)[^\d]{0,15}(-?[\d][\d.,]*)/gi];
+  for(i=0;i<res.length;i++){ while((m=res[i].exec(t))!==null) out.push(Math.abs(_numOCR(m[1],dec))); }
+  return out;
+}
+
+// ── Cuadrar el comprobante P2P con sus propias cuentas ────────────────────────
+// Un comprobante de Binance se comprueba solo:
+//     cantidad total = cantidad liberada + comisión
+//     importe en fiat = cantidad liberada × precio
+// Sólo una combinación de los números leídos cumple las dos. Si hay más de una,
+// o ninguna, se devuelve null y el parser avisa en vez de rellenar a ciegas.
+function _cuadrarP2P(U, F){
+  var vistas={}, sol=null, a,b,c,i,j;
+  for(a=0;a<U.length;a++) for(b=0;b<U.length;b++) for(c=0;c<U.length;c++){
+    if(a===b||a===c||b===c) continue;
+    var tot=U[a], lib=U[b], com=U[c];
+    if(!(tot>0)||!(lib>0)||!(com>=0)) continue;
+    if(com>=lib) continue;                              // la comisión nunca supera lo liberado
+    if(Math.abs(tot-(lib+com))>0.005) continue;
+    for(i=0;i<F.length;i++) for(j=0;j<F.length;j++){
+      if(i===j) continue;
+      var imp=F[i], pre=F[j];
+      if(!(imp>0)||!(pre>0)) continue;
+      if(Math.abs(imp-lib*pre)>Math.max(0.05, imp*0.002)) continue;
+      var firma=tot+'|'+lib+'|'+com+'|'+imp+'|'+pre;
+      if(!vistas[firma]){ vistas[firma]=1; sol={usdt:tot,liberado:lib,comision:com,monto:imp,tasa:pre}; }
+    }
+  }
+  return Object.keys(vistas).length===1?sol:null;
 }
 
 function _parsearOCR(txt){
@@ -9151,6 +9234,7 @@ function _parsearOCR(txt){
   // al pegar en móvil — cada campo se busca por CERCANÍA a su etiqueta,
   // no por posición de línea.
   var t=txt.replace(/[\r\n]+/g,' ').replace(/\s+/g,' ').trim();
+  var dec=_localeOCR(t);
   var r={tipo:'compra',moneda:'VES',comision:0};
 
   // ── ARREGLO 25 (02/09/2026): formato "Detalles de la conversión" ─────────
@@ -9161,23 +9245,27 @@ function _parsearOCR(txt){
   if(esConversion){
     // Direccion: lo que se RECIBE define si es compra o venta de USDT
     var mA=t.match(/\bA\s+(USDT|BRL|VES|PEN|COP|EUR)\b/i);
-    var mDesde=t.match(/Cuenta\s*Spot[^\d]{0,10}([\d]+[.,]?[\d]*)\s*(USDT|BRL|VES|PEN|COP|EUR)/i);
+    var mDesde=t.match(/Cuenta\s*Spot[^\d]{0,10}([\d][\d.,]*)\s*(USDT|BRL|VES|PEN|COP|EUR)/i);
     if(mA) r.tipo = /USDT/i.test(mA[1]) ? 'compra' : 'venta';
     // Tasa: "1 USDT = 5.1136 BRL"
-    var mTasa=t.match(/1\s*USDT\s*=\s*([\d]+[.,]?[\d]*)\s*(USDT|BRL|VES|PEN|COP|EUR)/i);
-    if(mTasa){ r.tasa=_normNum(mTasa[1]); r.moneda=mTasa[2].toUpperCase(); }
+    var mTasa=t.match(/1\s*USDT\s*=\s*([\d][\d.,]*)\s*(USDT|BRL|VES|PEN|COP|EUR)/i);
+    if(mTasa){ r.tasa=_numOCR(mTasa[1],dec); r.moneda=mTasa[2].toUpperCase(); }
     // USDT: acepta hasta 8 decimales
     var mU8=t.match(/([\d]+[.,][\d]{1,8})\s*USDT/i);
-    if(mU8) r.usdt=_normNum(mU8[1]);
+    if(mU8) r.usdt=_numOCR(mU8[1],dec);
     // Monto en fiat: el lado de "Cuenta Spot" que NO es USDT
-    if(mDesde && !/USDT/i.test(mDesde[2])){ r.monto=_normNum(mDesde[1]); r.moneda=mDesde[2].toUpperCase(); }
+    if(mDesde && !/USDT/i.test(mDesde[2])){ r.monto=_numOCR(mDesde[1],dec); r.moneda=mDesde[2].toUpperCase(); }
     else if(r.usdt && r.tasa){ r.monto=Math.round(r.usdt*r.tasa*100)/100; }
-    // Comision: "Comisiones de transacción 0.00 USDT"
-    var mC2=t.match(/Comisi[oó]n(?:es)?\s*(?:de\s*transacci[oó]n)?[^\d]{0,12}([\d]+[.,]?[\d]*)\s*USDT/i);
-    if(mC2) r.comision=_normNum(mC2[1]);
+    // Comision: "Comisiones de transacción 0.00 USDT". Una conversión no cobra
+    // comisión casi nunca, y un 0 leído de verdad tiene que llegar como 0.
+    var mC2=t.match(/Comisi[oó]n(?:es)?\s*(?:de\s*transacci[oó]n)?[^\d]{0,12}([\d][\d.,]*)\s*USDT/i);
+    if(mC2) r.comision=_numOCR(mC2[1],dec);
     // Fecha del trade
     var mF2=t.match(/Fecha\s*del\s*trade[^\d]{0,10}(\d{4})-(\d{2})-(\d{2})/i);
     if(mF2) r.fecha=mF2[1]+"-"+mF2[2]+"-"+mF2[3];
+    // La conversión también se comprueba sola: monto = USDT × tasa
+    r.cuadra = !!(r.usdt&&r.tasa&&r.monto) &&
+               Math.abs(r.monto-r.usdt*r.tasa)<=Math.max(0.05, r.monto*0.002);
     // Numero de orden propio: derivado del contenido, asi que volver a pegar
     // el mismo comprobante genera el MISMO id y el control de duplicados actua.
     var base=[r.fecha||"",r.tipo,r.moneda,r.usdt||"",r.tasa||"",r.monto||""].join("|");
@@ -9198,41 +9286,45 @@ function _parsearOCR(txt){
   else if(/\bCOP\b/i.test(t)) r.moneda='COP';
   else if(/\bEUR\b/i.test(t)) r.moneda='EUR';
 
-  // ── USDT total: priorizar etiqueta "Cantidad total" (evita confundir con
-  // "Cantidad liberada" que aparece en ventas y es un valor distinto) ────────
-  var mUsdtTotal=t.match(/Cantidad\s*total[^\d]{0,10}([\d]+[.,][\d]{1,4})\s*USDT/i);
-  if(mUsdtTotal) r.usdt=_normNum(mUsdtTotal[1]);
-  else {
-    var mu=t.match(/([\d]+[.,][\d]{1,4})\s*USDT/i);
-    if(mu) r.usdt=_normNum(mu[1]);
+  // ── Los cinco números del comprobante, cuadrados entre ellos ─────────────
+  var cuadre=_cuadrarP2P(_candUSDT(t,dec), _candFiat(t,dec));
+  if(cuadre){
+    r.usdt=cuadre.usdt; r.liberado=cuadre.liberado; r.comision=cuadre.comision;
+    r.monto=cuadre.monto; r.tasa=cuadre.tasa; r.cuadra=true;
+  } else {
+    // No cuadró: se cae a la lectura por etiqueta, pero marcada como dudosa
+    // para que la pantalla lo diga antes de rellenar nada.
+    r.cuadra=false;
+    var mUsdtTotal=t.match(/Cantidad\s*total[^\d]{0,10}([\d][\d.,]*)\s*USDT/i);
+    if(mUsdtTotal) r.usdt=_numOCR(mUsdtTotal[1],dec);
+    else {
+      var mu=t.match(/([\d]+[.,][\d]{1,4})\s*USDT/i);
+      if(mu) r.usdt=_numOCR(mu[1],dec);
+    }
+    var mCom=t.match(/Comisi[oó]n[^\d]{0,12}([\d][\d.,]*)\s*USDT/i)||
+             t.match(/(?:Fee|Commission)[^\d]{0,12}([\d][\d.,]*)\s*USDT/i);
+    if(mCom) r.comision=_numOCR(mCom[1],dec);
+    var mPrecio=t.match(/Precio[^\d]{0,15}([\d][\d.,]*)/i)||
+                t.match(/Price[^\d]{0,15}([\d][\d.,]*)/i);
+    if(mPrecio) r.tasa=_numOCR(mPrecio[1],dec);
+    var mImporte=t.match(/Importe\s*en\s*fiat[^\d]{0,15}([\d][\d.,]*)/i)||
+                 t.match(/Cantidad\s*en\s*fiat[^\d]{0,15}([\d][\d.,]*)/i)||
+                 t.match(/(?:Importe|Monto)[^\d]{0,15}([\d][\d.,]*)/i)||
+                 t.match(/Amount[^\d]{0,15}([\d][\d.,]*)/i);
+    if(mImporte) r.monto=_numOCR(mImporte[1],dec);
   }
 
-  // ── Comisión: etiqueta + número cercano (por defecto 0 si dice "0 USDT") ─
-  var mCom=t.match(/Comisi[oó]n[^\d]{0,12}([\d]+[.,]?[\d]*)\s*USDT/i)||
-            t.match(/(?:Fee|Commission)[^\d]{0,12}([\d]+[.,]?[\d]*)\s*USDT/i);
-  if(mCom) r.comision=_normNum(mCom[1]);
-
-  // ── Precio / Tasa ──────────────────────────────────────────────────────
-  var mPrecio=t.match(/Precio[^\d]{0,15}([\d]+[.,]?[\d]{0,4})/i)||
-              t.match(/Price[^\d]{0,15}([\d]+[.,]?[\d]{0,4})/i);
-  if(mPrecio) r.tasa=_normNum(mPrecio[1]);
-
-  // ── Importe en fiat / Monto ──────────────────────────────────────────────
-  var mImporte=t.match(/Importe\s*en\s*fiat[^\d]{0,15}([\d]+[.,]?[\d]{0,3})/i)||
-               t.match(/Cantidad\s*en\s*fiat[^\d]{0,15}([\d]+[.,]?[\d]{0,3})/i)||
-               t.match(/(?:Importe|Monto)[^\d]{0,15}([\d]+[.,]?[\d]{0,3})/i)||
-               t.match(/Amount[^\d]{0,15}([\d]+[.,]?[\d]{0,3})/i);
-  if(mImporte) r.monto=_normNum(mImporte[1]);
-
-  // ── Order ID: buscar primero cerca de la etiqueta (tolera espacios que
-  // a veces mete el OCR de Google Lens en medio de números largos) ──────────
-  var mOrdLabel=t.match(/(?:N\.?\s*[ºo°]\.?\s*de\s*orden|Nro\.?\s*de\s*orden|Orden\s*n[uú]mero|Order\s*(?:ID|No|number)?)[^\d]{0,10}((?:\d[\s]?){15,30})/i);
-  if(mOrdLabel){
-    r.ordenId=mOrdLabel[1].replace(/\s/g,'');
-  } else {
-    // Fallback: cualquier corrida de 15-25 dígitos consecutivos en el texto
-    var mOrd=t.match(/\b(\d{15,25})\b/);
-    if(mOrd) r.ordenId=mOrd[1];
+  // ── Order ID ────────────────────────────────────────────────────────────
+  // Primero una corrida seguida de dígitos: es lo normal y no se puede confundir.
+  // El comodín que tolera espacios (los mete a veces el lector de imágenes en
+  // medio de números largos) se tragaba el año de la fecha que venía detrás:
+  // "22932584057963716608 2026-09-13" quedaba como ...6608 2026, y con el número
+  // de orden contaminado el aviso de comprobante repetido no saltaba nunca.
+  var mOrd=t.match(/\b(\d{15,25})\b/);
+  if(mOrd) r.ordenId=mOrd[1];
+  else {
+    var mOrdLabel=t.match(/(?:N\.?\s*[ºo°]\.?\s*de\s*orden|Nro\.?\s*de\s*orden|Orden\s*n[uú]mero|Order\s*(?:ID|No|number)?)[^\d]{0,10}((?:\d[\s]?){15,30})/i);
+    if(mOrdLabel) r.ordenId=mOrdLabel[1].replace(/\s/g,'').substring(0,20);
   }
 
   // ── Fecha ISO (yyyy-mm-dd) ────────────────────────────────────────────────
@@ -9245,6 +9337,35 @@ function _parsearOCR(txt){
   if(!r.tasa&&r.usdt&&r.monto&&r.usdt>0) r.tasa=Math.round(r.monto/r.usdt*100)/100;
 
   return r;
+}
+
+// ── Lo que el lector entendió, para que se vea ANTES de rellenar ─────────────
+// Rellenar callado es lo que dejó pasar una comisión de 20,83 USDT donde eran
+// 0,06. Ahora se enseña el desglose y la comprobación, y hay que decir que sí.
+// Ni f2 ni f4 sirven para la tasa: f2 se comeria el cuarto decimal con el que
+// se calcula la ganancia. Se enseña el numero tal cual, solo cambiando el punto
+// por coma para que "5.111" no se lea como cinco mil ciento once.
+function _numLegible(n){ return String(n).replace('.',','); }
+function _resumenPegado(p){
+  var lib=(p.liberado!==undefined)?p.liberado:p.usdt;
+  var L=[];
+  L.push((p.tipo==='compra'?'COMPRA':'VENTA')+' de USDT · '+(p.moneda||'?'));
+  L.push('');
+  L.push('Cantidad total ..... '+f2(p.usdt||0)+' USDT   (lo que sale/entra en Binance)');
+  L.push('Comisión ........... '+_numLegible(p.comision||0)+' USDT');
+  if(lib!==p.usdt) L.push('Liberado ........... '+f2(lib||0)+' USDT');
+  L.push('Precio ............. '+_numLegible(p.tasa||0));
+  L.push('Importe ............ '+f2(p.monto||0)+' '+(p.moneda||''));
+  L.push('');
+  L.push(p.cuadra
+    ? '✔ Cuadra: '+f2(lib||0)+' × '+_numLegible(p.tasa||0)+' = '+f2(p.monto||0)
+    : '⚠️ NO CUADRA con el propio comprobante ('+f2(lib||0)+' × '+_numLegible(p.tasa||0)+' = '+
+      f2((lib||0)*(p.tasa||0))+', no '+f2(p.monto||0)+').\nRevisa cada campo a mano antes de guardar.');
+  if(p.ordenId) L.push('Orden .............. '+p.ordenId);
+  if(p.fecha)   L.push('Fecha .............. '+p.fecha);
+  L.push('');
+  L.push('¿Es esto lo que dice tu comprobante?');
+  return L.join('\n');
 }
 
 function _ocrUpdateUI(status, pct, result, error){
@@ -9362,33 +9483,18 @@ async function leerComprobanteOCR(input){
 
     var parsed=_parsearOCR(txt);
     if(parsed&&(parsed.usdt||parsed.tasa||parsed.monto)){
-      // Llenar S.nIU — el formulario REAL de Inventario USDT (antes esto
+      // Llena S.nIU — el formulario REAL de Inventario USDT (antes esto
       // llenaba S._qf, un formulario que no existe en ninguna pantalla,
       // así que el resultado del OCR nunca se veía reflejado en ningún lado).
-      S.nIU.tipo = parsed.tipo || 'compra';
-      S.nIU.plataforma = 'Binance P2P';
-      if(parsed.tasa)    S.nIU.tasa = parsed.tasa;
-      if(parsed.usdt)    S.nIU.usdt = parsed.usdt;
-      if(parsed.ordenId) S.nIU.ordenId = parsed.ordenId;
-      if(parsed.comision!==undefined) S.nIU.comision = parsed.comision;
-      if(parsed.tipo==='venta'){
-        S.nIU.monedaVenta = parsed.moneda||'VES';
-        if(parsed.monto) S.nIU.bsRecibidos = parsed.monto;
-      } else {
-        S.nIU.moneda = parsed.moneda||'VES';
-        if(parsed.monto) S.nIU.montOrigen = parsed.monto;
+      // Pasa por el mismo sitio que el pegado de texto, para que los dos
+      // caminos enseñen el mismo desglose y la misma comprobación.
+      if(_rellenarDesdePegado(parsed)){
+        var resumen=(parsed.tipo==='compra'?'Compra':'Venta')+' '+(parsed.moneda||'?')+
+          (parsed.monto?' · '+parsed.monto:'')+(parsed.usdt?' · '+parsed.usdt+' USDT':'')+
+          (parsed.tasa?' · Tasa: '+parsed.tasa:'')+' · Comisión: '+(parsed.comision||0)+' USDT';
+        _ocrUpdateUI(null,-1,resumen,null);
+        R(); // solo R() al final cuando ya tenemos resultado
       }
-      if(parsed.fecha) S.nIU.fecha = parsed.fecha;
-      else if(!S.nIU.fecha){
-        var h=new Date();
-        S.nIU.fecha=h.getFullYear()+'-'+String(h.getMonth()+1).padStart(2,'0')+'-'+String(h.getDate()).padStart(2,'0');
-      }
-      var resumen=(parsed.tipo==='compra'?'Compra':'Venta')+' '+(parsed.moneda||'?')+
-        (parsed.monto?' · '+parsed.monto:'')+(parsed.usdt?' · '+parsed.usdt+' USDT':'')+(parsed.tasa?' · Tasa: '+parsed.tasa:'');
-      S._pasteOk='✅ '+resumen+' — Selecciona las cuentas y guarda';
-      S._pasteErr=null;
-      _ocrUpdateUI(null,-1,resumen,null);
-      R(); // solo R() al final cuando ya tenemos resultado
     } else {
       _ocrUpdateUI(null,-1,null,'Texto leído: "'+txt.replace(/\n/g,' ').substring(0,150)+'" — Completa los campos manualmente.');
       _mostrarBitacora();
@@ -16199,7 +16305,7 @@ function rNuevaEE(){
 function toggleArchivados(){ S._verArchivados=!S._verArchivados; R(); }
 function rInventarioUsdt(){
   sincronizarFIFOconCuentas();
-  var f=S.nIU;var com=parseFloat(f.comision)||COM();
+  var f=S.nIU;var com=_comIU(f.comision);
   var prevUsdt=parseFloat(f.usdt)||0,prevTasa=parseFloat(f.tasa)||0;
   var prevMontOrigen=parseFloat(f.montOrigen)||0;
   // Para compra: calcular USDT esperados desde montOrigen ÷ tasa
