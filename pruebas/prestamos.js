@@ -54,7 +54,7 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "cuotasRecomendadas", "limiteCredito",
                     "costoOperativoPorPrestamo", "pctCostoOperativo",
                     "capitalRealTotal", "_mesesDesde", "_acumuladosMes",
-                    "conciliacionCapital", "getMesKeyActual",
+                    "conciliacionCapital", "getMesKeyActual", "ajustesDesdeApertura", "_isoDeDDMMAA",
                     "montoAUsdt", "montoConMoneda", "_unicos",
                     "_marcarCambiados", "_refotografiar", "_mergeArrayById",
                     "_marcarTodoLoQueSeFusiona", "_marcarObjetosCambiados",
@@ -1637,6 +1637,88 @@ ok(/if\(!_puedeDesglosar && S\.tx\.pagosMulti\) S\.tx\.pagosMulti=false;/.test(H
 ok(/inputmode='decimal'[^>]*onc?input='txPagoSet/.test(HTML) ||
    /txPagoSet\([^)]*\\"monto\\"/.test(HTML) && !/type='number'[^>]*txPagoSet/.test(HTML),
    "los montos del desglose no son type=number");
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// La apertura que se perdia, y de que esta hecha la diferencia (ARREGLO 46)
+// ─────────────────────────────────────────────────────────────────────────────
+console.log("\n— La apertura y la diferencia —");
+
+// 1. Una clave NUEVA dentro de un objeto YA fotografiado tiene que marcarse.
+//    Sin marca pierde contra la copia del otro aparato: la dueña fijaba la
+//    apertura, el otro aparato mandaba la vieja, y volvia la diferencia.
+//    Pero si no hay foto de NADA (primer guardado tras abrir la app) se sigue
+//    sin marcar: eso es ARREGLO 33 y no se toca.
+global.window._fotoPorClave = undefined;
+S._modCampos = {};
+S.config = { pct_sueldo: 30 };
+S.tasasDia = {}; S.tasasCambio = {}; S._tasasDiaMeta = {};
+F._marcarObjetosCambiados();
+ok(Object.keys((S._modCampos.config) || {}).length === 0,
+   "sin foto de nada no se marca (ARREGLO 33 sigue en pie)",
+   JSON.stringify(S._modCampos.config));
+S.config.aperturaUsdt = 2456.20;          // clave nueva, el objeto ya tiene foto
+F._marcarObjetosCambiados();
+ok(typeof (S._modCampos.config || {}).aperturaUsdt === "number",
+   "una clave NUEVA en un objeto ya fotografiado si se marca",
+   JSON.stringify(S._modCampos.config));
+S.config.pct_sueldo = 35;                 // y un cambio normal, como siempre
+F._marcarObjetosCambiados();
+ok(typeof S._modCampos.config.pct_sueldo === "number",
+   "y un cambio de valor tambien");
+
+// 2. Sin marca de ningun lado, la fusion se queda con lo VIEJO. Es lo que hacia
+//    que refijar la apertura no sirviera de nada.
+const respaldoCfg = function (k, vr, vl) {
+  return vl === undefined || vl === null || vl === "" || vl === 0;
+};
+S._modCampos = {};
+const sinMarca = F._mergeObjetoPorClave(
+  { aperturaUsdt: 2456.20 }, { aperturaUsdt: 2372.71 }, "config", {}, respaldoCfg);
+ok(sinMarca.aperturaUsdt === 2372.71,
+   "sin marca gana la apertura vieja — por eso hacia falta marcarla", sinMarca.aperturaUsdt);
+S._modCampos = {};
+const conMarca = F._mergeObjetoPorClave(
+  { aperturaUsdt: 2456.20 }, { aperturaUsdt: 2372.71 }, "config",
+  { config: { aperturaUsdt: Date.now() } }, respaldoCfg);
+ok(conMarca.aperturaUsdt === 2456.20,
+   "con marca gana la nueva, que es lo que la dueña acaba de fijar", conMarca.aperturaUsdt);
+
+// 3. De que esta hecha la diferencia: los ajustes a mano se explican solos.
+ok(F._isoDeDDMMAA("12/09/26") === "2026-09-12", "12/09/26 es 2026-09-12", F._isoDeDDMMAA("12/09/26"));
+ok(F._isoDeDDMMAA("") === "" && F._isoDeDDMMAA("raro") === "", "y lo que no es fecha, no revienta");
+
+S.cuentas = [
+  { id: "cves", nombre: "Banco VES", moneda: "VES" },
+  { id: "cusdt", nombre: "Binance", moneda: "USDT" },
+  { id: "cper", nombre: "Mi sueldo", moneda: "USDT", esPersonal: true }
+];
+S.ajustesSaldo = [
+  { fecha: "10/09/26", cuentaId: "cusdt", delta: 999 },   // antes de la apertura
+  { fecha: "11/09/26", cuentaId: "cusdt", delta: -7 },    // el MISMO dia, sin hora
+  { fecha: "12/09/26", cuentaId: "cusdt", delta: 51.52 }, // despues
+  { fecha: "13/09/26", cuentaId: "cves", delta: -2000 },  // despues, en bolivares
+  { fecha: "13/09/26", cuentaId: "cper", delta: 500 }     // personal: no es de la empresa
+];
+const ajs = F.ajustesDesdeApertura("2026-09-11");
+ok(ajs.n === 2, "cuenta los dos ajustes posteriores a la apertura", ajs.n);
+ok(ajs.total === Math.round((51.52 - 2000 / 200) * 100) / 100,
+   "y los suma en USDT (51,52 − 2.000/200 = 41,52)", ajs.total);
+ok(ajs.nMismoDia === 1 && ajs.mismoDia === -7,
+   "los del mismo dia van aparte: sin hora no se sabe si fue antes o despues");
+ok(F.ajustesDesdeApertura("").n === 0, "sin apertura no cuenta nada");
+
+// 4. El semaforo tiene que mirar lo que queda SIN EXPLICAR, no la diferencia
+//    bruta. Decia "tu contabilidad esta sana" justo debajo de un "sin explicar
+//    +116,09" — que es lo que hacia inutil la pantalla.
+ok(/var sano=Math\.abs\(sinExp\)<=tol;/.test(HTML),
+   "el semaforo mira lo que queda sin explicar");
+ok(!/var sano=Math\.abs\(dif\)<=tol;/.test(HTML),
+   "y ya no la diferencia bruta");
+ok(/sinExplicar:sinExplicar/.test(HTML) && /ajustes:ajustes/.test(HTML),
+   "conciliacionCapital devuelve el desglose");
+ok(/volver a fijar la apertura solo lo esconde/.test(HTML),
+   "y le dice que refijar la apertura no arregla nada");
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
