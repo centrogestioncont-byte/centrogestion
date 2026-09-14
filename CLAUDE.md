@@ -113,6 +113,9 @@ base con otros datos.
   Cierre de Mes. La "Ganancia" del encabezado suma solo remesas.
 - Los montos se guardan en la moneda pactada del préstamo; para sumar entre
   monedas se convierte a USDT con `getRateToUsdt()` (divide, no multiplica).
+- **La tasa con la que se valora el dinero parado sale sola.** `getRateToUsdt()`
+  pasa por `tasaDeReferencia()`, que toma la **última** operación de USDT de esa
+  misma moneda. No la escribas en el código ni la des por manual.
 
 ---
 
@@ -337,6 +340,74 @@ lleva los bolívares que se le entregaron al cliente, y la comisión es un cobro
 aparte del banco. Por eso la cuenta va siempre un poco por debajo del FIFO,
 justo lo que se llevó el banco. No lo "arregles".
 
+### La tasa de referencia sale sola — no la escribas a mano
+
+Antes mandaba lo que ella escribía en el panel 💱, y mandaba para siempre:
+
+```js
+// como estaba
+if(S.tasasDia && S.tasasDia[moneda]) return parseFloat(S.tasasDia[moneda]);
+```
+
+Sus palabras: *"casi nunca me da tiempo de editarla todos los días"*. Así que el
+5,22 y el 940 que escribió una vez seguían valorando todo su dinero mientras
+compraba USDT a 5,11 y vendía a 960. Ese hueco es lo que la conciliación enseña
+como "desfase de las tasas del día".
+
+`tasaDeReferencia(moneda)` decide, en este orden:
+
+1. La que ella **fijó a mano** (`_tasasDiaMeta[mon].fijada`). Es una decisión
+   suya, no un olvido: manda.
+2. La **última operación de USDT de esa misma moneda** — compra o venta,
+   mirando también `inventarioUsdt_cerrado`, con `_tasaEfectivaLote()`.
+3. Lo último que escribió, aunque no lo fijara.
+4. Nada.
+
+Tres cosas que costó medir y que no hay que deshacer:
+
+- **La más nueva, no la del frente del FIFO.** `getLastTasaCompra()` devuelve el
+  lote más viejo que aún tiene saldo: eso es el **costo** de lo que se gasta, no
+  el **valor** de lo que hay. Con sus datos daba BRL 5,163 cuando su compra más
+  reciente fue a 5,1126.
+- **Los lotes cerrados cuentan.** Si no, una moneda pierde su tasa en cuanto se
+  consume todo lo que tenía.
+- **Va en una pasada, sin `concat` ni `sort`.** Esto lo llama `getRateToUsdt()`,
+  y `getRateToUsdt()` lo llama todo: con una apertura de tres meses la
+  conciliación pide la tasa unas dos mil veces. Ordenar 288 lotes en cada una
+  costaba 280 ms de dibujo.
+
+**Y la tasa nunca se presta entre monedas.** `getLastTasaVenta()` tenía un
+rescate —"si no hay lotes en esa moneda, mira todas las ventas"— escrito cuando
+el único destino era Venezuela. Con Colombia y Perú devolvía 960,2328 para el
+sol y para el peso: la tasa del bolívar. Sin lotes en esa moneda, `null`. Mejor
+sin tasa —que se ve y avisa— que con una que cuadra la pantalla y miente.
+
+### La conciliación tiene que poder explicarse sola
+
+`conciliacionCapital()` compara lo que deberías tener contra lo que tienes. Un
+número suelto no se puede perseguir, así que la diferencia viene desglosada, y
+**lo que quede sin explicar es lo único que hay que buscar**.
+
+- **Volver a fijar la apertura no arregla nada: la esconde.** Pone la diferencia
+  en cero y borra la pista. Ella lo dijo: *"no tiene chiste que lo tenga que
+  hacer todos los días, pierde la lógica de para qué está eso ahí"*. Para
+  corregir el número está `corregirApertura()`, que deja la fecha donde está.
+- **Al fijar la apertura se guarda la foto de los saldos y la hora**
+  (`aperturaSaldos`, `aperturaTs`), no solo el total. Sin la foto, cuando la
+  diferencia no cuadra no hay con qué comparar.
+- **Un traspaso a una cuenta 💜 personal es una salida.** No es egreso ni pago a
+  socio, así que `deberías tener` no se enteraba: solo bajaba `lo que tienes` y
+  la diferencia lo cantaba como fuga. `traspasosAPersonal()` baja los dos lados.
+- **El desfase de las tasas es aritmética, no dinero.** `efectoTasasDesde()` lo
+  mide y sale como línea propia: comparar lo que de verdad se movió en las
+  cuentas contra el `pr` apuntado nunca da cero, porque los saldos se valoran a
+  una tasa y las operaciones se hicieron a otra. Dentro de "sin explicar" era
+  ruido que tapaba lo de verdad.
+- **Los avisos no se pliegan.** La explicación va detrás de un desplegable
+  porque se lee una vez y estorba las otras cien, pero los avisos —moneda sin
+  tasa, apertura vieja— y el veredicto se ven siempre. Un aviso escondido no es
+  un aviso.
+
 ### La fecha de un lote va SIEMPRE en mm/dd
 
 `ordenFIFO` la lee como `mes×100 + día`. Hubo hasta tres formatos conviviendo
@@ -351,8 +422,22 @@ alguien lo haya hecho antes. `pruebas/prestamos.js` recorre el archivo entero y
 exige que **cada** `inventarioUsdt.push(` saque su fecha de ahí: si añades un
 sitio nuevo, falla.
 
-Pendiente, y se rompe en enero: `mm/dd` no lleva año, así que un lote del 01/01
-se ordenará antes que uno del 31/12 anterior.
+**El año va aparte, en `fechaIso`** (ARREGLO 51). Sin él, `ordenFIFO` leía
+`mes×100 + día` y en enero ponía lo de diciembre por delante de lo de enero —y
+desde el arreglo 49 eso también decidía la tasa con la que se valora todo.
+
+Los lotes nuevos lo guardan. Los ~290 que ya existen no, y **no se les
+reescribe**: `_isoDeLote()` lo deduce, y la deducción tiene dos trampas que hay
+que respetar. Un lote puede llevar fecha **adelantada a propósito**
+(`confirmarFechaFutura` lo permite, y pasó el 12/09 con un 18/09), así que "en
+el futuro" no significa "del año pasado": se admiten 30 días por delante. Y en
+el cambio de año pasa lo contrario — el 29 de diciembre, un `01/05` está a once
+meses hacia atrás si se lee de este año y a una semana hacia delante si se lee
+del siguiente; es del siguiente.
+
+Comprobado con sus 288 lotes reales: el orden FIFO, las tasas sugeridas y el
+consumo salen **idénticos** a antes. El arreglo solo se nota en el cambio de
+año, que es para lo que está.
 
 ### Al borrar una remesa, las monedas salen de la remesa
 
@@ -366,6 +451,29 @@ Con una remesa a Colombia eso es falso, y borrarla le devolvía al lote de
 bolívares los **pesos** que nunca salieron de ahí: medido, un lote pasaba de
 51.043,97 a 173.943,97. Cada remesa guarda su `orig` y su `dest`; se leen de
 ahí (`monedasDeRemesa()`).
+
+### El campo se come la coma decimal
+
+`type="number"` descarta en silencio lo que el navegador no considera un
+número, y con el teclado en español **la coma decimal es justo eso**. Por ahí
+se perdió el `0,003` de la comisión del banco: el campo se quedaba con `0003`.
+
+Un campo de dinero va `type="text" inputmode="decimal"`, y lo que guarda pasa
+por **`_num()`**. Las dos mitades son obligatorias: pasar el campo a texto sin
+normalizar es *peor* que dejarlo como estaba, porque los cien `parseFloat` que
+hay detrás leerían `"5,22"` como **5**. `_num()` normaliza en la puerta —deja
+`"5.22"` en `S.*`— para que todo lo de abajo siga funcionando sin tocarlo, y si
+todavía está a medio teclear devuelve el texto tal cual.
+
+`pruebas/prestamos.js` recorre las pantallas donde ella teclea dinero y exige
+que no quede ningún `type="number"` y que cada campo pase por `_num()`.
+
+**Quedan 68 sin convertir**, y no por olvido: son los que **otro sitio lee por
+`getElementById(...).value`**. Convertir el campo sin arreglar también su
+lector cambiaría "no acepta la coma" por "acepta la coma y se queda con 5 en
+vez de 5,22" — de un fallo que se ve a uno que no. Están en Configuración, la
+edición en línea de una remesa ya guardada, la calculadora y el conversor BCV.
+Cuando se toquen, hay que cambiar el lector a `_leerNumero()` en la misma pasada.
 
 ### Registra la operación — no escribas el saldo
 
