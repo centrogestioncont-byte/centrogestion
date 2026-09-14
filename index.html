@@ -13342,14 +13342,18 @@ function generarInformePDF(mesKey){
     totalPrestamosUsdt=Math.round(totalPrestamosUsdt*100)/100;
     // Total afuera = cobros pendientes + préstamos activos
     var totalAfuera=Math.round((totalCobrarUsdt+totalPrestamosUsdt)*100)/100;
-    // Si cobras todo = lo que hay en cuentas + todo lo que está afuera
-    var siCobrasTodo=Math.round((totalUsdtCuentas+totalAfuera)*100)/100;
+    // ARREGLO 57 (14/09/2026): el capital sale de capitalRealTotal(), la misma
+    // funcion que enseña Balance de Cuentas. Antes se sumaba a mano
+    // "cuentas + afuera" y se dejaba fuera la RESERVA: con sus cifras daba
+    // 2.302,34 cuando su capital son 2.479,17 — los 176,82 de la reserva.
+    // Dos pantallas de la misma app contando distinto el mismo dinero.
+    var _capReal=(typeof capitalRealTotal==="function")?capitalRealTotal():null;
+    var siCobrasTodo=_capReal?_capReal.total:Math.round((totalUsdtCuentas+totalAfuera)*100)/100;
+    var enReservaPDF=_capReal?_capReal.enReserva:0;
     // Neto empresa = utilidad - sueldo (lo que queda en caja después de pagarte)
     var netoEmpresa=Math.round(((calc.utilidadEmpresa||0)-(calc.sueldo||0))*100)/100;
     var totalApartar=Math.max(0,calc.socioFinalEE)+calc.totalCom+calc.egEmpPend;
     // "Deberías tener" usa netoEmpresa (el sueldo es gasto personal, no queda en caja)
-    var deberiasTener=saldoAnterior!==null?Math.round((saldoAnterior+netoEmpresa)*100)/100:null;
-    var diferencia=deberiasTener!==null?Math.round((totalUsdtCuentas-deberiasTener)*100)/100:null;
     var pagosCheckList=[];
     if(calc.socioFinalEE>0) pagosCheckList.push({lbl:"Pagar a "+calc.socioNombreEE,monto:f2l(calc.socioFinalEE)+" USDT",color:"#c0392b"});
     if(calc.socioFinalEE<0) pagosCheckList.push({lbl:calc.socioNombreEE+" tiene deuda con la empresa",monto:"⚠️ Debe $"+f2l(Math.abs(calc.socioFinalEE))+" USDT",color:"#c0392b"});
@@ -13494,31 +13498,38 @@ function generarInformePDF(mesKey){
     (prestActivos.length>0?"<div style='margin-bottom:20px;border:2px solid #c0392b;border-radius:12px;overflow:hidden'>"+"<div style='background:#c0392b;padding:12px 16px;display:flex;justify-content:space-between;align-items:center'>"+"<div style='font-size:13px;font-weight:800;color:#fff'>🤝 Préstamos activos</div>"+"<div style='font-size:12px;color:#ffd5d5'>Total: <b>≈$"+f2l(totalPrestamosUsdt)+" USDT</b> · "+prestActivos.length+" préstamo(s)</div>"+"</div>"+"<table style='width:100%;border-collapse:collapse'>"+"<tr style='background:#FDECEA'><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b'>Descripción</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b'>Moneda</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b;text-align:right'>Prestado</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b;text-align:right'>Recuperado</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b;text-align:right'>Pendiente</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b;text-align:right'>≈ USDT</th></tr>"+prestActivos.map(function(p,i){var mon=p.mon||"USDT";var base=parseFloat(p.monto||p.sal)||0;var abos=(p.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);var ent=parseFloat(p.ent)||0;var rec=Math.round((abos+ent)*100)/100;var pend=Math.max(0,Math.round((base-rec)*100)/100);var rate=getRateToUsdt(mon);var pendUsdt=(mon==="USDT"?pend:(rate?Math.round(pend/rate*100)/100:null));return "<tr style='background:"+(i%2===0?"#fff":"#fff5f5")+"'>"+"<td style='padding:7px 10px;font-size:12px;font-weight:600'>"+p.desc+"</td>"+"<td style='padding:7px 10px;font-size:11px;color:#888'>"+mon+"</td>"+"<td style='padding:7px 10px;font-size:12px;text-align:right'>"+f2l(base)+"</td>"+"<td style='padding:7px 10px;font-size:12px;text-align:right;color:#0f6e3a'>"+f2l(rec)+"</td>"+"<td style='padding:7px 10px;font-size:12px;text-align:right;font-weight:700;color:#c0392b'>"+f2l(pend)+"</td>"+"<td style='padding:7px 10px;font-size:12px;text-align:right;color:#1a3558;font-weight:700'>"+(pendUsdt!==null?"$"+f2l(pendUsdt):"—")+"</td>"+"</tr>";}).join("")+"<tr style='background:#FDECEA'><td colspan='4' style='padding:7px 10px;font-size:11px;font-weight:800;color:#c0392b'>TOTAL PRÉSTAMOS PENDIENTES</td><td colspan='2' style='padding:7px 10px;text-align:right;font-size:13px;font-weight:900;color:#c0392b'>≈$"+f2l(totalPrestamosUsdt)+" USDT</td></tr>"+"</table></div>"+"</div>":"")+
 
     // ── RESUMEN COMPLETO: DINERO AFUERA + SI COBRAS TODO ──────────────
-    (totalAfuera>0?"<div style='margin-bottom:20px;background:linear-gradient(135deg,#1a3558,#0a2744);border-radius:14px;padding:18px;color:#fff'>"+"<div style='font-size:13px;font-weight:800;color:#FFA31C;margin-bottom:14px'>💼 Visión completa del dinero de la empresa</div>"+"<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px'>"+"<div style='background:rgba(255,255,255,.08);border-radius:10px;padding:14px'>"+"<div style='font-size:9px;color:rgba(255,255,255,.6);text-transform:uppercase;font-weight:700;margin-bottom:4px'>💵 En cuentas ahora</div>"+"<div style='font-size:22px;font-weight:900;color:#fff'>$"+f2l(totalUsdtCuentas)+" USDT</div></div>"+"<div style='background:rgba(255,163,28,.15);border-radius:10px;padding:14px;border:1px solid rgba(255,163,28,.4)'>"+"<div style='font-size:9px;color:#FFA31C;text-transform:uppercase;font-weight:700;margin-bottom:4px'>📤 Total afuera</div>"+"<div style='font-size:22px;font-weight:900;color:#FFA31C'>$"+f2l(totalAfuera)+" USDT</div>"+(cobrarPend.length>0?"<div style='font-size:9px;color:rgba(255,255,255,.5);margin-top:4px'>💳 Cobros: $"+f2l(totalCobrarUsdt)+" USDT</div>":"")+""+(prestActivos.length>0?"<div style='font-size:9px;color:rgba(255,255,255,.5);margin-top:2px'>🤝 Préstamos: $"+f2l(totalPrestamosUsdt)+" USDT</div>":"")+""+"</div></div>"+"<div style='border-top:1px solid rgba(255,255,255,.15);padding-top:14px;display:flex;justify-content:space-between;align-items:center'>"+"<div>"+"<div style='font-size:10px;color:rgba(255,255,255,.6);margin-bottom:2px'>Si cobras todo lo que te deben…</div>"+"<div style='font-size:11px;color:rgba(255,255,255,.5)'>En cuentas ($"+f2l(totalUsdtCuentas)+") + Afuera ($"+f2l(totalAfuera)+")</div>"+"</div>"+"<div style='text-align:right'>"+"<div style='font-size:9px;color:#4ade80;text-transform:uppercase;font-weight:700'>Potencial total</div>"+"<div style='font-size:28px;font-weight:900;color:#4ade80'>$"+f2l(siCobrasTodo)+" USDT</div>"+"</div></div>"+"</div>":"")+
+    (totalAfuera>0?"<div style='margin-bottom:20px;background:linear-gradient(135deg,#1a3558,#0a2744);border-radius:14px;padding:18px;color:#fff'>"+"<div style='font-size:13px;font-weight:800;color:#FFA31C;margin-bottom:14px'>💼 Visión completa del dinero de la empresa</div>"+"<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px'>"+"<div style='background:rgba(255,255,255,.08);border-radius:10px;padding:14px'>"+"<div style='font-size:9px;color:rgba(255,255,255,.6);text-transform:uppercase;font-weight:700;margin-bottom:4px'>💵 En cuentas ahora</div>"+"<div style='font-size:22px;font-weight:900;color:#fff'>$"+f2l(totalUsdtCuentas)+" USDT</div></div>"+"<div style='background:rgba(255,163,28,.15);border-radius:10px;padding:14px;border:1px solid rgba(255,163,28,.4)'>"+"<div style='font-size:9px;color:#FFA31C;text-transform:uppercase;font-weight:700;margin-bottom:4px'>📤 Total afuera</div>"+"<div style='font-size:22px;font-weight:900;color:#FFA31C'>$"+f2l(totalAfuera)+" USDT</div>"+(cobrarPend.length>0?"<div style='font-size:9px;color:rgba(255,255,255,.5);margin-top:4px'>💳 Cobros: $"+f2l(totalCobrarUsdt)+" USDT</div>":"")+""+(prestActivos.length>0?"<div style='font-size:9px;color:rgba(255,255,255,.5);margin-top:2px'>🤝 Préstamos: $"+f2l(totalPrestamosUsdt)+" USDT</div>":"")+""+"</div></div>"+"<div style='border-top:1px solid rgba(255,255,255,.15);padding-top:14px;display:flex;justify-content:space-between;align-items:center'>"+"<div>"+"<div style='font-size:10px;color:rgba(255,255,255,.6);margin-bottom:2px'>Si cobras todo lo que te deben…</div>"+"<div style='font-size:11px;color:rgba(255,255,255,.5)'>En cuentas ($"+f2l(totalUsdtCuentas)+")"+(enReservaPDF>0.009?" + Reserva ($"+f2l(enReservaPDF)+")":"")+" + Afuera ($"+f2l(totalAfuera)+")</div>"+"</div>"+"<div style='text-align:right'>"+"<div style='font-size:9px;color:#4ade80;text-transform:uppercase;font-weight:700'>Potencial total</div>"+"<div style='font-size:28px;font-weight:900;color:#4ade80'>$"+f2l(siCobrasTodo)+" USDT</div>"+"</div></div>"+"</div>":"")+
 
-    // ── TIENES vs DEBERÍAS TENER ───────────────────────────────────────
-    (deberiasTener!==null?"<div style='margin-bottom:20px;display:grid;grid-template-columns:1fr 1fr;gap:12px'>"+
-      "<div style='background:#f0f7ff;border:1.5px solid #1a3558;border-radius:12px;padding:16px'>"+
-        "<div style='font-size:10px;color:#888;font-weight:700;text-transform:uppercase;margin-bottom:8px'>🧮 Cálculo de lo que debería haber en caja</div>"+
-        "<div style='display:flex;justify-content:space-between;margin-bottom:4px'><span style='font-size:11px;color:#555'>Mes anterior ("+(cierreAnt?cierreAnt.mesLabel:"anterior")+")</span><span style='font-size:12px;font-weight:700'>$"+f2l(saldoAnterior)+"</span></div>"+
-        "<div style='display:flex;justify-content:space-between;margin-bottom:4px'><span style='font-size:11px;color:#0f6e3a'>+ Neto empresa este mes</span><span style='font-size:12px;font-weight:700;color:#0f6e3a'>+$"+f2l(netoEmpresa)+"</span></div>"+
-        "<div style='font-size:10px;color:#aaa;margin-bottom:4px;padding-left:12px'>(Tu sueldo de $"+f2l(calc.sueldo)+" ya fue descontado)</div>"+
-        "<div style='border-top:1px solid #ccc;margin:6px 0'></div>"+
-        "<div style='display:flex;justify-content:space-between'><span style='font-size:12px;font-weight:800;color:#1a3558'>= Debería haber en caja</span><span style='font-size:16px;font-weight:900;color:#1a3558'>$"+f2l(deberiasTener)+"</span></div>"+
-      "</div>"+
-      "<div style='background:"+(diferencia!==null&&diferencia<-50?"#FDECEA":diferencia!==null&&diferencia>50?"#E3F8EC":"#f8f9fa")+";border:1.5px solid "+(diferencia!==null&&diferencia<-50?"#c0392b":diferencia!==null&&diferencia>50?"#0f6e3a":"#ccc")+";border-radius:12px;padding:16px'>"+
-        "<div style='font-size:10px;color:#888;font-weight:700;text-transform:uppercase;margin-bottom:8px'>📊 Lo que realmente hay en cuentas</div>"+
-        "<div style='display:flex;justify-content:space-between;margin-bottom:4px'><span style='font-size:11px;color:#555'>En cuentas (USDT equiv.)</span><span style='font-size:12px;font-weight:700'>$"+f2l(totalUsdtCuentas)+"</span></div>"+
-        "<div style='display:flex;justify-content:space-between;margin-bottom:4px'><span style='font-size:11px;color:#555'>Debería haber</span><span style='font-size:12px;font-weight:700'>$"+f2l(deberiasTener)+"</span></div>"+
-        "<div style='border-top:1px solid #ccc;margin:6px 0'></div>"+
-        "<div style='display:flex;justify-content:space-between;align-items:center'>"+
-          "<span style='font-size:12px;font-weight:800'>Diferencia</span>"+
-          "<span style='font-size:16px;font-weight:900;color:"+(diferencia!==null&&diferencia<0?"#c0392b":"#0f6e3a")+"'>"+
-            (diferencia!==null?(diferencia<0?"⚠️ −$"+f2l(Math.abs(diferencia)):"✅ +$"+f2l(diferencia)):"—")+" USDT"+
-          "</span>"+
-        "</div>"+
-        (diferencia!==null&&Math.abs(diferencia)>10?"<div style='font-size:9px;color:#888;margin-top:6px'>"+(diferencia<0?"La diferencia puede deberse a tasas del momento o cobros pendientes.":"Excelente — hay más de lo esperado en cuentas.")+"</div>":"")+
-      "</div>"+
+    // ── CAPITAL DE LA EMPRESA ──────────────────────────────────────────
+    // ARREGLO 57: aqui habia un "deberias haber en caja" que comparaba
+    // "cierre anterior + neto del mes" contra SOLO lo que hay en cuentas
+    // bancarias. Con sus cifras cantaba un agujero de −546,29 USDT que no
+    // existe: deja fuera la reserva (176,82), lo que le deben (66,70) y lo
+    // prestado (1.010,93) — 1.254,45 que son suyos y no estan en un banco.
+    // Y se disculpaba debajo con "puede deberse a tasas o cobros
+    // pendientes". Un numero que necesita disculparse no sirve para
+    // perseguir nada, y este ademas asusta en un informe que sale de la app.
+    // Esa pregunta —¿me falta dinero?— ya la responde la conciliacion de
+    // capital, que cuenta TODO el capital, compara contra la apertura y
+    // desglosa la diferencia. Aqui se enseña de que se compone el capital y
+    // se manda alli; dos respuestas distintas a la misma pregunta era peor
+    // que ninguna.
+    (_capReal?"<div style='margin-bottom:20px;border:1.5px solid #1a3558;border-radius:12px;overflow:hidden'>"+
+      "<div style='background:#f0f7ff;padding:10px 16px;font-size:11px;font-weight:800;color:#1a3558;text-transform:uppercase'>🧮 De qué se compone el capital</div>"+
+      "<table style='width:100%;border-collapse:collapse'>"+
+        [["En cuentas",_capReal.enCuentas],["En reserva",_capReal.enReserva],
+         ["Por cobrar",_capReal.porCobrar],["Prestado",_capReal.enPrestamos]]
+          .filter(function(x){return Math.abs(x[1])>0.009;})
+          .map(function(x,i){
+            return "<tr style='background:"+(i%2===0?"#fff":"#fafbfd")+"'>"+
+              "<td style='padding:7px 16px;font-size:12px;color:#555'>"+x[0]+"</td>"+
+              "<td style='padding:7px 16px;text-align:right;font-size:12px;font-weight:700;color:#1a3558'>$"+f2l(x[1])+"</td></tr>";
+          }).join("")+
+        "<tr style='background:#FFF8DC'><td style='padding:8px 16px;font-size:12px;font-weight:800;color:#7a5c00'>CAPITAL TOTAL</td>"+
+        "<td style='padding:8px 16px;text-align:right;font-size:15px;font-weight:900;color:#7a5c00'>$"+f2l(_capReal.total)+" USDT</td></tr>"+
+      "</table>"+
+      (_capReal.sinTasa&&_capReal.sinTasa.length?"<div style='padding:8px 16px;font-size:10px;color:#c0392b;background:#FDECEA'>⚠️ Sin tasa para "+_unicos(_capReal.sinTasa).join(", ")+": ese dinero no está contado aquí.</div>":"")+
+      "<div style='padding:9px 16px;font-size:10px;color:#888;background:#fafafa;border-top:1px solid #eee'>Para comprobar si falta dinero está la <b>conciliación de capital</b> (Balance de Cuentas): compara contra la apertura y desglosa la diferencia.</div>"+
     "</div>":"")+
 
     // ── CHECKLIST DE CIERRE ────────────────────────────────────────────
