@@ -2656,20 +2656,38 @@ function rEvolucion(){
   function f2(n){return (Math.round((n||0)*100)/100).toFixed(2).replace(".",",");}
 
   // ── Fila de cada mes (cerrado o actual) ──
-  function filasMes(mesLabel, neto, bruta, socios, egresos, sueldo, esActual, mesKey, ganExtra){
+  function filasMes(mesLabel, neto, bruta, socios, egresos, sueldo, esActual, mesKey, ganExtra, extra){
+    extra = extra || {};
     var color = neto >= 0 ? "#0f6e3a" : "#c0392b";
     var bgColor = neto >= 0 ? "#E3F8EC" : "#FDECEA";
     var abierto = S["_evoOpen_"+mesKey];
+    // ARREGLO 53 (14/09/2026): un mes suelto no dice nada; lo que hace falta
+    // saber es si va mejor o peor que el anterior. Estaba delante y la pantalla
+    // se lo callaba: hizo 152 remesas en julio, 37 más que en junio, y ganó
+    // menos de la mitad.
+    var vsAnt = (extra.netoAnt!==undefined && extra.netoAnt!==null && Math.abs(extra.netoAnt)>0.01)
+      ? Math.round(((neto-extra.netoAnt)/Math.abs(extra.netoAnt))*1000)/10 : null;
+    var barra = (extra.maxNeto>0)
+      ? "<div style='height:5px;background:#eee;border-radius:3px;overflow:hidden'>"+
+          "<div style='height:100%;width:"+Math.max(2,Math.min(100,Math.round(Math.abs(neto)/extra.maxNeto*100)))+"%;background:"+color+";opacity:.55'></div>"+
+        "</div>" : "";
+    // Lo que explica la caída: no es hacer pocas remesas, es cuánto deja cada
+    // una y cuánto se llevan los egresos.
+    var porRemesa = (extra.ops>0 && bruta>0) ? bruta/extra.ops : null;
+    var pctEg = (bruta>0 && egresos>0) ? Math.round(egresos/bruta*1000)/10 : null;
     return "<div style='background:#fff;border:1.5px solid #eaeaea;border-radius:14px;margin-bottom:10px;overflow:hidden'>"+
       // Fila principal clickeable
       "<div onclick='S[\"_evoOpen_"+mesKey+"\"]=!S[\"_evoOpen_"+mesKey+"\"];R()' style='display:flex;align-items:center;justify-content:space-between;padding:14px 16px;cursor:pointer;user-select:none'>"+
         "<div style='display:flex;align-items:center;gap:10px'>"+
           "<div style='width:10px;height:10px;border-radius:50%;background:"+color+"'></div>"+
           "<div>"+
-            "<div style='font-size:13px;font-weight:700;color:#1a3558'>"+mesLabel+(esActual?" <span style='font-size:9px;background:#FFA31C;color:#fff;padding:1px 6px;border-radius:8px;font-weight:700'>MES EN CURSO</span>":"")+"</div>"+
+            "<div style='font-size:13px;font-weight:700;color:#1a3558'>"+mesLabel+(esActual?" <span style='font-size:9px;background:#FFA31C;color:#fff;padding:1px 6px;border-radius:8px;font-weight:700;white-space:nowrap;display:inline-block'>EN CURSO</span>":"")+"</div>"+
             "<div style='font-size:10px;color:#999'>"+
-              (esActual?"en curso · "+ganAct.ops+" operaciones":"cerrado · toca para ver desglose")+
+              (esActual?"en curso · "+ganAct.ops+" operaciones"
+                : (extra.ops?extra.ops+" operaciones":"cerrado")+(abierto?"":" · toca para ver"))+
             "</div>"+
+            (extra.viejo?"<div style='font-size:9px;color:#a06800;margin-top:2px'>⚠️ datos de antes · no suman</div>":"")+
+            (vsAnt!==null?"<div style='font-size:10px;font-weight:700;margin-top:2px;color:"+(vsAnt>=0?"#0f6e3a":"#c0392b")+"'>"+(vsAnt>=0?"▲ +":"▼ ")+String(vsAnt).replace(".",",")+"% vs el mes anterior</div>":"")+
           "</div>"+
         "</div>"+
         "<div style='display:flex;align-items:center;gap:10px'>"+
@@ -2685,6 +2703,7 @@ function rEvolucion(){
           "<div style='font-size:14px;color:#ccc'>"+(abierto?"▲":"▼")+"</div>"+
         "</div>"+
       "</div>"+
+      (barra?"<div style='padding:0 16px 11px'>"+barra+"</div>":"")+
       // Desglose (se abre al tocar)
       (abierto?
         "<div style='border-top:1px solid #f0f0f0;background:#fafafa;padding:12px 16px'>"+
@@ -2697,6 +2716,21 @@ function rEvolucion(){
             (sueldo>0?"<div style='display:flex;justify-content:space-between;font-size:12px'><span style='color:#555'>− Mi sueldo</span><span style='font-weight:700;color:#c0392b'>−$"+f2(sueldo)+"</span></div>":"")+
             "<div style='display:flex;justify-content:space-between;font-size:13px;font-weight:800;border-top:1.5px solid #e0e0e0;margin-top:6px;padding-top:6px'><span style='color:#1a3558'>Neto del mes</span><span style='color:"+color+"'>$"+f2(neto)+" USDT</span></div>"+
           "</div>"+
+          // ARREGLO 53: los dos números que explican por qué un mes cae, y que
+          // no estaban. Agosto: 135 operaciones y los egresos se llevaron el
+          // 76% de lo que ganó.
+          ((porRemesa!==null||pctEg!==null||extra.ganPrestamos>0)?
+            "<div style='border-top:1px solid #ececec;margin-top:10px;padding-top:9px;display:flex;flex-wrap:wrap;gap:8px'>"+
+              (porRemesa!==null?"<div style='flex:1;min-width:110px;background:#fff;border-radius:8px;padding:8px 10px'>"+
+                "<div style='font-size:9px;color:#999;text-transform:uppercase'>Deja cada operación</div>"+
+                "<div style='font-size:15px;font-weight:800;color:#1a3558'>$"+f2(porRemesa)+"</div></div>":"")+
+              (pctEg!==null?"<div style='flex:1;min-width:110px;background:#fff;border-radius:8px;padding:8px 10px'>"+
+                "<div style='font-size:9px;color:#999;text-transform:uppercase'>Se llevan los egresos</div>"+
+                "<div style='font-size:15px;font-weight:800;color:"+(pctEg>50?"#c0392b":pctEg>35?"#a06800":"#0f6e3a")+"'>"+String(pctEg).replace(".",",")+"%</div></div>":"")+
+              (extra.ganPrestamos>0?"<div style='flex:1;min-width:110px;background:#fff;border-radius:8px;padding:8px 10px'>"+
+                "<div style='font-size:9px;color:#999;text-transform:uppercase'>De eso, préstamos</div>"+
+                "<div style='font-size:15px;font-weight:800;color:#0f6e3a'>$"+f2(extra.ganPrestamos)+"</div></div>":"")+
+            "</div>":"")+
         "</div>"
       :"")+
     "</div>";
@@ -2709,7 +2743,10 @@ function rEvolucion(){
     "</div>";
 
   // ── Filas de meses cerrados ──
+  // ARREGLO 53: primero se leen todos los meses y después se dibujan, porque
+  // cada fila necesita saber cuánto ganó el mes anterior y cuál fue el mejor.
   var sumaTotal = 0;
+  var filas = [], netoAnt = null;
 
   cierres.forEach(function(c){
     var neto, bruta, socios, egresos, sueldo;
@@ -2735,49 +2772,68 @@ function rEvolucion(){
       egresos = parseFloat(c.egPag||0);
       sueldo  = 0;
     }
-    sumaTotal += neto;
-    html += filasMes(c.mesLabel, neto, bruta, socios, egresos, sueldo, false, c.mesKey, c.ganExtraEmp||0);
+    // Un cierre del formato viejo es de antes de que la app calculara bien.
+    // Ella lo dijo: "muchos datos de meses anteriores no están del todo
+    // correctos". Se enseñan —son su historia— pero no suman al acumulado, que
+    // si no arrastra un número que nadie puede defender.
+    var viejo = (c.ganBrutaTotal===undefined && c.utilidadEmpresa===undefined);
+    if(!viejo) sumaTotal += neto;
+    filas.push({label:c.mesLabel, neto:neto, bruta:bruta, socios:socios, egresos:egresos,
+                sueldo:sueldo, esActual:false, mesKey:c.mesKey, ganExtra:c.ganExtraEmp||0,
+                ops:parseFloat(c.totalOps)||0, ganPrestamos:parseFloat(c.ganPrestamos)||0, viejo:viejo});
   });
 
   // ── Fila mes actual (en curso) ──
   var netoActual = ganAct.netoFinal||0;
   sumaTotal += netoActual;
-  html += filasMes(labelActual, netoActual, ganAct.total, ganAct.totalSocios, ganAct.egPag, ganAct.sueldo, true, mesActualKey, ganAct.ganExtraEmp||0);
+  filas.push({label:labelActual, neto:netoActual, bruta:ganAct.total, socios:ganAct.totalSocios,
+              egresos:ganAct.egPag, sueldo:ganAct.sueldo, esActual:true, mesKey:mesActualKey,
+              ganExtra:ganAct.ganExtraEmp||0, ops:parseFloat(ganAct.ops)||0,
+              ganPrestamos:parseFloat(ganAct.ganPrestamos)||0, viejo:false});
 
-  // ── Comparación final ──
-  var capUsdt = capActual.usdtSolo||0;
-  var dif = Math.round((capUsdt - sumaTotal)*100)/100;
-  var difColor = Math.abs(dif)<1 ? "#0f6e3a" : dif>0 ? "#0a3d7c" : "#c0392b";
-  var difMsg = Math.abs(dif)<1
-    ? "✅ Todo cuadra perfectamente."
-    : dif>0
-      ? "🔼 Tienes más USDT de lo calculado. Puede ser dinero en otras monedas o ingresos no registrados."
-      : "🔽 Tienes menos USDT de lo calculado. Puede ser dinero en BRL, VES o retiros no registrados.";
+  // La barra se mide contra los meses que cuentan: si un cierre viejo con un
+  // número inflado marca la escala, los meses de verdad quedan aplastados y no
+  // se distingue uno de otro.
+  var maxNeto = filas.reduce(function(m,f){ return f.viejo?m:Math.max(m, Math.abs(f.neto||0)); }, 0);
+  var desdeLabel = (filas.filter(function(f){return !f.viejo;})[0]||{}).label || "";
+  filas.forEach(function(f){
+    html += filasMes(f.label, f.neto, f.bruta, f.socios, f.egresos, f.sueldo, f.esActual, f.mesKey, f.ganExtra,
+                     {netoAnt:(f.viejo?null:netoAnt), maxNeto:maxNeto, ops:f.ops,
+                      ganPrestamos:f.ganPrestamos, viejo:f.viejo});
+    if(!f.viejo) netoAnt = f.neto;
+  });
 
+  // ── Lo que esta pantalla sí puede decir ─────────────────────────────────
+  // ARREGLO 53: aquí había un "Resumen total" que comparaba la ganancia sumada
+  // de los meses contra lo que hay en las cuentas de USDT, y llamaba
+  // "Diferencia" a la resta. Esos dos números no tienen por qué parecerse:
+  //
+  //   · la suma de los meses es GANANCIA, no capital — no lleva con lo que
+  //     empezó, ni lo que metió, ni lo que sacó;
+  //   · "lo que está en USDT" eran 802,78 de sus 2.479,17, porque deja fuera
+  //     sus reales, sus bolívares, lo que le deben y 1.010,93 prestados.
+  //
+  // La app lo sabía y tenía que disculparse debajo con "puede ser dinero en BRL,
+  // VES o retiros no registrados". Un número que necesita una disculpa no sirve
+  // para perseguir nada, y esa pregunta —cuánto debería tener— ya la responde
+  // la conciliación, que sí cuenta todo el capital. Aquí queda lo que ninguna
+  // otra pantalla hace: cómo va el negocio mes a mes.
   html +=
     "<div style='background:#1a3558;border-radius:14px;padding:16px 18px;margin-top:8px;margin-bottom:12px;color:#fff'>"+
-      "<div style='font-size:10px;font-weight:700;opacity:.7;text-transform:uppercase;margin-bottom:12px'>Resumen total</div>"+
-      "<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px'>"+
-        "<div style='background:rgba(255,255,255,.1);border-radius:10px;padding:12px;text-align:center'>"+
-          "<div style='font-size:9px;opacity:.7;margin-bottom:4px'>DEBERÍAS TENER</div>"+
-          "<div style='font-size:22px;font-weight:900;color:#FFA31C'>$"+f2(sumaTotal)+"</div>"+
-          "<div style='font-size:9px;opacity:.6'>suma de todos los meses</div>"+
+      "<div style='display:flex;justify-content:space-between;align-items:flex-end;gap:12px'>"+
+        "<div>"+
+          "<div style='font-size:10px;font-weight:700;opacity:.7;text-transform:uppercase'>Ganancia acumulada</div>"+
+          "<div style='font-size:11px;opacity:.6;margin-top:2px'>"+(desdeLabel?"desde "+desdeLabel:"todos los meses")+"</div>"+
         "</div>"+
-        "<div style='background:rgba(255,255,255,.1);border-radius:10px;padding:12px;text-align:center'>"+
-          "<div style='font-size:9px;opacity:.7;margin-bottom:4px'>TIENES AHORA</div>"+
-          "<div style='font-size:22px;font-weight:900;color:"+(capUsdt>=sumaTotal?"#4ade80":"#f87171")+"'>$"+f2(capUsdt)+"</div>"+
-          "<div style='font-size:9px;opacity:.6'>solo lo que está en USDT</div>"+
-        "</div>"+
+        "<div style='font-size:26px;font-weight:900;color:"+(sumaTotal>=0?"#4ade80":"#f87171")+";line-height:1'>$"+f2(sumaTotal)+"</div>"+
       "</div>"+
-      "<div style='background:rgba(255,255,255,.08);border-radius:8px;padding:10px 12px;display:flex;justify-content:space-between;align-items:center'>"+
-        "<span style='font-size:12px;font-weight:700'>Diferencia</span>"+
-        "<span style='font-size:16px;font-weight:900;color:"+(dif>=0?"#4ade80":"#f87171")+";'>"+(dif>=0?"+":"")+"$"+f2(dif)+"</span>"+
+      "<div style='font-size:10px;opacity:.65;line-height:1.5;margin-top:10px'>"+
+        "Esto es lo que <b>ganaste</b>, no lo que <b>tienes</b>: no lleva el dinero con el que empezaste, ni lo que metiste, ni lo que sacaste."+
       "</div>"+
-    "</div>"+
-    "<div style='font-size:11px;color:#888;background:#fff;border-radius:10px;padding:10px 14px'>"+
-      difMsg+"<br><span style='font-size:9px;color:#bbb'>\"Tienes ahora\" cuenta solo el dinero que ya está en USDT. Si tienes reales o bolívares sin convertir, aparecen como diferencia.</span>"+
-    "</div>"+
-  "</div>";
+      "<button onclick='S.tab=\"capital_total\";R()' style='width:100%;margin-top:11px;padding:10px;border:none;border-radius:9px;background:rgba(255,255,255,.15);color:#fff;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>"+
+        "🧾 ¿Tienes de verdad lo que deberías? → Conciliación"+
+      "</button>"+
+    "</div>";
 
   return html;
 }
