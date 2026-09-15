@@ -7528,11 +7528,224 @@ function delCl(cod){
   }
   if(!confirm("¿Eliminar cliente?"))return;S.clientes=S.clientes.filter(function(x){return x.cod!==cod;});_marcarBorradoMerge("clientes",cod);saveData();R();
 }
+// ── ARREGLO 66: el formulario de compra/venta de USDT ────────────────────
+// Registra 3 operaciones de USDT al día de media (8 el día más cargado) y
+// tenía que teclear CUATRO números en cada una. Tres de ellos son el mismo
+// dato contado de tres formas —fiat = usdt × tasa— y Binance se los enseña
+// juntos en la pantalla de la orden, así que teclear el tercero no aporta
+// nada: solo abre la puerta a que los tres no cuadren entre sí.
+//
+// Y no es teórico. Cruzado su export del 14/09 contra el historial de
+// órdenes de Binance, de 45 operaciones 5 tenían los números descuadrados.
+// La peor, la del 19/08: apuntó 1.261,77 USDT donde de Binance salieron
+// 1.291,83 —un 6 por un 9— pero como los bolívares recibidos se teclean
+// aparte, el lote quedó diciendo que 1.261,71 USDT se vendieron por
+// 1.194.905,80 Bs. Eso da tasa 947, no la 925,01 que ella misma escribió
+// en el campo de al lado. Los tres números estaban en la misma pantalla,
+// se contradecían, y nada lo dijo.
+//
+// Así que: la app rellena el que falta y avisa cuando los tres no cuadran.
+
+// Los tres números que se relacionan entre sí. Lo único que cambia con el
+// tipo es cuál de ellos es el fiat.
+function _trioIU(){
+  return S.nIU.tipo==="venta"
+    ? {fiat:"bsRecibidos", usdt:"usdt", tasa:"tasa"}
+    : {fiat:"montOrigen",  usdt:"usdt", tasa:"tasa"};
+}
+// En la VENTA el número que ella teclea es el total que sale de Binance
+// (liberado + comisión) —así lo apunta saveIU()—, de modo que la comisión
+// entra en la cuenta. En la COMPRA paga en fiat y la comisión se descuenta
+// después, en USDT, así que el fiat no la lleva.
+function _fiatIU(usdt,tasa,com,esVenta){ return (esVenta?usdt-com:usdt)*tasa; }
+function _usdtIU(fiat,tasa,com,esVenta){ return tasa>0?fiat/tasa+(esVenta?com:0):0; }
+function _tasaIU(fiat,usdt,com,esVenta){ var n=esVenta?usdt-com:usdt; return n>0?fiat/n:0; }
+
+// Qué campo rellenó la app. No es un dato del negocio y no se guarda: vive
+// aquí, fuera de S, para que no viaje en la sincronización ni en el export.
+var _IU_AUTO="";
+function _olvidarAutoIU(){ _IU_AUTO=""; }
+// El tipo de operación cambia cuál es el fiat, así que lo que la app hubiera
+// rellenado deja de tener sentido.
+function _tipoIU(t){ S.nIU.tipo=t; _olvidarAutoIU(); R(); }
+
+// Rellena el número que falta de los tres. Se llama en cada tecla, así que
+// NO puede repintar (ARREGLO 32: R() rehace el HTML y destruye el input
+// debajo del dedo); escribe directamente en el DOM, como _refrescarAbonoPrest.
+function _autoIU(tocado){
+  try{
+    var f=S.nIU, esV=f.tipo==="venta", t=_trioIU(), com=_comIU(f.comision);
+    // Si vuelve a tocar el que puso la app, deja de ser de la app: manda ella.
+    if(_IU_AUTO===tocado) _IU_AUTO="";
+    var claves=[t.fiat,t.usdt,t.tasa], v={};
+    claves.forEach(function(k){
+      // Lo que escribió la app no cuenta como dato suyo, o el trío quedaría
+      // siempre completo y no se volvería a recalcular nunca.
+      v[k]=(k===_IU_AUTO)?0:(parseFloat(f[k])||0);
+    });
+    var faltan=claves.filter(function(k){ return !(v[k]>0); });
+    if(faltan.length===1){
+      var k=faltan[0], r=0;
+      if(k===t.fiat)      r=_fiatIU(v[t.usdt],v[t.tasa],com,esV);
+      else if(k===t.usdt) r=_usdtIU(v[t.fiat],v[t.tasa],com,esV);
+      else                r=_tasaIU(v[t.fiat],v[t.usdt],com,esV);
+      // La tasa lleva cuatro decimales porque Binance los usa (969,997) y
+      // redondearla a dos movería la ganancia de cada lote.
+      if(isFinite(r)&&r>0){
+        var el=document.getElementById(_IDS_IU[k]);
+        // Nunca se escribe en el campo que ella tiene debajo del dedo.
+        if(!el || document.activeElement!==el){
+          var val=(k===t.tasa)?Math.round(r*10000)/10000:Math.round(r*100)/100;
+          f[k]=String(val); _IU_AUTO=k;
+          if(el) el.value=val;
+        }
+      }
+    }
+    _pintarAutoIU();
+    _refrescarIU();
+  }catch(e){}
+}
+var _IDS_IU={montOrigen:"iu-fiat", bsRecibidos:"iu-fiat", usdt:"iu-usdt", tasa:"iu-tasa", comision:"iu-com"};
+// Un número que puso la app tiene que verse distinto de uno que escribió
+// ella: si no, no hay forma de saber cuál revisar cuando algo no cuadra.
+function _pintarAutoIU(){
+  ["montOrigen","bsRecibidos","usdt","tasa"].forEach(function(k){
+    var el=document.getElementById(_IDS_IU[k]); if(!el) return;
+    var auto=(k===_IU_AUTO);
+    el.style.background=auto?"#EEF4FF":"";
+    el.style.borderColor=auto?"#90b4f5":"";
+    el.title=auto?"Lo calculó la app con los otros dos. Escríbelo tú si no es correcto.":"";
+  });
+}
+
+// Los tres números tienen que contar la misma historia. Esto lo comprueba.
+function _descuadreIU(){
+  var f=S.nIU, esV=f.tipo==="venta", t=_trioIU(), com=_comIU(f.comision);
+  var fiat=parseFloat(f[t.fiat])||0, usdt=parseFloat(f.usdt)||0, tasa=parseFloat(f.tasa)||0;
+  if(!(fiat>0&&usdt>0&&tasa>0)) return null;
+  var esperado=_fiatIU(usdt,tasa,com,esV);
+  var dif=fiat-esperado;
+  // Binance redondea el precio que publica, así que sus propios números no
+  // cuadran clavados: medido en sus 57 órdenes del 15/08 al 14/09, "Precio
+  // total" contra cantidad×precio se desvía un 0,0044% de mediana y un
+  // 0,0383% en el peor caso. El 0,5% es trece veces ese ruido y aun así caza
+  // los dedazos: el peor suyo iba un 2,4% fuera y el segundo un 0,55%.
+  // Si esto avisara del redondeo, avisaría siempre y dejaría de mirarse.
+  if(Math.abs(dif)<=Math.max(0.5,Math.abs(esperado)*0.005)) return null;
+  return {esperado:esperado, real:fiat, dif:dif, tasaReal:_tasaIU(fiat,usdt,com,esV), mon:_monIU()};
+}
+function _monIU(){ var f=S.nIU; return f.tipo==="venta"?(f.monedaVenta||"VES"):(f.moneda||"BRL"); }
+
+// Las últimas operaciones de ESA moneda y ESE tipo. Sirven para que la tasa
+// que acaba de escribir tenga con qué compararse sin salir de la pantalla.
+function _ultimasIU(n){
+  var f=S.nIU, mon=_monIU();
+  return (S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[])
+    .filter(function(l){ return l.moneda===mon && l.tipo===f.tipo && (parseFloat(l.tasa)||0)>0; })
+    .sort(function(a,b){ return ordenFIFO(b,a); })
+    .slice(0,n||3);
+}
+
+// El recuadro del cálculo. Antes se armaba dentro de rInventarioUsdt() con
+// los valores del último repintado, así que mientras tecleaba enseñaba la
+// cuenta anterior — el mismo fallo que el recuadro verde de los abonos
+// (ARREGLO 55): dos números en pantalla que no cuadraban entre sí.
+function _htmlPrevIU(){
+  var f=S.nIU, esV=f.tipo==="venta", t=_trioIU(), com=_comIU(f.comision), mon=_monIU();
+  var fiat=parseFloat(f[t.fiat])||0, usdt=parseFloat(f.usdt)||0, tasa=parseFloat(f.tasa)||0;
+  if(!((usdt>0||fiat>0)&&(tasa>0||(usdt>0&&fiat>0))))
+    return "<div style='background:#f0f0f0;border-radius:8px;padding:10px;font-size:12px;color:#888;text-align:center'>Escribe dos de los tres números (monto, USDT y tasa) — el que falte lo calcula la app</div>";
+  var tasaMostrar=tasa>0?tasa:_tasaIU(fiat,usdt,com,esV);
+  var neto=esV?usdt-com:usdt-com;   // lo que de verdad queda en Binance, en los dos casos
+  var linea = esV
+    ? "("+f4(usdt)+" &minus; "+f4(com)+") &times; "+f2(tasa)+" = <b>"+f2(_fiatIU(usdt,tasa,com,true))+" "+mon+"</b>"
+    : f2(fiat)+" "+mon+" &divide; "+f4(tasa)+" = "+f4(usdt)+" USDT &nbsp;&minus;&nbsp;"+f4(com)+" de comisión &rarr; <b>entran "+f4(neto)+" USDT</b>";
+  var d=_descuadreIU();
+  var aviso = d ? "<div style='margin-top:8px;background:#FDECEA;border:1px solid #e88;border-radius:7px;padding:8px 10px;font-size:11px;color:#7c1c0c;line-height:1.5'>"+
+      "<b>⚠️ Estos tres números no cuadran.</b><br>"+
+      "Con "+f4(usdt)+" USDT a "+f4(tasa)+" salen <b>"+f2(d.esperado)+" "+mon+"</b>, pero escribiste <b>"+f2(d.real)+"</b> ("+(d.dif>0?"+":"")+f2(d.dif)+")."+
+      "<br>O la tasa es <b>"+f4(d.tasaReal)+"</b>, o uno de los otros dos está mal tecleado.</div>" : "";
+  return "<div style='background:"+(esV?"#DDEEFF":"#D6F5E3")+";border-radius:8px;padding:10px 14px'>"+
+      "<div style='font-size:10px;color:#666;text-transform:uppercase;letter-spacing:.5px'>Tasa de esta operación</div>"+
+      "<div style='font-size:22px;font-weight:800;color:"+(esV?"#0a3d7c":"#0f6e3a")+";line-height:1.2'>1 USDT = "+f4(tasaMostrar)+" "+mon+"</div>"+
+      "<div style='font-size:11px;color:#555;border-top:1px solid rgba(0,0,0,.08);margin-top:6px;padding-top:6px'>"+linea+"</div>"+
+    "</div>"+aviso;
+}
+
+// El aviso de orden repetida, mientras teclea y no solo al guardar. Mira
+// TAMBIÉN los archivados: sus cuatro órdenes registradas dos veces entraron
+// justo por ahí — en los cuatro casos el primer lote ya estaba archivado
+// cuando llegó el duplicado, así que la comprobación de saveIU(), que solo
+// miraba los activos, no veía nada.
+function _loteConOrden(id){
+  id=(id||"").trim(); if(!id) return null;
+  return (S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[])
+    .find(function(l){ return l.ordenId && String(l.ordenId).trim()===id; })||null;
+}
+function _htmlAvisoOrdenIU(){
+  var l=_loteConOrden(S.nIU.ordenId);
+  if(!l) return "";
+  return "<div style='margin-top:6px;background:#FFF4E5;border:1px solid #F5C518;border-radius:7px;padding:7px 10px;font-size:11px;color:#7a5c00;line-height:1.5'>"+
+    "<b>⚠️ Esta orden ya está registrada.</b><br>"+
+    (l.fecha||"")+" · "+(l.tipo==="compra"?"compra":"venta")+" de "+f4(l.usdt)+" USDT "+(l.moneda||"")+" a "+f4(l.tasa)+
+    (l._cerrado?" <span style='opacity:.7'>(archivada)</span>":"")+"</div>";
+}
+
+// Las últimas de esa moneda, con su tasa, para que la recién escrita tenga
+// con qué compararse. Si se sale mucho, se dice — es la misma idea que el
+// aviso de salto de 10× al escribir un saldo a mano.
+function _htmlUltimasIU(){
+  var f=S.nIU, mon=_monIU(), ult=_ultimasIU(3);
+  if(!ult.length) return "<div style='font-size:11px;color:#aaa;padding:8px 2px'>No hay operaciones anteriores de "+f.tipo+" en "+mon+".</div>";
+  var tasa=parseFloat(f.tasa)||0, ref=parseFloat(ult[0].tasa)||0, aviso="";
+  if(tasa>0&&ref>0){
+    var pc=(tasa-ref)/ref*100;
+    if(Math.abs(pc)>10) aviso="<div style='margin-top:6px;background:#FFF4E5;border:1px solid #F5C518;border-radius:7px;padding:7px 10px;font-size:11px;color:#7a5c00'>"+
+      "⚠️ Esta tasa se aparta un <b>"+f2(Math.abs(pc))+"%</b> de tu última "+f.tipo+" en "+mon+" ("+f4(ref)+"). Compruébala antes de guardar.</div>";
+  }
+  return "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:5px'>Tus últimas "+(f.tipo==="compra"?"compras":"ventas")+" en "+mon+"</div>"+
+    "<div style='display:flex;gap:6px;flex-wrap:wrap'>"+ult.map(function(l){
+      return "<div style='background:#f6f7f9;border-radius:7px;padding:6px 10px;font-size:11px'>"+
+        "<span style='color:#888'>"+(l.fecha||"—")+"</span> &nbsp;<b style='color:#1a3558'>"+f4(l.tasa)+"</b>"+
+        "<div style='font-size:9px;color:#aaa'>"+f4(l.usdt)+" USDT</div></div>";
+    }).join("")+"</div>"+aviso;
+}
+
+// El mismo realce que _pintarAutoIU(), pero dentro del HTML: R() rehace los
+// inputs desde cero y se llevaría por delante el estilo puesto a mano.
+function _estiloAutoIU(campo,extra){
+  var base=extra||"";
+  if(campo===_IU_AUTO) base+=(base?";":"")+"background:#EEF4FF;border-color:#90b4f5";
+  return base?" style='"+base+"'"+(campo===_IU_AUTO?" title='Lo calculó la app con los otros dos. Escríbelo tú si no es correcto.'":""):"";
+}
+
+// Todo lo que depende de lo que teclea, repintado sin pasar por R().
+function _refrescarIU(){
+  try{
+    var el;
+    if((el=document.getElementById("iu-prev")))        el.innerHTML=_htmlPrevIU();
+    if((el=document.getElementById("iu-aviso-orden"))) el.innerHTML=_htmlAvisoOrdenIU();
+    if((el=document.getElementById("iu-ult")))         el.innerHTML=_htmlUltimasIU();
+  }catch(e){}
+}
+
 function saveIU(){
   var f=S.nIU;
   var usdt=parseFloat(f.usdt)||0,tasa=parseFloat(f.tasa)||0,com=_comIU(f.comision);
   if(!f.fecha||!usdt||!tasa){alert("Completa: fecha, USDT y tasa.");return;}
   if(!confirmarFechaFutura(f.fecha,"Esta operación")) return;
+  // ARREGLO 66: los tres numeros tienen que contar la misma historia. Va
+  // antes que el resto de confirmaciones porque es el que revela el dedazo:
+  // el 19/08 apunto 1.261,77 USDT donde salieron 1.291,83 y el lote quedo
+  // guardado diciendo una tasa que no era la que ella misma escribio al lado.
+  var _desc=_descuadreIU();
+  if(_desc){
+    if(!confirm("⚠️ Los números no cuadran entre sí.\n\n"+
+      f4(usdt)+" USDT a "+f4(tasa)+" dan "+f2(_desc.esperado)+" "+_desc.mon+",\n"+
+      "pero escribiste "+f2(_desc.real)+" "+_desc.mon+" ("+(_desc.dif>0?"+":"")+f2(_desc.dif)+").\n\n"+
+      "O la tasa es "+f4(_desc.tasaReal)+", o uno de los otros dos está mal.\n\n"+
+      "¿Guardar así de todas formas?")) return;
+  }
   // Confirmación con resumen — para detectar a tiempo si la moneda/cuenta
   // seleccionada no es la que realmente usaste (ej: dejar VES puesto de la
   // operación anterior cuando en realidad pagaste con BRL).
@@ -7551,8 +7764,16 @@ function saveIU(){
   }
   // ── Verificar Order ID duplicado ──────────────────────────────────────────
   var ordenId=(f.ordenId||'').trim();
-  if(ordenId&&(S.inventarioUsdt||[]).some(function(l){return l.ordenId&&l.ordenId===ordenId;})){
-    if(!confirm('⚠️ Ya existe un lote con Order ID '+ordenId+'\n¿Continuar de todas formas?')) return;
+  // ARREGLO 66: antes esto solo miraba S.inventarioUsdt, los lotes ACTIVOS.
+  // Un lote consumido se muda a inventarioUsdt_cerrado y desaparece de ahi,
+  // asi que su orden dejaba de existir para la comprobacion. Sus cuatro
+  // ordenes registradas dos veces entraron exactamente por ese hueco: en las
+  // cuatro, el primer lote ya estaba archivado cuando llego el duplicado.
+  var _yaEsta=_loteConOrden(ordenId);
+  if(_yaEsta){
+    if(!confirm('⚠️ Ya existe un lote con Order ID '+ordenId+':\n\n'+
+      (_yaEsta.fecha||'')+' · '+(_yaEsta.tipo==='compra'?'compra':'venta')+' de '+f4(_yaEsta.usdt)+' USDT '+(_yaEsta.moneda||'')+' a '+f4(_yaEsta.tasa)+
+      (_yaEsta._cerrado?' (archivado)':'')+'\n\n¿Continuar de todas formas?')) return;
   }
   var fecha=_fechaLote(f.fecha), fechaIso=_fechaLoteIso(f.fecha);   // ARREGLO 51: el año, aparte
   var cuentaAfectada=f.cuentaId||"";
@@ -7601,6 +7822,7 @@ function saveIU(){
     }
   }
   S.nIU={fecha:f.fecha,tipo:f.tipo,moneda:f.moneda||"BRL",monedaVenta:f.monedaVenta||"VES",montOrigen:"",usdt:"",tasa:"",plataforma:f.plataforma||"",comision:COM(),cuentaId:"",bsRecibidos:"",cuentaOrigenId:"",cuentaDestinoId:"",ordenId:""};
+  _olvidarAutoIU();   // el formulario se vacia: lo que la app habia calculado ya no vale
   // NO llamar sincronizarSaldosUsdt() aqui: los ajustes puntuales ya son correctos
   saveData();R();
   var cNombre="";
@@ -18166,13 +18388,7 @@ function rNuevaEE(){
 function toggleArchivados(){ S._verArchivados=!S._verArchivados; R(); }
 function rInventarioUsdt(){
   sincronizarFIFOconCuentas();
-  var f=S.nIU;var com=_comIU(f.comision);
-  var prevUsdt=parseFloat(f.usdt)||0,prevTasa=parseFloat(f.tasa)||0;
-  var prevMontOrigen=parseFloat(f.montOrigen)||0;
-  // Para compra: calcular USDT esperados desde montOrigen ÷ tasa
-  var prevUsdtCalc=(f.tipo==="compra"&&prevMontOrigen>0&&prevTasa>0)?Math.round(prevMontOrigen/prevTasa*10000)/10000:prevUsdt;
-  var prevBs=f.tipo==="venta"?(prevUsdt-com)*prevTasa:prevUsdt*prevTasa;
-  var prevOk=f.tipo==="compra"?(prevMontOrigen>0&&prevTasa>0)||(prevUsdt>0&&prevTasa>0):prevUsdt>0&&prevTasa>0;
+  var f=S.nIU;
   var st=getInventarioStats();
   var monOpts=MONEDAS_COMPRA.map(function(m){return "<option value='"+m.id+"'"+(f.moneda===m.id?" selected":"")+">"+m.flag+" "+m.label+"</option>";}).join("");
   var mVentaOpts=MONEDAS_VENTA.map(function(m){return "<option value='"+m.id+"'"+(f.monedaVenta===m.id?" selected":"")+">"+m.flag+" "+m.label+"</option>";}).join("");
@@ -18337,8 +18553,8 @@ function rInventarioUsdt(){
     })()+
     "<div class='sec-title'>"+(f.tipo==="compra"?"⬇️ COMPRA de USDT":"⬆️ VENTA de USDT (recibo moneda)")+"</div>"+
     "<div style='display:flex;gap:8px;margin-bottom:14px'>"+
-      "<button type='button' onclick='S.nIU.tipo=\"compra\";R()' style='flex:1;padding:10px;border-radius:8px;border:2px solid "+(f.tipo==="compra"?"#1a6b3c":"#ddd")+";background:"+(f.tipo==="compra"?"#D6F5E3":"#fff")+";font-weight:700;cursor:pointer'>⬇️ COMPRA USDT<div style='font-size:10px;font-weight:400'>Gasto BRL/USD/PEN/COP...</div></button>"+
-      "<button type='button' onclick='S.nIU.tipo=\"venta\";R()' style='flex:1;padding:10px;border-radius:8px;border:2px solid "+(f.tipo==="venta"?"#c0392b":"#ddd")+";background:"+(f.tipo==="venta"?"#FDECEA":"#fff")+";font-weight:700;cursor:pointer'>⬆️ VENTA USDT<div style='font-size:10px;font-weight:400'>Recibo Bolívares u otra moneda</div></button>"+
+      "<button type='button' onclick='_tipoIU(\"compra\")' style='flex:1;padding:10px;border-radius:8px;border:2px solid "+(f.tipo==="compra"?"#1a6b3c":"#ddd")+";background:"+(f.tipo==="compra"?"#D6F5E3":"#fff")+";font-weight:700;cursor:pointer'>⬇️ COMPRA USDT<div style='font-size:10px;font-weight:400'>Gasto BRL/USD/PEN/COP...</div></button>"+
+      "<button type='button' onclick='_tipoIU(\"venta\")' style='flex:1;padding:10px;border-radius:8px;border:2px solid "+(f.tipo==="venta"?"#c0392b":"#ddd")+";background:"+(f.tipo==="venta"?"#FDECEA":"#fff")+";font-weight:700;cursor:pointer'>⬆️ VENTA USDT<div style='font-size:10px;font-weight:400'>Recibo Bolívares u otra moneda</div></button>"+
     "</div>"+
     "<div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px'>"+
       "<div class='fl'><label>Fecha</label><input type='date' value='"+(f.fecha||"")+"' onchange='S.nIU.fecha=this.value'></div>"+
@@ -18347,48 +18563,28 @@ function rInventarioUsdt(){
         :"<div class='fl'><label>Moneda que recibes</label><select onchange='S.nIU.monedaVenta=this.value;R()'>"+mVentaOpts+"</select></div>")+
       "<div class='fl'><label>Plataforma</label><input type='text' placeholder='ej: Binance P2P' value='"+(f.plataforma||"")+"' oninput='S.nIU.plataforma=this.value'></div>"+
       "<div class='fl'><label>Order ID Binance <span style='font-size:9px;color:#aaa;font-weight:400'>(N.º de orden)</span></label>"+
-      "<input type='text' placeholder='229060089...' value='"+(f.ordenId||"")+"' oninput='S.nIU.ordenId=this.value' style='font-size:11px'></div>"+
+      "<input type='text' placeholder='229060089...' value='"+(f.ordenId||"")+"' oninput='S.nIU.ordenId=this.value;_refrescarIU()' style='font-size:11px'>"+
+      "<div id='iu-aviso-orden'>"+_htmlAvisoOrdenIU()+"</div></div>"+
     "</div>"+
     (function(){
       if(f.tipo==="compra"){
         return "<div style='display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:10px'>"+
-          "<div class='fl'><label>Monto gastado ("+(f.moneda||"BRL")+")</label><input type='text' inputmode='decimal' step='0.01' placeholder='ej: 300' value='"+(f.montOrigen||"")+"' oninput='S.nIU.montOrigen=_num(this.value)'></div>"+
-          "<div class='fl'><label>USDT recibidos</label><input type='text' inputmode='decimal' step='0.01' placeholder='ej: 300' value='"+(f.usdt||"")+"' oninput='S.nIU.usdt=_num(this.value)'></div>"+
-          "<div class='fl'><label>Tasa ("+(f.moneda||"BRL")+"/USDT)</label><input type='text' inputmode='decimal' step='0.0001' placeholder='ej: 5.08' value='"+(f.tasa||"")+"' oninput='S.nIU.tasa=_num(this.value)'></div>"+
-          "<div class='fl'><label>Comisión (USDT)</label><input type='text' inputmode='decimal' step='0.001' value='"+(f.comision!==undefined?f.comision:0.06)+"' oninput='S.nIU.comision=parseFloat(_num(this.value))||0'></div>"+
+          "<div class='fl'><label>Monto gastado ("+(f.moneda||"BRL")+")</label><input id='iu-fiat' type='text' inputmode='decimal' step='0.01' placeholder='ej: 300' value='"+(f.montOrigen||"")+"'"+_estiloAutoIU("montOrigen")+" oninput='S.nIU.montOrigen=_num(this.value);_autoIU(\"montOrigen\")'></div>"+
+          "<div class='fl'><label>Cantidad de la orden (USDT)</label><input id='iu-usdt' type='text' inputmode='decimal' step='0.01' placeholder='ej: 58.14' value='"+(f.usdt||"")+"'"+_estiloAutoIU("usdt")+" oninput='S.nIU.usdt=_num(this.value);_autoIU(\"usdt\")'></div>"+
+          "<div class='fl'><label>Tasa ("+(f.moneda||"BRL")+"/USDT)</label><input id='iu-tasa' type='text' inputmode='decimal' step='0.0001' placeholder='ej: 5.08' value='"+(f.tasa||"")+"'"+_estiloAutoIU("tasa")+" oninput='S.nIU.tasa=_num(this.value);_autoIU(\"tasa\")'></div>"+
+          "<div class='fl'><label>Comisión (USDT)</label><input id='iu-com' type='text' inputmode='decimal' step='0.001' value='"+(f.comision!==undefined?f.comision:0.06)+"' oninput='S.nIU.comision=parseFloat(_num(this.value))||0;_autoIU(\"comision\")'></div>"+
         "</div>";
       } else {
-        var total=parseFloat(f.usdt)||0;
-        var com=parseFloat(f.comision!==undefined?f.comision:0.06)||0;
-        var neto=total-com;
-        var tasa=parseFloat(f.tasa)||0;
-        var bsCalc=neto*tasa;
-        var bsReal=parseFloat(f.bsRecibidos)||0;
-        var resumen="";
-        if(total&&tasa){
-          resumen="<div style='background:#EEF4FF;border:1px solid #90b4f5;border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:12px'>"+
-            "<div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:6px'>"+
-              "<div><div style='font-size:10px;color:#888'>Total liberado</div><div style='font-size:15px;font-weight:800;color:#1a3558'>"+f2(total)+" USDT</div></div>"+
-              "<div><div style='font-size:10px;color:#888'>− Comisión</div><div style='font-size:15px;font-weight:800;color:#c0392b'>−"+f2(com)+" USDT</div></div>"+
-              "<div><div style='font-size:10px;color:#888'>= Neto vendido</div><div style='font-size:15px;font-weight:800;color:#0f6e3a'>"+f2(neto)+" USDT</div></div>"+
-            "</div>"+
-            "<div style='font-size:11px;color:#555;border-top:1px solid #dde;padding-top:6px'>"+
-              f2(neto)+" × "+f2(tasa)+" = <b>"+f2(bsCalc)+" "+(f.monedaVenta||"VES")+"</b>"+
-              (bsReal>0?" &nbsp;|&nbsp; <span style='color:#856404;font-weight:700'>✅ Real: "+f2(bsReal)+" "+(f.monedaVenta||"VES")+"</span>":"")+
-            "</div>"+
-          "</div>";
-        }
         return "<div style='display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:10px'>"+
-          "<div class='fl'><label>💰 Total liberado en Binance (USDT)</label><input type='text' inputmode='decimal' step='0.01' placeholder='ej: 273.57' value='"+(f.usdt||"")+"' oninput='S.nIU.usdt=_num(this.value)' style='font-weight:700;border-color:#1a3558'></div>"+
-          "<div class='fl'><label>Comisión Binance (USDT)</label><input type='text' inputmode='decimal' step='0.001' placeholder='ej: 0.06' value='"+(f.comision!==undefined?f.comision:0.06)+"' oninput='S.nIU.comision=parseFloat(_num(this.value))||0'></div>"+
-          "<div class='fl'><label>Tasa ("+(f.monedaVenta||"VES")+"/USDT)</label><input type='text' inputmode='decimal' step='0.01' placeholder='ej: 731.23' value='"+(f.tasa||"")+"' oninput='S.nIU.tasa=_num(this.value)'></div>"+
-          "<div class='fl'><label>"+(f.monedaVenta||"VES")+" reales recibidos</label><input type='text' inputmode='decimal' step='0.01' placeholder='ej: 200000' value='"+(f.bsRecibidos||"")+"' oninput='S.nIU.bsRecibidos=_num(this.value)' style='background:#FFFBEA;border-color:#F5C518'></div>"+
-        "</div>"+resumen;
+          "<div class='fl'><label>💰 Total liberado en Binance (USDT)</label><input id='iu-usdt' type='text' inputmode='decimal' step='0.01' placeholder='ej: 273.57' value='"+(f.usdt||"")+"'"+_estiloAutoIU("usdt","font-weight:700;border-color:#1a3558")+" oninput='S.nIU.usdt=_num(this.value);_autoIU(\"usdt\")'></div>"+
+          "<div class='fl'><label>Comisión Binance (USDT)</label><input id='iu-com' type='text' inputmode='decimal' step='0.001' placeholder='ej: 0.06' value='"+(f.comision!==undefined?f.comision:0.06)+"' oninput='S.nIU.comision=parseFloat(_num(this.value))||0;_autoIU(\"comision\")'></div>"+
+          "<div class='fl'><label>Tasa ("+(f.monedaVenta||"VES")+"/USDT)</label><input id='iu-tasa' type='text' inputmode='decimal' step='0.01' placeholder='ej: 731.23' value='"+(f.tasa||"")+"'"+_estiloAutoIU("tasa")+" oninput='S.nIU.tasa=_num(this.value);_autoIU(\"tasa\")'></div>"+
+          "<div class='fl'><label>"+(f.monedaVenta||"VES")+" recibidos</label><input id='iu-fiat' type='text' inputmode='decimal' step='0.01' placeholder='ej: 200000' value='"+(f.bsRecibidos||"")+"'"+_estiloAutoIU("bsRecibidos","background:#FFFBEA;border-color:#F5C518")+" oninput='S.nIU.bsRecibidos=_num(this.value);_autoIU(\"bsRecibidos\")'></div>"+
+        "</div>";
       }
     })()+
-    (prevOk?"<div style='background:"+(f.tipo==="compra"?"#D6F5E3":"#DDEEFF")+";border-radius:8px;padding:10px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center'>"+
-      "<span style='color:#555'>"+(f.tipo==="compra"?f2(prevMontOrigen>0?prevMontOrigen:prevUsdt*prevTasa)+" "+((f.moneda||"BRL"))+" ÷ "+f2(prevTasa):"("+f4(prevUsdt)+" − 0.06) × "+f2(prevTasa)+" =")+"</span>"+
-      "<span style='font-size:16px;font-weight:800;color:"+(f.tipo==="compra"?"#0f6e3a":"#0a3d7c")+"'>"+(f.tipo==="compra"?"+"+f4(prevUsdtCalc)+" USDT":"+"+f2(prevBs)+" "+(f.monedaVenta==="VES"?"BS":f.monedaVenta||"BS"))+"</span></div>":"<div style='background:#f0f0f0;border-radius:8px;padding:10px;margin-bottom:10px;font-size:12px;color:#888;text-align:center'>Completa cantidad y tasa para ver el cálculo</div>")+
+    "<div id='iu-prev' style='margin-bottom:10px'>"+_htmlPrevIU()+"</div>"+
+    "<div id='iu-ult' style='margin-bottom:10px'>"+_htmlUltimasIU()+"</div>"+
     (function(){
     var monOrigen = f.tipo==="compra" ? (f.moneda||"BRL") : null;
     var monDestino = f.tipo==="venta" ? (f.monedaVenta||"VES") : null;
