@@ -2839,10 +2839,23 @@ console.log("\nArreglo 64 · entrar con huella");
   ok(/S\._bloqueoHuella=false/.test(arranque),
      "y si el servidor dice que la sesion murio, el bloqueo se cae con ella");
 }
+// ARREGLO 65: la huella SOBREVIVE a "Salir". Se borraba, por miedo a que la
+// siguiente persona se encontrara una cerradura ajena; pero eso ya lo impide el
+// correo, y borrarla obligaba a registrarla de nuevo cada vez que ella entra y
+// sale —que es a diario, porque cambia entre produccion y pruebas—.
 {
   const sal = sinComentarios(sacarFuncion("salir"));
-  ok(/_huellaOlvidar\(\)/.test(sal),
-     "al salir, la huella de este aparato se borra: no puede quedar de cerradura para el siguiente");
+  ok(!/_huellaOlvidar\(\)/.test(sal),
+     "salir NO borra la huella: registrarla una vez por aparato tiene que bastar");
+  ok(/_bloqueoHuella=false/.test(sal),
+     "pero si quita el bloqueo, para que salir lleve a la pantalla de entrar");
+  // Y lo que sostiene que sea seguro dejarla: sin sesion no desbloquea nada.
+  const quien = sinComentarios(sacarFuncion("_huellaDeEstaPersona"));
+  ok(/if\(!d\) return null/.test(quien) && /correo && d\.correo===correo/.test(quien),
+     "sin sesion, o con el correo de otra persona, la huella guardada no abre nada");
+  // Quitarla a proposito sigue siendo posible, y es lo unico que la borra.
+  ok(/_huellaOlvidar\(\)/.test(sinComentarios(sacarFuncion("quitarHuella"))),
+     "la unica forma de borrarla es el boton de Configuracion");
 }
 {
   const reg = sinComentarios(sacarFuncion("registrarHuella"));
