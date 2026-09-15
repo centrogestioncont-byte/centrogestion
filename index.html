@@ -2632,6 +2632,11 @@ function conciliacionCapital(){
     egPersonalSin:r2v(egPersonalSin), socios:r2v(socios),
     deberias:deberias, real:real, diferencia:diferencia,
     ajustes:ajustes, tasas:tasas, traspPers:traspPers, sinExplicar:sinExplicar,
+    // ARREGLO 60: la tarjeta dice contra qué apertura está midiendo. Una
+    // apertura sin foto de saldos no permite comparar cuenta por cuenta
+    // cuando algo no cuadra, y hasta ahora eso no se veía en ninguna parte.
+    aperturaSaldos:(S.config||{}).aperturaSaldos||null,
+    aperturaTs:(S.config||{}).aperturaTs||null,
     // Un desvio de menos del 2% del capital es ruido de tasas de cambio,
     // no una fuga: los saldos se convierten a USDT a la tasa de HOY.
     tolerancia:r2v(Math.max(5,real.total*0.02))
@@ -8675,10 +8680,18 @@ function rCapitalTotal(){
     var brd=sano?"#b6e0c4":(dif<0?"#f0b0a8":"#f0d080");
     return "<div style='background:"+bg+";border:1.5px solid "+brd+";border-radius:12px;padding:14px;margin-bottom:12px'>"+
       "<div style='display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px'>"+
+        // ARREGLO 60: el numero grande es lo SIN EXPLICAR, no la diferencia
+        // bruta. La diferencia incluye lo que ya tiene explicacion —los ajustes
+        // a mano, sobre todo— asi que el titular decia −76,38 mientras el
+        // veredicto de abajo decia "cuadra": dos mensajes opuestos en la misma
+        // tarjeta, y el que asusta es el grande. Lo que hay que perseguir es lo
+        // que queda sin explicar; la diferencia bruta sigue, como una fila mas
+        // del desglose.
         "<div><div style='font-size:13px;font-weight:800;color:"+col+"'>🧾 Conciliación de capital</div>"+
-        "<div style='font-size:10px;color:#888;margin-top:2px'>Desde el "+ds(co.desde)+" · "+co.meses+" mes(es)</div></div>"+
-        "<div style='text-align:right'><div style='font-size:22px;font-weight:900;color:"+col+";line-height:1'>"+(dif>=0?"+$":"−$")+f2(Math.abs(dif))+"</div>"+
-        "<div style='font-size:9px;color:#888'>diferencia</div></div>"+
+        "<div style='font-size:10px;color:#888;margin-top:2px'>Desde el "+ds(co.desde)+" · "+co.meses+" mes(es) · apertura $"+f2(co.apertura)+
+          ((co.aperturaSaldos&&Object.keys(co.aperturaSaldos).length)?"":" <span style='color:#a06800'>(sin foto de saldos)</span>")+"</div></div>"+
+        "<div style='text-align:right'><div style='font-size:22px;font-weight:900;color:"+col+";line-height:1'>"+((co.sinExplicar||0)>=0?"+$":"−$")+f2(Math.abs(co.sinExplicar||0))+"</div>"+
+        "<div style='font-size:9px;color:#888'>sin explicar</div></div>"+
       "</div>"+
       "<div style='background:#fff;border-radius:9px;padding:10px 12px;margin-bottom:8px;font-size:11px;color:#555;line-height:1.7'>"+
         "<div style='display:flex;justify-content:space-between'><span>Saldo de apertura</span><b>$"+f2(co.apertura)+"</b></div>"+
@@ -8690,6 +8703,15 @@ function rCapitalTotal(){
         "<div style='display:flex;justify-content:space-between;border-top:1px solid #ddd;margin-top:5px;padding-top:5px;font-size:13px'><b>Deberías tener</b><b>$"+f2(co.deberias)+"</b></div>"+
       "</div>"+
       "<div style='background:#fff;border-radius:9px;padding:10px 12px;margin-bottom:8px'>"+lineaReal+"</div>"+
+      // ARREGLO 60: esto estaba DENTRO del desplegable "por qué sale este
+      // número", que va cerrado. Son ajustes que la app no puede situar ni
+      // antes ni después de la apertura porque no llevan hora — con sus datos,
+      // 7 ajustes por −233,46 USDT en el aire. Un aviso escondido no es un
+      // aviso, y menos uno de ese tamaño.
+      (aj.nMismoDia>0?"<div style='background:#FFF8E8;border:1px solid #f0d080;border-radius:9px;padding:9px 11px;margin-bottom:8px;font-size:11px;color:#7a5c00;line-height:1.5'>"+
+        "⚠️ <b>"+aj.nMismoDia+" ajuste"+(aj.nMismoDia!==1?"s":"")+" de saldo por "+(aj.mismoDia<0?"−":"+")+"$"+f2(Math.abs(aj.mismoDia))+" que no se pueden situar.</b> "+
+        "Son del mismo día en que fijaste la apertura y no llevan hora, así que no se sabe si fueron antes o después. Ni cuentan ni se descartan."+
+      "</div>":"")+
       // ARREGLO 46: de qué está hecha la diferencia. Un número suelto no se
       // puede perseguir; separando lo que ya tiene explicación queda a la vista
       // lo único que hay que buscar.
@@ -19847,6 +19869,26 @@ function _refotografiar(){
 // objeto: config y tasasDia se recorren con for..in en varios sitios y una
 // clave "_mod" colada ahí se leería como si fuera una tasa o un ajuste.
 var _MERGE_OBJETOS = ["config","tasasDia","_tasasDiaMeta","tasasCambio"];
+// ── ARREGLO 60 (14/09/2026): claves que viajan JUNTAS o no viajan ──────────
+// La apertura no es un dato, son cinco: el total, la fecha, la foto de los
+// saldos, la hora y la base del mes. _mergeObjetoPorClave decide clave por
+// clave, cada una con su propia marca de tiempo, asi que con dos aparatos
+// puede quedarse la FECHA de uno y el MONTO del otro — una apertura que no
+// existio en ninguno de los dos, y contra la que mide toda la conciliacion.
+//
+// Reproducido con sus dos pantallas del 14/09:
+//   telefono 11/09 · $2.544,79   +   PC 12/09 · $2.450,20
+//   fusion   12/09 · $2.544,79   ← la fecha de uno con el monto del otro
+//
+// Y de ahi salian dos conciliaciones distintas: con apertura del 11 los
+// ajustes de ese dia cuentan (−85,55, diferencia −76,38) y con la del 12
+// quedan antes de la apertura y la pantalla dice "ninguno" (+11,85).
+//
+// Un bloque se resuelve con la marca MAS NUEVA de todas sus claves: o entran
+// todas las del otro aparato, o se quedan todas las de aqui.
+var _MERGE_BLOQUES = {
+  config: [["aperturaUsdt","aperturaFecha","aperturaSaldos","aperturaTs","aperturaBase"]]
+};
 var _MERGE_HISTORIAL = ["histBalance","histTasas","histSaldos"];
 
 function _marcarObjetosCambiados(){
@@ -19897,7 +19939,31 @@ function _mergeObjetoPorClave(remoto, local, campo, marcasRemotas, respaldo){
   var out={}; Object.keys(local).forEach(function(k){ out[k]=local[k]; });
   var mLoc=(S._modCampos&&S._modCampos[campo])||{};
   var mRem=(marcasRemotas&&marcasRemotas[campo])||{};
+  // ARREGLO 60: los bloques primero, y las claves que los forman quedan
+  // decididas — no se vuelven a mirar una por una mas abajo.
+  var yaResueltas={};
+  ((_MERGE_BLOQUES&&_MERGE_BLOQUES[campo])||[]).forEach(function(bloque){
+    var hayRem=bloque.some(function(k){return k in remoto;});
+    var hayLoc=bloque.some(function(k){return k in out;});
+    if(!hayRem) return;                       // el otro aparato no lo tiene
+    bloque.forEach(function(k){ yaResueltas[k]=true; });
+    if(!hayLoc){                              // aqui no hay nada: entra entero
+      bloque.forEach(function(k){ if(k in remoto) out[k]=remoto[k]; else delete out[k]; });
+      return;
+    }
+    var masNueva=function(marcas){
+      var t=0; bloque.forEach(function(k){ if(typeof marcas[k]==="number"&&marcas[k]>t) t=marcas[k]; });
+      return t;
+    };
+    var tRem=masNueva(mRem), tLoc=masNueva(mLoc);
+    if(tRem<=tLoc) return;                    // en un empate manda lo de aqui
+    // Entra el bloque entero: las claves que el otro aparato no tiene se
+    // borran, porque pertenecen a la apertura vieja y mezclarlas seria
+    // volver al mismo problema.
+    bloque.forEach(function(k){ if(k in remoto) out[k]=remoto[k]; else delete out[k]; });
+  });
   Object.keys(remoto).forEach(function(k){
+    if(yaResueltas[k]) return;
     if(!(k in out)){ out[k]=remoto[k]; return; }   // solo lo tiene el otro aparato
     if(JSON.stringify(out[k])===JSON.stringify(remoto[k])) return;
     var tr=mRem[k], tl=mLoc[k], ganaRemoto;
