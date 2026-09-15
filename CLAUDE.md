@@ -288,6 +288,49 @@ desactivarlo. Un candado que parece candado y no lo es es peor que ninguno.
 
 ---
 
+## La huella es una CERRADURA, no una clave (ARREGLO 64)
+
+Hasta ahora `_apiRestaurarSesion()` entraba **sola**: se abría la app y ya
+estabas dentro, sin preguntar nada, mientras la sesión no llevara 7 días sin
+verificarse. O sea que **no había ninguna cerradura** — quien cogiera el
+teléfono desbloqueado entraba a la contabilidad. Esto pone una.
+
+**Lo que es:** una cerradura local sobre la sesión que YA está guardada en ese
+aparato. El servidor sigue reconociendo a la persona por su testigo, igual que
+antes; la huella solo decide si esta app deja usar ese testigo o pide la clave.
+
+**Lo que NO es, y no se puede fingir:** quien tenga el aparato y sepa abrir las
+herramientas del navegador puede leer el testigo del almacenamiento igual que
+antes. Si algún día se quiere que la huella sustituya a la clave en un aparato
+**nuevo**, eso es otra cosa: hay que registrar la credencial en Mongo y que el
+servidor verifique la firma.
+
+**La regla que no se toca: esto NUNCA puede dejar a nadie fuera de su propia
+contabilidad.** Sin WebAuthn, sin lector, sin https, con la huella fallando o
+cancelada — siempre queda entrar con correo y clave, y el botón está a la vista
+en la propia pantalla de desbloqueo. Es el mismo criterio por el que existe la
+gracia sin conexión: un aparato tonto no puede costarle el día.
+
+- **`userVerification:"required"`** en el alta y en el desbloqueo: que el
+  aparato compruebe a la persona, no solo que esté presente. Y
+  `authenticatorAttachment:"platform"`, el lector del propio aparato.
+- **La credencial va amarrada al correo** (`_huellaDeEstaPersona`). Si entra
+  otra persona en el mismo aparato, no se encuentra la cerradura de la anterior.
+- **Al salir, la huella se borra** con la sesión. Si se quedara, la siguiente
+  persona se encontraría una cerradura que no es suya — y la credencial ya no
+  abre nada.
+- **El desbloqueo se dibuja antes que el login** en `R()`. Los dos son "todavía
+  no has entrado", pero en este hay una sesión esperando detrás.
+- **Si el servidor contesta 401, el bloqueo se cae con la sesión.** Quedarse en
+  esa pantalla con un testigo muerto es un callejón sin salida.
+
+`pruebas/prestamos.js` fija todo esto con guardias estructurales. El flujo real
+se probó en Chromium con su **autenticador virtual** (`WebAuthn.addVirtual
+Authenticator` por CDP), servido desde `http://localhost` — WebAuthn no existe
+en `file://`, hace falta contexto seguro.
+
+---
+
 ## El negocio de verdad — léelo antes de tocar saldos, lotes o ganancias
 
 Esto lo explicó la dueña. Si vas a cambiar algo que toque cuentas, inventario
