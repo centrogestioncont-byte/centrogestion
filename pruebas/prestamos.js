@@ -12,6 +12,15 @@ const path = require("path");
 
 const HTML = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
 
+// TABS es "const", no "var", asi que sacarConstante no lo ve. Se lee aparte:
+// las pruebas de permisos recorren el menu de cada rol y no puede ser una copia
+// (una copia se desactualiza en silencio y la prueba pasa probando otra cosa).
+const TABS = (function () {
+  const i = HTML.indexOf("const TABS={");
+  const j = HTML.indexOf("};", i);
+  return eval("(" + HTML.slice(i + "const TABS=".length, j + 1) + ")");
+})();
+
 // Extrae "function nombre(...){...}" contando llaves hasta cerrar.
 function sacarFuncion(nombre) {
   const inicio = HTML.indexOf("function " + nombre + "(");
@@ -42,8 +51,12 @@ function sacarConstante(nombre) {
   throw new Error("la constante " + nombre + " no termina en ';'");
 }
 const CONSTANTES = ["MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
-                    "_MERGE_OBJETOS", "_MERGE_HISTORIAL", "_RATE_LIMITS",
-                    "DATA_KEYS", "_CLAVES_QUE_NO_SON_DATOS", "PAGO_DEBE"];
+                    "_MERGE_OBJETOS", "_MERGE_BLOQUES", "_MERGE_HISTORIAL", "_RATE_LIMITS",
+                    "DATA_KEYS", "_CLAVES_QUE_NO_SON_DATOS", "PAGO_DEBE",
+                    "_TOCADO_AQUI", "_NOMBRE_DE_CLAVE", "_NOMBRE_DE_CONFIG",
+                    "_PISADOS", "_PISADOS_ABIERTO", "_CLIENTES_DESDE_API",
+                    "PERMISOS_APP", "PERMISOS_POR_ROL", "PERMISO_DE_TAB",
+                    "_CONFIG_PROHIBIDO", "_ETIQUETA_ROL"];
 
 const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
                     "congelarMora", "_sumarMeses", "_isoDeFecha", "calcularAmortizacion",
@@ -75,7 +88,13 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "_tasaAutoPago", "_deudaCubierta", "_htmlTasaInvertida",
                     "_htmlTasaEnPalabras", "_htmlEquivAbono", "_htmlCalcPago",
                     "_pasoRedondeoCobro", "_montoACobrar", "_fMontoCobro",
-                    "_deudaACobrar"];
+                    "_deudaACobrar",
+                    "_jsonEstable", "_escAud", "_anotarTocado", "_unirTocado",
+                    "_tomarTocado", "_etiquetaRegistro", "_resumirValor",
+                    "_camposEnConflicto", "_conflictosConElServidor",
+                    "_completarConLoQueQuedo", "_htmlAvisoPisado",
+                    "_permisoPorOmision", "tienePermiso", "permisoEdicion",
+                    "_resumenPermisos"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
 global.window = global.window || {};
 // setTasaDia/soltarTasaDia guardan y repintan, y avisan por alert(). Aqui no
@@ -100,7 +119,13 @@ const F = new Function("S", "getRateToUsdt", "calcMesCompleto",
   NECESARIAS.map(sacarFuncion).join("\n") +
   // Las constantes tambien se devuelven: las pruebas de la marca recorren
   // _MERGE_FIELDS entero, para que un campo nuevo no se quede sin cubrir.
-  "\nreturn {" + NECESARIAS.concat(CONSTANTES).join(",") + "};")(S, getRateToUsdt, calcMesCompleto);
+  // _TOCADO_AQUI y _PISADOS se REASIGNAN dentro (no solo se mutan), asi que
+  // la copia que sale en el return se queda vieja en cuanto alguien las
+  // reasigna. Estos accesos leen y escriben las de verdad.
+  "\n_pruebaTocado=function(v){ if(v!==undefined)_TOCADO_AQUI=v; return _TOCADO_AQUI; };" +
+  "\n_pruebaPisados=function(v,a){ if(v!==undefined)_PISADOS=v; if(a!==undefined)_PISADOS_ABIERTO=a; return _PISADOS; };" +
+  "\nreturn {" + NECESARIAS.concat(CONSTANTES).join(",") +
+  ",_pruebaTocado:_pruebaTocado,_pruebaPisados:_pruebaPisados};")(S, getRateToUsdt, calcMesCompleto);
 
 let fallos = 0;
 function ok(cond, msg, dato) {
@@ -2285,6 +2310,448 @@ ok(/monto = _deudaCubierta\(montoIngresado,tasaManual\);/.test(HTML),
    "lo recibido se convierte exacto, sin redondeos de por medio");
 ok(!/_montoACobrar\(montoIngresado/.test(HTML),
    "y el monto que entra a la cuenta no pasa por el redondeo");
+
+// ── ARREGLO 57: el cierre de mes no puede enseñar numeros que no cuadran ──
+// Guardias estructurales: estas cosas se comprobaron en el navegador con su
+// export, y aqui se fijan para que no vuelvan.
+console.log("\nArreglo 57 · el cierre de mes cuenta el mismo dinero en todas partes");
+
+// El agujero inventado: comparaba "cierre anterior + neto del mes" contra solo
+// lo que hay en cuentas bancarias y cantaba −546,29 USDT que no existian.
+ok(!/Debería haber en caja/.test(HTML),
+   "el PDF ya no tiene el 'deberia haber en caja' que inventaba el agujero");
+ok(!/puede deberse a tasas del momento o cobros pendientes/.test(HTML),
+   "ni la disculpa que lo acompañaba");
+ok(/DE QUÉ SE COMPONE EL CAPITAL|De qué se compone el capital/.test(HTML),
+   "en su sitio va de que se compone el capital");
+ok(/conciliación de capital/.test(HTML),
+   "y manda a la conciliacion, que si responde si falta dinero");
+// El capital sale de una sola funcion, para que dos pantallas no cuenten
+// distinto el mismo dinero (faltaba la reserva: 2.302,34 contra 2.479,17).
+ok(/var _capReal=\(typeof capitalRealTotal==="function"\)\?capitalRealTotal\(\):null;/.test(HTML),
+   "el capital del PDF sale de capitalRealTotal(), la misma de Balance de Cuentas");
+ok(/var siCobrasTodo=_capReal\?_capReal\.total:/.test(HTML),
+   "y el 'potencial total' es ese mismo numero, no una suma a mano");
+
+// Los intereses de prestamos entran en ganBrutaTotal y NO en miGanOperaciones:
+// el desglose saltaba de 226,89 a 221,50 sin una fila que lo explicara, y la
+// pestaña Operaciones enseñaba otra ganancia bruta distinta.
+ok((HTML.match(/Intereses de préstamos \("\+calc\.ganPrestamosCant/g)||[]).length===2,
+   "los intereses de prestamos tienen su fila en la pantalla y en el PDF");
+ok(/Solo remesas\. Los <b>\$"\+f2\(calc\.ganPrestamos\)/.test(HTML),
+   "y Operaciones avisa de que su total son solo remesas");
+
+// Apartar un numero negativo no significa nada: si el socio debe, es un cobro.
+ok(/var _socioAPagar=Math\.max\(0,calc\.socioFinalEE\);/.test(HTML),
+   "lo que se aparta para el socio nunca es negativo");
+ok(/te debe \(no se le paga este mes\)/.test(HTML),
+   "y cuando debe, la pantalla lo dice igual que el PDF");
+
+// Ruido que estorbaba la lectura.
+ok(!/mes anterior encontrado/.test(HTML),
+   "fuera la linea de depuracion que se veia en produccion");
+ok(/salieron de tus cuentas personales/.test(HTML),
+   "se explica por que unos gastos personales no bajan el disponible");
+// El cierre vivo, en español. (rCierreMes/imprimirRelatorioContador siguen en
+// portugues, pero son codigo muerto que nadie llama; se borran aparte.)
+// Se quitan los comentarios antes de mirar: un comentario que CUENTA el
+// arreglo nombra las palabras viejas, y si no, la prueba se acusa a si misma.
+const _vivo = HTML.slice(HTML.indexOf("function calcMesCompleto"))
+                  .split("\n").filter(function(l){return !/^\s*\/\//.test(l);}).join("\n");
+ok(!/Saídas|Fluxo líquido|Relatório Financeiro|todas as contas/.test(_vivo),
+   "no queda portugues suelto en el cierre vivo");
+ok(/En cero y sin movimiento este mes/.test(HTML) && / más en cero, sin saldo que informar/.test(HTML),
+   "las cuentas en cero se apartan pero se siguen nombrando");
+
+// ── ARREGLO 58: un socio sin nada no llena media pantalla de ceros ──────
+// Sus palabras: "ya todas esas cuentas quedaron saldadas, no deberia de
+// aparecer nada de Paul". Pero si queda una deuda viva, SI tiene que salir:
+// es dinero de verdad.
+console.log("\nArreglo 58 · un socio sin movimiento este mes no ocupa la pantalla");
+ok(/function _socioVacio\(bruta,deudas,final,socioId\)/.test(HTML),
+   "hay una sola regla para decidir si un socio tiene algo que enseñar");
+ok(/Math\.abs\(bruta\)<0\.009 && Math\.abs\(deudas\)<0\.009 && Math\.abs\(final\)<0\.009 && Math\.abs\(pagos\)<0\.009/.test(HTML),
+   "y solo se calla si no hay ganancia, ni deuda, ni saldo, ni pagos");
+ok(/sin operaciones, sin deudas y sin pagos este mes/.test(HTML),
+   "el socio dormido sale nombrado, no borrado");
+ok(/calc\.socioFinalEE>0\.009\?"<tr><td>Pagar /.test(HTML),
+   "el PDF no escribe una fila 'Pagar X \$0,00'");
+ok(/Math\.abs\(calc\.ganEEBruta\)>0\.009 \|\| Math\.abs\(calc\.deudasSocioEE\)>0\.009/.test(HTML),
+   "y la seccion de liquidacion de socios no se dibuja si no hay nada que liquidar");
+
+// ── ARREGLO 59: la hoja del contador y el detalle del mes ───────────────
+console.log("\nArreglo 59 · el informe lleva lo que el contador necesita");
+
+// El "</div>" de mas: cerraba .cuerpo y .hoja antes de tiempo, asi que TODO lo
+// que se pusiera despues quedaba FUERA de #reporteCapture — y html2canvas solo
+// captura lo de dentro. No se notaba porque no habia nada despues; al añadir
+// las dos secciones nuevas desaparecian sin dar un solo error.
+ok(!/"<\/table><\/div>"\+"<\/div>"/.test(HTML),
+   "no queda el '</div>' de mas que cerraba la hoja antes de tiempo");
+ok(/id='reporteCapture'/.test(HTML), "la hoja del PDF sigue teniendo su id");
+
+// Lo que el contador pide, y de quien es el papel.
+ok(/EMPRESA_RAZON|EMPRESA_CNPJ/.test(HTML), "la razon social y el CNPJ estan en el codigo");
+ok((HTML.match(/EMPRESA_CNPJ/g)||[]).length>=3,
+   "y salen en la hoja del PDF, en la pantalla y en el CSV");
+ok(/Hoja para el contador/.test(HTML), "el PDF lleva la hoja del contador");
+ok(/Detalle del mes · todo el movimiento/.test(HTML), "y el detalle de todo el movimiento");
+ok(/_descargarInformePDF/.test(HTML) && /⬇️ Descargar PDF/.test(HTML),
+   "hay boton de descargar, no solo compartir");
+
+// Una sola fuente para la ganancia del contador: cada operacion con SU tasa.
+// Sin comentarios: el que cuenta el arreglo nombra lo que se quito.
+const _sinCom = HTML.split("\n").filter(function(l){return !/^\s*\/\//.test(l);}).join("\n");
+ok(!/Lucro Bruto das Operações|Lucro Líquido Final/.test(_sinCom),
+   "fuera el 'lucro' que convertia todo con una sola tasa del dia");
+ok((HTML.match(/resumenContador\(mesKey\)/g)||[]).length>=3,
+   "la pantalla, el PDF y el CSV salen de resumenContador()");
+
+// El codigo muerto, borrado.
+ok(!/function rCierreMes\(/.test(HTML) && !/function imprimirRelatorioContador\(/.test(HTML),
+   "las 313 lineas muertas del cierre viejo ya no estan");
+ok(!/Selecione um mês|Relatório Contador/.test(HTML),
+   "y con ellas se fue el ultimo portugues del modulo");
+
+// ── ARREGLO 60: la apertura viaja entera o no viaja ─────────────────────
+// La apertura son cinco claves dentro de config, y _mergeObjetoPorClave decide
+// clave por clave: con dos aparatos se quedaba la FECHA de uno y el MONTO del
+// otro. Reproducido con sus dos pantallas del 14/09 —telefono 11/09 · 2.544,79
+// y PC 12/09 · 2.450,20— que fusionaban a 12/09 · 2.544,79: una apertura que no
+// existio en ninguno de los dos, y contra la que mide toda la conciliacion.
+console.log("\nArreglo 60 · la apertura no se mezcla entre aparatos");
+ok(Array.isArray(F._MERGE_BLOQUES && F._MERGE_BLOQUES.config),
+   "config tiene bloques de claves que viajan juntas");
+(function(){
+  const bloque = (F._MERGE_BLOQUES.config||[])[0]||[];
+  ["aperturaUsdt","aperturaFecha","aperturaSaldos","aperturaTs","aperturaBase"].forEach(function(k){
+    ok(bloque.indexOf(k)!==-1, "  "+k+" va en el bloque de la apertura");
+  });
+})();
+
+const T1 = 1789412461727, T2 = T1 + 3600000;
+function fusionarConfig(local, mLoc, remoto, mRem){
+  S._modCampos = {config:mLoc};
+  return F._mergeObjetoPorClave(remoto, local, "config", {config:mRem}, function(){ return false; });
+}
+// El caso exacto: el monto marcado aqui, la fecha marcada alla.
+const _mezcla = fusionarConfig(
+  {aperturaUsdt:2544.79, aperturaFecha:"2026-09-11"},
+  {aperturaUsdt:T2, aperturaFecha:T1},
+  {aperturaUsdt:2450.20, aperturaFecha:"2026-09-12", aperturaSaldos:{c1:10}, aperturaTs:T2},
+  {aperturaUsdt:T1, aperturaFecha:T2, aperturaSaldos:T2, aperturaTs:T2});
+ok((_mezcla.aperturaFecha==="2026-09-12" && _mezcla.aperturaUsdt===2450.20) ||
+   (_mezcla.aperturaFecha==="2026-09-11" && _mezcla.aperturaUsdt===2544.79),
+   "la fecha y el monto salen SIEMPRE del mismo aparato",
+   _mezcla.aperturaFecha+" con "+_mezcla.aperturaUsdt);
+// Si la del otro aparato es mas nueva, entra entera —foto incluida—.
+const _entera = fusionarConfig(
+  {aperturaUsdt:2544.79, aperturaFecha:"2026-09-11"},
+  {aperturaUsdt:T1, aperturaFecha:T1},
+  {aperturaUsdt:2450.20, aperturaFecha:"2026-09-12", aperturaSaldos:{c1:10}, aperturaTs:T2},
+  {aperturaUsdt:T2, aperturaFecha:T2, aperturaSaldos:T2, aperturaTs:T2});
+ok(_entera.aperturaFecha==="2026-09-12" && _entera.aperturaUsdt===2450.20 && !!_entera.aperturaSaldos,
+   "y cuando entra la del otro, entra con su foto y su hora");
+// En un empate manda la de este aparato: no se pisa lo que se acaba de hacer.
+const _empate = fusionarConfig(
+  {aperturaUsdt:2544.79, aperturaFecha:"2026-09-11"}, {aperturaUsdt:T2, aperturaFecha:T2},
+  {aperturaUsdt:2450.20, aperturaFecha:"2026-09-12"}, {aperturaUsdt:T2, aperturaFecha:T2});
+ok(_empate.aperturaUsdt===2544.79, "en un empate se queda la de este aparato");
+// El resto de config se sigue fusionando clave por clave, como siempre.
+const _resto = fusionarConfig(
+  {moraMultaPct:2, ntfyCanal:"a"}, {moraMultaPct:T2, ntfyCanal:T1},
+  {moraMultaPct:5, ntfyCanal:"b"}, {moraMultaPct:T1, ntfyCanal:T2});
+ok(_resto.moraMultaPct===2 && _resto.ntfyCanal==="b",
+   "lo demas de config no cambia de comportamiento", JSON.stringify(_resto));
+
+// La tarjeta: el numero grande es lo que hay que perseguir, y los avisos no se
+// pliegan (7 ajustes por −233,46 estaban dentro de un desplegable cerrado).
+ok(/>sin explicar</.test(HTML), "el titular de la conciliacion dice 'sin explicar'");
+ok(/f2\(Math\.abs\(co\.sinExplicar\|\|0\)\)/.test(HTML),
+   "y el numero grande es sinExplicar, no la diferencia bruta");
+ok(/que no se pueden situar/.test(HTML), "el aviso de los ajustes en el aire esta fuera del desplegable");
+ok(/aperturaSaldos:\(S\.config\|\|\{\}\)\.aperturaSaldos/.test(HTML),
+   "la conciliacion dice si la apertura tiene foto de saldos");
+
+// ── ARREGLO 62 · el aviso de choque entre dispositivos ────────────────────
+// Lo que se prueba es la REGLA, no la pantalla: se avisa solo de lo que este
+// aparato toco y el servidor devolvio distinto. Lo que llega nuevo del otro
+// aparato no puede avisar — si avisara, avisaria en cada guardado y el aviso
+// dejaria de significar nada.
+console.log("\nArreglo 62 · avisar cuando el otro aparato piso algo");
+
+// Lo tocado se anota desde el mismo sitio que ya lo marca, no a mano.
+{
+  const src = sacarFuncion("_marcarCambiados");
+  ok(/_anotarTocado\(clave,\s*id\)/.test(src),
+     "_marcarCambiados anota lo que marca (no hay que tocar cada funcion)");
+  const src2 = sacarFuncion("_marcarObjetosCambiados");
+  ok((src2.match(/_anotarTocado\("@"\+campo/g) || []).length === 2,
+     "y _marcarObjetosCambiados lo anota en sus dos ramas");
+  ok(/_marcarCambiados\(S\[k\],\s*window\._fotoPorCampo\[k\],\s*ids\[k\]\|\|"id",\s*k\)/
+       .test(sacarFuncion("_marcarTodoLoQueSeFusiona")),
+     "y le pasa el nombre del campo, para que el aviso sepa de que habla");
+}
+
+// El primer guardado tras abrir no anota nada: sin foto previa se anota, no se
+// marca (ARREGLO 33). Si anotara, el aviso saltaria al abrir la app.
+F._pruebaTocado({});
+global.window._fotoPorCampo = {};
+const _arr = [{id: "a", saldo: 10}];
+F._marcarCambiados(_arr, global.window._fotoPorCampo.cuentas = {}, "id", "cuentas");
+ok(Object.keys(F._pruebaTocado()).length === 0,
+   "el primer guardado tras abrir no anota nada");
+_arr[0].saldo = 20;
+F._marcarCambiados(_arr, global.window._fotoPorCampo.cuentas, "id", "cuentas");
+ok(F._pruebaTocado().cuentas && F._pruebaTocado().cuentas.a === true,
+   "y el cambio de verdad si queda anotado", JSON.stringify(F._pruebaTocado()));
+
+// El cajon se vacia al mandar, y vuelve entero si el envio no llego.
+const _llevado = F._tomarTocado();
+ok(Object.keys(F._pruebaTocado()).length === 0, "al mandar, el cajon queda vacio");
+F._unirTocado(F._pruebaTocado(), _llevado);
+ok(F._pruebaTocado().cuentas.a === true, "y si el envio falla, lo tocado vuelve entero");
+
+// El nucleo: que solo avise del choque.
+const _mando = {
+  cuentas: [{id: "c1", nombre: "Banco de Venezuela", saldo: 198619.9},
+            {id: "c2", nombre: "Binance", saldo: 800}],
+  config: {aperturaUsdt: 2544.79, aperturaFecha: "2026-09-11"}
+};
+const _volvio = {
+  cuentas: [{id: "c1", nombre: "Banco de Venezuela", saldo: 198619.9},
+            {id: "c2", nombre: "Binance", saldo: 915},          // lo cambio el otro
+            {id: "c3", nombre: "Cuenta nueva del otro", saldo: 5}],
+  config: {aperturaUsdt: 2450.20, aperturaFecha: "2026-09-12"}
+};
+// Este aparato solo toco c1 y la apertura.
+const _soloC1 = F._conflictosConElServidor(_mando, _volvio, {cuentas: {c1: true}});
+ok(_soloC1.length === 0,
+   "lo que cambio el OTRO aparato no avisa: eso es sincronizacion, no un choque",
+   JSON.stringify(_soloC1));
+const _choque = F._conflictosConElServidor(_mando, _volvio, {cuentas: {c2: true}});
+ok(_choque.length === 1 && _choque[0].id === "c2",
+   "pero si este aparato tambien lo toco, si avisa");
+ok(_choque[0].campos.length === 1 && _choque[0].campos[0].campo === "saldo" &&
+   _choque[0].campos[0].mio === "800" && _choque[0].campos[0].suyo === "915",
+   "y dice que campo, que mandaste y que tenia el otro", JSON.stringify(_choque[0].campos));
+
+// La tercera columna: lo que QUEDO. El servidor devuelve una cosa y despues
+// _aplicarEstadoDeApi vuelve a fusionar aqui con las marcas de este aparato,
+// asi que lo que queda puede no ser ninguna de las dos. Medido en el navegador:
+// el servidor devolvia 915, quedaba 801, y el aviso decia "quedo 915".
+S.cuentas = [{id:"c1", nombre:"Banco de Venezuela", saldo:198619.9},
+             {id:"c2", nombre:"Binance", saldo:801}];
+F._completarConLoQueQuedo(_choque);
+ok(_choque[0].campos[0].quedo === "801",
+   "y 'quedo' se lee de lo que ella ve, no de lo que devolvio el servidor",
+   _choque[0].campos[0].quedo);
+ok(_choque[0].campos[0].quedoMio === false && _choque[0].campos[0].quedoSuyo === false,
+   "si no quedo ni lo tuyo ni lo del otro, no se dice que si");
+S.cuentas[1].saldo = 915;
+const _gano = F._conflictosConElServidor(_mando, _volvio, {cuentas:{c2:true}});
+F._completarConLoQueQuedo(_gano);
+ok(_gano[0].campos[0].quedo === "915" && _gano[0].campos[0].quedoSuyo === true,
+   "y cuando gana el otro aparato, lo dice");
+S.cuentas = [];
+ok(/Cuenta · Binance/.test(_choque[0].etiqueta),
+   "con el nombre que ella usa, no el identificador interno", _choque[0].etiqueta);
+const _nueva = F._conflictosConElServidor(_mando, _volvio, {cuentas: {c1: true, c2: true}});
+ok(_nueva.length === 1, "una cuenta que solo tiene el otro aparato nunca es un choque");
+
+// La apertura: las cinco claves viajan juntas (ARREGLO 60) y el choque se ve.
+const _cfg = F._conflictosConElServidor(_mando, _volvio,
+  {"@config": {aperturaUsdt: true, aperturaFecha: true}});
+ok(_cfg.length === 2, "el choque de la apertura sale clave por clave");
+ok(_cfg.some(function (c) { return /Saldo de apertura/.test(c.etiqueta); }),
+   "y 'aperturaUsdt' se dice 'Saldo de apertura'", JSON.stringify(_cfg.map(c => c.etiqueta)));
+
+// Un registro que el otro aparato borro no puede pasar por un cambio de campo.
+const _sinC2 = {cuentas: [{id: "c1", nombre: "Banco de Venezuela", saldo: 198619.9}], config: {}};
+const _borr = F._conflictosConElServidor(_mando, _sinC2, {cuentas: {c2: true}});
+ok(_borr.length === 1 && _borr[0].borrado === true,
+   "y si el otro lo borro, lo dice con esas palabras");
+
+// _mod y "n" no son datos: si cambiaran solos, el aviso saltaria por nada.
+const _soloMod = F._conflictosConElServidor(
+  {brl: [{_uid: "u1", n: 4, cl: "Rudi", total: 500, _mod: 1}]},
+  {brl: [{_uid: "u1", n: 9, cl: "Rudi", total: 500, _mod: 2}]},
+  {brl: {u1: true}});
+ok(_soloMod.length === 0, "la marca y el numero de fila no cuentan como choque",
+   JSON.stringify(_soloMod));
+
+// Los clientes vienen por su propia ruta y el bloque de estado puede traer una
+// copia vieja que la app ignora a proposito. Avisar de ella seria avisar de algo
+// que ni siquiera se va a aplicar.
+{
+  const src = sacarFuncion("_conflictosConElServidor");
+  ok(/clave==="clientes"\s*&&\s*_CLIENTES_DESDE_API/.test(src),
+     "la copia vieja de clientes del bloque de estado no puede hacer saltar el aviso");
+}
+
+// El aviso se ve, y se ve fuera de la zona que hace scroll.
+F._completarConLoQueQuedo(_choque);
+F._pruebaPisados(_choque, false);
+const _av = F._htmlAvisoPisado();
+ok(/El otro dispositivo tambi[eé]n cambi[oó]/.test(_av), "el aviso dice lo que pasa");
+ok(/Ver qu[eé] cambi[oó]/.test(_av) && /Entendido/.test(_av),
+   "y se puede abrir el detalle o darlo por visto");
+ok(!/Binance/.test(_av), "plegado no enseña el detalle");
+F._pruebaPisados(undefined, true);
+ok(/Binance/.test(F._htmlAvisoPisado()), "desplegado si");
+ok(/el otro ten[ií]a/.test(F._htmlAvisoPisado()) && /qued[oó]/.test(F._htmlAvisoPisado()),
+   "y ensena los tres valores: lo tuyo, lo del otro y lo que quedo");
+F._pruebaPisados([], false);
+ok(F._htmlAvisoPisado() === "", "y sin choques no ocupa ni un pixel");
+ok(/_htmlAvisoPisado\(\)\+\s*\n?\s*"<div class='navbar3'>"/.test(HTML.replace(/\/\/[^\n]*\n/g, "\n")),
+   "el aviso va arriba del panel, fuera del scroll");
+
+// Y que nadie vuelva a adoptar en silencio.
+{
+  const src = sacarFuncion("_dobleEnviarAhora");
+  ok(/_conflictosConElServidor\(obj,\s*d\.estado,\s*_tocado\)/.test(src),
+     "se compara ANTES de adoptar lo del servidor");
+  ok(src.indexOf("_conflictosConElServidor") < src.indexOf("var _cambio=_aplicarEstadoDeApi"),
+     "y el orden es ese: comparar, despues adoptar");
+  ok(src.indexOf("var _cambio=_aplicarEstadoDeApi") < src.indexOf("_completarConLoQueQuedo"),
+     "y 'lo que quedo' se lee DESPUES de adoptar, que es cuando se sabe");
+}
+
+// ── FASE B · los permisos son de la PERSONA, no del rol ───────────────────
+console.log("\nFase B · permisos por persona");
+
+// Los comentarios de este proyecto cuentan lo que se quito ("antes pasaba X,
+// por eso ahora Y"), asi que una prueba que exige que un texto NO este se
+// acusa a si misma si no los saca antes.
+const sinComentarios = (t) => t.split("\n").filter((l) => !/^\s*\/\//.test(l)).join("\n");
+
+// La sesion vive en localStorage, que en Node no existe. tienePermiso la lee
+// por _permisosApi(): se sustituye por una de mentira para poder fijar el rol
+// y los permisos de cada caso.
+let SESION = null;
+global._permisosApi = () => SESION;
+
+// Lo que mas importa: que NADIE pierda nada el dia del despliegue. Los usuarios
+// que hay hoy tienen `permisos` casi vacio, y hasta ahora el menu de un
+// operador no salia de los permisos sino de S.config.modulos. Si los valores
+// por omision de cada rol no reprodujeran el menu de ayer, al desplegar esto
+// los operadores se quedarian sin app.
+const MENU_DE_AYER = {
+  admin: TABS.admin,
+  lector: TABS.lector,
+  brl: ["mi_ganancia", "op_diario", "nueva", "clientes"],
+  vzla: ["mi_ganancia", "op_diario", "nueva", "clientes"],
+  eeuu: ["mi_ganancia", "op_diario", "nueva_eeuu", "clientes"],
+};
+Object.keys(MENU_DE_AYER).forEach(function (rol) {
+  SESION = { rol: rol, permisos: {} };
+  const visibles = (TABS[rol] || []).filter(function (t) {
+    const k = F.PERMISO_DE_TAB[t];
+    return k === undefined || F.tienePermiso(k);
+  });
+  ok(JSON.stringify(visibles) === JSON.stringify(MENU_DE_AYER[rol]),
+     "con permisos vacios, " + rol + " ve exactamente el menu de ayer",
+     JSON.stringify(visibles));
+});
+
+// Cada pestaña de cada rol tiene que poder concederse desde la pantalla. Una
+// pestaña cuya llave no este en PERMISOS_APP seria un permiso invisible: la
+// puerta existe y no hay casilla para abrirla.
+{
+  const llaves = F.PERMISOS_APP.map(function (p) { return p.k; });
+  const huerfanas = [];
+  Object.keys(TABS).forEach(function (rol) {
+    (TABS[rol] || []).forEach(function (t) {
+      const k = F.PERMISO_DE_TAB[t];
+      if (k !== undefined && llaves.indexOf(k) === -1) huerfanas.push(t + "→" + k);
+    });
+  });
+  ok(huerfanas.length === 0,
+     "toda pestaña con puerta tiene su casilla en la pantalla", huerfanas.join(", "));
+  ok(llaves.indexOf("editar") === 0,
+     "'Registrar y modificar' va primero: es el unico que hace cumplir el servidor");
+}
+
+// Lo decidido para la persona manda sobre lo que diga su rol, en los dos
+// sentidos. Esto es la Fase B entera en dos comprobaciones.
+SESION = { rol: "brl", permisos: { clientes: false } };
+ok(F.tienePermiso("clientes") === false,
+   "quitarle una pantalla a una persona se la quita, aunque su rol la traiga");
+SESION = { rol: "brl", permisos: { prestamos: true } };
+ok(F.tienePermiso("prestamos") === true,
+   "y darle una que su rol no trae, se la da");
+SESION = { rol: "brl", permisos: {} };
+ok(F.tienePermiso("prestamos") === false && F.tienePermiso("clientes") === true,
+   "sin decidir, vale lo de su rol");
+
+// Dos personas con el MISMO rol y permisos distintos: es lo que ella pidio y
+// lo que la tabla vieja no podia hacer.
+const unoSi = (function () { SESION = { rol: "vzla", permisos: { cobrar: true } }; return F.tienePermiso("cobrar"); })();
+const otroNo = (function () { SESION = { rol: "vzla", permisos: { cobrar: false } }; return F.tienePermiso("cobrar"); })();
+ok(unoSi === true && otroNo === false,
+   "dos personas con el mismo rol pueden tener permisos distintos");
+
+// El Administrador no se puede quedar fuera por una casilla mal puesta.
+SESION = { rol: "admin", permisos: { config_admin: false, editar: false } };
+ok(F.tienePermiso("config_admin") === true && F.permisoEdicion() === true,
+   "al Administrador no hay casilla que le cierre nada");
+
+// El Supervisor ve todo y no modifica: eso ES el rol.
+SESION = { rol: "lector", permisos: {} };
+ok(F.tienePermiso("editar") === false && F.tienePermiso("cierre") === true,
+   "el Supervisor ve todo y no modifica");
+
+// Una sola puerta para guardar: permisoEdicion deja de tener criterio propio.
+SESION = { rol: "eeuu", permisos: {} };
+ok(F.permisoEdicion() === F.tienePermiso("editar"),
+   "permisoEdicion() es exactamente tienePermiso('editar')");
+// Y sin sesion no se entra ni se guarda.
+SESION = null;
+ok(F.tienePermiso("dash") === false && F.permisoEdicion() === false,
+   "sin sesion de la API no hay ningun permiso");
+
+// El resumen de la ficha dice la verdad de un vistazo.
+ok(/solo mira/.test(F._resumenPermisos({ rol: "lector", permisos: {} })),
+   "la ficha de un Supervisor dice 'solo mira'");
+ok(/registra/.test(F._resumenPermisos({ rol: "brl", permisos: {} })),
+   "y la de un operador, 'registra'");
+
+// La tabla vieja, retirada de verdad: no basta con esconder la pantalla.
+{
+  const sinCom = HTML.split("\n").filter(function (l) { return !/^\s*\/\//.test(l); }).join("\n");
+  ok(!/function toggleModulo\(/.test(sinCom), "la funcion que guardaba los permisos por rol ya no esta");
+  ok(!/S\.config\.modulos/.test(sinCom), "y nada lee ni escribe S.config.modulos");
+  ok(!/Permisos por operador/.test(sinCom), "el acordeon viejo ya no se dibuja");
+  ok(F._CONFIG_PROHIBIDO.indexOf("modulos") !== -1,
+     "y 'modulos' se limpia de config, para que no vuelva desde un aparato viejo");
+}
+
+// El menu y el contenido salen de la MISMA puerta. Antes el contenido estaba
+// detras de "isAdmin ? ... : ''" y a un operador se le devolvia pantalla en
+// blanco, sin decir por que.
+{
+  const src = sinComentarios(sacarFuncion("rMain"));
+  ok(!/isAdmin/.test(src), "el contenido ya no se decide por 'isAdmin'");
+  ok(/ts=ts\.filter\(function\(tab\)\{[\s\S]*PERMISO_DE_TAB\[tab\]/.test(src),
+     "el menu se filtra con el mismo permiso que dibuja la pantalla");
+}
+
+// Guardar manda la lista COMPLETA. Mandar solo lo marcado dejaria lo demas
+// "sin decidir", y sin decidir vuelve a valer lo del rol: quitar un permiso no
+// habria quitado nada.
+{
+  const src = sacarFuncion("guardarPermisosUsuario");
+  ok(/PERMISOS_APP\.forEach\(function\(p\)\{ permisos\[p\.k\]=!!S\._permVal\[p\.k\]; \}\)/.test(src),
+     "guardar manda todas las casillas con su true o su false");
+  ok(/method:"PUT",body:\{permisos:permisos\}/.test(src),
+     "y las manda al servidor, no al bloque que se sincroniza");
+}
+ok(!/R\(\)/.test(sinComentarios(sacarFuncion("togglePermisoUsuario"))),
+   "marcar una casilla no repinta: repintar cierra la tarjeta bajo el dedo (ARREGLO 32)");
+
+// Un cambio de permisos tiene que llegar sin cerrar la app.
+ok(/_refrescarMisPermisos\(\)/.test(HTML.replace(/\/\/[^\n]*\n/g, "\n")),
+   "los permisos se vuelven a preguntar al volver a la app");
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

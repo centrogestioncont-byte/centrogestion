@@ -1472,7 +1472,12 @@ function autorizar(accion){
 // CIFRAR dentro de S.config, y config viaja al servidor en cada guardado.
 // Nadie lee ya esas claves, pero mientras sigan ahi los PIN andan en claro
 // por todos los dispositivos.
-var _CONFIG_PROHIBIDO = ["usuarios","pins"];
+// Claves que ya no son datos y no tienen que volver del servidor. "usuarios" y
+// "pins" eran los perfiles locales con el PIN en claro. "modulos" son los
+// permisos por rol de la FASE B: si se quedaran, un aparato viejo los seguiria
+// mandando y el bloque de estado cargaria para siempre con un permiso que ya
+// no decide nada.
+var _CONFIG_PROHIBIDO = ["usuarios","pins","modulos"];
 function _limpiarConfig(cfg){
   if(!cfg || typeof cfg!=="object") return 0;
   var n=0;
@@ -1716,6 +1721,333 @@ var _DOBLE_MAX = 30;                    // cuántas comparaciones se guardan
 // compiten por el espacio que necesitan las remesas.
 var _DOBLE_CORTADA = "";                // motivo, si el servidor la rechazó
 
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 62 (15/09/2026) — que SE VEA cuando el otro aparato pisó algo
+//
+// El servidor fusiona y este dispositivo adopta la respuesta. Eso está bien
+// —es lo que evita que el último que guarda borre al otro— pero se hacía en
+// SILENCIO: si el teléfono tenía la apertura del 11 y la PC la del 12, uno
+// de los dos perdía y la pantalla simplemente cambiaba sola, sin decir
+// nada. Sus palabras: "que uno diga algo y el otro equipo otro".
+//
+// Lo que se enseña NO es todo lo que cambió el servidor. Casi todo lo que
+// vuelve distinto es sencillamente lo que el otro aparato registró mientras
+// tanto: eso es sincronización normal y avisarlo sería ruido en cada
+// guardado. Se avisa SOLO del choque: un registro que ESTE dispositivo
+// acaba de cambiar y que el servidor devuelve distinto de como se mandó.
+// Ahí sí hubo dos opiniones sobre el mismo dato, y ella tiene que saber
+// cuál quedó.
+//
+// De qué se sabe "lo que este dispositivo acaba de cambiar": del mismo
+// sitio que ya lo calcula para marcarlo, _marcarCambiados() y
+// _marcarObjetosCambiados(). No se anota a mano en ninguna función —ese
+// camino ya se demostró que no funciona (más de cien funciones escriben
+// datos, y la que se olvide es la que rompe)—; se anota donde ya se compara
+// contra la foto del guardado anterior, así que una función nueva queda
+// cubierta sola.
+// ══════════════════════════════════════════════════════════════════════
+
+// Lo tocado aquí y todavía sin respuesta del servidor. Se acumula entre
+// guardados: el freno de fbSave() junta varios cambios en un solo envío.
+var _TOCADO_AQUI = {};
+
+function _anotarTocado(clave, id){
+  if(!clave || id===undefined || id===null) return;
+  if(!_TOCADO_AQUI[clave]) _TOCADO_AQUI[clave]={};
+  _TOCADO_AQUI[clave][id]=true;
+}
+function _unirTocado(destino, otro){
+  Object.keys(otro||{}).forEach(function(k){
+    if(!destino[k]) destino[k]={};
+    Object.keys(otro[k]).forEach(function(id){ destino[k][id]=true; });
+  });
+  return destino;
+}
+// Se LLEVA lo anotado y deja el cajón vacío, para que lo que ella toque
+// mientras el guardado viaja no se confunda con lo que ya iba dentro. Si el
+// envío no llega a buen puerto se devuelve con _unirTocado.
+function _tomarTocado(){
+  var t=_TOCADO_AQUI; _TOCADO_AQUI={}; return t;
+}
+
+var _NOMBRE_DE_CLAVE = {
+  cuentas:"Cuenta", compromisos:"Compromiso", egresos:"Egreso",
+  egresos_personales:"Egreso personal", prestamos:"Préstamo",
+  cuentasCobrar:"Cuenta por cobrar", clientes:"Cliente",
+  inventarioUsdt:"Lote de USDT", inventarioUsdt_cerrado:"Lote de USDT cerrado",
+  brl:"Remesa Brasil", vzla:"Remesa Venezuela", eeuu:"Remesa EE.UU.",
+  traspasos:"Traspaso", reposiciones:"Reposición", gastos_eeuu:"Gasto EE.UU.",
+  deudas_paul:"Deuda de socio", movimientosCapital:"Movimiento de capital",
+  pagosSocios:"Pago a socio", gananciaExtra:"Ganancia extra",
+  gastos_socios:"Gasto de socio", cierresMes:"Cierre de mes",
+  capital:"Reserva", ajustesSaldo:"Ajuste de saldo",
+  "@config":"Configuración", "@tasasDia":"Tasa del día",
+  "@_tasasDiaMeta":"Tasa del día (fijada)", "@tasasCambio":"Tasa de cambio"
+};
+// Las claves de config se llaman como las llamó quien las escribió, y varias
+// no se entienden solas. Las que más se pisan entre dispositivos —las cinco
+// de la apertura, ARREGLO 60— llevan nombre en castellano.
+var _NOMBRE_DE_CONFIG = {
+  aperturaUsdt:"Saldo de apertura", aperturaFecha:"Fecha de la apertura",
+  aperturaSaldos:"Foto de saldos de la apertura",
+  aperturaTs:"Hora de la apertura", aperturaBase:"Mes de la apertura",
+  comisionPagoMovil:"Comisión de pago móvil",
+  comisionTransferencia:"Comisión de transferencia",
+  comisionMinima:"Comisión mínima"
+};
+
+// Qué registro es, dicho como lo diría ella. El identificador interno (_uid,
+// id) no le dice nada a nadie; el cliente y el número sí.
+function _etiquetaRegistro(clave, id, reg){
+  var base=_NOMBRE_DE_CLAVE[clave]||clave;
+  if(clave.charAt(0)==="@") return base+" · "+(_NOMBRE_DE_CONFIG[id]||id);
+  var det="";
+  if(reg && typeof reg==="object"){
+    if(clave==="brl"||clave==="vzla"||clave==="eeuu") det=(reg.n?"#"+reg.n+" ":"")+(reg.cl||"");
+    else if(clave==="inventarioUsdt"||clave==="inventarioUsdt_cerrado")
+      det=(reg.tipo||"")+" "+(reg.moneda||"")+" "+(reg.fecha||"");
+    else if(clave==="traspasos") det=(reg.origen||"")+" → "+(reg.destino||"");
+    else det=reg.nombre||reg.n||reg.cliente||reg.desc||reg.mot||reg.motivo||
+             reg.socioNombre||reg.mesLabel||reg.mesKey||"";
+  }
+  det=String(det||"").trim().slice(0,44);
+  return base+(det?" · "+det:" "+String(id).slice(0,12));
+}
+
+// Un valor, en una línea que se pueda leer de un vistazo.
+function _resumirValor(v){
+  if(v===undefined) return "(no estaba)";
+  if(v===null) return "(vacío)";
+  // Los números se escriben como ella los lee. Un "2450.2" al lado de un
+  // "2.450,20" de la pantalla de al lado se lee como otro número.
+  if(typeof v==="number" && isFinite(v))
+    return v.toLocaleString("es-VE",{maximumFractionDigits:6,
+      minimumFractionDigits:(v===Math.round(v)?0:2)});
+  if(typeof v==="object"){
+    var t=_jsonEstable(v);
+    return t.length>160 ? t.slice(0,160)+"…" : t;
+  }
+  return String(v);
+}
+
+// El choque, campo por campo: qué se mandó y qué contestó el servidor.
+function _camposEnConflicto(mio, suyo){
+  var out=[];
+  if(!mio || typeof mio!=="object" || !suyo || typeof suyo!=="object"){
+    out.push({campo:"", mio:_resumirValor(mio), suyo:_resumirValor(suyo)});
+    return out;
+  }
+  var vistas={};
+  [mio,suyo].forEach(function(o){ Object.keys(o).forEach(function(k){ vistas[k]=true; }); });
+  Object.keys(vistas).forEach(function(k){
+    if(k==="_mod"||k==="n") return;   // control y numeración, no datos
+    if(_jsonEstable(mio[k])===_jsonEstable(suyo[k])) return;
+    out.push({campo:k, mio:_resumirValor(mio[k]), suyo:_resumirValor(suyo[k]),
+              crudoMio:mio[k], crudoSuyo:suyo[k]});
+  });
+  return out;
+}
+
+// Solo lo que ESTE dispositivo tocó y volvió distinto. Lo que llega nuevo del
+// otro aparato no entra: eso es sincronización, no un choque.
+function _conflictosConElServidor(mando, delServidor, tocado){
+  var out=[];
+  if(!mando || !delServidor || !tocado) return out;
+  Object.keys(tocado).forEach(function(clave){
+    var ids=Object.keys(tocado[clave]||{});
+    if(!ids.length) return;
+    if(clave.charAt(0)==="@"){
+      var campo=clave.slice(1);
+      var oMio=mando[campo], oSuyo=delServidor[campo];
+      if(!oMio || typeof oMio!=="object") return;
+      ids.forEach(function(k){
+        var a=oMio[k], b=oSuyo?oSuyo[k]:undefined;
+        if(_jsonEstable(a)===_jsonEstable(b)) return;
+        out.push({clave:clave, id:k, etiqueta:_etiquetaRegistro(clave,k,null),
+                  borrado:(b===undefined),
+                  campos:[{campo:"", mio:_resumirValor(a), suyo:_resumirValor(b),
+                           crudoMio:a, crudoSuyo:b}]});
+      });
+      return;
+    }
+    // Los clientes no se adoptan del bloque de estado: tienen su propia ruta
+    // (/clientes) y _aplicarEstadoDeApi ignora a propósito la copia que venga
+    // aquí, que puede ser vieja. Si no se excluyeran, esa copia vieja haría
+    // saltar un aviso de choque por algo que la app ni siquiera va a aplicar.
+    if(clave==="clientes" && _CLIENTES_DESDE_API) return;
+    var a1=mando[clave], b1=delServidor[clave];
+    if(!Array.isArray(a1)) return;
+    var idF=(_MERGE_ID_FIELD&&_MERGE_ID_FIELD[clave])||"id";
+    var porId={};
+    (Array.isArray(b1)?b1:[]).forEach(function(r){
+      if(r && r[idF]!==undefined && r[idF]!==null) porId[r[idF]]=r;
+    });
+    var mios={};
+    a1.forEach(function(r){ if(r && r[idF]!==undefined && r[idF]!==null) mios[r[idF]]=r; });
+    ids.forEach(function(id){
+      var mio=mios[id]; if(!mio) return;     // ya no está ni aquí: se borró aquí
+      var suyo=porId[id];
+      if(suyo===undefined){
+        out.push({clave:clave, id:id, etiqueta:_etiquetaRegistro(clave,id,mio),
+                  borrado:true, campos:[]});
+        return;
+      }
+      var difs=_camposEnConflicto(mio, suyo);
+      if(difs.length) out.push({clave:clave, id:id,
+        etiqueta:_etiquetaRegistro(clave,id,suyo), borrado:false, campos:difs});
+    });
+  });
+  return out;
+}
+
+// El aviso tiene que decir la verdad, y la verdad son TRES valores: lo que
+// mandó este aparato, lo que traía el otro y lo que quedó. No son dos: el
+// servidor fusiona a su manera y después _aplicarEstadoDeApi vuelve a fusionar
+// aquí con las marcas de este dispositivo, así que lo que queda puede no ser
+// ninguna de las dos cosas que se compararon. Medido: el servidor devolvía 915
+// y quedaba 801, y el aviso decía "quedó 915". Un aviso que miente es peor que
+// no tener aviso — se deja de mirar.
+//
+// Por eso esto se llama DESPUÉS de adoptar, y lee de S, que es lo que ella ve.
+function _completarConLoQueQuedo(lista){
+  (lista||[]).forEach(function(c){
+    var reg=null;
+    if(c.clave.charAt(0)==="@"){
+      var o=S[c.clave.slice(1)];
+      reg=(o&&typeof o==="object")?{"":o[c.id]}:null;
+    } else {
+      var idF=(_MERGE_ID_FIELD&&_MERGE_ID_FIELD[c.clave])||"id";
+      var arr=S[c.clave];
+      if(Array.isArray(arr)){
+        for(var i=0;i<arr.length;i++){
+          if(arr[i] && arr[i][idF]===c.id){ reg=arr[i]; break; }
+        }
+      }
+    }
+    (c.campos||[]).forEach(function(d){
+      var v = reg ? reg[d.campo] : undefined;
+      d.quedo=_resumirValor(v);
+      d.quedoMio  = (_jsonEstable(v)===_jsonEstable(d.crudoMio));
+      d.quedoSuyo = (_jsonEstable(v)===_jsonEstable(d.crudoSuyo));
+      delete d.crudoMio; delete d.crudoSuyo;   // no hace falta guardarlos
+    });
+    if(!c.borrado && !reg) c.desaparecio=true;
+  });
+  return lista;
+}
+
+// ── El aviso en pantalla ──────────────────────────────────────────────────
+// Va arriba del todo y NO se pliega solo: un aviso escondido no es un aviso.
+// Se queda hasta que ella lo cierra, y queda guardado para poder mirarlo
+// después en Configuración.
+var _PISADOS = [];            // lo que hay que enseñar ahora mismo
+var _PISADOS_ABIERTO = false; // si el detalle está desplegado
+var _PISADOS_KEY = "cg_pisados_v1";
+var _PISADOS_MAX = 30;
+
+function _guardarPisados(lista){
+  try{
+    var r=localStorage.getItem(_PISADOS_KEY);
+    var h=r?JSON.parse(r):[];
+    if(!Array.isArray(h)) h=[];
+    h.unshift({ts:Date.now(), items:lista});
+    localStorage.setItem(_PISADOS_KEY, JSON.stringify(h.slice(0,_PISADOS_MAX)));
+  }catch(e){}
+}
+function _leerPisados(){
+  try{
+    var r=localStorage.getItem(_PISADOS_KEY);
+    var h=r?JSON.parse(r):[];
+    return Array.isArray(h)?h:[];
+  }catch(e){ return []; }
+}
+function _olvidarPisados(){
+  try{ localStorage.removeItem(_PISADOS_KEY); }catch(e){}
+  _PISADOS=[]; _PISADOS_ABIERTO=false; R();
+}
+function _cerrarAvisoPisado(){ _PISADOS=[]; _PISADOS_ABIERTO=false; R(); }
+function _alternarAvisoPisado(){ _PISADOS_ABIERTO=!_PISADOS_ABIERTO; R(); }
+
+// El historial, para cuando ella diga "esto lo cambié yo y volvió atrás".
+// Vive en Configuración, no en el aviso: el aviso es de ahora, esto es de
+// antes. Guarda las últimas 30 veces que hubo choque.
+function _htmlHistorialPisados(){
+  var h=_leerPisados();
+  if(!h.length) return "<div style='font-size:12px;color:#888;line-height:1.6'>"+
+    "Todavía no ha chocado nada. Aquí aparecen los cambios que hiciste en este "+
+    "dispositivo y que el servidor devolvió distintos porque el otro también "+
+    "los había tocado.</div>";
+  var out="<div style='font-size:11px;color:#666;margin-bottom:10px;line-height:1.6'>"+
+    "Cada vez que lo que guardaste aquí chocó con lo que había en el servidor. "+
+    "No es una lista de errores: es el registro de cuándo dos dispositivos "+
+    "opinaron distinto sobre el mismo dato.</div>";
+  h.forEach(function(ev){
+    var f=new Date(ev.ts);
+    out+="<div style='border:1px solid #eee;border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#fafafa'>"+
+      "<div style='font-size:11px;font-weight:800;color:#8a5200'>"+
+      _escAud(f.toLocaleString("es-VE"))+" · "+(ev.items||[]).length+" registro"+
+      ((ev.items||[]).length===1?"":"s")+"</div>";
+    (ev.items||[]).forEach(function(c){
+      out+="<div style='font-size:11px;color:#444;margin-top:5px'>• "+_escAud(c.etiqueta)+
+        (c.borrado?" <span style='color:#c0392b'>(lo borró el otro dispositivo)</span>":"")+"</div>";
+      (c.campos||[]).forEach(function(d){
+        out+="<div style='font-size:10px;color:#777;margin-left:10px;line-height:1.5'>"+
+          (d.campo?_escAud(d.campo)+": ":"")+"mandaste "+_escAud(d.mio)+
+          " · el otro tenía "+_escAud(d.suyo)+" · quedó <b>"+_escAud(d.quedo)+"</b></div>";
+      });
+    });
+    out+="</div>";
+  });
+  out+="<button onclick='if(confirm(\"¿Borrar este historial? No cambia ningún dato, solo la lista.\"))_olvidarPisados()' "+
+    "style='margin-top:6px;padding:8px 12px;border:1.5px dashed #bbb;border-radius:9px;background:#fff;color:#777;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit'>Borrar el historial</button>";
+  return out;
+}
+
+function _htmlAvisoPisado(){
+  if(!_PISADOS.length) return "";
+  var n=_PISADOS.length;
+  var h="<div style='background:#FFF4E5;border-bottom:2px solid #E08A00;padding:10px 14px'>"+
+    "<div style='display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap'>"+
+      "<div style='flex:1;min-width:200px'>"+
+        "<div style='font-size:13px;font-weight:800;color:#8a5200'>"+
+          "🔀 El otro dispositivo también cambió "+(n===1?"esto":"estas "+n+" cosas")+"</div>"+
+        "<div style='font-size:11px;color:#7a6a50;margin-top:3px;line-height:1.5'>"+
+          "Lo que guardaste aquí chocó con lo que había en el servidor. Quedó lo "+
+          "más reciente de cada campo. Revisa que sea lo que querías.</div>"+
+      "</div>"+
+      "<div style='display:flex;gap:6px'>"+
+        "<button onclick='_alternarAvisoPisado()' style='background:#fff;border:1.5px solid #E08A00;color:#8a5200;padding:6px 11px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit'>"+
+          (_PISADOS_ABIERTO?"Ocultar":"Ver qué cambió")+"</button>"+
+        "<button onclick='_cerrarAvisoPisado()' style='background:#E08A00;border:none;color:#fff;padding:6px 11px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit'>Entendido</button>"+
+      "</div>"+
+    "</div>";
+  if(_PISADOS_ABIERTO){
+    h+="<div style='margin-top:10px;background:#fff;border:1px solid #E08A0044;border-radius:9px;padding:9px 11px;max-height:38vh;overflow-y:auto'>";
+    _PISADOS.forEach(function(c){
+      h+="<div style='padding:7px 0;border-bottom:1px solid #f2f2f2'>"+
+         "<div style='font-size:12px;font-weight:700;color:#333'>"+_escAud(c.etiqueta)+"</div>";
+      if(c.borrado){
+        h+="<div style='font-size:11px;color:#c0392b;margin-top:3px'>El otro dispositivo lo borró.</div>";
+      } else {
+        c.campos.forEach(function(d){
+          h+="<div style='font-size:11px;color:#666;margin-top:3px;line-height:1.5'>"+
+             (d.campo?"<b>"+_escAud(d.campo)+"</b>: ":"")+
+             "mandaste <span style='color:#8a5200'>"+_escAud(d.mio)+"</span>"+
+             " · el otro tenía <span style='color:#8a5200'>"+_escAud(d.suyo)+"</span>"+
+             " · <b>quedó <span style='color:#0f6e3a'>"+_escAud(d.quedo)+"</span></b>"+
+             (d.quedoMio?" (lo tuyo)":(d.quedoSuyo?" (lo del otro)":""))+"</div>";
+        });
+      }
+      h+="</div>";
+    });
+    h+="<div style='font-size:10px;color:#999;margin-top:8px;line-height:1.5'>"+
+       "Si lo que quedó no es lo correcto, vuelve a registrarlo desde este "+
+       "dispositivo: el último cambio es el que manda.</div>";
+    h+="</div>";
+  }
+  return h+"</div>";
+}
+
 function _dobleLeer(){
   try{
     var r=localStorage.getItem(_DOBLE_KEY);
@@ -1829,6 +2161,10 @@ function enviarEstadoALaApi(obj){
 
 function _dobleEnviarAhora(obj){
   if(!apiSesionActiva() || _API_BLOQUEADA || !_API_ENTRO_POR_API) return;
+  // ARREGLO 62: lo tocado aquí viaja con ESTE envío. Se lleva del cajón para
+  // que lo que ella registre mientras el guardado va y viene no se confunda
+  // con lo que iba dentro; si el envío no llega, se devuelve intacto.
+  var _tocado=_tomarTocado();
   try{
     apiFetch("/estado",{method:"PUT",body:{estado:obj,_ts:obj._ts}})
       .then(function(r){
@@ -1841,16 +2177,19 @@ function _dobleEnviarAhora(obj){
         if(r.status===403){
           _DOBLE_CORTADA="tu usuario no tiene permiso de edición";
           console.warn("Guardado rechazado: sin permiso de edición.");
+          _unirTocado(_TOCADO_AQUI,_tocado);
           return null;
         }
         if(r.status===401){
           _DOBLE_CORTADA="la sesión venció";
           console.warn("Guardado rechazado: la sesión venció.");
+          _unirTocado(_TOCADO_AQUI,_tocado);
           return null;
         }
         if(r.status===409){
           _DOBLE_CORTADA="falta la carga inicial del estado";
           console.warn("Guardado rechazado: falta la carga inicial (POST /estado/importar).");
+          _unirTocado(_TOCADO_AQUI,_tocado);
           return null;
         }
         // Todo lo demás es pasajero: un arranque en frío de Railway, un 502
@@ -1859,18 +2198,35 @@ function _dobleEnviarAhora(obj){
         // antes de comparar nada. Se saltea este guardado y se sigue.
         if(!r.ok){
           console.warn("Comparación: el servidor respondió "+r.status+", se saltea este guardado.");
+          _unirTocado(_TOCADO_AQUI,_tocado);
           return null;
         }
         return r.json();
       })
       .then(function(d){
-        if(!d||!d.ok||!d.estado) return;
+        if(!d||!d.ok||!d.estado){ _unirTocado(_TOCADO_AQUI,_tocado); return; }
         _DOBLE_CORTADA="";   // salio bien: se limpia el aviso anterior
         if(FUENTE_API){
           // Fase 7.3: el servidor es el arbitro. Lo que devuelve NO se
           // compara, se adopta: es el resultado de fusionar lo que mando
           // este dispositivo contra lo que ya habia.
-          if(_aplicarEstadoDeApi(d.estado, d._ts)){ try{ R(); }catch(e){} }
+          //
+          // ARREGLO 62: adoptar está bien; adoptar EN SILENCIO no. Antes de
+          // pisar lo de aquí se mira qué de lo que ella acaba de cambiar
+          // volvió distinto, y eso —y solo eso— se le enseña. Va ANTES de
+          // _aplicarEstadoDeApi porque después ya no hay con qué comparar:
+          // esa función adopta y vuelve a fotografiar.
+          var _ch=[];
+          try{ _ch=_conflictosConElServidor(obj, d.estado, _tocado); }catch(e){}
+          var _cambio=_aplicarEstadoDeApi(d.estado, d._ts);
+          if(_ch.length){
+            // Lo que QUEDÓ solo se sabe después de adoptar: se lee de S.
+            try{ _completarConLoQueQuedo(_ch); }catch(e){}
+            _PISADOS=_ch;
+            _guardarPisados(_ch);
+            console.warn("🔀 El servidor devolvió distinto lo que este aparato cambió:", _ch);
+          }
+          if(_cambio||_ch.length){ try{ R(); }catch(e){} }
           return;
         }
         var difs=_dobleComparar(d.estado, obj);
@@ -1885,7 +2241,11 @@ function _dobleEnviarAhora(obj){
         }
         _dobleGuardar(reg);
       })
-      .catch(function(){ /* sin red: no es una diferencia, es una ausencia */ });
+      .catch(function(){
+        // sin red: no es una diferencia, es una ausencia. Lo tocado vuelve al
+        // cajón para que el próximo envío que sí llegue lo compare.
+        _unirTocado(_TOCADO_AQUI,_tocado);
+      });
   }catch(e){}
 }
 
@@ -1958,6 +2318,12 @@ function rComparacionApi(){
   return html;
 }
 
+// ARREGLO 59 (14/09/2026): la razon social y el CNPJ vivian SOLO dentro de una
+// pantalla que ya nadie llamaba (rCierreMes, borrada en este mismo arreglo).
+// El contador los necesita en cualquier papel que se le mande, asi que viven
+// aqui, en un solo sitio.
+var EMPRESA_RAZON = "SAIPHA SERVIÇOS DIGITAIS";
+var EMPRESA_CNPJ  = "66.994.057/0001-61";
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo","_modCampos"];
 
@@ -2626,6 +2992,11 @@ function conciliacionCapital(){
     egPersonalSin:r2v(egPersonalSin), socios:r2v(socios),
     deberias:deberias, real:real, diferencia:diferencia,
     ajustes:ajustes, tasas:tasas, traspPers:traspPers, sinExplicar:sinExplicar,
+    // ARREGLO 60: la tarjeta dice contra qué apertura está midiendo. Una
+    // apertura sin foto de saldos no permite comparar cuenta por cuenta
+    // cuando algo no cuadra, y hasta ahora eso no se veía en ninguna parte.
+    aperturaSaldos:(S.config||{}).aperturaSaldos||null,
+    aperturaTs:(S.config||{}).aperturaTs||null,
     // Un desvio de menos del 2% del capital es ruido de tasas de cambio,
     // no una fuga: los saldos se convierten a USDT a la tasa de HOY.
     tolerancia:r2v(Math.max(5,real.total*0.02))
@@ -7636,6 +8007,106 @@ function claveUsuarioApi(id,nombre){
     return _usrResultado(r,function(){ alert("Clave cambiada. Sus sesiones abiertas se cerraron."); });
   }).catch(function(){ alert("Sin conexión con el servidor."); });
 }
+var _ETIQUETA_ROL={admin:"Administrador",brl:"Operador BRL",vzla:"Operador VZLA",eeuu:"Operador EE.UU",lector:"Supervisor"};
+
+// ── FASE B · los permisos de una persona ──────────────────────────────────
+// Se editan en una tarjeta que se abre dentro de su ficha y NO se guarda sola
+// casilla por casilla: se marca todo lo que haga falta y se pulsa Guardar. Un
+// guardado por clic serían quince viajes al servidor para un cambio que ella
+// piensa como uno solo, y a medio camino la persona se queda con permisos que
+// nadie quiso darle.
+function abrirPermisosUsuario(id){
+  var u=(S._usrLista||[]).find(function(x){return x.id===id;});
+  if(!u) return;
+  // Se parte de lo que ya tiene decidido; lo que no, queda como lo dice su rol.
+  var actual={};
+  PERMISOS_APP.forEach(function(p){
+    var v=(u.permisos||{})[p.k];
+    actual[p.k] = (typeof v==="boolean") ? v : _permisoPorOmision(u.rol,p.k);
+  });
+  S._permUsr=id; S._permVal=actual; R();
+}
+function cerrarPermisosUsuario(){ S._permUsr=null; S._permVal=null; R(); }
+function togglePermisoUsuario(k,val){
+  if(!S._permVal) return;
+  S._permVal[k]=!!val;
+  // Sin R(): repintar mientras ella marca casillas rehace el HTML y cierra la
+  // tarjeta bajo el dedo. Es el mismo motivo del ARREGLO 32.
+}
+// Volver al punto de partida del rol: para cuando se enreda y quiere empezar
+// de nuevo sin cerrar y volver a abrir.
+function permisosDelRol(id){
+  var u=(S._usrLista||[]).find(function(x){return x.id===id;});
+  if(!u) return;
+  var v={};
+  PERMISOS_APP.forEach(function(p){ v[p.k]=_permisoPorOmision(u.rol,p.k); });
+  S._permVal=v; R();
+}
+function guardarPermisosUsuario(id){
+  var u=(S._usrLista||[]).find(function(x){return x.id===id;});
+  if(!u||!S._permVal) return;
+  // Se manda la lista COMPLETA, con su true o su false explícito. Mandar solo
+  // lo marcado dejaría lo demás "sin decidir", y sin decidir vuelve a valer lo
+  // del rol: quitar un permiso no habría quitado nada.
+  var permisos={};
+  PERMISOS_APP.forEach(function(p){ permisos[p.k]=!!S._permVal[p.k]; });
+  apiFetch("/usuarios/"+id,{method:"PUT",body:{permisos:permisos}}).then(function(r){
+    return _usrResultado(r,function(){
+      S._permUsr=null; S._permVal=null;
+      alert("Permisos guardados para "+(u.nombre||"")+".\n\nSi tiene la app abierta, los ve al volver a entrar o al traerla al frente.");
+    });
+  }).catch(function(){ alert("Sin conexión con el servidor. No se cambió nada."); });
+}
+
+function _htmlPermisosUsuario(u){
+  if(S._permUsr!==u.id) return "";
+  var v=S._permVal||{};
+  var filas=PERMISOS_APP.map(function(p){
+    var on=!!v[p.k];
+    var propio=typeof (u.permisos||{})[p.k]==="boolean";
+    return "<label style='display:flex;align-items:center;gap:9px;padding:7px 2px;border-bottom:1px solid #f4f4f4;cursor:pointer'>"+
+      "<input type='checkbox' "+(on?"checked":"")+" onchange='togglePermisoUsuario(\""+p.k+"\",this.checked)' "+
+        "style='width:17px;height:17px;cursor:pointer;flex-shrink:0'>"+
+      "<span style='flex:1;font-size:12px;"+(p.fuerte?"font-weight:800;color:#16233d":"color:#444")+"'>"+p.n+
+        (p.d?"<span style='font-size:10px;color:#9aa3b5;font-weight:400'> · "+p.d+"</span>":"")+"</span>"+
+      (propio?"":"<span style='font-size:9px;color:#b5bcc9;flex-shrink:0'>por su rol</span>")+
+    "</label>";
+  }).join("");
+  return "<div style='border:1.5px solid #1a6b3c;border-radius:10px;padding:12px;margin-top:10px;background:#F6FBF8'>"+
+    "<div style='font-size:11px;font-weight:800;color:#0b4d27;margin-bottom:4px'>PERMISOS DE "+_escAud((u.nombre||"").toUpperCase())+"</div>"+
+    "<div style='font-size:10px;color:#6b7a70;line-height:1.6;margin-bottom:9px'>"+
+      "Lo que no hayas tocado vale lo que diga su rol (<b>"+_escAud(_ETIQUETA_ROL[u.rol]||u.rol)+"</b>) y sale marcado "+
+      "«por su rol». En cuanto guardes, queda fijado para esta persona.</div>"+
+    "<div style='background:#fff;border:1px solid #e6efe9;border-radius:9px;padding:4px 10px;max-height:44vh;overflow-y:auto'>"+filas+"</div>"+
+    // Esto es lo que NO hay que disfrazar: solo "editar" lo hace cumplir el
+    // servidor. El resto decide lo que ve en la app, no a lo que puede llegar.
+    "<div style='font-size:10px;color:#7a6a50;background:#FFFBEA;border:1px solid #F5C518;border-radius:8px;padding:8px 10px;margin-top:9px;line-height:1.6'>"+
+      "<b>Registrar y modificar</b> lo hace cumplir el servidor: sin eso, nada de lo que toque se guarda. "+
+      "Las demás casillas deciden <b>qué ve dentro de la app</b>. Los datos llegan al equipo igual, así que "+
+      "para alguien en quien no confíes del todo, lo que manda es quitarle <b>Registrar y modificar</b> — o desactivarlo.</div>"+
+    "<div style='display:flex;gap:6px;margin-top:10px;flex-wrap:wrap'>"+
+      "<button type='button' onclick='guardarPermisosUsuario(\""+u.id+"\")' style='padding:9px 15px;background:#1a6b3c;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:800;cursor:pointer;font-family:inherit'>Guardar permisos</button>"+
+      "<button type='button' onclick='permisosDelRol(\""+u.id+"\")' style='padding:9px 13px;background:#fff;border:1px solid #ddd;border-radius:8px;font-size:12px;cursor:pointer;font-family:inherit'>Volver a los de su rol</button>"+
+      "<button type='button' onclick='cerrarPermisosUsuario()' style='padding:9px 13px;background:#fff;border:1px solid #ddd;border-radius:8px;font-size:12px;cursor:pointer;font-family:inherit'>Cancelar</button>"+
+    "</div>"+
+  "</div>";
+}
+
+// Lo que esa persona puede ver hoy, en una línea, sin abrir nada.
+function _resumenPermisos(u){
+  var n=0, total=0, tocados=0;
+  PERMISOS_APP.forEach(function(p){
+    if(p.k==="editar") return;
+    total++;
+    var val=(u.permisos||{})[p.k];
+    if(typeof val==="boolean"){ tocados++; if(val) n++; }
+    else if(_permisoPorOmision(u.rol,p.k)) n++;
+  });
+  var puedeEditar = (typeof (u.permisos||{}).editar==="boolean")
+    ? u.permisos.editar : _permisoPorOmision(u.rol,"editar");
+  return (puedeEditar?"✏️ registra":"👁️ solo mira")+" · "+n+" de "+total+" pantallas"+
+    (tocados?"":" (las de su rol)");
+}
 function rUsuariosApi(){
   var aviso="<div style='background:#FFFBEA;border:1.5px solid #F5C518;border-radius:9px;padding:9px 12px;margin-bottom:12px;font-size:11px;color:#7a5c00;line-height:1.5'>"+
     "Ésta es la lista completa de quienes pueden entrar. Desactivar a alguien acá le "+
@@ -7653,7 +8124,7 @@ function rUsuariosApi(){
       (S._usrError||"No se pudo cargar.")+"</div>"+
       "<button type='button' onclick='cargarUsuariosApi()' style='margin-top:10px;padding:9px 14px;border:1px solid #ddd;background:#fff;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Reintentar</button>";
   }
-  var etiqueta={admin:"Administrador",brl:"Operador BRL",vzla:"Operador VZLA",eeuu:"Operador EE.UU",lector:"Supervisor"};
+  var etiqueta=_ETIQUETA_ROL;   // en un solo sitio: lo usa tambien la tarjeta de permisos
   var filas=(S._usrLista||[]).map(function(u){
     var opciones=["admin","brl","vzla","eeuu","lector"].map(function(r){
       return "<option value='"+r+"'"+(u.rol===r?" selected":"")+">"+etiqueta[r]+"</option>";
@@ -7665,15 +8136,23 @@ function rUsuariosApi(){
           "<div style='font-size:13px;font-weight:700;color:"+(u.activo?"#16233d":"#999")+"'>"+(u.nombre||"")+
             (u.activo?"":" <span style='font-size:10px;font-weight:800;color:#c0392b'>· DESACTIVADO</span>")+"</div>"+
           "<div style='font-size:10px;color:#9aa3b5;word-break:break-all'>"+(u.correo||"")+"</div>"+
+          "<div style='font-size:10px;color:#1a6b3c;font-weight:700;margin-top:3px'>"+_resumenPermisos(u)+"</div>"+
         "</div>"+
         "<select onchange='cambiarRolUsuarioApi(\""+u.id+"\",this.value)' style='font-size:11px;padding:6px 8px;border:1px solid #ddd;border-radius:7px'>"+opciones+"</select>"+
       "</div>"+
       "<div style='display:flex;gap:6px;margin-top:9px;flex-wrap:wrap'>"+
+        // El Administrador no lleva casillas: las ve todas por definicion, y
+        // una tarjeta con quince casillas marcadas que no se pueden desmarcar
+        // solo confunde.
+        (u.rol==="admin"
+          ?"<span style='padding:6px 10px;font-size:11px;color:#9aa3b5'>El Administrador ve todo</span>"
+          :"<button type='button' onclick='abrirPermisosUsuario(\""+u.id+"\")' style='padding:6px 10px;font-size:11px;border:1px solid #1a6b3c;background:#F6FBF8;color:#0b4d27;border-radius:7px;cursor:pointer;font-weight:700'>🔒 Permisos</button>")+
         "<button type='button' onclick='claveUsuarioApi(\""+u.id+"\",\""+nombreSeguro+"\")' style='padding:6px 10px;font-size:11px;border:1px solid #ddd;background:#fff;border-radius:7px;cursor:pointer'>🔑 Clave nueva</button>"+
         (u.activo
           ?"<button type='button' onclick='activarUsuarioApi(\""+u.id+"\",false,\""+nombreSeguro+"\")' style='padding:6px 10px;font-size:11px;border:1px solid #e6a8a0;background:#FDECEA;color:#8b1a10;border-radius:7px;cursor:pointer;font-weight:700'>Desactivar</button>"
           :"<button type='button' onclick='activarUsuarioApi(\""+u.id+"\",true,\""+nombreSeguro+"\")' style='padding:6px 10px;font-size:11px;border:1px solid #7bc49a;background:#D6F5E3;color:#0b4d27;border-radius:7px;cursor:pointer;font-weight:700'>Reactivar</button>")+
       "</div>"+
+      _htmlPermisosUsuario(u)+
     "</div>";
   }).join("");
 
@@ -7714,7 +8193,6 @@ function _cfgAcc(id,icon,title,subtitle,color,bodyHtml,defaultOpen){
 }
 function rConfigAdmin(){
   if(!S.config) S.config={};
-  if(!S.config.modulos) S.config.modulos={};
   if(!S.config.tasasDia) S.config.tasasDia={};
   if(!S.config.socios) S.config.socios=[];
   // Auto-seed socio EE.UU (Paul) si no existe — editable igual que los demás
@@ -7854,16 +8332,16 @@ function rConfigAdmin(){
     "</div>"+
     "<button onclick='saveTasasConfig()' style='background:#e67e22;color:#fff;border:none;padding:11px 20px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;width:100%'>💾 Guardar tasas del día</button>";
 
-  // Permisos
-  var mods=S.config.modulos||{};
-  var permRows=["nueva","clientes","egresos"].map(function(mod){
-    var label=mod==="nueva"?"➕ Operación":mod==="clientes"?"👥 Clientes":"💸 Egresos";
-    return "<tr><td style='padding:10px 12px;font-size:12px;font-weight:600'>"+label+"</td>"+
-      ["brl","vzla","eeuu"].map(function(role){
-        var key=role+"_"+mod;var on=(mods[key]===undefined)?true:mods[key];
-        return "<td style='text-align:center;padding:10px 12px'><input type='checkbox' "+(on?"checked":"")+" onchange='toggleModulo(\'"+ key +"\',this.checked)' style='width:16px;height:16px;cursor:pointer'></td>";
-      }).join("")+"</tr>";
-  }).join("");
+  // FASE B: aqui vivia "Permisos por operador", tres casillas por ROL guardadas
+  // en S.config.modulos. Se retiro. Eran por rol —dos personas con el mismo rol
+  // no podian tener permisos distintos, que es justo lo que ella pedia— y
+  // viajaban dentro del bloque que se sincroniza, o sea que eran de los datos
+  // que se pisan entre aparatos: un permiso que se revierte solo es peor que no
+  // tener permisos. Ahora se dan persona por persona, dentro de Usuarios, y los
+  // guarda Mongo.
+  //
+  // Comprobado en su export antes de quitarla: S.config.modulos estaba VACIO,
+  // asi que no habia ni una casilla desmarcada que rescatar.
 
 
   // ── UI Socios ────────────────────────────────────────────────
@@ -8145,14 +8623,6 @@ function rConfigAdmin(){
         "<button onclick='agregarRutaExtra()' style='background:#2196F3;color:#fff;border:none;padding:9px 16px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;margin-top:14px'>Agregar</button>"+
       "</div></div>";
 
-  var permisosBody=
-      "<table style='width:100%;border-collapse:collapse;font-size:12px'>"+
-        "<thead><tr style='background:#f9f9f9'><th style='padding:10px 12px;text-align:left;font-size:11px;color:#888'>MÓDULO</th>"+
-        "<th style='padding:10px 12px;text-align:center;font-size:11px;color:#888'>🇧🇷 BRL</th>"+
-        "<th style='padding:10px 12px;text-align:center;font-size:11px;color:#888'>🇻🇪 VZLA</th>"+
-        "<th style='padding:10px 12px;text-align:center;font-size:11px;color:#888'>🇺🇸 EE.UU</th>"+
-        "</tr></thead><tbody>"+permRows+"</tbody></table>";
-
   return sociosUI+ ntfySec+
     "<div style='background:linear-gradient(135deg,#1b1e24,#4a3a12);border-radius:16px;padding:16px 18px;margin-bottom:14px;color:#fff;box-shadow:0 4px 14px rgba(0,0,0,.15)'>"+
       "<div style='font-size:16px;font-weight:900'>⚙️ Configuración del sistema</div>"+
@@ -8162,9 +8632,11 @@ function rConfigAdmin(){
     _cfgAcc("categorias","🏷️","Categorías","empresa y personales","#7b2d8b",categoriasBody,false)+
     _cfgAcc("rutas","🛣️","Rutas de operación",null,"#2196F3",rutasBody,false)+
     _cfgAcc("tasas","📊","Tasas del día","solo afecta nuevos registros","#e67e22",tasasHTML,false)+
-    _cfgAcc("usuarios_api","👥","Usuarios","correo y clave · la unica forma de entrar","#372c9e",rUsuariosApi(),false)+
+    _cfgAcc("usuarios_api","👥","Usuarios y permisos","quién entra y qué ve cada uno","#372c9e",rUsuariosApi(),false)+
     _cfgAcc("comparacion_api","⚖️","Comparación con la API","control de la migración","#b8752a",rComparacionApi(),false)+
-    _cfgAcc("permisos","🔒","Permisos por operador",null,"#1a6b3c",permisosBody,false)+
+    _cfgAcc("pisados","🔀","Cambios que chocaron entre dispositivos",
+      (function(){ var n=_leerPisados().length; return n?(n+" "+(n===1?"vez":"veces")):"ninguno todavía"; })(),
+      "#E08A00", _htmlHistorialPisados(), false)+
     "<div style='background:#f8f8f8;border-radius:14px;padding:14px;border:1px solid #eee'>"+
       "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:8px'>ℹ️ Sistema · versión "+APP_VERSION+"</div>"+
       "<div style='font-size:11px;color:#555;margin-bottom:10px;padding:8px 10px;background:#fff;border:1px solid #eee;border-radius:8px;line-height:1.5'>"+
@@ -8669,10 +9141,18 @@ function rCapitalTotal(){
     var brd=sano?"#b6e0c4":(dif<0?"#f0b0a8":"#f0d080");
     return "<div style='background:"+bg+";border:1.5px solid "+brd+";border-radius:12px;padding:14px;margin-bottom:12px'>"+
       "<div style='display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px'>"+
+        // ARREGLO 60: el numero grande es lo SIN EXPLICAR, no la diferencia
+        // bruta. La diferencia incluye lo que ya tiene explicacion —los ajustes
+        // a mano, sobre todo— asi que el titular decia −76,38 mientras el
+        // veredicto de abajo decia "cuadra": dos mensajes opuestos en la misma
+        // tarjeta, y el que asusta es el grande. Lo que hay que perseguir es lo
+        // que queda sin explicar; la diferencia bruta sigue, como una fila mas
+        // del desglose.
         "<div><div style='font-size:13px;font-weight:800;color:"+col+"'>🧾 Conciliación de capital</div>"+
-        "<div style='font-size:10px;color:#888;margin-top:2px'>Desde el "+ds(co.desde)+" · "+co.meses+" mes(es)</div></div>"+
-        "<div style='text-align:right'><div style='font-size:22px;font-weight:900;color:"+col+";line-height:1'>"+(dif>=0?"+$":"−$")+f2(Math.abs(dif))+"</div>"+
-        "<div style='font-size:9px;color:#888'>diferencia</div></div>"+
+        "<div style='font-size:10px;color:#888;margin-top:2px'>Desde el "+ds(co.desde)+" · "+co.meses+" mes(es) · apertura $"+f2(co.apertura)+
+          ((co.aperturaSaldos&&Object.keys(co.aperturaSaldos).length)?"":" <span style='color:#a06800'>(sin foto de saldos)</span>")+"</div></div>"+
+        "<div style='text-align:right'><div style='font-size:22px;font-weight:900;color:"+col+";line-height:1'>"+((co.sinExplicar||0)>=0?"+$":"−$")+f2(Math.abs(co.sinExplicar||0))+"</div>"+
+        "<div style='font-size:9px;color:#888'>sin explicar</div></div>"+
       "</div>"+
       "<div style='background:#fff;border-radius:9px;padding:10px 12px;margin-bottom:8px;font-size:11px;color:#555;line-height:1.7'>"+
         "<div style='display:flex;justify-content:space-between'><span>Saldo de apertura</span><b>$"+f2(co.apertura)+"</b></div>"+
@@ -8684,6 +9164,15 @@ function rCapitalTotal(){
         "<div style='display:flex;justify-content:space-between;border-top:1px solid #ddd;margin-top:5px;padding-top:5px;font-size:13px'><b>Deberías tener</b><b>$"+f2(co.deberias)+"</b></div>"+
       "</div>"+
       "<div style='background:#fff;border-radius:9px;padding:10px 12px;margin-bottom:8px'>"+lineaReal+"</div>"+
+      // ARREGLO 60: esto estaba DENTRO del desplegable "por qué sale este
+      // número", que va cerrado. Son ajustes que la app no puede situar ni
+      // antes ni después de la apertura porque no llevan hora — con sus datos,
+      // 7 ajustes por −233,46 USDT en el aire. Un aviso escondido no es un
+      // aviso, y menos uno de ese tamaño.
+      (aj.nMismoDia>0?"<div style='background:#FFF8E8;border:1px solid #f0d080;border-radius:9px;padding:9px 11px;margin-bottom:8px;font-size:11px;color:#7a5c00;line-height:1.5'>"+
+        "⚠️ <b>"+aj.nMismoDia+" ajuste"+(aj.nMismoDia!==1?"s":"")+" de saldo por "+(aj.mismoDia<0?"−":"+")+"$"+f2(Math.abs(aj.mismoDia))+" que no se pueden situar.</b> "+
+        "Son del mismo día en que fijaste la apertura y no llevan hora, así que no se sabe si fueron antes o después. Ni cuentan ni se descartan."+
+      "</div>":"")+
       // ARREGLO 46: de qué está hecha la diferencia. Un número suelto no se
       // puede perseguir; separando lo que ya tiene explicación queda a la vista
       // lo único que hay que buscar.
@@ -9431,14 +9920,6 @@ function saveCap(){
 }
 
 
-function toggleModulo(key, enabled){
-  if(!S.config) S.config={};
-  if(!S.config.modulos) S.config.modulos={};
-  S.config.modulos[key]=enabled;
-  // Update tabs dynamically
-  saveData();
-  R();
-}
 
 
 function saveTasasConfig(){
@@ -9463,320 +9944,6 @@ function saveTasasConfig(){
 // ══════════════════════════════════════════════════════
 // CIERRE MENSUAL — Reporte completo admin
 // ══════════════════════════════════════════════════════
-function rCierreMes(){
-  var meses=getMesesDisponibles();
-  var selMes=S.filtroMes||(meses.length?meses[0].key:"");
-  if(!selMes) return "<div style='text-align:center;padding:40px;color:#aaa'>No hay datos disponibles</div>";
-  var parts=selMes.split("-");
-  var mesLabel=getMesLabel(parts[1],parts[0]);
-  var mesOpts=meses.map(function(m){return "<option value='"+m.key+"'"+(selMes===m.key?" selected":"")+">"+getMesLabel(m.mes,m.anio)+"</option>";}).join("");
-
-  var brlM=filterByMes(S.brl,selMes);
-  var vzlaM=filterByMes(S.vzla,selMes);
-  var eeuuM=filterByMes(S.eeuu,selMes);
-  var egM=filterByMes(S.egresos,selMes);
-  var invM=filterByMes(S.inventarioUsdt,selMes);
-
-  // ── Ganancias ───────────────────────────────────────
-  var ganBrl=brlM.reduce(function(a,r){return a+r.pr;},0);
-  var ganVzla=vzlaM.reduce(function(a,r){return a+r.pr;},0);
-  var ganEEbruta=eeuuM.reduce(function(a,r){return a+r.pr;},0);
-  var gasEE=filterByMes(S.gastos_eeuu||[],selMes).reduce(function(a,g){return a+(parseFloat(g.monto)||0);},0);
-  var ganEEneta=ganEEbruta-gasEE;
-  var ganJulio=ganEEneta*0.5;
-  var deudaPaul=(S.deudas_paul||[]).filter(function(d){return !d.cobrada;}).reduce(function(a,d){return a+(parseFloat(d.monto)||0);},0);
-  var ganPaul=ganEEneta*0.5-deudaPaul;
-  var ganTotal=ganBrl+ganVzla+ganJulio;
-
-  // ── Egresos ─────────────────────────────────────────
-  var egPag=egM.filter(function(e){return e.pagada;}).reduce(function(a,e){return a+e.usdt;},0);
-  var egPend=egM.filter(function(e){return !e.pagada;}).reduce(function(a,e){return a+e.usdt;},0);
-
-  // ── USDT ────────────────────────────────────────────
-  var compM=invM.filter(function(r){return r.tipo==="compra";});
-  var ventM=invM.filter(function(r){return r.tipo==="venta";});
-  var totalComp=compM.reduce(function(a,r){return a+(parseFloat(r.usdt)||0);},0);
-  var totalVend=ventM.reduce(function(a,r){return a+(parseFloat(r.usdt)||0);},0);
-  var totalBsRec=ventM.reduce(function(a,r){return a+(parseFloat(r.bs)||0);},0);
-  var usdtDisp=totalComp-totalVend;
-
-  // ── Operaciones ─────────────────────────────────────
-  var totalOps=brlM.length+vzlaM.length+eeuuM.length;
-  // Top clientes
-  var clStats={};
-  [].concat(brlM.map(function(r){return{cl:r.cl,pr:r.pr};}),
-            vzlaM.map(function(r){return{cl:r.cl,pr:r.pr};}),
-            eeuuM.map(function(r){return{cl:r.cl,pr:r.pr/2};}))
-    .forEach(function(r){if(!clStats[r.cl])clStats[r.cl]={cl:r.cl,pr:0,txs:0};clStats[r.cl].pr+=r.pr;clStats[r.cl].txs++;});
-  var topCl=Object.values(clStats).sort(function(a,b){return b.pr-a.pr;}).slice(0,5);
-
-  // ── Ganancia líquida = neta - egresos pagados ────────
-  var ganNeta=ganBrl+ganVzla+ganEEneta;
-  var ganLiquida=ganTotal-egPag-egPend;
-
-  function mc(bg,label,val,sub){
-    return "<div style='background:"+bg+";border-radius:10px;padding:12px 14px'>"+
-      "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:4px'>"+label+"</div>"+
-      "<div style='font-size:20px;font-weight:800;color:#0f6e3a'>"+val+"</div>"+
-      (sub?"<div style='font-size:10px;color:#888;margin-top:2px'>"+sub+"</div>":"")+
-    "</div>";
-  }
-
-  var html=
-  // Header
-  "<div style='background:linear-gradient(135deg,#1a2a4a,#2c2c6e);border-radius:12px;padding:16px 20px;margin-bottom:16px;color:#fff'>"+
-    "<div style='display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px'>"+
-      "<div><div style='font-size:16px;font-weight:800'>📋 CIERRE MENSUAL</div>"+
-      "<div style='font-size:12px;opacity:.8;margin-top:3px'>"+mesLabel+" · "+totalOps+" operaciones totales</div></div>"+
-      "<select onchange='S.filtroMes=this.value;R()' style='border-radius:8px;padding:8px 12px;border:none;font-size:13px;background:rgba(255,255,255,.2);color:#fff;cursor:pointer'>"+mesOpts+"</select>"+
-    "</div>"+
-  "</div>"+
-
-  // ── Ganancias por operador ─────────────────────────
-  "<div class='sec' style='border-left:3px solid #0f6e3a'>"+
-    "<div class='sec-title' style='color:#0f6e3a'>💰 GANANCIAS POR OPERADOR</div>"+
-    "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:10px'>"+
-      mc("#D6F5E3","🇧🇷 BRL","$"+f2(ganBrl)+" USDT",brlM.length+" operaciones")+
-      mc("#FFF0E8","🇻🇪 VZLA","$"+f2(ganVzla)+" USDT",vzlaM.length+" operaciones")+
-      mc("#DDEEFF","🇺🇸 EE.UU bruta","$"+f2(ganEEbruta)+" USDT",eeuuM.length+" operaciones")+
-      mc("#FFF8DC","🇺🇸 EE.UU gastos","−$"+f2(gasEE)+" USDT","deducidos")+
-      mc("#E8F5E9","🇺🇸 EE.UU neta","$"+f2(ganEEneta)+" USDT","después de gastos")+
-    "</div>"+
-    "<div style='background:#f9f9f9;border-radius:8px;padding:12px;border:1px solid #eee'>"+
-      "<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:6px'>"+
-        "<span style='font-size:12px;font-weight:600'>Ganancia total del mes (BRL+VZLA+50% EE.UU)</span>"+
-        "<span style='font-size:22px;font-weight:900;color:#0f6e3a'>$"+f2(ganTotal)+" USDT</span>"+
-      "</div>"+
-    "</div>"+
-  "</div>"+
-
-  // ── Distribución socios ────────────────────────────
-  "<div class='sec' style='border-left:3px solid #0a3d7c'>"+
-    "<div class='sec-title' style='color:#0a3d7c'>👥 DISTRIBUCIÓN DE SOCIOS</div>"+
-    "<div style='display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:10px'>"+
-      "<div style='background:#1a3558;border-radius:10px;padding:14px;color:#fff'>"+
-        "<div style='font-size:12px;font-weight:700;margin-bottom:8px'>👤 JULIO (BRL+VZLA+50% EE.UU)</div>"+
-        "<div style='font-size:11px;opacity:.8;margin-bottom:4px'>BRL/VZLA: $"+f2(ganBrl+ganVzla)+"</div>"+
-        "<div style='font-size:11px;opacity:.8;margin-bottom:8px'>EE.UU (50%): $"+f2(ganJulio)+"</div>"+
-        "<div style='font-size:26px;font-weight:900;color:#90EE90'>$"+f2(ganTotal)+" USDT</div>"+
-        "<div style='font-size:10px;opacity:.6;margin-top:3px'>Ganancia total a cobrar</div>"+
-      "</div>"+
-      "<div style='background:#3a1a58;border-radius:10px;padding:14px;color:#fff'>"+
-        "<div style='font-size:12px;font-weight:700;margin-bottom:8px'>👤 PAUL (50% EE.UU)</div>"+
-        "<div style='font-size:11px;opacity:.8;margin-bottom:2px'>EE.UU 50%: $"+f2(ganEEneta*0.5)+"</div>"+
-        (deudaPaul>0?"<div style='font-size:11px;color:#ffaaaa;margin-bottom:2px'>Adelantos: −$"+f2(deudaPaul)+"</div>":"")+
-        "<div style='margin:6px 0;border-bottom:1px solid rgba(255,255,255,.2)'></div>"+
-        "<div style='font-size:26px;font-weight:900;color:"+(ganPaul>=0?"#90EE90":"#ffaaaa")+"'>$"+f2(ganPaul)+" USDT</div>"+
-        "<div style='font-size:10px;opacity:.6;margin-top:3px'>"+(deudaPaul>0?"Después de descontar adelantos":"Ganancia a cobrar")+"</div>"+
-      "</div>"+
-    "</div>"+
-  "</div>"+
-
-  // ── Egresos ─────────────────────────────────────────
-  "<div class='sec' style='border-left:3px solid #c0392b'>"+
-    "<div class='sec-title' style='color:#c0392b'>💸 EGRESOS DEL MES</div>"+
-    "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:10px'>"+
-      "<div style='background:#FDECEA;border-radius:8px;padding:12px'><div style='font-size:10px;color:#888;font-weight:700'>PAGADOS</div><div style='font-size:20px;font-weight:800;color:#c0392b'>$"+f2(egPag)+"</div></div>"+
-      "<div style='background:#FFF8DC;border-radius:8px;padding:12px'><div style='font-size:10px;color:#888;font-weight:700'>PENDIENTES</div><div style='font-size:20px;font-weight:800;color:#e67e22'>$"+f2(egPend)+"</div><div style='font-size:9px;color:#888'>APARTAR para pagar</div></div>"+
-      "<div style='background:#f0f0f0;border-radius:8px;padding:12px'><div style='font-size:10px;color:#888;font-weight:700'>TOTAL EGRESOS</div><div style='font-size:20px;font-weight:800;color:#555'>$"+f2(egPag+egPend)+"</div></div>"+
-    "</div>"+
-  "</div>"+
-
-  // ── Inventario USDT ──────────────────────────────────
-  "<div class='sec' style='border-left:3px solid #F5C518'>"+
-    "<div class='sec-title' style='color:#7a5c00'>💰 INVENTARIO USDT DEL MES</div>"+
-    "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:10px'>"+
-      "<div style='background:#FFF8DC;border-radius:8px;padding:12px'><div style='font-size:10px;color:#888;font-weight:700'>USDT COMPRADOS</div><div style='font-size:18px;font-weight:800;color:#0f6e3a'>+"+f4(totalComp)+"</div><div style='font-size:9px;color:#888'>"+compM.length+" compras</div></div>"+
-      "<div style='background:#FFF8DC;border-radius:8px;padding:12px'><div style='font-size:10px;color:#888;font-weight:700'>USDT VENDIDOS</div><div style='font-size:18px;font-weight:800;color:#c0392b'>−"+f4(totalVend)+"</div><div style='font-size:9px;color:#888'>"+ventM.length+" ventas</div></div>"+
-      "<div style='background:#FFF8DC;border-radius:8px;padding:12px'><div style='font-size:10px;color:#888;font-weight:700'>BS RECIBIDOS</div><div style='font-size:18px;font-weight:800;color:#0a3d7c'>"+f2(totalBsRec)+"</div></div>"+
-      "<div style='background:#FFFBEA;border:2px solid #F5C518;border-radius:8px;padding:12px'><div style='font-size:10px;color:#7a5c00;font-weight:700'>USDT RESTANTES</div><div style='font-size:18px;font-weight:800;color:#7a5c00'>"+f4(usdtDisp)+"</div><div style='font-size:9px;color:#888'>Lleva al siguiente mes</div></div>"+
-    "</div>"+
-  "</div>"+
-
-  // ── Resumen final ────────────────────────────────────
-  "<div style='background:linear-gradient(135deg,#0f3020,#1a6b3c);border-radius:12px;padding:16px 20px;color:#fff;margin-bottom:16px'>"+
-    "<div style='font-size:12px;font-weight:700;opacity:.8;margin-bottom:14px;text-transform:uppercase;letter-spacing:.5px'>📊 RESUMEN FINANCIERO FINAL</div>"+
-    "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px'>"+
-      "<div style='background:rgba(255,255,255,.12);border-radius:8px;padding:12px;text-align:center'>"+
-        "<div style='font-size:10px;opacity:.7;margin-bottom:4px'>GANANCIA BRUTA TOTAL</div>"+
-        "<div style='font-size:20px;font-weight:800'>$"+f2(ganBrl+ganVzla+ganEEbruta)+"</div>"+
-      "</div>"+
-      "<div style='background:rgba(255,255,255,.12);border-radius:8px;padding:12px;text-align:center'>"+
-        "<div style='font-size:10px;opacity:.7;margin-bottom:4px'>GASTOS OPERATIVOS</div>"+
-        "<div style='font-size:20px;font-weight:800;color:#ffaaaa'>−$"+f2(egPag+egPend+gasEE)+"</div>"+
-      "</div>"+
-      "<div style='background:rgba(255,215,0,.2);border:1.5px solid rgba(255,215,0,.5);border-radius:8px;padding:12px;text-align:center'>"+
-        "<div style='font-size:10px;color:#FFD700;font-weight:700;margin-bottom:4px'>GANANCIA NETA (Julio)</div>"+
-        "<div style='font-size:24px;font-weight:900;color:#FFD700'>$"+f2(ganTotal-egPag-egPend)+"</div>"+
-      "</div>"+
-    "</div>"+
-    "<div style='background:rgba(0,0,0,.2);border-radius:8px;padding:10px 14px;font-size:11px;opacity:.9'>"+
-      "📌 <b>Para el siguiente mes:</b> Llevar USDT disponibles ("+f4(usdtDisp)+") + capital en cuentas. "+
-      (egPend>0?"⚠️ Apartar <b>$"+f2(egPend)+" USDT</b> para egresos pendientes. ":"")+
-      "Pagar a Paul <b>$"+f2(ganPaul)+" USDT</b> y cerrar deudas."+
-    "</div>"+
-  "</div>"+
-
-  // ── Top clientes ─────────────────────────────────────
-  (topCl.length?"<div class='sec' style='border-left:3px solid #4B3FC7'><div class='sec-title' style='color:#4B3FC7'>🏆 TOP 5 CLIENTES DEL MES</div>"+
-    "<div style='border:1px solid #eee;border-radius:10px;overflow:hidden'>"+
-    "<table style='width:100%;border-collapse:collapse;font-size:12px'>"+
-    "<thead><tr style='background:#f9f9f9'><th style='padding:8px 10px;text-align:left;color:#888'>#</th><th style='padding:8px 10px;text-align:left;color:#888'>CLIENTE</th><th style='padding:8px 10px;text-align:center;color:#888'>OPERACIONES</th><th style='padding:8px 10px;text-align:right;color:#0f6e3a'>GANANCIA</th></tr></thead><tbody>"+
-    topCl.map(function(cl,i){var medals=["🥇","🥈","🥉","4°","5°"];return "<tr><td style='padding:8px 10px;font-weight:700'>"+medals[i]+"</td><td style='padding:8px 10px;font-weight:600'>"+cl.cl+"</td><td style='padding:8px 10px;text-align:center'>"+cl.txs+"</td><td style='padding:8px 10px;text-align:right;font-weight:700;color:#0f6e3a'>$"+f2(cl.pr)+"</td></tr>";}).join("")+
-    "</tbody></table></div></div>":"");
-
-  // ── Reporte para el Contador (solo operaciones en BRL) ─────────────────
-  // Operaciones que entran Reales al banco:
-  // 1) BRL → VES: cliente paga en BRL (entra al banco)
-  // 2) USD → BRL: cliente paga USD, se entrega BRL (entra BRL al banco)
-  // 3) VZLA → BRL: cliente paga VES, se entrega BRL (entra BRL al banco)
-  var brlVesM      = brlM.filter(function(r){ return r.orig==="BRL"; });
-  var usdBrlM      = brlM.filter(function(r){ return r.orig==="USD" && r.dest==="BRL"; });
-  var vzlaUsdBrlM  = vzlaM.filter(function(r){ return r.dest==="BRL"; });
-
-  // Monto recibido en BRL (lo que entró al banco)
-  var volBrlVes    = brlVesM.reduce(function(a,r){ return a+r.am; }, 0);
-  var volUsdBrl    = usdBrlM.reduce(function(a,r){ return a+(r.cant||0); }, 0);
-  var volVzlaBrl   = vzlaUsdBrlM.reduce(function(a,r){ return a+(r.cant||0); }, 0);
-  var totalEntBrl  = volBrlVes + volUsdBrl + volVzlaBrl;
-
-  // Ganancia en BRL (pr en USDT × tc BRL/USDT)
-  var ganBrlVesBRL = brlVesM.reduce(function(a,r){ return a + r.pr*(r.tc||5); }, 0);
-  var ganUsdBrlBRL = usdBrlM.reduce(function(a,r){ return a + r.pr*(r.tc||5); }, 0);
-  var ganVzlaBRL   = vzlaUsdBrlM.reduce(function(a,r){ return a + r.pr*(r.tv||5); }, 0);
-  var totalGanBRL  = ganBrlVesBRL + ganUsdBrlBRL + ganVzlaBRL;
-  var opsCtd       = brlVesM.length + usdBrlM.length + vzlaUsdBrlM.length;
-
-  html +=
-  "<div id='relatorio-contador' style='background:linear-gradient(135deg,#0a1628,#1a3558);border-radius:12px;padding:18px 20px;color:#fff;margin-top:8px'>"+
-    "<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px'>"+
-      "<div>"+
-        "<div style='font-size:14px;font-weight:800'>📄 RELATÓRIO PARA O CONTADOR</div>"+
-        "<div style='font-size:11px;opacity:.7;margin-top:2px'>SAIPHA SERVIÇOS DIGITAIS — CNPJ 66.994.057/0001-61</div>"+
-      "</div>"+
-      "<button onclick='imprimirRelatorioContador()' style='background:#F5C518;color:#000;border:none;padding:9px 16px;border-radius:8px;font-size:12px;font-weight:800;cursor:pointer'>🖨️ Imprimir / PDF</button>"+
-    "</div>"+
-
-    "<div style='background:rgba(255,255,255,.08);border-radius:10px;padding:14px;margin-bottom:12px'>"+
-      "<div style='font-size:10px;font-weight:700;opacity:.7;text-transform:uppercase;margin-bottom:10px'>📋 IDENTIFICACIÓN DEL PERÍODO</div>"+
-      "<div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;font-size:11px'>"+
-        "<div><div style='opacity:.6;margin-bottom:2px'>Empresa</div><div style='font-weight:700'>SAIPHA SERVIÇOS DIGITAIS</div></div>"+
-        "<div><div style='opacity:.6;margin-bottom:2px'>CNPJ</div><div style='font-weight:700'>66.994.057/0001-61</div></div>"+
-        "<div><div style='opacity:.6;margin-bottom:2px'>Período</div><div style='font-weight:700'>"+mesLabel+"</div></div>"+
-        "<div><div style='opacity:.6;margin-bottom:2px'>Porte</div><div style='font-weight:700'>ME — Simples Nacional</div></div>"+
-        "<div><div style='opacity:.6;margin-bottom:2px'>CNAE Principal</div><div style='font-weight:700'>63.19-4-00</div></div>"+
-        "<div><div style='opacity:.6;margin-bottom:2px'>Municipio</div><div style='font-weight:700'>Pacaraima — RR</div></div>"+
-      "</div>"+
-    "</div>"+
-
-    "<div style='background:rgba(255,255,255,.08);border-radius:10px;padding:14px;margin-bottom:12px'>"+
-      "<div style='font-size:10px;font-weight:700;opacity:.7;text-transform:uppercase;margin-bottom:10px'>💼 DESCRIPCIÓN DE LA ACTIVIDAD</div>"+
-      "<div style='font-size:11px;line-height:1.7;opacity:.9'>"+
-        "Prestación de servicio de <b>intermediación digital</b> — gestión de adquisición de producto digital "+
-        "por cuenta y orden de los contratantes. La empresa actúa como agente intermediario, "+
-        "recibiendo valores en Reales Brasileños (BRL) y proveyendo la entrega digital al destinatario indicado, "+
-        "cobrando comisión en Reales por el servicio prestado."+
-      "</div>"+
-    "</div>"+
-
-    "<div style='background:rgba(255,255,255,.08);border-radius:10px;padding:14px;margin-bottom:12px'>"+
-      "<div style='font-size:10px;font-weight:700;opacity:.7;text-transform:uppercase;margin-bottom:10px'>📊 MOVIMIENTO DEL MES — "+mesLabel+"</div>"+
-      "<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px'>"+
-        "<div style='background:rgba(255,255,255,.08);border-radius:8px;padding:12px'>"+
-          "<div style='font-size:10px;opacity:.6;margin-bottom:4px'>Total de operaciones (entradas en BRL)</div>"+
-          "<div style='font-size:26px;font-weight:900'>"+opsCtd+"</div>"+
-          "<div style='font-size:10px;opacity:.6;margin-top:3px'>"+
-            (brlVesM.length ? "BRL→VES: "+brlVesM.length+"  " : "")+
-            (usdBrlM.length ? "USD→BRL: "+usdBrlM.length+"  " : "")+
-            (vzlaUsdBrlM.length ? "VZLA→BRL: "+vzlaUsdBrlM.length : "")+
-          "</div>"+
-        "</div>"+
-        "<div style='background:rgba(255,255,255,.08);border-radius:8px;padding:12px'>"+
-          "<div style='font-size:10px;opacity:.6;margin-bottom:4px'>Total recibido en cuenta bancaria</div>"+
-          "<div style='font-size:24px;font-weight:900;color:#90EE90'>R$ "+f2(totalEntBrl)+"</div>"+
-          "<div style='font-size:10px;opacity:.6;margin-top:3px'>Reales ingresados al banco</div>"+
-        "</div>"+
-      "</div>"+
-    "</div>"+
-
-    "<div style='background:rgba(255,215,0,.15);border:1px solid rgba(255,215,0,.4);border-radius:10px;padding:14px;margin-bottom:12px'>"+
-      "<div style='font-size:10px;font-weight:700;color:#FFD700;text-transform:uppercase;margin-bottom:10px'>💰 INGRESOS Y GANANCIAS EN REALES (R$)</div>"+
-      "<table style='width:100%;border-collapse:collapse;font-size:11px'>"+
-        "<tr style='border-bottom:1px solid rgba(255,255,255,.2)'>"+
-          "<th style='padding:8px;text-align:left;opacity:.7;font-weight:600'>Servicio</th>"+
-          "<th style='padding:8px;text-align:right;opacity:.7;font-weight:600'>Ops.</th>"+
-          "<th style='padding:8px;text-align:right;opacity:.7;font-weight:600'>Recibido en banco (R$)</th>"+
-          "<th style='padding:8px;text-align:right;opacity:.7;font-weight:600'>Ganancia (R$)</th>"+
-        "</tr>"+
-        (brlVesM.length ?
-        "<tr style='border-bottom:1px solid rgba(255,255,255,.08)'>"+
-          "<td style='padding:9px 8px'>Intermediación BRL → VES</td>"+
-          "<td style='text-align:right;padding:9px 8px'>"+brlVesM.length+"</td>"+
-          "<td style='text-align:right;padding:9px 8px;font-weight:700;color:#90EE90'>R$ "+f2(volBrlVes)+"</td>"+
-          "<td style='text-align:right;padding:9px 8px;font-weight:700;color:#FFD700'>R$ "+f2(ganBrlVesBRL)+"</td>"+
-        "</tr>" : "")+
-        (usdBrlM.length ?
-        "<tr style='border-bottom:1px solid rgba(255,255,255,.08)'>"+
-          "<td style='padding:9px 8px'>Intermediación USD → BRL</td>"+
-          "<td style='text-align:right;padding:9px 8px'>"+usdBrlM.length+"</td>"+
-          "<td style='text-align:right;padding:9px 8px;font-weight:700;color:#90EE90'>R$ "+f2(volUsdBrl)+"</td>"+
-          "<td style='text-align:right;padding:9px 8px;font-weight:700;color:#FFD700'>R$ "+f2(ganUsdBrlBRL)+"</td>"+
-        "</tr>" : "")+
-        (vzlaUsdBrlM.length ?
-        "<tr style='border-bottom:1px solid rgba(255,255,255,.08)'>"+
-          "<td style='padding:9px 8px'>Intermediación VZLA → BRL</td>"+
-          "<td style='text-align:right;padding:9px 8px'>"+vzlaUsdBrlM.length+"</td>"+
-          "<td style='text-align:right;padding:9px 8px;font-weight:700;color:#90EE90'>R$ "+f2(volVzlaBrl)+"</td>"+
-          "<td style='text-align:right;padding:9px 8px;font-weight:700;color:#FFD700'>R$ "+f2(ganVzlaBRL)+"</td>"+
-        "</tr>" : "")+
-        "<tr style='background:rgba(255,215,0,.2)'>"+
-          "<td style='padding:11px 8px;font-weight:900;color:#FFD700;font-size:12px'>TOTAL DEL MES</td>"+
-          "<td style='text-align:right;padding:11px 8px;font-weight:900;color:#FFD700'>"+opsCtd+"</td>"+
-          "<td style='text-align:right;padding:11px 8px;font-weight:900;font-size:15px;color:#90EE90'>R$ "+f2(totalEntBrl)+"</td>"+
-          "<td style='text-align:right;padding:11px 8px;font-weight:900;font-size:15px;color:#FFD700'>R$ "+f2(totalGanBRL)+"</td>"+
-        "</tr>"+
-      "</table>"+
-    "</div>"+
-
-    "<div style='background:rgba(144,238,144,.15);border:2px solid rgba(144,238,144,.4);border-radius:10px;padding:16px'>"+
-      "<div style='font-size:10px;font-weight:700;color:#90EE90;text-transform:uppercase;margin-bottom:12px'>✅ RESUMEN FINAL DEL MES</div>"+
-      "<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px'>"+
-        "<div style='background:rgba(255,255,255,.08);border-radius:8px;padding:14px'>"+
-          "<div style='font-size:10px;opacity:.7;margin-bottom:6px'>💳 Entró al banco (R$)</div>"+
-          "<div style='font-size:26px;font-weight:900;color:#90EE90'>R$ "+f2(totalEntBrl)+"</div>"+
-          "<div style='font-size:10px;opacity:.6;margin-top:4px'>"+opsCtd+" operaciones del mes</div>"+
-        "</div>"+
-        "<div style='background:rgba(255,255,255,.08);border-radius:8px;padding:14px'>"+
-          "<div style='font-size:10px;opacity:.7;margin-bottom:6px'>💰 Ganancia neta (R$)</div>"+
-          "<div style='font-size:26px;font-weight:900;color:#FFD700'>R$ "+f2(totalGanBRL)+"</div>"+
-          "<div style='font-size:10px;opacity:.6;margin-top:4px'>Comisión cobrada en Reales</div>"+
-        "</div>"+
-      "</div>"+
-      "<div style='font-size:10px;opacity:.6;line-height:1.6'>"+
-        "⚠️ Este reporte está basado en los registros del sistema Centro de Gestión y debe ser revisado por el contador responsable. "+
-        "Solo se incluyen las operaciones donde el ingreso llega en Reales Brasileños (BRL) a la cuenta bancaria."+
-      "</div>"+
-    "</div>"+
-
-  "</div>";
-  return html;
-}
-
-function imprimirRelatorioContador(){
-  var el=document.getElementById('relatorio-contador');
-  if(!el){alert('Selecione um mês primeiro.');return;}
-  var w=window.open('','_blank','width=780,height=950');
-  w.document.write('<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">'+
-    '<title>Relatório Contador — SAIPHA</title>'+
-    '<style>body{font-family:Arial,sans-serif;font-size:12px;background:#0a1628;color:#fff;padding:20px;max-width:720px;margin:0 auto}'+
-    'h1{font-size:16px}table{width:100%;border-collapse:collapse}'+
-    'th,td{padding:8px;border-bottom:1px solid rgba(255,255,255,.2);font-size:11px}'+
-    '@media print{body{padding:5px}button{display:none}}</style></head><body>'+
-    el.innerHTML+
-    '<script>window.print();<\/script></body></html>');
-  w.document.close();
-}
-
 function _showSyncBadge(){
   // Punto azul en fb-dot
   var dot=document.getElementById("fb-dot");
@@ -10550,7 +10717,7 @@ function startAutoSync(){
   // Esto ademas levanta el detector de conexion mas rapido que antes.
   try{
     document.addEventListener("visibilitychange", function(){
-      if(!document.hidden){ _ultimoPoll=0; fbCheckREST(); }
+      if(!document.hidden){ _ultimoPoll=0; fbCheckREST(); _refrescarMisPermisos(); }
     });
   }catch(e){}
   // Renovar la sesión cada minuto mientras haya alguien logueado, para que
@@ -11478,9 +11645,135 @@ function revertirSaldosTraspaso(t){
 
 // ── Permisos granulares ────────────────────────────────────────────
 
+// ══════════════════════════════════════════════════════════════════════
+// FASE B (15/09/2026) — los permisos son de la PERSONA, no del rol
+//
+// Sus palabras: "no sirve para yo dar un usuario a otra persona con ciertos
+// permisos que yo como administradora total le otorgue".
+//
+// Antes había DOS sistemas de permisos y ninguno hacía eso:
+//
+//  · S.config.modulos — tres casillas (nueva/clientes/egresos) por ROL, no
+//    por persona, así que dos personas con el mismo rol no podían tener
+//    permisos distintos. Y vivía dentro del bloque que se sincroniza, o sea
+//    que era de los datos que se pisan entre aparatos: un permiso que se
+//    revierte solo es peor que no tener permisos.
+//  · permisos del servidor — sí son por persona y sí los guarda Mongo, pero
+//    la app NUNCA los mandaba (POST/PUT /usuarios solo enviaban el rol) y
+//    solo los consultaba para el Administrador y el Supervisor. Para un
+//    operador no se miraban en ninguna parte.
+//
+// Ahora hay uno solo: lo que guarda Mongo para esa persona. El rol pasa a ser
+// lo que era de verdad —un punto de partida—, y cada casilla se puede mover
+// persona por persona.
+//
+// LO QUE ESTO ES Y LO QUE NO ES. El servidor guarda TODO el estado en un solo
+// bloque y lo entrega entero a quien tenga sesión: no hay forma de que una
+// remesa no le llegue al navegador de un operador. Lo único que el servidor
+// hace cumplir de verdad es "editar" (contesta 403 al guardar). Las demás
+// casillas deciden QUÉ VE en la app, no a qué puede llegar. Está escrito en
+// la pantalla, porque un candado que parece candado y no lo es es peor que
+// no tener ninguno.
+// ══════════════════════════════════════════════════════════════════════
+
+// Cada permiso, con el nombre que ella usa y en el orden en que los piensa.
+var PERMISOS_APP = [
+  {k:"editar",          n:"Registrar y modificar",    d:"sin esto solo puede mirar", fuerte:true},
+  {k:"dash",            n:"📊 Resumen"},
+  {k:"diario",          n:"📅 Diario"},
+  {k:"ops",             n:"📋 Operaciones"},
+  {k:"nueva",           n:"➕ Nueva operación"},
+  {k:"nueva_eeuu",      n:"➕ Nueva EE.UU"},
+  {k:"clientes",        n:"👥 Clientes"},
+  {k:"prestamos",       n:"🤝 Préstamos"},
+  {k:"cobrar",          n:"💳 Por cobrar"},
+  {k:"egresos",         n:"💸 Egresos"},
+  {k:"inventario_usdt", n:"📦 Inventario USDT"},
+  {k:"capital_total",   n:"💰 Balance de cuentas"},
+  {k:"traspasos",       n:"🔄 Traspasos"},
+  {k:"calculadora",     n:"🧮 Tasas"},
+  {k:"evolucion",       n:"📈 Evolución y salud"},
+  {k:"cierre",          n:"🗓️ Cierre de mes"},
+  {k:"dash_eeuu",       n:"📊 Resumen EE.UU"},
+  {k:"mi_ganancia",     n:"📊 Balance mensual propio"},
+  {k:"op_diario",       n:"📋 Sus operaciones del día"},
+  {k:"auditoria",       n:"📋 Auditoría"},
+  {k:"config_admin",    n:"⚙️ Configuración"}
+];
+
+// Qué trae puesto cada rol. Esto NO es el permiso: es lo que vale cuando la
+// persona todavía no tiene esa casilla decidida.
+//
+// Y es lo que hace que nada se rompa al desplegar: todos los usuarios que hay
+// hoy tienen `permisos` casi vacío, así que sin estos valores por omisión
+// pasar a mirar los permisos para TODOS los roles —cosa que antes no se
+// hacía— les habría cerrado la app entera de golpe. Cada rol arranca
+// exactamente con lo que veía ayer.
+var PERMISOS_POR_ROL = {
+  // El Administrador no se toca: es ella.
+  admin:  "*",
+  // El Supervisor ve todo y no modifica. Eso ES el rol.
+  lector: {todo:true, salvo:["editar"]},
+  brl:    {si:["editar","mi_ganancia","op_diario","nueva","clientes"]},
+  vzla:   {si:["editar","mi_ganancia","op_diario","nueva","clientes"]},
+  eeuu:   {si:["editar","mi_ganancia","op_diario","nueva_eeuu","clientes","dash_eeuu"]}
+};
+
+function _permisoPorOmision(rol, k){
+  var d=PERMISOS_POR_ROL[rol];
+  if(d==="*") return true;
+  if(!d) return false;
+  if(d.todo) return (d.salvo||[]).indexOf(k)===-1;
+  return (d.si||[]).indexOf(k)!==-1;
+}
+
+// La pestaña y el permiso no siempre se llaman igual. Una pestaña sin entrada
+// aquí no se filtra: es de las que no tienen puerta (el menú de un operador,
+// por ejemplo, o el historial).
+var PERMISO_DE_TAB = {
+  dash:"dash", diario:"diario", ops:"ops", brl:"ops", vzla:"ops", eeuu:"ops",
+  evolucion:"evolucion", salud_financiera:"evolucion", cierre:"cierre",
+  nueva:"nueva", nueva_eeuu:"nueva_eeuu", clientes:"clientes",
+  prestamos:"prestamos", cobrar:"cobrar", egresos:"egresos",
+  inventario_usdt:"inventario_usdt", capital_total:"capital_total",
+  traspasos:"traspasos", calculadora:"calculadora", auditoria:"auditoria",
+  config_admin:"config_admin", dash_eeuu:"dash_eeuu",
+  mi_ganancia:"mi_ganancia", op_diario:"op_diario"
+};
+
 // Los permisos los manda el servidor: son los que guarda Mongo para ese
 // usuario. Los perfiles locales —los de S.config.usuarios, que llevaban el
 // PIN en claro— se retiraron con el acceso por PIN.
+// FASE B: los permisos se leen de la sesion guardada en ESTE navegador, y esa
+// copia solo se refrescaba al abrir la app. O sea: ella le quitaba un permiso a
+// alguien y esa persona lo conservaba el resto del dia, con la app abierta.
+//
+// Esto vuelve a preguntar "/auth/yo" cuando la app vuelve al frente —que es
+// cuando la persona la retoma— y repinta solo si algo cambio de verdad. Va a
+// ciegas: sin respuesta se sigue con lo que hay, como con cualquier otra
+// llamada.
+function _refrescarMisPermisos(){
+  if(!apiSesionActiva() || _API_BLOQUEADA || !_API_ENTRO_POR_API) return;
+  var ses=_apiSesionGuardada(); if(!ses||!ses.t) return;
+  var antes=JSON.stringify({r:(ses.u||{}).rol, p:(ses.u||{}).permisos||{}});
+  apiFetch("/auth/yo").then(function(r){
+    if(r.status===401){ _apiBorrarSesionLocal(); S.role=null; _borrarSesion(); R(); return null; }
+    if(!r.ok) return null;
+    return r.json();
+  }).then(function(d){
+    if(!d||!d.ok||!d.usuario) return;
+    _apiGuardarSesion(ses.t, d.usuario, true);
+    var ahora=JSON.stringify({r:d.usuario.rol, p:d.usuario.permisos||{}});
+    if(ahora!==antes){
+      // El rol decide el menu y los colores, asi que si cambio hay que
+      // aplicarlo, no solo repintar.
+      if(d.usuario.rol!==(ses.u||{}).rol) _loginApiAplicar(d.usuario,false);
+      try{ R(); }catch(e){}
+      console.log("Permisos actualizados desde el servidor.");
+    }
+  }).catch(function(){});
+}
+
 function _permisosApi(){
   if(!_API_ENTRO_POR_API) return null;
   try{
@@ -11493,13 +11786,17 @@ function _permisosApi(){
 function tienePermiso(perm){
   var api=_permisosApi();
   if(api){
+    // El Administrador no se filtra: es la dueña.
     if(api.rol==="admin") return true;
-    // El Supervisor ve todo y no modifica: eso ES el rol, tanto aca como en
-    // el servidor. Antes esta funcion solo miraba los perfiles locales, asi
-    // que un Supervisor que entraba por correo no tenia ninguno y se le
-    // negaba TODA la app: cada pestaña le mostraba "Sin acceso".
-    if(api.rol==="lector") return perm!=="editar" || !!api.permisos.editar;
-    return !!api.permisos[perm];
+    // FASE B: manda lo que Mongo guarda PARA ESA PERSONA. Solo cuando la
+    // casilla no está decidida se cae al valor por omisión de su rol, que es
+    // exactamente lo que esa persona veía antes de existir esta pantalla.
+    // Sin ese respaldo, pasar a mirar los permisos también para los
+    // operadores —cosa que antes no se hacía— les habría cerrado la app
+    // entera el día del despliegue.
+    var p=api.permisos||{};
+    if(typeof p[perm]==="boolean") return p[perm];
+    return _permisoPorOmision(api.rol, perm);
   }
   // Sin sesion de la API no hay permisos: la unica forma de entrar es con
   // correo y clave, asi que llegar aca significa que la sesion se cayo.
@@ -11515,15 +11812,12 @@ function rSinPermiso(seccion){
 }
 
 function permisoEdicion(){
-  var api=_permisosApi();
-  if(api){
-    if(api.rol==="admin") return true;
-    // Para los demas roles decide el permiso guardado en Mongo, que es el
-    // mismo que el servidor aplica en sus propias rutas. Asi la pantalla no
-    // ofrece guardar algo que la API va a rechazar con 403.
-    return !!(api.permisos && api.permisos.editar);
-  }
-  return false;
+  // Una sola puerta: "editar" es un permiso más, y es el ÚNICO que el
+  // servidor hace cumplir por su cuenta (contesta 403 al guardar). Antes esto
+  // leía api.permisos.editar a secas y no respetaba el valor por omisión del
+  // rol, así que un operador recién creado —con permisos vacíos— podía entrar
+  // pero no guardar nada, sin que nada se lo explicara.
+  return tienePermiso("editar");
 }
 
 // ── HELPERS ───────────────────────────────────────────
@@ -12661,18 +12955,18 @@ function rLogin(){
 function rMain(){
   var ro=ROLES.find(function(r){return r.id===S.role;});
   var ts=TABS[S.role]||[];
-  // Filter tabs by admin permissions
-  if(S.role&&S.role!=="admin"&&S.config&&S.config.modulos){
-    ts=ts.filter(function(tab){
-      var modKey=S.role+"_"+tab;
-      // Map tab to module key
-      if(tab==="nueva"||tab==="nueva_eeuu") modKey=S.role+"_nueva";
-      if(tab==="clientes") modKey=S.role+"_clientes";
-      if(tab==="egresos") modKey=S.role+"_egresos";
-      var allowed=S.config.modulos[modKey];
-      return allowed===undefined?true:allowed; // default: allowed
-    });
-  }
+  // FASE B: el menú lo decide el permiso DE LA PERSONA, el mismo que decide si
+  // la pantalla se dibuja. Antes eran dos cosas distintas y no coincidían: el
+  // menú salía de S.config.modulos (tres casillas por ROL, dentro del bloque
+  // que se sincroniza entre aparatos) y el contenido de tienePermiso(), que
+  // solo se miraba para el Administrador y el Supervisor. Una pestaña podía
+  // estar en el menú y contestar "Sin acceso" al tocarla.
+  //
+  // Una pestaña sin entrada en PERMISO_DE_TAB no se filtra: no tiene puerta.
+  ts=ts.filter(function(tab){
+    var k=PERMISO_DE_TAB[tab];
+    return k===undefined || tienePermiso(k);
+  });
   var real=dinReal();
   var nt=gNeta();
   var bgMap={admin:"linear-gradient(135deg,#2D3142,#404565)",lector:"linear-gradient(135deg,#2D3142,#404565)",brl:"linear-gradient(135deg,#0f6e3a,#1a9e55)",vzla:"linear-gradient(135deg,#8B0000,#c0392b)",eeuu:"linear-gradient(135deg,#0a3d7c,#1a6bbf)"};
@@ -12703,34 +12997,41 @@ function rMain(){
   "x";
   var _dummy2="";
   var body="";
-  var isAdmin=S.role==="admin"||S.role==="lector";
+  // FASE B: una sola puerta para todos. Antes cada línea empezaba por
+  // "isAdmin ? ... : ..." —o sea, el permiso solo se consultaba para el
+  // Administrador y el Supervisor— y a un operador se le devolvía CADENA
+  // VACÍA: una pantalla en blanco, sin decir por qué. Con los permisos por
+  // persona eso ya no tiene sentido: si ella le da el permiso, lo ve; si no,
+  // lee "Sin acceso" y a quién pedírselo.
   var tp=function(perm,fn,nombre){return tienePermiso(perm)?fn():rSinPermiso(nombre||perm);};
-  if(S.tab==="dash")               body=isAdmin?rDash():"";
-  else if(S.tab==="dash_eeuu")     body=isAdmin?rDashEE():"";
-  else if(S.tab==="diario")        body=isAdmin?tp("diario",rDiario,"Diario"):"";
-  else if(S.tab==="evolucion")     body=isAdmin?tp("evolucion",rEvolucion,"Evolución"):"";
-  else if(S.tab==="salud_financiera") body=isAdmin?tp("evolucion",rSaludFinanciera,"Salud Financiera"):"";
-  else if(S.tab==="cierre")        body=isAdmin?tp("cierre",rInformeCierre,"Cierre Mensual"):"";
-  else if(S.tab==="ops")           body=isAdmin?tp("ops",rTblUnificada,"Operaciones"):"";
-  else if(S.tab==="brl")           body=isAdmin?tp("ops",function(){return rTbl(S.brl,"brl");},"BRL"):"";
-  else if(S.tab==="vzla")          body=isAdmin?tp("ops",function(){return rTbl(S.vzla,"vzla");},"VZLA"):"";
-  else if(S.tab==="eeuu")          body=isAdmin?tp("ops",rTblEE,"EE.UU"):"";
-  else if(S.tab==="inventario_usdt") body=isAdmin?tp("inventario_usdt",rInventarioUsdt,"Inventario USDT"):"";
-  else if(S.tab==="capital_total") body=isAdmin?tp("capital_total",rCapitalTotal,"Balance de Cuentas"):"";
-  else if(S.tab==="traspasos")     body=isAdmin?tp("traspasos",rTraspasos,"Traspasos"):"";
-  else if(S.tab==="config_admin")  body=isAdmin?tp("config_admin",rConfigAdmin,"Configuración"):"";
-  else if(S.tab==="egresos")       body=isAdmin?tp("egresos",rEgresos,"Egresos"):(S.role==="eeuu"?rDashEE():"");
-  else if(S.tab==="auditoria")     body=isAdmin?tp("auditoria",rAuditoria,"Auditoría"):"";
-  else if(S.tab==="historial")     body=isAdmin?rHistorialMeses():"";
-  else if(S.tab==="nueva")         body=isAdmin?tp("nueva",rNueva,"Nueva Operación"):rNueva();
-  else if(S.tab==="nueva_eeuu")    body=rNuevaEE();
-  else if(S.tab==="mi_ganancia")   body=(S.role==="eeuu"?rDashEE():rMiGanancia());
-  else if(S.tab==="op_diario")     body=rOpDiario();
-  else if(S.tab==="clientes")      body=isAdmin?tp("clientes",rClientes,"Clientes"):rClientes();
-  else if(S.tab==="prestamos")     body=isAdmin?tp("prestamos",rPrestamos,"Préstamos"):rPrestamos();
-  else if(S.tab==="cobrar")        body=isAdmin?tp("cobrar",rCuentasCobrar,"Por Cobrar"):rCuentasCobrar();
+  if(S.tab==="dash")               body=tp("dash",rDash,"Resumen");
+  else if(S.tab==="dash_eeuu")     body=tp("dash_eeuu",rDashEE,"Resumen EE.UU");
+  else if(S.tab==="diario")        body=tp("diario",rDiario,"Diario");
+  else if(S.tab==="evolucion")     body=tp("evolucion",rEvolucion,"Evolución");
+  else if(S.tab==="salud_financiera") body=tp("evolucion",rSaludFinanciera,"Salud Financiera");
+  else if(S.tab==="cierre")        body=tp("cierre",rInformeCierre,"Cierre Mensual");
+  else if(S.tab==="ops")           body=tp("ops",rTblUnificada,"Operaciones");
+  else if(S.tab==="brl")           body=tp("ops",function(){return rTbl(S.brl,"brl");},"BRL");
+  else if(S.tab==="vzla")          body=tp("ops",function(){return rTbl(S.vzla,"vzla");},"VZLA");
+  else if(S.tab==="eeuu")          body=tp("ops",rTblEE,"EE.UU");
+  else if(S.tab==="inventario_usdt") body=tp("inventario_usdt",rInventarioUsdt,"Inventario USDT");
+  else if(S.tab==="capital_total") body=tp("capital_total",rCapitalTotal,"Balance de Cuentas");
+  else if(S.tab==="traspasos")     body=tp("traspasos",rTraspasos,"Traspasos");
+  else if(S.tab==="config_admin")  body=tp("config_admin",rConfigAdmin,"Configuración");
+  // La rama vieja "si es de EE.UU. enséñale su resumen" era inalcanzable:
+  // "egresos" no está en el menú de ningún operador. Ahora la puerta es una.
+  else if(S.tab==="egresos")       body=tp("egresos",rEgresos,"Egresos");
+  else if(S.tab==="auditoria")     body=tp("auditoria",rAuditoria,"Auditoría");
+  else if(S.tab==="historial")     body=tp("cierre",rHistorialMeses,"Historial de meses");
+  else if(S.tab==="nueva")         body=tp("nueva",rNueva,"Nueva Operación");
+  else if(S.tab==="nueva_eeuu")    body=tp("nueva_eeuu",rNuevaEE,"Nueva EE.UU");
+  else if(S.tab==="mi_ganancia")   body=tp("mi_ganancia",function(){return S.role==="eeuu"?rDashEE():rMiGanancia();},"Balance Mensual");
+  else if(S.tab==="op_diario")     body=tp("op_diario",rOpDiario,"Mis Operaciones");
+  else if(S.tab==="clientes")      body=tp("clientes",rClientes,"Clientes");
+  else if(S.tab==="prestamos")     body=tp("prestamos",rPrestamos,"Préstamos");
+  else if(S.tab==="cobrar")        body=tp("cobrar",rCuentasCobrar,"Por Cobrar");
   else if(S.tab==="mi_gestion")    body=rMiGestion();
-  else if(S.tab==="calculadora")   body=isAdmin?tp("calculadora",rCalculadora,"Tasas"):rCalculadora();
+  else if(S.tab==="calculadora")   body=tp("calculadora",rCalculadora,"Tasas");
   return "<div id='app'><div class='topbar' style='background:"+bgMap[S.role]+"'>"+
     "<div style='display:flex;align-items:center;gap:10px;flex-wrap:wrap'>"+
       "<div style='width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center;font-size:17px'>"+ro.ic+"</div>"+
@@ -12738,6 +13039,10 @@ function rMain(){
       "<div style='font-size:11px;opacity:.85'>"+sub+"</div></div></div>"+
     "<div style='display:flex;align-items:center;gap:8px'>"+"<div style='display:flex;align-items:center;gap:6px'>"+"<div id='fb-dot' title='"+(_hayConexionReal?"Conectado con el servidor":"Sin conexión con el servidor")+"' style='width:9px;height:9px;border-radius:50%;background:"+(_hayConexionReal?"#4ade80":"#f87171")+";border:1.5px solid rgba(255,255,255,.5)'></div>"+(S.role==="admin"?"<button onclick='st(\"config_admin\")' title='Configuración Admin' style='background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);color:#fff;padding:5px 9px;border-radius:7px;font-size:13px;cursor:pointer'>⚙️</button>":"")+"<button onclick='salir()' style='background:rgba(255,255,255,.2);border:none;color:#fff;padding:6px 13px;border-radius:8px;font-weight:600;cursor:pointer'>Salir</button>"+"</div>"+"</div>"+
   "</div><div class='panel' style='flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;-webkit-overflow-scrolling:touch'>"+
+    // ARREGLO 62: el aviso de choque va aquí arriba, fuera del área que hace
+    // scroll, para que se vea esté ella en la pantalla que esté. Un aviso al
+    // fondo de una lista de remesas no es un aviso.
+    _htmlAvisoPisado()+
     "<div class='navbar3'>"+
       "<button class='menubtn' onclick='document.getElementById(\"navMenuWrap\").classList.add(\"show\")'>☰ Menú</button>"+
       "<div class='cursec'>"+(TL[S.tab]||S.tab||"")+"</div>"+
@@ -12995,13 +13300,15 @@ function exportarReporteContadorCSV(mesKey){
   if(!rep){alert("Abre primero la pestaña 'Contador' en Cierre Mensual para generar el reporte.");return;}
   var partsK=mesKey.split("-");
   var mesLabel=getMesLabel(partsK[1],partsK[0]);
-  var linhas=["Relatório Financeiro · "+mesLabel];
-  Object.keys(rep).forEach(function(k){ linhas.push(k+";"+rep[k]); });
-  var csv=linhas.join("\n");
+  // ARREGLO 57: el informe salia en portugues ("Relatório Financeiro",
+  // "Saídas", "Fluxo líquido") dentro de una app que esta toda en español.
+  var lineas=["Informe financiero · "+mesLabel];
+  Object.keys(rep).forEach(function(k){ lineas.push(k+";"+rep[k]); });
+  var csv=lineas.join("\n");
   var blob=new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8;"});
   var url=URL.createObjectURL(blob);
   var a=document.createElement("a");
-  a.href=url; a.download="relatorio_contador_"+mesKey+".csv";
+  a.href=url; a.download="informe_contador_"+mesKey+".csv";
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
@@ -13012,17 +13319,28 @@ function _cargarH2PDF(cb){
   s.onload=cb;
   s.onerror=function(){
     alert("No se pudo cargar el generador de PDF. Revisa tu conexión e intenta de nuevo.");
-    var btn=document.getElementById("btnCompartirInforme");
-    if(btn){btn.textContent="📤 Compartir";btn.disabled=false;}
+    // Se devuelven los DOS botones a su sitio: el de descargar y el de
+    // compartir usan el mismo generador, y antes solo se reponía el de
+    // compartir — el otro se quedaba en "⏳ Cargando..." y deshabilitado
+    // para siempre.
+    var bD=document.getElementById("btnDescargarInforme");
+    if(bD){bD.textContent="⬇️ Descargar PDF";bD.disabled=false;}
+    var bC=document.getElementById("btnCompartirInforme");
+    if(bC){bC.textContent="📤 Compartir";bC.disabled=false;}
   };
   document.head.appendChild(s);
 }
-function _compartirInformeImg(){
-  var btn=document.getElementById("btnCompartirInforme");
+// Descargar y compartir salen del MISMO PDF: cambia solo qué se hace con
+// el archivo al final. Estaban escritos por separado y el de descargar ni
+// existía — el botón llamaba a una función que no estaba.
+function _pdfInforme(btnId,modo){
+  var btn=document.getElementById(btnId);
+  if(!btn) return;
   var t0=btn.textContent; btn.textContent="⏳ Cargando..."; btn.disabled=true;
   _cargarH2PDF(function(){
     btn.textContent="⏳ Generando PDF...";
     var nombreMes=(window._informeMesLabelActual||"Informe").replace(/\s/g,"_");
+    var nombreArch="Informe_"+nombreMes+".pdf";
     var el=document.getElementById("reporteCapture");
     // Fix8: html2canvas NO respeta los estilos de @media print (esos solo
     // aplican al botón nativo de Imprimir). Aquí .hoja tiene overflow:hidden
@@ -13035,25 +13353,31 @@ function _compartirInformeImg(){
     var alturaReal=el.scrollHeight;
     var opciones={
       margin:8,
-      filename:"Informe_"+nombreMes+".pdf",
+      filename:nombreArch,
       image:{type:"jpeg",quality:0.95},
       html2canvas:{scale:2,useCORS:true,scrollY:0,windowHeight:alturaReal,height:alturaReal},
       jsPDF:{unit:"mm",format:"a4",orientation:"portrait"},
       pagebreak:{mode:["css","legacy"]}
     };
+    function guardar(blob){
+      var url=URL.createObjectURL(blob);
+      var a=document.createElement("a"); a.href=url; a.download=nombreArch; a.click();
+      setTimeout(function(){URL.revokeObjectURL(url);},2000);
+    }
     html2pdf().set(opciones).from(el).toPdf().output("blob").then(function(blob){
       el.style.overflow=_overflowPrev;
-      var archivo=new File([blob],"Informe_"+nombreMes+".pdf",{type:"application/pdf"});
-      if(navigator.canShare && navigator.canShare({files:[archivo]})){
-        navigator.share({files:[archivo],title:"Informe "+(window._informeMesLabelActual||"")}).catch(function(){});
+      // Compartir: se intenta la hoja de compartir del teléfono (WhatsApp,
+      // correo). Si el navegador no la tiene, se descarga y se avisa.
+      // Descargar: siempre al archivo, sin preguntar.
+      if(modo==="compartir" && navigator.canShare && navigator.canShare({files:[new File([blob],nombreArch,{type:"application/pdf"})]})){
+        navigator.share({files:[new File([blob],nombreArch,{type:"application/pdf"})],title:"Informe "+(window._informeMesLabelActual||"")}).catch(function(){});
         btn.textContent=t0; btn.disabled=false;
-      } else {
-        var url=URL.createObjectURL(blob);
-        var a=document.createElement("a"); a.href=url; a.download=archivo.name; a.click();
-        setTimeout(function(){URL.revokeObjectURL(url);},2000);
-        btn.textContent="✅ PDF descargado — compártelo desde tus archivos"; btn.disabled=false;
-        setTimeout(function(){btn.textContent=t0;},4000);
+        return;
       }
+      guardar(blob);
+      btn.textContent=(modo==="compartir")?"✅ PDF descargado — compártelo desde tus archivos":"✅ PDF descargado";
+      btn.disabled=false;
+      setTimeout(function(){btn.textContent=t0;},4000);
     }).catch(function(e){
       el.style.overflow=_overflowPrev;
       alert("No se pudo generar el PDF: "+e.message);
@@ -13061,6 +13385,8 @@ function _compartirInformeImg(){
     });
   });
 }
+function _descargarInformePDF(){ _pdfInforme("btnDescargarInforme","descargar"); }
+function _compartirInformeImg(){ _pdfInforme("btnCompartirInforme","compartir"); }
 function generarInformePDF(mesKey){
  try{
   var partsK=mesKey.split("-");
@@ -13174,8 +13500,12 @@ function generarInformePDF(mesKey){
   "<div id='informePdfOverlay'><div class='contenido'>"+
   "<button class='btnCerrar' onclick='document.getElementById(\"informePdfOverlay\").remove();document.getElementById(\"estiloInformePdf\").remove()' style='position:absolute;top:12px;right:14px;background:#fff;border:none;border-radius:50%;width:36px;height:36px;font-size:16px;cursor:pointer;z-index:2;box-shadow:0 2px 8px rgba(0,0,0,.15)'>✕</button>"+
   "<div class='btnBar' style='display:flex;flex-direction:column;gap:8px;margin-bottom:16px;margin-top:36px'>"+
+    // ARREGLO 54: descargar y compartir son dos cosas. El único botón compartía
+    // y solo descargaba si el móvil no sabía compartir — así que para guardarlo
+    // en el teléfono había que pasar por el menú de compartir.
+    "<button class='btn' id='btnDescargarInforme' onclick='_descargarInformePDF()'>⬇️ Descargar PDF</button>"+
     "<button class='btn btnShare' id='btnCompartirInforme' onclick='_compartirInformeImg()'>📤 Compartir</button>"+
-    "<button class='btn' onclick='window.print()'>🖨️ Imprimir / PDF</button>"+
+    "<button class='btn' onclick='window.print()'>🖨️ Imprimir</button>"+
   "</div>"+
   "<div class='hoja' id='reporteCapture'>"+
   "<div class='ticket-top'>"+
@@ -13191,6 +13521,8 @@ function generarInformePDF(mesKey){
     "<div class='tabla-scroll'><table><tr><th>Concepto</th><th>Monto</th></tr>"+
     "<tr><td style='padding:5px 8px;font-size:12px'>Total operaciones realizadas</td><td style='padding:5px 8px;font-size:12px;text-align:right;font-weight:700;color:#1a3558'>"+calc.ops+" operaciones</td></tr>"+
     row("Ganancia bruta total",calc.ganBrutaTotal,"#0f6e3a")+
+    // ARREGLO 57: ver nota en rInformeCierre — el desglose tiene que cuadrar.
+    (calc.ganPrestamos>0?row("− 🤝 Intereses de préstamos ("+calc.ganPrestamosCant+" abono"+(calc.ganPrestamosCant!==1?"s":"")+", aparte: no entran en la utilidad)",calc.ganPrestamos,"#a06800"):"")+
     (calc.ganExtraEmp>0?row("+ Ganancias extra empresa",calc.ganExtraEmp,"#7a5c00"):"")+
     (calc.gasEEUU>0?row("− Gastos EE.UU compartidos (mi "+( 100-calc.socioPorcentajeEE)+"% de $"+f2(calc.gasEEUU)+")",Math.round(calc.gasEEUU*(1-calc.socioPorcentajeEE/100)*100)/100,"#c0392b"):"")+
     (calc.socioParte>0?row("− "+calc.socioNombreEE+" ("+calc.socioPorcentajeEE+"%)",calc.socioParte,"#c0392b"):"")+
@@ -13228,17 +13560,29 @@ function generarInformePDF(mesKey){
   // BANCOS
   sec("🏦 Saldos de cuentas al "+fechaSaldosInforme+(_esCierrePasado?" <span style='font-weight:400;font-size:9.5px;color:#999'>(cierre de "+mesLabel+")</span>":""),
     "<div class='tabla-scroll'><table><tr><th>Cuenta</th><th>Moneda</th><th>Saldo actual</th><th>≈ USDT</th></tr>"+
-    cuentasParaInforme.map(function(c){
+    // ARREGLO 57: 6 de sus 15 cuentas estan en cero y llenaban la tabla. No
+    // aportan nada al total (cero es cero) y en un informe que se manda fuera
+    // solo hacen ruido. Se cuentan al pie para que se sepa que estan.
+    cuentasParaInforme.filter(function(c){return Math.abs(parseFloat(c.saldo)||0)>0.009;}).map(function(c){
       var rate=getRateToUsdt(c.moneda);
       var usdt=c.moneda==="USDT"?(parseFloat(c.saldo)||0):(rate?((parseFloat(c.saldo)||0)/rate):null);
       return "<tr><td>"+c.nombre+"</td><td style='text-align:center'>"+c.moneda+"</td>"+
         "<td style='text-align:right;font-weight:700'>"+f2l(parseFloat(c.saldo)||0)+"</td>"+
         "<td style='text-align:right;color:#0a3d7c'>"+(usdt!==null?"≈ "+f2l(usdt):"<span style=\'color:#c0392b\'>Sin tasa</span>")+"</td></tr>";
     }).join("")+
+    (function(){
+      var vacias=cuentasParaInforme.filter(function(c){return Math.abs(parseFloat(c.saldo)||0)<=0.009;}).length;
+      return vacias?"<tr><td colspan='4' style='font-size:10px;color:#999;font-style:italic'>"+vacias+" cuenta"+(vacias!==1?"s":"")+" más en cero, sin saldo que informar</td></tr>":"";
+    })()+
     "<tr style='background:#f0f0f0'><td colspan='3' style='font-size:10px;color:#888'>Inventario USDT disponible</td><td style='text-align:right;color:#888'>$"+f2l(invUsdtPDF)+"</td></tr>"+
     "<tr style='background:#FFF8DC'><td colspan='3'><b>TOTAL EQUIVALENTE EN USDT</b></td><td style='text-align:right;font-weight:900;color:#7a5c00'>$"+f2l(totalUsdtCuentas)+"</td></tr>"+
     "</table></div>")+
   // SOCIOS
+  // ARREGLO 58: sin ganancia de sus rutas, sin deuda viva y sin pagos, la
+  // seccion entera sobra: era una tabla de ceros en un informe que se manda
+  // fuera. Si algo de eso existe, vuelve sola.
+  ((Math.abs(calc.ganEEBruta)>0.009 || Math.abs(calc.deudasSocioEE)>0.009 ||
+    Math.abs(calc.socioFinalEE)>0.009 || calc.comisionesSocios.length || pagosMes.length)?
   sec("🤝 Liquidación de socios",
     "<div class='tabla-scroll'><table><tr><th>Socio</th><th>Rutas</th><th>Ganancia de sus rutas</th><th>Su parte</th><th>Deudas personales</th><th>Total a pagar</th></tr>"+
     "<tr><td><b>"+calc.socioNombreEE+"</b></td><td>EE.UU</td>"+
@@ -13254,7 +13598,7 @@ function generarInformePDF(mesKey){
         (function(){var fS=Math.round((s.monto-(s.deudas||0))*100)/100;return "<td style='text-align:right;font-weight:900;color:"+(fS<0?"#c0392b":"#1a3558")+"'>"+(fS<0?"⚠️ Debe $"+f2l(Math.abs(fS)):"$"+f2l(fS))+"</td></tr>";})()
     }).join("")+
     (pagosMes.length?"<tr><td colspan='6' style='background:#E3F8EC;font-size:11px;color:#0f6e3a;padding:6px'>✅ Pagos registrados este mes: "+pagosMes.map(function(p){return p.fecha+" · "+p.socioNombre+" · $"+f2l(p.monto);}).join(" | ")+"</td></tr>":"")+
-    "</table></div>")+
+    "</table></div>"):"")+
   // EGRESOS EMPRESA
   (function(){
     var catEmp={};
@@ -13312,7 +13656,8 @@ function generarInformePDF(mesKey){
   // PENDIENTES Y SALDOS
   sec("⚖️ Lo que hay que apartar",
         "<div class='tabla-scroll'><table><tr><th colspan='2' style='background:#1a3558;color:#fff'>LO QUE HAY QUE APARTAR PARA EL PRÓXIMO MES</th></tr>"+
-    (calc.socioFinalEE<0?"<tr style='background:#FDECEA'><td colspan='2' style='color:#c0392b;font-size:11px'>⚠️ "+calc.socioNombreEE+" tiene deuda con la empresa por $"+f2l(Math.abs(calc.socioFinalEE))+" USDT (sus gastos superaron su ganancia). No se le paga este mes.</td></tr>":"<tr><td>Pagar "+calc.socioNombreEE+"</td><td style='text-align:right;font-weight:700'>$"+f2l(calc.socioFinalEE)+"</td></tr>")+
+    (calc.socioFinalEE<0?"<tr style='background:#FDECEA'><td colspan='2' style='color:#c0392b;font-size:11px'>⚠️ "+calc.socioNombreEE+" tiene deuda con la empresa por $"+f2l(Math.abs(calc.socioFinalEE))+" USDT (sus gastos superaron su ganancia). No se le paga este mes.</td></tr>"
+      :(calc.socioFinalEE>0.009?"<tr><td>Pagar "+calc.socioNombreEE+"</td><td style='text-align:right;font-weight:700'>$"+f2l(calc.socioFinalEE)+"</td></tr>":""))+
     (calc.totalCom>0?"<tr><td>Otros socios</td><td style='text-align:right;font-weight:700'>$"+f2l(calc.totalCom)+"</td></tr>":"")+
     (calc.egEmpPend>0?"<tr><td>Egresos empresa pendientes</td><td style='text-align:right;font-weight:700'>$"+f2l(calc.egEmpPend)+"</td></tr>":"")+
     "<tr style='background:#FFF8DC'><td><b>TOTAL A APARTAR</b></td><td style='text-align:right;font-weight:900;color:#7a5c00'>$"+f2l(Math.max(0,calc.socioFinalEE)+calc.totalCom+calc.egEmpPend)+"</td></tr>"+
@@ -13342,14 +13687,18 @@ function generarInformePDF(mesKey){
     totalPrestamosUsdt=Math.round(totalPrestamosUsdt*100)/100;
     // Total afuera = cobros pendientes + préstamos activos
     var totalAfuera=Math.round((totalCobrarUsdt+totalPrestamosUsdt)*100)/100;
-    // Si cobras todo = lo que hay en cuentas + todo lo que está afuera
-    var siCobrasTodo=Math.round((totalUsdtCuentas+totalAfuera)*100)/100;
+    // ARREGLO 57 (14/09/2026): el capital sale de capitalRealTotal(), la misma
+    // funcion que enseña Balance de Cuentas. Antes se sumaba a mano
+    // "cuentas + afuera" y se dejaba fuera la RESERVA: con sus cifras daba
+    // 2.302,34 cuando su capital son 2.479,17 — los 176,82 de la reserva.
+    // Dos pantallas de la misma app contando distinto el mismo dinero.
+    var _capReal=(typeof capitalRealTotal==="function")?capitalRealTotal():null;
+    var siCobrasTodo=_capReal?_capReal.total:Math.round((totalUsdtCuentas+totalAfuera)*100)/100;
+    var enReservaPDF=_capReal?_capReal.enReserva:0;
     // Neto empresa = utilidad - sueldo (lo que queda en caja después de pagarte)
     var netoEmpresa=Math.round(((calc.utilidadEmpresa||0)-(calc.sueldo||0))*100)/100;
     var totalApartar=Math.max(0,calc.socioFinalEE)+calc.totalCom+calc.egEmpPend;
     // "Deberías tener" usa netoEmpresa (el sueldo es gasto personal, no queda en caja)
-    var deberiasTener=saldoAnterior!==null?Math.round((saldoAnterior+netoEmpresa)*100)/100:null;
-    var diferencia=deberiasTener!==null?Math.round((totalUsdtCuentas-deberiasTener)*100)/100:null;
     var pagosCheckList=[];
     if(calc.socioFinalEE>0) pagosCheckList.push({lbl:"Pagar a "+calc.socioNombreEE,monto:f2l(calc.socioFinalEE)+" USDT",color:"#c0392b"});
     if(calc.socioFinalEE<0) pagosCheckList.push({lbl:calc.socioNombreEE+" tiene deuda con la empresa",monto:"⚠️ Debe $"+f2l(Math.abs(calc.socioFinalEE))+" USDT",color:"#c0392b"});
@@ -13487,38 +13836,50 @@ function generarInformePDF(mesKey){
           "</tr>";
         }).join("")+
         "<tr style='background:#FFF8DC'><td colspan='2' style='padding:7px 10px;font-size:11px;font-weight:800;color:#7a5c00'>TOTAL A COBRAR</td><td colspan='2' style='padding:7px 10px;text-align:right;font-size:13px;font-weight:900;color:#7a5c00'>$"+f2l(totalCobrarUsdt)+" USDT</td></tr>"+
-      "</table></div>"+
-    "</div>":"<div style='margin-bottom:20px;padding:12px 16px;background:#E3F8EC;border-radius:10px;border:1.5px solid #0f6e3a;font-size:12px;color:#0f6e3a;font-weight:700'>✅ Sin cobros pendientes — todas las operaciones están cobradas</div>")+
+      // ARREGLO 59: aqui habia un "</div>" de mas. Cerraba .cuerpo y .hoja
+      // antes de tiempo, asi que TODO lo que se pusiera despues en el informe
+      // se quedaba fuera de #reporteCapture — y html2canvas solo captura lo
+      // que hay dentro. No se notaba porque no habia nada despues; al añadir
+      // la hoja del contador y el detalle del mes, desaparecian sin error.
+      "</table></div>"
+    :"<div style='margin-bottom:20px;padding:12px 16px;background:#E3F8EC;border-radius:10px;border:1.5px solid #0f6e3a;font-size:12px;color:#0f6e3a;font-weight:700'>✅ Sin cobros pendientes — todas las operaciones están cobradas</div>")+
 
     // ── PRÉSTAMOS ACTIVOS ──────────────────────────────────────────────
-    (prestActivos.length>0?"<div style='margin-bottom:20px;border:2px solid #c0392b;border-radius:12px;overflow:hidden'>"+"<div style='background:#c0392b;padding:12px 16px;display:flex;justify-content:space-between;align-items:center'>"+"<div style='font-size:13px;font-weight:800;color:#fff'>🤝 Préstamos activos</div>"+"<div style='font-size:12px;color:#ffd5d5'>Total: <b>≈$"+f2l(totalPrestamosUsdt)+" USDT</b> · "+prestActivos.length+" préstamo(s)</div>"+"</div>"+"<table style='width:100%;border-collapse:collapse'>"+"<tr style='background:#FDECEA'><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b'>Descripción</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b'>Moneda</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b;text-align:right'>Prestado</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b;text-align:right'>Recuperado</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b;text-align:right'>Pendiente</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b;text-align:right'>≈ USDT</th></tr>"+prestActivos.map(function(p,i){var mon=p.mon||"USDT";var base=parseFloat(p.monto||p.sal)||0;var abos=(p.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);var ent=parseFloat(p.ent)||0;var rec=Math.round((abos+ent)*100)/100;var pend=Math.max(0,Math.round((base-rec)*100)/100);var rate=getRateToUsdt(mon);var pendUsdt=(mon==="USDT"?pend:(rate?Math.round(pend/rate*100)/100:null));return "<tr style='background:"+(i%2===0?"#fff":"#fff5f5")+"'>"+"<td style='padding:7px 10px;font-size:12px;font-weight:600'>"+p.desc+"</td>"+"<td style='padding:7px 10px;font-size:11px;color:#888'>"+mon+"</td>"+"<td style='padding:7px 10px;font-size:12px;text-align:right'>"+f2l(base)+"</td>"+"<td style='padding:7px 10px;font-size:12px;text-align:right;color:#0f6e3a'>"+f2l(rec)+"</td>"+"<td style='padding:7px 10px;font-size:12px;text-align:right;font-weight:700;color:#c0392b'>"+f2l(pend)+"</td>"+"<td style='padding:7px 10px;font-size:12px;text-align:right;color:#1a3558;font-weight:700'>"+(pendUsdt!==null?"$"+f2l(pendUsdt):"—")+"</td>"+"</tr>";}).join("")+"<tr style='background:#FDECEA'><td colspan='4' style='padding:7px 10px;font-size:11px;font-weight:800;color:#c0392b'>TOTAL PRÉSTAMOS PENDIENTES</td><td colspan='2' style='padding:7px 10px;text-align:right;font-size:13px;font-weight:900;color:#c0392b'>≈$"+f2l(totalPrestamosUsdt)+" USDT</td></tr>"+"</table></div>"+"</div>":"")+
+    (prestActivos.length>0?"<div style='margin-bottom:20px;border:2px solid #c0392b;border-radius:12px;overflow:hidden'>"+"<div style='background:#c0392b;padding:12px 16px;display:flex;justify-content:space-between;align-items:center'>"+"<div style='font-size:13px;font-weight:800;color:#fff'>🤝 Préstamos activos</div>"+"<div style='font-size:12px;color:#ffd5d5'>Total: <b>≈$"+f2l(totalPrestamosUsdt)+" USDT</b> · "+prestActivos.length+" préstamo(s)</div>"+"</div>"+"<table style='width:100%;border-collapse:collapse'>"+"<tr style='background:#FDECEA'><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b'>Descripción</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b'>Moneda</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b;text-align:right'>Prestado</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b;text-align:right'>Recuperado</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b;text-align:right'>Pendiente</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:#c0392b;text-align:right'>≈ USDT</th></tr>"+prestActivos.map(function(p,i){var mon=p.mon||"USDT";var base=parseFloat(p.monto||p.sal)||0;var abos=(p.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);var ent=parseFloat(p.ent)||0;var rec=Math.round((abos+ent)*100)/100;var pend=Math.max(0,Math.round((base-rec)*100)/100);var rate=getRateToUsdt(mon);var pendUsdt=(mon==="USDT"?pend:(rate?Math.round(pend/rate*100)/100:null));return "<tr style='background:"+(i%2===0?"#fff":"#fff5f5")+"'>"+"<td style='padding:7px 10px;font-size:12px;font-weight:600'>"+p.desc+"</td>"+"<td style='padding:7px 10px;font-size:11px;color:#888'>"+mon+"</td>"+"<td style='padding:7px 10px;font-size:12px;text-align:right'>"+f2l(base)+"</td>"+"<td style='padding:7px 10px;font-size:12px;text-align:right;color:#0f6e3a'>"+f2l(rec)+"</td>"+"<td style='padding:7px 10px;font-size:12px;text-align:right;font-weight:700;color:#c0392b'>"+f2l(pend)+"</td>"+"<td style='padding:7px 10px;font-size:12px;text-align:right;color:#1a3558;font-weight:700'>"+(pendUsdt!==null?"$"+f2l(pendUsdt):"—")+"</td>"+"</tr>";}).join("")+"<tr style='background:#FDECEA'><td colspan='4' style='padding:7px 10px;font-size:11px;font-weight:800;color:#c0392b'>TOTAL PRÉSTAMOS PENDIENTES</td><td colspan='2' style='padding:7px 10px;text-align:right;font-size:13px;font-weight:900;color:#c0392b'>≈$"+f2l(totalPrestamosUsdt)+" USDT</td></tr>"+"</table></div>":"")+   // ARREGLO 59: mismo "</div>" de mas que arriba
 
     // ── RESUMEN COMPLETO: DINERO AFUERA + SI COBRAS TODO ──────────────
-    (totalAfuera>0?"<div style='margin-bottom:20px;background:linear-gradient(135deg,#1a3558,#0a2744);border-radius:14px;padding:18px;color:#fff'>"+"<div style='font-size:13px;font-weight:800;color:#FFA31C;margin-bottom:14px'>💼 Visión completa del dinero de la empresa</div>"+"<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px'>"+"<div style='background:rgba(255,255,255,.08);border-radius:10px;padding:14px'>"+"<div style='font-size:9px;color:rgba(255,255,255,.6);text-transform:uppercase;font-weight:700;margin-bottom:4px'>💵 En cuentas ahora</div>"+"<div style='font-size:22px;font-weight:900;color:#fff'>$"+f2l(totalUsdtCuentas)+" USDT</div></div>"+"<div style='background:rgba(255,163,28,.15);border-radius:10px;padding:14px;border:1px solid rgba(255,163,28,.4)'>"+"<div style='font-size:9px;color:#FFA31C;text-transform:uppercase;font-weight:700;margin-bottom:4px'>📤 Total afuera</div>"+"<div style='font-size:22px;font-weight:900;color:#FFA31C'>$"+f2l(totalAfuera)+" USDT</div>"+(cobrarPend.length>0?"<div style='font-size:9px;color:rgba(255,255,255,.5);margin-top:4px'>💳 Cobros: $"+f2l(totalCobrarUsdt)+" USDT</div>":"")+""+(prestActivos.length>0?"<div style='font-size:9px;color:rgba(255,255,255,.5);margin-top:2px'>🤝 Préstamos: $"+f2l(totalPrestamosUsdt)+" USDT</div>":"")+""+"</div></div>"+"<div style='border-top:1px solid rgba(255,255,255,.15);padding-top:14px;display:flex;justify-content:space-between;align-items:center'>"+"<div>"+"<div style='font-size:10px;color:rgba(255,255,255,.6);margin-bottom:2px'>Si cobras todo lo que te deben…</div>"+"<div style='font-size:11px;color:rgba(255,255,255,.5)'>En cuentas ($"+f2l(totalUsdtCuentas)+") + Afuera ($"+f2l(totalAfuera)+")</div>"+"</div>"+"<div style='text-align:right'>"+"<div style='font-size:9px;color:#4ade80;text-transform:uppercase;font-weight:700'>Potencial total</div>"+"<div style='font-size:28px;font-weight:900;color:#4ade80'>$"+f2l(siCobrasTodo)+" USDT</div>"+"</div></div>"+"</div>":"")+
+    (totalAfuera>0?"<div style='margin-bottom:20px;background:linear-gradient(135deg,#1a3558,#0a2744);border-radius:14px;padding:18px;color:#fff'>"+"<div style='font-size:13px;font-weight:800;color:#FFA31C;margin-bottom:14px'>💼 Visión completa del dinero de la empresa</div>"+"<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px'>"+"<div style='background:rgba(255,255,255,.08);border-radius:10px;padding:14px'>"+"<div style='font-size:9px;color:rgba(255,255,255,.6);text-transform:uppercase;font-weight:700;margin-bottom:4px'>💵 En cuentas ahora</div>"+"<div style='font-size:22px;font-weight:900;color:#fff'>$"+f2l(totalUsdtCuentas)+" USDT</div></div>"+"<div style='background:rgba(255,163,28,.15);border-radius:10px;padding:14px;border:1px solid rgba(255,163,28,.4)'>"+"<div style='font-size:9px;color:#FFA31C;text-transform:uppercase;font-weight:700;margin-bottom:4px'>📤 Total afuera</div>"+"<div style='font-size:22px;font-weight:900;color:#FFA31C'>$"+f2l(totalAfuera)+" USDT</div>"+(cobrarPend.length>0?"<div style='font-size:9px;color:rgba(255,255,255,.5);margin-top:4px'>💳 Cobros: $"+f2l(totalCobrarUsdt)+" USDT</div>":"")+""+(prestActivos.length>0?"<div style='font-size:9px;color:rgba(255,255,255,.5);margin-top:2px'>🤝 Préstamos: $"+f2l(totalPrestamosUsdt)+" USDT</div>":"")+""+"</div></div>"+"<div style='border-top:1px solid rgba(255,255,255,.15);padding-top:14px;display:flex;justify-content:space-between;align-items:center'>"+"<div>"+"<div style='font-size:10px;color:rgba(255,255,255,.6);margin-bottom:2px'>Si cobras todo lo que te deben…</div>"+"<div style='font-size:11px;color:rgba(255,255,255,.5)'>En cuentas ($"+f2l(totalUsdtCuentas)+")"+(enReservaPDF>0.009?" + Reserva ($"+f2l(enReservaPDF)+")":"")+" + Afuera ($"+f2l(totalAfuera)+")</div>"+"</div>"+"<div style='text-align:right'>"+"<div style='font-size:9px;color:#4ade80;text-transform:uppercase;font-weight:700'>Potencial total</div>"+"<div style='font-size:28px;font-weight:900;color:#4ade80'>$"+f2l(siCobrasTodo)+" USDT</div>"+"</div></div>"+"</div>":"")+
 
-    // ── TIENES vs DEBERÍAS TENER ───────────────────────────────────────
-    (deberiasTener!==null?"<div style='margin-bottom:20px;display:grid;grid-template-columns:1fr 1fr;gap:12px'>"+
-      "<div style='background:#f0f7ff;border:1.5px solid #1a3558;border-radius:12px;padding:16px'>"+
-        "<div style='font-size:10px;color:#888;font-weight:700;text-transform:uppercase;margin-bottom:8px'>🧮 Cálculo de lo que debería haber en caja</div>"+
-        "<div style='display:flex;justify-content:space-between;margin-bottom:4px'><span style='font-size:11px;color:#555'>Mes anterior ("+(cierreAnt?cierreAnt.mesLabel:"anterior")+")</span><span style='font-size:12px;font-weight:700'>$"+f2l(saldoAnterior)+"</span></div>"+
-        "<div style='display:flex;justify-content:space-between;margin-bottom:4px'><span style='font-size:11px;color:#0f6e3a'>+ Neto empresa este mes</span><span style='font-size:12px;font-weight:700;color:#0f6e3a'>+$"+f2l(netoEmpresa)+"</span></div>"+
-        "<div style='font-size:10px;color:#aaa;margin-bottom:4px;padding-left:12px'>(Tu sueldo de $"+f2l(calc.sueldo)+" ya fue descontado)</div>"+
-        "<div style='border-top:1px solid #ccc;margin:6px 0'></div>"+
-        "<div style='display:flex;justify-content:space-between'><span style='font-size:12px;font-weight:800;color:#1a3558'>= Debería haber en caja</span><span style='font-size:16px;font-weight:900;color:#1a3558'>$"+f2l(deberiasTener)+"</span></div>"+
-      "</div>"+
-      "<div style='background:"+(diferencia!==null&&diferencia<-50?"#FDECEA":diferencia!==null&&diferencia>50?"#E3F8EC":"#f8f9fa")+";border:1.5px solid "+(diferencia!==null&&diferencia<-50?"#c0392b":diferencia!==null&&diferencia>50?"#0f6e3a":"#ccc")+";border-radius:12px;padding:16px'>"+
-        "<div style='font-size:10px;color:#888;font-weight:700;text-transform:uppercase;margin-bottom:8px'>📊 Lo que realmente hay en cuentas</div>"+
-        "<div style='display:flex;justify-content:space-between;margin-bottom:4px'><span style='font-size:11px;color:#555'>En cuentas (USDT equiv.)</span><span style='font-size:12px;font-weight:700'>$"+f2l(totalUsdtCuentas)+"</span></div>"+
-        "<div style='display:flex;justify-content:space-between;margin-bottom:4px'><span style='font-size:11px;color:#555'>Debería haber</span><span style='font-size:12px;font-weight:700'>$"+f2l(deberiasTener)+"</span></div>"+
-        "<div style='border-top:1px solid #ccc;margin:6px 0'></div>"+
-        "<div style='display:flex;justify-content:space-between;align-items:center'>"+
-          "<span style='font-size:12px;font-weight:800'>Diferencia</span>"+
-          "<span style='font-size:16px;font-weight:900;color:"+(diferencia!==null&&diferencia<0?"#c0392b":"#0f6e3a")+"'>"+
-            (diferencia!==null?(diferencia<0?"⚠️ −$"+f2l(Math.abs(diferencia)):"✅ +$"+f2l(diferencia)):"—")+" USDT"+
-          "</span>"+
-        "</div>"+
-        (diferencia!==null&&Math.abs(diferencia)>10?"<div style='font-size:9px;color:#888;margin-top:6px'>"+(diferencia<0?"La diferencia puede deberse a tasas del momento o cobros pendientes.":"Excelente — hay más de lo esperado en cuentas.")+"</div>":"")+
-      "</div>"+
+    // ── CAPITAL DE LA EMPRESA ──────────────────────────────────────────
+    // ARREGLO 57: aqui habia un "deberias haber en caja" que comparaba
+    // "cierre anterior + neto del mes" contra SOLO lo que hay en cuentas
+    // bancarias. Con sus cifras cantaba un agujero de −546,29 USDT que no
+    // existe: deja fuera la reserva (176,82), lo que le deben (66,70) y lo
+    // prestado (1.010,93) — 1.254,45 que son suyos y no estan en un banco.
+    // Y se disculpaba debajo con "puede deberse a tasas o cobros
+    // pendientes". Un numero que necesita disculparse no sirve para
+    // perseguir nada, y este ademas asusta en un informe que sale de la app.
+    // Esa pregunta —¿me falta dinero?— ya la responde la conciliacion de
+    // capital, que cuenta TODO el capital, compara contra la apertura y
+    // desglosa la diferencia. Aqui se enseña de que se compone el capital y
+    // se manda alli; dos respuestas distintas a la misma pregunta era peor
+    // que ninguna.
+    (_capReal?"<div style='margin-bottom:20px;border:1.5px solid #1a3558;border-radius:12px;overflow:hidden'>"+
+      "<div style='background:#f0f7ff;padding:10px 16px;font-size:11px;font-weight:800;color:#1a3558;text-transform:uppercase'>🧮 De qué se compone el capital</div>"+
+      "<table style='width:100%;border-collapse:collapse'>"+
+        [["En cuentas",_capReal.enCuentas],["En reserva",_capReal.enReserva],
+         ["Por cobrar",_capReal.porCobrar],["Prestado",_capReal.enPrestamos]]
+          .filter(function(x){return Math.abs(x[1])>0.009;})
+          .map(function(x,i){
+            return "<tr style='background:"+(i%2===0?"#fff":"#fafbfd")+"'>"+
+              "<td style='padding:7px 16px;font-size:12px;color:#555'>"+x[0]+"</td>"+
+              "<td style='padding:7px 16px;text-align:right;font-size:12px;font-weight:700;color:#1a3558'>$"+f2l(x[1])+"</td></tr>";
+          }).join("")+
+        "<tr style='background:#FFF8DC'><td style='padding:8px 16px;font-size:12px;font-weight:800;color:#7a5c00'>CAPITAL TOTAL</td>"+
+        "<td style='padding:8px 16px;text-align:right;font-size:15px;font-weight:900;color:#7a5c00'>$"+f2l(_capReal.total)+" USDT</td></tr>"+
+      "</table>"+
+      (_capReal.sinTasa&&_capReal.sinTasa.length?"<div style='padding:8px 16px;font-size:10px;color:#c0392b;background:#FDECEA'>⚠️ Sin tasa para "+_unicos(_capReal.sinTasa).join(", ")+": ese dinero no está contado aquí.</div>":"")+
+      "<div style='padding:9px 16px;font-size:10px;color:#888;background:#fafafa;border-top:1px solid #eee'>Para comprobar si falta dinero está la <b>conciliación de capital</b> (Balance de Cuentas): compara contra la apertura y desglosa la diferencia.</div>"+
     "</div>":"")+
 
     // ── CHECKLIST DE CIERRE ────────────────────────────────────────────
@@ -13548,6 +13909,112 @@ function generarInformePDF(mesKey){
     "</div>";
 
     return sec("🎯 Resumen Ejecutivo Final",html2);
+  }())+
+
+  // ── HOJA PARA EL CONTADOR ──────────────────────────────────────────
+  // ARREGLO 54: lo que él necesita para la declaración, y nada más. Las reglas
+  // están en resumenContador(); aquí solo se dibuja.
+  (function(){
+    var rc=resumenContador(mesKey);
+    function brl(v){ return "R$ "+f2l(v); }
+    var filaDest=rc.porDestino.map(function(d){
+      return "<tr><td>"+d.dest+"</td><td style='text-align:center'>"+d.n+"</td>"+
+        "<td style='text-align:right'>"+brl(d.entro)+"</td>"+
+        "<td style='text-align:right;color:#0f6e3a;font-weight:700'>"+brl(d.ganReales)+"</td></tr>";
+    }).join("");
+    var filaCta=rc.porCuenta.map(function(c){
+      return "<tr><td>"+c.nombre+"</td><td style='text-align:center'>"+c.n+"</td>"+
+        "<td style='text-align:right;font-weight:700'>"+brl(c.entro)+"</td></tr>";
+    }).join("");
+    var filaSal=rc.salidas.map(function(x){
+      return "<tr><td>"+x.concepto+"</td><td style='text-align:right'>"+brl(x.monto)+"</td></tr>";
+    }).join("");
+    var filaEg=rc.egresosReales.map(function(e){
+      return "<tr><td>"+ds(_isoDeDDMMAA(e.fecha))+"</td><td>"+e.cat+"</td><td>"+e.mot+"</td>"+
+        "<td>"+e.cuenta+"</td><td style='text-align:right;font-weight:700'>"+brl(e.monto)+"</td></tr>";
+    }).join("");
+    return sec("🧾 Hoja para el contador · "+rc.mesLabel,
+      // ARREGLO 59: el papel dice de quien es. Un informe fiscal sin razon
+      // social ni CNPJ le obliga al contador a preguntar de que empresa es.
+      "<div style='border:1.5px solid #1a3558;border-radius:10px;padding:10px 14px;margin-bottom:10px;background:#f7f9fc'>"+
+        "<div style='font-size:13px;font-weight:800;color:#1a3558'>"+EMPRESA_RAZON+"</div>"+
+        "<div style='font-size:11px;color:#5a6a85;margin-top:2px'>CNPJ "+EMPRESA_CNPJ+" · Período: "+rc.mesLabel+"</div>"+
+      "</div>"+
+      "<div style='background:#F3FAF5;border:1px solid #cfe9db;border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:11.5px;color:#14503a;line-height:1.5'>"+
+        "Solo lo que entró <b>en reales</b> y la ganancia que dejó. Cada operación convertida con <b>su propia tasa de compra</b>, no con una tasa única del mes."+
+      "</div>"+
+      "<div class='tabla-scroll'><table>"+
+        "<tr><th>Concepto</th><th>Monto</th></tr>"+
+        "<tr><td>Operaciones que entraron en reales</td><td style='text-align:right;font-weight:700'>"+rc.operaciones+"</td></tr>"+
+        "<tr><td>Entró en las cuentas</td><td style='text-align:right;font-weight:700'>"+brl(rc.entroReales)+"</td></tr>"+
+        "<tr><td style='color:#0f6e3a;font-weight:700'>Ganancia de esas operaciones</td><td style='text-align:right;font-weight:800;color:#0f6e3a'>"+brl(rc.ganReales)+"</td></tr>"+
+        "<tr><td style='color:#c0392b'>(−) Egresos de la empresa pagados en reales</td><td style='text-align:right;font-weight:700;color:#c0392b'>"+brl(rc.egresosRealesTotal)+"</td></tr>"+
+        "<tr><td style='font-weight:800;border-top:2px solid #ddd'>= Resultado del mes</td><td style='text-align:right;font-weight:900;border-top:2px solid #ddd;color:"+(rc.resultadoReales>=0?"#0f6e3a":"#c0392b")+"'>"+brl(rc.resultadoReales)+"</td></tr>"+
+      "</table></div>"+
+      (rc.sinTasa>0?"<div style='background:#FFF8DC;border:1px solid #F5C518;border-radius:8px;padding:8px 12px;margin-top:10px;font-size:10.5px;color:#7a5c00'>⚠️ "+rc.sinTasa+" operación(es) sin tasa de compra guardada: su ganancia no se pudo pasar a reales y no está en el total.</div>":"")+
+      (rc.resultadoReales<0?"<div style='background:#FDECEA;border:1px solid #f0b0a8;border-radius:8px;padding:8px 12px;margin-top:10px;font-size:10.5px;color:#a6402f'>Este mes los egresos en reales fueron mayores que la ganancia de la ruta. No es un error del sistema: es lo que pasó.</div>":"")+
+      "<h3 style='font-size:11px;font-weight:800;color:#1a3558;margin:18px 0 8px'>Por destino</h3>"+
+      "<div class='tabla-scroll'><table><tr><th>Destino</th><th>Ops</th><th>Entró</th><th>Ganancia</th></tr>"+filaDest+"</table></div>"+
+      "<h3 style='font-size:11px;font-weight:800;color:#1a3558;margin:18px 0 8px'>En qué cuenta entró</h3>"+
+      "<div class='tabla-scroll'><table><tr><th>Cuenta</th><th>Ops</th><th>Entró</th></tr>"+filaCta+"</table></div>"+
+      "<h3 style='font-size:11px;font-weight:800;color:#1a3558;margin:18px 0 8px'>Salidas de las cuentas en reales · "+brl(rc.salidasTotal)+"</h3>"+
+      "<div class='tabla-scroll'><table><tr><th>En qué se fue</th><th>Monto</th></tr>"+filaSal+"</table></div>"+
+      "<h3 style='font-size:11px;font-weight:800;color:#1a3558;margin:18px 0 8px'>Egresos de la empresa, partida por partida</h3>"+
+      (filaEg?"<div class='tabla-scroll'><table><tr><th>Fecha</th><th>Categoría</th><th>En qué se gastó</th><th>Cuenta</th><th>Monto</th></tr>"+filaEg+
+        "<tr><td colspan='4' style='font-weight:800;text-align:right'>Total en reales</td><td style='text-align:right;font-weight:900'>"+brl(rc.egresosRealesTotal)+"</td></tr>"+
+        "</table></div>":"<div style='font-size:11px;color:#999'>Ningún egreso pagado en reales este mes.</div>")+
+      (rc.egresosOtras.length?
+        "<div style='font-size:10.5px;color:#7c8aa8;margin-top:10px;line-height:1.5'><b>Pagados en otra moneda</b> (no entran en el resultado en reales):<br>"+
+        rc.egresosOtras.map(function(e){return "· "+ds(_isoDeDDMMAA(e.fecha))+" — "+e.mot+" — "+f2l(e.monto)+" "+e.mon+" ("+e.cuenta+")";}).join("<br>")+
+        "</div>":"")
+    );
+  }())+
+
+  // ── DETALLE DEL MES ────────────────────────────────────────────────
+  // "con todo a detalle de todo el movimiento del mes": un resumen no se puede
+  // auditar, una lista sí.
+  (function(){
+    var dm=detalleMes(mesKey);
+    function tabla(titulo, cabeceras, filas){
+      if(!filas) return "";
+      return "<h3 style='font-size:11px;font-weight:800;color:#1a3558;margin:18px 0 8px'>"+titulo+"</h3>"+
+        "<div class='tabla-scroll'><table><tr>"+cabeceras.map(function(h){return "<th>"+h+"</th>";}).join("")+"</tr>"+filas+"</table></div>";
+    }
+    var fRem=dm.remesas.map(function(x){
+      return "<tr><td>"+x.fecha+"</td><td>"+x.cliente+"</td><td>"+x.ruta+"</td>"+
+        "<td style='text-align:right'>"+f2l(x.entro)+" "+x.monEntro+"</td>"+
+        "<td style='text-align:right'>"+f2l(x.entrego)+" "+x.monEntrego+"</td>"+
+        "<td>"+x.cuenta+"</td>"+
+        "<td style='text-align:right;color:"+(x.ganUsdt>=0?"#0f6e3a":"#c0392b")+";font-weight:700'>$"+f2l(x.ganUsdt)+"</td></tr>";
+    }).join("");
+    var fUsdt=dm.usdt.map(function(x){
+      return "<tr><td>"+x.fecha+"</td><td>"+(x.tipo==="compra"?"Compra":"Venta")+"</td>"+
+        "<td style='text-align:right'>"+(x.tipo==="compra"?f2l(x.montOrigen)+" "+x.moneda:f2l(x.usdt)+" USDT")+"</td>"+
+        "<td style='text-align:right'>"+(x.tipo==="compra"?f2l(x.usdt)+" USDT":f2l(x.bs)+" "+x.moneda)+"</td>"+
+        "<td style='text-align:right'>"+f4(x.tasa)+"</td><td>"+x.cuenta+"</td></tr>";
+    }).join("");
+    var fEg=dm.egresos.map(function(x){
+      return "<tr><td>"+x.fecha+"</td><td>"+(x.tipo==="personal"?"💜 personal":"empresa")+"</td><td>"+x.cat+"</td><td>"+x.mot+"</td>"+
+        "<td>"+x.cuenta+"</td><td style='text-align:right;font-weight:700'>"+f2l(x.monto)+" "+x.mon+"</td></tr>";
+    }).join("");
+    var fTr=dm.traspasos.map(function(x){
+      return "<tr><td>"+ds(x.fecha)+"</td><td>"+x.origen+"</td><td>"+x.destino+"</td>"+
+        "<td style='text-align:right;font-weight:700'>"+f2l(x.monto)+" "+x.moneda+"</td><td>"+x.nota+"</td></tr>";
+    }).join("");
+    var fPr=dm.prestamos.map(function(x){
+      return "<tr><td>"+x.fecha+"</td><td>"+x.desc+"</td><td>"+x.cuenta+"</td>"+
+        "<td style='text-align:right;font-weight:700'>"+f2l(x.monto)+" "+x.mon+"</td></tr>";
+    }).join("");
+    return sec("📋 Detalle del mes · todo el movimiento",
+      "<div style='font-size:10.5px;color:#7c8aa8;margin-bottom:10px'>"+
+        dm.remesas.length+" remesas · "+dm.usdt.length+" operaciones de USDT · "+dm.egresos.length+" egresos · "+
+        dm.traspasos.length+" traspasos · "+dm.prestamos.length+" préstamos</div>"+
+      tabla("Remesas",["Fecha","Cliente","Ruta","Entró","Entregó","Cuenta","Ganancia"],fRem)+
+      tabla("Compras y ventas de USDT",["Fecha","Tipo","Salió","Entró","Tasa","Cuenta"],fUsdt)+
+      tabla("Egresos",["Fecha","Tipo","Categoría","Concepto","Cuenta","Monto"],fEg)+
+      tabla("Traspasos entre cuentas",["Fecha","Desde","Hacia","Monto","Nota"],fTr)+
+      tabla("Préstamos entregados",["Fecha","A quién","Cuenta","Monto"],fPr)
+    );
   }())+
   "</div>"+ // cierra .cuerpo
   "</div>"+ // cierra .hoja / #reporteCapture
@@ -13686,6 +14153,12 @@ function rInformeCierre(){
     "<div style='background:#fff;border:1px solid #eee;border-radius:12px;overflow:hidden;margin-bottom:10px'>"+
       "<div style='background:#f5f5f7;padding:8px 12px;font-size:10px;font-weight:700;color:#888;text-transform:uppercase'>Cómo llegamos a la utilidad de la empresa</div>"+
       wrow("Ganancia de todas las operaciones",calc.ganBrutaTotal,"#0f6e3a")+
+      // ARREGLO 57: la ganancia por prestamos entra en ganBrutaTotal pero NO en
+      // miGanOperaciones, asi que el desglose saltaba de 226,89 a 221,50 sin
+      // una fila que lo explicara: no cuadraba a mano. La linea dice lo que
+      // pasa de verdad — el interes se apunta aparte y no llega a la utilidad
+      // de la empresa.
+      (calc.ganPrestamos>0?wrow("− 🤝 Intereses de préstamos ("+calc.ganPrestamosCant+" abono"+(calc.ganPrestamosCant!==1?"s":"")+", aparte: no entran en la utilidad)",calc.ganPrestamos,"#a06800"):"")+
       (calc.ganExtraEmp>0?wrow("+ Ganancias extra empresa",calc.ganExtraEmp,"#7a5c00"):"")+
       (calc.gasEEUU>0?wrow("− Gastos EE.UU compartidos (mi "+(100-calc.socioPorcentajeEE)+"% de $"+f2(calc.gasEEUU)+")",Math.round(calc.gasEEUU*(1-calc.socioPorcentajeEE/100)*100)/100,"#c0392b"):"")+
       (calc.socioParte>0?wrow("− Pago a "+calc.socioNombreEE+" ("+calc.socioPorcentajeEE+"%)",calc.socioParte,"#c0392b"):"")+
@@ -13697,9 +14170,23 @@ function rInformeCierre(){
     "<div style='background:#fff;border:1px solid #eee;border-radius:12px;overflow:hidden;margin-bottom:12px'>"+
       "<div style='background:#f5f5f7;padding:8px 12px;font-size:10px;font-weight:700;color:#888;text-transform:uppercase'>Lo que puedes gastar ahora — solo lo ya cobrado</div>"+
       "<div style='display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#555'>Acumulado de meses ya cerrados</span><b style='font-size:13px;color:#0f6e3a'>$"+f2(calc.saldoPersonalAcumuladoPrevio)+"</b></div>"+
-      "<div style='padding:6px 12px;font-size:9.5px;color:#aaa;background:#fafafa;font-family:monospace'>🔍 mes anterior encontrado: "+(calc._diagAcum.mesEncontrado||"ninguno")+" · su sueldo guardado: "+(calc._diagAcum.sueldoGuardado!==null&&calc._diagAcum.sueldoGuardado!==undefined?"$"+f2(calc._diagAcum.sueldoGuardado):"no tiene")+" · ¿tenía el campo nuevo?: "+(calc._diagAcum.campoExistia===null?"—":(calc._diagAcum.campoExistia?"sí":"no, se reconstruyó"))+"</div>"+
+      // ARREGLO 57: aqui habia una linea de depuracion —"🔍 mes anterior
+      // encontrado: 2026-08 · su sueldo guardado... ¿tenia el campo nuevo?"—
+      // visible en produccion. Servia para cazar un fallo del acumulado que ya
+      // esta resuelto; lo que queda es ruido en la pantalla que ella mira.
       (calc.repTotal>0?wrow("+ Reposiciones",calc.repTotal,"#0f6e3a"):"")+
       wrow("− Gastos personales pagados este mes",calc.egPerPag,"#c0392b")+
+      // ARREGLO 57: lo pagado desde una cuenta PERSONAL no baja lo disponible
+      // —es dinero suyo, no de la empresa— y eso es correcto, pero la pantalla
+      // enseñaba "−$0,00" justo encima de una lista de $471,13 en gastos
+      // personales del mes, sin decir por que. Visto asi parece un error.
+      (function(){
+        var ctasPers=(S.cuentas||[]).filter(function(c){return c.esPersonal;}).map(function(c){return c.id;});
+        var desdePers=egPerM.filter(function(e){return e.pagada&&ctasPers.indexOf(e.cuentaId)!==-1;});
+        var sumaPers=desdePers.reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0);
+        if(sumaPers<=0.009) return "";
+        return "<div style='padding:8px 12px;font-size:10.5px;color:#777;background:#FAFBFD;border-top:1px solid #f5f5f5'>Otros <b>$"+f2(sumaPers)+"</b> en "+desdePers.length+" gasto"+(desdePers.length!==1?"s":"")+" personal"+(desdePers.length!==1?"es":"")+" salieron de tus cuentas personales, así que no bajan este disponible: ese dinero ya era tuyo.</div>";
+      })()+
       (function(){
         var cuentasPersId=(S.cuentas||[]).filter(function(c){return c.esPersonal;}).map(function(c){return c.id;});
         var itemsCount=egPerM.filter(function(e){return e.pagada&&cuentasPersId.indexOf(e.cuentaId)===-1;});
@@ -13731,6 +14218,10 @@ function rInformeCierre(){
     var total=todasOps.reduce(function(a,r){return a+(parseFloat(r.pr)||0);},0);
     return "<div style='background:#F0F4FF;border-radius:10px;padding:10px 12px;font-size:12px;color:#0a3d7c;margin-bottom:12px'>"+
       "<b>"+calc.ops+" operaciones</b> · Ganancia bruta total: <b>$"+f2(total)+" USDT</b>"+
+      // ARREGLO 57: este total son SOLO remesas, y el del Resumen lleva ademas
+      // los intereses de prestamos. Sin esta linea, dos pantallas del mismo
+      // modulo enseñaban dos ganancias brutas distintas sin decir por que.
+      (calc.ganPrestamos>0?"<div style='font-size:10.5px;color:#7a5c00;margin-top:4px'>Solo remesas. Los <b>$"+f2(calc.ganPrestamos)+"</b> de intereses de préstamos van aparte, en 📋 Resumen.</div>":"")+
     "</div>"+
     Object.keys(porRuta).sort().map(function(rt){
       var g=porRuta[rt];
@@ -13793,7 +14284,11 @@ function rInformeCierre(){
       if(g.pagada && g.cuentaId===cuentaId && mesKeyDe(g.fp||g.d)===mk) s.egresos+=(parseFloat(g.monto)||0);
     });
     // Inventario USDT: compra (sale de cuentaOrigenId) · venta (entra a cuentaId)
-    (S.inventarioUsdt||[]).forEach(function(iu){
+    // ARREGLO 54: también los CERRADOS. Solo se miraban los abiertos, así que
+    // en un mes ya cerrado desaparecían todas las compras: agosto enseñaba R$0
+    // de R$11.763,96 que salieron de PagBank, y el extracto del banco no podía
+    // cuadrar nunca. Cuanto más viejo el mes, más faltaba.
+    (S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[]).forEach(function(iu){
       if(mesKeyDeInv(iu.fecha,mk)!==mk) return;
       if(iu.tipo==="compra" && iu.cuentaOrigenId===cuentaId) s.compraUsdt+=(parseFloat(iu.montOrigen)||0);
       if(iu.tipo==="venta" && iu.cuentaDestinoId===cuentaId) e.ventaUsdt+=(parseFloat(iu.bs)||0);
@@ -13857,6 +14352,17 @@ function rInformeCierre(){
     var invUsdtSec=getInventarioStats().disponible||0;
     var totalUsdt=invUsdtSec;
     cuentasAct.forEach(function(c){var s=parseFloat(c.saldo)||0;var rate=getRateToUsdt(c.moneda);if(c.moneda==="USDT")totalUsdt+=s;else if(rate)totalUsdt+=s/rate;});
+    // ARREGLO 57: una cuenta en cero Y sin un solo movimiento en el mes no
+    // tiene nada que contar. Se aparta, pero NO se esconde: va nombrada al
+    // final, porque un saldo en cero que deberia tener dinero es justo lo que
+    // ella querria ver.
+    var _vacias=cuentasAct.filter(function(c){
+      if(Math.abs(parseFloat(c.saldo)||0)>0.009) return false;
+      var f=_flujoCuentaMes(c.id,mesKey);
+      return (f.totalE+f.totalS)<=0.009;
+    });
+    var _vaciasIds=_vacias.map(function(c){return c.id;});
+    cuentasAct=cuentasAct.filter(function(c){return _vaciasIds.indexOf(c.id)===-1;});
     var rows=cuentasAct.map(function(c){
       var isNeg=(parseFloat(c.saldo)||0)<0;
       var usdtEq=c.moneda==="USDT"?parseFloat(c.saldo)||0:(getRateToUsdt(c.moneda)?((parseFloat(c.saldo)||0)/getRateToUsdt(c.moneda)):null);
@@ -13912,6 +14418,10 @@ function rInformeCierre(){
       "</div>";
     }).join("");
     return rows+
+      (_vacias.length?"<div style='background:#FAFBFD;border:1px dashed #dde3ec;border-radius:12px;padding:10px 13px;margin-bottom:8px'>"+
+        "<div style='font-size:10px;font-weight:700;color:#9aa3b5;text-transform:uppercase;letter-spacing:.3px'>En cero y sin movimiento este mes</div>"+
+        "<div style='font-size:11.5px;color:#7a8497;margin-top:4px'>"+_vacias.map(function(c){return c.nombre+" ("+c.moneda+")";}).join(" · ")+"</div>"+
+      "</div>":"")+
       "<div style='background:linear-gradient(135deg,#1a3558,#132840);border-radius:16px;padding:16px 18px;color:#fff;display:flex;justify-content:space-between;align-items:center;margin-top:8px;box-shadow:0 4px 14px rgba(19,40,64,.25)'>"+
         "<div><div style='font-size:10px;color:#FFA31C;font-weight:800;text-transform:uppercase;letter-spacing:.4px'>💎 Total en todas las cuentas</div>"+
         "<div style='font-size:10px;color:rgba(255,255,255,.5);margin-top:3px'>Incluye inventario USDT ($"+f2(invUsdtSec)+") + equivalente de todas las cuentas</div></div>"+
@@ -13940,36 +14450,38 @@ function rInformeCierre(){
     var totalSalidas=flujosPorCuenta.reduce(function(a,x){return a+x.flujo.totalS;},0);
     var flujoNeto=totalEntradas-totalSalidas;
 
-    var tasaBRLUSDT=(S._contadorTasaBRL!==undefined&&S._contadorTasaBRL!==""&&S._contadorTasaBRL!==null)?(parseFloat(S._contadorTasaBRL)||0):(getRateToUsdt("BRL")||0);
-    // OJO: se usa calc.miGanOperaciones (todas las rutas juntas, ya con
-    // ganancias extra sumadas y socios restados) — NO calc.ganBrl (que es
-    // solo la ruta BRL). Antes se restaba el gasto y sueldo de TODA la
-    // empresa contra la ganancia de UNA sola ruta, lo que podía dar un
-    // "Lucro líquido" negativo aunque el negocio completo fuera positivo.
-    var ganBrlUsdt=parseFloat(calc.miGanOperaciones)||0;
-    var ganBrlReais=tasaBRLUSDT?ganBrlUsdt*tasaBRLUSDT:0;
-    // Gastos fijos y sueldo de la EMPRESA (nunca lo personal) — ya vienen
-    // calculados en USDT desde calcMesCompleto()/el cierre; se convierten a
-    // Reais con la misma tasa para que el contador vea todo en una sola moneda.
-    var gastosEmpresaUsdt=parseFloat(calc.egEmpPag)||0;
-    var sueldoUsdt=parseFloat(calc.sueldo)||0;
-    var gastosEmpresaReais=tasaBRLUSDT?gastosEmpresaUsdt*tasaBRLUSDT:0;
-    var sueldoReais=tasaBRLUSDT?sueldoUsdt*tasaBRLUSDT:0;
-    var lucroFinalReais=ganBrlReais-gastosEmpresaReais-sueldoReais;
+    // ARREGLO 59: aqui se calculaba el "lucro" convirtiendo la ganancia de
+    // TODAS las rutas con UNA tasa del dia y restando gastos y sueldo de toda
+    // la empresa. Se fue con el bloque que lo enseñaba: la hoja del contador
+    // sale de resumenContador(), cada operacion con su tasa y solo lo que
+    // entro en reales.
 
     // ── CSV / objeto para exportar ──
     var reporte={"Mês":mesLabel};
     flujosPorCuenta.forEach(function(x){
       reporte["Entradas — "+x.cuenta.nombre]=_fmtBRL(x.flujo.totalE);
-      reporte["Saídas — "+x.cuenta.nombre]=_fmtBRL(x.flujo.totalS);
+      reporte["Salidas — "+x.cuenta.nombre]=_fmtBRL(x.flujo.totalS);
     });
-    reporte["Total Entradas (todas as contas BRL)"]=_fmtBRL(totalEntradas);
-    reporte["Total Saídas (todas as contas BRL)"]=_fmtBRL(totalSalidas);
-    reporte["Fluxo de Caixa Líquido"]=_fmtBRL(flujoNeto);
-    reporte["Lucro Bruto das Operações (em Reais)"]=_fmtBRL(ganBrlReais);
-    reporte["(−) Gastos Fixos da Empresa (em Reais)"]=_fmtBRL(gastosEmpresaReais);
-    reporte["(−) Salário (em Reais)"]=_fmtBRL(sueldoReais);
-    reporte["Lucro Líquido Final (em Reais)"]=_fmtBRL(lucroFinalReais);
+    reporte["Total Entradas (todas las cuentas BRL)"]=_fmtBRL(totalEntradas);
+    reporte["Total Salidas (todas las cuentas BRL)"]=_fmtBRL(totalSalidas);
+    reporte["Flujo de caja neto"]=_fmtBRL(flujoNeto);
+    // ARREGLO 59: el CSV lleva lo mismo que la hoja y que el PDF, sacado de
+    // resumenContador(). Antes llevaba un "Lucro Bruto das Operações"
+    // convertido con UNA tasa del dia y con los gastos de toda la empresa
+    // restados: otro numero distinto para la misma pregunta, y en portugues.
+    (function(){
+      var rc=resumenContador(mesKey);
+      reporte["Empresa"]=EMPRESA_RAZON;
+      reporte["CNPJ"]=EMPRESA_CNPJ;
+      reporte["Operaciones que entraron en reales"]=rc.operaciones;
+      reporte["Entró en las cuentas (R$)"]=_fmtBRL(rc.entroReales);
+      reporte["Ganancia de esas operaciones (R$)"]=_fmtBRL(rc.ganReales);
+      reporte["(−) Egresos de la empresa en reales (R$)"]=_fmtBRL(rc.egresosRealesTotal);
+      reporte["Resultado del mes (R$)"]=_fmtBRL(rc.resultadoReales);
+      rc.egresosReales.forEach(function(e,i){
+        reporte["Egreso "+(i+1)+" — "+e.fecha+" "+(e.mot||e.cat||"")]=_fmtBRL(e.monto);
+      });
+    })();
     S._reporteContadorActual=reporte;
 
     function filaCuenta(x){
@@ -13982,9 +14494,9 @@ function rInformeCierre(){
         "</div>"+
         "<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px'>"+
           "<div style='background:#F3FAF5;border-radius:10px;padding:8px 10px'><div style='font-size:8.5px;color:#0f6e3a;font-weight:800;text-transform:uppercase;letter-spacing:.3px'>↑ Entradas</div><div style='font-size:15px;font-weight:900;color:#0f6e3a;margin-top:1px'>"+_fmtBRL(f.totalE)+"</div></div>"+
-          "<div style='background:#FDF4F4;border-radius:10px;padding:8px 10px'><div style='font-size:8.5px;color:#c0392b;font-weight:800;text-transform:uppercase;letter-spacing:.3px'>↓ Saídas</div><div style='font-size:15px;font-weight:900;color:#c0392b;margin-top:1px'>"+_fmtBRL(f.totalS)+"</div></div>"+
+          "<div style='background:#FDF4F4;border-radius:10px;padding:8px 10px'><div style='font-size:8.5px;color:#c0392b;font-weight:800;text-transform:uppercase;letter-spacing:.3px'>↓ Salidas</div><div style='font-size:15px;font-weight:900;color:#c0392b;margin-top:1px'>"+_fmtBRL(f.totalS)+"</div></div>"+
         "</div>"+
-        "<div style='display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding-top:8px;border-top:1px dashed #eee'><span style='font-size:10px;color:#9aa3b5;font-weight:600'>Fluxo líquido</span><b style='font-size:13px;color:"+(neto>=0?"#0f6e3a":"#c0392b")+"'>"+_fmtBRL(neto)+"</b></div>"+
+        "<div style='display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding-top:8px;border-top:1px dashed #eee'><span style='font-size:10px;color:#9aa3b5;font-weight:600'>Flujo neto</span><b style='font-size:13px;color:"+(neto>=0?"#0f6e3a":"#c0392b")+"'>"+_fmtBRL(neto)+"</b></div>"+
       "</div>";
     }
 
@@ -13998,26 +14510,50 @@ function rInformeCierre(){
       (cuentasBRL.length>1?
         "<div style='background:linear-gradient(135deg,#1a3558,#132840);border-radius:14px;padding:14px 16px;color:#fff;margin-top:6px;box-shadow:0 4px 14px rgba(19,40,64,.2)'>"+
           "<div style='font-size:9.5px;color:#FFA31C;font-weight:800;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px'>Total — todas las cuentas BRL</div>"+
-          "<div style='display:flex;justify-content:space-between;font-size:11.5px;color:rgba(255,255,255,.75)'><span>Entradas: "+_fmtBRL(totalEntradas)+"</span><span>Saídas: "+_fmtBRL(totalSalidas)+"</span></div>"+
+          "<div style='display:flex;justify-content:space-between;font-size:11.5px;color:rgba(255,255,255,.75)'><span>Entradas: "+_fmtBRL(totalEntradas)+"</span><span>Salidas: "+_fmtBRL(totalSalidas)+"</span></div>"+
           "<div style='font-size:19px;font-weight:900;margin-top:5px;color:#FFD700'>Neto: "+_fmtBRL(flujoNeto)+"</div>"+
         "</div>":"")+
     "</div>"+
-    "<div style='background:#fff;border-radius:18px;box-shadow:0 1px 4px rgba(20,30,60,.06);padding:18px;margin-bottom:16px'>"+
-      "<div style='display:flex;align-items:center;gap:10px;margin-bottom:4px'>"+
-        "<div style='width:34px;height:34px;border-radius:11px;background:#F3FAF5;display:flex;align-items:center;justify-content:center;font-size:16px'>💹</div>"+
-        "<div style='font-size:13.5px;font-weight:800;color:#16233d'>Ganancia real de operaciones (en Reais)</div>"+
-      "</div>"+
-      "<div style='font-size:10.5px;color:#9aa3b5;margin:6px 0 14px;line-height:1.4'>Ya con los gastos fijos y sueldo de la empresa descontados (no incluye nada personal) — este es el número final para el contador.</div>"+
-      "<div style='display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#7c8aa8;font-weight:600'>Tasa BRL/USDT usada</span><span style='display:flex;align-items:center;gap:6px'><input type='number' step='0.0001' inputmode='decimal' value='"+(S._contadorTasaBRL!==undefined&&S._contadorTasaBRL!==null?S._contadorTasaBRL:f4(tasaBRLUSDT))+"' onchange='S._contadorTasaBRL=this.value;R()' style='width:80px;font-size:13px;padding:5px 8px;border:1px solid #e2e6ef;border-radius:8px;text-align:right;font-weight:700;color:#1a3558'>"+(S._contadorTasaBRL!==undefined&&S._contadorTasaBRL!==""&&S._contadorTasaBRL!==null?"<button onclick='S._contadorTasaBRL=undefined;R()' style='background:none;border:none;color:#9aa3b5;font-size:10px;cursor:pointer;text-decoration:underline'>usar auto</button>":"")+"</span></div>"+
-      "<div style='display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#0f6e3a;font-weight:700'>Mi ganancia de operaciones (todas las rutas)</span><b style='font-size:15px;color:#0f6e3a'>"+_fmtBRL(ganBrlReais)+"</b></div>"+
-      "<div style='display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#c0392b;font-weight:600'>(−) Gastos fijos de la empresa</span><b style='font-size:13.5px;color:#c0392b'>"+_fmtBRL(gastosEmpresaReais)+"</b></div>"+
-      "<div style='display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#c0392b;font-weight:600'>(−) Sueldo</span><b style='font-size:13.5px;color:#c0392b'>"+_fmtBRL(sueldoReais)+"</b></div>"+
-      "<div style='display:flex;justify-content:space-between;align-items:center;padding:14px 16px;background:linear-gradient(135deg,#1a3558,#132840);border-radius:14px;margin-top:10px;box-shadow:0 4px 14px rgba(19,40,64,.2)'><span style='font-size:11.5px;color:#FFA31C;font-weight:700;text-transform:uppercase;letter-spacing:.3px'>Lucro Líquido Final</span><b style='font-size:20px;color:#FFD700'>"+_fmtBRL(lucroFinalReais)+"</b></div>"+
-      "<button onclick='exportarReporteContadorCSV(\""+mesKey+"\")' style='width:100%;margin-top:14px;padding:13px;background:#0f6e3a;color:#fff;border:none;border-radius:12px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px rgba(15,110,58,.25)'>⬇️ Descargar CSV para el contador</button>"+
-    "</div>"+
+    // ── ARREGLO 59: la misma hoja que va al PDF ────────────────────────
+    // Aqui habia un "Ganancia real de operaciones (en Reais)" que convertia
+    // la ganancia de TODAS las rutas con UNA sola tasa del dia, y le restaba
+    // los gastos y el sueldo de toda la empresa. Tres problemas: contaba
+    // rutas que no entran en reales, usaba una tasa que no es la de ninguna
+    // operacion, y daba un numero distinto al de la hoja del PDF. Ahora la
+    // pantalla y el PDF salen de resumenContador(): cada operacion con SU
+    // tasa, solo lo que entro en reales.
+    (function(){
+      var rc=resumenContador(mesKey);
+      function brl(v){ return _fmtBRL(v); }
+      function fila(lbl,val,col,neg){
+        return "<div style='display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #f5f5f5'>"+
+          "<span style='font-size:12px;color:"+(col||"#555")+"'>"+lbl+"</span>"+
+          "<span style='font-size:13px;font-weight:800;color:"+(col||"#16233d")+"'>"+(neg?"−":"")+brl(Math.abs(val))+"</span></div>";
+      }
+      return "<div style='background:#fff;border-radius:18px;box-shadow:0 1px 4px rgba(20,30,60,.06);padding:18px;margin-bottom:16px'>"+
+        "<div style='display:flex;align-items:center;gap:10px;margin-bottom:4px'>"+
+          "<div style='width:34px;height:34px;border-radius:11px;background:#F3FAF5;display:flex;align-items:center;justify-content:center;font-size:16px'>🧾</div>"+
+          "<div style='font-size:13.5px;font-weight:800;color:#16233d'>Hoja para el contador</div>"+
+        "</div>"+
+        "<div style='font-size:10.5px;color:#9aa3b5;margin:6px 0 12px;line-height:1.4'>"+EMPRESA_RAZON+" · CNPJ "+EMPRESA_CNPJ+" · "+rc.mesLabel+"<br>Solo lo que entró en reales, cada operación con su propia tasa. Es lo mismo que sale en el PDF.</div>"+
+        "<div style='display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #f5f5f5'><span style='font-size:12px;color:#555'>Operaciones que entraron en reales</span><span style='font-size:13px;font-weight:800;color:#16233d'>"+rc.operaciones+"</span></div>"+
+        fila("Entró en las cuentas",rc.entroReales)+
+        fila("Ganancia de esas operaciones",rc.ganReales,"#0f6e3a")+
+        fila("(−) Egresos de la empresa pagados en reales",rc.egresosRealesTotal,"#c0392b",true)+
+        "<div style='display:flex;justify-content:space-between;align-items:center;padding:14px 16px;background:linear-gradient(135deg,#1a3558,#132840);border-radius:12px;margin-top:10px;color:#fff'>"+
+          "<span style='font-size:12px;font-weight:800'>= Resultado del mes</span>"+
+          "<span style='font-size:19px;font-weight:900;color:"+(rc.resultadoReales>=0?"#4ade80":"#ff9a9a")+"'>"+brl(rc.resultadoReales)+"</span>"+
+        "</div>"+
+        (rc.sinTasa>0?"<div style='background:#FFF8DC;border:1px solid #F5C518;border-radius:8px;padding:8px 12px;margin-top:10px;font-size:10.5px;color:#7a5c00'>⚠️ "+rc.sinTasa+" operación(es) sin tasa guardada: su ganancia no está convertida a reales.</div>":"")+
+        "<button onclick='exportarReporteContadorCSV(\""+mesKey+"\")' style='width:100%;margin-top:14px;padding:13px;background:#0f6e3a;color:#fff;border:none;border-radius:12px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px rgba(15,110,58,.25)'>⬇️ Descargar CSV para el contador</button>"+
+      "</div>";
+    })()+
+    // ARREGLO 59: este pie repetia el "lucro liquido" de la tasa unica, que ya
+    // no existe. Se queda con lo que si es suyo y no esta en ningun otro
+    // sitio: el flujo de caja, que es lo que tiene que cuadrar con el banco.
     "<div style='background:#FFFBEA;border:1.5px solid #F5C518;border-radius:12px;padding:14px 16px'>"+
       "<div style='font-size:10px;font-weight:800;color:#7a5c00;text-transform:uppercase;margin-bottom:6px'>🔒 Solo para ti — control interno</div>"+
-      "<div style='font-size:13px;color:#5c4400;line-height:1.5'>El flujo de caja de tus cuentas BRL este mes es de <b>"+_fmtBRL(flujoNeto)+"</b> (entradas − salidas), y el lucro líquido final (después de gastos fijos y sueldo) es de <b>"+_fmtBRL(lucroFinalReais)+"</b>.</div>"+
+      "<div style='font-size:13px;color:#5c4400;line-height:1.5'>El flujo de caja de tus cuentas BRL este mes es de <b>"+_fmtBRL(flujoNeto)+"</b> (entradas − salidas). Ese número tiene que cuadrar con el extracto del banco; la ganancia es otra cosa y está arriba.</div>"+
     "</div>";
   }
 
@@ -14104,10 +14640,25 @@ function rInformeCierre(){
         "</div>":"")+
       "</div>";
     }
-    var html=socioCard("eeuu_0",calc.socioNombreEE,calc.ganEEBruta,calc.gasEEUU,calc.socioPorcentajeEE,calc.socioParte,calc.deudasSocioEE,calc.socioFinalEE,true);
+    // ARREGLO 58 (14/09/2026): un socio sin nada este mes no ocupa media
+    // pantalla con ceros. Sus palabras: "ya todas esas cuentas quedaron
+    // saldadas, no debería de aparecer nada de Paul". Se le enseña cuando
+    // hay ALGO de verdad — ganancia de sus rutas, una deuda viva, o un pago
+    // registrado este mes. Si no, sale una linea y ya.
+    function _socioVacio(bruta,deudas,final,socioId){
+      var pagos=pagosMes.filter(function(p){return String(p.socioId)===String(socioId);})
+        .reduce(function(a,p){return a+(parseFloat(p.monto)||0);},0);
+      return Math.abs(bruta)<0.009 && Math.abs(deudas)<0.009 && Math.abs(final)<0.009 && Math.abs(pagos)<0.009;
+    }
+    var html="", dormidos=[];
+    if(_socioVacio(calc.ganEEBruta,calc.deudasSocioEE,calc.socioFinalEE,"eeuu_0")) dormidos.push(calc.socioNombreEE);
+    else html+=socioCard("eeuu_0",calc.socioNombreEE,calc.ganEEBruta,calc.gasEEUU,calc.socioPorcentajeEE,calc.socioParte,calc.deudasSocioEE,calc.socioFinalEE,true);
     calc.comisionesSocios.forEach(function(s){
-      html+=socioCard(s.id,s.nombre,s.ganRutas,0,s.pct,s.monto,0,s.monto,false);
+      if(_socioVacio(s.ganRutas,0,s.monto,s.id)) dormidos.push(s.nombre);
+      else html+=socioCard(s.id,s.nombre,s.ganRutas,0,s.pct,s.monto,0,s.monto,false);
     });
+    if(dormidos.length) html+="<div style='background:#FAFBFD;border:1px dashed #dde3ec;border-radius:12px;padding:11px 13px;font-size:11.5px;color:#7a8497'>"+
+      "<b>"+dormidos.join(" · ")+"</b> — sin operaciones, sin deudas y sin pagos este mes.</div>";
     return html;
   }
 
@@ -14177,7 +14728,14 @@ function rInformeCierre(){
   // ── PENDIENTES Y SALDOS ────────────────────────────────────────
   function secPendientes(){
     var cobPendGan=cobrarPend.reduce(function(a,c){return a+(parseFloat(c.ganancia)||0);},0);
-    var totalApartar=calc.socioFinalEE+calc.totalCom+calc.egEmpPend;
+    // ARREGLO 57: si el socio DEBE a la empresa, su saldo es negativo y no es
+    // algo que apartar — es algo que cobrar. Sumandolo tal cual, la pantalla
+    // enseñaba "Pagar Paul −120,00 · TOTAL A APARTAR −120,00": apartar un
+    // numero negativo no significa nada, y el PDF ya decia otra cosa (0,00 mas
+    // el aviso de la deuda). Se usa la misma cuenta que el PDF.
+    var _socioAPagar=Math.max(0,calc.socioFinalEE);
+    var _socioDebe=calc.socioFinalEE<0?Math.abs(calc.socioFinalEE):0;
+    var totalApartar=_socioAPagar+calc.totalCom+calc.egEmpPend;
     return "<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px'>"+
       card("#0f6e3a","#fff","⏳ Por cobrar","$"+f2(cobPendGan)+" USDT",cobrarPend.length+" operaciones pendientes")+
       (function(){var prestUsdtTotal=0;prestActivos.forEach(function(p){var mon=p.mon||"USDT";var monto=parseFloat(p.monto||p.sal)||0;var abos=(p.abonos||[]).reduce(function(a,ab){return a+ab.monto;},0);var pend=Math.max(0,monto-abos);var rate=getRateToUsdt(mon);prestUsdtTotal+=(mon==="USDT"?pend:(rate?pend/rate:0));});return card("#c0392b","#fff","🤝 Préstamos activos","≈$"+f2(prestUsdtTotal)+" USDT",prestActivos.length+" préstamos activos");}())+
@@ -14185,10 +14743,12 @@ function rInformeCierre(){
     "</div>"+
     "<div style='background:#1a3558;border-radius:12px;padding:14px;color:#fff;margin-bottom:12px'>"+
       "<div style='font-size:12px;font-weight:700;color:#FFA31C;margin-bottom:10px'>💰 Lo que hay que apartar para el mes siguiente</div>"+
-      "<div style='display:flex;justify-content:space-between;font-size:12px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.1)'><span>Pagar "+calc.socioNombreEE+"</span><b>$"+f2(calc.socioFinalEE)+"</b></div>"+
+      (_socioAPagar>0?"<div style='display:flex;justify-content:space-between;font-size:12px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.1)'><span>Pagar "+calc.socioNombreEE+"</span><b>$"+f2(_socioAPagar)+"</b></div>":"")+
+      (_socioDebe>0?"<div style='display:flex;justify-content:space-between;font-size:12px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.1)'><span style='color:#ffd5d5'>"+calc.socioNombreEE+" te debe (no se le paga este mes)</span><b style='color:#ffd5d5'>$"+f2(_socioDebe)+"</b></div>":"")+
       calc.comisionesSocios.map(function(s){return "<div style='display:flex;justify-content:space-between;font-size:12px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.1)'><span>Pagar "+s.nombre+"</span><b>$"+f2(s.monto)+"</b></div>";}).join("")+
       (calc.egEmpPend>0?"<div style='display:flex;justify-content:space-between;font-size:12px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.1)'><span>Egresos empresa pendientes</span><b>$"+f2(calc.egEmpPend)+"</b></div>":"")+
       "<div style='display:flex;justify-content:space-between;font-size:15px;font-weight:900;padding:10px 0 4px'><span>TOTAL A APARTAR</span><span style='color:#FFA31C'>$"+f2(totalApartar)+"</span></div>"+
+      (totalApartar<=0.009?"<div style='font-size:10.5px;color:rgba(255,255,255,.6)'>Nada que apartar este mes.</div>":"")+
     "</div>"+
     (cobrarPend.length?"<div style='background:#FFF8DC;border:1px solid #F5C518;border-radius:11px;padding:12px;margin-bottom:10px'>"+
       "<div style='font-size:10px;font-weight:700;color:#7a5c00;text-transform:uppercase;margin-bottom:8px'>⏳ Operaciones por cobrar</div>"+
@@ -19507,6 +20067,170 @@ function getMesAnio(d){
   return{mes:parts[1]||"",anio:String(now.getFullYear())};
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+//  LO QUE NECESITA EL CONTADOR  ·  ARREGLO 54 (14/09/2026)
+// ══════════════════════════════════════════════════════════════════════════
+// Sus palabras: "el contador necesita saber cuánto me gané para poder hacer la
+// declaración de impuestos" y "la remesa de Brasil a Colombia sí, todo lo que
+// entra en reales y me genere una ganancia".
+//
+// De ahí salen las reglas, y ninguna es obvia:
+//
+//  1. "Lo que entra en reales" es `orig === "BRL"`, NO "está en la lista de
+//     Brasil". En S.brl hay remesas cuyo origen es otra moneda —medido: una de
+//     50 USDT→VES en agosto y una de 70 PEN→VES en septiembre—, y contarlas
+//     inflaba las operaciones y la ganancia de la declaración.
+//  2. Colombia entra. La ganancia no depende de a dónde salga el dinero sino
+//     de que haya entrado en reales y haya dejado margen.
+//  3. Cada operación se convierte a reales con SU PROPIA tasa de compra
+//     (`pr × tc`), no con una tasa única del mes. Es lo mismo que hace
+//     Evolución y es lo exacto: en un mes la tasa se mueve.
+//  4. Los egresos pagados en reales van en la cuenta del resultado; los de
+//     otras monedas se listan aparte, para que se vean sin mezclarse con lo
+//     que declara una empresa en Brasil.
+//
+// Devuelve datos, no conclusiones: el resultado puede salir negativo —agosto
+// dio −R$195,38 porque gastó en reales más de lo que dejó la ruta— y eso es un
+// hecho que tiene que ver, no un número que haya que maquillar.
+function _mesDeFecha(f){
+  var iso=_isoDeDDMMAA(f);
+  if(iso) return iso.slice(0,7);
+  var s=String(f||"");
+  return /^\d{4}-\d{2}/.test(s) ? s.slice(0,7) : "";
+}
+// El movimiento del mes, operación por operación. Es lo que ella pidió que
+// llevara el PDF: "con todo a detalle de todo el movimiento del mes". Un
+// resumen no se puede auditar; esto sí.
+function detalleMes(mesKey){
+  var mk=mesKey||getMesKeyActual();
+  function nom(id){ var c=(S.cuentas||[]).find(function(x){return x.id===id;}); return c?c.nombre:""; }
+  var d={remesas:[], usdt:[], egresos:[], traspasos:[], prestamos:[]};
+  [].concat(S.brl||[], S.vzla||[], S.eeuu||[]).forEach(function(x){
+    if(_mesDeFecha(x.d)!==mk) return;
+    d.remesas.push({fecha:x.d, n:x.n, cliente:x.cl||"", ruta:(x.orig||"")+"→"+(x.dest||""),
+      entro:parseFloat(x.am)||0, monEntro:x.orig||"", entrego:parseFloat(x.cant)||0, monEntrego:x.dest||"",
+      cuenta:nom(x.cuentaBanco), ganUsdt:parseFloat(x.pr)||0, tc:parseFloat(x.tc)||0});
+  });
+  (S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[]).forEach(function(l){
+    if(_isoDeLote(l).slice(0,7)!==mk) return;
+    if(l.plataforma==="Remesa"||l.origenRemesa) return;   // no es una operación suya: la creó una remesa
+    d.usdt.push({fecha:_fechaLoteLegible(l.fecha), tipo:l.tipo, moneda:l.moneda||"",
+      montOrigen:parseFloat(l.montOrigen)||0, usdt:parseFloat(l.usdt)||0, bs:parseFloat(l.bs)||0,
+      tasa:_tasaEfectivaLote(l)||0, cuenta:nom(l.tipo==="compra"?l.cuentaOrigenId:l.cuentaId)});
+  });
+  (S.egresos||[]).concat(S.egresos_personales||[]).forEach(function(e){
+    if(!e.pagada || _mesDeFecha(e.fp||e.d)!==mk) return;
+    d.egresos.push({fecha:e.fp||e.d, tipo:e.tipo||"empresa", cat:e.cat||"", mot:e.mot||"",
+      monto:parseFloat(e.monto)||0, mon:e.mon||"USDT", usdt:parseFloat(e.usdt)||0, cuenta:nom(e.cuentaId)});
+  });
+  (S.traspasos||[]).forEach(function(t){
+    if(String(t.fecha||"").slice(0,7)!==mk) return;
+    d.traspasos.push({fecha:t.fecha, origen:nom(t.origen), destino:nom(t.destino),
+      monto:parseFloat(t.monto)||0, moneda:t.moneda||"", nota:t.nota||""});
+  });
+  (S.prestamos||[]).forEach(function(p){
+    if(_mesDeFecha(p.d)!==mk) return;
+    d.prestamos.push({fecha:p.d, desc:p.desc||"", monto:parseFloat(p.monto)||0,
+      mon:p.mon||"USDT", cuenta:nom(p.cuentaId)});
+  });
+  function porFecha(a,b){ var x=_isoDeDDMMAA(a.fecha)||String(a.fecha), y=_isoDeDDMMAA(b.fecha)||String(b.fecha); return x<y?-1:x>y?1:0; }
+  d.remesas.sort(porFecha); d.egresos.sort(porFecha); d.traspasos.sort(porFecha); d.prestamos.sort(porFecha);
+  return d;
+}
+
+function resumenContador(mesKey){
+  var mk=mesKey||getMesKeyActual();
+  var p=mk.split("-");
+  var r={ mesKey:mk, mesLabel:getMesLabel(p[1],p[0]),
+          operaciones:0, entroReales:0, ganUsdt:0, ganReales:0,
+          porDestino:[], porCuenta:[], salidas:[], salidasTotal:0,
+          egresosReales:[], egresosOtras:[], egresosRealesTotal:0,
+          resultadoReales:0, sinTasa:0 };
+
+  // ── 1. Las operaciones que entraron en reales ──
+  var dest={}, cta={};
+  [].concat(S.brl||[], S.vzla||[], S.eeuu||[]).forEach(function(x){
+    if(x.orig!=="BRL") return;                 // la regla, dicha por ella
+    if(_mesDeFecha(x.d)!==mk) return;
+    var am=parseFloat(x.am)||0, pr=parseFloat(x.pr)||0, tc=parseFloat(x.tc)||0;
+    r.operaciones++; r.entroReales+=am; r.ganUsdt+=pr;
+    if(tc>0) r.ganReales+=pr*tc; else r.sinTasa++;
+    var d=x.dest||"?";
+    dest[d]=dest[d]||{dest:d,n:0,entro:0,ganUsdt:0,ganReales:0};
+    dest[d].n++; dest[d].entro+=am; dest[d].ganUsdt+=pr; if(tc>0) dest[d].ganReales+=pr*tc;
+    var c=x.cuentaBanco||"";
+    cta[c]=cta[c]||{cuentaId:c,n:0,entro:0};
+    cta[c].n++; cta[c].entro+=am;
+  });
+  function nom(id){ var c=(S.cuentas||[]).find(function(x){return x.id===id;}); return c?c.nombre:"(sin cuenta)"; }
+  r.porDestino=Object.keys(dest).map(function(k){ var d=dest[k];
+    d.entro=Math.round(d.entro*100)/100; d.ganUsdt=Math.round(d.ganUsdt*10000)/10000;
+    d.ganReales=Math.round(d.ganReales*100)/100; return d; })
+    .sort(function(a,b){return b.ganReales-a.ganReales;});
+  r.porCuenta=Object.keys(cta).map(function(k){ var c=cta[k];
+    c.nombre=nom(k); c.entro=Math.round(c.entro*100)/100; return c; })
+    .sort(function(a,b){return b.entro-a.entro;});
+
+  // ── 2. Lo que salió de las cuentas en reales, por concepto ──
+  // El contador pregunta "¿y esto en qué se fue?", así que no vale un total.
+  var ctasBRL=(S.cuentas||[]).filter(function(c){return c.moneda==="BRL"&&!c.esPersonal;})
+                             .map(function(c){return c.id;});
+  function esBRL(id){ return ctasBRL.indexOf(id)>-1; }
+  var sal={};
+  function sumSal(concepto, monto){
+    if(!(monto>0)) return;
+    sal[concepto]=(sal[concepto]||0)+monto;
+  }
+  [].concat(S.brl||[], S.vzla||[], S.eeuu||[]).forEach(function(x){
+    if(_mesDeFecha(x.d)!==mk) return;
+    if(esBRL(x.cuentaDest)) sumSal("Entregado a clientes", parseFloat(x.cant)||0);
+  });
+  // Compras de USDT: abiertas Y cerradas. Solo miraba las abiertas, así que en
+  // un mes ya cerrado desaparecían todas — medido: agosto enseñaba R$0 de
+  // R$11.763,96, y el extracto del banco no cuadraba nunca.
+  (S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[]).forEach(function(l){
+    if(l.tipo!=="compra") return;
+    if(_isoDeLote(l).slice(0,7)!==mk) return;
+    if(esBRL(l.cuentaOrigenId)) sumSal("Compra de USDT", parseFloat(l.montOrigen)||0);
+  });
+  (S.egresos||[]).concat(S.egresos_personales||[]).forEach(function(e){
+    if(!e.pagada || _mesDeFecha(e.fp||e.d)!==mk) return;
+    if(esBRL(e.cuentaId)) sumSal(e.tipo==="personal"?"Gastos personales":"Egresos de la empresa", parseFloat(e.monto)||0);
+  });
+  (S.prestamos||[]).forEach(function(pr){
+    if(esBRL(pr.cuentaId) && _mesDeFecha(pr.d)===mk) sumSal("Préstamos entregados", parseFloat(pr.monto)||0);
+  });
+  (S.traspasos||[]).forEach(function(t){
+    if(String(t.fecha||"").slice(0,7)!==mk) return;
+    if(esBRL(t.origen) && !esBRL(t.destino)) sumSal("Traspasos a otras cuentas", parseFloat(t.monto)||0);
+  });
+  (S.pagosSocios||[]).forEach(function(x){
+    if(String(x.fecha||"").slice(0,7)!==mk) return;
+    if(esBRL(x.cuentaId)) sumSal("Pagos a socios", parseFloat(x.monto)||0);
+  });
+  r.salidas=Object.keys(sal).map(function(k){return {concepto:k, monto:Math.round(sal[k]*100)/100};})
+                            .sort(function(a,b){return b.monto-a.monto;});
+  r.salidasTotal=Math.round(r.salidas.reduce(function(a,x){return a+x.monto;},0)*100)/100;
+
+  // ── 3. Los egresos, partida por partida ──
+  (S.egresos||[]).forEach(function(e){
+    if(!e.pagada || _mesDeFecha(e.fp||e.d)!==mk) return;
+    var fila={fecha:e.fp||e.d, cat:e.cat||"", mot:e.mot||"", monto:parseFloat(e.monto)||0,
+              mon:e.mon||"USDT", usdt:parseFloat(e.usdt)||0, cuenta:nom(e.cuentaId)};
+    if(fila.mon==="BRL"){ r.egresosReales.push(fila); r.egresosRealesTotal+=fila.monto; }
+    else r.egresosOtras.push(fila);
+  });
+  function porFecha(a,b){ var x=_isoDeDDMMAA(a.fecha), y=_isoDeDDMMAA(b.fecha); return x<y?-1:x>y?1:0; }
+  r.egresosReales.sort(porFecha); r.egresosOtras.sort(porFecha);
+
+  r.entroReales=Math.round(r.entroReales*100)/100;
+  r.ganUsdt=Math.round(r.ganUsdt*10000)/10000;
+  r.ganReales=Math.round(r.ganReales*100)/100;
+  r.egresosRealesTotal=Math.round(r.egresosRealesTotal*100)/100;
+  r.resultadoReales=Math.round((r.ganReales-r.egresosRealesTotal)*100)/100;
+  return r;
+}
+
 function getMesLabel(mes,anio){
   var meses=["","Enero","Febrero","Marzo","Abril","Mayo","Junio",
              "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
@@ -19649,7 +20373,7 @@ var _fbSaveTimer = null;
 // o un préstamo: son más de quince, y la que se olvide reabre el agujero.
 // Se compara la foto del registro contra la del guardado anterior; si
 // cambió de verdad, lleva marca.
-function _marcarCambiados(arr, memo, idField){
+function _marcarCambiados(arr, memo, idField, clave){
   if(!Array.isArray(arr)||!memo) return;
   idField = idField || "id";
   arr.forEach(function(it){
@@ -19666,7 +20390,10 @@ function _marcarCambiados(arr, memo, idField){
     // guardado después de abrir la app marcaría todo, y un dispositivo con
     // datos viejos le ganaría la fusión a uno al día solo por haber
     // guardado una vez. Eso es exactamente lo que pasó con las cuentas.
-    if(previo!==undefined && previo!==foto) it._mod=Date.now();
+    // ARREGLO 62: el mismo sitio que decide que esto cambió aquí lo anota
+    // para el aviso de choque. Anotarlo en cada función que toca datos ya se
+    // probó y no funciona: la que se olvide es la que calla el aviso.
+    if(previo!==undefined && previo!==foto){ it._mod=Date.now(); _anotarTocado(clave,id); }
     memo[id]=foto;
   });
 }
@@ -19690,7 +20417,7 @@ function _marcarTodoLoQueSeFusiona(){
   campos.forEach(function(k){
     if(!Array.isArray(S[k])) return;
     if(!window._fotoPorCampo[k]) window._fotoPorCampo[k]={};
-    _marcarCambiados(S[k], window._fotoPorCampo[k], ids[k]||"id");
+    _marcarCambiados(S[k], window._fotoPorCampo[k], ids[k]||"id", k);
   });
 }
 // Después de traer datos del servidor, las fotos que teníamos son de antes de
@@ -19736,6 +20463,26 @@ function _refotografiar(){
 // objeto: config y tasasDia se recorren con for..in en varios sitios y una
 // clave "_mod" colada ahí se leería como si fuera una tasa o un ajuste.
 var _MERGE_OBJETOS = ["config","tasasDia","_tasasDiaMeta","tasasCambio"];
+// ── ARREGLO 60 (14/09/2026): claves que viajan JUNTAS o no viajan ──────────
+// La apertura no es un dato, son cinco: el total, la fecha, la foto de los
+// saldos, la hora y la base del mes. _mergeObjetoPorClave decide clave por
+// clave, cada una con su propia marca de tiempo, asi que con dos aparatos
+// puede quedarse la FECHA de uno y el MONTO del otro — una apertura que no
+// existio en ninguno de los dos, y contra la que mide toda la conciliacion.
+//
+// Reproducido con sus dos pantallas del 14/09:
+//   telefono 11/09 · $2.544,79   +   PC 12/09 · $2.450,20
+//   fusion   12/09 · $2.544,79   ← la fecha de uno con el monto del otro
+//
+// Y de ahi salian dos conciliaciones distintas: con apertura del 11 los
+// ajustes de ese dia cuentan (−85,55, diferencia −76,38) y con la del 12
+// quedan antes de la apertura y la pantalla dice "ninguno" (+11,85).
+//
+// Un bloque se resuelve con la marca MAS NUEVA de todas sus claves: o entran
+// todas las del otro aparato, o se quedan todas las de aqui.
+var _MERGE_BLOQUES = {
+  config: [["aperturaUsdt","aperturaFecha","aperturaSaldos","aperturaTs","aperturaBase"]]
+};
 var _MERGE_HISTORIAL = ["histBalance","histTasas","histSaldos"];
 
 function _marcarObjetosCambiados(){
@@ -19753,7 +20500,7 @@ function _marcarObjetosCambiados(){
     Object.keys(obj).forEach(function(k){
       var foto=JSON.stringify(obj[k]);
       if(memo[k]!==undefined){
-        if(memo[k]!==foto) marcas[k]=ahora;
+        if(memo[k]!==foto){ marcas[k]=ahora; _anotarTocado("@"+campo,k); }
       } else if(habiaFoto){
         // ARREGLO 46 (14/09/2026): una clave NUEVA dentro de un objeto que YA
         // estaba fotografiado es un cambio, y hay que marcarla.
@@ -19769,6 +20516,7 @@ function _marcarObjetosCambiados(){
         // Si no había foto de nada, se sigue sin marcar: eso es ARREGLO 33 y no
         // se toca.
         marcas[k]=ahora;
+        _anotarTocado("@"+campo,k);
       }
       memo[k]=foto;
     });
@@ -19786,7 +20534,31 @@ function _mergeObjetoPorClave(remoto, local, campo, marcasRemotas, respaldo){
   var out={}; Object.keys(local).forEach(function(k){ out[k]=local[k]; });
   var mLoc=(S._modCampos&&S._modCampos[campo])||{};
   var mRem=(marcasRemotas&&marcasRemotas[campo])||{};
+  // ARREGLO 60: los bloques primero, y las claves que los forman quedan
+  // decididas — no se vuelven a mirar una por una mas abajo.
+  var yaResueltas={};
+  ((_MERGE_BLOQUES&&_MERGE_BLOQUES[campo])||[]).forEach(function(bloque){
+    var hayRem=bloque.some(function(k){return k in remoto;});
+    var hayLoc=bloque.some(function(k){return k in out;});
+    if(!hayRem) return;                       // el otro aparato no lo tiene
+    bloque.forEach(function(k){ yaResueltas[k]=true; });
+    if(!hayLoc){                              // aqui no hay nada: entra entero
+      bloque.forEach(function(k){ if(k in remoto) out[k]=remoto[k]; else delete out[k]; });
+      return;
+    }
+    var masNueva=function(marcas){
+      var t=0; bloque.forEach(function(k){ if(typeof marcas[k]==="number"&&marcas[k]>t) t=marcas[k]; });
+      return t;
+    };
+    var tRem=masNueva(mRem), tLoc=masNueva(mLoc);
+    if(tRem<=tLoc) return;                    // en un empate manda lo de aqui
+    // Entra el bloque entero: las claves que el otro aparato no tiene se
+    // borran, porque pertenecen a la apertura vieja y mezclarlas seria
+    // volver al mismo problema.
+    bloque.forEach(function(k){ if(k in remoto) out[k]=remoto[k]; else delete out[k]; });
+  });
   Object.keys(remoto).forEach(function(k){
+    if(yaResueltas[k]) return;
     if(!(k in out)){ out[k]=remoto[k]; return; }   // solo lo tiene el otro aparato
     if(JSON.stringify(out[k])===JSON.stringify(remoto[k])) return;
     var tr=mRem[k], tl=mLoc[k], ganaRemoto;

@@ -169,12 +169,122 @@ Lo que sí tienes que respetar:
   producción, con eso puesto, no se marcaba prácticamente nada: dos cobros
   recién marcados volvieron a "pendiente" al día siguiente.
 
+**Y hay claves que tienen que viajar JUNTAS** (`_MERGE_BLOQUES`, ARREGLO 60).
+La apertura no es un dato, son cinco: `aperturaUsdt`, `aperturaFecha`,
+`aperturaSaldos`, `aperturaTs` y `aperturaBase`. `_mergeObjetoPorClave` decide
+clave por clave, cada una con su marca, así que con dos aparatos se quedaba **la
+fecha de uno y el monto del otro**. Reproducido con sus dos pantallas del 14/09:
+
+```
+teléfono  11/09 · $2.544,79
+PC        12/09 · $2.450,20
+fusión    12/09 · $2.544,79   ← una apertura que no existió en ninguno
+```
+
+Y de ahí salían dos conciliaciones distintas: con la apertura del 11 los ajustes
+de ese día cuentan (−85,55, diferencia −76,38); con la del 12 quedan antes de la
+apertura y la pantalla dice "ninguno" (+11,85). **Si un grupo de claves solo
+tiene sentido junto, va en `_MERGE_BLOQUES`**: entra entero o no entra.
+
+### Adoptar la respuesta del servidor está bien; adoptarla en silencio, no
+
+El servidor fusiona bajo candado y el aparato **adopta** lo que contesta. Eso es
+lo correcto —es lo que evita que el último que guarda borre al otro— pero se
+hacía sin decir nada: si el teléfono tenía la apertura del 11 y la PC la del 12,
+uno perdía y la pantalla cambiaba sola. Sus palabras: *"que uno diga algo y el
+otro equipo otro"*.
+
+**No se avisa de todo lo que cambia el servidor.** Casi todo lo que vuelve
+distinto es lo que el otro aparato registró mientras tanto: eso es
+sincronización normal y avisarlo sería ruido en cada guardado. Se avisa **solo
+del choque**: un registro que ESTE aparato acaba de cambiar y que el servidor
+devuelve distinto de como se mandó.
+
+- **De dónde sale "lo que este aparato acaba de cambiar":** del mismo sitio que
+  ya lo calcula para marcarlo, `_marcarCambiados()` y
+  `_marcarObjetosCambiados()`. `_anotarTocado()` se llama ahí y en ningún otro
+  lado — anotarlo función por función es el mismo camino que ya falló cuatro
+  veces. Una función nueva queda cubierta sola.
+- **Lo anotado se lleva al mandar y vuelve si el envío no llega**
+  (`_tomarTocado()` / `_unirTocado()`). Lo que ella registre mientras el
+  guardado viaja no se confunde con lo que iba dentro.
+- **El aviso son TRES valores, no dos:** lo que mandó este aparato, lo que traía
+  el otro y **lo que quedó**. No son lo mismo: el servidor fusiona a su manera y
+  después `_aplicarEstadoDeApi()` vuelve a fusionar aquí con las marcas de este
+  dispositivo, así que lo que queda puede no ser ninguna de las dos cosas que se
+  compararon. Medido: el servidor devolvía 915, quedaba 801, y el aviso decía
+  "quedó 915". Por eso `_completarConLoQueQuedo()` se llama **después** de
+  adoptar y lee de `S`, que es lo que ella ve. Un aviso que miente se deja de
+  mirar.
+- **Los clientes se excluyen.** Tienen su propia ruta (`/clientes`) y
+  `_aplicarEstadoDeApi` ignora a propósito la copia que venga en el bloque de
+  estado. Avisar de ella sería avisar de algo que ni se va a aplicar.
+- El aviso va **arriba del panel, fuera de la zona que hace scroll**, y queda
+  hasta que ella lo cierra. El historial de choques vive en Configuración
+  (`_htmlHistorialPisados()`), para cuando diga "esto lo cambié yo y volvió
+  atrás".
+
 Cuando el dueño diga que algo "se revirtió solo" o "volvió a aparecer",
 **empieza por aquí**: casi siempre es un dato que llegó sin marca.
 
 Y cuando arregles algo de esto: **el arreglo no repara los registros ya
 pisados.** Hay que volver a hacerlos a mano una vez. Díselo, no lo des por
 entendido.
+
+---
+
+## Los permisos son de la PERSONA, no del rol (FASE B)
+
+Sus palabras: *"no sirve para yo dar un usuario a otra persona con ciertos
+permisos que yo como administradora total le otorgue"*.
+
+Antes había **dos** sistemas de permisos y ninguno hacía eso:
+
+- `S.config.modulos` — tres casillas (nueva/clientes/egresos) **por ROL**, así
+  que dos personas con el mismo rol no podían tener permisos distintos. Y vivía
+  dentro del bloque que se sincroniza: era de los datos que se pisan entre
+  aparatos. **Retirado**, y `modulos` está en `_CONFIG_PROHIBIDO` para que no
+  vuelva desde un aparato viejo. (Comprobado en su export antes de quitarlo:
+  estaba **vacío**, no había ni una casilla desmarcada que rescatar.)
+- Los `permisos` del servidor — sí son por persona y los guarda Mongo, pero la
+  app **nunca los mandaba** (POST/PUT `/usuarios` solo enviaban el rol) y solo
+  los consultaba para el Administrador y el Supervisor.
+
+Ahora manda uno solo: lo que Mongo guarda para esa persona.
+
+- **El rol es un punto de partida, no el permiso.** `PERMISOS_POR_ROL` solo se
+  usa cuando la casilla **no está decidida** (`_permisoPorOmision`). Eso es lo
+  que evitó que el despliegue cerrara la app a todo el mundo: los usuarios que
+  había tenían `permisos` casi vacío, y hasta entonces el menú de un operador no
+  salía de los permisos. `pruebas/prestamos.js` compara el menú de **cada rol**
+  con el de antes, casilla por casilla: si alguien toca los valores por omisión
+  y un rol pierde una pestaña, falla.
+- **Una sola puerta.** `PERMISO_DE_TAB` decide el menú **y** el contenido. Antes
+  el menú salía de `S.config.modulos` y el contenido de `tienePermiso()`, y no
+  coincidían: una pestaña podía estar en el menú y contestar "Sin acceso".
+- **Fuera el `isAdmin ? … : ""`.** A un operador se le devolvía **cadena vacía**
+  —pantalla en blanco, sin decir por qué—. Ahora todos pasan por `tp()`, que
+  dibuja "Sin acceso" y a quién pedírselo.
+- **`permisoEdicion()` es `tienePermiso("editar")`**, sin criterio propio. Antes
+  leía `api.permisos.editar` a secas y no respetaba el valor por omisión del
+  rol: un operador recién creado entraba y no podía guardar nada.
+- **Guardar manda la lista COMPLETA**, con su `true` o su `false` explícito.
+  Mandar solo lo marcado dejaría el resto "sin decidir", y sin decidir vuelve a
+  valer lo del rol: **quitar un permiso no habría quitado nada**.
+- **Marcar una casilla no llama a `R()`** — repintar rehace el HTML y cierra la
+  tarjeta bajo el dedo (ARREGLO 32). Se marca todo y se pulsa Guardar.
+- **Un cambio de permisos llega sin cerrar la app.** `_refrescarMisPermisos()`
+  vuelve a preguntar `/auth/yo` cuando la app vuelve al frente. Antes la copia
+  de la sesión solo se refrescaba al abrir: le quitabas un permiso a alguien y
+  lo conservaba el resto del día.
+
+**Y lo que esto NO es, que está escrito en la propia pantalla.** El servidor
+guarda todo el estado en un solo bloque y se lo entrega entero a quien tenga
+sesión: no hay forma de que una remesa no le llegue al navegador de un operador.
+Lo único que el servidor hace cumplir es **`editar`** (contesta 403 al guardar).
+Las demás casillas deciden **qué ve en la app**, no a qué puede llegar. Para
+alguien en quien no se confíe del todo, lo que manda es quitarle `editar` o
+desactivarlo. Un candado que parece candado y no lo es es peor que ninguno.
 
 ---
 
@@ -407,6 +517,17 @@ número suelto no se puede perseguir, así que la diferencia viene desglosada, y
   porque se lee una vez y estorba las otras cien, pero los avisos —moneda sin
   tasa, apertura vieja— y el veredicto se ven siempre. Un aviso escondido no es
   un aviso.
+- **El número grande es lo SIN EXPLICAR, no la diferencia bruta** (ARREGLO 60).
+  El titular decía −$76,38 mientras el veredicto debajo decía "cuadra": dos
+  mensajes opuestos en la misma tarjeta, y el que asusta es el grande. La
+  diferencia bruta incluye lo que ya tiene explicación —los ajustes a mano,
+  sobre todo—; lo que hay que perseguir es el resto.
+- **Los ajustes que no se pueden situar se ven sin desplegar nada.** Los del
+  mismo día en que se fijó la apertura no llevan hora, así que ni cuentan ni se
+  descartan: con sus datos son 7 por −$233,46. Estaban dentro del desplegable.
+- **La tarjeta dice contra qué apertura mide** —fecha, monto y si tiene foto de
+  saldos—. Una apertura sin foto no permite comparar cuenta por cuenta cuando
+  algo no cuadra, y eso no se veía en ninguna parte.
 
 ### Evolución mide la tendencia, no el capital
 
@@ -589,6 +710,96 @@ multiplicar `montoIngresado * tasaManual`.
 Comprobado contra su export: **ningún abono anterior se cobró en otra moneda**,
 ni de préstamos ni de cuentas por cobrar. Este habría sido el primero, así que
 no hay nada guardado que rehacer.
+
+### El cierre de mes tiene que contar el mismo dinero en todas partes
+
+El módulo son ~1.700 líneas repartidas en la pantalla (`rInformeCierre`, con
+8 sub-pestañas), el PDF (`generarInformePDF`) y los cálculos
+(`calcMesCompleto`). Auditado el 14/09/2026 con su export; esto es lo que
+salió y no hay que deshacer.
+
+**El PDF inventaba un agujero de −546,29 USDT.** Comparaba "cierre del mes
+anterior + neto de este mes" contra **solo lo que hay en cuentas bancarias**,
+y se disculpaba debajo: *"puede deberse a tasas del momento o cobros
+pendientes"*. El hueco no existe: deja fuera la reserva (176,82), lo que le
+deben (66,70) y lo prestado (1.010,93) — 1.254,45 que son suyos y no están en
+un banco. Es el mismo error que ya se quitó de Evolución, y aquí además salía
+en el informe que se manda fuera. Ahora va **de qué se compone el capital** y
+se manda a la conciliación, que es la que responde "¿me falta dinero?".
+**No vuelvas a poner un "deberías tener" aquí**: dos respuestas distintas a la
+misma pregunta son peores que una.
+
+**El capital sale de `capitalRealTotal()`, no de una suma a mano.** El PDF
+sumaba "cuentas + afuera" y se dejaba la reserva: 2.302,34 donde Balance de
+Cuentas dice 2.479,17.
+
+**Los intereses de préstamos entran en `ganBrutaTotal` pero NO en
+`miGanOperaciones`.** Por eso el desglose saltaba de 226,89 a 221,50 sin una
+fila que lo explicara, y la pestaña Operaciones enseñaba 221,50 mientras el
+Resumen enseñaba 226,89 — dos ganancias brutas distintas en el mismo módulo.
+Ahora la fila está y dice lo que pasa: el interés se apunta aparte y no llega
+a la utilidad de la empresa. **Si eso debe cambiar —que el interés cuente para
+la utilidad y por tanto para el sueldo— es decisión suya, y se toca en
+`calcMesCompleto`, no en la pantalla.**
+
+**Apartar un número negativo no significa nada.** Si el socio debe a la
+empresa, su saldo es negativo: eso es un cobro, no algo que apartar. La
+pantalla lo sumaba tal cual ("TOTAL A APARTAR −120,00") mientras el PDF ya lo
+hacía bien.
+
+**Las cuentas en cero se apartan, no se esconden.** 6 de sus 15 lo están. En
+Bancos solo se apartan si además no tuvieron ni un movimiento en el mes, y van
+nombradas al final: un saldo en cero que debería tener dinero es justo lo que
+ella querría ver.
+
+**Un socio sin nada este mes no ocupa media pantalla de ceros** (ARREGLO 58).
+Sus palabras: *"ya todas esas cuentas quedaron saldadas, no debería de aparecer
+nada de Paul"*. La regla es una (`_socioVacio`): se calla solo si no hay
+ganancia de sus rutas, ni deuda viva, ni saldo, ni pagos del mes. **Si queda
+una deuda, sí sale** — eso es dinero de verdad, y esconderlo sería peor que el
+ruido. Y el socio dormido va **nombrado** al final, no borrado.
+
+Ojo con esto al diagnosticar: las deudas viven en `deudas_paul` con
+`cobrada:false`, y se marcan pagadas desde el panel de EE.UU. (💸 DEDUCCIONES
+DE …, botón ✅). Si ella dice que está saldado y la app lo sigue enseñando,
+casi seguro es que falta ese clic — no un fallo del cierre.
+
+**La hoja del contador y el detalle del mes van en el PDF** (ARREGLO 59). Lo
+que él pide para la declaración: cuántas operaciones entraron **en reales**,
+cuánto entró, la ganancia que dejaron y los egresos partida por partida. Tres
+reglas que no son obvias y están en `resumenContador()`:
+
+- *"lo que entra en reales"* es **`orig === "BRL"`**, no "está en la lista de
+  Brasil". En `S.brl` hay remesas que entran en USDT o en soles; contarlas
+  infla lo declarado. En septiembre eran dos.
+- **Colombia cuenta.** Entra en reales y deja ganancia, así que declara igual
+  que Venezuela, aunque la entrega la haga el aliado en pesos.
+- **Cada operación se convierte con SU tasa** (`pr × tc`). Sumar en USDT y
+  multiplicar al final por la tasa de hoy da un número que no cuadra con
+  ningún mes.
+
+La pantalla, el PDF y el CSV salen de esa misma función. Antes la pestaña
+Contador tenía su propio "lucro" convertido con **una sola tasa del día** y con
+los gastos de toda la empresa restados: otro número distinto para la misma
+pregunta, y en portugués.
+
+**El papel dice de quién es**: `EMPRESA_RAZON` y `EMPRESA_CNPJ`, en un solo
+sitio. Vivían dentro de `rCierreMes()`, que era código muerto — al borrarla se
+habrían ido con ella.
+
+**Y el `</div>` de más, que costó una tarde.** Las dos secciones nuevas se
+generaban bien y **no aparecían en el PDF, sin un solo error en consola**. Había
+dos `</div>` sobrantes —en cobros pendientes y en préstamos activos— que
+cerraban `.cuerpo` y `.hoja` antes de tiempo: todo lo que viniera después
+quedaba **fuera de `#reporteCapture`**, y html2canvas solo captura lo de dentro.
+No se notaba porque no había nada después. Si algún día añades una sección al
+final del informe y no sale, **mira el balance de `<div>` antes que nada**:
+`pruebas/prestamos.js` ya vigila que no vuelva ese patrón.
+
+**`rCierreMes()` e `imprimirRelatorioContador()` estaban muertas** — 314 líneas
+que nadie llamaba, con fórmulas viejas y en portugués. Borradas en el ARREGLO
+59. El peligro no era el peso: era que alguien las leyera y creyera que eran
+las buenas.
 
 ### Registra la operación — no escribas el saldo
 
