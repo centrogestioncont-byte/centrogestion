@@ -316,9 +316,13 @@ gracia sin conexión: un aparato tonto no puede costarle el día.
   `authenticatorAttachment:"platform"`, el lector del propio aparato.
 - **La credencial va amarrada al correo** (`_huellaDeEstaPersona`). Si entra
   otra persona en el mismo aparato, no se encuentra la cerradura de la anterior.
-- **Al salir, la huella se borra** con la sesión. Si se quedara, la siguiente
-  persona se encontraría una cerradura que no es suya — y la credencial ya no
-  abre nada.
+- **Al salir, la huella NO se borra** (ARREGLO 65). El 64 la borraba, por miedo
+  a que la siguiente persona se encontrara una cerradura ajena. Ese miedo ya
+  está cubierto por el correo: a otra persona la app ni le mira la huella.
+  Borrarla no añadía seguridad y costaba caro — ella entra y sale a diario,
+  porque cambia entre producción y pruebas, y tenía que registrarla cada vez.
+  Sin sesión guardada tampoco desbloquea nada, y para quitarla a propósito está
+  el botón de Configuración, que es lo único que la borra.
 - **El desbloqueo se dibuja antes que el login** en `R()`. Los dos son "todavía
   no has entrado", pero en este hay una sesión esperando detrás.
 - **Si el servidor contesta 401, el bloqueo se cae con la sesión.** Quedarse en
