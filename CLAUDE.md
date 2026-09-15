@@ -233,6 +233,61 @@ entendido.
 
 ---
 
+## Los permisos son de la PERSONA, no del rol (FASE B)
+
+Sus palabras: *"no sirve para yo dar un usuario a otra persona con ciertos
+permisos que yo como administradora total le otorgue"*.
+
+Antes había **dos** sistemas de permisos y ninguno hacía eso:
+
+- `S.config.modulos` — tres casillas (nueva/clientes/egresos) **por ROL**, así
+  que dos personas con el mismo rol no podían tener permisos distintos. Y vivía
+  dentro del bloque que se sincroniza: era de los datos que se pisan entre
+  aparatos. **Retirado**, y `modulos` está en `_CONFIG_PROHIBIDO` para que no
+  vuelva desde un aparato viejo. (Comprobado en su export antes de quitarlo:
+  estaba **vacío**, no había ni una casilla desmarcada que rescatar.)
+- Los `permisos` del servidor — sí son por persona y los guarda Mongo, pero la
+  app **nunca los mandaba** (POST/PUT `/usuarios` solo enviaban el rol) y solo
+  los consultaba para el Administrador y el Supervisor.
+
+Ahora manda uno solo: lo que Mongo guarda para esa persona.
+
+- **El rol es un punto de partida, no el permiso.** `PERMISOS_POR_ROL` solo se
+  usa cuando la casilla **no está decidida** (`_permisoPorOmision`). Eso es lo
+  que evitó que el despliegue cerrara la app a todo el mundo: los usuarios que
+  había tenían `permisos` casi vacío, y hasta entonces el menú de un operador no
+  salía de los permisos. `pruebas/prestamos.js` compara el menú de **cada rol**
+  con el de antes, casilla por casilla: si alguien toca los valores por omisión
+  y un rol pierde una pestaña, falla.
+- **Una sola puerta.** `PERMISO_DE_TAB` decide el menú **y** el contenido. Antes
+  el menú salía de `S.config.modulos` y el contenido de `tienePermiso()`, y no
+  coincidían: una pestaña podía estar en el menú y contestar "Sin acceso".
+- **Fuera el `isAdmin ? … : ""`.** A un operador se le devolvía **cadena vacía**
+  —pantalla en blanco, sin decir por qué—. Ahora todos pasan por `tp()`, que
+  dibuja "Sin acceso" y a quién pedírselo.
+- **`permisoEdicion()` es `tienePermiso("editar")`**, sin criterio propio. Antes
+  leía `api.permisos.editar` a secas y no respetaba el valor por omisión del
+  rol: un operador recién creado entraba y no podía guardar nada.
+- **Guardar manda la lista COMPLETA**, con su `true` o su `false` explícito.
+  Mandar solo lo marcado dejaría el resto "sin decidir", y sin decidir vuelve a
+  valer lo del rol: **quitar un permiso no habría quitado nada**.
+- **Marcar una casilla no llama a `R()`** — repintar rehace el HTML y cierra la
+  tarjeta bajo el dedo (ARREGLO 32). Se marca todo y se pulsa Guardar.
+- **Un cambio de permisos llega sin cerrar la app.** `_refrescarMisPermisos()`
+  vuelve a preguntar `/auth/yo` cuando la app vuelve al frente. Antes la copia
+  de la sesión solo se refrescaba al abrir: le quitabas un permiso a alguien y
+  lo conservaba el resto del día.
+
+**Y lo que esto NO es, que está escrito en la propia pantalla.** El servidor
+guarda todo el estado en un solo bloque y se lo entrega entero a quien tenga
+sesión: no hay forma de que una remesa no le llegue al navegador de un operador.
+Lo único que el servidor hace cumplir es **`editar`** (contesta 403 al guardar).
+Las demás casillas deciden **qué ve en la app**, no a qué puede llegar. Para
+alguien en quien no se confíe del todo, lo que manda es quitarle `editar` o
+desactivarlo. Un candado que parece candado y no lo es es peor que ninguno.
+
+---
+
 ## El negocio de verdad — léelo antes de tocar saldos, lotes o ganancias
 
 Esto lo explicó la dueña. Si vas a cambiar algo que toque cuentas, inventario

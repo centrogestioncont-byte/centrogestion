@@ -12,6 +12,15 @@ const path = require("path");
 
 const HTML = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
 
+// TABS es "const", no "var", asi que sacarConstante no lo ve. Se lee aparte:
+// las pruebas de permisos recorren el menu de cada rol y no puede ser una copia
+// (una copia se desactualiza en silencio y la prueba pasa probando otra cosa).
+const TABS = (function () {
+  const i = HTML.indexOf("const TABS={");
+  const j = HTML.indexOf("};", i);
+  return eval("(" + HTML.slice(i + "const TABS=".length, j + 1) + ")");
+})();
+
 // Extrae "function nombre(...){...}" contando llaves hasta cerrar.
 function sacarFuncion(nombre) {
   const inicio = HTML.indexOf("function " + nombre + "(");
@@ -45,7 +54,9 @@ const CONSTANTES = ["MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD"
                     "_MERGE_OBJETOS", "_MERGE_BLOQUES", "_MERGE_HISTORIAL", "_RATE_LIMITS",
                     "DATA_KEYS", "_CLAVES_QUE_NO_SON_DATOS", "PAGO_DEBE",
                     "_TOCADO_AQUI", "_NOMBRE_DE_CLAVE", "_NOMBRE_DE_CONFIG",
-                    "_PISADOS", "_PISADOS_ABIERTO", "_CLIENTES_DESDE_API"];
+                    "_PISADOS", "_PISADOS_ABIERTO", "_CLIENTES_DESDE_API",
+                    "PERMISOS_APP", "PERMISOS_POR_ROL", "PERMISO_DE_TAB",
+                    "_CONFIG_PROHIBIDO", "_ETIQUETA_ROL"];
 
 const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
                     "congelarMora", "_sumarMeses", "_isoDeFecha", "calcularAmortizacion",
@@ -81,7 +92,9 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "_jsonEstable", "_escAud", "_anotarTocado", "_unirTocado",
                     "_tomarTocado", "_etiquetaRegistro", "_resumirValor",
                     "_camposEnConflicto", "_conflictosConElServidor",
-                    "_completarConLoQueQuedo", "_htmlAvisoPisado"];
+                    "_completarConLoQueQuedo", "_htmlAvisoPisado",
+                    "_permisoPorOmision", "tienePermiso", "permisoEdicion",
+                    "_resumenPermisos"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
 global.window = global.window || {};
 // setTasaDia/soltarTasaDia guardan y repintan, y avisan por alert(). Aqui no
@@ -2603,6 +2616,142 @@ ok(/_htmlAvisoPisado\(\)\+\s*\n?\s*"<div class='navbar3'>"/.test(HTML.replace(/\
   ok(src.indexOf("var _cambio=_aplicarEstadoDeApi") < src.indexOf("_completarConLoQueQuedo"),
      "y 'lo que quedo' se lee DESPUES de adoptar, que es cuando se sabe");
 }
+
+// ── FASE B · los permisos son de la PERSONA, no del rol ───────────────────
+console.log("\nFase B · permisos por persona");
+
+// Los comentarios de este proyecto cuentan lo que se quito ("antes pasaba X,
+// por eso ahora Y"), asi que una prueba que exige que un texto NO este se
+// acusa a si misma si no los saca antes.
+const sinComentarios = (t) => t.split("\n").filter((l) => !/^\s*\/\//.test(l)).join("\n");
+
+// La sesion vive en localStorage, que en Node no existe. tienePermiso la lee
+// por _permisosApi(): se sustituye por una de mentira para poder fijar el rol
+// y los permisos de cada caso.
+let SESION = null;
+global._permisosApi = () => SESION;
+
+// Lo que mas importa: que NADIE pierda nada el dia del despliegue. Los usuarios
+// que hay hoy tienen `permisos` casi vacio, y hasta ahora el menu de un
+// operador no salia de los permisos sino de S.config.modulos. Si los valores
+// por omision de cada rol no reprodujeran el menu de ayer, al desplegar esto
+// los operadores se quedarian sin app.
+const MENU_DE_AYER = {
+  admin: TABS.admin,
+  lector: TABS.lector,
+  brl: ["mi_ganancia", "op_diario", "nueva", "clientes"],
+  vzla: ["mi_ganancia", "op_diario", "nueva", "clientes"],
+  eeuu: ["mi_ganancia", "op_diario", "nueva_eeuu", "clientes"],
+};
+Object.keys(MENU_DE_AYER).forEach(function (rol) {
+  SESION = { rol: rol, permisos: {} };
+  const visibles = (TABS[rol] || []).filter(function (t) {
+    const k = F.PERMISO_DE_TAB[t];
+    return k === undefined || F.tienePermiso(k);
+  });
+  ok(JSON.stringify(visibles) === JSON.stringify(MENU_DE_AYER[rol]),
+     "con permisos vacios, " + rol + " ve exactamente el menu de ayer",
+     JSON.stringify(visibles));
+});
+
+// Cada pestaña de cada rol tiene que poder concederse desde la pantalla. Una
+// pestaña cuya llave no este en PERMISOS_APP seria un permiso invisible: la
+// puerta existe y no hay casilla para abrirla.
+{
+  const llaves = F.PERMISOS_APP.map(function (p) { return p.k; });
+  const huerfanas = [];
+  Object.keys(TABS).forEach(function (rol) {
+    (TABS[rol] || []).forEach(function (t) {
+      const k = F.PERMISO_DE_TAB[t];
+      if (k !== undefined && llaves.indexOf(k) === -1) huerfanas.push(t + "→" + k);
+    });
+  });
+  ok(huerfanas.length === 0,
+     "toda pestaña con puerta tiene su casilla en la pantalla", huerfanas.join(", "));
+  ok(llaves.indexOf("editar") === 0,
+     "'Registrar y modificar' va primero: es el unico que hace cumplir el servidor");
+}
+
+// Lo decidido para la persona manda sobre lo que diga su rol, en los dos
+// sentidos. Esto es la Fase B entera en dos comprobaciones.
+SESION = { rol: "brl", permisos: { clientes: false } };
+ok(F.tienePermiso("clientes") === false,
+   "quitarle una pantalla a una persona se la quita, aunque su rol la traiga");
+SESION = { rol: "brl", permisos: { prestamos: true } };
+ok(F.tienePermiso("prestamos") === true,
+   "y darle una que su rol no trae, se la da");
+SESION = { rol: "brl", permisos: {} };
+ok(F.tienePermiso("prestamos") === false && F.tienePermiso("clientes") === true,
+   "sin decidir, vale lo de su rol");
+
+// Dos personas con el MISMO rol y permisos distintos: es lo que ella pidio y
+// lo que la tabla vieja no podia hacer.
+const unoSi = (function () { SESION = { rol: "vzla", permisos: { cobrar: true } }; return F.tienePermiso("cobrar"); })();
+const otroNo = (function () { SESION = { rol: "vzla", permisos: { cobrar: false } }; return F.tienePermiso("cobrar"); })();
+ok(unoSi === true && otroNo === false,
+   "dos personas con el mismo rol pueden tener permisos distintos");
+
+// El Administrador no se puede quedar fuera por una casilla mal puesta.
+SESION = { rol: "admin", permisos: { config_admin: false, editar: false } };
+ok(F.tienePermiso("config_admin") === true && F.permisoEdicion() === true,
+   "al Administrador no hay casilla que le cierre nada");
+
+// El Supervisor ve todo y no modifica: eso ES el rol.
+SESION = { rol: "lector", permisos: {} };
+ok(F.tienePermiso("editar") === false && F.tienePermiso("cierre") === true,
+   "el Supervisor ve todo y no modifica");
+
+// Una sola puerta para guardar: permisoEdicion deja de tener criterio propio.
+SESION = { rol: "eeuu", permisos: {} };
+ok(F.permisoEdicion() === F.tienePermiso("editar"),
+   "permisoEdicion() es exactamente tienePermiso('editar')");
+// Y sin sesion no se entra ni se guarda.
+SESION = null;
+ok(F.tienePermiso("dash") === false && F.permisoEdicion() === false,
+   "sin sesion de la API no hay ningun permiso");
+
+// El resumen de la ficha dice la verdad de un vistazo.
+ok(/solo mira/.test(F._resumenPermisos({ rol: "lector", permisos: {} })),
+   "la ficha de un Supervisor dice 'solo mira'");
+ok(/registra/.test(F._resumenPermisos({ rol: "brl", permisos: {} })),
+   "y la de un operador, 'registra'");
+
+// La tabla vieja, retirada de verdad: no basta con esconder la pantalla.
+{
+  const sinCom = HTML.split("\n").filter(function (l) { return !/^\s*\/\//.test(l); }).join("\n");
+  ok(!/function toggleModulo\(/.test(sinCom), "la funcion que guardaba los permisos por rol ya no esta");
+  ok(!/S\.config\.modulos/.test(sinCom), "y nada lee ni escribe S.config.modulos");
+  ok(!/Permisos por operador/.test(sinCom), "el acordeon viejo ya no se dibuja");
+  ok(F._CONFIG_PROHIBIDO.indexOf("modulos") !== -1,
+     "y 'modulos' se limpia de config, para que no vuelva desde un aparato viejo");
+}
+
+// El menu y el contenido salen de la MISMA puerta. Antes el contenido estaba
+// detras de "isAdmin ? ... : ''" y a un operador se le devolvia pantalla en
+// blanco, sin decir por que.
+{
+  const src = sinComentarios(sacarFuncion("rMain"));
+  ok(!/isAdmin/.test(src), "el contenido ya no se decide por 'isAdmin'");
+  ok(/ts=ts\.filter\(function\(tab\)\{[\s\S]*PERMISO_DE_TAB\[tab\]/.test(src),
+     "el menu se filtra con el mismo permiso que dibuja la pantalla");
+}
+
+// Guardar manda la lista COMPLETA. Mandar solo lo marcado dejaria lo demas
+// "sin decidir", y sin decidir vuelve a valer lo del rol: quitar un permiso no
+// habria quitado nada.
+{
+  const src = sacarFuncion("guardarPermisosUsuario");
+  ok(/PERMISOS_APP\.forEach\(function\(p\)\{ permisos\[p\.k\]=!!S\._permVal\[p\.k\]; \}\)/.test(src),
+     "guardar manda todas las casillas con su true o su false");
+  ok(/method:"PUT",body:\{permisos:permisos\}/.test(src),
+     "y las manda al servidor, no al bloque que se sincroniza");
+}
+ok(!/R\(\)/.test(sinComentarios(sacarFuncion("togglePermisoUsuario"))),
+   "marcar una casilla no repinta: repintar cierra la tarjeta bajo el dedo (ARREGLO 32)");
+
+// Un cambio de permisos tiene que llegar sin cerrar la app.
+ok(/_refrescarMisPermisos\(\)/.test(HTML.replace(/\/\/[^\n]*\n/g, "\n")),
+   "los permisos se vuelven a preguntar al volver a la app");
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
