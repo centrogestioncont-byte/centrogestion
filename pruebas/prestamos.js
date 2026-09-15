@@ -43,7 +43,9 @@ function sacarConstante(nombre) {
 }
 const CONSTANTES = ["MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
                     "_MERGE_OBJETOS", "_MERGE_BLOQUES", "_MERGE_HISTORIAL", "_RATE_LIMITS",
-                    "DATA_KEYS", "_CLAVES_QUE_NO_SON_DATOS", "PAGO_DEBE"];
+                    "DATA_KEYS", "_CLAVES_QUE_NO_SON_DATOS", "PAGO_DEBE",
+                    "_TOCADO_AQUI", "_NOMBRE_DE_CLAVE", "_NOMBRE_DE_CONFIG",
+                    "_PISADOS", "_PISADOS_ABIERTO", "_CLIENTES_DESDE_API"];
 
 const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
                     "congelarMora", "_sumarMeses", "_isoDeFecha", "calcularAmortizacion",
@@ -75,7 +77,11 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "_tasaAutoPago", "_deudaCubierta", "_htmlTasaInvertida",
                     "_htmlTasaEnPalabras", "_htmlEquivAbono", "_htmlCalcPago",
                     "_pasoRedondeoCobro", "_montoACobrar", "_fMontoCobro",
-                    "_deudaACobrar"];
+                    "_deudaACobrar",
+                    "_jsonEstable", "_escAud", "_anotarTocado", "_unirTocado",
+                    "_tomarTocado", "_etiquetaRegistro", "_resumirValor",
+                    "_camposEnConflicto", "_conflictosConElServidor",
+                    "_completarConLoQueQuedo", "_htmlAvisoPisado"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
 global.window = global.window || {};
 // setTasaDia/soltarTasaDia guardan y repintan, y avisan por alert(). Aqui no
@@ -100,7 +106,13 @@ const F = new Function("S", "getRateToUsdt", "calcMesCompleto",
   NECESARIAS.map(sacarFuncion).join("\n") +
   // Las constantes tambien se devuelven: las pruebas de la marca recorren
   // _MERGE_FIELDS entero, para que un campo nuevo no se quede sin cubrir.
-  "\nreturn {" + NECESARIAS.concat(CONSTANTES).join(",") + "};")(S, getRateToUsdt, calcMesCompleto);
+  // _TOCADO_AQUI y _PISADOS se REASIGNAN dentro (no solo se mutan), asi que
+  // la copia que sale en el return se queda vieja en cuanto alguien las
+  // reasigna. Estos accesos leen y escriben las de verdad.
+  "\n_pruebaTocado=function(v){ if(v!==undefined)_TOCADO_AQUI=v; return _TOCADO_AQUI; };" +
+  "\n_pruebaPisados=function(v,a){ if(v!==undefined)_PISADOS=v; if(a!==undefined)_PISADOS_ABIERTO=a; return _PISADOS; };" +
+  "\nreturn {" + NECESARIAS.concat(CONSTANTES).join(",") +
+  ",_pruebaTocado:_pruebaTocado,_pruebaPisados:_pruebaPisados};")(S, getRateToUsdt, calcMesCompleto);
 
 let fallos = 0;
 function ok(cond, msg, dato) {
@@ -2413,6 +2425,150 @@ ok(/f2\(Math\.abs\(co\.sinExplicar\|\|0\)\)/.test(HTML),
 ok(/que no se pueden situar/.test(HTML), "el aviso de los ajustes en el aire esta fuera del desplegable");
 ok(/aperturaSaldos:\(S\.config\|\|\{\}\)\.aperturaSaldos/.test(HTML),
    "la conciliacion dice si la apertura tiene foto de saldos");
+
+// ── ARREGLO 62 · el aviso de choque entre dispositivos ────────────────────
+// Lo que se prueba es la REGLA, no la pantalla: se avisa solo de lo que este
+// aparato toco y el servidor devolvio distinto. Lo que llega nuevo del otro
+// aparato no puede avisar — si avisara, avisaria en cada guardado y el aviso
+// dejaria de significar nada.
+console.log("\nArreglo 62 · avisar cuando el otro aparato piso algo");
+
+// Lo tocado se anota desde el mismo sitio que ya lo marca, no a mano.
+{
+  const src = sacarFuncion("_marcarCambiados");
+  ok(/_anotarTocado\(clave,\s*id\)/.test(src),
+     "_marcarCambiados anota lo que marca (no hay que tocar cada funcion)");
+  const src2 = sacarFuncion("_marcarObjetosCambiados");
+  ok((src2.match(/_anotarTocado\("@"\+campo/g) || []).length === 2,
+     "y _marcarObjetosCambiados lo anota en sus dos ramas");
+  ok(/_marcarCambiados\(S\[k\],\s*window\._fotoPorCampo\[k\],\s*ids\[k\]\|\|"id",\s*k\)/
+       .test(sacarFuncion("_marcarTodoLoQueSeFusiona")),
+     "y le pasa el nombre del campo, para que el aviso sepa de que habla");
+}
+
+// El primer guardado tras abrir no anota nada: sin foto previa se anota, no se
+// marca (ARREGLO 33). Si anotara, el aviso saltaria al abrir la app.
+F._pruebaTocado({});
+global.window._fotoPorCampo = {};
+const _arr = [{id: "a", saldo: 10}];
+F._marcarCambiados(_arr, global.window._fotoPorCampo.cuentas = {}, "id", "cuentas");
+ok(Object.keys(F._pruebaTocado()).length === 0,
+   "el primer guardado tras abrir no anota nada");
+_arr[0].saldo = 20;
+F._marcarCambiados(_arr, global.window._fotoPorCampo.cuentas, "id", "cuentas");
+ok(F._pruebaTocado().cuentas && F._pruebaTocado().cuentas.a === true,
+   "y el cambio de verdad si queda anotado", JSON.stringify(F._pruebaTocado()));
+
+// El cajon se vacia al mandar, y vuelve entero si el envio no llego.
+const _llevado = F._tomarTocado();
+ok(Object.keys(F._pruebaTocado()).length === 0, "al mandar, el cajon queda vacio");
+F._unirTocado(F._pruebaTocado(), _llevado);
+ok(F._pruebaTocado().cuentas.a === true, "y si el envio falla, lo tocado vuelve entero");
+
+// El nucleo: que solo avise del choque.
+const _mando = {
+  cuentas: [{id: "c1", nombre: "Banco de Venezuela", saldo: 198619.9},
+            {id: "c2", nombre: "Binance", saldo: 800}],
+  config: {aperturaUsdt: 2544.79, aperturaFecha: "2026-09-11"}
+};
+const _volvio = {
+  cuentas: [{id: "c1", nombre: "Banco de Venezuela", saldo: 198619.9},
+            {id: "c2", nombre: "Binance", saldo: 915},          // lo cambio el otro
+            {id: "c3", nombre: "Cuenta nueva del otro", saldo: 5}],
+  config: {aperturaUsdt: 2450.20, aperturaFecha: "2026-09-12"}
+};
+// Este aparato solo toco c1 y la apertura.
+const _soloC1 = F._conflictosConElServidor(_mando, _volvio, {cuentas: {c1: true}});
+ok(_soloC1.length === 0,
+   "lo que cambio el OTRO aparato no avisa: eso es sincronizacion, no un choque",
+   JSON.stringify(_soloC1));
+const _choque = F._conflictosConElServidor(_mando, _volvio, {cuentas: {c2: true}});
+ok(_choque.length === 1 && _choque[0].id === "c2",
+   "pero si este aparato tambien lo toco, si avisa");
+ok(_choque[0].campos.length === 1 && _choque[0].campos[0].campo === "saldo" &&
+   _choque[0].campos[0].mio === "800" && _choque[0].campos[0].suyo === "915",
+   "y dice que campo, que mandaste y que tenia el otro", JSON.stringify(_choque[0].campos));
+
+// La tercera columna: lo que QUEDO. El servidor devuelve una cosa y despues
+// _aplicarEstadoDeApi vuelve a fusionar aqui con las marcas de este aparato,
+// asi que lo que queda puede no ser ninguna de las dos. Medido en el navegador:
+// el servidor devolvia 915, quedaba 801, y el aviso decia "quedo 915".
+S.cuentas = [{id:"c1", nombre:"Banco de Venezuela", saldo:198619.9},
+             {id:"c2", nombre:"Binance", saldo:801}];
+F._completarConLoQueQuedo(_choque);
+ok(_choque[0].campos[0].quedo === "801",
+   "y 'quedo' se lee de lo que ella ve, no de lo que devolvio el servidor",
+   _choque[0].campos[0].quedo);
+ok(_choque[0].campos[0].quedoMio === false && _choque[0].campos[0].quedoSuyo === false,
+   "si no quedo ni lo tuyo ni lo del otro, no se dice que si");
+S.cuentas[1].saldo = 915;
+const _gano = F._conflictosConElServidor(_mando, _volvio, {cuentas:{c2:true}});
+F._completarConLoQueQuedo(_gano);
+ok(_gano[0].campos[0].quedo === "915" && _gano[0].campos[0].quedoSuyo === true,
+   "y cuando gana el otro aparato, lo dice");
+S.cuentas = [];
+ok(/Cuenta · Binance/.test(_choque[0].etiqueta),
+   "con el nombre que ella usa, no el identificador interno", _choque[0].etiqueta);
+const _nueva = F._conflictosConElServidor(_mando, _volvio, {cuentas: {c1: true, c2: true}});
+ok(_nueva.length === 1, "una cuenta que solo tiene el otro aparato nunca es un choque");
+
+// La apertura: las cinco claves viajan juntas (ARREGLO 60) y el choque se ve.
+const _cfg = F._conflictosConElServidor(_mando, _volvio,
+  {"@config": {aperturaUsdt: true, aperturaFecha: true}});
+ok(_cfg.length === 2, "el choque de la apertura sale clave por clave");
+ok(_cfg.some(function (c) { return /Saldo de apertura/.test(c.etiqueta); }),
+   "y 'aperturaUsdt' se dice 'Saldo de apertura'", JSON.stringify(_cfg.map(c => c.etiqueta)));
+
+// Un registro que el otro aparato borro no puede pasar por un cambio de campo.
+const _sinC2 = {cuentas: [{id: "c1", nombre: "Banco de Venezuela", saldo: 198619.9}], config: {}};
+const _borr = F._conflictosConElServidor(_mando, _sinC2, {cuentas: {c2: true}});
+ok(_borr.length === 1 && _borr[0].borrado === true,
+   "y si el otro lo borro, lo dice con esas palabras");
+
+// _mod y "n" no son datos: si cambiaran solos, el aviso saltaria por nada.
+const _soloMod = F._conflictosConElServidor(
+  {brl: [{_uid: "u1", n: 4, cl: "Rudi", total: 500, _mod: 1}]},
+  {brl: [{_uid: "u1", n: 9, cl: "Rudi", total: 500, _mod: 2}]},
+  {brl: {u1: true}});
+ok(_soloMod.length === 0, "la marca y el numero de fila no cuentan como choque",
+   JSON.stringify(_soloMod));
+
+// Los clientes vienen por su propia ruta y el bloque de estado puede traer una
+// copia vieja que la app ignora a proposito. Avisar de ella seria avisar de algo
+// que ni siquiera se va a aplicar.
+{
+  const src = sacarFuncion("_conflictosConElServidor");
+  ok(/clave==="clientes"\s*&&\s*_CLIENTES_DESDE_API/.test(src),
+     "la copia vieja de clientes del bloque de estado no puede hacer saltar el aviso");
+}
+
+// El aviso se ve, y se ve fuera de la zona que hace scroll.
+F._completarConLoQueQuedo(_choque);
+F._pruebaPisados(_choque, false);
+const _av = F._htmlAvisoPisado();
+ok(/El otro dispositivo tambi[eé]n cambi[oó]/.test(_av), "el aviso dice lo que pasa");
+ok(/Ver qu[eé] cambi[oó]/.test(_av) && /Entendido/.test(_av),
+   "y se puede abrir el detalle o darlo por visto");
+ok(!/Binance/.test(_av), "plegado no enseña el detalle");
+F._pruebaPisados(undefined, true);
+ok(/Binance/.test(F._htmlAvisoPisado()), "desplegado si");
+ok(/el otro ten[ií]a/.test(F._htmlAvisoPisado()) && /qued[oó]/.test(F._htmlAvisoPisado()),
+   "y ensena los tres valores: lo tuyo, lo del otro y lo que quedo");
+F._pruebaPisados([], false);
+ok(F._htmlAvisoPisado() === "", "y sin choques no ocupa ni un pixel");
+ok(/_htmlAvisoPisado\(\)\+\s*\n?\s*"<div class='navbar3'>"/.test(HTML.replace(/\/\/[^\n]*\n/g, "\n")),
+   "el aviso va arriba del panel, fuera del scroll");
+
+// Y que nadie vuelva a adoptar en silencio.
+{
+  const src = sacarFuncion("_dobleEnviarAhora");
+  ok(/_conflictosConElServidor\(obj,\s*d\.estado,\s*_tocado\)/.test(src),
+     "se compara ANTES de adoptar lo del servidor");
+  ok(src.indexOf("_conflictosConElServidor") < src.indexOf("var _cambio=_aplicarEstadoDeApi"),
+     "y el orden es ese: comparar, despues adoptar");
+  ok(src.indexOf("var _cambio=_aplicarEstadoDeApi") < src.indexOf("_completarConLoQueQuedo"),
+     "y 'lo que quedo' se lee DESPUES de adoptar, que es cuando se sabe");
+}
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

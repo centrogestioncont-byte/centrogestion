@@ -186,6 +186,44 @@ de ese día cuentan (−85,55, diferencia −76,38); con la del 12 quedan antes 
 apertura y la pantalla dice "ninguno" (+11,85). **Si un grupo de claves solo
 tiene sentido junto, va en `_MERGE_BLOQUES`**: entra entero o no entra.
 
+### Adoptar la respuesta del servidor está bien; adoptarla en silencio, no
+
+El servidor fusiona bajo candado y el aparato **adopta** lo que contesta. Eso es
+lo correcto —es lo que evita que el último que guarda borre al otro— pero se
+hacía sin decir nada: si el teléfono tenía la apertura del 11 y la PC la del 12,
+uno perdía y la pantalla cambiaba sola. Sus palabras: *"que uno diga algo y el
+otro equipo otro"*.
+
+**No se avisa de todo lo que cambia el servidor.** Casi todo lo que vuelve
+distinto es lo que el otro aparato registró mientras tanto: eso es
+sincronización normal y avisarlo sería ruido en cada guardado. Se avisa **solo
+del choque**: un registro que ESTE aparato acaba de cambiar y que el servidor
+devuelve distinto de como se mandó.
+
+- **De dónde sale "lo que este aparato acaba de cambiar":** del mismo sitio que
+  ya lo calcula para marcarlo, `_marcarCambiados()` y
+  `_marcarObjetosCambiados()`. `_anotarTocado()` se llama ahí y en ningún otro
+  lado — anotarlo función por función es el mismo camino que ya falló cuatro
+  veces. Una función nueva queda cubierta sola.
+- **Lo anotado se lleva al mandar y vuelve si el envío no llega**
+  (`_tomarTocado()` / `_unirTocado()`). Lo que ella registre mientras el
+  guardado viaja no se confunde con lo que iba dentro.
+- **El aviso son TRES valores, no dos:** lo que mandó este aparato, lo que traía
+  el otro y **lo que quedó**. No son lo mismo: el servidor fusiona a su manera y
+  después `_aplicarEstadoDeApi()` vuelve a fusionar aquí con las marcas de este
+  dispositivo, así que lo que queda puede no ser ninguna de las dos cosas que se
+  compararon. Medido: el servidor devolvía 915, quedaba 801, y el aviso decía
+  "quedó 915". Por eso `_completarConLoQueQuedo()` se llama **después** de
+  adoptar y lee de `S`, que es lo que ella ve. Un aviso que miente se deja de
+  mirar.
+- **Los clientes se excluyen.** Tienen su propia ruta (`/clientes`) y
+  `_aplicarEstadoDeApi` ignora a propósito la copia que venga en el bloque de
+  estado. Avisar de ella sería avisar de algo que ni se va a aplicar.
+- El aviso va **arriba del panel, fuera de la zona que hace scroll**, y queda
+  hasta que ella lo cierra. El historial de choques vive en Configuración
+  (`_htmlHistorialPisados()`), para cuando diga "esto lo cambié yo y volvió
+  atrás".
+
 Cuando el dueño diga que algo "se revirtió solo" o "volvió a aparecer",
 **empieza por aquí**: casi siempre es un dato que llegó sin marca.
 
