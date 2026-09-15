@@ -1472,7 +1472,12 @@ function autorizar(accion){
 // CIFRAR dentro de S.config, y config viaja al servidor en cada guardado.
 // Nadie lee ya esas claves, pero mientras sigan ahi los PIN andan en claro
 // por todos los dispositivos.
-var _CONFIG_PROHIBIDO = ["usuarios","pins"];
+// Claves que ya no son datos y no tienen que volver del servidor. "usuarios" y
+// "pins" eran los perfiles locales con el PIN en claro. "modulos" son los
+// permisos por rol de la FASE B: si se quedaran, un aparato viejo los seguiria
+// mandando y el bloque de estado cargaria para siempre con un permiso que ya
+// no decide nada.
+var _CONFIG_PROHIBIDO = ["usuarios","pins","modulos"];
 function _limpiarConfig(cfg){
   if(!cfg || typeof cfg!=="object") return 0;
   var n=0;
@@ -8002,6 +8007,106 @@ function claveUsuarioApi(id,nombre){
     return _usrResultado(r,function(){ alert("Clave cambiada. Sus sesiones abiertas se cerraron."); });
   }).catch(function(){ alert("Sin conexión con el servidor."); });
 }
+var _ETIQUETA_ROL={admin:"Administrador",brl:"Operador BRL",vzla:"Operador VZLA",eeuu:"Operador EE.UU",lector:"Supervisor"};
+
+// ── FASE B · los permisos de una persona ──────────────────────────────────
+// Se editan en una tarjeta que se abre dentro de su ficha y NO se guarda sola
+// casilla por casilla: se marca todo lo que haga falta y se pulsa Guardar. Un
+// guardado por clic serían quince viajes al servidor para un cambio que ella
+// piensa como uno solo, y a medio camino la persona se queda con permisos que
+// nadie quiso darle.
+function abrirPermisosUsuario(id){
+  var u=(S._usrLista||[]).find(function(x){return x.id===id;});
+  if(!u) return;
+  // Se parte de lo que ya tiene decidido; lo que no, queda como lo dice su rol.
+  var actual={};
+  PERMISOS_APP.forEach(function(p){
+    var v=(u.permisos||{})[p.k];
+    actual[p.k] = (typeof v==="boolean") ? v : _permisoPorOmision(u.rol,p.k);
+  });
+  S._permUsr=id; S._permVal=actual; R();
+}
+function cerrarPermisosUsuario(){ S._permUsr=null; S._permVal=null; R(); }
+function togglePermisoUsuario(k,val){
+  if(!S._permVal) return;
+  S._permVal[k]=!!val;
+  // Sin R(): repintar mientras ella marca casillas rehace el HTML y cierra la
+  // tarjeta bajo el dedo. Es el mismo motivo del ARREGLO 32.
+}
+// Volver al punto de partida del rol: para cuando se enreda y quiere empezar
+// de nuevo sin cerrar y volver a abrir.
+function permisosDelRol(id){
+  var u=(S._usrLista||[]).find(function(x){return x.id===id;});
+  if(!u) return;
+  var v={};
+  PERMISOS_APP.forEach(function(p){ v[p.k]=_permisoPorOmision(u.rol,p.k); });
+  S._permVal=v; R();
+}
+function guardarPermisosUsuario(id){
+  var u=(S._usrLista||[]).find(function(x){return x.id===id;});
+  if(!u||!S._permVal) return;
+  // Se manda la lista COMPLETA, con su true o su false explícito. Mandar solo
+  // lo marcado dejaría lo demás "sin decidir", y sin decidir vuelve a valer lo
+  // del rol: quitar un permiso no habría quitado nada.
+  var permisos={};
+  PERMISOS_APP.forEach(function(p){ permisos[p.k]=!!S._permVal[p.k]; });
+  apiFetch("/usuarios/"+id,{method:"PUT",body:{permisos:permisos}}).then(function(r){
+    return _usrResultado(r,function(){
+      S._permUsr=null; S._permVal=null;
+      alert("Permisos guardados para "+(u.nombre||"")+".\n\nSi tiene la app abierta, los ve al volver a entrar o al traerla al frente.");
+    });
+  }).catch(function(){ alert("Sin conexión con el servidor. No se cambió nada."); });
+}
+
+function _htmlPermisosUsuario(u){
+  if(S._permUsr!==u.id) return "";
+  var v=S._permVal||{};
+  var filas=PERMISOS_APP.map(function(p){
+    var on=!!v[p.k];
+    var propio=typeof (u.permisos||{})[p.k]==="boolean";
+    return "<label style='display:flex;align-items:center;gap:9px;padding:7px 2px;border-bottom:1px solid #f4f4f4;cursor:pointer'>"+
+      "<input type='checkbox' "+(on?"checked":"")+" onchange='togglePermisoUsuario(\""+p.k+"\",this.checked)' "+
+        "style='width:17px;height:17px;cursor:pointer;flex-shrink:0'>"+
+      "<span style='flex:1;font-size:12px;"+(p.fuerte?"font-weight:800;color:#16233d":"color:#444")+"'>"+p.n+
+        (p.d?"<span style='font-size:10px;color:#9aa3b5;font-weight:400'> · "+p.d+"</span>":"")+"</span>"+
+      (propio?"":"<span style='font-size:9px;color:#b5bcc9;flex-shrink:0'>por su rol</span>")+
+    "</label>";
+  }).join("");
+  return "<div style='border:1.5px solid #1a6b3c;border-radius:10px;padding:12px;margin-top:10px;background:#F6FBF8'>"+
+    "<div style='font-size:11px;font-weight:800;color:#0b4d27;margin-bottom:4px'>PERMISOS DE "+_escAud((u.nombre||"").toUpperCase())+"</div>"+
+    "<div style='font-size:10px;color:#6b7a70;line-height:1.6;margin-bottom:9px'>"+
+      "Lo que no hayas tocado vale lo que diga su rol (<b>"+_escAud(_ETIQUETA_ROL[u.rol]||u.rol)+"</b>) y sale marcado "+
+      "«por su rol». En cuanto guardes, queda fijado para esta persona.</div>"+
+    "<div style='background:#fff;border:1px solid #e6efe9;border-radius:9px;padding:4px 10px;max-height:44vh;overflow-y:auto'>"+filas+"</div>"+
+    // Esto es lo que NO hay que disfrazar: solo "editar" lo hace cumplir el
+    // servidor. El resto decide lo que ve en la app, no a lo que puede llegar.
+    "<div style='font-size:10px;color:#7a6a50;background:#FFFBEA;border:1px solid #F5C518;border-radius:8px;padding:8px 10px;margin-top:9px;line-height:1.6'>"+
+      "<b>Registrar y modificar</b> lo hace cumplir el servidor: sin eso, nada de lo que toque se guarda. "+
+      "Las demás casillas deciden <b>qué ve dentro de la app</b>. Los datos llegan al equipo igual, así que "+
+      "para alguien en quien no confíes del todo, lo que manda es quitarle <b>Registrar y modificar</b> — o desactivarlo.</div>"+
+    "<div style='display:flex;gap:6px;margin-top:10px;flex-wrap:wrap'>"+
+      "<button type='button' onclick='guardarPermisosUsuario(\""+u.id+"\")' style='padding:9px 15px;background:#1a6b3c;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:800;cursor:pointer;font-family:inherit'>Guardar permisos</button>"+
+      "<button type='button' onclick='permisosDelRol(\""+u.id+"\")' style='padding:9px 13px;background:#fff;border:1px solid #ddd;border-radius:8px;font-size:12px;cursor:pointer;font-family:inherit'>Volver a los de su rol</button>"+
+      "<button type='button' onclick='cerrarPermisosUsuario()' style='padding:9px 13px;background:#fff;border:1px solid #ddd;border-radius:8px;font-size:12px;cursor:pointer;font-family:inherit'>Cancelar</button>"+
+    "</div>"+
+  "</div>";
+}
+
+// Lo que esa persona puede ver hoy, en una línea, sin abrir nada.
+function _resumenPermisos(u){
+  var n=0, total=0, tocados=0;
+  PERMISOS_APP.forEach(function(p){
+    if(p.k==="editar") return;
+    total++;
+    var val=(u.permisos||{})[p.k];
+    if(typeof val==="boolean"){ tocados++; if(val) n++; }
+    else if(_permisoPorOmision(u.rol,p.k)) n++;
+  });
+  var puedeEditar = (typeof (u.permisos||{}).editar==="boolean")
+    ? u.permisos.editar : _permisoPorOmision(u.rol,"editar");
+  return (puedeEditar?"✏️ registra":"👁️ solo mira")+" · "+n+" de "+total+" pantallas"+
+    (tocados?"":" (las de su rol)");
+}
 function rUsuariosApi(){
   var aviso="<div style='background:#FFFBEA;border:1.5px solid #F5C518;border-radius:9px;padding:9px 12px;margin-bottom:12px;font-size:11px;color:#7a5c00;line-height:1.5'>"+
     "Ésta es la lista completa de quienes pueden entrar. Desactivar a alguien acá le "+
@@ -8019,7 +8124,7 @@ function rUsuariosApi(){
       (S._usrError||"No se pudo cargar.")+"</div>"+
       "<button type='button' onclick='cargarUsuariosApi()' style='margin-top:10px;padding:9px 14px;border:1px solid #ddd;background:#fff;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Reintentar</button>";
   }
-  var etiqueta={admin:"Administrador",brl:"Operador BRL",vzla:"Operador VZLA",eeuu:"Operador EE.UU",lector:"Supervisor"};
+  var etiqueta=_ETIQUETA_ROL;   // en un solo sitio: lo usa tambien la tarjeta de permisos
   var filas=(S._usrLista||[]).map(function(u){
     var opciones=["admin","brl","vzla","eeuu","lector"].map(function(r){
       return "<option value='"+r+"'"+(u.rol===r?" selected":"")+">"+etiqueta[r]+"</option>";
@@ -8031,15 +8136,23 @@ function rUsuariosApi(){
           "<div style='font-size:13px;font-weight:700;color:"+(u.activo?"#16233d":"#999")+"'>"+(u.nombre||"")+
             (u.activo?"":" <span style='font-size:10px;font-weight:800;color:#c0392b'>· DESACTIVADO</span>")+"</div>"+
           "<div style='font-size:10px;color:#9aa3b5;word-break:break-all'>"+(u.correo||"")+"</div>"+
+          "<div style='font-size:10px;color:#1a6b3c;font-weight:700;margin-top:3px'>"+_resumenPermisos(u)+"</div>"+
         "</div>"+
         "<select onchange='cambiarRolUsuarioApi(\""+u.id+"\",this.value)' style='font-size:11px;padding:6px 8px;border:1px solid #ddd;border-radius:7px'>"+opciones+"</select>"+
       "</div>"+
       "<div style='display:flex;gap:6px;margin-top:9px;flex-wrap:wrap'>"+
+        // El Administrador no lleva casillas: las ve todas por definicion, y
+        // una tarjeta con quince casillas marcadas que no se pueden desmarcar
+        // solo confunde.
+        (u.rol==="admin"
+          ?"<span style='padding:6px 10px;font-size:11px;color:#9aa3b5'>El Administrador ve todo</span>"
+          :"<button type='button' onclick='abrirPermisosUsuario(\""+u.id+"\")' style='padding:6px 10px;font-size:11px;border:1px solid #1a6b3c;background:#F6FBF8;color:#0b4d27;border-radius:7px;cursor:pointer;font-weight:700'>🔒 Permisos</button>")+
         "<button type='button' onclick='claveUsuarioApi(\""+u.id+"\",\""+nombreSeguro+"\")' style='padding:6px 10px;font-size:11px;border:1px solid #ddd;background:#fff;border-radius:7px;cursor:pointer'>🔑 Clave nueva</button>"+
         (u.activo
           ?"<button type='button' onclick='activarUsuarioApi(\""+u.id+"\",false,\""+nombreSeguro+"\")' style='padding:6px 10px;font-size:11px;border:1px solid #e6a8a0;background:#FDECEA;color:#8b1a10;border-radius:7px;cursor:pointer;font-weight:700'>Desactivar</button>"
           :"<button type='button' onclick='activarUsuarioApi(\""+u.id+"\",true,\""+nombreSeguro+"\")' style='padding:6px 10px;font-size:11px;border:1px solid #7bc49a;background:#D6F5E3;color:#0b4d27;border-radius:7px;cursor:pointer;font-weight:700'>Reactivar</button>")+
       "</div>"+
+      _htmlPermisosUsuario(u)+
     "</div>";
   }).join("");
 
@@ -8080,7 +8193,6 @@ function _cfgAcc(id,icon,title,subtitle,color,bodyHtml,defaultOpen){
 }
 function rConfigAdmin(){
   if(!S.config) S.config={};
-  if(!S.config.modulos) S.config.modulos={};
   if(!S.config.tasasDia) S.config.tasasDia={};
   if(!S.config.socios) S.config.socios=[];
   // Auto-seed socio EE.UU (Paul) si no existe — editable igual que los demás
@@ -8220,16 +8332,16 @@ function rConfigAdmin(){
     "</div>"+
     "<button onclick='saveTasasConfig()' style='background:#e67e22;color:#fff;border:none;padding:11px 20px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;width:100%'>💾 Guardar tasas del día</button>";
 
-  // Permisos
-  var mods=S.config.modulos||{};
-  var permRows=["nueva","clientes","egresos"].map(function(mod){
-    var label=mod==="nueva"?"➕ Operación":mod==="clientes"?"👥 Clientes":"💸 Egresos";
-    return "<tr><td style='padding:10px 12px;font-size:12px;font-weight:600'>"+label+"</td>"+
-      ["brl","vzla","eeuu"].map(function(role){
-        var key=role+"_"+mod;var on=(mods[key]===undefined)?true:mods[key];
-        return "<td style='text-align:center;padding:10px 12px'><input type='checkbox' "+(on?"checked":"")+" onchange='toggleModulo(\'"+ key +"\',this.checked)' style='width:16px;height:16px;cursor:pointer'></td>";
-      }).join("")+"</tr>";
-  }).join("");
+  // FASE B: aqui vivia "Permisos por operador", tres casillas por ROL guardadas
+  // en S.config.modulos. Se retiro. Eran por rol —dos personas con el mismo rol
+  // no podian tener permisos distintos, que es justo lo que ella pedia— y
+  // viajaban dentro del bloque que se sincroniza, o sea que eran de los datos
+  // que se pisan entre aparatos: un permiso que se revierte solo es peor que no
+  // tener permisos. Ahora se dan persona por persona, dentro de Usuarios, y los
+  // guarda Mongo.
+  //
+  // Comprobado en su export antes de quitarla: S.config.modulos estaba VACIO,
+  // asi que no habia ni una casilla desmarcada que rescatar.
 
 
   // ── UI Socios ────────────────────────────────────────────────
@@ -8511,14 +8623,6 @@ function rConfigAdmin(){
         "<button onclick='agregarRutaExtra()' style='background:#2196F3;color:#fff;border:none;padding:9px 16px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;margin-top:14px'>Agregar</button>"+
       "</div></div>";
 
-  var permisosBody=
-      "<table style='width:100%;border-collapse:collapse;font-size:12px'>"+
-        "<thead><tr style='background:#f9f9f9'><th style='padding:10px 12px;text-align:left;font-size:11px;color:#888'>MÓDULO</th>"+
-        "<th style='padding:10px 12px;text-align:center;font-size:11px;color:#888'>🇧🇷 BRL</th>"+
-        "<th style='padding:10px 12px;text-align:center;font-size:11px;color:#888'>🇻🇪 VZLA</th>"+
-        "<th style='padding:10px 12px;text-align:center;font-size:11px;color:#888'>🇺🇸 EE.UU</th>"+
-        "</tr></thead><tbody>"+permRows+"</tbody></table>";
-
   return sociosUI+ ntfySec+
     "<div style='background:linear-gradient(135deg,#1b1e24,#4a3a12);border-radius:16px;padding:16px 18px;margin-bottom:14px;color:#fff;box-shadow:0 4px 14px rgba(0,0,0,.15)'>"+
       "<div style='font-size:16px;font-weight:900'>⚙️ Configuración del sistema</div>"+
@@ -8528,9 +8632,8 @@ function rConfigAdmin(){
     _cfgAcc("categorias","🏷️","Categorías","empresa y personales","#7b2d8b",categoriasBody,false)+
     _cfgAcc("rutas","🛣️","Rutas de operación",null,"#2196F3",rutasBody,false)+
     _cfgAcc("tasas","📊","Tasas del día","solo afecta nuevos registros","#e67e22",tasasHTML,false)+
-    _cfgAcc("usuarios_api","👥","Usuarios","correo y clave · la unica forma de entrar","#372c9e",rUsuariosApi(),false)+
+    _cfgAcc("usuarios_api","👥","Usuarios y permisos","quién entra y qué ve cada uno","#372c9e",rUsuariosApi(),false)+
     _cfgAcc("comparacion_api","⚖️","Comparación con la API","control de la migración","#b8752a",rComparacionApi(),false)+
-    _cfgAcc("permisos","🔒","Permisos por operador",null,"#1a6b3c",permisosBody,false)+
     _cfgAcc("pisados","🔀","Cambios que chocaron entre dispositivos",
       (function(){ var n=_leerPisados().length; return n?(n+" "+(n===1?"vez":"veces")):"ninguno todavía"; })(),
       "#E08A00", _htmlHistorialPisados(), false)+
@@ -9817,14 +9920,6 @@ function saveCap(){
 }
 
 
-function toggleModulo(key, enabled){
-  if(!S.config) S.config={};
-  if(!S.config.modulos) S.config.modulos={};
-  S.config.modulos[key]=enabled;
-  // Update tabs dynamically
-  saveData();
-  R();
-}
 
 
 function saveTasasConfig(){
@@ -10622,7 +10717,7 @@ function startAutoSync(){
   // Esto ademas levanta el detector de conexion mas rapido que antes.
   try{
     document.addEventListener("visibilitychange", function(){
-      if(!document.hidden){ _ultimoPoll=0; fbCheckREST(); }
+      if(!document.hidden){ _ultimoPoll=0; fbCheckREST(); _refrescarMisPermisos(); }
     });
   }catch(e){}
   // Renovar la sesión cada minuto mientras haya alguien logueado, para que
@@ -11550,9 +11645,135 @@ function revertirSaldosTraspaso(t){
 
 // ── Permisos granulares ────────────────────────────────────────────
 
+// ══════════════════════════════════════════════════════════════════════
+// FASE B (15/09/2026) — los permisos son de la PERSONA, no del rol
+//
+// Sus palabras: "no sirve para yo dar un usuario a otra persona con ciertos
+// permisos que yo como administradora total le otorgue".
+//
+// Antes había DOS sistemas de permisos y ninguno hacía eso:
+//
+//  · S.config.modulos — tres casillas (nueva/clientes/egresos) por ROL, no
+//    por persona, así que dos personas con el mismo rol no podían tener
+//    permisos distintos. Y vivía dentro del bloque que se sincroniza, o sea
+//    que era de los datos que se pisan entre aparatos: un permiso que se
+//    revierte solo es peor que no tener permisos.
+//  · permisos del servidor — sí son por persona y sí los guarda Mongo, pero
+//    la app NUNCA los mandaba (POST/PUT /usuarios solo enviaban el rol) y
+//    solo los consultaba para el Administrador y el Supervisor. Para un
+//    operador no se miraban en ninguna parte.
+//
+// Ahora hay uno solo: lo que guarda Mongo para esa persona. El rol pasa a ser
+// lo que era de verdad —un punto de partida—, y cada casilla se puede mover
+// persona por persona.
+//
+// LO QUE ESTO ES Y LO QUE NO ES. El servidor guarda TODO el estado en un solo
+// bloque y lo entrega entero a quien tenga sesión: no hay forma de que una
+// remesa no le llegue al navegador de un operador. Lo único que el servidor
+// hace cumplir de verdad es "editar" (contesta 403 al guardar). Las demás
+// casillas deciden QUÉ VE en la app, no a qué puede llegar. Está escrito en
+// la pantalla, porque un candado que parece candado y no lo es es peor que
+// no tener ninguno.
+// ══════════════════════════════════════════════════════════════════════
+
+// Cada permiso, con el nombre que ella usa y en el orden en que los piensa.
+var PERMISOS_APP = [
+  {k:"editar",          n:"Registrar y modificar",    d:"sin esto solo puede mirar", fuerte:true},
+  {k:"dash",            n:"📊 Resumen"},
+  {k:"diario",          n:"📅 Diario"},
+  {k:"ops",             n:"📋 Operaciones"},
+  {k:"nueva",           n:"➕ Nueva operación"},
+  {k:"nueva_eeuu",      n:"➕ Nueva EE.UU"},
+  {k:"clientes",        n:"👥 Clientes"},
+  {k:"prestamos",       n:"🤝 Préstamos"},
+  {k:"cobrar",          n:"💳 Por cobrar"},
+  {k:"egresos",         n:"💸 Egresos"},
+  {k:"inventario_usdt", n:"📦 Inventario USDT"},
+  {k:"capital_total",   n:"💰 Balance de cuentas"},
+  {k:"traspasos",       n:"🔄 Traspasos"},
+  {k:"calculadora",     n:"🧮 Tasas"},
+  {k:"evolucion",       n:"📈 Evolución y salud"},
+  {k:"cierre",          n:"🗓️ Cierre de mes"},
+  {k:"dash_eeuu",       n:"📊 Resumen EE.UU"},
+  {k:"mi_ganancia",     n:"📊 Balance mensual propio"},
+  {k:"op_diario",       n:"📋 Sus operaciones del día"},
+  {k:"auditoria",       n:"📋 Auditoría"},
+  {k:"config_admin",    n:"⚙️ Configuración"}
+];
+
+// Qué trae puesto cada rol. Esto NO es el permiso: es lo que vale cuando la
+// persona todavía no tiene esa casilla decidida.
+//
+// Y es lo que hace que nada se rompa al desplegar: todos los usuarios que hay
+// hoy tienen `permisos` casi vacío, así que sin estos valores por omisión
+// pasar a mirar los permisos para TODOS los roles —cosa que antes no se
+// hacía— les habría cerrado la app entera de golpe. Cada rol arranca
+// exactamente con lo que veía ayer.
+var PERMISOS_POR_ROL = {
+  // El Administrador no se toca: es ella.
+  admin:  "*",
+  // El Supervisor ve todo y no modifica. Eso ES el rol.
+  lector: {todo:true, salvo:["editar"]},
+  brl:    {si:["editar","mi_ganancia","op_diario","nueva","clientes"]},
+  vzla:   {si:["editar","mi_ganancia","op_diario","nueva","clientes"]},
+  eeuu:   {si:["editar","mi_ganancia","op_diario","nueva_eeuu","clientes","dash_eeuu"]}
+};
+
+function _permisoPorOmision(rol, k){
+  var d=PERMISOS_POR_ROL[rol];
+  if(d==="*") return true;
+  if(!d) return false;
+  if(d.todo) return (d.salvo||[]).indexOf(k)===-1;
+  return (d.si||[]).indexOf(k)!==-1;
+}
+
+// La pestaña y el permiso no siempre se llaman igual. Una pestaña sin entrada
+// aquí no se filtra: es de las que no tienen puerta (el menú de un operador,
+// por ejemplo, o el historial).
+var PERMISO_DE_TAB = {
+  dash:"dash", diario:"diario", ops:"ops", brl:"ops", vzla:"ops", eeuu:"ops",
+  evolucion:"evolucion", salud_financiera:"evolucion", cierre:"cierre",
+  nueva:"nueva", nueva_eeuu:"nueva_eeuu", clientes:"clientes",
+  prestamos:"prestamos", cobrar:"cobrar", egresos:"egresos",
+  inventario_usdt:"inventario_usdt", capital_total:"capital_total",
+  traspasos:"traspasos", calculadora:"calculadora", auditoria:"auditoria",
+  config_admin:"config_admin", dash_eeuu:"dash_eeuu",
+  mi_ganancia:"mi_ganancia", op_diario:"op_diario"
+};
+
 // Los permisos los manda el servidor: son los que guarda Mongo para ese
 // usuario. Los perfiles locales —los de S.config.usuarios, que llevaban el
 // PIN en claro— se retiraron con el acceso por PIN.
+// FASE B: los permisos se leen de la sesion guardada en ESTE navegador, y esa
+// copia solo se refrescaba al abrir la app. O sea: ella le quitaba un permiso a
+// alguien y esa persona lo conservaba el resto del dia, con la app abierta.
+//
+// Esto vuelve a preguntar "/auth/yo" cuando la app vuelve al frente —que es
+// cuando la persona la retoma— y repinta solo si algo cambio de verdad. Va a
+// ciegas: sin respuesta se sigue con lo que hay, como con cualquier otra
+// llamada.
+function _refrescarMisPermisos(){
+  if(!apiSesionActiva() || _API_BLOQUEADA || !_API_ENTRO_POR_API) return;
+  var ses=_apiSesionGuardada(); if(!ses||!ses.t) return;
+  var antes=JSON.stringify({r:(ses.u||{}).rol, p:(ses.u||{}).permisos||{}});
+  apiFetch("/auth/yo").then(function(r){
+    if(r.status===401){ _apiBorrarSesionLocal(); S.role=null; _borrarSesion(); R(); return null; }
+    if(!r.ok) return null;
+    return r.json();
+  }).then(function(d){
+    if(!d||!d.ok||!d.usuario) return;
+    _apiGuardarSesion(ses.t, d.usuario, true);
+    var ahora=JSON.stringify({r:d.usuario.rol, p:d.usuario.permisos||{}});
+    if(ahora!==antes){
+      // El rol decide el menu y los colores, asi que si cambio hay que
+      // aplicarlo, no solo repintar.
+      if(d.usuario.rol!==(ses.u||{}).rol) _loginApiAplicar(d.usuario,false);
+      try{ R(); }catch(e){}
+      console.log("Permisos actualizados desde el servidor.");
+    }
+  }).catch(function(){});
+}
+
 function _permisosApi(){
   if(!_API_ENTRO_POR_API) return null;
   try{
@@ -11565,13 +11786,17 @@ function _permisosApi(){
 function tienePermiso(perm){
   var api=_permisosApi();
   if(api){
+    // El Administrador no se filtra: es la dueña.
     if(api.rol==="admin") return true;
-    // El Supervisor ve todo y no modifica: eso ES el rol, tanto aca como en
-    // el servidor. Antes esta funcion solo miraba los perfiles locales, asi
-    // que un Supervisor que entraba por correo no tenia ninguno y se le
-    // negaba TODA la app: cada pestaña le mostraba "Sin acceso".
-    if(api.rol==="lector") return perm!=="editar" || !!api.permisos.editar;
-    return !!api.permisos[perm];
+    // FASE B: manda lo que Mongo guarda PARA ESA PERSONA. Solo cuando la
+    // casilla no está decidida se cae al valor por omisión de su rol, que es
+    // exactamente lo que esa persona veía antes de existir esta pantalla.
+    // Sin ese respaldo, pasar a mirar los permisos también para los
+    // operadores —cosa que antes no se hacía— les habría cerrado la app
+    // entera el día del despliegue.
+    var p=api.permisos||{};
+    if(typeof p[perm]==="boolean") return p[perm];
+    return _permisoPorOmision(api.rol, perm);
   }
   // Sin sesion de la API no hay permisos: la unica forma de entrar es con
   // correo y clave, asi que llegar aca significa que la sesion se cayo.
@@ -11587,15 +11812,12 @@ function rSinPermiso(seccion){
 }
 
 function permisoEdicion(){
-  var api=_permisosApi();
-  if(api){
-    if(api.rol==="admin") return true;
-    // Para los demas roles decide el permiso guardado en Mongo, que es el
-    // mismo que el servidor aplica en sus propias rutas. Asi la pantalla no
-    // ofrece guardar algo que la API va a rechazar con 403.
-    return !!(api.permisos && api.permisos.editar);
-  }
-  return false;
+  // Una sola puerta: "editar" es un permiso más, y es el ÚNICO que el
+  // servidor hace cumplir por su cuenta (contesta 403 al guardar). Antes esto
+  // leía api.permisos.editar a secas y no respetaba el valor por omisión del
+  // rol, así que un operador recién creado —con permisos vacíos— podía entrar
+  // pero no guardar nada, sin que nada se lo explicara.
+  return tienePermiso("editar");
 }
 
 // ── HELPERS ───────────────────────────────────────────
@@ -12733,18 +12955,18 @@ function rLogin(){
 function rMain(){
   var ro=ROLES.find(function(r){return r.id===S.role;});
   var ts=TABS[S.role]||[];
-  // Filter tabs by admin permissions
-  if(S.role&&S.role!=="admin"&&S.config&&S.config.modulos){
-    ts=ts.filter(function(tab){
-      var modKey=S.role+"_"+tab;
-      // Map tab to module key
-      if(tab==="nueva"||tab==="nueva_eeuu") modKey=S.role+"_nueva";
-      if(tab==="clientes") modKey=S.role+"_clientes";
-      if(tab==="egresos") modKey=S.role+"_egresos";
-      var allowed=S.config.modulos[modKey];
-      return allowed===undefined?true:allowed; // default: allowed
-    });
-  }
+  // FASE B: el menú lo decide el permiso DE LA PERSONA, el mismo que decide si
+  // la pantalla se dibuja. Antes eran dos cosas distintas y no coincidían: el
+  // menú salía de S.config.modulos (tres casillas por ROL, dentro del bloque
+  // que se sincroniza entre aparatos) y el contenido de tienePermiso(), que
+  // solo se miraba para el Administrador y el Supervisor. Una pestaña podía
+  // estar en el menú y contestar "Sin acceso" al tocarla.
+  //
+  // Una pestaña sin entrada en PERMISO_DE_TAB no se filtra: no tiene puerta.
+  ts=ts.filter(function(tab){
+    var k=PERMISO_DE_TAB[tab];
+    return k===undefined || tienePermiso(k);
+  });
   var real=dinReal();
   var nt=gNeta();
   var bgMap={admin:"linear-gradient(135deg,#2D3142,#404565)",lector:"linear-gradient(135deg,#2D3142,#404565)",brl:"linear-gradient(135deg,#0f6e3a,#1a9e55)",vzla:"linear-gradient(135deg,#8B0000,#c0392b)",eeuu:"linear-gradient(135deg,#0a3d7c,#1a6bbf)"};
@@ -12775,34 +12997,41 @@ function rMain(){
   "x";
   var _dummy2="";
   var body="";
-  var isAdmin=S.role==="admin"||S.role==="lector";
+  // FASE B: una sola puerta para todos. Antes cada línea empezaba por
+  // "isAdmin ? ... : ..." —o sea, el permiso solo se consultaba para el
+  // Administrador y el Supervisor— y a un operador se le devolvía CADENA
+  // VACÍA: una pantalla en blanco, sin decir por qué. Con los permisos por
+  // persona eso ya no tiene sentido: si ella le da el permiso, lo ve; si no,
+  // lee "Sin acceso" y a quién pedírselo.
   var tp=function(perm,fn,nombre){return tienePermiso(perm)?fn():rSinPermiso(nombre||perm);};
-  if(S.tab==="dash")               body=isAdmin?rDash():"";
-  else if(S.tab==="dash_eeuu")     body=isAdmin?rDashEE():"";
-  else if(S.tab==="diario")        body=isAdmin?tp("diario",rDiario,"Diario"):"";
-  else if(S.tab==="evolucion")     body=isAdmin?tp("evolucion",rEvolucion,"Evolución"):"";
-  else if(S.tab==="salud_financiera") body=isAdmin?tp("evolucion",rSaludFinanciera,"Salud Financiera"):"";
-  else if(S.tab==="cierre")        body=isAdmin?tp("cierre",rInformeCierre,"Cierre Mensual"):"";
-  else if(S.tab==="ops")           body=isAdmin?tp("ops",rTblUnificada,"Operaciones"):"";
-  else if(S.tab==="brl")           body=isAdmin?tp("ops",function(){return rTbl(S.brl,"brl");},"BRL"):"";
-  else if(S.tab==="vzla")          body=isAdmin?tp("ops",function(){return rTbl(S.vzla,"vzla");},"VZLA"):"";
-  else if(S.tab==="eeuu")          body=isAdmin?tp("ops",rTblEE,"EE.UU"):"";
-  else if(S.tab==="inventario_usdt") body=isAdmin?tp("inventario_usdt",rInventarioUsdt,"Inventario USDT"):"";
-  else if(S.tab==="capital_total") body=isAdmin?tp("capital_total",rCapitalTotal,"Balance de Cuentas"):"";
-  else if(S.tab==="traspasos")     body=isAdmin?tp("traspasos",rTraspasos,"Traspasos"):"";
-  else if(S.tab==="config_admin")  body=isAdmin?tp("config_admin",rConfigAdmin,"Configuración"):"";
-  else if(S.tab==="egresos")       body=isAdmin?tp("egresos",rEgresos,"Egresos"):(S.role==="eeuu"?rDashEE():"");
-  else if(S.tab==="auditoria")     body=isAdmin?tp("auditoria",rAuditoria,"Auditoría"):"";
-  else if(S.tab==="historial")     body=isAdmin?rHistorialMeses():"";
-  else if(S.tab==="nueva")         body=isAdmin?tp("nueva",rNueva,"Nueva Operación"):rNueva();
-  else if(S.tab==="nueva_eeuu")    body=rNuevaEE();
-  else if(S.tab==="mi_ganancia")   body=(S.role==="eeuu"?rDashEE():rMiGanancia());
-  else if(S.tab==="op_diario")     body=rOpDiario();
-  else if(S.tab==="clientes")      body=isAdmin?tp("clientes",rClientes,"Clientes"):rClientes();
-  else if(S.tab==="prestamos")     body=isAdmin?tp("prestamos",rPrestamos,"Préstamos"):rPrestamos();
-  else if(S.tab==="cobrar")        body=isAdmin?tp("cobrar",rCuentasCobrar,"Por Cobrar"):rCuentasCobrar();
+  if(S.tab==="dash")               body=tp("dash",rDash,"Resumen");
+  else if(S.tab==="dash_eeuu")     body=tp("dash_eeuu",rDashEE,"Resumen EE.UU");
+  else if(S.tab==="diario")        body=tp("diario",rDiario,"Diario");
+  else if(S.tab==="evolucion")     body=tp("evolucion",rEvolucion,"Evolución");
+  else if(S.tab==="salud_financiera") body=tp("evolucion",rSaludFinanciera,"Salud Financiera");
+  else if(S.tab==="cierre")        body=tp("cierre",rInformeCierre,"Cierre Mensual");
+  else if(S.tab==="ops")           body=tp("ops",rTblUnificada,"Operaciones");
+  else if(S.tab==="brl")           body=tp("ops",function(){return rTbl(S.brl,"brl");},"BRL");
+  else if(S.tab==="vzla")          body=tp("ops",function(){return rTbl(S.vzla,"vzla");},"VZLA");
+  else if(S.tab==="eeuu")          body=tp("ops",rTblEE,"EE.UU");
+  else if(S.tab==="inventario_usdt") body=tp("inventario_usdt",rInventarioUsdt,"Inventario USDT");
+  else if(S.tab==="capital_total") body=tp("capital_total",rCapitalTotal,"Balance de Cuentas");
+  else if(S.tab==="traspasos")     body=tp("traspasos",rTraspasos,"Traspasos");
+  else if(S.tab==="config_admin")  body=tp("config_admin",rConfigAdmin,"Configuración");
+  // La rama vieja "si es de EE.UU. enséñale su resumen" era inalcanzable:
+  // "egresos" no está en el menú de ningún operador. Ahora la puerta es una.
+  else if(S.tab==="egresos")       body=tp("egresos",rEgresos,"Egresos");
+  else if(S.tab==="auditoria")     body=tp("auditoria",rAuditoria,"Auditoría");
+  else if(S.tab==="historial")     body=tp("cierre",rHistorialMeses,"Historial de meses");
+  else if(S.tab==="nueva")         body=tp("nueva",rNueva,"Nueva Operación");
+  else if(S.tab==="nueva_eeuu")    body=tp("nueva_eeuu",rNuevaEE,"Nueva EE.UU");
+  else if(S.tab==="mi_ganancia")   body=tp("mi_ganancia",function(){return S.role==="eeuu"?rDashEE():rMiGanancia();},"Balance Mensual");
+  else if(S.tab==="op_diario")     body=tp("op_diario",rOpDiario,"Mis Operaciones");
+  else if(S.tab==="clientes")      body=tp("clientes",rClientes,"Clientes");
+  else if(S.tab==="prestamos")     body=tp("prestamos",rPrestamos,"Préstamos");
+  else if(S.tab==="cobrar")        body=tp("cobrar",rCuentasCobrar,"Por Cobrar");
   else if(S.tab==="mi_gestion")    body=rMiGestion();
-  else if(S.tab==="calculadora")   body=isAdmin?tp("calculadora",rCalculadora,"Tasas"):rCalculadora();
+  else if(S.tab==="calculadora")   body=tp("calculadora",rCalculadora,"Tasas");
   return "<div id='app'><div class='topbar' style='background:"+bgMap[S.role]+"'>"+
     "<div style='display:flex;align-items:center;gap:10px;flex-wrap:wrap'>"+
       "<div style='width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center;font-size:17px'>"+ro.ic+"</div>"+
