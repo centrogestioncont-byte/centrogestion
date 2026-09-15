@@ -709,9 +709,42 @@ Ojo con esto al diagnosticar: las deudas viven en `deudas_paul` con
 DE …, botón ✅). Si ella dice que está saldado y la app lo sigue enseñando,
 casi seguro es que falta ese clic — no un fallo del cierre.
 
-**`rCierreMes()` e `imprimirRelatorioContador()` están muertas** — 313 líneas
-que nadie llama, con fórmulas viejas y en portugués. El peligro no es el peso:
-es que alguien las lea y crea que son las buenas.
+**La hoja del contador y el detalle del mes van en el PDF** (ARREGLO 59). Lo
+que él pide para la declaración: cuántas operaciones entraron **en reales**,
+cuánto entró, la ganancia que dejaron y los egresos partida por partida. Tres
+reglas que no son obvias y están en `resumenContador()`:
+
+- *"lo que entra en reales"* es **`orig === "BRL"`**, no "está en la lista de
+  Brasil". En `S.brl` hay remesas que entran en USDT o en soles; contarlas
+  infla lo declarado. En septiembre eran dos.
+- **Colombia cuenta.** Entra en reales y deja ganancia, así que declara igual
+  que Venezuela, aunque la entrega la haga el aliado en pesos.
+- **Cada operación se convierte con SU tasa** (`pr × tc`). Sumar en USDT y
+  multiplicar al final por la tasa de hoy da un número que no cuadra con
+  ningún mes.
+
+La pantalla, el PDF y el CSV salen de esa misma función. Antes la pestaña
+Contador tenía su propio "lucro" convertido con **una sola tasa del día** y con
+los gastos de toda la empresa restados: otro número distinto para la misma
+pregunta, y en portugués.
+
+**El papel dice de quién es**: `EMPRESA_RAZON` y `EMPRESA_CNPJ`, en un solo
+sitio. Vivían dentro de `rCierreMes()`, que era código muerto — al borrarla se
+habrían ido con ella.
+
+**Y el `</div>` de más, que costó una tarde.** Las dos secciones nuevas se
+generaban bien y **no aparecían en el PDF, sin un solo error en consola**. Había
+dos `</div>` sobrantes —en cobros pendientes y en préstamos activos— que
+cerraban `.cuerpo` y `.hoja` antes de tiempo: todo lo que viniera después
+quedaba **fuera de `#reporteCapture`**, y html2canvas solo captura lo de dentro.
+No se notaba porque no había nada después. Si algún día añades una sección al
+final del informe y no sale, **mira el balance de `<div>` antes que nada**:
+`pruebas/prestamos.js` ya vigila que no vuelva ese patrón.
+
+**`rCierreMes()` e `imprimirRelatorioContador()` estaban muertas** — 314 líneas
+que nadie llamaba, con fórmulas viejas y en portugués. Borradas en el ARREGLO
+59. El peligro no era el peso: era que alguien las leyera y creyera que eran
+las buenas.
 
 ### Registra la operación — no escribas el saldo
 
