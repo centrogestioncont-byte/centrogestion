@@ -96,7 +96,9 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "_simularConFecha", "ds",
                     "_huellaDisponible", "_huellaGuardada", "_huellaDeEstaPersona",
                     "_permisoPorOmision", "tienePermiso", "permisoEdicion",
-                    "_resumenPermisos", "_loteConOrden"];
+                    "_resumenPermisos",
+                    "_trioIU", "_fiatIU", "_usdtIU", "_tasaIU", "_descuadreIU",
+                    "_monIU", "_loteConOrden", "_ultimasIU"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
 global.window = global.window || {};
 // setTasaDia/soltarTasaDia guardan y repintan, y avisan por alert(). Aqui no
@@ -1391,9 +1393,15 @@ ok(F._comIU("") === F.COM(), "sin comision escrita, la de por defecto", F._comIU
 ok(F._comIU(undefined) === F.COM(), "y sin campo, igual", F._comIU(undefined));
 ok(!/parseFloat\(f\.comision\)\|\|COM\(\)/.test(HTML),
    "no vuelve el ||COM() que se comia el cero");
-ok((HTML.match(/_comIU\(f\.comision\)/g) || []).length === 2,
-   "los dos sitios que leen la comision pasan por _comIU",
+// Eran 2 sitios; el ARREGLO 66 quito el de rInventarioUsdt (que ya no calcula
+// nada) y anadio los de _autoIU, _descuadreIU y _htmlPrevIU. Lo que protege la
+// guardia no es el numero sino que NADIE lea la comision a pelo: si alguien
+// vuelve a poner parseFloat(f.comision), el cero escrito se convierte en 0,06.
+ok((HTML.match(/_comIU\(f\.comision\)/g) || []).length === 4,
+   "los cuatro sitios que leen la comision pasan por _comIU",
    (HTML.match(/_comIU\(f\.comision\)/g) || []).length);
+ok(!/parseFloat\(\s*f\.comision\s*\)/.test(HTML),
+   "y ninguno la lee a pelo con parseFloat");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Leer el comprobante de Binance (ARREGLO 40, 14/09/2026)
@@ -2885,25 +2893,129 @@ ok(/window\.isSecureContext/.test(sacarFuncion("_huellaDisponible")),
    "no se ofrece la huella donde el navegador no puede darla");
 
 
-console.log("\n— La orden repetida se busca tambien entre los archivados —");
-// Sus cuatro ordenes registradas dos veces entraron por aca: en los cuatro
-// casos el primer lote ya estaba archivado cuando llego el duplicado, y la
-// comprobacion solo miraba los ACTIVOS.
+// ─────────────────────────────────────────────────────────────────────────
+// ARREGLO 66 — el formulario de USDT rellena el tercer numero y avisa
+// cuando los tres no cuadran.
+//
+// Los numeros de aca salen del historial de ordenes P2P de Binance de la
+// duena (15/08 al 14/09) cruzado con su export del 14/09. No son inventados:
+// si alguien cambia la direccion de alguna cuenta, dejan de dar lo suyo.
+// ─────────────────────────────────────────────────────────────────────────
+console.log("\n— El formulario de USDT (ARREGLO 66) —");
+
+// La VENTA: lo que ella teclea es el total que SALE de Binance (liberado mas
+// comision), asi que la comision se resta antes de multiplicar por la tasa.
+// Orden 22921953629031460864: Binance vendio 114,37 a 874,30 por 100.000 Bs,
+// y del monedero salieron 114,43.
+// No cuadra clavado y no puede: Binance publica el precio redondeado, asi que
+// sus propios "Precio total" y cantidad x precio se separan hasta un 0,0383%
+// (medido en sus 57 ordenes). Por eso el descuadre tolera el 0,5%.
+ok(Math.abs(F._fiatIU(114.43, 874.3, 0.06, true) - 100000) / 100000 < 0.0005,
+   "venta: (total liberado - comision) x tasa da los bolivares de Binance",
+   F._fiatIU(114.43, 874.3, 0.06, true));
+ok(Math.abs(F._usdtIU(100000, 874.3, 0.06, true) - 114.43) < 0.02,
+   "y al reves: de los bolivares y la tasa sale el total liberado",
+   F._usdtIU(100000, 874.3, 0.06, true));
+ok(Math.abs(F._tasaIU(100000, 114.43, 0.06, true) - 874.3) < 0.1,
+   "y la tasa sale de los otros dos", F._tasaIU(100000, 114.43, 0.06, true));
+
+// La COMPRA paga en fiat y la comision se descuenta despues, en USDT: el
+// monto gastado NO la lleva. Orden 22922682205394382848: 150.000 Bs a 875,799
+// son 171,27 de orden, y a ella le quedaron 171,21.
+ok(Math.abs(F._fiatIU(171.27, 875.799, 0.06, false) - 150000) < 5,
+   "compra: cantidad x tasa da lo gastado, sin tocar la comision",
+   F._fiatIU(171.27, 875.799, 0.06, false));
+ok(Math.abs(F._usdtIU(150000, 875.799, 0.06, false) - 171.27) < 0.02,
+   "y de lo gastado y la tasa sale la cantidad de la orden",
+   F._usdtIU(150000, 875.799, 0.06, false));
+// La diferencia entre las dos direcciones es justo la comision: si alguien
+// las iguala, la compra acredita de mas o la venta cobra de menos.
+ok(F._usdtIU(100000, 874.3, 0.06, true) !== F._usdtIU(100000, 874.3, 0.06, false),
+   "compra y venta NO tratan la comision igual");
+
+// El trio depende del tipo: en la venta el fiat es lo recibido, en la compra
+// lo gastado. Si se confunden, se rellena el campo equivocado.
+S.nIU = { tipo: "venta" };
+ok(F._trioIU().fiat === "bsRecibidos", "en la venta el fiat es bsRecibidos", F._trioIU().fiat);
+S.nIU = { tipo: "compra" };
+ok(F._trioIU().fiat === "montOrigen", "en la compra el fiat es montOrigen", F._trioIU().fiat);
+
+// El dedazo del 19/08, con sus cifras exactas. Apunto 1.261,77 USDT donde de
+// Binance salieron 1.291,83 —un 6 por un 9— pero los bolivares los tecleo
+// aparte y bien, asi que el lote quedo guardado diciendo tasa 947 mientras en
+// el campo de al lado ella misma habia escrito 925,01.
+S.nIU = { tipo: "venta", monedaVenta: "VES", usdt: "1261.77", tasa: "925.01",
+          bsRecibidos: "1194905.805", comision: 0.06 };
+{
+  const d = F._descuadreIU();
+  ok(!!d, "el dedazo del 19/08 se caza");
+  ok(d && Math.abs(d.tasaReal - 947) < 1,
+     "y dice cual seria la tasa de verdad si el monto fuera bueno", d && d.tasaReal);
+}
+// Con el numero bueno no molesta.
+S.nIU.usdt = "1291.83";
+ok(F._descuadreIU() === null, "con el numero correcto no avisa de nada");
+
+// Y el ruido normal se deja pasar: Binance redondea sus cantidades a dos
+// decimales, asi que casi nunca cuadra clavado. Si esto avisara, avisaria
+// siempre y dejaria de mirarse.
+S.nIU = { tipo: "venta", monedaVenta: "VES", usdt: "114.43", tasa: "874.3",
+          bsRecibidos: "100000", comision: 0.06 };
+ok(F._descuadreIU() === null, "el redondeo de Binance no dispara el aviso");
+
+// Sin los tres numeros no hay nada que comparar: no puede avisar a medio teclear.
+S.nIU = { tipo: "venta", usdt: "114.43", tasa: "", bsRecibidos: "100000", comision: 0.06 };
+ok(F._descuadreIU() === null, "a medio rellenar se calla");
+
+// Sus cuatro ordenes registradas dos veces entraron porque la comprobacion
+// solo miraba los lotes ACTIVOS: en los cuatro casos el primero ya estaba
+// archivado cuando llego el duplicado.
 S.inventarioUsdt = [{ ordenId: "111", tipo: "compra", usdt: 10, tasa: 5, moneda: "BRL" }];
 S.inventarioUsdt_cerrado = [{ ordenId: "22909791031187947520", tipo: "compra",
                               usdt: 96.69, tasa: 5.167, moneda: "BRL", _cerrado: true }];
 ok(!!F._loteConOrden("111"), "encuentra la orden repetida entre los lotes activos");
 ok(!!F._loteConOrden("22909791031187947520"),
    "y TAMBIEN entre los archivados, que es por donde se colaron los suyos");
-ok(!!F._loteConOrden(" 22909791031187947520 "), "sin que estorben los espacios");
+ok(F._loteConOrden(" 22909791031187947520 "), "sin que estorben los espacios");
 ok(F._loteConOrden("") === null && F._loteConOrden(null) === null,
    "sin numero de orden no inventa un duplicado");
+
+// Guardias de estructura: lo que no se puede deshacer sin romper esto.
 {
   const sv = sinComentarios(sacarFuncion("saveIU"));
-  ok(/_loteConOrden\(/.test(sv), "saveIU lo busca con _loteConOrden");
+  ok(/_loteConOrden\(/.test(sv),
+     "saveIU busca el duplicado con _loteConOrden, que mira los dos sitios");
   ok(!/\(S\.inventarioUsdt\|\|\[\]\)\.some\(function\(l\)\{return l\.ordenId/.test(sv),
      "y no vuelve a mirar solo los activos");
+  ok(/_descuadreIU\(\)/.test(sv), "y no deja guardar un descuadre sin preguntar");
 }
+// _autoIU corre en CADA tecla: si repinta, destruye el input bajo el dedo
+// (ARREGLO 32). Tiene que escribir en el DOM, como _refrescarAbonoPrest.
+{
+  const au = sinComentarios(sacarFuncion("_autoIU"));
+  ok(!/\bR\(\)/.test(au), "_autoIU no repinta la pantalla mientras ella teclea");
+  ok(/document\.activeElement!==el/.test(au),
+     "y nunca escribe en el campo que tiene debajo del dedo");
+  const rf = sinComentarios(sacarFuncion("_refrescarIU"));
+  ok(!/\bR\(\)/.test(rf), "ni _refrescarIU");
+}
+// Los tres campos tienen que estar conectados, o el autorelleno no se entera.
+["montOrigen", "usdt", "tasa", "bsRecibidos"].forEach(function (k) {
+  // En index.html vive dentro de un oninput, con las comillas escapadas:
+  //   _autoIU(\"tasa\")
+  var busca = '_autoIU(' + '\\"' + k + '\\"' + ')';
+  ok(HTML.indexOf(busca) >= 0,
+     "el campo " + k + " avisa al autorelleno");
+});
+ok((HTML.match(/id='iu-fiat'/g) || []).length === 2 &&
+   (HTML.match(/id='iu-usdt'/g) || []).length === 2 &&
+   (HTML.match(/id='iu-tasa'/g) || []).length === 2,
+   "los tres campos llevan su id en las dos pantallas (compra y venta)");
+// El recuadro del calculo se arma en su propia funcion para poder refrescarlo
+// sin R(); si vuelve a armarse dentro del render, se queda con la cuenta
+// anterior mientras ella teclea (es el fallo del ARREGLO 55).
+ok(/id='iu-prev'/.test(HTML) && /_htmlPrevIU\(\)/.test(HTML),
+   "el recuadro del calculo se puede refrescar solo");
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
