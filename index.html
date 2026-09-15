@@ -1233,12 +1233,25 @@ function _apiRestaurarSesion(){
   var ses=_apiSesionGuardada();
   if(!ses||!ses.t||!ses.u) return false;
   var vencida=_apiGraciaVencida(ses);
+  // ARREGLO 64: con huella registrada para ESTA persona en ESTE aparato, no se
+  // entra solo: se para en la pantalla de desbloqueo. Es la unica cerradura que
+  // hay — hasta ahora la app se abria y ya estabas dentro.
+  // La verificacion contra el servidor de mas abajo sigue corriendo igual: el
+  // bloqueo es de esta pantalla, no de la sesion.
+  if(!vencida && _huellaDeEstaPersona() && _huellaDisponible()){
+    S._bloqueoHuella=true;
+    try{ R(); }catch(e){}
+    return false;
+  }
   // Si la gracia sigue vigente se entra en el acto y se verifica por atrás.
   // Si venció, NO se entra hasta que el servidor confirme.
   if(!vencida) _loginApiAplicar(ses.u,false);
   apiFetch("/auth/yo").then(function(r){
     if(r.status===401){
       _apiBorrarSesionLocal();
+      // El bloqueo se cae con la sesion: si el testigo ya no vale, no hay nada
+      // que desbloquear y quedarse en esa pantalla seria un callejon sin salida.
+      S._bloqueoHuella=false;
       if(!vencida){ S.role=null; _borrarSesion(); }
       R();
       return null;
@@ -8725,6 +8738,9 @@ function rConfigAdmin(){
     _cfgAcc("rutas","🛣️","Rutas de operación",null,"#2196F3",rutasBody,false)+
     _cfgAcc("tasas","📊","Tasas del día","solo afecta nuevos registros","#e67e22",tasasHTML,false)+
     _cfgAcc("usuarios_api","👥","Usuarios y permisos","quién entra y qué ve cada uno","#372c9e",rUsuariosApi(),false)+
+    _cfgAcc("huella","👆","Entrar con huella",
+      (_huellaDeEstaPersona()?"encendida en este aparato":(_huellaDisponible()?"apagada":"no disponible aquí")),
+      "#0f6e3a",_htmlHuella(),false)+
     _cfgAcc("comparacion_api","⚖️","Comparación con la API","control de la migración","#b8752a",rComparacionApi(),false)+
     _cfgAcc("pisados","🔀","Cambios que chocaron entre dispositivos",
       (function(){ var n=_leerPisados().length; return n?(n+" "+(n===1?"vez":"veces")):"ninguno todavía"; })(),
@@ -11737,9 +11753,210 @@ function revertirSaldosTraspaso(t){
   adjId(t.cuentaOrigen||t.origen, +monto);
   adjId(t.cuentaDestino||t.destino, -monto);
 }
-// ── ENTRADA CON HUELLA (WebAuthn) ────────────────────────────────
-// Cada huella se registra en EL DISPOSITIVO de cada operador, amarrada a su rol.
-// ── USUARIOS ADICIONALES (esposo, hermana, suplentes...) ─────────
+
+// ══════════════════════════════════════════════════════════════════════
+// ENTRADA CON HUELLA — ARREGLO 64 (15/09/2026)
+//
+// QUÉ ES ESTO Y QUÉ NO ES. Es una CERRADURA LOCAL sobre la sesión que ya está
+// guardada en este aparato, no una forma de autenticarse contra el servidor.
+// El servidor sigue reconociendo a la persona por su testigo, igual que antes;
+// la huella solo decide si esta app deja usar ese testigo o pide la clave.
+//
+// Esa distinción importa y no se puede perder: quien tenga el aparato en la
+// mano y sepa abrir las herramientas del navegador puede leer el testigo del
+// almacenamiento igual que antes. La huella detiene a quien coge el teléfono
+// desbloqueado —que es el riesgo de verdad— y nada más. Si algún día se quiere
+// que la huella sustituya a la clave en un aparato NUEVO, eso es otra cosa:
+// hay que registrar la credencial en Mongo y que el servidor verifique la
+// firma. No se puede fingir que esto ya lo hace.
+//
+// POR QUÉ IGUAL MEJORA LAS COSAS. Hasta ahora _apiRestaurarSesion() entraba
+// SOLA: se abría la app y ya estabas dentro, sin preguntar nada, mientras la
+// sesión no llevara 7 días sin verificarse. O sea que no había ninguna
+// cerradura. Esto pone una.
+//
+// LA REGLA QUE NO SE TOCA: esto NUNCA puede dejar a nadie fuera de su propia
+// contabilidad. Si el navegador no soporta WebAuthn, si el aparato no tiene
+// lector, si la página no va por https, si la huella falla o si la cancela,
+// SIEMPRE queda entrar con correo y clave. Es el mismo criterio por el que la
+// gracia sin conexión existe: un aparato tonto no puede costarle el día.
+// ══════════════════════════════════════════════════════════════════════
+
+var _HUELLA_KEY = "cg_huella_v1";   // { correo, id } — solo de ESTE navegador
+
+function _huellaGuardada(){
+  try{
+    var r=localStorage.getItem(_HUELLA_KEY);
+    var d=r?JSON.parse(r):null;
+    return (d&&d.id&&d.correo)?d:null;
+  }catch(e){ return null; }
+}
+// Registrada para ESTA persona. Amarrarla al correo es lo que evita que, si
+// otra persona entra en el mismo aparato, se encuentre la huella de la
+// anterior haciéndole de cerradura.
+function _huellaDeEstaPersona(){
+  var d=_huellaGuardada(); if(!d) return null;
+  var ses=_apiSesionGuardada();
+  var correo=(ses&&ses.u&&ses.u.correo)||"";
+  return (correo && d.correo===correo) ? d : null;
+}
+function _huellaOlvidar(){
+  try{ localStorage.removeItem(_HUELLA_KEY); }catch(e){}
+}
+
+// ¿Se puede siquiera ofrecer? WebAuthn pide contexto seguro (https o
+// localhost); en http o en un file:// abierto a mano no existe.
+function _huellaDisponible(){
+  try{
+    return !!(window.PublicKeyCredential && navigator.credentials &&
+              navigator.credentials.create && window.isSecureContext);
+  }catch(e){ return false; }
+}
+
+function _b64urlABytes(s){
+  s=String(s).replace(/-/g,"+").replace(/_/g,"/");
+  while(s.length%4) s+="=";
+  var bin=atob(s), out=new Uint8Array(bin.length);
+  for(var i=0;i<bin.length;i++) out[i]=bin.charCodeAt(i);
+  return out;
+}
+function _bytesAB64url(buf){
+  var b=new Uint8Array(buf), s="";
+  for(var i=0;i<b.length;i++) s+=String.fromCharCode(b[i]);
+  return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+}
+// El reto es local y no lo verifica nadie: esto no es una autenticación, es
+// una cerradura (ver la cabecera). Se manda aleatorio igualmente porque el
+// navegador lo exige y porque un reto fijo sería una invitación a copiar la
+// respuesta.
+function _retoNuevo(){
+  var a=new Uint8Array(32);
+  (window.crypto||window.msCrypto).getRandomValues(a);
+  return a;
+}
+
+function registrarHuella(){
+  if(!_huellaDisponible()){
+    alert("Este navegador no puede usar la huella.\n\nHace falta que la página vaya por https y que el aparato tenga lector de huella o reconocimiento facial.");
+    return;
+  }
+  var ses=_apiSesionGuardada();
+  if(!ses||!ses.u||!ses.u.correo){
+    alert("Primero entra con tu correo y clave. La huella se registra sobre una sesión ya abierta.");
+    return;
+  }
+  var correo=ses.u.correo;
+  var idUsuario=new TextEncoder().encode(String(ses.u.id||correo));
+  navigator.credentials.create({publicKey:{
+    challenge:_retoNuevo(),
+    rp:{name:"Centro de Gestión"},   // sin rp.id: lo pone el navegador con el dominio de verdad
+    user:{id:idUsuario, name:correo, displayName:(ses.u.nombre||correo)},
+    pubKeyCredParams:[{type:"public-key",alg:-7},{type:"public-key",alg:-257}],
+    authenticatorSelection:{
+      authenticatorAttachment:"platform",   // el lector DEL aparato, no una llave USB
+      userVerification:"required"           // que compruebe a la persona, no solo que el aparato esté
+    },
+    timeout:60000,
+    attestation:"none"
+  }}).then(function(cred){
+    if(!cred){ alert("No se pudo registrar la huella."); return; }
+    try{
+      localStorage.setItem(_HUELLA_KEY, JSON.stringify({correo:correo, id:_bytesAB64url(cred.rawId)}));
+    }catch(e){ alert("No se pudo guardar la huella en este navegador."); return; }
+    logAudit("HUELLA_ALTA","Huella registrada en este dispositivo para "+correo);
+    R();
+    alert("✅ Huella registrada en ESTE aparato.\n\nLa próxima vez que abras la app te la pedirá antes de entrar. Si falla o la cancelas, siempre puedes entrar con tu correo y clave.");
+  }).catch(function(e){
+    // Cancelar no es un error que haya que gritar.
+    if(e && (e.name==="NotAllowedError"||e.name==="AbortError")) return;
+    alert("No se pudo registrar la huella: "+((e&&e.name)||"error desconocido"));
+  });
+}
+
+function quitarHuella(){
+  if(!confirm("¿Quitar la huella de este aparato?\n\nVolverá a entrar solo, sin pedir nada, como antes.")) return;
+  _huellaOlvidar();
+  logAudit("HUELLA_BAJA","Huella retirada de este dispositivo");
+  R();
+}
+
+// ── La pantalla de desbloqueo ─────────────────────────────────────────────
+var _HUELLA_PIDIENDO=false;   // para no lanzar dos peticiones a la vez
+
+function pedirHuella(){
+  var d=_huellaDeEstaPersona();
+  if(!d||!_huellaDisponible()){ entrarConClaveEnVezDeHuella(); return; }
+  if(_HUELLA_PIDIENDO) return;
+  _HUELLA_PIDIENDO=true;
+  S.huellaErr=""; R();
+  navigator.credentials.get({publicKey:{
+    challenge:_retoNuevo(),
+    allowCredentials:[{type:"public-key", id:_b64urlABytes(d.id)}],
+    userVerification:"required",
+    timeout:60000
+  }}).then(function(cred){
+    _HUELLA_PIDIENDO=false;
+    if(!cred){ S.huellaErr="No se reconoció la huella."; R(); return; }
+    var ses=_apiSesionGuardada();
+    if(!ses||!ses.u){ S._bloqueoHuella=false; R(); return; }
+    S._bloqueoHuella=false;
+    _loginApiAplicar(ses.u,false);
+    R();
+  }).catch(function(e){
+    _HUELLA_PIDIENDO=false;
+    S.huellaErr=(e && (e.name==="NotAllowedError"||e.name==="AbortError"))
+      ? "" : "No se pudo leer la huella. Entra con tu correo y clave.";
+    R();
+  });
+}
+
+// La salida de emergencia, y por eso está siempre a la vista: la huella no
+// puede ser la única puerta.
+function entrarConClaveEnVezDeHuella(){
+  S._bloqueoHuella=false;
+  S.huellaErr="";
+  R();
+}
+
+function rDesbloqueoHuella(){
+  var ses=_apiSesionGuardada();
+  var quien=(ses&&ses.u&&(ses.u.nombre||ses.u.correo))||"";
+  return '<div class="login-wrap"><div class="login-card">'+
+    '<div style="text-align:center;margin-bottom:6px;font-size:52px">👆</div>'+
+    '<div style="text-align:center;font-size:20px;font-weight:800;margin-bottom:3px">Centro de Gestión</div>'+
+    '<div style="text-align:center;font-size:12px;color:#888;margin-bottom:18px">'+
+      (quien?"Desbloquea para entrar como <b>"+_escAud(quien)+"</b>":"Desbloquea para entrar")+'</div>'+
+    '<button type="button" onclick="pedirHuella()" style="width:100%;padding:13px;background:linear-gradient(135deg,#4B3FC7,#372c9e);color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:800;cursor:pointer;box-shadow:0 4px 16px rgba(75,63,199,.35)">👆 Usar la huella</button>'+
+    '<div style="color:#c0392b;font-size:11px;margin-top:8px;min-height:18px;text-align:center">'+_escAud(S.huellaErr||"")+'</div>'+
+    '<button type="button" onclick="entrarConClaveEnVezDeHuella()" style="width:100%;margin-top:4px;padding:11px;background:#fff;border:1.5px solid #ddd;color:#555;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer">Entrar con correo y clave</button>'+
+    '<div style="margin-top:10px;padding:9px;background:#f6f6f6;border-radius:8px;font-size:10px;color:#888;text-align:center;line-height:1.5">La huella solo abre la sesión guardada en este aparato. Si falla, entra con tu clave.</div>'+
+  '</div></div>';
+}
+
+// ── El interruptor, en Configuración ──────────────────────────────────────
+function _htmlHuella(){
+  var puede=_huellaDisponible();
+  var d=_huellaDeEstaPersona();
+  var otra=(!d && _huellaGuardada());   // hay una, pero de otra persona
+  var cab="<div style='font-size:11px;color:#666;margin-bottom:11px;line-height:1.6'>"+
+    "Si la enciendes, al abrir la app en <b>este aparato</b> te pedirá la huella antes de entrar. "+
+    "Hoy entra sola, sin preguntar nada.<br><br>"+
+    "<b>Es una cerradura, no una clave nueva.</b> Abre la sesión que ya está guardada aquí; tu correo y tu clave siguen siendo la forma de entrar en un aparato nuevo. "+
+    "Y si la huella falla o la cancelas, siempre puedes entrar con la clave.</div>";
+  if(!puede){
+    return cab+"<div style='background:#f7f7f7;border:1px solid #eee;border-radius:9px;padding:11px 12px;font-size:12px;color:#888'>"+
+      "Este navegador no puede usarla. Hace falta que la página vaya por <b>https</b> y que el aparato tenga lector de huella o reconocimiento facial.</div>";
+  }
+  if(d){
+    return cab+"<div style='background:#D6F5E3;border:1.5px solid #7bc49a;border-radius:9px;padding:11px 12px;margin-bottom:10px;font-size:12px;color:#0b4d27;font-weight:700'>"+
+      "✅ Encendida en este aparato</div>"+
+      "<button type='button' onclick='quitarHuella()' style='padding:9px 14px;border:1px solid #e6a8a0;background:#FDECEA;color:#8b1a10;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>Quitar la huella de este aparato</button>";
+  }
+  return cab+
+    (otra?"<div style='background:#FFFBEA;border:1px solid #F5C518;border-radius:9px;padding:9px 12px;margin-bottom:10px;font-size:11px;color:#7a5c00'>Hay una huella guardada de otra persona. Al registrar la tuya, la suya se reemplaza.</div>":"")+
+    "<button type='button' onclick='registrarHuella()' style='padding:10px 15px;background:#4B3FC7;color:#fff;border:none;border-radius:9px;font-size:12px;font-weight:800;cursor:pointer;font-family:inherit'>👆 Encender la huella en este aparato</button>";
+}
+
 
 // ── Permisos granulares ────────────────────────────────────────────
 
@@ -11953,7 +12170,25 @@ function _guardarSesion(){
 // el servidor.
 function _borrarSesion(){ try{localStorage.removeItem(_SESSION_KEY);}catch(e){} }
 
-function salir(){logAudit("LOGOUT","Cerró sesión");_apiSalir();S.role=null;S.tab="dash";S.q="";S.loginErr="";_borrarSesion();R();}
+function salir(){
+  logAudit("LOGOUT","Cerró sesión");
+  _apiSalir();
+  // ARREGLO 65 (15/09/2026): la huella NO se borra al salir.
+  //
+  // El arreglo 64 la borraba aqui, por miedo a que la siguiente persona que
+  // entrara en este aparato se encontrara una cerradura que no es suya. Ese
+  // miedo ya esta cubierto en otro sitio: _huellaDeEstaPersona() exige que el
+  // correo de la sesion coincida con el de la credencial, asi que a otra
+  // persona la app ni le mira la huella. Borrarla aqui no añadia seguridad y
+  // costaba caro: ella entra y sale a diario —cambia entre produccion y
+  // pruebas— y tenia que volver a registrarla cada vez.
+  //
+  // Sin sesion guardada tampoco desbloquea nada: _huellaDeEstaPersona()
+  // devuelve null y sale la pantalla de entrar de siempre. Y para quitarla a
+  // proposito esta el boton de Configuracion, que es donde se busca.
+  S._bloqueoHuella=false; S.huellaErr="";
+  S.role=null;S.tab="dash";S.q="";S.loginErr="";_borrarSesion();R();
+}
 function ssq(v){S.q=v;if(_st)clearTimeout(_st);_st=setTimeout(R,300);}
 // ARREGLO 19 (02/09/2026): el buscador de clientes redibujaba la pantalla
 // entera a los 300 ms de cada letra. Ese redibujado destruye el campo y crea
@@ -12972,6 +13207,9 @@ function R(){
     el.style.display="block";
     el.style.overflow="";
   }
+  // ARREGLO 64: el desbloqueo va ANTES del login. Los dos son "todavia no has
+  // entrado", pero en este hay una sesion esperando detras.
+  if(!S.role && S._bloqueoHuella){ el.innerHTML=rDesbloqueoHuella(); return; }
   if(!S.role){el.innerHTML=rLogin();return;}
   // Guardar posición de scroll antes de re-renderizar
   var _scrollEl = document.querySelector(".panel > div:last-child");

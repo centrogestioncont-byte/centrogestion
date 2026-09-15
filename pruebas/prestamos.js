@@ -94,6 +94,7 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "_camposEnConflicto", "_conflictosConElServidor",
                     "_completarConLoQueQuedo", "_htmlAvisoPisado",
                     "_simularConFecha", "ds",
+                    "_huellaDisponible", "_huellaGuardada", "_huellaDeEstaPersona",
                     "_permisoPorOmision", "tienePermiso", "permisoEdicion",
                     "_resumenPermisos"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
@@ -2807,6 +2808,81 @@ ok(/Corregir el monto/.test(HTML) && /Corregir la fecha/.test(HTML),
    "la tarjeta ofrece corregir el monto y la fecha por separado");
 ok(/reinicia la medición/.test(HTML),
    "y el de volver a fijarla dice que reinicia la medicion");
+
+// ── ARREGLO 64 · entrar con huella ────────────────────────────────────────
+// Es una CERRADURA sobre la sesion ya guardada en el aparato, no una forma de
+// autenticarse contra el servidor. Hasta ahora no habia ninguna: la app se
+// abria y ya estabas dentro. Lo que se prueba aqui es la regla que sostiene
+// todo lo demas — que esto NUNCA puede dejar a nadie fuera de su contabilidad.
+// El flujo con el lector de verdad se prueba en Chromium con su autenticador
+// virtual; aqui quedan las guardias que impiden deshacerlo por descuido.
+console.log("\nArreglo 64 · entrar con huella");
+
+{
+  const pantalla = sinComentarios(sacarFuncion("rDesbloqueoHuella"));
+  ok(/Entrar con correo y clave/.test(pantalla),
+     "la pantalla de desbloqueo SIEMPRE ofrece entrar con la clave");
+  ok(/entrarConClaveEnVezDeHuella\(\)/.test(pantalla),
+     "y ese boton lleva a la salida de emergencia");
+  ok(/solo abre la sesi[oó]n guardada en este aparato/.test(sacarFuncion("rDesbloqueoHuella")),
+     "y dice lo que es: una cerradura sobre la sesion de este aparato");
+}
+{
+  const emerg = sinComentarios(sacarFuncion("entrarConClaveEnVezDeHuella"));
+  ok(/_bloqueoHuella=false/.test(emerg), "la salida de emergencia quita el bloqueo");
+  ok(!/credentials/.test(emerg), "y no depende de la huella para nada");
+}
+{
+  const arranque = sinComentarios(sacarFuncion("_apiRestaurarSesion"));
+  ok(/_huellaDeEstaPersona\(\) && _huellaDisponible\(\)/.test(arranque),
+     "solo se bloquea si hay huella DE ESTA PERSONA y el aparato puede leerla");
+  ok(/S\._bloqueoHuella=false/.test(arranque),
+     "y si el servidor dice que la sesion murio, el bloqueo se cae con ella");
+}
+// ARREGLO 65: la huella SOBREVIVE a "Salir". Se borraba, por miedo a que la
+// siguiente persona se encontrara una cerradura ajena; pero eso ya lo impide el
+// correo, y borrarla obligaba a registrarla de nuevo cada vez que ella entra y
+// sale —que es a diario, porque cambia entre produccion y pruebas—.
+{
+  const sal = sinComentarios(sacarFuncion("salir"));
+  ok(!/_huellaOlvidar\(\)/.test(sal),
+     "salir NO borra la huella: registrarla una vez por aparato tiene que bastar");
+  ok(/_bloqueoHuella=false/.test(sal),
+     "pero si quita el bloqueo, para que salir lleve a la pantalla de entrar");
+  // Y lo que sostiene que sea seguro dejarla: sin sesion no desbloquea nada.
+  const quien = sinComentarios(sacarFuncion("_huellaDeEstaPersona"));
+  ok(/if\(!d\) return null/.test(quien) && /correo && d\.correo===correo/.test(quien),
+     "sin sesion, o con el correo de otra persona, la huella guardada no abre nada");
+  // Quitarla a proposito sigue siendo posible, y es lo unico que la borra.
+  ok(/_huellaOlvidar\(\)/.test(sinComentarios(sacarFuncion("quitarHuella"))),
+     "la unica forma de borrarla es el boton de Configuracion");
+}
+{
+  const reg = sinComentarios(sacarFuncion("registrarHuella"));
+  ok(/userVerification:"required"/.test(reg),
+     "al registrar se exige que el aparato COMPRUEBE a la persona, no solo que este presente");
+  ok(/authenticatorAttachment:"platform"/.test(reg),
+     "y que sea el lector del propio aparato");
+  const pide = sinComentarios(sacarFuncion("pedirHuella"));
+  ok(/userVerification:"required"/.test(pide), "y lo mismo al desbloquear");
+  ok(/allowCredentials/.test(pide), "usando la credencial registrada aqui, no cualquiera");
+}
+// La credencial se guarda amarrada al correo: si entra otra persona en el mismo
+// aparato, no se encuentra la cerradura de la anterior.
+{
+  const src = sinComentarios(sacarFuncion("_huellaDeEstaPersona"));
+  ok(/d\.correo===correo/.test(src), "la huella esta amarrada al correo de quien la registro");
+}
+// R() tiene que enseñar el desbloqueo ANTES del login, o la sesion que espera
+// detras no se ve nunca.
+{
+  const r = sinComentarios(sacarFuncion("R"));
+  ok(r.indexOf("rDesbloqueoHuella()") < r.indexOf("rLogin()"),
+     "el desbloqueo se dibuja antes que el login");
+}
+// Y sin contexto seguro no se ofrece: en http o en un file:// no existe.
+ok(/window\.isSecureContext/.test(sacarFuncion("_huellaDisponible")),
+   "no se ofrece la huella donde el navegador no puede darla");
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
