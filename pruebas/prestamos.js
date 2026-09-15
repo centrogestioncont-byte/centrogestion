@@ -50,7 +50,8 @@ function sacarConstante(nombre) {
   }
   throw new Error("la constante " + nombre + " no termina en ';'");
 }
-const CONSTANTES = ["MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
+const CONSTANTES = ["_BIN_COLS_C2C", "_BIN_COLS_TX", "MONEDAS_COMPRA", "MONEDAS_VENTA",
+                    "MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
                     "_MERGE_OBJETOS", "_MERGE_BLOQUES", "_MERGE_HISTORIAL", "_RATE_LIMITS",
                     "DATA_KEYS", "_CLAVES_QUE_NO_SON_DATOS", "PAGO_DEBE",
                     "_TOCADO_AQUI", "_NOMBRE_DE_CLAVE", "_NOMBRE_DE_CONFIG",
@@ -96,7 +97,10 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "_simularConFecha", "ds",
                     "_huellaDisponible", "_huellaGuardada", "_huellaDeEstaPersona",
                     "_permisoPorOmision", "tienePermiso", "permisoEdicion",
-                    "_resumenPermisos",
+                    "_resumenPermisos", "_binCuentaDeUid",
+                    "_binNum", "_binNorm", "_binMapaCols", "_binBuscarCabecera",
+                    "_binIdentificar", "_binOrdenesC2C", "_binConverts", "_binDias",
+                    "_binMonedaConocida", "_binYaRegistrado", "_binCuentaSugerida", "_binMesCerrado",
                     "_trioIU", "_fiatIU", "_usdtIU", "_tasaIU", "_descuadreIU",
                     "_monIU", "_loteConOrden", "_ultimasIU"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
@@ -3016,6 +3020,182 @@ ok((HTML.match(/id='iu-fiat'/g) || []).length === 2 &&
 // anterior mientras ella teclea (es el fallo del ARREGLO 55).
 ok(/id='iu-prev'/.test(HTML) && /_htmlPrevIU\(\)/.test(HTML),
    "el recuadro del calculo se puede refrescar solo");
+
+
+// ─────────────────────────────────────────────────────────────────────────
+// IMPORTAR DE BINANCE
+//
+// Las filas de aca son REALES: salen de sus exports del 15/09 (cuenta SAIPHA
+// y cuenta JULIO). Si Binance cambia un rotulo o el importador deja de
+// entender una columna, estas pruebas lo cantan.
+// ─────────────────────────────────────────────────────────────────────────
+console.log("\n— Importar de Binance —");
+const FIX = {"c2c": [["","","","","","","","","","","","","","www.binance.com"],["","","Historial de órdenes C2C"],["","","Nombre","J. DEL CARMEN HERNANDEZ BARRETO","","Email","saipha.servicos.digitais@gmail.com","","Dirección","R MONTE RORAIMA S/N VILA NOVA RR"],["","","ID de usuario","1259063977","","Período(UTC--4)","2026-09-01 to 2026-09-15"],["","","Número de Pedido","Tipo de orden","Activo","Tipo de Fiat","Precio Total","Precio","Cantidad","Tipo de cambio","Tarifa de creador","Comisión de tomador","Contraparte","Estado","Hora de creación"],["","","22928483177651154944","Sell","USDT","BRL","100","5.11","19.56","","","0.07","_Ckrypto_","Completed","2026-09-02 11:07:24"],["","","22928585081217331200","Sell","USDT","BRL","676.05","5.113","132.22","","","0.07","Anderson-26","Completed","2026-09-02 17:52:19"],["","","22929998835071328256","Sell","USDT","BRL","100","5.177","19.31","","","0.07","cambioviagem","Completed","2026-09-06 15:30:05"],["","","22930837293825511424","Sell","USDT","BRL","1050","5.108","205.55","","","0.07","_Ckrypto_","Completed","2026-09-08 23:01:49"],["","","22932202144596058112","Buy","USDT","BRL","2075","5.162","401.97","","","0.07","IaCrypto_net","Completed","2026-09-12 17:25:15"]],"c2c_julio": [["","","","","","","","","","","","","","www.binance.com"],["","","Historial de órdenes C2C"],["","","Nombre","JULIO FRANCISCO HERNANDEZ","","Correo electrónico","marshalljulio46@gmail.com","","Dirección","Av Pacasmayo 07036, Callao, Perú"],["","","Id. de usuario","338951166","","Periodo(UTC--4)","2026-08-15 to 2026-09-15"],["","","Número de orden","Tipo de orden","Activo","Tipo de Fiat","Precio total","Precio","Cantidad","Tipo de cambio","Comisión del Creador","Comisión del tomador","Contraparte","Estado","Hora de creación"],["","","22921953629031460864","Sell","USDT","VES","100000","874.3","114.37","","","0.06","3lpriet0","Completed","2026-08-15 10:41:18"],["","","22921999413204643840","Buy","USDT","VES","31448","875","35.94","","","0.06","ASCENDERLTDA-REMESAS","Completed","2026-08-15 13:43:14"],["","","22922061345427742720","Sell","USDT","VES","20000","868.1","23.03","","","0.06","CCambia","Completed","2026-08-15 17:49:20"],["","","22922103795244138496","Sell","USDT","VES","50000","866.6","57.69","","","0.06","JU4NPOL4C4","Completed","2026-08-15 20:38:00"],["","","22922340917704065024","Sell","USDT","VES","100000","868.163","115.18","","","0.06","RicoMcPato_3minutos","Completed","2026-08-16 12:20:15"],["","","22922682205394382848","Buy","USDT","VES","150000","875.799","171.27","","","0.06","diegoramirez20","Completed","2026-08-17 10:56:24"],["","","22922787973000278016","Buy","USDT","VES","55800","894.999","62.34","","","0.06","CriptoQueen27","Cancelled","2026-08-17 17:56:41"],["","","22922809418894782464","Buy","USDT","VES","55800","889.79","62.71","","","0.06","Roa0805","Cancelled","2026-08-17 19:21:54"]],"tx": [["","","","","","","","","","","","www.binance.com"],["","","Historial de transacciones"],["","","Nombre","J. DEL CARMEN HERNANDEZ BARRETO","","Email","saipha.servicos.digitais@gmail.com","","Dirección","R MONTE RORAIMA S/N VILA NOVA RR"],["","","ID de usuario","1259063977","","Período(UTC--4)","2026-09-01 to 2026-09-15"],["","","ID de usuario","Hora","","Cuenta","Operación","","Moneda","Cambiar","","Comentario"],["","","1259063977","2026-09-01 10:14:16","","Spot","Binance Convert","","USDT","257.93570875","",""],["","","1259063977","2026-09-01 10:14:16","","Spot","Binance Convert","","BRL","-1331.98","",""],["","","1259063977","2026-09-01 14:02:13","","Funding","Binance Convert","","USDT","-69","",""],["","","1259063977","2026-09-01 14:02:13","","Spot","Binance Convert","","USDT","69","",""],["","","1259063977","2026-09-01 14:04:39","","Spot","Binance Convert","","BRL","355.77592695","",""],["","","1259063977","2026-09-01 14:04:39","","Spot","Binance Convert","","USDT","-69.0076668","",""],["","","1259063977","2026-09-02 07:59:50","","Spot","Binance Convert","","USDT","68.92210905","",""],["","","1259063977","2026-09-02 07:59:50","","Spot","Binance Convert","","BRL","-355.77592695","",""],["","","1259063977","2026-09-02 21:25:20","","Spot","Binance Convert","","BRL","-224.56","",""],["","","1259063977","2026-09-02 21:25:20","","Spot","Binance Convert","","USDT","43.91426783","",""],["","","1259063977","2026-09-03 16:50:50","","Spot","Binance Convert","","BRL","-437","",""],["","","1259063977","2026-09-03 16:50:50","","Spot","Binance Convert","","USDT","85.32156663","",""],["","","1259063977","2026-09-08 09:48:32","","Spot","Binance Convert","","BRL","-1975","",""],["","","1259063977","2026-09-08 09:48:32","","Spot","Binance Convert","","USDT","386.49706457","",""]],"tx_btc": [["","","","","","","","","","","","www.binance.com"],["","","Historial de transacciones"],["","","Nombre","JULIO FRANCISCO HERNANDEZ","","Correo electrónico","marshalljulio46@gmail.com","","Dirección","Av Pacasmayo 07036, Callao, Perú"],["","","Id. de usuario","338951166","","Periodo(UTC--4)","2026-08-15 to 2026-09-15"],["","","ID de usuario","Tiempo","","Cuenta","Operación","","Moneda","Cambio","","Observación"],["","","338951166","2026-08-24 21:02:46","","Funding","Binance Convert","","USDT","-200","",""],["","","338951166","2026-08-24 21:02:46","","Funding","Binance Convert","","BTC","0.00249195","",""],["","","338951166","2026-09-03 13:37:16","","Funding","Binance Convert","","USDT","202.17883112","",""],["","","338951166","2026-09-03 13:37:16","","Funding","Binance Convert","","BTC","-0.00249195","",""]]};
+
+// Binance escribe con PUNTO decimal. _leerNumero, que es lo que usa la app
+// para lo que ella teclea, leeria 5.113 como 5113 por la regla de "punto y
+// tres decimales son miles". Por eso el importador tiene su propio lector.
+ok(F._binNum("5.113") === 5.113, "_binNum lee el punto como decimal", F._binNum("5.113"));
+ok(F._binNum("633911.82") === 633911.82, "y los montos grandes", F._binNum("633911.82"));
+ok(F._binNum("-1331.98") === -1331.98, "y los negativos", F._binNum("-1331.98"));
+ok(F._leerNumero("5.113") === 5113,
+   "mientras _leerNumero sigue leyendolo como 5113 (y debe seguir asi)", F._leerNumero("5.113"));
+ok(isNaN(F._binNum("")) && isNaN(F._binNum(null)), "sin valor no inventa un cero");
+
+// Los rotulos cambian de un export a otro segun el idioma con que Binance lo
+// genero: "Numero de orden" y "Numero de Pedido", "Hora" y "Tiempo".
+ok(F._binNorm("Número de Pedido") === "numero de pedido", "_binNorm quita acentos y mayusculas");
+{
+  const cab = ["", "", "Número de orden", "Tipo de orden", "Activo", "Tipo de Fiat",
+               "Precio total", "Precio", "Cantidad"];
+  const m = F._binMapaCols(cab, { total: ["precio total"], precio: ["precio"] });
+  // "precio" es prefijo de "precio total": por prefijo se cogeria la columna 6.
+  ok(m.precio === 7 && m.total === 6, "la columna se reconoce entera, no por prefijo",
+     JSON.stringify(m));
+}
+
+// Reconoce el archivo y de que cuenta es, sin que ella tenga que decirlo.
+{
+  const id = F._binIdentificar(FIX.c2c);
+  ok(id.tipo === "c2c", "reconoce el historial de ordenes C2C", id.tipo);
+  ok(id.uid === "1259063977", "y saca el ID de usuario", id.uid);
+  ok(/saipha/.test(id.correo), "y el correo", id.correo);
+  ok(F._binIdentificar(FIX.tx).tipo === "tx", "y distingue el de transacciones");
+}
+
+// Las ordenes P2P.
+{
+  const o = F._binOrdenesC2C(FIX.c2c);
+  ok(o.length === 5, "lee las 5 ordenes de SAIPHA", o.length);
+  const v = o.find((x) => x.ordenId === "22928585081217331200");
+  ok(v && v.tipo === "venta" && v.moneda === "BRL", "Sell es una venta en reales");
+  // Lo que la app guarda no es la cantidad de la orden: es lo que se movio del
+  // monedero. En la venta salen la cantidad MAS la comision.
+  ok(v && Math.abs(v.usdt - 132.29) < 0.005,
+     "y guarda el total que sale del monedero (132,22 + 0,07)", v && v.usdt);
+  const c = o.find((x) => x.tipo === "compra");
+  ok(c && Math.abs(c.usdt - 401.97) < 0.005,
+     "en la compra guarda la cantidad de la orden; la comision se resta al crear el lote", c && c.usdt);
+  // Las canceladas no movieron ni un USDT.
+  const oj = F._binOrdenesC2C(FIX.c2c_julio);
+  ok(oj.every((x) => x.ordenId), "ninguna fila sin numero de orden");
+  ok(oj.length < 8, "las canceladas se descartan", oj.length);
+}
+
+// Las conversiones: dos filas con la MISMA hora, una del fiat y otra del USDT.
+{
+  const c = F._binConverts(FIX.tx);
+  ok(c.length >= 5, "empareja las conversiones por la hora exacta", c.length);
+  const compra = c.find((x) => Math.abs(x.monto - 1975) < 0.01);
+  ok(compra && compra.tipo === "compra" && compra.moneda === "BRL",
+     "fiat que sale y USDT que entra es una compra");
+  ok(compra && Math.abs(compra.usdt - 386.4971) < 0.001, "con su USDT", compra && compra.usdt);
+  ok(compra && Math.abs(compra.tasa - 5.11) < 0.001, "y la tasa sale de dividir", compra && compra.tasa);
+  // El 01/09 convirtio 69 USDT en 355,78 reales: eso es una VENTA.
+  const venta = c.find((x) => x.tipo === "venta");
+  ok(!!venta, "fiat que entra y USDT que sale es una venta");
+  // Un par con USDT en los dos lados es un movimiento entre sus propios
+  // monederos (Funding y Spot), no un cambio.
+  ok(c.every((x) => x.moneda !== "USDT"), "un movimiento interno no crea un lote");
+  ok(c.every((x) => x.ordenId.indexOf("CNV-") === 0),
+     "se les fabrica un numero con su hora, para no importarlas dos veces");
+}
+// En la cuenta de Julio hay conversiones USDT<->BTC: mueve criptomoneda, no
+// dinero de clientes. Colarlas crearia un lote en BTC con tasa 0,0000.
+ok(F._binConverts(FIX.tx_btc).length === 0, "las conversiones a BTC no entran",
+   F._binConverts(FIX.tx_btc).length);
+ok(!F._binMonedaConocida("BTC") && F._binMonedaConocida("BRL") && !F._binMonedaConocida("USDT"),
+   "solo entran las monedas que la app conoce");
+
+// Duplicados.
+S.inventarioUsdt = [];
+S.inventarioUsdt_cerrado = [
+  { ordenId: "22928585081217331200", tipo: "venta", moneda: "BRL", usdt: 132.29, bs: 676.05,
+    fecha: "09/02", fechaIso: "2026-09-02", tasa: 5.113 },
+];
+{
+  const o = F._binOrdenesC2C(FIX.c2c);
+  const lotes = S.inventarioUsdt.concat(S.inventarioUsdt_cerrado);
+  const rep = o.find((x) => x.ordenId === "22928585081217331200");
+  ok(!!F._binYaRegistrado(rep, lotes),
+     "una orden P2P ya registrada se reconoce por su numero, tambien archivada");
+  const otra = o.find((x) => x.ordenId !== "22928585081217331200");
+  ok(!F._binYaRegistrado(otra, lotes), "y una nueva no");
+}
+// Las conversiones NO traen numero de orden en el export, asi que se
+// reconocen por el importe. Su lote CNV-1D3ZYEZ esta apuntado el 08/09 y la
+// conversion fue el 11/09: la fecha no puede exigirse igual.
+{
+  const lotes = [{ tipo: "compra", moneda: "BRL", usdt: 317.9361, montOrigen: 1618.6,
+                   fecha: "09/08", fechaIso: "2026-09-08", ordenId: "CNV-1D3ZYEZ" }];
+  const op = { origen: "convert", tipo: "compra", moneda: "BRL", usdt: 317.9961,
+               monto: 1618.6, hora: "2026-09-11 09:02:34" };
+  ok(!!F._binYaRegistrado(op, lotes), "una conversion ya registrada se reconoce por el importe");
+  // Pero no a cualquier distancia: tiene TRES ventas iguales de 19,30 USDT por
+  // 100 R$ en agosto. Sin limite de fecha, una de septiembre se daria por
+  // registrada y se perderia.
+  const lejos = { origen: "convert", tipo: "compra", moneda: "BRL", usdt: 317.9961,
+                  monto: 1618.6, hora: "2026-11-11 09:02:34" };
+  ok(!F._binYaRegistrado(lejos, lotes), "pero no si esta a dos meses de distancia");
+  ok(F._binDias("2026-09-08", "2026-09-11") === 3, "_binDias cuenta bien", F._binDias("2026-09-08","2026-09-11"));
+  ok(F._binDias("", "2026-09-11") === 999, "y sin fecha no empareja a ciegas");
+}
+
+// El banco cambia en cada operacion -PagBank, Nubank, Banesco-, asi que se
+// propone el que ella mas ha usado en esas mismas condiciones.
+{
+  const lotes = [
+    { tipo: "compra", moneda: "BRL", cuentaId: "cA", cuentaOrigenId: "pag" },
+    { tipo: "compra", moneda: "BRL", cuentaId: "cA", cuentaOrigenId: "pag" },
+    { tipo: "compra", moneda: "BRL", cuentaId: "cA", cuentaOrigenId: "nub" },
+    { tipo: "venta",  moneda: "VES", cuentaId: "cB", cuentaDestinoId: "bdv" },
+  ];
+  ok(F._binCuentaSugerida(lotes, "cA", "BRL", "compra") === "pag", "propone el banco mas repetido");
+  ok(F._binCuentaSugerida(lotes, "cB", "VES", "venta") === "bdv", "y en la venta mira la cuenta de destino");
+  ok(F._binCuentaSugerida(lotes, "cA", "COP", "compra") === "", "sin historia no se inventa ninguno");
+}
+
+// Un mes con su cierre hecho ya esta contado y declarado: meterle una
+// operacion cambia una ganancia que ella dio por buena. Entra si lo decide,
+// pero desmarcada.
+S.cierresMes = [{ mesKey: "2026-08" }, { mesKey: "2026-07" }];
+ok(F._binMesCerrado("2026-08-20"), "reconoce un mes con el cierre hecho");
+ok(!F._binMesCerrado("2026-09-20"), "y septiembre sigue abierto");
+ok(!F._binMesCerrado(""), "sin fecha no dice que este cerrado");
+{
+  const imp2 = sinComentarios(sacarFuncion("_binImportar"));
+  ok(/o\.cerrado/.test(imp2), "y al guardar se avisa de cuantas caen en un mes cerrado");
+  const rec2 = sinComentarios(sacarFuncion("_binRecalcular"));
+  ok(/!o\.cerrado/.test(rec2), "esas entran desmarcadas");
+}
+// La tasa de una conversion sale de dividir y eso deja cola de punto flotante:
+// 355.77592695 / 69.0076668 da 5.155599999940876.
+{
+  const c = F._binConverts(FIX.tx);
+  ok(c.every((x) => String(x.tasa).replace(/^\d*\.?/, "").length <= 6),
+     "la tasa se redondea: nada de 5.155599999940876",
+     c.map((x) => x.tasa).join(" "));
+}
+
+// Guardias de estructura.
+{
+  const imp = sinComentarios(sacarFuncion("_binImportar"));
+  ok(/sel\.sort\(/.test(imp),
+     "las operaciones entran en orden de fecha, o el FIFO consume el lote equivocado");
+  ok(/permisoEdicion\(\)/.test(imp), "y no graba quien no puede guardar");
+  ok(/_fechaLote\(/.test(imp) && /_fechaLoteIso\(/.test(imp),
+     "las fechas pasan por _fechaLote y llevan su año (ARREGLO 51)");
+  ok(/confirm\(/.test(imp), "nada se graba sin confirmar");
+  const rec = sinComentarios(sacarFuncion("_binRecalcular"));
+  ok(/visto\[k\]/.test(rec), "el mismo archivo dos veces no duplica");
+  const mar = sinComentarios(sacarFuncion("_binMarcar"));
+  ok(!/\bR\(\)/.test(mar), "marcar una casilla no repinta la tabla (ARREGLO 32)");
+}
+// Un campo que se sincroniza tiene que estar en DATA_KEYS o el remoto lo
+// borra, y en _MERGE_OBJETOS o se reemplaza entero en vez de unirse.
+ok(F.DATA_KEYS.indexOf("mapaBinance") !== -1, "mapaBinance viaja en DATA_KEYS");
+ok(sacarConstante("_MERGE_OBJETOS").indexOf("mapaBinance") !== -1,
+   "y se fusiona clave a clave, no de golpe");
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
