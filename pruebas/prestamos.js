@@ -2354,6 +2354,40 @@ ok(/calc\.socioFinalEE>0\.009\?"<tr><td>Pagar /.test(HTML),
 ok(/Math\.abs\(calc\.ganEEBruta\)>0\.009 \|\| Math\.abs\(calc\.deudasSocioEE\)>0\.009/.test(HTML),
    "y la seccion de liquidacion de socios no se dibuja si no hay nada que liquidar");
 
+// ── ARREGLO 59: la hoja del contador y el detalle del mes ───────────────
+console.log("\nArreglo 59 · el informe lleva lo que el contador necesita");
+
+// El "</div>" de mas: cerraba .cuerpo y .hoja antes de tiempo, asi que TODO lo
+// que se pusiera despues quedaba FUERA de #reporteCapture — y html2canvas solo
+// captura lo de dentro. No se notaba porque no habia nada despues; al añadir
+// las dos secciones nuevas desaparecian sin dar un solo error.
+ok(!/"<\/table><\/div>"\+"<\/div>"/.test(HTML),
+   "no queda el '</div>' de mas que cerraba la hoja antes de tiempo");
+ok(/id='reporteCapture'/.test(HTML), "la hoja del PDF sigue teniendo su id");
+
+// Lo que el contador pide, y de quien es el papel.
+ok(/EMPRESA_RAZON|EMPRESA_CNPJ/.test(HTML), "la razon social y el CNPJ estan en el codigo");
+ok((HTML.match(/EMPRESA_CNPJ/g)||[]).length>=3,
+   "y salen en la hoja del PDF, en la pantalla y en el CSV");
+ok(/Hoja para el contador/.test(HTML), "el PDF lleva la hoja del contador");
+ok(/Detalle del mes · todo el movimiento/.test(HTML), "y el detalle de todo el movimiento");
+ok(/_descargarInformePDF/.test(HTML) && /⬇️ Descargar PDF/.test(HTML),
+   "hay boton de descargar, no solo compartir");
+
+// Una sola fuente para la ganancia del contador: cada operacion con SU tasa.
+// Sin comentarios: el que cuenta el arreglo nombra lo que se quito.
+const _sinCom = HTML.split("\n").filter(function(l){return !/^\s*\/\//.test(l);}).join("\n");
+ok(!/Lucro Bruto das Operações|Lucro Líquido Final/.test(_sinCom),
+   "fuera el 'lucro' que convertia todo con una sola tasa del dia");
+ok((HTML.match(/resumenContador\(mesKey\)/g)||[]).length>=3,
+   "la pantalla, el PDF y el CSV salen de resumenContador()");
+
+// El codigo muerto, borrado.
+ok(!/function rCierreMes\(/.test(HTML) && !/function imprimirRelatorioContador\(/.test(HTML),
+   "las 313 lineas muertas del cierre viejo ya no estan");
+ok(!/Selecione um mês|Relatório Contador/.test(HTML),
+   "y con ellas se fue el ultimo portugues del modulo");
+
 // ── ARREGLO 60: la apertura viaja entera o no viaja ─────────────────────
 // La apertura son cinco claves dentro de config, y _mergeObjetoPorClave decide
 // clave por clave: con dos aparatos se quedaba la FECHA de uno y el MONTO del
