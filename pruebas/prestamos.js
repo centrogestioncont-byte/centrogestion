@@ -93,6 +93,7 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "_tomarTocado", "_etiquetaRegistro", "_resumirValor",
                     "_camposEnConflicto", "_conflictosConElServidor",
                     "_completarConLoQueQuedo", "_htmlAvisoPisado",
+                    "_simularConFecha", "ds",
                     "_permisoPorOmision", "tienePermiso", "permisoEdicion",
                     "_resumenPermisos"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
@@ -2752,6 +2753,60 @@ ok(!/R\(\)/.test(sinComentarios(sacarFuncion("togglePermisoUsuario"))),
 // Un cambio de permisos tiene que llegar sin cerrar la app.
 ok(/_refrescarMisPermisos\(\)/.test(HTML.replace(/\/\/[^\n]*\n/g, "\n")),
    "los permisos se vuelven a preguntar al volver a la app");
+
+// ── ARREGLO 63 · corregir la FECHA de la apertura ─────────────────────────
+// El monto se podia corregir; la fecha no, y tambien se queda mal (el 14/09 la
+// fusion mezclo la fecha de un aparato con el monto del otro). La unica salida
+// era volver a fijarla con el dinero de hoy, que pone la diferencia en cero y
+// borra la pista.
+console.log("\nArreglo 63 · corregir la fecha de la apertura");
+
+{
+  const crudo = sacarFuncion("corregirFechaApertura");
+  const src = sinComentarios(crudo);
+  ok(!/aperturaUsdt\s*=/.test(src), "corregir la fecha NO toca el monto");
+  ok(!/aperturaSaldos\s*=|aperturaTs\s*=|aperturaBase\s*=/.test(src),
+     "ni la foto de saldos, ni la hora, ni la base del mes");
+  ok(/_simularConFecha\(iso\)/.test(src) && src.indexOf("_simularConFecha") < src.indexOf("confirm("),
+     "simula el resultado ANTES de preguntar, no despues");
+  ok(/sinExplicar/.test(src),
+     "y lo que enseña es el 'sin explicar', que es el numero que hay que perseguir");
+  ok(/iso>td\(\)/.test(src), "no deja poner una fecha que todavia no ha llegado");
+  ok(/iso!==_isoDeFecha\(d\)/.test(src),
+     "ni una que no existe: un 31/02 que Date corrige solo no es la que ella escribio");
+  ok(/cambiaDeMes/.test(src) && /entra se suma entero/.test(crudo),
+     "y avisa cuando cambia de mes, que es lo unico que puede salir mal");
+  ok(/logAudit\("APERTURA_FECHA"/.test(src), "queda en la auditoria");
+}
+
+// La simulacion tiene que DEVOLVER la fecha a su sitio, pase lo que pase. Si se
+// la dejara puesta, mirar el resultado ya seria haberlo aplicado.
+S.config = {aperturaUsdt: 2464.13, aperturaFecha: "2026-09-12"};
+["cuentas","capital","prestamos","cuentasCobrar","ajustesSaldo","traspasos",
+ "brl","vzla","eeuu","inventarioUsdt","inventarioUsdt_cerrado","egresos",
+ "egresos_personales","pagosSocios","gastos_eeuu"].forEach(k => { S[k] = []; });
+{
+  const antes = S.config.aperturaFecha;
+  const sim = F._simularConFecha("2026-09-11");
+  ok(S.config.aperturaFecha === antes, "simular no deja la fecha cambiada", S.config.aperturaFecha);
+  ok(sim.desde === "2026-09-11", "pero simula de verdad con la fecha nueva", sim.desde);
+  ok(sim.apertura === 2464.13, "y con el mismo monto", sim.apertura);
+}
+// Y si algo revienta a mitad, la fecha vuelve igual: por eso va en finally.
+{
+  const antes = S.config.aperturaFecha;
+  try { F._simularConFecha("no-es-una-fecha"); } catch (e) { /* da igual que falle */ }
+  ok(S.config.aperturaFecha === antes,
+     "y si algo falla por el camino, tambien vuelve", S.config.aperturaFecha);
+  ok(/finally/.test(sacarFuncion("_simularConFecha")),
+     "eso lo sostiene un finally, no la suerte");
+}
+
+// Los dos botones estan, y el que reinicia la medicion va aparte.
+ok(/Corregir el monto/.test(HTML) && /Corregir la fecha/.test(HTML),
+   "la tarjeta ofrece corregir el monto y la fecha por separado");
+ok(/reinicia la medición/.test(HTML),
+   "y el de volver a fijarla dice que reinicia la medicion");
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

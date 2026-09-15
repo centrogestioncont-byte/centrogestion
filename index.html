@@ -4667,6 +4667,98 @@ function corregirApertura(){
   });
 }
 
+
+// ── Corregir la FECHA de la apertura, sin volver a fijarla ──────────────────
+// ARREGLO 63 (15/09/2026): corregirApertura() arregla el monto y deja la fecha
+// donde esta, que es lo correcto casi siempre. Pero la fecha tambien se puede
+// quedar mal —paso el 14/09: la fusion mezclo la fecha de un aparato con el
+// monto del otro— y para eso no habia salida. La unica forma de cambiarla era
+// volver a fijar la apertura con el dinero de hoy, que es justo lo que no hay
+// que hacer: pone la diferencia en cero y borra la pista.
+//
+// Esto NO mueve el dinero contado. El total de la apertura se midio en un
+// instante y sigue siendo el mismo; lo que se corrige es la etiqueta de cuando
+// se midio, que es la que decide desde donde cuenta la conciliacion.
+//
+// Por eso ANTES de confirmar se simula: se calcula la conciliacion con la fecha
+// nueva y se le enseña el "sin explicar" que va a quedar. Un boton que dice
+// "cambia la fecha" y no dice a que numero te lleva es el que hace falta usar
+// dos veces para entenderlo.
+function _simularConFecha(iso){
+  var cfg=S.config||{};
+  var antes=cfg.aperturaFecha;
+  try{
+    cfg.aperturaFecha=iso;
+    return conciliacionCapital();
+  } finally {
+    cfg.aperturaFecha=antes;   // pase lo que pase, la fecha vuelve a su sitio
+  }
+}
+
+function corregirFechaApertura(){
+  var cfg=S.config||{};
+  if(isNaN(parseFloat(cfg.aperturaUsdt))||!cfg.aperturaFecha){
+    alert("Todavía no hay una apertura fijada."); return;
+  }
+  var t=prompt(
+    "Corregir la FECHA de la apertura.\n\n"+
+    "Ahora dice "+ds(cfg.aperturaFecha)+", con $"+f2(cfg.aperturaUsdt)+" USDT.\n\n"+
+    "El monto no cambia: lo que se corrige es desde cuándo mide la conciliación.\n\n"+
+    "Escribe la fecha como dd/mm/aaaa",
+    ds(cfg.aperturaFecha));
+  if(t===null) return;
+  var iso=_isoDeDDMMAA(String(t).trim());
+  var d=iso?new Date(iso+"T00:00:00"):null;
+  if(!iso||!d||isNaN(d.getTime())){
+    alert("No entendí esa fecha. Escríbela como dd/mm/aaaa, por ejemplo 11/09/2026."); return;
+  }
+  // Una fecha que el propio Date corrige en silencio (31/02 pasa a 03/03) no
+  // es la que ella escribio: se rechaza en vez de aceptar otra distinta.
+  if(iso!==_isoDeFecha(d)){
+    alert("Esa fecha no existe. Revísala."); return;
+  }
+  if(iso===cfg.aperturaFecha){ alert("Esa ya es la fecha de la apertura."); return; }
+  if(iso>td()){ alert("La apertura no puede ser de un día que todavía no ha llegado."); return; }
+
+  var antes=conciliacionCapital();
+  var luego=_simularConFecha(iso);
+  var f=function(n){ return (n<0?"−":"+")+"$"+f2(Math.abs(n)); };
+  var cambiaDeMes=(String(cfg.aperturaFecha).slice(0,7)!==iso.slice(0,7));
+
+  var msg=
+    "Fecha de la apertura\n\n"+
+    "Antes:   "+ds(cfg.aperturaFecha)+"   ("+antes.meses+" mes(es))\n"+
+    "Después: "+ds(iso)+"   ("+luego.meses+" mes(es))\n\n"+
+    "El monto sigue siendo $"+f2(cfg.aperturaUsdt)+" USDT.\n\n"+
+    "Lo que queda SIN EXPLICAR:\n"+
+    "  antes:   "+f(antes.sinExplicar)+"\n"+
+    "  después: "+f(luego.sinExplicar)+"   (margen ±$"+f2(luego.tolerancia)+")\n";
+  if(cambiaDeMes){
+    // Esto es lo unico que puede salir de verdad mal, asi que se dice con
+    // todas las letras. aperturaBase guarda lo que iba del mes EN QUE SE FIJO,
+    // para no contarlo dos veces; si la fecha se va a otro mes, el mes que
+    // entra se suma ENTERO y esa foto ya no le corresponde.
+    msg+="\n⚠️ Estás cambiando de MES.\n"+
+         "La apertura guarda una foto de lo que iba del mes en que se fijó, para "+
+         "no contarlo dos veces. Al mover la fecha a otro mes esa foto deja de "+
+         "corresponder, y el mes que entra se suma entero.\n"+
+         "Mira el 'después' de arriba: si se dispara, no es la fecha que tocaba.\n";
+  }
+  msg+="\n¿Confirmas?";
+  if(!confirm(msg)) return;
+
+  autorizarYHacer(function(){
+    if(!S.config) S.config={};
+    var vieja=S.config.aperturaFecha;
+    S.config.aperturaFecha=iso;
+    logAudit("APERTURA_FECHA","Fecha de la apertura: "+vieja+" → "+iso+
+             " (monto sin tocar: $"+f2(S.config.aperturaUsdt)+")");
+    saveData();R();
+    alert("✅ La apertura ahora es del "+ds(iso)+", con los mismos $"+
+          f2(S.config.aperturaUsdt)+" USDT.");
+  });
+}
+
 function guardarCostoOperativo(){
   var min=parseFloat(document.getElementById("inp-minutos-prestamo").value);
   var hora=parseFloat(document.getElementById("inp-valor-hora").value);
@@ -9215,9 +9307,15 @@ function rCapitalTotal(){
           "<div style='margin-bottom:7px'>Lo que se pasa a una cuenta 💜 personal sale del capital de la empresa aunque no sea un gasto, por eso baja los dos lados y no aparece como diferencia.</div>"+
           (co.egPersonalSin>0?"<div style='margin-bottom:7px'>Hay $"+f2(co.egPersonalSin)+" de gastos personales sin cuenta asignada. No se restan porque no salieron de ningún saldo registrado — si en realidad sí salieron de una cuenta, edítalos y asígnasela.</div>":"")+
           "<div style='color:#aaa'>Tu sueldo no se resta aquí: la app lo calcula como un % de la utilidad, no registra lo que de verdad sacaste. Lo que sacas se anota como gasto personal con su cuenta.</div>"+
-          "<div style='display:flex;gap:7px;margin-top:11px'>"+
-            "<button onclick='corregirApertura()' style='flex:1;padding:8px;border:1px solid "+brd+";border-radius:8px;background:#fff;color:#666;font-size:11px;cursor:pointer;font-family:inherit'>✏️ Corregir la apertura ($"+f2(co.apertura)+")</button>"+
-            "<button onclick='fijarAperturaHoy()' style='flex:1;padding:8px;border:1px solid "+brd+";border-radius:8px;background:#fff;color:#666;font-size:11px;cursor:pointer;font-family:inherit'>Volver a fijarla con el dinero de hoy</button>"+
+          // ARREGLO 63: el monto y la fecha se corrigen por separado. Los dos
+          // dejan la medicion donde esta; el de "volver a fijarla" la reinicia,
+          // y por eso va aparte y en ultimo lugar.
+          "<div style='display:flex;gap:7px;margin-top:11px;flex-wrap:wrap'>"+
+            "<button onclick='corregirApertura()' style='flex:1;min-width:130px;padding:8px;border:1px solid "+brd+";border-radius:8px;background:#fff;color:#666;font-size:11px;cursor:pointer;font-family:inherit'>✏️ Corregir el monto ($"+f2(co.apertura)+")</button>"+
+            "<button onclick='corregirFechaApertura()' style='flex:1;min-width:130px;padding:8px;border:1px solid "+brd+";border-radius:8px;background:#fff;color:#666;font-size:11px;cursor:pointer;font-family:inherit'>📅 Corregir la fecha ("+ds(co.desde)+")</button>"+
+          "</div>"+
+          "<div style='display:flex;gap:7px;margin-top:7px'>"+
+            "<button onclick='fijarAperturaHoy()' style='flex:1;padding:8px;border:1px dashed "+brd+";border-radius:8px;background:#fff;color:#999;font-size:11px;cursor:pointer;font-family:inherit'>Volver a fijarla con el dinero de hoy (reinicia la medición)</button>"+
           "</div>"+
         "</div>"
       :"")+
