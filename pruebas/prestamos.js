@@ -96,7 +96,7 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "_simularConFecha", "ds",
                     "_huellaDisponible", "_huellaGuardada", "_huellaDeEstaPersona",
                     "_permisoPorOmision", "tienePermiso", "permisoEdicion",
-                    "_resumenPermisos"];
+                    "_resumenPermisos", "_loteConOrden"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
 global.window = global.window || {};
 // setTasaDia/soltarTasaDia guardan y repintan, y avisan por alert(). Aqui no
@@ -2883,6 +2883,27 @@ console.log("\nArreglo 64 · entrar con huella");
 // Y sin contexto seguro no se ofrece: en http o en un file:// no existe.
 ok(/window\.isSecureContext/.test(sacarFuncion("_huellaDisponible")),
    "no se ofrece la huella donde el navegador no puede darla");
+
+
+console.log("\n— La orden repetida se busca tambien entre los archivados —");
+// Sus cuatro ordenes registradas dos veces entraron por aca: en los cuatro
+// casos el primer lote ya estaba archivado cuando llego el duplicado, y la
+// comprobacion solo miraba los ACTIVOS.
+S.inventarioUsdt = [{ ordenId: "111", tipo: "compra", usdt: 10, tasa: 5, moneda: "BRL" }];
+S.inventarioUsdt_cerrado = [{ ordenId: "22909791031187947520", tipo: "compra",
+                              usdt: 96.69, tasa: 5.167, moneda: "BRL", _cerrado: true }];
+ok(!!F._loteConOrden("111"), "encuentra la orden repetida entre los lotes activos");
+ok(!!F._loteConOrden("22909791031187947520"),
+   "y TAMBIEN entre los archivados, que es por donde se colaron los suyos");
+ok(!!F._loteConOrden(" 22909791031187947520 "), "sin que estorben los espacios");
+ok(F._loteConOrden("") === null && F._loteConOrden(null) === null,
+   "sin numero de orden no inventa un duplicado");
+{
+  const sv = sinComentarios(sacarFuncion("saveIU"));
+  ok(/_loteConOrden\(/.test(sv), "saveIU lo busca con _loteConOrden");
+  ok(!/\(S\.inventarioUsdt\|\|\[\]\)\.some\(function\(l\)\{return l\.ordenId/.test(sv),
+     "y no vuelve a mirar solo los activos");
+}
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

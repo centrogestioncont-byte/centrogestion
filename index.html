@@ -7528,6 +7528,22 @@ function delCl(cod){
   }
   if(!confirm("¿Eliminar cliente?"))return;S.clientes=S.clientes.filter(function(x){return x.cod!==cod;});_marcarBorradoMerge("clientes",cod);saveData();R();
 }
+// El aviso de orden repetida tiene que mirar TAMBIÉN los lotes archivados.
+// Un lote consumido se muda a inventarioUsdt_cerrado y desaparece del activo,
+// así que su número de orden dejaba de existir para la comprobación. Por ahí
+// se colaron sus cuatro órdenes registradas dos veces: en los cuatro casos el
+// primer lote ya estaba archivado cuando llegó el duplicado.
+//
+//   22909791031187947520  12/07 compra 96,69 USDT a 5,167    x2
+//   22909997187055955968  13/07 venta  58,17 USDT a 5,163    x2
+//   22918471962673512448  05/08 venta  94,82 USDT a 844,20   x2
+//   22926775908846555136  28/08 venta  19,30 USDT a 5,20     x2
+function _loteConOrden(id){
+  id=(id||"").trim(); if(!id) return null;
+  return (S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[])
+    .find(function(l){ return l.ordenId && String(l.ordenId).trim()===id; })||null;
+}
+
 function saveIU(){
   var f=S.nIU;
   var usdt=parseFloat(f.usdt)||0,tasa=parseFloat(f.tasa)||0,com=_comIU(f.comision);
@@ -7551,8 +7567,11 @@ function saveIU(){
   }
   // ── Verificar Order ID duplicado ──────────────────────────────────────────
   var ordenId=(f.ordenId||'').trim();
-  if(ordenId&&(S.inventarioUsdt||[]).some(function(l){return l.ordenId&&l.ordenId===ordenId;})){
-    if(!confirm('⚠️ Ya existe un lote con Order ID '+ordenId+'\n¿Continuar de todas formas?')) return;
+  var _yaEsta=_loteConOrden(ordenId);
+  if(_yaEsta){
+    if(!confirm('⚠️ Ya existe un lote con Order ID '+ordenId+':\n\n'+
+      (_yaEsta.fecha||'')+' · '+(_yaEsta.tipo==='compra'?'compra':'venta')+' de '+f4(_yaEsta.usdt)+' USDT '+(_yaEsta.moneda||'')+' a '+f4(_yaEsta.tasa)+
+      (_yaEsta._cerrado?' (archivado)':'')+'\n\n¿Continuar de todas formas?')) return;
   }
   var fecha=_fechaLote(f.fecha), fechaIso=_fechaLoteIso(f.fecha);   // ARREGLO 51: el año, aparte
   var cuentaAfectada=f.cuentaId||"";
