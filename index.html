@@ -1716,6 +1716,333 @@ var _DOBLE_MAX = 30;                    // cuántas comparaciones se guardan
 // compiten por el espacio que necesitan las remesas.
 var _DOBLE_CORTADA = "";                // motivo, si el servidor la rechazó
 
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 62 (15/09/2026) — que SE VEA cuando el otro aparato pisó algo
+//
+// El servidor fusiona y este dispositivo adopta la respuesta. Eso está bien
+// —es lo que evita que el último que guarda borre al otro— pero se hacía en
+// SILENCIO: si el teléfono tenía la apertura del 11 y la PC la del 12, uno
+// de los dos perdía y la pantalla simplemente cambiaba sola, sin decir
+// nada. Sus palabras: "que uno diga algo y el otro equipo otro".
+//
+// Lo que se enseña NO es todo lo que cambió el servidor. Casi todo lo que
+// vuelve distinto es sencillamente lo que el otro aparato registró mientras
+// tanto: eso es sincronización normal y avisarlo sería ruido en cada
+// guardado. Se avisa SOLO del choque: un registro que ESTE dispositivo
+// acaba de cambiar y que el servidor devuelve distinto de como se mandó.
+// Ahí sí hubo dos opiniones sobre el mismo dato, y ella tiene que saber
+// cuál quedó.
+//
+// De qué se sabe "lo que este dispositivo acaba de cambiar": del mismo
+// sitio que ya lo calcula para marcarlo, _marcarCambiados() y
+// _marcarObjetosCambiados(). No se anota a mano en ninguna función —ese
+// camino ya se demostró que no funciona (más de cien funciones escriben
+// datos, y la que se olvide es la que rompe)—; se anota donde ya se compara
+// contra la foto del guardado anterior, así que una función nueva queda
+// cubierta sola.
+// ══════════════════════════════════════════════════════════════════════
+
+// Lo tocado aquí y todavía sin respuesta del servidor. Se acumula entre
+// guardados: el freno de fbSave() junta varios cambios en un solo envío.
+var _TOCADO_AQUI = {};
+
+function _anotarTocado(clave, id){
+  if(!clave || id===undefined || id===null) return;
+  if(!_TOCADO_AQUI[clave]) _TOCADO_AQUI[clave]={};
+  _TOCADO_AQUI[clave][id]=true;
+}
+function _unirTocado(destino, otro){
+  Object.keys(otro||{}).forEach(function(k){
+    if(!destino[k]) destino[k]={};
+    Object.keys(otro[k]).forEach(function(id){ destino[k][id]=true; });
+  });
+  return destino;
+}
+// Se LLEVA lo anotado y deja el cajón vacío, para que lo que ella toque
+// mientras el guardado viaja no se confunda con lo que ya iba dentro. Si el
+// envío no llega a buen puerto se devuelve con _unirTocado.
+function _tomarTocado(){
+  var t=_TOCADO_AQUI; _TOCADO_AQUI={}; return t;
+}
+
+var _NOMBRE_DE_CLAVE = {
+  cuentas:"Cuenta", compromisos:"Compromiso", egresos:"Egreso",
+  egresos_personales:"Egreso personal", prestamos:"Préstamo",
+  cuentasCobrar:"Cuenta por cobrar", clientes:"Cliente",
+  inventarioUsdt:"Lote de USDT", inventarioUsdt_cerrado:"Lote de USDT cerrado",
+  brl:"Remesa Brasil", vzla:"Remesa Venezuela", eeuu:"Remesa EE.UU.",
+  traspasos:"Traspaso", reposiciones:"Reposición", gastos_eeuu:"Gasto EE.UU.",
+  deudas_paul:"Deuda de socio", movimientosCapital:"Movimiento de capital",
+  pagosSocios:"Pago a socio", gananciaExtra:"Ganancia extra",
+  gastos_socios:"Gasto de socio", cierresMes:"Cierre de mes",
+  capital:"Reserva", ajustesSaldo:"Ajuste de saldo",
+  "@config":"Configuración", "@tasasDia":"Tasa del día",
+  "@_tasasDiaMeta":"Tasa del día (fijada)", "@tasasCambio":"Tasa de cambio"
+};
+// Las claves de config se llaman como las llamó quien las escribió, y varias
+// no se entienden solas. Las que más se pisan entre dispositivos —las cinco
+// de la apertura, ARREGLO 60— llevan nombre en castellano.
+var _NOMBRE_DE_CONFIG = {
+  aperturaUsdt:"Saldo de apertura", aperturaFecha:"Fecha de la apertura",
+  aperturaSaldos:"Foto de saldos de la apertura",
+  aperturaTs:"Hora de la apertura", aperturaBase:"Mes de la apertura",
+  comisionPagoMovil:"Comisión de pago móvil",
+  comisionTransferencia:"Comisión de transferencia",
+  comisionMinima:"Comisión mínima"
+};
+
+// Qué registro es, dicho como lo diría ella. El identificador interno (_uid,
+// id) no le dice nada a nadie; el cliente y el número sí.
+function _etiquetaRegistro(clave, id, reg){
+  var base=_NOMBRE_DE_CLAVE[clave]||clave;
+  if(clave.charAt(0)==="@") return base+" · "+(_NOMBRE_DE_CONFIG[id]||id);
+  var det="";
+  if(reg && typeof reg==="object"){
+    if(clave==="brl"||clave==="vzla"||clave==="eeuu") det=(reg.n?"#"+reg.n+" ":"")+(reg.cl||"");
+    else if(clave==="inventarioUsdt"||clave==="inventarioUsdt_cerrado")
+      det=(reg.tipo||"")+" "+(reg.moneda||"")+" "+(reg.fecha||"");
+    else if(clave==="traspasos") det=(reg.origen||"")+" → "+(reg.destino||"");
+    else det=reg.nombre||reg.n||reg.cliente||reg.desc||reg.mot||reg.motivo||
+             reg.socioNombre||reg.mesLabel||reg.mesKey||"";
+  }
+  det=String(det||"").trim().slice(0,44);
+  return base+(det?" · "+det:" "+String(id).slice(0,12));
+}
+
+// Un valor, en una línea que se pueda leer de un vistazo.
+function _resumirValor(v){
+  if(v===undefined) return "(no estaba)";
+  if(v===null) return "(vacío)";
+  // Los números se escriben como ella los lee. Un "2450.2" al lado de un
+  // "2.450,20" de la pantalla de al lado se lee como otro número.
+  if(typeof v==="number" && isFinite(v))
+    return v.toLocaleString("es-VE",{maximumFractionDigits:6,
+      minimumFractionDigits:(v===Math.round(v)?0:2)});
+  if(typeof v==="object"){
+    var t=_jsonEstable(v);
+    return t.length>160 ? t.slice(0,160)+"…" : t;
+  }
+  return String(v);
+}
+
+// El choque, campo por campo: qué se mandó y qué contestó el servidor.
+function _camposEnConflicto(mio, suyo){
+  var out=[];
+  if(!mio || typeof mio!=="object" || !suyo || typeof suyo!=="object"){
+    out.push({campo:"", mio:_resumirValor(mio), suyo:_resumirValor(suyo)});
+    return out;
+  }
+  var vistas={};
+  [mio,suyo].forEach(function(o){ Object.keys(o).forEach(function(k){ vistas[k]=true; }); });
+  Object.keys(vistas).forEach(function(k){
+    if(k==="_mod"||k==="n") return;   // control y numeración, no datos
+    if(_jsonEstable(mio[k])===_jsonEstable(suyo[k])) return;
+    out.push({campo:k, mio:_resumirValor(mio[k]), suyo:_resumirValor(suyo[k]),
+              crudoMio:mio[k], crudoSuyo:suyo[k]});
+  });
+  return out;
+}
+
+// Solo lo que ESTE dispositivo tocó y volvió distinto. Lo que llega nuevo del
+// otro aparato no entra: eso es sincronización, no un choque.
+function _conflictosConElServidor(mando, delServidor, tocado){
+  var out=[];
+  if(!mando || !delServidor || !tocado) return out;
+  Object.keys(tocado).forEach(function(clave){
+    var ids=Object.keys(tocado[clave]||{});
+    if(!ids.length) return;
+    if(clave.charAt(0)==="@"){
+      var campo=clave.slice(1);
+      var oMio=mando[campo], oSuyo=delServidor[campo];
+      if(!oMio || typeof oMio!=="object") return;
+      ids.forEach(function(k){
+        var a=oMio[k], b=oSuyo?oSuyo[k]:undefined;
+        if(_jsonEstable(a)===_jsonEstable(b)) return;
+        out.push({clave:clave, id:k, etiqueta:_etiquetaRegistro(clave,k,null),
+                  borrado:(b===undefined),
+                  campos:[{campo:"", mio:_resumirValor(a), suyo:_resumirValor(b),
+                           crudoMio:a, crudoSuyo:b}]});
+      });
+      return;
+    }
+    // Los clientes no se adoptan del bloque de estado: tienen su propia ruta
+    // (/clientes) y _aplicarEstadoDeApi ignora a propósito la copia que venga
+    // aquí, que puede ser vieja. Si no se excluyeran, esa copia vieja haría
+    // saltar un aviso de choque por algo que la app ni siquiera va a aplicar.
+    if(clave==="clientes" && _CLIENTES_DESDE_API) return;
+    var a1=mando[clave], b1=delServidor[clave];
+    if(!Array.isArray(a1)) return;
+    var idF=(_MERGE_ID_FIELD&&_MERGE_ID_FIELD[clave])||"id";
+    var porId={};
+    (Array.isArray(b1)?b1:[]).forEach(function(r){
+      if(r && r[idF]!==undefined && r[idF]!==null) porId[r[idF]]=r;
+    });
+    var mios={};
+    a1.forEach(function(r){ if(r && r[idF]!==undefined && r[idF]!==null) mios[r[idF]]=r; });
+    ids.forEach(function(id){
+      var mio=mios[id]; if(!mio) return;     // ya no está ni aquí: se borró aquí
+      var suyo=porId[id];
+      if(suyo===undefined){
+        out.push({clave:clave, id:id, etiqueta:_etiquetaRegistro(clave,id,mio),
+                  borrado:true, campos:[]});
+        return;
+      }
+      var difs=_camposEnConflicto(mio, suyo);
+      if(difs.length) out.push({clave:clave, id:id,
+        etiqueta:_etiquetaRegistro(clave,id,suyo), borrado:false, campos:difs});
+    });
+  });
+  return out;
+}
+
+// El aviso tiene que decir la verdad, y la verdad son TRES valores: lo que
+// mandó este aparato, lo que traía el otro y lo que quedó. No son dos: el
+// servidor fusiona a su manera y después _aplicarEstadoDeApi vuelve a fusionar
+// aquí con las marcas de este dispositivo, así que lo que queda puede no ser
+// ninguna de las dos cosas que se compararon. Medido: el servidor devolvía 915
+// y quedaba 801, y el aviso decía "quedó 915". Un aviso que miente es peor que
+// no tener aviso — se deja de mirar.
+//
+// Por eso esto se llama DESPUÉS de adoptar, y lee de S, que es lo que ella ve.
+function _completarConLoQueQuedo(lista){
+  (lista||[]).forEach(function(c){
+    var reg=null;
+    if(c.clave.charAt(0)==="@"){
+      var o=S[c.clave.slice(1)];
+      reg=(o&&typeof o==="object")?{"":o[c.id]}:null;
+    } else {
+      var idF=(_MERGE_ID_FIELD&&_MERGE_ID_FIELD[c.clave])||"id";
+      var arr=S[c.clave];
+      if(Array.isArray(arr)){
+        for(var i=0;i<arr.length;i++){
+          if(arr[i] && arr[i][idF]===c.id){ reg=arr[i]; break; }
+        }
+      }
+    }
+    (c.campos||[]).forEach(function(d){
+      var v = reg ? reg[d.campo] : undefined;
+      d.quedo=_resumirValor(v);
+      d.quedoMio  = (_jsonEstable(v)===_jsonEstable(d.crudoMio));
+      d.quedoSuyo = (_jsonEstable(v)===_jsonEstable(d.crudoSuyo));
+      delete d.crudoMio; delete d.crudoSuyo;   // no hace falta guardarlos
+    });
+    if(!c.borrado && !reg) c.desaparecio=true;
+  });
+  return lista;
+}
+
+// ── El aviso en pantalla ──────────────────────────────────────────────────
+// Va arriba del todo y NO se pliega solo: un aviso escondido no es un aviso.
+// Se queda hasta que ella lo cierra, y queda guardado para poder mirarlo
+// después en Configuración.
+var _PISADOS = [];            // lo que hay que enseñar ahora mismo
+var _PISADOS_ABIERTO = false; // si el detalle está desplegado
+var _PISADOS_KEY = "cg_pisados_v1";
+var _PISADOS_MAX = 30;
+
+function _guardarPisados(lista){
+  try{
+    var r=localStorage.getItem(_PISADOS_KEY);
+    var h=r?JSON.parse(r):[];
+    if(!Array.isArray(h)) h=[];
+    h.unshift({ts:Date.now(), items:lista});
+    localStorage.setItem(_PISADOS_KEY, JSON.stringify(h.slice(0,_PISADOS_MAX)));
+  }catch(e){}
+}
+function _leerPisados(){
+  try{
+    var r=localStorage.getItem(_PISADOS_KEY);
+    var h=r?JSON.parse(r):[];
+    return Array.isArray(h)?h:[];
+  }catch(e){ return []; }
+}
+function _olvidarPisados(){
+  try{ localStorage.removeItem(_PISADOS_KEY); }catch(e){}
+  _PISADOS=[]; _PISADOS_ABIERTO=false; R();
+}
+function _cerrarAvisoPisado(){ _PISADOS=[]; _PISADOS_ABIERTO=false; R(); }
+function _alternarAvisoPisado(){ _PISADOS_ABIERTO=!_PISADOS_ABIERTO; R(); }
+
+// El historial, para cuando ella diga "esto lo cambié yo y volvió atrás".
+// Vive en Configuración, no en el aviso: el aviso es de ahora, esto es de
+// antes. Guarda las últimas 30 veces que hubo choque.
+function _htmlHistorialPisados(){
+  var h=_leerPisados();
+  if(!h.length) return "<div style='font-size:12px;color:#888;line-height:1.6'>"+
+    "Todavía no ha chocado nada. Aquí aparecen los cambios que hiciste en este "+
+    "dispositivo y que el servidor devolvió distintos porque el otro también "+
+    "los había tocado.</div>";
+  var out="<div style='font-size:11px;color:#666;margin-bottom:10px;line-height:1.6'>"+
+    "Cada vez que lo que guardaste aquí chocó con lo que había en el servidor. "+
+    "No es una lista de errores: es el registro de cuándo dos dispositivos "+
+    "opinaron distinto sobre el mismo dato.</div>";
+  h.forEach(function(ev){
+    var f=new Date(ev.ts);
+    out+="<div style='border:1px solid #eee;border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#fafafa'>"+
+      "<div style='font-size:11px;font-weight:800;color:#8a5200'>"+
+      _escAud(f.toLocaleString("es-VE"))+" · "+(ev.items||[]).length+" registro"+
+      ((ev.items||[]).length===1?"":"s")+"</div>";
+    (ev.items||[]).forEach(function(c){
+      out+="<div style='font-size:11px;color:#444;margin-top:5px'>• "+_escAud(c.etiqueta)+
+        (c.borrado?" <span style='color:#c0392b'>(lo borró el otro dispositivo)</span>":"")+"</div>";
+      (c.campos||[]).forEach(function(d){
+        out+="<div style='font-size:10px;color:#777;margin-left:10px;line-height:1.5'>"+
+          (d.campo?_escAud(d.campo)+": ":"")+"mandaste "+_escAud(d.mio)+
+          " · el otro tenía "+_escAud(d.suyo)+" · quedó <b>"+_escAud(d.quedo)+"</b></div>";
+      });
+    });
+    out+="</div>";
+  });
+  out+="<button onclick='if(confirm(\"¿Borrar este historial? No cambia ningún dato, solo la lista.\"))_olvidarPisados()' "+
+    "style='margin-top:6px;padding:8px 12px;border:1.5px dashed #bbb;border-radius:9px;background:#fff;color:#777;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit'>Borrar el historial</button>";
+  return out;
+}
+
+function _htmlAvisoPisado(){
+  if(!_PISADOS.length) return "";
+  var n=_PISADOS.length;
+  var h="<div style='background:#FFF4E5;border-bottom:2px solid #E08A00;padding:10px 14px'>"+
+    "<div style='display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap'>"+
+      "<div style='flex:1;min-width:200px'>"+
+        "<div style='font-size:13px;font-weight:800;color:#8a5200'>"+
+          "🔀 El otro dispositivo también cambió "+(n===1?"esto":"estas "+n+" cosas")+"</div>"+
+        "<div style='font-size:11px;color:#7a6a50;margin-top:3px;line-height:1.5'>"+
+          "Lo que guardaste aquí chocó con lo que había en el servidor. Quedó lo "+
+          "más reciente de cada campo. Revisa que sea lo que querías.</div>"+
+      "</div>"+
+      "<div style='display:flex;gap:6px'>"+
+        "<button onclick='_alternarAvisoPisado()' style='background:#fff;border:1.5px solid #E08A00;color:#8a5200;padding:6px 11px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit'>"+
+          (_PISADOS_ABIERTO?"Ocultar":"Ver qué cambió")+"</button>"+
+        "<button onclick='_cerrarAvisoPisado()' style='background:#E08A00;border:none;color:#fff;padding:6px 11px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit'>Entendido</button>"+
+      "</div>"+
+    "</div>";
+  if(_PISADOS_ABIERTO){
+    h+="<div style='margin-top:10px;background:#fff;border:1px solid #E08A0044;border-radius:9px;padding:9px 11px;max-height:38vh;overflow-y:auto'>";
+    _PISADOS.forEach(function(c){
+      h+="<div style='padding:7px 0;border-bottom:1px solid #f2f2f2'>"+
+         "<div style='font-size:12px;font-weight:700;color:#333'>"+_escAud(c.etiqueta)+"</div>";
+      if(c.borrado){
+        h+="<div style='font-size:11px;color:#c0392b;margin-top:3px'>El otro dispositivo lo borró.</div>";
+      } else {
+        c.campos.forEach(function(d){
+          h+="<div style='font-size:11px;color:#666;margin-top:3px;line-height:1.5'>"+
+             (d.campo?"<b>"+_escAud(d.campo)+"</b>: ":"")+
+             "mandaste <span style='color:#8a5200'>"+_escAud(d.mio)+"</span>"+
+             " · el otro tenía <span style='color:#8a5200'>"+_escAud(d.suyo)+"</span>"+
+             " · <b>quedó <span style='color:#0f6e3a'>"+_escAud(d.quedo)+"</span></b>"+
+             (d.quedoMio?" (lo tuyo)":(d.quedoSuyo?" (lo del otro)":""))+"</div>";
+        });
+      }
+      h+="</div>";
+    });
+    h+="<div style='font-size:10px;color:#999;margin-top:8px;line-height:1.5'>"+
+       "Si lo que quedó no es lo correcto, vuelve a registrarlo desde este "+
+       "dispositivo: el último cambio es el que manda.</div>";
+    h+="</div>";
+  }
+  return h+"</div>";
+}
+
 function _dobleLeer(){
   try{
     var r=localStorage.getItem(_DOBLE_KEY);
@@ -1829,6 +2156,10 @@ function enviarEstadoALaApi(obj){
 
 function _dobleEnviarAhora(obj){
   if(!apiSesionActiva() || _API_BLOQUEADA || !_API_ENTRO_POR_API) return;
+  // ARREGLO 62: lo tocado aquí viaja con ESTE envío. Se lleva del cajón para
+  // que lo que ella registre mientras el guardado va y viene no se confunda
+  // con lo que iba dentro; si el envío no llega, se devuelve intacto.
+  var _tocado=_tomarTocado();
   try{
     apiFetch("/estado",{method:"PUT",body:{estado:obj,_ts:obj._ts}})
       .then(function(r){
@@ -1841,16 +2172,19 @@ function _dobleEnviarAhora(obj){
         if(r.status===403){
           _DOBLE_CORTADA="tu usuario no tiene permiso de edición";
           console.warn("Guardado rechazado: sin permiso de edición.");
+          _unirTocado(_TOCADO_AQUI,_tocado);
           return null;
         }
         if(r.status===401){
           _DOBLE_CORTADA="la sesión venció";
           console.warn("Guardado rechazado: la sesión venció.");
+          _unirTocado(_TOCADO_AQUI,_tocado);
           return null;
         }
         if(r.status===409){
           _DOBLE_CORTADA="falta la carga inicial del estado";
           console.warn("Guardado rechazado: falta la carga inicial (POST /estado/importar).");
+          _unirTocado(_TOCADO_AQUI,_tocado);
           return null;
         }
         // Todo lo demás es pasajero: un arranque en frío de Railway, un 502
@@ -1859,18 +2193,35 @@ function _dobleEnviarAhora(obj){
         // antes de comparar nada. Se saltea este guardado y se sigue.
         if(!r.ok){
           console.warn("Comparación: el servidor respondió "+r.status+", se saltea este guardado.");
+          _unirTocado(_TOCADO_AQUI,_tocado);
           return null;
         }
         return r.json();
       })
       .then(function(d){
-        if(!d||!d.ok||!d.estado) return;
+        if(!d||!d.ok||!d.estado){ _unirTocado(_TOCADO_AQUI,_tocado); return; }
         _DOBLE_CORTADA="";   // salio bien: se limpia el aviso anterior
         if(FUENTE_API){
           // Fase 7.3: el servidor es el arbitro. Lo que devuelve NO se
           // compara, se adopta: es el resultado de fusionar lo que mando
           // este dispositivo contra lo que ya habia.
-          if(_aplicarEstadoDeApi(d.estado, d._ts)){ try{ R(); }catch(e){} }
+          //
+          // ARREGLO 62: adoptar está bien; adoptar EN SILENCIO no. Antes de
+          // pisar lo de aquí se mira qué de lo que ella acaba de cambiar
+          // volvió distinto, y eso —y solo eso— se le enseña. Va ANTES de
+          // _aplicarEstadoDeApi porque después ya no hay con qué comparar:
+          // esa función adopta y vuelve a fotografiar.
+          var _ch=[];
+          try{ _ch=_conflictosConElServidor(obj, d.estado, _tocado); }catch(e){}
+          var _cambio=_aplicarEstadoDeApi(d.estado, d._ts);
+          if(_ch.length){
+            // Lo que QUEDÓ solo se sabe después de adoptar: se lee de S.
+            try{ _completarConLoQueQuedo(_ch); }catch(e){}
+            _PISADOS=_ch;
+            _guardarPisados(_ch);
+            console.warn("🔀 El servidor devolvió distinto lo que este aparato cambió:", _ch);
+          }
+          if(_cambio||_ch.length){ try{ R(); }catch(e){} }
           return;
         }
         var difs=_dobleComparar(d.estado, obj);
@@ -1885,7 +2236,11 @@ function _dobleEnviarAhora(obj){
         }
         _dobleGuardar(reg);
       })
-      .catch(function(){ /* sin red: no es una diferencia, es una ausencia */ });
+      .catch(function(){
+        // sin red: no es una diferencia, es una ausencia. Lo tocado vuelve al
+        // cajón para que el próximo envío que sí llegue lo compare.
+        _unirTocado(_TOCADO_AQUI,_tocado);
+      });
   }catch(e){}
 }
 
@@ -8176,6 +8531,9 @@ function rConfigAdmin(){
     _cfgAcc("usuarios_api","👥","Usuarios","correo y clave · la unica forma de entrar","#372c9e",rUsuariosApi(),false)+
     _cfgAcc("comparacion_api","⚖️","Comparación con la API","control de la migración","#b8752a",rComparacionApi(),false)+
     _cfgAcc("permisos","🔒","Permisos por operador",null,"#1a6b3c",permisosBody,false)+
+    _cfgAcc("pisados","🔀","Cambios que chocaron entre dispositivos",
+      (function(){ var n=_leerPisados().length; return n?(n+" "+(n===1?"vez":"veces")):"ninguno todavía"; })(),
+      "#E08A00", _htmlHistorialPisados(), false)+
     "<div style='background:#f8f8f8;border-radius:14px;padding:14px;border:1px solid #eee'>"+
       "<div style='font-size:10px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:8px'>ℹ️ Sistema · versión "+APP_VERSION+"</div>"+
       "<div style='font-size:11px;color:#555;margin-bottom:10px;padding:8px 10px;background:#fff;border:1px solid #eee;border-radius:8px;line-height:1.5'>"+
@@ -12452,6 +12810,10 @@ function rMain(){
       "<div style='font-size:11px;opacity:.85'>"+sub+"</div></div></div>"+
     "<div style='display:flex;align-items:center;gap:8px'>"+"<div style='display:flex;align-items:center;gap:6px'>"+"<div id='fb-dot' title='"+(_hayConexionReal?"Conectado con el servidor":"Sin conexión con el servidor")+"' style='width:9px;height:9px;border-radius:50%;background:"+(_hayConexionReal?"#4ade80":"#f87171")+";border:1.5px solid rgba(255,255,255,.5)'></div>"+(S.role==="admin"?"<button onclick='st(\"config_admin\")' title='Configuración Admin' style='background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);color:#fff;padding:5px 9px;border-radius:7px;font-size:13px;cursor:pointer'>⚙️</button>":"")+"<button onclick='salir()' style='background:rgba(255,255,255,.2);border:none;color:#fff;padding:6px 13px;border-radius:8px;font-weight:600;cursor:pointer'>Salir</button>"+"</div>"+"</div>"+
   "</div><div class='panel' style='flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;-webkit-overflow-scrolling:touch'>"+
+    // ARREGLO 62: el aviso de choque va aquí arriba, fuera del área que hace
+    // scroll, para que se vea esté ella en la pantalla que esté. Un aviso al
+    // fondo de una lista de remesas no es un aviso.
+    _htmlAvisoPisado()+
     "<div class='navbar3'>"+
       "<button class='menubtn' onclick='document.getElementById(\"navMenuWrap\").classList.add(\"show\")'>☰ Menú</button>"+
       "<div class='cursec'>"+(TL[S.tab]||S.tab||"")+"</div>"+
@@ -19782,7 +20144,7 @@ var _fbSaveTimer = null;
 // o un préstamo: son más de quince, y la que se olvide reabre el agujero.
 // Se compara la foto del registro contra la del guardado anterior; si
 // cambió de verdad, lleva marca.
-function _marcarCambiados(arr, memo, idField){
+function _marcarCambiados(arr, memo, idField, clave){
   if(!Array.isArray(arr)||!memo) return;
   idField = idField || "id";
   arr.forEach(function(it){
@@ -19799,7 +20161,10 @@ function _marcarCambiados(arr, memo, idField){
     // guardado después de abrir la app marcaría todo, y un dispositivo con
     // datos viejos le ganaría la fusión a uno al día solo por haber
     // guardado una vez. Eso es exactamente lo que pasó con las cuentas.
-    if(previo!==undefined && previo!==foto) it._mod=Date.now();
+    // ARREGLO 62: el mismo sitio que decide que esto cambió aquí lo anota
+    // para el aviso de choque. Anotarlo en cada función que toca datos ya se
+    // probó y no funciona: la que se olvide es la que calla el aviso.
+    if(previo!==undefined && previo!==foto){ it._mod=Date.now(); _anotarTocado(clave,id); }
     memo[id]=foto;
   });
 }
@@ -19823,7 +20188,7 @@ function _marcarTodoLoQueSeFusiona(){
   campos.forEach(function(k){
     if(!Array.isArray(S[k])) return;
     if(!window._fotoPorCampo[k]) window._fotoPorCampo[k]={};
-    _marcarCambiados(S[k], window._fotoPorCampo[k], ids[k]||"id");
+    _marcarCambiados(S[k], window._fotoPorCampo[k], ids[k]||"id", k);
   });
 }
 // Después de traer datos del servidor, las fotos que teníamos son de antes de
@@ -19906,7 +20271,7 @@ function _marcarObjetosCambiados(){
     Object.keys(obj).forEach(function(k){
       var foto=JSON.stringify(obj[k]);
       if(memo[k]!==undefined){
-        if(memo[k]!==foto) marcas[k]=ahora;
+        if(memo[k]!==foto){ marcas[k]=ahora; _anotarTocado("@"+campo,k); }
       } else if(habiaFoto){
         // ARREGLO 46 (14/09/2026): una clave NUEVA dentro de un objeto que YA
         // estaba fotografiado es un cambio, y hay que marcarla.
@@ -19922,6 +20287,7 @@ function _marcarObjetosCambiados(){
         // Si no había foto de nada, se sigue sin marcar: eso es ARREGLO 33 y no
         // se toca.
         marcas[k]=ahora;
+        _anotarTocado("@"+campo,k);
       }
       memo[k]=foto;
     });
