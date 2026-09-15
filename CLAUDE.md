@@ -528,6 +528,25 @@ número suelto no se puede perseguir, así que la diferencia viene desglosada, y
 - **La tarjeta dice contra qué apertura mide** —fecha, monto y si tiene foto de
   saldos—. Una apertura sin foto no permite comparar cuenta por cuenta cuando
   algo no cuadra, y eso no se veía en ninguna parte.
+- **El monto y la fecha se corrigen por separado** (ARREGLO 63).
+  `corregirApertura()` arregla el monto; `corregirFechaApertura()`, la fecha.
+  La fecha también se queda mal —el 14/09 la fusión pegó la fecha de un aparato
+  al monto del otro— y para eso la única salida era volver a fijarla con el
+  dinero de hoy, que es justo lo que no hay que hacer. Ninguno de los dos toca
+  `aperturaSaldos`, `aperturaTs` ni `aperturaBase`: el dinero se midió en un
+  instante y sigue siendo el mismo; lo que se corrige es la etiqueta.
+- **Corregir la fecha SIMULA antes de preguntar.** `_simularConFecha()` calcula
+  la conciliación con la fecha nueva y enseña el "sin explicar" que va a quedar,
+  antes y después. Un botón que dice "cambia la fecha" y no dice a qué número te
+  lleva hay que usarlo dos veces para entenderlo. La simulación devuelve la
+  fecha a su sitio **en un `finally`**: si no, mirar el resultado ya sería
+  haberlo aplicado.
+- **Cambiar de MES es lo único que puede salir mal, y se avisa.** `aperturaBase`
+  guarda lo que iba del mes **en que se fijó**, para no contarlo dos veces; al
+  mover la fecha a otro mes esa foto deja de corresponder y el mes que entra se
+  suma entero. Medido con su export: pasar del 12/09 al 30/08 lleva el "sin
+  explicar" de −$47,85 a **+$836,87**. Por eso la simulación va primero — el
+  número lo canta solo, sin que nadie tenga que creerse el aviso.
 
 ### Evolución mide la tendencia, no el capital
 
