@@ -101,6 +101,7 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "_binNum", "_binNorm", "_binMapaCols", "_binBuscarCabecera",
                     "_binIdentificar", "_binOrdenesC2C", "_binConverts", "_binDias",
                     "_binMonedaConocida", "_binYaRegistrado", "_binCuentaSugerida", "_binMesCerrado",
+                    "_binConfianzaBanco", "_binSinBanco",
                     "_trioIU", "_fiatIU", "_usdtIU", "_tasaIU", "_descuadreIU",
                     "_monIU", "_loteConOrden", "_ultimasIU"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
@@ -3196,6 +3197,92 @@ ok(!F._binMesCerrado(""), "sin fecha no dice que este cerrado");
 ok(F.DATA_KEYS.indexOf("mapaBinance") !== -1, "mapaBinance viaja en DATA_KEYS");
 ok(sacarConstante("_MERGE_OBJETOS").indexOf("mapaBinance") !== -1,
    "y se fusiona clave a clave, no de golpe");
+
+
+console.log("\n— Cerrar el mes, y el banco del importador —");
+
+// El boton del informe llamaba directo a ejecutarCierreMes() sin preguntar
+// nada, y esta pegado al de PDF: asi se le cerro septiembre teniendolo en
+// curso. Y no habia forma de deshacerlo.
+{
+  const html = sinComentarios(HTML);
+  ok(!/onclick='ejecutarCierreMes\(S\._cMes,true\)'/.test(html),
+     "el boton del informe ya no cierra el mes a bocajarro");
+  const cer = sinComentarios(sacarFuncion("cerrarMesDesdeInforme"));
+  ok(/confirm\(/.test(cer), "pregunta antes de cerrar");
+  ok(/permisoEdicion\(\)/.test(cer), "y no cierra quien no puede guardar");
+}
+// Reabrir SOLO el mes en curso: el cierre guarda una foto de los saldos, de lo
+// que le deben y de lo prestado. Borrar el de un mes pasado tira esa foto, y
+// al volver a cerrarlo se tomarian los saldos de HOY.
+{
+  const re = sinComentarios(sacarFuncion("reabrirMes"));
+  ok(/getMesKeyActual\(\)/.test(re), "reabrir se limita al mes en curso");
+  ok(/confirm\(/.test(re), "y tambien pregunta");
+  ok(/ultimoMesCerrado/.test(re),
+     "al reabrir, ultimoMesCerrado vuelve al mas nuevo que quede");
+  ok(/permisoEdicion\(\)/.test(re), "y respeta el permiso de guardar");
+}
+
+// El banco no viene en el archivo de Binance, asi que la sugerencia tiene que
+// decir que es una sugerencia. Sus 123 ventas en VES: 111 a Banco de Venezuela.
+{
+  const lotes = [];
+  for (let i = 0; i < 9; i++) lotes.push({ tipo: "venta", moneda: "VES", cuentaDestinoId: "bdv" });
+  lotes.push({ tipo: "venta", moneda: "VES", cuentaDestinoId: "banesco" });
+  const c = F._binConfianzaBanco(lotes, "", "VES", "venta");
+  ok(c.id === "bdv" && c.n === 9 && c.total === 10,
+     "dice cual propone y sobre cuantas", JSON.stringify(c));
+  ok(F._binConfianzaBanco([], "", "COP", "venta").total === 0,
+     "sin historia no inventa un porcentaje");
+}
+// Y se puede dejar sin banco: el lote, el FIFO y la ganancia no dependen de el.
+{
+  const imp = sinComentarios(sacarFuncion("_binImportar"));
+  ok(/cuentaOrigenId:o\.cuentaFiat\|\|""/.test(imp) && /cuentaDestinoId:o\.cuentaFiat\|\|""/.test(imp),
+     "importar sin banco es valido");
+  ok(/contraparte:o\.contraparte/.test(imp),
+     "y el lote se queda con la contraparte, para reconocerlo en el extracto");
+  const sin = sinComentarios(sacarFuncion("_binImportar"));
+  ok(!/sinBanco|!o\.cuentaFiat/.test(sin.split("sinCuenta")[0] || ""),
+     "el banco no bloquea la importacion");
+}
+// Lo importado sin banco no puede quedar invisible.
+S.inventarioUsdt = [
+  { id: 1, tipo: "venta", moneda: "VES", bs: 100000, cuentaDestinoId: "", fecha: "09/02" },
+  { id: 2, tipo: "venta", moneda: "VES", bs: 50000, cuentaDestinoId: "bdv", fecha: "09/03" },
+  { id: 3, tipo: "compra", moneda: "BRL", montOrigen: 500, cuentaOrigenId: "", fecha: "09/04" },
+  { id: 4, tipo: "compra", moneda: "USDT", montOrigen: 10, cuentaOrigenId: "", fecha: "09/05" },
+];
+S.inventarioUsdt_cerrado = [];
+{
+  const p = F._binSinBanco();
+  ok(p.length === 2, "lista los que esperan banco", p.length);
+  ok(p.every((l) => l.moneda !== "USDT"),
+     "un lote en USDT no lleva banco aparte y no cuenta");
+  ok(p.some((l) => l.id === 1) && p.some((l) => l.id === 3),
+     "entran tanto las ventas como las compras");
+}
+// Un lote en blanco no movio dinero: no hay banco que asignarle y solo alarga
+// la lista. La app ya los marca aparte como "registro sin montos".
+S.inventarioUsdt.push({ id: 5, tipo: "venta", moneda: "VES", bs: 0, cuentaDestinoId: "", fecha: "09/06" });
+ok(!F._binSinBanco().some((l) => l.id === 5), "un lote en blanco no entra en los pendientes");
+// Asignarlo despues tiene que mover el saldo: el dinero entro o salio de
+// verdad, solo que no se sabia de donde.
+{
+  const pon = sinComentarios(sacarFuncion("_binPonerBanco"));
+  ok(/c\.saldo=/.test(pon), "al asignar el banco se mueve el saldo de esa cuenta");
+  ok(/l\._mod=Date\.now\(\)/.test(pon), "y el lote queda marcado para la sincronizacion");
+  ok(/permisoEdicion\(\)/.test(pon), "con permiso de guardar");
+}
+// La contraparte viene en el archivo y antes se tiraba.
+{
+  const o = F._binOrdenesC2C(FIX.c2c);
+  ok(o.every((x) => typeof x.contraparte === "string"),
+     "todas las ordenes traen contraparte");
+  ok(o.some((x) => x.contraparte.length > 0), "y al menos una con nombre",
+     o.map((x) => x.contraparte).join("|"));
+}
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

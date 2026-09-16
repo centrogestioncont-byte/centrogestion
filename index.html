@@ -2625,6 +2625,46 @@ function exportarMesExcel(mesKey){
   return filename;
 }
 
+// Cerrar desde el informe: lo mismo que hacia el boton, pero preguntando.
+// Cerrar un mes no es un boton de pintar: fija la ganancia, el sueldo y el
+// acumulado, y a partir de ahi el importador de Binance deja las operaciones
+// de ese mes desmarcadas.
+function cerrarMesDesdeInforme(mesKey){
+  if(!permisoEdicion()){ alert("No tienes permiso para guardar."); return; }
+  var k=mesKey||S._cMes;
+  var lbl=getMesLabel(k.split("-")[1],k.split("-")[0]);
+  var enCurso=(k===getMesKeyActual());
+  if(!confirm("Cerrar "+lbl+(enCurso?" (el mes EN CURSO)":"")+"\n\n"+
+    "Al cerrarlo:\n"+
+    "· la ganancia y el sueldo del mes quedan fijados\n"+
+    "· el sueldo pasa a tu acumulado gastable\n"+
+    "· las operaciones de ese mes entran desmarcadas al importar de Binance\n\n"+
+    (enCurso?"El mes todavía no ha terminado. ¿Seguro?":"¿Continuar?"))) return;
+  ejecutarCierreMes(k,true);
+}
+// Reabrir. Solo el mes EN CURSO, y no por capricho: el cierre guarda una foto
+// de los saldos, de lo que te deben y de lo prestado en el momento de
+// cerrarlo. Borrar el cierre de un mes ya pasado tira esa foto y volver a
+// cerrarlo tomaria los saldos de HOY, que no son los de aquel mes. Con el mes
+// en curso no se pierde nada: la foto buena es la que se tome al final.
+function reabrirMes(mesKey){
+  if(!permisoEdicion()){ alert("No tienes permiso para guardar."); return; }
+  var k=mesKey||S._cMes;
+  if(k!==getMesKeyActual()){
+    alert("Solo se puede reabrir el mes en curso.\n\nUn mes ya pasado guarda una foto de tus saldos del día que lo cerraste. Si se borra, al volver a cerrarlo se tomarían los saldos de hoy y los números de ese mes quedarían mal.");
+    return;
+  }
+  var lbl=getMesLabel(k.split("-")[1],k.split("-")[0]);
+  if(!confirm("Reabrir "+lbl+"\n\nVuelve a quedar como un mes en curso: la ganancia se recalcula sola y el sueldo deja de contar como acumulado hasta que lo cierres de verdad.\n\n¿Continuar?")) return;
+  S.cierresMes=(S.cierresMes||[]).filter(function(c){ return c && c.mesKey!==k; });
+  // ultimoMesCerrado pasa a ser el mas nuevo de los que quedan, o nada.
+  var quedan=(S.cierresMes||[]).map(function(c){return c.mesKey;}).sort();
+  S.ultimoMesCerrado=quedan.length?quedan[quedan.length-1]:"";
+  try{ logAudit("MES_REABIERTO","Se reabrió "+lbl); }catch(e){}
+  saveData(); R();
+  alert("🔓 "+lbl+" vuelve a estar abierto.");
+}
+
 function cerrarMes(){
   var meses=getMesesDisponibles();
   var selMes=S.filtroMes||(meses.length?meses[0].key:"");
@@ -7574,6 +7614,7 @@ var _BIN_COLS_C2C={
   cantidad:["cantidad","quantity"],
   comCre:["comision del creador","tarifa de creador","maker fee"],
   comTom:["comision del tomador","comision de tomador","taker fee"],
+  contraparte:["contraparte","counterparty"],
   estado:["estado","status"],
   hora:["hora de creacion","created time"]
 };
@@ -7655,6 +7696,10 @@ function _binOrdenesC2C(filas){
       // transacciones en 40 de sus 45 operaciones cruzadas.
       usdt: venta ? cant+com : cant,
       cantidad:cant, comision:com, tasa:precio, monto:(total>0?total:cant*precio),
+      // El archivo trae con quien se hizo la operacion. Se guarda porque es lo
+      // que le permite reconocerla en el extracto del banco cuando tenga que
+      // decir a que cuenta entro el dinero.
+      contraparte:String(f[c.contraparte]||"").trim(),
       plataforma:"Binance P2P"
     });
   }
@@ -7764,6 +7809,21 @@ function _binDias(a, b){
 // el código ni pedirle que lo configure. Se mira lo que ella misma hizo en
 // esas mismas condiciones y se propone lo más repetido; en la pantalla de
 // revisión puede cambiarlo fila a fila.
+// Devuelve {id, n, total} para poder decir "el 90% de tus ventas en VES".
+function _binConfianzaBanco(lotes, cuentaUsdtId, moneda, tipo){
+  var campo=tipo==="compra"?"cuentaOrigenId":"cuentaDestinoId", cuenta={}, total=0, i, id;
+  for(i=0;i<lotes.length;i++){
+    var l=lotes[i];
+    if(l.tipo!==tipo || String(l.moneda||"").toUpperCase()!==moneda) continue;
+    if(cuentaUsdtId && l.cuentaId && l.cuentaId!==cuentaUsdtId) continue;
+    total++;
+    id=l[campo]; if(!id) continue;
+    cuenta[id]=(cuenta[id]||0)+1;
+  }
+  var mejor="", n=0;
+  for(id in cuenta) if(cuenta[id]>n){ n=cuenta[id]; mejor=id; }
+  return {id:mejor, n:n, total:total};
+}
 function _binCuentaSugerida(lotes, cuentaUsdtId, moneda, tipo){
   var campo=tipo==="compra"?"cuentaOrigenId":"cuentaDestinoId", cuenta={}, i, id;
   for(i=0;i<lotes.length;i++){
@@ -7799,6 +7859,70 @@ function _binFijarCuenta(uid, cuentaId){
 }
 
 function _binCancelar(){ S._impBin=null; R(); }
+
+// Lo importado sin banco no puede quedar invisible. El lote, el FIFO y la
+// ganancia salen bien sin el banco -solo el saldo de esa cuenta se queda sin
+// mover-, asi que es legitimo dejarlo para despues; lo que no es legitimo es
+// que se olvide. Estos son los que esperan.
+function _binSinBanco(){
+  return (S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[]).filter(function(l){
+    if(String(l.moneda||"").toUpperCase()==="USDT") return false;   // no lleva banco aparte
+    // Un lote en blanco -los que la app ya marca como "registro sin montos"-
+    // no tiene banco que asignar: no movio dinero. Colarlo aqui solo hace que
+    // la lista parezca mas larga de lo que es y que deje de mirarse.
+    var monto=parseFloat(l.tipo==="compra"?l.montOrigen:l.bs)||0;
+    if(monto<=0) return false;
+    return !(l.tipo==="compra"?l.cuentaOrigenId:l.cuentaDestinoId);
+  }).sort(function(a,b){ return ordenFIFO(b,a); });
+}
+// Asignar el banco a un lote ya guardado, y mover el saldo de esa cuenta: el
+// dinero entro o salio de verdad, solo que hasta ahora no se sabia de donde.
+function _binPonerBanco(loteId, cuentaId){
+  if(!permisoEdicion()){ alert("No tienes permiso para guardar."); return; }
+  var l=(S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[])
+        .find(function(x){ return String(x.id)===String(loteId); });
+  if(!l||!cuentaId) return;
+  var c=(S.cuentas||[]).find(function(x){ return x.id===cuentaId; });
+  if(!c) return;
+  if(l.tipo==="compra"){
+    l.cuentaOrigenId=cuentaId;
+    c.saldo=Math.round(((parseFloat(c.saldo)||0)-(parseFloat(l.montOrigen)||0))*100)/100;
+  }else{
+    l.cuentaDestinoId=cuentaId;
+    c.saldo=Math.round(((parseFloat(c.saldo)||0)+(parseFloat(l.bs)||0))*100)/100;
+  }
+  l._mod=Date.now();
+  saveData(); R();
+}
+function _htmlPendientesBanco(){
+  var p=_binSinBanco();
+  if(!p.length) return "";
+  if(!S._verSinBanco) return "<div style='margin-bottom:10px'>"+
+    "<button type='button' onclick='S._verSinBanco=true;R()' style='width:100%;padding:10px;border:1.5px dashed #F5C518;background:#FFFBEA;color:#7a5c00;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>"+
+    "🏦 "+p.length+" operaciones sin banco asignado — pulsa para verlas</button></div>";
+  return "<div style='background:#FFFBEA;border:1.5px solid #F5C518;border-radius:11px;padding:12px 14px;margin-bottom:10px'>"+
+    "<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px'>"+
+      "<b style='font-size:12px;color:#7a5c00'>🏦 "+p.length+" operaciones sin banco</b>"+
+      "<button type='button' onclick='S._verSinBanco=false;R()' style='background:#eee;border:none;padding:5px 11px;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer'>Cerrar</button>"+
+    "</div>"+
+    "<div style='font-size:11px;color:#7a5c00;margin-bottom:9px;line-height:1.5'>La ganancia de estas ya está bien contada. Lo único que falta es de qué cuenta salió o a cuál entró el dinero — búscalas en tu extracto por el monto y la fecha.</div>"+
+    p.slice(0,40).map(function(l){
+      var cf=(S.cuentas||[]).filter(function(c){return c.activa!==false&&c.moneda===l.moneda;});
+      var monto=l.tipo==="compra"?(parseFloat(l.montOrigen)||0):(parseFloat(l.bs)||0);
+      return "<div style='display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap;font-size:11px'>"+
+        "<span style='min-width:52px'>"+(l.fecha||"—")+"</span>"+
+        "<span class='bd' style='background:"+(l.tipo==="compra"?"#D6F5E3":"#FDECEA")+";color:"+(l.tipo==="compra"?"#0b4d27":"#7c1c0c")+"'>"+(l.tipo==="compra"?"⬇️":"⬆️")+" "+l.moneda+"</span>"+
+        "<span style='min-width:110px;text-align:right;font-weight:700'>"+f2(monto)+" "+l.moneda+"</span>"+
+        (l.contraparte?"<span style='color:#888;min-width:110px'>"+l.contraparte+"</span>":"")+
+        (cf.length?"<select onchange='_binPonerBanco(\""+l.id+"\",this.value)' style='flex:1;min-width:150px;padding:5px;border:1px solid #ddd;border-radius:6px;font-family:inherit;font-size:11px'>"+
+          "<option value=''>— elegir banco —</option>"+
+          cf.map(function(c){return "<option value='"+c.id+"'>"+c.nombre+"</option>";}).join("")+"</select>"
+         :"<span style='color:#c0392b;font-size:10px'>no tienes ninguna cuenta en "+l.moneda+" — créala en Configuración</span>")+
+      "</div>";
+    }).join("")+
+    (p.length>40?"<div style='font-size:10px;color:#888;margin-top:6px'>… y "+(p.length-40)+" más. Asigna estas y vuelve.</div>":"")+
+  "</div>";
+}
 
 // Lee los Excel. Se admiten varios a la vez porque hacen falta dos por cuenta
 // y son seis archivos en total si se ponen al día las tres.
@@ -7885,6 +8009,15 @@ function _binMarcarTodas(cual){
   R();
 }
 function _binFiat(i,id){ var o=(S._impBin&&S._impBin.ops||[])[i]; if(o) o.cuentaFiat=id; }
+// A todas las de esa moneda y ese tipo. "" deja el banco sin decidir, que es
+// una respuesta legitima: el lote, el FIFO y la ganancia no dependen del
+// banco; solo el saldo de esa cuenta.
+function _binFiatTodas(moneda, tipo, id){
+  ((S._impBin&&S._impBin.ops)||[]).forEach(function(o){
+    if(o.moneda===moneda && o.tipo===tipo) o.cuentaFiat=id;
+  });
+  R();
+}
 
 // El recuento de abajo se refresca sin repintar: marcar una casilla no puede
 // llamar a R(), que rehace la tabla y pierde el scroll (ARREGLO 32).
@@ -8030,6 +8163,7 @@ function _binImportar(){
       S.inventarioUsdt.push({id:base+k, tipo:"compra", fecha:fecha, fechaIso:fechaIso,
         moneda:o.moneda, montOrigen:Math.round(o.monto*100)/100, usdt:neto, tasa:o.tasa,
         comision:com, bs:0, plataforma:o.plataforma, ordenId:o.ordenId,
+        contraparte:o.contraparte||"",
         cuentaId:o.cuentaId, cuentaOrigenId:o.cuentaFiat||"",
         restante:neto, locked:false, _mod:Date.now()});
       if(cObj&&cObj.moneda==="USDT") cObj.saldo=Math.round(((parseFloat(cObj.saldo)||0)+neto)*100)/100;
@@ -8040,6 +8174,7 @@ function _binImportar(){
       S.inventarioUsdt.push({id:base+k, tipo:"venta", fecha:fecha, fechaIso:fechaIso,
         moneda:o.moneda, montOrigen:0, usdt:o.usdt, neto:netoV, tasa:o.tasa,
         comision:com, bs:bs, bsRestante:bs, plataforma:o.plataforma, ordenId:o.ordenId,
+        contraparte:o.contraparte||"",
         cuentaId:o.cuentaId, cuentaDestinoId:o.cuentaFiat||"",
         restante:0, locked:false, _mod:Date.now()});
       if(cObj&&cObj.moneda==="USDT") cObj.saldo=Math.round(((parseFloat(cObj.saldo)||0)-o.usdt)*100)/100;
@@ -15176,8 +15311,14 @@ function rInformeCierre(){
   "<div style='display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px'>"+
     "<select onchange='S._cMes=this.value;S._cSec=\"resumen\";R()' style='flex:1;min-width:160px;padding:10px 12px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-weight:700;font-family:inherit;cursor:pointer'>"+mesOpts+"</select>"+
     "<button onclick='generarInformePDF(S._cMes)' style='padding:10px 14px;background:#FFA31C;color:#fff;border:none;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>📄 PDF</button>"+
-    (esMesAct?"<button onclick='ejecutarCierreMes(S._cMes,true)' style='padding:10px 14px;background:#1a3558;color:#fff;border:none;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>🗓️ Cerrar</button>":
-      (cierreGuardado?"<span style='background:#D6F5E3;color:#0f6e3a;border-radius:9px;padding:8px 12px;font-size:11px;font-weight:700'>✅ Cerrado</span>":""))+
+    // Este boton llamaba directo a ejecutarCierreMes() SIN preguntar nada. Un
+    // toque de mas -esta pegado al de PDF- y el mes quedaba cerrado. Asi se le
+    // cerro septiembre teniendolo en curso, y encima no habia forma de
+    // deshacerlo: nada en la app quitaba un mes de S.cierresMes.
+    (cierreGuardado
+      ? "<span style='background:#D6F5E3;color:#0f6e3a;border-radius:9px;padding:8px 12px;font-size:11px;font-weight:700'>✅ Cerrado</span>"+
+        (esMesAct?"<button onclick='reabrirMes(S._cMes)' style='padding:10px 14px;background:#fff;color:#7a5c00;border:1.5px solid #F5C518;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>🔓 Reabrir</button>":"")
+      : (esMesAct?"<button onclick='cerrarMesDesdeInforme(S._cMes)' style='padding:10px 14px;background:#1a3558;color:#fff;border:none;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>🗓️ Cerrar</button>":""))+
   "</div>"+
   "<div style='display:flex;overflow-x:auto;gap:5px;margin-bottom:12px;scrollbar-width:none;padding-bottom:2px'>"+
     secs.map(function(s){var on=S._cSec===s;
@@ -18916,6 +19057,7 @@ function rInventarioUsdt(){
   // invita a teclear a mano lo que se esta a punto de importar.
   if(S._impBin) return rImportarBinance();
   var f=S.nIU;
+  var pendBanco=_htmlPendientesBanco();
   var st=getInventarioStats();
   var monOpts=MONEDAS_COMPRA.map(function(m){return "<option value='"+m.id+"'"+(f.moneda===m.id?" selected":"")+">"+m.flag+" "+m.label+"</option>";}).join("");
   var mVentaOpts=MONEDAS_VENTA.map(function(m){return "<option value='"+m.id+"'"+(f.monedaVenta===m.id?" selected":"")+">"+m.flag+" "+m.label+"</option>";}).join("");
@@ -19061,7 +19203,7 @@ function rInventarioUsdt(){
       "</div>";
     })()+
   "</div>"+
-    "<div class='sec'>"+
+    "<div class='sec'>"+ pendBanco +
     // ── Panel OCR Tesseract (gratis, sin API) ─────────────────────────────
     (function(){
       // Botón simple — prompt() nativo, no depende de R()
