@@ -50,7 +50,8 @@ function sacarConstante(nombre) {
   }
   throw new Error("la constante " + nombre + " no termina en ';'");
 }
-const CONSTANTES = ["_BIN_COLS_C2C", "_BIN_COLS_TX", "MONEDAS_COMPRA", "MONEDAS_VENTA",
+const CONSTANTES = ["_PODA_CATS",
+                    "_BIN_COLS_C2C", "_BIN_COLS_TX", "MONEDAS_COMPRA", "MONEDAS_VENTA",
                     "MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
                     "_MERGE_OBJETOS", "_MERGE_BLOQUES", "_MERGE_HISTORIAL", "_RATE_LIMITS",
                     "DATA_KEYS", "_CLAVES_QUE_NO_SON_DATOS", "PAGO_DEBE",
@@ -102,6 +103,8 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "_binIdentificar", "_binOrdenesC2C", "_binConverts", "_binDias",
                     "_binMonedaConocida", "_binYaRegistrado", "_binCuentaSugerida", "_binMesCerrado",
                     "_binConfianzaBanco", "_binSinBanco", "_htmlOrdenCopiable",
+                    "_marcarBorradoMerge", "_estaBorradoMerge", "_olvidarBorradoMerge",
+                    "_podarBorrados",
                     "_trioIU", "_fiatIU", "_usdtIU", "_tasaIU", "_descuadreIU",
                     "_monIU", "_loteConOrden", "_ultimasIU"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
@@ -3314,6 +3317,46 @@ ok(!/String\(o\.ordenId\)\.slice\(0,\s*12\)/.test(HTML),
   ok(/prompt\(/.test(cp), "si el portapapeles no va, se ensena el numero para copiarlo a mano");
   ok(/isSecureContext/.test(cp), "y solo se intenta donde el navegador lo permite");
 }
+
+
+console.log("\n— Reabrir un mes tiene que sobrevivir a la fusion —");
+// cierresMes se fusiona entre dispositivos. Borrarlo solo en el aparato no
+// basta: al guardar, el servidor devuelve el cierre y la fusion lo repone.
+// Sintoma exacto: le dio a Reabrir y la pantalla siguio diciendo "Cerrado".
+{
+  const re = sinComentarios(sacarFuncion("reabrirMes"));
+  ok(/_marcarBorradoMerge\("cierresMes"/.test(re),
+     "reabrir deja constancia del borrado, o el servidor lo devuelve");
+  // Y la constancia no sirve de nada si su categoria no se poda: la marca se
+  // anota y nadie la aplica (ARREGLOS 13 y 18).
+  ok(sacarConstante("_PODA_CATS").indexOf('"cierresMes"') !== -1,
+     "y cierresMes entra en la poda, para que la marca se aplique de verdad");
+}
+// La trampa del otro lado: la marca dura 30 dias. Al cerrar el mes de verdad,
+// la poda se lo comeria otra vez.
+{
+  const ej = sinComentarios(sacarFuncion("ejecutarCierreMes"));
+  ok(/_olvidarBorradoMerge\("cierresMes"/.test(ej),
+     "y al volver a cerrar, la marca se retira");
+}
+// La aritmetica de las tres piezas, de punta a punta.
+S._deletedMerge = {};
+S.cierresMes = [{ mesKey: "2026-09" }, { mesKey: "2026-08" }];
+F._marcarBorradoMerge("cierresMes", "2026-09");
+ok(F._estaBorradoMerge("cierresMes", "2026-09"), "queda marcado");
+ok(!F._estaBorradoMerge("cierresMes", "2026-08"), "y solo ese mes");
+// La fusion trae el cierre de vuelta; la poda tiene que sacarlo.
+S.cierresMes.push({ mesKey: "2026-09" });
+F._podarBorrados();
+ok(!S.cierresMes.some((c) => c.mesKey === "2026-09"),
+   "aunque el servidor lo devuelva, la poda lo saca");
+ok(S.cierresMes.some((c) => c.mesKey === "2026-08"), "sin tocar los demas meses");
+// Y al cerrarlo otra vez, la marca se va y el cierre se queda.
+F._olvidarBorradoMerge("cierresMes", "2026-09");
+S.cierresMes.push({ mesKey: "2026-09" });
+F._podarBorrados();
+ok(S.cierresMes.some((c) => c.mesKey === "2026-09"),
+   "cerrado de nuevo, ya no se lo come la poda");
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

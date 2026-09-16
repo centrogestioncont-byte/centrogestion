@@ -2493,6 +2493,10 @@ function ejecutarCierreMes(mesKey, manual){
 
   // Guardar el cierre
   S.cierresMes = S.cierresMes.filter(function(c){return c.mesKey!==mesKey;}); // evitar duplicados
+  // Si este mes se habia reabierto, su marca de borrado sigue viva 30 dias y
+  // la poda volveria a quitarlo en el siguiente guardado. Cerrarlo otra vez es
+  // justo lo contrario de borrarlo: la marca se retira.
+  _olvidarBorradoMerge("cierresMes",mesKey);
   S.cierresMes.push(cierre);
   S.cierresMes.sort(function(a,b){return b.mesKey.localeCompare(a.mesKey);});
   S.ultimoMesCerrado = mesKey;
@@ -2657,6 +2661,11 @@ function reabrirMes(mesKey){
   var lbl=getMesLabel(k.split("-")[1],k.split("-")[0]);
   if(!confirm("Reabrir "+lbl+"\n\nVuelve a quedar como un mes en curso: la ganancia se recalcula sola y el sueldo deja de contar como acumulado hasta que lo cierres de verdad.\n\n¿Continuar?")) return;
   S.cierresMes=(S.cierresMes||[]).filter(function(c){ return c && c.mesKey!==k; });
+  // cierresMes se fusiona entre dispositivos (_MERGE_FIELDS). Borrarlo solo
+  // aqui no basta: al guardar, el servidor devuelve el cierre y la fusion lo
+  // repone, asi que la pantalla volvia a decir "Cerrado" al instante. Es el
+  // mismo fallo que ya documenta _marcarBorradoMerge() para egresos y cuentas.
+  _marcarBorradoMerge("cierresMes",k);
   // ultimoMesCerrado pasa a ser el mas nuevo de los que quedan, o nada.
   var quedan=(S.cierresMes||[]).map(function(c){return c.mesKey;}).sort();
   S.ultimoMesCerrado=quedan.length?quedan[quedan.length-1]:"";
@@ -21933,7 +21942,12 @@ function _mergeArrayById(remoteArr, localArr, idField, remoteTs, localTs){
 var _PODA_CATS=["brl","vzla","eeuu","clientes","inventarioUsdt","inventarioUsdt_cerrado",
                 "cuentas","cuentasCobrar","egresos","egresos_personales","prestamos",
                 "compromisos","traspasos","deudas_paul","gananciaExtra","gastos_socios",
-                "gastos_eeuu","reposiciones","ajustesSaldo","pagosSocios","capital"];
+                "gastos_eeuu","reposiciones","ajustesSaldo","pagosSocios","capital",
+                // "cierresMes" entra el 16/09/2026, con el boton de reabrir el
+                // mes. La marca se anotaba y nadie la miraba, asi que reabrir
+                // duraba lo que tardaba el siguiente guardado: el servidor
+                // devolvia el cierre y la pantalla volvia a decir "Cerrado".
+                "cierresMes"];
 function _podarBorrados(){
   var quitados=0;
   try{
@@ -22117,6 +22131,15 @@ function _marcarBorradoMerge(campo,id){
     var cutoff=Date.now()-2592000000; // 30 días
     S._deletedMerge[campo]=S._deletedMerge[campo].filter(function(x){return x.ts>cutoff;});
     S._deletedMerge[campo].push({id:id,ts:Date.now()});
+  }catch(e){}
+}
+// Quita la marca de borrado de un registro. Sin esto, volver a crear algo que
+// se borro -cerrar otra vez un mes que se reabrio- se lo comeria la poda en el
+// siguiente guardado, porque la marca dura 30 dias.
+function _olvidarBorradoMerge(campo,id){
+  try{
+    if(!S._deletedMerge||!S._deletedMerge[campo]) return;
+    S._deletedMerge[campo]=S._deletedMerge[campo].filter(function(x){ return x.id!==id; });
   }catch(e){}
 }
 function _estaBorradoMerge(campo,id){
