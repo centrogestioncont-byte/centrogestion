@@ -7870,6 +7870,20 @@ function _binMesCerrado(iso){
   return (S.cierresMes||[]).some(function(c){ return c && c.mesKey===mk; });
 }
 function _binMarcar(i,v){ var o=(S._impBin&&S._impBin.ops||[])[i]; if(o){ o.sel=!!v; _binResumenImp(); } }
+// Marcar en bloque. Esto SI repinta: hay que mover todas las casillas de la
+// tabla, no solo el recuento, y no se esta tecleando en ningun campo.
+//   "nuevas"  → lo que no esta registrado y no cae en un mes cerrado
+//   "todas"   → tambien las de meses cerrados, si ella lo decide
+//   "ninguna" → limpiar
+function _binMarcarTodas(cual){
+  var ops=(S._impBin&&S._impBin.ops)||[];
+  ops.forEach(function(o){
+    if(cual==="ninguna") o.sel=false;
+    else if(cual==="todas") o.sel=!o.ya && !!o.cuentaId;
+    else o.sel=!o.ya && !!o.cuentaId && !o.cerrado;
+  });
+  R();
+}
 function _binFiat(i,id){ var o=(S._impBin&&S._impBin.ops||[])[i]; if(o) o.cuentaFiat=id; }
 
 // El recuento de abajo se refresca sin repintar: marcar una casilla no puede
@@ -7955,10 +7969,25 @@ function rImportarBinance(){
         "</select>":"<span style='color:#aaa'>—</span>")+"</td>"+
       "<td style='padding:6px 8px;font-size:9px;color:#aaa;white-space:nowrap'>"+
         (gris?("ya está"+(dif>0?" · apuntada "+o.ya.fecha:""))
-             :(o.cerrado?"<b style='color:#7a5c00'>mes cerrado</b>":String(o.ordenId).slice(0,12)))+"</td>"+
+             :(o.cerrado?"<b style='color:#7a5c00'>mes cerrado</b><br>":"")+String(o.ordenId).slice(0,12))+"</td>"+
     "</tr>";
   });
   H+="</tbody></table></div>";
+  // Cuantas se quedan fuera y por que. Una fila desmarcada sin explicacion es
+  // una pantalla que no se puede usar: no hay forma de saber si falta un dato
+  // o si la app decidio algo.
+  var nCerr=0, nYa=0;
+  ops.forEach(function(o){ if(o.ya) nYa++; else if(o.cerrado) nCerr++; });
+  H+="<div style='display:flex;gap:7px;margin-top:10px;flex-wrap:wrap;align-items:center'>"+
+     "<span style='font-size:10px;color:#888;text-transform:uppercase;font-weight:700'>Marcar</span>"+
+     "<button type='button' onclick='_binMarcarTodas(\"nuevas\")' style='padding:6px 12px;border:1.5px solid #1a3558;background:#fff;color:#1a3558;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit'>Las nuevas</button>"+
+     "<button type='button' onclick='_binMarcarTodas(\"todas\")' style='padding:6px 12px;border:1.5px solid #7a5c00;background:#fff;color:#7a5c00;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit'>Todas, incluidas las de meses cerrados</button>"+
+     "<button type='button' onclick='_binMarcarTodas(\"ninguna\")' style='padding:6px 12px;border:1.5px solid #ddd;background:#fff;color:#888;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit'>Ninguna</button>"+
+     "</div>";
+  if(nCerr) H+="<div style='background:#FFF4E5;border:1px solid #F5C518;border-radius:8px;padding:9px 12px;font-size:11px;color:#7a5c00;margin-top:9px;line-height:1.5'>"+
+     "<b>"+nCerr+" operaciones caen en un mes que ya tiene su cierre hecho</b> y por eso entran desmarcadas: registrarlas cambia una ganancia que ya diste por buena. "+
+     "Si aun asi las quieres, usa el boton de arriba o marcalas una a una.</div>";
+  if(nYa) H+="<div style='font-size:11px;color:#888;margin-top:7px'>"+nYa+" ya estaban registradas y se quedan fuera.</div>";
   H+="<div style='display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap'>"+
      "<div id='bin-resumen' style='font-size:12px;color:#555'>"+_htmlResumenBin()+"</div>"+
      "<button class='btn-main' onclick='_binImportar()' style='background:"+(faltaCuenta?"#bbb":"#1a3558")+";color:#fff;margin:0;width:auto;padding:11px 22px'"+
