@@ -7858,6 +7858,44 @@ function _binFijarCuenta(uid, cuentaId){
   _binRecalcular(); R();
 }
 
+// El numero de orden es lo unico que identifica la operacion: al mismo
+// comerciante se le puede comprar tres veces el mismo dia, asi que el nombre
+// no distingue. Con el numero se busca en Binance y ahi se ve el metodo de
+// pago, que es el dato que el export NO trae.
+//
+// El portapapeles necesita contexto seguro y permiso; si no se puede, se
+// ensena el numero en un prompt para copiarlo a mano. Quedarse sin copiar no
+// puede dejarla sin el dato.
+function _copiarTexto(txt, etiqueta){
+  txt=String(txt||""); if(!txt) return;
+  var ok=function(){ try{ _toast("📋 "+(etiqueta||"Copiado")); }catch(e){} };
+  try{
+    if(navigator.clipboard && window.isSecureContext){
+      navigator.clipboard.writeText(txt).then(ok,function(){ prompt("Copia el número:",txt); });
+      return;
+    }
+  }catch(e){}
+  prompt("Copia el número:",txt);
+}
+// Aviso corto que no interrumpe. alert() obliga a pulsar aceptar cada vez, y
+// esto se usa una vez por operacion.
+function _toast(msg){
+  var d=document.getElementById("cg-toast");
+  if(!d){
+    d=document.createElement("div"); d.id="cg-toast";
+    d.style.cssText="position:fixed;left:50%;transform:translateX(-50%);bottom:22px;background:#1a3558;color:#fff;padding:9px 16px;border-radius:9px;font-size:12px;font-weight:700;z-index:99999;box-shadow:0 4px 14px rgba(0,0,0,.25);transition:opacity .25s";
+    document.body.appendChild(d);
+  }
+  d.textContent=msg; d.style.opacity="1";
+  clearTimeout(_toast._t); _toast._t=setTimeout(function(){ d.style.opacity="0"; },1800);
+}
+function _htmlOrdenCopiable(id, corto){
+  id=String(id||""); if(!id) return "";
+  return "<button type='button' onclick='_copiarTexto(\""+id+"\",\"Número de orden copiado\")' "+
+    "title='Copiar para buscarlo en Binance' "+
+    "style='background:#f0f2f5;border:1px solid #ddd;border-radius:6px;padding:3px 7px;font-size:"+(corto?"9":"10")+"px;font-family:monospace;cursor:pointer;color:#555;max-width:100%;overflow:hidden;text-overflow:ellipsis'>📋 "+id+"</button>";
+}
+
 function _binCancelar(){ S._impBin=null; R(); }
 
 // Lo importado sin banco no puede quedar invisible. El lote, el FIFO y la
@@ -7913,7 +7951,8 @@ function _htmlPendientesBanco(){
         "<span style='min-width:52px'>"+(l.fecha||"—")+"</span>"+
         "<span class='bd' style='background:"+(l.tipo==="compra"?"#D6F5E3":"#FDECEA")+";color:"+(l.tipo==="compra"?"#0b4d27":"#7c1c0c")+"'>"+(l.tipo==="compra"?"⬇️":"⬆️")+" "+l.moneda+"</span>"+
         "<span style='min-width:110px;text-align:right;font-weight:700'>"+f2(monto)+" "+l.moneda+"</span>"+
-        (l.contraparte?"<span style='color:#888;min-width:110px'>"+l.contraparte+"</span>":"")+
+        (l.contraparte?"<span style='color:#888;min-width:105px'>"+l.contraparte+"</span>":"")+
+        _htmlOrdenCopiable(l.ordenId)+
         (cf.length?"<select onchange='_binPonerBanco(\""+l.id+"\",this.value)' style='flex:1;min-width:150px;padding:5px;border:1px solid #ddd;border-radius:6px;font-family:inherit;font-size:11px'>"+
           "<option value=''>— elegir banco —</option>"+
           cf.map(function(c){return "<option value='"+c.id+"'>"+c.nombre+"</option>";}).join("")+"</select>"
@@ -8102,7 +8141,7 @@ function rImportarBinance(){
         "</select>":"<span style='color:#aaa'>—</span>")+"</td>"+
       "<td style='padding:6px 8px;font-size:9px;color:#aaa;white-space:nowrap'>"+
         (gris?("ya está"+(dif>0?" · apuntada "+o.ya.fecha:""))
-             :(o.cerrado?"<b style='color:#7a5c00'>mes cerrado</b><br>":"")+String(o.ordenId).slice(0,12))+"</td>"+
+             :(o.cerrado?"<b style='color:#7a5c00'>mes cerrado</b><br>":"")+_htmlOrdenCopiable(o.ordenId,true))+"</td>"+
     "</tr>";
   });
   H+="</tbody></table></div>";
