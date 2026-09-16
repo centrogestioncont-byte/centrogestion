@@ -102,7 +102,7 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "_binNum", "_binNorm", "_binMapaCols", "_binBuscarCabecera",
                     "_binIdentificar", "_binOrdenesC2C", "_binConverts", "_binDias",
                     "_binMonedaConocida", "_binYaRegistrado", "_binCuentaSugerida", "_binMesCerrado",
-                    "_binConfianzaBanco", "_binSinBanco", "_htmlOrdenCopiable",
+                    "_binConfianzaBanco", "_binSinBanco", "_htmlOrdenCopiable", "_htmlSupuesto",
                     "_marcarBorradoMerge", "_estaBorradoMerge", "_olvidarBorradoMerge",
                     "_podarBorrados",
                     "_trioIU", "_fiatIU", "_usdtIU", "_tasaIU", "_descuadreIU",
@@ -3357,6 +3357,58 @@ S.cierresMes.push({ mesKey: "2026-09" });
 F._podarBorrados();
 ok(S.cierresMes.some((c) => c.mesKey === "2026-09"),
    "cerrado de nuevo, ya no se lo come la poda");
+
+console.log("\n— El banco se pone por grupo, no fila por fila —");
+// El fallo que esto fija: _binFiatTodas se escribio y se quedo SIN CONECTAR a
+// la pantalla. La funcion pasaba cualquier prueba que la llamara a mano, y en
+// su pantalla no habia ningun boton: sus 31 ventas en VES habia que corregirlas
+// abriendo 31 desplegables. Una funcion que nadie llama no arregla nada.
+{
+  const rend = sinComentarios(sacarFuncion("rImportarBinance"));
+  ok(/_binFiatTodas\(/.test(rend),
+     "la pantalla del importador dibuja el selector por grupo");
+  ok(/aplicar a todas/.test(rend),
+     "con su rotulo, para que se entienda que cambia mas de una fila");
+  // Agrupar por moneda y tipo, no por una lista de bancos escrita a mano: su
+  // empresa va a crecer y las cuentas nuevas tienen que salir solas.
+  ok(/c\.moneda\s*===\s*g\.moneda/.test(rend),
+     "las cuentas del grupo salen de S.cuentas, no de una lista fija");
+  ok(/bin-sup-/.test(rend),
+     "y cada fila lleva sitio para la etiqueta de suposicion");
+}
+{
+  const ft = sinComentarios(sacarFuncion("_binFiatTodas"));
+  ok(/if\(!id\)\s*return/.test(ft),
+     "el hueco del desplegable es el rotulo: no borra el banco de todas");
+  ok(/__sin__/.test(ft),
+     "dejarlas sin banco a proposito tiene su propia opcion");
+  ok(/fiatAuto\s*=\s*false/.test(ft),
+     "lo que elige ella deja de contar como suposicion");
+}
+// "supuesto" es lo unico que separa lo que propuso la app de lo que reviso
+// ella. Sin eso, 31 filas iguales y ninguna forma de saber cuales miro.
+{
+  const rec = sinComentarios(sacarFuncion("_binRecalcular"));
+  ok(/fiatAuto\s*=\s*!!o\.cuentaFiat/.test(rec),
+     "la sugerencia automatica queda marcada como suposicion");
+  const fi = sinComentarios(sacarFuncion("_binFiat"));
+  ok(/fiatAuto\s*=\s*false/.test(fi),
+     "tocar el desplegable de una fila la da por revisada");
+  ok(!/\bR\(\)/.test(fi),
+     "y no repinta: la tabla es larga y se perderia el scroll (ARREGLO 32)");
+  ok(F._htmlSupuesto({ fiatAuto: true, cuentaFiat: "c1" }).indexOf("supuesto") >= 0,
+     "una propuesta se ve como propuesta");
+  ok(F._htmlSupuesto({ fiatAuto: false, cuentaFiat: "c1" }) === "",
+     "lo que decidio ella no lleva etiqueta");
+  ok(F._htmlSupuesto({ fiatAuto: true, cuentaFiat: "" }) === "",
+     "y sin banco no hay nada que suponer");
+}
+// Un "1" con verbo en plural se lee como un error de la app.
+{
+  const rend = sinComentarios(sacarFuncion("rImportarBinance"));
+  ok(/nYa\s*===\s*1/.test(rend) && /nCerr\s*===\s*1/.test(rend),
+     "los recuentos de uno van en singular");
+}
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

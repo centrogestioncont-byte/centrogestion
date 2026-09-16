@@ -8024,7 +8024,15 @@ function _binRecalcular(){
     o.i=i;
     o.cuentaId=_binCuentaDeUid(o.uid);
     o.ya=_binYaRegistrado(o,lotes);
-    o.cuentaFiat=o.cuentaFiat||_binCuentaSugerida(lotes,o.cuentaId,o.moneda,o.tipo);
+    // El banco no viene en el archivo de Binance, así que se propone el que
+    // más veces usó para esa moneda y ese tipo — y queda MARCADO como
+    // suposición. Sin la marca, una propuesta se lee igual que una decisión:
+    // sus 31 ventas de septiembre decían todas "Banco de Venezuela" y no
+    // había forma de saber cuáles había revisado ella y cuáles rellenó la app.
+    if(!o.cuentaFiat){
+      o.cuentaFiat=_binCuentaSugerida(lotes,o.cuentaId,o.moneda,o.tipo);
+      o.fiatAuto=!!o.cuentaFiat;
+    }
     // Lo ya registrado entra desmarcado; lo nuevo, marcado. Y sin saber a qué
     // cuenta de Binance va no se marca nada: un lote sin cuenta no descuenta
     // de ningún sitio y el saldo se queda mintiendo.
@@ -8056,13 +8064,30 @@ function _binMarcarTodas(cual){
   });
   R();
 }
-function _binFiat(i,id){ var o=(S._impBin&&S._impBin.ops||[])[i]; if(o) o.cuentaFiat=id; }
+function _binFiat(i,id){
+  var o=(S._impBin&&S._impBin.ops||[])[i]; if(!o) return;
+  o.cuentaFiat=id; o.fiatAuto=false;
+  // Repintar entero perdería el scroll de una tabla de 46 filas (ARREGLO 32):
+  // se cambia solo la etiqueta de esa fila.
+  try{ var el=document.getElementById("bin-sup-"+i); if(el) el.innerHTML=_htmlSupuesto(o); }catch(e){}
+}
+// "supuesto" es lo que separa lo que propuso la app de lo que decidió ella.
+// Va DEBAJO del desplegable, no al lado: medido en su tabla, las 62 etiquetas
+// se salían de su celda y se metían encima del número de orden.
+function _htmlSupuesto(o){
+  return (o&&o.fiatAuto&&o.cuentaFiat)?"supuesto":"";
+}
 // A todas las de esa moneda y ese tipo. "" deja el banco sin decidir, que es
 // una respuesta legitima: el lote, el FIFO y la ganancia no dependen del
 // banco; solo el saldo de esa cuenta.
 function _binFiatTodas(moneda, tipo, id){
+  // El hueco del desplegable no hace nada: es el rótulo, no una respuesta.
+  // Para dejarlos sin banco a propósito está la opción de abajo, que sí lo es
+  // —y por eso deja de contar como suposición—.
+  if(!id) return;
+  if(id==="__sin__") id="";
   ((S._impBin&&S._impBin.ops)||[]).forEach(function(o){
-    if(o.moneda===moneda && o.tipo===tipo) o.cuentaFiat=id;
+    if(o.moneda===moneda && o.tipo===tipo){ o.cuentaFiat=id; o.fiatAuto=false; }
   });
   R();
 }
@@ -8123,6 +8148,39 @@ function rImportarBinance(){
     return H+"<div style='text-align:center;color:#888;font-size:12px;padding:16px'>No se encontró ninguna operación en estos archivos.</div></div>";
   }
 
+  // Poner el banco fila por fila no escala: en su septiembre son 31 ventas en
+  // VES, y la app las propuso TODAS en Banco de Venezuela porque es el que más
+  // usa. Sus palabras: "puede ser que el dinero caiga en banesco, provincial o
+  // mercantil no todo es banco vzla". Casi siempre el grupo entero va al mismo
+  // sitio, así que se cambia de un toque y después se corrige la excepción.
+  // Se agrupa por moneda y tipo, no por una lista de bancos escrita a mano:
+  // cuando abra cuentas nuevas aparecen solas.
+  var grupos={}, ordenG=[];
+  ops.forEach(function(o){
+    var k=o.moneda+"|"+o.tipo;
+    if(!grupos[k]){ grupos[k]={moneda:o.moneda,tipo:o.tipo,n:0,auto:0}; ordenG.push(k); }
+    grupos[k].n++; if(o.fiatAuto&&o.cuentaFiat) grupos[k].auto++;
+  });
+  H+="<div style='background:#FAFAFA;border:1px solid #e3e3e3;border-radius:9px;padding:10px 12px;margin-bottom:10px'>"+
+     "<div style='font-size:10px;font-weight:700;color:#555;text-transform:uppercase;margin-bottom:7px'>¿De qué banco salió o entró el dinero?</div>";
+  ordenG.forEach(function(k){
+    var g=grupos[k];
+    var cf=(S.cuentas||[]).filter(function(c){return c.activa!==false&&c.moneda===g.moneda;});
+    var etq=(g.tipo==="compra"?"compras con ":"ventas por ")+g.moneda;
+    H+="<div style='display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap'>"+
+       "<span style='font-size:11px;min-width:230px'><b>"+g.n+"</b> "+etq+
+         (g.auto?" <span style='color:#b08900'>· "+g.auto+" sin revisar</span>":"")+"</span>"+
+       (cf.length?
+         "<select onchange='_binFiatTodas(\""+g.moneda+"\",\""+g.tipo+"\",this.value)' style='flex:1;min-width:170px;padding:6px;border:1.5px solid #ddd;border-radius:7px;font-family:inherit;font-size:11px'>"+
+         "<option value=''>-- aplicar a todas --</option>"+
+         cf.map(function(c){return "<option value='"+c.id+"'>"+c.nombre+"</option>";}).join("")+
+         "<option value='__sin__'>— dejarlas sin banco —</option>"+
+         "</select>"
+        :"<span style='font-size:11px;color:#c0392b'>No tienes ninguna cuenta en "+g.moneda+". Créala en Configuración y vuelve.</span>")+
+       "</div>";
+  });
+  H+="<div style='font-size:10px;color:#666;margin-top:4px'>Lo que elijas aquí se pone en todas las de ese grupo; después corriges las que fueron distintas, fila por fila. El banco no cambia la ganancia ni el FIFO — solo de qué cuenta baja o sube el saldo.</div></div>";
+
   // La tabla. Gris lo que ya está registrado, blanco lo nuevo.
   H+="<div style='overflow-x:auto;border:1px solid #e3e3e3;border-radius:9px'>"+
      "<table style='width:100%;border-collapse:collapse;font-size:11px;min-width:820px'>"+
@@ -8147,7 +8205,7 @@ function rImportarBinance(){
         "<select onchange='_binFiat("+o.i+",this.value)' style='padding:4px;font-size:10px;border:1px solid #ddd;border-radius:6px;font-family:inherit'>"+
         "<option value=''>-- ninguna --</option>"+
         cuentasFiat.map(function(c){return "<option value='"+c.id+"'"+(o.cuentaFiat===c.id?" selected":"")+">"+c.nombre+"</option>";}).join("")+
-        "</select>":"<span style='color:#aaa'>—</span>")+"</td>"+
+        "</select><div id='bin-sup-"+o.i+"' style='font-size:9px;color:#b08900;margin-top:2px'>"+_htmlSupuesto(o)+"</div>":"<span style='color:#aaa'>—</span>")+"</td>"+
       "<td style='padding:6px 8px;font-size:9px;color:#aaa;white-space:nowrap'>"+
         (gris?("ya está"+(dif>0?" · apuntada "+o.ya.fecha:""))
              :(o.cerrado?"<b style='color:#7a5c00'>mes cerrado</b><br>":"")+_htmlOrdenCopiable(o.ordenId,true))+"</td>"+
