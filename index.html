@@ -2625,6 +2625,46 @@ function exportarMesExcel(mesKey){
   return filename;
 }
 
+// Cerrar desde el informe: lo mismo que hacia el boton, pero preguntando.
+// Cerrar un mes no es un boton de pintar: fija la ganancia, el sueldo y el
+// acumulado, y a partir de ahi el importador de Binance deja las operaciones
+// de ese mes desmarcadas.
+function cerrarMesDesdeInforme(mesKey){
+  if(!permisoEdicion()){ alert("No tienes permiso para guardar."); return; }
+  var k=mesKey||S._cMes;
+  var lbl=getMesLabel(k.split("-")[1],k.split("-")[0]);
+  var enCurso=(k===getMesKeyActual());
+  if(!confirm("Cerrar "+lbl+(enCurso?" (el mes EN CURSO)":"")+"\n\n"+
+    "Al cerrarlo:\n"+
+    "· la ganancia y el sueldo del mes quedan fijados\n"+
+    "· el sueldo pasa a tu acumulado gastable\n"+
+    "· las operaciones de ese mes entran desmarcadas al importar de Binance\n\n"+
+    (enCurso?"El mes todavía no ha terminado. ¿Seguro?":"¿Continuar?"))) return;
+  ejecutarCierreMes(k,true);
+}
+// Reabrir. Solo el mes EN CURSO, y no por capricho: el cierre guarda una foto
+// de los saldos, de lo que te deben y de lo prestado en el momento de
+// cerrarlo. Borrar el cierre de un mes ya pasado tira esa foto y volver a
+// cerrarlo tomaria los saldos de HOY, que no son los de aquel mes. Con el mes
+// en curso no se pierde nada: la foto buena es la que se tome al final.
+function reabrirMes(mesKey){
+  if(!permisoEdicion()){ alert("No tienes permiso para guardar."); return; }
+  var k=mesKey||S._cMes;
+  if(k!==getMesKeyActual()){
+    alert("Solo se puede reabrir el mes en curso.\n\nUn mes ya pasado guarda una foto de tus saldos del día que lo cerraste. Si se borra, al volver a cerrarlo se tomarían los saldos de hoy y los números de ese mes quedarían mal.");
+    return;
+  }
+  var lbl=getMesLabel(k.split("-")[1],k.split("-")[0]);
+  if(!confirm("Reabrir "+lbl+"\n\nVuelve a quedar como un mes en curso: la ganancia se recalcula sola y el sueldo deja de contar como acumulado hasta que lo cierres de verdad.\n\n¿Continuar?")) return;
+  S.cierresMes=(S.cierresMes||[]).filter(function(c){ return c && c.mesKey!==k; });
+  // ultimoMesCerrado pasa a ser el mas nuevo de los que quedan, o nada.
+  var quedan=(S.cierresMes||[]).map(function(c){return c.mesKey;}).sort();
+  S.ultimoMesCerrado=quedan.length?quedan[quedan.length-1]:"";
+  try{ logAudit("MES_REABIERTO","Se reabrió "+lbl); }catch(e){}
+  saveData(); R();
+  alert("🔓 "+lbl+" vuelve a estar abierto.");
+}
+
 function cerrarMes(){
   var meses=getMesesDisponibles();
   var selMes=S.filtroMes||(meses.length?meses[0].key:"");
@@ -15176,8 +15216,15 @@ function rInformeCierre(){
   "<div style='display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px'>"+
     "<select onchange='S._cMes=this.value;S._cSec=\"resumen\";R()' style='flex:1;min-width:160px;padding:10px 12px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-weight:700;font-family:inherit;cursor:pointer'>"+mesOpts+"</select>"+
     "<button onclick='generarInformePDF(S._cMes)' style='padding:10px 14px;background:#FFA31C;color:#fff;border:none;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>📄 PDF</button>"+
-    (esMesAct?"<button onclick='ejecutarCierreMes(S._cMes,true)' style='padding:10px 14px;background:#1a3558;color:#fff;border:none;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>🗓️ Cerrar</button>":
-      (cierreGuardado?"<span style='background:#D6F5E3;color:#0f6e3a;border-radius:9px;padding:8px 12px;font-size:11px;font-weight:700'>✅ Cerrado</span>":""))+
+    // Este boton llamaba directo a ejecutarCierreMes() SIN preguntar nada. Un
+    // toque de mas -esta pegado al de PDF- y el mes quedaba cerrado. Asi se le
+    // cerro septiembre teniendolo en curso, y encima no habia forma de
+    // deshacerlo: nada en la app quitaba un mes de S.cierresMes.
+    (cierreGuardado
+      ? "<span style='background:#D6F5E3;color:#0f6e3a;border-radius:9px;padding:8px 12px;font-size:11px;font-weight:700'>✅ Cerrado</span>"+
+        (esMesAct?"<button onclick='reabrirMes(S._cMes)' style='padding:10px 14px;background:#fff;color:#7a5c00;border:1.5px solid #F5C518;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>🔓 Reabrir</button>":"")
+      : (esMesAct?"<button onclick='cerrarMesDesdeInforme(S._cMes)' style='padding:10px 14px;background:#1a3558;color:#fff;border:none;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>🗓️ Cerrar</button>":""))+
+
   "</div>"+
   "<div style='display:flex;overflow-x:auto;gap:5px;margin-bottom:12px;scrollbar-width:none;padding-bottom:2px'>"+
     secs.map(function(s){var on=S._cSec===s;

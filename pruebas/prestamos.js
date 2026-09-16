@@ -3197,5 +3197,31 @@ ok(F.DATA_KEYS.indexOf("mapaBinance") !== -1, "mapaBinance viaja en DATA_KEYS");
 ok(sacarConstante("_MERGE_OBJETOS").indexOf("mapaBinance") !== -1,
    "y se fusiona clave a clave, no de golpe");
 
+console.log("\n— Cerrar el mes —");
+
+// El boton del informe llamaba directo a ejecutarCierreMes() sin preguntar
+// nada, y esta pegado al de PDF: asi se le cerro septiembre teniendolo en
+// curso. Y no habia forma de deshacerlo.
+{
+  const html = sinComentarios(HTML);
+  ok(!/onclick='ejecutarCierreMes\(S\._cMes,true\)'/.test(html),
+     "el boton del informe ya no cierra el mes a bocajarro");
+  const cer = sinComentarios(sacarFuncion("cerrarMesDesdeInforme"));
+  ok(/confirm\(/.test(cer), "pregunta antes de cerrar");
+  ok(/permisoEdicion\(\)/.test(cer), "y no cierra quien no puede guardar");
+}
+// Reabrir SOLO el mes en curso: el cierre guarda una foto de los saldos, de lo
+// que le deben y de lo prestado. Borrar el de un mes pasado tira esa foto, y
+// al volver a cerrarlo se tomarian los saldos de HOY.
+{
+  const re = sinComentarios(sacarFuncion("reabrirMes"));
+  ok(/getMesKeyActual\(\)/.test(re), "reabrir se limita al mes en curso");
+  ok(/confirm\(/.test(re), "y tambien pregunta");
+  ok(/ultimoMesCerrado/.test(re),
+     "al reabrir, ultimoMesCerrado vuelve al mas nuevo que quede");
+  ok(/permisoEdicion\(\)/.test(re), "y respeta el permiso de guardar");
+}
+
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
