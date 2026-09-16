@@ -101,7 +101,7 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "_binNum", "_binNorm", "_binMapaCols", "_binBuscarCabecera",
                     "_binIdentificar", "_binOrdenesC2C", "_binConverts", "_binDias",
                     "_binMonedaConocida", "_binYaRegistrado", "_binCuentaSugerida", "_binMesCerrado",
-                    "_binConfianzaBanco", "_binSinBanco",
+                    "_binConfianzaBanco", "_binSinBanco", "_htmlOrdenCopiable",
                     "_trioIU", "_fiatIU", "_usdtIU", "_tasaIU", "_descuadreIU",
                     "_monIU", "_loteConOrden", "_ultimasIU"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
@@ -3282,6 +3282,37 @@ ok(!F._binSinBanco().some((l) => l.id === 5), "un lote en blanco no entra en los
      "todas las ordenes traen contraparte");
   ok(o.some((x) => x.contraparte.length > 0), "y al menos una con nombre",
      o.map((x) => x.contraparte).join("|"));
+}
+
+
+console.log("\n— El numero de orden identifica la operacion —");
+// Al mismo comerciante se le puede comprar tres veces el mismo dia, asi que el
+// nombre no distingue: el numero de orden es lo unico unico. Y con el se busca
+// en Binance, que es donde SI se ve el metodo de pago.
+{
+  const h = F._htmlOrdenCopiable("22932202144596058112");
+  ok(h.indexOf("22932202144596058112") >= 0,
+     "el numero sale ENTERO: cortado no sirve para buscarlo en Binance");
+  ok(/_copiarTexto\(/.test(h), "y se puede copiar de un toque");
+  ok(F._htmlOrdenCopiable("") === "" && F._htmlOrdenCopiable(null) === "",
+     "sin numero no pinta un boton vacio");
+}
+// Los 20 digitos tienen que sobrevivir enteros en las dos pantallas.
+ok(!/String\(o\.ordenId\)\.slice\(0,\s*12\)/.test(HTML),
+   "la tabla del importador ya no corta el numero a 12 caracteres");
+{
+  const pend = sinComentarios(sacarFuncion("_htmlPendientesBanco"));
+  ok(/_htmlOrdenCopiable\(l\.ordenId\)/.test(pend),
+     "y la lista de pendientes tambien lo ensena");
+  ok(/l\.contraparte/.test(pend),
+     "junto a la contraparte, para confirmar que es la operacion buena");
+}
+// Copiar puede fallar -sin https o sin permiso- y eso no puede dejarla sin el
+// numero.
+{
+  const cp = sinComentarios(sacarFuncion("_copiarTexto"));
+  ok(/prompt\(/.test(cp), "si el portapapeles no va, se ensena el numero para copiarlo a mano");
+  ok(/isSecureContext/.test(cp), "y solo se intenta donde el navegador lo permite");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
