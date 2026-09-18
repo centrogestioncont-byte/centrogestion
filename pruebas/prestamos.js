@@ -93,7 +93,7 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "_deudaACobrar",
                     "_jsonEstable", "_escAud", "_anotarTocado", "_unirTocado",
                     "_tomarTocado", "_etiquetaRegistro", "_resumirValor",
-                    "_camposEnConflicto", "_conflictosConElServidor",
+                    "_camposEnConflicto", "_conflictosConElServidor", "_choqueApertura",
                     "_completarConLoQueQuedo", "_htmlAvisoPisado",
                     "_simularConFecha", "ds",
                     "_huellaDisponible", "_huellaGuardada", "_huellaDeEstaPersona",
@@ -3408,6 +3408,58 @@ console.log("\n— El banco se pone por grupo, no fila por fila —");
   const rend = sinComentarios(sacarFuncion("rImportarBinance"));
   ok(/nYa\s*===\s*1/.test(rend) && /nCerr\s*===\s*1/.test(rend),
      "los recuentos de uno van en singular");
+}
+
+console.log("\n— ARREGLO 67: la apertura avisa siempre —");
+// El aviso de choque solo mira lo que ESTE aparato acaba de cambiar. Para casi
+// todo esta bien. La apertura no: es el ancla de la conciliacion, y cuando
+// llega distinta del otro aparato se mueven todos los numeros de esa tarjeta.
+// Su caso: del 15 al 18 de septiembre paso sola de 12/09 · 2.464,13 a
+// 11/09 · 2.544,79 y el "sin explicar" salto de -1,93 a +65,37, sin un aviso.
+{
+  const mando = { config: { aperturaUsdt: 2464.13, aperturaFecha: "2026-09-12",
+                            aperturaBase: { bruta: 210.54 } } };
+  const srv   = { config: { aperturaUsdt: 2544.79, aperturaFecha: "2026-09-11",
+                            aperturaBase: { bruta: 152.33 } } };
+  // Lo importante: el tercer argumento va VACIO. Ella no toco nada.
+  const ch = F._choqueApertura(mando, srv, []);
+  ok(ch.length === 3, "avisa aunque ella no haya tocado la apertura (" + ch.length + " claves)");
+  ok(ch.every((c) => c.apertura === true), "y van marcadas, para que no se plieguen");
+  ok(ch.every((c) => c.clave === "@config"),
+     "con la forma que ya entienden _completarConLoQueQuedo y la pantalla");
+  const m = ch.find((c) => c.id === "aperturaUsdt");
+  ok(m && /2\.464,13/.test(m.campos[0].mio) && /2\.544,79/.test(m.campos[0].suyo),
+     "y los numeros escritos como ella los lee, no como los guarda el JSON");
+  const f = ch.find((c) => c.id === "aperturaFecha");
+  ok(f && f.campos[0].mio === "12/09/26" && f.campos[0].suyo === "11/09/26",
+     "la fecha en dd/mm/aa, como la lee ella y como sale en la conciliacion");
+  ok(/c\.verFecha/.test(sinComentarios(sacarFuncion("_completarConLoQueQuedo"))),
+     "y 'quedo' tambien: los tres valores escritos igual");
+  ok(F._choqueApertura(mando, mando, []).length === 0,
+     "si la apertura no cambio no molesta: esto no puede sonar en cada guardado");
+  ok(F._choqueApertura(mando, srv, [{ clave: "@config", id: "aperturaUsdt" }]).length === 2,
+     "y no repite lo que el aviso de choque normal ya dijo");
+  // Las cinco claves salen de _MERGE_BLOQUES: dos listas se separan.
+  const fn = sinComentarios(sacarFuncion("_choqueApertura"));
+  ok(/_MERGE_BLOQUES/.test(fn) && !/aperturaUsdt/.test(fn),
+     "las claves salen de _MERGE_BLOQUES, no de una lista copiada");
+}
+// Y se engancha de verdad: una funcion que nadie llama no avisa de nada.
+ok(/_ch\.concat\(_choqueApertura\(obj,\s*d\.estado,\s*_ch\)\)/.test(sinComentarios(HTML)),
+   "el guardado la llama, justo despues del choque normal");
+// En pantalla: la apertura NO se pliega. Un aviso escondido no es un aviso.
+{
+  const av = sinComentarios(sacarFuncion("_htmlAvisoPisado"));
+  const iAp = av.indexOf("La apertura cambió sola");
+  const iFold = av.indexOf("_PISADOS_ABIERTO && n");
+  ok(iAp > -1, "el aviso de la apertura existe");
+  ok(iFold > -1 && iAp < iFold, "y se pinta ANTES del desplegable, siempre a la vista");
+  ok(/var n=resto\.length/.test(av),
+     "el recuento de 'el otro tambien cambio' cuenta el resto, no la apertura");
+  ok(/No la vuelvas a fijar/.test(av),
+     "le dice que corrija, no que vuelva a fijar: volver a fijarla esconde la diferencia");
+  ok(/este aparato tenía/.test(av),
+     "y no le dice 'lo que guardaste choco': aqui ella no guardo nada, le llego");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

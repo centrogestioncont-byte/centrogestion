@@ -1914,6 +1914,54 @@ function _conflictosConElServidor(mando, delServidor, tocado){
   return out;
 }
 
+// ── ARREGLO 67: la apertura avisa SIEMPRE, la haya tocado ella o no ────────
+// El aviso de choque de arriba solo mira lo que ESTE aparato acaba de cambiar,
+// y para casi todo es lo correcto: lo que el otro registró mientras tanto es
+// sincronización normal y avisarlo sería ruido en cada guardado.
+//
+// La apertura es la excepción, y no por capricho: no es un registro más, es el
+// ancla de toda la conciliación. Si se mueve, se mueven TODOS los números de
+// esa tarjeta.
+//
+// Medido en sus dos exports. Entre el 15 y el 18 de septiembre la apertura pasó
+// sola de 12/09 · $2.464,13 a 11/09 · $2.544,79 —las cinco claves juntas, o sea
+// el bloque del ARREGLO 60 llegando entero desde el teléfono—. Con eso, cinco
+// ajustes de saldo del 12/09 que antes caían el MISMO día de la apertura
+// pasaron a caer después, empezaron a contar, y el "sin explicar" saltó de
+// −$1,93 a +$65,37. Ella no tocó nada, así que no hubo choque que avisar y la
+// pantalla cambió en silencio. Sus palabras: "no he editado ningún saldo manual
+// y no entiendo esa diferencia".
+function _choqueApertura(mando, delServidor, ya){
+  var out=[];
+  if(!mando || !delServidor) return out;
+  var cMio=mando.config, cSuyo=delServidor.config;
+  if(!cMio || typeof cMio!=="object") return out;
+  // Las claves salen de _MERGE_BLOQUES, que es donde ya está escrito que la
+  // apertura son cinco y viajan juntas. Dos listas se separan.
+  var claves=((_MERGE_BLOQUES&&_MERGE_BLOQUES.config)||[[]])[0]||[];
+  var yaEsta={};
+  (ya||[]).forEach(function(c){ if(c.clave==="@config") yaEsta[c.id]=1; });
+  claves.forEach(function(k){
+    if(yaEsta[k]) return;                  // ya lo avisa el choque normal
+    var a=cMio[k], b=cSuyo?cSuyo[k]:undefined;
+    if(_jsonEstable(a)===_jsonEstable(b)) return;
+    // La foto de saldos y la base del mes valen un objeto: enseñarle el JSON
+    // no le dice nada y tapa las dos lineas que si puede leer y corregir.
+    var interno=(a&&typeof a==="object")||(b&&typeof b==="object");
+    // La fecha en dd/mm/aa, que es como la lee ella y como sale en la tarjeta
+    // de la conciliación. Un 2026-09-11 al lado de un 11/09/26 se lee como
+    // otra cosa.
+    var ver=(k==="aperturaFecha")
+      ? function(v){ return v?ds(v):_resumirValor(v); }
+      : _resumirValor;
+    out.push({clave:"@config", id:k, apertura:true, borrado:false, interno:interno,
+              etiqueta:_NOMBRE_DE_CONFIG[k]||k, verFecha:(k==="aperturaFecha"),
+              campos:[{campo:"", mio:ver(a), suyo:ver(b),
+                       crudoMio:a, crudoSuyo:b}]});
+  });
+  return out;
+}
+
 // El aviso tiene que decir la verdad, y la verdad son TRES valores: lo que
 // mandó este aparato, lo que traía el otro y lo que quedó. No son dos: el
 // servidor fusiona a su manera y después _aplicarEstadoDeApi vuelve a fusionar
@@ -1940,7 +1988,10 @@ function _completarConLoQueQuedo(lista){
     }
     (c.campos||[]).forEach(function(d){
       var v = reg ? reg[d.campo] : undefined;
-      d.quedo=_resumirValor(v);
+      // Los tres valores tienen que estar escritos igual. La fecha de la
+      // apertura se enseña en dd/mm/aa arriba (ARREGLO 67); si "quedó" saliera
+      // en ISO, el aviso enseñaria el mismo dia de dos formas distintas.
+      d.quedo=(c.verFecha&&v)?ds(v):_resumirValor(v);
       d.quedoMio  = (_jsonEstable(v)===_jsonEstable(d.crudoMio));
       d.quedoSuyo = (_jsonEstable(v)===_jsonEstable(d.crudoSuyo));
       delete d.crudoMio; delete d.crudoSuyo;   // no hace falta guardarlos
@@ -2019,25 +2070,64 @@ function _htmlHistorialPisados(){
 
 function _htmlAvisoPisado(){
   if(!_PISADOS.length) return "";
-  var n=_PISADOS.length;
-  var h="<div style='background:#FFF4E5;border-bottom:2px solid #E08A00;padding:10px 14px'>"+
-    "<div style='display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap'>"+
-      "<div style='flex:1;min-width:200px'>"+
-        "<div style='font-size:13px;font-weight:800;color:#8a5200'>"+
-          "🔀 El otro dispositivo también cambió "+(n===1?"esto":"estas "+n+" cosas")+"</div>"+
-        "<div style='font-size:11px;color:#7a6a50;margin-top:3px;line-height:1.5'>"+
-          "Lo que guardaste aquí chocó con lo que había en el servidor. Quedó lo "+
-          "más reciente de cada campo. Revisa que sea lo que querías.</div>"+
-      "</div>"+
-      "<div style='display:flex;gap:6px'>"+
-        "<button onclick='_alternarAvisoPisado()' style='background:#fff;border:1.5px solid #E08A00;color:#8a5200;padding:6px 11px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit'>"+
-          (_PISADOS_ABIERTO?"Ocultar":"Ver qué cambió")+"</button>"+
-        "<button onclick='_cerrarAvisoPisado()' style='background:#E08A00;border:none;color:#fff;padding:6px 11px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit'>Entendido</button>"+
-      "</div>"+
-    "</div>";
-  if(_PISADOS_ABIERTO){
+  // ARREGLO 67: la apertura va SIEMPRE a la vista, sin desplegar nada. Es el
+  // mismo criterio que los avisos de la conciliación: lo que se esconde detrás
+  // de un botón no es un aviso. Y el texto de abajo no le vale — ahí se le dice
+  // "lo que guardaste chocó", y aquí ella no guardó nada: le llegó y ya.
+  var ap=_PISADOS.filter(function(c){ return c.apertura; });
+  var resto=_PISADOS.filter(function(c){ return !c.apertura; });
+  var n=resto.length;
+  var h="<div style='background:#FFF4E5;border-bottom:2px solid #E08A00;padding:10px 14px'>";
+
+  if(ap.length){
+    h+="<div style='background:#fff;border:1.5px solid #E08A00;border-radius:9px;padding:9px 11px;margin-bottom:"+(n?"10px":"8px")+"'>"+
+       "<div style='font-size:13px;font-weight:800;color:#8a5200'>⚠️ La apertura cambió sola</div>"+
+       "<div style='font-size:11px;color:#7a6a50;margin-top:3px;line-height:1.5'>"+
+         "El otro dispositivo tenía otra apertura y es la que quedó. "+
+         "<b>La apertura decide todos los números del Balance de Cuentas</b>: si se mueve, "+
+         "se mueve también lo que la conciliación te enseña como «sin explicar».</div>";
+    ap.filter(function(c){ return !c.interno; }).forEach(function(c){
+      h+="<div style='padding:6px 0 0'>"+
+         "<div style='font-size:12px;font-weight:700;color:#333'>"+_escAud(c.etiqueta)+"</div>";
+      c.campos.forEach(function(d){
+        h+="<div style='font-size:11px;color:#666;margin-top:2px;line-height:1.5'>"+
+           "este aparato tenía <span style='color:#8a5200'>"+_escAud(d.mio)+"</span>"+
+           " · el otro <span style='color:#8a5200'>"+_escAud(d.suyo)+"</span>"+
+           " · <b>quedó <span style='color:#0f6e3a'>"+_escAud(d.quedo)+"</span></b>"+
+           (d.quedoMio?" (lo de aquí)":(d.quedoSuyo?" (lo del otro)":""))+"</div>";
+      });
+      h+="</div>";
+    });
+    var _int=ap.filter(function(c){ return c.interno; });
+    if(_int.length) h+="<div style='font-size:10px;color:#999;margin-top:6px;line-height:1.5'>"+
+       "También cambiaron otros datos internos de la apertura ("+
+       _int.map(function(c){ return _escAud(c.etiqueta).toLowerCase(); }).join(", ")+
+       "). No tienes que hacer nada con ellos.</div>";
+    h+="<div style='font-size:10px;color:#8a5200;margin-top:8px;line-height:1.5'>"+
+       "Si la que quedó no es la buena, corrígela con los botones de <b>corregir</b> del "+
+       "Balance de Cuentas. <b>No la vuelvas a fijar</b>: eso pone la diferencia en cero y "+
+       "borra la pista de dónde estaba el dinero.</div>"+
+       "</div>";
+  }
+
+  h+="<div style='display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap'>"+
+      "<div style='flex:1;min-width:200px'>";
+  if(n){
+    h+="<div style='font-size:13px;font-weight:800;color:#8a5200'>"+
+         "🔀 El otro dispositivo también cambió "+(n===1?"esto":"estas "+n+" cosas")+"</div>"+
+       "<div style='font-size:11px;color:#7a6a50;margin-top:3px;line-height:1.5'>"+
+         "Lo que guardaste aquí chocó con lo que había en el servidor. Quedó lo "+
+         "más reciente de cada campo. Revisa que sea lo que querías.</div>";
+  }
+  h+="</div><div style='display:flex;gap:6px'>";
+  if(n) h+="<button onclick='_alternarAvisoPisado()' style='background:#fff;border:1.5px solid #E08A00;color:#8a5200;padding:6px 11px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit'>"+
+        (_PISADOS_ABIERTO?"Ocultar":"Ver qué cambió")+"</button>";
+  h+="<button onclick='_cerrarAvisoPisado()' style='background:#E08A00;border:none;color:#fff;padding:6px 11px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit'>Entendido</button>"+
+     "</div></div>";
+
+  if(_PISADOS_ABIERTO && n){
     h+="<div style='margin-top:10px;background:#fff;border:1px solid #E08A0044;border-radius:9px;padding:9px 11px;max-height:38vh;overflow-y:auto'>";
-    _PISADOS.forEach(function(c){
+    resto.forEach(function(c){
       h+="<div style='padding:7px 0;border-bottom:1px solid #f2f2f2'>"+
          "<div style='font-size:12px;font-weight:700;color:#333'>"+_escAud(c.etiqueta)+"</div>";
       if(c.borrado){
@@ -2232,6 +2322,8 @@ function _dobleEnviarAhora(obj){
           // esa función adopta y vuelve a fotografiar.
           var _ch=[];
           try{ _ch=_conflictosConElServidor(obj, d.estado, _tocado); }catch(e){}
+          // ARREGLO 67: y la apertura se compara siempre, la haya tocado o no.
+          try{ _ch=_ch.concat(_choqueApertura(obj, d.estado, _ch)); }catch(e){}
           var _cambio=_aplicarEstadoDeApi(d.estado, d._ts);
           if(_ch.length){
             // Lo que QUEDÓ solo se sabe después de adoptar: se lee de S.
