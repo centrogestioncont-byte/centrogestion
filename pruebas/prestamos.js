@@ -72,7 +72,7 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "conciliacionCapital", "getMesKeyActual", "ajustesDesdeApertura", "_isoDeDDMMAA",
                     "traspasosAPersonal", "efectoTasasDesde", "_isoDeFechaLote",
                     "tasaDeReferencia", "_tasaFijadaAMano", "setTasaDia", "soltarTasaDia",
-                    "_isoDeLote", "_fechaLoteIso", "_num",
+                    "_isoDeLote", "_fechaLoteIso", "_num", "_horaLote", "_horaAhora", "_horaDe",
                     "_diasDesdeLote", "_fechaLoteLegible", "getLastTasaVenta",
                     "montoAUsdt", "montoConMoneda", "_unicos",
                     "_marcarCambiados", "_refotografiar", "_mergeArrayById",
@@ -1163,7 +1163,7 @@ S.inventarioUsdt = [];
 // llamada, no en el orden.
 ok(/var fecha=_fechaLote\(f\.fecha\), fechaIso=_fechaLoteIso\(f\.fecha\);/.test(HTML),
    "saveIU pone la fecha del lote con _fechaLote, y el año con _fechaLoteIso");
-ok(/tipo:"venta", fecha:_fechaLote\(fecha\), fechaIso:_fechaLoteIso\(fecha\), moneda:moneda,/.test(HTML),
+ok(/tipo:"venta", fecha:_fechaLote\(fecha\), fechaIso:_fechaLoteIso\(fecha\), hora:_horaDe\(hora\), moneda:moneda,/.test(HTML),
    "crearLoteRecibido las normaliza dentro, para quien la llame manana");
 // ARREGLO 51: y que NINGUN sitio meta un lote sin su año. mm/dd solo no basta:
 // en enero, un lote de diciembre se ordenaba por delante de uno de enero.
@@ -3408,6 +3408,71 @@ console.log("\n— El banco se pone por grupo, no fila por fila —");
   const rend = sinComentarios(sacarFuncion("rImportarBinance"));
   ok(/nYa\s*===\s*1/.test(rend) && /nCerr\s*===\s*1/.test(rend),
      "los recuentos de uno van en singular");
+}
+
+console.log("\n— FASE 1: la hora de la operacion —");
+// Se empieza a guardar la hora a la que ocurrio cada operacion. Hoy NADIE la
+// mira: el FIFO sigue ordenando por dia, igual que ayer. El dia que se use sera
+// porque ella lo encienda, no por haber empezado a guardarla.
+{
+  ok(F._horaLote("2026-09-02 11:07:24") === "11:07:24", "lee la hora del export de Binance");
+  ok(F._horaLote("9:05") === "09:05:00", "completa los segundos que falten");
+  ok(F._horaLote("") === "" && F._horaLote(null) === "", "sin hora no se inventa nada");
+  ok(F._horaLote("no es una hora") === "", "lo que no es una hora no pasa");
+  ok(F._horaLote("25:00:00") === "", "ni una hora imposible");
+  ok(/^\d\d:\d\d:\d\d$/.test(F._horaAhora()), "la de ahora sale en hh:mm:ss");
+  ok(F._horaDe("07:30") === "07:30:00", "lo que ella escribe manda");
+  ok(/^\d\d:\d\d:\d\d$/.test(F._horaDe("")), "y sin nada escrito, la de ahora: un lote sin hora ya no se fecha nunca");
+}
+// Ningun lote nuevo puede nacer sin hora. Mismo patron que la guardia de
+// _fechaLote: si alguien anade un sitio y se olvida, ese lote queda sin fechar
+// para siempre y no hay forma de recuperarlo.
+{
+  const pushes = HTML.match(/inventarioUsdt\.push\(\{[^}]*/g) || [];
+  ok(pushes.length >= 8, "se encontraron los sitios donde nacen lotes (" + pushes.length + ")");
+  const sinHora = pushes.filter((x) => !/\bhora:/.test(x));
+  ok(sinHora.length === 0, "todos los lotes nuevos nacen con hora" +
+     (sinHora.length ? " · sin ella: " + sinHora.length : ""));
+  const cl = sinComentarios(sacarFuncion("crearLoteRecibido"));
+  ok(/hora:_horaDe\(hora\)/.test(cl), "y el lote de los bolivares que entran por una remesa, tambien");
+}
+// LA GUARDIA DE FONDO. ordenFIFO tiene que seguir CIEGO a la hora.
+{
+  const of = sinComentarios(sacarFuncion("ordenFIFO"));
+  ok(!/\bhora\b/.test(of), "ordenFIFO NO mira la hora: hoy ordena por dia, exactamente como ayer");
+  const nf = sinComentarios(sacarFuncion("normalizarInventarioFIFO"));
+  ok(!/\bhora\b/.test(nf), "y a los lotes que ya existen no se les escribe ninguna hora");
+}
+// Y se demuestra, no se promete: el mismo inventario ordenado con hora y sin
+// ella tiene que dar el MISMO orden. Las horas van puestas al reves a proposito
+// -la mas tardia al lote mas viejo-: si ordenFIFO las mirara, el orden se daria
+// la vuelta y esto fallaria.
+{
+  const base = [
+    { id: 5, fecha: "09/12", fechaIso: "2026-09-12", tipo: "venta",  moneda: "VES" },
+    { id: 3, fecha: "09/12", fechaIso: "2026-09-12", tipo: "venta",  moneda: "VES" },
+    { id: 9, fecha: "09/12",                          tipo: "venta",  moneda: "VES" }, // viejo, sin año
+    { id: 1, fecha: "09/11", fechaIso: "2026-09-11", tipo: "venta",  moneda: "VES" },
+    { id: 7, fecha: "09/18", fechaIso: "2026-09-18", tipo: "venta",  moneda: "VES" }, // adelantado a proposito
+    { id: 2, fecha: "12/28", fechaIso: "2025-12-28", tipo: "compra", moneda: "BRL" },
+    { id: 4, fecha: "01/05", fechaIso: "2026-01-05", tipo: "compra", moneda: "BRL" },
+  ];
+  const orden = (arr) => arr.slice().sort(F.ordenFIFO).map((l) => l.id).join(",");
+  const sin = orden(base);
+  const con = orden(base.map((l, i) => Object.assign({}, l, {
+    hora: String(23 - i).padStart(2, "0") + ":00:00",
+  })));
+  ok(sin === con, "la hora no mueve el orden del FIFO: sin=" + sin + " con=" + con);
+  ok(sin === "2,4,1,3,5,9,7", "y el orden sigue siendo el de siempre: " + sin);
+}
+// La remesa tambien guarda la suya: es la otra mitad de "la remesa de las 12:00
+// consume la compra de las 11:49".
+{
+  const plano = HTML.replace(/\s+/g, " ");
+  const n = (plano.match(/d:ds\(f\.date\),h:_horaDe\(f\.hora\)/g) || []).length;
+  ok(n === 2, "las remesas guardan su hora, las de Brasil y las de EE.UU. (" + n + ")");
+  const t = (HTML.match(/type='time' step='1'/g) || []).length;
+  ok(t === 3, "y los tres formularios donde ella teclea a mano la piden, con segundos (" + t + ")");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
