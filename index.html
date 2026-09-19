@@ -4316,6 +4316,57 @@ function toggleCuentaPersonal(cid){
   logAudit("CUENTA_PERSONAL",c.nombre+" → esPersonal="+nuevoEstado);
   saveData();R();
 }
+// ── FASE 2: la cuenta madre ───────────────────────────────────────────────
+// Binance NO dice a que banco entraron los bolivares de una venta de USDT. Sus
+// palabras: "yo no iba a poder saber por binance que banco se uso, si fue
+// venezuela banesco y mercantil". Medido en su export: de 123 lotes de venta en
+// VES, 111 estaban asignados a Banco de Venezuela porque era la suposicion de la
+// app, no porque se supiera.
+//
+// La madre es donde cae ese dinero: "bolivares del negocio, sin repartir todavia
+// por banco". Una por moneda. Las demas cuentas se quedan EXACTAMENTE como
+// estan — no se borra ninguna, no se mueve ningun saldo — porque hacen falta
+// para los egresos, los prestamos y todo lo demas.
+function _cuentaMadre(moneda){
+  if(!moneda) return null;
+  return (S.cuentas||[]).find(function(c){
+    return c && c.esMadre && c.moneda===moneda && c.activa!==false;
+  })||null;
+}
+function toggleCuentaMadre(cid){
+  var c=(S.cuentas||[]).find(function(x){return x.id===cid;});
+  if(!c) return;
+  if(!c.esMadre){
+    // Una sola por moneda: con dos, el FIFO tendria dos sitios donde buscar y
+    // ninguno seria "el" sitio.
+    var ya=_cuentaMadre(c.moneda);
+    if(ya){ alert("Ya tienes una cuenta madre de "+c.moneda+": \""+ya.nombre+"\".\n\n"+
+      "Solo puede haber una por moneda. Quitale la marca a esa primero."); return; }
+    if(c.esPersonal||c.esReserva){ alert("Una cuenta personal o de reserva no puede ser la madre: "+
+      "ahi cae el dinero del negocio."); return; }
+    if(!confirm("🏦 Marcar \""+c.nombre+"\" como CUENTA MADRE de "+c.moneda+".\n\n"+
+      "Ahi van a caer los "+c.moneda+" de tus compras y ventas de USDT, porque Binance no dice "+
+      "a que banco entraron.\n\nEl importador dejara de preguntarte el banco, y cualquier remesa "+
+      "podra gastar de aqui.\n\nTus demas cuentas no se tocan.\n\n¿Confirmar?")) return;
+  } else {
+    if(!confirm("Quitar la marca de madre a \""+c.nombre+"\".\n\n"+
+      "El importador volvera a preguntarte el banco en cada operacion.\n\n¿Confirmar?")) return;
+  }
+  c.esMadre=!c.esMadre; c._mod=Date.now();
+  logAudit("CUENTA_MADRE",c.nombre+" → esMadre="+c.esMadre);
+  saveData();R();
+}
+// Un lote que esta en la cuenta madre lo puede consumir CUALQUIER banco: ahi
+// estan justo los bolivares cuyo banco no se sabe. Sin esto un lote de la madre
+// no lo tocaria ninguna remesa —el FIFO filtra por cuenta— y se quedaria ahi
+// para siempre, ensuciando las tasas que la app sugiere.
+function _cuentaOMadre(destinoDelLote, cuentaId, moneda){
+  if(!cuentaId) return true;
+  if(destinoDelLote===cuentaId) return true;
+  var m=_cuentaMadre(moneda);
+  return !!(m && destinoDelLote===m.id);
+}
+
 // Marca una cuenta como jurídica (CNPJ) de la empresa — para diferenciarla de
 // las cuentas informales/personales-de-nombre que se usan para el negocio.
 // No cambia ningún cálculo (una cuenta jurídica sigue siendo 100% empresa,
@@ -5505,6 +5556,33 @@ function acreditarPagos(filas, mov){
     mov.push({cuentaId:c.id, delta:p.monto});
   });
 }
+// FASE 2. El dinero de las ventas de USDT cae en la cuenta madre, porque
+// Binance no dice a que banco entro. Pero las remesas se pagan desde un banco de
+// verdad, y el archivo de su esposo dira cual. Sin esto ese banco se iria a
+// negativo mientras la madre crece sola, y el desglose por cuenta -que ella usa
+// para su contabilidad: "es importante los movimientos de cada banco"- dejaria
+// de servir.
+//
+// La regla es una: el banco gasta primero LO SUYO; cuando se queda corto, la
+// madre le pasa exactamente lo que falta. Y no es un invento: si pago desde ese
+// banco es porque el dinero estaba ahi. El traspaso queda en _mov, asi que
+// borrar la remesa lo revierte solo, sin adivinar.
+//
+// Con esto, ademas, sus saldos de hoy se gastan primero y la madre solo entra
+// cuando de verdad hace falta: no hay que migrar nada.
+function _completarDesdeMadre(cDest, sal, adj, soloComprobar){
+  if(soloComprobar || !cDest || !sal || !(sal.monto>0)) return;
+  if(cDest.moneda!==sal.moneda) return;   // sale otra moneda (aliado pagado en USDT)
+  if(cDest.esMadre) return;               // ya es ella
+  var m=_cuentaMadre(sal.moneda);
+  if(!m || m.id===cDest.id) return;
+  var falta=Math.round((sal.monto-(parseFloat(cDest.saldo)||0))*100)/100;
+  if(!(falta>0)) return;                  // le alcanza con lo suyo
+  var mover=Math.min(falta, Math.max(0, parseFloat(m.saldo)||0));
+  if(!(mover>0)) return;                  // la madre tampoco tiene: no se inventa
+  adj(m.id, -mover, sal.moneda);
+  adj(cDest.id, +mover, sal.moneda);
+}
 function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaDestId, cant, skipOrigen, soloComprobar, uvUsdt){
   _cuentasNoEncontradas = [];
   // Actualiza saldos de cuentas para CUALQUIER moneda automáticamente.
@@ -5580,6 +5658,7 @@ function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaD
   if(cuentaDestId){
     var _cDest=(S.cuentas||[]).find(function(x){return x.id===cuentaDestId;});
     var _sal=salidaDeCuentaEntrega(_cDest, vesEntregado, uvUsdt, monDest);
+    _completarDesdeMadre(_cDest, _sal, adj, soloComprobar);   // FASE 2
     adj(cuentaDestId, -_sal.monto, _sal.moneda);
   } else {
     var defaultDest = { VES:"banco de venezuela", BRL:"nubank", USD:"zelle" };
@@ -6763,12 +6842,14 @@ function descontarFIFOEgreso(mon,monto,usdt,cuentaId){
   var m=parseFloat(monto)||0;
   if(mon==="VES"){
     var vsTodas=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda==="VES";}).sort(ordenFIFO);
-    var vs=cuentaId?vsTodas.filter(function(r){return r.cuentaDestinoId===cuentaId;}):vsTodas;
+    // FASE 2: los de la cuenta madre entran siempre — ahi esta el dinero cuyo
+    // banco no se sabe, y si no se pudiera gastar se quedaria muerto.
+    var vs=cuentaId?vsTodas.filter(function(r){return _cuentaOMadre(r.cuentaDestinoId,cuentaId,"VES");}):vsTodas;
     if(cuentaId&&!vs.length) vs=vsTodas;
     for(var i=0;i<vs.length&&m>0.01;i++){var d=parseFloat(vs[i].bsRestante)||0;if(d<=0)continue;var u=Math.min(d,m);vs[i].bsRestante=Math.round((d-u)*100)/100;vs[i]._mod=Date.now();m-=u;}
   } else if(mon==="BRL"){
     var vbTodas=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda==="BRL";}).sort(ordenFIFO);
-    var vb=cuentaId?vbTodas.filter(function(r){return r.cuentaDestinoId===cuentaId;}):vbTodas;
+    var vb=cuentaId?vbTodas.filter(function(r){return _cuentaOMadre(r.cuentaDestinoId,cuentaId,"BRL");}):vbTodas;
     if(cuentaId&&!vb.length) vb=vbTodas;
     for(var j=0;j<vb.length&&m>0.01;j++){var db=parseFloat(vb[j].bsRestante)||0;if(db<=0)continue;var ub=Math.min(db,m);vb[j].bsRestante=Math.round((db-ub)*100)/100;vb[j]._mod=Date.now();m-=ub;}
   } else if(mon==="USDT"){
@@ -6792,12 +6873,12 @@ function restaurarFIFOEgreso(mon,monto,usdt,cuentaId){
   var m=parseFloat(monto)||0;
   if(mon==="VES"){
     var vsTodas=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda==="VES";}).sort(function(a,b){return(b.id||0)-(a.id||0);});
-    var vs=cuentaId?vsTodas.filter(function(r){return r.cuentaDestinoId===cuentaId;}):vsTodas;
+    var vs=cuentaId?vsTodas.filter(function(r){return _cuentaOMadre(r.cuentaDestinoId,cuentaId,"VES");}):vsTodas;
     if(cuentaId&&!vs.length) vs=vsTodas;
     for(var i=0;i<vs.length&&m>0.01;i++){var cap=parseFloat(vs[i].bs)||0;var act=parseFloat(vs[i].bsRestante)||0;var dev=Math.min(m,cap-act);if(dev>0){vs[i].bsRestante=Math.round((act+dev)*100)/100;vs[i]._mod=Date.now();m-=dev;}}
   } else if(mon==="BRL"){
     var vbTodas=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda==="BRL";}).sort(function(a,b){return(b.id||0)-(a.id||0);});
-    var vb=cuentaId?vbTodas.filter(function(r){return r.cuentaDestinoId===cuentaId;}):vbTodas;
+    var vb=cuentaId?vbTodas.filter(function(r){return _cuentaOMadre(r.cuentaDestinoId,cuentaId,"BRL");}):vbTodas;
     if(cuentaId&&!vb.length) vb=vbTodas;
     for(var j=0;j<vb.length&&m>0.01;j++){var capB=parseFloat(vb[j].bs)||0;var actB=parseFloat(vb[j].bsRestante)||0;var devB=Math.min(m,capB-actB);if(devB>0){vb[j].bsRestante=Math.round((actB+devB)*100)/100;vb[j]._mod=Date.now();m-=devB;}}
   } else if(mon==="USDT"){
@@ -8205,8 +8286,15 @@ function _binRecalcular(){
     // sus 31 ventas de septiembre decían todas "Banco de Venezuela" y no
     // había forma de saber cuáles había revisado ella y cuáles rellenó la app.
     if(!o.cuentaFiat){
-      o.cuentaFiat=_binCuentaSugerida(lotes,o.cuentaId,o.moneda,o.tipo);
-      o.fiatAuto=!!o.cuentaFiat;
+      // FASE 2: si hay cuenta madre de esa moneda, ahi va y no se pregunta nada
+      // mas. No es una suposicion -por eso no lleva la etiqueta "supuesto"-: es
+      // la respuesta correcta, porque el banco de verdad no se puede saber.
+      var _m=_cuentaMadre(o.moneda);
+      if(_m){ o.cuentaFiat=_m.id; o.fiatAuto=false; o.fiatMadre=true; }
+      else {
+        o.cuentaFiat=_binCuentaSugerida(lotes,o.cuentaId,o.moneda,o.tipo);
+        o.fiatAuto=!!o.cuentaFiat;
+      }
     }
     // Lo ya registrado entra desmarcado; lo nuevo, marcado. Y sin saber a qué
     // cuenta de Binance va no se marca nada: un lote sin cuenta no descuenta
@@ -8337,14 +8425,22 @@ function rImportarBinance(){
     grupos[k].n++; if(o.fiatAuto&&o.cuentaFiat) grupos[k].auto++;
   });
   H+="<div style='background:#FAFAFA;border:1px solid #e3e3e3;border-radius:9px;padding:10px 12px;margin-bottom:10px'>"+
-     "<div style='font-size:10px;font-weight:700;color:#555;text-transform:uppercase;margin-bottom:7px'>¿De qué banco salió o entró el dinero?</div>";
+     "<div style='font-size:10px;font-weight:700;color:#555;text-transform:uppercase;margin-bottom:7px'>¿De qué banco salió o entró el dinero?</div>"+
+     // FASE 2: con cuenta madre esto deja de ser una pregunta. Se deja el
+     // desplegable por si algun dia lo sabe, pero ya no se le pide nada.
+     ((_cuentaMadre("VES")||_cuentaMadre("BRL"))
+       ? "<div style='font-size:10px;color:#0f6e3a;margin-bottom:7px;line-height:1.5'>"+
+         "Binance no lo dice, así que va a tu <b>cuenta madre</b>. No tienes que elegir nada. "+
+         "El desplegable queda por si alguna vez sí lo sabes.</div>" : "");
   ordenG.forEach(function(k){
     var g=grupos[k];
     var cf=(S.cuentas||[]).filter(function(c){return c.activa!==false&&c.moneda===g.moneda;});
     var etq=(g.tipo==="compra"?"compras con ":"ventas por ")+g.moneda;
+    var madre=_cuentaMadre(g.moneda);
     H+="<div style='display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap'>"+
        "<span style='font-size:11px;min-width:230px'><b>"+g.n+"</b> "+etq+
-         (g.auto?" <span style='color:#b08900'>· "+g.auto+" sin revisar</span>":"")+"</span>"+
+         (madre?" <span style='color:#0f6e3a'>· van a "+_escAud(madre.nombre)+"</span>"
+              :(g.auto?" <span style='color:#b08900'>· "+g.auto+" sin revisar</span>":""))+"</span>"+
        (cf.length?
          "<select onchange='_binFiatTodas(\""+g.moneda+"\",\""+g.tipo+"\",this.value)' style='flex:1;min-width:170px;padding:6px;border:1.5px solid #ddd;border-radius:7px;font-family:inherit;font-size:11px'>"+
          "<option value=''>-- aplicar a todas --</option>"+
@@ -9559,6 +9655,8 @@ function rConfigAdmin(){
         // porque el diseño se acomoda distinto. Ahora el campo tiene un ancho
         // minimo propio y los botones bajan de linea si no entran.
         (c.esReserva?"<div style=\'font-size:9px;font-weight:800;color:#8e44ad;background:#f4ecf7;border-radius:6px;padding:2px 6px;margin-bottom:4px;display:inline-block\'>&#128274; RESERVADO &mdash; no cuenta en el disponible</div>":"")+
+        // FASE 2: la madre se dice, no se adivina por el nombre.
+        (c.esMadre?"<div style=\'font-size:9px;font-weight:800;color:#0f6e3a;background:#E3F8EC;border-radius:6px;padding:2px 6px;margin-bottom:4px;display:inline-block\'>&#127974; CUENTA MADRE &mdash; aqu&iacute; caen los "+c.moneda+" de tus USDT</div>":"")+
         "<div style=\'display:flex;gap:5px;align-items:center;flex-wrap:wrap\'>"+
           "<input type=\'number\' value=\'"+saldo+"\' step=\'0.01\' data-cid=\'"+c.id+"\' onchange=\'editarSaldoCuenta(this)\' "+
             "style=\'flex:1 1 110px;min-width:90px;padding:6px 8px;border:1.5px solid "+(isNeg?"#f5b7b1":"#e8e8e8")+";border-radius:8px;font-size:12px;font-weight:700;text-align:right;color:"+(isNeg?"#c0392b":"#1a3558")+"\' title=\'Editar saldo\'>"+
@@ -9568,6 +9666,8 @@ function rConfigAdmin(){
             "style=\'padding:6px 9px;border:1.5px solid "+(c.esPersonal?"#c4b5fd":"#e8e8e8")+";border-radius:8px;font-size:12px;cursor:pointer;background:"+(c.esPersonal?"#F3F0FF":"#f8f8f8")+"\'>"+(c.esPersonal?"💜":"🤍")+"</button>"+
           "<button onclick=\'toggleCuentaJuridica(\""+c.id+"\")\' title=\'"+(c.esJuridica?"Cuenta jurídica (CNPJ) — click para quitar marca":"Marcar como cuenta jurídica (CNPJ) de la empresa")+"\' "+
             "style=\'padding:6px 9px;border:1.5px solid "+(c.esJuridica?"#a8c5f0":"#e8e8e8")+";border-radius:8px;font-size:12px;cursor:pointer;background:"+(c.esJuridica?"#E8F0FE":"#f8f8f8")+"\'>🏛️</button>"+
+          "<button onclick=\'toggleCuentaMadre(\""+c.id+"\")\' title=\'"+(c.esMadre?"Cuenta madre — click para quitar marca":"Marcar como cuenta madre: aquí caen los "+c.moneda+" de tus compras y ventas de USDT")+"\' "+
+            "style=\'padding:6px 9px;border:1.5px solid "+(c.esMadre?"#9ad9b8":"#e8e8e8")+";border-radius:8px;font-size:12px;cursor:pointer;background:"+(c.esMadre?"#E3F8EC":"#f8f8f8")+"\'>🏦</button>"+
           "<button data-cid=\'"+c.id+"\' onclick=\'toggleCuenta(this)\' title=\'"+(inac?"Reactivar":"Pausar")+"\' "+
             "style=\'padding:6px 9px;border:1.5px solid #e8e8e8;border-radius:8px;font-size:12px;cursor:pointer;background:"+(inac?"#D6F5E3":"#fff8dc")+"\'>"+
             (inac?"▶️":"⏸")+"</button>"+
@@ -12835,7 +12935,7 @@ function revertirSaldosRemesa(tipo, r){
       var ventasTodas=S.inventarioUsdt.filter(function(l){
         return l.tipo==="venta"&&l.moneda===monDest;
       }).sort(function(a,b){return(b.id||0)-(a.id||0);}); // más nuevo primero para revertir
-      var ventas=r.cuentaDest?ventasTodas.filter(function(l){return l.cuentaDestinoId===r.cuentaDest;}):ventasTodas;
+      var ventas=r.cuentaDest?ventasTodas.filter(function(l){return _cuentaOMadre(l.cuentaDestinoId,r.cuentaDest,monDest);}):ventasTodas;
       if(r.cuentaDest&&!ventas.length) ventas=ventasTodas; // esa cuenta nunca tuvo lotes propios
       var restCant=cant;
       for(var j=0;j<ventas.length&&restCant>0.001;j++){
@@ -12904,7 +13004,7 @@ function revertirSaldosRemesa(tipo, r){
     var ventasTodas2=S.inventarioUsdt.filter(function(l){
       return l.tipo==="venta"&&l.moneda===monDest;
     }).sort(function(a,b){return(b.id||0)-(a.id||0);});
-    var ventas2=r.cuentaDest?ventasTodas2.filter(function(l){return l.cuentaDestinoId===r.cuentaDest;}):ventasTodas2;
+    var ventas2=r.cuentaDest?ventasTodas2.filter(function(l){return _cuentaOMadre(l.cuentaDestinoId,r.cuentaDest,monDest);}):ventasTodas2;
     if(r.cuentaDest&&!ventas2.length) ventas2=ventasTodas2;
     var restCant=cant;
     for(var vi=0;vi<ventas2.length&&restCant>0.001;vi++){
@@ -13893,7 +13993,7 @@ function getLastTasaVenta(monedaDest,cuentaDestinoId){
   var dest=monedaDest||"VES";
   var arr=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda===dest;}).sort(ordenFIFO);
   if(cuentaDestinoId){
-    var propias=arr.filter(function(r){return r.cuentaDestinoId===cuentaDestinoId;});
+    var propias=arr.filter(function(r){return _cuentaOMadre(r.cuentaDestinoId,cuentaDestinoId,dest);});
     if(propias.length){
       for(var p=0;p<propias.length;p++){ if((parseFloat(propias[p].bsRestante)||0)>0.01) return _tasaEfectivaLote(propias[p]); }
       return _tasaEfectivaLote(propias[propias.length-1]); // esta cuenta ya consumió lo suyo → su propia última tasa
@@ -14343,7 +14443,7 @@ function getTasaVentaPonderada(monedaDest,montoBs,cuentaDestinoId){
   var base=getLastTasaVenta(dest,cuentaDestinoId);
   if(m<=0||base===null) return base;
   var lotesTodos=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda===dest&&(parseFloat(r.tasa)||0)>0;}).sort(ordenFIFO);
-  var lotes=cuentaDestinoId?lotesTodos.filter(function(r){return r.cuentaDestinoId===cuentaDestinoId;}):lotesTodos;
+  var lotes=cuentaDestinoId?lotesTodos.filter(function(r){return _cuentaOMadre(r.cuentaDestinoId,cuentaDestinoId,dest);}):lotesTodos;
   if(!lotes.length) lotes=lotesTodos; // cuenta nueva sin lotes propios → usar el pool general, igual que getLastTasaVenta
   if(!lotes.length) return base;
   var rest=m,usdt=0;
