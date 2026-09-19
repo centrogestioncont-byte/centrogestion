@@ -3740,9 +3740,21 @@ console.log("\n— FASE 2: la cuenta madre —");
      "y ANTES de descontar, no despues: si no, el banco pasa por negativo");
   ok(/movimientos\.push/.test(a), "los movimientos se guardan, asi que borrar la remesa lo revierte");
 }
-// El importador deja de preguntar el banco cuando hay madre.
+// El importador deja de preguntar el banco cuando hay madre — PERO SOLO EN LAS
+// VENTAS. Al comprar USDT el dinero SALE, y esa transferencia la hace ella: sabe
+// de que cuenta. "con la de reales desde pagbank o nubank, y con los bolivares
+// igual, depende de que cuenta haya mas bs para comprar".
+//
+// Mandar tambien las compras a la madre fue un fallo mio y se vio al primer
+// intento: sus 9 compras en BRL dejaron la madre de reales en -6.679,11, porque
+// pagaron desde ahi un dinero que nunca habia entrado ahi.
 {
   const rec = sinComentarios(sacarFuncion("_binRecalcular"));
+  ok(/\(o\.tipo==="venta"\)\?_cuentaMadre\(o\.moneda\):null/.test(rec),
+     "la madre solo recibe las VENTAS; las compras siguen preguntando el banco");
+  const grp = sinComentarios(sacarFuncion("rImportarBinance"));
+  ok(/\(g\.tipo==="venta"\)\?_cuentaMadre\(g\.moneda\):null/.test(grp),
+     "y en pantalla, solo el grupo de ventas dice que van a la madre");
   ok(/_cuentaMadre\(o\.moneda\)/.test(rec), "el importador busca la madre de esa moneda");
   ok(/fiatMadre:\s*true|fiatMadre=true/.test(rec), "y marca que va ahi");
   ok(/fiatAuto=false;\s*o\.fiatMadre=true/.test(rec),
