@@ -2482,11 +2482,33 @@ const _resto = fusionarConfig(
 ok(_resto.moraMultaPct===2 && _resto.ntfyCanal==="b",
    "lo demas de config no cambia de comportamiento", JSON.stringify(_resto));
 
-// La tarjeta: el numero grande es lo que hay que perseguir, y los avisos no se
-// pliegan (7 ajustes por −233,46 estaban dentro de un desplegable cerrado).
-ok(/>sin explicar</.test(HTML), "el titular de la conciliacion dice 'sin explicar'");
-ok(/f2\(Math\.abs\(co\.sinExplicar\|\|0\)\)/.test(HTML),
-   "y el numero grande es sinExplicar, no la diferencia bruta");
+// La tarjeta: los avisos no se pliegan (7 ajustes por −233,46 estaban dentro de
+// un desplegable cerrado).
+//
+// ARREGLO 69: el titular era SOLO el "sin explicar". Con sus numeros del 18/09
+// eso decia +$65,37 en verde mientras la resta de al lado -2.545,08 contra
+// 2.550,95- daba −$5,87: "me dice que tengo mas tanto y resulta que cuando saco
+// la cuenta con lo que deberia tener con lo que tengo mas bien me falta plata".
+// Los dos numeros son ciertos y contestan preguntas distintas, asi que salen los
+// DOS, cada uno con su nombre. La leccion del ARREGLO 60 sigue en pie -un numero
+// grande y suelto que contradice al de al lado- y por eso se prueba que ninguno
+// de los dos va sin etiqueta.
+ok(/f2\(Math\.abs\(sinExp\)\)\+" sin explicar/.test(HTML),
+   "el titular sigue enseñando el 'sin explicar', con su numero");
+ok(/Te faltan |Te sobran /.test(HTML) && /lo que deberías tener/.test(HTML),
+   "y la diferencia dice en PALABRAS si falta o sobra: un '+65,37' en verde se lee al reves");
+ok(/Math\.abs\(dif\)<0\.005 \? "Cuadra"/.test(HTML),
+   "cuando no hay diferencia lo dice, en vez de un $0,00 con signo");
+{
+  // Ninguno de los dos puede quedarse sin etiqueta: eso es lo que hacia que se
+  // leyeran como si dijeran lo contrario el uno del otro.
+  const i = HTML.indexOf("lo que deberías tener");
+  const j = HTML.indexOf("sin explicar", i);
+  ok(i > -1 && j > i && j - i < 700,
+     "los dos van juntos en el titular, cada uno con su rotulo");
+  ok(/por encima de ±\$/.test(HTML),
+     "y si el sin explicar se pasa de la tolerancia, lo dice ahi mismo");
+}
 ok(/que no se pueden situar/.test(HTML), "el aviso de los ajustes en el aire esta fuera del desplegable");
 ok(/aperturaSaldos:\(S\.config\|\|\{\}\)\.aperturaSaldos/.test(HTML),
    "la conciliacion dice si la apertura tiene foto de saldos");
