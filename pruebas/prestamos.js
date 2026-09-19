@@ -3755,6 +3755,18 @@ console.log("\n— FASE 2: la cuenta madre —");
   const grp = sinComentarios(sacarFuncion("rImportarBinance"));
   ok(/\(g\.tipo==="venta"\)\?_cuentaMadre\(g\.moneda\):null/.test(grp),
      "y en pantalla, solo el grupo de ventas dice que van a la madre");
+  // Y lo que queda sin banco tiene que verse. Una operacion sin cuenta fiat
+  // entra al FIFO y no mueve ningun saldo: importarla en silencio deja la
+  // cuenta mintiendo. Sus 9 compras en reales salen asi.
+  ok(/sinBanco\+\+/.test(grp) && /g\.sinBanco\?/.test(grp),
+     "el grupo avisa cuantas se quedan sin banco");
+  ok(/no mueven ning/.test(grp), "y dice lo que eso significa, no solo el numero");
+  // El desplegable ensena la cuenta en la que ya esta el grupo. Antes volvia
+  // siempre al rotulo tras R() y parecia que elegir no hacia nada.
+  ok(/g\.mismo===c\.id\?" selected":""/.test(grp),
+     "el desplegable del grupo ensena la cuenta que ya tienen, no el rotulo");
+  ok(/grupos\[k\]\.mismo=null/.test(grp),
+     "y si el grupo esta repartido entre varios bancos, se queda el rotulo");
   ok(/_cuentaMadre\(o\.moneda\)/.test(rec), "el importador busca la madre de esa moneda");
   ok(/fiatMadre:\s*true|fiatMadre=true/.test(rec), "y marca que va ahi");
   ok(/fiatAuto=false;\s*o\.fiatMadre=true/.test(rec),
