@@ -2951,8 +2951,25 @@ function _isoDeDDMMAA(f){
   var a=p[2].length===2?("20"+p[2]):p[2];
   return a+"-"+String(p[1]).padStart(2,"0")+"-"+String(p[0]).padStart(2,"0");
 }
+// ── ARREGLO 68: por qué no cuadraba ───────────────────────────────────────
+// Sus 109 ajustes de saldo dicen todos lo mismo: "Ajuste manual de saldo". La
+// app no sabe si corrigió un dedazo o si el banco le cobró algo, así que los
+// cuenta TODOS como dinero perdido. Y ahí está el bucle que la tenía atrapada:
+// ajusta para que cuadre la pantalla, y con eso mismo descuadra la conciliación,
+// que al día siguiente la hace ajustar otra vez. Sus palabras: "no puedo estar
+// todo el tiempo ajustando el saldo de forma manual".
+//
+// Un dedazo NO es dinero: la app tenía mal el número y el dinero nunca se movió.
+// Corregirlo no puede contar como un agujero. Lo que sí es dinero —un cobro del
+// banco— tampoco se arregla escribiendo el saldo: es un egreso, y como egreso
+// baja la cuenta Y baja el "deberías tener", así que la conciliación no salta.
+// Por eso esa opción no ajusta nada: lleva a registrarlo donde toca.
+var _MOTIVOS_AJUSTE = {
+  "1": {tipo:"dedazo", txt:"Me equivoqué al teclear"},
+  "3": {tipo:"nose",   txt:"No sé por qué"}
+};
 function ajustesDesdeApertura(desdeIso){
-  var r={total:0, n:0, mismoDia:0, nMismoDia:0, sinTasa:false};
+  var r={total:0, n:0, mismoDia:0, nMismoDia:0, nSinSaber:0, sinTasa:false};
   if(!desdeIso) return r;
   // ARREGLO 50: si el ajuste y la apertura llevan hora, ya no hay que adivinar.
   // Los de antes de la foto no se cuentan —ya están dentro de la apertura— y los
@@ -2963,6 +2980,19 @@ function ajustesDesdeApertura(desdeIso){
     if(!iso || iso<desdeIso) return;
     var c=(S.cuentas||[]).find(function(x){return x.id===a.cuentaId;});
     if(!c || c.esPersonal) return;      // lo personal no es dinero de la empresa
+    // ARREGLO 68. Lo que entra en r.total se RESTA de la diferencia, o sea que
+    // se da por EXPLICADO. Por eso hoy ningún ajuste mueve el "sin explicar":
+    // se explican todos solos, y ella se queda sin número que perseguir.
+    //
+    //   dedazo  → la app tenía mal el número y el dinero nunca se movió. El
+    //             salto que provoca corregirlo es un artefacto, no un agujero:
+    //             se explica y no ensucia. (Sigue contando, como hasta hoy.)
+    //   no sé   → el dinero SÍ es distinto de lo que la app creía y ella no
+    //             sabe por qué. Eso es exactamente lo que hay que perseguir,
+    //             así que NO se explica: sale en el "sin explicar".
+    //
+    // Los 109 de antes no llevan tipo y se quedan como hasta hoy: no se les
+    // inventa un motivo que nadie eligió.
     var d=parseFloat(a.delta)||0, u;
     if(c.moneda==="USDT"||c.moneda==="USD") u=d;
     else {
@@ -2970,10 +3000,16 @@ function ajustesDesdeApertura(desdeIso){
       if(!t||isNaN(t)||t<=0){ r.sinTasa=true; return; }
       u=d/t;
     }
-    if(iso>desdeIso){ r.total+=u; r.n++; return; }
+    // Se clasifica DESPUÉS de situarlo: uno anterior a la apertura ya está
+    // dentro del punto de partida y no cuenta de ninguna manera.
+    function _contar(){
+      if(a.tipo==="nose"){ r.nSinSaber++; return; }   // se queda SIN explicar
+      r.total+=u; r.n++;                              // explicado: no ensucia
+    }
+    if(iso>desdeIso){ _contar(); return; }
     var ts=parseFloat(a.ts)||0;
-    if(apTs&&ts){ if(ts>apTs){ r.total+=u; r.n++; } return; }   // con hora: no hay duda
-    r.mismoDia+=u; r.nMismoDia++;                                // sin hora: en el aire
+    if(apTs&&ts){ if(ts>apTs){ _contar(); } return; }   // con hora: no hay duda
+    r.mismoDia+=u; r.nMismoDia++;                       // sin hora: en el aire
   });
   r.total=Math.round(r.total*100)/100;
   r.mismoDia=Math.round(r.mismoDia*100)/100;
@@ -4188,17 +4224,62 @@ function updateCuentaSaldo(id, val){
     // Se confirma aquí, que es por donde pasan las dos pantallas que editan
     // saldos. Antes no preguntaba nada y el cambio se aplicaba de un tecleo.
     if(!confirm(_avisoCambioSaldo(c,antes,v,delta))){ R(); return; }
+    // ARREGLO 68: y POR QUÉ no cuadraba. Sin esto todos los ajustes pesan igual
+    // y la conciliación los cuenta a todos como dinero perdido.
+    var mot=_motivoDelAjuste(c, delta);
+    if(!mot){ R(); return; }                     // canceló, o eligió el egreso
     S.ajustesSaldo=S.ajustesSaldo||[];
     // ARREGLO 50: la hora. Sin ella, un ajuste del mismo día que la apertura no
     // se puede situar —¿antes o después de la foto?— y la conciliación tiene que
     // dejarlo "en el aire". El 11/09 fueron 7 ajustes por −230,87 sin poder
     // contarlos ni descartarlos. Un número que la app guarda gratis.
-    S.ajustesSaldo.push({id:_newUid(),fecha:ds(td()),ts:Date.now(),cuentaId:id,delta:delta,saldoAntes:antes,saldoDespues:v,motivo:"Ajuste manual de saldo"});
+    S.ajustesSaldo.push({id:_newUid(),fecha:ds(td()),ts:Date.now(),cuentaId:id,delta:delta,saldoAntes:antes,saldoDespues:v,tipo:mot.tipo,motivo:mot.txt});
   }
   c.saldo=v;
   if(c.moneda==="USDT") c.manual_override=true;
   (S.capital||[]).forEach(function(cap,i){if(cap.cuentaId===id){S.capital[i].saldo=v;}});
   saveData();R();
+}
+
+// Devuelve el motivo elegido, o null si no hay que guardar ajuste ninguno.
+// Va con prompt y no con una pantalla propia a propósito: esto se usa desde el
+// teléfono, en medio de otra cosa, y el resto de la app confirma así.
+function _motivoDelAjuste(c, delta){
+  var q=prompt(
+    "¿Por qué no cuadraba \""+c.nombre+"\"?\n\n"+
+    "1  Me equivoqué al teclear el saldo\n"+
+    "     La app tenía mal el número. El dinero nunca se movió,\n"+
+    "     así que NO cuenta como diferencia.\n\n"+
+    "2  El banco me cobró algo, o salió dinero de verdad\n"+
+    "     Eso es un EGRESO. Te llevo a registrarlo: así baja la\n"+
+    "     cuenta y baja también lo que deberías tener.\n\n"+
+    "3  No sé por qué\n"+
+    "     Queda como diferencia sin explicar en la conciliación.\n\n"+
+    "Escribe 1, 2 o 3:", "");
+  if(q===null) return null;
+  q=String(q).trim();
+  if(q==="2"){ _ajusteAEgreso(c, delta); return null; }
+  var m=_MOTIVOS_AJUSTE[q];
+  if(!m){
+    alert("No entendí \""+q+"\".\n\n\""+c.nombre+"\" se queda como estaba. "+
+          "Vuelve a intentarlo y escribe 1, 2 o 3.");
+    return null;
+  }
+  return m;
+}
+// El saldo NO se toca: se deja el formulario de egreso listo con lo que ya se
+// sabe. Registrarlo ahí es lo que hace que la conciliación no salte, y además
+// el gasto aparece en el cierre del mes y en la hoja del contador, que es donde
+// tiene que estar. Escribir el saldo no habría hecho ninguna de las dos cosas.
+function _ajusteAEgreso(c, delta){
+  var monto=Math.abs(delta);
+  S.nEg=Object.assign(S.nEg||{}, {date:td(), mot:"", monto:String(monto),
+    mon:c.moneda, cuentaId:c.id, pagada:true, fija:false});
+  S.tab="egresos";
+  alert("No le toco el saldo a \""+c.nombre+"\".\n\n"+
+        "Te dejo el egreso empezado por "+f2(monto)+" "+c.moneda+" desde esa cuenta. "+
+        "Ponle el motivo y la categoría y guárdalo: el saldo baja solo.");
+  R();
 }
 
 function saveCuenta(){
@@ -10379,6 +10460,13 @@ function rCapitalTotal(){
           (aj.n>0
             ? "<div style='display:flex;justify-content:space-between'><span>De eso, ajustes de saldo a mano ("+aj.n+")</span><b>"+(aj.total<0?"−":"+")+"$"+f2(Math.abs(aj.total))+"</b></div>"
             : "<div style='display:flex;justify-content:space-between;color:#aaa'><span>Ajustes de saldo a mano</span><b>ninguno</b></div>")+
+          // ARREGLO 68: lo que ella marcó "no sé por qué" NO se da por explicado,
+          // así que sale en el "sin explicar" — y aquí se dice de dónde viene.
+          // Va fuera del if de arriba porque puede haber cero ajustes contados
+          // y aun así uno sin saber.
+          ((aj.nSinSaber>0)
+            ? "<div style='display:flex;justify-content:space-between;color:#a06800'><span>"+aj.nSinSaber+" ajuste"+(aj.nSinSaber===1?"":"s")+" que marcaste <b>«no sé por qué»</b></span><b>va en «sin explicar»</b></div>"
+            : "")+
           (hayTasas
             ? "<div style='display:flex;justify-content:space-between'><span>De eso, desfase de las tasas del día ("+ta.n+" op.)</span><b>"+(ta.total<0?"−":"+")+"$"+f2(Math.abs(ta.total))+"</b></div>"
             : "")+
