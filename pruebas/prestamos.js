@@ -50,7 +50,7 @@ function sacarConstante(nombre) {
   }
   throw new Error("la constante " + nombre + " no termina en ';'");
 }
-const CONSTANTES = ["_PODA_CATS",
+const CONSTANTES = ["_PODA_CATS", "_MOTIVOS_AJUSTE",
                     "_BIN_COLS_C2C", "_BIN_COLS_TX", "MONEDAS_COMPRA", "MONEDAS_VENTA",
                     "MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
                     "_MERGE_OBJETOS", "_MERGE_BLOQUES", "_MERGE_HISTORIAL", "_RATE_LIMITS",
@@ -69,7 +69,7 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "cuotasRecomendadas", "limiteCredito",
                     "costoOperativoPorPrestamo", "pctCostoOperativo",
                     "capitalRealTotal", "_mesesDesde", "_acumuladosMes",
-                    "conciliacionCapital", "getMesKeyActual", "ajustesDesdeApertura", "_isoDeDDMMAA",
+                    "conciliacionCapital", "getMesKeyActual", "ajustesDesdeApertura", "_isoDeDDMMAA", "_motivoDelAjuste", "_ajusteAEgreso",
                     "traspasosAPersonal", "efectoTasasDesde", "_isoDeFechaLote",
                     "tasaDeReferencia", "_tasaFijadaAMano", "setTasaDia", "soltarTasaDia",
                     "_isoDeLote", "_fechaLoteIso", "_num", "_horaLote", "_horaAhora", "_horaDe",
@@ -3525,6 +3525,108 @@ ok(/_ch\.concat\(_choqueApertura\(obj,\s*d\.estado,\s*_ch\)\)/.test(sinComentari
      "le dice que corrija, no que vuelva a fijar: volver a fijarla esconde la diferencia");
   ok(/este aparato tenía/.test(av),
      "y no le dice 'lo que guardaste choco': aqui ella no guardo nada, le llego");
+}
+
+console.log("\n— ARREGLO 68: por que no cuadraba —");
+// Sus 109 ajustes dicen todos "Ajuste manual de saldo", asi que la conciliacion
+// los cuenta TODOS como explicados y NINGUNO mueve el "sin explicar". Ese es el
+// bucle: ajusta para cuadrar la pantalla, el numero de arriba no se entera, y al
+// dia siguiente vuelve a ajustar. Sus palabras: "no puedo estar todo el tiempo
+// ajustando el saldo de forma manual".
+//
+// Lo que entra en total se RESTA de la diferencia, o sea que se da por bueno.
+//   dedazo → la app tenia mal el numero, el dinero nunca se movio: se explica.
+//   no se  → el dinero SI es otro y ella no sabe por que: eso hay que
+//            perseguirlo, asi que NO se explica y sale en el "sin explicar".
+{
+  const base = {
+    cuentas: [{ id: "cVes", nombre: "BANCO DE VENEZUELA", moneda: "USDT", saldo: 0 }],
+    config: { aperturaFecha: "2026-09-01", aperturaTs: 0 },
+  };
+  const correr = (ajustes) => {
+    S.cuentas = base.cuentas; S.config = base.config;
+    S.ajustesSaldo = ajustes;
+    return F.ajustesDesdeApertura("2026-09-01");
+  };
+  const A = (tipo, delta) => ({ id: "a" + Math.random(), fecha: "05/09/26", cuentaId: "cVes",
+                                delta: delta, tipo: tipo });
+  let r = correr([A("dedazo", -100), A("nose", -20)]);
+  ok(r.total === -100 && r.n === 1,
+     "el dedazo se explica y no ensucia: la app tenia mal el numero (" + r.total + ")");
+  ok(r.nSinSaber === 1,
+     "y el 'no se por que' NO se explica: sale en el sin explicar");
+  r = correr([A("nose", -20), A("nose", -30)]);
+  ok(r.total === 0 && r.n === 0 && r.nSinSaber === 2,
+     "si no sabe de ninguno, no hay nada dado por bueno");
+  // Y lo que ya esta guardado no cambia de significado: sus 109 no llevan tipo.
+  r = correr([{ id: "viejo", fecha: "05/09/26", cuentaId: "cVes", delta: -100 }]);
+  ok(r.total === -100 && r.n === 1 && r.nSinSaber === 0,
+     "a los 109 de antes no se les inventa un motivo: cuentan como hasta hoy");
+  // Lo anterior a la apertura ya esta dentro del punto de partida.
+  r = correr([{ id: "v2", fecha: "20/08/26", cuentaId: "cVes", delta: -500, tipo: "nose" }]);
+  ok(r.total === 0 && r.n === 0 && r.nSinSaber === 0,
+     "y lo de antes de la apertura no cuenta de ninguna manera");
+}
+// LA PRUEBA QUE IMPORTA: un "no se" tiene que MOVER el sin explicar, y un
+// dedazo no. Es justo lo que ella pidio: "un numero que pueda perseguir".
+{
+  const montar = (ajustes) => {
+    S.cuentas = [{ id: "cU", nombre: "BINANCE", moneda: "USDT", saldo: 900 }];
+    S.config = { aperturaUsdt: 1000, aperturaFecha: "2026-09-01", aperturaTs: 0,
+                 aperturaBase: { bruta: 0, egEmpresa: 0, egPersonal: 0, egPersonalSin: 0, socios: 0 } };
+    ["brl","vzla","eeuu","egresos","egresos_personales","prestamos","cuentasCobrar",
+     "capital","traspasos","pagosSocios","gastos_socios","gananciaExtra",
+     "inventarioUsdt","inventarioUsdt_cerrado"].forEach((k) => { S[k] = []; });
+    S.ajustesSaldo = ajustes;
+    return F.conciliacionCapital();
+  };
+  const bajada = { id: "x", fecha: "05/09/26", cuentaId: "cU", delta: -100 };
+  const sinNada  = montar([]);
+  const conNose  = montar([Object.assign({}, bajada, { tipo: "nose" })]);
+  const conDeda  = montar([Object.assign({}, bajada, { tipo: "dedazo" })]);
+  ok(Math.round(sinNada.sinExplicar) === -100,
+     "tiene 900 y deberia tener 1000: faltan 100 sin explicar (" + sinNada.sinExplicar + ")");
+  ok(Math.round(conNose.sinExplicar) === -100,
+     "marcarlo 'no se por que' lo DEJA sin explicar, que es donde tiene que estar");
+  ok(Math.round(conDeda.sinExplicar) === 0,
+     "y marcarlo 'me equivoque al teclear' lo quita: no se movio dinero ninguno");
+  ok(conDeda.ajustes.n === 1 && conNose.ajustes.nSinSaber === 1,
+     "cada uno contado en su sitio");
+}
+// Lo que se deja fuera tiene que VERSE. Un descuento silencioso no se revisa.
+{
+  const i0 = HTML.indexOf("De qué está hecha la diferencia");
+  const card = sinComentarios(HTML.slice(i0, i0 + 2500));
+  ok(/aj\.nSinSaber\s*>\s*0/.test(card), "la tarjeta dice cuantos marco 'no se por que'");
+  const i1 = card.indexOf("Ajustes de saldo a mano</span><b>ninguno");
+  const i2 = card.indexOf("aj.nSinSaber");
+  ok(i1 > -1 && i2 > i1, "y se ve tambien cuando no queda ningun ajuste contado");
+}
+// Los motivos, en un solo sitio. El del banco NO esta: ese no ajusta el saldo,
+// lleva a registrar el egreso, que es lo que baja las DOS caras de la cuenta.
+{
+  ok(F._MOTIVOS_AJUSTE["1"].tipo === "dedazo" && F._MOTIVOS_AJUSTE["3"].tipo === "nose",
+     "los dos motivos que si guardan un ajuste");
+  ok(F._MOTIVOS_AJUSTE["2"] === undefined,
+     "el cobro del banco no se arregla escribiendo el saldo: no esta en la lista");
+  const m = sinComentarios(sacarFuncion("_motivoDelAjuste"));
+  ok(/_ajusteAEgreso\(/.test(m), "elegir el banco lleva al egreso");
+  ok(/return null/.test(m.slice(m.indexOf("_ajusteAEgreso"))),
+     "y NO guarda ajuste: el saldo lo baja el egreso, no un numero escrito a mano");
+  const e = sinComentarios(sacarFuncion("_ajusteAEgreso"));
+  ok(!/c\.saldo\s*=/.test(e), "el egreso no toca el saldo por su cuenta");
+  ok(/S\.tab\s*=\s*"egresos"/.test(e) && /monto:String\(monto\)/.test(e),
+     "y deja el formulario empezado con el monto, para que no sea mas trabajo");
+}
+// Y se engancha: sin esto la pregunta no la ve nadie.
+{
+  const u = sinComentarios(sacarFuncion("updateCuentaSaldo"));
+  ok(/_motivoDelAjuste\(/.test(u), "ajustar un saldo pregunta el motivo");
+  ok(/if\(!mot\)\{\s*R\(\);\s*return;\s*\}/.test(u),
+     "si no elige uno, no se guarda nada: ni ajuste ni saldo nuevo");
+  ok(/tipo:mot\.tipo/.test(u), "y el motivo se guarda con el ajuste");
+  ok(u.indexOf("_motivoDelAjuste") > u.indexOf("_avisoCambioSaldo"),
+     "se pregunta despues del aviso del salto de 10x, no antes");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
