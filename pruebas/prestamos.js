@@ -69,7 +69,7 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "cuotasRecomendadas", "limiteCredito",
                     "costoOperativoPorPrestamo", "pctCostoOperativo",
                     "capitalRealTotal", "_mesesDesde", "_acumuladosMes",
-                    "conciliacionCapital", "getMesKeyActual", "ajustesDesdeApertura", "_isoDeDDMMAA", "_motivoDelAjuste", "_ajusteAEgreso",
+                    "conciliacionCapital", "getMesKeyActual", "ajustesDesdeApertura", "_isoDeDDMMAA", "_motivoDelAjuste", "_ajusteAEgreso", "_cuentaMadre", "_cuentaOMadre", "_completarDesdeMadre", "toggleCuentaMadre",
                     "traspasosAPersonal", "efectoTasasDesde", "_isoDeFechaLote",
                     "tasaDeReferencia", "_tasaFijadaAMano", "setTasaDia", "soltarTasaDia",
                     "_isoDeLote", "_fechaLoteIso", "_num", "_horaLote", "_horaAhora", "_horaDe",
@@ -3667,6 +3667,92 @@ console.log("\n— ARREGLO 70: el formulario en el telefono —");
      "la fila de Fecha/Hora/Moneda usa la rejilla con clase, que en el telefono se colapsa sola");
   ok(!/grid-template-columns:1fr 1fr 1fr/.test(fila),
      "y no una de tres columnas a mano: a esa el @media no la toca");
+}
+
+console.log("\n— FASE 2: la cuenta madre —");
+// Binance no dice a que banco entraron los bolivares de una venta de USDT. Sus
+// palabras: "yo no iba a poder saber por binance que banco se uso, si fue
+// venezuela banesco y mercantil". La madre es donde cae ese dinero.
+{
+  const montar = () => {
+    S.cuentas = [
+      { id: "cMadre", nombre: "BOLIVARES USDT", moneda: "VES", saldo: 0, esMadre: true },
+      { id: "cBdv",   nombre: "BANCO DE VENEZUELA", moneda: "VES", saldo: 0 },
+      { id: "cBan",   nombre: "BANESCO", moneda: "VES", saldo: 0 },
+      { id: "cBrl",   nombre: "PAGBANK", moneda: "BRL", saldo: 0 },
+    ];
+  };
+  montar();
+  ok(F._cuentaMadre("VES").id === "cMadre", "encuentra la madre de su moneda");
+  ok(F._cuentaMadre("BRL") === null, "y no se inventa una donde no la hay");
+  ok(F._cuentaMadre("") === null, "sin moneda, nada");
+  // Un lote de la madre lo puede gastar cualquier banco: ahi esta el dinero
+  // cuyo banco no se sabe. Sin esto se quedaria muerto y ensuciando las tasas.
+  ok(F._cuentaOMadre("cMadre", "cBdv", "VES"), "un lote de la madre lo gasta Banco de Venezuela");
+  ok(F._cuentaOMadre("cMadre", "cBan", "VES"), "y tambien Banesco: el banco no se sabia");
+  ok(F._cuentaOMadre("cBdv", "cBdv", "VES"), "y lo suyo lo sigue gastando cada uno");
+  ok(!F._cuentaOMadre("cBdv", "cBan", "VES"), "pero un lote de OTRO banco no: eso no cambia");
+  ok(F._cuentaOMadre("cBdv", "", "VES"), "sin cuenta se mira todo, como siempre");
+  ok(!F._cuentaOMadre("cMadre", "cBrl", "BRL"), "y la madre de VES no vale para reales");
+}
+// Los seis sitios que deciden que lote se consume o se devuelve tienen que
+// mirarla. Si uno se queda fuera, ese dinero se vuelve inalcanzable por ahi.
+{
+  const sitios = (sinComentarios(HTML).match(/_cuentaOMadre\(/g) || []).length;
+  ok(sitios >= 7, "todos los filtros de lote miran la madre (" + sitios + " usos)");
+  ok(!/filter\(function\(r\)\{return r\.cuentaDestinoId===cuentaId;\}\)/.test(sinComentarios(HTML)),
+     "no queda ningun filtro que la deje fuera");
+}
+// El banco gasta LO SUYO primero; la madre solo completa lo que falte. Asi sus
+// saldos de hoy se gastan solos y no hay que migrar nada.
+{
+  const correr = (saldoBanco, saldoMadre, sale) => {
+    const cDest = { id: "cBdv", moneda: "VES", saldo: saldoBanco };
+    S.cuentas = [{ id: "cMadre", moneda: "VES", saldo: saldoMadre, esMadre: true }, cDest];
+    const movs = [];
+    F._completarDesdeMadre(cDest, { monto: sale, moneda: "VES" },
+      (id, d) => movs.push({ id: id, d: Math.round(d * 100) / 100 }), false);
+    return movs;
+  };
+  ok(correr(1000, 5000, 300).length === 0, "si al banco le alcanza, la madre no se toca");
+  const m = correr(200, 5000, 1000);
+  ok(m.length === 2 && m[0].id === "cMadre" && m[0].d === -800 && m[1].d === 800,
+     "y si se queda corto, la madre le pasa EXACTAMENTE lo que falta (" + JSON.stringify(m) + ")");
+  const m2 = correr(0, 300, 1000);
+  ok(m2.length === 2 && m2[0].d === -300,
+     "si la madre tampoco tiene, pasa lo que hay: no se inventa dinero");
+  ok(correr(0, 0, 1000).length === 0, "y sin nada, no se mueve nada");
+  // Una cuenta en otra moneda (el aliado cobrado en USDT) no la toca.
+  {
+    const cU = { id: "cBin", moneda: "USDT", saldo: 0 };
+    S.cuentas = [{ id: "cMadre", moneda: "VES", saldo: 9999, esMadre: true }, cU];
+    const mv = [];
+    F._completarDesdeMadre(cU, { monto: 50, moneda: "USDT" }, (i, d) => mv.push(d), false);
+    ok(mv.length === 0, "y no se mete donde sale otra moneda (Colombia se paga en USDT)");
+  }
+}
+// Se engancha en la remesa, y el traspaso queda en _mov para poder revertirlo.
+{
+  const a = sinComentarios(sacarFuncion("actualizarCuentasPorRemesa"));
+  ok(/_completarDesdeMadre\(_cDest, _sal, adj, soloComprobar\)/.test(a),
+     "la remesa completa desde la madre antes de descontar");
+  ok(a.indexOf("_completarDesdeMadre") < a.indexOf("adj(cuentaDestId, -_sal.monto"),
+     "y ANTES de descontar, no despues: si no, el banco pasa por negativo");
+  ok(/movimientos\.push/.test(a), "los movimientos se guardan, asi que borrar la remesa lo revierte");
+}
+// El importador deja de preguntar el banco cuando hay madre.
+{
+  const rec = sinComentarios(sacarFuncion("_binRecalcular"));
+  ok(/_cuentaMadre\(o\.moneda\)/.test(rec), "el importador busca la madre de esa moneda");
+  ok(/fiatMadre:\s*true|fiatMadre=true/.test(rec), "y marca que va ahi");
+  ok(/fiatAuto=false;\s*o\.fiatMadre=true/.test(rec),
+     "sin etiqueta de 'supuesto': no es una suposicion, es la respuesta");
+}
+// Una sola madre por moneda, y nunca una personal ni de reserva.
+{
+  const t = sinComentarios(sacarFuncion("toggleCuentaMadre"));
+  ok(/Solo puede haber una por moneda/.test(t), "no deja marcar dos de la misma moneda");
+  ok(/esPersonal\|\|c\.esReserva/.test(t), "ni una personal o de reserva: ahi cae dinero del negocio");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
