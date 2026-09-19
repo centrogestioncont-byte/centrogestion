@@ -3651,5 +3651,23 @@ console.log("\n— ARREGLO 68: por que no cuadraba —");
      "se pregunta despues del aviso del salto de 10x, no antes");
 }
 
+console.log("\n— ARREGLO 70: el formulario en el telefono —");
+// Ella trabaja desde el movil. Medido en Chromium a 390 px: al meterle la Hora,
+// el campo se salia por el borde y empujaba "Moneda de origen" 67 px fuera de la
+// pantalla. La causa era que esa fila llevaba la rejilla de tres columnas
+// escrita a mano, y la regla de movil solo sabe colapsar .f2 y .f3.
+{
+  ok(/@media \(max-width:600px\)/.test(HTML), "sigue existiendo la regla de moviles");
+  ok(/\.f2,\.f3\{grid-template-columns:1fr !important\}/.test(HTML),
+     "y es la que pasa las rejillas a una sola columna");
+  const inv = sinComentarios(sacarFuncion("rInventarioUsdt"));
+  const i = inv.indexOf("<label>Fecha</label>");
+  const fila = inv.slice(Math.max(0, i - 300), i);
+  ok(i > -1 && /class='f3'/.test(fila),
+     "la fila de Fecha/Hora/Moneda usa la rejilla con clase, que en el telefono se colapsa sola");
+  ok(!/grid-template-columns:1fr 1fr 1fr/.test(fila),
+     "y no una de tres columnas a mano: a esa el @media no la toca");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
