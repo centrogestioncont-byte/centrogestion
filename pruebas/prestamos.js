@@ -2904,8 +2904,15 @@ console.log("\nArreglo 64 · entrar con huella");
      "no hay tema negro dentro de la app");
   ok(/var _TEMAS=\["claro","papel","suave"\]/.test(HTML),
      "los temas que se ofrecen son claro, papel y suave");
-  ok(/return _TEMAS\.indexOf\(g\)>=0 \? g : "claro"/.test(sacarFuncion("temaActual")),
-     "sin elegir nada manda CLARO, no lo que tenga puesto el aparato");
+  // Lo que esta guardia protege no es "claro" ni "suave", es que el tema NO
+  // siga al aparato: si mirara prefers-color-scheme, el telefono entrando en
+  // modo noche le cambiaria la app sola en mitad de una jornada de registro.
+  // Cual manda por omision lo decide ella, y desde que los avisos dejaron de
+  // gritar pidio SUAVE.
+  ok(/return _TEMAS\.indexOf\(g\)>=0 \? g : "suave"/.test(sacarFuncion("temaActual")),
+     "sin elegir nada manda SUAVE");
+  ok(!/prefers-color-scheme/.test(HTML),
+     "y el tema no lo decide el sistema operativo del aparato");
   // El <meta theme-color> pinta la barra del navegador y NO entiende var(--x).
   ok(!/setAttribute\("content",[\s\S]{0,120}var\(--/.test(HTML),
      "el color de la barra del navegador va en hex, no por nombre");
