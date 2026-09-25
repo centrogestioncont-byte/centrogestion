@@ -1811,7 +1811,7 @@ ok(!/var sano=Math\.abs\(dif\)<=tol;/.test(HTML),
    "y ya no la diferencia bruta");
 ok(/sinExplicar:sinExplicar/.test(HTML) && /ajustes:ajustes/.test(HTML),
    "conciliacionCapital devuelve el desglose");
-ok(/volver a fijar la apertura solo lo esconde/.test(HTML),
+ok(/Volver a fijar la apertura no lo arregla: lo esconde/.test(HTML),
    "y le dice que refijar la apertura no arregla nada");
 
 
@@ -1941,7 +1941,9 @@ ok(/Algún ajuste es de una moneda sin tasa/.test(_blq),
    "el aviso de moneda sin tasa queda fuera del desplegable");
 ok(/Vuelve a fijar la apertura/.test(_blq),
    "y el de apertura vieja tambien");
-ok(/Cuadra\. Lo que queda sin explicar/.test(_blq),
+// ARREGLO 71: el veredicto dejo de ser un parrafo repetido debajo y es el
+// TITULAR. Lo que se prueba sigue siendo lo mismo: que se ve sin desplegar nada.
+ok(/"✅ Cuadra"/.test(_blq) && /Falta por explicar/.test(_blq) && /Sobra sin explicar/.test(_blq),
    "el veredicto tambien se ve siempre: es la respuesta a la pregunta");
 
 
@@ -2494,20 +2496,27 @@ ok(_resto.moraMultaPct===2 && _resto.ntfyCanal==="b",
 // DOS, cada uno con su nombre. La leccion del ARREGLO 60 sigue en pie -un numero
 // grande y suelto que contradice al de al lado- y por eso se prueba que ninguno
 // de los dos va sin etiqueta.
-ok(/f2\(Math\.abs\(sinExp\)\)\+" sin explicar/.test(HTML),
+//
+// ARREGLO 71: los dos siguen, pero ya no compiten. El grande es el que hay que
+// perseguir —el sin explicar— y la resta que ella hace a mano va entera en una
+// linea pequena debajo. Sus palabras sobre la tarjeta: "mucha letra".
+ok(/Falta por explicar \$"\+f2\(Math\.abs\(sinExp\)\)/.test(HTML) &&
+   /Sobra sin explicar \$"\+f2\(Math\.abs\(sinExp\)\)/.test(HTML),
    "el titular sigue enseñando el 'sin explicar', con su numero");
-ok(/Te faltan |Te sobran /.test(HTML) && /lo que deberías tener/.test(HTML),
+ok(/te faltan |te sobran /.test(HTML) && /deberías tener <b/.test(HTML) && /Tienes <b/.test(HTML),
    "y la diferencia dice en PALABRAS si falta o sobra: un '+65,37' en verde se lee al reves");
-ok(/Math\.abs\(dif\)<0\.005 \? "Cuadra"/.test(HTML),
+ok(/Math\.abs\(dif\)<0\.005 \? " · clavado"/.test(HTML),
    "cuando no hay diferencia lo dice, en vez de un $0,00 con signo");
 {
   // Ninguno de los dos puede quedarse sin etiqueta: eso es lo que hacia que se
   // leyeran como si dijeran lo contrario el uno del otro.
-  const i = HTML.indexOf("lo que deberías tener");
-  const j = HTML.indexOf("sin explicar", i);
-  ok(i > -1 && j > i && j - i < 700,
+  // Se ancla en el literal del codigo, no en el texto suelto: "sin explicar"
+  // aparece tambien en los comentarios y el primero que salia era uno de esos.
+  const i = HTML.indexOf('"⚠️ Sobra sin explicar $"');
+  const j = HTML.indexOf("deberías tener <b", i);
+  ok(i > -1 && j > i && j - i < 900,
      "los dos van juntos en el titular, cada uno con su rotulo");
-  ok(/por encima de ±\$/.test(HTML),
+  ok(/el margen normal es ±\$/.test(HTML) && /de ruido normal/.test(HTML),
      "y si el sin explicar se pasa de la tolerancia, lo dice ahi mismo");
 }
 ok(/que no se pueden situar/.test(HTML), "el aviso de los ajustes en el aire esta fuera del desplegable");
@@ -4310,6 +4319,7 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(/esPersonal\|\|c\.esReserva/.test(t), "ni una personal o de reserva: ahi cae dinero del negocio");
 }
 
+
 // ── ARREGLO 71 · el interes de un prestamo no es capital hasta que se cobra ──
 // Ella lo dijo: "presto una cantidad pero por los intereses cobro mas". De la
 // cuenta sale el CAPITAL; p.monto es capital + interes. Contar p.monto entero
@@ -4388,6 +4398,30 @@ console.log("\n— FASE 2: la cuenta madre —");
      antes.sinExplicar + " -> " + tras.sinExplicar);
   ok(tras.real.total === 1000, "el capital sigue siendo el mismo dinero", tras.real.total);
   S.cuentas = []; S.cuentasCobrar = []; S.prestamos = []; S.config = {};
+}
+
+// ── ARREGLO 71 · la tarjeta: un solo numero grande y el detalle a un toque ──
+// "mucha letra, no es facil de entender". Las dos restas completas (14 filas)
+// se van al desplegable; los avisos y el veredicto NO.
+{
+  const abierto = HTML.slice(HTML.indexOf("var tablasCuenta="), HTML.indexOf("return \"<div style='background:\"+bg"));
+  ok(/Saldo de apertura/.test(abierto) && /Deberías tener/.test(abierto),
+     "la resta de 'deberias tener' se declara aparte para poder plegarla");
+  const cuerpo = HTML.slice(HTML.indexOf("return \"<div style='background:\"+bg"),
+                            HTML.indexOf("S._concDetalle=!S._concDetalle"));
+  ok(!/Saldo de apertura/.test(cuerpo) && !/lineaReal/.test(cuerpo),
+     "y ninguna de las dos tablas se dibuja ya sin desplegar");
+  ok(/S\._concDetalle\?\s*\n?\s*tablasCuenta\+/.test(HTML),
+     "estan dentro del desplegable, no borradas");
+  // Lo urgente sigue fuera: un aviso escondido no es un aviso (ARREGLO 48/60).
+  ok(/que no se pueden situar/.test(cuerpo), "el aviso de los ajustes en el aire sigue fuera");
+  ok(/De qué está hecha la diferencia/.test(cuerpo),
+     "y el desglose tambien: es lo que convierte el numero en algo que perseguir");
+  // El interes por cobrar se ve, pero dicho: no es suyo todavia.
+  ok(/intereses por cobrar \(aún no son tuyos\)/.test(HTML),
+     "la tarjeta dice que el interes pendiente no cuenta como capital");
+  ok(/En préstamos \(capital\)/.test(HTML),
+     "y que lo que cuenta es el capital");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

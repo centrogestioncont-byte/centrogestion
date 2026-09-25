@@ -779,6 +779,34 @@ Con préstamos nuevos cada semana, ese sobrante no paraba de crecer.
 Comprobado: el "sin explicar" de su export no se mueve ni un céntimo (59,28
 antes y después), y prestar con interés ya no lo toca.
 
+### La tarjeta de conciliación: un solo número grande
+
+Sus palabras: *"mucha letra, no es fácil de entender, nunca está en 0 siempre
+tiene un desajuste"*.
+
+Tenía **dos números grandes compitiendo** —la diferencia bruta y el sin
+explicar— y **tres tablas** debajo, 14 filas entre las dos restas.
+
+- **Manda uno solo: el que hay que perseguir.** El titular dice `✅ Cuadra` o
+  `⚠️ Falta / Sobra sin explicar $X`, y nada más.
+- **La resta que ella hace a mano sigue entera, en una línea pequeña**: *"Tienes
+  $2.530,81 · deberías tener $2.539,97 · te faltan $9,16"*. El ARREGLO 69 está
+  ahí porque esconderla la dejó sin entender de dónde salía el titular; lo que
+  cambió es la jerarquía, no lo que se dice.
+- **Las dos restas completas se van al desplegable.** Se leen cuando algo no
+  cuadra y estorban las otras cien veces.
+- **Lo urgente sigue fuera**: los ajustes que no se pueden situar, la moneda sin
+  tasa, la apertura vieja y el desglose de la diferencia — que es lo que
+  convierte un número en algo que se puede perseguir.
+- **El color va con el titular.** Seguía a la diferencia bruta, así que la
+  tarjeta salía **roja** con un titular que decía *"Sobra sin explicar $59,28"*.
+  El color se lee antes que la letra: si dice lo contrario, manda el color. Y
+  dentro del margen, la resta se dice sin color de alarma — un "te faltan" en
+  rojo dentro de una tarjeta verde es la misma contradicción al revés.
+- **"Nunca está en 0" no se arregla poniéndolo en 0.** Un desvío pequeño es
+  ruido de tasas, no una fuga; por eso existe la tolerancia. Dentro del margen el
+  titular dice **Cuadra** y no enseña ninguna cifra roja.
+
 ### Evolución mide la tendencia, no el capital
 
 Tenía un "Resumen total" que restaba la ganancia sumada de los meses menos lo
