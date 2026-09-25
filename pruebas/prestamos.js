@@ -3028,6 +3028,24 @@ console.log("\nArreglo 64 · entrar con huella");
      "y ya no da por hecho cual manda sin elegir");
 }
 
+// ── Clientes: la negrita vuelve a significar algo ─────────────────────────
+// Medido antes: el 85% del texto de esta pantalla estaba en negrita -el
+// codigo, la ruta, el pais, el nombre, todo-. Cuando todo esta en negrita, la
+// negrita no significa nada. Y el nombre, que es lo que ella busca aqui, se
+// pintaba en var(--az1-a): un azul oscuro que sobre la tarjeta oscura daba
+// contraste 2,0. Ahora es lo unico en negrita, lo mas grande de la fila, y
+// esta en 10,9.
+{
+  const c = sinComentarios(sacarFuncion("rClientes"));
+  ok(/font-weight:700;font-size:14\.5px;color:var\(--tx\)[^']*'>"\+cl\.n/.test(c),
+     "el nombre del cliente es lo mas grande de la fila y usa el color del texto");
+  ok(!/color:var\(--az1-a\)'>"\+cl\.n/.test(c),
+     "y ya no se pinta con el azul oscuro que no se leia");
+  // El codigo y el telefono son datos secundarios: se leen, pero no compiten.
+  ok(/#"\+cl\.cod/.test(c) && !/font-size:9px[^']*'>#"\+cl\.cod/.test(c),
+     "el codigo sigue estando, pero ya no a 9px");
+}
+
 // ── Las dos tablas donde pasa las horas ───────────────────────────────────
 // Medido antes: en Operaciones el 86% del texto estaba a 11px o menos, y en
 // Diario el 92%. Lo diminuto no era el adorno: eran los montos, las tasas y
