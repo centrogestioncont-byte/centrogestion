@@ -3028,6 +3028,50 @@ console.log("\nArreglo 64 · entrar con huella");
      "y ya no da por hecho cual manda sin elegir");
 }
 
+// ── El armazon: barra lateral en PC, boton en el telefono ─────────────────
+// Hasta ahora, en cualquier pantalla, para cambiar de pestaña habia que abrir
+// un menu que tapaba lo que estabas mirando. En el telefono esta bien -no cabe
+// otra cosa-; en la PC sobra sitio y esconder la navegacion obliga a recordar
+// donde esta cada cosa en vez de verlo.
+{
+  // Los dos menus salen del MISMO orden. Si cada uno tuviera el suyo, acabarian
+  // distintos y cambiar de aparato seria volver a aprenderse la app.
+  ok(/var _GRUPOS_MENU=\[/.test(HTML), "el orden del menu esta en un solo sitio");
+  ["_htmlLateral", "_htmlMenuTel"].forEach(function(f){
+    const c = sinComentarios(sacarFuncion(f));
+    ok(/_GRUPOS_MENU\.forEach/.test(c), f + " lee el orden de _GRUPOS_MENU");
+    // Lo que no este en ningun grupo NO desaparece: cae en "Mas" al final. Una
+    // pestaña nueva que se olvide de apuntarse tiene que seguir alcanzandose.
+    ok(/sueltas/.test(c) && /Más/.test(c),
+       f + ": una pestaña sin grupo cae en 'Más', no se pierde");
+  });
+
+  // La barra la dibuja la lista YA FILTRADA por permisos, no TABS[S.role]. Si
+  // leyera los tabs del rol, el menu volveria a enseñar pestañas que contestan
+  // "Sin acceso" al tocarlas, que es el error de la FASE B.
+  const main = sinComentarios(sacarFuncion("rMain"));
+  ok(/_htmlLateral\(ts\)/.test(main) && /_htmlMenuTel\(ts\)/.test(main),
+     "los dos menus salen de la lista ya filtrada por permisos");
+  ok(!/_htmlLateral\(TABS/.test(main) && !/_htmlMenuTel\(TABS/.test(main),
+     "y no de los tabs del rol");
+
+  // El telefono no cambia: la barra solo existe por encima de 900px y el boton
+  // ☰ sigue ahi debajo.
+  ok(/@media\(min-width:900px\)\{[\s\S]{0,900}\.lateral\{display:flex/.test(HTML),
+     "la barra lateral solo aparece en pantalla ancha");
+  ok(/\.lateral\{display:none\}/.test(HTML),
+     "y por debajo de 900px no existe");
+  ok(/\.navbar3 \.menubtn\{display:none\}/.test(HTML),
+     "en PC sobra el boton de menu (y el selector es mas especifico que .menubtn, que se declara despues)");
+
+  // Las piezas compartidas viven en el <style>, no dentro de una pantalla.
+  [".pz-rejilla", ".pz-card", ".pz-rot", ".pz-num", ".pz-pie"].forEach(function(c){
+    ok(new RegExp("\\" + c + "\\{").test(HTML), "existe la pieza " + c);
+  });
+  ok(/class='pz-card'/.test(sinComentarios(sacarFuncion("rDash"))),
+     "el Resumen ya usa las piezas compartidas");
+}
+
 // ── Lo primero del Resumen son cuatro numeros ─────────────────────────────
 // Antes lo primero eran los avisos, y despues un desglose con todo del mismo
 // tamaño y todo en negrita: nada destacaba, asi que habia que leer la pantalla
