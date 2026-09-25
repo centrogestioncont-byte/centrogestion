@@ -4584,8 +4584,100 @@ var _MOTIVOS_AJUSTE = {
   "1": {tipo:"dedazo", txt:"Me equivoqué al teclear"},
   "3": {tipo:"nose",   txt:"No sé por qué"}
 };
+// ── ARREGLO 72: la hora nunca se perdió, está dentro del id ───────────────
+// _newUid() es Date.now().toString(36)+"_"+azar, así que CADA registro creado
+// con él lleva su hora exacta escrita en el propio id. ajustesDesdeApertura()
+// solo miraba a.ts —que los de antes del ARREGLO 50 no tienen— y dejaba en el
+// aire 7 ajustes por −233,27 USDT que estaban perfectamente fechados.
+//
+// Comprobado con sus 109 ajustes: 109 de 109 se decodifican, y 109 de 109 dan
+// la misma fecha que el campo "fecha".
+//
+// El rango es la guardia: un id de los de antes (Date.now() en decimal, o un
+// número de orden) leído en base 36 se dispara fuera de cualquier fecha creíble
+// y se descarta en vez de inventarse una hora.
+function _tsDeUid(u){
+  var p=String(u||"").split("_")[0];
+  if(!p||!/^[0-9a-z]+$/.test(p)) return 0;
+  var t=parseInt(p,36);
+  return (isFinite(t)&&t>=1.4e12&&t<=2.5e12) ? t : 0;
+}
+// La hora de un ajuste: la guardada manda, y si no la hay se saca del id.
+function _tsDeAjuste(a){
+  if(!a) return 0;
+  var t=parseFloat(a.ts);
+  if(t>0) return t;
+  return _tsDeUid(a.id);
+}
+
+// ── ARREGLO 72 · fechar una apertura que se fijó sin hora ──────────────────
+// Queda la otra mitad: saber a qué hora se fijó la apertura. Las de antes del
+// ARREGLO 50 no guardaron aperturaTs, y sin eso los ajustes de ESE MISMO DÍA
+// siguen sin poder situarse aunque ya se sepa su hora.
+//
+// Pero la apertura dejó un rastro: aperturaBase.bruta es la ganancia que
+// llevaba el mes EN EL INSTANTE de fijarla. Reconstruyendo la bruta acumulada
+// operación por operación —las remesas también llevan la hora en su _uid— se
+// ve entre qué dos operaciones cae ese número, y eso acota el momento.
+//
+// Medido con su export: aperturaBase.bruta = 152,33 y la acumulada pasa de
+// 142,99 (remesa 670) a 152,96 (remesa 112), con un minuto entre las dos. No
+// cuadra al céntimo —sobran 0,63, porque hoy las operaciones se revaloran con
+// otras tasas— pero el salto entre operaciones es de 9,34, así que la ventana
+// aguanta de sobra el ruido.
+//
+// Esto es una DEDUCCIÓN, no un dato, y por eso no se aplica sola: devuelve la
+// ventana y quien la use tiene que enseñarla y preguntar.
+function _deducirHoraApertura(){
+  var cfg=S.config||{};
+  var base=cfg.aperturaBase, desde=cfg.aperturaFecha;
+  if(!base||!desde) return null;
+  var objetivo=parseFloat(base.bruta);
+  if(isNaN(objetivo)) return null;
+  var mk=String(desde).slice(0,7);
+  var ops=[];
+  ["brl","vzla","eeuu"].forEach(function(k){
+    (S[k]||[]).forEach(function(o){
+      var t=_tsDeUid(o._uid);
+      if(t) ops.push({k:k,t:t,uid:o._uid});
+    });
+  });
+  if(!ops.length) return null;
+  ops.sort(function(a,b){return a.t-b.t;});
+  var orig={brl:S.brl, vzla:S.vzla, eeuu:S.eeuu};
+  // Las listas se recortan para medir y se devuelven a su sitio en un finally:
+  // si saliera por una excepción a mitad, la app se quedaría sin remesas.
+  var antes=null, luego=null, brutaAntes=0, brutaLuego=0;
+  try{
+    var brutaHasta=function(hasta){
+      ["brl","vzla","eeuu"].forEach(function(k){
+        S[k]=(orig[k]||[]).filter(function(o){
+          var t=_tsDeUid(o._uid);
+          return !t || t<=hasta;
+        });
+      });
+      var c=calcMesCompleto(mk)||{};
+      return Math.round(((parseFloat(c.ganBrutaTotal)||0)+(parseFloat(c.ganExtraEmp)||0))*100)/100;
+    };
+    var prevT=0, prevB=0;
+    for(var i=0;i<ops.length;i++){
+      var b=brutaHasta(ops[i].t);
+      if(prevB<=objetivo && b>objetivo){ antes=prevT; luego=ops[i].t; brutaAntes=prevB; brutaLuego=b; break; }
+      prevT=ops[i].t; prevB=b;
+    }
+  } finally {
+    S.brl=orig.brl; S.vzla=orig.vzla; S.eeuu=orig.eeuu;
+  }
+  if(!luego) return null;
+  // El corte tiene que caer en el propio día de la apertura: si cae en otro,
+  // la foto no corresponde a lo que dice la fecha y no se deduce nada.
+  var isoCorte=_isoDeFecha(new Date(luego));
+  return {desde:antes, hasta:luego, brutaAntes:brutaAntes, brutaLuego:brutaLuego,
+          objetivo:objetivo, mismoDia:(isoCorte===desde)};
+}
+
 function ajustesDesdeApertura(desdeIso){
-  var r={total:0, n:0, mismoDia:0, nMismoDia:0, nSinSaber:0, sinTasa:false};
+  var r={total:0, n:0, mismoDia:0, nMismoDia:0, nSinSaber:0, sinTasa:false, enElAire:[]};
   if(!desdeIso) return r;
   // ARREGLO 50: si el ajuste y la apertura llevan hora, ya no hay que adivinar.
   // Los de antes de la foto no se cuentan —ya están dentro de la apertura— y los
@@ -4623,9 +4715,13 @@ function ajustesDesdeApertura(desdeIso){
       r.total+=u; r.n++;                              // explicado: no ensucia
     }
     if(iso>desdeIso){ _contar(); return; }
-    var ts=parseFloat(a.ts)||0;
+    var ts=_tsDeAjuste(a);   // ARREGLO 72: la guardada, o la que lleva el id
     if(apTs&&ts){ if(ts>apTs){ _contar(); } return; }   // con hora: no hay duda
     r.mismoDia+=u; r.nMismoDia++;                       // sin hora: en el aire
+    // ARREGLO 72: se lleva cuáles son, no solo cuántos. Ahora tienen hora, y
+    // con la hora delante ella puede juzgar por su cuenta — que es lo que el
+    // aviso le pedía a ciegas.
+    r.enElAire.push({ts:ts, usdt:Math.round(u*100)/100, cuenta:c.nombre, mon:c.moneda, delta:d});
   });
   r.total=Math.round(r.total*100)/100;
   r.mismoDia=Math.round(r.mismoDia*100)/100;
@@ -6668,6 +6764,94 @@ function corregirFechaApertura(){
     saveData();R();
     alert("✅ La apertura ahora es del "+ds(iso)+", con los mismos $"+
           f2(S.config.aperturaUsdt)+" USDT.");
+  });
+}
+
+// ── ARREGLO 72 · situar los ajustes que quedaron en el aire ────────────────
+// Los del mismo día en que se fijó la apertura no se pueden situar porque esa
+// apertura no guardó la hora. Ya se sabe la de cada ajuste (va en su id); lo
+// que falta es la de la apertura, y _deducirHoraApertura() la acota desde la
+// ganancia que llevaba el mes cuando se fijó.
+//
+// Eso es una deducción, así que NO se aplica sola: se enseña de dónde sale, se
+// simula el número que va a quedar y se pregunta. Es el mismo criterio que el
+// botón de corregir la fecha — un botón que no dice a qué número te lleva hay
+// que usarlo dos veces para entenderlo.
+//
+// Y hay que decirle una cosa incómoda: situarlos casi siempre SUBE el "sin
+// explicar", porque un ajuste que pasa a contar se da por explicado y sale de
+// la diferencia. Medido con su export: de +59,28 a +274,66. No aparece dinero
+// nuevo; lo que había estaba escondido detrás del aviso.
+function situarAjustesEnElAire(){
+  var cfg=S.config||{};
+  if(isNaN(parseFloat(cfg.aperturaUsdt))||!cfg.aperturaFecha){
+    alert("Todavía no hay una apertura fijada."); return;
+  }
+  if(parseFloat(cfg.aperturaTs)>0){
+    alert("Esta apertura ya tiene hora guardada: los ajustes se sitúan solos."); return;
+  }
+  var aj=ajustesDesdeApertura(cfg.aperturaFecha);
+  if(!aj.nMismoDia){ alert("No hay ajustes en el aire."); return; }
+
+  var v=_deducirHoraApertura();
+  if(!v||!v.mismoDia){
+    alert("No puedo deducir a qué hora fijaste la apertura.\n\n"+
+          "Se saca de la ganancia que llevabas ese mes cuando la fijaste, comparándola "+
+          "con tus operaciones una por una, y aquí no cuadra con ninguna.\n\n"+
+          "Los "+aj.nMismoDia+" ajustes se quedan como están.");
+    return;
+  }
+  var hh=function(t){var d=new Date(t);
+    return String(d.getDate()).padStart(2,"0")+"/"+String(d.getMonth()+1).padStart(2,"0")+" "+
+           String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");};
+  // El punto medio de la ventana. Y si algún ajuste cae DENTRO o muy cerca, se
+  // avisa: ahí la deducción no alcanza y el lado sería una precisión inventada.
+  var punto=Math.round((v.desde+v.hasta)/2);
+  var MARGEN=30*60*1000;
+  var dudosos=aj.enElAire.filter(function(q){ return Math.abs(q.ts-punto)<MARGEN; });
+
+  var antes=conciliacionCapital(), luego;
+  try{ S.config.aperturaTs=punto; luego=conciliacionCapital(); }
+  finally{ delete S.config.aperturaTs; }   // mirar el resultado no puede ser aplicarlo
+
+  var f=function(n){ return (n<0?"−":"+")+"$"+f2(Math.abs(n)); };
+  var lista=aj.enElAire.slice().sort(function(a,b){return a.ts-b.ts;}).map(function(q){
+    return "   "+hh(q.ts)+"   "+(q.ts<punto?"antes  ":"después")+"   "+
+           f(q.usdt)+"   "+q.cuenta;
+  }).join("\n");
+
+  var msg=
+    "Situar los "+aj.nMismoDia+" ajustes que están en el aire\n\n"+
+    "La hora de cada ajuste va dentro de su propio id, así que no se perdió.\n"+
+    "Lo que faltaba era la hora de la apertura, y se deduce de la ganancia que\n"+
+    "llevabas ese mes cuando la fijaste ($"+f2(v.objetivo)+"):\n\n"+
+    "   "+hh(v.desde)+"   llevabas $"+f2(v.brutaAntes)+"\n"+
+    "   "+hh(v.hasta)+"   llevabas $"+f2(v.brutaLuego)+"\n"+
+    "   → la fijaste entre esas dos operaciones\n\n"+
+    "Cómo quedan:\n"+lista+"\n\n"+
+    "Lo que queda SIN EXPLICAR:\n"+
+    "   antes:   "+f(antes.sinExplicar)+"\n"+
+    "   después: "+f(luego.sinExplicar)+"   (margen ±$"+f2(luego.tolerancia)+")\n";
+  if(Math.abs(luego.sinExplicar)>Math.abs(antes.sinExplicar)){
+    msg+="\n⚠️ El número SUBE, y es lo normal: un ajuste que pasa a contar se da "+
+         "por explicado y sale de la diferencia. No aparece dinero nuevo — lo que "+
+         "había estaba detrás de este aviso.\n";
+  }
+  if(dudosos.length){
+    msg+="\n⚠️ "+dudosos.length+" ajuste(s) caen a menos de media hora de la apertura. "+
+         "Ahí la deducción no da para tanto y el lado puede estar mal.\n";
+  }
+  msg+="\nSe guarda solo la HORA de la apertura. Ni el monto ni la fecha se tocan.\n\n¿Confirmas?";
+  if(!confirm(msg)) return;
+
+  autorizarYHacer(function(){
+    if(!S.config) S.config={};
+    S.config.aperturaTs=punto;
+    logAudit("APERTURA_HORA","Hora de la apertura deducida: "+new Date(punto).toISOString()+
+             " (de aperturaBase.bruta $"+f2(v.objetivo)+", entre dos operaciones). "+
+             aj.nMismoDia+" ajustes situados.");
+    saveData();R();
+    alert("✅ Listo. Los "+aj.nMismoDia+" ajustes ya están situados y el aviso desaparece.");
   });
 }
 
@@ -12232,10 +12416,24 @@ function rCapitalTotal(){
       // antes ni después de la apertura porque no llevan hora — con sus datos,
       // 7 ajustes por −233,46 USDT en el aire. Un aviso escondido no es un
       // aviso, y menos uno de ese tamaño.
-      (aj.nMismoDia>0?"<div style='background:var(--am6-a);border:1px solid var(--am4);border-radius:9px;padding:9px 11px;margin-bottom:8px;font-size:11px;color:var(--avi-tx);line-height:1.5'>"+
+      // ARREGLO 72: el aviso decía "no se pueden situar" y no daba con qué
+      // juzgarlo. Ahora la hora de cada uno sale del propio id, así que se
+      // enseñan —con su hora y su monto— y hay un botón que los sitúa.
+      (aj.nMismoDia>0?(function(){
+        var hhm=function(t){var q=new Date(t);
+          return String(q.getHours()).padStart(2,"0")+":"+String(q.getMinutes()).padStart(2,"0");};
+        var conHora=(aj.enElAire||[]).filter(function(q){return q.ts>0;});
+        return "<div style='background:var(--am6-a);border:1px solid var(--am4);border-radius:9px;padding:9px 11px;margin-bottom:8px;font-size:11px;color:var(--avi-tx);line-height:1.5'>"+
         "⚠️ <b>"+aj.nMismoDia+" ajuste"+(aj.nMismoDia!==1?"s":"")+" de saldo por "+(aj.mismoDia<0?"−":"+")+"$"+f2(Math.abs(aj.mismoDia))+" que no se pueden situar.</b> "+
-        "Del mismo día que la apertura y sin hora: no se sabe si fueron antes o después, así que ni cuentan ni se descartan."+
-      "</div>":"")+
+        "Del mismo día que la apertura, que se fijó sin hora: no se sabe si fueron antes o después, así que ni cuentan ni se descartan."+
+        (conHora.length?"<div style='margin-top:6px;font-size:10.5px;color:var(--avi-tx2)'>"+
+          conHora.slice().sort(function(a,b){return a.ts-b.ts;}).map(function(q){
+            return hhm(q.ts)+" <b>"+(q.usdt<0?"−":"+")+"$"+f2(Math.abs(q.usdt))+"</b>";
+          }).join(" · ")+"</div>":"")+
+        (conHora.length===aj.nMismoDia?
+          "<button onclick='situarAjustesEnElAire()' style='width:100%;margin-top:8px;padding:8px;border:1px solid var(--am4);border-radius:8px;background:var(--sup);color:var(--tx2b);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit'>📍 Situarlos (te digo a qué número llevan antes de aplicarlo)</button>"
+          :"")+
+      "</div>";})():"")+
       // ARREGLO 46: de qué está hecha la diferencia. Un número suelto no se
       // puede perseguir; separando lo que ya tiene explicación queda a la vista
       // lo único que hay que buscar.
