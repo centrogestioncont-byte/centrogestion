@@ -50,7 +50,9 @@ function sacarConstante(nombre) {
   }
   throw new Error("la constante " + nombre + " no termina en ';'");
 }
-const CONSTANTES = ["MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
+const CONSTANTES = ["_PODA_CATS", "_MOTIVOS_AJUSTE",
+                    "_BIN_COLS_C2C", "_BIN_COLS_TX", "MONEDAS_COMPRA", "MONEDAS_VENTA",
+                    "MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
                     "_MERGE_OBJETOS", "_MERGE_BLOQUES", "_MERGE_HISTORIAL", "_RATE_LIMITS",
                     "DATA_KEYS", "_CLAVES_QUE_NO_SON_DATOS", "PAGO_DEBE",
                     "_TOCADO_AQUI", "_NOMBRE_DE_CLAVE", "_NOMBRE_DE_CONFIG",
@@ -67,10 +69,10 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "cuotasRecomendadas", "limiteCredito",
                     "costoOperativoPorPrestamo", "pctCostoOperativo",
                     "capitalRealTotal", "_mesesDesde", "_acumuladosMes",
-                    "conciliacionCapital", "getMesKeyActual", "ajustesDesdeApertura", "_isoDeDDMMAA",
+                    "conciliacionCapital", "getMesKeyActual", "ajustesDesdeApertura", "_isoDeDDMMAA", "_motivoDelAjuste", "_ajusteAEgreso", "_cuentaMadre", "_cuentaOMadre", "_completarDesdeMadre", "toggleCuentaMadre",
                     "traspasosAPersonal", "efectoTasasDesde", "_isoDeFechaLote",
                     "tasaDeReferencia", "_tasaFijadaAMano", "setTasaDia", "soltarTasaDia",
-                    "_isoDeLote", "_fechaLoteIso", "_num",
+                    "_isoDeLote", "_fechaLoteIso", "_num", "_horaLote", "_horaAhora", "_horaDe",
                     "_diasDesdeLote", "_fechaLoteLegible", "getLastTasaVenta",
                     "montoAUsdt", "montoConMoneda", "_unicos",
                     "_marcarCambiados", "_refotografiar", "_mergeArrayById",
@@ -91,12 +93,20 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "_deudaACobrar",
                     "_jsonEstable", "_escAud", "_anotarTocado", "_unirTocado",
                     "_tomarTocado", "_etiquetaRegistro", "_resumirValor",
-                    "_camposEnConflicto", "_conflictosConElServidor",
+                    "_camposEnConflicto", "_conflictosConElServidor", "_choqueApertura",
                     "_completarConLoQueQuedo", "_htmlAvisoPisado",
                     "_simularConFecha", "ds",
                     "_huellaDisponible", "_huellaGuardada", "_huellaDeEstaPersona",
                     "_permisoPorOmision", "tienePermiso", "permisoEdicion",
-                    "_resumenPermisos"];
+                    "_resumenPermisos", "_binCuentaDeUid",
+                    "_binNum", "_binNorm", "_binMapaCols", "_binBuscarCabecera",
+                    "_binIdentificar", "_binOrdenesC2C", "_binConverts", "_binDias",
+                    "_binMonedaConocida", "_binYaRegistrado", "_binCuentaSugerida", "_binMesCerrado",
+                    "_binConfianzaBanco", "_binSinBanco", "_htmlOrdenCopiable", "_htmlSupuesto",
+                    "_marcarBorradoMerge", "_estaBorradoMerge", "_olvidarBorradoMerge",
+                    "_podarBorrados",
+                    "_trioIU", "_fiatIU", "_usdtIU", "_tasaIU", "_descuadreIU",
+                    "_monIU", "_loteConOrden", "_ultimasIU"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
 global.window = global.window || {};
 // setTasaDia/soltarTasaDia guardan y repintan, y avisan por alert(). Aqui no
@@ -1153,7 +1163,7 @@ S.inventarioUsdt = [];
 // llamada, no en el orden.
 ok(/var fecha=_fechaLote\(f\.fecha\), fechaIso=_fechaLoteIso\(f\.fecha\);/.test(HTML),
    "saveIU pone la fecha del lote con _fechaLote, y el año con _fechaLoteIso");
-ok(/tipo:"venta", fecha:_fechaLote\(fecha\), fechaIso:_fechaLoteIso\(fecha\), moneda:moneda,/.test(HTML),
+ok(/tipo:"venta", fecha:_fechaLote\(fecha\), fechaIso:_fechaLoteIso\(fecha\), hora:_horaDe\(hora\), moneda:moneda,/.test(HTML),
    "crearLoteRecibido las normaliza dentro, para quien la llame manana");
 // ARREGLO 51: y que NINGUN sitio meta un lote sin su año. mm/dd solo no basta:
 // en enero, un lote de diciembre se ordenaba por delante de uno de enero.
@@ -1391,9 +1401,15 @@ ok(F._comIU("") === F.COM(), "sin comision escrita, la de por defecto", F._comIU
 ok(F._comIU(undefined) === F.COM(), "y sin campo, igual", F._comIU(undefined));
 ok(!/parseFloat\(f\.comision\)\|\|COM\(\)/.test(HTML),
    "no vuelve el ||COM() que se comia el cero");
-ok((HTML.match(/_comIU\(f\.comision\)/g) || []).length === 2,
-   "los dos sitios que leen la comision pasan por _comIU",
+// Eran 2 sitios; el ARREGLO 66 quito el de rInventarioUsdt (que ya no calcula
+// nada) y anadio los de _autoIU, _descuadreIU y _htmlPrevIU. Lo que protege la
+// guardia no es el numero sino que NADIE lea la comision a pelo: si alguien
+// vuelve a poner parseFloat(f.comision), el cero escrito se convierte en 0,06.
+ok((HTML.match(/_comIU\(f\.comision\)/g) || []).length === 4,
+   "los cuatro sitios que leen la comision pasan por _comIU",
    (HTML.match(/_comIU\(f\.comision\)/g) || []).length);
+ok(!/parseFloat\(\s*f\.comision\s*\)/.test(HTML),
+   "y ninguno la lee a pelo con parseFloat");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Leer el comprobante de Binance (ARREGLO 40, 14/09/2026)
@@ -2466,11 +2482,33 @@ const _resto = fusionarConfig(
 ok(_resto.moraMultaPct===2 && _resto.ntfyCanal==="b",
    "lo demas de config no cambia de comportamiento", JSON.stringify(_resto));
 
-// La tarjeta: el numero grande es lo que hay que perseguir, y los avisos no se
-// pliegan (7 ajustes por −233,46 estaban dentro de un desplegable cerrado).
-ok(/>sin explicar</.test(HTML), "el titular de la conciliacion dice 'sin explicar'");
-ok(/f2\(Math\.abs\(co\.sinExplicar\|\|0\)\)/.test(HTML),
-   "y el numero grande es sinExplicar, no la diferencia bruta");
+// La tarjeta: los avisos no se pliegan (7 ajustes por −233,46 estaban dentro de
+// un desplegable cerrado).
+//
+// ARREGLO 69: el titular era SOLO el "sin explicar". Con sus numeros del 18/09
+// eso decia +$65,37 en verde mientras la resta de al lado -2.545,08 contra
+// 2.550,95- daba −$5,87: "me dice que tengo mas tanto y resulta que cuando saco
+// la cuenta con lo que deberia tener con lo que tengo mas bien me falta plata".
+// Los dos numeros son ciertos y contestan preguntas distintas, asi que salen los
+// DOS, cada uno con su nombre. La leccion del ARREGLO 60 sigue en pie -un numero
+// grande y suelto que contradice al de al lado- y por eso se prueba que ninguno
+// de los dos va sin etiqueta.
+ok(/f2\(Math\.abs\(sinExp\)\)\+" sin explicar/.test(HTML),
+   "el titular sigue enseñando el 'sin explicar', con su numero");
+ok(/Te faltan |Te sobran /.test(HTML) && /lo que deberías tener/.test(HTML),
+   "y la diferencia dice en PALABRAS si falta o sobra: un '+65,37' en verde se lee al reves");
+ok(/Math\.abs\(dif\)<0\.005 \? "Cuadra"/.test(HTML),
+   "cuando no hay diferencia lo dice, en vez de un $0,00 con signo");
+{
+  // Ninguno de los dos puede quedarse sin etiqueta: eso es lo que hacia que se
+  // leyeran como si dijeran lo contrario el uno del otro.
+  const i = HTML.indexOf("lo que deberías tener");
+  const j = HTML.indexOf("sin explicar", i);
+  ok(i > -1 && j > i && j - i < 700,
+     "los dos van juntos en el titular, cada uno con su rotulo");
+  ok(/por encima de ±\$/.test(HTML),
+     "y si el sin explicar se pasa de la tolerancia, lo dice ahi mismo");
+}
 ok(/que no se pueden situar/.test(HTML), "el aviso de los ajustes en el aire esta fuera del desplegable");
 ok(/aperturaSaldos:\(S\.config\|\|\{\}\)\.aperturaSaldos/.test(HTML),
    "la conciliacion dice si la apertura tiene foto de saldos");
@@ -2827,6 +2865,510 @@ console.log("\nArreglo 64 · entrar con huella");
   ok(/solo abre la sesi[oó]n guardada en este aparato/.test(sacarFuncion("rDesbloqueoHuella")),
      "y dice lo que es: una cerradura sobre la sesion de este aparato");
 }
+// ── FASE 1 · los colores tienen nombre ────────────────────────────────────
+// Los colores estaban escritos a mano dentro de los estilos en linea, 2.667
+// veces. Eso hacia imposible cambiar el aspecto de la app sin ir funcion por
+// funcion. Ahora van por nombre y se deciden en un solo sitio.
+//
+// Esta fase NO cambio nada de aspecto: se comprobo pestaña por pestaña,
+// identicas al pixel con su export del 20/09.
+{
+  const raiz = (HTML.match(/:root\{[\s\S]*?\n\}/) || [""])[0];
+  ok(/--sup:/.test(raiz) && /--tx:/.test(raiz) && /--ln:/.test(raiz),
+     "los colores con nombre estan declarados en :root");
+  // Todo nombre que se use tiene que existir. Uno mal escrito no da error en
+  // ningun sitio: el navegador se lo calla y el color sale transparente.
+  const usados = new Set((HTML.match(/var\(--[a-z0-9-]+\)/g) || [])
+    .map(function(v){ return v.slice(4, -1); }));
+  const declarados = new Set((raiz.match(/--[a-z0-9-]+\s*:/g) || [])
+    .map(function(v){ return v.replace(/\s*:$/, ""); }));
+  const huerfanos = [...usados].filter(function(v){ return !declarados.has(v); });
+  ok(huerfanos.length === 0,
+     "ningun color usa un nombre que no existe", huerfanos.slice(0, 6).join(", "));
+}
+// ── FASE 3 · el tema oscuro ───────────────────────────────────────────────
+// Tres guardias, una por cada error que costo una vuelta entera al hacerlo.
+{
+  const raiz = (HTML.match(/:root\{[\s\S]*?\n\}/) || [""])[0];
+  const osc  = (HTML.match(/html\[data-tema="suave"\]\{[\s\S]*?\n\}/) || [""])[0];
+  ok(osc.length > 0, "existe el bloque del tema suave");
+  // DENTRO de la app no hay negro. Lo dijo dos veces: es una herramienta de
+  // contabilidad y se pasan horas registrando, asi que ni blanco a tope de
+  // brillo ni negro a tope de contraste. El negro se queda SOLO en la pantalla
+  // de entrada, que se mira diez segundos y ahi si lo eligio ella.
+  ["papel", "suave"].forEach(function(t){
+    ok(new RegExp('html\\[data-tema="' + t + '"\\]').test(HTML),
+       "existe el tema " + t);
+  });
+  ok(!/html\[data-tema="oscuro"\]/.test(HTML),
+     "no hay tema negro dentro de la app");
+  ok(/var _TEMAS=\["claro","papel","suave"\]/.test(HTML),
+     "los temas que se ofrecen son claro, papel y suave");
+  // Lo que esta guardia protege no es "claro" ni "suave", es que el tema NO
+  // siga al aparato: si mirara prefers-color-scheme, el telefono entrando en
+  // modo noche le cambiaria la app sola en mitad de una jornada de registro.
+  // Cual manda por omision lo decide ella, y desde que los avisos dejaron de
+  // gritar pidio SUAVE.
+  ok(/return _TEMAS\.indexOf\(g\)>=0 \? g : "suave"/.test(sacarFuncion("temaActual")),
+     "sin elegir nada manda SUAVE");
+  ok(!/prefers-color-scheme/.test(HTML),
+     "y el tema no lo decide el sistema operativo del aparato");
+  // El <meta theme-color> pinta la barra del navegador y NO entiende var(--x).
+  ok(!/setAttribute\("content",[\s\S]{0,120}var\(--/.test(HTML),
+     "el color de la barra del navegador va en hex, no por nombre");
+
+  // 1. NINGUN nombre declarado dos veces. Paso con --az6-s: la cola larga de la
+  //    fase 2 llego a la letra "s" y choco con la marca que usaba el pase del
+  //    bloque <style>. El segundo gana en silencio y un panel cambiaba de color
+  //    sin que nada fallara.
+  [["claro", raiz], ["oscuro", osc]].forEach(function(par){
+    const vistos = {}, dup = [];
+    (par[1].match(/--[a-z0-9A-Z-]+\s*:/g) || []).forEach(function(d){
+      const k = d.replace(/\s*:$/, "");
+      if (vistos[k]) dup.push(k); else vistos[k] = 1;
+    });
+    ok(dup.length === 0, "ningun color declarado dos veces en " + par[0],
+       dup.slice(0, 5).join(", "));
+  });
+
+  // 2. Nada de pegarle la transparencia detras a un nombre. "var(--ok)55" no es
+  //    un color: el navegador se lo calla y el borde DESAPARECE. Asi se perdio
+  //    el borde del panel de Nuevo cliente, y el unico sintoma visible fue que
+  //    todo lo de debajo subia dos pixeles. Para eso esta _conAlfa().
+  const pegados = HTML.match(/var\(--[a-z0-9-]+\)[0-9a-fA-F]{2}/g) || [];
+  const concat  = HTML.match(/\+[A-Za-z_][A-Za-z0-9_.]*\+"[0-9a-fA-F]{2}[;,)'"]/g) || [];
+  ok(pegados.length === 0 && concat.length === 0,
+     "la transparencia va por _conAlfa(), no pegada detras del color",
+     (pegados.concat(concat)).slice(0, 3).join(" · "));
+
+  // 3. Todo nombre usado tiene su version oscura. Si falta una, esa pantalla se
+  //    queda con el color claro en medio de lo oscuro -fondo claro con texto
+  //    claro encima- y no falla nada, solo se ve mal.
+  const enClaro = new Set((raiz.match(/--[a-z0-9A-Z-]+\s*:/g) || [])
+    .map(function(v){ return v.replace(/\s*:$/, ""); }));
+  const enOsc = new Set((osc.match(/--[a-z0-9A-Z-]+\s*:/g) || [])
+    .map(function(v){ return v.replace(/\s*:$/, ""); }));
+  // Los --ent-* quedan fuera A PROPOSITO: son las dos pantallas de entrada,
+  // que son siempre negras elija ella el tema que elija. Darles version oscura
+  // es justo el error que se arreglo.
+  const sinOscuro = [...enClaro].filter(function(k){
+    return !enOsc.has(k) && !/^--(radius|shadow|ent-)/.test(k);
+  });
+  ok(sinOscuro.length === 0, "todo color tiene su version oscura",
+     sinOscuro.slice(0, 6).join(", "));
+
+  // Y al reves: ningun tema puede redefinirlos. Estaban pintadas con nombres
+  // del tema y aguanto mientras el que abria era el claro; al pasar el por
+  // omision a SUAVE, el color del texto que ella teclea -#F2EDEF- se volvio
+  // #403137 sobre una tarjeta negra: escribia el correo y la clave y no se
+  // veian. Los iconos del boton y la letra de los chips, igual.
+  {
+    const pap = (HTML.match(/html\[data-tema="papel"\]\{[\s\S]*?\n\}/) || [""])[0];
+    const pisados = [];
+    [["suave", osc], ["papel", pap]].forEach(function(par){
+      (par[1].match(/--ent-[\w-]+\s*:/g) || []).forEach(function(d){
+        pisados.push(par[0] + " " + d.replace(/\s*:$/, ""));
+      });
+    });
+    ok(pisados.length === 0,
+       "ningun tema repinta las pantallas de entrada: son siempre negras",
+       pisados.slice(0, 6).join(", "));
+  }
+
+  // Y la entrada no puede volver a usar un nombre del tema. Un nombre nuevo
+  // colado ahi no falla nada: solo se ve mal el dia que ella cambie de tema.
+  {
+    const fuera = [];
+    ["rLogin", "rDesbloqueoHuella"].forEach(function(f){
+      (sacarFuncion(f).match(/var\(--[\w-]+\)/g) || []).forEach(function(v){
+        if (!/^var\(--ent-/.test(v)) fuera.push(f + " " + v);
+      });
+    });
+    ok(fuera.length === 0,
+       "las pantallas de entrada solo usan sus propios colores (--ent-*)",
+       fuera.slice(0, 6).join(", "));
+  }
+}
+// El tema es de ESTE APARATO. Si entrara en lo que se sincroniza, la PC y el
+// telefono se pelearian por el en cada guardado -el mismo error que costo
+// cuatro arreglos con los saldos- y ademas no tiene sentido: puede querer
+// oscuro en el telefono de noche y claro en la PC de dia.
+{
+  ok(/localStorage\.setItem\(_TEMA_KEY/.test(sacarFuncion("ponerTema")),
+     "el tema se guarda en este aparato, no en el estado que se sincroniza");
+  ok(!/DATA_KEYS[\s\S]{0,400}tema/.test(HTML) || !/_MERGE_FIELDS[\s\S]{0,400}"tema"/.test(HTML),
+     "y no esta metido en DATA_KEYS ni en las listas de fusion");
+  // Cambiar el tema NO puede repintar: repintar cierra la tarjeta bajo el dedo
+  // (ARREGLO 32). Basta con cambiar el atributo, los colores van por nombre.
+  ok(!/\bR\(\)/.test(sinComentarios(sacarFuncion("ponerTema"))),
+     "cambiar el tema no repinta la app (ARREGLO 32)");
+  ok(/_pintarTema\(\)/.test(HTML.slice(HTML.lastIndexOf("migrarTipoEgresos"))),
+     "el tema se enciende ANTES del primer dibujo, sin fogonazo blanco");
+}
+// El informe del cierre se imprime: sus colores no pueden seguir al tema. Y
+// genera su PROPIO bloque <style> dentro de la funcion, que es justo por donde
+// se colo el primer intento.
+{
+  ["generarInformePDF", "rInformeCierre"].forEach(function(f){
+    ok(!/var\(--/.test(sacarFuncion(f)),
+       "el informe (" + f + ") no usa ningun color del tema");
+  });
+}
+
+// La tarjeta de Configuracion marca el tema que esta CORRIENDO, no el que esta
+// guardado. Mientras ella no elija nada los dos son distintos, y la linea
+// daba por hecho que sin elegir mandaba "claro": al pasar el por omision a
+// SUAVE, la app corria en Suave y la tarjeta le marcaba Claro. Era justo lo
+// que iba a mirar para saber en cual estaba.
+{
+  const f = sinComentarios(sacarFuncion("_htmlBotonesTema"));
+  ok(/var on=\(act===id\)/.test(f),
+     "la tarjeta marca el tema que corre, no uno supuesto");
+  ok(!/g===""/.test(f),
+     "y ya no da por hecho cual manda sin elegir");
+}
+
+// ── En NINGUNA pantalla queda letra por debajo de 10px ────────────────────
+// Sus palabras: "yo me imagino que todo eso aplica en todas las pestañas y no
+// solo en resumen". Tenia razon. Esta guardia es la que lo sostiene para las
+// que vengan: una pantalla nueva con letra de 8 o 9px no pasa.
+// El informe del cierre queda fuera porque se imprime en papel, donde 9px se
+// lee bien y el sitio escasea.
+{
+  const prot = ["generarInformePDF", "rInformeCierre"].map(function(f){
+    const i = HTML.indexOf("function " + f + "(");
+    return i < 0 ? null : [i, HTML.indexOf("\n}\n", i)];
+  }).filter(Boolean);
+  const chicas = [];
+  let m;
+  const re = /font-size:([\d.]+)px/g;
+  while ((m = re.exec(HTML)) !== null) {
+    if (prot.some(function(r){ return m.index >= r[0] && m.index < r[1]; })) continue;
+    if (parseFloat(m[1]) < 10) chicas.push(m[1] + "px");
+  }
+  ok(chicas.length === 0,
+     "en ninguna pantalla queda letra por debajo de 10px",
+     chicas.length + " sitios, p.ej. " + chicas.slice(0, 4).join(", "));
+}
+
+// ── Las pantallas que no tenian NI UN numero grande ───────────────────────
+// Eran ocho. Todo al mismo tamaño, asi que no habia donde posar el ojo.
+{
+  const cob = sinComentarios(sacarFuncion("rCuentasCobrar"));
+
+  // LA SUMA. Los cargos estan en monedas distintas -BRL, VES, USDT- y sumar
+  // 97 BRL con 80.000 VES da un numero que no existe. El primer intento de
+  // esta tarjeta hacia exactamente eso y enseñaba "$177,00": la suma cruda de
+  // dos cargos en reales, con simbolo de dolar delante.
+  ok(/getRateToUsdt\(mon\)/.test(cob) && /monto\/r/.test(cob),
+     "lo que le deben se suma en USDT y DIVIDIENDO por la tasa, no en crudo");
+  ok(/parcial/.test(cob),
+     "y si a una moneda le falta la tasa, el total se marca parcial en vez de quedarse corto en silencio");
+
+  // Un solo numero para el mismo dato. Sumar arriba por cargo y abajo por
+  // cliente -cada saldo ya redondeado- daba 34,27 en un sitio y 34,28 en el
+  // otro, en la misma pantalla.
+  ok(/var totalPendUsdtCC=_pend\.total/.test(cob),
+     "el panel de abajo lee el mismo total que la tarjeta de arriba");
+
+  // Las tarjetas son las piezas compartidas, no unas propias.
+  ["rCuentasCobrar", "rEgresos"].forEach(function(f){
+    ok(/class='pz-card'/.test(sinComentarios(sacarFuncion(f))),
+       f + " usa las piezas compartidas");
+  });
+
+  // El informe del cierre se queda FUERA a proposito: se imprime y se le manda
+  // al contador, asi que sus colores no pueden seguir al tema. Meterle las
+  // piezas -que van por var(--...)- lo rompe.
+  ok(!/class='pz-/.test(sacarFuncion("rInformeCierre")),
+     "el informe del cierre no usa las piezas: se imprime en blanco");
+}
+
+// ── Clientes: la negrita vuelve a significar algo ─────────────────────────
+// Medido antes: el 85% del texto de esta pantalla estaba en negrita -el
+// codigo, la ruta, el pais, el nombre, todo-. Cuando todo esta en negrita, la
+// negrita no significa nada. Y el nombre, que es lo que ella busca aqui, se
+// pintaba en var(--az1-a): un azul oscuro que sobre la tarjeta oscura daba
+// contraste 2,0. Ahora es lo unico en negrita, lo mas grande de la fila, y
+// esta en 10,9.
+{
+  const c = sinComentarios(sacarFuncion("rClientes"));
+  ok(/font-weight:700;font-size:14\.5px;color:var\(--tx\)[^']*'>"\+cl\.n/.test(c),
+     "el nombre del cliente es lo mas grande de la fila y usa el color del texto");
+  ok(!/color:var\(--az1-a\)'>"\+cl\.n/.test(c),
+     "y ya no se pinta con el azul oscuro que no se leia");
+  // El codigo y el telefono son datos secundarios: se leen, pero no compiten.
+  ok(/#"\+cl\.cod/.test(c) && !/font-size:9px[^']*'>#"\+cl\.cod/.test(c),
+     "el codigo sigue estando, pero ya no a 9px");
+}
+
+// ── Las dos tablas donde pasa las horas ───────────────────────────────────
+// Medido antes: en Operaciones el 86% del texto estaba a 11px o menos, y en
+// Diario el 92%. Lo diminuto no era el adorno: eran los montos, las tasas y
+// los nombres. Lo unico grande de Operaciones -la pantalla con MAS texto de la
+// app, 2.363 trozos- era el titulo.
+{
+  const chicas = [];
+  ["rTblUnificada", "rDiario"].forEach(function(f){
+    const c = sinComentarios(sacarFuncion(f));
+    (c.match(/font-size:([\d.]+)px/g) || []).forEach(function(m){
+      const v = parseFloat(m.split(":")[1]);
+      if (v < 10.5) chicas.push(f + " " + m);
+    });
+  });
+  ok(chicas.length === 0,
+     "en las dos tablas no queda letra por debajo de 10,5px",
+     chicas.slice(0, 5).join(" · "));
+
+  ok(/table\{[^}]*font-size:13px/.test(HTML), "la tabla arranca en 13px, no en 12,5");
+  ok(/td\{padding:12px/.test(HTML), "y la fila respira un punto mas");
+
+  // Operaciones usa las mismas piezas que el Resumen. Si se escribe sus
+  // propias tarjetas, en dos semanas hay diecisiete tarjetas distintas.
+  ok(/class='pz-card'/.test(sinComentarios(sacarFuncion("rTblUnificada"))),
+     "las tarjetas de Operaciones son las piezas compartidas");
+}
+
+// ── El armazon: barra lateral en PC, boton en el telefono ─────────────────
+// Hasta ahora, en cualquier pantalla, para cambiar de pestaña habia que abrir
+// un menu que tapaba lo que estabas mirando. En el telefono esta bien -no cabe
+// otra cosa-; en la PC sobra sitio y esconder la navegacion obliga a recordar
+// donde esta cada cosa en vez de verlo.
+{
+  // Los dos menus salen del MISMO orden. Si cada uno tuviera el suyo, acabarian
+  // distintos y cambiar de aparato seria volver a aprenderse la app.
+  ok(/var _GRUPOS_MENU=\[/.test(HTML), "el orden del menu esta en un solo sitio");
+  ["_htmlLateral", "_htmlMenuTel"].forEach(function(f){
+    const c = sinComentarios(sacarFuncion(f));
+    ok(/_GRUPOS_MENU\.forEach/.test(c), f + " lee el orden de _GRUPOS_MENU");
+    // Lo que no este en ningun grupo NO desaparece: cae en "Mas" al final. Una
+    // pestaña nueva que se olvide de apuntarse tiene que seguir alcanzandose.
+    ok(/sueltas/.test(c) && /Más/.test(c),
+       f + ": una pestaña sin grupo cae en 'Más', no se pierde");
+  });
+
+  // La barra la dibuja la lista YA FILTRADA por permisos, no TABS[S.role]. Si
+  // leyera los tabs del rol, el menu volveria a enseñar pestañas que contestan
+  // "Sin acceso" al tocarlas, que es el error de la FASE B.
+  const main = sinComentarios(sacarFuncion("rMain"));
+  ok(/_htmlLateral\(ts\)/.test(main) && /_htmlMenuTel\(ts\)/.test(main),
+     "los dos menus salen de la lista ya filtrada por permisos");
+  ok(!/_htmlLateral\(TABS/.test(main) && !/_htmlMenuTel\(TABS/.test(main),
+     "y no de los tabs del rol");
+
+  // El telefono no cambia: la barra solo existe por encima de 900px y el boton
+  // ☰ sigue ahi debajo.
+  ok(/@media\(min-width:900px\)\{[\s\S]{0,900}\.lateral\{display:flex/.test(HTML),
+     "la barra lateral solo aparece en pantalla ancha");
+  ok(/\.lateral\{display:none\}/.test(HTML),
+     "y por debajo de 900px no existe");
+  ok(/\.navbar3 \.menubtn\{display:none\}/.test(HTML),
+     "en PC sobra el boton de menu (y el selector es mas especifico que .menubtn, que se declara despues)");
+
+  // Las piezas compartidas viven en el <style>, no dentro de una pantalla.
+  [".pz-rejilla", ".pz-card", ".pz-rot", ".pz-num", ".pz-pie"].forEach(function(c){
+    ok(new RegExp("\\" + c + "\\{").test(HTML), "existe la pieza " + c);
+  });
+  ok(/class='pz-card'/.test(sinComentarios(sacarFuncion("rDash"))),
+     "el Resumen ya usa las piezas compartidas");
+}
+
+// ── Lo primero del Resumen son cuatro numeros ─────────────────────────────
+// Antes lo primero eran los avisos, y despues un desglose con todo del mismo
+// tamaño y todo en negrita: nada destacaba, asi que habia que leer la pantalla
+// entera para encontrar un dato.
+{
+  const dash = sinComentarios(sacarFuncion("rDash"));
+
+  ok(/return headerSel \+ kpisHtml \+ alertasHtml/.test(dash),
+     "los cuatro numeros van los primeros, antes que los avisos");
+
+  // La proyeccion la miran DOS sitios: la tarjeta y el pie del grafico. Si
+  // cada uno la calculara por su cuenta acabarian diciendo numeros distintos
+  // en la misma pantalla. Es el mismo motivo por el que el cronograma sale de
+  // cronogramaCuotas() y de ningun otro sitio.
+  ok(/var _evo = \(function\(\)\{/.test(dash),
+     "el mes se calcula una sola vez, en _evo");
+  ok(/_evo\.ganMes[\s\S]{0,300}_evo\.proyeccion/.test(dash),
+     "y el pie del grafico lee de ahi, no rehace la cuenta");
+  const ocurrencias = (dash.match(/promDia\s*\*\s*[\w.]*[Dd]iasRestantes/g) || []).length;
+  ok(ocurrencias === 1,
+     "la formula de la proyeccion esta escrita UNA sola vez",
+     ocurrencias + " veces");
+
+  // Proyectar un mes ya cerrado no significa nada: la cuarta tarjeta cambia.
+  ok(/if\(esMesActual\)\{[\s\S]{0,400}out\.proyeccion/.test(dash),
+     "solo se proyecta el mes en curso");
+  ok(/_evo && _evo\.proyeccion[\s\S]{0,400}Egresos pagados/.test(dash),
+     "en un mes pasado, la cuarta tarjeta dice otra cosa en vez de inventar una proyeccion");
+
+  // El capital sale de capitalRealTotal(), no de una suma a mano. El PDF del
+  // cierre sumaba "cuentas + afuera" por su cuenta y se dejaba la reserva:
+  // 2.302,34 donde Balance de Cuentas decia 2.479,17.
+  ok(/var _cap = capitalRealTotal\(\)/.test(dash),
+     "el capital sale de capitalRealTotal(), no de una suma a mano");
+  // Una moneda sin tasa deja el capital incompleto: eso se dice, no se calla.
+  ok(/_cap\.sinTasa\.length[\s\S]{0,160}falta la tasa/.test(dash),
+     "si falta la tasa de una moneda, la tarjeta lo dice");
+}
+
+// ── Los avisos del Resumen van en UNA linea ───────────────────────────────
+// Eran hasta seis barras apiladas, del mismo alto y del mismo peso, ocupando
+// media pantalla antes de llegar a un solo numero. Seis alarmas sonando a la
+// vez: cuando todo urge, no urge nada.
+{
+  const dash = sinComentarios(sacarFuncion("rDash"));
+
+  // Lo urgente NO se esconde nunca. Plegada, la cabecera sigue diciendo el
+  // aviso urgente entero: un cobro de 54 dias no puede quedar detras de un
+  // "ver mas". Esconder un aviso rojo cuesta dinero de verdad.
+  ok(/urg:1/.test(HTML), "los avisos rojos van marcados como urgentes");
+  ok(/urgentes\.length[\s\S]{0,200}urgentes\[0\]\.msg/.test(dash),
+     "plegado, el aviso urgente se sigue leyendo entero en la cabecera");
+  ok(/urgentes\.length\s*\+\s*alertas\.length/.test(dash) === false,
+     "y el contador no mezcla urgentes con el total");
+  // Abierto ya se lee en su fila: repetirlo en la cabecera seria ruido.
+  ok(/avisos-urg/.test(dash) && /u\.style\.display=abrir\?"none":"inline"/.test(sinComentarios(sacarFuncion("_toggleAvisos"))),
+     "abierto, el urgente no se repite en la cabecera");
+
+  // Plegar NO puede repintar: rehacer el HTML cierra lo que tenga abierto bajo
+  // el dedo, que es el ARREGLO 32 otra vez.
+  const tg = sinComentarios(sacarFuncion("_toggleAvisos"));
+  ok(tg.length > 0, "existe el plegado de los avisos");
+  ok(!/\bR\(\)/.test(tg), "plegar los avisos no repinta la app (ARREGLO 32)");
+  ok(/getElementById\("avisos-lista"\)/.test(tg) && /getElementById\("avisos-flecha"\)/.test(tg),
+     "plegar cambia la lista y la flecha por su id");
+
+  // Es de ESTE aparato, como el tema: no viaja al otro ni entra en la fusion.
+  ok(/localStorage\.setItem\(_AVISOS_KEY/.test(tg),
+     "si estan plegados o no se guarda en este aparato");
+  ok(!/_MERGE_FIELDS[\s\S]{0,300}avisos/.test(HTML) && !/DATA_KEYS[\s\S]{0,300}cg_avisos/.test(HTML),
+     "y no entra en DATA_KEYS ni en las listas de fusion");
+
+  // Sin nada guardado se abre. Un aviso que nadie ha visto todavia no puede
+  // nacer escondido.
+  ok(/getItem\(_AVISOS_KEY\)!=="0"/.test(sinComentarios(sacarFuncion("_avisosAbiertos"))),
+     "la primera vez los avisos salen abiertos");
+
+  // El texto del aviso pasa por _escAud: son nombres de clientes.
+  ok(/_escAud\(a\.msg\)/.test(dash) && /_escAud\(urgentes\[0\]\.msg\)/.test(dash),
+     "los nombres de los clientes salen escapados");
+}
+
+// ── El interior tiene que poder mirarse horas ─────────────────────────────
+// Ella lo dijo dos veces: "es un sistema de contabilidad, se pasan horas
+// registrando datos, no puede ser tosco para la vista". La primera lectura
+// -"esta demasiado oscuro"- era falsa: su pantalla de referencia es MAS oscura
+// que este tema (fondo negro, tarjetas #1C1C1E). Lo que cansaba eran los
+// fondos de aviso saturados: 19 bloques de mas de 4.000 pixeles solo en el
+// Resumen, con cromas de 47 a 66 donde el panel vale 8. Ahora rozan el color del panel y el
+// color vive en la letra y el borde. Si alguien vuelve a subirlos, vuelve el
+// cansancio, asi que aqui se mide.
+{
+  const FONDOS = ["--mal-sup","--ok-sup","--avi-sup","--info-sup","--info-sup2",
+    "--avi-sup2","--am6-j5","--am6-e","--az6-p","--az6-f","--az6-n","--az6-o","--vd6-c"];
+  const osc = (HTML.match(/html\[data-tema="suave"\]\{[\s\S]*?\n\}/) || [""])[0];
+  // Se mide el CROMA -lo que separa el canal mas fuerte del mas debil-, no la
+  // saturacion de HSL. La saturacion engaña en los colores muy oscuros: un azul
+  // casi negro como #1a202c da 0,26 y parece que grita, cuando al lado del
+  // panel no se distingue. El croma dice lo que de verdad importa: cuanto
+  // color lleva el relleno. Para situarlo: el panel de este tema vale 8 y la
+  // tarjeta de su pantalla de referencia, 2.
+  const cromaDe = function(hex){
+    const h = hex.replace("#","");
+    const c = [0,2,4].map(function(i){ return parseInt(h.slice(i,i+2),16); });
+    return Math.max.apply(null,c) - Math.min.apply(null,c);
+  };
+  const gritan = [];
+  FONDOS.forEach(function(k){
+    const m = osc.match(new RegExp(k.replace(/[-]/g,"\\-") + "\\s*:\\s*(#[0-9a-fA-F]{6})"));
+    if (!m) { gritan.push(k + " (no esta)"); return; }
+    const c = cromaDe(m[1]);
+    if (c > 22) gritan.push(k + " " + m[1] + " croma " + c);
+  });
+  ok(gritan.length === 0,
+     "ningun fondo de aviso del tema suave vuelve a gritar (croma <= 22)",
+     gritan.join(" · "));
+}
+
+// La barra de arriba llevaba siete botones rellenos de color pleno. Ahora el
+// relleno es el mismo gris para todos y el color va en el borde. Las DOS que
+// borran -Restaurar y la papelera- son la excepcion y tienen que seguir
+// distinguiendose: si los siete fueran identicos, lo unico que separaria
+// "Exportar" de "Borrar todo" seria un emoji de 14 pixeles.
+{
+  const tb = HTML.slice(HTML.indexOf('d.id="adm-btns"'), HTML.indexOf("tb.appendChild(d)"));
+  ok(tb.length > 0, "la barra de administrador sigue ahi");
+  ok(!/rgba\(\s*(?:100|255)\s*,\s*(?:100|180|200|215)\s*,\s*(?:0|100|255|100)\s*,/.test(tb),
+     "los botones de la barra ya no llevan relleno de color pleno");
+  ["restoreFromBackup", "clearAllData"].forEach(function(f){
+    const i = tb.indexOf(f);
+    ok(i > 0 && /_btNo/.test(tb.slice(i, i + 160)),
+       "el boton que borra (" + f + ") conserva su rojo y no se confunde con los demas");
+  });
+  ok(/guardarEnServidorYa[\s\S]{0,160}_btSi/.test(tb),
+     "Guardar, que es la que mas usa, se sigue encontrando sin leer");
+}
+
+// FASE 2 · ya no queda ningun color escrito a mano fuera del informe. Esta es
+// la guardia que sostiene todo el rediseño: si alguien añade una pantalla nueva
+// con colores a pelo, el tema oscuro la dejaria blanca en medio de lo demas y
+// nadie se enteraria hasta verlo en produccion.
+{
+  const bloques = [];
+  const est = /style=(['"])([\s\S]*?)\1/g;
+  const prot = ["generarInformePDF", "rInformeCierre"].map(function(f){
+    const i = HTML.indexOf("function " + f + "(");
+    const j = i < 0 ? -1 : HTML.indexOf("\n}\n", i);
+    return i < 0 ? null : [i, j > 0 ? j + 3 : HTML.length];
+  }).filter(Boolean);
+  let m;
+  while ((m = est.exec(HTML)) !== null) {
+    if (prot.some(function(r){ return m.index >= r[0] && m.index < r[1]; })) continue;
+    const hs = m[2].match(/#[0-9a-fA-F]{3,8}/g);
+    if (hs) bloques.push(hs.join(" ") + "  →  " + m[2].slice(0, 60));
+  }
+  ok(bloques.length === 0,
+     "ningun color escrito a mano fuera del informe",
+     bloques.length ? bloques.length + " sitios, p.ej. " + bloques[0] : "");
+}
+
+// El informe del cierre de mes se QUEDA CLARO: se imprime y se le manda al
+// contador, y un PDF negro gasta tinta y se lee peor fuera de su pantalla. Por
+// eso esas dos funciones NO usan los nombres: cuando se enciendan los colores
+// oscuros, el papel sigue blanco solo.
+{
+  ["generarInformePDF", "rInformeCierre"].forEach(function(f){
+    const cuerpo = sacarFuncion(f);
+    ok(!/var\(--(sup|tx|ln|ok|mal|avi|info|ac|tit)/.test(cuerpo),
+       "el informe (" + f + ") no usa los colores del tema: se imprime en blanco");
+  });
+}
+
+// ── Las DOS pantallas de entrada van vestidas igual ───────────────────────
+// Son la misma puerta y se salta de una a otra con un boton. Si alguien viste
+// solo una, al pulsar "Entrar con correo y clave" cambia el fondo entero y
+// parece un fallo de la app. Por eso la guardia mira las dos a la vez.
+{
+  const desb = sinComentarios(sacarFuncion("rDesbloqueoHuella"));
+  const log  = sinComentarios(sacarFuncion("rLogin"));
+  ["login-wrap","ent-caja","login-card","ent-avwrap","ent-avatar","ent-hola","ent-marca",
+   "ent-btn","ent-chips"].forEach(function(c){
+    ok(desb.indexOf(c)>=0 && log.indexOf(c)>=0,
+       "las dos pantallas de entrada usan ."+c);
+  });
+  // El login sigue siendo el login: los campos y el boton que lee entrarConCorreo
+  ok(/id="api-correo"/.test(log) && /id="api-clave"/.test(log) && /id="api-btn"/.test(log),
+     "el login conserva los tres id que lee entrarConCorreo");
+  ok(/entrarConCorreo\(\)/.test(log), "y el boton sigue llamando a entrarConCorreo");
+  ok(/ent-input/.test(log), "los campos del login usan la caja oscura, no la blanca de antes");
+  ok(/ent-ojo/.test(log) && /el\.type=el\.type===/.test(log),
+     "y el ojo para ver la clave sigue ahi");
+  // La inicial es lo que dice CON QUE CUENTA entras, que con produccion y
+  // pruebas abiertas a la vez no es un adorno.
+  ok(/ent-avatar">'\+\(ini\?/.test(sacarFuncion("rDesbloqueoHuella")),
+     "el desbloqueo enseña la inicial de la persona");
+}
 {
   const emerg = sinComentarios(sacarFuncion("entrarConClaveEnVezDeHuella"));
   ok(/_bloqueoHuella=false/.test(emerg), "la salida de emergencia quita el bloqueo");
@@ -2883,6 +3425,863 @@ console.log("\nArreglo 64 · entrar con huella");
 // Y sin contexto seguro no se ofrece: en http o en un file:// no existe.
 ok(/window\.isSecureContext/.test(sacarFuncion("_huellaDisponible")),
    "no se ofrece la huella donde el navegador no puede darla");
+
+
+// ─────────────────────────────────────────────────────────────────────────
+// ARREGLO 66 — el formulario de USDT rellena el tercer numero y avisa
+// cuando los tres no cuadran.
+//
+// Los numeros de aca salen del historial de ordenes P2P de Binance de la
+// duena (15/08 al 14/09) cruzado con su export del 14/09. No son inventados:
+// si alguien cambia la direccion de alguna cuenta, dejan de dar lo suyo.
+// ─────────────────────────────────────────────────────────────────────────
+console.log("\n— El formulario de USDT (ARREGLO 66) —");
+
+// La VENTA: lo que ella teclea es el total que SALE de Binance (liberado mas
+// comision), asi que la comision se resta antes de multiplicar por la tasa.
+// Orden 22921953629031460864: Binance vendio 114,37 a 874,30 por 100.000 Bs,
+// y del monedero salieron 114,43.
+// No cuadra clavado y no puede: Binance publica el precio redondeado, asi que
+// sus propios "Precio total" y cantidad x precio se separan hasta un 0,0383%
+// (medido en sus 57 ordenes). Por eso el descuadre tolera el 0,5%.
+ok(Math.abs(F._fiatIU(114.43, 874.3, 0.06, true) - 100000) / 100000 < 0.0005,
+   "venta: (total liberado - comision) x tasa da los bolivares de Binance",
+   F._fiatIU(114.43, 874.3, 0.06, true));
+ok(Math.abs(F._usdtIU(100000, 874.3, 0.06, true) - 114.43) < 0.02,
+   "y al reves: de los bolivares y la tasa sale el total liberado",
+   F._usdtIU(100000, 874.3, 0.06, true));
+ok(Math.abs(F._tasaIU(100000, 114.43, 0.06, true) - 874.3) < 0.1,
+   "y la tasa sale de los otros dos", F._tasaIU(100000, 114.43, 0.06, true));
+
+// La COMPRA paga en fiat y la comision se descuenta despues, en USDT: el
+// monto gastado NO la lleva. Orden 22922682205394382848: 150.000 Bs a 875,799
+// son 171,27 de orden, y a ella le quedaron 171,21.
+ok(Math.abs(F._fiatIU(171.27, 875.799, 0.06, false) - 150000) < 5,
+   "compra: cantidad x tasa da lo gastado, sin tocar la comision",
+   F._fiatIU(171.27, 875.799, 0.06, false));
+ok(Math.abs(F._usdtIU(150000, 875.799, 0.06, false) - 171.27) < 0.02,
+   "y de lo gastado y la tasa sale la cantidad de la orden",
+   F._usdtIU(150000, 875.799, 0.06, false));
+// La diferencia entre las dos direcciones es justo la comision: si alguien
+// las iguala, la compra acredita de mas o la venta cobra de menos.
+ok(F._usdtIU(100000, 874.3, 0.06, true) !== F._usdtIU(100000, 874.3, 0.06, false),
+   "compra y venta NO tratan la comision igual");
+
+// El trio depende del tipo: en la venta el fiat es lo recibido, en la compra
+// lo gastado. Si se confunden, se rellena el campo equivocado.
+S.nIU = { tipo: "venta" };
+ok(F._trioIU().fiat === "bsRecibidos", "en la venta el fiat es bsRecibidos", F._trioIU().fiat);
+S.nIU = { tipo: "compra" };
+ok(F._trioIU().fiat === "montOrigen", "en la compra el fiat es montOrigen", F._trioIU().fiat);
+
+// El dedazo del 19/08, con sus cifras exactas. Apunto 1.261,77 USDT donde de
+// Binance salieron 1.291,83 —un 6 por un 9— pero los bolivares los tecleo
+// aparte y bien, asi que el lote quedo guardado diciendo tasa 947 mientras en
+// el campo de al lado ella misma habia escrito 925,01.
+S.nIU = { tipo: "venta", monedaVenta: "VES", usdt: "1261.77", tasa: "925.01",
+          bsRecibidos: "1194905.805", comision: 0.06 };
+{
+  const d = F._descuadreIU();
+  ok(!!d, "el dedazo del 19/08 se caza");
+  ok(d && Math.abs(d.tasaReal - 947) < 1,
+     "y dice cual seria la tasa de verdad si el monto fuera bueno", d && d.tasaReal);
+}
+// Con el numero bueno no molesta.
+S.nIU.usdt = "1291.83";
+ok(F._descuadreIU() === null, "con el numero correcto no avisa de nada");
+
+// Y el ruido normal se deja pasar: Binance redondea sus cantidades a dos
+// decimales, asi que casi nunca cuadra clavado. Si esto avisara, avisaria
+// siempre y dejaria de mirarse.
+S.nIU = { tipo: "venta", monedaVenta: "VES", usdt: "114.43", tasa: "874.3",
+          bsRecibidos: "100000", comision: 0.06 };
+ok(F._descuadreIU() === null, "el redondeo de Binance no dispara el aviso");
+
+// Sin los tres numeros no hay nada que comparar: no puede avisar a medio teclear.
+S.nIU = { tipo: "venta", usdt: "114.43", tasa: "", bsRecibidos: "100000", comision: 0.06 };
+ok(F._descuadreIU() === null, "a medio rellenar se calla");
+
+// Sus cuatro ordenes registradas dos veces entraron porque la comprobacion
+// solo miraba los lotes ACTIVOS: en los cuatro casos el primero ya estaba
+// archivado cuando llego el duplicado.
+S.inventarioUsdt = [{ ordenId: "111", tipo: "compra", usdt: 10, tasa: 5, moneda: "BRL" }];
+S.inventarioUsdt_cerrado = [{ ordenId: "22909791031187947520", tipo: "compra",
+                              usdt: 96.69, tasa: 5.167, moneda: "BRL", _cerrado: true }];
+ok(!!F._loteConOrden("111"), "encuentra la orden repetida entre los lotes activos");
+ok(!!F._loteConOrden("22909791031187947520"),
+   "y TAMBIEN entre los archivados, que es por donde se colaron los suyos");
+ok(F._loteConOrden(" 22909791031187947520 "), "sin que estorben los espacios");
+ok(F._loteConOrden("") === null && F._loteConOrden(null) === null,
+   "sin numero de orden no inventa un duplicado");
+
+// Guardias de estructura: lo que no se puede deshacer sin romper esto.
+{
+  const sv = sinComentarios(sacarFuncion("saveIU"));
+  ok(/_loteConOrden\(/.test(sv),
+     "saveIU busca el duplicado con _loteConOrden, que mira los dos sitios");
+  ok(!/\(S\.inventarioUsdt\|\|\[\]\)\.some\(function\(l\)\{return l\.ordenId/.test(sv),
+     "y no vuelve a mirar solo los activos");
+  ok(/_descuadreIU\(\)/.test(sv), "y no deja guardar un descuadre sin preguntar");
+}
+// _autoIU corre en CADA tecla: si repinta, destruye el input bajo el dedo
+// (ARREGLO 32). Tiene que escribir en el DOM, como _refrescarAbonoPrest.
+{
+  const au = sinComentarios(sacarFuncion("_autoIU"));
+  ok(!/\bR\(\)/.test(au), "_autoIU no repinta la pantalla mientras ella teclea");
+  ok(/document\.activeElement!==el/.test(au),
+     "y nunca escribe en el campo que tiene debajo del dedo");
+  const rf = sinComentarios(sacarFuncion("_refrescarIU"));
+  ok(!/\bR\(\)/.test(rf), "ni _refrescarIU");
+}
+// Los tres campos tienen que estar conectados, o el autorelleno no se entera.
+["montOrigen", "usdt", "tasa", "bsRecibidos"].forEach(function (k) {
+  // En index.html vive dentro de un oninput, con las comillas escapadas:
+  //   _autoIU(\"tasa\")
+  var busca = '_autoIU(' + '\\"' + k + '\\"' + ')';
+  ok(HTML.indexOf(busca) >= 0,
+     "el campo " + k + " avisa al autorelleno");
+});
+ok((HTML.match(/id='iu-fiat'/g) || []).length === 2 &&
+   (HTML.match(/id='iu-usdt'/g) || []).length === 2 &&
+   (HTML.match(/id='iu-tasa'/g) || []).length === 2,
+   "los tres campos llevan su id en las dos pantallas (compra y venta)");
+// El recuadro del calculo se arma en su propia funcion para poder refrescarlo
+// sin R(); si vuelve a armarse dentro del render, se queda con la cuenta
+// anterior mientras ella teclea (es el fallo del ARREGLO 55).
+ok(/id='iu-prev'/.test(HTML) && /_htmlPrevIU\(\)/.test(HTML),
+   "el recuadro del calculo se puede refrescar solo");
+
+
+// ─────────────────────────────────────────────────────────────────────────
+// IMPORTAR DE BINANCE
+//
+// Las filas de aca son REALES: salen de sus exports del 15/09 (cuenta SAIPHA
+// y cuenta JULIO). Si Binance cambia un rotulo o el importador deja de
+// entender una columna, estas pruebas lo cantan.
+// ─────────────────────────────────────────────────────────────────────────
+console.log("\n— Importar de Binance —");
+const FIX = {"c2c": [["","","","","","","","","","","","","","www.binance.com"],["","","Historial de órdenes C2C"],["","","Nombre","J. DEL CARMEN HERNANDEZ BARRETO","","Email","saipha.servicos.digitais@gmail.com","","Dirección","R MONTE RORAIMA S/N VILA NOVA RR"],["","","ID de usuario","1259063977","","Período(UTC--4)","2026-09-01 to 2026-09-15"],["","","Número de Pedido","Tipo de orden","Activo","Tipo de Fiat","Precio Total","Precio","Cantidad","Tipo de cambio","Tarifa de creador","Comisión de tomador","Contraparte","Estado","Hora de creación"],["","","22928483177651154944","Sell","USDT","BRL","100","5.11","19.56","","","0.07","_Ckrypto_","Completed","2026-09-02 11:07:24"],["","","22928585081217331200","Sell","USDT","BRL","676.05","5.113","132.22","","","0.07","Anderson-26","Completed","2026-09-02 17:52:19"],["","","22929998835071328256","Sell","USDT","BRL","100","5.177","19.31","","","0.07","cambioviagem","Completed","2026-09-06 15:30:05"],["","","22930837293825511424","Sell","USDT","BRL","1050","5.108","205.55","","","0.07","_Ckrypto_","Completed","2026-09-08 23:01:49"],["","","22932202144596058112","Buy","USDT","BRL","2075","5.162","401.97","","","0.07","IaCrypto_net","Completed","2026-09-12 17:25:15"]],"c2c_julio": [["","","","","","","","","","","","","","www.binance.com"],["","","Historial de órdenes C2C"],["","","Nombre","JULIO FRANCISCO HERNANDEZ","","Correo electrónico","marshalljulio46@gmail.com","","Dirección","Av Pacasmayo 07036, Callao, Perú"],["","","Id. de usuario","338951166","","Periodo(UTC--4)","2026-08-15 to 2026-09-15"],["","","Número de orden","Tipo de orden","Activo","Tipo de Fiat","Precio total","Precio","Cantidad","Tipo de cambio","Comisión del Creador","Comisión del tomador","Contraparte","Estado","Hora de creación"],["","","22921953629031460864","Sell","USDT","VES","100000","874.3","114.37","","","0.06","3lpriet0","Completed","2026-08-15 10:41:18"],["","","22921999413204643840","Buy","USDT","VES","31448","875","35.94","","","0.06","ASCENDERLTDA-REMESAS","Completed","2026-08-15 13:43:14"],["","","22922061345427742720","Sell","USDT","VES","20000","868.1","23.03","","","0.06","CCambia","Completed","2026-08-15 17:49:20"],["","","22922103795244138496","Sell","USDT","VES","50000","866.6","57.69","","","0.06","JU4NPOL4C4","Completed","2026-08-15 20:38:00"],["","","22922340917704065024","Sell","USDT","VES","100000","868.163","115.18","","","0.06","RicoMcPato_3minutos","Completed","2026-08-16 12:20:15"],["","","22922682205394382848","Buy","USDT","VES","150000","875.799","171.27","","","0.06","diegoramirez20","Completed","2026-08-17 10:56:24"],["","","22922787973000278016","Buy","USDT","VES","55800","894.999","62.34","","","0.06","CriptoQueen27","Cancelled","2026-08-17 17:56:41"],["","","22922809418894782464","Buy","USDT","VES","55800","889.79","62.71","","","0.06","Roa0805","Cancelled","2026-08-17 19:21:54"]],"tx": [["","","","","","","","","","","","www.binance.com"],["","","Historial de transacciones"],["","","Nombre","J. DEL CARMEN HERNANDEZ BARRETO","","Email","saipha.servicos.digitais@gmail.com","","Dirección","R MONTE RORAIMA S/N VILA NOVA RR"],["","","ID de usuario","1259063977","","Período(UTC--4)","2026-09-01 to 2026-09-15"],["","","ID de usuario","Hora","","Cuenta","Operación","","Moneda","Cambiar","","Comentario"],["","","1259063977","2026-09-01 10:14:16","","Spot","Binance Convert","","USDT","257.93570875","",""],["","","1259063977","2026-09-01 10:14:16","","Spot","Binance Convert","","BRL","-1331.98","",""],["","","1259063977","2026-09-01 14:02:13","","Funding","Binance Convert","","USDT","-69","",""],["","","1259063977","2026-09-01 14:02:13","","Spot","Binance Convert","","USDT","69","",""],["","","1259063977","2026-09-01 14:04:39","","Spot","Binance Convert","","BRL","355.77592695","",""],["","","1259063977","2026-09-01 14:04:39","","Spot","Binance Convert","","USDT","-69.0076668","",""],["","","1259063977","2026-09-02 07:59:50","","Spot","Binance Convert","","USDT","68.92210905","",""],["","","1259063977","2026-09-02 07:59:50","","Spot","Binance Convert","","BRL","-355.77592695","",""],["","","1259063977","2026-09-02 21:25:20","","Spot","Binance Convert","","BRL","-224.56","",""],["","","1259063977","2026-09-02 21:25:20","","Spot","Binance Convert","","USDT","43.91426783","",""],["","","1259063977","2026-09-03 16:50:50","","Spot","Binance Convert","","BRL","-437","",""],["","","1259063977","2026-09-03 16:50:50","","Spot","Binance Convert","","USDT","85.32156663","",""],["","","1259063977","2026-09-08 09:48:32","","Spot","Binance Convert","","BRL","-1975","",""],["","","1259063977","2026-09-08 09:48:32","","Spot","Binance Convert","","USDT","386.49706457","",""]],"tx_btc": [["","","","","","","","","","","","www.binance.com"],["","","Historial de transacciones"],["","","Nombre","JULIO FRANCISCO HERNANDEZ","","Correo electrónico","marshalljulio46@gmail.com","","Dirección","Av Pacasmayo 07036, Callao, Perú"],["","","Id. de usuario","338951166","","Periodo(UTC--4)","2026-08-15 to 2026-09-15"],["","","ID de usuario","Tiempo","","Cuenta","Operación","","Moneda","Cambio","","Observación"],["","","338951166","2026-08-24 21:02:46","","Funding","Binance Convert","","USDT","-200","",""],["","","338951166","2026-08-24 21:02:46","","Funding","Binance Convert","","BTC","0.00249195","",""],["","","338951166","2026-09-03 13:37:16","","Funding","Binance Convert","","USDT","202.17883112","",""],["","","338951166","2026-09-03 13:37:16","","Funding","Binance Convert","","BTC","-0.00249195","",""]]};
+
+// Binance escribe con PUNTO decimal. _leerNumero, que es lo que usa la app
+// para lo que ella teclea, leeria 5.113 como 5113 por la regla de "punto y
+// tres decimales son miles". Por eso el importador tiene su propio lector.
+ok(F._binNum("5.113") === 5.113, "_binNum lee el punto como decimal", F._binNum("5.113"));
+ok(F._binNum("633911.82") === 633911.82, "y los montos grandes", F._binNum("633911.82"));
+ok(F._binNum("-1331.98") === -1331.98, "y los negativos", F._binNum("-1331.98"));
+ok(F._leerNumero("5.113") === 5113,
+   "mientras _leerNumero sigue leyendolo como 5113 (y debe seguir asi)", F._leerNumero("5.113"));
+ok(isNaN(F._binNum("")) && isNaN(F._binNum(null)), "sin valor no inventa un cero");
+
+// Los rotulos cambian de un export a otro segun el idioma con que Binance lo
+// genero: "Numero de orden" y "Numero de Pedido", "Hora" y "Tiempo".
+ok(F._binNorm("Número de Pedido") === "numero de pedido", "_binNorm quita acentos y mayusculas");
+{
+  const cab = ["", "", "Número de orden", "Tipo de orden", "Activo", "Tipo de Fiat",
+               "Precio total", "Precio", "Cantidad"];
+  const m = F._binMapaCols(cab, { total: ["precio total"], precio: ["precio"] });
+  // "precio" es prefijo de "precio total": por prefijo se cogeria la columna 6.
+  ok(m.precio === 7 && m.total === 6, "la columna se reconoce entera, no por prefijo",
+     JSON.stringify(m));
+}
+
+// Reconoce el archivo y de que cuenta es, sin que ella tenga que decirlo.
+{
+  const id = F._binIdentificar(FIX.c2c);
+  ok(id.tipo === "c2c", "reconoce el historial de ordenes C2C", id.tipo);
+  ok(id.uid === "1259063977", "y saca el ID de usuario", id.uid);
+  ok(/saipha/.test(id.correo), "y el correo", id.correo);
+  ok(F._binIdentificar(FIX.tx).tipo === "tx", "y distingue el de transacciones");
+}
+
+// Las ordenes P2P.
+{
+  const o = F._binOrdenesC2C(FIX.c2c);
+  ok(o.length === 5, "lee las 5 ordenes de SAIPHA", o.length);
+  const v = o.find((x) => x.ordenId === "22928585081217331200");
+  ok(v && v.tipo === "venta" && v.moneda === "BRL", "Sell es una venta en reales");
+  // Lo que la app guarda no es la cantidad de la orden: es lo que se movio del
+  // monedero. En la venta salen la cantidad MAS la comision.
+  ok(v && Math.abs(v.usdt - 132.29) < 0.005,
+     "y guarda el total que sale del monedero (132,22 + 0,07)", v && v.usdt);
+  const c = o.find((x) => x.tipo === "compra");
+  ok(c && Math.abs(c.usdt - 401.97) < 0.005,
+     "en la compra guarda la cantidad de la orden; la comision se resta al crear el lote", c && c.usdt);
+  // Las canceladas no movieron ni un USDT.
+  const oj = F._binOrdenesC2C(FIX.c2c_julio);
+  ok(oj.every((x) => x.ordenId), "ninguna fila sin numero de orden");
+  ok(oj.length < 8, "las canceladas se descartan", oj.length);
+}
+
+// Las conversiones: dos filas con la MISMA hora, una del fiat y otra del USDT.
+{
+  const c = F._binConverts(FIX.tx);
+  ok(c.length >= 5, "empareja las conversiones por la hora exacta", c.length);
+  const compra = c.find((x) => Math.abs(x.monto - 1975) < 0.01);
+  ok(compra && compra.tipo === "compra" && compra.moneda === "BRL",
+     "fiat que sale y USDT que entra es una compra");
+  ok(compra && Math.abs(compra.usdt - 386.4971) < 0.001, "con su USDT", compra && compra.usdt);
+  ok(compra && Math.abs(compra.tasa - 5.11) < 0.001, "y la tasa sale de dividir", compra && compra.tasa);
+  // El 01/09 convirtio 69 USDT en 355,78 reales: eso es una VENTA.
+  const venta = c.find((x) => x.tipo === "venta");
+  ok(!!venta, "fiat que entra y USDT que sale es una venta");
+  // Un par con USDT en los dos lados es un movimiento entre sus propios
+  // monederos (Funding y Spot), no un cambio.
+  ok(c.every((x) => x.moneda !== "USDT"), "un movimiento interno no crea un lote");
+  ok(c.every((x) => x.ordenId.indexOf("CNV-") === 0),
+     "se les fabrica un numero con su hora, para no importarlas dos veces");
+}
+// En la cuenta de Julio hay conversiones USDT<->BTC: mueve criptomoneda, no
+// dinero de clientes. Colarlas crearia un lote en BTC con tasa 0,0000.
+ok(F._binConverts(FIX.tx_btc).length === 0, "las conversiones a BTC no entran",
+   F._binConverts(FIX.tx_btc).length);
+ok(!F._binMonedaConocida("BTC") && F._binMonedaConocida("BRL") && !F._binMonedaConocida("USDT"),
+   "solo entran las monedas que la app conoce");
+
+// Duplicados.
+S.inventarioUsdt = [];
+S.inventarioUsdt_cerrado = [
+  { ordenId: "22928585081217331200", tipo: "venta", moneda: "BRL", usdt: 132.29, bs: 676.05,
+    fecha: "09/02", fechaIso: "2026-09-02", tasa: 5.113 },
+];
+{
+  const o = F._binOrdenesC2C(FIX.c2c);
+  const lotes = S.inventarioUsdt.concat(S.inventarioUsdt_cerrado);
+  const rep = o.find((x) => x.ordenId === "22928585081217331200");
+  ok(!!F._binYaRegistrado(rep, lotes),
+     "una orden P2P ya registrada se reconoce por su numero, tambien archivada");
+  const otra = o.find((x) => x.ordenId !== "22928585081217331200");
+  ok(!F._binYaRegistrado(otra, lotes), "y una nueva no");
+}
+// Las conversiones NO traen numero de orden en el export, asi que se
+// reconocen por el importe. Su lote CNV-1D3ZYEZ esta apuntado el 08/09 y la
+// conversion fue el 11/09: la fecha no puede exigirse igual.
+{
+  const lotes = [{ tipo: "compra", moneda: "BRL", usdt: 317.9361, montOrigen: 1618.6,
+                   fecha: "09/08", fechaIso: "2026-09-08", ordenId: "CNV-1D3ZYEZ" }];
+  const op = { origen: "convert", tipo: "compra", moneda: "BRL", usdt: 317.9961,
+               monto: 1618.6, hora: "2026-09-11 09:02:34" };
+  ok(!!F._binYaRegistrado(op, lotes), "una conversion ya registrada se reconoce por el importe");
+  // Pero no a cualquier distancia: tiene TRES ventas iguales de 19,30 USDT por
+  // 100 R$ en agosto. Sin limite de fecha, una de septiembre se daria por
+  // registrada y se perderia.
+  const lejos = { origen: "convert", tipo: "compra", moneda: "BRL", usdt: 317.9961,
+                  monto: 1618.6, hora: "2026-11-11 09:02:34" };
+  ok(!F._binYaRegistrado(lejos, lotes), "pero no si esta a dos meses de distancia");
+  ok(F._binDias("2026-09-08", "2026-09-11") === 3, "_binDias cuenta bien", F._binDias("2026-09-08","2026-09-11"));
+  ok(F._binDias("", "2026-09-11") === 999, "y sin fecha no empareja a ciegas");
+}
+
+// El banco cambia en cada operacion -PagBank, Nubank, Banesco-, asi que se
+// propone el que ella mas ha usado en esas mismas condiciones.
+{
+  const lotes = [
+    { tipo: "compra", moneda: "BRL", cuentaId: "cA", cuentaOrigenId: "pag" },
+    { tipo: "compra", moneda: "BRL", cuentaId: "cA", cuentaOrigenId: "pag" },
+    { tipo: "compra", moneda: "BRL", cuentaId: "cA", cuentaOrigenId: "nub" },
+    { tipo: "venta",  moneda: "VES", cuentaId: "cB", cuentaDestinoId: "bdv" },
+  ];
+  ok(F._binCuentaSugerida(lotes, "cA", "BRL", "compra") === "pag", "propone el banco mas repetido");
+  ok(F._binCuentaSugerida(lotes, "cB", "VES", "venta") === "bdv", "y en la venta mira la cuenta de destino");
+  ok(F._binCuentaSugerida(lotes, "cA", "COP", "compra") === "", "sin historia no se inventa ninguno");
+}
+
+// Un mes con su cierre hecho ya esta contado y declarado: meterle una
+// operacion cambia una ganancia que ella dio por buena. Entra si lo decide,
+// pero desmarcada.
+S.cierresMes = [{ mesKey: "2026-08" }, { mesKey: "2026-07" }];
+ok(F._binMesCerrado("2026-08-20"), "reconoce un mes con el cierre hecho");
+ok(!F._binMesCerrado("2026-09-20"), "y septiembre sigue abierto");
+ok(!F._binMesCerrado(""), "sin fecha no dice que este cerrado");
+{
+  const imp2 = sinComentarios(sacarFuncion("_binImportar"));
+  ok(/o\.cerrado/.test(imp2), "y al guardar se avisa de cuantas caen en un mes cerrado");
+  const rec2 = sinComentarios(sacarFuncion("_binRecalcular"));
+  ok(/!o\.cerrado/.test(rec2), "esas entran desmarcadas");
+}
+// La tasa de una conversion sale de dividir y eso deja cola de punto flotante:
+// 355.77592695 / 69.0076668 da 5.155599999940876.
+{
+  const c = F._binConverts(FIX.tx);
+  ok(c.every((x) => String(x.tasa).replace(/^\d*\.?/, "").length <= 6),
+     "la tasa se redondea: nada de 5.155599999940876",
+     c.map((x) => x.tasa).join(" "));
+}
+
+// Guardias de estructura.
+{
+  const imp = sinComentarios(sacarFuncion("_binImportar"));
+  ok(/sel\.sort\(/.test(imp),
+     "las operaciones entran en orden de fecha, o el FIFO consume el lote equivocado");
+  ok(/permisoEdicion\(\)/.test(imp), "y no graba quien no puede guardar");
+  ok(/_fechaLote\(/.test(imp) && /_fechaLoteIso\(/.test(imp),
+     "las fechas pasan por _fechaLote y llevan su año (ARREGLO 51)");
+  ok(/confirm\(/.test(imp), "nada se graba sin confirmar");
+  const rec = sinComentarios(sacarFuncion("_binRecalcular"));
+  ok(/visto\[k\]/.test(rec), "el mismo archivo dos veces no duplica");
+  const mar = sinComentarios(sacarFuncion("_binMarcar"));
+  ok(!/\bR\(\)/.test(mar), "marcar una casilla no repinta la tabla (ARREGLO 32)");
+}
+// Un campo que se sincroniza tiene que estar en DATA_KEYS o el remoto lo
+// borra, y en _MERGE_OBJETOS o se reemplaza entero en vez de unirse.
+ok(F.DATA_KEYS.indexOf("mapaBinance") !== -1, "mapaBinance viaja en DATA_KEYS");
+ok(sacarConstante("_MERGE_OBJETOS").indexOf("mapaBinance") !== -1,
+   "y se fusiona clave a clave, no de golpe");
+
+
+console.log("\n— Cerrar el mes, y el banco del importador —");
+
+// El boton del informe llamaba directo a ejecutarCierreMes() sin preguntar
+// nada, y esta pegado al de PDF: asi se le cerro septiembre teniendolo en
+// curso. Y no habia forma de deshacerlo.
+{
+  const html = sinComentarios(HTML);
+  ok(!/onclick='ejecutarCierreMes\(S\._cMes,true\)'/.test(html),
+     "el boton del informe ya no cierra el mes a bocajarro");
+  const cer = sinComentarios(sacarFuncion("cerrarMesDesdeInforme"));
+  ok(/confirm\(/.test(cer), "pregunta antes de cerrar");
+  ok(/permisoEdicion\(\)/.test(cer), "y no cierra quien no puede guardar");
+}
+// Reabrir SOLO el mes en curso: el cierre guarda una foto de los saldos, de lo
+// que le deben y de lo prestado. Borrar el de un mes pasado tira esa foto, y
+// al volver a cerrarlo se tomarian los saldos de HOY.
+{
+  const re = sinComentarios(sacarFuncion("reabrirMes"));
+  ok(/getMesKeyActual\(\)/.test(re), "reabrir se limita al mes en curso");
+  ok(/confirm\(/.test(re), "y tambien pregunta");
+  ok(/ultimoMesCerrado/.test(re),
+     "al reabrir, ultimoMesCerrado vuelve al mas nuevo que quede");
+  ok(/permisoEdicion\(\)/.test(re), "y respeta el permiso de guardar");
+}
+
+// El banco no viene en el archivo de Binance, asi que la sugerencia tiene que
+// decir que es una sugerencia. Sus 123 ventas en VES: 111 a Banco de Venezuela.
+{
+  const lotes = [];
+  for (let i = 0; i < 9; i++) lotes.push({ tipo: "venta", moneda: "VES", cuentaDestinoId: "bdv" });
+  lotes.push({ tipo: "venta", moneda: "VES", cuentaDestinoId: "banesco" });
+  const c = F._binConfianzaBanco(lotes, "", "VES", "venta");
+  ok(c.id === "bdv" && c.n === 9 && c.total === 10,
+     "dice cual propone y sobre cuantas", JSON.stringify(c));
+  ok(F._binConfianzaBanco([], "", "COP", "venta").total === 0,
+     "sin historia no inventa un porcentaje");
+}
+// Y se puede dejar sin banco: el lote, el FIFO y la ganancia no dependen de el.
+{
+  const imp = sinComentarios(sacarFuncion("_binImportar"));
+  ok(/cuentaOrigenId:o\.cuentaFiat\|\|""/.test(imp) && /cuentaDestinoId:o\.cuentaFiat\|\|""/.test(imp),
+     "importar sin banco es valido");
+  ok(/contraparte:o\.contraparte/.test(imp),
+     "y el lote se queda con la contraparte, para reconocerlo en el extracto");
+  const sin = sinComentarios(sacarFuncion("_binImportar"));
+  ok(!/sinBanco|!o\.cuentaFiat/.test(sin.split("sinCuenta")[0] || ""),
+     "el banco no bloquea la importacion");
+}
+// Lo importado sin banco no puede quedar invisible.
+S.inventarioUsdt = [
+  { id: 1, tipo: "venta", moneda: "VES", bs: 100000, cuentaDestinoId: "", fecha: "09/02" },
+  { id: 2, tipo: "venta", moneda: "VES", bs: 50000, cuentaDestinoId: "bdv", fecha: "09/03" },
+  { id: 3, tipo: "compra", moneda: "BRL", montOrigen: 500, cuentaOrigenId: "", fecha: "09/04" },
+  { id: 4, tipo: "compra", moneda: "USDT", montOrigen: 10, cuentaOrigenId: "", fecha: "09/05" },
+];
+S.inventarioUsdt_cerrado = [];
+{
+  const p = F._binSinBanco();
+  ok(p.length === 2, "lista los que esperan banco", p.length);
+  ok(p.every((l) => l.moneda !== "USDT"),
+     "un lote en USDT no lleva banco aparte y no cuenta");
+  ok(p.some((l) => l.id === 1) && p.some((l) => l.id === 3),
+     "entran tanto las ventas como las compras");
+}
+// Un lote en blanco no movio dinero: no hay banco que asignarle y solo alarga
+// la lista. La app ya los marca aparte como "registro sin montos".
+S.inventarioUsdt.push({ id: 5, tipo: "venta", moneda: "VES", bs: 0, cuentaDestinoId: "", fecha: "09/06" });
+ok(!F._binSinBanco().some((l) => l.id === 5), "un lote en blanco no entra en los pendientes");
+// Asignarlo despues tiene que mover el saldo: el dinero entro o salio de
+// verdad, solo que no se sabia de donde.
+{
+  const pon = sinComentarios(sacarFuncion("_binPonerBanco"));
+  ok(/c\.saldo=/.test(pon), "al asignar el banco se mueve el saldo de esa cuenta");
+  ok(/l\._mod=Date\.now\(\)/.test(pon), "y el lote queda marcado para la sincronizacion");
+  ok(/permisoEdicion\(\)/.test(pon), "con permiso de guardar");
+}
+// La contraparte viene en el archivo y antes se tiraba.
+{
+  const o = F._binOrdenesC2C(FIX.c2c);
+  ok(o.every((x) => typeof x.contraparte === "string"),
+     "todas las ordenes traen contraparte");
+  ok(o.some((x) => x.contraparte.length > 0), "y al menos una con nombre",
+     o.map((x) => x.contraparte).join("|"));
+}
+
+
+console.log("\n— El numero de orden identifica la operacion —");
+// Al mismo comerciante se le puede comprar tres veces el mismo dia, asi que el
+// nombre no distingue: el numero de orden es lo unico unico. Y con el se busca
+// en Binance, que es donde SI se ve el metodo de pago.
+{
+  const h = F._htmlOrdenCopiable("22932202144596058112");
+  ok(h.indexOf("22932202144596058112") >= 0,
+     "el numero sale ENTERO: cortado no sirve para buscarlo en Binance");
+  ok(/_copiarTexto\(/.test(h), "y se puede copiar de un toque");
+  ok(F._htmlOrdenCopiable("") === "" && F._htmlOrdenCopiable(null) === "",
+     "sin numero no pinta un boton vacio");
+}
+// Los 20 digitos tienen que sobrevivir enteros en las dos pantallas.
+ok(!/String\(o\.ordenId\)\.slice\(0,\s*12\)/.test(HTML),
+   "la tabla del importador ya no corta el numero a 12 caracteres");
+{
+  const pend = sinComentarios(sacarFuncion("_htmlPendientesBanco"));
+  ok(/_htmlOrdenCopiable\(l\.ordenId\)/.test(pend),
+     "y la lista de pendientes tambien lo ensena");
+  ok(/l\.contraparte/.test(pend),
+     "junto a la contraparte, para confirmar que es la operacion buena");
+}
+// Copiar puede fallar -sin https o sin permiso- y eso no puede dejarla sin el
+// numero.
+{
+  const cp = sinComentarios(sacarFuncion("_copiarTexto"));
+  ok(/prompt\(/.test(cp), "si el portapapeles no va, se ensena el numero para copiarlo a mano");
+  ok(/isSecureContext/.test(cp), "y solo se intenta donde el navegador lo permite");
+}
+
+
+console.log("\n— Reabrir un mes tiene que sobrevivir a la fusion —");
+// cierresMes se fusiona entre dispositivos. Borrarlo solo en el aparato no
+// basta: al guardar, el servidor devuelve el cierre y la fusion lo repone.
+// Sintoma exacto: le dio a Reabrir y la pantalla siguio diciendo "Cerrado".
+{
+  const re = sinComentarios(sacarFuncion("reabrirMes"));
+  ok(/_marcarBorradoMerge\("cierresMes"/.test(re),
+     "reabrir deja constancia del borrado, o el servidor lo devuelve");
+  // Y la constancia no sirve de nada si su categoria no se poda: la marca se
+  // anota y nadie la aplica (ARREGLOS 13 y 18).
+  ok(sacarConstante("_PODA_CATS").indexOf('"cierresMes"') !== -1,
+     "y cierresMes entra en la poda, para que la marca se aplique de verdad");
+}
+// La trampa del otro lado: la marca dura 30 dias. Al cerrar el mes de verdad,
+// la poda se lo comeria otra vez.
+{
+  const ej = sinComentarios(sacarFuncion("ejecutarCierreMes"));
+  ok(/_olvidarBorradoMerge\("cierresMes"/.test(ej),
+     "y al volver a cerrar, la marca se retira");
+}
+// La aritmetica de las tres piezas, de punta a punta.
+S._deletedMerge = {};
+S.cierresMes = [{ mesKey: "2026-09" }, { mesKey: "2026-08" }];
+F._marcarBorradoMerge("cierresMes", "2026-09");
+ok(F._estaBorradoMerge("cierresMes", "2026-09"), "queda marcado");
+ok(!F._estaBorradoMerge("cierresMes", "2026-08"), "y solo ese mes");
+// La fusion trae el cierre de vuelta; la poda tiene que sacarlo.
+S.cierresMes.push({ mesKey: "2026-09" });
+F._podarBorrados();
+ok(!S.cierresMes.some((c) => c.mesKey === "2026-09"),
+   "aunque el servidor lo devuelva, la poda lo saca");
+ok(S.cierresMes.some((c) => c.mesKey === "2026-08"), "sin tocar los demas meses");
+// Y al cerrarlo otra vez, la marca se va y el cierre se queda.
+F._olvidarBorradoMerge("cierresMes", "2026-09");
+S.cierresMes.push({ mesKey: "2026-09" });
+F._podarBorrados();
+ok(S.cierresMes.some((c) => c.mesKey === "2026-09"),
+   "cerrado de nuevo, ya no se lo come la poda");
+
+console.log("\n— El banco se pone por grupo, no fila por fila —");
+// El fallo que esto fija: _binFiatTodas se escribio y se quedo SIN CONECTAR a
+// la pantalla. La funcion pasaba cualquier prueba que la llamara a mano, y en
+// su pantalla no habia ningun boton: sus 31 ventas en VES habia que corregirlas
+// abriendo 31 desplegables. Una funcion que nadie llama no arregla nada.
+{
+  const rend = sinComentarios(sacarFuncion("rImportarBinance"));
+  ok(/_binFiatTodas\(/.test(rend),
+     "la pantalla del importador dibuja el selector por grupo");
+  ok(/aplicar a todas/.test(rend),
+     "con su rotulo, para que se entienda que cambia mas de una fila");
+  // Agrupar por moneda y tipo, no por una lista de bancos escrita a mano: su
+  // empresa va a crecer y las cuentas nuevas tienen que salir solas.
+  ok(/c\.moneda\s*===\s*g\.moneda/.test(rend),
+     "las cuentas del grupo salen de S.cuentas, no de una lista fija");
+  ok(/bin-sup-/.test(rend),
+     "y cada fila lleva sitio para la etiqueta de suposicion");
+}
+{
+  const ft = sinComentarios(sacarFuncion("_binFiatTodas"));
+  ok(/if\(!id\)\s*return/.test(ft),
+     "el hueco del desplegable es el rotulo: no borra el banco de todas");
+  ok(/__sin__/.test(ft),
+     "dejarlas sin banco a proposito tiene su propia opcion");
+  ok(/fiatAuto\s*=\s*false/.test(ft),
+     "lo que elige ella deja de contar como suposicion");
+}
+// "supuesto" es lo unico que separa lo que propuso la app de lo que reviso
+// ella. Sin eso, 31 filas iguales y ninguna forma de saber cuales miro.
+{
+  const rec = sinComentarios(sacarFuncion("_binRecalcular"));
+  ok(/fiatAuto\s*=\s*!!o\.cuentaFiat/.test(rec),
+     "la sugerencia automatica queda marcada como suposicion");
+  const fi = sinComentarios(sacarFuncion("_binFiat"));
+  ok(/fiatAuto\s*=\s*false/.test(fi),
+     "tocar el desplegable de una fila la da por revisada");
+  ok(!/\bR\(\)/.test(fi),
+     "y no repinta: la tabla es larga y se perderia el scroll (ARREGLO 32)");
+  ok(F._htmlSupuesto({ fiatAuto: true, cuentaFiat: "c1" }).indexOf("supuesto") >= 0,
+     "una propuesta se ve como propuesta");
+  ok(F._htmlSupuesto({ fiatAuto: false, cuentaFiat: "c1" }) === "",
+     "lo que decidio ella no lleva etiqueta");
+  ok(F._htmlSupuesto({ fiatAuto: true, cuentaFiat: "" }) === "",
+     "y sin banco no hay nada que suponer");
+}
+// Un "1" con verbo en plural se lee como un error de la app.
+{
+  const rend = sinComentarios(sacarFuncion("rImportarBinance"));
+  ok(/nYa\s*===\s*1/.test(rend) && /nCerr\s*===\s*1/.test(rend),
+     "los recuentos de uno van en singular");
+}
+
+console.log("\n— FASE 1: la hora de la operacion —");
+// Se empieza a guardar la hora a la que ocurrio cada operacion. Hoy NADIE la
+// mira: el FIFO sigue ordenando por dia, igual que ayer. El dia que se use sera
+// porque ella lo encienda, no por haber empezado a guardarla.
+{
+  ok(F._horaLote("2026-09-02 11:07:24") === "11:07:24", "lee la hora del export de Binance");
+  ok(F._horaLote("9:05") === "09:05:00", "completa los segundos que falten");
+  ok(F._horaLote("") === "" && F._horaLote(null) === "", "sin hora no se inventa nada");
+  ok(F._horaLote("no es una hora") === "", "lo que no es una hora no pasa");
+  ok(F._horaLote("25:00:00") === "", "ni una hora imposible");
+  ok(/^\d\d:\d\d:\d\d$/.test(F._horaAhora()), "la de ahora sale en hh:mm:ss");
+  ok(F._horaDe("07:30") === "07:30:00", "lo que ella escribe manda");
+  ok(/^\d\d:\d\d:\d\d$/.test(F._horaDe("")), "y sin nada escrito, la de ahora: un lote sin hora ya no se fecha nunca");
+}
+// Ningun lote nuevo puede nacer sin hora. Mismo patron que la guardia de
+// _fechaLote: si alguien anade un sitio y se olvida, ese lote queda sin fechar
+// para siempre y no hay forma de recuperarlo.
+{
+  const pushes = HTML.match(/inventarioUsdt\.push\(\{[^}]*/g) || [];
+  ok(pushes.length >= 8, "se encontraron los sitios donde nacen lotes (" + pushes.length + ")");
+  const sinHora = pushes.filter((x) => !/\bhora:/.test(x));
+  ok(sinHora.length === 0, "todos los lotes nuevos nacen con hora" +
+     (sinHora.length ? " · sin ella: " + sinHora.length : ""));
+  const cl = sinComentarios(sacarFuncion("crearLoteRecibido"));
+  ok(/hora:_horaDe\(hora\)/.test(cl), "y el lote de los bolivares que entran por una remesa, tambien");
+}
+// LA GUARDIA DE FONDO. ordenFIFO tiene que seguir CIEGO a la hora.
+{
+  const of = sinComentarios(sacarFuncion("ordenFIFO"));
+  ok(!/\bhora\b/.test(of), "ordenFIFO NO mira la hora: hoy ordena por dia, exactamente como ayer");
+  const nf = sinComentarios(sacarFuncion("normalizarInventarioFIFO"));
+  ok(!/\bhora\b/.test(nf), "y a los lotes que ya existen no se les escribe ninguna hora");
+}
+// Y se demuestra, no se promete: el mismo inventario ordenado con hora y sin
+// ella tiene que dar el MISMO orden. Las horas van puestas al reves a proposito
+// -la mas tardia al lote mas viejo-: si ordenFIFO las mirara, el orden se daria
+// la vuelta y esto fallaria.
+{
+  const base = [
+    { id: 5, fecha: "09/12", fechaIso: "2026-09-12", tipo: "venta",  moneda: "VES" },
+    { id: 3, fecha: "09/12", fechaIso: "2026-09-12", tipo: "venta",  moneda: "VES" },
+    { id: 9, fecha: "09/12",                          tipo: "venta",  moneda: "VES" }, // viejo, sin año
+    { id: 1, fecha: "09/11", fechaIso: "2026-09-11", tipo: "venta",  moneda: "VES" },
+    { id: 7, fecha: "09/18", fechaIso: "2026-09-18", tipo: "venta",  moneda: "VES" }, // adelantado a proposito
+    { id: 2, fecha: "12/28", fechaIso: "2025-12-28", tipo: "compra", moneda: "BRL" },
+    { id: 4, fecha: "01/05", fechaIso: "2026-01-05", tipo: "compra", moneda: "BRL" },
+  ];
+  const orden = (arr) => arr.slice().sort(F.ordenFIFO).map((l) => l.id).join(",");
+  const sin = orden(base);
+  const con = orden(base.map((l, i) => Object.assign({}, l, {
+    hora: String(23 - i).padStart(2, "0") + ":00:00",
+  })));
+  ok(sin === con, "la hora no mueve el orden del FIFO: sin=" + sin + " con=" + con);
+  ok(sin === "2,4,1,3,5,9,7", "y el orden sigue siendo el de siempre: " + sin);
+}
+// La remesa tambien guarda la suya: es la otra mitad de "la remesa de las 12:00
+// consume la compra de las 11:49".
+{
+  const plano = HTML.replace(/\s+/g, " ");
+  const n = (plano.match(/d:ds\(f\.date\),h:_horaDe\(f\.hora\)/g) || []).length;
+  ok(n === 2, "las remesas guardan su hora, las de Brasil y las de EE.UU. (" + n + ")");
+  const t = (HTML.match(/type='time' step='1'/g) || []).length;
+  ok(t === 3, "y los tres formularios donde ella teclea a mano la piden, con segundos (" + t + ")");
+}
+
+console.log("\n— ARREGLO 67: la apertura avisa siempre —");
+// El aviso de choque solo mira lo que ESTE aparato acaba de cambiar. Para casi
+// todo esta bien. La apertura no: es el ancla de la conciliacion, y cuando
+// llega distinta del otro aparato se mueven todos los numeros de esa tarjeta.
+// Su caso: del 15 al 18 de septiembre paso sola de 12/09 · 2.464,13 a
+// 11/09 · 2.544,79 y el "sin explicar" salto de -1,93 a +65,37, sin un aviso.
+{
+  const mando = { config: { aperturaUsdt: 2464.13, aperturaFecha: "2026-09-12",
+                            aperturaBase: { bruta: 210.54 } } };
+  const srv   = { config: { aperturaUsdt: 2544.79, aperturaFecha: "2026-09-11",
+                            aperturaBase: { bruta: 152.33 } } };
+  // Lo importante: el tercer argumento va VACIO. Ella no toco nada.
+  const ch = F._choqueApertura(mando, srv, []);
+  ok(ch.length === 3, "avisa aunque ella no haya tocado la apertura (" + ch.length + " claves)");
+  ok(ch.every((c) => c.apertura === true), "y van marcadas, para que no se plieguen");
+  ok(ch.every((c) => c.clave === "@config"),
+     "con la forma que ya entienden _completarConLoQueQuedo y la pantalla");
+  const m = ch.find((c) => c.id === "aperturaUsdt");
+  ok(m && /2\.464,13/.test(m.campos[0].mio) && /2\.544,79/.test(m.campos[0].suyo),
+     "y los numeros escritos como ella los lee, no como los guarda el JSON");
+  const f = ch.find((c) => c.id === "aperturaFecha");
+  ok(f && f.campos[0].mio === "12/09/26" && f.campos[0].suyo === "11/09/26",
+     "la fecha en dd/mm/aa, como la lee ella y como sale en la conciliacion");
+  ok(/c\.verFecha/.test(sinComentarios(sacarFuncion("_completarConLoQueQuedo"))),
+     "y 'quedo' tambien: los tres valores escritos igual");
+  ok(F._choqueApertura(mando, mando, []).length === 0,
+     "si la apertura no cambio no molesta: esto no puede sonar en cada guardado");
+  ok(F._choqueApertura(mando, srv, [{ clave: "@config", id: "aperturaUsdt" }]).length === 2,
+     "y no repite lo que el aviso de choque normal ya dijo");
+  // Las cinco claves salen de _MERGE_BLOQUES: dos listas se separan.
+  const fn = sinComentarios(sacarFuncion("_choqueApertura"));
+  ok(/_MERGE_BLOQUES/.test(fn) && !/aperturaUsdt/.test(fn),
+     "las claves salen de _MERGE_BLOQUES, no de una lista copiada");
+}
+// Y se engancha de verdad: una funcion que nadie llama no avisa de nada.
+ok(/_ch\.concat\(_choqueApertura\(obj,\s*d\.estado,\s*_ch\)\)/.test(sinComentarios(HTML)),
+   "el guardado la llama, justo despues del choque normal");
+// En pantalla: la apertura NO se pliega. Un aviso escondido no es un aviso.
+{
+  const av = sinComentarios(sacarFuncion("_htmlAvisoPisado"));
+  const iAp = av.indexOf("La apertura cambió sola");
+  const iFold = av.indexOf("_PISADOS_ABIERTO && n");
+  ok(iAp > -1, "el aviso de la apertura existe");
+  ok(iFold > -1 && iAp < iFold, "y se pinta ANTES del desplegable, siempre a la vista");
+  ok(/var n=resto\.length/.test(av),
+     "el recuento de 'el otro tambien cambio' cuenta el resto, no la apertura");
+  ok(/No la vuelvas a fijar/.test(av),
+     "le dice que corrija, no que vuelva a fijar: volver a fijarla esconde la diferencia");
+  ok(/este aparato tenía/.test(av),
+     "y no le dice 'lo que guardaste choco': aqui ella no guardo nada, le llego");
+}
+
+console.log("\n— ARREGLO 68: por que no cuadraba —");
+// Sus 109 ajustes dicen todos "Ajuste manual de saldo", asi que la conciliacion
+// los cuenta TODOS como explicados y NINGUNO mueve el "sin explicar". Ese es el
+// bucle: ajusta para cuadrar la pantalla, el numero de arriba no se entera, y al
+// dia siguiente vuelve a ajustar. Sus palabras: "no puedo estar todo el tiempo
+// ajustando el saldo de forma manual".
+//
+// Lo que entra en total se RESTA de la diferencia, o sea que se da por bueno.
+//   dedazo → la app tenia mal el numero, el dinero nunca se movio: se explica.
+//   no se  → el dinero SI es otro y ella no sabe por que: eso hay que
+//            perseguirlo, asi que NO se explica y sale en el "sin explicar".
+{
+  const base = {
+    cuentas: [{ id: "cVes", nombre: "BANCO DE VENEZUELA", moneda: "USDT", saldo: 0 }],
+    config: { aperturaFecha: "2026-09-01", aperturaTs: 0 },
+  };
+  const correr = (ajustes) => {
+    S.cuentas = base.cuentas; S.config = base.config;
+    S.ajustesSaldo = ajustes;
+    return F.ajustesDesdeApertura("2026-09-01");
+  };
+  const A = (tipo, delta) => ({ id: "a" + Math.random(), fecha: "05/09/26", cuentaId: "cVes",
+                                delta: delta, tipo: tipo });
+  let r = correr([A("dedazo", -100), A("nose", -20)]);
+  ok(r.total === -100 && r.n === 1,
+     "el dedazo se explica y no ensucia: la app tenia mal el numero (" + r.total + ")");
+  ok(r.nSinSaber === 1,
+     "y el 'no se por que' NO se explica: sale en el sin explicar");
+  r = correr([A("nose", -20), A("nose", -30)]);
+  ok(r.total === 0 && r.n === 0 && r.nSinSaber === 2,
+     "si no sabe de ninguno, no hay nada dado por bueno");
+  // Y lo que ya esta guardado no cambia de significado: sus 109 no llevan tipo.
+  r = correr([{ id: "viejo", fecha: "05/09/26", cuentaId: "cVes", delta: -100 }]);
+  ok(r.total === -100 && r.n === 1 && r.nSinSaber === 0,
+     "a los 109 de antes no se les inventa un motivo: cuentan como hasta hoy");
+  // Lo anterior a la apertura ya esta dentro del punto de partida.
+  r = correr([{ id: "v2", fecha: "20/08/26", cuentaId: "cVes", delta: -500, tipo: "nose" }]);
+  ok(r.total === 0 && r.n === 0 && r.nSinSaber === 0,
+     "y lo de antes de la apertura no cuenta de ninguna manera");
+}
+// LA PRUEBA QUE IMPORTA: un "no se" tiene que MOVER el sin explicar, y un
+// dedazo no. Es justo lo que ella pidio: "un numero que pueda perseguir".
+{
+  const montar = (ajustes) => {
+    S.cuentas = [{ id: "cU", nombre: "BINANCE", moneda: "USDT", saldo: 900 }];
+    S.config = { aperturaUsdt: 1000, aperturaFecha: "2026-09-01", aperturaTs: 0,
+                 aperturaBase: { bruta: 0, egEmpresa: 0, egPersonal: 0, egPersonalSin: 0, socios: 0 } };
+    ["brl","vzla","eeuu","egresos","egresos_personales","prestamos","cuentasCobrar",
+     "capital","traspasos","pagosSocios","gastos_socios","gananciaExtra",
+     "inventarioUsdt","inventarioUsdt_cerrado"].forEach((k) => { S[k] = []; });
+    S.ajustesSaldo = ajustes;
+    return F.conciliacionCapital();
+  };
+  const bajada = { id: "x", fecha: "05/09/26", cuentaId: "cU", delta: -100 };
+  const sinNada  = montar([]);
+  const conNose  = montar([Object.assign({}, bajada, { tipo: "nose" })]);
+  const conDeda  = montar([Object.assign({}, bajada, { tipo: "dedazo" })]);
+  ok(Math.round(sinNada.sinExplicar) === -100,
+     "tiene 900 y deberia tener 1000: faltan 100 sin explicar (" + sinNada.sinExplicar + ")");
+  ok(Math.round(conNose.sinExplicar) === -100,
+     "marcarlo 'no se por que' lo DEJA sin explicar, que es donde tiene que estar");
+  ok(Math.round(conDeda.sinExplicar) === 0,
+     "y marcarlo 'me equivoque al teclear' lo quita: no se movio dinero ninguno");
+  ok(conDeda.ajustes.n === 1 && conNose.ajustes.nSinSaber === 1,
+     "cada uno contado en su sitio");
+}
+// Lo que se deja fuera tiene que VERSE. Un descuento silencioso no se revisa.
+{
+  const i0 = HTML.indexOf("De qué está hecha la diferencia");
+  const card = sinComentarios(HTML.slice(i0, i0 + 2500));
+  ok(/aj\.nSinSaber\s*>\s*0/.test(card), "la tarjeta dice cuantos marco 'no se por que'");
+  const i1 = card.indexOf("Ajustes de saldo a mano</span><b>ninguno");
+  const i2 = card.indexOf("aj.nSinSaber");
+  ok(i1 > -1 && i2 > i1, "y se ve tambien cuando no queda ningun ajuste contado");
+}
+// Los motivos, en un solo sitio. El del banco NO esta: ese no ajusta el saldo,
+// lleva a registrar el egreso, que es lo que baja las DOS caras de la cuenta.
+{
+  ok(F._MOTIVOS_AJUSTE["1"].tipo === "dedazo" && F._MOTIVOS_AJUSTE["3"].tipo === "nose",
+     "los dos motivos que si guardan un ajuste");
+  ok(F._MOTIVOS_AJUSTE["2"] === undefined,
+     "el cobro del banco no se arregla escribiendo el saldo: no esta en la lista");
+  const m = sinComentarios(sacarFuncion("_motivoDelAjuste"));
+  ok(/_ajusteAEgreso\(/.test(m), "elegir el banco lleva al egreso");
+  ok(/return null/.test(m.slice(m.indexOf("_ajusteAEgreso"))),
+     "y NO guarda ajuste: el saldo lo baja el egreso, no un numero escrito a mano");
+  const e = sinComentarios(sacarFuncion("_ajusteAEgreso"));
+  ok(!/c\.saldo\s*=/.test(e), "el egreso no toca el saldo por su cuenta");
+  ok(/S\.tab\s*=\s*"egresos"/.test(e) && /monto:String\(monto\)/.test(e),
+     "y deja el formulario empezado con el monto, para que no sea mas trabajo");
+}
+// Y se engancha: sin esto la pregunta no la ve nadie.
+{
+  const u = sinComentarios(sacarFuncion("updateCuentaSaldo"));
+  ok(/_motivoDelAjuste\(/.test(u), "ajustar un saldo pregunta el motivo");
+  ok(/if\(!mot\)\{\s*R\(\);\s*return;\s*\}/.test(u),
+     "si no elige uno, no se guarda nada: ni ajuste ni saldo nuevo");
+  ok(/tipo:mot\.tipo/.test(u), "y el motivo se guarda con el ajuste");
+  ok(u.indexOf("_motivoDelAjuste") > u.indexOf("_avisoCambioSaldo"),
+     "se pregunta despues del aviso del salto de 10x, no antes");
+}
+
+console.log("\n— ARREGLO 70: el formulario en el telefono —");
+// Ella trabaja desde el movil. Medido en Chromium a 390 px: al meterle la Hora,
+// el campo se salia por el borde y empujaba "Moneda de origen" 67 px fuera de la
+// pantalla. La causa era que esa fila llevaba la rejilla de tres columnas
+// escrita a mano, y la regla de movil solo sabe colapsar .f2 y .f3.
+{
+  ok(/@media \(max-width:600px\)/.test(HTML), "sigue existiendo la regla de moviles");
+  ok(/\.f2,\.f3\{grid-template-columns:1fr !important\}/.test(HTML),
+     "y es la que pasa las rejillas a una sola columna");
+  const inv = sinComentarios(sacarFuncion("rInventarioUsdt"));
+  const i = inv.indexOf("<label>Fecha</label>");
+  const fila = inv.slice(Math.max(0, i - 300), i);
+  ok(i > -1 && /class='f3'/.test(fila),
+     "la fila de Fecha/Hora/Moneda usa la rejilla con clase, que en el telefono se colapsa sola");
+  ok(!/grid-template-columns:1fr 1fr 1fr/.test(fila),
+     "y no una de tres columnas a mano: a esa el @media no la toca");
+}
+
+console.log("\n— FASE 2: la cuenta madre —");
+// Binance no dice a que banco entraron los bolivares de una venta de USDT. Sus
+// palabras: "yo no iba a poder saber por binance que banco se uso, si fue
+// venezuela banesco y mercantil". La madre es donde cae ese dinero.
+{
+  const montar = () => {
+    S.cuentas = [
+      { id: "cMadre", nombre: "BOLIVARES USDT", moneda: "VES", saldo: 0, esMadre: true },
+      { id: "cBdv",   nombre: "BANCO DE VENEZUELA", moneda: "VES", saldo: 0 },
+      { id: "cBan",   nombre: "BANESCO", moneda: "VES", saldo: 0 },
+      { id: "cBrl",   nombre: "PAGBANK", moneda: "BRL", saldo: 0 },
+    ];
+  };
+  montar();
+  ok(F._cuentaMadre("VES").id === "cMadre", "encuentra la madre de su moneda");
+  ok(F._cuentaMadre("BRL") === null, "y no se inventa una donde no la hay");
+  ok(F._cuentaMadre("") === null, "sin moneda, nada");
+  // Un lote de la madre lo puede gastar cualquier banco: ahi esta el dinero
+  // cuyo banco no se sabe. Sin esto se quedaria muerto y ensuciando las tasas.
+  ok(F._cuentaOMadre("cMadre", "cBdv", "VES"), "un lote de la madre lo gasta Banco de Venezuela");
+  ok(F._cuentaOMadre("cMadre", "cBan", "VES"), "y tambien Banesco: el banco no se sabia");
+  ok(F._cuentaOMadre("cBdv", "cBdv", "VES"), "y lo suyo lo sigue gastando cada uno");
+  ok(!F._cuentaOMadre("cBdv", "cBan", "VES"), "pero un lote de OTRO banco no: eso no cambia");
+  ok(F._cuentaOMadre("cBdv", "", "VES"), "sin cuenta se mira todo, como siempre");
+  ok(!F._cuentaOMadre("cMadre", "cBrl", "BRL"), "y la madre de VES no vale para reales");
+}
+// Los seis sitios que deciden que lote se consume o se devuelve tienen que
+// mirarla. Si uno se queda fuera, ese dinero se vuelve inalcanzable por ahi.
+{
+  const sitios = (sinComentarios(HTML).match(/_cuentaOMadre\(/g) || []).length;
+  ok(sitios >= 7, "todos los filtros de lote miran la madre (" + sitios + " usos)");
+  ok(!/filter\(function\(r\)\{return r\.cuentaDestinoId===cuentaId;\}\)/.test(sinComentarios(HTML)),
+     "no queda ningun filtro que la deje fuera");
+}
+// El banco gasta LO SUYO primero; la madre solo completa lo que falte. Asi sus
+// saldos de hoy se gastan solos y no hay que migrar nada.
+{
+  const correr = (saldoBanco, saldoMadre, sale) => {
+    const cDest = { id: "cBdv", moneda: "VES", saldo: saldoBanco };
+    S.cuentas = [{ id: "cMadre", moneda: "VES", saldo: saldoMadre, esMadre: true }, cDest];
+    const movs = [];
+    F._completarDesdeMadre(cDest, { monto: sale, moneda: "VES" },
+      (id, d) => movs.push({ id: id, d: Math.round(d * 100) / 100 }), false);
+    return movs;
+  };
+  ok(correr(1000, 5000, 300).length === 0, "si al banco le alcanza, la madre no se toca");
+  const m = correr(200, 5000, 1000);
+  ok(m.length === 2 && m[0].id === "cMadre" && m[0].d === -800 && m[1].d === 800,
+     "y si se queda corto, la madre le pasa EXACTAMENTE lo que falta (" + JSON.stringify(m) + ")");
+  const m2 = correr(0, 300, 1000);
+  ok(m2.length === 2 && m2[0].d === -300,
+     "si la madre tampoco tiene, pasa lo que hay: no se inventa dinero");
+  ok(correr(0, 0, 1000).length === 0, "y sin nada, no se mueve nada");
+  // Una cuenta en otra moneda (el aliado cobrado en USDT) no la toca.
+  {
+    const cU = { id: "cBin", moneda: "USDT", saldo: 0 };
+    S.cuentas = [{ id: "cMadre", moneda: "VES", saldo: 9999, esMadre: true }, cU];
+    const mv = [];
+    F._completarDesdeMadre(cU, { monto: 50, moneda: "USDT" }, (i, d) => mv.push(d), false);
+    ok(mv.length === 0, "y no se mete donde sale otra moneda (Colombia se paga en USDT)");
+  }
+}
+// Se engancha en la remesa, y el traspaso queda en _mov para poder revertirlo.
+{
+  const a = sinComentarios(sacarFuncion("actualizarCuentasPorRemesa"));
+  ok(/_completarDesdeMadre\(_cDest, _sal, adj, soloComprobar\)/.test(a),
+     "la remesa completa desde la madre antes de descontar");
+  ok(a.indexOf("_completarDesdeMadre") < a.indexOf("adj(cuentaDestId, -_sal.monto"),
+     "y ANTES de descontar, no despues: si no, el banco pasa por negativo");
+  ok(/movimientos\.push/.test(a), "los movimientos se guardan, asi que borrar la remesa lo revierte");
+}
+// El importador deja de preguntar el banco cuando hay madre — PERO SOLO EN LAS
+// VENTAS. Al comprar USDT el dinero SALE, y esa transferencia la hace ella: sabe
+// de que cuenta. "con la de reales desde pagbank o nubank, y con los bolivares
+// igual, depende de que cuenta haya mas bs para comprar".
+//
+// Mandar tambien las compras a la madre fue un fallo mio y se vio al primer
+// intento: sus 9 compras en BRL dejaron la madre de reales en -6.679,11, porque
+// pagaron desde ahi un dinero que nunca habia entrado ahi.
+{
+  const rec = sinComentarios(sacarFuncion("_binRecalcular"));
+  ok(/\(o\.tipo==="venta"\)\?_cuentaMadre\(o\.moneda\):null/.test(rec),
+     "la madre solo recibe las VENTAS; las compras siguen preguntando el banco");
+  const grp = sinComentarios(sacarFuncion("rImportarBinance"));
+  ok(/\(g\.tipo==="venta"\)\?_cuentaMadre\(g\.moneda\):null/.test(grp),
+     "y en pantalla, solo el grupo de ventas dice que van a la madre");
+  // Y lo que queda sin banco tiene que verse. Una operacion sin cuenta fiat
+  // entra al FIFO y no mueve ningun saldo: importarla en silencio deja la
+  // cuenta mintiendo. Sus 9 compras en reales salen asi.
+  ok(/sinBanco\+\+/.test(grp) && /g\.sinBanco\?/.test(grp),
+     "el grupo avisa cuantas se quedan sin banco");
+  ok(/no mueven ning/.test(grp), "y dice lo que eso significa, no solo el numero");
+  // El desplegable ensena la cuenta en la que ya esta el grupo. Antes volvia
+  // siempre al rotulo tras R() y parecia que elegir no hacia nada.
+  ok(/g\.mismo===c\.id\?" selected":""/.test(grp),
+     "el desplegable del grupo ensena la cuenta que ya tienen, no el rotulo");
+  ok(/grupos\[k\]\.mismo=null/.test(grp),
+     "y si el grupo esta repartido entre varios bancos, se queda el rotulo");
+  ok(/_cuentaMadre\(o\.moneda\)/.test(rec), "el importador busca la madre de esa moneda");
+  ok(/fiatMadre:\s*true|fiatMadre=true/.test(rec), "y marca que va ahi");
+  ok(/fiatAuto=false;\s*o\.fiatMadre=true/.test(rec),
+     "sin etiqueta de 'supuesto': no es una suposicion, es la respuesta");
+}
+// Una sola madre por moneda, y nunca una personal ni de reserva.
+{
+  const t = sinComentarios(sacarFuncion("toggleCuentaMadre"));
+  ok(/Solo puede haber una por moneda/.test(t), "no deja marcar dos de la misma moneda");
+  ok(/esPersonal\|\|c\.esReserva/.test(t), "ni una personal o de reserva: ahi cae dinero del negocio");
+}
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
