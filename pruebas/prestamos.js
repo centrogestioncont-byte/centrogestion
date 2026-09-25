@@ -2865,6 +2865,39 @@ console.log("\nArreglo 64 · entrar con huella");
   ok(/solo abre la sesi[oó]n guardada en este aparato/.test(sacarFuncion("rDesbloqueoHuella")),
      "y dice lo que es: una cerradura sobre la sesion de este aparato");
 }
+// ── FASE 1 · los colores tienen nombre ────────────────────────────────────
+// Los colores estaban escritos a mano dentro de los estilos en linea, 2.667
+// veces. Eso hacia imposible cambiar el aspecto de la app sin ir funcion por
+// funcion. Ahora van por nombre y se deciden en un solo sitio.
+//
+// Esta fase NO cambio nada de aspecto: se comprobo pestaña por pestaña,
+// identicas al pixel con su export del 20/09.
+{
+  const raiz = (HTML.match(/:root\{[\s\S]*?\n\}/) || [""])[0];
+  ok(/--sup:/.test(raiz) && /--tx:/.test(raiz) && /--ln:/.test(raiz),
+     "los colores con nombre estan declarados en :root");
+  // Todo nombre que se use tiene que existir. Uno mal escrito no da error en
+  // ningun sitio: el navegador se lo calla y el color sale transparente.
+  const usados = new Set((HTML.match(/var\(--[a-z0-9-]+\)/g) || [])
+    .map(function(v){ return v.slice(4, -1); }));
+  const declarados = new Set((raiz.match(/--[a-z0-9-]+\s*:/g) || [])
+    .map(function(v){ return v.replace(/\s*:$/, ""); }));
+  const huerfanos = [...usados].filter(function(v){ return !declarados.has(v); });
+  ok(huerfanos.length === 0,
+     "ningun color usa un nombre que no existe", huerfanos.slice(0, 6).join(", "));
+}
+// El informe del cierre de mes se QUEDA CLARO: se imprime y se le manda al
+// contador, y un PDF negro gasta tinta y se lee peor fuera de su pantalla. Por
+// eso esas dos funciones NO usan los nombres: cuando se enciendan los colores
+// oscuros, el papel sigue blanco solo.
+{
+  ["generarInformePDF", "rInformeCierre"].forEach(function(f){
+    const cuerpo = sacarFuncion(f);
+    ok(!/var\(--(sup|tx|ln|ok|mal|avi|info|ac|tit)/.test(cuerpo),
+       "el informe (" + f + ") no usa los colores del tema: se imprime en blanco");
+  });
+}
+
 // ── Las DOS pantallas de entrada van vestidas igual ───────────────────────
 // Son la misma puerta y se salta de una a otra con un boton. Si alguien viste
 // solo una, al pulsar "Entrar con correo y clave" cambia el fondo entero y
