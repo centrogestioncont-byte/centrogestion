@@ -14861,6 +14861,25 @@ function _htmlTema(){
 }
 // Aparte, porque al pulsar un boton se refresca SOLO esto. Refrescar la tarjeta
 // entera la cerraba bajo el dedo, que es el ARREGLO 32 otra vez.
+// Si los avisos estan abiertos o plegados es de ESTE aparato, como el tema: no
+// tiene por que viajar al otro ni entrar en lo que se fusiona.
+var _AVISOS_KEY="cg_avisos_v1";
+function _avisosAbiertos(){
+  try{ return localStorage.getItem(_AVISOS_KEY)!=="0"; }catch(e){ return true; }
+}
+// Plegar NO puede llamar a R(): repintar rehace el HTML entero y cierra lo que
+// tenga abierto bajo el dedo (ARREGLO 32). Se cambia el display y la flecha.
+function _toggleAvisos(){
+  var l=document.getElementById("avisos-lista");
+  if(!l) return;
+  var abrir=(l.style.display==="none");
+  l.style.display=abrir?"block":"none";
+  var f=document.getElementById("avisos-flecha");
+  if(f) f.textContent=abrir?"ocultar ▴":"ver ▾";
+  var u=document.getElementById("avisos-urg");
+  if(u) u.style.display=abrir?"none":"inline";
+  try{ localStorage.setItem(_AVISOS_KEY, abrir?"1":"0"); }catch(e){}
+}
 function _htmlBotonesTema(){
   var act=temaActual();
   function bot(id,txt,sub){
@@ -18367,7 +18386,7 @@ function rDash(){
   if(cobVencidos.length>0){
     var noms=cobVencidos.slice(0,3).map(function(c){return c.cliente+" ("+diasDesde(c.fecha)+"d)";}).join(", ");
     if(cobVencidos.length>3) noms+=" y "+(cobVencidos.length-3)+" más";
-    alertas.push({color:"var(--mal)",bg:"var(--mal-sup)",brd:"var(--mal-ln)",ico:"🚨",msg:cobVencidos.length+" cobro"+(cobVencidos.length>1?"s":"")+" con más de "+diasAlerta+" días sin cobrar: "+noms,accion:"cobrar",aLbl:"Ver →"});
+    alertas.push({urg:1,color:"var(--mal)",bg:"var(--mal-sup)",brd:"var(--mal-ln)",ico:"🚨",msg:cobVencidos.length+" cobro"+(cobVencidos.length>1?"s":"")+" con más de "+diasAlerta+" días sin cobrar: "+noms,accion:"cobrar",aLbl:"Ver →"});
   } else if(cobPendAll.length>0){
     alertas.push({color:"var(--am2-d)",bg:"var(--avi-sup)",brd:"var(--avi-ln)",ico:"⏳",msg:cobPendAll.length+" cobro"+(cobPendAll.length>1?"s":"")+" pendiente"+(cobPendAll.length>1?"s":"")+" por cobrar",accion:"cobrar",aLbl:"Ver →"});
   }
@@ -18388,7 +18407,7 @@ function rDash(){
     alertas.push({color:"var(--avi-tx)",bg:"var(--avi-sup)",brd:"var(--avi-ln)",ico:"📅",msg:cmpCntAct+" compromiso"+(cmpCntAct>1?"s":"")+" pendiente"+(cmpCntAct>1?"s":"")+" este mes: $"+f2(cmpPendAct)+" USDT",accion:"egresos_compromisos",aLbl:"Ver →"});
   }
   var ctasNeg=(S.cuentas||[]).filter(function(c){return c.activa!==false&&(parseFloat(c.saldo)||0)<0;});
-  if(ctasNeg.length>0) alertas.push({color:"var(--mal)",bg:"var(--mal-sup)",brd:"var(--mal-ln)",ico:"🔴",msg:"Cuenta"+(ctasNeg.length>1?"s":"")+" en negativo: "+ctasNeg.map(function(c){return c.nombre+" ("+f2(c.saldo)+")";}).join(", "),accion:"config_admin",aLbl:"Ver cuentas →"});
+  if(ctasNeg.length>0) alertas.push({urg:1,color:"var(--mal)",bg:"var(--mal-sup)",brd:"var(--mal-ln)",ico:"🔴",msg:"Cuenta"+(ctasNeg.length>1?"s":"")+" en negativo: "+ctasNeg.map(function(c){return c.nombre+" ("+f2(c.saldo)+")";}).join(", "),accion:"config_admin",aLbl:"Ver cuentas →"});
   var lotesRiesgo=(S.inventarioUsdt||[]).filter(function(r){
     if(r.tipo==="compra"){var t=parseFloat(r.usdt)||0,res=parseFloat(r.restante)||0;return t>0&&res>0&&res/t<0.10;}
     if(r.tipo==="venta"){var b=parseFloat(r.bs)||0,br=parseFloat(r.bsRestante)||0;return b>0&&br>0&&br/b<0.10;}
@@ -18408,12 +18427,42 @@ function rDash(){
     var recientes=todas.filter(function(r){if(!r.d)return false;var p=r.d.split("/");if(p.length<2)return false;return new Date(hoy.getFullYear(),parseInt(p[1])-1,parseInt(p[0]))>=hace7;});
     if(!recientes.length&&todas.length>0) alertas.push({color:"var(--info)",bg:"var(--info-sup2)",brd:"var(--az5)",ico:"📅",msg:"No hay operaciones en los últimos 7 días",accion:"nueva",aLbl:"Registrar →"});
   }
-  var alertasHtml=alertas.length?
-    "<div style='display:flex;flex-direction:column;gap:7px;margin-bottom:14px'>"+
-    alertas.map(function(a){
+  // ── Los avisos, en UNA linea ──────────────────────────────────────────────
+  // Eran hasta seis barras apiladas, cada una del mismo alto y del mismo peso,
+  // ocupando media pantalla antes de llegar a un solo numero. Sus palabras
+  // mirando la app de su esposo: "algo tiene este sistema que siento que no es
+  // dificil concentrarse". Seis barras son seis alarmas sonando a la vez, y
+  // cuando todo urge no urge nada.
+  //
+  // Ahora son una fila que se abre. Y la regla que la sostiene: LO URGENTE NO
+  // SE ESCONDE NUNCA. Plegada, la cabecera sigue diciendo el aviso urgente
+  // entero -un cobro de 54 dias no puede quedar detras de un "ver mas"-; lo
+  // que se pliega es el resto. Esconder un aviso rojo cuesta dinero de verdad.
+  var alertasHtml="";
+  if(alertas.length){
+    var urgentes=alertas.filter(function(a){return a.urg;});
+    var abierto=_avisosAbiertos();
+    var cab="<div onclick='_toggleAvisos()' style='display:flex;align-items:center;gap:10px;padding:13px 15px;cursor:pointer'>"+
+      "<span style='width:8px;height:8px;border-radius:50%;flex:0 0 8px;background:"+(urgentes.length?"var(--mal)":"var(--avi)")+"'></span>"+
+      "<b style='font-size:13.5px;font-weight:700;color:var(--tx)'>"+alertas.length+" cosa"+(alertas.length>1?"s":"")+" que mirar hoy</b>"+
+      // El urgente sale en la cabecera SOLO cuando esta plegado: abierto ya se
+      // lee en su fila, y repetirlo dos veces seguidas es ruido.
+      (urgentes.length
+        ? "<span id='avisos-urg' style='font-size:12px;color:var(--mal);font-weight:600;display:"+(abierto?"none":"inline")+"'>· "+_escAud(urgentes[0].msg)+(urgentes.length>1?" (+"+(urgentes.length-1)+")":"")+"</span>"
+        : "")+
+      "<span id='avisos-flecha' style='margin-left:auto;font-size:11.5px;color:var(--tx3);white-space:nowrap'>"+(abierto?"ocultar ▴":"ver ▾")+"</span>"+
+    "</div>";
+    var filas=alertas.map(function(a){
       var onclk=a.accion==="egresos_compromisos"?"S.tab='egresos';S._egTab='compromisos';R()":"S.tab='"+a.accion+"';R()";
-      return "<div style='background:"+a.bg+";border:1px solid "+a.brd+";border-radius:10px;padding:9px 13px;display:flex;align-items:center;justify-content:space-between;gap:8px'><div style='display:flex;align-items:center;gap:8px'><span style='font-size:16px'>"+a.ico+"</span><span style='font-size:12px;font-weight:600;color:"+a.color+"'>"+a.msg+"</span></div>"+(a.accion?"<button onclick=\""+onclk+"\" style='background:"+a.color+";color:var(--sobre-color);border:none;padding:4px 10px;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;font-family:inherit'>"+a.aLbl+"</button>":"")+"</div>";
-    }).join("")+"</div>":"";
+      return "<div style='display:flex;align-items:center;gap:11px;padding:11px 15px;border-top:1px solid var(--ln)'>"+
+        "<span style='width:6px;height:6px;border-radius:50%;flex:0 0 6px;background:"+a.color+"'></span>"+
+        "<span style='font-size:12.5px;color:var(--tx2);line-height:1.45'>"+_escAud(a.msg)+"</span>"+
+        (a.accion?"<button onclick=\""+onclk+"\" style='margin-left:auto;background:none;color:var(--tx2);border:1px solid var(--ln2);padding:4px 10px;border-radius:7px;font-size:11.5px;font-weight:600;cursor:pointer;white-space:nowrap;font-family:inherit'>"+a.aLbl+"</button>":"")+
+      "</div>";
+    }).join("");
+    alertasHtml="<div style='background:var(--sup);border:1px solid var(--ln);border-radius:12px;margin-bottom:14px;overflow:hidden'>"+
+      cab+"<div id='avisos-lista' style='display:"+(abierto?"block":"none")+"'>"+filas+"</div></div>";
+  }
 
   // Widget tasas de mercado (solo referencia visual — no entra en ningún cálculo)
   var tasasWidget =
