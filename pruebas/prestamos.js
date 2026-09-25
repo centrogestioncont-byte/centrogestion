@@ -2890,15 +2890,20 @@ console.log("\nArreglo 64 · entrar con huella");
 // Tres guardias, una por cada error que costo una vuelta entera al hacerlo.
 {
   const raiz = (HTML.match(/:root\{[\s\S]*?\n\}/) || [""])[0];
-  const osc  = (HTML.match(/html\[data-tema="oscuro"\]\{[\s\S]*?\n\}/) || [""])[0];
-  ok(osc.length > 0, "existe el bloque del tema oscuro");
-  // Cuatro temas, y el que manda sin elegir nada es CLARO. Seguir al aparato
-  // suena bien hasta que el telefono esta en modo noche y la app se pone negra
-  // sola en mitad de una jornada de registro.
+  const osc  = (HTML.match(/html\[data-tema="suave"\]\{[\s\S]*?\n\}/) || [""])[0];
+  ok(osc.length > 0, "existe el bloque del tema suave");
+  // DENTRO de la app no hay negro. Lo dijo dos veces: es una herramienta de
+  // contabilidad y se pasan horas registrando, asi que ni blanco a tope de
+  // brillo ni negro a tope de contraste. El negro se queda SOLO en la pantalla
+  // de entrada, que se mira diez segundos y ahi si lo eligio ella.
   ["papel", "suave"].forEach(function(t){
     ok(new RegExp('html\\[data-tema="' + t + '"\\]').test(HTML),
        "existe el tema " + t);
   });
+  ok(!/html\[data-tema="oscuro"\]/.test(HTML),
+     "no hay tema negro dentro de la app");
+  ok(/var _TEMAS=\["claro","papel","suave"\]/.test(HTML),
+     "los temas que se ofrecen son claro, papel y suave");
   ok(/return _TEMAS\.indexOf\(g\)>=0 \? g : "claro"/.test(sacarFuncion("temaActual")),
      "sin elegir nada manda CLARO, no lo que tenga puesto el aparato");
   // El <meta theme-color> pinta la barra del navegador y NO entiende var(--x).
