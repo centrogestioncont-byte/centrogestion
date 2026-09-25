@@ -740,6 +740,45 @@ número suelto no se puede perseguir, así que la diferencia viene desglosada, y
   explicar" de −$47,85 a **+$836,87**. Por eso la simulación va primero — el
   número lo canta solo, sin que nadie tenga que creerse el aviso.
 
+### El interés de un préstamo no es capital hasta que se cobra
+
+Sus palabras: *"presto una cantidad pero por los intereses cobro más"*.
+
+Un préstamo guarda **dos** montos: `p.capital` es lo que entregó y `p.monto` es
+lo que le tienen que devolver, capital + interés. De la cuenta sale solo el
+capital. `capitalRealTotal()` contaba `p.monto` entero como dinero suyo, así que
+**el día de prestar "tienes de verdad" subía el interés entero** sin que
+"deberías tener" se moviera, y ese interés salía como **sobrante sin explicar**
+hasta que el cliente pagara. Reproducido con sus datos:
+
+```
+antes ................  sin explicar  +59,28
+prestas 100 (+20) ....  sin explicar  +79,28   ← subió el interés entero
+cobras las 120 .......  sin explicar  +59,28   ← volvió solo
+```
+
+Con préstamos nuevos cada semana, ese sobrante no paraba de crecer.
+
+- **En el capital entra el capital pendiente**; el interés pendiente sale aparte
+  (`interesPrestamos`) y se ve en la tarjeta, dicho: *"aún no son tuyos"*. No se
+  esconde — es dinero que le van a pagar— pero no suma.
+- **La fracción de interés vive en `_fraccionInteresPrestamo()` y en ningún otro
+  sitio.** La leen las dos cuentas que tienen que sumar el interés pactado: lo
+  ya cobrado (`gananciaPrestamosDelMes`) y lo que falta (`capitalRealTotal`). Es
+  la misma regla que ya obliga a `cronogramaCuotas()`.
+- **Y la otra mitad, que es la que no se ve venir:** la apertura se contó con el
+  interés de los préstamos que ya estaban vivos ese día. Si el capital deja de
+  contarlo y la apertura sigue llevándolo, queda un **hueco fijo que no cierra
+  nunca**, porque no es dinero: es el punto de partida mal puesto. Sus tres
+  préstamos con interés son del 15/08, 20/08 y 09/09, todos anteriores a la
+  apertura del 11/09 — sin esto, el arreglo le habría abierto un −25,15 que no
+  existe. Lo descuenta `interesDentroDeApertura()` al medir; **el número guardado
+  no se toca**, porque volver a fijar la apertura es justo lo que no hay que
+  hacer y corregirla a mano obligaría a acertar un número que la app calcula sola.
+
+Comprobado: el "sin explicar" de su export no se mueve ni un céntimo (59,28
+antes y después), y prestar con interés ya no lo toca.
+
 ### Evolución mide la tendencia, no el capital
 
 Tenía un "Resumen total" que restaba la ganancia sumada de los meses menos lo

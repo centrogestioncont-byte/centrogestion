@@ -2237,16 +2237,27 @@ function _mesKeyISO(dstr){ // "yyyy-mm-dd" -> "yyyy-mm"
   var p=String(dstr).split("-"); if(p.length<2) return "";
   return p[0]+"-"+p[1];
 }
+// ARREGLO 71: que parte de cada unidad de un prestamo es interes. Un prestamo
+// de 100 a devolver 120 lleva 20/120 = 16,67% de interes en cada peso que el
+// cliente entrega. Vive aqui y en ningun otro sitio porque lo leen DOS cuentas
+// que tienen que sumar el total: el interes que ya se cobro (ganancia del mes)
+// y el que todavia no (que no es capital). Si cada una se lo calculara por su
+// cuenta, lo ganado y lo pendiente dejarian de dar el interes pactado.
+function _fraccionInteresPrestamo(p){
+  var montoTotal=parseFloat(p&&p.monto)||0;
+  if(montoTotal<=0) return 0;
+  var capital=parseFloat(p.capital!==undefined?p.capital:p.monto)||0;
+  var interesTotal=Math.max(0,Math.round((montoTotal-capital)*100)/100);
+  return interesTotal>0 ? interesTotal/montoTotal : 0;
+}
 function gananciaPrestamosDelMes(mesKey){
   var monto=0, usdt=0, cant=0;
   (S.prestamos||[]).forEach(function(p){
-    var capital=parseFloat(p.capital!==undefined?p.capital:p.monto)||0;
     var montoTotal=parseFloat(p.monto)||0;
     if(montoTotal<=0) return;
     var usdtPorUnidad=(parseFloat(p.usdt)||0)/montoTotal;
-    var interesTotal=Math.max(0,Math.round((montoTotal-capital)*100)/100);
-    if(interesTotal>0){
-      var fracInteres=interesTotal/montoTotal;
+    var fracInteres=_fraccionInteresPrestamo(p);
+    if(fracInteres>0){
       (p.abonos||[]).forEach(function(ab){
         if(_mesKeyISO(ab.fecha)===mesKey){
           var interesEnAbono=(parseFloat(ab.monto)||0)*fracInteres;
@@ -4420,23 +4431,81 @@ function capitalRealTotal(){
     if(!r||isNaN(r)){ sinTasa.push(mon); return; }
     porCobrar+=pend/r;
   });
-  var enPrestamos=0;
+  // ARREGLO 71: un prestamo entra aqui por su CAPITAL pendiente, no por el
+  // total a cobrar. El interes pactado todavia no es dinero suyo: lo gana
+  // cuando el cliente paga, y ahi lo apunta gananciaPrestamosDelMes().
+  //
+  // Antes entraba el total (p.monto = capital + interes), y de la cuenta solo
+  // habia salido el capital. Reproducido con sus datos: prestar 100 con 20 de
+  // interes subia "tienes de verdad" 20 sin mover "deberias tener", y esos 20
+  // salian como sobrante SIN EXPLICAR hasta el dia que el cliente pagara. Con
+  // prestamos nuevos cada semana, el sobrante no paraba de crecer.
+  //
+  // El interes pendiente no se tira: sale aparte, para que ella siga viendo lo
+  // que le tienen que devolver entero.
+  var enPrestamos=0, interesPrestamos=0;
   (S.prestamos||[]).forEach(function(p){
     if(p.estado==="pagado"||p.estado==="saldado") return;
     var abon=(p.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);
     var pend=Math.max(0,(parseFloat(p.monto||p.sal)||0)-abon-(parseFloat(p.ent)||0));
     if(pend<=0) return;
+    var fr=_fraccionInteresPrestamo(p);
+    var pendInt=pend*fr, pendCap=pend-pendInt;
     var mon=p.mon||"USDT";
-    if(mon==="USDT"||mon==="USD"){ enPrestamos+=pend; return; }
+    if(mon==="USDT"||mon==="USD"){ enPrestamos+=pendCap; interesPrestamos+=pendInt; return; }
     var r=getRateToUsdt(mon);
     if(!r||isNaN(r)){ sinTasa.push(mon); return; }
-    enPrestamos+=pend/r;
+    enPrestamos+=pendCap/r; interesPrestamos+=pendInt/r;
   });
   var r2v=function(n){return Math.round(n*100)/100;};
   var total=r2v(enCuentas+enReserva+porCobrar+enPrestamos);
   return {enCuentas:r2v(enCuentas), enReserva:r2v(enReserva), porCobrar:r2v(porCobrar),
-          enPrestamos:r2v(enPrestamos), enLaCalle:r2v(porCobrar+enPrestamos), total:total,
+          enPrestamos:r2v(enPrestamos), interesPrestamos:r2v(interesPrestamos),
+          enLaCalle:r2v(porCobrar+enPrestamos), total:total,
           sinTasa:sinTasa.filter(function(m,i,a){return a.indexOf(m)===i;})};
+}
+
+// ARREGLO 71 · la otra mitad. La apertura se fijo con el capital de ENTONCES,
+// que por lo de arriba llevaba dentro el interes aun no cobrado de los
+// prestamos que ya estaban vivos ese dia. Si el capital deja de contarlo y la
+// apertura sigue llevandolo, aparece un hueco permanente del tamaño de ese
+// interes — y no se cierra nunca, porque es un error del punto de partida.
+//
+// Medido con sus datos del 14/09: sus tres prestamos con interes son del 15/08,
+// 20/08 y 09/09, todos ANTERIORES a la apertura del 11/09, asi que sin esto el
+// arreglo le habria abierto un −25,15 que no existe.
+//
+// No se toca el numero guardado: se descuenta al medir. Volver a fijar la
+// apertura es justo lo que no hay que hacer, y corregirla a mano obligaria a
+// acertar un numero que la app sabe calcular sola.
+function interesDentroDeApertura(desdeIso){
+  var r={total:0, n:0, sinTasa:false};
+  if(!desdeIso) return r;
+  (S.prestamos||[]).forEach(function(p){
+    var fr=_fraccionInteresPrestamo(p);
+    if(fr<=0) return;
+    var nacIso=_isoDeDDMMAA(p.d);
+    if(!nacIso || nacIso>desdeIso) return;     // nacio despues: no estaba en la foto
+    // Lo que quedaba por cobrar EL DIA de la apertura, no hoy.
+    var abon=0;
+    (p.abonos||[]).forEach(function(ab){
+      var i=String(ab.fecha||"").slice(0,10);
+      if(i && i<=desdeIso) abon+=parseFloat(ab.monto)||0;
+    });
+    var pend=Math.max(0,(parseFloat(p.monto||p.sal)||0)-abon-(parseFloat(p.ent)||0));
+    if(pend<=0) return;
+    var pendInt=pend*fr;
+    var mon=p.mon||"USDT", u;
+    if(mon==="USDT"||mon==="USD") u=pendInt;
+    else {
+      var t=getRateToUsdt(mon);
+      if(!t||isNaN(t)||t<=0){ r.sinTasa=true; return; }
+      u=pendInt/t;
+    }
+    r.total+=u; r.n++;
+  });
+  r.total=Math.round(r.total*100)/100;
+  return r;
 }
 
 // Lista de meses desde la apertura hasta hoy, en orden.
@@ -4716,7 +4785,12 @@ function conciliacionCapital(){
   // ARREGLO 47: lo que se fue a una cuenta personal salió del capital igual que
   // un gasto, aunque no esté anotado como tal. Baja los dos lados a la vez.
   var traspPers=traspasosAPersonal(desde);
-  var deberias=r2v(apertura+bruta-egEmpresa-egPersonal-socios-traspPers.total);
+  // ARREGLO 71: la apertura se contó con el interés de los préstamos que ya
+  // estaban vivos ese día, y el capital ya no lo cuenta. Se descuenta aquí para
+  // que los dos lados midan lo mismo; si no, queda un hueco fijo que no cierra
+  // nunca porque no es dinero, es el punto de partida mal puesto.
+  var intAp=interesDentroDeApertura(desde);
+  var deberias=r2v(apertura-intAp.total+bruta-egEmpresa-egPersonal-socios-traspPers.total);
   var diferencia=r2v(real.total-deberias);
   // De qué está hecha esa diferencia: los ajustes a mano y el desfase de las
   // tasas se explican solos, lo que quede es lo único que hay que perseguir.
@@ -4729,7 +4803,7 @@ function conciliacionCapital(){
     bruta:r2v(bruta), egEmpresa:r2v(egEmpresa), egPersonal:r2v(egPersonal),
     egPersonalSin:r2v(egPersonalSin), socios:r2v(socios),
     deberias:deberias, real:real, diferencia:diferencia,
-    ajustes:ajustes, tasas:tasas, traspPers:traspPers, sinExplicar:sinExplicar,
+    ajustes:ajustes, tasas:tasas, traspPers:traspPers, intAp:intAp, sinExplicar:sinExplicar,
     // ARREGLO 60: la tarjeta dice contra qué apertura está midiendo. Una
     // apertura sin foto de saldos no permite comparar cuenta por cuenta
     // cuando algo no cuadra, y hasta ahora eso no se veía en ninguna parte.
@@ -6436,8 +6510,12 @@ function fijarAperturaHoy(){
     "En cuentas:   $"+f2(cap.enCuentas)+"\n"+
     (cap.enReserva>0?"En reserva:   $"+f2(cap.enReserva)+"\n":"")+
     (cap.porCobrar>0?"Por cobrar:   $"+f2(cap.porCobrar)+"\n":"")+
-    (cap.enPrestamos>0?"En préstamos: $"+f2(cap.enPrestamos)+"\n":"")+
+    (cap.enPrestamos>0?"En préstamos: $"+f2(cap.enPrestamos)+" (capital)\n":"")+
     "─────────────────\nTOTAL:        $"+f2(cap.total)+" USDT\n\n"+
+    // ARREGLO 71: el interés pactado no entra en el total. Se dice aquí porque
+    // este número se queda fijo como punto de partida: si no cuadra con lo que
+    // ella contó a mano, tiene que saber por qué falta.
+    ((cap.interesPrestamos||0)>0.005?"(No cuenta el interés aún no cobrado de los préstamos, $"+f2(cap.interesPrestamos)+": es tuyo cuando te lo paguen.)\n\n":"")+
     "Desde hoy la app compara cada mes lo que deberías tener contra lo que tienes.\n\n"+
     "Antes de confirmar: ¿los saldos de tus cuentas son los de verdad?";
   if(!confirm(msg)) return;
@@ -12051,7 +12129,10 @@ function rCapitalTotal(){
         "<div style='display:flex;justify-content:space-between'><span>En cuentas (las 4 monedas)</span><b>$"+f2(R.enCuentas)+"</b></div>"+
         (R.enReserva>0?"<div style='display:flex;justify-content:space-between'><span>En reserva</span><b>$"+f2(R.enReserva)+"</b></div>":"")+
         (R.porCobrar>0?"<div style='display:flex;justify-content:space-between'><span>Por cobrar</span><b>$"+f2(R.porCobrar)+"</b></div>":"")+
-        (R.enPrestamos>0?"<div style='display:flex;justify-content:space-between'><span>En préstamos</span><b>$"+f2(R.enPrestamos)+"</b></div>":"")+
+        (R.enPrestamos>0?"<div style='display:flex;justify-content:space-between'><span>En préstamos (capital)</span><b>$"+f2(R.enPrestamos)+"</b></div>":"")+
+        // ARREGLO 71: el interés pactado se ve, pero no suma. Es lo que le van a
+        // pagar, no lo que ya tiene: entra como ganancia el día que se cobra.
+        ((R.interesPrestamos||0)>0.005?"<div style='display:flex;justify-content:space-between;color:var(--tx4);font-size:10.5px'><span>+ intereses por cobrar (aún no son tuyos)</span><b>$"+f2(R.interesPrestamos)+"</b></div>":"")+
         "<div style='display:flex;justify-content:space-between;border-top:1px solid var(--ln);margin-top:5px;padding-top:5px;font-size:13px'><b>Tienes de verdad</b><b>$"+f2(R.total)+"</b></div>"+
         (R.sinTasa.length?"<div style='color:var(--mal);font-size:11.5px;margin-top:4px'>⚠️ Sin tasa para "+R.sinTasa.join(", ")+": ese dinero no está contado.</div>":"")+
       "</div>";

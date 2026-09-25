@@ -68,7 +68,8 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "ajusteDiasPrimeraCuota", "interesPorAjusteDias",
                     "cuotasRecomendadas", "limiteCredito",
                     "costoOperativoPorPrestamo", "pctCostoOperativo",
-                    "capitalRealTotal", "_mesesDesde", "_acumuladosMes",
+                    "capitalRealTotal", "_fraccionInteresPrestamo", "interesDentroDeApertura",
+                    "_mesesDesde", "_acumuladosMes",
                     "conciliacionCapital", "getMesKeyActual", "ajustesDesdeApertura", "_isoDeDDMMAA", "_motivoDelAjuste", "_ajusteAEgreso", "_cuentaMadre", "_cuentaOMadre", "_completarDesdeMadre", "toggleCuentaMadre",
                     "traspasosAPersonal", "efectoTasasDesde", "_isoDeFechaLote",
                     "tasaDeReferencia", "_tasaFijadaAMano", "setTasaDia", "soltarTasaDia",
@@ -4307,6 +4308,86 @@ console.log("\n— FASE 2: la cuenta madre —");
   const t = sinComentarios(sacarFuncion("toggleCuentaMadre"));
   ok(/Solo puede haber una por moneda/.test(t), "no deja marcar dos de la misma moneda");
   ok(/esPersonal\|\|c\.esReserva/.test(t), "ni una personal o de reserva: ahi cae dinero del negocio");
+}
+
+// ── ARREGLO 71 · el interes de un prestamo no es capital hasta que se cobra ──
+// Ella lo dijo: "presto una cantidad pero por los intereses cobro mas". De la
+// cuenta sale el CAPITAL; p.monto es capital + interes. Contar p.monto entero
+// como dinero suyo subia "tienes de verdad" el dia de prestar sin mover
+// "deberias tener", y ese interes salia como SOBRANTE SIN EXPLICAR hasta que el
+// cliente pagara. Con prestamos nuevos cada semana no paraba de crecer.
+{
+  const f = (n) => Math.round(n * 100) / 100;
+  // La fraccion de interes sale de un solo sitio, y las dos cuentas que la usan
+  // —lo ya cobrado y lo que falta— tienen que sumar el interes pactado.
+  ok(f(F._fraccionInteresPrestamo({monto:120, capital:100}) * 120) === 20,
+     "la fraccion de interes reparte los 20 de un 100→120");
+  ok(F._fraccionInteresPrestamo({monto:100, capital:100}) === 0,
+     "un prestamo sin interes no reparte nada");
+  ok(F._fraccionInteresPrestamo({monto:100}) === 0,
+     "y uno viejo sin 'capital' tampoco: capital=monto, interes cero");
+  ok(/_fraccionInteresPrestamo\(p\)/.test(sacarFuncion("gananciaPrestamosDelMes")),
+     "la ganancia del mes la lee de ahi, no se la calcula aparte");
+  ok(/_fraccionInteresPrestamo\(p\)/.test(sacarFuncion("capitalRealTotal")),
+     "y el capital tambien: el mismo dato no se calcula en dos sitios");
+
+  // El capital: solo lo prestado. El interes se ve, pero aparte y sin sumar.
+  S.cuentas = [{id:"c1", moneda:"USDT", saldo:0, activa:true}];
+  S.cuentasCobrar = []; S.prestamos = [
+    {id:1, d:"01/09/26", mon:"USDT", monto:120, capital:100, estado:"activo", abonos:[], ent:0}
+  ];
+  const cap1 = F.capitalRealTotal();
+  ok(cap1.enPrestamos === 100, "en prestamos entra el capital, no el total a cobrar", cap1.enPrestamos);
+  ok(cap1.interesPrestamos === 20, "y el interes pendiente sale aparte", cap1.interesPrestamos);
+  ok(cap1.total === 100, "el capital total NO lo cuenta", cap1.total);
+  // A medio pagar, cada abono devuelve capital e interes en la misma proporcion.
+  S.prestamos[0].abonos = [{fecha:"2026-09-20", monto:60}];
+  const cap2 = F.capitalRealTotal();
+  ok(cap2.enPrestamos === 50 && cap2.interesPrestamos === 10,
+     "a mitad de pago, la mitad de cada cosa", cap2.enPrestamos + "/" + cap2.interesPrestamos);
+  ok(f(cap2.interesPrestamos + 60 * F._fraccionInteresPrestamo(S.prestamos[0])) === 20,
+     "lo cobrado mas lo pendiente da el interes pactado, sin perder un centimo");
+  // En otra moneda se convierte DIVIDIENDO, igual que todo lo demas.
+  S.prestamos = [{id:2, d:"01/09/26", mon:"BRL", monto:540, capital:270, estado:"activo", abonos:[], ent:0}];
+  const cap3 = F.capitalRealTotal();
+  ok(cap3.enPrestamos === 50 && cap3.interesPrestamos === 50,
+     "en BRL se divide por la tasa, las dos partes", cap3.enPrestamos + "/" + cap3.interesPrestamos);
+
+  // La otra mitad del arreglo: la apertura se conto con el interes de los
+  // prestamos que YA estaban vivos ese dia. Si el capital deja de contarlo y la
+  // apertura sigue llevandolo, queda un hueco fijo que no cierra nunca — no es
+  // dinero, es el punto de partida mal puesto.
+  S.prestamos = [
+    {id:3, d:"01/09/26", mon:"USDT", monto:120, capital:100, estado:"activo", abonos:[], ent:0},
+    {id:4, d:"20/09/26", mon:"USDT", monto:240, capital:200, estado:"activo", abonos:[], ent:0}
+  ];
+  const ia = F.interesDentroDeApertura("2026-09-11");
+  ok(ia.total === 20 && ia.n === 1,
+     "solo cuenta el interes de los prestamos anteriores a la apertura", ia.total + "/" + ia.n);
+  // Y lo que ya se habia cobrado antes de la apertura no estaba pendiente.
+  S.prestamos = [{id:5, d:"01/09/26", mon:"USDT", monto:120, capital:100, estado:"activo",
+                  abonos:[{fecha:"2026-09-05", monto:60}, {fecha:"2026-09-30", monto:30}], ent:0}];
+  const ia2 = F.interesDentroDeApertura("2026-09-11");
+  ok(ia2.total === 10,
+     "y se mide lo que quedaba pendiente EL DIA de la apertura, no hoy", ia2.total);
+  ok(/apertura-intAp\.total\+bruta/.test(HTML),
+     "'deberias tener' descuenta ese interes: los dos lados miden lo mismo");
+
+  // La prueba de verdad, punta a punta: prestar con interes no puede mover el
+  // "sin explicar". Antes lo subia exactamente el interes del prestamo.
+  S.cuentas = [{id:"c1", moneda:"USDT", saldo:1000, activa:true}];
+  S.cuentasCobrar = []; S.prestamos = []; S.ajustesSaldo = []; S.traspasos = [];
+  S.config = {aperturaUsdt:1000, aperturaFecha:"2026-09-01", aperturaBase:{}};
+  const antes = F.conciliacionCapital();
+  // presta 100 con 20 de interes: de la cuenta salen 100, el prestamo nace en 120
+  S.cuentas[0].saldo = 900;
+  S.prestamos = [{id:6, d:"05/09/26", mon:"USDT", monto:120, capital:100, estado:"activo", abonos:[], ent:0}];
+  const tras = F.conciliacionCapital();
+  ok(antes.sinExplicar === tras.sinExplicar,
+     "prestar con interes no inventa un sobrante",
+     antes.sinExplicar + " -> " + tras.sinExplicar);
+  ok(tras.real.total === 1000, "el capital sigue siendo el mismo dinero", tras.real.total);
+  S.cuentas = []; S.cuentasCobrar = []; S.prestamos = []; S.config = {};
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
