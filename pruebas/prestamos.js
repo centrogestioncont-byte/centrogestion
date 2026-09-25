@@ -3028,6 +3028,39 @@ console.log("\nArreglo 64 · entrar con huella");
      "y ya no da por hecho cual manda sin elegir");
 }
 
+// ── Las pantallas que no tenian NI UN numero grande ───────────────────────
+// Eran ocho. Todo al mismo tamaño, asi que no habia donde posar el ojo.
+{
+  const cob = sinComentarios(sacarFuncion("rCuentasCobrar"));
+
+  // LA SUMA. Los cargos estan en monedas distintas -BRL, VES, USDT- y sumar
+  // 97 BRL con 80.000 VES da un numero que no existe. El primer intento de
+  // esta tarjeta hacia exactamente eso y enseñaba "$177,00": la suma cruda de
+  // dos cargos en reales, con simbolo de dolar delante.
+  ok(/getRateToUsdt\(mon\)/.test(cob) && /monto\/r/.test(cob),
+     "lo que le deben se suma en USDT y DIVIDIENDO por la tasa, no en crudo");
+  ok(/parcial/.test(cob),
+     "y si a una moneda le falta la tasa, el total se marca parcial en vez de quedarse corto en silencio");
+
+  // Un solo numero para el mismo dato. Sumar arriba por cargo y abajo por
+  // cliente -cada saldo ya redondeado- daba 34,27 en un sitio y 34,28 en el
+  // otro, en la misma pantalla.
+  ok(/var totalPendUsdtCC=_pend\.total/.test(cob),
+     "el panel de abajo lee el mismo total que la tarjeta de arriba");
+
+  // Las tarjetas son las piezas compartidas, no unas propias.
+  ["rCuentasCobrar", "rEgresos"].forEach(function(f){
+    ok(/class='pz-card'/.test(sinComentarios(sacarFuncion(f))),
+       f + " usa las piezas compartidas");
+  });
+
+  // El informe del cierre se queda FUERA a proposito: se imprime y se le manda
+  // al contador, asi que sus colores no pueden seguir al tema. Meterle las
+  // piezas -que van por var(--...)- lo rompe.
+  ok(!/class='pz-/.test(sacarFuncion("rInformeCierre")),
+     "el informe del cierre no usa las piezas: se imprime en blanco");
+}
+
 // ── Clientes: la negrita vuelve a significar algo ─────────────────────────
 // Medido antes: el 85% del texto de esta pantalla estaba en negrita -el
 // codigo, la ruta, el pais, el nombre, todo-. Cuando todo esta en negrita, la
