@@ -2892,6 +2892,18 @@ console.log("\nArreglo 64 · entrar con huella");
   const raiz = (HTML.match(/:root\{[\s\S]*?\n\}/) || [""])[0];
   const osc  = (HTML.match(/html\[data-tema="oscuro"\]\{[\s\S]*?\n\}/) || [""])[0];
   ok(osc.length > 0, "existe el bloque del tema oscuro");
+  // Cuatro temas, y el que manda sin elegir nada es CLARO. Seguir al aparato
+  // suena bien hasta que el telefono esta en modo noche y la app se pone negra
+  // sola en mitad de una jornada de registro.
+  ["papel", "suave"].forEach(function(t){
+    ok(new RegExp('html\\[data-tema="' + t + '"\\]').test(HTML),
+       "existe el tema " + t);
+  });
+  ok(/return _TEMAS\.indexOf\(g\)>=0 \? g : "claro"/.test(sacarFuncion("temaActual")),
+     "sin elegir nada manda CLARO, no lo que tenga puesto el aparato");
+  // El <meta theme-color> pinta la barra del navegador y NO entiende var(--x).
+  ok(!/setAttribute\("content",[\s\S]{0,120}var\(--/.test(HTML),
+     "el color de la barra del navegador va en hex, no por nombre");
 
   // 1. NINGUN nombre declarado dos veces. Paso con --az6-s: la cola larga de la
   //    fase 2 llego a la letra "s" y choco con la marca que usaba el pase del
