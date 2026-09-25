@@ -3028,6 +3028,29 @@ console.log("\nArreglo 64 · entrar con huella");
      "y ya no da por hecho cual manda sin elegir");
 }
 
+// ── En NINGUNA pantalla queda letra por debajo de 10px ────────────────────
+// Sus palabras: "yo me imagino que todo eso aplica en todas las pestañas y no
+// solo en resumen". Tenia razon. Esta guardia es la que lo sostiene para las
+// que vengan: una pantalla nueva con letra de 8 o 9px no pasa.
+// El informe del cierre queda fuera porque se imprime en papel, donde 9px se
+// lee bien y el sitio escasea.
+{
+  const prot = ["generarInformePDF", "rInformeCierre"].map(function(f){
+    const i = HTML.indexOf("function " + f + "(");
+    return i < 0 ? null : [i, HTML.indexOf("\n}\n", i)];
+  }).filter(Boolean);
+  const chicas = [];
+  let m;
+  const re = /font-size:([\d.]+)px/g;
+  while ((m = re.exec(HTML)) !== null) {
+    if (prot.some(function(r){ return m.index >= r[0] && m.index < r[1]; })) continue;
+    if (parseFloat(m[1]) < 10) chicas.push(m[1] + "px");
+  }
+  ok(chicas.length === 0,
+     "en ninguna pantalla queda letra por debajo de 10px",
+     chicas.length + " sitios, p.ej. " + chicas.slice(0, 4).join(", "));
+}
+
 // ── Las pantallas que no tenian NI UN numero grande ───────────────────────
 // Eran ocho. Todo al mismo tamaño, asi que no habia donde posar el ojo.
 {
