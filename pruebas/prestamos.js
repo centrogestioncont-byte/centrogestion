@@ -2886,6 +2886,29 @@ console.log("\nArreglo 64 · entrar con huella");
   ok(huerfanos.length === 0,
      "ningun color usa un nombre que no existe", huerfanos.slice(0, 6).join(", "));
 }
+// FASE 2 · ya no queda ningun color escrito a mano fuera del informe. Esta es
+// la guardia que sostiene todo el rediseño: si alguien añade una pantalla nueva
+// con colores a pelo, el tema oscuro la dejaria blanca en medio de lo demas y
+// nadie se enteraria hasta verlo en produccion.
+{
+  const bloques = [];
+  const est = /style=(['"])([\s\S]*?)\1/g;
+  const prot = ["generarInformePDF", "rInformeCierre"].map(function(f){
+    const i = HTML.indexOf("function " + f + "(");
+    const j = i < 0 ? -1 : HTML.indexOf("\n}\n", i);
+    return i < 0 ? null : [i, j > 0 ? j + 3 : HTML.length];
+  }).filter(Boolean);
+  let m;
+  while ((m = est.exec(HTML)) !== null) {
+    if (prot.some(function(r){ return m.index >= r[0] && m.index < r[1]; })) continue;
+    const hs = m[2].match(/#[0-9a-fA-F]{3,8}/g);
+    if (hs) bloques.push(hs.join(" ") + "  →  " + m[2].slice(0, 60));
+  }
+  ok(bloques.length === 0,
+     "ningun color escrito a mano fuera del informe",
+     bloques.length ? bloques.length + " sitios, p.ej. " + bloques[0] : "");
+}
+
 // El informe del cierre de mes se QUEDA CLARO: se imprime y se le manda al
 // contador, y un PDF negro gasta tinta y se lee peor fuera de su pantalla. Por
 // eso esas dos funciones NO usan los nombres: cuando se enciendan los colores
