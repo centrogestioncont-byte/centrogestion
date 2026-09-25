@@ -3028,6 +3028,32 @@ console.log("\nArreglo 64 · entrar con huella");
      "y ya no da por hecho cual manda sin elegir");
 }
 
+// ── Nada se queda pegado al deslizar, salvo un encabezado de columna ──────
+// Sus palabras: "un boton que cuando deslizo se queda ahi fijo". Era la barra
+// de Total empresa de Balance de Cuentas, con position:sticky: en el telefono
+// son 163px de los 614 visibles -el 27% de la pantalla- tapando la lista de
+// cuentas todo el rato, y el boton de Tasas iba dentro, asi que parecia un
+// boton flotante.
+//
+// Lo unico que puede seguir pegado es el ENCABEZADO DE COLUMNA de una tabla:
+// son 40px y sin ellos, bajando por 119 operaciones, se pierde de vista que
+// columna es cual. Un bloque entero pegado es otra cosa.
+{
+  const fuera = [];
+  ["rCapitalTotal", "rInventarioUsdt", "rPrestamos", "rCuentasCobrar", "rEgresos", "rDash"].forEach(function(f){
+    const c = sinComentarios(sacarFuncion(f));
+    (c.match(/position:sticky/g) || []).forEach(function(){
+      // solo se admite si es la fila de encabezado de una tabla
+      if (!/<thead><tr style='position:sticky/.test(c)) fuera.push(f);
+    });
+  });
+  ok(fuera.length === 0,
+     "ninguna pantalla deja un bloque pegado al deslizar",
+     [...new Set(fuera)].join(", "));
+  ok(!/position:sticky;top:0;z-index:10;background:var\(--fondo-osc\)/.test(HTML),
+     "y la barra de Total empresa ya no se clava arriba");
+}
+
 // ── En NINGUNA pantalla queda letra por debajo de 10px ────────────────────
 // Sus palabras: "yo me imagino que todo eso aplica en todas las pestañas y no
 // solo en resumen". Tenia razon. Esta guardia es la que lo sostiene para las
