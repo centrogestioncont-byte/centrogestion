@@ -3009,6 +3009,25 @@ console.log("\nArreglo 64 · entrar con huella");
      gritan.join(" · "));
 }
 
+// La barra de arriba llevaba siete botones rellenos de color pleno. Ahora el
+// relleno es el mismo gris para todos y el color va en el borde. Las DOS que
+// borran -Restaurar y la papelera- son la excepcion y tienen que seguir
+// distinguiendose: si los siete fueran identicos, lo unico que separaria
+// "Exportar" de "Borrar todo" seria un emoji de 14 pixeles.
+{
+  const tb = HTML.slice(HTML.indexOf('d.id="adm-btns"'), HTML.indexOf("tb.appendChild(d)"));
+  ok(tb.length > 0, "la barra de administrador sigue ahi");
+  ok(!/rgba\(\s*(?:100|255)\s*,\s*(?:100|180|200|215)\s*,\s*(?:0|100|255|100)\s*,/.test(tb),
+     "los botones de la barra ya no llevan relleno de color pleno");
+  ["restoreFromBackup", "clearAllData"].forEach(function(f){
+    const i = tb.indexOf(f);
+    ok(i > 0 && /_btNo/.test(tb.slice(i, i + 160)),
+       "el boton que borra (" + f + ") conserva su rojo y no se confunde con los demas");
+  });
+  ok(/guardarEnServidorYa[\s\S]{0,160}_btSi/.test(tb),
+     "Guardar, que es la que mas usa, se sigue encontrando sin leer");
+}
+
 // FASE 2 · ya no queda ningun color escrito a mano fuera del informe. Esta es
 // la guardia que sostiene todo el rediseño: si alguien añade una pantalla nueva
 // con colores a pelo, el tema oscuro la dejaria blanca en medio de lo demas y
