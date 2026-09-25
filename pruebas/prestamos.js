@@ -2973,6 +2973,42 @@ console.log("\nArreglo 64 · entrar con huella");
   });
 }
 
+// ── El interior tiene que poder mirarse horas ─────────────────────────────
+// Ella lo dijo dos veces: "es un sistema de contabilidad, se pasan horas
+// registrando datos, no puede ser tosco para la vista". La primera lectura
+// -"esta demasiado oscuro"- era falsa: su pantalla de referencia es MAS oscura
+// que este tema (fondo negro, tarjetas #1C1C1E). Lo que cansaba eran los
+// fondos de aviso saturados: 19 bloques de mas de 4.000 pixeles solo en el
+// Resumen, con cromas de 47 a 66 donde el panel vale 8. Ahora rozan el color del panel y el
+// color vive en la letra y el borde. Si alguien vuelve a subirlos, vuelve el
+// cansancio, asi que aqui se mide.
+{
+  const FONDOS = ["--mal-sup","--ok-sup","--avi-sup","--info-sup","--info-sup2",
+    "--avi-sup2","--am6-j5","--am6-e","--az6-p","--az6-f","--az6-n","--az6-o","--vd6-c"];
+  const osc = (HTML.match(/html\[data-tema="suave"\]\{[\s\S]*?\n\}/) || [""])[0];
+  // Se mide el CROMA -lo que separa el canal mas fuerte del mas debil-, no la
+  // saturacion de HSL. La saturacion engaña en los colores muy oscuros: un azul
+  // casi negro como #1a202c da 0,26 y parece que grita, cuando al lado del
+  // panel no se distingue. El croma dice lo que de verdad importa: cuanto
+  // color lleva el relleno. Para situarlo: el panel de este tema vale 8 y la
+  // tarjeta de su pantalla de referencia, 2.
+  const cromaDe = function(hex){
+    const h = hex.replace("#","");
+    const c = [0,2,4].map(function(i){ return parseInt(h.slice(i,i+2),16); });
+    return Math.max.apply(null,c) - Math.min.apply(null,c);
+  };
+  const gritan = [];
+  FONDOS.forEach(function(k){
+    const m = osc.match(new RegExp(k.replace(/[-]/g,"\\-") + "\\s*:\\s*(#[0-9a-fA-F]{6})"));
+    if (!m) { gritan.push(k + " (no esta)"); return; }
+    const c = cromaDe(m[1]);
+    if (c > 22) gritan.push(k + " " + m[1] + " croma " + c);
+  });
+  ok(gritan.length === 0,
+     "ningun fondo de aviso del tema suave vuelve a gritar (croma <= 22)",
+     gritan.join(" · "));
+}
+
 // FASE 2 · ya no queda ningun color escrito a mano fuera del informe. Esta es
 // la guardia que sostiene todo el rediseño: si alguien añade una pantalla nueva
 // con colores a pelo, el tema oscuro la dejaria blanca en medio de lo demas y
