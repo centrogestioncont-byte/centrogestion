@@ -2865,6 +2865,30 @@ console.log("\nArreglo 64 · entrar con huella");
   ok(/solo abre la sesi[oó]n guardada en este aparato/.test(sacarFuncion("rDesbloqueoHuella")),
      "y dice lo que es: una cerradura sobre la sesion de este aparato");
 }
+// ── Las DOS pantallas de entrada van vestidas igual ───────────────────────
+// Son la misma puerta y se salta de una a otra con un boton. Si alguien viste
+// solo una, al pulsar "Entrar con correo y clave" cambia el fondo entero y
+// parece un fallo de la app. Por eso la guardia mira las dos a la vez.
+{
+  const desb = sinComentarios(sacarFuncion("rDesbloqueoHuella"));
+  const log  = sinComentarios(sacarFuncion("rLogin"));
+  ["login-wrap","ent-caja","login-card","ent-avwrap","ent-avatar","ent-hola","ent-marca",
+   "ent-btn","ent-chips"].forEach(function(c){
+    ok(desb.indexOf(c)>=0 && log.indexOf(c)>=0,
+       "las dos pantallas de entrada usan ."+c);
+  });
+  // El login sigue siendo el login: los campos y el boton que lee entrarConCorreo
+  ok(/id="api-correo"/.test(log) && /id="api-clave"/.test(log) && /id="api-btn"/.test(log),
+     "el login conserva los tres id que lee entrarConCorreo");
+  ok(/entrarConCorreo\(\)/.test(log), "y el boton sigue llamando a entrarConCorreo");
+  ok(/ent-input/.test(log), "los campos del login usan la caja oscura, no la blanca de antes");
+  ok(/ent-ojo/.test(log) && /el\.type=el\.type===/.test(log),
+     "y el ojo para ver la clave sigue ahi");
+  // La inicial es lo que dice CON QUE CUENTA entras, que con produccion y
+  // pruebas abiertas a la vez no es un adorno.
+  ok(/ent-avatar">'\+\(ini\?/.test(sacarFuncion("rDesbloqueoHuella")),
+     "el desbloqueo enseña la inicial de la persona");
+}
 {
   const emerg = sinComentarios(sacarFuncion("entrarConClaveEnVezDeHuella"));
   ok(/_bloqueoHuella=false/.test(emerg), "la salida de emergencia quita el bloqueo");
