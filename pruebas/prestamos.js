@@ -2886,6 +2886,93 @@ console.log("\nArreglo 64 · entrar con huella");
   ok(huerfanos.length === 0,
      "ningun color usa un nombre que no existe", huerfanos.slice(0, 6).join(", "));
 }
+// ── FASE 3 · el tema oscuro ───────────────────────────────────────────────
+// Tres guardias, una por cada error que costo una vuelta entera al hacerlo.
+{
+  const raiz = (HTML.match(/:root\{[\s\S]*?\n\}/) || [""])[0];
+  const osc  = (HTML.match(/html\[data-tema="suave"\]\{[\s\S]*?\n\}/) || [""])[0];
+  ok(osc.length > 0, "existe el bloque del tema suave");
+  // DENTRO de la app no hay negro. Lo dijo dos veces: es una herramienta de
+  // contabilidad y se pasan horas registrando, asi que ni blanco a tope de
+  // brillo ni negro a tope de contraste. El negro se queda SOLO en la pantalla
+  // de entrada, que se mira diez segundos y ahi si lo eligio ella.
+  ["papel", "suave"].forEach(function(t){
+    ok(new RegExp('html\\[data-tema="' + t + '"\\]').test(HTML),
+       "existe el tema " + t);
+  });
+  ok(!/html\[data-tema="oscuro"\]/.test(HTML),
+     "no hay tema negro dentro de la app");
+  ok(/var _TEMAS=\["claro","papel","suave"\]/.test(HTML),
+     "los temas que se ofrecen son claro, papel y suave");
+  ok(/return _TEMAS\.indexOf\(g\)>=0 \? g : "claro"/.test(sacarFuncion("temaActual")),
+     "sin elegir nada manda CLARO, no lo que tenga puesto el aparato");
+  // El <meta theme-color> pinta la barra del navegador y NO entiende var(--x).
+  ok(!/setAttribute\("content",[\s\S]{0,120}var\(--/.test(HTML),
+     "el color de la barra del navegador va en hex, no por nombre");
+
+  // 1. NINGUN nombre declarado dos veces. Paso con --az6-s: la cola larga de la
+  //    fase 2 llego a la letra "s" y choco con la marca que usaba el pase del
+  //    bloque <style>. El segundo gana en silencio y un panel cambiaba de color
+  //    sin que nada fallara.
+  [["claro", raiz], ["oscuro", osc]].forEach(function(par){
+    const vistos = {}, dup = [];
+    (par[1].match(/--[a-z0-9A-Z-]+\s*:/g) || []).forEach(function(d){
+      const k = d.replace(/\s*:$/, "");
+      if (vistos[k]) dup.push(k); else vistos[k] = 1;
+    });
+    ok(dup.length === 0, "ningun color declarado dos veces en " + par[0],
+       dup.slice(0, 5).join(", "));
+  });
+
+  // 2. Nada de pegarle la transparencia detras a un nombre. "var(--ok)55" no es
+  //    un color: el navegador se lo calla y el borde DESAPARECE. Asi se perdio
+  //    el borde del panel de Nuevo cliente, y el unico sintoma visible fue que
+  //    todo lo de debajo subia dos pixeles. Para eso esta _conAlfa().
+  const pegados = HTML.match(/var\(--[a-z0-9-]+\)[0-9a-fA-F]{2}/g) || [];
+  const concat  = HTML.match(/\+[A-Za-z_][A-Za-z0-9_.]*\+"[0-9a-fA-F]{2}[;,)'"]/g) || [];
+  ok(pegados.length === 0 && concat.length === 0,
+     "la transparencia va por _conAlfa(), no pegada detras del color",
+     (pegados.concat(concat)).slice(0, 3).join(" · "));
+
+  // 3. Todo nombre usado tiene su version oscura. Si falta una, esa pantalla se
+  //    queda con el color claro en medio de lo oscuro -fondo claro con texto
+  //    claro encima- y no falla nada, solo se ve mal.
+  const enClaro = new Set((raiz.match(/--[a-z0-9A-Z-]+\s*:/g) || [])
+    .map(function(v){ return v.replace(/\s*:$/, ""); }));
+  const enOsc = new Set((osc.match(/--[a-z0-9A-Z-]+\s*:/g) || [])
+    .map(function(v){ return v.replace(/\s*:$/, ""); }));
+  const sinOscuro = [...enClaro].filter(function(k){
+    return !enOsc.has(k) && !/^--(radius|shadow)/.test(k);
+  });
+  ok(sinOscuro.length === 0, "todo color tiene su version oscura",
+     sinOscuro.slice(0, 6).join(", "));
+}
+// El tema es de ESTE APARATO. Si entrara en lo que se sincroniza, la PC y el
+// telefono se pelearian por el en cada guardado -el mismo error que costo
+// cuatro arreglos con los saldos- y ademas no tiene sentido: puede querer
+// oscuro en el telefono de noche y claro en la PC de dia.
+{
+  ok(/localStorage\.setItem\(_TEMA_KEY/.test(sacarFuncion("ponerTema")),
+     "el tema se guarda en este aparato, no en el estado que se sincroniza");
+  ok(!/DATA_KEYS[\s\S]{0,400}tema/.test(HTML) || !/_MERGE_FIELDS[\s\S]{0,400}"tema"/.test(HTML),
+     "y no esta metido en DATA_KEYS ni en las listas de fusion");
+  // Cambiar el tema NO puede repintar: repintar cierra la tarjeta bajo el dedo
+  // (ARREGLO 32). Basta con cambiar el atributo, los colores van por nombre.
+  ok(!/\bR\(\)/.test(sinComentarios(sacarFuncion("ponerTema"))),
+     "cambiar el tema no repinta la app (ARREGLO 32)");
+  ok(/_pintarTema\(\)/.test(HTML.slice(HTML.lastIndexOf("migrarTipoEgresos"))),
+     "el tema se enciende ANTES del primer dibujo, sin fogonazo blanco");
+}
+// El informe del cierre se imprime: sus colores no pueden seguir al tema. Y
+// genera su PROPIO bloque <style> dentro de la funcion, que es justo por donde
+// se colo el primer intento.
+{
+  ["generarInformePDF", "rInformeCierre"].forEach(function(f){
+    ok(!/var\(--/.test(sacarFuncion(f)),
+       "el informe (" + f + ") no usa ningun color del tema");
+  });
+}
+
 // FASE 2 · ya no queda ningun color escrito a mano fuera del informe. Esta es
 // la guardia que sostiene todo el rediseño: si alguien añade una pantalla nueva
 // con colores a pelo, el tema oscuro la dejaria blanca en medio de lo demas y
