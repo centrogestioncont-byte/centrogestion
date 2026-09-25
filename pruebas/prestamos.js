@@ -2948,11 +2948,46 @@ console.log("\nArreglo 64 · entrar con huella");
     .map(function(v){ return v.replace(/\s*:$/, ""); }));
   const enOsc = new Set((osc.match(/--[a-z0-9A-Z-]+\s*:/g) || [])
     .map(function(v){ return v.replace(/\s*:$/, ""); }));
+  // Los --ent-* quedan fuera A PROPOSITO: son las dos pantallas de entrada,
+  // que son siempre negras elija ella el tema que elija. Darles version oscura
+  // es justo el error que se arreglo.
   const sinOscuro = [...enClaro].filter(function(k){
-    return !enOsc.has(k) && !/^--(radius|shadow)/.test(k);
+    return !enOsc.has(k) && !/^--(radius|shadow|ent-)/.test(k);
   });
   ok(sinOscuro.length === 0, "todo color tiene su version oscura",
      sinOscuro.slice(0, 6).join(", "));
+
+  // Y al reves: ningun tema puede redefinirlos. Estaban pintadas con nombres
+  // del tema y aguanto mientras el que abria era el claro; al pasar el por
+  // omision a SUAVE, el color del texto que ella teclea -#F2EDEF- se volvio
+  // #403137 sobre una tarjeta negra: escribia el correo y la clave y no se
+  // veian. Los iconos del boton y la letra de los chips, igual.
+  {
+    const pap = (HTML.match(/html\[data-tema="papel"\]\{[\s\S]*?\n\}/) || [""])[0];
+    const pisados = [];
+    [["suave", osc], ["papel", pap]].forEach(function(par){
+      (par[1].match(/--ent-[\w-]+\s*:/g) || []).forEach(function(d){
+        pisados.push(par[0] + " " + d.replace(/\s*:$/, ""));
+      });
+    });
+    ok(pisados.length === 0,
+       "ningun tema repinta las pantallas de entrada: son siempre negras",
+       pisados.slice(0, 6).join(", "));
+  }
+
+  // Y la entrada no puede volver a usar un nombre del tema. Un nombre nuevo
+  // colado ahi no falla nada: solo se ve mal el dia que ella cambie de tema.
+  {
+    const fuera = [];
+    ["rLogin", "rDesbloqueoHuella"].forEach(function(f){
+      (sacarFuncion(f).match(/var\(--[\w-]+\)/g) || []).forEach(function(v){
+        if (!/^var\(--ent-/.test(v)) fuera.push(f + " " + v);
+      });
+    });
+    ok(fuera.length === 0,
+       "las pantallas de entrada solo usan sus propios colores (--ent-*)",
+       fuera.slice(0, 6).join(", "));
+  }
 }
 // El tema es de ESTE APARATO. Si entrara en lo que se sincroniza, la PC y el
 // telefono se pelearian por el en cada guardado -el mismo error que costo
@@ -2978,6 +3013,19 @@ console.log("\nArreglo 64 · entrar con huella");
     ok(!/var\(--/.test(sacarFuncion(f)),
        "el informe (" + f + ") no usa ningun color del tema");
   });
+}
+
+// La tarjeta de Configuracion marca el tema que esta CORRIENDO, no el que esta
+// guardado. Mientras ella no elija nada los dos son distintos, y la linea
+// daba por hecho que sin elegir mandaba "claro": al pasar el por omision a
+// SUAVE, la app corria en Suave y la tarjeta le marcaba Claro. Era justo lo
+// que iba a mirar para saber en cual estaba.
+{
+  const f = sinComentarios(sacarFuncion("_htmlBotonesTema"));
+  ok(/var on=\(act===id\)/.test(f),
+     "la tarjeta marca el tema que corre, no uno supuesto");
+  ok(!/g===""/.test(f),
+     "y ya no da por hecho cual manda sin elegir");
 }
 
 // ── El interior tiene que poder mirarse horas ─────────────────────────────
