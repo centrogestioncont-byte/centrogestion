@@ -335,6 +335,151 @@ en `file://`, hace falta contexto seguro.
 
 ---
 
+## La pantalla: lo que se midió y no hay que deshacer
+
+Todo esto sale de medir la app en Chromium con sus datos, no de opinar. Los
+números que aparecen aquí se pueden volver a sacar con los mismos guiones.
+
+### El diagnóstico que estuvo mal, y cómo se supo
+
+Dijo dos veces que el interior era *"tosco y cansón para la vista"*. La primera
+lectura —"está demasiado oscuro"— era **falsa**. Medida su pantalla de
+referencia: fondo **negro** y tarjetas **#1C1C1E**, o sea más oscura que
+cualquier tema de aquí.
+
+Lo que cansaba era otra cosa: **19 bloques** de más de 4.000 píxeles rellenos de
+color en el Resumen, con cromas de 47 a 66 donde el panel vale 8. Sale de
+invertir el brillo de un tinte pálido del tema claro: "verde pálido" se
+convierte en "bloque verde saturado".
+
+**La lección, que vale para lo próximo: no deduzcas lo que le molesta, mídelo.**
+Su referencia estaba a un `getImageData` de distancia.
+
+### Los fondos de aviso se miden por CROMA, no por saturación
+
+Croma = lo que separa el canal más fuerte del más débil. **Tope: 22.** El panel
+del tema vale 8 y la tarjeta de su referencia, 2.
+
+La saturación de HSL engaña en los colores muy oscuros: un azul casi negro como
+`#1a202c` da 0,26 y parece que grita, cuando al lado del panel no se distingue.
+El primer intento usaba saturación y marcaba como problema algo que no lo era.
+
+**El color vive en la LETRA y en el BORDE, que se quedan a plena fuerza.** El
+relleno solo lleva el tono suficiente para que el rojo se siga leyendo rojo.
+
+### Las dos pantallas de entrada tienen sus PROPIOS colores
+
+Son siempre negras, elija el tema que elija. Por eso usan `--ent-*`, declarados
+una vez en `:root`, que **ningún tema vuelve a definir**.
+
+Estaban pintadas con nombres del tema y aguantó mientras el que abría era el
+claro. Al pasar el por omisión a **Suave** se rompió: el texto que ella teclea
+pasó de `#F2EDEF` a `#403137` sobre una tarjeta negra —contraste **1,2**—.
+**Escribía el correo y la clave y no se veían.** Con él se fueron los iconos del
+botón, la letra de los chips y la línea de error: 13 nombres en total.
+
+Tres guardias lo fijan: que los `--ent-*` no tengan versión oscura, que ningún
+tema los repinte, y que las dos funciones de entrada no usen ningún otro nombre.
+
+### Una tarjeta se define en UN sitio
+
+`.pz-rejilla`, `.pz-card`, `.pz-rot`, `.pz-num`, `.pz-pie` viven en el `<style>`.
+Si cada pantalla se escribe sus estilos, en dos semanas hay diecisiete tarjetas
+distintas — que es de donde venimos.
+
+### Nada por debajo de 10px, y el informe del cierre es la excepción
+
+Medido antes: Operaciones **86 %** del texto a 11px o menos, Diario **92 %**. Y
+lo diminuto no era el adorno: eran los montos, las tasas, los nombres de los
+clientes y los bancos. Los sufijos de moneda estaban a **9px**. El dato con el
+que trabaja era lo más pequeño de la pantalla.
+
+**El informe del cierre queda fuera de esa guardia a propósito**: se imprime en
+papel, donde 9px se lee bien y el sitio escasea. Es la misma razón por la que
+sus colores tampoco siguen al tema.
+
+### Cuando todo está en negrita, la negrita no significa nada
+
+Clientes tenía el **85 %** del texto en negrita, y el nombre —lo único que se
+busca ahí— se pintaba en un azul oscuro sobre tarjeta oscura: contraste **2,01**.
+Ahora el nombre es lo único en negrita y está en 10,91.
+
+### Lo urgente no se esconde nunca
+
+Los avisos del Resumen van en una línea que se pliega, pero **plegada la
+cabecera sigue diciendo el aviso urgente entero**. Un cobro de 54 días no puede
+quedar detrás de un "ver más". Esconder un aviso rojo cuesta dinero de verdad.
+
+Y plegar **no llama a `R()`**: repintar cierra lo que tenga abierto bajo el dedo
+(ARREGLO 32 otra vez). Se cambia el `display` por su id.
+
+---
+
+## Dos errores de NÚMEROS que salieron haciendo pantallas
+
+No son de diseño y son los que más caro habrían salido.
+
+### Sumar monedas distintas da un número que no existe
+
+La primera tarjeta de Por cobrar enseñaba **"$177,00"**: la suma cruda de dos
+cargos de 97 y 80 **en reales**, con símbolo de dólar delante. Los cargos están
+en BRL, VES y USDT.
+
+**Para sumar entre monedas se convierte con `getRateToUsdt()`, que DIVIDE**, y
+si a una moneda le falta la tasa el total se marca **"parcial"** en vez de
+quedarse corto en silencio. Un total corto que parece completo es peor que no
+dar total.
+
+### El mismo dato no se calcula en dos sitios
+
+El panel de Por cobrar sumaba por **cliente** (cada saldo ya redondeado) y la
+tarjeta nueva por **cargo**: la misma pantalla decía **34,27 arriba y 34,28
+abajo**. Un céntimo basta para que deje de fiarse de los dos.
+
+Es la misma regla que ya obliga a que el cronograma salga de `cronogramaCuotas()`
+y de ningún otro sitio. Por eso la proyección del mes se calcula una vez, en
+`_evo`, y la leen la tarjeta del Resumen **y** el pie del gráfico.
+
+**Antes de añadir un número a una pantalla, busca si ya está calculado en otro
+lado.** Si lo está, léelo de ahí.
+
+---
+
+## El menú: un solo orden, y lo que no está no desaparece
+
+`_GRUPOS_MENU` es el único sitio donde vive el orden, y lo leen la barra lateral
+(PC) y el menú desplegable (teléfono). Si cada uno tuviera el suyo acabarían
+distintos, y cambiar de aparato sería volver a aprenderse la app.
+
+**Una pestaña que no esté en ningún grupo cae en "Más" al final**, no se pierde.
+Una pestaña nueva que se olvide de apuntarse tiene que seguir alcanzándose.
+
+Y los dos menús se dibujan con la lista **ya filtrada por permisos**, no con
+`TABS[S.role]`: si leyeran los tabs del rol volverían a enseñar pestañas que
+contestan "Sin acceso" al tocarlas, que es el error que arregló la FASE B.
+
+El corte de la barra lateral son **900px**. Por debajo queda todo exactamente
+como estaba: el teléfono no cambió.
+
+---
+
+## El tema es de cada APARATO, y no lo decide el sistema operativo
+
+Tres temas: **Claro**, **Papel** y **Suave**, y el que abre solo es **Suave**,
+que lo pidió ella después de ver el resultado.
+
+Se guarda en `localStorage`, **no** en lo que se sincroniza: puede querer oscuro
+en el teléfono de noche y claro en la PC de día. Y **no mira
+`prefers-color-scheme`**: si lo hiciera, el móvil entrando en modo noche le
+cambiaría la app sola a media jornada de registro.
+
+Cambiar el tema **no llama a `R()`** (ARREGLO 32), y la tarjeta de Configuración
+marca el tema que está **corriendo**, no el guardado — dar por hecho cuál manda
+sin elegir es lo que hizo que la app corriera en Suave y la tarjeta marcara
+Claro.
+
+---
+
 ## El negocio de verdad — léelo antes de tocar saldos, lotes o ganancias
 
 Esto lo explicó la dueña. Si vas a cambiar algo que toque cuentas, inventario
