@@ -3028,6 +3028,33 @@ console.log("\nArreglo 64 · entrar con huella");
      "y ya no da por hecho cual manda sin elegir");
 }
 
+// ── Las dos tablas donde pasa las horas ───────────────────────────────────
+// Medido antes: en Operaciones el 86% del texto estaba a 11px o menos, y en
+// Diario el 92%. Lo diminuto no era el adorno: eran los montos, las tasas y
+// los nombres. Lo unico grande de Operaciones -la pantalla con MAS texto de la
+// app, 2.363 trozos- era el titulo.
+{
+  const chicas = [];
+  ["rTblUnificada", "rDiario"].forEach(function(f){
+    const c = sinComentarios(sacarFuncion(f));
+    (c.match(/font-size:([\d.]+)px/g) || []).forEach(function(m){
+      const v = parseFloat(m.split(":")[1]);
+      if (v < 10.5) chicas.push(f + " " + m);
+    });
+  });
+  ok(chicas.length === 0,
+     "en las dos tablas no queda letra por debajo de 10,5px",
+     chicas.slice(0, 5).join(" · "));
+
+  ok(/table\{[^}]*font-size:13px/.test(HTML), "la tabla arranca en 13px, no en 12,5");
+  ok(/td\{padding:12px/.test(HTML), "y la fila respira un punto mas");
+
+  // Operaciones usa las mismas piezas que el Resumen. Si se escribe sus
+  // propias tarjetas, en dos semanas hay diecisiete tarjetas distintas.
+  ok(/class='pz-card'/.test(sinComentarios(sacarFuncion("rTblUnificada"))),
+     "las tarjetas de Operaciones son las piezas compartidas");
+}
+
 // ── El armazon: barra lateral en PC, boton en el telefono ─────────────────
 // Hasta ahora, en cualquier pantalla, para cambiar de pestaña habia que abrir
 // un menu que tapaba lo que estabas mirando. En el telefono esta bien -no cabe
