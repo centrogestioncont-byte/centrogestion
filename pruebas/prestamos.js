@@ -3028,6 +3028,49 @@ console.log("\nArreglo 64 · entrar con huella");
      "y ya no da por hecho cual manda sin elegir");
 }
 
+// ── Los avisos del Resumen van en UNA linea ───────────────────────────────
+// Eran hasta seis barras apiladas, del mismo alto y del mismo peso, ocupando
+// media pantalla antes de llegar a un solo numero. Seis alarmas sonando a la
+// vez: cuando todo urge, no urge nada.
+{
+  const dash = sinComentarios(sacarFuncion("rDash"));
+
+  // Lo urgente NO se esconde nunca. Plegada, la cabecera sigue diciendo el
+  // aviso urgente entero: un cobro de 54 dias no puede quedar detras de un
+  // "ver mas". Esconder un aviso rojo cuesta dinero de verdad.
+  ok(/urg:1/.test(HTML), "los avisos rojos van marcados como urgentes");
+  ok(/urgentes\.length[\s\S]{0,200}urgentes\[0\]\.msg/.test(dash),
+     "plegado, el aviso urgente se sigue leyendo entero en la cabecera");
+  ok(/urgentes\.length\s*\+\s*alertas\.length/.test(dash) === false,
+     "y el contador no mezcla urgentes con el total");
+  // Abierto ya se lee en su fila: repetirlo en la cabecera seria ruido.
+  ok(/avisos-urg/.test(dash) && /u\.style\.display=abrir\?"none":"inline"/.test(sinComentarios(sacarFuncion("_toggleAvisos"))),
+     "abierto, el urgente no se repite en la cabecera");
+
+  // Plegar NO puede repintar: rehacer el HTML cierra lo que tenga abierto bajo
+  // el dedo, que es el ARREGLO 32 otra vez.
+  const tg = sinComentarios(sacarFuncion("_toggleAvisos"));
+  ok(tg.length > 0, "existe el plegado de los avisos");
+  ok(!/\bR\(\)/.test(tg), "plegar los avisos no repinta la app (ARREGLO 32)");
+  ok(/getElementById\("avisos-lista"\)/.test(tg) && /getElementById\("avisos-flecha"\)/.test(tg),
+     "plegar cambia la lista y la flecha por su id");
+
+  // Es de ESTE aparato, como el tema: no viaja al otro ni entra en la fusion.
+  ok(/localStorage\.setItem\(_AVISOS_KEY/.test(tg),
+     "si estan plegados o no se guarda en este aparato");
+  ok(!/_MERGE_FIELDS[\s\S]{0,300}avisos/.test(HTML) && !/DATA_KEYS[\s\S]{0,300}cg_avisos/.test(HTML),
+     "y no entra en DATA_KEYS ni en las listas de fusion");
+
+  // Sin nada guardado se abre. Un aviso que nadie ha visto todavia no puede
+  // nacer escondido.
+  ok(/getItem\(_AVISOS_KEY\)!=="0"/.test(sinComentarios(sacarFuncion("_avisosAbiertos"))),
+     "la primera vez los avisos salen abiertos");
+
+  // El texto del aviso pasa por _escAud: son nombres de clientes.
+  ok(/_escAud\(a\.msg\)/.test(dash) && /_escAud\(urgentes\[0\]\.msg\)/.test(dash),
+     "los nombres de los clientes salen escapados");
+}
+
 // ── El interior tiene que poder mirarse horas ─────────────────────────────
 // Ella lo dijo dos veces: "es un sistema de contabilidad, se pasan horas
 // registrando datos, no puede ser tosco para la vista". La primera lectura
