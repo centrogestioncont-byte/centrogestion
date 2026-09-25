@@ -3028,6 +3028,45 @@ console.log("\nArreglo 64 · entrar con huella");
      "y ya no da por hecho cual manda sin elegir");
 }
 
+// ── Lo primero del Resumen son cuatro numeros ─────────────────────────────
+// Antes lo primero eran los avisos, y despues un desglose con todo del mismo
+// tamaño y todo en negrita: nada destacaba, asi que habia que leer la pantalla
+// entera para encontrar un dato.
+{
+  const dash = sinComentarios(sacarFuncion("rDash"));
+
+  ok(/return headerSel \+ kpisHtml \+ alertasHtml/.test(dash),
+     "los cuatro numeros van los primeros, antes que los avisos");
+
+  // La proyeccion la miran DOS sitios: la tarjeta y el pie del grafico. Si
+  // cada uno la calculara por su cuenta acabarian diciendo numeros distintos
+  // en la misma pantalla. Es el mismo motivo por el que el cronograma sale de
+  // cronogramaCuotas() y de ningun otro sitio.
+  ok(/var _evo = \(function\(\)\{/.test(dash),
+     "el mes se calcula una sola vez, en _evo");
+  ok(/_evo\.ganMes[\s\S]{0,300}_evo\.proyeccion/.test(dash),
+     "y el pie del grafico lee de ahi, no rehace la cuenta");
+  const ocurrencias = (dash.match(/promDia\s*\*\s*[\w.]*[Dd]iasRestantes/g) || []).length;
+  ok(ocurrencias === 1,
+     "la formula de la proyeccion esta escrita UNA sola vez",
+     ocurrencias + " veces");
+
+  // Proyectar un mes ya cerrado no significa nada: la cuarta tarjeta cambia.
+  ok(/if\(esMesActual\)\{[\s\S]{0,400}out\.proyeccion/.test(dash),
+     "solo se proyecta el mes en curso");
+  ok(/_evo && _evo\.proyeccion[\s\S]{0,400}Egresos pagados/.test(dash),
+     "en un mes pasado, la cuarta tarjeta dice otra cosa en vez de inventar una proyeccion");
+
+  // El capital sale de capitalRealTotal(), no de una suma a mano. El PDF del
+  // cierre sumaba "cuentas + afuera" por su cuenta y se dejaba la reserva:
+  // 2.302,34 donde Balance de Cuentas decia 2.479,17.
+  ok(/var _cap = capitalRealTotal\(\)/.test(dash),
+     "el capital sale de capitalRealTotal(), no de una suma a mano");
+  // Una moneda sin tasa deja el capital incompleto: eso se dice, no se calla.
+  ok(/_cap\.sinTasa\.length[\s\S]{0,160}falta la tasa/.test(dash),
+     "si falta la tasa de una moneda, la tarjeta lo dice");
+}
+
 // ── Los avisos del Resumen van en UNA linea ───────────────────────────────
 // Eran hasta seis barras apiladas, del mismo alto y del mismo peso, ocupando
 // media pantalla antes de llegar a un solo numero. Seis alarmas sonando a la

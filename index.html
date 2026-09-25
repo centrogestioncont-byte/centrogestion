@@ -18464,6 +18464,80 @@ function rDash(){
       cab+"<div id='avisos-lista' style='display:"+(abierto?"block":"none")+"'>"+filas+"</div></div>";
   }
 
+  // ── Los numeros del mes, calculados UNA sola vez ──────────────────────────
+  // La proyeccion vivia dentro del grafico. Ahora la miran dos sitios -la
+  // tarjeta de arriba y el pie del grafico-, y si cada uno la calculara por su
+  // cuenta acabarian diciendo numeros distintos en la misma pantalla. Es el
+  // mismo motivo por el que el cronograma de cuotas sale de cronogramaCuotas()
+  // y de ningun otro sitio: dos cuentas para el mismo dato terminan divergiendo.
+  var _evo = (function(){
+    var ops = [].concat(brlM, vzlaM, eeuuM);
+    if(!ops.length) return null;
+    var ganDia = {};
+    ops.forEach(function(r){
+      var dia = parseInt((r.d||"0").split("/")[0])||0;
+      if(!dia) return;
+      ganDia[dia] = (ganDia[dia]||0) + (parseFloat(r.pr)||0);
+    });
+    var dias = Object.keys(ganDia).map(Number).sort(function(a,b){ return a-b; });
+    if(!dias.length) return null;
+    var out = {
+      ganDia: ganDia, dias: dias,
+      maxGan: Math.max.apply(null, dias.map(function(d){ return ganDia[d]; })),
+      ganMes: ops.reduce(function(a,r){ return a+(parseFloat(r.pr)||0); }, 0)
+    };
+    // Proyectar un mes ya cerrado no significa nada: solo el mes en curso.
+    if(esMesActual){
+      var diasConOps = dias.filter(function(d){ return ganDia[d]>0; }).length;
+      if(diasConOps>0){
+        var hoy = new Date().getDate();
+        var mesActDias = new Date(new Date().getFullYear(), new Date().getMonth()+1, 0).getDate();
+        out.promDia       = out.ganMes/diasConOps;
+        out.diasRestantes = mesActDias - hoy;
+        out.proyeccion    = Math.round((out.ganMes + out.promDia*out.diasRestantes)*100)/100;
+        out.pct           = out.proyeccion>0 ? Math.min(100, Math.round(out.ganMes/out.proyeccion*100)) : 0;
+      }
+    }
+    return out;
+  })();
+
+  // ── Lo primero de la pantalla son cuatro numeros ──────────────────────────
+  // Antes lo primero eran los avisos, y despues un desglose con todo del mismo
+  // tamaño y todo en negrita: nada destacaba, asi que habia que leer la
+  // pantalla entera para encontrar un dato. Aqui el numero va a 26 px y su
+  // rotulo a 10 px en gris, y cada uno lleva debajo la linea que lo explica
+  // -"ya descontados $130,26 de egresos"-, que es justo lo que antes obligaba
+  // a ir a buscar a otra pestaña.
+  var _cap = capitalRealTotal();
+  var _nOps = brlM.length + vzlaM.length + eeuuM.length;
+  function _kpi(rot, num, pie, color){
+    return "<div style='background:var(--sup);border:1px solid var(--ln);border-radius:14px;padding:16px 17px 14px'>"+
+      "<div style='font-size:10px;font-weight:800;letter-spacing:.11em;text-transform:uppercase;color:var(--tx3);margin-bottom:9px'>"+rot+"</div>"+
+      "<div style='font-size:26px;font-weight:800;letter-spacing:-.02em;line-height:1.05;color:"+(color||"var(--tx)")+"'>"+num+"</div>"+
+      "<div style='font-size:11px;color:var(--tx3);margin-top:6px;line-height:1.45'>"+pie+"</div>"+
+    "</div>";
+  }
+  var kpisHtml =
+    "<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:12px;margin-bottom:16px'>"+
+      _kpi("Ganancia del mes", "$"+f2(ganTotal),
+           _nOps ? _nOps+" operacion"+(_nOps>1?"es":"")+" · $"+f2(Math.round(ganTotal/_nOps*100)/100)+" cada una"
+                 : "sin operaciones este mes") +
+      _kpi("Neto real", "$"+f2(neto),
+           "ya descontados $"+f2(egPag)+" de egresos"+(egPend>0?" · $"+f2(egPend)+" por pagar":""),
+           neto<0 ? "var(--mal)" : "var(--tx)") +
+      _kpi("Capital total", "$"+f2(_cap.total),
+           _cap.sinTasa.length
+             ? "falta la tasa de "+_escAud(_cap.sinTasa.join(", "))+": no esta todo"
+             : "incluye $"+f2(_cap.enLaCalle)+" prestados y por cobrar",
+           _cap.sinTasa.length ? "var(--avi)" : "var(--tx)") +
+      ((_evo && _evo.proyeccion)
+        ? _kpi("Proyección", "≈$"+f2(_evo.proyeccion),
+               "a este ritmo · "+_evo.diasRestantes+" día"+(_evo.diasRestantes===1?"":"s")+" restante"+(_evo.diasRestantes===1?"":"s"),
+               "var(--ac)")
+        : _kpi("Egresos pagados", "$"+f2(egPag),
+               egPend>0 ? "quedan $"+f2(egPend)+" por pagar" : "sin pendientes")) +
+    "</div>";
+
   // Widget tasas de mercado (solo referencia visual — no entra en ningún cálculo)
   var tasasWidget =
     "<div style='background:var(--sup);border:1px solid var(--az6-m);border-radius:12px;padding:12px 14px;margin-bottom:14px'>"+
@@ -18476,24 +18550,11 @@ function rDash(){
 
   // ── #6 Evolución diaria + #7 Proyección mensual ──────────────────────────
   var evolucionWidget = (function(){
-    var todasOps2=[].concat(brlM,vzlaM,eeuuM);
-    if(!todasOps2.length) return "";
-
-    // Agrupar ganancias por día del mes
-    var ganDia={};
-    todasOps2.forEach(function(r){
-      var dia=parseInt((r.d||"0").split("/")[0])||0;
-      if(!dia) return;
-      ganDia[dia]=(ganDia[dia]||0)+(parseFloat(r.pr)||0);
-    });
-    var dias=Object.keys(ganDia).map(Number).sort(function(a,b){return a-b;});
-    if(!dias.length) return "";
-
-    var maxGan=Math.max.apply(null,dias.map(function(d){return ganDia[d];}));
+    if(!_evo) return "";
+    var ganDia=_evo.ganDia, dias=_evo.dias, maxGan=_evo.maxGan;
     if(maxGan<=0) return "";
 
-    var hoy=new Date().getDate();
-    var mesActDias=new Date(new Date().getFullYear(),new Date().getMonth()+1,0).getDate();
+    var hoy=new Date().getDate();   // para marcar la barra de hoy
 
     // ── Gráfico SVG ────────────────────────────────────────────
     var svgW=560, svgH=80, barW=14, gap=3;
@@ -18514,14 +18575,11 @@ function rDash(){
 
     // ── Proyección ──────────────────────────────────────────────
     var proyHtml="";
-    if(esMesActual){
-      var diasConOps=dias.filter(function(d){return ganDia[d]>0;}).length;
-      var ganTotal2=todasOps2.reduce(function(a,r){return a+(parseFloat(r.pr)||0);},0);
-      if(diasConOps>0){
-        var promDia=ganTotal2/diasConOps;
-        var diasRestantes=mesActDias-hoy;
-        var proyeccion=Math.round((ganTotal2+promDia*diasRestantes)*100)/100;
-        var pct=Math.min(100,Math.round(ganTotal2/proyeccion*100));
+    {
+      // Los mismos numeros que la tarjeta de arriba, del mismo sitio.
+      var ganTotal2=_evo.ganMes, promDia=_evo.promDia,
+          diasRestantes=_evo.diasRestantes, proyeccion=_evo.proyeccion, pct=_evo.pct;
+      if(proyeccion){
         proyHtml=
           "<div style='border-top:1px solid rgba(255,255,255,.1);margin-top:10px;padding-top:10px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px'>"+
           "<div>"+
@@ -18550,8 +18608,7 @@ function rDash(){
     "</div>";
   })();
 
-  return headerSel + tasasWidget +
-  alertasHtml+evolucionWidget+
+  return headerSel + kpisHtml + alertasHtml + tasasWidget + evolucionWidget +
   "<div style='background:var(--az6-p);border:1px solid var(--az6-f);border-radius:12px;padding:11px 14px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:center'>"+
     "<div style='font-size:10px;font-weight:700;color:var(--tx3);text-transform:uppercase;width:100%;margin-bottom:4px'>🔍 Desglose por fuente · "+getMesLabel(selMes.split("-")[1],selMes.split("-")[0])+"</div>"+
     "<div style='flex:1;min-width:90px;background:var(--ok-sup);border-radius:8px;padding:7px 10px'><div style='font-size:9px;font-weight:700;color:var(--ok)'>🇧🇷 BRL</div><div style='font-size:13px;font-weight:800;color:var(--ok-tx)'>$"+f2(ganBrl)+"</div><div style='font-size:9px;color:var(--tx2b)'>"+brlM.length+" ops</div></div>"+
