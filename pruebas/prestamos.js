@@ -68,8 +68,10 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "ajusteDiasPrimeraCuota", "interesPorAjusteDias",
                     "cuotasRecomendadas", "limiteCredito",
                     "costoOperativoPorPrestamo", "pctCostoOperativo",
-                    "capitalRealTotal", "_mesesDesde", "_acumuladosMes",
-                    "conciliacionCapital", "getMesKeyActual", "ajustesDesdeApertura", "_isoDeDDMMAA", "_motivoDelAjuste", "_ajusteAEgreso", "_cuentaMadre", "_cuentaOMadre", "_completarDesdeMadre", "toggleCuentaMadre",
+                    "capitalRealTotal", "_fraccionInteresPrestamo", "interesDentroDeApertura",
+                    "_mesesDesde", "_acumuladosMes",
+                    "conciliacionCapital", "getMesKeyActual", "ajustesDesdeApertura",
+                    "_tsDeUid", "_tsDeAjuste", "_deducirHoraApertura", "_isoDeDDMMAA", "_motivoDelAjuste", "_ajusteAEgreso", "_cuentaMadre", "_cuentaOMadre", "_completarDesdeMadre", "toggleCuentaMadre",
                     "traspasosAPersonal", "efectoTasasDesde", "_isoDeFechaLote",
                     "tasaDeReferencia", "_tasaFijadaAMano", "setTasaDia", "soltarTasaDia",
                     "_isoDeLote", "_fechaLoteIso", "_num", "_horaLote", "_horaAhora", "_horaDe",
@@ -1810,7 +1812,7 @@ ok(!/var sano=Math\.abs\(dif\)<=tol;/.test(HTML),
    "y ya no la diferencia bruta");
 ok(/sinExplicar:sinExplicar/.test(HTML) && /ajustes:ajustes/.test(HTML),
    "conciliacionCapital devuelve el desglose");
-ok(/volver a fijar la apertura solo lo esconde/.test(HTML),
+ok(/Volver a fijar la apertura no lo arregla: lo esconde/.test(HTML),
    "y le dice que refijar la apertura no arregla nada");
 
 
@@ -1940,7 +1942,9 @@ ok(/Algún ajuste es de una moneda sin tasa/.test(_blq),
    "el aviso de moneda sin tasa queda fuera del desplegable");
 ok(/Vuelve a fijar la apertura/.test(_blq),
    "y el de apertura vieja tambien");
-ok(/Cuadra\. Lo que queda sin explicar/.test(_blq),
+// ARREGLO 71: el veredicto dejo de ser un parrafo repetido debajo y es el
+// TITULAR. Lo que se prueba sigue siendo lo mismo: que se ve sin desplegar nada.
+ok(/"✅ Cuadra"/.test(_blq) && /Falta por explicar/.test(_blq) && /Sobra sin explicar/.test(_blq),
    "el veredicto tambien se ve siempre: es la respuesta a la pregunta");
 
 
@@ -2493,20 +2497,27 @@ ok(_resto.moraMultaPct===2 && _resto.ntfyCanal==="b",
 // DOS, cada uno con su nombre. La leccion del ARREGLO 60 sigue en pie -un numero
 // grande y suelto que contradice al de al lado- y por eso se prueba que ninguno
 // de los dos va sin etiqueta.
-ok(/f2\(Math\.abs\(sinExp\)\)\+" sin explicar/.test(HTML),
+//
+// ARREGLO 71: los dos siguen, pero ya no compiten. El grande es el que hay que
+// perseguir —el sin explicar— y la resta que ella hace a mano va entera en una
+// linea pequena debajo. Sus palabras sobre la tarjeta: "mucha letra".
+ok(/Falta por explicar \$"\+f2\(Math\.abs\(sinExp\)\)/.test(HTML) &&
+   /Sobra sin explicar \$"\+f2\(Math\.abs\(sinExp\)\)/.test(HTML),
    "el titular sigue enseñando el 'sin explicar', con su numero");
-ok(/Te faltan |Te sobran /.test(HTML) && /lo que deberías tener/.test(HTML),
+ok(/te faltan |te sobran /.test(HTML) && /deberías tener <b/.test(HTML) && /Tienes <b/.test(HTML),
    "y la diferencia dice en PALABRAS si falta o sobra: un '+65,37' en verde se lee al reves");
-ok(/Math\.abs\(dif\)<0\.005 \? "Cuadra"/.test(HTML),
+ok(/Math\.abs\(dif\)<0\.005 \? " · clavado"/.test(HTML),
    "cuando no hay diferencia lo dice, en vez de un $0,00 con signo");
 {
   // Ninguno de los dos puede quedarse sin etiqueta: eso es lo que hacia que se
   // leyeran como si dijeran lo contrario el uno del otro.
-  const i = HTML.indexOf("lo que deberías tener");
-  const j = HTML.indexOf("sin explicar", i);
-  ok(i > -1 && j > i && j - i < 700,
+  // Se ancla en el literal del codigo, no en el texto suelto: "sin explicar"
+  // aparece tambien en los comentarios y el primero que salia era uno de esos.
+  const i = HTML.indexOf('"⚠️ Sobra sin explicar $"');
+  const j = HTML.indexOf("deberías tener <b", i);
+  ok(i > -1 && j > i && j - i < 900,
      "los dos van juntos en el titular, cada uno con su rotulo");
-  ok(/por encima de ±\$/.test(HTML),
+  ok(/el margen normal es ±\$/.test(HTML) && /de ruido normal/.test(HTML),
      "y si el sin explicar se pasa de la tolerancia, lo dice ahi mismo");
 }
 ok(/que no se pueden situar/.test(HTML), "el aviso de los ajustes en el aire esta fuera del desplegable");
@@ -2951,8 +2962,10 @@ console.log("\nArreglo 64 · entrar con huella");
   // Los --ent-* quedan fuera A PROPOSITO: son las dos pantallas de entrada,
   // que son siempre negras elija ella el tema que elija. Darles version oscura
   // es justo el error que se arreglo.
+  // Y los --fly-* igual (ARREGLO 73): el flyer es lo que le llega al cliente
+  // y ella imprime, no una pantalla; el tema es del aparato.
   const sinOscuro = [...enClaro].filter(function(k){
-    return !enOsc.has(k) && !/^--(radius|shadow|ent-)/.test(k);
+    return !enOsc.has(k) && !/^--(radius|shadow|ent-|fly-)/.test(k);
   });
   ok(sinOscuro.length === 0, "todo color tiene su version oscura",
      sinOscuro.slice(0, 6).join(", "));
@@ -2973,6 +2986,37 @@ console.log("\nArreglo 64 · entrar con huella");
     ok(pisados.length === 0,
        "ningun tema repinta las pantallas de entrada: son siempre negras",
        pisados.slice(0, 6).join(", "));
+  }
+
+  // ── ARREGLO 73 · el flyer tampoco sigue al tema ────────────────────────
+  // Se descarga como imagen, se manda por WhatsApp y ella lo imprime: no puede
+  // depender del tema del aparato desde el que se genero. Se rompio igual que
+  // las pantallas de entrada al pasar el por omision a SUAVE — el fondo, hecho
+  // NEGRO, paso a #d7d5d5 y los textos siguieron blancos: "TU DINERO SE
+  // CONVIERTE EN SOLUCIONES" en blanco al 55% sobre ese gris da contraste 1,3.
+  // Ella lo imprimio y no se leia.
+  {
+    ok(/--fly-fondo1:\s*#0a0a0a/.test(HTML) && /--fly-sobre:\s*#fff/.test(HTML),
+       "el flyer tiene sus propios colores, declarados en :root");
+    const pap2 = (HTML.match(/html\[data-tema="papel"\]\{[\s\S]*?\n\}/) || [""])[0];
+    const pisados2 = [];
+    [["suave", osc], ["papel", pap2]].forEach(function(par){
+      (par[1].match(/--fly-[\w-]+\s*:/g) || []).forEach(function(d){
+        pisados2.push(par[0] + " " + d.replace(/\s*:$/, ""));
+      });
+    });
+    ok(pisados2.length === 0,
+       "ningun tema repinta el flyer: sale igual desde cualquier aparato",
+       pisados2.slice(0, 6).join(", "));
+    const fueraFly = [];
+    ["generarFlyer", "generarMiniFlyer"].forEach(function(f){
+      (sacarFuncion(f).match(/var\(--[\w-]+\)/g) || []).forEach(function(v){
+        if (!/^var\(--fly-/.test(v)) fueraFly.push(f + " " + v);
+      });
+    });
+    ok(fueraFly.length === 0,
+       "el flyer y el mini flyer solo usan sus propios colores (--fly-*)",
+       fueraFly.slice(0, 6).join(", "));
   }
 
   // Y la entrada no puede volver a usar un nombre del tema. Un nombre nuevo
@@ -3026,6 +3070,32 @@ console.log("\nArreglo 64 · entrar con huella");
      "la tarjeta marca el tema que corre, no uno supuesto");
   ok(!/g===""/.test(f),
      "y ya no da por hecho cual manda sin elegir");
+}
+
+// ── Nada se queda pegado al deslizar, salvo un encabezado de columna ──────
+// Sus palabras: "un boton que cuando deslizo se queda ahi fijo". Era la barra
+// de Total empresa de Balance de Cuentas, con position:sticky: en el telefono
+// son 163px de los 614 visibles -el 27% de la pantalla- tapando la lista de
+// cuentas todo el rato, y el boton de Tasas iba dentro, asi que parecia un
+// boton flotante.
+//
+// Lo unico que puede seguir pegado es el ENCABEZADO DE COLUMNA de una tabla:
+// son 40px y sin ellos, bajando por 119 operaciones, se pierde de vista que
+// columna es cual. Un bloque entero pegado es otra cosa.
+{
+  const fuera = [];
+  ["rCapitalTotal", "rInventarioUsdt", "rPrestamos", "rCuentasCobrar", "rEgresos", "rDash"].forEach(function(f){
+    const c = sinComentarios(sacarFuncion(f));
+    (c.match(/position:sticky/g) || []).forEach(function(){
+      // solo se admite si es la fila de encabezado de una tabla
+      if (!/<thead><tr style='position:sticky/.test(c)) fuera.push(f);
+    });
+  });
+  ok(fuera.length === 0,
+     "ninguna pantalla deja un bloque pegado al deslizar",
+     [...new Set(fuera)].join(", "));
+  ok(!/position:sticky;top:0;z-index:10;background:var\(--fondo-osc\)/.test(HTML),
+     "y la barra de Total empresa ya no se clava arriba");
 }
 
 // ── En NINGUNA pantalla queda letra por debajo de 10px ────────────────────
@@ -4281,6 +4351,111 @@ console.log("\n— FASE 2: la cuenta madre —");
   const t = sinComentarios(sacarFuncion("toggleCuentaMadre"));
   ok(/Solo puede haber una por moneda/.test(t), "no deja marcar dos de la misma moneda");
   ok(/esPersonal\|\|c\.esReserva/.test(t), "ni una personal o de reserva: ahi cae dinero del negocio");
+}
+
+
+// ── ARREGLO 71 · el interes de un prestamo no es capital hasta que se cobra ──
+// Ella lo dijo: "presto una cantidad pero por los intereses cobro mas". De la
+// cuenta sale el CAPITAL; p.monto es capital + interes. Contar p.monto entero
+// como dinero suyo subia "tienes de verdad" el dia de prestar sin mover
+// "deberias tener", y ese interes salia como SOBRANTE SIN EXPLICAR hasta que el
+// cliente pagara. Con prestamos nuevos cada semana no paraba de crecer.
+{
+  const f = (n) => Math.round(n * 100) / 100;
+  // La fraccion de interes sale de un solo sitio, y las dos cuentas que la usan
+  // —lo ya cobrado y lo que falta— tienen que sumar el interes pactado.
+  ok(f(F._fraccionInteresPrestamo({monto:120, capital:100}) * 120) === 20,
+     "la fraccion de interes reparte los 20 de un 100→120");
+  ok(F._fraccionInteresPrestamo({monto:100, capital:100}) === 0,
+     "un prestamo sin interes no reparte nada");
+  ok(F._fraccionInteresPrestamo({monto:100}) === 0,
+     "y uno viejo sin 'capital' tampoco: capital=monto, interes cero");
+  ok(/_fraccionInteresPrestamo\(p\)/.test(sacarFuncion("gananciaPrestamosDelMes")),
+     "la ganancia del mes la lee de ahi, no se la calcula aparte");
+  ok(/_fraccionInteresPrestamo\(p\)/.test(sacarFuncion("capitalRealTotal")),
+     "y el capital tambien: el mismo dato no se calcula en dos sitios");
+
+  // El capital: solo lo prestado. El interes se ve, pero aparte y sin sumar.
+  S.cuentas = [{id:"c1", moneda:"USDT", saldo:0, activa:true}];
+  S.cuentasCobrar = []; S.prestamos = [
+    {id:1, d:"01/09/26", mon:"USDT", monto:120, capital:100, estado:"activo", abonos:[], ent:0}
+  ];
+  const cap1 = F.capitalRealTotal();
+  ok(cap1.enPrestamos === 100, "en prestamos entra el capital, no el total a cobrar", cap1.enPrestamos);
+  ok(cap1.interesPrestamos === 20, "y el interes pendiente sale aparte", cap1.interesPrestamos);
+  ok(cap1.total === 100, "el capital total NO lo cuenta", cap1.total);
+  // A medio pagar, cada abono devuelve capital e interes en la misma proporcion.
+  S.prestamos[0].abonos = [{fecha:"2026-09-20", monto:60}];
+  const cap2 = F.capitalRealTotal();
+  ok(cap2.enPrestamos === 50 && cap2.interesPrestamos === 10,
+     "a mitad de pago, la mitad de cada cosa", cap2.enPrestamos + "/" + cap2.interesPrestamos);
+  ok(f(cap2.interesPrestamos + 60 * F._fraccionInteresPrestamo(S.prestamos[0])) === 20,
+     "lo cobrado mas lo pendiente da el interes pactado, sin perder un centimo");
+  // En otra moneda se convierte DIVIDIENDO, igual que todo lo demas.
+  S.prestamos = [{id:2, d:"01/09/26", mon:"BRL", monto:540, capital:270, estado:"activo", abonos:[], ent:0}];
+  const cap3 = F.capitalRealTotal();
+  ok(cap3.enPrestamos === 50 && cap3.interesPrestamos === 50,
+     "en BRL se divide por la tasa, las dos partes", cap3.enPrestamos + "/" + cap3.interesPrestamos);
+
+  // La otra mitad del arreglo: la apertura se conto con el interes de los
+  // prestamos que YA estaban vivos ese dia. Si el capital deja de contarlo y la
+  // apertura sigue llevandolo, queda un hueco fijo que no cierra nunca — no es
+  // dinero, es el punto de partida mal puesto.
+  S.prestamos = [
+    {id:3, d:"01/09/26", mon:"USDT", monto:120, capital:100, estado:"activo", abonos:[], ent:0},
+    {id:4, d:"20/09/26", mon:"USDT", monto:240, capital:200, estado:"activo", abonos:[], ent:0}
+  ];
+  const ia = F.interesDentroDeApertura("2026-09-11");
+  ok(ia.total === 20 && ia.n === 1,
+     "solo cuenta el interes de los prestamos anteriores a la apertura", ia.total + "/" + ia.n);
+  // Y lo que ya se habia cobrado antes de la apertura no estaba pendiente.
+  S.prestamos = [{id:5, d:"01/09/26", mon:"USDT", monto:120, capital:100, estado:"activo",
+                  abonos:[{fecha:"2026-09-05", monto:60}, {fecha:"2026-09-30", monto:30}], ent:0}];
+  const ia2 = F.interesDentroDeApertura("2026-09-11");
+  ok(ia2.total === 10,
+     "y se mide lo que quedaba pendiente EL DIA de la apertura, no hoy", ia2.total);
+  ok(/apertura-intAp\.total\+bruta/.test(HTML),
+     "'deberias tener' descuenta ese interes: los dos lados miden lo mismo");
+
+  // La prueba de verdad, punta a punta: prestar con interes no puede mover el
+  // "sin explicar". Antes lo subia exactamente el interes del prestamo.
+  S.cuentas = [{id:"c1", moneda:"USDT", saldo:1000, activa:true}];
+  S.cuentasCobrar = []; S.prestamos = []; S.ajustesSaldo = []; S.traspasos = [];
+  S.config = {aperturaUsdt:1000, aperturaFecha:"2026-09-01", aperturaBase:{}};
+  const antes = F.conciliacionCapital();
+  // presta 100 con 20 de interes: de la cuenta salen 100, el prestamo nace en 120
+  S.cuentas[0].saldo = 900;
+  S.prestamos = [{id:6, d:"05/09/26", mon:"USDT", monto:120, capital:100, estado:"activo", abonos:[], ent:0}];
+  const tras = F.conciliacionCapital();
+  ok(antes.sinExplicar === tras.sinExplicar,
+     "prestar con interes no inventa un sobrante",
+     antes.sinExplicar + " -> " + tras.sinExplicar);
+  ok(tras.real.total === 1000, "el capital sigue siendo el mismo dinero", tras.real.total);
+  S.cuentas = []; S.cuentasCobrar = []; S.prestamos = []; S.config = {};
+}
+
+// ── ARREGLO 71 · la tarjeta: un solo numero grande y el detalle a un toque ──
+// "mucha letra, no es facil de entender". Las dos restas completas (14 filas)
+// se van al desplegable; los avisos y el veredicto NO.
+{
+  const abierto = HTML.slice(HTML.indexOf("var tablasCuenta="), HTML.indexOf("return \"<div style='background:\"+bg"));
+  ok(/Saldo de apertura/.test(abierto) && /Deberías tener/.test(abierto),
+     "la resta de 'deberias tener' se declara aparte para poder plegarla");
+  const cuerpo = HTML.slice(HTML.indexOf("return \"<div style='background:\"+bg"),
+                            HTML.indexOf("S._concDetalle=!S._concDetalle"));
+  ok(!/Saldo de apertura/.test(cuerpo) && !/lineaReal/.test(cuerpo),
+     "y ninguna de las dos tablas se dibuja ya sin desplegar");
+  ok(/S\._concDetalle\?\s*\n?\s*tablasCuenta\+/.test(HTML),
+     "estan dentro del desplegable, no borradas");
+  // Lo urgente sigue fuera: un aviso escondido no es un aviso (ARREGLO 48/60).
+  ok(/que no se pueden situar/.test(cuerpo), "el aviso de los ajustes en el aire sigue fuera");
+  ok(/De qué está hecha la diferencia/.test(cuerpo),
+     "y el desglose tambien: es lo que convierte el numero en algo que perseguir");
+  // El interes por cobrar se ve, pero dicho: no es suyo todavia.
+  ok(/intereses por cobrar \(aún no son tuyos\)/.test(HTML),
+     "la tarjeta dice que el interes pendiente no cuenta como capital");
+  ok(/En préstamos \(capital\)/.test(HTML),
+     "y que lo que cuenta es el capital");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

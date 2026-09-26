@@ -381,6 +381,29 @@ botón, la letra de los chips y la línea de error: 13 nombres en total.
 Tres guardias lo fijan: que los `--ent-*` no tengan versión oscura, que ningún
 tema los repinte, y que las dos funciones de entrada no usen ningún otro nombre.
 
+### El flyer tampoco sigue al tema — es lo que ve el cliente
+
+Misma regla que las pantallas de entrada, y se rompió por lo mismo. El flyer se
+descarga como imagen, se manda por WhatsApp y **ella lo imprime**: no puede
+depender del tema que tenga puesto el aparato desde el que se generó.
+
+Estaba pintado con nombres del tema. El fondo se diseñó **negro** (`--gr1-c`
+valía `#0a0a0a` en Claro) y los textos son blancos a medio tono. Al pasar el por
+omisión a **Suave**, `--gr1-c` pasó a `#d7d5d5` —gris claro— y los textos
+siguieron siendo blancos: *"TU DINERO SE CONVIERTE EN SOLUCIONES"* en blanco al
+55 % sobre ese gris da contraste **1,3**. Lo imprimió y no se leía. De paso el
+degradado desaparecía, porque en Suave los tres tonos del fondo son el mismo gris.
+
+Ahora usa `--fly-*`, declarados una vez en `:root` con los valores que tenía en
+Claro, que ningún tema vuelve a definir. Vale para el flyer y para el mini flyer.
+Tres guardias: que no tengan versión oscura, que ningún tema los repinte, y que
+`generarFlyer()` y `generarMiniFlyer()` no usen ningún otro nombre.
+
+**Lo que hay que sacar de aquí, porque es la tercera vez:** cuando algo de la app
+sale HACIA FUERA —el flyer, el informe del contador, el PDF del cierre— sus
+colores son suyos, no del tema. El tema es del aparato de quien lo genera; lo que
+sale ya no está en ese aparato.
+
 ### Una tarjeta se define en UN sitio
 
 `.pz-rejilla`, `.pz-card`, `.pz-rot`, `.pz-num`, `.pz-pie` viven en el `<style>`.
@@ -717,6 +740,34 @@ número suelto no se puede perseguir, así que la diferencia viene desglosada, y
 - **Los ajustes que no se pueden situar se ven sin desplegar nada.** Los del
   mismo día en que se fijó la apertura no llevan hora, así que ni cuentan ni se
   descartan: con sus datos son 7 por −$233,46. Estaban dentro del desplegable.
+- **Y sí se pueden situar: la hora nunca se perdió** (ARREGLO 72). `_newUid()` es
+  `Date.now().toString(36)+"_"+azar`, así que **cada registro creado con él lleva
+  su hora exacta dentro del id**. `ajustesDesdeApertura()` solo miraba `a.ts` y
+  tiraba un dato que estaba ahí al lado. Comprobado con sus 109 ajustes: **109 de
+  109** se decodifican y **109 de 109** dan la misma fecha que el campo `fecha`.
+  El rango es la guardia (`_tsDeUid`): un id de los viejos leído en base 36 se
+  dispara fuera de cualquier fecha creíble y se descarta en vez de inventarse una
+  hora. **Esto vale para cualquier cosa que lleve `_uid`**, no solo los ajustes —
+  las remesas también.
+- **La hora de la apertura se deduce de `aperturaBase.bruta`.** Es la ganancia que
+  llevaba el mes **en el instante** de fijarla, así que reconstruyendo la bruta
+  acumulada operación por operación se ve entre qué dos cae. Con su export:
+  `aperturaBase.bruta` = 152,33 y la acumulada pasa de 142,99 (remesa 670, 17:45)
+  a 152,96 (remesa 112, 17:46). No cuadra al céntimo —sobran 0,63, porque hoy las
+  operaciones se revaloran con otras tasas— pero el salto entre operaciones es de
+  **9,34**, así que la ventana aguanta el ruido. Sus 7 ajustes quedan **2 antes y
+  5 después**, y el más cercano está a **más de tres horas** de la frontera.
+  `_deducirHoraApertura()` recorta las listas para medir y **las devuelve en un
+  `finally`**: si saliera por una excepción a mitad, la app se quedaría sin
+  remesas. Cuesta ~370 ms, así que corre **solo al pulsar el botón**, nunca al
+  dibujar.
+- **Es una DEDUCCIÓN, así que no se aplica sola.** El aviso enseña la hora y el
+  monto de cada uno, y `situarAjustesEnElAire()` simula el número que va a quedar
+  antes de preguntar — el mismo criterio que corregir la fecha. Se guarda solo
+  `aperturaTs`; el monto y la fecha no se tocan. Y avisa de lo incómodo:
+  **situarlos SUBE el "sin explicar"**, de +59,28 a +274,66 con su export, porque
+  un ajuste que pasa a contar se da por explicado y sale de la diferencia. No
+  aparece dinero nuevo: lo que había estaba detrás del aviso.
 - **La tarjeta dice contra qué apertura mide** —fecha, monto y si tiene foto de
   saldos—. Una apertura sin foto no permite comparar cuenta por cuenta cuando
   algo no cuadra, y eso no se veía en ninguna parte.
@@ -739,6 +790,73 @@ número suelto no se puede perseguir, así que la diferencia viene desglosada, y
   suma entero. Medido con su export: pasar del 12/09 al 30/08 lleva el "sin
   explicar" de −$47,85 a **+$836,87**. Por eso la simulación va primero — el
   número lo canta solo, sin que nadie tenga que creerse el aviso.
+
+### El interés de un préstamo no es capital hasta que se cobra
+
+Sus palabras: *"presto una cantidad pero por los intereses cobro más"*.
+
+Un préstamo guarda **dos** montos: `p.capital` es lo que entregó y `p.monto` es
+lo que le tienen que devolver, capital + interés. De la cuenta sale solo el
+capital. `capitalRealTotal()` contaba `p.monto` entero como dinero suyo, así que
+**el día de prestar "tienes de verdad" subía el interés entero** sin que
+"deberías tener" se moviera, y ese interés salía como **sobrante sin explicar**
+hasta que el cliente pagara. Reproducido con sus datos:
+
+```
+antes ................  sin explicar  +59,28
+prestas 100 (+20) ....  sin explicar  +79,28   ← subió el interés entero
+cobras las 120 .......  sin explicar  +59,28   ← volvió solo
+```
+
+Con préstamos nuevos cada semana, ese sobrante no paraba de crecer.
+
+- **En el capital entra el capital pendiente**; el interés pendiente sale aparte
+  (`interesPrestamos`) y se ve en la tarjeta, dicho: *"aún no son tuyos"*. No se
+  esconde — es dinero que le van a pagar— pero no suma.
+- **La fracción de interés vive en `_fraccionInteresPrestamo()` y en ningún otro
+  sitio.** La leen las dos cuentas que tienen que sumar el interés pactado: lo
+  ya cobrado (`gananciaPrestamosDelMes`) y lo que falta (`capitalRealTotal`). Es
+  la misma regla que ya obliga a `cronogramaCuotas()`.
+- **Y la otra mitad, que es la que no se ve venir:** la apertura se contó con el
+  interés de los préstamos que ya estaban vivos ese día. Si el capital deja de
+  contarlo y la apertura sigue llevándolo, queda un **hueco fijo que no cierra
+  nunca**, porque no es dinero: es el punto de partida mal puesto. Sus tres
+  préstamos con interés son del 15/08, 20/08 y 09/09, todos anteriores a la
+  apertura del 11/09 — sin esto, el arreglo le habría abierto un −25,15 que no
+  existe. Lo descuenta `interesDentroDeApertura()` al medir; **el número guardado
+  no se toca**, porque volver a fijar la apertura es justo lo que no hay que
+  hacer y corregirla a mano obligaría a acertar un número que la app calcula sola.
+
+Comprobado: el "sin explicar" de su export no se mueve ni un céntimo (59,28
+antes y después), y prestar con interés ya no lo toca.
+
+### La tarjeta de conciliación: un solo número grande
+
+Sus palabras: *"mucha letra, no es fácil de entender, nunca está en 0 siempre
+tiene un desajuste"*.
+
+Tenía **dos números grandes compitiendo** —la diferencia bruta y el sin
+explicar— y **tres tablas** debajo, 14 filas entre las dos restas.
+
+- **Manda uno solo: el que hay que perseguir.** El titular dice `✅ Cuadra` o
+  `⚠️ Falta / Sobra sin explicar $X`, y nada más.
+- **La resta que ella hace a mano sigue entera, en una línea pequeña**: *"Tienes
+  $2.530,81 · deberías tener $2.539,97 · te faltan $9,16"*. El ARREGLO 69 está
+  ahí porque esconderla la dejó sin entender de dónde salía el titular; lo que
+  cambió es la jerarquía, no lo que se dice.
+- **Las dos restas completas se van al desplegable.** Se leen cuando algo no
+  cuadra y estorban las otras cien veces.
+- **Lo urgente sigue fuera**: los ajustes que no se pueden situar, la moneda sin
+  tasa, la apertura vieja y el desglose de la diferencia — que es lo que
+  convierte un número en algo que se puede perseguir.
+- **El color va con el titular.** Seguía a la diferencia bruta, así que la
+  tarjeta salía **roja** con un titular que decía *"Sobra sin explicar $59,28"*.
+  El color se lee antes que la letra: si dice lo contrario, manda el color. Y
+  dentro del margen, la resta se dice sin color de alarma — un "te faltan" en
+  rojo dentro de una tarjeta verde es la misma contradicción al revés.
+- **"Nunca está en 0" no se arregla poniéndolo en 0.** Un desvío pequeño es
+  ruido de tasas, no una fuga; por eso existe la tolerancia. Dentro del margen el
+  titular dice **Cuadra** y no enseña ninguna cifra roja.
 
 ### Evolución mide la tendencia, no el capital
 
@@ -1060,6 +1178,6 @@ explicación todavía no es la correcta.
 Y si te pasa un export, **úsalo**: `ajustesSaldo` guarda cada corrección manual
 con el saldo de antes y el de después, y el `_mov` de cada remesa guarda el
 movimiento exacto que hizo sobre cada cuenta. Con eso se reconstruye un día
-entero en vez de teorizar. (Limitación conocida: `ajustesSaldo` guarda la fecha
-pero **no la hora**, así que no se puede saber qué remesas entraron antes de
-una corrección y cuáles después.)
+entero en vez de teorizar. (Los de antes del ARREGLO 50 no guardan `ts`, pero
+**la hora está en el id**: `_tsDeAjuste()` la saca, y lo mismo vale para el
+`_uid` de cualquier remesa. Ya no hay que teorizar con el orden de un día.)

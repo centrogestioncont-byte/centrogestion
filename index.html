@@ -93,6 +93,26 @@
   --ent-fucsia:#DB2777;  --ent-fucsia2:#A8154E;
   --ent-rosa:#F9A8C4;    --ent-teja:#C86F52;    --ent-err:#FF8A8A;
 
+  /* ── El flyer y el mini flyer ────────────────────────────────────────
+     ARREGLO 73. Esto no es una pantalla: es lo que le llega al CLIENTE.
+     Se descarga como imagen, se manda por WhatsApp y ella lo imprime, asi
+     que no puede depender del tema que tenga puesto el aparato desde el
+     que se genero. Misma regla que las dos pantallas de entrada de arriba
+     y que el informe del contador, que tampoco sigue al tema.
+     Estaba pintado con nombres del tema y se rompio igual que aquellas al
+     pasar el por omision a SUAVE: el fondo, disenado NEGRO (--gr1-c era
+     #0a0a0a), paso a #d7d5d5 -gris claro- y los textos siguieron siendo
+     blancos. Medido, "TU DINERO SE CONVIERTE EN SOLUCIONES" en blanco al
+     55% sobre ese gris da contraste 1,3: ella lo imprimio y no se leia.
+     De paso el degradado desaparecia, porque en Suave los tres tonos del
+     fondo son el mismo gris.
+     Los valores son los que tenia en CLARO, que es como se diseno.
+     La guardia de mas abajo exige que ningun tema los redefina y que las
+     dos funciones del flyer no usen ningun otro nombre. */
+  --fly-fondo1:#0a0a0a;  --fly-fondo2:#141414;  --fly-fondo3:#000;
+  --fly-naranja:#ff9a1f; --fly-crema:#e8dfd4;   --fly-sobre:#fff;
+  --fly-wa:#25d366;
+
   --brand:#FF8A00;
   --brandDark:#E06E00;
   --brandDeep:#C45A00;
@@ -2237,16 +2257,27 @@ function _mesKeyISO(dstr){ // "yyyy-mm-dd" -> "yyyy-mm"
   var p=String(dstr).split("-"); if(p.length<2) return "";
   return p[0]+"-"+p[1];
 }
+// ARREGLO 71: que parte de cada unidad de un prestamo es interes. Un prestamo
+// de 100 a devolver 120 lleva 20/120 = 16,67% de interes en cada peso que el
+// cliente entrega. Vive aqui y en ningun otro sitio porque lo leen DOS cuentas
+// que tienen que sumar el total: el interes que ya se cobro (ganancia del mes)
+// y el que todavia no (que no es capital). Si cada una se lo calculara por su
+// cuenta, lo ganado y lo pendiente dejarian de dar el interes pactado.
+function _fraccionInteresPrestamo(p){
+  var montoTotal=parseFloat(p&&p.monto)||0;
+  if(montoTotal<=0) return 0;
+  var capital=parseFloat(p.capital!==undefined?p.capital:p.monto)||0;
+  var interesTotal=Math.max(0,Math.round((montoTotal-capital)*100)/100);
+  return interesTotal>0 ? interesTotal/montoTotal : 0;
+}
 function gananciaPrestamosDelMes(mesKey){
   var monto=0, usdt=0, cant=0;
   (S.prestamos||[]).forEach(function(p){
-    var capital=parseFloat(p.capital!==undefined?p.capital:p.monto)||0;
     var montoTotal=parseFloat(p.monto)||0;
     if(montoTotal<=0) return;
     var usdtPorUnidad=(parseFloat(p.usdt)||0)/montoTotal;
-    var interesTotal=Math.max(0,Math.round((montoTotal-capital)*100)/100);
-    if(interesTotal>0){
-      var fracInteres=interesTotal/montoTotal;
+    var fracInteres=_fraccionInteresPrestamo(p);
+    if(fracInteres>0){
       (p.abonos||[]).forEach(function(ab){
         if(_mesKeyISO(ab.fecha)===mesKey){
           var interesEnAbono=(parseFloat(ab.monto)||0)*fracInteres;
@@ -4420,23 +4451,81 @@ function capitalRealTotal(){
     if(!r||isNaN(r)){ sinTasa.push(mon); return; }
     porCobrar+=pend/r;
   });
-  var enPrestamos=0;
+  // ARREGLO 71: un prestamo entra aqui por su CAPITAL pendiente, no por el
+  // total a cobrar. El interes pactado todavia no es dinero suyo: lo gana
+  // cuando el cliente paga, y ahi lo apunta gananciaPrestamosDelMes().
+  //
+  // Antes entraba el total (p.monto = capital + interes), y de la cuenta solo
+  // habia salido el capital. Reproducido con sus datos: prestar 100 con 20 de
+  // interes subia "tienes de verdad" 20 sin mover "deberias tener", y esos 20
+  // salian como sobrante SIN EXPLICAR hasta el dia que el cliente pagara. Con
+  // prestamos nuevos cada semana, el sobrante no paraba de crecer.
+  //
+  // El interes pendiente no se tira: sale aparte, para que ella siga viendo lo
+  // que le tienen que devolver entero.
+  var enPrestamos=0, interesPrestamos=0;
   (S.prestamos||[]).forEach(function(p){
     if(p.estado==="pagado"||p.estado==="saldado") return;
     var abon=(p.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);
     var pend=Math.max(0,(parseFloat(p.monto||p.sal)||0)-abon-(parseFloat(p.ent)||0));
     if(pend<=0) return;
+    var fr=_fraccionInteresPrestamo(p);
+    var pendInt=pend*fr, pendCap=pend-pendInt;
     var mon=p.mon||"USDT";
-    if(mon==="USDT"||mon==="USD"){ enPrestamos+=pend; return; }
+    if(mon==="USDT"||mon==="USD"){ enPrestamos+=pendCap; interesPrestamos+=pendInt; return; }
     var r=getRateToUsdt(mon);
     if(!r||isNaN(r)){ sinTasa.push(mon); return; }
-    enPrestamos+=pend/r;
+    enPrestamos+=pendCap/r; interesPrestamos+=pendInt/r;
   });
   var r2v=function(n){return Math.round(n*100)/100;};
   var total=r2v(enCuentas+enReserva+porCobrar+enPrestamos);
   return {enCuentas:r2v(enCuentas), enReserva:r2v(enReserva), porCobrar:r2v(porCobrar),
-          enPrestamos:r2v(enPrestamos), enLaCalle:r2v(porCobrar+enPrestamos), total:total,
+          enPrestamos:r2v(enPrestamos), interesPrestamos:r2v(interesPrestamos),
+          enLaCalle:r2v(porCobrar+enPrestamos), total:total,
           sinTasa:sinTasa.filter(function(m,i,a){return a.indexOf(m)===i;})};
+}
+
+// ARREGLO 71 · la otra mitad. La apertura se fijo con el capital de ENTONCES,
+// que por lo de arriba llevaba dentro el interes aun no cobrado de los
+// prestamos que ya estaban vivos ese dia. Si el capital deja de contarlo y la
+// apertura sigue llevandolo, aparece un hueco permanente del tamaño de ese
+// interes — y no se cierra nunca, porque es un error del punto de partida.
+//
+// Medido con sus datos del 14/09: sus tres prestamos con interes son del 15/08,
+// 20/08 y 09/09, todos ANTERIORES a la apertura del 11/09, asi que sin esto el
+// arreglo le habria abierto un −25,15 que no existe.
+//
+// No se toca el numero guardado: se descuenta al medir. Volver a fijar la
+// apertura es justo lo que no hay que hacer, y corregirla a mano obligaria a
+// acertar un numero que la app sabe calcular sola.
+function interesDentroDeApertura(desdeIso){
+  var r={total:0, n:0, sinTasa:false};
+  if(!desdeIso) return r;
+  (S.prestamos||[]).forEach(function(p){
+    var fr=_fraccionInteresPrestamo(p);
+    if(fr<=0) return;
+    var nacIso=_isoDeDDMMAA(p.d);
+    if(!nacIso || nacIso>desdeIso) return;     // nacio despues: no estaba en la foto
+    // Lo que quedaba por cobrar EL DIA de la apertura, no hoy.
+    var abon=0;
+    (p.abonos||[]).forEach(function(ab){
+      var i=String(ab.fecha||"").slice(0,10);
+      if(i && i<=desdeIso) abon+=parseFloat(ab.monto)||0;
+    });
+    var pend=Math.max(0,(parseFloat(p.monto||p.sal)||0)-abon-(parseFloat(p.ent)||0));
+    if(pend<=0) return;
+    var pendInt=pend*fr;
+    var mon=p.mon||"USDT", u;
+    if(mon==="USDT"||mon==="USD") u=pendInt;
+    else {
+      var t=getRateToUsdt(mon);
+      if(!t||isNaN(t)||t<=0){ r.sinTasa=true; return; }
+      u=pendInt/t;
+    }
+    r.total+=u; r.n++;
+  });
+  r.total=Math.round(r.total*100)/100;
+  return r;
 }
 
 // Lista de meses desde la apertura hasta hoy, en orden.
@@ -4515,8 +4604,100 @@ var _MOTIVOS_AJUSTE = {
   "1": {tipo:"dedazo", txt:"Me equivoqué al teclear"},
   "3": {tipo:"nose",   txt:"No sé por qué"}
 };
+// ── ARREGLO 72: la hora nunca se perdió, está dentro del id ───────────────
+// _newUid() es Date.now().toString(36)+"_"+azar, así que CADA registro creado
+// con él lleva su hora exacta escrita en el propio id. ajustesDesdeApertura()
+// solo miraba a.ts —que los de antes del ARREGLO 50 no tienen— y dejaba en el
+// aire 7 ajustes por −233,27 USDT que estaban perfectamente fechados.
+//
+// Comprobado con sus 109 ajustes: 109 de 109 se decodifican, y 109 de 109 dan
+// la misma fecha que el campo "fecha".
+//
+// El rango es la guardia: un id de los de antes (Date.now() en decimal, o un
+// número de orden) leído en base 36 se dispara fuera de cualquier fecha creíble
+// y se descarta en vez de inventarse una hora.
+function _tsDeUid(u){
+  var p=String(u||"").split("_")[0];
+  if(!p||!/^[0-9a-z]+$/.test(p)) return 0;
+  var t=parseInt(p,36);
+  return (isFinite(t)&&t>=1.4e12&&t<=2.5e12) ? t : 0;
+}
+// La hora de un ajuste: la guardada manda, y si no la hay se saca del id.
+function _tsDeAjuste(a){
+  if(!a) return 0;
+  var t=parseFloat(a.ts);
+  if(t>0) return t;
+  return _tsDeUid(a.id);
+}
+
+// ── ARREGLO 72 · fechar una apertura que se fijó sin hora ──────────────────
+// Queda la otra mitad: saber a qué hora se fijó la apertura. Las de antes del
+// ARREGLO 50 no guardaron aperturaTs, y sin eso los ajustes de ESE MISMO DÍA
+// siguen sin poder situarse aunque ya se sepa su hora.
+//
+// Pero la apertura dejó un rastro: aperturaBase.bruta es la ganancia que
+// llevaba el mes EN EL INSTANTE de fijarla. Reconstruyendo la bruta acumulada
+// operación por operación —las remesas también llevan la hora en su _uid— se
+// ve entre qué dos operaciones cae ese número, y eso acota el momento.
+//
+// Medido con su export: aperturaBase.bruta = 152,33 y la acumulada pasa de
+// 142,99 (remesa 670) a 152,96 (remesa 112), con un minuto entre las dos. No
+// cuadra al céntimo —sobran 0,63, porque hoy las operaciones se revaloran con
+// otras tasas— pero el salto entre operaciones es de 9,34, así que la ventana
+// aguanta de sobra el ruido.
+//
+// Esto es una DEDUCCIÓN, no un dato, y por eso no se aplica sola: devuelve la
+// ventana y quien la use tiene que enseñarla y preguntar.
+function _deducirHoraApertura(){
+  var cfg=S.config||{};
+  var base=cfg.aperturaBase, desde=cfg.aperturaFecha;
+  if(!base||!desde) return null;
+  var objetivo=parseFloat(base.bruta);
+  if(isNaN(objetivo)) return null;
+  var mk=String(desde).slice(0,7);
+  var ops=[];
+  ["brl","vzla","eeuu"].forEach(function(k){
+    (S[k]||[]).forEach(function(o){
+      var t=_tsDeUid(o._uid);
+      if(t) ops.push({k:k,t:t,uid:o._uid});
+    });
+  });
+  if(!ops.length) return null;
+  ops.sort(function(a,b){return a.t-b.t;});
+  var orig={brl:S.brl, vzla:S.vzla, eeuu:S.eeuu};
+  // Las listas se recortan para medir y se devuelven a su sitio en un finally:
+  // si saliera por una excepción a mitad, la app se quedaría sin remesas.
+  var antes=null, luego=null, brutaAntes=0, brutaLuego=0;
+  try{
+    var brutaHasta=function(hasta){
+      ["brl","vzla","eeuu"].forEach(function(k){
+        S[k]=(orig[k]||[]).filter(function(o){
+          var t=_tsDeUid(o._uid);
+          return !t || t<=hasta;
+        });
+      });
+      var c=calcMesCompleto(mk)||{};
+      return Math.round(((parseFloat(c.ganBrutaTotal)||0)+(parseFloat(c.ganExtraEmp)||0))*100)/100;
+    };
+    var prevT=0, prevB=0;
+    for(var i=0;i<ops.length;i++){
+      var b=brutaHasta(ops[i].t);
+      if(prevB<=objetivo && b>objetivo){ antes=prevT; luego=ops[i].t; brutaAntes=prevB; brutaLuego=b; break; }
+      prevT=ops[i].t; prevB=b;
+    }
+  } finally {
+    S.brl=orig.brl; S.vzla=orig.vzla; S.eeuu=orig.eeuu;
+  }
+  if(!luego) return null;
+  // El corte tiene que caer en el propio día de la apertura: si cae en otro,
+  // la foto no corresponde a lo que dice la fecha y no se deduce nada.
+  var isoCorte=_isoDeFecha(new Date(luego));
+  return {desde:antes, hasta:luego, brutaAntes:brutaAntes, brutaLuego:brutaLuego,
+          objetivo:objetivo, mismoDia:(isoCorte===desde)};
+}
+
 function ajustesDesdeApertura(desdeIso){
-  var r={total:0, n:0, mismoDia:0, nMismoDia:0, nSinSaber:0, sinTasa:false};
+  var r={total:0, n:0, mismoDia:0, nMismoDia:0, nSinSaber:0, sinTasa:false, enElAire:[]};
   if(!desdeIso) return r;
   // ARREGLO 50: si el ajuste y la apertura llevan hora, ya no hay que adivinar.
   // Los de antes de la foto no se cuentan —ya están dentro de la apertura— y los
@@ -4554,9 +4735,13 @@ function ajustesDesdeApertura(desdeIso){
       r.total+=u; r.n++;                              // explicado: no ensucia
     }
     if(iso>desdeIso){ _contar(); return; }
-    var ts=parseFloat(a.ts)||0;
+    var ts=_tsDeAjuste(a);   // ARREGLO 72: la guardada, o la que lleva el id
     if(apTs&&ts){ if(ts>apTs){ _contar(); } return; }   // con hora: no hay duda
     r.mismoDia+=u; r.nMismoDia++;                       // sin hora: en el aire
+    // ARREGLO 72: se lleva cuáles son, no solo cuántos. Ahora tienen hora, y
+    // con la hora delante ella puede juzgar por su cuenta — que es lo que el
+    // aviso le pedía a ciegas.
+    r.enElAire.push({ts:ts, usdt:Math.round(u*100)/100, cuenta:c.nombre, mon:c.moneda, delta:d});
   });
   r.total=Math.round(r.total*100)/100;
   r.mismoDia=Math.round(r.mismoDia*100)/100;
@@ -4716,7 +4901,12 @@ function conciliacionCapital(){
   // ARREGLO 47: lo que se fue a una cuenta personal salió del capital igual que
   // un gasto, aunque no esté anotado como tal. Baja los dos lados a la vez.
   var traspPers=traspasosAPersonal(desde);
-  var deberias=r2v(apertura+bruta-egEmpresa-egPersonal-socios-traspPers.total);
+  // ARREGLO 71: la apertura se contó con el interés de los préstamos que ya
+  // estaban vivos ese día, y el capital ya no lo cuenta. Se descuenta aquí para
+  // que los dos lados midan lo mismo; si no, queda un hueco fijo que no cierra
+  // nunca porque no es dinero, es el punto de partida mal puesto.
+  var intAp=interesDentroDeApertura(desde);
+  var deberias=r2v(apertura-intAp.total+bruta-egEmpresa-egPersonal-socios-traspPers.total);
   var diferencia=r2v(real.total-deberias);
   // De qué está hecha esa diferencia: los ajustes a mano y el desfase de las
   // tasas se explican solos, lo que quede es lo único que hay que perseguir.
@@ -4729,7 +4919,7 @@ function conciliacionCapital(){
     bruta:r2v(bruta), egEmpresa:r2v(egEmpresa), egPersonal:r2v(egPersonal),
     egPersonalSin:r2v(egPersonalSin), socios:r2v(socios),
     deberias:deberias, real:real, diferencia:diferencia,
-    ajustes:ajustes, tasas:tasas, traspPers:traspPers, sinExplicar:sinExplicar,
+    ajustes:ajustes, tasas:tasas, traspPers:traspPers, intAp:intAp, sinExplicar:sinExplicar,
     // ARREGLO 60: la tarjeta dice contra qué apertura está midiendo. Una
     // apertura sin foto de saldos no permite comparar cuenta por cuenta
     // cuando algo no cuadra, y hasta ahora eso no se veía en ninguna parte.
@@ -6436,8 +6626,12 @@ function fijarAperturaHoy(){
     "En cuentas:   $"+f2(cap.enCuentas)+"\n"+
     (cap.enReserva>0?"En reserva:   $"+f2(cap.enReserva)+"\n":"")+
     (cap.porCobrar>0?"Por cobrar:   $"+f2(cap.porCobrar)+"\n":"")+
-    (cap.enPrestamos>0?"En préstamos: $"+f2(cap.enPrestamos)+"\n":"")+
+    (cap.enPrestamos>0?"En préstamos: $"+f2(cap.enPrestamos)+" (capital)\n":"")+
     "─────────────────\nTOTAL:        $"+f2(cap.total)+" USDT\n\n"+
+    // ARREGLO 71: el interés pactado no entra en el total. Se dice aquí porque
+    // este número se queda fijo como punto de partida: si no cuadra con lo que
+    // ella contó a mano, tiene que saber por qué falta.
+    ((cap.interesPrestamos||0)>0.005?"(No cuenta el interés aún no cobrado de los préstamos, $"+f2(cap.interesPrestamos)+": es tuyo cuando te lo paguen.)\n\n":"")+
     "Desde hoy la app compara cada mes lo que deberías tener contra lo que tienes.\n\n"+
     "Antes de confirmar: ¿los saldos de tus cuentas son los de verdad?";
   if(!confirm(msg)) return;
@@ -6590,6 +6784,94 @@ function corregirFechaApertura(){
     saveData();R();
     alert("✅ La apertura ahora es del "+ds(iso)+", con los mismos $"+
           f2(S.config.aperturaUsdt)+" USDT.");
+  });
+}
+
+// ── ARREGLO 72 · situar los ajustes que quedaron en el aire ────────────────
+// Los del mismo día en que se fijó la apertura no se pueden situar porque esa
+// apertura no guardó la hora. Ya se sabe la de cada ajuste (va en su id); lo
+// que falta es la de la apertura, y _deducirHoraApertura() la acota desde la
+// ganancia que llevaba el mes cuando se fijó.
+//
+// Eso es una deducción, así que NO se aplica sola: se enseña de dónde sale, se
+// simula el número que va a quedar y se pregunta. Es el mismo criterio que el
+// botón de corregir la fecha — un botón que no dice a qué número te lleva hay
+// que usarlo dos veces para entenderlo.
+//
+// Y hay que decirle una cosa incómoda: situarlos casi siempre SUBE el "sin
+// explicar", porque un ajuste que pasa a contar se da por explicado y sale de
+// la diferencia. Medido con su export: de +59,28 a +274,66. No aparece dinero
+// nuevo; lo que había estaba escondido detrás del aviso.
+function situarAjustesEnElAire(){
+  var cfg=S.config||{};
+  if(isNaN(parseFloat(cfg.aperturaUsdt))||!cfg.aperturaFecha){
+    alert("Todavía no hay una apertura fijada."); return;
+  }
+  if(parseFloat(cfg.aperturaTs)>0){
+    alert("Esta apertura ya tiene hora guardada: los ajustes se sitúan solos."); return;
+  }
+  var aj=ajustesDesdeApertura(cfg.aperturaFecha);
+  if(!aj.nMismoDia){ alert("No hay ajustes en el aire."); return; }
+
+  var v=_deducirHoraApertura();
+  if(!v||!v.mismoDia){
+    alert("No puedo deducir a qué hora fijaste la apertura.\n\n"+
+          "Se saca de la ganancia que llevabas ese mes cuando la fijaste, comparándola "+
+          "con tus operaciones una por una, y aquí no cuadra con ninguna.\n\n"+
+          "Los "+aj.nMismoDia+" ajustes se quedan como están.");
+    return;
+  }
+  var hh=function(t){var d=new Date(t);
+    return String(d.getDate()).padStart(2,"0")+"/"+String(d.getMonth()+1).padStart(2,"0")+" "+
+           String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");};
+  // El punto medio de la ventana. Y si algún ajuste cae DENTRO o muy cerca, se
+  // avisa: ahí la deducción no alcanza y el lado sería una precisión inventada.
+  var punto=Math.round((v.desde+v.hasta)/2);
+  var MARGEN=30*60*1000;
+  var dudosos=aj.enElAire.filter(function(q){ return Math.abs(q.ts-punto)<MARGEN; });
+
+  var antes=conciliacionCapital(), luego;
+  try{ S.config.aperturaTs=punto; luego=conciliacionCapital(); }
+  finally{ delete S.config.aperturaTs; }   // mirar el resultado no puede ser aplicarlo
+
+  var f=function(n){ return (n<0?"−":"+")+"$"+f2(Math.abs(n)); };
+  var lista=aj.enElAire.slice().sort(function(a,b){return a.ts-b.ts;}).map(function(q){
+    return "   "+hh(q.ts)+"   "+(q.ts<punto?"antes  ":"después")+"   "+
+           f(q.usdt)+"   "+q.cuenta;
+  }).join("\n");
+
+  var msg=
+    "Situar los "+aj.nMismoDia+" ajustes que están en el aire\n\n"+
+    "La hora de cada ajuste va dentro de su propio id, así que no se perdió.\n"+
+    "Lo que faltaba era la hora de la apertura, y se deduce de la ganancia que\n"+
+    "llevabas ese mes cuando la fijaste ($"+f2(v.objetivo)+"):\n\n"+
+    "   "+hh(v.desde)+"   llevabas $"+f2(v.brutaAntes)+"\n"+
+    "   "+hh(v.hasta)+"   llevabas $"+f2(v.brutaLuego)+"\n"+
+    "   → la fijaste entre esas dos operaciones\n\n"+
+    "Cómo quedan:\n"+lista+"\n\n"+
+    "Lo que queda SIN EXPLICAR:\n"+
+    "   antes:   "+f(antes.sinExplicar)+"\n"+
+    "   después: "+f(luego.sinExplicar)+"   (margen ±$"+f2(luego.tolerancia)+")\n";
+  if(Math.abs(luego.sinExplicar)>Math.abs(antes.sinExplicar)){
+    msg+="\n⚠️ El número SUBE, y es lo normal: un ajuste que pasa a contar se da "+
+         "por explicado y sale de la diferencia. No aparece dinero nuevo — lo que "+
+         "había estaba detrás de este aviso.\n";
+  }
+  if(dudosos.length){
+    msg+="\n⚠️ "+dudosos.length+" ajuste(s) caen a menos de media hora de la apertura. "+
+         "Ahí la deducción no da para tanto y el lado puede estar mal.\n";
+  }
+  msg+="\nSe guarda solo la HORA de la apertura. Ni el monto ni la fecha se tocan.\n\n¿Confirmas?";
+  if(!confirm(msg)) return;
+
+  autorizarYHacer(function(){
+    if(!S.config) S.config={};
+    S.config.aperturaTs=punto;
+    logAudit("APERTURA_HORA","Hora de la apertura deducida: "+new Date(punto).toISOString()+
+             " (de aperturaBase.bruta $"+f2(v.objetivo)+", entre dos operaciones). "+
+             aj.nMismoDia+" ajustes situados.");
+    saveData();R();
+    alert("✅ Listo. Los "+aj.nMismoDia+" ajustes ya están situados y el aviso desaparece.");
   });
 }
 
@@ -12051,7 +12333,10 @@ function rCapitalTotal(){
         "<div style='display:flex;justify-content:space-between'><span>En cuentas (las 4 monedas)</span><b>$"+f2(R.enCuentas)+"</b></div>"+
         (R.enReserva>0?"<div style='display:flex;justify-content:space-between'><span>En reserva</span><b>$"+f2(R.enReserva)+"</b></div>":"")+
         (R.porCobrar>0?"<div style='display:flex;justify-content:space-between'><span>Por cobrar</span><b>$"+f2(R.porCobrar)+"</b></div>":"")+
-        (R.enPrestamos>0?"<div style='display:flex;justify-content:space-between'><span>En préstamos</span><b>$"+f2(R.enPrestamos)+"</b></div>":"")+
+        (R.enPrestamos>0?"<div style='display:flex;justify-content:space-between'><span>En préstamos (capital)</span><b>$"+f2(R.enPrestamos)+"</b></div>":"")+
+        // ARREGLO 71: el interés pactado se ve, pero no suma. Es lo que le van a
+        // pagar, no lo que ya tiene: entra como ganancia el día que se cobra.
+        ((R.interesPrestamos||0)>0.005?"<div style='display:flex;justify-content:space-between;color:var(--tx4);font-size:10.5px'><span>+ intereses por cobrar (aún no son tuyos)</span><b>$"+f2(R.interesPrestamos)+"</b></div>":"")+
         "<div style='display:flex;justify-content:space-between;border-top:1px solid var(--ln);margin-top:5px;padding-top:5px;font-size:13px'><b>Tienes de verdad</b><b>$"+f2(R.total)+"</b></div>"+
         (R.sinTasa.length?"<div style='color:var(--mal);font-size:11.5px;margin-top:4px'>⚠️ Sin tasa para "+R.sinTasa.join(", ")+": ese dinero no está contado.</div>":"")+
       "</div>";
@@ -12085,69 +12370,90 @@ function rCapitalTotal(){
     var aj=co.ajustes||{total:0,n:0,mismoDia:0,nMismoDia:0};
     var ta=co.tasas||{total:0,remesas:0,usdt:0,n:0};
     var hayTasas=(ta.n>0||Math.abs(ta.total)>0.005);
-    var col=sano?"var(--ok)":(dif<0?"var(--mal)":"var(--avi-tx2)");
+    // ARREGLO 71: el color va con lo que dice el TITULAR, que ahora es el "sin
+    // explicar". Seguia a la diferencia bruta, asi que la tarjeta salia roja
+    // —"te falta"— con un titular que decia "Sobra sin explicar $59,28". El
+    // color se lee antes que la letra: si dice lo contrario, manda el color.
+    var col=sano?"var(--ok)":(sinExp<0?"var(--mal)":"var(--avi-tx2)");
     // ARREGLO 69: la diferencia lleva su propio color. Rojo si falta, ambar si
     // sobra, verde si es cero — sin mirar el veredicto, que es de otra cosa.
     var colDif=Math.abs(dif)<0.005?"var(--ok)":(dif<0?"var(--mal)":"var(--avi-tx2)");
-    var bg =sano?"var(--vd6-c)":(dif<0?"var(--mal-sup)":"var(--am6-a)");
-    var brd=sano?"var(--vd5-d)":(dif<0?"var(--rj5-j3)":"var(--am4)");
-    return "<div style='background:"+bg+";border:1.5px solid "+brd+";border-radius:12px;padding:14px;margin-bottom:12px'>"+
-      // ARREGLO 70: con flex-wrap y un ancho minimo, en un telefono de 390 px
-      // el titulo se queda arriba y los numeros bajan a su propia linea, enteros.
-      // Sin esto "Te faltan $9,16" se partia en dos y "por encima de ±$51,12" en
-      // tres. Ella trabaja desde el movil.
-      "<div style='display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px;flex-wrap:wrap'>"+
-        // ARREGLO 60: el numero grande es lo SIN EXPLICAR, no la diferencia
-        // bruta. La diferencia incluye lo que ya tiene explicacion —los ajustes
-        // a mano, sobre todo— asi que el titular decia −76,38 mientras el
-        // veredicto de abajo decia "cuadra": dos mensajes opuestos en la misma
-        // tarjeta, y el que asusta es el grande. Lo que hay que perseguir es lo
-        // que queda sin explicar; la diferencia bruta sigue, como una fila mas
-        // del desglose.
-        "<div style='flex:1 1 190px;min-width:0'><div style='font-size:13px;font-weight:800;color:"+col+"'>🧾 Conciliación de capital</div>"+
-        "<div style='font-size:11.5px;color:var(--tx3);margin-top:2px'>Desde el "+ds(co.desde)+" · "+co.meses+" mes(es) · apertura $"+f2(co.apertura)+
-          ((co.aperturaSaldos&&Object.keys(co.aperturaSaldos).length)?"":" <span style='color:var(--avi-tx2)'>(sin foto de saldos)</span>")+"</div></div>"+
-        // ARREGLO 69: el titular era el "sin explicar" a secas, y con sus
-        // numeros del 18/09 decia +$65,37 en verde mientras la resta de al
-        // lado —2.545,08 contra 2.550,95— daba −$5,87. Sus palabras: "me dice
-        // que tengo mas tanto y resulta que cuando saco la cuenta con lo que
-        // deberia tener con lo que tengo mas bien me falta plata".
-        //
-        // Los dos numeros son ciertos y responden a preguntas distintas, asi
-        // que no se elige uno: se enseñan los DOS, cada uno diciendo lo que
-        // es. Y el signo va en palabras, porque un "+65,37" en verde se lee
-        // como "te sobra" y aqui significa otra cosa.
-        "<div style='text-align:right;flex:0 0 auto;margin-left:auto'>"+
-          "<div style='font-size:20px;font-weight:900;color:"+colDif+";line-height:1.15;white-space:nowrap'>"+
-            (Math.abs(dif)<0.005 ? "Cuadra"
-              : (dif<0?"Te faltan ":"Te sobran ")+"$"+f2(Math.abs(dif)))+"</div>"+
-          "<div style='font-size:10.5px;color:var(--tx3)'>"+
-            (Math.abs(dif)<0.005?"con lo que deberías tener":"de lo que deberías tener")+"</div>"+
-          "<div style='font-size:13px;font-weight:800;color:"+col+";margin-top:6px;white-space:nowrap'>"+
-            "$"+f2(Math.abs(sinExp))+" sin explicar</div>"+
-          "<div style='font-size:10.5px;color:"+(sano?"var(--tx3)":"var(--avi-tx2)")+";white-space:nowrap'>"+
-            (sano?"dentro de ±$"+f2(tol):"por encima de ±$"+f2(tol))+"</div>"+
-        "</div>"+
-      "</div>"+
+    var bg =sano?"var(--vd6-c)":(sinExp<0?"var(--mal-sup)":"var(--am6-a)");
+    var brd=sano?"var(--vd5-d)":(sinExp<0?"var(--rj5-j3)":"var(--am4)");
+    // ARREGLO 71: las dos restas completas —de qué sale "deberías tener" y de
+    // qué sale "tienes de verdad"— se van al desplegable. Son 14 filas que se
+    // leen cuando algo no cuadra y estorban las otras cien veces. Sus palabras
+    // sobre esta tarjeta: "mucha letra, no es fácil de entender". Arriba queda
+    // el veredicto, el número que hay que perseguir y los avisos; el detalle,
+    // a un toque.
+    var tablasCuenta=
       "<div style='background:var(--sup);border-radius:9px;padding:10px 12px;margin-bottom:8px;font-size:11px;color:var(--tx2);line-height:1.7'>"+
         "<div style='display:flex;justify-content:space-between'><span>Saldo de apertura</span><b>$"+f2(co.apertura)+"</b></div>"+
         "<div style='display:flex;justify-content:space-between;color:var(--ok)'><span>+ Ganancia bruta</span><b>+$"+f2(co.bruta)+"</b></div>"+
         (co.egEmpresa>0?"<div style='display:flex;justify-content:space-between;color:var(--mal)'><span>− Egresos empresa</span><b>−$"+f2(co.egEmpresa)+"</b></div>":"")+
         (co.egPersonal>0?"<div style='display:flex;justify-content:space-between;color:var(--mal)'><span>− Gastos personales (de una cuenta)</span><b>−$"+f2(co.egPersonal)+"</b></div>":"")+
         (co.socios>0?"<div style='display:flex;justify-content:space-between;color:var(--mal)'><span>− Pagos a socios</span><b>−$"+f2(co.socios)+"</b></div>":"")+
+        ((co.intAp&&co.intAp.total>0.005)?"<div style='display:flex;justify-content:space-between;color:var(--tx4)'><span>− Intereses que iban dentro de la apertura ("+co.intAp.n+")</span><b>−$"+f2(co.intAp.total)+"</b></div>":"")+
         ((co.traspPers&&Math.abs(co.traspPers.total)>0.005)?"<div style='display:flex;justify-content:space-between;color:"+(co.traspPers.total>0?"var(--mal)":"var(--ok)")+"'><span>"+(co.traspPers.total>0?"− Pasado a cuentas personales":"+ Metido desde cuentas personales")+" ("+co.traspPers.n+")</span><b>"+(co.traspPers.total>0?"−":"+")+"$"+f2(Math.abs(co.traspPers.total))+"</b></div>":"")+
         "<div style='display:flex;justify-content:space-between;border-top:1px solid var(--ln);margin-top:5px;padding-top:5px;font-size:13px'><b>Deberías tener</b><b>$"+f2(co.deberias)+"</b></div>"+
       "</div>"+
-      "<div style='background:var(--sup);border-radius:9px;padding:10px 12px;margin-bottom:8px'>"+lineaReal+"</div>"+
+      "<div style='background:var(--sup);border-radius:9px;padding:10px 12px;margin-bottom:8px'>"+lineaReal+"</div>";
+    return "<div style='background:"+bg+";border:1.5px solid "+brd+";border-radius:12px;padding:14px;margin-bottom:12px'>"+
+      // ARREGLO 71: la cabecera tenía DOS números grandes compitiendo —la
+      // diferencia bruta y el sin explicar— y tres tablas debajo. Sus palabras:
+      // "mucha letra, no es fácil de entender". Ahora manda uno solo, el que hay
+      // que perseguir, y la cuenta que ella hace a mano (tengo / debería) va
+      // completa en una línea pequeña debajo: el ARREGLO 69 está ahí porque
+      // esconderla la dejó sin entender de dónde salía el titular.
+      //
+      // Y "nunca está en 0" no se arregla poniéndolo en 0: un desvío pequeño es
+      // ruido de tasas, no una fuga. Dentro del margen el titular dice CUADRA y
+      // no enseña ninguna cifra roja; la cifra sigue en la línea de abajo.
+      "<div style='margin-bottom:10px'>"+
+        "<div style='display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap'>"+
+          "<div style='font-size:13px;font-weight:800;color:"+col+"'>🧾 Conciliación de capital</div>"+
+          "<div style='font-size:10.5px;color:var(--tx3)'>desde el "+ds(co.desde)+" · apertura $"+f2(co.apertura)+
+            ((co.aperturaSaldos&&Object.keys(co.aperturaSaldos).length)?"":" <span style='color:var(--avi-tx2)'>(sin foto de saldos)</span>")+"</div>"+
+        "</div>"+
+        "<div style='font-size:22px;font-weight:900;color:"+col+";line-height:1.2;margin-top:7px'>"+
+          (sano ? "✅ Cuadra"
+                : (sinExp<0 ? "⚠️ Falta por explicar $"+f2(Math.abs(sinExp))
+                            : "⚠️ Sobra sin explicar $"+f2(Math.abs(sinExp))))+"</div>"+
+        "<div style='font-size:11px;color:var(--tx3);margin-top:4px;line-height:1.6'>"+
+          "Tienes <b style='color:var(--tx2)'>$"+f2(R.total)+"</b> · deberías tener <b style='color:var(--tx2)'>$"+f2(co.deberias)+"</b>"+
+          (Math.abs(dif)<0.005 ? " · clavado"
+            // ARREGLO 71: dentro del margen la resta se dice igual, pero sin
+            // color de alarma. Un "te faltan $68,44" en rojo dentro de una
+            // tarjeta verde es la misma contradiccion que el ARREGLO 69 vino a
+            // quitar, solo que al reves.
+            : " · <b style='color:"+(sano?"var(--tx2)":colDif)+"'>"+(dif<0?"te faltan ":"te sobran ")+"$"+f2(Math.abs(dif))+"</b>")+
+          (sano ? " ("+(Math.abs(sinExp)<0.005?"nada sin explicar":"lo que no encaja cabe en el ±$"+f2(tol)+" de ruido normal")+")"
+                : " · el margen normal es ±$"+f2(tol))+
+        "</div>"+
+      "</div>"+
       // ARREGLO 60: esto estaba DENTRO del desplegable "por qué sale este
       // número", que va cerrado. Son ajustes que la app no puede situar ni
       // antes ni después de la apertura porque no llevan hora — con sus datos,
       // 7 ajustes por −233,46 USDT en el aire. Un aviso escondido no es un
       // aviso, y menos uno de ese tamaño.
-      (aj.nMismoDia>0?"<div style='background:var(--am6-a);border:1px solid var(--am4);border-radius:9px;padding:9px 11px;margin-bottom:8px;font-size:11px;color:var(--avi-tx);line-height:1.5'>"+
+      // ARREGLO 72: el aviso decía "no se pueden situar" y no daba con qué
+      // juzgarlo. Ahora la hora de cada uno sale del propio id, así que se
+      // enseñan —con su hora y su monto— y hay un botón que los sitúa.
+      (aj.nMismoDia>0?(function(){
+        var hhm=function(t){var q=new Date(t);
+          return String(q.getHours()).padStart(2,"0")+":"+String(q.getMinutes()).padStart(2,"0");};
+        var conHora=(aj.enElAire||[]).filter(function(q){return q.ts>0;});
+        return "<div style='background:var(--am6-a);border:1px solid var(--am4);border-radius:9px;padding:9px 11px;margin-bottom:8px;font-size:11px;color:var(--avi-tx);line-height:1.5'>"+
         "⚠️ <b>"+aj.nMismoDia+" ajuste"+(aj.nMismoDia!==1?"s":"")+" de saldo por "+(aj.mismoDia<0?"−":"+")+"$"+f2(Math.abs(aj.mismoDia))+" que no se pueden situar.</b> "+
-        "Son del mismo día en que fijaste la apertura y no llevan hora, así que no se sabe si fueron antes o después. Ni cuentan ni se descartan."+
-      "</div>":"")+
+        "Del mismo día que la apertura, que se fijó sin hora: no se sabe si fueron antes o después, así que ni cuentan ni se descartan."+
+        (conHora.length?"<div style='margin-top:6px;font-size:10.5px;color:var(--avi-tx2)'>"+
+          conHora.slice().sort(function(a,b){return a.ts-b.ts;}).map(function(q){
+            return hhm(q.ts)+" <b>"+(q.usdt<0?"−":"+")+"$"+f2(Math.abs(q.usdt))+"</b>";
+          }).join(" · ")+"</div>":"")+
+        (conHora.length===aj.nMismoDia?
+          "<button onclick='situarAjustesEnElAire()' style='width:100%;margin-top:8px;padding:8px;border:1px solid var(--am4);border-radius:8px;background:var(--sup);color:var(--tx2b);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit'>📍 Situarlos (te digo a qué número llevan antes de aplicarlo)</button>"
+          :"")+
+      "</div>";})():"")+
       // ARREGLO 46: de qué está hecha la diferencia. Un número suelto no se
       // puede perseguir; separando lo que ya tiene explicación queda a la vista
       // lo único que hay que buscar.
@@ -12174,13 +12480,17 @@ function rCapitalTotal(){
           (aj.sinTasa?"<div style='font-size:11.5px;color:var(--mal);margin-top:6px'>⚠️ Algún ajuste es de una moneda sin tasa y no está contado aquí.</div>":"")+
         "</div>";
       })() : "")+
+      // ARREGLO 71: cuando cuadra no se dice dos veces. El titular ya lo dice,
+      // y este párrafo repetido debajo era parte de la "mucha letra". Cuando NO
+      // cuadra sí se queda, porque es lo único que dice por dónde empezar, pero
+      // en una frase: el resto de la explicación está en el desplegable.
+      (sano ? "" :
       "<div style='font-size:11px;color:"+col+";font-weight:700;line-height:1.6'>"+
-        (sano
-          ? "✅ Cuadra. Lo que queda sin explicar está dentro del ruido normal (±$"+f2(tol)+"). Tu contabilidad está sana."
-          : sinExp<0
-            ? "⚠️ Faltan $"+f2(Math.abs(sinExp))+" que no explican ni los ajustes a mano ni el desfase de las tasas. Es dinero que salió sin quedar registrado — lo más común es lo que sacas para ti sin anotarlo. Búscalo entre las operaciones desde el "+ds(co.desde)+": volver a fijar la apertura solo lo esconde."
-            : "⚠️ Sobran $"+f2(sinExp)+" que no explican ni los ajustes a mano ni el desfase de las tasas. Suele ser dinero que entró sin registrarse como ganancia, o una apertura que se guardó más baja de lo que tocaba — si fue eso, corrígela con el botón de abajo en vez de volver a fijarla.")+
-      "</div>"+
+        (sinExp<0
+          ? "Dinero que salió sin quedar registrado — lo más común es lo que sacas para ti sin anotarlo. Búscalo entre las operaciones desde el "+ds(co.desde)+"."
+          : "Suele ser dinero que entró sin registrarse como ganancia, o una apertura que se guardó más baja de lo que tocaba.")+
+        " <span style='font-weight:400;color:var(--tx3)'>Volver a fijar la apertura no lo arregla: lo esconde.</span>"+
+      "</div>")+
       (co.baseFaltante?"<div style='background:var(--am6);border:1px solid var(--am4-b);border-radius:8px;padding:9px 11px;font-size:11px;color:var(--avi-tx);line-height:1.6;margin-top:8px'>"+
         "<b>⚠️ Vuelve a fijar la apertura.</b> Esta se guardó antes de un arreglo: contaba dos veces lo que ya llevabas ganado el mes en que la fijaste, así que la diferencia arranca torcida. Un clic en el botón de abajo lo deja en cero."+
       "</div>":"")+
@@ -12190,6 +12500,7 @@ function rCapitalTotal(){
         "<span>ℹ️ Por qué sale este número, y qué puedo hacer</span><span style='font-size:13px;color:var(--tx3b)'>"+(S._concDetalle?"▴":"▾")+"</span>"+
       "</div>"+
       (S._concDetalle?
+        tablasCuenta+
         "<div style='background:var(--sup);border-radius:9px;padding:11px 12px;margin-top:7px;font-size:11.5px;color:var(--tx3);line-height:1.55'>"+
           (aj.nMismoDia>0?"<div style='color:var(--avi-tx2);margin-bottom:7px'>Hay "+aj.nMismoDia+" ajuste(s) del mismo día que fijaste la apertura, por "+(aj.mismoDia<0?"−":"+")+"$"+f2(Math.abs(aj.mismoDia))+". No se cuentan porque son de antes de que la app guardara la hora, y sin ella no hay forma de saber si fueron antes o después de la foto. Los de ahora en adelante ya se sitúan solos.</div>":"")+
           (hayTasas?"<div style='margin-bottom:7px'>El desfase de las tasas es aritmética, no dinero: compras USDT a una tasa y vendes a otra, pero tus saldos se valoran a la tasa del día. "+(Math.abs(ta.usdt)>0.005?"Compra/venta de USDT "+(ta.usdt<0?"−":"+")+"$"+f2(Math.abs(ta.usdt))+". ":"")+(Math.abs(ta.remesas)>0.005?"Remesas "+(ta.remesas<0?"−":"+")+"$"+f2(Math.abs(ta.remesas))+".":"")+"</div>":"")+
@@ -12214,7 +12525,13 @@ function rCapitalTotal(){
 
   return "<div style='padding:8px'>"+
   conciliacionHtml+
-  "<div style='position:sticky;top:0;z-index:10;background:var(--fondo-osc);border-radius:12px;padding:12px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap'>"+
+    // Esta barra llevaba position:sticky y se quedaba clavada arriba al
+  // deslizar. En el telefono son 163px de los 614 visibles -el 27% de la
+  // pantalla- tapando la lista de cuentas todo el rato, y el boton de Tasas
+  // iba dentro, asi que parecia un boton flotante. Sus palabras: "un boton
+  // que cuando deslizo se queda ahi fijo". Ahora se desliza como todo lo
+  // demas: el total se lee al entrar, que es cuando hace falta.
+  "<div style='background:var(--fondo-osc);border-radius:12px;padding:12px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap'>"+
       "<div>"+
         "<div style='font-size:11.5px;font-weight:700;color:var(--ac);text-transform:uppercase;margin-bottom:2px'>🏢 Total empresa (USDT equiv.)</div>"+
         "<div style='font-size:28px;font-weight:900;color:var(--avi);line-height:1'>$"+f2(totalUsdt)+"</div>"+
@@ -20791,7 +21108,7 @@ function generarMiniFlyer(){
   card.style.cssText=[
     "position:fixed;top:-9999px;left:-9999px",
     "width:"+SZ+"px;height:"+SZ+"px",
-    "background:linear-gradient(150deg,var(--gr1-c),var(--gr1-d) 55%,var(--gr1-j1))",
+    "background:linear-gradient(150deg,var(--fly-fondo1),var(--fly-fondo2) 55%,var(--fly-fondo3))",
     "display:flex;flex-direction:column;justify-content:space-between",
     "padding:64px 68px 60px",
     "font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif",
@@ -20802,14 +21119,14 @@ function generarMiniFlyer(){
     "<div style='position:absolute;top:-100px;right:-100px;width:380px;height:380px;"+
     "background:radial-gradient(circle,rgba(255,138,0,.13),transparent 70%);pointer-events:none'></div>"+
     "<div style='position:absolute;bottom:0;left:0;right:0;height:5px;"+
-    "background:linear-gradient(90deg,transparent,var(--am4-d) 25%,var(--am4-d) 75%,transparent)'></div>"+
+    "background:linear-gradient(90deg,transparent,var(--fly-naranja) 25%,var(--fly-naranja) 75%,transparent)'></div>"+
 
     // TOP: logo + fecha
     "<div style='display:flex;justify-content:space-between;align-items:flex-start'>"+
       "<div style='display:flex;align-items:center;gap:18px'>"+
         "<img src='"+_LOGO_R+"' style='width:72px;height:72px;border-radius:16px;object-fit:cover'>"+
         "<div>"+
-          "<div style='font-size:38px;font-weight:900;color:var(--am4-d);letter-spacing:.5px'>RemesasYA</div>"+
+          "<div style='font-size:38px;font-weight:900;color:var(--fly-naranja);letter-spacing:.5px'>RemesasYA</div>"+
           "<div style='font-size:15px;color:rgba(255,255,255,.28);text-transform:uppercase;letter-spacing:1.5px;margin-top:3px'>Transferencias internacionales</div>"+
         "</div>"+
       "</div>"+
@@ -20823,7 +21140,7 @@ function generarMiniFlyer(){
     "<div style='text-align:center;padding:16px 0 8px'>"+
       "<div style='font-size:100px;line-height:1.1;display:flex;align-items:center;justify-content:center;gap:20px'>"+
         "<span>"+moOrig.flag+"</span>"+
-        "<span style='color:var(--am4-d);font-size:56px;font-weight:900'>→</span>"+
+        "<span style='color:var(--fly-naranja);font-size:56px;font-weight:900'>→</span>"+
         "<span>"+moDest.flag+"</span>"+
       "</div>"+
       "<div style='font-size:18px;color:rgba(255,255,255,.3);text-transform:uppercase;letter-spacing:1.5px;margin-top:10px;font-weight:700'>"+t.orig+" → "+t.dest+"</div>"+
@@ -20832,7 +21149,7 @@ function generarMiniFlyer(){
     // TASA sin fondo
     "<div style='text-align:center;padding:8px 0 20px'>"+
       "<div style='font-size:16px;color:rgba(255,255,255,.28);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:8px'>Tasa del día</div>"+
-      "<div style='font-size:60px;font-weight:900;color:var(--am4-d);line-height:1'>1 = "+tasaStr+"</div>"+
+      "<div style='font-size:60px;font-weight:900;color:var(--fly-naranja);line-height:1'>1 = "+tasaStr+"</div>"+
       "<div style='font-size:17px;color:rgba(255,138,0,.4);margin-top:6px;font-weight:600'>"+t.orig+" / "+t.dest+"</div>"+
     "</div>"+
 
@@ -20842,14 +21159,14 @@ function generarMiniFlyer(){
       "<div style='flex:1;background:"+cOrig.bg+";border:1.5px solid "+cOrig.bd+";border-radius:20px;padding:32px 20px;text-align:center'>"+
         "<div style='font-size:52px;margin-bottom:12px'>"+moOrig.flag+"</div>"+
         "<div style='font-size:16px;color:"+cOrig.tx+";text-transform:uppercase;letter-spacing:.8px;font-weight:700;margin-bottom:12px'>Tú envías</div>"+
-        "<div style='font-size:68px;font-weight:900;color:var(--sobre-color);line-height:1'>"+fmt(t.simMonto,0)+"</div>"+
+        "<div style='font-size:68px;font-weight:900;color:var(--fly-sobre);line-height:1'>"+fmt(t.simMonto,0)+"</div>"+
         "<div style='font-size:18px;color:"+cOrig.tx+";margin-top:10px;font-weight:600'>"+t.orig+"</div>"+
       "</div>"+
       // Recibes
       "<div style='flex:1;background:"+cDest.bg+";border:1.5px solid "+cDest.bd+";border-radius:20px;padding:32px 20px;text-align:center'>"+
         "<div style='font-size:52px;margin-bottom:12px'>"+moDest.flag+"</div>"+
         "<div style='font-size:16px;color:"+cDest.tx+";text-transform:uppercase;letter-spacing:.8px;font-weight:700;margin-bottom:12px'>Recibes</div>"+
-        "<div style='font-size:68px;font-weight:900;color:var(--sobre-color);line-height:1'>"+fmt(t.simDestMonto,0)+"</div>"+
+        "<div style='font-size:68px;font-weight:900;color:var(--fly-sobre);line-height:1'>"+fmt(t.simDestMonto,0)+"</div>"+
         "<div style='font-size:18px;color:"+cDest.tx+";margin-top:10px;font-weight:600'>"+t.dest+"</div>"+
       "</div>"+
     "</div>"+
@@ -20857,7 +21174,7 @@ function generarMiniFlyer(){
     // BOTTOM
     "<div style='display:flex;justify-content:space-between;align-items:center;margin-top:36px'>"+
       "<div style='display:flex;align-items:center;gap:12px'>"+
-        "<div style='width:36px;height:36px;background:var(--vd3-d);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:20px;color:var(--sobre-color);font-weight:900'>✓</div>"+
+        "<div style='width:36px;height:36px;background:var(--fly-wa);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:20px;color:var(--fly-sobre);font-weight:900'>✓</div>"+
         "<span style='font-size:22px;color:rgba(255,255,255,.4);font-weight:600'>+55 95 84098171</span>"+
       "</div>"+
       "<div style='font-size:14px;color:rgba(255,255,255,.15);text-transform:uppercase;letter-spacing:.8px'>Tasa sujeta a cambio</div>"+
@@ -20885,30 +21202,30 @@ function generarFlyer(){
   var tIda="", tVuelta="";
   if(t.ida.ok){
     tIda="<div style='flex:1;display:flex;flex-direction:column;align-items:center;gap:10px;"+
-      "background:rgba(255,154,31,.06);border-radius:30px;border-bottom:4px solid var(--am4-d);padding:28px 16px'>"+
+      "background:rgba(255,154,31,.06);border-radius:30px;border-bottom:4px solid var(--fly-naranja);padding:28px 16px'>"+
       "<img src='"+_FLAG_BR_B64+"' style='width:78px;height:78px;display:block'/>"+
       "<div style='font-size:22px;font-weight:600;color:rgba(255,255,255,.65)'>Brasil → Venezuela</div>"+
       "<div style='display:flex;align-items:baseline;gap:10px'>"+
-        "<span style='font-size:88px;font-weight:900;color:var(--sobre-color);line-height:1'>"+t.ida.cliente+"</span>"+
-        "<span style='font-size:42px;font-weight:700;color:var(--am4-d)'>Bs</span>"+
+        "<span style='font-size:88px;font-weight:900;color:var(--fly-sobre);line-height:1'>"+t.ida.cliente+"</span>"+
+        "<span style='font-size:42px;font-weight:700;color:var(--fly-naranja)'>Bs</span>"+
       "</div>"+
     "</div>";
   }
   if(t.vuelta.ok){
     tVuelta="<div style='flex:1;display:flex;flex-direction:column;align-items:center;gap:10px;"+
-      "background:rgba(255,154,31,.06);border-radius:30px;border-bottom:4px solid var(--am4-d);padding:28px 16px'>"+
+      "background:rgba(255,154,31,.06);border-radius:30px;border-bottom:4px solid var(--fly-naranja);padding:28px 16px'>"+
       "<img src='"+_FLAG_VE_B64+"' style='width:78px;height:78px;display:block'/>"+
       "<div style='font-size:22px;font-weight:600;color:rgba(255,255,255,.65)'>Venezuela → Brasil</div>"+
       "<div style='display:flex;align-items:baseline;gap:10px'>"+
-        "<span style='font-size:88px;font-weight:900;color:var(--sobre-color);line-height:1'>"+t.vuelta.cliente+"</span>"+
-        "<span style='font-size:42px;font-weight:700;color:var(--am4-d)'>Bs</span>"+
+        "<span style='font-size:88px;font-weight:900;color:var(--fly-sobre);line-height:1'>"+t.vuelta.cliente+"</span>"+
+        "<span style='font-size:42px;font-weight:700;color:var(--fly-naranja)'>Bs</span>"+
       "</div>"+
     "</div>";
   }
 
   var html=
   "<div id='_flyerCard' style='width:1080px;height:1350px;position:relative;"+
-    "background:linear-gradient(150deg,var(--gr1-c),var(--gr1-d) 55%,var(--gr1));"+
+    "background:linear-gradient(150deg,var(--fly-fondo1),var(--fly-fondo2) 55%,var(--fly-fondo3));"+
     "font-family:-apple-system,Segoe UI,Arial,Helvetica,sans-serif;overflow:hidden;box-sizing:border-box;padding:60px'>"+
     "<div style='position:absolute;top:-200px;left:50%;transform:translateX(-50%);width:880px;height:880px;border-radius:50%;background:radial-gradient(circle,rgba(255,138,0,.18),rgba(255,138,0,0) 70%)'></div>"+
     "<div style='position:absolute;inset:22px;border:5px solid rgba(255,154,31,.35);border-radius:42px'></div>"+
@@ -20917,20 +21234,20 @@ function generarFlyer(){
       "<img src='"+_LOGO_B64+"' style='width:480px;height:auto'/>"+
       // encabezado reducido y discreto
       "<div style='text-align:center'>"+
-        "<div style='font-size:28px;font-weight:600;color:var(--am5-g);letter-spacing:4px'>DESDE BRASIL HASTA VENEZUELA</div>"+
+        "<div style='font-size:28px;font-weight:600;color:var(--fly-crema);letter-spacing:4px'>DESDE BRASIL HASTA VENEZUELA</div>"+
         "<div style='font-size:46px;font-weight:700;color:rgba(255,255,255,.55);letter-spacing:1px;margin:8px 0'>TU DINERO SE CONVIERTE EN SOLUCIONES</div>"+
       "</div>"+
       // tarjetas con línea de acento abajo
       "<div style='display:flex;gap:20px;width:100%'>"+tIda+tVuelta+"</div>"+
       // fecha y hora
       "<div style='display:flex;gap:60px;align-items:center'>"+
-        "<div style='display:flex;align-items:center;gap:12px'><span style='font-size:40px'>📅</span><span style='font-size:35px;font-weight:600;color:var(--sobre-color)'>"+fh.fecha+"</span></div>"+
-        "<div style='display:flex;align-items:center;gap:12px'><span style='font-size:40px'>⏰</span><span style='font-size:35px;font-weight:600;color:var(--sobre-color)'>"+fh.hora+"</span></div>"+
+        "<div style='display:flex;align-items:center;gap:12px'><span style='font-size:40px'>📅</span><span style='font-size:35px;font-weight:600;color:var(--fly-sobre)'>"+fh.fecha+"</span></div>"+
+        "<div style='display:flex;align-items:center;gap:12px'><span style='font-size:40px'>⏰</span><span style='font-size:35px;font-weight:600;color:var(--fly-sobre)'>"+fh.hora+"</span></div>"+
       "</div>"+
       // whatsapp
-      "<div style='display:flex;align-items:center;gap:16px;background:rgba(37,211,102,.14);border:2.5px solid var(--vd3-d);border-radius:44px;padding:17px 40px'>"+
+      "<div style='display:flex;align-items:center;gap:16px;background:rgba(37,211,102,.14);border:2.5px solid var(--fly-wa);border-radius:44px;padding:17px 40px'>"+
         _WA_SVG+
-        "<span style='font-size:40px;font-weight:700;color:var(--sobre-color)'>+55 95 84098171</span>"+
+        "<span style='font-size:40px;font-weight:700;color:var(--fly-sobre)'>+55 95 84098171</span>"+
       "</div>"+
       // pie: tasa sujeta a cambio
       "<div style='font-size:22px;font-weight:600;color:rgba(255,154,31,.65);letter-spacing:5px'>TASA SUJETA A CAMBIO</div>"+
@@ -21663,7 +21980,7 @@ function rInventarioUsdt(){
           "<td style='padding:6px 8px;text-align:right;font-size:10.5px;color:var(--tx4)'>"+(r._fechaCierre||"")+"</td></tr>";
       }).join("");
       return "<div style='border:1px solid var(--am5-i);background:var(--am6-g);border-radius:10px;overflow-x:auto;max-height:300px;margin-bottom:12px'>"+
-        "<div style='padding:8px 10px;font-size:11.5px;font-weight:700;color:var(--avi-tx);background:var(--am6-h);border-bottom:1px solid var(--am5-b);position:sticky;top:0'>📦 LOTES ARCHIVADOS (llegaron a 0) — "+arch.length+"</div>"+
+        "<div style='padding:8px 10px;font-size:11.5px;font-weight:700;color:var(--avi-tx);background:var(--am6-h);border-bottom:1px solid var(--am5-b)'>📦 LOTES ARCHIVADOS (llegaron a 0) — "+arch.length+"</div>"+
         "<table style='min-width:560px;width:100%;border-collapse:collapse'><thead><tr style='background:var(--am6-i)'>"+
         "<th style='padding:6px 8px;text-align:left;font-size:10.5px;color:var(--avi-tx)'>FECHA</th>"+
         "<th style='padding:6px 8px;text-align:left;font-size:10.5px;color:var(--avi-tx)'>TIPO</th>"+
