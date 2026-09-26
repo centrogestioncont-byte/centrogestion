@@ -4009,7 +4009,7 @@ function rComparacionApi(){
 var EMPRESA_RAZON = "SAIPHA SERVIÇOS DIGITAIS";
 var EMPRESA_CNPJ  = "66.994.057/0001-61";
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
-  "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo","_modCampos","mapaBinance"];
+  "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","histComp","ajustesSaldo","_modCampos","mapaBinance"];
 
 // ══════════════════════════════════════════════════════════════════════
 // SISTEMA DE CIERRE AUTOMÁTICO DE MES
@@ -20884,6 +20884,173 @@ function _reconvertirBCV(){
   else if(elUsd.value) _convDesde("usd");
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 74 · EL MERCADO: a cómo está la competencia
+// ══════════════════════════════════════════════════════════════════════
+// Sus palabras: "todas esas casas de cambio todos los días tengo que revisar
+// para poder colocar mi tasa". Revisar cuatro sitios, acordarse de los números
+// y comparar de cabeza, cada día.
+//
+// Esto NO se puede leer solo y no se va a fingir que sí: dos son apps y dos son
+// grupos de WhatsApp. Inventar de dónde sacarlas sería darle números falsos
+// sobre los que decide precio. Lo que sí se puede es que apuntarlas cueste diez
+// segundos y que la comparación la haga la app — y, sobre todo, que quede
+// GUARDADA con su fecha, que es lo único que después contesta "¿cuándo y cuánto
+// se mueven?".
+//
+// Las dos direcciones se escriben en la MISMA unidad, bolívares por real, que
+// es como ella las lee en los flyers. Medido en sus 674 remesas de ida y 117 de
+// vuelta: ida 172,5 (200 R$ -> 34.500 Bs), vuelta 220 (42.500 Bs -> 193 R$).
+// Pero significan cosas opuestas:
+//   ida    -> ella ENTREGA bolívares: cuantos MÁS dé, mejor para el cliente
+//   vuelta -> ella ENTREGA reales:    cuantos MENOS pida, mejor para el cliente
+var _COMPETIDORES_POR_OMISION = [
+  {id:"retorna", nombre:"Retorna",       nota:"app",    vuelta:false},
+  {id:"dorado",  nombre:"El Dorado P2P", nota:"app",    vuelta:true},
+  {id:"grupo1",  nombre:"Grupo 1",       nota:"WhatsApp", vuelta:true},
+  {id:"grupo2",  nombre:"Grupo 2",       nota:"WhatsApp", vuelta:true}
+];
+function _competidores(){
+  var c=(S.config||{}).competidores;
+  return (c&&c.length)?c:_COMPETIDORES_POR_OMISION;
+}
+// Lo apuntado hoy. Indexado por fecha para que el historial se una entre
+// aparatos en vez de pisarse (por eso histComp va en _MERGE_HISTORIAL).
+function _compDelDia(iso){
+  if(!S.histComp) S.histComp={};
+  var k=iso||td();
+  if(!S.histComp[k]) S.histComp[k]={};
+  return S.histComp[k];
+}
+// Se escribe con _num() en la puerta: con el teclado en español la coma decimal
+// es lo primero que se pierde, y 171,54 entraría como 17154.
+function _setComp(id,dir,val){
+  var d=_compDelDia();
+  if(!d[id]) d[id]={};
+  d[id][dir]=_num(val);
+  // ARREGLO 32: repintar mientras teclea destruye el input bajo el dedo. Se
+  // refresca solo el recuadro de la comparación, por su id.
+  var box=document.getElementById("comp-resumen");
+  if(box) box.innerHTML=_htmlCompResumen();
+}
+// Su tasa publicada: la que guarda el flyer al generarlo (guardarTasaCalcHoy).
+// No se inventa una: si todavía no ha publicado hoy, se dice que falta.
+function _misTasasPublicadas(){
+  var t=(S.config||{}).tasasDia||{};
+  var ida=parseFloat(t.tdia_brl), vta=parseFloat(t.tdia_ves_brl);
+  return {ida:(isFinite(ida)&&ida>0)?ida:null, vuelta:(isFinite(vta)&&vta>0)?vta:null};
+}
+// Dónde queda ella. Devuelve los números, no un juicio: su vuelta alta es una
+// DECISIÓN suya —le frena la entrada de bolívares, que parados se devalúan, y
+// le cubre el P2P que tiene que hacer cuando entra una vuelta grande y no tiene
+// reales—. Una pantalla que la marcara en rojo estaría opinando sobre su
+// negocio con la mitad de la información.
+function _posicionMercado(){
+  var d=_compDelDia(), mias=_misTasasPublicadas();
+  var ida=[], vta=[];
+  _competidores().forEach(function(c){
+    var v=d[c.id]||{};
+    var i=parseFloat(v.ida), u=parseFloat(v.vuelta);
+    if(isFinite(i)&&i>0) ida.push({n:c.nombre, v:i});
+    if(c.vuelta!==false && isFinite(u)&&u>0) vta.push({n:c.nombre, v:u});
+  });
+  // En la IDA gana quien da MÁS bolívares. En la VUELTA, quien pide MENOS.
+  ida.sort(function(a,b){return b.v-a.v;});
+  vta.sort(function(a,b){return a.v-b.v;});
+  var r2=function(n){return Math.round(n*100)/100;};
+  var pos=function(lista,mia,masEsMejor){
+    if(mia===null||!lista.length) return null;
+    var mejores=lista.filter(function(x){return masEsMejor ? x.v>mia : x.v<mia;}).length;
+    return {puesto:mejores+1, de:lista.length+1,
+            mejor:lista[0], peor:lista[lista.length-1],
+            brechaMejor:r2(Math.abs(lista[0].v-mia))};
+  };
+  return {ida:ida, vuelta:vta, mias:mias,
+          posIda:pos(ida,mias.ida,true), posVuelta:pos(vta,mias.vuelta,false)};
+}
+
+// El recuadro de abajo: se rehace solo (por id) mientras ella teclea.
+function _htmlCompResumen(){
+  var m=_posicionMercado();
+  var f=function(n){return f2(n);};
+  var linea=function(rot,mia,p,masEsMejor){
+    if(mia===null) return "<div style='display:flex;justify-content:space-between;gap:8px;font-size:11.5px;color:var(--tx3)'><span>"+rot+"</span><span>aún no has publicado hoy</span></div>";
+    if(!p) return "<div style='display:flex;justify-content:space-between;gap:8px;font-size:11.5px'><span style='color:var(--tx3)'>"+rot+"</span><b style='color:var(--tit)'>"+f(mia)+"</b></div>";
+    var solo=(p.puesto===1);
+    var ult=(p.puesto===p.de);
+    return "<div style='display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap'>"+
+      "<span style='font-size:11.5px;color:var(--tx3)'>"+rot+"</span>"+
+      "<span style='font-size:13px;font-weight:800;color:var(--tit)'>"+f(mia)+
+        "<span style='font-size:11px;font-weight:600;color:"+(solo?"var(--ok)":(ult?"var(--avi-tx2)":"var(--tx3)"))+";margin-left:6px'>"+
+          p.puesto+"º de "+p.de+
+          (solo?" · la mejor":(ult?" · la última":""))+
+        "</span></span>"+
+      "</div>"+
+      "<div style='font-size:10.5px;color:var(--tx4);margin:1px 0 7px;text-align:right'>"+
+        (solo ? "nadie "+(masEsMejor?"da más":"pide menos")
+              : p.mejor.n+" "+(masEsMejor?"da":"pide")+" "+f(p.mejor.v)+" ("+(masEsMejor?"+":"−")+f(p.brechaMejor)+" que tú)")+
+      "</div>";
+  };
+  return linea("Tu ida (R$ → Bs)", m.mias.ida, m.posIda, true)+
+         linea("Tu vuelta (Bs → R$)", m.mias.vuelta, m.posVuelta, false)+
+         ((m.mias.vuelta!==null&&m.posVuelta&&m.posVuelta.puesto===m.posVuelta.de)
+           ? "<div style='font-size:10.5px;color:var(--tx4);line-height:1.5;border-top:1px solid var(--ln);padding-top:6px;margin-top:2px'>"+
+             "Estar arriba en la vuelta te frena la entrada de bolívares y te cubre el P2P que toca hacer cuando entra una vuelta grande sin tener reales. Aquí solo dice dónde estás."+
+             "</div>" : "");
+}
+
+// Dos de los cuatro son grupos suyos de WhatsApp, y "Grupo 1" no le dice nada
+// dentro de tres semanas. Se renombran tocando el nombre. La lista se guarda en
+// config, que ya se fusiona clave por clave entre sus dos aparatos.
+function _renombrarComp(id){
+  var lista=_competidores().map(function(x){return Object.assign({},x);});
+  var c=lista.find(function(x){return x.id===id;});
+  if(!c) return;
+  var n=prompt("\u00bfC\u00f3mo se llama?", c.nombre);
+  if(n===null) return;
+  n=String(n).trim();
+  if(!n){ alert("El nombre no puede quedar vac\u00edo."); return; }
+  c.nombre=n;
+  if(!S.config) S.config={};
+  S.config.competidores=lista;
+  saveData(); R();
+}
+
+// La tarjeta entera, arriba de la calculadora: es donde decide la tasa.
+function _htmlMercadoHoy(){
+  var d=_compDelDia();
+  var filas=_competidores().map(function(c){
+    var v=d[c.id]||{};
+    var inp=function(dir,ph){
+      return "<input type='text' inputmode='decimal' placeholder='"+ph+"' value='"+(v[dir]!==undefined&&v[dir]!==""?v[dir]:"")+"' "+
+        "oninput='_setComp(\""+c.id+"\",\""+dir+"\",this.value)' onchange='saveData()' "+
+        "style='width:100%;padding:7px 9px;border:1.5px solid var(--ln);border-radius:8px;font-size:13px;font-weight:700;text-align:center;font-family:inherit;background:var(--sup);color:var(--tit)'>";
+    };
+    return "<div style='display:flex;align-items:center;gap:8px;padding:6px 0'>"+
+      "<div style='flex:1 1 110px;min-width:0;cursor:pointer' onclick='_renombrarComp(\""+c.id+"\")' title='Toca para cambiarle el nombre'>"+
+        "<div style='font-size:12px;font-weight:700;color:var(--tit);white-space:nowrap;overflow:hidden;text-overflow:ellipsis'>"+c.nombre+"</div>"+
+        "<div style='font-size:10.5px;color:var(--tx4)'>"+(c.nota||"")+"</div>"+
+      "</div>"+
+      "<div style='flex:0 0 82px'>"+inp("ida","ida")+"</div>"+
+      "<div style='flex:0 0 82px'>"+(c.vuelta===false
+        ? "<div style='text-align:center;font-size:10.5px;color:var(--tx4);padding:8px 0'>solo ida</div>"
+        : inp("vuelta","vuelta"))+"</div>"+
+    "</div>";
+  }).join("");
+  return "<div style='background:var(--sup);border:1.5px solid var(--ln2);border-radius:14px;padding:14px 16px;margin-bottom:16px'>"+
+    "<div style='display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:4px;flex-wrap:wrap'>"+
+      "<div style='font-size:13px;font-weight:800;color:var(--tit)'>📊 El mercado hoy</div>"+
+      "<div style='font-size:10.5px;color:var(--tx4)'>"+ds(td())+" · en bolívares por real</div>"+
+    "</div>"+
+    "<div style='font-size:10.5px;color:var(--tx4);margin-bottom:8px;line-height:1.5'>Apunta lo que veas hoy. Queda guardado con su fecha, así que en unos días tienes cómo se mueven.</div>"+
+    "<div style='display:flex;gap:8px;font-size:10.5px;color:var(--tx4);font-weight:700;text-transform:uppercase;letter-spacing:.3px'>"+
+      "<div style='flex:1 1 110px'></div><div style='flex:0 0 82px;text-align:center'>Ida</div><div style='flex:0 0 82px;text-align:center'>Vuelta</div>"+
+    "</div>"+
+    filas+
+    "<div id='comp-resumen' style='border-top:1px solid var(--ln);margin-top:8px;padding-top:9px'>"+_htmlCompResumen()+"</div>"+
+  "</div>";
+}
+
 function rCalculadora(){
   var c=S.calc;
   var modo=c.modoCalc||"fijas";
@@ -20919,6 +21086,9 @@ function rCalculadora(){
       "<div style='font-size:12px;opacity:.85;margin-top:3px'>Calcula la tasa para tu cliente y genera el flyer</div>"+
     "</div>"+
     _rConversorBCV()+
+    // ARREGLO 74: va ARRIBA, antes de las sub-pestañas. Es lo primero que mira
+    // antes de decidir la tasa, no un apéndice al final.
+    _htmlMercadoHoy()+
     subTabs;
 
   // ══════════════════════
@@ -24422,7 +24592,7 @@ var _MERGE_OBJETOS = ["config","tasasDia","_tasasDiaMeta","tasasCambio","mapaBin
 var _MERGE_BLOQUES = {
   config: [["aperturaUsdt","aperturaFecha","aperturaSaldos","aperturaTs","aperturaBase"]]
 };
-var _MERGE_HISTORIAL = ["histBalance","histTasas","histSaldos"];
+var _MERGE_HISTORIAL = ["histBalance","histTasas","histSaldos","histComp"];
 
 function _marcarObjetosCambiados(){
   if(!window._fotoPorClave) window._fotoPorClave={};

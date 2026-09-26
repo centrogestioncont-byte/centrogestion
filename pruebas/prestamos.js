@@ -68,6 +68,7 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "ajusteDiasPrimeraCuota", "interesPorAjusteDias",
                     "cuotasRecomendadas", "limiteCredito",
                     "costoOperativoPorPrestamo", "pctCostoOperativo",
+                    "_competidores", "_compDelDia", "_setComp", "_misTasasPublicadas", "_posicionMercado",
                     "capitalRealTotal", "_fraccionInteresPrestamo", "interesDentroDeApertura",
                     "_mesesDesde", "_acumuladosMes",
                     "conciliacionCapital", "getMesKeyActual", "ajustesDesdeApertura",
@@ -111,6 +112,10 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "_monIU", "_loteConOrden", "_ultimasIU"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
 global.window = global.window || {};
+// Lo mismo con document: las funciones que refrescan un recuadro por su id
+// (ARREGLO 32: no repintar mientras ella teclea) lo buscan antes de tocarlo.
+// Aqui no hay pantalla, asi que no lo encuentran y siguen su camino.
+global.document = global.document || { getElementById: function(){ return null; } };
 // setTasaDia/soltarTasaDia guardan y repintan, y avisan por alert(). Aqui no
 // hay pantalla: se anota lo que habrian dicho para poder comprobarlo.
 global.avisos = [];
@@ -4456,6 +4461,72 @@ console.log("\n— FASE 2: la cuenta madre —");
      "la tarjeta dice que el interes pendiente no cuenta como capital");
   ok(/En préstamos \(capital\)/.test(HTML),
      "y que lo que cuenta es el capital");
+}
+
+
+// ── ARREGLO 74 · el mercado: donde queda ella contra la competencia ────────
+// "todas esas casas de cambio todos los dias tengo que revisar para poder
+// colocar mi tasa". Las dos direcciones se escriben en la MISMA unidad
+// -bolivares por real- pero significan lo contrario: en la ida ella ENTREGA
+// bolivares (mas es mejor para el cliente) y en la vuelta ENTREGA reales
+// (menos es mejor). Invertir uno de los dos le daria el puesto al reves, que
+// es justo lo que la haria publicar una tasa mala.
+{
+  const CONF = [
+    {id:"retorna", nombre:"Retorna",  vuelta:false},
+    {id:"dorado",  nombre:"Dorado",   vuelta:true},
+    {id:"g1",      nombre:"Grupo 1",  vuelta:true},
+    {id:"g2",      nombre:"Grupo 2",  vuelta:true}
+  ];
+  S.config = {competidores: CONF, tasasDia:{tdia_brl:172.5, tdia_ves_brl:220}};
+  S.histComp = {};
+  const hoy = F.td();
+  S.histComp[hoy] = {
+    retorna:{ida:171.54}, dorado:{ida:173, vuelta:200},
+    g1:{ida:175}, g2:{ida:170, vuelta:200}
+  };
+  const m = F._posicionMercado();
+  // Sus numeros del 26/09, tal y como me los dio.
+  ok(m.posIda.puesto === 3 && m.posIda.de === 5,
+     "en la ida cuenta cuantos dan MAS bolivares que ella",
+     m.posIda.puesto + "/" + m.posIda.de);
+  ok(m.posIda.mejor.nombre === undefined && m.posIda.mejor.n === "Grupo 1" && m.posIda.mejor.v === 175,
+     "y el mejor de la ida es el que mas da");
+  ok(m.posVuelta.puesto === 3 && m.posVuelta.de === 3,
+     "en la vuelta cuenta cuantos piden MENOS: ahi queda la ultima",
+     m.posVuelta.puesto + "/" + m.posVuelta.de);
+  ok(m.posVuelta.mejor.v === 200 && m.posVuelta.brechaMejor === 20,
+     "y la brecha con el mejor son los 20 Bs por real", m.posVuelta.brechaMejor);
+  // Retorna solo publica ida: no puede colarse en el ranking de vuelta.
+  ok(m.vuelta.length === 2 && !m.vuelta.some(function(x){return x.n==="Retorna";}),
+     "quien solo publica ida no entra en la vuelta", m.vuelta.length);
+  // Si todavia no ha publicado hoy, no se le inventa una tasa.
+  S.config.tasasDia = {};
+  const sinPublicar = F._posicionMercado();
+  ok(sinPublicar.mias.ida === null && sinPublicar.posIda === null,
+     "sin tasa publicada no se inventa un puesto");
+  S.config.tasasDia = {tdia_brl:172.5, tdia_ves_brl:220};
+
+  // La coma decimal: es lo primero que se pierde con el teclado en espanol, y
+  // 171,54 entraria como 17154 -cien veces su tasa-.
+  S.histComp = {};
+  F._setComp("retorna", "ida", "171,54");
+  ok(F._compDelDia()[ "retorna" ].ida === "171.54",
+     "el campo del mercado pasa por _num(): 171,54 no se vuelve 17154",
+     F._compDelDia()["retorna"].ida);
+  ok(/type='text' inputmode='decimal'/.test(sacarFuncion("_htmlMercadoHoy")) &&
+     !/type='number'/.test(sacarFuncion("_htmlMercadoHoy")),
+     "y el campo es de texto, no type=number");
+  // ARREGLO 32: teclear no puede repintar la pantalla entera.
+  ok(!/\bR\(\)/.test(sinComentarios(sacarFuncion("_setComp"))) &&
+     /getElementById\("comp-resumen"\)/.test(sacarFuncion("_setComp")),
+     "apuntar una tasa no repinta: refresca el recuadro por su id");
+  // El historial va indexado por fecha y se UNE entre aparatos, nunca se pisa.
+  ok(/_MERGE_HISTORIAL = \[[^\]]*"histComp"/.test(HTML),
+     "histComp se une por fecha entre los dos aparatos");
+  ok(/DATA_KEYS = \[[\s\S]{0,800}"histComp"/.test(HTML),
+     "y esta en DATA_KEYS: si no, el remoto lo reemplaza entero");
+  S.config = {}; S.histComp = {};
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

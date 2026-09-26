@@ -707,6 +707,63 @@ el único destino era Venezuela. Con Colombia y Perú devolvía 960,2328 para el
 sol y para el peso: la tasa del bolívar. Sin lotes en esa moneda, `null`. Mejor
 sin tasa —que se ve y avisa— que con una que cuadra la pantalla y miente.
 
+### Las dos tasas al cliente se escriben igual y significan lo contrario
+
+Sus palabras: *"todas esas casas de cambio todos los días tengo que revisar para
+poder colocar mi tasa"*.
+
+Las dos direcciones se publican en **bolívares por real**, la misma unidad —así
+las lee ella en los flyers— pero dicen cosas opuestas:
+
+```
+ida    (R$ → Bs)   ella ENTREGA bolívares → cuantos MÁS dé, mejor para el cliente
+vuelta (Bs → R$)   ella ENTREGA reales    → cuantos MENOS pida, mejor para el cliente
+```
+
+Medido en su export: ida **172,5** (200 R$ → 34.500 Bs, 674 operaciones) y vuelta
+**220** (42.500 Bs → 193 R$, 117 operaciones). Coincide con su flyer.
+**Invertir una de las dos le daría el puesto al revés**, que es justo lo que la
+haría publicar una tasa mala. `pruebas/prestamos.js` lo fija con sus números del
+26/09.
+
+**Su vuelta alta es una DECISIÓN, no un descuido.** Está 20 Bs por real por
+encima de los otros dos que la publican, y es a propósito, por dos razones que
+dio ella:
+
+- le **frena la entrada de bolívares**, que parados se devalúan;
+- y le cubre el **P2P que tiene que hacer** cuando entra una vuelta grande y no
+  tiene reales: con esos Bs compra USDT y lo vende por reales, y ese paso cuesta.
+
+Sus palabras: *"en eso no puedo perder por no tener el capital en reales"*.
+
+**Y lo que eso implica para el futuro:** con más volumen ese costo desaparece
+solo. Una vuelta que entra el mismo día que una ida del mismo tamaño **se cruzan
+entre ellas** y no toca Binance — la brecha entera se queda. Lo dijo así:
+*"si más adelante tengo más movimiento eso puede cambiar… y no hacer el p2p"*.
+O sea que su tasa de vuelta no debería ser un número fijo: depende de si puede
+cruzarla. **La app tiene los saldos, así que lo puede saber.**
+
+Por eso la pantalla **dice dónde está, no la corrige**. Marcarle la vuelta en
+rojo sería opinar sobre su negocio con la mitad de la información.
+
+### Lo que la app NO va a leer sola
+
+De sus cuatro referencias, dos son apps (Retorna, El Dorado P2P) y dos son grupos
+de WhatsApp. **No hay de dónde leer eso de forma fiable**, y montar algo que lo
+adivine sería darle números inventados sobre los que decide precio. Lo que sí se
+hizo es que apuntarlas cueste diez segundos y que la comparación la haga la app.
+
+**Lo que sí se puede leer solo es el P2P de Binance** —su costo real— pero **no
+desde el navegador**: la app corre en una página y Binance no autoriza que otra
+le pregunte. Tiene que pedirlo el servidor (`centrogestion-api`). Ese es el único
+camino; lo de dentro de `index.html` no funciona, no hace falta volver a
+intentarlo.
+
+`histComp` guarda lo apuntado **indexado por fecha**, así que va en
+`_MERGE_HISTORIAL` y en `DATA_KEYS`: se une entre los dos aparatos en vez de
+pisarse, y en unos días contesta sola la otra pregunta —*cuándo y cuánto se
+mueve el mercado*—, que no se puede deducir, solo registrar.
+
 ### La conciliación tiene que poder explicarse sola
 
 `conciliacionCapital()` compara lo que deberías tener contra lo que tienes. Un
