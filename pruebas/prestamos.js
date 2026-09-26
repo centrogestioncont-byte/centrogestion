@@ -2961,8 +2961,10 @@ console.log("\nArreglo 64 · entrar con huella");
   // Los --ent-* quedan fuera A PROPOSITO: son las dos pantallas de entrada,
   // que son siempre negras elija ella el tema que elija. Darles version oscura
   // es justo el error que se arreglo.
+  // Y los --fly-* igual (ARREGLO 73): el flyer es lo que le llega al cliente
+  // y ella imprime, no una pantalla; el tema es del aparato.
   const sinOscuro = [...enClaro].filter(function(k){
-    return !enOsc.has(k) && !/^--(radius|shadow|ent-)/.test(k);
+    return !enOsc.has(k) && !/^--(radius|shadow|ent-|fly-)/.test(k);
   });
   ok(sinOscuro.length === 0, "todo color tiene su version oscura",
      sinOscuro.slice(0, 6).join(", "));
@@ -2983,6 +2985,37 @@ console.log("\nArreglo 64 · entrar con huella");
     ok(pisados.length === 0,
        "ningun tema repinta las pantallas de entrada: son siempre negras",
        pisados.slice(0, 6).join(", "));
+  }
+
+  // ── ARREGLO 73 · el flyer tampoco sigue al tema ────────────────────────
+  // Se descarga como imagen, se manda por WhatsApp y ella lo imprime: no puede
+  // depender del tema del aparato desde el que se genero. Se rompio igual que
+  // las pantallas de entrada al pasar el por omision a SUAVE — el fondo, hecho
+  // NEGRO, paso a #d7d5d5 y los textos siguieron blancos: "TU DINERO SE
+  // CONVIERTE EN SOLUCIONES" en blanco al 55% sobre ese gris da contraste 1,3.
+  // Ella lo imprimio y no se leia.
+  {
+    ok(/--fly-fondo1:\s*#0a0a0a/.test(HTML) && /--fly-sobre:\s*#fff/.test(HTML),
+       "el flyer tiene sus propios colores, declarados en :root");
+    const pap2 = (HTML.match(/html\[data-tema="papel"\]\{[\s\S]*?\n\}/) || [""])[0];
+    const pisados2 = [];
+    [["suave", osc], ["papel", pap2]].forEach(function(par){
+      (par[1].match(/--fly-[\w-]+\s*:/g) || []).forEach(function(d){
+        pisados2.push(par[0] + " " + d.replace(/\s*:$/, ""));
+      });
+    });
+    ok(pisados2.length === 0,
+       "ningun tema repinta el flyer: sale igual desde cualquier aparato",
+       pisados2.slice(0, 6).join(", "));
+    const fueraFly = [];
+    ["generarFlyer", "generarMiniFlyer"].forEach(function(f){
+      (sacarFuncion(f).match(/var\(--[\w-]+\)/g) || []).forEach(function(v){
+        if (!/^var\(--fly-/.test(v)) fueraFly.push(f + " " + v);
+      });
+    });
+    ok(fueraFly.length === 0,
+       "el flyer y el mini flyer solo usan sus propios colores (--fly-*)",
+       fueraFly.slice(0, 6).join(", "));
   }
 
   // Y la entrada no puede volver a usar un nombre del tema. Un nombre nuevo

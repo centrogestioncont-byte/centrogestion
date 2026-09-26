@@ -381,6 +381,29 @@ botón, la letra de los chips y la línea de error: 13 nombres en total.
 Tres guardias lo fijan: que los `--ent-*` no tengan versión oscura, que ningún
 tema los repinte, y que las dos funciones de entrada no usen ningún otro nombre.
 
+### El flyer tampoco sigue al tema — es lo que ve el cliente
+
+Misma regla que las pantallas de entrada, y se rompió por lo mismo. El flyer se
+descarga como imagen, se manda por WhatsApp y **ella lo imprime**: no puede
+depender del tema que tenga puesto el aparato desde el que se generó.
+
+Estaba pintado con nombres del tema. El fondo se diseñó **negro** (`--gr1-c`
+valía `#0a0a0a` en Claro) y los textos son blancos a medio tono. Al pasar el por
+omisión a **Suave**, `--gr1-c` pasó a `#d7d5d5` —gris claro— y los textos
+siguieron siendo blancos: *"TU DINERO SE CONVIERTE EN SOLUCIONES"* en blanco al
+55 % sobre ese gris da contraste **1,3**. Lo imprimió y no se leía. De paso el
+degradado desaparecía, porque en Suave los tres tonos del fondo son el mismo gris.
+
+Ahora usa `--fly-*`, declarados una vez en `:root` con los valores que tenía en
+Claro, que ningún tema vuelve a definir. Vale para el flyer y para el mini flyer.
+Tres guardias: que no tengan versión oscura, que ningún tema los repinte, y que
+`generarFlyer()` y `generarMiniFlyer()` no usen ningún otro nombre.
+
+**Lo que hay que sacar de aquí, porque es la tercera vez:** cuando algo de la app
+sale HACIA FUERA —el flyer, el informe del contador, el PDF del cierre— sus
+colores son suyos, no del tema. El tema es del aparato de quien lo genera; lo que
+sale ya no está en ese aparato.
+
 ### Una tarjeta se define en UN sitio
 
 `.pz-rejilla`, `.pz-card`, `.pz-rot`, `.pz-num`, `.pz-pie` viven en el `<style>`.
