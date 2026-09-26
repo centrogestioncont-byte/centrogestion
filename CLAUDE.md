@@ -740,6 +740,34 @@ número suelto no se puede perseguir, así que la diferencia viene desglosada, y
 - **Los ajustes que no se pueden situar se ven sin desplegar nada.** Los del
   mismo día en que se fijó la apertura no llevan hora, así que ni cuentan ni se
   descartan: con sus datos son 7 por −$233,46. Estaban dentro del desplegable.
+- **Y sí se pueden situar: la hora nunca se perdió** (ARREGLO 72). `_newUid()` es
+  `Date.now().toString(36)+"_"+azar`, así que **cada registro creado con él lleva
+  su hora exacta dentro del id**. `ajustesDesdeApertura()` solo miraba `a.ts` y
+  tiraba un dato que estaba ahí al lado. Comprobado con sus 109 ajustes: **109 de
+  109** se decodifican y **109 de 109** dan la misma fecha que el campo `fecha`.
+  El rango es la guardia (`_tsDeUid`): un id de los viejos leído en base 36 se
+  dispara fuera de cualquier fecha creíble y se descarta en vez de inventarse una
+  hora. **Esto vale para cualquier cosa que lleve `_uid`**, no solo los ajustes —
+  las remesas también.
+- **La hora de la apertura se deduce de `aperturaBase.bruta`.** Es la ganancia que
+  llevaba el mes **en el instante** de fijarla, así que reconstruyendo la bruta
+  acumulada operación por operación se ve entre qué dos cae. Con su export:
+  `aperturaBase.bruta` = 152,33 y la acumulada pasa de 142,99 (remesa 670, 17:45)
+  a 152,96 (remesa 112, 17:46). No cuadra al céntimo —sobran 0,63, porque hoy las
+  operaciones se revaloran con otras tasas— pero el salto entre operaciones es de
+  **9,34**, así que la ventana aguanta el ruido. Sus 7 ajustes quedan **2 antes y
+  5 después**, y el más cercano está a **más de tres horas** de la frontera.
+  `_deducirHoraApertura()` recorta las listas para medir y **las devuelve en un
+  `finally`**: si saliera por una excepción a mitad, la app se quedaría sin
+  remesas. Cuesta ~370 ms, así que corre **solo al pulsar el botón**, nunca al
+  dibujar.
+- **Es una DEDUCCIÓN, así que no se aplica sola.** El aviso enseña la hora y el
+  monto de cada uno, y `situarAjustesEnElAire()` simula el número que va a quedar
+  antes de preguntar — el mismo criterio que corregir la fecha. Se guarda solo
+  `aperturaTs`; el monto y la fecha no se tocan. Y avisa de lo incómodo:
+  **situarlos SUBE el "sin explicar"**, de +59,28 a +274,66 con su export, porque
+  un ajuste que pasa a contar se da por explicado y sale de la diferencia. No
+  aparece dinero nuevo: lo que había estaba detrás del aviso.
 - **La tarjeta dice contra qué apertura mide** —fecha, monto y si tiene foto de
   saldos—. Una apertura sin foto no permite comparar cuenta por cuenta cuando
   algo no cuadra, y eso no se veía en ninguna parte.
@@ -1150,6 +1178,6 @@ explicación todavía no es la correcta.
 Y si te pasa un export, **úsalo**: `ajustesSaldo` guarda cada corrección manual
 con el saldo de antes y el de después, y el `_mov` de cada remesa guarda el
 movimiento exacto que hizo sobre cada cuenta. Con eso se reconstruye un día
-entero en vez de teorizar. (Limitación conocida: `ajustesSaldo` guarda la fecha
-pero **no la hora**, así que no se puede saber qué remesas entraron antes de
-una corrección y cuáles después.)
+entero en vez de teorizar. (Los de antes del ARREGLO 50 no guardan `ts`, pero
+**la hora está en el id**: `_tsDeAjuste()` la saca, y lo mismo vale para el
+`_uid` de cualquier remesa. Ya no hay que teorizar con el orden de un día.)
