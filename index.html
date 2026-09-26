@@ -21016,6 +21016,117 @@ function _renombrarComp(id){
   saveData(); R();
 }
 
+// ── ARREGLO 75 · su costo, el del mercado, y el suelo que sale de los dos ──
+// Sus palabras: "no se que tasa de compra y venta esta usando mi app" y
+// "no es solo la competencia sino el mercado p2p".
+//
+// Son DOS cosas distintas y las dos hacen falta:
+//   sus lotes  -> el suelo de lo que YA compro. Sale de tasaDeReferencia(),
+//                 la misma funcion que ya valora todo su dinero, para que no
+//                 haya dos respuestas a la misma pregunta.
+//   el mercado -> el suelo de lo que puede comprar AHORA. Eso lo trae
+//                 GET /mercado, porque desde el navegador Binance no contesta.
+//
+// La lectura del mercado NO se guarda en S ni se sincroniza: es un precio de
+// hace un minuto, no un dato del negocio. Vive en memoria y se vuelve a pedir.
+var _MERCADO = {leido:0, datos:null, cargando:false, error:""};
+var _MERCADO_FRESCO_MS = 5*60*1000;
+
+function _pedirMercado(forzar){
+  if(_MERCADO.cargando) return;
+  if(!forzar && _MERCADO.datos && (Date.now()-_MERCADO.leido)<_MERCADO_FRESCO_MS) return;
+  if(typeof apiFetch!=="function" || !apiSesionActiva()) return;
+  _MERCADO.cargando=true; _MERCADO.error="";
+  var cfg=S.config||{};
+  var q=[];
+  if(parseFloat(cfg.mercadoMontoBRL)>0) q.push("brl="+parseFloat(cfg.mercadoMontoBRL));
+  if(parseFloat(cfg.mercadoMontoVES)>0) q.push("ves="+parseFloat(cfg.mercadoMontoVES));
+  apiFetch("/mercado"+(q.length?"?"+q.join("&"):"")).then(function(r){
+    return r.ok ? r.json() : null;
+  }).then(function(d){
+    _MERCADO.cargando=false;
+    if(d&&d.ok){ _MERCADO.datos=d; _MERCADO.leido=Date.now(); }
+    else _MERCADO.error="el servidor no contestó";
+    _refrescarSuelo();
+  }).catch(function(){
+    _MERCADO.cargando=false; _MERCADO.error="sin conexión";
+    _refrescarSuelo();
+  });
+}
+// ARREGLO 32: llega mientras ella puede estar tecleando. Se refresca el
+// recuadro por su id, nunca con R().
+function _refrescarSuelo(){
+  var n=document.getElementById("mercado-suelo");
+  if(n) n.innerHTML=_htmlSuelo();
+}
+
+// El punto de equilibrio: cuantos bolivares por real puede dar sin perder.
+// Compra 1 USDT por "compra" reales y lo vende por "venta" bolivares, pagando
+// la comision de Binance al convertir. Todo lo que ofrezca POR DEBAJO de esto
+// le deja ganancia.
+function _equilibrio(compra, venta){
+  var c=parseFloat(compra), v=parseFloat(venta);
+  if(!(c>0)||!(v>0)) return null;
+  var fee=parseFloat((S.config||{}).comision_binance);
+  if(!(fee>=0)||fee>=1) fee=0;
+  return Math.round(((v*(1-fee))/c)*100)/100;
+}
+function _htmlSuelo(){
+  var f=function(n){return f2(n);};
+  // ARREGLO 75: la tasa de compra de USDT va a CUATRO decimales. Con f2,
+  // 5,1638 se enseña como 5,16 — y entre 5,16 y 5,1638 hay 0,07% de su
+  // margen, que sobre su volumen del mes no es redondeo, es dinero. Los
+  // bolivares no lo necesitan: 948 no tiene decimales que perder.
+  var fp=function(n){ return (n<100) ? f4(n) : f2(n); };
+  // Lo suyo: la misma tasa de referencia que ya valora su dinero.
+  var rc=(typeof tasaDeReferencia==="function")?tasaDeReferencia("BRL"):null;
+  var rv=(typeof tasaDeReferencia==="function")?tasaDeReferencia("VES"):null;
+  var miC=rc&&rc.tasa, miV=rv&&rv.tasa;
+  var eqMio=_equilibrio(miC,miV);
+  // El mercado, si hay lectura.
+  var m=_MERCADO.datos, mc=null, mv=null, eqMerc=null;
+  if(m&&m.disponible){
+    mc=m.compraBRL&&m.compraBRL.tasa; mv=m.ventaVES&&m.ventaVES.tasa;
+    eqMerc=_equilibrio(mc,mv);
+  }
+  var mia=_misTasasPublicadas().ida;
+  var fila=function(rot,c,v,pie,col){
+    if(!(c>0)&&!(v>0)) return "";
+    return "<div style='display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:11px;margin-bottom:3px'>"+
+      "<span style='color:var(--tx3)'>"+rot+"</span>"+
+      "<span style='color:"+(col||"var(--tx2)")+"'>compras <b>"+(c>0?fp(c):"—")+"</b> R$ · vendes <b>"+(v>0?fp(v):"—")+"</b> Bs"+
+        (pie?"<span style='color:var(--tx4);font-size:10.5px'> · "+pie+"</span>":"")+"</span>"+
+    "</div>";
+  };
+  var cuerpo=
+    fila("Tus últimas operaciones", miC, miV, (rc&&rc.fecha)?rc.fecha:"")+
+    (m&&m.disponible
+      ? fila("El mercado ahora", mc, mv,
+             ((m.compraBRL?m.compraBRL.anuncios:0)+" y "+(m.ventaVES?m.ventaVES.anuncios:0)+" anuncios a tu monto"), "var(--ok)")
+      : "<div style='font-size:11px;color:var(--tx4);margin-bottom:3px'>El mercado ahora · "+
+          (_MERCADO.cargando ? "leyendo…"
+            : (_MERCADO.error ? _MERCADO.error : "sin lectura"))+
+          " <span onclick='_pedirMercado(true);_refrescarSuelo()' style='cursor:pointer;color:var(--ac);font-weight:700'>↻ reintentar</span></div>");
+  var suelos="";
+  if(eqMio||eqMerc){
+    suelos="<div style='border-top:1px solid var(--ln);margin-top:7px;padding-top:7px'>";
+    if(eqMio) suelos+="<div style='display:flex;justify-content:space-between;font-size:11.5px'><span style='color:var(--tx3)'>Tu suelo con lo que ya compraste</span><b style='color:var(--tit)'>"+f(eqMio)+"</b></div>";
+    if(eqMerc) suelos+="<div style='display:flex;justify-content:space-between;font-size:11.5px'><span style='color:var(--tx3)'>Tu suelo al precio de hoy</span><b style='color:var(--ok)'>"+f(eqMerc)+"</b></div>";
+    var base=eqMerc||eqMio;
+    if(mia!==null&&base){
+      var mg=Math.round(((base-mia)/base)*1000)/10;
+      suelos+="<div style='font-size:11.5px;margin-top:5px;color:"+(mg>0?"var(--ok)":"var(--mal)")+";font-weight:700'>"+
+        "Ofreciendo "+f(mia)+" te queda "+(mg>0?"+":"")+String(mg).replace(".",",")+"%"+
+        (mg<=0?" — por encima del suelo PIERDES":"")+"</div>";
+    }
+    // Lo que este numero NO incluye. Un suelo optimista es peor que ninguno.
+    suelos+="<div style='font-size:10.5px;color:var(--tx4);line-height:1.5;margin-top:5px'>"+
+      "El suelo es el de la operación: no lleva la comisión del banco venezolano ni tus egresos.</div>";
+    suelos+="</div>";
+  }
+  return cuerpo+suelos;
+}
+
 // La tarjeta entera, arriba de la calculadora: es donde decide la tasa.
 function _htmlMercadoHoy(){
   var d=_compDelDia();
@@ -21042,7 +21153,10 @@ function _htmlMercadoHoy(){
       "<div style='font-size:13px;font-weight:800;color:var(--tit)'>📊 El mercado hoy</div>"+
       "<div style='font-size:10.5px;color:var(--tx4)'>"+ds(td())+" · en bolívares por real</div>"+
     "</div>"+
-    "<div style='font-size:10.5px;color:var(--tx4);margin-bottom:8px;line-height:1.5'>Apunta lo que veas hoy. Queda guardado con su fecha, así que en unos días tienes cómo se mueven.</div>"+
+    // ARREGLO 75: su costo y su suelo van ARRIBA de la competencia. Mirar lo
+    // que cobran los demás sin saber tu suelo no contesta nada.
+    "<div id='mercado-suelo' style='background:var(--sup2d);border-radius:10px;padding:10px 12px;margin-bottom:10px'>"+_htmlSuelo()+"</div>"+
+    "<div style='font-size:10.5px;color:var(--tx4);margin-bottom:8px;line-height:1.5'>Y lo que cobran los demás. Apúntalo hoy: queda guardado con su fecha, así que en unos días tienes cómo se mueven.</div>"+
     "<div style='display:flex;gap:8px;font-size:10.5px;color:var(--tx4);font-weight:700;text-transform:uppercase;letter-spacing:.3px'>"+
       "<div style='flex:1 1 110px'></div><div style='flex:0 0 82px;text-align:center'>Ida</div><div style='flex:0 0 82px;text-align:center'>Vuelta</div>"+
     "</div>"+
@@ -21052,6 +21166,11 @@ function _htmlMercadoHoy(){
 }
 
 function rCalculadora(){
+  // ARREGLO 75: se pide al entrar, no en cada repintado — _pedirMercado() se
+  // calla solo si la lectura tiene menos de 5 minutos. Va en un setTimeout
+  // para no retrasar el dibujado: la tarjeta se pinta con "leyendo…" y se
+  // rellena sola cuando llega.
+  setTimeout(function(){ _pedirMercado(false); }, 0);
   var c=S.calc;
   var modo=c.modoCalc||"fijas";
   var t=_calcTasas();
