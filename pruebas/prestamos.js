@@ -69,6 +69,7 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "cuotasRecomendadas", "limiteCredito",
                     "costoOperativoPorPrestamo", "pctCostoOperativo",
                     "_competidores", "_compDelDia", "_setComp", "_misTasasPublicadas", "_posicionMercado",
+                    "_equilibrio",
                     "capitalRealTotal", "_fraccionInteresPrestamo", "interesDentroDeApertura",
                     "_mesesDesde", "_acumuladosMes",
                     "conciliacionCapital", "getMesKeyActual", "ajustesDesdeApertura",
@@ -4527,6 +4528,63 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(/DATA_KEYS = \[[\s\S]{0,800}"histComp"/.test(HTML),
      "y esta en DATA_KEYS: si no, el remoto lo reemplaza entero");
   S.config = {}; S.histComp = {};
+}
+
+
+// ── ARREGLO 75 · el suelo: hasta donde puede ofrecer sin perder ────────────
+// "no se que tasa de compra y venta esta usando mi app" y "no es solo la
+// competencia sino el mercado p2p". Compra 1 USDT por X reales y lo vende por
+// Y bolivares: todo lo que ofrezca por DEBAJO de Y/X le deja ganancia.
+{
+  S.config = {comision_binance: 0};
+  // Sus tasas del 18/09.
+  ok(F._equilibrio(5.1638, 948) === 183.59,
+     "el suelo sale de dividir la venta entre la compra", F._equilibrio(5.1638, 948));
+  // La comision de Binance BAJA el suelo: entra menos USDT del que se paga.
+  S.config = {comision_binance: 0.007};
+  ok(F._equilibrio(5.1638, 948) === 182.3,
+     "y la comision de Binance lo baja: con 0,7% queda en 182,30",
+     F._equilibrio(5.1638, 948));
+  ok(F._equilibrio(5.1638, 948) < F._equilibrio(5.1638, 948) + 1,
+     "el suelo con comision nunca es mayor que sin ella");
+  // Sin datos no se inventa un suelo: una tasa de referencia que falta no
+  // puede convertirse en un numero que ella use para publicar.
+  ok(F._equilibrio(0, 948) === null && F._equilibrio(5.16, 0) === null &&
+     F._equilibrio(null, null) === null && F._equilibrio("hola", 948) === null,
+     "sin las dos tasas no hay suelo, y no se inventa");
+  // Una comision absurda no puede volver el suelo cero o negativo.
+  S.config = {comision_binance: 5};
+  ok(F._equilibrio(5.1638, 948) === 183.59,
+     "una comision fuera de rango se ignora en vez de destrozar el suelo",
+     F._equilibrio(5.1638, 948));
+  S.config = {};
+
+  // La lectura del mercado NO se guarda ni se sincroniza: es un precio de hace
+  // un minuto, no un dato del negocio. Si entrara en DATA_KEYS viajaria entre
+  // aparatos y se pisaria con lecturas de otra hora.
+  ok(!/DATA_KEYS = \[[\s\S]{0,900}"_MERCADO"/.test(HTML) &&
+     !/_MERGE_FIELDS = \[[\s\S]{0,900}"_MERCADO"/.test(HTML),
+     "la lectura del mercado no se sincroniza: es un precio, no un dato");
+  // Y llega de la red mientras ella puede estar tecleando (ARREGLO 32).
+  ok(!/\bR\(\)/.test(sinComentarios(sacarFuncion("_refrescarSuelo"))) &&
+     /getElementById\("mercado-suelo"\)/.test(sacarFuncion("_refrescarSuelo")),
+     "cuando llega la lectura no repinta: refresca el recuadro por su id");
+  // No se pide en cada repintado: _pedirMercado se calla si la lectura es
+  // fresca. Sin esa guardia serian decenas de llamadas por minuto.
+  ok(/_MERCADO\.datos && \(Date\.now\(\)-_MERCADO\.leido\)<_MERCADO_FRESCO_MS/.test(sacarFuncion("_pedirMercado")),
+     "no se le pregunta a la API en cada repintado");
+  // Si la API no contesta, la pantalla sigue entera y lo dice.
+  ok(/sin lectura/.test(sacarFuncion("_htmlSuelo")) &&
+     /reintentar/.test(sacarFuncion("_htmlSuelo")),
+     "sin lectura del mercado la tarjeta sigue, y ofrece reintentar");
+  // El suelo es de la OPERACION. Presentarlo como el de la empresa seria
+  // darle un numero optimista, y con eso publicaria una tasa que no aguanta.
+  ok(/no lleva la comisión del banco venezolano ni tus egresos/.test(sacarFuncion("_htmlSuelo")),
+     "y dice lo que el suelo NO incluye");
+  // Los 4 decimales de la tasa de compra: entre 5,16 y 5,1638 hay 0,07% de
+  // su margen, que sobre su volumen no es redondeo.
+  ok(/f4\(n\) : f2\(n\)/.test(sacarFuncion("_htmlSuelo")),
+     "la tasa de compra de USDT se enseña con sus cuatro decimales");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

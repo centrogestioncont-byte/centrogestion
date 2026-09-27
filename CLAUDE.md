@@ -746,6 +746,46 @@ cruzarla. **La app tiene los saldos, así que lo puede saber.**
 Por eso la pantalla **dice dónde está, no la corrige**. Marcarle la vuelta en
 rojo sería opinar sobre su negocio con la mitad de la información.
 
+### Su suelo: hasta dónde puede ofrecer sin perder
+
+Sus palabras: *"no sé qué tasa de compra y venta está usando mi app"* y *"no es
+solo la competencia sino el mercado p2p"*. Son **dos** cosas distintas y las dos
+hacen falta:
+
+- **Sus lotes** → el suelo de lo que **ya compró**. Sale de `tasaDeReferencia()`,
+  la misma función que ya valora todo su dinero: no se calcula aparte, para que
+  no haya dos respuestas a la misma pregunta.
+- **El mercado** → el suelo de lo que puede comprar **ahora**. Eso lo trae
+  `GET /mercado` de la API.
+
+El suelo es `venta ÷ compra`, descontando la comisión de Binance:
+
+```
+compra 1 USDT por 5,1638 R$ · lo vende por 948 Bs
+suelo = (948 × (1 − 0,7%)) ÷ 5,1638 = 182,30 Bs por real
+```
+
+**Todo lo que ofrezca por debajo de 182,30 le deja ganancia.** Medido con sus
+números del 18/09: ofreciendo 172 le quedaba **+5,6 %**, y podía llegar a **175
+—mejor que todos sus competidores— y aún le quedaba 4 %**. Cuando dijo *"estoy
+por debajo del mercado, nadie mandará conmigo"* la respuesta era la contraria:
+estaba por debajo de sí misma.
+
+Tres cosas que no hay que deshacer:
+
+- **Sin las dos tasas no hay suelo, y no se inventa.** Una tasa de referencia
+  que falta no puede convertirse en un número con el que ella publique.
+- **Una comisión fuera de rango se ignora**, en vez de destrozar el suelo.
+- **Se dice lo que el suelo NO incluye**: la comisión del banco venezolano y sus
+  egresos. Es el suelo de la operación, no el de la empresa. Un suelo optimista
+  es peor que ninguno — con él publicaría una tasa que no aguanta.
+- **La tasa de compra va a CUATRO decimales.** Entre 5,16 y 5,1638 hay 0,07 %
+  de su margen, y sobre su volumen del mes eso no es redondeo.
+- **La lectura del mercado NO se guarda ni se sincroniza.** Es un precio de hace
+  un minuto, no un dato del negocio: si entrara en `DATA_KEYS` viajaría entre
+  aparatos y se pisaría con lecturas de otra hora. Vive en memoria y se vuelve a
+  pedir, con una guardia de 5 minutos para no preguntar en cada repintado.
+
 ### Lo que la app NO va a leer sola
 
 De sus cuatro referencias, dos son apps (Retorna, El Dorado P2P) y dos son grupos
