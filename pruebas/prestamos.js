@@ -4569,14 +4569,37 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(!/\bR\(\)/.test(sinComentarios(sacarFuncion("_refrescarSuelo"))) &&
      /getElementById\("mercado-suelo"\)/.test(sacarFuncion("_refrescarSuelo")),
      "cuando llega la lectura no repinta: refresca el recuadro por su id");
-  // No se pide en cada repintado: _pedirMercado se calla si la lectura es
-  // fresca. Sin esa guardia serian decenas de llamadas por minuto.
-  ok(/_MERCADO\.datos && \(Date\.now\(\)-_MERCADO\.leido\)<_MERCADO_FRESCO_MS/.test(sacarFuncion("_pedirMercado")),
+  // No se pide en cada repintado: _pedirMercado se calla si acaba de
+  // preguntar. Sin esa guardia serian decenas de llamadas por minuto.
+  ok(/if\(!forzar && _MERCADO\.intento && \(Date\.now\(\)-_MERCADO\.intento\)<espera\) return;/
+       .test(sacarFuncion("_pedirMercado")),
      "no se le pregunta a la API en cada repintado");
+  // Pero un FALLO no puede frenar lo mismo que una lectura buena: asi la
+  // pantalla no volvia a intentarlo sola y solo se movia pulsando el boton.
+  ok(/_MERCADO_REINTENTO_MS = 30\*1000/.test(HTML) &&
+     /espera=hayLectura\?_MERCADO_FRESCO_MS:_MERCADO_REINTENTO_MS/.test(sacarFuncion("_pedirMercado")),
+     "y un fallo se reintenta antes que una lectura buena");
   // Si la API no contesta, la pantalla sigue entera y lo dice.
   ok(/sin lectura/.test(sacarFuncion("_htmlSuelo")) &&
      /reintentar/.test(sacarFuncion("_htmlSuelo")),
      "sin lectura del mercado la tarjeta sigue, y ofrece reintentar");
+  // Y dice POR QUE. "Sin lectura" a secas mezcla dos problemas con arreglos
+  // distintos -uno del servidor, otro bajar el monto en Configuracion- y se
+  // perdio una tarde sin poder saber cual era. El motivo lo manda el servidor
+  // dentro de la respuesta; tirarlo es volver al mismo sitio.
+  ok(/_MERCADO\.error=d\.motivo\|\|"sin lectura"/.test(sacarFuncion("_pedirMercado")),
+     "cuando el servidor contesta bien pero sin precios, se guarda su motivo");
+  ok(/_escAud\(_MERCADO\.error\|\|"sin lectura"\)/.test(sacarFuncion("_htmlSuelo")),
+     "y la tarjeta lo enseña, escapado: ese texto viene de Binance");
+  // Un 404 significa algo muy concreto: el servidor esta vivo pero no tiene
+  // esta funcion. "No contesto" manda a buscar donde no es.
+  ok(/r\.status===404/.test(sacarFuncion("_pedirMercado")) &&
+     /todavía no tiene esta función/.test(sacarFuncion("_pedirMercado")),
+     "un servidor sin la función lo dice, en vez de decir que no contestó");
+  // Media lectura tambien es un fallo: sin las DOS tasas no hay suelo.
+  ok(/m\.motivoBRL/.test(sacarFuncion("_htmlSuelo")) &&
+     /m\.motivoVES/.test(sacarFuncion("_htmlSuelo")),
+     "si falta un solo lado, se avisa: sin las dos tasas no hay suelo");
   // El suelo es de la OPERACION. Presentarlo como el de la empresa seria
   // darle un numero optimista, y con eso publicaria una tasa que no aguanta.
   ok(/no lleva la comisión del banco venezolano ni tus egresos/.test(sacarFuncion("_htmlSuelo")),

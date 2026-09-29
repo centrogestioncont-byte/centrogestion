@@ -21029,24 +21029,50 @@ function _renombrarComp(id){
 //
 // La lectura del mercado NO se guarda en S ni se sincroniza: es un precio de
 // hace un minuto, no un dato del negocio. Vive en memoria y se vuelve a pedir.
-var _MERCADO = {leido:0, datos:null, cargando:false, error:""};
+var _MERCADO = {leido:0, intento:0, datos:null, cargando:false, error:""};
 var _MERCADO_FRESCO_MS = 5*60*1000;
+// Un intento FALLIDO no bloquea cinco minutos. Antes la espera era la misma
+// para una lectura buena y para un fallo, asi que tras un fallo la pantalla
+// no volvia a preguntar sola: habia que pulsar el boton. El servidor tambien
+// guarda los fallos poco tiempo, asi que esto no se convierte en preguntarle
+// a Binance sin parar.
+var _MERCADO_REINTENTO_MS = 30*1000;
 
 function _pedirMercado(forzar){
   if(_MERCADO.cargando) return;
-  if(!forzar && _MERCADO.datos && (Date.now()-_MERCADO.leido)<_MERCADO_FRESCO_MS) return;
+  // "intento" es la ultima vez que se PREGUNTO; "leido", la ultima que se
+  // consiguio algo. Son distintas: sin separarlas, un fallo o contaba como
+  // lectura fresca o no frenaba nada.
+  var hayLectura=!!(_MERCADO.datos&&_MERCADO.datos.disponible);
+  var espera=hayLectura?_MERCADO_FRESCO_MS:_MERCADO_REINTENTO_MS;
+  if(!forzar && _MERCADO.intento && (Date.now()-_MERCADO.intento)<espera) return;
   if(typeof apiFetch!=="function" || !apiSesionActiva()) return;
-  _MERCADO.cargando=true; _MERCADO.error="";
+  _MERCADO.cargando=true; _MERCADO.error=""; _MERCADO.intento=Date.now();
   var cfg=S.config||{};
   var q=[];
   if(parseFloat(cfg.mercadoMontoBRL)>0) q.push("brl="+parseFloat(cfg.mercadoMontoBRL));
   if(parseFloat(cfg.mercadoMontoVES)>0) q.push("ves="+parseFloat(cfg.mercadoMontoVES));
   apiFetch("/mercado"+(q.length?"?"+q.join("&"):"")).then(function(r){
-    return r.ok ? r.json() : null;
+    if(r.ok) return r.json();
+    // Un 404 aca significa una cosa muy concreta y accionable: el servidor
+    // esta vivo, pero es de antes de que esto existiera. Decir "no contesto"
+    // manda a buscar el problema donde no esta —se perdio una tarde con esto—.
+    _MERCADO.error=(r.status===404)
+      ? "tu servidor todavía no tiene esta función"
+      : "tu servidor respondió "+r.status;
+    return null;
   }).then(function(d){
     _MERCADO.cargando=false;
-    if(d&&d.ok){ _MERCADO.datos=d; _MERCADO.leido=Date.now(); }
-    else _MERCADO.error="el servidor no contestó";
+    if(d&&d.ok){
+      _MERCADO.datos=d;
+      if(d.disponible){ _MERCADO.leido=Date.now(); _MERCADO.error=""; }
+      // El servidor puede contestar perfecto y aun asi venir sin precios, y
+      // el porque viene DENTRO de la respuesta. Antes se tiraba: la tarjeta
+      // escribia "sin lectura" y no habia forma de saber si el arreglo era
+      // del servidor o de bajar el monto en Configuracion.
+      else _MERCADO.error=d.motivo||"sin lectura";
+    }
+    else if(!_MERCADO.error) _MERCADO.error="el servidor no contestó";
     _refrescarSuelo();
   }).catch(function(){
     _MERCADO.cargando=false; _MERCADO.error="sin conexión";
@@ -21098,15 +21124,35 @@ function _htmlSuelo(){
         (pie?"<span style='color:var(--tx4);font-size:10.5px'> · "+pie+"</span>":"")+"</span>"+
     "</div>";
   };
+  // Cuando no hay lectura, lo que importa es POR QUE. Detras hay dos problemas
+  // con arreglos distintos —uno es del servidor, el otro es bajar el monto en
+  // Configuracion— y un "sin lectura" a secas no se puede perseguir. El motivo
+  // lo manda el servidor y puede ser largo, asi que va en su PROPIA linea; el
+  // boton se queda arriba, donde siempre estuvo.
+  var reintentar="<span onclick='_pedirMercado(true);_refrescarSuelo()' style='cursor:pointer;color:var(--ac);font-weight:700;white-space:nowrap'>↻ reintentar</span>";
+  var sinLectura=function(){
+    if(_MERCADO.cargando)
+      return "<div style='font-size:11px;color:var(--tx4);margin-bottom:3px'>El mercado ahora · leyendo…</div>";
+    return "<div style='font-size:11px;color:var(--tx4);margin-bottom:3px;line-height:1.5'>"+
+      "El mercado ahora · sin lectura "+reintentar+
+      "<div style='color:var(--tx3);margin-top:2px'>"+_escAud(_MERCADO.error||"sin lectura")+"</div></div>";
+  };
+  // Media lectura tambien es un fallo: sin las DOS tasas no hay suelo de
+  // mercado. Antes, si fallaba un solo lado, la fila salia en verde con un
+  // guion y no se decia nada.
+  var ladoQueFalto=function(){
+    if(!m) return "";
+    var t=m.motivoBRL?("reales · "+m.motivoBRL):(m.motivoVES?("bolívares · "+m.motivoVES):"");
+    if(!t) return "";
+    return "<div style='font-size:10.5px;color:var(--am3-b);margin:-1px 0 4px;line-height:1.5'>"+
+      "Falta un lado, así que no hay suelo de mercado: "+_escAud(t)+" "+reintentar+"</div>";
+  };
   var cuerpo=
     fila("Tus últimas operaciones", miC, miV, (rc&&rc.fecha)?rc.fecha:"")+
     (m&&m.disponible
       ? fila("El mercado ahora", mc, mv,
-             ((m.compraBRL?m.compraBRL.anuncios:0)+" y "+(m.ventaVES?m.ventaVES.anuncios:0)+" anuncios a tu monto"), "var(--ok)")
-      : "<div style='font-size:11px;color:var(--tx4);margin-bottom:3px'>El mercado ahora · "+
-          (_MERCADO.cargando ? "leyendo…"
-            : (_MERCADO.error ? _MERCADO.error : "sin lectura"))+
-          " <span onclick='_pedirMercado(true);_refrescarSuelo()' style='cursor:pointer;color:var(--ac);font-weight:700'>↻ reintentar</span></div>");
+             ((m.compraBRL?m.compraBRL.anuncios:0)+" y "+(m.ventaVES?m.ventaVES.anuncios:0)+" anuncios a tu monto"), "var(--ok)")+ladoQueFalto()
+      : sinLectura());
   var suelos="";
   if(eqMio||eqMerc){
     suelos="<div style='border-top:1px solid var(--ln);margin-top:7px;padding-top:7px'>";
