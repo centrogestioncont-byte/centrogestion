@@ -4600,6 +4600,10 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(/m\.motivoBRL/.test(sacarFuncion("_htmlSuelo")) &&
      /m\.motivoVES/.test(sacarFuncion("_htmlSuelo")),
      "si falta un solo lado, se avisa: sin las dos tasas no hay suelo");
+  // Y esa fila deja de ser verde. El verde es "lectura completa": un
+  // "vendes —" en verde se lee como si estuviera bien.
+  ok(/\(m\.motivoBRL\|\|m\.motivoVES\)\?"var\(--tx2\)":"var\(--ok\)"/.test(sacarFuncion("_htmlSuelo")),
+     "y media lectura no se pinta de verde");
   // El suelo es de la OPERACION. Presentarlo como el de la empresa seria
   // darle un numero optimista, y con eso publicaria una tasa que no aguanta.
   ok(/no lleva la comisión del banco venezolano ni tus egresos/.test(sacarFuncion("_htmlSuelo")),
