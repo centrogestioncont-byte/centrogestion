@@ -4569,14 +4569,41 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(!/\bR\(\)/.test(sinComentarios(sacarFuncion("_refrescarSuelo"))) &&
      /getElementById\("mercado-suelo"\)/.test(sacarFuncion("_refrescarSuelo")),
      "cuando llega la lectura no repinta: refresca el recuadro por su id");
-  // No se pide en cada repintado: _pedirMercado se calla si la lectura es
-  // fresca. Sin esa guardia serian decenas de llamadas por minuto.
-  ok(/_MERCADO\.datos && \(Date\.now\(\)-_MERCADO\.leido\)<_MERCADO_FRESCO_MS/.test(sacarFuncion("_pedirMercado")),
+  // No se pide en cada repintado: _pedirMercado se calla si acaba de
+  // preguntar. Sin esa guardia serian decenas de llamadas por minuto.
+  ok(/if\(!forzar && _MERCADO\.intento && \(Date\.now\(\)-_MERCADO\.intento\)<espera\) return;/
+       .test(sacarFuncion("_pedirMercado")),
      "no se le pregunta a la API en cada repintado");
+  // Pero un FALLO no puede frenar lo mismo que una lectura buena: asi la
+  // pantalla no volvia a intentarlo sola y solo se movia pulsando el boton.
+  ok(/_MERCADO_REINTENTO_MS = 30\*1000/.test(HTML) &&
+     /espera=hayLectura\?_MERCADO_FRESCO_MS:_MERCADO_REINTENTO_MS/.test(sacarFuncion("_pedirMercado")),
+     "y un fallo se reintenta antes que una lectura buena");
   // Si la API no contesta, la pantalla sigue entera y lo dice.
   ok(/sin lectura/.test(sacarFuncion("_htmlSuelo")) &&
      /reintentar/.test(sacarFuncion("_htmlSuelo")),
      "sin lectura del mercado la tarjeta sigue, y ofrece reintentar");
+  // Y dice POR QUE. "Sin lectura" a secas mezcla dos problemas con arreglos
+  // distintos -uno del servidor, otro bajar el monto en Configuracion- y se
+  // perdio una tarde sin poder saber cual era. El motivo lo manda el servidor
+  // dentro de la respuesta; tirarlo es volver al mismo sitio.
+  ok(/_MERCADO\.error=d\.motivo\|\|"sin lectura"/.test(sacarFuncion("_pedirMercado")),
+     "cuando el servidor contesta bien pero sin precios, se guarda su motivo");
+  ok(/_escAud\(_MERCADO\.error\|\|"sin lectura"\)/.test(sacarFuncion("_htmlSuelo")),
+     "y la tarjeta lo enseña, escapado: ese texto viene de Binance");
+  // Un 404 significa algo muy concreto: el servidor esta vivo pero no tiene
+  // esta funcion. "No contesto" manda a buscar donde no es.
+  ok(/r\.status===404/.test(sacarFuncion("_pedirMercado")) &&
+     /todavía no tiene esta función/.test(sacarFuncion("_pedirMercado")),
+     "un servidor sin la función lo dice, en vez de decir que no contestó");
+  // Media lectura tambien es un fallo: sin las DOS tasas no hay suelo.
+  ok(/m\.motivoBRL/.test(sacarFuncion("_htmlSuelo")) &&
+     /m\.motivoVES/.test(sacarFuncion("_htmlSuelo")),
+     "si falta un solo lado, se avisa: sin las dos tasas no hay suelo");
+  // Y esa fila deja de ser verde. El verde es "lectura completa": un
+  // "vendes —" en verde se lee como si estuviera bien.
+  ok(/\(m\.motivoBRL\|\|m\.motivoVES\)\?"var\(--tx2\)":"var\(--ok\)"/.test(sacarFuncion("_htmlSuelo")),
+     "y media lectura no se pinta de verde");
   // El suelo es de la OPERACION. Presentarlo como el de la empresa seria
   // darle un numero optimista, y con eso publicaria una tasa que no aguanta.
   ok(/no lleva la comisión del banco venezolano ni tus egresos/.test(sacarFuncion("_htmlSuelo")),
@@ -4585,6 +4612,36 @@ console.log("\n— FASE 2: la cuenta madre —");
   // su margen, que sobre su volumen no es redondeo.
   ok(/f4\(n\) : f2\(n\)/.test(sacarFuncion("_htmlSuelo")),
      "la tasa de compra de USDT se enseña con sus cuatro decimales");
+
+  // ── La version del servidor, en Configuracion ──────────────────────
+  // Existe porque hubo que preguntarla a mano: se paso una tarde buscando un
+  // problema en el despliegue cuando el despliegue estaba bien. /salud ya la
+  // traia y la app la tiraba.
+  var sis=sacarFuncion("_htmlSistemaApi");
+  ok(/_API_VERSION/.test(sacarFuncion("_apiComprobarAmbiente")) &&
+     /_API_BASE/.test(sacarFuncion("_apiComprobarAmbiente")),
+     "lo que /salud contesta sobre version y base se guarda, no se tira");
+  ok(/Versión del servidor/.test(sis) && /Base de datos/.test(sis),
+     "y Configuración las enseña las dos");
+  // El caso grave de ese recuadro: el servidor contesta pero no llega a los
+  // datos. Eso no puede ser una linea mas entre las otras.
+  ok(/el servidor no llega a la base/.test(sis) && /var\(--mal\)/.test(sis),
+     "una base caída se ve en rojo, no como una línea más");
+  // "desconocido" es lo que contesta corriendo fuera de Railway: es la verdad
+  // pero a ella no le dice nada.
+  ok(/corriendo fuera de Railway/.test(sis),
+     "y un servidor sin datos de despliegue lo dice con palabras, no con \"desconocido\"");
+  // ARREGLO 32: se pulsa con el acordeon abierto; R() lo cerraria.
+  ok(!/\bR\(\)/.test(sinComentarios(sacarFuncion("_refrescarSistemaApi"))) &&
+     /getElementById\("cfg-sistema-api"\)/.test(sacarFuncion("_refrescarSistemaApi")),
+     "volver a preguntar no repinta la pantalla: refresca el recuadro por su id");
+  // El boton necesita saber cuando termino la consulta.
+  ok(/return fetch\(_API_URL\+"\/salud"/.test(sacarFuncion("_apiComprobarAmbiente")),
+     "la consulta a /salud se devuelve, para poder esperarla desde el botón");
+  // Es un estado de ahora mismo, no un dato del negocio: si viajara entre
+  // aparatos, cada uno enseñaria la version que leyo el otro.
+  ok(!/DATA_KEYS = \[[\s\S]{0,900}"_API_VERSION"/.test(HTML),
+     "la versión del servidor no se sincroniza: es de este momento, no del negocio");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
