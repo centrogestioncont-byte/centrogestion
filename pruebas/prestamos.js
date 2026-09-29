@@ -4642,6 +4642,25 @@ console.log("\n— FASE 2: la cuenta madre —");
   // aparatos, cada uno enseñaria la version que leyo el otro.
   ok(!/DATA_KEYS = \[[\s\S]{0,900}"_API_VERSION"/.test(HTML),
      "la versión del servidor no se sincroniza: es de este momento, no del negocio");
+  // Se preguntaba UNA vez, 1,2 s despues de abrir, y ahi se quedaba: el 29/09
+  // marcaba 166c1b4 con el servidor ya en 6c0806f, porque la app abrio
+  // mientras desplegaba. Un dato que puede mentir callado deja de mirarse.
+  ok(/_API_LEIDO=Date\.now\(\)/.test(sacarFuncion("_apiComprobarAmbiente")),
+     "se apunta cuándo se leyó el estado del servidor");
+  ok(/leído /.test(sis) && /_API_LEIDO/.test(sis),
+     "y la tarjeta dice a qué hora, siempre, no solo cuando ya es viejo");
+  ok(/_apiComprobarAmbiente\(\)/.test(
+       HTML.slice(HTML.indexOf("visibilitychange"), HTML.indexOf("visibilitychange")+700)),
+     "al volver a la app se vuelve a preguntar, como ya se hace con los permisos");
+  // Pero no en cada vez que vuelve al frente: entrar y salir cinco veces en un
+  // minuto no pueden ser cinco preguntas.
+  ok(/_API_SALUD_FRESCO_MS = 30\*1000/.test(HTML) &&
+     /Date\.now\(\)-_API_LEIDO > _API_SALUD_FRESCO_MS/.test(HTML),
+     "y no en cada vuelta: hay medio minuto de guardia");
+  // Al pulsar el botón la hora vieja también se va: si no, se queda debajo de
+  // "consultando…" y parece la hora de la lectura nueva.
+  ok(/_API_LEIDO=0/.test(sacarFuncion("_refrescarSistemaApi")),
+     "y al volver a preguntar, la hora vieja se borra con el dato viejo");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

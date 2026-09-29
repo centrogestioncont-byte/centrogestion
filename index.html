@@ -2615,6 +2615,15 @@ var _API_AMBIENTE_REAL = null;   // lo que contesta /salud
 // habia forma de notarlo—. Eso no se le puede pedir a ella.
 var _API_VERSION = null;         // {commit, rama} del servidor que contesta
 var _API_BASE = null;            // {conectado, base} de Mongo
+// CUANDO se leyo lo de arriba. Sin esto, la linea de la version puede llevar
+// una hora desactualizada sin decirlo: el 29/09 marcaba 166c1b4 con el
+// servidor ya corriendo 6c0806f, porque la app abrio mientras desplegaba y
+// nunca volvio a preguntar. Un dato que puede mentir callado deja de mirarse.
+var _API_LEIDO = 0;
+// No se pregunta en cada vez que vuelve al frente: si entra y sale cinco veces
+// en un minuto, cinco preguntas. Medio minuto es de sobra para lo que esto
+// contesta —un despliegue tarda mas que eso— y no se nota.
+var _API_SALUD_FRESCO_MS = 30*1000;
 var _API_VIVA = null;            // null = todavía no se sabe
 var _API_MOTIVO = "";            // por qué no contesta, cuando no contesta
 var _API_BLOQUEADA = _API_DOMINIO_DESCONOCIDO;  // ambiente equivocado, o dominio fuera de la lista
@@ -2697,6 +2706,7 @@ function _apiComprobarAmbiente(){
     _API_AMBIENTE_REAL=(d&&d.ambiente)||null;
     _API_VERSION=(d&&d.version)||null;
     _API_BASE=(d&&d.mongo)||null;
+    _API_LEIDO=Date.now();
     if(_API_AMBIENTE_REAL && _API_AMBIENTE_REAL!==_API_AMBIENTE_ESPERADO){
       // Esto es grave: este sitio está hablando con la base equivocada.
       // Se corta el acceso por correo y se cierra la sesión que hubiera.
@@ -11454,10 +11464,18 @@ function _htmlSistemaApi(){
   // llega a los datos. Se ve en rojo, no como una linea mas.
   else baseTxt="<span style='color:var(--mal);font-weight:800'>⚠️ el servidor no llega a la base</span>";
 
+  // A que hora se leyo. Va SIEMPRE, no solo cuando es viejo: si apareciera
+  // solo al envejecer, su ausencia habria que saber leerla.
+  var cuando="";
+  if(_API_LEIDO){
+    var h=new Date(_API_LEIDO);
+    cuando="leído "+("0"+h.getHours()).slice(-2)+":"+("0"+h.getMinutes()).slice(-2)+" · ";
+  }
   return "<div style='font-size:11px;color:var(--tx2);margin-bottom:10px;padding:8px 10px;background:var(--sup);border:1px solid var(--ln2);border-radius:8px;line-height:1.6'>"+
-    "<div style='display:flex;justify-content:space-between;gap:8px;margin-bottom:4px'>"+
+    "<div style='display:flex;justify-content:space-between;gap:8px;margin-bottom:4px;flex-wrap:wrap'>"+
       "<b>Tu servidor</b>"+
-      "<span onclick='_refrescarSistemaApi()' style='cursor:pointer;color:var(--ac);font-weight:700;white-space:nowrap'>↻ volver a preguntar</span>"+
+      "<span style='white-space:nowrap'><span style='color:var(--tx4);font-size:10.5px'>"+cuando+"</span>"+
+      "<span onclick='_refrescarSistemaApi()' style='cursor:pointer;color:var(--ac);font-weight:700'>↻ volver a preguntar</span></span>"+
     "</div>"+
     "<b>Ambiente esperado:</b> "+_API_AMBIENTE_ESPERADO+"<br>"+
     "<b>Ambiente que responde:</b> "+(_API_AMBIENTE_REAL||(_API_VIVA===false?("sin respuesta — "+_escAud(_API_MOTIVO)):"consultando…"))+
@@ -11476,7 +11494,7 @@ function _refrescarSistemaApi(){
     var n=document.getElementById("cfg-sistema-api");
     if(n) n.innerHTML=_htmlSistemaApi();
   };
-  _API_VERSION=null; _API_BASE=null; pintar();   // "consultando…" mientras va
+  _API_VERSION=null; _API_BASE=null; _API_LEIDO=0; pintar();  // "consultando…" mientras va
   var p=_apiComprobarAmbiente();
   if(p&&p.then) p.then(pintar,pintar); else pintar();
 }
@@ -14083,7 +14101,16 @@ function startAutoSync(){
   // Esto ademas levanta el detector de conexion mas rapido que antes.
   try{
     document.addEventListener("visibilitychange", function(){
-      if(!document.hidden){ _ultimoPoll=0; fbCheckREST(); _refrescarMisPermisos(); }
+      if(!document.hidden){
+        _ultimoPoll=0; fbCheckREST(); _refrescarMisPermisos();
+        // Y el estado del servidor, por lo mismo que los permisos: se
+        // preguntaba UNA vez, 1,2 s despues de abrir, y ahi se quedaba toda la
+        // sesion. Abrir la app mientras el servidor desplegaba dejaba la
+        // version marcando la anterior sin decirlo.
+        if(Date.now()-_API_LEIDO > _API_SALUD_FRESCO_MS){
+          try{ _apiComprobarAmbiente(); }catch(e){}
+        }
+      }
     });
   }catch(e){}
   // Renovar la sesión cada minuto mientras haya alguien logueado, para que
