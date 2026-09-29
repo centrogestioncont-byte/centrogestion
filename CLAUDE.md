@@ -804,6 +804,50 @@ intentarlo.
 pisarse, y en unos días contesta sola la otra pregunta —*cuándo y cuánto se
 mueve el mercado*—, que no se puede deducir, solo registrar.
 
+### Un fallo que no dice por qué cuesta una tarde
+
+La tarjeta decía **"El mercado ahora · sin lectura"** y ahí se acababa. Detrás
+hay tres cosas distintas que se arreglan en sitios distintos, y se estuvo
+buscando en el sitio equivocado hasta que ella abrió `/salud` a mano:
+
+```
+tu servidor todavía no tiene esta función    → 404: está vivo pero es viejo
+Binance respondió 403                        → el filtro de Binance, se arregla en la API
+de los 20 anuncios de BRL, ninguno acepta 1.000  → lo arregla ella, bajando el monto
+```
+
+El servidor **ya sabía** cuál era —`mercado_p2p()` devuelve `motivo`— y la app lo
+tiraba. La regla que sale de aquí: **si el servidor sabe por qué falló, la
+pantalla lo dice.** Un fallo mudo obliga a adivinar, y adivinar es lo que ya
+costó tres diagnósticos equivocados en una sesión.
+
+Cuatro cosas que lo sostienen:
+
+- **El motivo va por LADO** (`motivoBRL` / `motivoVES`), no solo cuando fallan los
+  dos. Sin las dos tasas no hay suelo, así que media lectura es un fallo igual —y
+  esa fila deja de pintarse verde: un *"vendes —"* en verde se lee como si
+  estuviera bien.
+- **Un fallo no se guarda como una lectura buena.** El caché del servidor era de
+  5 minutos para todo, así que el botón que dice "reintentar" devolvía el mismo
+  fallo guardado y no hacía absolutamente nada. Un fallo vive 20 s en el
+  servidor y la pantalla lo reintenta sola a los 30 s (`_MERCADO.intento` es
+  *cuándo se preguntó*; `_MERCADO.leido`, *cuándo se consiguió algo* — no son lo
+  mismo).
+- **El texto viene de Binance, así que se escapa y se corta a 70.** No lo
+  controlamos y acaba dentro de `innerHTML`.
+- **El servidor se presenta ante Binance como un navegador.** Se presentaba como
+  `"centrogestion-api"`, que es justo lo que el filtro del tablón busca. Esto no
+  se puede probar sin salir a internet —ni aquí ni en el CI—: la prueba mira lo
+  que **se iba a mandar**, que es lo único que ese filtro juzga, y la de verdad
+  la da su servidor al desplegar.
+
+**Y la versión del servidor está en Configuración**, con su base de datos y un
+botón para volver a preguntar. `/salud` ya la traía en cada arranque y la app la
+tiraba; que ella tenga que abrir una dirección a mano para saber si su servidor
+está al día es un fallo de la app, no una tarea suya. Un despliegue puede quedar
+fallado y seguir corriendo el contenedor viejo: desde fuera no hay otra forma de
+notarlo.
+
 ### La conciliación tiene que poder explicarse sola
 
 `conciliacionCapital()` compara lo que deberías tener contra lo que tienes. Un
