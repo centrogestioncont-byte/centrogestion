@@ -4612,6 +4612,36 @@ console.log("\n— FASE 2: la cuenta madre —");
   // su margen, que sobre su volumen no es redondeo.
   ok(/f4\(n\) : f2\(n\)/.test(sacarFuncion("_htmlSuelo")),
      "la tasa de compra de USDT se enseña con sus cuatro decimales");
+
+  // ── La version del servidor, en Configuracion ──────────────────────
+  // Existe porque hubo que preguntarla a mano: se paso una tarde buscando un
+  // problema en el despliegue cuando el despliegue estaba bien. /salud ya la
+  // traia y la app la tiraba.
+  var sis=sacarFuncion("_htmlSistemaApi");
+  ok(/_API_VERSION/.test(sacarFuncion("_apiComprobarAmbiente")) &&
+     /_API_BASE/.test(sacarFuncion("_apiComprobarAmbiente")),
+     "lo que /salud contesta sobre version y base se guarda, no se tira");
+  ok(/Versión del servidor/.test(sis) && /Base de datos/.test(sis),
+     "y Configuración las enseña las dos");
+  // El caso grave de ese recuadro: el servidor contesta pero no llega a los
+  // datos. Eso no puede ser una linea mas entre las otras.
+  ok(/el servidor no llega a la base/.test(sis) && /var\(--mal\)/.test(sis),
+     "una base caída se ve en rojo, no como una línea más");
+  // "desconocido" es lo que contesta corriendo fuera de Railway: es la verdad
+  // pero a ella no le dice nada.
+  ok(/corriendo fuera de Railway/.test(sis),
+     "y un servidor sin datos de despliegue lo dice con palabras, no con \"desconocido\"");
+  // ARREGLO 32: se pulsa con el acordeon abierto; R() lo cerraria.
+  ok(!/\bR\(\)/.test(sinComentarios(sacarFuncion("_refrescarSistemaApi"))) &&
+     /getElementById\("cfg-sistema-api"\)/.test(sacarFuncion("_refrescarSistemaApi")),
+     "volver a preguntar no repinta la pantalla: refresca el recuadro por su id");
+  // El boton necesita saber cuando termino la consulta.
+  ok(/return fetch\(_API_URL\+"\/salud"/.test(sacarFuncion("_apiComprobarAmbiente")),
+     "la consulta a /salud se devuelve, para poder esperarla desde el botón");
+  // Es un estado de ahora mismo, no un dato del negocio: si viajara entre
+  // aparatos, cada uno enseñaria la version que leyo el otro.
+  ok(!/DATA_KEYS = \[[\s\S]{0,900}"_API_VERSION"/.test(HTML),
+     "la versión del servidor no se sincroniza: es de este momento, no del negocio");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

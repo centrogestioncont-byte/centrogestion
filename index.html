@@ -2609,6 +2609,12 @@ if(_API_DOMINIO_DESCONOCIDO) _API_DEF = {url:"", ambiente:"no autorizado"};
 var _API_URL = _API_DEF.url;
 var _API_AMBIENTE_ESPERADO = _API_DEF.ambiente;
 var _API_AMBIENTE_REAL = null;   // lo que contesta /salud
+// /salud ya traia estas dos y se tiraban. Existen porque hubo que preguntarle
+// a mano por la direccion del servidor si estaba al dia —un despliegue puede
+// quedar fallado y seguir corriendo el contenedor viejo, y desde la app no
+// habia forma de notarlo—. Eso no se le puede pedir a ella.
+var _API_VERSION = null;         // {commit, rama} del servidor que contesta
+var _API_BASE = null;            // {conectado, base} de Mongo
 var _API_VIVA = null;            // null = todavía no se sabe
 var _API_MOTIVO = "";            // por qué no contesta, cuando no contesta
 var _API_BLOQUEADA = _API_DOMINIO_DESCONOCIDO;  // ambiente equivocado, o dominio fuera de la lista
@@ -2680,15 +2686,17 @@ function _apiComprobarAmbiente(){
     _API_VIVA=false;
     _API_MOTIVO="esta dirección no está autorizada";
     _apiAvisoDominio();
-    return;
+    return Promise.resolve();
   }
-  fetch(_API_URL+"/salud",{cache:"no-store"}).then(function(r){
+  return fetch(_API_URL+"/salud",{cache:"no-store"}).then(function(r){
     if(!r.ok){ _API_VIVA=false; _API_MOTIVO="el servidor respondió "+r.status; return null; }
     return r.json();
   }).then(function(d){
     if(!d) return;
     _API_VIVA=true; _API_MOTIVO="";
     _API_AMBIENTE_REAL=(d&&d.ambiente)||null;
+    _API_VERSION=(d&&d.version)||null;
+    _API_BASE=(d&&d.mongo)||null;
     if(_API_AMBIENTE_REAL && _API_AMBIENTE_REAL!==_API_AMBIENTE_ESPERADO){
       // Esto es grave: este sitio está hablando con la base equivocada.
       // Se corta el acceso por correo y se cierra la sesión que hubiera.
@@ -11412,6 +11420,66 @@ function _cfgAcc(id,icon,title,subtitle,color,bodyHtml,defaultOpen){
     (abierto?"<div style='padding:16px'>"+bodyHtml+"</div>":"")+
   "</div>";
 }
+// ── El estado del servidor, en Configuración ─────────────────────────
+// Vivia suelto dentro de rConfigAdmin. Sale a su propia funcion porque ahora
+// tiene un boton que lo vuelve a preguntar, y eso necesita poder redibujar
+// SOLO este recuadro (ARREGLO 32: R() rehace la pantalla y cierra el acordeon
+// bajo el dedo).
+//
+// La version del servidor esta aca porque hubo que preguntarla a mano: se
+// paso una tarde buscando un problema en el despliegue cuando el despliegue
+// estaba bien. /salud ya la traia; lo que faltaba era enseñarsela.
+function _htmlSistemaApi(){
+  var v=_API_VERSION||{};
+  var b=_API_BASE||{};
+  // "desconocido" es lo que contesta el servidor cuando corre fuera de
+  // Railway. Es la verdad, pero a ella no le dice nada: se traduce.
+  var commit=v.commit&&v.commit!=="desconocido" ? v.commit : "";
+  var rama=v.rama&&v.rama!=="desconocida" ? v.rama : "";
+  var versionTxt;
+  if(_API_VIVA===false) versionTxt="<span style='color:var(--tx4)'>no se pudo preguntar</span>";
+  else if(!_API_VERSION) versionTxt="<span style='color:var(--tx4)'>consultando…</span>";
+  else if(commit||rama)
+    versionTxt="<span style='font-family:monospace;font-size:11px'>"+_escAud(commit||"—")+"</span>"+
+               (rama?" · rama <b>"+_escAud(rama)+"</b>":"");
+  else versionTxt="<span style='color:var(--tx4)'>corriendo fuera de Railway</span>";
+
+  var baseTxt;
+  if(_API_VIVA===false) baseTxt="<span style='color:var(--tx4)'>no se pudo preguntar</span>";
+  else if(!_API_BASE) baseTxt="<span style='color:var(--tx4)'>consultando…</span>";
+  else if(b.conectado)
+    baseTxt="<span style='color:var(--ok);font-weight:700'>conectada</span>"+
+            (b.base?" · <span style='font-size:10.5px'>"+_escAud(b.base)+"</span>":"");
+  // Esto es lo unico grave de este recuadro: el servidor contesta pero no
+  // llega a los datos. Se ve en rojo, no como una linea mas.
+  else baseTxt="<span style='color:var(--mal);font-weight:800'>⚠️ el servidor no llega a la base</span>";
+
+  return "<div style='font-size:11px;color:var(--tx2);margin-bottom:10px;padding:8px 10px;background:var(--sup);border:1px solid var(--ln2);border-radius:8px;line-height:1.6'>"+
+    "<div style='display:flex;justify-content:space-between;gap:8px;margin-bottom:4px'>"+
+      "<b>Tu servidor</b>"+
+      "<span onclick='_refrescarSistemaApi()' style='cursor:pointer;color:var(--ac);font-weight:700;white-space:nowrap'>↻ volver a preguntar</span>"+
+    "</div>"+
+    "<b>Ambiente esperado:</b> "+_API_AMBIENTE_ESPERADO+"<br>"+
+    "<b>Ambiente que responde:</b> "+(_API_AMBIENTE_REAL||(_API_VIVA===false?("sin respuesta — "+_escAud(_API_MOTIVO)):"consultando…"))+
+    ((_API_AMBIENTE_REAL&&_API_AMBIENTE_REAL!==_API_AMBIENTE_ESPERADO)?" <span style='color:var(--mal);font-weight:800'>⚠️ NO COINCIDE</span>":"")+"<br>"+
+    "<b>Versión del servidor:</b> "+versionTxt+"<br>"+
+    "<b>Base de datos:</b> "+baseTxt+"<br>"+
+    "<b>API:</b> <span style='font-size:10px;word-break:break-all'>"+_API_URL+"</span><br>"+
+    "<b>Sesión por correo:</b> "+(apiSesionActiva()?"activa":"no")+
+    (_API_BLOQUEADA?"<br><span style='color:var(--mal);font-weight:800'>Acceso por correo desactivado — "+(_API_DOMINIO_DESCONOCIDO?"esta dirección no está autorizada":"desajuste de ambiente")+"</span>":"")+
+  "</div>";
+}
+// ARREGLO 32: se redibuja el recuadro por su id, nunca con R(). Esto se pulsa
+// con el acordeon de Configuracion abierto, y repintar lo cerraria.
+function _refrescarSistemaApi(){
+  var pintar=function(){
+    var n=document.getElementById("cfg-sistema-api");
+    if(n) n.innerHTML=_htmlSistemaApi();
+  };
+  _API_VERSION=null; _API_BASE=null; pintar();   // "consultando…" mientras va
+  var p=_apiComprobarAmbiente();
+  if(p&&p.then) p.then(pintar,pintar); else pintar();
+}
 function rConfigAdmin(){
   if(!S.config) S.config={};
   if(!S.config.tasasDia) S.config.tasasDia={};
@@ -11870,14 +11938,7 @@ function rConfigAdmin(){
       "var(--am3)", _htmlHistorialPisados(), false)+
     "<div style='background:var(--gr6-c);border-radius:14px;padding:14px;border:1px solid var(--ln2)'>"+
       "<div style='font-size:10px;font-weight:700;color:var(--tx3);text-transform:uppercase;margin-bottom:8px'>ℹ️ Sistema · versión "+APP_VERSION+"</div>"+
-      "<div style='font-size:11px;color:var(--tx2);margin-bottom:10px;padding:8px 10px;background:var(--sup);border:1px solid var(--ln2);border-radius:8px;line-height:1.5'>"+
-        "<b>Ambiente esperado:</b> "+_API_AMBIENTE_ESPERADO+"<br>"+
-        "<b>Ambiente que responde:</b> "+(_API_AMBIENTE_REAL||(_API_VIVA===false?("sin respuesta — "+_API_MOTIVO):"consultando…"))+
-        ((_API_AMBIENTE_REAL&&_API_AMBIENTE_REAL!==_API_AMBIENTE_ESPERADO)?" <span style='color:var(--mal);font-weight:800'>⚠️ NO COINCIDE</span>":"")+"<br>"+
-        "<b>API:</b> <span style='font-size:10px;word-break:break-all'>"+_API_URL+"</span><br>"+
-        "<b>Sesión por correo:</b> "+(apiSesionActiva()?"activa":"no")+
-        (_API_BLOQUEADA?"<br><span style='color:var(--mal);font-weight:800'>Acceso por correo desactivado — "+(_API_DOMINIO_DESCONOCIDO?"esta dirección no está autorizada":"desajuste de ambiente")+"</span>":"")+
-      "</div>"+
+      "<div id='cfg-sistema-api'>"+_htmlSistemaApi()+"</div>"+
       // Si el servidor esta rechazando los guardados hay que decirlo ACA,
       // que es donde se mira cuando algo anda raro. Antes esto solo se
       // veia dentro del acordeon "Comparación con la API", cerrado por
