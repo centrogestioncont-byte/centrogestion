@@ -4641,6 +4641,33 @@ console.log("\n— FASE 2: la cuenta madre —");
   // Y el pie deja de prometer "a tu monto" cuando ya no lo es.
   ok(/hayAjuste\?"":" a tu monto"/.test(suelo),
      "y el pie deja de decir \"a tu monto\" cuando no se midió a su monto");
+
+  // ── Los dos montos, en Configuración ──────────────────────────────
+  // _pedirMercado los leía de S.config desde el ARREGLO 75, pero no había
+  // dónde escribirlos: se le dijo dos veces que bajara el monto en
+  // Configuración y ese campo no estaba en ninguna parte.
+  var montos=sacarFuncion("_htmlMontosMercado");
+  ok(/_cfgAcc\("mercado_monto"/.test(HTML) && /_htmlMontosMercado\(\)/.test(HTML),
+     "los dos montos del mercado tienen su sitio en Configuración");
+  // El campo se come la coma decimal: texto + _num() en la puerta, las dos
+  // mitades, o "5,22" se lee como 5.
+  ok(/type='text' inputmode='decimal'/.test(montos) && !/type='number'/.test(montos),
+     "y son campos de texto, que no se comen la coma");
+  ok(/_num\(v\)/.test(sacarFuncion("_setMontoMercado")),
+     "con _num() en la puerta");
+  // ARREGLO 32: repintar cierra el acordeón bajo el dedo mientras teclea.
+  ok(!/\bR\(\)/.test(sinComentarios(sacarFuncion("_setMontoMercado"))) &&
+     /getElementById\("mercado-monto-pie"\)/.test(sacarFuncion("_setMontoMercado")),
+     "escribir el monto no repinta: refresca el pie por su id");
+  // Lo ya leído se midió a OTRO monto: dejarlo puesto sería enseñar un precio
+  // de otro tamaño con la etiqueta del nuevo.
+  ok(/_MERCADO\.datos=null/.test(sacarFuncion("_guardarMontoMercado")) &&
+     /_pedirMercado\(true\)/.test(sacarFuncion("_guardarMontoMercado")),
+     "y al guardarlo se tira la lectura vieja y se vuelve a pedir");
+  // Vacío no puede significar cero: el servidor tiene los mismos por omisión.
+  ok(/_MERCADO_MONTO_DEF = \{BRL:1000, VES:112000\}/.test(HTML) &&
+     /\(v>0\) \? v : _MERCADO_MONTO_DEF\[mon\]/.test(sacarFuncion("_montoMercado")),
+     "dejarlos en blanco vuelve a los medidos, no a cero");
   // El suelo es de la OPERACION. Presentarlo como el de la empresa seria
   // darle un numero optimista, y con eso publicaria una tasa que no aguanta.
   ok(/no lleva la comisión del banco venezolano ni tus egresos/.test(sacarFuncion("_htmlSuelo")),

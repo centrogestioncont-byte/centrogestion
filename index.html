@@ -11943,6 +11943,7 @@ function rConfigAdmin(){
     _cfgAcc("categorias","🏷️","Categorías","empresa y personales","var(--rol-ee)",categoriasBody,false)+
     _cfgAcc("rutas","🛣️","Rutas de operación",null,"var(--az3-c)",rutasBody,false)+
     _cfgAcc("tasas","📊","Tasas del día","solo afecta nuevos registros","var(--rol-na)",tasasHTML,false)+
+    _cfgAcc("mercado_monto","📐","Tamaño de tus operaciones","con qué monto se lee el P2P","var(--ac)",_htmlMontosMercado(),false)+
     _cfgAcc("usuarios_api","👥","Usuarios y permisos","quién entra y qué ve cada uno","var(--az3-b)",rUsuariosApi(),false)+
     "<div id='cfg-tema'>"+_cfgAcc("tema","🎨","Colores de la app",
       temaActual()+" · solo en este aparato",
@@ -21185,6 +21186,62 @@ function _equilibrio(compra, venta){
   if(!(fee>=0)||fee>=1) fee=0;
   return Math.round(((v*(1-fee))/c)*100)/100;
 }
+// ── Con qué monto se lee el mercado ──────────────────────────────────
+// Estos dos existian desde el ARREGLO 75 —_pedirMercado ya los leia de
+// S.config— pero NO habia donde escribirlos. Se le dijo dos veces que bajara
+// el monto en Configuracion y ese campo no estaba en ninguna parte.
+//
+// Los valores por omision salen de medir sus propios lotes (70 compras y 131
+// ventas): compra USDT con reales por una mediana de ~R$ 1.000 y vende por
+// bolivares por ~112.000 Bs. Son los mismos que usa el servidor si aqui no hay
+// nada, asi que dejarlos en blanco no rompe nada.
+var _MERCADO_MONTO_DEF = {BRL:1000, VES:112000};
+function _montoMercado(mon){
+  var v=parseFloat((S.config||{})["mercadoMonto"+mon]);
+  return (v>0) ? v : _MERCADO_MONTO_DEF[mon];
+}
+function _htmlMontoMercadoPie(){
+  return "Ahora mismo se lee el precio de operaciones de <b>"+f0(_montoMercado("BRL"))+
+    " R$</b> y <b>"+f0(_montoMercado("VES"))+" Bs</b>. Si a esa hora nadie está tomando "+
+    "ese monto, la app baja al mayor que sí den y te lo dice.";
+}
+function _setMontoMercado(mon,v){
+  S.config=S.config||{};
+  // _num() en la puerta: con el teclado en español la coma decimal es lo
+  // primero que se pierde, y detras hay parseFloat.
+  S.config["mercadoMonto"+mon]=_num(v);
+  // ARREGLO 32: no se repinta mientras teclea. El pie se rehace por su id.
+  var n=document.getElementById("mercado-monto-pie");
+  if(n) n.innerHTML=_htmlMontoMercadoPie();
+}
+function _guardarMontoMercado(){
+  saveData();
+  // Lo que hubiera leido se midio a OTRO monto, asi que ya no vale. Se tira y
+  // se vuelve a pedir: dejarlo seria enseñarle un precio de otro tamaño.
+  _MERCADO.datos=null; _MERCADO.intento=0; _MERCADO.error="";
+  _pedirMercado(true); _refrescarSuelo();
+}
+function _htmlMontosMercado(){
+  var campo=function(mon,rot,pie){
+    return "<div><label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>"+rot+"</label>"+
+      "<input type='text' inputmode='decimal' value='"+_montoMercado(mon)+"' "+
+        "oninput='_setMontoMercado(\""+mon+"\",this.value)' onchange='_guardarMontoMercado()' "+
+        "style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;"+
+        "font-weight:700;font-family:inherit;background:var(--sup);color:var(--tit)'>"+
+      "<div style='font-size:10px;color:var(--tx4);margin-top:3px'>"+pie+"</div></div>";
+  };
+  return "<div style='font-size:11px;color:var(--tx2b);margin-bottom:12px;line-height:1.6'>"+
+      "El precio del P2P depende de <b>cuánto muevas de una vez</b>: los anuncios grandes suelen dar "+
+      "mejor precio, pero piden más. La app lee el precio que aceptan operaciones de este tamaño, "+
+      "para que sea el tuyo y no uno que no puedas tomar.</div>"+
+    "<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px'>"+
+      campo("BRL","🇧🇷 Cuánto compras de una vez","en reales · por omisión 1.000")+
+      campo("VES","🇻🇪 Cuánto vendes de una vez","en bolívares · por omisión 112.000")+
+    "</div>"+
+    "<div id='mercado-monto-pie' style='font-size:10.5px;color:var(--tx4);line-height:1.5'>"+
+      _htmlMontoMercadoPie()+"</div>";
+}
+
 function _htmlSuelo(){
   var f=function(n){return f2(n);};
   // ARREGLO 75: la tasa de compra de USDT va a CUATRO decimales. Con f2,
