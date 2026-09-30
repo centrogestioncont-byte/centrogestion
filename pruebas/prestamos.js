@@ -4639,8 +4639,13 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(/montoPedido/.test(suelo) && /nadie toma tu monto entero/.test(suelo),
      "cuando el mercado se midió a otro monto, la tarjeta lo dice");
   // Y el pie deja de prometer "a tu monto" cuando ya no lo es.
-  ok(/hayAjuste\?"":" a tu monto"/.test(suelo),
+  ok(/bajoDeMonto\(m\.ventaVES\)\?"":" a tu monto"/.test(suelo),
      "y el pie deja de decir \"a tu monto\" cuando no se midió a su monto");
+  // Los reales salen del mercado normal (sin anuncios) y los bolívares del P2P
+  // (con ellos). El pie decía "0 y 2 anuncios", y ese 0 se leía como "los
+  // reales fallaron" cuando estaban perfectos.
+  ok(/fuente==="mercado"/.test(suelo) && /reales del mercado/.test(suelo),
+     "el pie dice que los reales vienen del mercado, no cuenta anuncios que no hay");
 
   // ── Los dos montos, en Configuración ──────────────────────────────
   // _pedirMercado los leía de S.config desde el ARREGLO 75, pero no había
