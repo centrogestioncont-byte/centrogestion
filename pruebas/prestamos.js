@@ -4644,8 +4644,8 @@ console.log("\n— FASE 2: la cuenta madre —");
   // Los reales salen del mercado normal (sin anuncios) y los bolívares del P2P
   // (con ellos). El pie decía "0 y 2 anuncios", y ese 0 se leía como "los
   // reales fallaron" cuando estaban perfectos.
-  ok(/fuente==="mercado"/.test(suelo) && /reales del mercado/.test(suelo),
-     "el pie dice que los reales vienen del mercado, no cuenta anuncios que no hay");
+  ok(/"reales: "\+_escAud\(m\.compraBRL\.fuente\)/.test(suelo),
+     "el pie dice de QUÉ sitio vienen los reales, no cuenta anuncios que no hay");
 
   // ── Los dos montos, en Configuración ──────────────────────────────
   // _pedirMercado los leía de S.config desde el ARREGLO 75, pero no había
