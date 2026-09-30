@@ -4616,7 +4616,7 @@ console.log("\n— FASE 2: la cuenta madre —");
      "con media lectura se completa el lado que falta con lo suyo, en las dos direcciones");
   // Y SUSTITUYE al suyo. Dos suelos parecidos para la misma pregunta es lo que
   // ya hizo que dejara de fiarse de los dos (34,27 arriba y 34,28 abajo).
-  ok(/if\(eqMixto\) suelos\+=linea\(rotMixto[\s\S]{0,200}else if\(eqMio\)/.test(suelo),
+  ok(/if\(eqMixto\)\{[\s\S]{0,400}\}else if\(eqMio\)\{/.test(suelo),
      "y ocupa el sitio del suyo, no se pone al lado");
   // Sin ninguno de los dos lados no hay mixto: eso seria inventar.
   ok(/if\(!eqMerc\)\{/.test(suelo),
@@ -4625,9 +4625,67 @@ console.log("\n— FASE 2: la cuenta madre —");
   // explicar como se hizo es lo que hace que dejen de creerse los tres.
   ok(/pieMixto="tu compra de "/.test(suelo) && /con la venta de hoy/.test(suelo),
      "y dice de dónde sale cada mitad, con las dos tasas");
-  // El porcentaje se mide contra el suelo que se esta enseñando, no contra otro.
-  ok(/var base=eqMerc\|\|eqMixto\|\|eqMio;/.test(suelo),
-     "el \"te queda +X%\" se mide contra el suelo que está a la vista");
+  // ── ARREGLO 77: manda el suelo MAS BAJO ───────────────────────────
+  // El suelo es venta ÷ compra, asi que una compra mas cara lo BAJA. El 30/09
+  // ella compro USDT a 5,27 —paga la comision del P2P— y el mercado abierto
+  // estaba en 5,20: suelo real 180,3, suelo de mercado 182,7. El % se medía
+  // contra el del mercado, o sea contra un costo que no era el suyo.
+  ok(F._equilibrio(5.27, 956.86) < F._equilibrio(5.20, 956.86),
+     "comprar mas caro BAJA el suelo: por eso manda el mas bajo",
+     F._equilibrio(5.27, 956.86) + " vs " + F._equilibrio(5.20, 956.86));
+  // Y el caso contrario sale solo: una tasa de compra vieja y BARATA da un
+  // suelo alto, asi que pierde y manda el del mercado. Es el numero que le
+  // salio esa mañana (5,0018 del 18/09) y contra el que se estaba midiendo.
+  ok(F._equilibrio(5.0018, 956.86) > F._equilibrio(5.20, 956.86),
+     "y una compra vieja y barata da un suelo ALTO, que pierde la comparacion",
+     F._equilibrio(5.0018, 956.86) + " vs " + F._equilibrio(5.20, 956.86));
+  // El porcentaje se mide contra el mas bajo de los que esten a la vista, no
+  // contra el del mercado. Un suelo optimista es peor que ninguno: con el
+  // publicaria una tasa que no aguanta su propio costo.
+  ok(/for\(var ci=0;ci<cands\.length;ci\+\+\) if\(!manda\|\|cands\[ci\]\.v<manda\.v\) manda=cands\[ci\];/.test(suelo) &&
+     /var base=manda\?manda\.v:null;/.test(suelo),
+     "el \"te queda +X%\" se mide contra el suelo mas bajo de los que se enseñan");
+  // Y los candidatos son exactamente los que se dibujan: si uno se enseña y no
+  // entra en la comparacion, el % puede salir de un numero que no esta arriba.
+  // Por eso se dibuja RECORRIENDO la lista de candidatos, en un solo sitio.
+  ok((suelo.match(/cands\.push\(/g)||[]).length === 3 &&
+     (suelo.match(/suelos\+=linea\(/g)||[]).length === 1 &&
+     /for\(var cj=0;cj<cands\.length;cj\+\+\)\s*\n?\s*suelos\+=linea\(cands\[cj\]/.test(suelo),
+     "cada suelo que se dibuja entra en la comparacion, y ninguno mas");
+  // Y el color va con el que MANDA. Al reves, el suelo que manda salia en
+  // ambar y el que no manda en verde: el color se lee antes que la letra, asi
+  // que la tarjeta decia una cosa con el texto y la contraria con el color.
+  ok(/cands\[cj\]===manda\?"var\(--ok\)":"var\(--tx3\)"/.test(suelo),
+     "y el verde se lo lleva el que manda, no el otro");
+  // Con dos suelos en pantalla hay que decir contra cual se midio y con que
+  // par de tasas: un % que no dice de donde sale hay que comprobarlo a mano.
+  ok(/manda "\+manda\.nombre/.test(suelo) &&
+     /compras "\+fp\(manda\.c\)\+" R\$ · vendes "\+fp\(manda\.s\)/.test(suelo),
+     "y la tarjeta dice cual mando, con las dos tasas con que se hizo");
+  // Con un solo suelo no hay nada que elegir, asi que no se dice nada.
+  ok(/if\(cands\.length>1&&base&&mia!==null\)\{/.test(suelo),
+     "con un solo suelo no se escribe la linea de \"manda\": no hay eleccion");
+
+  // ── La tasa de compra puede ser de hace dias ──────────────────────
+  // Sale de la ULTIMA operacion de USDT registrada. El 30/09 la tarjeta
+  // enseñaba 187,90 con una compra del 18/09, y ella habia comprado a 5,27 esa
+  // misma mañana. El numero no estaba mal, estaba VIEJO — que para lo que
+  // sirve un suelo es lo mismo.
+  ok(/rc\.origen!=="auto"\|\|!rc\.iso/.test(suelo) && /dias>1/.test(suelo),
+     "avisa cuando la tasa de compra que sostiene el suelo lleva mas de un dia");
+  // La fijada a mano no se avisa: es una decision suya, no un olvido. Es la
+  // misma regla que ya manda en tasaDeReferencia().
+  ok(/rc\.origen!=="auto"/.test(suelo),
+     "y la tasa fijada a mano no se avisa: es una decision, no un descuido");
+  // El dato con el que se mide tiene que existir: tasaDeReferencia() devuelve
+  // la fecha ISO del lote del que salio la tasa.
+  ok(/return \{tasa:t, origen:"auto", fecha:u\.fecha, iso:uF, tipo:u\.tipo, meta:\{\}\};/
+       .test(sacarFuncion("tasaDeReferencia")),
+     "tasaDeReferencia dice de que dia es la tasa que devuelve");
+  // Y NO se llama fechaIso: ese nombre lo cuenta la guardia del ARREGLO 51
+  // contra cada inventarioUsdt.push(, y un campo mas romperia esa cuenta.
+  ok(!/fechaIso/.test(sacarFuncion("tasaDeReferencia")),
+     "sin usar el nombre fechaIso, que esta reservado a los lotes");
   // Y el aviso de arriba tiene que cuadrar con el numero de abajo: "no hay
   // suelo de mercado" con un suelo justo debajo son dos mensajes opuestos en
   // la misma tarjeta, que es lo que ya hizo falsa la de conciliación.
