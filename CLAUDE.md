@@ -818,21 +818,35 @@ intentarlo.
 **Y cada moneda sale de un sitio distinto, que no es intercambiable:**
 
 ```
-reales     →  mercado NORMAL (api.binance.com, par USDTBRL)
-bolívares  →  P2P (p2p.binance.com)
+reales     →  Binance → CoinGecko → Mercado Bitcoin   (el primero que conteste)
+bolívares  →  P2P de Binance
 ```
 
-El tablón **P2P de reales viene vacío para su servidor en las dos direcciones**
-—`total 0`, con la pregunta simple igual, y el sondeo del otro lado también—
-mientras el de bolívares, desde la misma máquina, trae anuncios. Esa puerta está
-cerrada; no la vuelvas a intentar. Pero `USDT/BRL` es un par de verdad en el
-mercado normal y ese precio es público y sin filtro de país.
+**Su servidor está en Railway EE.UU. y Binance lo bloquea por país.** Medido el
+30/09: el mercado normal devuelve **451** (*"Unavailable For Legal Reasons"*) y
+el tablón P2P de reales viene vacío en las **dos** direcciones —`total 0`, con la
+pregunta simple igual, y el sondeo del otro lado también— mientras el de
+bolívares, desde la misma máquina, trae anuncios. Las dos puertas cerradas por lo
+mismo.
+
+**Cambiar de región en Railway lo arreglaría, pero es de pago y su plan no lo
+tiene.** Así que el precio de los reales se busca donde sí contesten. Binance va
+primero porque es donde ella opera de verdad; USDT/BRL es tan líquido que entre
+sitios hay décimas de por ciento, y para un **suelo** eso vale.
+
+- **Lo que no vale es callar de dónde salió.** Cada lectura trae su `fuente` con
+  el nombre del sitio y la pantalla lo enseña (*"reales: CoinGecko"*). Enseñarle
+  un precio que no es el de Binance como si lo fuera sería peor que no darlo.
+- **Cada sitio envuelve el precio a su manera** y no hay contrato entre ellos.
+  `_precio_de` prueba las tres formas conocidas y si ninguna encaja devuelve
+  nada, en vez de adivinar.
+- **Si caen las tres, el motivo cuenta lo que dijo CADA una.** Cuál contesta y
+  cuál no es lo que decide qué hacer después, y el 451 hay que poder leerlo tal
+  cual porque no se arregla con código.
 
 Al revés no vale: **Binance no lista VES**, así que ahí el P2P es el único sitio
-donde ese precio existe.
-
-Mientras el mercado conteste, al P2P de reales **ni se le pregunta**. Si falla,
-se cae al P2P y el motivo cuenta los dos intentos.
+donde ese precio existe. Mientras alguna fuente conteste, al P2P de reales **ni
+se le pregunta**.
 
 `histComp` guarda lo apuntado **indexado por fecha**, así que va en
 `_MERGE_HISTORIAL` y en `DATA_KEYS`: se une entre los dos aparatos en vez de
