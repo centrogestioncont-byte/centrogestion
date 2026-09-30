@@ -2615,6 +2615,15 @@ var _API_AMBIENTE_REAL = null;   // lo que contesta /salud
 // habia forma de notarlo—. Eso no se le puede pedir a ella.
 var _API_VERSION = null;         // {commit, rama} del servidor que contesta
 var _API_BASE = null;            // {conectado, base} de Mongo
+// CUANDO se leyo lo de arriba. Sin esto, la linea de la version puede llevar
+// una hora desactualizada sin decirlo: el 29/09 marcaba 166c1b4 con el
+// servidor ya corriendo 6c0806f, porque la app abrio mientras desplegaba y
+// nunca volvio a preguntar. Un dato que puede mentir callado deja de mirarse.
+var _API_LEIDO = 0;
+// No se pregunta en cada vez que vuelve al frente: si entra y sale cinco veces
+// en un minuto, cinco preguntas. Medio minuto es de sobra para lo que esto
+// contesta —un despliegue tarda mas que eso— y no se nota.
+var _API_SALUD_FRESCO_MS = 30*1000;
 var _API_VIVA = null;            // null = todavía no se sabe
 var _API_MOTIVO = "";            // por qué no contesta, cuando no contesta
 var _API_BLOQUEADA = _API_DOMINIO_DESCONOCIDO;  // ambiente equivocado, o dominio fuera de la lista
@@ -2697,6 +2706,7 @@ function _apiComprobarAmbiente(){
     _API_AMBIENTE_REAL=(d&&d.ambiente)||null;
     _API_VERSION=(d&&d.version)||null;
     _API_BASE=(d&&d.mongo)||null;
+    _API_LEIDO=Date.now();
     if(_API_AMBIENTE_REAL && _API_AMBIENTE_REAL!==_API_AMBIENTE_ESPERADO){
       // Esto es grave: este sitio está hablando con la base equivocada.
       // Se corta el acceso por correo y se cierra la sesión que hubiera.
@@ -11454,10 +11464,18 @@ function _htmlSistemaApi(){
   // llega a los datos. Se ve en rojo, no como una linea mas.
   else baseTxt="<span style='color:var(--mal);font-weight:800'>⚠️ el servidor no llega a la base</span>";
 
+  // A que hora se leyo. Va SIEMPRE, no solo cuando es viejo: si apareciera
+  // solo al envejecer, su ausencia habria que saber leerla.
+  var cuando="";
+  if(_API_LEIDO){
+    var h=new Date(_API_LEIDO);
+    cuando="leído "+("0"+h.getHours()).slice(-2)+":"+("0"+h.getMinutes()).slice(-2)+" · ";
+  }
   return "<div style='font-size:11px;color:var(--tx2);margin-bottom:10px;padding:8px 10px;background:var(--sup);border:1px solid var(--ln2);border-radius:8px;line-height:1.6'>"+
-    "<div style='display:flex;justify-content:space-between;gap:8px;margin-bottom:4px'>"+
+    "<div style='display:flex;justify-content:space-between;gap:8px;margin-bottom:4px;flex-wrap:wrap'>"+
       "<b>Tu servidor</b>"+
-      "<span onclick='_refrescarSistemaApi()' style='cursor:pointer;color:var(--ac);font-weight:700;white-space:nowrap'>↻ volver a preguntar</span>"+
+      "<span style='white-space:nowrap'><span style='color:var(--tx4);font-size:10.5px'>"+cuando+"</span>"+
+      "<span onclick='_refrescarSistemaApi()' style='cursor:pointer;color:var(--ac);font-weight:700'>↻ volver a preguntar</span></span>"+
     "</div>"+
     "<b>Ambiente esperado:</b> "+_API_AMBIENTE_ESPERADO+"<br>"+
     "<b>Ambiente que responde:</b> "+(_API_AMBIENTE_REAL||(_API_VIVA===false?("sin respuesta — "+_escAud(_API_MOTIVO)):"consultando…"))+
@@ -11476,7 +11494,7 @@ function _refrescarSistemaApi(){
     var n=document.getElementById("cfg-sistema-api");
     if(n) n.innerHTML=_htmlSistemaApi();
   };
-  _API_VERSION=null; _API_BASE=null; pintar();   // "consultando…" mientras va
+  _API_VERSION=null; _API_BASE=null; _API_LEIDO=0; pintar();  // "consultando…" mientras va
   var p=_apiComprobarAmbiente();
   if(p&&p.then) p.then(pintar,pintar); else pintar();
 }
@@ -14083,7 +14101,16 @@ function startAutoSync(){
   // Esto ademas levanta el detector de conexion mas rapido que antes.
   try{
     document.addEventListener("visibilitychange", function(){
-      if(!document.hidden){ _ultimoPoll=0; fbCheckREST(); _refrescarMisPermisos(); }
+      if(!document.hidden){
+        _ultimoPoll=0; fbCheckREST(); _refrescarMisPermisos();
+        // Y el estado del servidor, por lo mismo que los permisos: se
+        // preguntaba UNA vez, 1,2 s despues de abrir, y ahi se quedaba toda la
+        // sesion. Abrir la app mientras el servidor desplegaba dejaba la
+        // version marcando la anterior sin decirlo.
+        if(Date.now()-_API_LEIDO > _API_SALUD_FRESCO_MS){
+          try{ _apiComprobarAmbiente(); }catch(e){}
+        }
+      }
     });
   }catch(e){}
   // Renovar la sesión cada minuto mientras haya alguien logueado, para que
@@ -21176,6 +21203,28 @@ function _htmlSuelo(){
     mc=m.compraBRL&&m.compraBRL.tasa; mv=m.ventaVES&&m.ventaVES.tasa;
     eqMerc=_equilibrio(mc,mv);
   }
+  // MEDIA lectura: el mercado dio un lado y del otro no hay. Se completa con
+  // lo suyo, que es lo mas cerca de la verdad que se puede estar sin inventar
+  // nada: los dos numeros son reales, solo que uno es de su historia y el otro
+  // de ahora. Paso el 29/09 —los bolivares se leyeron y los reales no— y la
+  // pantalla se quedaba enseñando solo su suelo viejo, teniendo medio dato
+  // nuevo guardado sin usar.
+  //
+  // SUSTITUYE al suyo, no se pone al lado. Dos suelos parecidos para la misma
+  // pregunta es lo que ya hizo que dejara de fiarse de los dos (34,27 arriba y
+  // 34,28 abajo en Por cobrar).
+  var eqMixto=null, rotMixto="", pieMixto="";
+  if(!eqMerc){
+    if(mv>0 && miC>0){
+      eqMixto=_equilibrio(miC,mv);
+      rotMixto="Tu suelo vendiendo hoy lo que ya compraste";
+      pieMixto="tu compra de "+fp(miC)+" R$ con la venta de hoy, "+fp(mv)+" Bs";
+    }else if(mc>0 && miV>0){
+      eqMixto=_equilibrio(mc,miV);
+      rotMixto="Tu suelo comprando hoy, a tu última venta";
+      pieMixto="la compra de hoy, "+fp(mc)+" R$, con tu venta de "+fp(miV)+" Bs";
+    }
+  }
   var mia=_misTasasPublicadas().ida;
   var fila=function(rot,c,v,pie,col){
     if(!(c>0)&&!(v>0)) return "";
@@ -21205,8 +21254,14 @@ function _htmlSuelo(){
     if(!m) return "";
     var t=m.motivoBRL?("reales · "+m.motivoBRL):(m.motivoVES?("bolívares · "+m.motivoVES):"");
     if(!t) return "";
+    // Lo que diga aqui tiene que cuadrar con el suelo que hay DEBAJO. Cuando
+    // se completa el lado que falta con lo suyo, decir "no hay suelo de
+    // mercado" con un suelo justo abajo son dos mensajes opuestos en la misma
+    // tarjeta — que es lo que ya hizo falsa la tarjeta de conciliacion.
+    var cabeza=eqMixto ? "Falta un lado del mercado, así que el suelo de abajo va con tu tasa: "
+                       : "Falta un lado, así que no hay suelo de mercado: ";
     return "<div style='font-size:10.5px;color:var(--am3-b);margin:-1px 0 4px;line-height:1.5'>"+
-      "Falta un lado, así que no hay suelo de mercado: "+_escAud(t)+" "+reintentar+"</div>";
+      cabeza+_escAud(t)+" "+reintentar+"</div>";
   };
   var cuerpo=
     fila("Tus últimas operaciones", miC, miV, (rc&&rc.fecha)?rc.fecha:"")+
@@ -21218,11 +21273,20 @@ function _htmlSuelo(){
              (m.motivoBRL||m.motivoVES)?"var(--tx2)":"var(--ok)")+ladoQueFalto()
       : sinLectura());
   var suelos="";
-  if(eqMio||eqMerc){
+  if(eqMio||eqMerc||eqMixto){
     suelos="<div style='border-top:1px solid var(--ln);margin-top:7px;padding-top:7px'>";
-    if(eqMio) suelos+="<div style='display:flex;justify-content:space-between;font-size:11.5px'><span style='color:var(--tx3)'>Tu suelo con lo que ya compraste</span><b style='color:var(--tit)'>"+f(eqMio)+"</b></div>";
-    if(eqMerc) suelos+="<div style='display:flex;justify-content:space-between;font-size:11.5px'><span style='color:var(--tx3)'>Tu suelo al precio de hoy</span><b style='color:var(--ok)'>"+f(eqMerc)+"</b></div>";
-    var base=eqMerc||eqMio;
+    var linea=function(rot,val,col,pie){
+      return "<div style='display:flex;justify-content:space-between;gap:8px;font-size:11.5px'>"+
+        "<span style='color:var(--tx3)'>"+rot+"</span><b style='color:"+col+"'>"+f(val)+"</b></div>"+
+        (pie?"<div style='font-size:10px;color:var(--tx4);margin:-1px 0 3px'>"+pie+"</div>":"");
+    };
+    // El mixto ocupa el sitio del suyo, no se suma. El rotulo dice de donde
+    // sale cada mitad: un tercer numero sin decir como se hizo es justo lo que
+    // hace que dejen de creerse los tres.
+    if(eqMixto) suelos+=linea(rotMixto,eqMixto,"var(--ok)",pieMixto);
+    else if(eqMio) suelos+=linea("Tu suelo con lo que ya compraste",eqMio,"var(--tit)","");
+    if(eqMerc) suelos+=linea("Tu suelo al precio de hoy",eqMerc,"var(--ok)","");
+    var base=eqMerc||eqMixto||eqMio;
     if(mia!==null&&base){
       var mg=Math.round(((base-mia)/base)*1000)/10;
       suelos+="<div style='font-size:11.5px;margin-top:5px;color:"+(mg>0?"var(--ok)":"var(--mal)")+";font-weight:700'>"+

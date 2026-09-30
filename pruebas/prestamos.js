@@ -4604,6 +4604,35 @@ console.log("\n— FASE 2: la cuenta madre —");
   // "vendes —" en verde se lee como si estuviera bien.
   ok(/\(m\.motivoBRL\|\|m\.motivoVES\)\?"var\(--tx2\)":"var\(--ok\)"/.test(sacarFuncion("_htmlSuelo")),
      "y media lectura no se pinta de verde");
+
+  // ── El suelo mixto ────────────────────────────────────────────────
+  // Media lectura del mercado no es nada: los dos numeros que quedan son
+  // reales, solo que uno es de su historia y el otro de ahora. El 29/09 los
+  // bolivares se leyeron (957,01) y los reales no, y la pantalla seguia
+  // enseñando solo su suelo viejo con medio dato nuevo sin usar.
+  var suelo=sacarFuncion("_htmlSuelo");
+  ok(/eqMixto=_equilibrio\(miC,mv\)/.test(suelo) &&
+     /eqMixto=_equilibrio\(mc,miV\)/.test(suelo),
+     "con media lectura se completa el lado que falta con lo suyo, en las dos direcciones");
+  // Y SUSTITUYE al suyo. Dos suelos parecidos para la misma pregunta es lo que
+  // ya hizo que dejara de fiarse de los dos (34,27 arriba y 34,28 abajo).
+  ok(/if\(eqMixto\) suelos\+=linea\(rotMixto[\s\S]{0,200}else if\(eqMio\)/.test(suelo),
+     "y ocupa el sitio del suyo, no se pone al lado");
+  // Sin ninguno de los dos lados no hay mixto: eso seria inventar.
+  ok(/if\(!eqMerc\)\{/.test(suelo),
+     "con lectura completa del mercado no se calcula ningún mixto");
+  // El rotulo tiene que decir de donde sale cada mitad. Un tercer numero sin
+  // explicar como se hizo es lo que hace que dejen de creerse los tres.
+  ok(/pieMixto="tu compra de "/.test(suelo) && /con la venta de hoy/.test(suelo),
+     "y dice de dónde sale cada mitad, con las dos tasas");
+  // El porcentaje se mide contra el suelo que se esta enseñando, no contra otro.
+  ok(/var base=eqMerc\|\|eqMixto\|\|eqMio;/.test(suelo),
+     "el \"te queda +X%\" se mide contra el suelo que está a la vista");
+  // Y el aviso de arriba tiene que cuadrar con el numero de abajo: "no hay
+  // suelo de mercado" con un suelo justo debajo son dos mensajes opuestos en
+  // la misma tarjeta, que es lo que ya hizo falsa la de conciliación.
+  ok(/eqMixto \? "Falta un lado del mercado, así que el suelo de abajo va con tu tasa: "/.test(suelo),
+     "y el aviso de \"falta un lado\" no contradice al suelo que se enseña debajo");
   // El suelo es de la OPERACION. Presentarlo como el de la empresa seria
   // darle un numero optimista, y con eso publicaria una tasa que no aguanta.
   ok(/no lleva la comisión del banco venezolano ni tus egresos/.test(sacarFuncion("_htmlSuelo")),
@@ -4642,6 +4671,25 @@ console.log("\n— FASE 2: la cuenta madre —");
   // aparatos, cada uno enseñaria la version que leyo el otro.
   ok(!/DATA_KEYS = \[[\s\S]{0,900}"_API_VERSION"/.test(HTML),
      "la versión del servidor no se sincroniza: es de este momento, no del negocio");
+  // Se preguntaba UNA vez, 1,2 s despues de abrir, y ahi se quedaba: el 29/09
+  // marcaba 166c1b4 con el servidor ya en 6c0806f, porque la app abrio
+  // mientras desplegaba. Un dato que puede mentir callado deja de mirarse.
+  ok(/_API_LEIDO=Date\.now\(\)/.test(sacarFuncion("_apiComprobarAmbiente")),
+     "se apunta cuándo se leyó el estado del servidor");
+  ok(/leído /.test(sis) && /_API_LEIDO/.test(sis),
+     "y la tarjeta dice a qué hora, siempre, no solo cuando ya es viejo");
+  ok(/_apiComprobarAmbiente\(\)/.test(
+       HTML.slice(HTML.indexOf("visibilitychange"), HTML.indexOf("visibilitychange")+700)),
+     "al volver a la app se vuelve a preguntar, como ya se hace con los permisos");
+  // Pero no en cada vez que vuelve al frente: entrar y salir cinco veces en un
+  // minuto no pueden ser cinco preguntas.
+  ok(/_API_SALUD_FRESCO_MS = 30\*1000/.test(HTML) &&
+     /Date\.now\(\)-_API_LEIDO > _API_SALUD_FRESCO_MS/.test(HTML),
+     "y no en cada vuelta: hay medio minuto de guardia");
+  // Al pulsar el botón la hora vieja también se va: si no, se queda debajo de
+  // "consultando…" y parece la hora de la lectura nueva.
+  ok(/_API_LEIDO=0/.test(sacarFuncion("_refrescarSistemaApi")),
+     "y al volver a preguntar, la hora vieja se borra con el dato viejo");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

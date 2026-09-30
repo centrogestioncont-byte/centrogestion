@@ -848,6 +848,56 @@ está al día es un fallo de la app, no una tarea suya. Un despliegue puede qued
 fallado y seguir corriendo el contenedor viejo: desde fuera no hay otra forma de
 notarlo.
 
+Y esa línea **se refresca sola y dice a qué hora se leyó**. Se preguntaba una
+vez, 1,2 s después de abrir, y ahí se quedaba: el 29/09 marcaba `166c1b4` con el
+servidor ya en `6c0806f`, porque la app abrió mientras Railway desplegaba. No
+estaba mal, estaba **vieja** — que para lo que sirve esa línea es lo mismo. Se
+vuelve a preguntar al volver a la app, como ya se hacía con los permisos, y la
+hora va siempre: si solo apareciera al envejecer, su ausencia habría que saber
+leerla.
+
+### Media lectura del mercado no es nada: se completa con lo suyo
+
+Pasó el 29/09 y es el caso normal, no el raro. Los bolívares se leyeron —957,01,
+de 2 anuncios— y los reales volvieron con **el tablón vacío**. Sin las dos tasas
+no hay "suelo al precio de hoy", así que la pantalla enseñaba solo su suelo
+propio y **medio dato nuevo se quedaba guardado sin usar**.
+
+No hace falta inventar nada: los dos números que quedan son reales, solo que uno
+es de su historia y el otro de ahora.
+
+```
+tu compra de 5,0018 R$ · la venta de hoy, 957,01 Bs  →  189,99
+```
+
+Con sus cifras eso es **+9,5 % ofreciendo 172,00**, donde veía +8,5 %. Vale en
+las dos direcciones: si lo que falta son los bolívares, sale la compra de hoy con
+su última venta.
+
+- **SUSTITUYE al suyo, no se pone al lado.** Dos suelos parecidos para la misma
+  pregunta es lo que ya hizo que dejara de fiarse de los dos.
+- **El rótulo dice de dónde sale cada mitad**, con las dos tasas escritas. Un
+  tercer número sin explicar cómo se hizo hace que dejen de creerse los tres.
+- **Y el aviso de arriba no puede contradecirlo.** Decía *"no hay suelo de
+  mercado"* con un suelo justo debajo — la misma contradicción del ARREGLO 60.
+
+### Un tablón vacío no se lo cree nadie
+
+Brasil tiene cientos de anuncios a cualquier hora, así que `data: []` casi nunca
+significa "no hay": significa que **nos están filtrando en silencio**, con un 200
+y la lista vacía en vez de un 403 que se vea. Dos cosas salen de ahí:
+
+- **Se repite lo que dijo Binance** —`success`, `code`, `message`, `total`— en vez
+  de suponerlo (`_porque_vacio`). Solo se ve desde dentro de `_pedir_tablon`, con
+  el cuerpo de la respuesta delante.
+- **Se pregunta UNA vez más con el cuerpo mínimo** (`sencillo=True`), sin
+  `clientType`, `payTypes` ni `publisherType`. Si son esos campos los que vacían
+  una moneda, lo arregla en el acto; si no, el motivo lo dice. Solo cuando ya vino
+  vacío —una lectura buena no cuesta ni una llamada más—, solo una vez, y **nunca
+  cuando Binance no contestó**: ahí el problema no es el cuerpo, y gastar otra
+  llamada contra un 403 es pedir que corten más. Las cabeceras no cambian en ese
+  segundo intento: mover dos cosas a la vez no diría cuál fue.
+
 ### La conciliación tiene que poder explicarse sola
 
 `conciliacionCapital()` compara lo que deberías tener contra lo que tienes. Un
