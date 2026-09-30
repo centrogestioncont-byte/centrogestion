@@ -4633,6 +4633,14 @@ console.log("\n— FASE 2: la cuenta madre —");
   // la misma tarjeta, que es lo que ya hizo falsa la de conciliación.
   ok(/eqMixto \? "Falta un lado del mercado, así que el suelo de abajo va con tu tasa: "/.test(suelo),
      "y el aviso de \"falta un lado\" no contradice al suelo que se enseña debajo");
+  // El tablón se mueve: hay horas en que nadie toma su monto y el servidor
+  // mide al mayor que sí dan. Callarlo sería enseñarle un precio que no es el
+  // de su operación.
+  ok(/montoPedido/.test(suelo) && /nadie toma tu monto entero/.test(suelo),
+     "cuando el mercado se midió a otro monto, la tarjeta lo dice");
+  // Y el pie deja de prometer "a tu monto" cuando ya no lo es.
+  ok(/hayAjuste\?"":" a tu monto"/.test(suelo),
+     "y el pie deja de decir \"a tu monto\" cuando no se midió a su monto");
   // El suelo es de la OPERACION. Presentarlo como el de la empresa seria
   // darle un numero optimista, y con eso publicaria una tasa que no aguanta.
   ok(/no lleva la comisión del banco venezolano ni tus egresos/.test(sacarFuncion("_htmlSuelo")),
