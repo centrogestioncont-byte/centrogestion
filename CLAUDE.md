@@ -15,6 +15,22 @@ cargan por CDN. Los datos viven en una API aparte
 Siempre. Comentarios de código, mensajes de commit, descripciones de PR y
 conversación: todo en español.
 
+## Y habla CORTO
+
+Sus palabras: *"yo necesito cosas prácticas no un montón de explicaciones"*.
+
+En la conversación: qué pasa, qué hago, qué tiene que hacer ella. Un párrafo de
+contexto como mucho, y solo cuando cambia lo que ella va a decidir.
+
+**Lo que sí va entero, siempre:**
+
+- un número suyo que no sea de fiar, y por qué;
+- un error tuyo, dicho de una vez y sin rodeos;
+- lo que tiene que hacer ella, paso a paso.
+
+El "por qué" largo va en los comentarios del código y en los mensajes de commit
+—ahí es donde evita que alguien reintroduzca el error— **no en el chat**.
+
 ---
 
 ## Flujo de trabajo — respétalo
