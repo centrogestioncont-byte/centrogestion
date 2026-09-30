@@ -802,6 +802,53 @@ Tres cosas que no hay que deshacer:
   aparatos y se pisaría con lecturas de otra hora. Vive en memoria y se vuelve a
   pedir, con una guardia de 5 minutos para no preguntar en cada repintado.
 
+### De los dos suelos manda el MÁS BAJO (ARREGLO 77)
+
+En pantalla hay dos: el de lo que ya compró y el del precio de hoy. El `%` se
+medía contra el del mercado, y eso es medir contra un costo que no es el suyo.
+
+El suelo es `venta ÷ compra`, así que **una compra más cara lo BAJA**. El 30/09
+ella compró USDT a 5,27 —paga la comisión del P2P— y el mercado abierto estaba
+en 5,20:
+
+```
+su costo   5,27 · vende 946,44  →  179,59   ← este es el que aguanta
+mercado    5,20 · vende 956,86  →  184,01
+```
+
+Lo dijo ella: *"cuando mi tasa de compra de los reales sea más alta que la que
+está en el mercado, que me lance la de mi última tasa de compra"*.
+
+- **Y el caso contrario sale solo, sin una regla aparte.** Una tasa de compra
+  vieja y barata (el 5,0018 del 18/09) da un suelo **alto**, así que pierde la
+  comparación y manda el del mercado. Por ningún lado le puede salir el número
+  optimista, que es lo único que esta tarjeta no se puede permitir.
+- **Se decide primero y se pinta después, porque el color va con el que manda.**
+  Al revés salía el suelo que manda en ámbar y el que no manda en verde: el
+  color se lee antes que la letra, y la tarjeta decía una cosa con el texto y la
+  contraria con el color. Es el mismo fallo de la tarjeta de conciliación.
+- **Cada suelo que se dibuja entra en la comparación.** Se dibuja recorriendo la
+  misma lista con la que se elige, en un solo sitio: si uno se enseñara y no
+  compitiera, el `%` podría salir de un número que no está arriba.
+- **Y se dice cuál mandó, con las dos tasas.** Un porcentaje que no dice de
+  dónde sale hay que comprobarlo a mano — que es justo lo que esta tarjeta
+  existe para ahorrarle. Con un solo suelo no se escribe nada: no hay elección.
+
+**La tasa de compra puede ser de hace días y eso hay que decirlo.** Sale de la
+**última** operación de USDT registrada, así que si compró más caro y todavía no
+lo registró, el suelo sale optimista y se calla. El 30/09 la tarjeta enseñaba
+187,90 con una compra del 18/09 mientras ella había comprado a 5,27 esa misma
+mañana: el número no estaba **mal**, estaba **viejo** — que para lo que sirve un
+suelo es lo mismo. Se avisa a partir de un día. **La tasa fijada a mano no se
+avisa**: eso es una decisión suya, no un olvido, la misma regla que ya manda en
+`tasaDeReferencia()`.
+
+`tasaDeReferencia()` devuelve esa fecha en **`iso`, no en `fechaIso`**:
+`pruebas/prestamos.js` cuenta cada `fechaIso:` del archivo contra cada sitio que
+mete un lote, para que no vuelva a colarse uno sin año (ARREGLO 51), y un campo
+más con ese nombre rompe la cuenta. Esto no es un lote: es la tasa que salió de
+uno.
+
 ### Lo que la app NO va a leer sola
 
 De sus cuatro referencias, dos son apps (Retorna, El Dorado P2P) y dos son grupos

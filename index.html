@@ -5723,7 +5723,12 @@ function tasaDeReferencia(moneda){
     var t=_tasaEfectivaLote(u);
     var lim=_RATE_LIMITS[moneda];
     if(t>0 && !(lim&&(t<lim[0]||t>lim[1])))
-      return {tasa:t, origen:"auto", fecha:u.fecha, tipo:u.tipo, meta:{}};
+      // Se llama `iso` a proposito, con el nombre largo reservado a los
+      // lotes: pruebas/prestamos.js cuenta ese nombre largo una vez por cada
+      // sitio que mete un lote, para que no vuelva a colarse uno sin año
+      // (ARREGLO 51). Un campo mas con ese nombre, aunque no sea un lote,
+      // rompe esa cuenta. Y esto no es un lote: es la tasa que salio de uno.
+      return {tasa:t, origen:"auto", fecha:u.fecha, iso:uF, tipo:u.tipo, meta:{}};
   }
   // Sin operaciones en esa moneda: lo último que escribió, aunque no lo fijara.
   var v=parseFloat((S.tasasDia||{})[moneda]);
@@ -21351,8 +21356,23 @@ function _htmlSuelo(){
       (bajoDeMonto(m.ventaVES)?"":" a tu monto"));
     return t.join(" · ");
   };
+  // ARREGLO 77. La tasa de compra que sostiene todo esto sale de la ULTIMA
+  // operacion de USDT registrada, y eso puede ser de hace dias: si compro mas
+  // caro y todavia no lo ha registrado, el suelo sale optimista y no lo dice.
+  // Paso el 30/09 — la tarjeta enseñaba 187,90 con una compra del 18/09 y ella
+  // habia comprado a 5,27 esa misma mañana. El numero no estaba mal, estaba
+  // VIEJO, que para lo que sirve un suelo es lo mismo. No se avisa de la tasa
+  // fijada a mano: esa es una decision suya, no un olvido.
+  var tasaVieja=function(){
+    if(!rc||rc.origen!=="auto"||!rc.iso) return "";
+    var dias=Math.floor((new Date(td()+"T00:00:00")-new Date(rc.iso+"T00:00:00"))/86400000);
+    if(!(dias>1)) return "";
+    return "<div style='font-size:10.5px;color:var(--am3-b);margin:-1px 0 4px;line-height:1.5'>"+
+      "Tu última compra de USDT es de hace "+dias+" días ("+_escAud(rc.fecha||rc.iso)+"). "+
+      "Si desde entonces compraste a otra tasa y no la registraste, este suelo no la sabe.</div>";
+  };
   var cuerpo=
-    fila("Tus últimas operaciones", miC, miV, (rc&&rc.fecha)?rc.fecha:"")+
+    fila("Tus últimas operaciones", miC, miV, (rc&&rc.fecha)?rc.fecha:"")+tasaVieja()+
     (m&&m.disponible
       // El verde es "lectura completa". Con un lado caido la fila sale en el
       // color de siempre: un "vendes —" en verde se lee como si estuviera bien.
@@ -21370,15 +21390,56 @@ function _htmlSuelo(){
     // El mixto ocupa el sitio del suyo, no se suma. El rotulo dice de donde
     // sale cada mitad: un tercer numero sin decir como se hizo es justo lo que
     // hace que dejen de creerse los tres.
-    if(eqMixto) suelos+=linea(rotMixto,eqMixto,"var(--ok)",pieMixto);
-    else if(eqMio) suelos+=linea("Tu suelo con lo que ya compraste",eqMio,"var(--tit)","");
-    if(eqMerc) suelos+=linea("Tu suelo al precio de hoy",eqMerc,"var(--ok)","");
-    var base=eqMerc||eqMixto||eqMio;
+    //
+    // ARREGLO 77: el % se mide contra el suelo MAS BAJO de los que haya, no
+    // contra el del mercado. El suelo es venta ÷ compra, asi que una compra
+    // mas cara lo BAJA: el 30/09 ella compro USDT a 5,27 y el mercado abierto
+    // estaba en 5,20 —paga la comision del P2P—, o sea suelo real 180,30 y
+    // suelo de mercado 182,72. Publicar contra 182,72 es publicar contra un
+    // costo que no es el suyo, y CLAUDE.md ya lo tiene escrito: un suelo
+    // optimista es peor que ninguno.
+    //
+    // Y el caso contrario queda cubierto sin hacer nada: una tasa de compra
+    // vieja y BARATA da un suelo alto, asi que pierde la comparacion y manda
+    // el del mercado. Por ningun lado le puede salir el numero optimista.
+    var cands=[];
+    if(eqMixto){
+      cands.push({v:eqMixto, rot:rotMixto, pie:pieMixto, nombre:"la mezcla de arriba",
+                  c:(mv>0&&miC>0)?miC:mc, s:(mv>0&&miC>0)?mv:miV});
+    }else if(eqMio){
+      cands.push({v:eqMio, rot:"Tu suelo con lo que ya compraste", pie:"",
+                  nombre:"tu costo", c:miC, s:miV});
+    }
+    if(eqMerc){
+      cands.push({v:eqMerc, rot:"Tu suelo al precio de hoy", pie:"",
+                  nombre:"el mercado", c:mc, s:mv});
+    }
+    var manda=null;
+    for(var ci=0;ci<cands.length;ci++) if(!manda||cands[ci].v<manda.v) manda=cands[ci];
+    var base=manda?manda.v:null;
+    // Se decide PRIMERO y se pinta despues, porque el color tiene que ir con el
+    // que manda. Al reves salia el suelo que manda en ambar y el que no manda
+    // en verde, y el color se lee antes que la letra: la tarjeta decia una cosa
+    // con el texto y la contraria con el color, que es lo mismo que ya hizo
+    // falsa la tarjeta de conciliacion.
+    for(var cj=0;cj<cands.length;cj++)
+      suelos+=linea(cands[cj].rot, cands[cj].v,
+                    cands[cj]===manda?"var(--ok)":"var(--tx3)", cands[cj].pie);
     if(mia!==null&&base){
       var mg=Math.round(((base-mia)/base)*1000)/10;
       suelos+="<div style='font-size:11.5px;margin-top:5px;color:"+(mg>0?"var(--ok)":"var(--mal)")+";font-weight:700'>"+
         "Ofreciendo "+f(mia)+" te queda "+(mg>0?"+":"")+String(mg).replace(".",",")+"%"+
         (mg<=0?" — por encima del suelo PIERDES":"")+"</div>";
+    }
+    // Con dos suelos en pantalla hay que decir contra cual se midio, y con que
+    // par de tasas. Un porcentaje que no dice de donde sale obliga a hacer la
+    // cuenta a mano para creerselo — que es justo lo que esta tarjeta existe
+    // para ahorrarle.
+    if(cands.length>1&&base&&mia!==null){
+      suelos+="<div style='font-size:10.5px;color:var(--tx4);line-height:1.5;margin-top:3px'>"+
+        "Se mide contra el más bajo, que es el que aguanta: manda "+manda.nombre+
+        ((manda.c>0&&manda.s>0)?(" (compras "+fp(manda.c)+" R$ · vendes "+fp(manda.s)+" Bs)"):"")+
+        ".</div>";
     }
     // Lo que este numero NO incluye. Un suelo optimista es peor que ninguno.
     suelos+="<div style='font-size:10.5px;color:var(--tx4);line-height:1.5;margin-top:5px'>"+
