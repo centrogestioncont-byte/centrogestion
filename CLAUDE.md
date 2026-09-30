@@ -809,11 +809,30 @@ de WhatsApp. **No hay de dónde leer eso de forma fiable**, y montar algo que lo
 adivine sería darle números inventados sobre los que decide precio. Lo que sí se
 hizo es que apuntarlas cueste diez segundos y que la comparación la haga la app.
 
-**Lo que sí se puede leer solo es el P2P de Binance** —su costo real— pero **no
-desde el navegador**: la app corre en una página y Binance no autoriza que otra
-le pregunte. Tiene que pedirlo el servidor (`centrogestion-api`). Ese es el único
-camino; lo de dentro de `index.html` no funciona, no hace falta volver a
+**Lo que sí se puede leer solo es el precio de Binance** —su costo real— pero
+**no desde el navegador**: la app corre en una página y Binance no autoriza que
+otra le pregunte. Tiene que pedirlo el servidor (`centrogestion-api`). Ese es el
+único camino; lo de dentro de `index.html` no funciona, no hace falta volver a
 intentarlo.
+
+**Y cada moneda sale de un sitio distinto, que no es intercambiable:**
+
+```
+reales     →  mercado NORMAL (api.binance.com, par USDTBRL)
+bolívares  →  P2P (p2p.binance.com)
+```
+
+El tablón **P2P de reales viene vacío para su servidor en las dos direcciones**
+—`total 0`, con la pregunta simple igual, y el sondeo del otro lado también—
+mientras el de bolívares, desde la misma máquina, trae anuncios. Esa puerta está
+cerrada; no la vuelvas a intentar. Pero `USDT/BRL` es un par de verdad en el
+mercado normal y ese precio es público y sin filtro de país.
+
+Al revés no vale: **Binance no lista VES**, así que ahí el P2P es el único sitio
+donde ese precio existe.
+
+Mientras el mercado conteste, al P2P de reales **ni se le pregunta**. Si falla,
+se cae al P2P y el motivo cuenta los dos intentos.
 
 `histComp` guarda lo apuntado **indexado por fecha**, así que va en
 `_MERGE_HISTORIAL` y en `DATA_KEYS`: se une entre los dos aparatos en vez de
