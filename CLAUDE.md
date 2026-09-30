@@ -897,6 +897,45 @@ y la lista vacía en vez de un 403 que se vea. Dos cosas salen de ahí:
   cuando Binance no contestó**: ahí el problema no es el cuerpo, y gastar otra
   llamada contra un 403 es pedir que corten más. Las cabeceras no cambian en ese
   segundo intento: mover dos cosas a la vez no diría cuál fue.
+- **Y se sondea la misma moneda al revés** (`_sondear_otro_lado`). El 30/09 los
+  reales devolvieron `total 0` —Binance diciendo *"todo bien, no hay nada"*— con
+  la pregunta simple igual, mientras el tablón de bolívares, **desde el mismo
+  servidor**, traía 20 anuncios. No es un bloqueo general: le pasa algo a esa
+  consulta. Desde fuera las dos posibilidades se ven idénticas, y esto las
+  separa: *el otro lado sí trae anuncios* → el tablón existe y solo se vacía ese
+  sentido; *el otro lado también vacío* → Binance no le sirve tablón de esa
+  moneda a este servidor, **y esa tasa no se va a poder leer sola**. Lo segundo
+  no es una mala noticia que haya que esconder: es la respuesta, y convierte el
+  suelo mixto en lo definitivo en vez de un parche.
+
+### El tablón SE MUEVE: el monto no puede ser todo o nada
+
+El 29/09 por la noche dos anuncios de VES aceptaban sus 112.000 Bs y salió la
+lectura. **A la mañana siguiente había 20 anuncios y ninguno los aceptaba**, y la
+pantalla se quedó sin número. El monto medido de sus lotes es correcto; lo que
+estaba mal era exigir que **un solo anuncio** se comiera la operación entera a
+cualquier hora.
+
+```
+de los 20 anuncios de VES, ninguno acepta 112.000      ← antes: sin lectura
+se midió al mayor que sí dan: los bolívares a 45.000   ← ahora
+```
+
+- **No se coge el anuncio más grande y ya.** Eso es leer UNO, que es justo lo
+  que el filtro del monto existe para evitar. Se busca el mayor monto que
+  todavía acepten **tres** (`MERCADO_MIN_ANUNCIOS`), y solo si ninguno llega a
+  esa cuenta se cae al que tenga **más anuncios**, con el monto más alto para
+  desempatar.
+- **El monto usado va en `monto` y el suyo en `montoPedido`**, solo cuando no
+  coinciden. La tarjeta lo dice y el pie deja de prometer *"a tu monto"*. Un
+  precio medido a otro volumen presentado como el suyo la haría publicar contra
+  una tasa que a su tamaño no existe.
+- **Y los dos montos por fin se pueden editar** (Configuración → *Tamaño de tus
+  operaciones*). `_pedirMercado` los leía de `S.config` desde el ARREGLO 75 y
+  **no había dónde escribirlos**: se le dijo dos veces que bajara el monto ahí y
+  el campo no existía. Al guardarlos se tira la lectura que hubiera y se vuelve a
+  pedir — se midió a otro monto—, y dejarlos en blanco vuelve a los medidos, no
+  a cero.
 
 ### La conciliación tiene que poder explicarse sola
 
