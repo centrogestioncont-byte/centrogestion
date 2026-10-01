@@ -15,6 +15,22 @@ cargan por CDN. Los datos viven en una API aparte
 Siempre. Comentarios de código, mensajes de commit, descripciones de PR y
 conversación: todo en español.
 
+## Y habla CORTO
+
+Sus palabras: *"yo necesito cosas prácticas no un montón de explicaciones"*.
+
+En la conversación: qué pasa, qué hago, qué tiene que hacer ella. Un párrafo de
+contexto como mucho, y solo cuando cambia lo que ella va a decidir.
+
+**Lo que sí va entero, siempre:**
+
+- un número suyo que no sea de fiar, y por qué;
+- un error tuyo, dicho de una vez y sin rodeos;
+- lo que tiene que hacer ella, paso a paso.
+
+El "por qué" largo va en los comentarios del código y en los mensajes de commit
+—ahí es donde evita que alguien reintroduzca el error— **no en el chat**.
+
 ---
 
 ## Flujo de trabajo — respétalo
@@ -706,6 +722,316 @@ rescate —"si no hay lotes en esa moneda, mira todas las ventas"— escrito cua
 el único destino era Venezuela. Con Colombia y Perú devolvía 960,2328 para el
 sol y para el peso: la tasa del bolívar. Sin lotes en esa moneda, `null`. Mejor
 sin tasa —que se ve y avisa— que con una que cuadra la pantalla y miente.
+
+### Las dos tasas al cliente se escriben igual y significan lo contrario
+
+Sus palabras: *"todas esas casas de cambio todos los días tengo que revisar para
+poder colocar mi tasa"*.
+
+Las dos direcciones se publican en **bolívares por real**, la misma unidad —así
+las lee ella en los flyers— pero dicen cosas opuestas:
+
+```
+ida    (R$ → Bs)   ella ENTREGA bolívares → cuantos MÁS dé, mejor para el cliente
+vuelta (Bs → R$)   ella ENTREGA reales    → cuantos MENOS pida, mejor para el cliente
+```
+
+Medido en su export: ida **172,5** (200 R$ → 34.500 Bs, 674 operaciones) y vuelta
+**220** (42.500 Bs → 193 R$, 117 operaciones). Coincide con su flyer.
+**Invertir una de las dos le daría el puesto al revés**, que es justo lo que la
+haría publicar una tasa mala. `pruebas/prestamos.js` lo fija con sus números del
+26/09.
+
+**Su vuelta alta es una DECISIÓN, no un descuido.** Está 20 Bs por real por
+encima de los otros dos que la publican, y es a propósito, por dos razones que
+dio ella:
+
+- le **frena la entrada de bolívares**, que parados se devalúan;
+- y le cubre el **P2P que tiene que hacer** cuando entra una vuelta grande y no
+  tiene reales: con esos Bs compra USDT y lo vende por reales, y ese paso cuesta.
+
+Sus palabras: *"en eso no puedo perder por no tener el capital en reales"*.
+
+**Y lo que eso implica para el futuro:** con más volumen ese costo desaparece
+solo. Una vuelta que entra el mismo día que una ida del mismo tamaño **se cruzan
+entre ellas** y no toca Binance — la brecha entera se queda. Lo dijo así:
+*"si más adelante tengo más movimiento eso puede cambiar… y no hacer el p2p"*.
+O sea que su tasa de vuelta no debería ser un número fijo: depende de si puede
+cruzarla. **La app tiene los saldos, así que lo puede saber.**
+
+Por eso la pantalla **dice dónde está, no la corrige**. Marcarle la vuelta en
+rojo sería opinar sobre su negocio con la mitad de la información.
+
+### Su suelo: hasta dónde puede ofrecer sin perder
+
+Sus palabras: *"no sé qué tasa de compra y venta está usando mi app"* y *"no es
+solo la competencia sino el mercado p2p"*. Son **dos** cosas distintas y las dos
+hacen falta:
+
+- **Sus lotes** → el suelo de lo que **ya compró**. Sale de `tasaDeReferencia()`,
+  la misma función que ya valora todo su dinero: no se calcula aparte, para que
+  no haya dos respuestas a la misma pregunta.
+- **El mercado** → el suelo de lo que puede comprar **ahora**. Eso lo trae
+  `GET /mercado` de la API.
+
+El suelo es `venta ÷ compra`, descontando la comisión de Binance:
+
+```
+compra 1 USDT por 5,1638 R$ · lo vende por 948 Bs
+suelo = (948 × (1 − 0,7%)) ÷ 5,1638 = 182,30 Bs por real
+```
+
+**Todo lo que ofrezca por debajo de 182,30 le deja ganancia.** Medido con sus
+números del 18/09: ofreciendo 172 le quedaba **+5,6 %**, y podía llegar a **175
+—mejor que todos sus competidores— y aún le quedaba 4 %**. Cuando dijo *"estoy
+por debajo del mercado, nadie mandará conmigo"* la respuesta era la contraria:
+estaba por debajo de sí misma.
+
+Tres cosas que no hay que deshacer:
+
+- **Sin las dos tasas no hay suelo, y no se inventa.** Una tasa de referencia
+  que falta no puede convertirse en un número con el que ella publique.
+- **Una comisión fuera de rango se ignora**, en vez de destrozar el suelo.
+- **Se dice lo que el suelo NO incluye**: la comisión del banco venezolano y sus
+  egresos. Es el suelo de la operación, no el de la empresa. Un suelo optimista
+  es peor que ninguno — con él publicaría una tasa que no aguanta.
+- **La tasa de compra va a CUATRO decimales.** Entre 5,16 y 5,1638 hay 0,07 %
+  de su margen, y sobre su volumen del mes eso no es redondeo.
+- **La lectura del mercado NO se guarda ni se sincroniza.** Es un precio de hace
+  un minuto, no un dato del negocio: si entrara en `DATA_KEYS` viajaría entre
+  aparatos y se pisaría con lecturas de otra hora. Vive en memoria y se vuelve a
+  pedir, con una guardia de 5 minutos para no preguntar en cada repintado.
+
+### De los dos suelos manda el MÁS BAJO (ARREGLO 77)
+
+En pantalla hay dos: el de lo que ya compró y el del precio de hoy. El `%` se
+medía contra el del mercado, y eso es medir contra un costo que no es el suyo.
+
+El suelo es `venta ÷ compra`, así que **una compra más cara lo BAJA**. El 30/09
+ella compró USDT a 5,27 —paga la comisión del P2P— y el mercado abierto estaba
+en 5,20:
+
+```
+su costo   5,27 · vende 946,44  →  179,59   ← este es el que aguanta
+mercado    5,20 · vende 956,86  →  184,01
+```
+
+Lo dijo ella: *"cuando mi tasa de compra de los reales sea más alta que la que
+está en el mercado, que me lance la de mi última tasa de compra"*.
+
+- **Y el caso contrario sale solo, sin una regla aparte.** Una tasa de compra
+  vieja y barata (el 5,0018 del 18/09) da un suelo **alto**, así que pierde la
+  comparación y manda el del mercado. Por ningún lado le puede salir el número
+  optimista, que es lo único que esta tarjeta no se puede permitir.
+- **Se decide primero y se pinta después, porque el color va con el que manda.**
+  Al revés salía el suelo que manda en ámbar y el que no manda en verde: el
+  color se lee antes que la letra, y la tarjeta decía una cosa con el texto y la
+  contraria con el color. Es el mismo fallo de la tarjeta de conciliación.
+- **Cada suelo que se dibuja entra en la comparación.** Se dibuja recorriendo la
+  misma lista con la que se elige, en un solo sitio: si uno se enseñara y no
+  compitiera, el `%` podría salir de un número que no está arriba.
+- **Y se dice cuál mandó, con las dos tasas.** Un porcentaje que no dice de
+  dónde sale hay que comprobarlo a mano — que es justo lo que esta tarjeta
+  existe para ahorrarle. Con un solo suelo no se escribe nada: no hay elección.
+
+**La tasa de compra puede ser de hace días y eso hay que decirlo.** Sale de la
+**última** operación de USDT registrada, así que si compró más caro y todavía no
+lo registró, el suelo sale optimista y se calla. El 30/09 la tarjeta enseñaba
+187,90 con una compra del 18/09 mientras ella había comprado a 5,27 esa misma
+mañana: el número no estaba **mal**, estaba **viejo** — que para lo que sirve un
+suelo es lo mismo. Se avisa a partir de un día. **La tasa fijada a mano no se
+avisa**: eso es una decisión suya, no un olvido, la misma regla que ya manda en
+`tasaDeReferencia()`.
+
+`tasaDeReferencia()` devuelve esa fecha en **`iso`, no en `fechaIso`**:
+`pruebas/prestamos.js` cuenta cada `fechaIso:` del archivo contra cada sitio que
+mete un lote, para que no vuelva a colarse uno sin año (ARREGLO 51), y un campo
+más con ese nombre rompe la cuenta. Esto no es un lote: es la tasa que salió de
+uno.
+
+### Lo que la app NO va a leer sola
+
+De sus cuatro referencias, dos son apps (Retorna, El Dorado P2P) y dos son grupos
+de WhatsApp. **No hay de dónde leer eso de forma fiable**, y montar algo que lo
+adivine sería darle números inventados sobre los que decide precio. Lo que sí se
+hizo es que apuntarlas cueste diez segundos y que la comparación la haga la app.
+
+**Lo que sí se puede leer solo es el precio de Binance** —su costo real— pero
+**no desde el navegador**: la app corre en una página y Binance no autoriza que
+otra le pregunte. Tiene que pedirlo el servidor (`centrogestion-api`). Ese es el
+único camino; lo de dentro de `index.html` no funciona, no hace falta volver a
+intentarlo.
+
+**Y cada moneda sale de un sitio distinto, que no es intercambiable:**
+
+```
+reales     →  Binance → CoinGecko → Mercado Bitcoin   (el primero que conteste)
+bolívares  →  P2P de Binance
+```
+
+**Su servidor está en Railway EE.UU. y Binance lo bloquea por país.** Medido el
+30/09: el mercado normal devuelve **451** (*"Unavailable For Legal Reasons"*) y
+el tablón P2P de reales viene vacío en las **dos** direcciones —`total 0`, con la
+pregunta simple igual, y el sondeo del otro lado también— mientras el de
+bolívares, desde la misma máquina, trae anuncios. Las dos puertas cerradas por lo
+mismo.
+
+**Cambiar de región en Railway lo arreglaría, pero es de pago y su plan no lo
+tiene.** Así que el precio de los reales se busca donde sí contesten. Binance va
+primero porque es donde ella opera de verdad; USDT/BRL es tan líquido que entre
+sitios hay décimas de por ciento, y para un **suelo** eso vale.
+
+- **Lo que no vale es callar de dónde salió.** Cada lectura trae su `fuente` con
+  el nombre del sitio y la pantalla lo enseña (*"reales: CoinGecko"*). Enseñarle
+  un precio que no es el de Binance como si lo fuera sería peor que no darlo.
+- **Cada sitio envuelve el precio a su manera** y no hay contrato entre ellos.
+  `_precio_de` prueba las tres formas conocidas y si ninguna encaja devuelve
+  nada, en vez de adivinar.
+- **Si caen las tres, el motivo cuenta lo que dijo CADA una.** Cuál contesta y
+  cuál no es lo que decide qué hacer después, y el 451 hay que poder leerlo tal
+  cual porque no se arregla con código.
+
+Al revés no vale: **Binance no lista VES**, así que ahí el P2P es el único sitio
+donde ese precio existe. Mientras alguna fuente conteste, al P2P de reales **ni
+se le pregunta**.
+
+`histComp` guarda lo apuntado **indexado por fecha**, así que va en
+`_MERGE_HISTORIAL` y en `DATA_KEYS`: se une entre los dos aparatos en vez de
+pisarse, y en unos días contesta sola la otra pregunta —*cuándo y cuánto se
+mueve el mercado*—, que no se puede deducir, solo registrar.
+
+### Un fallo que no dice por qué cuesta una tarde
+
+La tarjeta decía **"El mercado ahora · sin lectura"** y ahí se acababa. Detrás
+hay tres cosas distintas que se arreglan en sitios distintos, y se estuvo
+buscando en el sitio equivocado hasta que ella abrió `/salud` a mano:
+
+```
+tu servidor todavía no tiene esta función    → 404: está vivo pero es viejo
+Binance respondió 403                        → el filtro de Binance, se arregla en la API
+de los 20 anuncios de BRL, ninguno acepta 1.000  → lo arregla ella, bajando el monto
+```
+
+El servidor **ya sabía** cuál era —`mercado_p2p()` devuelve `motivo`— y la app lo
+tiraba. La regla que sale de aquí: **si el servidor sabe por qué falló, la
+pantalla lo dice.** Un fallo mudo obliga a adivinar, y adivinar es lo que ya
+costó tres diagnósticos equivocados en una sesión.
+
+Cuatro cosas que lo sostienen:
+
+- **El motivo va por LADO** (`motivoBRL` / `motivoVES`), no solo cuando fallan los
+  dos. Sin las dos tasas no hay suelo, así que media lectura es un fallo igual —y
+  esa fila deja de pintarse verde: un *"vendes —"* en verde se lee como si
+  estuviera bien.
+- **Un fallo no se guarda como una lectura buena.** El caché del servidor era de
+  5 minutos para todo, así que el botón que dice "reintentar" devolvía el mismo
+  fallo guardado y no hacía absolutamente nada. Un fallo vive 20 s en el
+  servidor y la pantalla lo reintenta sola a los 30 s (`_MERCADO.intento` es
+  *cuándo se preguntó*; `_MERCADO.leido`, *cuándo se consiguió algo* — no son lo
+  mismo).
+- **El texto viene de Binance, así que se escapa y se corta a 70.** No lo
+  controlamos y acaba dentro de `innerHTML`.
+- **El servidor se presenta ante Binance como un navegador.** Se presentaba como
+  `"centrogestion-api"`, que es justo lo que el filtro del tablón busca. Esto no
+  se puede probar sin salir a internet —ni aquí ni en el CI—: la prueba mira lo
+  que **se iba a mandar**, que es lo único que ese filtro juzga, y la de verdad
+  la da su servidor al desplegar.
+
+**Y la versión del servidor está en Configuración**, con su base de datos y un
+botón para volver a preguntar. `/salud` ya la traía en cada arranque y la app la
+tiraba; que ella tenga que abrir una dirección a mano para saber si su servidor
+está al día es un fallo de la app, no una tarea suya. Un despliegue puede quedar
+fallado y seguir corriendo el contenedor viejo: desde fuera no hay otra forma de
+notarlo.
+
+Y esa línea **se refresca sola y dice a qué hora se leyó**. Se preguntaba una
+vez, 1,2 s después de abrir, y ahí se quedaba: el 29/09 marcaba `166c1b4` con el
+servidor ya en `6c0806f`, porque la app abrió mientras Railway desplegaba. No
+estaba mal, estaba **vieja** — que para lo que sirve esa línea es lo mismo. Se
+vuelve a preguntar al volver a la app, como ya se hacía con los permisos, y la
+hora va siempre: si solo apareciera al envejecer, su ausencia habría que saber
+leerla.
+
+### Media lectura del mercado no es nada: se completa con lo suyo
+
+Pasó el 29/09 y es el caso normal, no el raro. Los bolívares se leyeron —957,01,
+de 2 anuncios— y los reales volvieron con **el tablón vacío**. Sin las dos tasas
+no hay "suelo al precio de hoy", así que la pantalla enseñaba solo su suelo
+propio y **medio dato nuevo se quedaba guardado sin usar**.
+
+No hace falta inventar nada: los dos números que quedan son reales, solo que uno
+es de su historia y el otro de ahora.
+
+```
+tu compra de 5,0018 R$ · la venta de hoy, 957,01 Bs  →  189,99
+```
+
+Con sus cifras eso es **+9,5 % ofreciendo 172,00**, donde veía +8,5 %. Vale en
+las dos direcciones: si lo que falta son los bolívares, sale la compra de hoy con
+su última venta.
+
+- **SUSTITUYE al suyo, no se pone al lado.** Dos suelos parecidos para la misma
+  pregunta es lo que ya hizo que dejara de fiarse de los dos.
+- **El rótulo dice de dónde sale cada mitad**, con las dos tasas escritas. Un
+  tercer número sin explicar cómo se hizo hace que dejen de creerse los tres.
+- **Y el aviso de arriba no puede contradecirlo.** Decía *"no hay suelo de
+  mercado"* con un suelo justo debajo — la misma contradicción del ARREGLO 60.
+
+### Un tablón vacío no se lo cree nadie
+
+Brasil tiene cientos de anuncios a cualquier hora, así que `data: []` casi nunca
+significa "no hay": significa que **nos están filtrando en silencio**, con un 200
+y la lista vacía en vez de un 403 que se vea. Dos cosas salen de ahí:
+
+- **Se repite lo que dijo Binance** —`success`, `code`, `message`, `total`— en vez
+  de suponerlo (`_porque_vacio`). Solo se ve desde dentro de `_pedir_tablon`, con
+  el cuerpo de la respuesta delante.
+- **Se pregunta UNA vez más con el cuerpo mínimo** (`sencillo=True`), sin
+  `clientType`, `payTypes` ni `publisherType`. Si son esos campos los que vacían
+  una moneda, lo arregla en el acto; si no, el motivo lo dice. Solo cuando ya vino
+  vacío —una lectura buena no cuesta ni una llamada más—, solo una vez, y **nunca
+  cuando Binance no contestó**: ahí el problema no es el cuerpo, y gastar otra
+  llamada contra un 403 es pedir que corten más. Las cabeceras no cambian en ese
+  segundo intento: mover dos cosas a la vez no diría cuál fue.
+- **Y se sondea la misma moneda al revés** (`_sondear_otro_lado`). El 30/09 los
+  reales devolvieron `total 0` —Binance diciendo *"todo bien, no hay nada"*— con
+  la pregunta simple igual, mientras el tablón de bolívares, **desde el mismo
+  servidor**, traía 20 anuncios. No es un bloqueo general: le pasa algo a esa
+  consulta. Desde fuera las dos posibilidades se ven idénticas, y esto las
+  separa: *el otro lado sí trae anuncios* → el tablón existe y solo se vacía ese
+  sentido; *el otro lado también vacío* → Binance no le sirve tablón de esa
+  moneda a este servidor, **y esa tasa no se va a poder leer sola**. Lo segundo
+  no es una mala noticia que haya que esconder: es la respuesta, y convierte el
+  suelo mixto en lo definitivo en vez de un parche.
+
+### El tablón SE MUEVE: el monto no puede ser todo o nada
+
+El 29/09 por la noche dos anuncios de VES aceptaban sus 112.000 Bs y salió la
+lectura. **A la mañana siguiente había 20 anuncios y ninguno los aceptaba**, y la
+pantalla se quedó sin número. El monto medido de sus lotes es correcto; lo que
+estaba mal era exigir que **un solo anuncio** se comiera la operación entera a
+cualquier hora.
+
+```
+de los 20 anuncios de VES, ninguno acepta 112.000      ← antes: sin lectura
+se midió al mayor que sí dan: los bolívares a 45.000   ← ahora
+```
+
+- **No se coge el anuncio más grande y ya.** Eso es leer UNO, que es justo lo
+  que el filtro del monto existe para evitar. Se busca el mayor monto que
+  todavía acepten **tres** (`MERCADO_MIN_ANUNCIOS`), y solo si ninguno llega a
+  esa cuenta se cae al que tenga **más anuncios**, con el monto más alto para
+  desempatar.
+- **El monto usado va en `monto` y el suyo en `montoPedido`**, solo cuando no
+  coinciden. La tarjeta lo dice y el pie deja de prometer *"a tu monto"*. Un
+  precio medido a otro volumen presentado como el suyo la haría publicar contra
+  una tasa que a su tamaño no existe.
+- **Y los dos montos por fin se pueden editar** (Configuración → *Tamaño de tus
+  operaciones*). `_pedirMercado` los leía de `S.config` desde el ARREGLO 75 y
+  **no había dónde escribirlos**: se le dijo dos veces que bajara el monto ahí y
+  el campo no existía. Al guardarlos se tira la lectura que hubiera y se vuelve a
+  pedir — se midió a otro monto—, y dejarlos en blanco vuelve a los medidos, no
+  a cero.
 
 ### La conciliación tiene que poder explicarse sola
 

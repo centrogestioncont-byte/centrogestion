@@ -68,6 +68,8 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "ajusteDiasPrimeraCuota", "interesPorAjusteDias",
                     "cuotasRecomendadas", "limiteCredito",
                     "costoOperativoPorPrestamo", "pctCostoOperativo",
+                    "_competidores", "_compDelDia", "_setComp", "_misTasasPublicadas", "_posicionMercado",
+                    "_equilibrio",
                     "capitalRealTotal", "_fraccionInteresPrestamo", "interesDentroDeApertura",
                     "_mesesDesde", "_acumuladosMes",
                     "conciliacionCapital", "getMesKeyActual", "ajustesDesdeApertura",
@@ -111,6 +113,10 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "_monIU", "_loteConOrden", "_ultimasIU"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
 global.window = global.window || {};
+// Lo mismo con document: las funciones que refrescan un recuadro por su id
+// (ARREGLO 32: no repintar mientras ella teclea) lo buscan antes de tocarlo.
+// Aqui no hay pantalla, asi que no lo encuentran y siguen su camino.
+global.document = global.document || { getElementById: function(){ return null; } };
 // setTasaDia/soltarTasaDia guardan y repintan, y avisan por alert(). Aqui no
 // hay pantalla: se anota lo que habrian dicho para poder comprobarlo.
 global.avisos = [];
@@ -4456,6 +4462,332 @@ console.log("\n— FASE 2: la cuenta madre —");
      "la tarjeta dice que el interes pendiente no cuenta como capital");
   ok(/En préstamos \(capital\)/.test(HTML),
      "y que lo que cuenta es el capital");
+}
+
+
+// ── ARREGLO 74 · el mercado: donde queda ella contra la competencia ────────
+// "todas esas casas de cambio todos los dias tengo que revisar para poder
+// colocar mi tasa". Las dos direcciones se escriben en la MISMA unidad
+// -bolivares por real- pero significan lo contrario: en la ida ella ENTREGA
+// bolivares (mas es mejor para el cliente) y en la vuelta ENTREGA reales
+// (menos es mejor). Invertir uno de los dos le daria el puesto al reves, que
+// es justo lo que la haria publicar una tasa mala.
+{
+  const CONF = [
+    {id:"retorna", nombre:"Retorna",  vuelta:false},
+    {id:"dorado",  nombre:"Dorado",   vuelta:true},
+    {id:"g1",      nombre:"Grupo 1",  vuelta:true},
+    {id:"g2",      nombre:"Grupo 2",  vuelta:true}
+  ];
+  S.config = {competidores: CONF, tasasDia:{tdia_brl:172.5, tdia_ves_brl:220}};
+  S.histComp = {};
+  const hoy = F.td();
+  S.histComp[hoy] = {
+    retorna:{ida:171.54}, dorado:{ida:173, vuelta:200},
+    g1:{ida:175}, g2:{ida:170, vuelta:200}
+  };
+  const m = F._posicionMercado();
+  // Sus numeros del 26/09, tal y como me los dio.
+  ok(m.posIda.puesto === 3 && m.posIda.de === 5,
+     "en la ida cuenta cuantos dan MAS bolivares que ella",
+     m.posIda.puesto + "/" + m.posIda.de);
+  ok(m.posIda.mejor.nombre === undefined && m.posIda.mejor.n === "Grupo 1" && m.posIda.mejor.v === 175,
+     "y el mejor de la ida es el que mas da");
+  ok(m.posVuelta.puesto === 3 && m.posVuelta.de === 3,
+     "en la vuelta cuenta cuantos piden MENOS: ahi queda la ultima",
+     m.posVuelta.puesto + "/" + m.posVuelta.de);
+  ok(m.posVuelta.mejor.v === 200 && m.posVuelta.brechaMejor === 20,
+     "y la brecha con el mejor son los 20 Bs por real", m.posVuelta.brechaMejor);
+  // Retorna solo publica ida: no puede colarse en el ranking de vuelta.
+  ok(m.vuelta.length === 2 && !m.vuelta.some(function(x){return x.n==="Retorna";}),
+     "quien solo publica ida no entra en la vuelta", m.vuelta.length);
+  // Si todavia no ha publicado hoy, no se le inventa una tasa.
+  S.config.tasasDia = {};
+  const sinPublicar = F._posicionMercado();
+  ok(sinPublicar.mias.ida === null && sinPublicar.posIda === null,
+     "sin tasa publicada no se inventa un puesto");
+  S.config.tasasDia = {tdia_brl:172.5, tdia_ves_brl:220};
+
+  // La coma decimal: es lo primero que se pierde con el teclado en espanol, y
+  // 171,54 entraria como 17154 -cien veces su tasa-.
+  S.histComp = {};
+  F._setComp("retorna", "ida", "171,54");
+  ok(F._compDelDia()[ "retorna" ].ida === "171.54",
+     "el campo del mercado pasa por _num(): 171,54 no se vuelve 17154",
+     F._compDelDia()["retorna"].ida);
+  ok(/type='text' inputmode='decimal'/.test(sacarFuncion("_htmlMercadoHoy")) &&
+     !/type='number'/.test(sacarFuncion("_htmlMercadoHoy")),
+     "y el campo es de texto, no type=number");
+  // ARREGLO 32: teclear no puede repintar la pantalla entera.
+  ok(!/\bR\(\)/.test(sinComentarios(sacarFuncion("_setComp"))) &&
+     /getElementById\("comp-resumen"\)/.test(sacarFuncion("_setComp")),
+     "apuntar una tasa no repinta: refresca el recuadro por su id");
+  // El historial va indexado por fecha y se UNE entre aparatos, nunca se pisa.
+  ok(/_MERGE_HISTORIAL = \[[^\]]*"histComp"/.test(HTML),
+     "histComp se une por fecha entre los dos aparatos");
+  ok(/DATA_KEYS = \[[\s\S]{0,800}"histComp"/.test(HTML),
+     "y esta en DATA_KEYS: si no, el remoto lo reemplaza entero");
+  S.config = {}; S.histComp = {};
+}
+
+
+// ── ARREGLO 75 · el suelo: hasta donde puede ofrecer sin perder ────────────
+// "no se que tasa de compra y venta esta usando mi app" y "no es solo la
+// competencia sino el mercado p2p". Compra 1 USDT por X reales y lo vende por
+// Y bolivares: todo lo que ofrezca por DEBAJO de Y/X le deja ganancia.
+{
+  S.config = {comision_binance: 0};
+  // Sus tasas del 18/09.
+  ok(F._equilibrio(5.1638, 948) === 183.59,
+     "el suelo sale de dividir la venta entre la compra", F._equilibrio(5.1638, 948));
+  // La comision de Binance BAJA el suelo: entra menos USDT del que se paga.
+  S.config = {comision_binance: 0.007};
+  ok(F._equilibrio(5.1638, 948) === 182.3,
+     "y la comision de Binance lo baja: con 0,7% queda en 182,30",
+     F._equilibrio(5.1638, 948));
+  ok(F._equilibrio(5.1638, 948) < F._equilibrio(5.1638, 948) + 1,
+     "el suelo con comision nunca es mayor que sin ella");
+  // Sin datos no se inventa un suelo: una tasa de referencia que falta no
+  // puede convertirse en un numero que ella use para publicar.
+  ok(F._equilibrio(0, 948) === null && F._equilibrio(5.16, 0) === null &&
+     F._equilibrio(null, null) === null && F._equilibrio("hola", 948) === null,
+     "sin las dos tasas no hay suelo, y no se inventa");
+  // Una comision absurda no puede volver el suelo cero o negativo.
+  S.config = {comision_binance: 5};
+  ok(F._equilibrio(5.1638, 948) === 183.59,
+     "una comision fuera de rango se ignora en vez de destrozar el suelo",
+     F._equilibrio(5.1638, 948));
+  S.config = {};
+
+  // La lectura del mercado NO se guarda ni se sincroniza: es un precio de hace
+  // un minuto, no un dato del negocio. Si entrara en DATA_KEYS viajaria entre
+  // aparatos y se pisaria con lecturas de otra hora.
+  ok(!/DATA_KEYS = \[[\s\S]{0,900}"_MERCADO"/.test(HTML) &&
+     !/_MERGE_FIELDS = \[[\s\S]{0,900}"_MERCADO"/.test(HTML),
+     "la lectura del mercado no se sincroniza: es un precio, no un dato");
+  // Y llega de la red mientras ella puede estar tecleando (ARREGLO 32).
+  ok(!/\bR\(\)/.test(sinComentarios(sacarFuncion("_refrescarSuelo"))) &&
+     /getElementById\("mercado-suelo"\)/.test(sacarFuncion("_refrescarSuelo")),
+     "cuando llega la lectura no repinta: refresca el recuadro por su id");
+  // No se pide en cada repintado: _pedirMercado se calla si acaba de
+  // preguntar. Sin esa guardia serian decenas de llamadas por minuto.
+  ok(/if\(!forzar && _MERCADO\.intento && \(Date\.now\(\)-_MERCADO\.intento\)<espera\) return;/
+       .test(sacarFuncion("_pedirMercado")),
+     "no se le pregunta a la API en cada repintado");
+  // Pero un FALLO no puede frenar lo mismo que una lectura buena: asi la
+  // pantalla no volvia a intentarlo sola y solo se movia pulsando el boton.
+  ok(/_MERCADO_REINTENTO_MS = 30\*1000/.test(HTML) &&
+     /espera=hayLectura\?_MERCADO_FRESCO_MS:_MERCADO_REINTENTO_MS/.test(sacarFuncion("_pedirMercado")),
+     "y un fallo se reintenta antes que una lectura buena");
+  // Si la API no contesta, la pantalla sigue entera y lo dice.
+  ok(/sin lectura/.test(sacarFuncion("_htmlSuelo")) &&
+     /reintentar/.test(sacarFuncion("_htmlSuelo")),
+     "sin lectura del mercado la tarjeta sigue, y ofrece reintentar");
+  // Y dice POR QUE. "Sin lectura" a secas mezcla dos problemas con arreglos
+  // distintos -uno del servidor, otro bajar el monto en Configuracion- y se
+  // perdio una tarde sin poder saber cual era. El motivo lo manda el servidor
+  // dentro de la respuesta; tirarlo es volver al mismo sitio.
+  ok(/_MERCADO\.error=d\.motivo\|\|"sin lectura"/.test(sacarFuncion("_pedirMercado")),
+     "cuando el servidor contesta bien pero sin precios, se guarda su motivo");
+  ok(/_escAud\(_MERCADO\.error\|\|"sin lectura"\)/.test(sacarFuncion("_htmlSuelo")),
+     "y la tarjeta lo enseña, escapado: ese texto viene de Binance");
+  // Un 404 significa algo muy concreto: el servidor esta vivo pero no tiene
+  // esta funcion. "No contesto" manda a buscar donde no es.
+  ok(/r\.status===404/.test(sacarFuncion("_pedirMercado")) &&
+     /todavía no tiene esta función/.test(sacarFuncion("_pedirMercado")),
+     "un servidor sin la función lo dice, en vez de decir que no contestó");
+  // Media lectura tambien es un fallo: sin las DOS tasas no hay suelo.
+  ok(/m\.motivoBRL/.test(sacarFuncion("_htmlSuelo")) &&
+     /m\.motivoVES/.test(sacarFuncion("_htmlSuelo")),
+     "si falta un solo lado, se avisa: sin las dos tasas no hay suelo");
+  // Y esa fila deja de ser verde. El verde es "lectura completa": un
+  // "vendes —" en verde se lee como si estuviera bien.
+  ok(/\(m\.motivoBRL\|\|m\.motivoVES\)\?"var\(--tx2\)":"var\(--ok\)"/.test(sacarFuncion("_htmlSuelo")),
+     "y media lectura no se pinta de verde");
+
+  // ── El suelo mixto ────────────────────────────────────────────────
+  // Media lectura del mercado no es nada: los dos numeros que quedan son
+  // reales, solo que uno es de su historia y el otro de ahora. El 29/09 los
+  // bolivares se leyeron (957,01) y los reales no, y la pantalla seguia
+  // enseñando solo su suelo viejo con medio dato nuevo sin usar.
+  var suelo=sacarFuncion("_htmlSuelo");
+  ok(/eqMixto=_equilibrio\(miC,mv\)/.test(suelo) &&
+     /eqMixto=_equilibrio\(mc,miV\)/.test(suelo),
+     "con media lectura se completa el lado que falta con lo suyo, en las dos direcciones");
+  // Y SUSTITUYE al suyo. Dos suelos parecidos para la misma pregunta es lo que
+  // ya hizo que dejara de fiarse de los dos (34,27 arriba y 34,28 abajo).
+  ok(/if\(eqMixto\)\{[\s\S]{0,400}\}else if\(eqMio\)\{/.test(suelo),
+     "y ocupa el sitio del suyo, no se pone al lado");
+  // Sin ninguno de los dos lados no hay mixto: eso seria inventar.
+  ok(/if\(!eqMerc\)\{/.test(suelo),
+     "con lectura completa del mercado no se calcula ningún mixto");
+  // El rotulo tiene que decir de donde sale cada mitad. Un tercer numero sin
+  // explicar como se hizo es lo que hace que dejen de creerse los tres.
+  ok(/pieMixto="tu compra de "/.test(suelo) && /con la venta de hoy/.test(suelo),
+     "y dice de dónde sale cada mitad, con las dos tasas");
+  // ── ARREGLO 77: manda el suelo MAS BAJO ───────────────────────────
+  // El suelo es venta ÷ compra, asi que una compra mas cara lo BAJA. El 30/09
+  // ella compro USDT a 5,27 —paga la comision del P2P— y el mercado abierto
+  // estaba en 5,20: suelo real 180,3, suelo de mercado 182,7. El % se medía
+  // contra el del mercado, o sea contra un costo que no era el suyo.
+  ok(F._equilibrio(5.27, 956.86) < F._equilibrio(5.20, 956.86),
+     "comprar mas caro BAJA el suelo: por eso manda el mas bajo",
+     F._equilibrio(5.27, 956.86) + " vs " + F._equilibrio(5.20, 956.86));
+  // Y el caso contrario sale solo: una tasa de compra vieja y BARATA da un
+  // suelo alto, asi que pierde y manda el del mercado. Es el numero que le
+  // salio esa mañana (5,0018 del 18/09) y contra el que se estaba midiendo.
+  ok(F._equilibrio(5.0018, 956.86) > F._equilibrio(5.20, 956.86),
+     "y una compra vieja y barata da un suelo ALTO, que pierde la comparacion",
+     F._equilibrio(5.0018, 956.86) + " vs " + F._equilibrio(5.20, 956.86));
+  // El porcentaje se mide contra el mas bajo de los que esten a la vista, no
+  // contra el del mercado. Un suelo optimista es peor que ninguno: con el
+  // publicaria una tasa que no aguanta su propio costo.
+  ok(/for\(var ci=0;ci<cands\.length;ci\+\+\) if\(!manda\|\|cands\[ci\]\.v<manda\.v\) manda=cands\[ci\];/.test(suelo) &&
+     /var base=manda\?manda\.v:null;/.test(suelo),
+     "el \"te queda +X%\" se mide contra el suelo mas bajo de los que se enseñan");
+  // Y los candidatos son exactamente los que se dibujan: si uno se enseña y no
+  // entra en la comparacion, el % puede salir de un numero que no esta arriba.
+  // Por eso se dibuja RECORRIENDO la lista de candidatos, en un solo sitio.
+  ok((suelo.match(/cands\.push\(/g)||[]).length === 3 &&
+     (suelo.match(/suelos\+=linea\(/g)||[]).length === 1 &&
+     /for\(var cj=0;cj<cands\.length;cj\+\+\)\s*\n?\s*suelos\+=linea\(cands\[cj\]/.test(suelo),
+     "cada suelo que se dibuja entra en la comparacion, y ninguno mas");
+  // Y el color va con el que MANDA. Al reves, el suelo que manda salia en
+  // ambar y el que no manda en verde: el color se lee antes que la letra, asi
+  // que la tarjeta decia una cosa con el texto y la contraria con el color.
+  ok(/cands\[cj\]===manda\?"var\(--ok\)":"var\(--tx3\)"/.test(suelo),
+     "y el verde se lo lleva el que manda, no el otro");
+  // Con dos suelos en pantalla hay que decir contra cual se midio y con que
+  // par de tasas: un % que no dice de donde sale hay que comprobarlo a mano.
+  ok(/manda "\+manda\.nombre/.test(suelo) &&
+     /compras "\+fp\(manda\.c\)\+" R\$ · vendes "\+fp\(manda\.s\)/.test(suelo),
+     "y la tarjeta dice cual mando, con las dos tasas con que se hizo");
+  // Con un solo suelo no hay nada que elegir, asi que no se dice nada.
+  ok(/if\(cands\.length>1&&base&&mia!==null\)\{/.test(suelo),
+     "con un solo suelo no se escribe la linea de \"manda\": no hay eleccion");
+
+  // ── La tasa de compra puede ser de hace dias ──────────────────────
+  // Sale de la ULTIMA operacion de USDT registrada. El 30/09 la tarjeta
+  // enseñaba 187,90 con una compra del 18/09, y ella habia comprado a 5,27 esa
+  // misma mañana. El numero no estaba mal, estaba VIEJO — que para lo que
+  // sirve un suelo es lo mismo.
+  ok(/rc\.origen!=="auto"\|\|!rc\.iso/.test(suelo) && /dias>1/.test(suelo),
+     "avisa cuando la tasa de compra que sostiene el suelo lleva mas de un dia");
+  // La fijada a mano no se avisa: es una decision suya, no un olvido. Es la
+  // misma regla que ya manda en tasaDeReferencia().
+  ok(/rc\.origen!=="auto"/.test(suelo),
+     "y la tasa fijada a mano no se avisa: es una decision, no un descuido");
+  // El dato con el que se mide tiene que existir: tasaDeReferencia() devuelve
+  // la fecha ISO del lote del que salio la tasa.
+  ok(/return \{tasa:t, origen:"auto", fecha:u\.fecha, iso:uF, tipo:u\.tipo, meta:\{\}\};/
+       .test(sacarFuncion("tasaDeReferencia")),
+     "tasaDeReferencia dice de que dia es la tasa que devuelve");
+  // Y NO se llama fechaIso: ese nombre lo cuenta la guardia del ARREGLO 51
+  // contra cada inventarioUsdt.push(, y un campo mas romperia esa cuenta.
+  ok(!/fechaIso/.test(sacarFuncion("tasaDeReferencia")),
+     "sin usar el nombre fechaIso, que esta reservado a los lotes");
+  // Y el aviso de arriba tiene que cuadrar con el numero de abajo: "no hay
+  // suelo de mercado" con un suelo justo debajo son dos mensajes opuestos en
+  // la misma tarjeta, que es lo que ya hizo falsa la de conciliación.
+  ok(/eqMixto \? "Falta un lado del mercado, así que el suelo de abajo va con tu tasa: "/.test(suelo),
+     "y el aviso de \"falta un lado\" no contradice al suelo que se enseña debajo");
+  // El tablón se mueve: hay horas en que nadie toma su monto y el servidor
+  // mide al mayor que sí dan. Callarlo sería enseñarle un precio que no es el
+  // de su operación.
+  ok(/montoPedido/.test(suelo) && /nadie toma tu monto entero/.test(suelo),
+     "cuando el mercado se midió a otro monto, la tarjeta lo dice");
+  // Y el pie deja de prometer "a tu monto" cuando ya no lo es.
+  ok(/bajoDeMonto\(m\.ventaVES\)\?"":" a tu monto"/.test(suelo),
+     "y el pie deja de decir \"a tu monto\" cuando no se midió a su monto");
+  // Los reales salen del mercado normal (sin anuncios) y los bolívares del P2P
+  // (con ellos). El pie decía "0 y 2 anuncios", y ese 0 se leía como "los
+  // reales fallaron" cuando estaban perfectos.
+  ok(/"reales: "\+_escAud\(m\.compraBRL\.fuente\)/.test(suelo),
+     "el pie dice de QUÉ sitio vienen los reales, no cuenta anuncios que no hay");
+
+  // ── Los dos montos, en Configuración ──────────────────────────────
+  // _pedirMercado los leía de S.config desde el ARREGLO 75, pero no había
+  // dónde escribirlos: se le dijo dos veces que bajara el monto en
+  // Configuración y ese campo no estaba en ninguna parte.
+  var montos=sacarFuncion("_htmlMontosMercado");
+  ok(/_cfgAcc\("mercado_monto"/.test(HTML) && /_htmlMontosMercado\(\)/.test(HTML),
+     "los dos montos del mercado tienen su sitio en Configuración");
+  // El campo se come la coma decimal: texto + _num() en la puerta, las dos
+  // mitades, o "5,22" se lee como 5.
+  ok(/type='text' inputmode='decimal'/.test(montos) && !/type='number'/.test(montos),
+     "y son campos de texto, que no se comen la coma");
+  ok(/_num\(v\)/.test(sacarFuncion("_setMontoMercado")),
+     "con _num() en la puerta");
+  // ARREGLO 32: repintar cierra el acordeón bajo el dedo mientras teclea.
+  ok(!/\bR\(\)/.test(sinComentarios(sacarFuncion("_setMontoMercado"))) &&
+     /getElementById\("mercado-monto-pie"\)/.test(sacarFuncion("_setMontoMercado")),
+     "escribir el monto no repinta: refresca el pie por su id");
+  // Lo ya leído se midió a OTRO monto: dejarlo puesto sería enseñar un precio
+  // de otro tamaño con la etiqueta del nuevo.
+  ok(/_MERCADO\.datos=null/.test(sacarFuncion("_guardarMontoMercado")) &&
+     /_pedirMercado\(true\)/.test(sacarFuncion("_guardarMontoMercado")),
+     "y al guardarlo se tira la lectura vieja y se vuelve a pedir");
+  // Vacío no puede significar cero: el servidor tiene los mismos por omisión.
+  ok(/_MERCADO_MONTO_DEF = \{BRL:1000, VES:112000\}/.test(HTML) &&
+     /\(v>0\) \? v : _MERCADO_MONTO_DEF\[mon\]/.test(sacarFuncion("_montoMercado")),
+     "dejarlos en blanco vuelve a los medidos, no a cero");
+  // El suelo es de la OPERACION. Presentarlo como el de la empresa seria
+  // darle un numero optimista, y con eso publicaria una tasa que no aguanta.
+  ok(/no lleva la comisión del banco venezolano ni tus egresos/.test(sacarFuncion("_htmlSuelo")),
+     "y dice lo que el suelo NO incluye");
+  // Los 4 decimales de la tasa de compra: entre 5,16 y 5,1638 hay 0,07% de
+  // su margen, que sobre su volumen no es redondeo.
+  ok(/f4\(n\) : f2\(n\)/.test(sacarFuncion("_htmlSuelo")),
+     "la tasa de compra de USDT se enseña con sus cuatro decimales");
+
+  // ── La version del servidor, en Configuracion ──────────────────────
+  // Existe porque hubo que preguntarla a mano: se paso una tarde buscando un
+  // problema en el despliegue cuando el despliegue estaba bien. /salud ya la
+  // traia y la app la tiraba.
+  var sis=sacarFuncion("_htmlSistemaApi");
+  ok(/_API_VERSION/.test(sacarFuncion("_apiComprobarAmbiente")) &&
+     /_API_BASE/.test(sacarFuncion("_apiComprobarAmbiente")),
+     "lo que /salud contesta sobre version y base se guarda, no se tira");
+  ok(/Versión del servidor/.test(sis) && /Base de datos/.test(sis),
+     "y Configuración las enseña las dos");
+  // El caso grave de ese recuadro: el servidor contesta pero no llega a los
+  // datos. Eso no puede ser una linea mas entre las otras.
+  ok(/el servidor no llega a la base/.test(sis) && /var\(--mal\)/.test(sis),
+     "una base caída se ve en rojo, no como una línea más");
+  // "desconocido" es lo que contesta corriendo fuera de Railway: es la verdad
+  // pero a ella no le dice nada.
+  ok(/corriendo fuera de Railway/.test(sis),
+     "y un servidor sin datos de despliegue lo dice con palabras, no con \"desconocido\"");
+  // ARREGLO 32: se pulsa con el acordeon abierto; R() lo cerraria.
+  ok(!/\bR\(\)/.test(sinComentarios(sacarFuncion("_refrescarSistemaApi"))) &&
+     /getElementById\("cfg-sistema-api"\)/.test(sacarFuncion("_refrescarSistemaApi")),
+     "volver a preguntar no repinta la pantalla: refresca el recuadro por su id");
+  // El boton necesita saber cuando termino la consulta.
+  ok(/return fetch\(_API_URL\+"\/salud"/.test(sacarFuncion("_apiComprobarAmbiente")),
+     "la consulta a /salud se devuelve, para poder esperarla desde el botón");
+  // Es un estado de ahora mismo, no un dato del negocio: si viajara entre
+  // aparatos, cada uno enseñaria la version que leyo el otro.
+  ok(!/DATA_KEYS = \[[\s\S]{0,900}"_API_VERSION"/.test(HTML),
+     "la versión del servidor no se sincroniza: es de este momento, no del negocio");
+  // Se preguntaba UNA vez, 1,2 s despues de abrir, y ahi se quedaba: el 29/09
+  // marcaba 166c1b4 con el servidor ya en 6c0806f, porque la app abrio
+  // mientras desplegaba. Un dato que puede mentir callado deja de mirarse.
+  ok(/_API_LEIDO=Date\.now\(\)/.test(sacarFuncion("_apiComprobarAmbiente")),
+     "se apunta cuándo se leyó el estado del servidor");
+  ok(/leído /.test(sis) && /_API_LEIDO/.test(sis),
+     "y la tarjeta dice a qué hora, siempre, no solo cuando ya es viejo");
+  ok(/_apiComprobarAmbiente\(\)/.test(
+       HTML.slice(HTML.indexOf("visibilitychange"), HTML.indexOf("visibilitychange")+700)),
+     "al volver a la app se vuelve a preguntar, como ya se hace con los permisos");
+  // Pero no en cada vez que vuelve al frente: entrar y salir cinco veces en un
+  // minuto no pueden ser cinco preguntas.
+  ok(/_API_SALUD_FRESCO_MS = 30\*1000/.test(HTML) &&
+     /Date\.now\(\)-_API_LEIDO > _API_SALUD_FRESCO_MS/.test(HTML),
+     "y no en cada vuelta: hay medio minuto de guardia");
+  // Al pulsar el botón la hora vieja también se va: si no, se queda debajo de
+  // "consultando…" y parece la hora de la lectura nueva.
+  ok(/_API_LEIDO=0/.test(sacarFuncion("_refrescarSistemaApi")),
+     "y al volver a preguntar, la hora vieja se borra con el dato viejo");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

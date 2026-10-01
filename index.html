@@ -2609,6 +2609,21 @@ if(_API_DOMINIO_DESCONOCIDO) _API_DEF = {url:"", ambiente:"no autorizado"};
 var _API_URL = _API_DEF.url;
 var _API_AMBIENTE_ESPERADO = _API_DEF.ambiente;
 var _API_AMBIENTE_REAL = null;   // lo que contesta /salud
+// /salud ya traia estas dos y se tiraban. Existen porque hubo que preguntarle
+// a mano por la direccion del servidor si estaba al dia —un despliegue puede
+// quedar fallado y seguir corriendo el contenedor viejo, y desde la app no
+// habia forma de notarlo—. Eso no se le puede pedir a ella.
+var _API_VERSION = null;         // {commit, rama} del servidor que contesta
+var _API_BASE = null;            // {conectado, base} de Mongo
+// CUANDO se leyo lo de arriba. Sin esto, la linea de la version puede llevar
+// una hora desactualizada sin decirlo: el 29/09 marcaba 166c1b4 con el
+// servidor ya corriendo 6c0806f, porque la app abrio mientras desplegaba y
+// nunca volvio a preguntar. Un dato que puede mentir callado deja de mirarse.
+var _API_LEIDO = 0;
+// No se pregunta en cada vez que vuelve al frente: si entra y sale cinco veces
+// en un minuto, cinco preguntas. Medio minuto es de sobra para lo que esto
+// contesta —un despliegue tarda mas que eso— y no se nota.
+var _API_SALUD_FRESCO_MS = 30*1000;
 var _API_VIVA = null;            // null = todavía no se sabe
 var _API_MOTIVO = "";            // por qué no contesta, cuando no contesta
 var _API_BLOQUEADA = _API_DOMINIO_DESCONOCIDO;  // ambiente equivocado, o dominio fuera de la lista
@@ -2680,15 +2695,18 @@ function _apiComprobarAmbiente(){
     _API_VIVA=false;
     _API_MOTIVO="esta dirección no está autorizada";
     _apiAvisoDominio();
-    return;
+    return Promise.resolve();
   }
-  fetch(_API_URL+"/salud",{cache:"no-store"}).then(function(r){
+  return fetch(_API_URL+"/salud",{cache:"no-store"}).then(function(r){
     if(!r.ok){ _API_VIVA=false; _API_MOTIVO="el servidor respondió "+r.status; return null; }
     return r.json();
   }).then(function(d){
     if(!d) return;
     _API_VIVA=true; _API_MOTIVO="";
     _API_AMBIENTE_REAL=(d&&d.ambiente)||null;
+    _API_VERSION=(d&&d.version)||null;
+    _API_BASE=(d&&d.mongo)||null;
+    _API_LEIDO=Date.now();
     if(_API_AMBIENTE_REAL && _API_AMBIENTE_REAL!==_API_AMBIENTE_ESPERADO){
       // Esto es grave: este sitio está hablando con la base equivocada.
       // Se corta el acceso por correo y se cierra la sesión que hubiera.
@@ -4009,7 +4027,7 @@ function rComparacionApi(){
 var EMPRESA_RAZON = "SAIPHA SERVIÇOS DIGITAIS";
 var EMPRESA_CNPJ  = "66.994.057/0001-61";
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
-  "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","ajustesSaldo","_modCampos","mapaBinance"];
+  "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","histComp","ajustesSaldo","_modCampos","mapaBinance"];
 
 // ══════════════════════════════════════════════════════════════════════
 // SISTEMA DE CIERRE AUTOMÁTICO DE MES
@@ -5705,7 +5723,12 @@ function tasaDeReferencia(moneda){
     var t=_tasaEfectivaLote(u);
     var lim=_RATE_LIMITS[moneda];
     if(t>0 && !(lim&&(t<lim[0]||t>lim[1])))
-      return {tasa:t, origen:"auto", fecha:u.fecha, tipo:u.tipo, meta:{}};
+      // Se llama `iso` a proposito, con el nombre largo reservado a los
+      // lotes: pruebas/prestamos.js cuenta ese nombre largo una vez por cada
+      // sitio que mete un lote, para que no vuelva a colarse uno sin año
+      // (ARREGLO 51). Un campo mas con ese nombre, aunque no sea un lote,
+      // rompe esa cuenta. Y esto no es un lote: es la tasa que salio de uno.
+      return {tasa:t, origen:"auto", fecha:u.fecha, iso:uF, tipo:u.tipo, meta:{}};
   }
   // Sin operaciones en esa moneda: lo último que escribió, aunque no lo fijara.
   var v=parseFloat((S.tasasDia||{})[moneda]);
@@ -11412,6 +11435,74 @@ function _cfgAcc(id,icon,title,subtitle,color,bodyHtml,defaultOpen){
     (abierto?"<div style='padding:16px'>"+bodyHtml+"</div>":"")+
   "</div>";
 }
+// ── El estado del servidor, en Configuración ─────────────────────────
+// Vivia suelto dentro de rConfigAdmin. Sale a su propia funcion porque ahora
+// tiene un boton que lo vuelve a preguntar, y eso necesita poder redibujar
+// SOLO este recuadro (ARREGLO 32: R() rehace la pantalla y cierra el acordeon
+// bajo el dedo).
+//
+// La version del servidor esta aca porque hubo que preguntarla a mano: se
+// paso una tarde buscando un problema en el despliegue cuando el despliegue
+// estaba bien. /salud ya la traia; lo que faltaba era enseñarsela.
+function _htmlSistemaApi(){
+  var v=_API_VERSION||{};
+  var b=_API_BASE||{};
+  // "desconocido" es lo que contesta el servidor cuando corre fuera de
+  // Railway. Es la verdad, pero a ella no le dice nada: se traduce.
+  var commit=v.commit&&v.commit!=="desconocido" ? v.commit : "";
+  var rama=v.rama&&v.rama!=="desconocida" ? v.rama : "";
+  var versionTxt;
+  if(_API_VIVA===false) versionTxt="<span style='color:var(--tx4)'>no se pudo preguntar</span>";
+  else if(!_API_VERSION) versionTxt="<span style='color:var(--tx4)'>consultando…</span>";
+  else if(commit||rama)
+    versionTxt="<span style='font-family:monospace;font-size:11px'>"+_escAud(commit||"—")+"</span>"+
+               (rama?" · rama <b>"+_escAud(rama)+"</b>":"");
+  else versionTxt="<span style='color:var(--tx4)'>corriendo fuera de Railway</span>";
+
+  var baseTxt;
+  if(_API_VIVA===false) baseTxt="<span style='color:var(--tx4)'>no se pudo preguntar</span>";
+  else if(!_API_BASE) baseTxt="<span style='color:var(--tx4)'>consultando…</span>";
+  else if(b.conectado)
+    baseTxt="<span style='color:var(--ok);font-weight:700'>conectada</span>"+
+            (b.base?" · <span style='font-size:10.5px'>"+_escAud(b.base)+"</span>":"");
+  // Esto es lo unico grave de este recuadro: el servidor contesta pero no
+  // llega a los datos. Se ve en rojo, no como una linea mas.
+  else baseTxt="<span style='color:var(--mal);font-weight:800'>⚠️ el servidor no llega a la base</span>";
+
+  // A que hora se leyo. Va SIEMPRE, no solo cuando es viejo: si apareciera
+  // solo al envejecer, su ausencia habria que saber leerla.
+  var cuando="";
+  if(_API_LEIDO){
+    var h=new Date(_API_LEIDO);
+    cuando="leído "+("0"+h.getHours()).slice(-2)+":"+("0"+h.getMinutes()).slice(-2)+" · ";
+  }
+  return "<div style='font-size:11px;color:var(--tx2);margin-bottom:10px;padding:8px 10px;background:var(--sup);border:1px solid var(--ln2);border-radius:8px;line-height:1.6'>"+
+    "<div style='display:flex;justify-content:space-between;gap:8px;margin-bottom:4px;flex-wrap:wrap'>"+
+      "<b>Tu servidor</b>"+
+      "<span style='white-space:nowrap'><span style='color:var(--tx4);font-size:10.5px'>"+cuando+"</span>"+
+      "<span onclick='_refrescarSistemaApi()' style='cursor:pointer;color:var(--ac);font-weight:700'>↻ volver a preguntar</span></span>"+
+    "</div>"+
+    "<b>Ambiente esperado:</b> "+_API_AMBIENTE_ESPERADO+"<br>"+
+    "<b>Ambiente que responde:</b> "+(_API_AMBIENTE_REAL||(_API_VIVA===false?("sin respuesta — "+_escAud(_API_MOTIVO)):"consultando…"))+
+    ((_API_AMBIENTE_REAL&&_API_AMBIENTE_REAL!==_API_AMBIENTE_ESPERADO)?" <span style='color:var(--mal);font-weight:800'>⚠️ NO COINCIDE</span>":"")+"<br>"+
+    "<b>Versión del servidor:</b> "+versionTxt+"<br>"+
+    "<b>Base de datos:</b> "+baseTxt+"<br>"+
+    "<b>API:</b> <span style='font-size:10px;word-break:break-all'>"+_API_URL+"</span><br>"+
+    "<b>Sesión por correo:</b> "+(apiSesionActiva()?"activa":"no")+
+    (_API_BLOQUEADA?"<br><span style='color:var(--mal);font-weight:800'>Acceso por correo desactivado — "+(_API_DOMINIO_DESCONOCIDO?"esta dirección no está autorizada":"desajuste de ambiente")+"</span>":"")+
+  "</div>";
+}
+// ARREGLO 32: se redibuja el recuadro por su id, nunca con R(). Esto se pulsa
+// con el acordeon de Configuracion abierto, y repintar lo cerraria.
+function _refrescarSistemaApi(){
+  var pintar=function(){
+    var n=document.getElementById("cfg-sistema-api");
+    if(n) n.innerHTML=_htmlSistemaApi();
+  };
+  _API_VERSION=null; _API_BASE=null; _API_LEIDO=0; pintar();  // "consultando…" mientras va
+  var p=_apiComprobarAmbiente();
+  if(p&&p.then) p.then(pintar,pintar); else pintar();
+}
 function rConfigAdmin(){
   if(!S.config) S.config={};
   if(!S.config.tasasDia) S.config.tasasDia={};
@@ -11857,6 +11948,7 @@ function rConfigAdmin(){
     _cfgAcc("categorias","🏷️","Categorías","empresa y personales","var(--rol-ee)",categoriasBody,false)+
     _cfgAcc("rutas","🛣️","Rutas de operación",null,"var(--az3-c)",rutasBody,false)+
     _cfgAcc("tasas","📊","Tasas del día","solo afecta nuevos registros","var(--rol-na)",tasasHTML,false)+
+    _cfgAcc("mercado_monto","📐","Tamaño de tus operaciones","con qué monto se lee el P2P","var(--ac)",_htmlMontosMercado(),false)+
     _cfgAcc("usuarios_api","👥","Usuarios y permisos","quién entra y qué ve cada uno","var(--az3-b)",rUsuariosApi(),false)+
     "<div id='cfg-tema'>"+_cfgAcc("tema","🎨","Colores de la app",
       temaActual()+" · solo en este aparato",
@@ -11870,14 +11962,7 @@ function rConfigAdmin(){
       "var(--am3)", _htmlHistorialPisados(), false)+
     "<div style='background:var(--gr6-c);border-radius:14px;padding:14px;border:1px solid var(--ln2)'>"+
       "<div style='font-size:10px;font-weight:700;color:var(--tx3);text-transform:uppercase;margin-bottom:8px'>ℹ️ Sistema · versión "+APP_VERSION+"</div>"+
-      "<div style='font-size:11px;color:var(--tx2);margin-bottom:10px;padding:8px 10px;background:var(--sup);border:1px solid var(--ln2);border-radius:8px;line-height:1.5'>"+
-        "<b>Ambiente esperado:</b> "+_API_AMBIENTE_ESPERADO+"<br>"+
-        "<b>Ambiente que responde:</b> "+(_API_AMBIENTE_REAL||(_API_VIVA===false?("sin respuesta — "+_API_MOTIVO):"consultando…"))+
-        ((_API_AMBIENTE_REAL&&_API_AMBIENTE_REAL!==_API_AMBIENTE_ESPERADO)?" <span style='color:var(--mal);font-weight:800'>⚠️ NO COINCIDE</span>":"")+"<br>"+
-        "<b>API:</b> <span style='font-size:10px;word-break:break-all'>"+_API_URL+"</span><br>"+
-        "<b>Sesión por correo:</b> "+(apiSesionActiva()?"activa":"no")+
-        (_API_BLOQUEADA?"<br><span style='color:var(--mal);font-weight:800'>Acceso por correo desactivado — "+(_API_DOMINIO_DESCONOCIDO?"esta dirección no está autorizada":"desajuste de ambiente")+"</span>":"")+
-      "</div>"+
+      "<div id='cfg-sistema-api'>"+_htmlSistemaApi()+"</div>"+
       // Si el servidor esta rechazando los guardados hay que decirlo ACA,
       // que es donde se mira cuando algo anda raro. Antes esto solo se
       // veia dentro del acordeon "Comparación con la API", cerrado por
@@ -14022,7 +14107,16 @@ function startAutoSync(){
   // Esto ademas levanta el detector de conexion mas rapido que antes.
   try{
     document.addEventListener("visibilitychange", function(){
-      if(!document.hidden){ _ultimoPoll=0; fbCheckREST(); _refrescarMisPermisos(); }
+      if(!document.hidden){
+        _ultimoPoll=0; fbCheckREST(); _refrescarMisPermisos();
+        // Y el estado del servidor, por lo mismo que los permisos: se
+        // preguntaba UNA vez, 1,2 s despues de abrir, y ahi se quedaba toda la
+        // sesion. Abrir la app mientras el servidor desplegaba dejaba la
+        // version marcando la anterior sin decirlo.
+        if(Date.now()-_API_LEIDO > _API_SALUD_FRESCO_MS){
+          try{ _apiComprobarAmbiente(); }catch(e){}
+        }
+      }
     });
   }catch(e){}
   // Renovar la sesión cada minuto mientras haya alguien logueado, para que
@@ -20884,7 +20978,521 @@ function _reconvertirBCV(){
   else if(elUsd.value) _convDesde("usd");
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 74 · EL MERCADO: a cómo está la competencia
+// ══════════════════════════════════════════════════════════════════════
+// Sus palabras: "todas esas casas de cambio todos los días tengo que revisar
+// para poder colocar mi tasa". Revisar cuatro sitios, acordarse de los números
+// y comparar de cabeza, cada día.
+//
+// Esto NO se puede leer solo y no se va a fingir que sí: dos son apps y dos son
+// grupos de WhatsApp. Inventar de dónde sacarlas sería darle números falsos
+// sobre los que decide precio. Lo que sí se puede es que apuntarlas cueste diez
+// segundos y que la comparación la haga la app — y, sobre todo, que quede
+// GUARDADA con su fecha, que es lo único que después contesta "¿cuándo y cuánto
+// se mueven?".
+//
+// Las dos direcciones se escriben en la MISMA unidad, bolívares por real, que
+// es como ella las lee en los flyers. Medido en sus 674 remesas de ida y 117 de
+// vuelta: ida 172,5 (200 R$ -> 34.500 Bs), vuelta 220 (42.500 Bs -> 193 R$).
+// Pero significan cosas opuestas:
+//   ida    -> ella ENTREGA bolívares: cuantos MÁS dé, mejor para el cliente
+//   vuelta -> ella ENTREGA reales:    cuantos MENOS pida, mejor para el cliente
+var _COMPETIDORES_POR_OMISION = [
+  {id:"retorna", nombre:"Retorna",       nota:"app",    vuelta:false},
+  {id:"dorado",  nombre:"El Dorado P2P", nota:"app",    vuelta:true},
+  {id:"grupo1",  nombre:"Grupo 1",       nota:"WhatsApp", vuelta:true},
+  {id:"grupo2",  nombre:"Grupo 2",       nota:"WhatsApp", vuelta:true}
+];
+function _competidores(){
+  var c=(S.config||{}).competidores;
+  return (c&&c.length)?c:_COMPETIDORES_POR_OMISION;
+}
+// Lo apuntado hoy. Indexado por fecha para que el historial se una entre
+// aparatos en vez de pisarse (por eso histComp va en _MERGE_HISTORIAL).
+function _compDelDia(iso){
+  if(!S.histComp) S.histComp={};
+  var k=iso||td();
+  if(!S.histComp[k]) S.histComp[k]={};
+  return S.histComp[k];
+}
+// Se escribe con _num() en la puerta: con el teclado en español la coma decimal
+// es lo primero que se pierde, y 171,54 entraría como 17154.
+function _setComp(id,dir,val){
+  var d=_compDelDia();
+  if(!d[id]) d[id]={};
+  d[id][dir]=_num(val);
+  // ARREGLO 32: repintar mientras teclea destruye el input bajo el dedo. Se
+  // refresca solo el recuadro de la comparación, por su id.
+  var box=document.getElementById("comp-resumen");
+  if(box) box.innerHTML=_htmlCompResumen();
+}
+// Su tasa publicada: la que guarda el flyer al generarlo (guardarTasaCalcHoy).
+// No se inventa una: si todavía no ha publicado hoy, se dice que falta.
+function _misTasasPublicadas(){
+  var t=(S.config||{}).tasasDia||{};
+  var ida=parseFloat(t.tdia_brl), vta=parseFloat(t.tdia_ves_brl);
+  return {ida:(isFinite(ida)&&ida>0)?ida:null, vuelta:(isFinite(vta)&&vta>0)?vta:null};
+}
+// Dónde queda ella. Devuelve los números, no un juicio: su vuelta alta es una
+// DECISIÓN suya —le frena la entrada de bolívares, que parados se devalúan, y
+// le cubre el P2P que tiene que hacer cuando entra una vuelta grande y no tiene
+// reales—. Una pantalla que la marcara en rojo estaría opinando sobre su
+// negocio con la mitad de la información.
+function _posicionMercado(){
+  var d=_compDelDia(), mias=_misTasasPublicadas();
+  var ida=[], vta=[];
+  _competidores().forEach(function(c){
+    var v=d[c.id]||{};
+    var i=parseFloat(v.ida), u=parseFloat(v.vuelta);
+    if(isFinite(i)&&i>0) ida.push({n:c.nombre, v:i});
+    if(c.vuelta!==false && isFinite(u)&&u>0) vta.push({n:c.nombre, v:u});
+  });
+  // En la IDA gana quien da MÁS bolívares. En la VUELTA, quien pide MENOS.
+  ida.sort(function(a,b){return b.v-a.v;});
+  vta.sort(function(a,b){return a.v-b.v;});
+  var r2=function(n){return Math.round(n*100)/100;};
+  var pos=function(lista,mia,masEsMejor){
+    if(mia===null||!lista.length) return null;
+    var mejores=lista.filter(function(x){return masEsMejor ? x.v>mia : x.v<mia;}).length;
+    return {puesto:mejores+1, de:lista.length+1,
+            mejor:lista[0], peor:lista[lista.length-1],
+            brechaMejor:r2(Math.abs(lista[0].v-mia))};
+  };
+  return {ida:ida, vuelta:vta, mias:mias,
+          posIda:pos(ida,mias.ida,true), posVuelta:pos(vta,mias.vuelta,false)};
+}
+
+// El recuadro de abajo: se rehace solo (por id) mientras ella teclea.
+function _htmlCompResumen(){
+  var m=_posicionMercado();
+  var f=function(n){return f2(n);};
+  var linea=function(rot,mia,p,masEsMejor){
+    if(mia===null) return "<div style='display:flex;justify-content:space-between;gap:8px;font-size:11.5px;color:var(--tx3)'><span>"+rot+"</span><span>aún no has publicado hoy</span></div>";
+    if(!p) return "<div style='display:flex;justify-content:space-between;gap:8px;font-size:11.5px'><span style='color:var(--tx3)'>"+rot+"</span><b style='color:var(--tit)'>"+f(mia)+"</b></div>";
+    var solo=(p.puesto===1);
+    var ult=(p.puesto===p.de);
+    return "<div style='display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap'>"+
+      "<span style='font-size:11.5px;color:var(--tx3)'>"+rot+"</span>"+
+      "<span style='font-size:13px;font-weight:800;color:var(--tit)'>"+f(mia)+
+        "<span style='font-size:11px;font-weight:600;color:"+(solo?"var(--ok)":(ult?"var(--avi-tx2)":"var(--tx3)"))+";margin-left:6px'>"+
+          p.puesto+"º de "+p.de+
+          (solo?" · la mejor":(ult?" · la última":""))+
+        "</span></span>"+
+      "</div>"+
+      "<div style='font-size:10.5px;color:var(--tx4);margin:1px 0 7px;text-align:right'>"+
+        (solo ? "nadie "+(masEsMejor?"da más":"pide menos")
+              : p.mejor.n+" "+(masEsMejor?"da":"pide")+" "+f(p.mejor.v)+" ("+(masEsMejor?"+":"−")+f(p.brechaMejor)+" que tú)")+
+      "</div>";
+  };
+  return linea("Tu ida (R$ → Bs)", m.mias.ida, m.posIda, true)+
+         linea("Tu vuelta (Bs → R$)", m.mias.vuelta, m.posVuelta, false)+
+         ((m.mias.vuelta!==null&&m.posVuelta&&m.posVuelta.puesto===m.posVuelta.de)
+           ? "<div style='font-size:10.5px;color:var(--tx4);line-height:1.5;border-top:1px solid var(--ln);padding-top:6px;margin-top:2px'>"+
+             "Estar arriba en la vuelta te frena la entrada de bolívares y te cubre el P2P que toca hacer cuando entra una vuelta grande sin tener reales. Aquí solo dice dónde estás."+
+             "</div>" : "");
+}
+
+// Dos de los cuatro son grupos suyos de WhatsApp, y "Grupo 1" no le dice nada
+// dentro de tres semanas. Se renombran tocando el nombre. La lista se guarda en
+// config, que ya se fusiona clave por clave entre sus dos aparatos.
+function _renombrarComp(id){
+  var lista=_competidores().map(function(x){return Object.assign({},x);});
+  var c=lista.find(function(x){return x.id===id;});
+  if(!c) return;
+  var n=prompt("\u00bfC\u00f3mo se llama?", c.nombre);
+  if(n===null) return;
+  n=String(n).trim();
+  if(!n){ alert("El nombre no puede quedar vac\u00edo."); return; }
+  c.nombre=n;
+  if(!S.config) S.config={};
+  S.config.competidores=lista;
+  saveData(); R();
+}
+
+// ── ARREGLO 75 · su costo, el del mercado, y el suelo que sale de los dos ──
+// Sus palabras: "no se que tasa de compra y venta esta usando mi app" y
+// "no es solo la competencia sino el mercado p2p".
+//
+// Son DOS cosas distintas y las dos hacen falta:
+//   sus lotes  -> el suelo de lo que YA compro. Sale de tasaDeReferencia(),
+//                 la misma funcion que ya valora todo su dinero, para que no
+//                 haya dos respuestas a la misma pregunta.
+//   el mercado -> el suelo de lo que puede comprar AHORA. Eso lo trae
+//                 GET /mercado, porque desde el navegador Binance no contesta.
+//
+// La lectura del mercado NO se guarda en S ni se sincroniza: es un precio de
+// hace un minuto, no un dato del negocio. Vive en memoria y se vuelve a pedir.
+var _MERCADO = {leido:0, intento:0, datos:null, cargando:false, error:""};
+var _MERCADO_FRESCO_MS = 5*60*1000;
+// Un intento FALLIDO no bloquea cinco minutos. Antes la espera era la misma
+// para una lectura buena y para un fallo, asi que tras un fallo la pantalla
+// no volvia a preguntar sola: habia que pulsar el boton. El servidor tambien
+// guarda los fallos poco tiempo, asi que esto no se convierte en preguntarle
+// a Binance sin parar.
+var _MERCADO_REINTENTO_MS = 30*1000;
+
+function _pedirMercado(forzar){
+  if(_MERCADO.cargando) return;
+  // "intento" es la ultima vez que se PREGUNTO; "leido", la ultima que se
+  // consiguio algo. Son distintas: sin separarlas, un fallo o contaba como
+  // lectura fresca o no frenaba nada.
+  var hayLectura=!!(_MERCADO.datos&&_MERCADO.datos.disponible);
+  var espera=hayLectura?_MERCADO_FRESCO_MS:_MERCADO_REINTENTO_MS;
+  if(!forzar && _MERCADO.intento && (Date.now()-_MERCADO.intento)<espera) return;
+  if(typeof apiFetch!=="function" || !apiSesionActiva()) return;
+  _MERCADO.cargando=true; _MERCADO.error=""; _MERCADO.intento=Date.now();
+  var cfg=S.config||{};
+  var q=[];
+  if(parseFloat(cfg.mercadoMontoBRL)>0) q.push("brl="+parseFloat(cfg.mercadoMontoBRL));
+  if(parseFloat(cfg.mercadoMontoVES)>0) q.push("ves="+parseFloat(cfg.mercadoMontoVES));
+  apiFetch("/mercado"+(q.length?"?"+q.join("&"):"")).then(function(r){
+    if(r.ok) return r.json();
+    // Un 404 aca significa una cosa muy concreta y accionable: el servidor
+    // esta vivo, pero es de antes de que esto existiera. Decir "no contesto"
+    // manda a buscar el problema donde no esta —se perdio una tarde con esto—.
+    _MERCADO.error=(r.status===404)
+      ? "tu servidor todavía no tiene esta función"
+      : "tu servidor respondió "+r.status;
+    return null;
+  }).then(function(d){
+    _MERCADO.cargando=false;
+    if(d&&d.ok){
+      _MERCADO.datos=d;
+      if(d.disponible){ _MERCADO.leido=Date.now(); _MERCADO.error=""; }
+      // El servidor puede contestar perfecto y aun asi venir sin precios, y
+      // el porque viene DENTRO de la respuesta. Antes se tiraba: la tarjeta
+      // escribia "sin lectura" y no habia forma de saber si el arreglo era
+      // del servidor o de bajar el monto en Configuracion.
+      else _MERCADO.error=d.motivo||"sin lectura";
+    }
+    else if(!_MERCADO.error) _MERCADO.error="el servidor no contestó";
+    _refrescarSuelo();
+  }).catch(function(){
+    _MERCADO.cargando=false; _MERCADO.error="sin conexión";
+    _refrescarSuelo();
+  });
+}
+// ARREGLO 32: llega mientras ella puede estar tecleando. Se refresca el
+// recuadro por su id, nunca con R().
+function _refrescarSuelo(){
+  var n=document.getElementById("mercado-suelo");
+  if(n) n.innerHTML=_htmlSuelo();
+}
+
+// El punto de equilibrio: cuantos bolivares por real puede dar sin perder.
+// Compra 1 USDT por "compra" reales y lo vende por "venta" bolivares, pagando
+// la comision de Binance al convertir. Todo lo que ofrezca POR DEBAJO de esto
+// le deja ganancia.
+function _equilibrio(compra, venta){
+  var c=parseFloat(compra), v=parseFloat(venta);
+  if(!(c>0)||!(v>0)) return null;
+  var fee=parseFloat((S.config||{}).comision_binance);
+  if(!(fee>=0)||fee>=1) fee=0;
+  return Math.round(((v*(1-fee))/c)*100)/100;
+}
+// ── Con qué monto se lee el mercado ──────────────────────────────────
+// Estos dos existian desde el ARREGLO 75 —_pedirMercado ya los leia de
+// S.config— pero NO habia donde escribirlos. Se le dijo dos veces que bajara
+// el monto en Configuracion y ese campo no estaba en ninguna parte.
+//
+// Los valores por omision salen de medir sus propios lotes (70 compras y 131
+// ventas): compra USDT con reales por una mediana de ~R$ 1.000 y vende por
+// bolivares por ~112.000 Bs. Son los mismos que usa el servidor si aqui no hay
+// nada, asi que dejarlos en blanco no rompe nada.
+var _MERCADO_MONTO_DEF = {BRL:1000, VES:112000};
+function _montoMercado(mon){
+  var v=parseFloat((S.config||{})["mercadoMonto"+mon]);
+  return (v>0) ? v : _MERCADO_MONTO_DEF[mon];
+}
+function _htmlMontoMercadoPie(){
+  return "Ahora mismo se lee el precio de operaciones de <b>"+f0(_montoMercado("BRL"))+
+    " R$</b> y <b>"+f0(_montoMercado("VES"))+" Bs</b>. Si a esa hora nadie está tomando "+
+    "ese monto, la app baja al mayor que sí den y te lo dice.";
+}
+function _setMontoMercado(mon,v){
+  S.config=S.config||{};
+  // _num() en la puerta: con el teclado en español la coma decimal es lo
+  // primero que se pierde, y detras hay parseFloat.
+  S.config["mercadoMonto"+mon]=_num(v);
+  // ARREGLO 32: no se repinta mientras teclea. El pie se rehace por su id.
+  var n=document.getElementById("mercado-monto-pie");
+  if(n) n.innerHTML=_htmlMontoMercadoPie();
+}
+function _guardarMontoMercado(){
+  saveData();
+  // Lo que hubiera leido se midio a OTRO monto, asi que ya no vale. Se tira y
+  // se vuelve a pedir: dejarlo seria enseñarle un precio de otro tamaño.
+  _MERCADO.datos=null; _MERCADO.intento=0; _MERCADO.error="";
+  _pedirMercado(true); _refrescarSuelo();
+}
+function _htmlMontosMercado(){
+  var campo=function(mon,rot,pie){
+    return "<div><label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>"+rot+"</label>"+
+      "<input type='text' inputmode='decimal' value='"+_montoMercado(mon)+"' "+
+        "oninput='_setMontoMercado(\""+mon+"\",this.value)' onchange='_guardarMontoMercado()' "+
+        "style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;"+
+        "font-weight:700;font-family:inherit;background:var(--sup);color:var(--tit)'>"+
+      "<div style='font-size:10px;color:var(--tx4);margin-top:3px'>"+pie+"</div></div>";
+  };
+  return "<div style='font-size:11px;color:var(--tx2b);margin-bottom:12px;line-height:1.6'>"+
+      "El precio del P2P depende de <b>cuánto muevas de una vez</b>: los anuncios grandes suelen dar "+
+      "mejor precio, pero piden más. La app lee el precio que aceptan operaciones de este tamaño, "+
+      "para que sea el tuyo y no uno que no puedas tomar.</div>"+
+    "<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px'>"+
+      campo("BRL","🇧🇷 Cuánto compras de una vez","en reales · por omisión 1.000")+
+      campo("VES","🇻🇪 Cuánto vendes de una vez","en bolívares · por omisión 112.000")+
+    "</div>"+
+    "<div id='mercado-monto-pie' style='font-size:10.5px;color:var(--tx4);line-height:1.5'>"+
+      _htmlMontoMercadoPie()+"</div>";
+}
+
+function _htmlSuelo(){
+  var f=function(n){return f2(n);};
+  // ARREGLO 75: la tasa de compra de USDT va a CUATRO decimales. Con f2,
+  // 5,1638 se enseña como 5,16 — y entre 5,16 y 5,1638 hay 0,07% de su
+  // margen, que sobre su volumen del mes no es redondeo, es dinero. Los
+  // bolivares no lo necesitan: 948 no tiene decimales que perder.
+  var fp=function(n){ return (n<100) ? f4(n) : f2(n); };
+  // Lo suyo: la misma tasa de referencia que ya valora su dinero.
+  var rc=(typeof tasaDeReferencia==="function")?tasaDeReferencia("BRL"):null;
+  var rv=(typeof tasaDeReferencia==="function")?tasaDeReferencia("VES"):null;
+  var miC=rc&&rc.tasa, miV=rv&&rv.tasa;
+  var eqMio=_equilibrio(miC,miV);
+  // El mercado, si hay lectura.
+  var m=_MERCADO.datos, mc=null, mv=null, eqMerc=null;
+  if(m&&m.disponible){
+    mc=m.compraBRL&&m.compraBRL.tasa; mv=m.ventaVES&&m.ventaVES.tasa;
+    eqMerc=_equilibrio(mc,mv);
+  }
+  // MEDIA lectura: el mercado dio un lado y del otro no hay. Se completa con
+  // lo suyo, que es lo mas cerca de la verdad que se puede estar sin inventar
+  // nada: los dos numeros son reales, solo que uno es de su historia y el otro
+  // de ahora. Paso el 29/09 —los bolivares se leyeron y los reales no— y la
+  // pantalla se quedaba enseñando solo su suelo viejo, teniendo medio dato
+  // nuevo guardado sin usar.
+  //
+  // SUSTITUYE al suyo, no se pone al lado. Dos suelos parecidos para la misma
+  // pregunta es lo que ya hizo que dejara de fiarse de los dos (34,27 arriba y
+  // 34,28 abajo en Por cobrar).
+  var eqMixto=null, rotMixto="", pieMixto="";
+  if(!eqMerc){
+    if(mv>0 && miC>0){
+      eqMixto=_equilibrio(miC,mv);
+      rotMixto="Tu suelo vendiendo hoy lo que ya compraste";
+      pieMixto="tu compra de "+fp(miC)+" R$ con la venta de hoy, "+fp(mv)+" Bs";
+    }else if(mc>0 && miV>0){
+      eqMixto=_equilibrio(mc,miV);
+      rotMixto="Tu suelo comprando hoy, a tu última venta";
+      pieMixto="la compra de hoy, "+fp(mc)+" R$, con tu venta de "+fp(miV)+" Bs";
+    }
+  }
+  var mia=_misTasasPublicadas().ida;
+  var fila=function(rot,c,v,pie,col){
+    if(!(c>0)&&!(v>0)) return "";
+    return "<div style='display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:11px;margin-bottom:3px'>"+
+      "<span style='color:var(--tx3)'>"+rot+"</span>"+
+      "<span style='color:"+(col||"var(--tx2)")+"'>compras <b>"+(c>0?fp(c):"—")+"</b> R$ · vendes <b>"+(v>0?fp(v):"—")+"</b> Bs"+
+        (pie?"<span style='color:var(--tx4);font-size:10.5px'> · "+pie+"</span>":"")+"</span>"+
+    "</div>";
+  };
+  // Cuando no hay lectura, lo que importa es POR QUE. Detras hay dos problemas
+  // con arreglos distintos —uno es del servidor, el otro es bajar el monto en
+  // Configuracion— y un "sin lectura" a secas no se puede perseguir. El motivo
+  // lo manda el servidor y puede ser largo, asi que va en su PROPIA linea; el
+  // boton se queda arriba, donde siempre estuvo.
+  var reintentar="<span onclick='_pedirMercado(true);_refrescarSuelo()' style='cursor:pointer;color:var(--ac);font-weight:700;white-space:nowrap'>↻ reintentar</span>";
+  var sinLectura=function(){
+    if(_MERCADO.cargando)
+      return "<div style='font-size:11px;color:var(--tx4);margin-bottom:3px'>El mercado ahora · leyendo…</div>";
+    return "<div style='font-size:11px;color:var(--tx4);margin-bottom:3px;line-height:1.5'>"+
+      "El mercado ahora · sin lectura "+reintentar+
+      "<div style='color:var(--tx3);margin-top:2px'>"+_escAud(_MERCADO.error||"sin lectura")+"</div></div>";
+  };
+  // Media lectura tambien es un fallo: sin las DOS tasas no hay suelo de
+  // mercado. Antes, si fallaba un solo lado, la fila salia en verde con un
+  // guion y no se decia nada.
+  var ladoQueFalto=function(){
+    if(!m) return "";
+    var t=m.motivoBRL?("reales · "+m.motivoBRL):(m.motivoVES?("bolívares · "+m.motivoVES):"");
+    if(!t) return "";
+    // Lo que diga aqui tiene que cuadrar con el suelo que hay DEBAJO. Cuando
+    // se completa el lado que falta con lo suyo, decir "no hay suelo de
+    // mercado" con un suelo justo abajo son dos mensajes opuestos en la misma
+    // tarjeta — que es lo que ya hizo falsa la tarjeta de conciliacion.
+    var cabeza=eqMixto ? "Falta un lado del mercado, así que el suelo de abajo va con tu tasa: "
+                       : "Falta un lado, así que no hay suelo de mercado: ";
+    return "<div style='font-size:10.5px;color:var(--am3-b);margin:-1px 0 4px;line-height:1.5'>"+
+      cabeza+_escAud(t)+" "+reintentar+"</div>";
+  };
+  // El tablon se mueve: hay horas en que nadie esta tomando su monto. El
+  // servidor entonces mide al mayor que si esten dando y lo dice; callarlo
+  // seria enseñarle un precio que no es el de su operacion.
+  var bajoDeMonto=function(lado){ return !!(lado&&lado.montoPedido); };
+  var hayAjuste=!!(m&&(bajoDeMonto(m.compraBRL)||bajoDeMonto(m.ventaVES)));
+  var montoAjustado=function(){
+    if(!hayAjuste) return "";
+    var t=[];
+    if(bajoDeMonto(m.compraBRL)) t.push("los reales a "+f0(m.compraBRL.monto)+" R$");
+    if(bajoDeMonto(m.ventaVES))  t.push("los bolívares a "+f0(m.ventaVES.monto)+" Bs");
+    return "<div style='font-size:10.5px;color:var(--tx4);margin:-1px 0 4px;line-height:1.5'>"+
+      "Ahora mismo nadie toma tu monto entero, así que se midió al mayor que sí dan: "+t.join(" · ")+".</div>";
+  };
+  // Cada lado sale de un sitio distinto y se dice cual. Los reales vienen del
+  // mercado normal de Binance —ahi no hay anuncios, el precio es uno solo—; los
+  // bolivares del P2P, donde si los hay. Antes el pie decia "0 y 2 anuncios",
+  // y ese 0 se leia como "los reales fallaron" cuando estaban perfectos.
+  var pieMercado=function(){
+    var t=[];
+    // El nombre del sitio, no "del mercado" a secas: Binance le devuelve 451
+    // —bloqueado por pais— desde su servidor, asi que el precio puede venir de
+    // CoinGecko o de Mercado Bitcoin. Son decimas de diferencia y para un suelo
+    // vale, pero callar de donde salio seria enseñarle el precio de Binance sin
+    // que lo sea.
+    if(m.compraBRL) t.push(m.compraBRL.fuente
+      ? ("reales: "+_escAud(m.compraBRL.fuente))
+      : ((m.compraBRL.anuncios||0)+" anuncios en reales"));
+    if(m.ventaVES) t.push((m.ventaVES.anuncios||0)+" anuncios en bolívares"+
+      (bajoDeMonto(m.ventaVES)?"":" a tu monto"));
+    return t.join(" · ");
+  };
+  // ARREGLO 77. La tasa de compra que sostiene todo esto sale de la ULTIMA
+  // operacion de USDT registrada, y eso puede ser de hace dias: si compro mas
+  // caro y todavia no lo ha registrado, el suelo sale optimista y no lo dice.
+  // Paso el 30/09 — la tarjeta enseñaba 187,90 con una compra del 18/09 y ella
+  // habia comprado a 5,27 esa misma mañana. El numero no estaba mal, estaba
+  // VIEJO, que para lo que sirve un suelo es lo mismo. No se avisa de la tasa
+  // fijada a mano: esa es una decision suya, no un olvido.
+  var tasaVieja=function(){
+    if(!rc||rc.origen!=="auto"||!rc.iso) return "";
+    var dias=Math.floor((new Date(td()+"T00:00:00")-new Date(rc.iso+"T00:00:00"))/86400000);
+    if(!(dias>1)) return "";
+    return "<div style='font-size:10.5px;color:var(--am3-b);margin:-1px 0 4px;line-height:1.5'>"+
+      "Tu última compra de USDT es de hace "+dias+" días ("+_escAud(rc.fecha||rc.iso)+"). "+
+      "Si desde entonces compraste a otra tasa y no la registraste, este suelo no la sabe.</div>";
+  };
+  var cuerpo=
+    fila("Tus últimas operaciones", miC, miV, (rc&&rc.fecha)?rc.fecha:"")+tasaVieja()+
+    (m&&m.disponible
+      // El verde es "lectura completa". Con un lado caido la fila sale en el
+      // color de siempre: un "vendes —" en verde se lee como si estuviera bien.
+      ? fila("El mercado ahora", mc, mv, pieMercado(),
+             (m.motivoBRL||m.motivoVES)?"var(--tx2)":"var(--ok)")+montoAjustado()+ladoQueFalto()
+      : sinLectura());
+  var suelos="";
+  if(eqMio||eqMerc||eqMixto){
+    suelos="<div style='border-top:1px solid var(--ln);margin-top:7px;padding-top:7px'>";
+    var linea=function(rot,val,col,pie){
+      return "<div style='display:flex;justify-content:space-between;gap:8px;font-size:11.5px'>"+
+        "<span style='color:var(--tx3)'>"+rot+"</span><b style='color:"+col+"'>"+f(val)+"</b></div>"+
+        (pie?"<div style='font-size:10px;color:var(--tx4);margin:-1px 0 3px'>"+pie+"</div>":"");
+    };
+    // El mixto ocupa el sitio del suyo, no se suma. El rotulo dice de donde
+    // sale cada mitad: un tercer numero sin decir como se hizo es justo lo que
+    // hace que dejen de creerse los tres.
+    //
+    // ARREGLO 77: el % se mide contra el suelo MAS BAJO de los que haya, no
+    // contra el del mercado. El suelo es venta ÷ compra, asi que una compra
+    // mas cara lo BAJA: el 30/09 ella compro USDT a 5,27 y el mercado abierto
+    // estaba en 5,20 —paga la comision del P2P—, o sea suelo real 180,30 y
+    // suelo de mercado 182,72. Publicar contra 182,72 es publicar contra un
+    // costo que no es el suyo, y CLAUDE.md ya lo tiene escrito: un suelo
+    // optimista es peor que ninguno.
+    //
+    // Y el caso contrario queda cubierto sin hacer nada: una tasa de compra
+    // vieja y BARATA da un suelo alto, asi que pierde la comparacion y manda
+    // el del mercado. Por ningun lado le puede salir el numero optimista.
+    var cands=[];
+    if(eqMixto){
+      cands.push({v:eqMixto, rot:rotMixto, pie:pieMixto, nombre:"la mezcla de arriba",
+                  c:(mv>0&&miC>0)?miC:mc, s:(mv>0&&miC>0)?mv:miV});
+    }else if(eqMio){
+      cands.push({v:eqMio, rot:"Tu suelo con lo que ya compraste", pie:"",
+                  nombre:"tu costo", c:miC, s:miV});
+    }
+    if(eqMerc){
+      cands.push({v:eqMerc, rot:"Tu suelo al precio de hoy", pie:"",
+                  nombre:"el mercado", c:mc, s:mv});
+    }
+    var manda=null;
+    for(var ci=0;ci<cands.length;ci++) if(!manda||cands[ci].v<manda.v) manda=cands[ci];
+    var base=manda?manda.v:null;
+    // Se decide PRIMERO y se pinta despues, porque el color tiene que ir con el
+    // que manda. Al reves salia el suelo que manda en ambar y el que no manda
+    // en verde, y el color se lee antes que la letra: la tarjeta decia una cosa
+    // con el texto y la contraria con el color, que es lo mismo que ya hizo
+    // falsa la tarjeta de conciliacion.
+    for(var cj=0;cj<cands.length;cj++)
+      suelos+=linea(cands[cj].rot, cands[cj].v,
+                    cands[cj]===manda?"var(--ok)":"var(--tx3)", cands[cj].pie);
+    if(mia!==null&&base){
+      var mg=Math.round(((base-mia)/base)*1000)/10;
+      suelos+="<div style='font-size:11.5px;margin-top:5px;color:"+(mg>0?"var(--ok)":"var(--mal)")+";font-weight:700'>"+
+        "Ofreciendo "+f(mia)+" te queda "+(mg>0?"+":"")+String(mg).replace(".",",")+"%"+
+        (mg<=0?" — por encima del suelo PIERDES":"")+"</div>";
+    }
+    // Con dos suelos en pantalla hay que decir contra cual se midio, y con que
+    // par de tasas. Un porcentaje que no dice de donde sale obliga a hacer la
+    // cuenta a mano para creerselo — que es justo lo que esta tarjeta existe
+    // para ahorrarle.
+    if(cands.length>1&&base&&mia!==null){
+      suelos+="<div style='font-size:10.5px;color:var(--tx4);line-height:1.5;margin-top:3px'>"+
+        "Se mide contra el más bajo, que es el que aguanta: manda "+manda.nombre+
+        ((manda.c>0&&manda.s>0)?(" (compras "+fp(manda.c)+" R$ · vendes "+fp(manda.s)+" Bs)"):"")+
+        ".</div>";
+    }
+    // Lo que este numero NO incluye. Un suelo optimista es peor que ninguno.
+    suelos+="<div style='font-size:10.5px;color:var(--tx4);line-height:1.5;margin-top:5px'>"+
+      "El suelo es el de la operación: no lleva la comisión del banco venezolano ni tus egresos.</div>";
+    suelos+="</div>";
+  }
+  return cuerpo+suelos;
+}
+
+// La tarjeta entera, arriba de la calculadora: es donde decide la tasa.
+function _htmlMercadoHoy(){
+  var d=_compDelDia();
+  var filas=_competidores().map(function(c){
+    var v=d[c.id]||{};
+    var inp=function(dir,ph){
+      return "<input type='text' inputmode='decimal' placeholder='"+ph+"' value='"+(v[dir]!==undefined&&v[dir]!==""?v[dir]:"")+"' "+
+        "oninput='_setComp(\""+c.id+"\",\""+dir+"\",this.value)' onchange='saveData()' "+
+        "style='width:100%;padding:7px 9px;border:1.5px solid var(--ln);border-radius:8px;font-size:13px;font-weight:700;text-align:center;font-family:inherit;background:var(--sup);color:var(--tit)'>";
+    };
+    return "<div style='display:flex;align-items:center;gap:8px;padding:6px 0'>"+
+      "<div style='flex:1 1 110px;min-width:0;cursor:pointer' onclick='_renombrarComp(\""+c.id+"\")' title='Toca para cambiarle el nombre'>"+
+        "<div style='font-size:12px;font-weight:700;color:var(--tit);white-space:nowrap;overflow:hidden;text-overflow:ellipsis'>"+c.nombre+"</div>"+
+        "<div style='font-size:10.5px;color:var(--tx4)'>"+(c.nota||"")+"</div>"+
+      "</div>"+
+      "<div style='flex:0 0 82px'>"+inp("ida","ida")+"</div>"+
+      "<div style='flex:0 0 82px'>"+(c.vuelta===false
+        ? "<div style='text-align:center;font-size:10.5px;color:var(--tx4);padding:8px 0'>solo ida</div>"
+        : inp("vuelta","vuelta"))+"</div>"+
+    "</div>";
+  }).join("");
+  return "<div style='background:var(--sup);border:1.5px solid var(--ln2);border-radius:14px;padding:14px 16px;margin-bottom:16px'>"+
+    "<div style='display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:4px;flex-wrap:wrap'>"+
+      "<div style='font-size:13px;font-weight:800;color:var(--tit)'>📊 El mercado hoy</div>"+
+      "<div style='font-size:10.5px;color:var(--tx4)'>"+ds(td())+" · en bolívares por real</div>"+
+    "</div>"+
+    // ARREGLO 75: su costo y su suelo van ARRIBA de la competencia. Mirar lo
+    // que cobran los demás sin saber tu suelo no contesta nada.
+    "<div id='mercado-suelo' style='background:var(--sup2d);border-radius:10px;padding:10px 12px;margin-bottom:10px'>"+_htmlSuelo()+"</div>"+
+    "<div style='font-size:10.5px;color:var(--tx4);margin-bottom:8px;line-height:1.5'>Y lo que cobran los demás. Apúntalo hoy: queda guardado con su fecha, así que en unos días tienes cómo se mueven.</div>"+
+    "<div style='display:flex;gap:8px;font-size:10.5px;color:var(--tx4);font-weight:700;text-transform:uppercase;letter-spacing:.3px'>"+
+      "<div style='flex:1 1 110px'></div><div style='flex:0 0 82px;text-align:center'>Ida</div><div style='flex:0 0 82px;text-align:center'>Vuelta</div>"+
+    "</div>"+
+    filas+
+    "<div id='comp-resumen' style='border-top:1px solid var(--ln);margin-top:8px;padding-top:9px'>"+_htmlCompResumen()+"</div>"+
+  "</div>";
+}
+
 function rCalculadora(){
+  // ARREGLO 75: se pide al entrar, no en cada repintado — _pedirMercado() se
+  // calla solo si la lectura tiene menos de 5 minutos. Va en un setTimeout
+  // para no retrasar el dibujado: la tarjeta se pinta con "leyendo…" y se
+  // rellena sola cuando llega.
+  setTimeout(function(){ _pedirMercado(false); }, 0);
   var c=S.calc;
   var modo=c.modoCalc||"fijas";
   var t=_calcTasas();
@@ -20919,6 +21527,9 @@ function rCalculadora(){
       "<div style='font-size:12px;opacity:.85;margin-top:3px'>Calcula la tasa para tu cliente y genera el flyer</div>"+
     "</div>"+
     _rConversorBCV()+
+    // ARREGLO 74: va ARRIBA, antes de las sub-pestañas. Es lo primero que mira
+    // antes de decidir la tasa, no un apéndice al final.
+    _htmlMercadoHoy()+
     subTabs;
 
   // ══════════════════════
@@ -24422,7 +25033,7 @@ var _MERGE_OBJETOS = ["config","tasasDia","_tasasDiaMeta","tasasCambio","mapaBin
 var _MERGE_BLOQUES = {
   config: [["aperturaUsdt","aperturaFecha","aperturaSaldos","aperturaTs","aperturaBase"]]
 };
-var _MERGE_HISTORIAL = ["histBalance","histTasas","histSaldos"];
+var _MERGE_HISTORIAL = ["histBalance","histTasas","histSaldos","histComp"];
 
 function _marcarObjetosCambiados(){
   if(!window._fotoPorClave) window._fotoPorClave={};
