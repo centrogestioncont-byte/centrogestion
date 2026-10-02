@@ -575,6 +575,32 @@ estilo global —`.cuerpo`, `td`, `th`, `.val`, `.lbl`, `.sub`— y cualquier
 documento que se saque fuera de su sitio lo hereda. **Scopearlo por un id del
 contenedor no basta si lo que se exporta es el contenido, no el contenedor.**
 
+### Lo indivisible es la FILA, no la tabla ni la sección (ARREGLO 86)
+
+El 79 dejó escrito *"ni una tabla ni una sección se parte entre hojas"*, y con
+sus datos reales eso salía **al revés** de lo que buscaba: una sección que no
+cabe en lo que queda de hoja salta entera a la siguiente y deja media hoja en
+blanco; y las que no caben **ni en una hoja completa** —Préstamos activos, 20
+filas— se parten igual. O sea que el hueco no compraba nada.
+
+Medido con un mes de su tamaño (23 operaciones, 20 préstamos, 25 egresos):
+
+```
+            bloques empujados   blanco que generan      hojas
+antes              14            7.916 px ≈ 7,1 hojas    ~15
+ahora               4                75 px ≈ 0,1          8
+```
+
+Ahora `break-inside:avoid` vive solo en el `tr`. Ninguna fila se corta por la
+mitad, el título sigue sin quedarse solo al final de una hoja (`h2` conserva su
+`break-after:avoid`) y desaparecen los huecos.
+
+**Y la cabecera de columnas NO se repite al pasar de hoja, aunque sería lo
+suyo.** `html2pdf` hace **una imagen** de la página y la corta en trozos del
+alto de un A4: no hay motor de maquetado que repita nada, así que `<thead>` con
+`display:table-header-group` aquí no hace absolutamente nada. Se intentó y se
+quitó; no hace falta volver a probarlo.
+
 ### Una tarjeta se define en UN sitio
 
 `.pz-rejilla`, `.pz-card`, `.pz-rot`, `.pz-num`, `.pz-pie` viven en el `<style>`.
