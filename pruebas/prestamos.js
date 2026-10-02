@@ -3059,8 +3059,47 @@ console.log("\nArreglo 64 · entrar con huella");
 // genera su PROPIO bloque <style> dentro de la funcion, que es justo por donde
 // se colo el primer intento.
 {
+  // ── ARREGLO 78: los dos informes se salian de la hoja ──────────────
+  // La app tiene una regla GLOBAL .cuerpo{display:flex} —el armazon de la
+  // barra lateral, 25/09— y las dos capas de informe llaman .cuerpo a su
+  // contenedor. Las secciones se pintaban EN FILA: 4.856 px de ancho dentro
+  // de una hoja de 768 en el informe del mes, y 1.471 dentro de 612 en el
+  // del socio. html2canvas solo captura #reporteCapture, que mide lo que la
+  // hoja, asi que el PDF salia con la primera seccion y media y sin un solo
+  // error en consola. Cada capa tiene que declarar su display.
+  ok(/#informePdfOverlay \.cuerpo\{display:block\}/.test(HTML),
+     "el informe del mes declara su propio display, no hereda el flex de la barra lateral");
+  ok(/#reporteSocioOverlay \.cuerpo\{display:block\}/.test(HTML),
+     "y el reporte del socio tambien");
+  // Y la regla global sigue ahi: la barra lateral la necesita. Si alguien la
+  // quitara "para arreglar el informe", el arreglo de arriba sobraria y la
+  // barra lateral de la PC se rompe. Esta prueba dice cual es cual.
+  ok(/\.cuerpo\{display:flex;flex:1;min-height:0\}/.test(HTML),
+     "la regla global de .cuerpo no se toca: es el armazon de la barra lateral");
+  // El informe es BLANCO y las reglas globales pintan td y th con los colores
+  // del tema (td{color:var(--ink)} y th{...!important}). Con Suave eso daba
+  // #DCDAE0 sobre blanco: contraste 1,39, solo se leian los montos.
+  ok(/#informePdfOverlay td\{color:#14213D/.test(HTML),
+     "el informe fija el color de su texto de tabla, que si no lo pone el tema");
+  ok(/#informePdfOverlay th\{background:#14213D !important;color:#fff !important/.test(HTML),
+     "y el de sus cabeceras, que la regla global lleva !important");
+  // El color de td va SIN !important a proposito: con specificity le gana a la
+  // regla global, y asi los montos siguen pintandose de verde o rojo desde su
+  // propio style. Con !important saldrian todos azules.
+  ok(!/#informePdfOverlay td\{color:#14213D !important/.test(HTML),
+     "pero sin !important, o los montos pierden su verde y su rojo");
+  // Las dos tablas de cabecera ambar y roja llevan clase porque el !important
+  // de la regla global de th se come el color y el fondo de su fila.
+  ok(/#informePdfOverlay th\.thAm\{/.test(HTML) && /#informePdfOverlay th\.thRo\{/.test(HTML) &&
+     /<th class='thAm'/.test(HTML) && /<th class='thRo'/.test(HTML),
+     "las cabeceras ambar y roja del informe conservan su color con su clase");
+
+  // Va sobre el CODIGO, no sobre los comentarios: el ARREGLO 78 tuvo que
+  // escribir en un comentario cual era la regla global que se colaba
+  // (td{color:var(--ink)}) y eso disparaba la guardia sin que hubiera ni un
+  // color del tema en el informe. Un comentario no pinta nada.
   ["generarInformePDF", "rInformeCierre"].forEach(function(f){
-    ok(!/var\(--/.test(sacarFuncion(f)),
+    ok(!/var\(--/.test(sinComentarios(sacarFuncion(f))),
        "el informe (" + f + ") no usa ningun color del tema");
   });
 }
