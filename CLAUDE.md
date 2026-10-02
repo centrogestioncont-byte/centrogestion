@@ -57,11 +57,40 @@ clientes reales. Avísale cuando esté listo; el clic lo da él.
 
 ---
 
+## Si tocas `index.html`, sube `APP_VERSION`
+
+**Un arreglo que no llega al aparato no está arreglado**, y desde fuera se ve
+igual que uno que no funciona.
+
+`_checkAppUpdate()` se baja el archivo publicado cada cinco minutos, le saca
+`APP_VERSION` y, si no coincide con la que corre, enseña *"🔄 Hay una versión
+nueva — toca aquí para actualizar"*. **Ese aviso es lo único que saca a un
+aparato de su copia en caché.** El service worker es de paso y no cachea; el
+que manda es el caché normal del navegador.
+
+Estuvo clavado en `20260910_v153` desde el **5 de septiembre** mientras
+`index.html` recibía **126 commits**, así que el aviso no salió ni una vez. Se
+vio el 02/10: ella descargó el PDF del cierre y le salió el de **antes** del
+arreglo —secciones en fila, texto gris— con el arreglo desplegado desde hacía
+rato, y se estuvo mirando el PDF cuando el problema era el archivo viejo en su
+teléfono.
+
+Pedirlo en un comentario del código ya se intentó. Ahora lo comprueba el CI:
+`pruebas/version.py` compara contra la rama base y **falla el PR si
+`index.html` cambia y `APP_VERSION` no**. Formato `aaaammdd_vNNN`.
+
+Y cuando ella diga que un arreglo "no le llegó" o que ve algo viejo, **empieza
+por aquí** antes de tocar el código: que abra `centrogestion.pages.dev/?upd=1`
+y mire la versión en Configuración.
+
+---
+
 ## Cómo probar — obligatorio antes de cualquier PR
 
 ```
 python3 pruebas/revisar.py      # archivo entero, sintaxis de cada <script>, 19 funciones clave
 node pruebas/prestamos.js       # lógica de préstamos: fechas, mora, tasa sugerida, límite
+python3 pruebas/version.py <rama-base>   # que APP_VERSION suba con el archivo
 ```
 
 Las dos tienen que terminar en "Todo en orden." y salir con código 0. Las
