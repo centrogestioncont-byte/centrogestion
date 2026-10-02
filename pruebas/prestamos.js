@@ -2378,7 +2378,7 @@ ok(/te debe \(no se le paga este mes\)/.test(HTML),
 // Ruido que estorbaba la lectura.
 ok(!/mes anterior encontrado/.test(HTML),
    "fuera la linea de depuracion que se veia en produccion");
-ok(/salieron de tus cuentas personales/.test(HTML),
+ok(/se pagaron desde una cuenta, así que ya bajaron ESA cuenta/.test(HTML),
    "se explica por que unos gastos personales no bajan el disponible");
 // El cierre vivo, en español. (rCierreMes/imprimirRelatorioContador siguen en
 // portugues, pero son codigo muerto que nadie llama; se borran aparte.)
@@ -2970,8 +2970,10 @@ console.log("\nArreglo 64 · entrar con huella");
   // es justo el error que se arreglo.
   // Y los --fly-* igual (ARREGLO 73): el flyer es lo que le llega al cliente
   // y ella imprime, no una pantalla; el tema es del aparato.
+  // Y los --inf-* (ARREGLO 79): el informe del mes es el documento que va a la
+  // junta con el socio. Misma razon, tercera vez.
   const sinOscuro = [...enClaro].filter(function(k){
-    return !enOsc.has(k) && !/^--(radius|shadow|ent-|fly-)/.test(k);
+    return !enOsc.has(k) && !/^--(radius|shadow|ent-|fly-|inf-)/.test(k);
   });
   ok(sinOscuro.length === 0, "todo color tiene su version oscura",
      sinOscuro.slice(0, 6).join(", "));
@@ -3059,10 +3061,147 @@ console.log("\nArreglo 64 · entrar con huella");
 // genera su PROPIO bloque <style> dentro de la funcion, que es justo por donde
 // se colo el primer intento.
 {
-  ["generarInformePDF", "rInformeCierre"].forEach(function(f){
-    ok(!/var\(--/.test(sacarFuncion(f)),
-       "el informe (" + f + ") no usa ningun color del tema");
-  });
+  // ── ARREGLO 78: los dos informes se salian de la hoja ──────────────
+  // La app tiene una regla GLOBAL .cuerpo{display:flex} —el armazon de la
+  // barra lateral, 25/09— y las dos capas de informe llaman .cuerpo a su
+  // contenedor. Las secciones se pintaban EN FILA: 4.856 px de ancho dentro
+  // de una hoja de 768 en el informe del mes, y 1.471 dentro de 612 en el
+  // del socio. html2canvas solo captura #reporteCapture, que mide lo que la
+  // hoja, asi que el PDF salia con la primera seccion y media y sin un solo
+  // error en consola. Cada capa tiene que declarar su display.
+  ok(/#informePdfOverlay \.cuerpo\{padding:0 24px;display:block\}/.test(HTML),
+     "el informe del mes declara su propio display, no hereda el flex de la barra lateral");
+  ok(/#reporteSocioOverlay \.cuerpo\{display:block\}/.test(HTML),
+     "y el reporte del socio tambien");
+  // Y la regla global sigue ahi: la barra lateral la necesita. Si alguien la
+  // quitara "para arreglar el informe", el arreglo de arriba sobraria y la
+  // barra lateral de la PC se rompe. Esta prueba dice cual es cual.
+  ok(/\.cuerpo\{display:flex;flex:1;min-height:0\}/.test(HTML),
+     "la regla global de .cuerpo no se toca: es el armazon de la barra lateral");
+  // El informe es BLANCO y las reglas globales pintan td y th con los colores
+  // del tema (td{color:var(--ink)} y th{...!important}). Con Suave eso daba
+  // #DCDAE0 sobre blanco: contraste 1,39, solo se leian los montos.
+  ok(/#informePdfOverlay td\{color:var\(--inf-tinta\)/.test(HTML),
+     "el informe fija el color de su texto de tabla, que si no lo pone el tema");
+  ok(/#informePdfOverlay th\{background:var\(--inf-cabecera\) !important;color:var\(--inf-tinta\) !important/.test(HTML),
+     "y el de sus cabeceras, que la regla global lleva !important");
+  // El color de td va SIN !important a proposito: con specificity le gana a la
+  // regla global, y asi los montos siguen pintandose de verde o rojo desde su
+  // propio style. Con !important saldrian todos azules.
+  ok(!/#informePdfOverlay td\{color:var\(--inf-tinta\) !important/.test(HTML),
+     "pero sin !important, o los montos pierden el rojo de lo que resta");
+  // Las dos tablas que tenian cabecera ambar y roja pasaron a la cabecera gris
+  // de todas las demas (ARREGLO 79): en un documento de junta, tres colores de
+  // cabecera distintos no dicen nada que no diga ya el titulo de la tabla.
+  ok(!/thAm|thRo/.test(HTML),
+     "no quedan cabeceras de color sueltas: todas las tablas iguales");
+
+  // Va sobre el CODIGO, no sobre los comentarios: el ARREGLO 78 tuvo que
+  // escribir en un comentario cual era la regla global que se colaba
+  // (td{color:var(--ink)}) y eso disparaba la guardia sin que hubiera ni un
+  // color del tema en el informe. Un comentario no pinta nada.
+  //
+  // rInformeCierre es la PANTALLA del cierre: ahi no se usa ningun nombre de
+  // color, ni del tema ni propio. El informe que sale en PDF si tiene los
+  // suyos (--inf-*, ARREGLO 79) y no puede usar ningun otro.
+  ok(!/var\(--/.test(sinComentarios(sacarFuncion("rInformeCierre"))),
+     "la pantalla del cierre no usa ningun color del tema");
+  {
+    const fuera = [];
+    (sinComentarios(sacarFuncion("generarInformePDF")).match(/var\(--[\w-]+\)/g) || [])
+      .forEach(function(v){ if (!/^var\(--inf-/.test(v)) fuera.push(v); });
+    ok(fuera.length === 0,
+       "el informe del mes solo usa sus propios colores (--inf-*)",
+       fuera.slice(0, 6).join(", "));
+  }
+  // Y ningun tema puede repintarlos: es lo que rompio el flyer y las dos
+  // pantallas de entrada cuando el por omision paso a Suave.
+  {
+    const oscInf = (HTML.match(/html\[data-tema="suave"\]\{[\s\S]*?\n\}/) || [""])[0];
+    const papInf = (HTML.match(/html\[data-tema="papel"\]\{[\s\S]*?\n\}/) || [""])[0];
+    const pisados3 = [];
+    [["suave", oscInf], ["papel", papInf]].forEach(function(par){
+      (par[1].match(/--inf-[\w-]+\s*:/g) || []).forEach(function(d){
+        pisados3.push(par[0] + " " + d.replace(/\s*:$/, ""));
+      });
+    });
+    ok(pisados3.length === 0,
+       "ningun tema repinta el informe del mes: sale igual desde cualquier aparato",
+       pisados3.slice(0, 6).join(", "));
+    ok(/--inf-tinta:\s*#111111/.test(HTML) && /--inf-azul:\s*#14213D/.test(HTML),
+       "el informe del mes tiene sus propios colores, declarados en :root");
+  }
+
+  // ── ARREGLO 80: los numeros que no cuadraban ──────────────────────
+  {
+    const cierre = sinComentarios(sacarFuncion("rInformeCierre"));
+    const pdf = sinComentarios(sacarFuncion("generarInformePDF"));
+    // 1. La pestaña Bancos contaba las cuentas USDT DOS VECES: arrancaba el
+    //    total con getInventarioStats().disponible —que es, literal, la suma de
+    //    los saldos de las cuentas USDT— y despues volvia a recorrerlas todas.
+    //    Medido: $4.217,06 donde hay $3.414,28, o sea los $802,78 de Binance
+    //    inventados, y la pestaña Pendientes del mismo modulo decia $3.591,10.
+    ok(!/var totalUsdt=invUsdtSec/.test(cierre) && /var totalUsdt=0;/.test(cierre),
+       "el total de Bancos no arranca del inventario: contaba Binance dos veces");
+    // 2. Los egresos guardan su categoria en `cat`. Leerla solo por `categoria`
+    //    hacia que TODO saliera "General", en pantalla y en el PDF.
+    ok(!/e\.categoria\|\|"General"/.test(HTML),
+       "la categoria de un egreso se lee por su nombre real (cat), no solo por categoria");
+    // 3. calcMesCompleto cuenta contra el sueldo SOLO lo que no salio de
+    //    ninguna cuenta. Las listas y las barras miraban otro conjunto: la
+    //    pantalla decia "estas transacciones suman los $80,00" y listaba
+    //    $80,00 + $25,00, y las barras repartian 100% + 31% = 131%.
+    ok(/var itemsCount=egPerM\.filter\(function\(e\)\{return e\.pagada&&!e\.cuentaId;\}\);/.test(cierre),
+       "la lista de gastos personales lista exactamente lo que suma");
+    ok(/var desdePers=egPerM\.filter\(function\(e\)\{return e\.pagada&&!!e\.cuentaId;\}\);/.test(cierre),
+       "y la linea de al lado, el complemento exacto: cada gasto una sola vez");
+    ok(/var cuentanContraSueldo=pagPerList\.filter\(function\(e\)\{return !e\.cuentaId;\}\);/.test(cierre),
+       "las barras de categoria se reparten sobre el mismo conjunto que su total");
+    // 4. El capital se calculaba en TRES sitios. La pantalla sumaba todas las
+    //    cuentas —incluidas las 💜 personales— y los prestamos por p.monto
+    //    (capital + interes): decia $4.225,14 donde el PDF decia $4.125,14.
+    //    El interes no es capital hasta que se cobra (ARREGLO 70).
+    ok(/var _cap=\(typeof capitalRealTotal==="function"\)\?capitalRealTotal\(\):null;/.test(cierre) &&
+       /var _potencial=_cap\.total;/.test(cierre),
+       "el potencial total de la pantalla sale de capitalRealTotal, como el PDF");
+    // Y el pie del PDF explica SU titular, no otro: sumaba las partes con el
+    // interes dentro y daba $4.225,14 debajo de un titular de $4.125,14.
+    ok(/_capReal\?_capReal\.enLaCalle:totalAfuera/.test(pdf),
+       "y el pie del PDF desglosa el mismo numero que el titular");
+  }
+
+  // ── ARREGLO 79: es un documento de junta, no una pantalla ──────────
+  // Sus palabras: "es un informe que va para una junta que es para toma de
+  // decisiones... no me puedes dar un informe con colores vibrantes con
+  // colores super tediosos para la vista porque me lo van a regresar".
+  // Medido antes: 34% de superficie con fondo de color, 30 colores de texto,
+  // 16 tamanos de letra entre 8px y 28px, 3 familias y 33 emojis. Y todo eso
+  // se imprime, porque el informe lleva print-color-adjust:exact.
+  {
+    const inf = sinComentarios(sacarFuncion("generarInformePDF"));
+    // Nada por debajo de 10px: en papel, al otro lado de una mesa, 8px no se
+    // lee. Lo eligio ella viendo las tres opciones.
+    const chicas = (inf.match(/font-size:(\d(?:\.\d)?)px/g) || [])
+      .filter(function(t){ return parseFloat(t.replace(/\D*([\d.]+).*/, "$1")) < 10; });
+    ok(chicas.length === 0, "en el informe no queda letra por debajo de 10px",
+       chicas.slice(0, 6).join(", "));
+    // Una sola familia. Antes habia tres mezcladas y los numeros no iban en
+    // cifras de ancho fijo, asi que las columnas no alineaban entre filas.
+    ok(!/Georgia|Times New Roman|SFMono|Menlo|Consolas/.test(inf),
+       "el informe va en una sola familia, la que eligio ella");
+    ok(/tabular-nums/.test(inf),
+       "y los numeros en cifras de ancho fijo, para que las columnas alineen");
+    // Los titulos de seccion sin emojis: es un documento para una junta.
+    const conEmoji = (inf.match(/sec\("[^"]*"/g) || [])
+      .filter(function(t){ return /\p{Extended_Pictographic}/u.test(t); });
+    ok(conEmoji.length === 0, "ningun titulo de seccion lleva emoji",
+       conEmoji.slice(0, 4).join(" "));
+    // Ni una tabla ni una seccion partida entre hojas. Son 5 hojas A4 y antes
+    // no habia una sola regla de salto.
+    ok(/break-inside:avoid/.test(inf) && /page-break-inside:avoid/.test(inf),
+       "ninguna tabla ni seccion se parte entre hojas");
+    ok(/@page\{margin/.test(inf), "y la hoja lleva sus margenes de impresion");
+  }
 }
 
 // La tarjeta de Configuracion marca el tema que esta CORRIENDO, no el que esta
