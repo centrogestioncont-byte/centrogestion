@@ -3069,9 +3069,9 @@ console.log("\nArreglo 64 · entrar con huella");
   // del socio. html2canvas solo captura #reporteCapture, que mide lo que la
   // hoja, asi que el PDF salia con la primera seccion y media y sin un solo
   // error en consola. Cada capa tiene que declarar su display.
-  ok(/#informePdfOverlay \.cuerpo\{padding:0 24px;display:block\}/.test(HTML),
+  ok(/\.inf-doc \.cuerpo\{padding:0 24px;display:block\}/.test(HTML),
      "el informe del mes declara su propio display, no hereda el flex de la barra lateral");
-  ok(/#reporteSocioOverlay \.cuerpo\{display:block\}/.test(HTML),
+  ok(/\.soc-doc \.cuerpo\{display:block\}/.test(HTML),
      "y el reporte del socio tambien");
   // Y la regla global sigue ahi: la barra lateral la necesita. Si alguien la
   // quitara "para arreglar el informe", el arreglo de arriba sobraria y la
@@ -3081,14 +3081,14 @@ console.log("\nArreglo 64 · entrar con huella");
   // El informe es BLANCO y las reglas globales pintan td y th con los colores
   // del tema (td{color:var(--ink)} y th{...!important}). Con Suave eso daba
   // #DCDAE0 sobre blanco: contraste 1,39, solo se leian los montos.
-  ok(/#informePdfOverlay td\{color:var\(--inf-tinta\)/.test(HTML),
+  ok(/\.inf-doc td\{color:var\(--inf-tinta\)/.test(HTML),
      "el informe fija el color de su texto de tabla, que si no lo pone el tema");
-  ok(/#informePdfOverlay th\{background:var\(--inf-cabecera\) !important;color:var\(--inf-tinta\) !important/.test(HTML),
+  ok(/\.inf-doc th\{background:var\(--inf-cabecera\) !important;color:var\(--inf-tinta\) !important/.test(HTML),
      "y el de sus cabeceras, que la regla global lleva !important");
   // El color de td va SIN !important a proposito: con specificity le gana a la
   // regla global, y asi los montos siguen pintandose de verde o rojo desde su
   // propio style. Con !important saldrian todos azules.
-  ok(!/#informePdfOverlay td\{color:var\(--inf-tinta\) !important/.test(HTML),
+  ok(!/\.inf-doc td\{color:var\(--inf-tinta\) !important/.test(HTML),
      "pero sin !important, o los montos pierden el rojo de lo que resta");
   // Las dos tablas que tenian cabecera ambar y roja pasaron a la cabecera gris
   // de todas las demas (ARREGLO 79): en un documento de junta, tres colores de
@@ -3163,10 +3163,10 @@ console.log("\nArreglo 64 · entrar con huella");
     // PARTE ESTE MES". Tercera colision de nombre del mismo tipo, despues de
     // .cuerpo y de td/th.
     ["val", "lbl", "sub"].forEach(function(c){
-      ok(new RegExp("#reporteSocioOverlay \\." + c + "\\{color:var\\(--inf-").test(HTML),
+      ok(new RegExp("\\.soc-doc \\." + c + "\\{color:var\\(--inf-").test(HTML),
          "la clase ." + c + " lleva su color, que si no se lo pone el tema");
     });
-    ok(/#reporteSocioOverlay td\{color:var\(--inf-tinta\)/.test(HTML),
+    ok(/\.soc-doc td\{color:var\(--inf-tinta\)/.test(HTML),
        "y el td tambien, ahora que la hoja es blanca en los tres temas");
   }
 
@@ -3246,7 +3246,7 @@ console.log("\nArreglo 64 · entrar con huella");
     // importes— porque la hoja media lo que midiera la pantalla y las tablas
     // no cabian. html2canvas solo captura lo de dentro, asi que el mismo boton
     // daba un documento completo desde la PC y uno sin cifras desde el movil.
-    ok(/\.hoja\{width:768px/.test(inf),
+    ok(/"\.inf-doc\{width:768px/.test(inf),
        "la hoja del informe mide 768px fijos, la genere el telefono o la PC");
     // El nowrap de la version estrecha era justo lo que empujaba las tablas
     // fuera de la hoja. Con el ancho fijo sobra, y volver a meterlo reabre el
@@ -3307,6 +3307,56 @@ console.log("\nArreglo 64 · entrar con huella");
     const inf2 = sinComentarios(sacarFuncion("generarInformePDF"));
     ok(/\+APP_VERSION\+/.test(inf2),
        "el informe lleva escrita la version que lo genero");
+  }
+
+  // ── ARREGLO 85: el estilo viaja CON la hoja, no con la pantalla ────
+  // html2pdf.js no dibuja el elemento donde esta: lo CLONA y lo cuelga de
+  // <body>, dentro de un contenedor suyo. Todo lo escrito como
+  // "#informePdfOverlay ..." deja de aplicar ahi, y manda el estilo general
+  // de la app. Medido clonando la hoja a mano: .cuerpo pasaba de block a FLEX
+  // (la regla global del armazon), el contenido de 768 px a 5.132, la tinta
+  // de #111111 a #dcdae0 y la cabecera de #f2f2f2 al azul oscuro del tema.
+  // Era exactamente el PDF que ella recibia. Por eso las reglas del documento
+  // cuelgan de una clase que lleva la propia hoja.
+  {
+    const inf = sacarFuncion("generarInformePDF");
+    ok(/class='hoja inf-doc' id='reporteCapture'/.test(inf),
+       "la hoja del informe lleva su propia clase, que viaja con el clon");
+    const soc = sacarFuncion("generarReporteSocio");
+    ok(/class='page soc-doc' id='reporteSocioCapture'/.test(soc),
+       "y la del socio tambien");
+    // Del overlay solo pueden quedar las reglas de PANTALLA: el fondo, la
+    // columna, los botones y la lupa. Nada que pinte el documento.
+    // El @media print queda FUERA de la cuenta: al imprimir no hay clon, el
+    // overlay de verdad esta ahi, y esas reglas son justamente las que lo
+    // adaptan al papel (esconder los botones, soltar el alto).
+    const CHROME = /^(contenido|btn|btnBar|btnShare|btnCerrar|lupa|lupa-int|no-print)$/;
+    [["#informePdfOverlay", inf], ["#reporteSocioOverlay", soc]].forEach(function(par){
+      const id = par[0];
+      const txt = sinComentarios(par[1])
+        .split("\n")
+        .filter(function(l){ return l.indexOf("@media print") === -1 && /^\s*"/.test(l); })
+        .join("\n");
+      const malas = [];
+      const re = new RegExp(id + "\\s+\\.([A-Za-z0-9_-]+)", "g");
+      let m;
+      while ((m = re.exec(txt))) if (!CHROME.test(m[1])) malas.push(m[1]);
+      ok(malas.length === 0,
+         id + ": del overlay solo cuelgan las reglas de pantalla, no las del documento",
+         malas.slice(0, 6).join(" | "));
+    });
+    // Y lo que antes se HEREDABA del overlay (letra, tinta, cifras de ancho
+    // fijo) tiene que estar en la hoja: fuera del overlay no lo hereda de nadie.
+    [["inf-doc", inf], ["soc-doc", soc]].forEach(function(par){
+      const propias = sinComentarios(par[1])
+        .split("\n")
+        .filter(function(l){ return l.indexOf('"." + par[0] + "{') !== -1 ||
+                                    l.indexOf('"\u002E' + par[0] + '{') !== -1; })
+        .join(" ");
+      ok(/font-family/.test(propias) && /color:var\(--inf-tinta\)/.test(propias) &&
+         /tabular-nums/.test(propias),
+         "." + par[0] + " lleva la letra, la tinta y las cifras de ancho fijo, sin heredarlas");
+    });
   }
 }
 

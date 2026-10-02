@@ -534,6 +534,47 @@ librería (el CDN está cerrado en el entorno y en el CI), **sustitúyela por un
 que anote lo que recibe**: eso sí es el camino de verdad hasta el último paso
 que se puede alcanzar desde aquí.
 
+### Y el estilo tiene que viajar CON la hoja (ARREGLO 85)
+
+El 83 y el 84 no arreglaron el archivo, porque la causa era otra y está una capa
+más abajo. Esta es **la de verdad**.
+
+**`html2pdf.js` no dibuja el elemento donde está: lo CLONA y lo cuelga de
+`<body>`, dentro de un contenedor suyo.** Todo lo escrito como
+`#informePdfOverlay …` deja de aplicar en ese clon, y manda el estilo general de
+la app. Medido clonando la hoja a mano, que es lo que la librería hace:
+
+```
+                 en pantalla        en el clon que se dibuja
+.cuerpo          block              FLEX      ← la regla global del armazón
+ancho            768                5.132
+tinta de tabla   #111111            #dcdae0   ← gris del tema
+cabecera         #f2f2f2            #14192a   ← azul oscuro del tema
+```
+
+Esa segunda columna **es exactamente el PDF que ella recibía**: secciones en
+fila, texto gris, cortado por la derecha. Y explica por qué la vista previa
+estaba bien: la pantalla sí tiene el overlay encima.
+
+Ahora las reglas del documento cuelgan de una clase que lleva **la propia
+hoja** —`.inf-doc` en el informe, `.soc-doc` en el del socio—, que viaja con el
+clon. Del overlay solo quedan las de pantalla: el fondo, la columna, los botones
+y la lupa. Y lo que antes se **heredaba** del overlay —la familia de letra, el
+color de la tinta, las cifras de ancho fijo— va escrito en la hoja, porque fuera
+del overlay no lo hereda de nadie.
+
+- **El `@media print` se queda en el overlay, a propósito.** Al imprimir no hay
+  clon: el overlay de verdad está ahí, y esas reglas son justo las que lo
+  adaptan al papel.
+- **La guardia cuenta selectores.** `pruebas/prestamos.js` recorre las dos hojas
+  de estilo y exige que del id del overlay solo cuelguen los nombres de pantalla.
+  Una regla nueva escrita con el id vuelve a abrir el agujero, y falla.
+
+**La lección, que es la cuarta vez con la misma forma:** este archivo tiene un
+estilo global —`.cuerpo`, `td`, `th`, `.val`, `.lbl`, `.sub`— y cualquier
+documento que se saque fuera de su sitio lo hereda. **Scopearlo por un id del
+contenedor no basta si lo que se exporta es el contenido, no el contenedor.**
+
 ### Una tarjeta se define en UN sitio
 
 `.pz-rejilla`, `.pz-card`, `.pz-rot`, `.pz-num`, `.pz-pie` viven en el `<style>`.
