@@ -487,6 +487,53 @@ cuatro —768 de ancho, 5.171 de alto, las 10 secciones dentro, ninguna celda
 fuera, letra mínima 10px— y la vista previa cabe sin hueco en blanco debajo. El
 reporte del socio se midió también y ese no tenía el problema.
 
+### Pero medir la PANTALLA no es medir el ARCHIVO (ARREGLO 84)
+
+El 83 arregló la hoja y el archivo descargado **siguió saliendo mal**. Sus
+palabras: *"no sé qué tanto te cuesta poder generar una descarga de un archivo
+en PDF… son unas medidas estándar, eso es fácil"*. Y tenía razón: el fallo no
+estaba en la hoja, estaba en el paso que no se había probado.
+
+**html2canvas no dibuja la página: la COPIA a un marco aparte y dibuja esa
+copia.** La vista previa no pasa por ese marco; el archivo sí. Dos cosas se
+colaban ahí, y las dos solo se ven desde el teléfono:
+
+- **Del marco se le pasaba el alto y no el ancho.** Sin `windowWidth`,
+  html2canvas usa el de la pantalla: 412 px en su teléfono, con la hoja en 768.
+- **`scale:2` sobre 768 × 5.171 pide un lienzo de casi 16 millones de píxeles.**
+  Android lo corta por encima de su tope **sin un solo error**: devuelve una
+  imagen recortada o deformada. De ahí sus **15 hojas** con el contenido diminuto
+  en una esquina donde deberían ser 5. En la PC no hay ese tope, así que ahí
+  nunca se vio.
+
+Ahora se le dan los cuatro números (`windowWidth`, `windowHeight`, `width`,
+`height`) y la escala **se mide** contra un presupuesto de 12 millones en vez de
+darse por hecha. Con su informe sale 1,5 — 151 puntos por pulgada en A4, que en
+papel se lee igual. **Un PDF que no se abre no se lee de ninguna manera.**
+
+Comprobado a 390, 412, 768 y 1280 px sustituyendo `html2pdf` por una función que
+anota lo que recibe: las opciones salen **idénticas** en los cuatro —marco
+768 × 5.171, escala 1,5, lienzo de 8,9 M, **5 hojas A4**— y la lupa vuelve a su
+sitio después de generar.
+
+**Compartir no compartía NADA y no lo decía.** Android pide un gesto reciente
+para abrir la hoja de compartir y generar el PDF tarda varios segundos, así que
+`navigator.share` se rechazaba; un `.catch(function(){})` vacío se tragaba el
+rechazo y el botón volvía a su texto normal. Desde fuera parecía que había
+funcionado. Ahora, si no se puede compartir, se descarga y se dice — menos
+`AbortError`, que es ella cancelando a propósito.
+
+**Y la versión del archivo va DENTRO del papel.** Dos veces el mismo día hubo
+que adivinar qué copia de la app había hecho un PDF que salía mal, mirando la
+forma de las tablas. Escrita ahí, cualquier captura suya lo dice sola.
+
+**La lección, y es la cara B del "mídelo, no lo deduzcas":** medir no vale si
+mides otra cosa. Aquí se midió lo que html2canvas *iba a* capturar —el DOM vivo—
+y el fallo estaba en la copia que dibuja. Cuando no se pueda ejecutar la
+librería (el CDN está cerrado en el entorno y en el CI), **sustitúyela por una
+que anote lo que recibe**: eso sí es el camino de verdad hasta el último paso
+que se puede alcanzar desde aquí.
+
 ### Una tarjeta se define en UN sitio
 
 `.pz-rejilla`, `.pz-card`, `.pz-rot`, `.pz-num`, `.pz-pie` viven en el `<style>`.
