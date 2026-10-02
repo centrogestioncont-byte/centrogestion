@@ -3132,6 +3132,44 @@ console.log("\nArreglo 64 · entrar con huella");
        "el informe del mes tiene sus propios colores, declarados en :root");
   }
 
+  // ── ARREGLO 81: el reporte del socio tampoco sigue al tema ────────
+  // Lo lee la misma persona, en la misma reunion y en el mismo papel que el
+  // informe del mes, asi que lleva la misma paleta y las mismas reglas.
+  // Estaba pintado con 41 nombres del tema en 93 sitios: generado en Suave le
+  // salia sobre hoja oscura.
+  {
+    const soc = sinComentarios(sacarFuncion("generarReporteSocio"));
+    const fuera = [];
+    (soc.match(/var\(--[\w-]+\)/g) || []).forEach(function(v){
+      if (!/^var\(--inf-/.test(v)) fuera.push(v);
+    });
+    ok(fuera.length === 0,
+       "el reporte del socio solo usa los colores del informe (--inf-*)",
+       fuera.slice(0, 8).join(", "));
+    ok(!/Georgia|Times New Roman|SFMono|Menlo|Consolas/.test(soc),
+       "va en una sola familia, la misma que el informe del mes");
+    const chicas = (soc.match(/font-size:(\d(?:\.\d)?)px/g) || [])
+      .filter(function(t){ return parseFloat(t.replace(/\D*([\d.]+).*/, "$1")) < 10; });
+    ok(chicas.length === 0, "y nada por debajo de 10px", chicas.slice(0, 5).join(", "));
+    ok(/tabular-nums/.test(soc), "con los numeros en cifras de ancho fijo");
+    ok(/break-inside:avoid/.test(soc) && /@page\{margin/.test(soc),
+       "y ninguna tabla partida entre hojas");
+    const conEmoji = (soc.match(/<h2[^>]*>[^<]*/g) || [])
+      .filter(function(t){ return /\p{Extended_Pictographic}/u.test(t); });
+    ok(conEmoji.length === 0, "sin emojis en los titulos", conEmoji.slice(0, 3).join(" "));
+    // .val, .lbl y .sub son TAMBIEN clases globales de la app, asi que las
+    // cifras de las tarjetas cogian el color del tema aunque la hoja ya fuera
+    // blanca: #DCDAE0 sobre blanco en Suave, contraste 1,33, justo en "TU
+    // PARTE ESTE MES". Tercera colision de nombre del mismo tipo, despues de
+    // .cuerpo y de td/th.
+    ["val", "lbl", "sub"].forEach(function(c){
+      ok(new RegExp("#reporteSocioOverlay \\." + c + "\\{color:var\\(--inf-").test(HTML),
+         "la clase ." + c + " lleva su color, que si no se lo pone el tema");
+    });
+    ok(/#reporteSocioOverlay td\{color:var\(--inf-tinta\)/.test(HTML),
+       "y el td tambien, ahora que la hoja es blanca en los tres temas");
+  }
+
   // ── ARREGLO 80: los numeros que no cuadraban ──────────────────────
   {
     const cierre = sinComentarios(sacarFuncion("rInformeCierre"));
