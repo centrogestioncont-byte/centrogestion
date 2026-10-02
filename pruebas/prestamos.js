@@ -3236,8 +3236,19 @@ console.log("\nArreglo 64 · entrar con huella");
        conEmoji.slice(0, 4).join(" "));
     // Ni una tabla ni una seccion partida entre hojas. Son 5 hojas A4 y antes
     // no habia una sola regla de salto.
-    ok(/break-inside:avoid/.test(inf) && /page-break-inside:avoid/.test(inf),
-       "ninguna tabla ni seccion se parte entre hojas");
+    // ARREGLO 86: lo indivisible es la FILA, no la tabla ni la seccion.
+    // El 79 las hacia indivisibles enteras y con sus datos salia al reves: una
+    // seccion que no cabia en lo que quedaba de hoja saltaba completa y dejaba
+    // el hueco. Medido con un mes de su tamano: 14 bloques empujados y 7.916 px
+    // de blanco —7,1 hojas vacias— contra 4 bloques y 75 px ahora.
+    ok(/\.inf-doc tr\{break-inside:avoid;page-break-inside:avoid\}/.test(inf),
+       "ninguna FILA se parte entre hojas");
+    // Ojo con la expresion: el estilo en linea lleva ';' dentro, asi que un
+    // [^;]* se corta antes de llegar y la guardia no fallaria nunca.
+    ok(!/var sec=function[\s\S]{0,160}break-inside:avoid/.test(inf),
+       "y la seccion ya no es indivisible, que era lo que dejaba media hoja en blanco");
+    ok(!/\.inf-doc table,\.inf-doc tr\{break-inside/.test(inf),
+       "ni la tabla entera: una de 20 filas no cabe en una hoja y se partia igual");
     ok(/@page\{margin/.test(inf), "y la hoja lleva sus margenes de impresion");
 
     // ── ARREGLO 83: el documento no depende del aparato que lo genera ──
