@@ -3271,6 +3271,42 @@ console.log("\nArreglo 64 · entrar con huella");
     const sl = sinComentarios(sacarFuncion("_sinLupa"));
     ok(/transform="none"/.test(sl) && /style\.height=""/.test(sl),
        "quitarla deja la hoja a sus 768px y sin altura impuesta");
+
+    // ── ARREGLO 84: el archivo que se descarga, no solo la vista previa ──
+    // html2canvas no dibuja la pagina: la copia a un marco aparte y dibuja esa
+    // copia. Se le pasaba el alto del marco y no el ancho, asi que el marco
+    // media lo que la pantalla (412 px en su telefono) mientras la hoja mide
+    // 768. La vista previa no pasa por ahi; el archivo si, y por eso el PDF
+    // descargado no se parecia a lo que se veia.
+    ok(/windowWidth:ANCHO_HOJA/.test(pdf) && /width:ANCHO_HOJA/.test(pdf),
+       "al generar el PDF se le dice tambien el ANCHO del marco, no solo el alto");
+    ok(/windowHeight:alturaReal/.test(pdf) && /height:alturaReal/.test(pdf),
+       "y el alto sigue siendo el real, no el de la pantalla");
+    // scale:2 sobre 768x5171 pide casi 16 millones de pixeles. Android corta
+    // el lienzo por encima de su tope SIN avisar: imagen recortada o
+    // deformada y ningun error. De ahi 15 hojas donde deberian ser 5.
+    ok(/TOPE_LIENZO/.test(pdf) && /while\s*\(escala>1/.test(pdf),
+       "la escala se mide contra el tope de lienzo, no se da por hecha");
+    ok(!/scale:2\b/.test(pdf),
+       "y ya no hay un scale:2 fijo que el telefono no pueda dibujar");
+  }
+  {
+    // Compartir no compartia NADA y no lo decia. Android pide un gesto
+    // reciente para abrir la hoja de compartir y generar el PDF tarda varios
+    // segundos, asi que navigator.share se rechazaba; un .catch() vacio se
+    // tragaba el rechazo y el boton volvia a su texto normal. Desde fuera
+    // parecia que habia funcionado.
+    ["_pdfInforme", "_compartirSocioImg"].forEach(function(nom){
+      const f = sinComentarios(sacarFuncion(nom));
+      ok(!/navigator\.share\([^]*?\)\.catch\(function\(\)\{\}\)/.test(f),
+         nom + ": compartir ya no se traga el fallo en silencio");
+      ok(/AbortError/.test(f),
+         nom + ": y cancelar a proposito no se confunde con un fallo");
+    });
+    // El papel que sale hacia fuera dice con que version se hizo.
+    const inf2 = sinComentarios(sacarFuncion("generarInformePDF"));
+    ok(/\+APP_VERSION\+/.test(inf2),
+       "el informe lleva escrita la version que lo genero");
   }
 }
 
