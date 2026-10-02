@@ -3069,9 +3069,9 @@ console.log("\nArreglo 64 · entrar con huella");
   // del socio. html2canvas solo captura #reporteCapture, que mide lo que la
   // hoja, asi que el PDF salia con la primera seccion y media y sin un solo
   // error en consola. Cada capa tiene que declarar su display.
-  ok(/#informePdfOverlay \.cuerpo\{padding:0 24px;display:block\}/.test(HTML),
+  ok(/\.inf-doc \.cuerpo\{padding:0 24px;display:block\}/.test(HTML),
      "el informe del mes declara su propio display, no hereda el flex de la barra lateral");
-  ok(/#reporteSocioOverlay \.cuerpo\{display:block\}/.test(HTML),
+  ok(/\.soc-doc \.cuerpo\{display:block\}/.test(HTML),
      "y el reporte del socio tambien");
   // Y la regla global sigue ahi: la barra lateral la necesita. Si alguien la
   // quitara "para arreglar el informe", el arreglo de arriba sobraria y la
@@ -3081,14 +3081,14 @@ console.log("\nArreglo 64 · entrar con huella");
   // El informe es BLANCO y las reglas globales pintan td y th con los colores
   // del tema (td{color:var(--ink)} y th{...!important}). Con Suave eso daba
   // #DCDAE0 sobre blanco: contraste 1,39, solo se leian los montos.
-  ok(/#informePdfOverlay td\{color:var\(--inf-tinta\)/.test(HTML),
+  ok(/\.inf-doc td\{color:var\(--inf-tinta\)/.test(HTML),
      "el informe fija el color de su texto de tabla, que si no lo pone el tema");
-  ok(/#informePdfOverlay th\{background:var\(--inf-cabecera\) !important;color:var\(--inf-tinta\) !important/.test(HTML),
+  ok(/\.inf-doc th\{background:var\(--inf-cabecera\) !important;color:var\(--inf-tinta\) !important/.test(HTML),
      "y el de sus cabeceras, que la regla global lleva !important");
   // El color de td va SIN !important a proposito: con specificity le gana a la
   // regla global, y asi los montos siguen pintandose de verde o rojo desde su
   // propio style. Con !important saldrian todos azules.
-  ok(!/#informePdfOverlay td\{color:var\(--inf-tinta\) !important/.test(HTML),
+  ok(!/\.inf-doc td\{color:var\(--inf-tinta\) !important/.test(HTML),
      "pero sin !important, o los montos pierden el rojo de lo que resta");
   // Las dos tablas que tenian cabecera ambar y roja pasaron a la cabecera gris
   // de todas las demas (ARREGLO 79): en un documento de junta, tres colores de
@@ -3163,10 +3163,10 @@ console.log("\nArreglo 64 · entrar con huella");
     // PARTE ESTE MES". Tercera colision de nombre del mismo tipo, despues de
     // .cuerpo y de td/th.
     ["val", "lbl", "sub"].forEach(function(c){
-      ok(new RegExp("#reporteSocioOverlay \\." + c + "\\{color:var\\(--inf-").test(HTML),
+      ok(new RegExp("\\.soc-doc \\." + c + "\\{color:var\\(--inf-").test(HTML),
          "la clase ." + c + " lleva su color, que si no se lo pone el tema");
     });
-    ok(/#reporteSocioOverlay td\{color:var\(--inf-tinta\)/.test(HTML),
+    ok(/\.soc-doc td\{color:var\(--inf-tinta\)/.test(HTML),
        "y el td tambien, ahora que la hoja es blanca en los tres temas");
   }
 
@@ -3236,8 +3236,19 @@ console.log("\nArreglo 64 · entrar con huella");
        conEmoji.slice(0, 4).join(" "));
     // Ni una tabla ni una seccion partida entre hojas. Son 5 hojas A4 y antes
     // no habia una sola regla de salto.
-    ok(/break-inside:avoid/.test(inf) && /page-break-inside:avoid/.test(inf),
-       "ninguna tabla ni seccion se parte entre hojas");
+    // ARREGLO 86: lo indivisible es la FILA, no la tabla ni la seccion.
+    // El 79 las hacia indivisibles enteras y con sus datos salia al reves: una
+    // seccion que no cabia en lo que quedaba de hoja saltaba completa y dejaba
+    // el hueco. Medido con un mes de su tamano: 14 bloques empujados y 7.916 px
+    // de blanco —7,1 hojas vacias— contra 4 bloques y 75 px ahora.
+    ok(/\.inf-doc tr\{break-inside:avoid;page-break-inside:avoid\}/.test(inf),
+       "ninguna FILA se parte entre hojas");
+    // Ojo con la expresion: el estilo en linea lleva ';' dentro, asi que un
+    // [^;]* se corta antes de llegar y la guardia no fallaria nunca.
+    ok(!/var sec=function[\s\S]{0,160}break-inside:avoid/.test(inf),
+       "y la seccion ya no es indivisible, que era lo que dejaba media hoja en blanco");
+    ok(!/\.inf-doc table,\.inf-doc tr\{break-inside/.test(inf),
+       "ni la tabla entera: una de 20 filas no cabe en una hoja y se partia igual");
     ok(/@page\{margin/.test(inf), "y la hoja lleva sus margenes de impresion");
 
     // ── ARREGLO 83: el documento no depende del aparato que lo genera ──
@@ -3246,7 +3257,7 @@ console.log("\nArreglo 64 · entrar con huella");
     // importes— porque la hoja media lo que midiera la pantalla y las tablas
     // no cabian. html2canvas solo captura lo de dentro, asi que el mismo boton
     // daba un documento completo desde la PC y uno sin cifras desde el movil.
-    ok(/\.hoja\{width:768px/.test(inf),
+    ok(/"\.inf-doc\{width:768px/.test(inf),
        "la hoja del informe mide 768px fijos, la genere el telefono o la PC");
     // El nowrap de la version estrecha era justo lo que empujaba las tablas
     // fuera de la hoja. Con el ancho fijo sobra, y volver a meterlo reabre el
@@ -3271,6 +3282,92 @@ console.log("\nArreglo 64 · entrar con huella");
     const sl = sinComentarios(sacarFuncion("_sinLupa"));
     ok(/transform="none"/.test(sl) && /style\.height=""/.test(sl),
        "quitarla deja la hoja a sus 768px y sin altura impuesta");
+
+    // ── ARREGLO 84: el archivo que se descarga, no solo la vista previa ──
+    // html2canvas no dibuja la pagina: la copia a un marco aparte y dibuja esa
+    // copia. Se le pasaba el alto del marco y no el ancho, asi que el marco
+    // media lo que la pantalla (412 px en su telefono) mientras la hoja mide
+    // 768. La vista previa no pasa por ahi; el archivo si, y por eso el PDF
+    // descargado no se parecia a lo que se veia.
+    ok(/windowWidth:ANCHO_HOJA/.test(pdf) && /width:ANCHO_HOJA/.test(pdf),
+       "al generar el PDF se le dice tambien el ANCHO del marco, no solo el alto");
+    ok(/windowHeight:alturaReal/.test(pdf) && /height:alturaReal/.test(pdf),
+       "y el alto sigue siendo el real, no el de la pantalla");
+    // scale:2 sobre 768x5171 pide casi 16 millones de pixeles. Android corta
+    // el lienzo por encima de su tope SIN avisar: imagen recortada o
+    // deformada y ningun error. De ahi 15 hojas donde deberian ser 5.
+    ok(/TOPE_LIENZO/.test(pdf) && /while\s*\(escala>1/.test(pdf),
+       "la escala se mide contra el tope de lienzo, no se da por hecha");
+    ok(!/scale:2\b/.test(pdf),
+       "y ya no hay un scale:2 fijo que el telefono no pueda dibujar");
+  }
+  {
+    // Compartir no compartia NADA y no lo decia. Android pide un gesto
+    // reciente para abrir la hoja de compartir y generar el PDF tarda varios
+    // segundos, asi que navigator.share se rechazaba; un .catch() vacio se
+    // tragaba el rechazo y el boton volvia a su texto normal. Desde fuera
+    // parecia que habia funcionado.
+    ["_pdfInforme", "_compartirSocioImg"].forEach(function(nom){
+      const f = sinComentarios(sacarFuncion(nom));
+      ok(!/navigator\.share\([^]*?\)\.catch\(function\(\)\{\}\)/.test(f),
+         nom + ": compartir ya no se traga el fallo en silencio");
+      ok(/AbortError/.test(f),
+         nom + ": y cancelar a proposito no se confunde con un fallo");
+    });
+    // El papel que sale hacia fuera dice con que version se hizo.
+    const inf2 = sinComentarios(sacarFuncion("generarInformePDF"));
+    ok(/\+APP_VERSION\+/.test(inf2),
+       "el informe lleva escrita la version que lo genero");
+  }
+
+  // ── ARREGLO 85: el estilo viaja CON la hoja, no con la pantalla ────
+  // html2pdf.js no dibuja el elemento donde esta: lo CLONA y lo cuelga de
+  // <body>, dentro de un contenedor suyo. Todo lo escrito como
+  // "#informePdfOverlay ..." deja de aplicar ahi, y manda el estilo general
+  // de la app. Medido clonando la hoja a mano: .cuerpo pasaba de block a FLEX
+  // (la regla global del armazon), el contenido de 768 px a 5.132, la tinta
+  // de #111111 a #dcdae0 y la cabecera de #f2f2f2 al azul oscuro del tema.
+  // Era exactamente el PDF que ella recibia. Por eso las reglas del documento
+  // cuelgan de una clase que lleva la propia hoja.
+  {
+    const inf = sacarFuncion("generarInformePDF");
+    ok(/class='hoja inf-doc' id='reporteCapture'/.test(inf),
+       "la hoja del informe lleva su propia clase, que viaja con el clon");
+    const soc = sacarFuncion("generarReporteSocio");
+    ok(/class='page soc-doc' id='reporteSocioCapture'/.test(soc),
+       "y la del socio tambien");
+    // Del overlay solo pueden quedar las reglas de PANTALLA: el fondo, la
+    // columna, los botones y la lupa. Nada que pinte el documento.
+    // El @media print queda FUERA de la cuenta: al imprimir no hay clon, el
+    // overlay de verdad esta ahi, y esas reglas son justamente las que lo
+    // adaptan al papel (esconder los botones, soltar el alto).
+    const CHROME = /^(contenido|btn|btnBar|btnShare|btnCerrar|lupa|lupa-int|no-print)$/;
+    [["#informePdfOverlay", inf], ["#reporteSocioOverlay", soc]].forEach(function(par){
+      const id = par[0];
+      const txt = sinComentarios(par[1])
+        .split("\n")
+        .filter(function(l){ return l.indexOf("@media print") === -1 && /^\s*"/.test(l); })
+        .join("\n");
+      const malas = [];
+      const re = new RegExp(id + "\\s+\\.([A-Za-z0-9_-]+)", "g");
+      let m;
+      while ((m = re.exec(txt))) if (!CHROME.test(m[1])) malas.push(m[1]);
+      ok(malas.length === 0,
+         id + ": del overlay solo cuelgan las reglas de pantalla, no las del documento",
+         malas.slice(0, 6).join(" | "));
+    });
+    // Y lo que antes se HEREDABA del overlay (letra, tinta, cifras de ancho
+    // fijo) tiene que estar en la hoja: fuera del overlay no lo hereda de nadie.
+    [["inf-doc", inf], ["soc-doc", soc]].forEach(function(par){
+      const propias = sinComentarios(par[1])
+        .split("\n")
+        .filter(function(l){ return l.indexOf('"." + par[0] + "{') !== -1 ||
+                                    l.indexOf('"\u002E' + par[0] + '{') !== -1; })
+        .join(" ");
+      ok(/font-family/.test(propias) && /color:var\(--inf-tinta\)/.test(propias) &&
+         /tabular-nums/.test(propias),
+         "." + par[0] + " lleva la letra, la tinta y las cifras de ancho fijo, sin heredarlas");
+    });
   }
 }
 
