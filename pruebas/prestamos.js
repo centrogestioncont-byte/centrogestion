@@ -2378,7 +2378,7 @@ ok(/te debe \(no se le paga este mes\)/.test(HTML),
 // Ruido que estorbaba la lectura.
 ok(!/mes anterior encontrado/.test(HTML),
    "fuera la linea de depuracion que se veia en produccion");
-ok(/salieron de tus cuentas personales/.test(HTML),
+ok(/se pagaron desde una cuenta, así que ya bajaron ESA cuenta/.test(HTML),
    "se explica por que unos gastos personales no bajan el disponible");
 // El cierre vivo, en español. (rCierreMes/imprimirRelatorioContador siguen en
 // portugues, pero son codigo muerto que nadie llama; se borran aparte.)
@@ -3130,6 +3130,44 @@ console.log("\nArreglo 64 · entrar con huella");
        pisados3.slice(0, 6).join(", "));
     ok(/--inf-tinta:\s*#111111/.test(HTML) && /--inf-azul:\s*#14213D/.test(HTML),
        "el informe del mes tiene sus propios colores, declarados en :root");
+  }
+
+  // ── ARREGLO 80: los numeros que no cuadraban ──────────────────────
+  {
+    const cierre = sinComentarios(sacarFuncion("rInformeCierre"));
+    const pdf = sinComentarios(sacarFuncion("generarInformePDF"));
+    // 1. La pestaña Bancos contaba las cuentas USDT DOS VECES: arrancaba el
+    //    total con getInventarioStats().disponible —que es, literal, la suma de
+    //    los saldos de las cuentas USDT— y despues volvia a recorrerlas todas.
+    //    Medido: $4.217,06 donde hay $3.414,28, o sea los $802,78 de Binance
+    //    inventados, y la pestaña Pendientes del mismo modulo decia $3.591,10.
+    ok(!/var totalUsdt=invUsdtSec/.test(cierre) && /var totalUsdt=0;/.test(cierre),
+       "el total de Bancos no arranca del inventario: contaba Binance dos veces");
+    // 2. Los egresos guardan su categoria en `cat`. Leerla solo por `categoria`
+    //    hacia que TODO saliera "General", en pantalla y en el PDF.
+    ok(!/e\.categoria\|\|"General"/.test(HTML),
+       "la categoria de un egreso se lee por su nombre real (cat), no solo por categoria");
+    // 3. calcMesCompleto cuenta contra el sueldo SOLO lo que no salio de
+    //    ninguna cuenta. Las listas y las barras miraban otro conjunto: la
+    //    pantalla decia "estas transacciones suman los $80,00" y listaba
+    //    $80,00 + $25,00, y las barras repartian 100% + 31% = 131%.
+    ok(/var itemsCount=egPerM\.filter\(function\(e\)\{return e\.pagada&&!e\.cuentaId;\}\);/.test(cierre),
+       "la lista de gastos personales lista exactamente lo que suma");
+    ok(/var desdePers=egPerM\.filter\(function\(e\)\{return e\.pagada&&!!e\.cuentaId;\}\);/.test(cierre),
+       "y la linea de al lado, el complemento exacto: cada gasto una sola vez");
+    ok(/var cuentanContraSueldo=pagPerList\.filter\(function\(e\)\{return !e\.cuentaId;\}\);/.test(cierre),
+       "las barras de categoria se reparten sobre el mismo conjunto que su total");
+    // 4. El capital se calculaba en TRES sitios. La pantalla sumaba todas las
+    //    cuentas —incluidas las 💜 personales— y los prestamos por p.monto
+    //    (capital + interes): decia $4.225,14 donde el PDF decia $4.125,14.
+    //    El interes no es capital hasta que se cobra (ARREGLO 70).
+    ok(/var _cap=\(typeof capitalRealTotal==="function"\)\?capitalRealTotal\(\):null;/.test(cierre) &&
+       /var _potencial=_cap\.total;/.test(cierre),
+       "el potencial total de la pantalla sale de capitalRealTotal, como el PDF");
+    // Y el pie del PDF explica SU titular, no otro: sumaba las partes con el
+    // interes dentro y daba $4.225,14 debajo de un titular de $4.125,14.
+    ok(/_capReal\?_capReal\.enLaCalle:totalAfuera/.test(pdf),
+       "y el pie del PDF desglosa el mismo numero que el titular");
   }
 
   // ── ARREGLO 79: es un documento de junta, no una pantalla ──────────
