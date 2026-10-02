@@ -449,6 +449,44 @@ sale HACIA FUERA —el flyer, el informe del contador, el PDF del cierre— sus
 colores son suyos, no del tema. El tema es del aparato de quien lo genera; lo que
 sale ya no está en ese aparato.
 
+### Y tampoco el ANCHO: el informe mide 768 px lo genere quien lo genere (ARREGLO 83)
+
+Misma regla, otra propiedad, y costó encontrarla porque desde la PC no se ve.
+
+`#reporteCapture` medía lo que midiera la pantalla. Desde la PC son 768 y cabe
+todo; desde su teléfono son 412 y las tablas no caben. html2canvas **solo captura
+lo que hay dentro del elemento**, así que lo de fuera no sale ni avisa. Medido el
+02/10 a 412 px:
+
+```
+77 celdas fuera de la hoja  ←  la columna MONTO entera, todos los importes
+```
+
+El mismo botón daba dos documentos distintos según el aparato. Y el bloque
+`@media (max-width:639px)` que encogía la letra y metía `white-space:nowrap` era
+**parte del problema**, no un apaño: el nowrap es lo que empujaba las tablas
+fuera. Se quitó.
+
+Ahora la hoja son **768 px fijos** y en el teléfono se ve reducida con una lupa
+(`#reporteLupa`). Tres cosas que no hay que deshacer:
+
+- **La lupa va aparte de la hoja, en dos capas.** El `scale` en la de dentro y la
+  altura en la de fuera. Puestos en el mismo elemento se encoge dos veces —la
+  altura que se le fija la vuelve a reducir el propio `scale`— y la hoja se sale
+  de su hueco por abajo. Medido: 2.775 px de alto quedaban en 1.489.
+- **Se quita antes de capturar** (`_sinLupa()`). Un `transform` en un antecesor sí
+  entra en el recuadro que mide html2pdf: capturar con ella puesta da un PDF al
+  tamaño reducido, borroso y con la letra por debajo de los 10px que este
+  documento tiene como suelo.
+- **Y se repone en los DOS caminos**, salga bien o falle. Reponerla solo al salir
+  bien deja la vista previa a tamaño completo dentro de un teléfono, sin forma de
+  volver atrás salvo cerrar y abrir.
+
+Comprobado a 390, 412, 768 y 1280 px: lo que se captura es **idéntico** en los
+cuatro —768 de ancho, 5.171 de alto, las 10 secciones dentro, ninguna celda
+fuera, letra mínima 10px— y la vista previa cabe sin hueco en blanco debajo. El
+reporte del socio se midió también y ese no tenía el problema.
+
 ### Una tarjeta se define en UN sitio
 
 `.pz-rejilla`, `.pz-card`, `.pz-rot`, `.pz-num`, `.pz-pie` viven en el `<style>`.

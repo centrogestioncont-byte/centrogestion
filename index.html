@@ -2597,7 +2597,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261002_v154";
+var APP_VERSION = "20261002_v155";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -17241,6 +17241,46 @@ function exportarReporteContadorCSV(mesKey){
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+// ARREGLO 83 ─ la vista previa se encoge; el documento NO.
+// La hoja mide 768 px siempre. En un teléfono eso no cabe, así que se reduce
+// con un scale sobre #reporteLupa, que envuelve a la hoja pero no se captura.
+// La altura de la lupa se fija a mano porque un elemento con scale sigue
+// ocupando su tamaño sin reducir: sin esto quedaría un hueco en blanco debajo
+// del informe tan alto como lo que se encogió.
+function _ajustarLupaInforme(){
+  var lupa=document.getElementById("reporteLupa");
+  var intr=document.getElementById("reporteLupaInt");
+  var hoja=document.getElementById("reporteCapture");
+  if(!lupa||!intr||!hoja) return;
+  var pad=lupa.parentElement;
+  if(!pad) return;
+  // clientWidth INCLUYE el relleno, asi que hay que descontarlo: con los 8 px
+  // de cada lado del telefono, escalar contra el ancho con relleno dejaba la
+  // hoja 16 px mas ancha que su contenedor y volvia a salirse por la derecha.
+  var cs=getComputedStyle(pad);
+  var disp=pad.clientWidth-(parseFloat(cs.paddingLeft)||0)-(parseFloat(cs.paddingRight)||0);
+  if(!(disp>0)) return;
+  var esc=Math.min(1, disp/768);
+  if(esc>=0.999){ intr.style.transform=""; lupa.style.height=""; return; }
+  // El scale va en la capa de DENTRO y la altura en la de fuera. Puestos en el
+  // mismo elemento se encogia dos veces —la altura que se le fijaba la volvia a
+  // reducir el propio scale— y la hoja se salia de su hueco por abajo.
+  intr.style.transform="scale("+esc+")";
+  lupa.style.height=Math.ceil(hoja.offsetHeight*esc)+"px";
+}
+window.addEventListener("resize", function(){ _ajustarLupaInforme(); });
+// Un scale en un antecesor SÍ entra en el recuadro que html2pdf mide, así que
+// capturar con la lupa puesta daría un PDF al tamaño reducido —borroso y con
+// la letra por debajo de los 10px que este documento tiene como suelo—. Se
+// quita antes y se repone después, pase lo que pase (también si falla).
+function _sinLupa(){
+  var lupa=document.getElementById("reporteLupa");
+  var intr=document.getElementById("reporteLupaInt");
+  if(!lupa||!intr) return function(){};
+  var t=intr.style.transform, h=lupa.style.height;
+  intr.style.transform="none"; lupa.style.height="";
+  return function(){ intr.style.transform=t; lupa.style.height=h; };
+}
 function _cargarH2PDF(cb){
   if(typeof html2pdf!=="undefined"){cb();return;}
   var s=document.createElement("script");
@@ -17278,6 +17318,7 @@ function _pdfInforme(btnId,modo){
     // después de "Resumen General"). Forzamos overflow visible y le damos
     // el alto REAL (scrollHeight) para que capture el documento completo.
     var _overflowPrev=el.style.overflow;
+    var _reponerLupa=_sinLupa();          // ARREGLO 83
     el.style.overflow="visible";
     var alturaReal=el.scrollHeight;
     var opciones={
@@ -17294,7 +17335,7 @@ function _pdfInforme(btnId,modo){
       setTimeout(function(){URL.revokeObjectURL(url);},2000);
     }
     html2pdf().set(opciones).from(el).toPdf().output("blob").then(function(blob){
-      el.style.overflow=_overflowPrev;
+      el.style.overflow=_overflowPrev; _reponerLupa();
       // Compartir: se intenta la hoja de compartir del teléfono (WhatsApp,
       // correo). Si el navegador no la tiene, se descarga y se avisa.
       // Descargar: siempre al archivo, sin preguntar.
@@ -17308,7 +17349,7 @@ function _pdfInforme(btnId,modo){
       btn.disabled=false;
       setTimeout(function(){btn.textContent=t0;},4000);
     }).catch(function(e){
-      el.style.overflow=_overflowPrev;
+      el.style.overflow=_overflowPrev; _reponerLupa();
       alert("No se pudo generar el PDF: "+e.message);
       btn.textContent=t0; btn.disabled=false;
     });
@@ -17435,7 +17476,19 @@ function generarInformePDF(mesKey){
   var estiloHtml="<style id='estiloInformePdf'>"+
   "#informePdfOverlay{position:fixed;inset:0;background:var(--inf-fondo);z-index:99998;overflow-y:auto;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:var(--inf-tinta);font-variant-numeric:tabular-nums;font-feature-settings:\"tnum\" 1}"+
   "#informePdfOverlay .contenido{max-width:800px;margin:0 auto;padding:16px}"+
-  "#informePdfOverlay .hoja{background:var(--inf-sobre);border-radius:2px;box-shadow:0 8px 30px rgba(20,33,61,.14);overflow:hidden;padding-bottom:24px}"+
+  // ARREGLO 83: ancho FIJO. Antes la hoja medía lo que midiera la pantalla, y
+  // desde el teléfono (412 px) las tablas no cabían: medido, 77 celdas se
+  // quedaban fuera de #reporteCapture —la columna MONTO entera, todos los
+  // importes— y html2canvas solo captura lo que hay dentro. Desde la PC no
+  // pasaba, así que el mismo botón daba dos documentos distintos. Es la misma
+  // regla que ya rige los colores del flyer y de este informe: lo que sale
+  // HACIA FUERA no depende del aparato desde el que se generó.
+  "#informePdfOverlay .hoja{width:768px;background:var(--inf-sobre);border-radius:2px;box-shadow:0 8px 30px rgba(20,33,61,.14);overflow:hidden;padding-bottom:24px}"+
+  // La lupa solo encoge la VISTA PREVIA para que quepa en el teléfono. No se
+  // captura: _sinLupa() la quita antes de generar el PDF y la repone después,
+  // porque un scale en un antecesor sí entra en el recuadro que mide html2pdf
+  // y saldría un PDF a media resolución.
+  "#informePdfOverlay .lupa{overflow:hidden}#informePdfOverlay .lupa-int{transform-origin:top left}"+
   "#informePdfOverlay .ticket-top{background:var(--inf-azul);padding:24px 24px 18px;position:relative;margin-bottom:20px}"+
   "#informePdfOverlay .eyebrow{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--inf-azul2);font-weight:600}"+
   "#informePdfOverlay .num{font-variant-numeric:tabular-nums}"+
@@ -17460,12 +17513,15 @@ function generarInformePDF(mesKey){
   "#informePdfOverlay h2{break-after:avoid;page-break-after:avoid}"+
   "#informePdfOverlay table,#informePdfOverlay tr{break-inside:avoid;page-break-inside:avoid}"+
   "@page{margin:14mm 12mm}"+
-  "@media print{*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important}body>*:not(#informePdfOverlay){display:none !important}#informePdfOverlay{position:static!important;inset:auto!important;height:auto!important;max-height:none!important;overflow:visible!important;background:var(--inf-sobre)}#informePdfOverlay .contenido{height:auto!important;overflow:visible!important;max-width:none;padding:0}#informePdfOverlay .btnBar,#informePdfOverlay .btnCerrar{display:none !important}#informePdfOverlay .hoja{box-shadow:none;height:auto!important;overflow:visible!important}}"+
+  "@media print{*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important}body>*:not(#informePdfOverlay){display:none !important}#informePdfOverlay{position:static!important;inset:auto!important;height:auto!important;max-height:none!important;overflow:visible!important;background:var(--inf-sobre)}#informePdfOverlay .contenido{height:auto!important;overflow:visible!important;max-width:none;padding:0}#informePdfOverlay .btnBar,#informePdfOverlay .btnCerrar{display:none !important}#informePdfOverlay .hoja{box-shadow:none;height:auto!important;overflow:visible!important;width:auto!important}#informePdfOverlay .lupa{height:auto!important;overflow:visible!important}#informePdfOverlay .lupa-int{transform:none!important}}"+
   "@media (min-width:640px){#informePdfOverlay .btnBar{display:flex;gap:8px}#informePdfOverlay .btn{width:auto;padding:10px 18px}}"+
   "#informePdfOverlay .tabla-scroll{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}"+
-  // El suelo de 10px vale tambien en pantalla estrecha: este documento se
-  // imprime, y lo que se lee en el telefono es lo que se va a imprimir.
-  "@media (max-width:639px){#informePdfOverlay td,#informePdfOverlay th{font-size:10px;padding:6px 5px;white-space:nowrap}#informePdfOverlay .ticket-top,#informePdfOverlay .cuerpo{padding-left:16px;padding-right:16px}}"+
+  // ARREGLO 83: aqui habia un bloque que en pantalla estrecha encogia la letra
+  // a 10px, metia white-space:nowrap y recortaba los margenes. Con la hoja a
+  // 768 fijos sobra, y ademas era parte del problema: el nowrap era lo que
+  // empujaba las tablas fuera de la hoja. El documento es el mismo se genere
+  // donde se genere.
+  "@media (max-width:860px){#informePdfOverlay .contenido{max-width:none;padding:16px 8px}}"+
   "</style>";
   var html=
   "<div id='informePdfOverlay'><div class='contenido'>"+
@@ -17478,6 +17534,10 @@ function generarInformePDF(mesKey){
     "<button class='btn btnShare' id='btnCompartirInforme' onclick='_compartirInformeImg()'>Compartir</button>"+
     "<button class='btn' onclick='window.print()'>Imprimir</button>"+
   "</div>"+
+  // ARREGLO 83: la hoja mide 768 SIEMPRE, la genere el telefono o la PC. En el
+  // telefono se ve reducida con un scale sobre esta lupa, que no se captura.
+  "<div class='lupa' id='reporteLupa'>"+
+  "<div class='lupa-int' id='reporteLupaInt'>"+
   "<div class='hoja' id='reporteCapture'>"+
   "<div class='ticket-top'>"+
   "<div style='display:flex;justify-content:space-between;align-items:flex-start'>"+
@@ -17989,12 +18049,15 @@ function generarInformePDF(mesKey){
   }())+
   "</div>"+ // cierra .cuerpo
   "</div>"+ // cierra .hoja / #reporteCapture
+  "</div>"+ // cierra .lupa-int
+  "</div>"+ // cierra .lupa / #reporteLupa
   "</div></div>"; // cierra .contenido y #informePdfOverlay
   window._informeMesLabelActual = mesLabel;
   var _old=document.getElementById("informePdfOverlay"); if(_old) _old.remove();
   var _oldStyle=document.getElementById("estiloInformePdf"); if(_oldStyle) _oldStyle.remove();
   document.head.insertAdjacentHTML("beforeend", estiloHtml);
   document.body.insertAdjacentHTML("beforeend", html);
+  _ajustarLupaInforme();   // ARREGLO 83: encoger la vista previa si no cabe
   window.scrollTo(0,0);
  }catch(e){
   console.error("generarInformePDF error:",e);

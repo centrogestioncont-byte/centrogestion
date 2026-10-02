@@ -3239,6 +3239,38 @@ console.log("\nArreglo 64 · entrar con huella");
     ok(/break-inside:avoid/.test(inf) && /page-break-inside:avoid/.test(inf),
        "ninguna tabla ni seccion se parte entre hojas");
     ok(/@page\{margin/.test(inf), "y la hoja lleva sus margenes de impresion");
+
+    // ── ARREGLO 83: el documento no depende del aparato que lo genera ──
+    // Medido el 02/10 generando desde un telefono de 412px: 77 celdas se
+    // quedaban FUERA de #reporteCapture —la columna MONTO entera, todos los
+    // importes— porque la hoja media lo que midiera la pantalla y las tablas
+    // no cabian. html2canvas solo captura lo de dentro, asi que el mismo boton
+    // daba un documento completo desde la PC y uno sin cifras desde el movil.
+    ok(/\.hoja\{width:768px/.test(inf),
+       "la hoja del informe mide 768px fijos, la genere el telefono o la PC");
+    // El nowrap de la version estrecha era justo lo que empujaba las tablas
+    // fuera de la hoja. Con el ancho fijo sobra, y volver a meterlo reabre el
+    // mismo agujero.
+    ok(!/max-width:639px\)\{#informePdfOverlay td/.test(inf),
+       "y no vuelve a encoger la letra ni a meter nowrap en pantalla estrecha");
+    // La lupa solo encoge la VISTA PREVIA. Un scale en un antecesor entra en
+    // el recuadro que mide html2pdf, asi que si se captura con ella puesta
+    // sale un PDF reducido: borroso y con la letra por debajo de los 10px.
+    ok(/lupa-int\{transform-origin/.test(inf),
+       "la vista previa se encoge con una lupa aparte de la hoja");
+  }
+  {
+    const pdf = sinComentarios(sacarFuncion("_pdfInforme"));
+    ok(/_sinLupa\(\)/.test(pdf),
+       "antes de capturar se quita la lupa, para que el PDF salga a tamano real");
+    // Reponerla en los DOS caminos: si solo se repusiera al salir bien, un
+    // fallo del generador dejaria la vista previa a tamano completo dentro de
+    // un telefono, sin forma de volver atras salvo cerrar y abrir.
+    ok((pdf.match(/_reponerLupa\(\)/g) || []).length >= 2,
+       "y se repone tanto si sale bien como si falla");
+    const sl = sinComentarios(sacarFuncion("_sinLupa"));
+    ok(/transform="none"/.test(sl) && /style\.height=""/.test(sl),
+       "quitarla deja la hoja a sus 768px y sin altura impuesta");
   }
 }
 
