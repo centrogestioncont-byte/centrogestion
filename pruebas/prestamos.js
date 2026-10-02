@@ -2970,8 +2970,10 @@ console.log("\nArreglo 64 · entrar con huella");
   // es justo el error que se arreglo.
   // Y los --fly-* igual (ARREGLO 73): el flyer es lo que le llega al cliente
   // y ella imprime, no una pantalla; el tema es del aparato.
+  // Y los --inf-* (ARREGLO 79): el informe del mes es el documento que va a la
+  // junta con el socio. Misma razon, tercera vez.
   const sinOscuro = [...enClaro].filter(function(k){
-    return !enOsc.has(k) && !/^--(radius|shadow|ent-|fly-)/.test(k);
+    return !enOsc.has(k) && !/^--(radius|shadow|ent-|fly-|inf-)/.test(k);
   });
   ok(sinOscuro.length === 0, "todo color tiene su version oscura",
      sinOscuro.slice(0, 6).join(", "));
@@ -3067,7 +3069,7 @@ console.log("\nArreglo 64 · entrar con huella");
   // del socio. html2canvas solo captura #reporteCapture, que mide lo que la
   // hoja, asi que el PDF salia con la primera seccion y media y sin un solo
   // error en consola. Cada capa tiene que declarar su display.
-  ok(/#informePdfOverlay \.cuerpo\{display:block\}/.test(HTML),
+  ok(/#informePdfOverlay \.cuerpo\{padding:0 24px;display:block\}/.test(HTML),
      "el informe del mes declara su propio display, no hereda el flex de la barra lateral");
   ok(/#reporteSocioOverlay \.cuerpo\{display:block\}/.test(HTML),
      "y el reporte del socio tambien");
@@ -3079,29 +3081,89 @@ console.log("\nArreglo 64 · entrar con huella");
   // El informe es BLANCO y las reglas globales pintan td y th con los colores
   // del tema (td{color:var(--ink)} y th{...!important}). Con Suave eso daba
   // #DCDAE0 sobre blanco: contraste 1,39, solo se leian los montos.
-  ok(/#informePdfOverlay td\{color:#14213D/.test(HTML),
+  ok(/#informePdfOverlay td\{color:var\(--inf-tinta\)/.test(HTML),
      "el informe fija el color de su texto de tabla, que si no lo pone el tema");
-  ok(/#informePdfOverlay th\{background:#14213D !important;color:#fff !important/.test(HTML),
+  ok(/#informePdfOverlay th\{background:var\(--inf-cabecera\) !important;color:var\(--inf-tinta\) !important/.test(HTML),
      "y el de sus cabeceras, que la regla global lleva !important");
   // El color de td va SIN !important a proposito: con specificity le gana a la
   // regla global, y asi los montos siguen pintandose de verde o rojo desde su
   // propio style. Con !important saldrian todos azules.
-  ok(!/#informePdfOverlay td\{color:#14213D !important/.test(HTML),
-     "pero sin !important, o los montos pierden su verde y su rojo");
-  // Las dos tablas de cabecera ambar y roja llevan clase porque el !important
-  // de la regla global de th se come el color y el fondo de su fila.
-  ok(/#informePdfOverlay th\.thAm\{/.test(HTML) && /#informePdfOverlay th\.thRo\{/.test(HTML) &&
-     /<th class='thAm'/.test(HTML) && /<th class='thRo'/.test(HTML),
-     "las cabeceras ambar y roja del informe conservan su color con su clase");
+  ok(!/#informePdfOverlay td\{color:var\(--inf-tinta\) !important/.test(HTML),
+     "pero sin !important, o los montos pierden el rojo de lo que resta");
+  // Las dos tablas que tenian cabecera ambar y roja pasaron a la cabecera gris
+  // de todas las demas (ARREGLO 79): en un documento de junta, tres colores de
+  // cabecera distintos no dicen nada que no diga ya el titulo de la tabla.
+  ok(!/thAm|thRo/.test(HTML),
+     "no quedan cabeceras de color sueltas: todas las tablas iguales");
 
   // Va sobre el CODIGO, no sobre los comentarios: el ARREGLO 78 tuvo que
   // escribir en un comentario cual era la regla global que se colaba
   // (td{color:var(--ink)}) y eso disparaba la guardia sin que hubiera ni un
   // color del tema en el informe. Un comentario no pinta nada.
-  ["generarInformePDF", "rInformeCierre"].forEach(function(f){
-    ok(!/var\(--/.test(sinComentarios(sacarFuncion(f))),
-       "el informe (" + f + ") no usa ningun color del tema");
-  });
+  //
+  // rInformeCierre es la PANTALLA del cierre: ahi no se usa ningun nombre de
+  // color, ni del tema ni propio. El informe que sale en PDF si tiene los
+  // suyos (--inf-*, ARREGLO 79) y no puede usar ningun otro.
+  ok(!/var\(--/.test(sinComentarios(sacarFuncion("rInformeCierre"))),
+     "la pantalla del cierre no usa ningun color del tema");
+  {
+    const fuera = [];
+    (sinComentarios(sacarFuncion("generarInformePDF")).match(/var\(--[\w-]+\)/g) || [])
+      .forEach(function(v){ if (!/^var\(--inf-/.test(v)) fuera.push(v); });
+    ok(fuera.length === 0,
+       "el informe del mes solo usa sus propios colores (--inf-*)",
+       fuera.slice(0, 6).join(", "));
+  }
+  // Y ningun tema puede repintarlos: es lo que rompio el flyer y las dos
+  // pantallas de entrada cuando el por omision paso a Suave.
+  {
+    const oscInf = (HTML.match(/html\[data-tema="suave"\]\{[\s\S]*?\n\}/) || [""])[0];
+    const papInf = (HTML.match(/html\[data-tema="papel"\]\{[\s\S]*?\n\}/) || [""])[0];
+    const pisados3 = [];
+    [["suave", oscInf], ["papel", papInf]].forEach(function(par){
+      (par[1].match(/--inf-[\w-]+\s*:/g) || []).forEach(function(d){
+        pisados3.push(par[0] + " " + d.replace(/\s*:$/, ""));
+      });
+    });
+    ok(pisados3.length === 0,
+       "ningun tema repinta el informe del mes: sale igual desde cualquier aparato",
+       pisados3.slice(0, 6).join(", "));
+    ok(/--inf-tinta:\s*#111111/.test(HTML) && /--inf-azul:\s*#14213D/.test(HTML),
+       "el informe del mes tiene sus propios colores, declarados en :root");
+  }
+
+  // ── ARREGLO 79: es un documento de junta, no una pantalla ──────────
+  // Sus palabras: "es un informe que va para una junta que es para toma de
+  // decisiones... no me puedes dar un informe con colores vibrantes con
+  // colores super tediosos para la vista porque me lo van a regresar".
+  // Medido antes: 34% de superficie con fondo de color, 30 colores de texto,
+  // 16 tamanos de letra entre 8px y 28px, 3 familias y 33 emojis. Y todo eso
+  // se imprime, porque el informe lleva print-color-adjust:exact.
+  {
+    const inf = sinComentarios(sacarFuncion("generarInformePDF"));
+    // Nada por debajo de 10px: en papel, al otro lado de una mesa, 8px no se
+    // lee. Lo eligio ella viendo las tres opciones.
+    const chicas = (inf.match(/font-size:(\d(?:\.\d)?)px/g) || [])
+      .filter(function(t){ return parseFloat(t.replace(/\D*([\d.]+).*/, "$1")) < 10; });
+    ok(chicas.length === 0, "en el informe no queda letra por debajo de 10px",
+       chicas.slice(0, 6).join(", "));
+    // Una sola familia. Antes habia tres mezcladas y los numeros no iban en
+    // cifras de ancho fijo, asi que las columnas no alineaban entre filas.
+    ok(!/Georgia|Times New Roman|SFMono|Menlo|Consolas/.test(inf),
+       "el informe va en una sola familia, la que eligio ella");
+    ok(/tabular-nums/.test(inf),
+       "y los numeros en cifras de ancho fijo, para que las columnas alineen");
+    // Los titulos de seccion sin emojis: es un documento para una junta.
+    const conEmoji = (inf.match(/sec\("[^"]*"/g) || [])
+      .filter(function(t){ return /\p{Extended_Pictographic}/u.test(t); });
+    ok(conEmoji.length === 0, "ningun titulo de seccion lleva emoji",
+       conEmoji.slice(0, 4).join(" "));
+    // Ni una tabla ni una seccion partida entre hojas. Son 5 hojas A4 y antes
+    // no habia una sola regla de salto.
+    ok(/break-inside:avoid/.test(inf) && /page-break-inside:avoid/.test(inf),
+       "ninguna tabla ni seccion se parte entre hojas");
+    ok(/@page\{margin/.test(inf), "y la hoja lleva sus margenes de impresion");
+  }
 }
 
 // La tarjeta de Configuracion marca el tema que esta CORRIENDO, no el que esta
