@@ -595,11 +595,117 @@ Ahora `break-inside:avoid` vive solo en el `tr`. Ninguna fila se corta por la
 mitad, el título sigue sin quedarse solo al final de una hoja (`h2` conserva su
 `break-after:avoid`) y desaparecen los huecos.
 
-**Y la cabecera de columnas NO se repite al pasar de hoja, aunque sería lo
-suyo.** `html2pdf` hace **una imagen** de la página y la corta en trozos del
-alto de un A4: no hay motor de maquetado que repita nada, así que `<thead>` con
+**Y la cabecera de columnas no se repite POR CSS, aunque sería lo suyo.**
+`html2pdf` hace **una imagen** de la página y la corta en trozos del alto de un
+A4: no hay motor de maquetado que repita nada, así que `<thead>` con
 `display:table-header-group` aquí no hace absolutamente nada. Se intentó y se
-quitó; no hace falta volver a probarlo.
+quitó; no hace falta volver a probarlo. (Desde el **ARREGLO 90** sí se repite,
+pero de otra forma: la app **clona** la fila de cabecera al DOM antes de
+dibujar. Ver más abajo.)
+
+### Una hoja = un tema con su título (ARREGLO 90)
+
+Sus palabras: *"quiero que el informe no se corte cuando pase de una página a
+otra. No es que todo esté en una sola página. Es que cuando pase una hoja y
+venga la otra información, tenga su título allí, cada hoja tenga su título, a
+qué corresponde cada hoja y que la información sea completa de ese título.
+Porque así es muy tedioso, demasiada información en una sola hoja, brinca para
+un lado, brinca para otro, se corta y ya me han devuelto ese reporte muchas
+veces."*
+
+El 86 arregló que no se partiera una fila. Lo que ella pedía era otra cosa: que
+una hoja se pueda leer sola. El documento era una tira continua y el PDF la
+cortaba cada 1.112 px donde cayera, así que una hoja podía empezar a mitad de
+una tabla sin decir de qué era.
+
+**Esto no se puede hacer con CSS, y ahí está la trampa.** El PDF se dibuja hoja
+por hoja (ARREGLO 88) recortando la **misma imagen** del documento: no hay motor
+de maquetado al que decirle "no partas aquí" ni "repite el título", y
+`break-before` no lo mira nadie en ese camino. Por eso el reparto lo hace la app
+sobre el **DOM ya dibujado**, en `_paginarInforme()`, metiendo tres cosas:
+
+```
+un RELLENO     antes de lo que no cabe, para empujarlo a la hoja siguiente
+el TÍTULO      repetido con "(continúa)" arriba de esa hoja
+la CABECERA    de columnas, si lo que sigue es media tabla
+```
+
+**Y eso corrige lo que el 86 dejó escrito sobre la cabecera.** Es verdad que no
+se puede repetir **por CSS** —`display:table-header-group` no hace nada aquí—,
+pero sí se puede **clonar al DOM antes de dibujar**, que es otra cosa. Lo que no
+hay que volver a intentar es el `<thead>`.
+
+Cuatro cosas que costaron medirse y no hay que deshacer:
+
+- **La banda se decide por CAMBIO DE HOJA, no por "esto cruza un corte".**
+  Mirando solo lo que se parte, con 70 clientes la tabla ocupaba tres hojas y
+  solo la segunda llevaba título: la fila que empezaba la tercera caía justo en
+  el borde, no cruzaba nada y se quedaba sin banda. Medido: *"hoja 8 sin título
+  en la hoja"*. Se sigue en qué hoja va el apartado y se repite el título cuando
+  cambia, parta algo o no.
+- **El aire de cada apartado va en su `padding`, no en el margen del `h2`.** Un
+  margen de arriba se suma **por fuera** de la caja, así que el apartado
+  siguiente empezaba 24 px pasado el corte — y el relleno, que solo puede
+  **añadir**, lo empujaba una hoja **entera**. Medido: una hoja 8 en blanco con
+  el apartado 6 en la 9.
+- **El relleno solo suma.** Pasarse deja más blanco; quedarse corto parte una
+  tabla por la mitad, que es lo único que no se puede permitir. Va en varias
+  pasadas porque meterlo cambia el documento (los márgenes pegados se colapsan).
+- **Dentro de una tabla el relleno es un `<tr>`.** Un `<div>` ahí lo saca el
+  navegador fuera de la tabla y el hueco aparece donde no toca.
+
+**La geometría vive en un solo sitio** (`INF_ANCHO_HOJA`, `INF_PX_HOJA`,
+`INF_MARGEN_MM`): la leen el reparto y el PDF. Dos copias del mismo número y el
+reparto cae donde el PDF no corta. Y el `@page` de imprimir pasó a `8mm` para
+que el navegador corte por el mismo sitio.
+
+**Las rayas de corte se ven en la vista previa**, con el número de hoja. Van
+dentro de la lupa y **fuera** de `#reporteCapture`, así que no se capturan nunca.
+Sin eso hay que descargar el archivo para saber si el reparto quedó bien.
+
+Medido en Chromium a 390, 412, 768 y 1280 px, con un mes de su tamaño y con otro
+de 70 clientes:
+
+```
+                              su mes      mes de 70 clientes
+apartados fuera del corte        0                0
+filas cortadas                   0                0
+hojas en blanco                  0                0
+hojas sin título propio          0                0
+hojas del PDF                   13               18
+```
+
+**Lo que cuesta: más hojas.** De 8 a 13 con sus datos, y 6.274 px de blanco. Eso
+no es un fallo que arreglar: es lo que se compra al poner un tema por hoja, y es
+lo que pidió. Si algún día dice que son demasiadas, lo que hay que tocar es
+dejar que dos apartados pequeños compartan hoja — **no** quitar el reparto.
+
+#### Y lo que se fue del informe
+
+Sus palabras: *"no me importa mucho que me deje un informe de todas las remesas
+que salieron, solamente por dónde salieron, cuánto salió por cada ruta… con los
+detalles de cada operación, yo diría que eso no es tan relevante"*.
+
+Se fue el **detalle remesa por remesa**. De `detalleMes()` siguen las **compras y
+ventas de USDT** y los **traspasos entre cuentas** —que son el movimiento de
+banco de verdad, de donde sale toda la ganancia— y entró lo que pidió: **cuánto
+mandó cada cliente y cuántas veces**, ordenado por lo que pesa.
+
+Dos reglas que ya valían y aquí vuelven a aplicarse:
+
+- el volumen de cada ruta va **en su moneda** y la columna **no lleva total**:
+  sumar reales con bolívares da un número que no existe;
+- lo de cada cliente sí se suma, convirtiendo con `getRateToUsdt()` (que
+  **divide**), y si a una moneda le falta la tasa el total se marca **"parcial"**
+  en vez de quedarse corto en silencio.
+
+**El índice de la portada sale de la misma lista que se dibuja.** Numerarlo a
+mano se descuadra en cuanto un apartado se calla por estar vacío (un socio sin
+nada este mes, ARREGLO 58).
+
+**Y el signo va delante del símbolo.** `f2l` de un negativo devuelve `-73,26` y
+anteponerle el `$` escribía **`$-73,26`**, que se lee como un precio raro en vez
+de como una pérdida. Está en `usd()`.
 
 ### Hoja por hoja, y por eso 302 puntos por pulgada (ARREGLO 88)
 

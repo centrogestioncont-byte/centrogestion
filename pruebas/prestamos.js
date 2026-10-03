@@ -2350,22 +2350,43 @@ ok(!/Debería haber en caja/.test(HTML),
    "el PDF ya no tiene el 'deberia haber en caja' que inventaba el agujero");
 ok(!/puede deberse a tasas del momento o cobros pendientes/.test(HTML),
    "ni la disculpa que lo acompañaba");
-ok(/DE QUÉ SE COMPONE EL CAPITAL|De qué se compone el capital/.test(HTML),
-   "en su sitio va de que se compone el capital");
+// ARREGLO 90: el bloque se llamaba "de que se compone el capital" y vivia al
+// final, dentro del resumen ejecutivo. Ahora es el apartado 1 del informe y el
+// rotulo lo dice en su idioma ("De donde sale"), pero lo que la guardia
+// protege es lo mismo: que el desglose este y que mande a la conciliacion.
+ok(/De dónde sale/.test(HTML),
+   "el informe desglosa de donde sale el capital");
 ok(/conciliación de capital/.test(HTML),
    "y manda a la conciliacion, que si responde si falta dinero");
 // El capital sale de una sola funcion, para que dos pantallas no cuenten
 // distinto el mismo dinero (faltaba la reserva: 2.302,34 contra 2.479,17).
-ok(/var _capReal=\(typeof capitalRealTotal==="function"\)\?capitalRealTotal\(\):null;/.test(HTML),
-   "el capital del PDF sale de capitalRealTotal(), la misma de Balance de Cuentas");
-ok(/var siCobrasTodo=_capReal\?_capReal\.total:/.test(HTML),
-   "y el 'potencial total' es ese mismo numero, no una suma a mano");
+{
+  // sinComentarios es un const que se declara mas abajo: aqui se quitan los
+  // comentarios a mano. (Leerlo antes de su declaracion revienta el fichero
+  // entero con "Cannot access before initialization", no falla una prueba.)
+  const inf = sacarFuncion("generarInformePDF")
+    .split("\n").filter(function(l){ return !/^\s*\/\//.test(l); }).join("\n");
+  ok(/var cap=\(typeof capitalRealTotal==="function"\)\?capitalRealTotal\(\):null;/.test(inf),
+     "el capital del PDF sale de capitalRealTotal(), la misma de Balance de Cuentas");
+  // Ni un total de capital sumado a mano: todos los que se enseñan salen de
+  // cap.total. Antes habia un "potencial total" que sumaba cuentas + afuera y
+  // se dejaba la reserva (2.302,34 contra 2.479,17).
+  ok(!/totalUsdtCuentas\+totalAfuera|siCobrasTodo/.test(inf),
+     "y no queda ningun capital sumado a mano en el informe");
+  ok((inf.match(/f2l\(cap\.total\)/g)||[]).length>=3,
+     "el titular, el pie de la tabla y la portada enseñan el MISMO cap.total");
+}
 
 // Los intereses de prestamos entran en ganBrutaTotal y NO en miGanOperaciones:
 // el desglose saltaba de 226,89 a 221,50 sin una fila que lo explicara, y la
 // pestaña Operaciones enseñaba otra ganancia bruta distinta.
-ok((HTML.match(/Intereses de préstamos \("\+calc\.ganPrestamosCant/g)||[]).length===2,
-   "los intereses de prestamos tienen su fila en la pantalla y en el PDF");
+// ARREGLO 90: en el PDF la fila cambio de texto ("De eso, intereses de
+// prestamos"), pero sigue teniendo que estar: sin ella el desglose salta de
+// 226,89 a 221,50 sin nada que lo explique.
+ok(/Intereses de préstamos \("\+calc\.ganPrestamosCant/.test(HTML),
+   "los intereses de prestamos tienen su fila en la pantalla");
+ok(/intereses de préstamos \("\+calc\.ganPrestamosCant/.test(HTML),
+   "y tambien en el PDF, que si no el desglose no cuadra");
 ok(/Solo remesas\. Los <b>\$"\+f2\(calc\.ganPrestamos\)/.test(HTML),
    "y Operaciones avisa de que su total son solo remesas");
 
@@ -2402,7 +2423,7 @@ ok(/Math\.abs\(bruta\)<0\.009 && Math\.abs\(deudas\)<0\.009 && Math\.abs\(final\
    "y solo se calla si no hay ganancia, ni deuda, ni saldo, ni pagos");
 ok(/sin operaciones, sin deudas y sin pagos este mes/.test(HTML),
    "el socio dormido sale nombrado, no borrado");
-ok(/calc\.socioFinalEE>0\.009\?"<tr><td>Pagar /.test(HTML),
+ok(/if\(calc\.socioFinalEE>0\.009\) filas\.push\(\["Pagar a "\+calc\.socioNombreEE/.test(HTML),
    "el PDF no escribe una fila 'Pagar X \$0,00'");
 ok(/Math\.abs\(calc\.ganEEBruta\)>0\.009 \|\| Math\.abs\(calc\.deudasSocioEE\)>0\.009/.test(HTML),
    "y la seccion de liquidacion de socios no se dibuja si no hay nada que liquidar");
@@ -2423,7 +2444,20 @@ ok(/EMPRESA_RAZON|EMPRESA_CNPJ/.test(HTML), "la razon social y el CNPJ estan en 
 ok((HTML.match(/EMPRESA_CNPJ/g)||[]).length>=3,
    "y salen en la hoja del PDF, en la pantalla y en el CSV");
 ok(/Hoja para el contador/.test(HTML), "el PDF lleva la hoja del contador");
-ok(/Detalle del mes · todo el movimiento/.test(HTML), "y el detalle de todo el movimiento");
+// ARREGLO 90: el detalle remesa por remesa se FUE, y es lo que ella pidio:
+// "no me importa mucho que me deje un informe de todas las remesas que
+// salieron, solamente por donde salieron, cuanto salio por cada ruta... con
+// los detalles de cada operacion, yo diria que eso no es tan relevante".
+// En su sitio entra lo que si pidio: cuanto mando cada cliente.
+ok(!/Detalle del mes · todo el movimiento/.test(HTML),
+   "el detalle remesa por remesa ya no va en el informe");
+ok(/Clientes · cuánto mandó cada uno/.test(HTML),
+   "y en su sitio esta cuanto mando cada cliente");
+// Lo que de detalleMes() si sigue en el informe son los movimientos de banco:
+// las compras y ventas de USDT y los traspasos entre cuentas, que es de donde
+// sale toda la ganancia.
+ok(/dm\.usdt\.length/.test(HTML) && /dm\.traspasos\.length/.test(HTML),
+   "los movimientos de banco siguen: compras y ventas de USDT y traspasos");
 ok(/_descargarInformePDF/.test(HTML) && /⬇️ Descargar PDF/.test(HTML),
    "hay boton de descargar, no solo compartir");
 
@@ -3237,8 +3271,13 @@ console.log("\nArreglo 64 · entrar con huella");
        "el potencial total de la pantalla sale de capitalRealTotal, como el PDF");
     // Y el pie del PDF explica SU titular, no otro: sumaba las partes con el
     // interes dentro y daba $4.225,14 debajo de un titular de $4.125,14.
-    ok(/_capReal\?_capReal\.enLaCalle:totalAfuera/.test(pdf),
-       "y el pie del PDF desglosa el mismo numero que el titular");
+    // ARREGLO 90: el titular ya no es un "potencial total" calculado aparte,
+    // es cap.total, y las partes de debajo salen de los campos de la misma
+    // llamada. Lo que la guardia protege es que ninguna se calcule a mano.
+    ok(/\["En las cuentas",cap\.enCuentas/.test(pdf),
+       "el pie del PDF desglosa el mismo numero que el titular, campo por campo");
+    ok(/f2l\(cap\.interesPrestamos\)/.test(pdf) && !/cap\.total\+cap\.interesPrestamos/.test(pdf),
+       "y el interes pendiente se dice pero no se suma al titular");
   }
 
   // ── ARREGLO 79: es un documento de junta, no una pantalla ──────────
@@ -3386,8 +3425,21 @@ console.log("\nArreglo 64 · entrar con huella");
       });
     // Y el informe del dueño SI tiene que llevarlo, por moneda.
     const inf = sinComentarios(sacarFuncion("generarInformePDF"));
-    ok(/ESTADO DE LA EMPRESA|Estado de la empresa/.test(inf),
-       "el informe del mes abre con el estado de la empresa, no con la ganancia");
+    // ARREGLO 90: el apartado se llama como ella lo pidio ("Tienes tanto un
+    // USDT, tienes tanto reserva...") y es el PRIMERO de la lista, que es lo
+    // que de verdad hay que fijar: antes el informe abria con la cuenta de
+    // resultados y lo que un dueño mira primero es cuanto HAY.
+    ok(/ap\("Qué tiene la empresa hoy"/.test(inf),
+       "el informe del mes lleva el apartado del estado de la empresa");
+    {
+      const orden = (inf.match(/ap\("([^"]+)"/g)||[]).map(function(t){ return t.slice(4,-1); });
+      ok(orden[0]==="Qué tiene la empresa hoy",
+         "y es el PRIMERO, no la ganancia del mes", orden.slice(0,3).join(" | "));
+      ok(orden.indexOf("Cómo le fue el mes")===1,
+         "y el segundo es como le fue el mes", orden.slice(0,3).join(" | "));
+      ok(orden.indexOf("Hoja para el contador")===orden.length-1,
+         "y la hoja del contador va al final", orden.join(" | "));
+    }
     // Ojo: exigir solo "cap.porMoneda" no vale, porque esa cadena tambien
     // aparece en la guarda de "si no hay desglose, no pintes nada". Lo que hay
     // que exigir es que de verdad RECORRA la lista para hacer las filas.
@@ -3422,7 +3474,10 @@ console.log("\nArreglo 64 · entrar con huella");
     // El @media print queda FUERA de la cuenta: al imprimir no hay clon, el
     // overlay de verdad esta ahi, y esas reglas son justamente las que lo
     // adaptan al papel (esconder los botones, soltar el alto).
-    const CHROME = /^(contenido|btn|btnBar|btnShare|btnCerrar|lupa|lupa-int|no-print)$/;
+    // ARREGLO 90: "corte" son las rayas de la vista previa que enseñan donde va a
+    // cortar el PDF. Van dentro de la lupa y FUERA de la hoja, asi que no se
+    // capturan nunca: son pantalla, como los botones.
+    const CHROME = /^(contenido|btn|btnBar|btnShare|btnCerrar|lupa|lupa-int|corte|no-print)$/;
     [["#informePdfOverlay", inf], ["#reporteSocioOverlay", soc]].forEach(function(par){
       const id = par[0];
       const txt = sinComentarios(par[1])
@@ -3449,6 +3504,115 @@ console.log("\nArreglo 64 · entrar con huella");
          /tabular-nums/.test(propias),
          "." + par[0] + " lleva la letra, la tinta y las cifras de ancho fijo, sin heredarlas");
     });
+  }
+
+  // ── ARREGLO 90: cada apartado en su hoja, y si sigue, con su titulo ──
+  // Sus palabras: "quiero que el informe no se corte cuando pase de una
+  // pagina a otra. No es que todo este en una sola pagina. Es que cuando pase
+  // una hoja y venga la otra informacion, tenga su titulo alli, cada hoja
+  // tenga su titulo... y que la informacion sea completa de ese titulo.
+  // Porque asi es muy tedioso, demasiada informacion en una sola hoja, brinca
+  // para un lado, brinca para otro, se corta y ya me han devuelto ese reporte
+  // muchas veces".
+  //
+  // Medido en Chromium con un mes de su tamaño y con otro de 70 clientes:
+  // 0 apartados que no arranquen arriba de una hoja, 0 filas cortadas,
+  // 0 hojas en blanco y 0 hojas sin titulo propio, igual a 390, 412, 768 y
+  // 1280 px de ventana.
+  {
+    const pag = sinComentarios(sacarFuncion("_paginarInforme"));
+    const inf = sinComentarios(sacarFuncion("generarInformePDF"));
+    const pdf = sinComentarios(sacarFuncion("_pdfInforme"));
+
+    // Se reparte, y se reparte ANTES de la lupa: la lupa mide el alto del
+    // documento para no dejar hueco debajo, y el reparto lo cambia.
+    ok(inf.indexOf("_paginarInforme()") !== -1 &&
+       inf.indexOf("_paginarInforme()") < inf.indexOf("_ajustarLupaInforme()"),
+       "el informe se reparte en hojas, y antes de ajustar la lupa");
+
+    // TODOS los apartados arrancan arriba de una hoja, el primero tambien.
+    // Dejando que el primero comparta hoja con la portada se partia en dos.
+    ok(/secs\.forEach\(function\(sec\)\{[\s\S]{0,400}_infAlPrincipio\(sec,hoja\)/.test(pag),
+       "todos los apartados arrancan arriba de una hoja");
+    ok(!/sec!==secs\[0\]/.test(pag),
+       "incluido el primero: la portada se queda sola en la hoja 1");
+
+    // La banda con el titulo repetido se decide por CAMBIO DE HOJA, no por
+    // "esto cruza un corte". Con 70 clientes la tabla ocupaba tres hojas y la
+    // tercera empezaba en una fila que caia justo en el borde: no cruzaba
+    // nada, no se le ponia banda y la hoja quedaba sin decir de que era.
+    ok(/var hojaActual=hojaDe\(_infY\(sec,hoja\)\);/.test(pag) &&
+       /if\(h0===hojaActual && h1===hojaActual\) return;/.test(pag),
+       "el titulo se repite cuando el apartado CAMBIA de hoja, no solo cuando algo se parte");
+    ok(/hojaActual=hojaDe\(_infY\(a,hoja\)\);/.test(pag),
+       "y despues de repetirlo se apunta en que hoja va, para la siguiente");
+    ok(/\(continúa\)/.test(pag),
+       "la hoja que continua lo dice con (continua)");
+    // La cabecera de columnas se CLONA al DOM. El ARREGLO 86 dejo escrito que
+    // repetirla por CSS es imposible —html2pdf hace UNA imagen y la corta— y
+    // sigue siendo verdad: esto no la repite, la copia antes de dibujar.
+    ok(/cab\.cloneNode\(true\)/.test(pag) && /!a\.querySelector\("th"\)/.test(pag),
+       "y si lo que sigue es media tabla, su cabecera se clona (menos si lo empujado ES la cabecera)");
+
+    // El relleno solo SUMA alto. Quitarlo dejaria el apartado empezando antes
+    // del corte, que es lo unico que parte una tabla por la mitad.
+    ok(/_infPonerAlto\(relleno,_infAltoDe\(relleno\)\+falta\)/.test(sinComentarios(sacarFuncion("_infAlPrincipio"))),
+       "el relleno solo añade hueco, nunca lo quita");
+    // Dentro de una tabla el relleno tiene que ser un <tr>: un <div> ahi lo
+    // mueve el navegador fuera de la tabla y el hueco aparece donde no toca.
+    ok(/TBODY\|THEAD\|TFOOT\|TABLE/.test(sinComentarios(sacarFuncion("_infNodo"))),
+       "y dentro de una tabla es un <tr>, no un <div>");
+
+    // El aire de cada apartado va en su PADDING, no en el margen del h2. Un
+    // margen de arriba se suma por fuera de la caja: el apartado siguiente
+    // empezaba 24 px pasado el corte y el relleno —que solo puede añadir— lo
+    // empujaba una hoja ENTERA. Medido: hoja 8 en blanco, apartado 6 en la 9.
+    ok(/\.inf-doc \.inf-sec\{padding-top:\d+px\}/.test(inf) &&
+       /\.inf-doc \.inf-sec>h2\{margin-top:0\}/.test(inf),
+       "el aire del apartado va en su padding, que no empuja una hoja entera");
+
+    // Una sola geometria para el reparto y para el PDF. Dos copias del mismo
+    // numero y el reparto cae donde el PDF no corta.
+    ok(/var PX_HOJA=INF_PX_HOJA;/.test(pdf) && /var ANCHO_HOJA=INF_ANCHO_HOJA;/.test(pdf),
+       "el PDF y el reparto miden la hoja con los mismos numeros");
+    ok(/@page\{margin:8mm\}/.test(inf) && /INF_MARGEN_MM=8/.test(HTML),
+       "y al imprimir el margen del papel es el mismo que el del PDF");
+
+    // Las rayas de la vista previa van FUERA de la hoja: dentro de
+    // #reporteCapture saldrian impresas en el papel.
+    ok(/document\.getElementById\("reporteLupaInt"\)/.test(sinComentarios(sacarFuncion("_infMarcarCortes"))),
+       "las rayas de corte se dibujan fuera de la hoja, en la lupa");
+    ok(!/class="corte"|class='corte'/.test(inf),
+       "y no las escribe el documento, que si no se capturarian");
+
+    // El apartado de clientes: lo que pidio y no estaba. Para sumar entre
+    // monedas se convierte con getRateToUsdt (que DIVIDE) y si falta una tasa
+    // el total se marca "parcial" en vez de quedarse corto en silencio.
+    ok(/c\.usdt\+=am\/t/.test(inf) && /c\.parcial=true/.test(inf),
+       "los clientes se suman convirtiendo con getRateToUsdt, que divide");
+    ok(/algoParcial\?"<span style='color:var\(--inf-resta\)'>parcial/.test(inf),
+       "y si falta una tasa el total se marca parcial, no se queda corto");
+    ok(/o\.n\+"<\/td>"/.test(inf) || /text-align:center;font-weight:700'>"\+o\.n\+/.test(inf),
+       "y dice cuantas veces mando cada cliente");
+
+    // El indice de la portada sale de la MISMA lista que se dibuja: numerarlo
+    // a mano se descuadra en cuanto un apartado se calla por estar vacio.
+    ok(/apartados\.map\(function\(s,i\)\{/.test(inf) &&
+       (inf.match(/apartados\.map\(/g)||[]).length >= 2,
+       "el indice de la portada sale de la misma lista que se dibuja");
+    ok(/ap=function\(t,c\)\{ if\(c\) apartados\.push/.test(inf),
+       "y un apartado vacio no entra en la lista ni ocupa un numero");
+    // Es un documento de junta: ni un emoji en los titulos.
+    {
+      const conEmoji = (inf.match(/ap\("[^"]*"/g)||[])
+        .filter(function(t){ return /\p{Extended_Pictographic}/u.test(t); });
+      ok(conEmoji.length === 0, "ningun apartado lleva emoji en el titulo",
+         conEmoji.slice(0,4).join(" "));
+    }
+    // El signo va delante del simbolo: f2l de un negativo da "-73,26" y
+    // anteponerle el "$" escribia "$-73,26".
+    ok(/var usd=function\(v\)\{ var n=parseFloat\(v\)\|\|0; return \(n<0\?"−\$":"\$"\)/.test(inf),
+       "un numero negativo se escribe −$73,26, no $-73,26");
   }
 }
 
