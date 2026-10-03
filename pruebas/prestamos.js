@@ -2660,8 +2660,41 @@ ok(/el otro ten[ií]a/.test(F._htmlAvisoPisado()) && /qued[oó]/.test(F._htmlAvi
    "y ensena los tres valores: lo tuyo, lo del otro y lo que quedo");
 F._pruebaPisados([], false);
 ok(F._htmlAvisoPisado() === "", "y sin choques no ocupa ni un pixel");
-ok(/_htmlAvisoPisado\(\)\+\s*\n?\s*"<div class='navbar3'>"/.test(HTML.replace(/\/\/[^\n]*\n/g, "\n")),
+  // ARREGLO 89: ahora hay DOS avisos ahi arriba —el de choques y el del mes sin
+  // cerrar—, los dos fuera de la zona que hace scroll. La guardia admite otro
+  // aviso en medio, pero ninguno puede caerse dentro del scroll.
+  ok(/_htmlAvisoPisado\(\)\+[\s\S]{0,160}?"<div class='navbar3'>"/.test(HTML.replace(/\/\/[^\n]*\n/g, "\n")),
    "el aviso va arriba del panel, fuera del scroll");
+  ok(/_htmlAvisoMesSinCerrar\(\)\+[\s\S]{0,160}?"<div class='navbar3'>"/.test(HTML.replace(/\/\/[^\n]*\n/g, "\n")),
+     "y el aviso del mes sin cerrar, tambien");
+
+  // ── ARREGLO 89: cerrar un mes es decision suya, no del reloj ──────
+  // Sus palabras: "ya estaba cerrado por voluntad propia del sistema, cosa que
+  // no deberia de ser asi, porque si el 30 faltaron cosas por registrar no
+  // deberias de cerrarme el sistema automaticamente". Y era peor: cerraba al
+  // abrir la app, cada 5 minutos y a medianoche. Un mes cerrado congela sus
+  // numeros, asi que lo que faltara por registrar se quedaba fuera.
+  {
+    const sinCom = HTML.replace(/\/\/[^\n]*\n/g, "\n");
+    ok(!/function checkCierreAutomatico/.test(sinCom),
+       "ya no existe la funcion que cerraba el mes sola");
+    ok(!/function programarCierreMedianoche/.test(sinCom),
+       "ni el temporizador de medianoche que la llamaba");
+    // El cierre solo puede salir de un boton suyo: ejecutarCierreMes no puede
+    // volver a colarse en un setTimeout ni en un setInterval.
+    // Ojo con la expresion: un [^)]* se corta en el parentesis de
+    // "function()" y nunca llega a ver la llamada de dentro.
+    ok(!/set(Timeout|Interval)\([\s\S]{0,200}?ejecutarCierreMes/.test(sinCom),
+       "y ningun temporizador llama a ejecutarCierreMes");
+    // Ojo: sinComentarios se declara mas abajo en el archivo, asi que aqui no
+    // se puede usar todavia. Se quitan los comentarios a mano.
+    const rev = sacarFuncion("_revisarMesSinCerrar").replace(/\/\/[^\n]*\n/g, "\n");
+    ok(!/ejecutarCierreMes/.test(rev),
+       "el que revisa si falta cerrar no cierra nada: solo marca");
+    // Sin operaciones el aviso seria ruido; con el mes ya cerrado, mentira.
+    ok(/cierresMes\.some/.test(rev) && /filterByMes/.test(rev),
+       "y solo avisa si ese mes tiene operaciones y no esta cerrado");
+  }
 
 // Y que nadie vuelva a adoptar en silencio.
 {

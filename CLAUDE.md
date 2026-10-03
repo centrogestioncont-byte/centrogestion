@@ -1637,6 +1637,41 @@ que nadie llamaba, con fórmulas viejas y en portugués. Borradas en el ARREGLO
 59. El peligro no era el peso: era que alguien las leyera y creyera que eran
 las buenas.
 
+### Cerrar un mes es decisión SUYA, no del reloj (ARREGLO 89)
+
+Sus palabras: *"me di cuenta que yo no cerré el mes de septiembre, ya estaba
+cerrado por voluntad propia del sistema. Cosa que no debería de ser así, porque
+si el 30 faltaron cosas por registrar, no deberías de cerrarme el sistema
+automáticamente, al menos que yo le dé cerrar mes"*.
+
+Y era peor de lo que ella creía. `checkCierreAutomatico()` cerraba el mes
+anterior **sin preguntar nada**, y corría en **tres** sitios:
+
+```
+· 2 segundos después de abrir la app
+· cada 5 minutos, de respaldo
+· a medianoche exacta, con un temporizador que se recalibraba solo
+```
+
+O sea que el 1 de octubre, dos segundos después de que ella abriera la app,
+septiembre quedó cerrado — con lo que faltara por registrar fuera. **Y un mes
+cerrado congela sus números**: el informe de ese mes deja de recalcular y pasa a
+leer lo que quedó guardado en el cierre.
+
+Ahora solo lo cierra ella, con su botón. Lo único que hace la app sola es
+**avisar**, arriba del panel y fuera de la zona que hace scroll (ARREGLO 62):
+
+> **Todavía no has cerrado Septiembre 2026.** Todo lo que registres ahora cuenta
+> para Octubre 2026, no para Septiembre 2026. Cierra Septiembre 2026 primero.
+
+- **El aviso no se puede cerrar.** Mientras el mes siga abierto el dato sigue
+  siendo cierto, y esconderlo es lo que la dejó sin enterarse la primera vez.
+- **Solo sale si ese mes tiene operaciones y no está cerrado.** Sin operaciones
+  no hay nada que cerrar y el aviso sería ruido.
+- **`_revisarMesSinCerrar()` no cierra nada: solo marca.** Y una guardia exige
+  que ningún `setTimeout` ni `setInterval` vuelva a llamar a
+  `ejecutarCierreMes` — es por donde entró la primera vez.
+
 ### Registra la operación — no escribas el saldo
 
 **La regla que más costó el 12/09**, y se rompió tres veces en un día.
