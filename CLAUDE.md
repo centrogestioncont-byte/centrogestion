@@ -601,6 +601,81 @@ alto de un A4: no hay motor de maquetado que repita nada, así que `<thead>` con
 `display:table-header-group` aquí no hace absolutamente nada. Se intentó y se
 quitó; no hace falta volver a probarlo.
 
+### Hoja por hoja, y por eso 302 puntos por pulgada (ARREGLO 88)
+
+Sus palabras: *"¿por qué el PDF sale pixelado? no se ve nítido"*. Porque **no es
+texto**: `html2pdf` dibuja la página en un lienzo y mete esa **imagen** en el
+PDF. Lo nítido que salga es lo que mida ese lienzo.
+
+Dibujando el documento **entero** de una vez, el lienzo tiene que caber bajo el
+tope de Android (ARREGLO 84), así que la escala bajaba a 1,5 — **151 ppp**, la
+mitad de calidad de imprenta. Y cuanto más largo el mes, peor: con un mes grande
+bajaba a 1 (101 ppp). O sea que la nitidez dependía de cuántas operaciones tuvo.
+
+Hoja por hoja cada lienzo es pequeño —**2.304 × 3.336 px a 3×, 7,7 M de
+píxeles**— así que cabe de sobra y **la calidad ya no depende del mes**: 302 ppp
+con 5 hojas y con 20. Es el mismo criterio del 83: lo que sale hacia fuera no
+puede depender de las circunstancias del aparato.
+
+- **PNG, no JPEG.** El JPEG es con pérdida y se nota justo donde peor va, en el
+  borde de las letras. Sobre blanco el PNG además pesa poco.
+- **El camino viejo queda como respaldo**, por si la librería no expone
+  `html2canvas` y `jsPDF` sueltos. Mejor un PDF de 151 ppp que ninguno.
+- **Y si lo quiere perfecto, el botón Imprimir → "Guardar como PDF"** lo hace el
+  navegador con texto de verdad: nítido a cualquier zoom, y se puede buscar.
+
+Medido con los dos sustituidos por funciones que anotan lo que reciben, a 390,
+412, 768 y 1280 px: 8 hojas, 8 páginas, escala 3, 302 ppp, cortes contiguos que
+cubren exactamente el alto del documento, las 8 en PNG, ninguna en JPEG. Y
+quitando las dos piezas, cae al respaldo sin un error.
+
+### Cada papel enseña lo suyo (ARREGLO 87)
+
+Sus palabras: *"el reporte a socio mayor no es el mismo que los socios menores y
+no es lo mismo que el contador, cada uno tiene que ver información diferente"*.
+Julio es su marido y el otro **dueño**, no un socio de comisión — así que su
+documento no es uno nuevo: **es el Informe Mensual**. Los socios de ruta (Paul,
+Diana) siguen llamándose socios; *aliado* ya significa otra cosa aquí, el que
+entrega los pesos en Colombia.
+
+```
+Informe Mensual   → Julio y ella   el estado real completo
+Reporte por socio → cada socio     solo lo suyo
+Hoja del contador → el contador    lo fiscal
+```
+
+El reporte por socio **ya estaba bien**: no menciona `capitalRealTotal`,
+`S.cuentas`, `S.prestamos`, `cuentasCobrar` ni `inventarioUsdt`. Una guardia lo
+fija, porque es lo único que impide que un día se cuele ahí el capital.
+
+**Lo que faltaba era el estado de la empresa, y va PRIMERO.** Sus palabras: *"no
+se entiende claramente el estado real de la empresa… no me pones el desglose de
+lo que es saldo de la empresa primero, tanto en usdt tanto en bs y su
+equivalente en usdt, igual con todas las monedas… no omitas información solo
+expresarlo mejor"*.
+
+El informe abría con la cuenta de resultados del mes —cuánto ganó— y lo que un
+dueño mira primero es **cuánto hay**. Las dos cosas estaban, pero el "cuánto
+hay" salía convertido todo a USDT y repartido en tres sitios del documento: no
+había forma de ver cuánto tiene en bolívares sin ir sumando a mano.
+
+- **El desglose lo devuelve `capitalRealTotal()`**, que es quien ya recorre las
+  cuentas, los cobros y los préstamos. Calcularlo aparte sería la segunda
+  respuesta a la misma pregunta — justo lo que ya hizo que dejara de fiarse de
+  dos números que diferían en un céntimo.
+- **Se guarda el monto NATIVO y aparte su equivalente.** Convertirlo todo a USDT
+  es lo que impedía ver cuánto hay en cada moneda.
+- **Las monedas se ordenan por lo que pesan en USDT**: la primera fila es donde
+  de verdad está su dinero, no la que entró antes.
+- **El interés pendiente se dice pero NO suma** (ARREGLO 71). Esconderlo sería
+  peor —es dinero que le van a dar— y sumarlo sería inventarse capital.
+- **Y nada se quita: se ordena.** El detalle de cada cuenta, cada cobro y cada
+  préstamo sigue entero, más abajo.
+
+Comprobado con un mes de su tamaño: la suma de las filas por moneda da
+**7.476,67**, exactamente el total que ya daba la conciliación. Si alguna vez no
+cuadra, es que alguien calculó el desglose por su cuenta.
+
 ### Una tarjeta se define en UN sitio
 
 `.pz-rejilla`, `.pz-card`, `.pz-rot`, `.pz-num`, `.pz-pie` viven en el `<style>`.
