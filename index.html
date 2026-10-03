@@ -2597,7 +2597,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261002_v158";
+var APP_VERSION = "20261003_v159";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -4477,6 +4477,23 @@ function getGananciaUsdtMes(mesKey){
 //   · las cuentas de reserva (estaban fuera de todos los totales)
 //   · el dinero en la calle: cobros pendientes y prestamos activos
 function capitalRealTotal(){
+  // ARREGLO 87: ademas de los totales en USDT, el desglose POR MONEDA.
+  // Sus palabras: "no me pones el desglose de lo que es saldo de la empresa
+  // primero... tanto en usdt tanto en bs y su equivalente en usdt igual con
+  // todas las monedas". El informe lo necesita y este es el unico sitio que
+  // ya recorre las cuentas, los cobros y los prestamos: calcularlo aparte
+  // seria la segunda respuesta a la misma pregunta, que es justo lo que ya
+  // hizo que dejara de fiarse de dos numeros (34,27 arriba y 34,28 abajo).
+  //
+  // Se guarda el monto NATIVO —bolivares como bolivares— y aparte su
+  // equivalente, porque convertirlo todo a USDT es lo que hacia que no se
+  // pudiera ver cuanto tiene de verdad en cada moneda.
+  var porMoneda={};
+  var _mon=function(m){
+    if(!porMoneda[m]) porMoneda[m]={moneda:m,enCuentas:0,enReserva:0,porCobrar:0,
+                                    enPrestamos:0,interesPrestamos:0,usdt:0,sinTasa:false};
+    return porMoneda[m];
+  };
   var enCuentas=0, enReserva=0, sinTasa=[];
   (S.cuentas||[]).filter(function(c){return c.activa!==false&&!c.esPersonal;}).forEach(function(acc){
     var saldo=parseFloat(acc.saldo)||0;
@@ -4485,10 +4502,13 @@ function capitalRealTotal(){
     if(acc.moneda==="USDT"||acc.moneda==="USD") usdt=saldo;
     else {
       var r=getRateToUsdt(acc.moneda);
-      if(!r||isNaN(r)){ sinTasa.push(acc.moneda); return; }
+      if(!r||isNaN(r)){ sinTasa.push(acc.moneda); _mon(acc.moneda).sinTasa=true; return; }
       usdt=saldo/r;
     }
     if(acc.esReserva) enReserva+=usdt; else enCuentas+=usdt;
+    var mm=_mon(acc.moneda);
+    if(acc.esReserva) mm.enReserva+=saldo; else mm.enCuentas+=saldo;
+    mm.usdt+=usdt;
   });
   var porCobrar=0;
   (S.cuentasCobrar||[]).forEach(function(c){
@@ -4497,10 +4517,11 @@ function capitalRealTotal(){
     var pend=Math.max(0,(parseFloat(c.monto)||0)-abon);
     if(pend<=0) return;
     var mon=c.moneda||"USDT";
-    if(mon==="USDT"||mon==="USD"){ porCobrar+=pend; return; }
+    var mc=_mon(mon); mc.porCobrar+=pend;
+    if(mon==="USDT"||mon==="USD"){ porCobrar+=pend; mc.usdt+=pend; return; }
     var r=getRateToUsdt(mon);
-    if(!r||isNaN(r)){ sinTasa.push(mon); return; }
-    porCobrar+=pend/r;
+    if(!r||isNaN(r)){ sinTasa.push(mon); mc.sinTasa=true; return; }
+    porCobrar+=pend/r; mc.usdt+=pend/r;
   });
   // ARREGLO 71: un prestamo entra aqui por su CAPITAL pendiente, no por el
   // total a cobrar. El interes pactado todavia no es dinero suyo: lo gana
@@ -4523,16 +4544,28 @@ function capitalRealTotal(){
     var fr=_fraccionInteresPrestamo(p);
     var pendInt=pend*fr, pendCap=pend-pendInt;
     var mon=p.mon||"USDT";
-    if(mon==="USDT"||mon==="USD"){ enPrestamos+=pendCap; interesPrestamos+=pendInt; return; }
+    var mp=_mon(mon); mp.enPrestamos+=pendCap; mp.interesPrestamos+=pendInt;
+    if(mon==="USDT"||mon==="USD"){ enPrestamos+=pendCap; interesPrestamos+=pendInt; mp.usdt+=pendCap; return; }
     var r=getRateToUsdt(mon);
-    if(!r||isNaN(r)){ sinTasa.push(mon); return; }
-    enPrestamos+=pendCap/r; interesPrestamos+=pendInt/r;
+    if(!r||isNaN(r)){ sinTasa.push(mon); mp.sinTasa=true; return; }
+    enPrestamos+=pendCap/r; interesPrestamos+=pendInt/r; mp.usdt+=pendCap/r;
   });
   var r2v=function(n){return Math.round(n*100)/100;};
   var total=r2v(enCuentas+enReserva+porCobrar+enPrestamos);
+  // Las monedas se ordenan por lo que pesan en USDT: la primera fila del
+  // informe es donde de verdad esta su dinero, no la que entro antes.
+  var lista=Object.keys(porMoneda).map(function(m){
+    var x=porMoneda[m];
+    return {moneda:m, enCuentas:r2v(x.enCuentas), enReserva:r2v(x.enReserva),
+            porCobrar:r2v(x.porCobrar), enPrestamos:r2v(x.enPrestamos),
+            interesPrestamos:r2v(x.interesPrestamos), usdt:r2v(x.usdt), sinTasa:x.sinTasa};
+  }).filter(function(x){
+    return Math.abs(x.enCuentas)>0.009||Math.abs(x.enReserva)>0.009||
+           Math.abs(x.porCobrar)>0.009||Math.abs(x.enPrestamos)>0.009;
+  }).sort(function(a,b){return b.usdt-a.usdt;});
   return {enCuentas:r2v(enCuentas), enReserva:r2v(enReserva), porCobrar:r2v(porCobrar),
           enPrestamos:r2v(enPrestamos), interesPrestamos:r2v(interesPrestamos),
-          enLaCalle:r2v(porCobrar+enPrestamos), total:total,
+          enLaCalle:r2v(porCobrar+enPrestamos), total:total, porMoneda:lista,
           sinTasa:sinTasa.filter(function(m,i,a){return a.indexOf(m)===i;})};
 }
 
@@ -17373,25 +17406,70 @@ function _pdfInforme(btnId,modo){
     //    informe sale 1,5 — unos 150 puntos por pulgada en A4, que en papel se
     //    lee igual; un PDF que no se abre no se lee de ninguna manera.
     var ANCHO_HOJA=768;
-    var TOPE_LIENZO=12000000;
-    var escala=2;
-    while(escala>1 && (ANCHO_HOJA*escala)*(alturaReal*escala)>TOPE_LIENZO) escala-=0.25;
-    var opciones={
-      margin:8,
-      filename:nombreArch,
-      image:{type:"jpeg",quality:0.95},
-      html2canvas:{scale:escala,useCORS:true,scrollX:0,scrollY:0,
-                   windowWidth:ANCHO_HOJA,windowHeight:alturaReal,
-                   width:ANCHO_HOJA,height:alturaReal},
-      jsPDF:{unit:"mm",format:"a4",orientation:"portrait"},
-      pagebreak:{mode:["css","legacy"]}
-    };
+    // ARREGLO 88 ─ se dibuja HOJA POR HOJA, no el documento entero.
+    //
+    // Sus palabras: "¿por qué el PDF sale pixelado? no se ve nítido". Porque
+    // no es texto: html2pdf dibuja la pagina en un lienzo y mete esa IMAGEN en
+    // el PDF. Lo nitido que salga es lo que mida ese lienzo.
+    //
+    // Dibujando el documento entero de una vez, el lienzo tiene que caber bajo
+    // el tope de Android (ARREGLO 84), asi que la escala bajaba a 1,5 — 151
+    // puntos por pulgada, la mitad de lo que se considera calidad de imprenta.
+    // Y cuanto mas largo el mes, peor: con un mes grande bajaba a 1 (101 ppp).
+    //
+    // Hoja por hoja, cada lienzo es pequeño —2.304 x 3.336 px a 3x— asi que
+    // cabe de sobra y la calidad YA NO DEPENDE de lo largo que sea el mes:
+    // 302 ppp con 5 hojas y con 20. Es el mismo criterio del ARREGLO 83: lo
+    // que sale hacia fuera no puede depender de las circunstancias del aparato
+    // ni del mes.
+    var ESCALA=3;
+    var MM_ANCHO=194, MM_ALTO=281, MARGEN=8;   // A4 menos margenes
+    var PX_HOJA=Math.floor(ANCHO_HOJA*MM_ALTO/MM_ANCHO);
     function guardar(blob){
       var url=URL.createObjectURL(blob);
       var a=document.createElement("a"); a.href=url; a.download=nombreArch; a.click();
       setTimeout(function(){URL.revokeObjectURL(url);},2000);
     }
-    html2pdf().set(opciones).from(el).toPdf().output("blob").then(function(blob){
+    // El camino de siempre, por si la libreria no expone las dos piezas que
+    // esto necesita. Mejor un PDF de 151 ppp que ninguno.
+    function porElCaminoViejo(){
+      var escala=2, TOPE=12000000;
+      while(escala>1 && (ANCHO_HOJA*escala)*(alturaReal*escala)>TOPE) escala-=0.25;
+      return html2pdf().set({
+        margin:MARGEN, filename:nombreArch, image:{type:"jpeg",quality:0.95},
+        html2canvas:{scale:escala,useCORS:true,scrollX:0,scrollY:0,
+                     windowWidth:ANCHO_HOJA,windowHeight:alturaReal,
+                     width:ANCHO_HOJA,height:alturaReal},
+        jsPDF:{unit:"mm",format:"a4",orientation:"portrait"},
+        pagebreak:{mode:["css","legacy"]}
+      }).from(el).toPdf().output("blob");
+    }
+    function porHojas(){
+      var jsPDFCtor=(window.jspdf&&window.jspdf.jsPDF)||window.jsPDF;
+      if(typeof html2canvas!=="function"||typeof jsPDFCtor!=="function") return null;
+      var nHojas=Math.max(1,Math.ceil(alturaReal/PX_HOJA));
+      var doc=new jsPDFCtor({unit:"mm",format:"a4",orientation:"portrait"});
+      var paso=function(i){
+        if(i>=nHojas) return Promise.resolve(doc.output("blob"));
+        var alto=Math.min(PX_HOJA, alturaReal-i*PX_HOJA);
+        return html2canvas(el,{
+          scale:ESCALA, useCORS:true, backgroundColor:"#ffffff",
+          windowWidth:ANCHO_HOJA, windowHeight:alturaReal,
+          width:ANCHO_HOJA, height:alto,
+          scrollX:0, scrollY:0, x:0, y:i*PX_HOJA
+        }).then(function(lienzo){
+          // PNG y no JPEG: el JPEG es con perdida y se nota justo donde peor
+          // va, en el borde de las letras. En un documento de texto sobre
+          // blanco el PNG ademas pesa poco.
+          if(i>0) doc.addPage();
+          doc.addImage(lienzo.toDataURL("image/png"), "PNG",
+                       MARGEN, MARGEN, MM_ANCHO, alto*MM_ANCHO/ANCHO_HOJA);
+          return paso(i+1);
+        });
+      };
+      return paso(0);
+    }
+    (porHojas()||porElCaminoViejo()).then(function(blob){
       el.style.overflow=_overflowPrev; _reponerLupa();
       // Compartir: se intenta la hoja de compartir del teléfono (WhatsApp,
       // correo). Si el navegador no la tiene, se descarga y se avisa.
@@ -17642,6 +17720,62 @@ function generarInformePDF(mesKey){
   // captura suya lo dice sola, sin preguntarle nada — la misma idea que la
   // version del servidor en Configuracion.
   "<div style='background:var(--inf-suave);border:1px solid var(--inf-linea);border-radius:8px;padding:8px 12px;margin-bottom:16px;font-size:11px;color:var(--inf-tinta)'>Este PDF es una <b>foto del momento en que se generó</b>. Cualquier cambio posterior (deudas, tasas, pagos) requiere volver a generarlo.<span style='float:right;color:var(--inf-tinta2);font-size:10px'>"+APP_VERSION+"</span></div>"+
+
+  // ── ESTADO DE LA EMPRESA ─ va PRIMERO (ARREGLO 87) ────────────────
+  // Sus palabras: "no sé si es que la información está mal distribuida porque
+  // no se entiende claramente el estado real de la empresa... no me pones el
+  // desglose de lo que es saldo de la empresa primero, tanto en usdt tanto en
+  // bs y su equivalente en usdt, igual con todas las monedas... no omitas
+  // información solo expresarlo mejor".
+  //
+  // El informe abria con la cuenta de resultados del mes —cuanto gano— y lo
+  // que un dueño mira primero es cuanto HAY. Las dos cosas estaban, pero el
+  // "cuanto hay" salia convertido todo a USDT y repartido en tres sitios
+  // distintos del documento, asi que no habia forma de ver cuanto tiene en
+  // bolivares ni cuanto en reales sin ir sumando a mano.
+  //
+  // Los numeros salen de capitalRealTotal(), el mismo sitio que ya responde
+  // esa pregunta en la conciliacion. No se recalcula nada aqui.
+  (function(){
+    var cap=(typeof capitalRealTotal==="function")?capitalRealTotal():null;
+    if(!cap||!cap.porMoneda) return "";
+    var col=function(v,mon){
+      if(Math.abs(v)<0.009) return "<td style='text-align:right;color:var(--inf-tinta2)'>—</td>";
+      return "<td style='text-align:right'>"+f2l(v)+"</td>";
+    };
+    var filas=cap.porMoneda.map(function(m){
+      return "<tr><td style='font-weight:700'>"+m.moneda+"</td>"+
+        col(m.enCuentas)+col(m.enReserva)+col(m.porCobrar)+col(m.enPrestamos)+
+        "<td style='text-align:right;font-weight:700;color:var(--inf-azul)'>"+
+          (m.sinTasa?"<span style='color:var(--inf-resta)'>Sin tasa</span>":"$"+f2l(m.usdt))+
+        "</td></tr>";
+    }).join("");
+    // El interes pendiente se dice, pero NO suma: no es dinero suyo hasta que
+    // el cliente paga (ARREGLO 71). Esconderlo seria peor —es dinero que le
+    // van a dar— y sumarlo seria inventarse capital.
+    var pieInt = cap.interesPrestamos>0.009
+      ? "<tr><td colspan='5' style='font-size:10px;color:var(--inf-tinta2);font-style:italic'>Intereses de préstamos todavía por cobrar — aún no son de la empresa, por eso no suman</td>"+
+        "<td style='text-align:right;font-size:10px;color:var(--inf-tinta2)'>$"+f2l(cap.interesPrestamos)+"</td></tr>"
+      : "";
+    var aviso = (cap.sinTasa&&cap.sinTasa.length)
+      ? "<div style='margin-top:8px;font-size:10px;color:var(--inf-resta)'>Falta la tasa de "+cap.sinTasa.join(", ")+
+        ", así que ese dinero no entra en el total. El total está incompleto, no corregido.</div>"
+      : "";
+    return sec("Estado de la empresa · qué hay hoy",
+      "<div class='tabla-scroll'><table>"+
+      "<tr><th>Moneda</th><th>En cuentas</th><th>Reserva</th><th>Por cobrar</th><th>En préstamos</th><th>≈ USDT</th></tr>"+
+      filas+
+      "<tr style='background:var(--inf-suave)'>"+
+        "<td colspan='5'><b>CAPITAL TOTAL DE LA EMPRESA</b></td>"+
+        "<td style='text-align:right;font-weight:900;color:var(--inf-azul);font-size:13px'>$"+f2l(cap.total)+"</td></tr>"+
+      pieInt+
+      "</table></div>"+aviso+
+      "<div style='margin-top:8px;font-size:10.5px;color:var(--inf-tinta2)'>"+
+        "En cuentas $"+f2l(cap.enCuentas)+" · en reserva $"+f2l(cap.enReserva)+
+        " · por cobrar $"+f2l(cap.porCobrar)+" · prestado $"+f2l(cap.enPrestamos)+
+        ". El detalle de cada cuenta, cada cobro y cada préstamo va más abajo.</div>");
+  }())+
+
   // RESUMEN
   sec("Resumen General",
     "<div class='tabla-scroll'><table><tr><th>Concepto</th><th>Monto</th></tr>"+
