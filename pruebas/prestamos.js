@@ -3296,8 +3296,26 @@ console.log("\nArreglo 64 · entrar con huella");
     // scale:2 sobre 768x5171 pide casi 16 millones de pixeles. Android corta
     // el lienzo por encima de su tope SIN avisar: imagen recortada o
     // deformada y ningun error. De ahi 15 hojas donde deberian ser 5.
-    ok(/TOPE_LIENZO/.test(pdf) && /while\s*\(escala>1/.test(pdf),
-       "la escala se mide contra el tope de lienzo, no se da por hecha");
+    // ARREGLO 88: ya no se dibuja el documento entero, sino HOJA POR HOJA, asi
+    // que el tope de lienzo deja de apretar: cada hoja suelta son 2.304x3.336
+    // px a 3x y cabe de sobra. Lo que se exige ahora es que ese camino exista,
+    // que dibuje a 3x y que el respaldo siga midiendo la escala por si la
+    // libreria no expone html2canvas y jsPDF sueltos.
+    // Igual aqui: que la funcion EXISTA no prueba nada —un "return null" la
+    // deja en pie y manda el camino viejo—. Se exige que llame a html2canvas
+    // con la escala y con el desplazamiento de cada hoja.
+    ok(/ESCALA=3/.test(pdf) &&
+       /html2canvas\(el,\{[^}]*scale:ESCALA/.test(pdf) &&
+       /y:i\*PX_HOJA/.test(pdf),
+       "el PDF se dibuja hoja por hoja a 3x, no el documento entero a 1,5x");
+    // El respaldo sigue en JPEG a proposito: ahi el lienzo es el documento
+    // entero y el peso importa. El camino bueno va en PNG.
+    ok(/toDataURL\("image\/png"\)/.test(pdf),
+       "y en PNG, que no emborrona el borde de las letras");
+    ok(/porHojas\(\)\s*\|\|\s*porElCaminoViejo\(\)/.test(pdf),
+       "con el camino de antes como respaldo: mejor 151 ppp que ningun PDF");
+    ok(/while\s*\(escala>1/.test(pdf),
+       "y ese respaldo sigue midiendo la escala contra el tope de Android");
     ok(!/scale:2\b/.test(pdf),
        "y ya no hay un scale:2 fijo que el telefono no pueda dibujar");
   }
@@ -3318,6 +3336,36 @@ console.log("\nArreglo 64 · entrar con huella");
     const inf2 = sinComentarios(sacarFuncion("generarInformePDF"));
     ok(/\+APP_VERSION\+/.test(inf2),
        "el informe lleva escrita la version que lo genero");
+  }
+
+  // ── ARREGLO 87: cada papel enseña lo suyo ─────────────────────────
+  // Sus palabras: "el reporte a socio mayor no es el mismo que los socios
+  // menores y no es lo mismo que el contador, cada uno tiene que ver
+  // informacion diferente". El Informe Mensual es el documento del dueño —el
+  // estado real de la empresa—; el reporte por socio es el del socio de ruta y
+  // no puede llevar capital, saldos de cuentas ni prestamos.
+  {
+    const soc = sinComentarios(sacarFuncion("generarReporteSocio"));
+    ["capitalRealTotal", "S.cuentas", "S.prestamos", "cuentasCobrar", "inventarioUsdt"]
+      .forEach(function(q){
+        ok(soc.indexOf(q) === -1,
+           "el reporte de un socio no enseña " + q + ": ese papel es solo lo suyo");
+      });
+    // Y el informe del dueño SI tiene que llevarlo, por moneda.
+    const inf = sinComentarios(sacarFuncion("generarInformePDF"));
+    ok(/ESTADO DE LA EMPRESA|Estado de la empresa/.test(inf),
+       "el informe del mes abre con el estado de la empresa, no con la ganancia");
+    // Ojo: exigir solo "cap.porMoneda" no vale, porque esa cadena tambien
+    // aparece en la guarda de "si no hay desglose, no pintes nada". Lo que hay
+    // que exigir es que de verdad RECORRA la lista para hacer las filas.
+    ok(/cap\.porMoneda\.map/.test(inf),
+       "y lo desglosa por moneda, con su equivalente en USDT");
+    // El desglose sale de capitalRealTotal, no de una suma aparte: dos
+    // respuestas a la misma pregunta es lo que ya hizo que dejara de fiarse
+    // de dos numeros que diferian en un centimo.
+    const crt = sinComentarios(sacarFuncion("capitalRealTotal"));
+    ok(/porMoneda:lista/.test(crt),
+       "y ese desglose lo devuelve capitalRealTotal, que es quien ya recorre todo");
   }
 
   // ── ARREGLO 85: el estilo viaja CON la hoja, no con la pantalla ────
