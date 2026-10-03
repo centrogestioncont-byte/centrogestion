@@ -595,11 +595,192 @@ Ahora `break-inside:avoid` vive solo en el `tr`. Ninguna fila se corta por la
 mitad, el título sigue sin quedarse solo al final de una hoja (`h2` conserva su
 `break-after:avoid`) y desaparecen los huecos.
 
-**Y la cabecera de columnas NO se repite al pasar de hoja, aunque sería lo
-suyo.** `html2pdf` hace **una imagen** de la página y la corta en trozos del
-alto de un A4: no hay motor de maquetado que repita nada, así que `<thead>` con
+**Y la cabecera de columnas no se repite POR CSS, aunque sería lo suyo.**
+`html2pdf` hace **una imagen** de la página y la corta en trozos del alto de un
+A4: no hay motor de maquetado que repita nada, así que `<thead>` con
 `display:table-header-group` aquí no hace absolutamente nada. Se intentó y se
-quitó; no hace falta volver a probarlo.
+quitó; no hace falta volver a probarlo. (Desde el **ARREGLO 90** sí se repite,
+pero de otra forma: la app **clona** la fila de cabecera al DOM antes de
+dibujar. Ver más abajo.)
+
+### Una hoja = un tema con su título (ARREGLO 90)
+
+Sus palabras: *"quiero que el informe no se corte cuando pase de una página a
+otra. No es que todo esté en una sola página. Es que cuando pase una hoja y
+venga la otra información, tenga su título allí, cada hoja tenga su título, a
+qué corresponde cada hoja y que la información sea completa de ese título.
+Porque así es muy tedioso, demasiada información en una sola hoja, brinca para
+un lado, brinca para otro, se corta y ya me han devuelto ese reporte muchas
+veces."*
+
+El 86 arregló que no se partiera una fila. Lo que ella pedía era otra cosa: que
+una hoja se pueda leer sola. El documento era una tira continua y el PDF la
+cortaba cada 1.112 px donde cayera, así que una hoja podía empezar a mitad de
+una tabla sin decir de qué era.
+
+**Esto no se puede hacer con CSS, y ahí está la trampa.** El PDF se dibuja hoja
+por hoja (ARREGLO 88) recortando la **misma imagen** del documento: no hay motor
+de maquetado al que decirle "no partas aquí" ni "repite el título", y
+`break-before` no lo mira nadie en ese camino. Por eso el reparto lo hace la app
+sobre el **DOM ya dibujado**, en `_paginarInforme()`, metiendo tres cosas:
+
+```
+un RELLENO     antes de lo que no cabe, para empujarlo a la hoja siguiente
+el TÍTULO      repetido con "(continúa)" arriba de esa hoja
+la CABECERA    de columnas, si lo que sigue es media tabla
+```
+
+**Y eso corrige lo que el 86 dejó escrito sobre la cabecera.** Es verdad que no
+se puede repetir **por CSS** —`display:table-header-group` no hace nada aquí—,
+pero sí se puede **clonar al DOM antes de dibujar**, que es otra cosa. Lo que no
+hay que volver a intentar es el `<thead>`.
+
+Cuatro cosas que costaron medirse y no hay que deshacer:
+
+- **La banda se decide por CAMBIO DE HOJA, no por "esto cruza un corte".**
+  Mirando solo lo que se parte, con 70 clientes la tabla ocupaba tres hojas y
+  solo la segunda llevaba título: la fila que empezaba la tercera caía justo en
+  el borde, no cruzaba nada y se quedaba sin banda. Medido: *"hoja 8 sin título
+  en la hoja"*. Se sigue en qué hoja va el apartado y se repite el título cuando
+  cambia, parta algo o no.
+- **El aire de cada apartado va en su `padding`, no en el margen del `h2`.** Un
+  margen de arriba se suma **por fuera** de la caja, así que el apartado
+  siguiente empezaba 24 px pasado el corte — y el relleno, que solo puede
+  **añadir**, lo empujaba una hoja **entera**. Medido: una hoja 8 en blanco con
+  el apartado 6 en la 9.
+- **El relleno solo suma.** Pasarse deja más blanco; quedarse corto parte una
+  tabla por la mitad, que es lo único que no se puede permitir. Va en varias
+  pasadas porque meterlo cambia el documento (los márgenes pegados se colapsan).
+- **Dentro de una tabla el relleno es un `<tr>`.** Un `<div>` ahí lo saca el
+  navegador fuera de la tabla y el hueco aparece donde no toca.
+
+**La geometría vive en un solo sitio** (`INF_ANCHO_HOJA`, `INF_PX_HOJA`,
+`INF_MARGEN_MM`): la leen el reparto y el PDF. Dos copias del mismo número y el
+reparto cae donde el PDF no corta. Y el `@page` de imprimir pasó a `8mm` para
+que el navegador corte por el mismo sitio.
+
+**Las rayas de corte se ven en la vista previa**, con el número de hoja. Van
+dentro de la lupa y **fuera** de `#reporteCapture`, así que no se capturan nunca.
+Sin eso hay que descargar el archivo para saber si el reparto quedó bien.
+
+Medido en Chromium a 390, 412, 768 y 1280 px, con un mes de su tamaño y con otro
+de 70 clientes:
+
+```
+                              su mes      mes de 70 clientes
+apartados fuera del corte        0                0
+filas cortadas                   0                0
+hojas en blanco                  0                0
+hojas sin título propio          0                0
+hojas del PDF                   13               18
+```
+
+**Lo que cuesta: más hojas.** De 8 a 13 con sus datos, y 6.274 px de blanco. Eso
+no es un fallo que arreglar: es lo que se compra al poner un tema por hoja, y es
+lo que pidió. Si algún día dice que son demasiadas, lo que hay que tocar es
+dejar que dos apartados pequeños compartan hoja — **no** quitar el reparto.
+
+#### Y lo que se fue del informe
+
+Sus palabras: *"no me importa mucho que me deje un informe de todas las remesas
+que salieron, solamente por dónde salieron, cuánto salió por cada ruta… con los
+detalles de cada operación, yo diría que eso no es tan relevante"*.
+
+Se fue el **detalle remesa por remesa**. De `detalleMes()` siguen las **compras y
+ventas de USDT** y los **traspasos entre cuentas** —que son el movimiento de
+banco de verdad, de donde sale toda la ganancia— y entró lo que pidió: **cuánto
+mandó cada cliente y cuántas veces**, ordenado por lo que pesa.
+
+Dos reglas que ya valían y aquí vuelven a aplicarse:
+
+- el volumen de cada ruta va **en su moneda** y la columna **no lleva total**:
+  sumar reales con bolívares da un número que no existe;
+- lo de cada cliente sí se suma, convirtiendo con `getRateToUsdt()` (que
+  **divide**), y si a una moneda le falta la tasa el total se marca **"parcial"**
+  en vez de quedarse corto en silencio.
+
+**El índice de la portada sale de la misma lista que se dibuja.** Numerarlo a
+mano se descuadra en cuanto un apartado se calla por estar vacío (un socio sin
+nada este mes, ARREGLO 58).
+
+**Y el signo va delante del símbolo.** `f2l` de un negativo devuelve `-73,26` y
+anteponerle el `$` escribía **`$-73,26`**, que se lee como un precio raro en vez
+de como una pérdida. Está en `usd()`.
+
+### Hoja por hoja, y por eso 302 puntos por pulgada (ARREGLO 88)
+
+Sus palabras: *"¿por qué el PDF sale pixelado? no se ve nítido"*. Porque **no es
+texto**: `html2pdf` dibuja la página en un lienzo y mete esa **imagen** en el
+PDF. Lo nítido que salga es lo que mida ese lienzo.
+
+Dibujando el documento **entero** de una vez, el lienzo tiene que caber bajo el
+tope de Android (ARREGLO 84), así que la escala bajaba a 1,5 — **151 ppp**, la
+mitad de calidad de imprenta. Y cuanto más largo el mes, peor: con un mes grande
+bajaba a 1 (101 ppp). O sea que la nitidez dependía de cuántas operaciones tuvo.
+
+Hoja por hoja cada lienzo es pequeño —**2.304 × 3.336 px a 3×, 7,7 M de
+píxeles**— así que cabe de sobra y **la calidad ya no depende del mes**: 302 ppp
+con 5 hojas y con 20. Es el mismo criterio del 83: lo que sale hacia fuera no
+puede depender de las circunstancias del aparato.
+
+- **PNG, no JPEG.** El JPEG es con pérdida y se nota justo donde peor va, en el
+  borde de las letras. Sobre blanco el PNG además pesa poco.
+- **El camino viejo queda como respaldo**, por si la librería no expone
+  `html2canvas` y `jsPDF` sueltos. Mejor un PDF de 151 ppp que ninguno.
+- **Y si lo quiere perfecto, el botón Imprimir → "Guardar como PDF"** lo hace el
+  navegador con texto de verdad: nítido a cualquier zoom, y se puede buscar.
+
+Medido con los dos sustituidos por funciones que anotan lo que reciben, a 390,
+412, 768 y 1280 px: 8 hojas, 8 páginas, escala 3, 302 ppp, cortes contiguos que
+cubren exactamente el alto del documento, las 8 en PNG, ninguna en JPEG. Y
+quitando las dos piezas, cae al respaldo sin un error.
+
+### Cada papel enseña lo suyo (ARREGLO 87)
+
+Sus palabras: *"el reporte a socio mayor no es el mismo que los socios menores y
+no es lo mismo que el contador, cada uno tiene que ver información diferente"*.
+Julio es su marido y el otro **dueño**, no un socio de comisión — así que su
+documento no es uno nuevo: **es el Informe Mensual**. Los socios de ruta (Paul,
+Diana) siguen llamándose socios; *aliado* ya significa otra cosa aquí, el que
+entrega los pesos en Colombia.
+
+```
+Informe Mensual   → Julio y ella   el estado real completo
+Reporte por socio → cada socio     solo lo suyo
+Hoja del contador → el contador    lo fiscal
+```
+
+El reporte por socio **ya estaba bien**: no menciona `capitalRealTotal`,
+`S.cuentas`, `S.prestamos`, `cuentasCobrar` ni `inventarioUsdt`. Una guardia lo
+fija, porque es lo único que impide que un día se cuele ahí el capital.
+
+**Lo que faltaba era el estado de la empresa, y va PRIMERO.** Sus palabras: *"no
+se entiende claramente el estado real de la empresa… no me pones el desglose de
+lo que es saldo de la empresa primero, tanto en usdt tanto en bs y su
+equivalente en usdt, igual con todas las monedas… no omitas información solo
+expresarlo mejor"*.
+
+El informe abría con la cuenta de resultados del mes —cuánto ganó— y lo que un
+dueño mira primero es **cuánto hay**. Las dos cosas estaban, pero el "cuánto
+hay" salía convertido todo a USDT y repartido en tres sitios del documento: no
+había forma de ver cuánto tiene en bolívares sin ir sumando a mano.
+
+- **El desglose lo devuelve `capitalRealTotal()`**, que es quien ya recorre las
+  cuentas, los cobros y los préstamos. Calcularlo aparte sería la segunda
+  respuesta a la misma pregunta — justo lo que ya hizo que dejara de fiarse de
+  dos números que diferían en un céntimo.
+- **Se guarda el monto NATIVO y aparte su equivalente.** Convertirlo todo a USDT
+  es lo que impedía ver cuánto hay en cada moneda.
+- **Las monedas se ordenan por lo que pesan en USDT**: la primera fila es donde
+  de verdad está su dinero, no la que entró antes.
+- **El interés pendiente se dice pero NO suma** (ARREGLO 71). Esconderlo sería
+  peor —es dinero que le van a dar— y sumarlo sería inventarse capital.
+- **Y nada se quita: se ordena.** El detalle de cada cuenta, cada cobro y cada
+  préstamo sigue entero, más abajo.
+
+Comprobado con un mes de su tamaño: la suma de las filas por moneda da
+**7.476,67**, exactamente el total que ya daba la conciliación. Si alguna vez no
+cuadra, es que alguien calculó el desglose por su cuenta.
 
 ### Una tarjeta se define en UN sitio
 
@@ -1636,6 +1817,95 @@ final del informe y no sale, **mira el balance de `<div>` antes que nada**:
 que nadie llamaba, con fórmulas viejas y en portugués. Borradas en el ARREGLO
 59. El peligro no era el peso: era que alguien las leyera y creyera que eran
 las buenas.
+
+### Cerrar un mes es decisión SUYA, no del reloj (ARREGLO 89)
+
+Sus palabras: *"me di cuenta que yo no cerré el mes de septiembre, ya estaba
+cerrado por voluntad propia del sistema. Cosa que no debería de ser así, porque
+si el 30 faltaron cosas por registrar, no deberías de cerrarme el sistema
+automáticamente, al menos que yo le dé cerrar mes"*.
+
+Y era peor de lo que ella creía. `checkCierreAutomatico()` cerraba el mes
+anterior **sin preguntar nada**, y corría en **tres** sitios:
+
+```
+· 2 segundos después de abrir la app
+· cada 5 minutos, de respaldo
+· a medianoche exacta, con un temporizador que se recalibraba solo
+```
+
+O sea que el 1 de octubre, dos segundos después de que ella abriera la app,
+septiembre quedó cerrado — con lo que faltara por registrar fuera. **Y un mes
+cerrado congela sus números**: el informe de ese mes deja de recalcular y pasa a
+leer lo que quedó guardado en el cierre.
+
+Ahora solo lo cierra ella, con su botón. Lo único que hace la app sola es
+**avisar**, arriba del panel y fuera de la zona que hace scroll (ARREGLO 62):
+
+> **Todavía no has cerrado Septiembre 2026.** Todo lo que registres ahora cuenta
+> para Octubre 2026, no para Septiembre 2026. Cierra Septiembre 2026 primero.
+
+- **El aviso no se puede cerrar.** Mientras el mes siga abierto el dato sigue
+  siendo cierto, y esconderlo es lo que la dejó sin enterarse la primera vez.
+- **Solo sale si ese mes tiene operaciones y no está cerrado.** Sin operaciones
+  no hay nada que cerrar y el aviso sería ruido.
+- **`_revisarMesSinCerrar()` no cierra nada: solo marca.** Y una guardia exige
+  que ningún `setTimeout` ni `setInterval` vuelva a llamar a
+  `ejecutarCierreMes` — es por donde entró la primera vez.
+
+#### Pero quitar el automático dejó el manual tapiado (ARREGLO 91)
+
+El 89 se probó con guardias estructurales y **no se probó el camino que el
+propio aviso señala**. Lo encontró ella en `test`: *"me mandó a cerrar el mes de
+septiembre, cuando le di allí me cerró fue el mes de octubre"*.
+
+Eran dos piezas que no encajaban, y cada una sola parecía correcta:
+
+```
+el botón del aviso        llamaba a st("cierre") a secas
+la pantalla de cierre     abre en S._cMes, que por omisión es el mes EN CURSO
+el botón 🗓️ Cerrar        salía solo si esMesAct
+```
+
+O sea que el aviso la mandaba a cerrar septiembre, la dejaba en octubre, y el
+único botón de cerrar que había cerraba **octubre**. Y septiembre no se podía
+cerrar desde ninguna parte: entre el 89 —que quitó el automático— y ese
+`esMesAct`, **el mes anterior no se cerraba de ninguna manera**. Reproducido en
+Chromium contra la versión desplegada: `meses cerrados ahora: ["2026-10"]` y el
+aviso de septiembre seguía ahí.
+
+- **El botón del aviso SELECCIONA el mes** (`S._cMes`), no solo cambia de
+  pestaña. Un aviso que señala un sitio y te deja en otro es peor que no avisar.
+- **El botón Cerrar sale para cualquier mes pasado.** Un mes **futuro** sigue sin
+  botón: puede haber operaciones con fecha adelantada a propósito
+  (`confirmarFechaFutura`) y cerrar un mes que no ha empezado no significa nada.
+- **Y se dice lo que no se ve: la ganancia del mes sale de las operaciones de ESE
+  mes, pero la foto de saldos se toma HOY.** Cerrando septiembre el 3 de octubre,
+  esa foto ya lleva dentro lo que se movió en octubre. Es el precio de que lo
+  cierre ella cuando quiera y no un reloj a medianoche — callarlo le dejaría un
+  número raro sin explicación.
+- **Cerrar el mes anterior no puede ser una puerta de un solo sentido.**
+  `reabrirMes()` solo admitía el mes en curso, porque volver a cerrar tomaría los
+  saldos de hoy en vez de los de aquel día; pero **si el cierre se hizo hoy, esa
+  foto ES la de hoy** y no se pierde nada. Ahora se puede deshacer el mes en
+  curso o un cierre del mismo día, y el botón 🔓 Reabrir sale donde
+  `reabrirMes()` deja reabrir — que antes tampoco coincidían.
+
+**Y el backup del cierre no se descargaba.** Sus palabras: *"supuestamente me iba
+a descargar el archivo de forma automática cuando yo le diera cerrar mes pero no
+me generó nada"*. Iba detrás de un `setTimeout` de medio segundo **después** de
+un `alert()`: Android exige un gesto reciente para una descarga que lanza el
+código, y para entonces el permiso del toque ya había caducado. **Es exactamente
+el mismo fallo que ya costó el botón de compartir (ARREGLO 84)**, en otra
+función. Ahora se lanza dentro del toque, antes del aviso, y `autoBackupJSON()`
+**devuelve el nombre del archivo o `null`**: antes se tragaba cualquier fallo en
+un `catch` que solo escribe en la consola, así que desde fuera un backup que no
+existe se veía igual que uno que sí.
+
+**La lección, y es la segunda vez en dos arreglos seguidos:** una guardia
+estructural comprueba que el código dice lo que debe decir, no que el camino
+funcione. Cuando un arreglo añade un **botón que lleva a algún sitio**, hay que
+pulsarlo en Chromium y mirar dónde cae.
 
 ### Registra la operación — no escribas el saldo
 

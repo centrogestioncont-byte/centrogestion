@@ -2597,7 +2597,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261002_v158";
+var APP_VERSION = "20261003_v162";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -4071,39 +4071,70 @@ function getMesKeyActual(){
   return n.getFullYear()+"-"+String(n.getMonth()+1).padStart(2,"0");
 }
 
-// ─── Cierre automático de mes ────────────────────────────────────────────────
-// Se ejecuta al cargar la app Y a medianoche exacta (setTimeout calibrado)
-function checkCierreAutomatico(){
-  var ahora=new Date();
+// ─── El mes NO se cierra solo: se avisa (ARREGLO 89) ─────────────────────────
+//
+// Sus palabras: "me di cuenta que yo no cerré el mes de septiembre, ya estaba
+// cerrado por voluntad propia del sistema. Cosa que no debería de ser así,
+// porque si el 30 faltaron cosas por registrar, no deberías de cerrarme el
+// sistema automáticamente, al menos que yo le dé cerrar mes".
+//
+// Y era peor de lo que ella creia. checkCierreAutomatico() cerraba el mes
+// anterior SIN preguntar nada, y corria en TRES sitios:
+//
+//   · 2 segundos despues de abrir la app
+//   · cada 5 minutos, de respaldo
+//   · a medianoche exacta, con un temporizador que se recalibraba solo
+//
+// O sea que el 1 de octubre, dos segundos despues de que ella abriera la app,
+// septiembre quedo cerrado — con lo que faltara por registrar fuera. Y un mes
+// cerrado congela sus numeros: el informe de ese mes deja de recalcular y pasa
+// a leer lo que quedo guardado en el cierre.
+//
+// Cerrar un mes es una decision de contabilidad, no una tarea de reloj. Ahora
+// solo lo cierra ella, con su boton, y lo unico que hace la app sola es
+// AVISAR: "aun no has cerrado septiembre; lo que registres ahora cuenta para
+// octubre".
+var _MES_SIN_CERRAR = null;   // mesKey del mes anterior que sigue abierto
+
+function _revisarMesSinCerrar(){
+  _MES_SIN_CERRAR = null;
   if(!S.cierresMes) S.cierresMes=[];
-  // Mes anterior al actual
+  var ahora=new Date();
   var anio=ahora.getFullYear(), mes=ahora.getMonth()+1;
   var mesAnt=mes===1?(anio-1)+"-12":anio+"-"+String(mes-1).padStart(2,"0");
-  // Solo cerrar si no está cerrado ya y hay operaciones
-  var yaExiste=S.cierresMes.some(function(c){return c.mesKey===mesAnt;});
-  if(!yaExiste){
-    var brlAnt=filterByMes(S.brl||[],mesAnt);
-    var vzlaAnt=filterByMes(S.vzla||[],mesAnt);
-    var eeuuAnt=filterByMes(S.eeuu||[],mesAnt);
-    if(brlAnt.length||vzlaAnt.length||eeuuAnt.length){
-      ejecutarCierreMes(mesAnt,false);
-      console.log("[CierreAuto] Cerrado automaticamente: "+mesAnt);
-    }
-  }
+  if(S.cierresMes.some(function(c){return c.mesKey===mesAnt;})) return;
+  // Sin operaciones no hay nada que cerrar y el aviso seria ruido.
+  var hay=filterByMes(S.brl||[],mesAnt).length ||
+          filterByMes(S.vzla||[],mesAnt).length ||
+          filterByMes(S.eeuu||[],mesAnt).length;
+  if(hay) _MES_SIN_CERRAR=mesAnt;
 }
 
-// Programa el próximo disparo a medianoche exacta y se recalibra solo
-function programarCierreMedianoche(){
-  var ahora=new Date();
-  // Calcular milisegundos hasta las 00:00:05 del día siguiente (5 seg de margen)
-  var manana=new Date(ahora.getFullYear(),ahora.getMonth(),ahora.getDate()+1,0,0,5,0);
-  var msHastaMedianoche=manana.getTime()-ahora.getTime();
-  console.log("[CierreAuto] Próximo cierre automático en "+(msHastaMedianoche/1000/60).toFixed(1)+" minutos");
-  setTimeout(function(){
-    checkCierreAutomatico(); // ejecutar cierre
-    R();                     // refrescar UI
-    programarCierreMedianoche(); // recalibrar para la siguiente medianoche
-  }, msHastaMedianoche);
+// El aviso va arriba del panel, fuera de la zona que hace scroll, igual que el
+// de choques (ARREGLO 62): un aviso al fondo de una lista no es un aviso. Y no
+// se puede cerrar — mientras el mes siga abierto, el dato sigue siendo cierto.
+function _htmlAvisoMesSinCerrar(){
+  if(!_MES_SIN_CERRAR) return "";
+  var p=_MES_SIN_CERRAR.split("-");
+  var etq=getMesLabel(p[1],p[0]);
+  var pa=getMesKeyActual().split("-");
+  var etqAhora=getMesLabel(pa[1],pa[0]);
+  return "<div style='background:var(--am1);border-bottom:2px solid var(--am3);padding:10px 14px;"+
+    "display:flex;align-items:center;gap:10px;flex-wrap:wrap'>"+
+    "<div style='flex:1;min-width:200px;font-size:12.5px;color:var(--tx2);line-height:1.5'>"+
+      "<b>Todavía no has cerrado "+etq+".</b> Todo lo que registres ahora cuenta para "+
+      etqAhora+", no para "+etq+". Cierra "+etq+" primero."+
+    "</div>"+
+    // ARREGLO 91: el boton SELECCIONA el mes, no solo cambia de pestaña.
+    // Antes llamaba a st("cierre") a secas y la pantalla abria en S._cMes, que
+    // por omision es el mes EN CURSO. O sea que el aviso decia "ve a cerrar
+    // septiembre" y la dejaba en octubre, donde el unico boton de cerrar que
+    // habia cerraba octubre. Eso fue exactamente lo que paso: el 03/10 cerro
+    // octubre creyendo que cerraba septiembre.
+    "<button onclick='S._cMes=\""+_MES_SIN_CERRAR+"\";S._cSec=\"resumen\";st(\"cierre\")' style='background:var(--am3);color:var(--sobre-color);border:none;"+
+      "padding:8px 14px;border-radius:8px;font-size:12.5px;font-weight:700;cursor:pointer'>"+
+      "Ir a cerrar "+etq+"</button>"+
+  "</div>";
 }
 
 function ejecutarCierreMes(mesKey, manual){
@@ -4223,9 +4254,22 @@ function ejecutarCierreMes(mesKey, manual){
   S.ultimoMesCerrado = mesKey;
   saveData();
   if(manual) {
-    // Backup automático al cerrar mes manualmente
-    setTimeout(function(){ autoBackupJSON(cierre.mesLabel); }, 500);
-    alert("✅ Mes "+cierre.mesLabel+" cerrado.\n\n📥 Se descargará un backup automático en un momento.\nGuárdalo en un lugar seguro."); R();
+    // ARREGLO 91: la descarga va AQUI, dentro del toque que la pidio, y no
+    // detras de un setTimeout de medio segundo despues de un alert. Android
+    // exige un gesto reciente para una descarga que lanza el codigo: con el
+    // temporizador y el alert por delante, el permiso del toque ya habia
+    // caducado y el archivo no salia. Es el mismo fallo que ya se arreglo en
+    // compartir el PDF (ARREGLO 84).
+    //
+    // Y se dice QUE paso. Antes el aviso prometia "se descargará un backup" y
+    // autoBackupJSON se tragaba cualquier fallo en un catch que solo escribe
+    // en la consola: desde fuera, un backup que no existe se veia igual que
+    // uno que si.
+    var _bk = autoBackupJSON(cierre.mesLabel);
+    alert("✅ Mes "+cierre.mesLabel+" cerrado.\n\n"+
+      (_bk ? "📥 Backup descargado: "+_bk+"\nGuárdalo en un lugar seguro."
+           : "⚠️ El backup NO se pudo descargar.\nGuárdalo a mano desde Configuración → Exportar."));
+    R();
   }
 }
 
@@ -4359,12 +4403,21 @@ function cerrarMesDesdeInforme(mesKey){
   var k=mesKey||S._cMes;
   var lbl=getMesLabel(k.split("-")[1],k.split("-")[0]);
   var enCurso=(k===getMesKeyActual());
+  // ARREGLO 91: cerrar un mes YA PASADO tiene una consecuencia que no se ve y
+  // hay que decirla. La ganancia sale de las operaciones de ESE mes y es
+  // correcta, pero la foto de saldos que guarda el cierre se toma HOY: si
+  // cierra septiembre el 3 de octubre, esa foto ya lleva dentro lo que se
+  // movio en octubre. Es el precio de que el mes lo cierre ella cuando quiera
+  // (ARREGLO 89) y no un reloj a medianoche, pero callarlo seria dejarle un
+  // numero raro sin explicacion.
   if(!confirm("Cerrar "+lbl+(enCurso?" (el mes EN CURSO)":"")+"\n\n"+
     "Al cerrarlo:\n"+
     "· la ganancia y el sueldo del mes quedan fijados\n"+
     "· el sueldo pasa a tu acumulado gastable\n"+
     "· las operaciones de ese mes entran desmarcadas al importar de Binance\n\n"+
-    (enCurso?"El mes todavía no ha terminado. ¿Seguro?":"¿Continuar?"))) return;
+    (enCurso
+      ? "El mes todavía no ha terminado. ¿Seguro?"
+      : "Ojo: la ganancia de "+lbl+" sale de las operaciones de ese mes, pero la foto de saldos de las cuentas se toma HOY, no el último día de "+lbl+".\n\n¿Continuar?"))) return;
   ejecutarCierreMes(k,true);
 }
 // Reabrir. Solo el mes EN CURSO, y no por capricho: el cierre guarda una foto
@@ -4375,8 +4428,17 @@ function cerrarMesDesdeInforme(mesKey){
 function reabrirMes(mesKey){
   if(!permisoEdicion()){ alert("No tienes permiso para guardar."); return; }
   var k=mesKey||S._cMes;
-  if(k!==getMesKeyActual()){
-    alert("Solo se puede reabrir el mes en curso.\n\nUn mes ya pasado guarda una foto de tus saldos del día que lo cerraste. Si se borra, al volver a cerrarlo se tomarían los saldos de hoy y los números de ese mes quedarían mal.");
+  // ARREGLO 91: tambien se puede deshacer un cierre hecho HOY, aunque sea de
+  // un mes pasado. La regla de antes —solo el mes en curso— existia porque
+  // volver a cerrar tomaria los saldos de hoy en vez de los de aquel dia; pero
+  // si el cierre se hizo hoy, esa foto ES la de hoy y no se pierde nada.
+  // Sin esto, cerrar el mes anterior seria una puerta de un solo sentido: justo
+  // lo que la dejo atrapada cuando el cierre automatico le cerro septiembre.
+  var _cz=(S.cierresMes||[]).find(function(c){return c && c.mesKey===k;});
+  var _hoy=new Date().toDateString();
+  var _cerradoHoy=!!(_cz && _cz.fechaCierre && new Date(_cz.fechaCierre).toDateString()===_hoy);
+  if(k!==getMesKeyActual() && !_cerradoHoy){
+    alert("Este mes se cerró otro día y ya no se puede reabrir.\n\nSu cierre guarda una foto de tus saldos del día que lo cerraste. Si se borra, al volver a cerrarlo se tomarían los saldos de hoy y los números de ese mes quedarían mal.\n\nUn cierre del mismo día sí se puede deshacer.");
     return;
   }
   var lbl=getMesLabel(k.split("-")[1],k.split("-")[0]);
@@ -4477,6 +4539,23 @@ function getGananciaUsdtMes(mesKey){
 //   · las cuentas de reserva (estaban fuera de todos los totales)
 //   · el dinero en la calle: cobros pendientes y prestamos activos
 function capitalRealTotal(){
+  // ARREGLO 87: ademas de los totales en USDT, el desglose POR MONEDA.
+  // Sus palabras: "no me pones el desglose de lo que es saldo de la empresa
+  // primero... tanto en usdt tanto en bs y su equivalente en usdt igual con
+  // todas las monedas". El informe lo necesita y este es el unico sitio que
+  // ya recorre las cuentas, los cobros y los prestamos: calcularlo aparte
+  // seria la segunda respuesta a la misma pregunta, que es justo lo que ya
+  // hizo que dejara de fiarse de dos numeros (34,27 arriba y 34,28 abajo).
+  //
+  // Se guarda el monto NATIVO —bolivares como bolivares— y aparte su
+  // equivalente, porque convertirlo todo a USDT es lo que hacia que no se
+  // pudiera ver cuanto tiene de verdad en cada moneda.
+  var porMoneda={};
+  var _mon=function(m){
+    if(!porMoneda[m]) porMoneda[m]={moneda:m,enCuentas:0,enReserva:0,porCobrar:0,
+                                    enPrestamos:0,interesPrestamos:0,usdt:0,sinTasa:false};
+    return porMoneda[m];
+  };
   var enCuentas=0, enReserva=0, sinTasa=[];
   (S.cuentas||[]).filter(function(c){return c.activa!==false&&!c.esPersonal;}).forEach(function(acc){
     var saldo=parseFloat(acc.saldo)||0;
@@ -4485,10 +4564,13 @@ function capitalRealTotal(){
     if(acc.moneda==="USDT"||acc.moneda==="USD") usdt=saldo;
     else {
       var r=getRateToUsdt(acc.moneda);
-      if(!r||isNaN(r)){ sinTasa.push(acc.moneda); return; }
+      if(!r||isNaN(r)){ sinTasa.push(acc.moneda); _mon(acc.moneda).sinTasa=true; return; }
       usdt=saldo/r;
     }
     if(acc.esReserva) enReserva+=usdt; else enCuentas+=usdt;
+    var mm=_mon(acc.moneda);
+    if(acc.esReserva) mm.enReserva+=saldo; else mm.enCuentas+=saldo;
+    mm.usdt+=usdt;
   });
   var porCobrar=0;
   (S.cuentasCobrar||[]).forEach(function(c){
@@ -4497,10 +4579,11 @@ function capitalRealTotal(){
     var pend=Math.max(0,(parseFloat(c.monto)||0)-abon);
     if(pend<=0) return;
     var mon=c.moneda||"USDT";
-    if(mon==="USDT"||mon==="USD"){ porCobrar+=pend; return; }
+    var mc=_mon(mon); mc.porCobrar+=pend;
+    if(mon==="USDT"||mon==="USD"){ porCobrar+=pend; mc.usdt+=pend; return; }
     var r=getRateToUsdt(mon);
-    if(!r||isNaN(r)){ sinTasa.push(mon); return; }
-    porCobrar+=pend/r;
+    if(!r||isNaN(r)){ sinTasa.push(mon); mc.sinTasa=true; return; }
+    porCobrar+=pend/r; mc.usdt+=pend/r;
   });
   // ARREGLO 71: un prestamo entra aqui por su CAPITAL pendiente, no por el
   // total a cobrar. El interes pactado todavia no es dinero suyo: lo gana
@@ -4523,16 +4606,28 @@ function capitalRealTotal(){
     var fr=_fraccionInteresPrestamo(p);
     var pendInt=pend*fr, pendCap=pend-pendInt;
     var mon=p.mon||"USDT";
-    if(mon==="USDT"||mon==="USD"){ enPrestamos+=pendCap; interesPrestamos+=pendInt; return; }
+    var mp=_mon(mon); mp.enPrestamos+=pendCap; mp.interesPrestamos+=pendInt;
+    if(mon==="USDT"||mon==="USD"){ enPrestamos+=pendCap; interesPrestamos+=pendInt; mp.usdt+=pendCap; return; }
     var r=getRateToUsdt(mon);
-    if(!r||isNaN(r)){ sinTasa.push(mon); return; }
-    enPrestamos+=pendCap/r; interesPrestamos+=pendInt/r;
+    if(!r||isNaN(r)){ sinTasa.push(mon); mp.sinTasa=true; return; }
+    enPrestamos+=pendCap/r; interesPrestamos+=pendInt/r; mp.usdt+=pendCap/r;
   });
   var r2v=function(n){return Math.round(n*100)/100;};
   var total=r2v(enCuentas+enReserva+porCobrar+enPrestamos);
+  // Las monedas se ordenan por lo que pesan en USDT: la primera fila del
+  // informe es donde de verdad esta su dinero, no la que entro antes.
+  var lista=Object.keys(porMoneda).map(function(m){
+    var x=porMoneda[m];
+    return {moneda:m, enCuentas:r2v(x.enCuentas), enReserva:r2v(x.enReserva),
+            porCobrar:r2v(x.porCobrar), enPrestamos:r2v(x.enPrestamos),
+            interesPrestamos:r2v(x.interesPrestamos), usdt:r2v(x.usdt), sinTasa:x.sinTasa};
+  }).filter(function(x){
+    return Math.abs(x.enCuentas)>0.009||Math.abs(x.enReserva)>0.009||
+           Math.abs(x.porCobrar)>0.009||Math.abs(x.enPrestamos)>0.009;
+  }).sort(function(a,b){return b.usdt-a.usdt;});
   return {enCuentas:r2v(enCuentas), enReserva:r2v(enReserva), porCobrar:r2v(porCobrar),
           enPrestamos:r2v(enPrestamos), interesPrestamos:r2v(interesPrestamos),
-          enLaCalle:r2v(porCobrar+enPrestamos), total:total,
+          enLaCalle:r2v(porCobrar+enPrestamos), total:total, porMoneda:lista,
           sinTasa:sinTasa.filter(function(m,i,a){return a.indexOf(m)===i;})};
 }
 
@@ -14635,10 +14730,13 @@ function autoBackupJSON(mesLabel){
     var hoy=new Date();
     a.download="Backup_"+mesLabel+"_"+hoy.getFullYear()+"-"+String(hoy.getMonth()+1).padStart(2,"0")+"-"+String(hoy.getDate()).padStart(2,"0")+".json";
     document.body.appendChild(a);a.click();
+    var _nom=a.download;
     setTimeout(function(){document.body.removeChild(a);URL.revokeObjectURL(a.href);},1000);
-    console.log("✅ Backup automático descargado:",a.download);
+    console.log("✅ Backup automático descargado:",_nom);
+    return _nom;   // ARREGLO 91: quien llama tiene que poder decir si salio
   }catch(e){
     console.warn("Auto-backup falló (no crítico):",e);
+    return null;
   }
 }
 
@@ -15864,10 +15962,12 @@ function guardarEditClienteCobrar(id){
   saveData();R();
 }
 
-// Cierre automático: al cargar (2 seg) + a medianoche exacta + cada 5 min de respaldo
-setTimeout(checkCierreAutomatico, 2000);
-setInterval(checkCierreAutomatico, 300000); // respaldo cada 5 min
-programarCierreMedianoche();               // disparo preciso a las 00:00:05
+// ARREGLO 89: esto llamaba a checkCierreAutomatico, que CERRABA el mes solo —
+// al abrir, cada 5 minutos y a medianoche. Ahora solo revisa y avisa. El
+// disparo de medianoche se fue con ella: no habia nada que hacer a esa hora
+// salvo cerrar, y cerrar ya no es cosa del reloj.
+setTimeout(function(){ _revisarMesSinCerrar(); R(); }, 2000);
+setInterval(function(){ _revisarMesSinCerrar(); }, 300000);
 
 
 // upC — live calculation update
@@ -17016,6 +17116,7 @@ function rMain(){
     // scroll, para que se vea esté ella en la pantalla que esté. Un aviso al
     // fondo de una lista de remesas no es un aviso.
     _htmlAvisoPisado()+
+    _htmlAvisoMesSinCerrar()+   // ARREGLO 89
     "<div class='navbar3'>"+
       "<button class='menubtn' onclick='document.getElementById(\"navMenuWrap\").classList.add(\"show\")'>☰ Menú</button>"+
       "<div class='cursec'>"+(TL[S.tab]||S.tab||"")+"</div>"+
@@ -17272,6 +17373,191 @@ function exportarReporteContadorCSV(mesKey){
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+// ── ARREGLO 90 ─ LA GEOMETRIA DE LA HOJA, EN UN SOLO SITIO ────────────────
+// La hoja mide 768 px (ARREGLO 83) y en el PDF ocupa 194 x 281 mm, que es un
+// A4 menos 8 mm de margen por lado. De ahi sale cuanto mide una hoja en
+// pixeles: 1.112. Estaba escrito dentro de _pdfInforme, pero ahora lo necesita
+// tambien _paginarInforme para repartir los apartados — y si los dos numeros
+// se separan, el reparto cae donde no corta el PDF.
+var INF_ANCHO_HOJA=768;
+var INF_MM_ANCHO=194, INF_MM_ALTO=281, INF_MARGEN_MM=8;
+var INF_PX_HOJA=Math.floor(INF_ANCHO_HOJA*INF_MM_ALTO/INF_MM_ANCHO);   // 1112
+
+// ── ARREGLO 90 ─ CADA APARTADO EN SU HOJA, Y SI SIGUE, CON SU TITULO ──────
+//
+// Sus palabras: "quiero que el informe no se corte cuando pase de una pagina a
+// otra... cada hoja tenga su titulo, a que corresponde cada hoja y que la
+// informacion sea completa de ese titulo. Porque asi es muy tedioso, demasiada
+// informacion en una sola hoja, brinca para un lado, brinca para otro, se
+// corta y ya me han devuelto ese reporte muchas veces".
+//
+// Esto no se puede hacer con CSS. El PDF se dibuja hoja por hoja (ARREGLO 88)
+// recortando la MISMA imagen del documento en trozos de INF_PX_HOJA: no hay
+// motor de maquetado al que decirle "no partas aqui" ni "repite el titulo", y
+// break-inside/break-before no los mira nadie en ese camino. Por eso el reparto
+// se hace a mano sobre el DOM ya dibujado, metiendo tres cosas:
+//
+//   · un RELLENO antes de lo que no cabe, para empujarlo a la hoja siguiente;
+//   · el TITULO repetido con "(continua)" arriba de esa hoja;
+//   · y la CABECERA de columnas, si lo que sigue es media tabla.
+//
+// Medir el documento dibujado es lo unico fiable: el alto de una fila depende
+// de cuanto texto lleve el nombre de un cliente, y eso no se puede calcular por
+// adelantado. Y se mide con offsetTop/offsetHeight a proposito, que ignoran el
+// transform de la lupa; con getBoundingClientRect los numeros saldrian
+// encogidos en el telefono (ARREGLO 83).
+function _infY(el,hoja){
+  // offsetTop sube por offsetParent, que para todo lo que hay dentro de la
+  // hoja acaba en <body> (la hoja no esta posicionada). Se suma la cadena de
+  // los dos y se resta: asi vale igual para un <div> que para un <tr>.
+  var acum=function(n){ var y=0; while(n){ y+=n.offsetTop; n=n.offsetParent; } return y; };
+  return acum(el)-acum(hoja);
+}
+function _infCols(nodo){
+  var t=nodo.closest?nodo.closest("table"):null;
+  if(!t) return 1;
+  var tr=t.querySelector("tr");
+  if(!tr) return 1;
+  var n=0;
+  Array.prototype.slice.call(tr.children).forEach(function(c){ n+=(parseInt(c.getAttribute("colspan"),10)||1); });
+  return n||1;
+}
+// El relleno tiene que ser del tipo que admita su padre: dentro de una tabla,
+// un <tr> con una celda que ocupe todas las columnas. Un <div> ahi lo mueve el
+// navegador fuera de la tabla y el hueco aparece donde no toca.
+function _infNodo(padre,clase,cols,html){
+  var dentroDeTabla=/^(TBODY|THEAD|TFOOT|TABLE)$/.test((padre.tagName||"").toUpperCase());
+  var n=document.createElement(dentroDeTabla?"tr":"div");
+  n.className=clase;
+  if(dentroDeTabla) n.innerHTML="<td colspan='"+cols+"'>"+(html||"")+"</td>";
+  else n.innerHTML=html||"";
+  return n;
+}
+function _infPonerAlto(n,px){
+  var celda=n.firstElementChild;
+  if(n.tagName==="TR"&&celda) celda.style.height=px+"px";
+  else n.style.height=px+"px";
+}
+function _infAltoDe(n){
+  var celda=n.firstElementChild;
+  if(n.tagName==="TR"&&celda) return parseFloat(celda.style.height)||0;
+  return parseFloat(n.style.height)||0;
+}
+// Empuja un nodo hasta el principio de una hoja. Va en varias pasadas porque
+// meter el relleno cambia el documento: los margenes de dos elementos pegados
+// se colapsan y al separarlos el alto no es el que se habia medido. Solo SUMA
+// alto, nunca lo quita, asi que si se pasa deja mas blanco pero no corta nada
+// — quedarse corto es lo unico que parte una tabla por la mitad.
+function _infAlPrincipio(nodo,hoja){
+  var relleno=null;
+  for(var i=0;i<5;i++){
+    var y=_infY(nodo,hoja);
+    var resto=((y%INF_PX_HOJA)+INF_PX_HOJA)%INF_PX_HOJA;
+    if(resto<=1) return relleno;
+    var falta=INF_PX_HOJA-resto;
+    if(!relleno){
+      relleno=_infNodo(nodo.parentNode,"inf-relleno",_infCols(nodo),"");
+      nodo.parentNode.insertBefore(relleno,nodo);
+      _infPonerAlto(relleno,falta);
+    }else{
+      _infPonerAlto(relleno,_infAltoDe(relleno)+falta);
+    }
+  }
+  return relleno;
+}
+// Los "atomos" son lo que no se puede cortar por la mitad: una fila, un
+// parrafo, una tarjeta. Se baja por el arbol solo cuando algo no cabe en una
+// hoja entera; si cabe, es un atomo y viaja completo. Asi una tabla de 6 filas
+// no se parte nunca, y una de 40 se parte entre filas.
+function _infAtomos(el,out){
+  var hijos=el.children;
+  if(!hijos||!hijos.length) return;
+  for(var i=0;i<hijos.length;i++){
+    var h=hijos[i];
+    if(!h.offsetHeight) continue;
+    if(h.offsetHeight<=INF_PX_HOJA || !h.children.length) out.push(h);
+    else _infAtomos(h,out);
+  }
+}
+function _paginarInforme(){
+  var hoja=document.getElementById("reporteCapture");
+  if(!hoja) return;
+  // Una pasada anterior deja sus piezas puestas: se quitan antes de medir, que
+  // si no el reparto se hace sobre un documento que ya estaba repartido.
+  Array.prototype.slice.call(hoja.querySelectorAll(".inf-relleno,.inf-sigue,.inf-h2sigue"))
+    .forEach(function(n){ n.remove(); });
+  var secs=Array.prototype.slice.call(hoja.querySelectorAll(".inf-sec"));
+  secs.forEach(function(sec){
+    // 1) TODOS los apartados empiezan arriba de una hoja, el primero tambien:
+    //    la portada con el indice se queda sola en la hoja 1. Dejandolo
+    //    compartir hoja con la portada, el apartado 1 se partia en dos —y
+    //    partirse es justo lo que ella no quiere, aunque lleve su titulo.
+    _infAlPrincipio(sec,hoja);
+    var h2=sec.querySelector("h2");
+    if(!h2) return;
+    var titulo=h2.innerHTML;
+    // 2) y TODA hoja que continue el apartado repite su titulo.
+    //
+    // Ojo con la condicion, que es lo que costo: mirar solo "esto cruza un
+    // corte" no basta. Con 70 clientes la tabla ocupaba tres hojas y solo la
+    // segunda llevaba titulo: la fila que empezaba la tercera caia justo en el
+    // borde, asi que no cruzaba nada y no se le ponia banda. Medido: "hoja 8
+    // SIN TITULO EN LA HOJA". Lo que hay que seguir es en que hoja va el
+    // apartado y cuando cambia, cruce o no cruce.
+    var atomos=[];
+    _infAtomos(sec,atomos);
+    var hojaDe=function(y){ return Math.floor(y/INF_PX_HOJA); };
+    var hojaActual=hojaDe(_infY(sec,hoja));
+    atomos.forEach(function(a){
+      if(a===h2) return;
+      var alto=a.offsetHeight;
+      if(!alto) return;
+      var y=_infY(a,hoja);
+      var h0=hojaDe(y), h1=hojaDe(y+alto-1);
+      if(h0===hojaActual && h1===hojaActual) return;   // sigue en la misma hoja
+      // Mas alto que una hoja entera: no hay reparto posible y empujarlo solo
+      // añadiria blanco. Se deja donde esta y se apunta donde acaba.
+      if(alto>=INF_PX_HOJA-60){ hojaActual=h1; return; }
+      var cols=_infCols(a);
+      var banda=_infNodo(a.parentNode,"inf-sigue",cols,
+        "<div class='inf-h2sigue'>"+titulo+" <span style='font-weight:400;text-transform:none;letter-spacing:0'>(continúa)</span></div>");
+      a.parentNode.insertBefore(banda,a);
+      // Si lo que sigue es media tabla, su cabecera de columnas se clona: sin
+      // ella la hoja siguiente son numeros sin decir de que columna son. No se
+      // clona si lo que se empuja ES la cabecera.
+      var tabla=a.closest?a.closest("table"):null;
+      if(tabla && a.tagName==="TR" && !a.querySelector("th")){
+        var cab=tabla.querySelector("tr");
+        if(cab && cab.querySelector("th") && cab!==a){
+          var copia=cab.cloneNode(true);
+          copia.className="inf-sigue-cab";
+          a.parentNode.insertBefore(copia,a);
+        }
+      }
+      _infAlPrincipio(banda,hoja);
+      hojaActual=hojaDe(_infY(a,hoja));
+    });
+  });
+  _infMarcarCortes(hoja);
+}
+// Las rayas de la vista previa: donde va a cortar el PDF y que numero de hoja
+// es. Van FUERA de #reporteCapture —dentro de la lupa, que no se captura— asi
+// que no salen en el papel. Sin esto hay que descargar el archivo para saber
+// si el reparto quedo bien.
+function _infMarcarCortes(hoja){
+  var cont=document.getElementById("reporteLupaInt");
+  if(!cont) return;
+  Array.prototype.slice.call(cont.querySelectorAll(".corte")).forEach(function(n){ n.remove(); });
+  var total=hoja.scrollHeight;
+  var n=Math.max(1,Math.ceil(total/INF_PX_HOJA));
+  for(var i=1;i<=n;i++){
+    var d=document.createElement("div");
+    d.className="corte";
+    d.style.top=Math.min(total,i*INF_PX_HOJA)+"px";
+    d.innerHTML="<span>fin de la hoja "+i+" de "+n+"</span>";
+    cont.appendChild(d);
+  }
+}
 // ARREGLO 83 ─ la vista previa se encoge; el documento NO.
 // La hoja mide 768 px siempre. En un teléfono eso no cabe, así que se reduce
 // con un scale sobre #reporteLupa, que envuelve a la hoja pero no se captura.
@@ -17372,26 +17658,75 @@ function _pdfInforme(btnId,modo){
     //    Se baja la escala hasta caber en un presupuesto seguro. Con su
     //    informe sale 1,5 — unos 150 puntos por pulgada en A4, que en papel se
     //    lee igual; un PDF que no se abre no se lee de ninguna manera.
-    var ANCHO_HOJA=768;
-    var TOPE_LIENZO=12000000;
-    var escala=2;
-    while(escala>1 && (ANCHO_HOJA*escala)*(alturaReal*escala)>TOPE_LIENZO) escala-=0.25;
-    var opciones={
-      margin:8,
-      filename:nombreArch,
-      image:{type:"jpeg",quality:0.95},
-      html2canvas:{scale:escala,useCORS:true,scrollX:0,scrollY:0,
-                   windowWidth:ANCHO_HOJA,windowHeight:alturaReal,
-                   width:ANCHO_HOJA,height:alturaReal},
-      jsPDF:{unit:"mm",format:"a4",orientation:"portrait"},
-      pagebreak:{mode:["css","legacy"]}
-    };
+    var ANCHO_HOJA=INF_ANCHO_HOJA;
+    // ARREGLO 88 ─ se dibuja HOJA POR HOJA, no el documento entero.
+    //
+    // Sus palabras: "¿por qué el PDF sale pixelado? no se ve nítido". Porque
+    // no es texto: html2pdf dibuja la pagina en un lienzo y mete esa IMAGEN en
+    // el PDF. Lo nitido que salga es lo que mida ese lienzo.
+    //
+    // Dibujando el documento entero de una vez, el lienzo tiene que caber bajo
+    // el tope de Android (ARREGLO 84), asi que la escala bajaba a 1,5 — 151
+    // puntos por pulgada, la mitad de lo que se considera calidad de imprenta.
+    // Y cuanto mas largo el mes, peor: con un mes grande bajaba a 1 (101 ppp).
+    //
+    // Hoja por hoja, cada lienzo es pequeño —2.304 x 3.336 px a 3x— asi que
+    // cabe de sobra y la calidad YA NO DEPENDE de lo largo que sea el mes:
+    // 302 ppp con 5 hojas y con 20. Es el mismo criterio del ARREGLO 83: lo
+    // que sale hacia fuera no puede depender de las circunstancias del aparato
+    // ni del mes.
+    var ESCALA=3;
+    // ARREGLO 90: la geometria sale de las constantes de arriba, que son las
+    // mismas que usa _paginarInforme() para repartir los apartados. Estaban
+    // escritas aqui a mano, y dos copias del mismo numero es lo que haria que
+    // el reparto cayera donde el PDF no corta.
+    var MM_ANCHO=INF_MM_ANCHO, MM_ALTO=INF_MM_ALTO, MARGEN=INF_MARGEN_MM;
+    var PX_HOJA=INF_PX_HOJA;
     function guardar(blob){
       var url=URL.createObjectURL(blob);
       var a=document.createElement("a"); a.href=url; a.download=nombreArch; a.click();
       setTimeout(function(){URL.revokeObjectURL(url);},2000);
     }
-    html2pdf().set(opciones).from(el).toPdf().output("blob").then(function(blob){
+    // El camino de siempre, por si la libreria no expone las dos piezas que
+    // esto necesita. Mejor un PDF de 151 ppp que ninguno.
+    function porElCaminoViejo(){
+      var escala=2, TOPE=12000000;
+      while(escala>1 && (ANCHO_HOJA*escala)*(alturaReal*escala)>TOPE) escala-=0.25;
+      return html2pdf().set({
+        margin:MARGEN, filename:nombreArch, image:{type:"jpeg",quality:0.95},
+        html2canvas:{scale:escala,useCORS:true,scrollX:0,scrollY:0,
+                     windowWidth:ANCHO_HOJA,windowHeight:alturaReal,
+                     width:ANCHO_HOJA,height:alturaReal},
+        jsPDF:{unit:"mm",format:"a4",orientation:"portrait"},
+        pagebreak:{mode:["css","legacy"]}
+      }).from(el).toPdf().output("blob");
+    }
+    function porHojas(){
+      var jsPDFCtor=(window.jspdf&&window.jspdf.jsPDF)||window.jsPDF;
+      if(typeof html2canvas!=="function"||typeof jsPDFCtor!=="function") return null;
+      var nHojas=Math.max(1,Math.ceil(alturaReal/PX_HOJA));
+      var doc=new jsPDFCtor({unit:"mm",format:"a4",orientation:"portrait"});
+      var paso=function(i){
+        if(i>=nHojas) return Promise.resolve(doc.output("blob"));
+        var alto=Math.min(PX_HOJA, alturaReal-i*PX_HOJA);
+        return html2canvas(el,{
+          scale:ESCALA, useCORS:true, backgroundColor:"#ffffff",
+          windowWidth:ANCHO_HOJA, windowHeight:alturaReal,
+          width:ANCHO_HOJA, height:alto,
+          scrollX:0, scrollY:0, x:0, y:i*PX_HOJA
+        }).then(function(lienzo){
+          // PNG y no JPEG: el JPEG es con perdida y se nota justo donde peor
+          // va, en el borde de las letras. En un documento de texto sobre
+          // blanco el PNG ademas pesa poco.
+          if(i>0) doc.addPage();
+          doc.addImage(lienzo.toDataURL("image/png"), "PNG",
+                       MARGEN, MARGEN, MM_ANCHO, alto*MM_ANCHO/ANCHO_HOJA);
+          return paso(i+1);
+        });
+      };
+      return paso(0);
+    }
+    (porHojas()||porElCaminoViejo()).then(function(blob){
       el.style.overflow=_overflowPrev; _reponerLupa();
       // Compartir: se intenta la hoja de compartir del teléfono (WhatsApp,
       // correo). Si el navegador no la tiene, se descarga y se avisa.
@@ -17498,38 +17833,13 @@ function generarInformePDF(mesKey){
   var totalUsdtCuentas=0;
   cuentasParaInforme.forEach(function(c){var s=parseFloat(c.saldo)||0;var rate=getRateToUsdt(c.moneda);if(c.moneda==="USDT")totalUsdtCuentas+=s;else if(rate)totalUsdtCuentas+=s/rate;});
   totalUsdtCuentas=Math.round(totalUsdtCuentas*100)/100;
-  // Fix6: cierre anterior para el resumen final
-  var cierresArr=(S.cierresMes||[]).slice().sort(function(a,b){return b.mesKey.localeCompare(a.mesKey);});
-  var cierreAnt=cierresArr.find(function(c){return c.mesKey!==mesKey;});
-  var _caSaldo=cierreAnt?parseFloat(cierreAnt.saldoCierreUsdtCalc):NaN;var saldoAnterior=(!isNaN(_caSaldo)&&_caSaldo!==null&&cierreAnt)?_caSaldo:null;
   // Agrupar ops por ruta — Fix1+2: guardar _isEE por ruta
   var porRuta={};
   todasOps.forEach(function(r){var k=r.rt||"Sin ruta";if(!porRuta[k])porRuta[k]={ops:0,gan:0,vol:0,mon:r.orig||"",_isEE:!!r._isEE};porRuta[k].ops++;porRuta[k].gan+=parseFloat(r.pr)||0;porRuta[k].vol+=parseFloat(r.am)||0;});
-  // Egresos por categoría
-  var empPorCat={};egEmpM.filter(function(e){return e.pagada;}).forEach(function(e){var c=e.categoria||e.cat||"General";if(!empPorCat[c])empPorCat[c]=0;empPorCat[c]+=(parseFloat(e.usdt)||0);});
-  var perPorCat={};egPerM.filter(function(e){return e.pagada;}).forEach(function(e){var c=e.categoria||e.cat||"General";if(!perPorCat[c])perPorCat[c]=0;perPorCat[c]+=(parseFloat(e.usdt)||0);});
   // Pagos a socios del mes
   var pagosMes=(S.pagosSocios||[]).filter(function(p){return (p.mesKeyPara||p.mesKey)===mesKey;});
   var f2l=function(n){return (Math.round(n*100)/100).toFixed(2).replace(".",",");};
-  var row=function(l,v,color,signed){var num=parseFloat(v)||0;var disp=signed?num:Math.abs(num);var col=(color||"#1a3558");return "<tr><td style='padding:5px 8px;font-size:12px'>"+l+"</td><td style='padding:5px 8px;font-size:12px;text-align:right;font-weight:700;color:"+col+"'>"+(signed&&num<0?"−":"")+"$"+f2l(Math.abs(disp))+" USDT</td></tr>";};
-  // La seccion y su filete. El filete era ambar #FFA31C de 2px: en una hoja
-  // blanca eso es lo primero que ve el ojo, once veces, y no dice nada. Ahora
-  // es la linea del titulo, en el azul de la empresa y de 1px.
-  // ARREGLO 86: la seccion ya NO es indivisible.
-  //
-  // Y la cabecera de columnas NO se repite al pasar de hoja, aunque seria lo
-  // suyo: html2pdf hace UNA imagen de la pagina y la corta en trozos del alto
-  // de un A4. No hay motor de maquetado que repita nada, asi que <thead> con
-  // display:table-header-group aqui no hace absolutamente nada. Se intento y se
-  // quito; no hace falta volver a probarlo. Lo era desde el 79 —"ni una
-  // tabla ni una seccion se parte entre hojas"— y con sus datos reales eso
-  // salia al reves de lo buscado: una seccion que no cabia en lo que quedaba de
-  // hoja saltaba entera a la siguiente y dejaba media hoja en blanco, y las que
-  // no caben NI en una hoja completa (Prestamos activos, 20 filas) se partian
-  // igual. O sea que el hueco no compraba nada: 9 hojas, cuatro de ellas medio
-  // vacias. Ahora lo indivisible es la FILA, que es lo que de verdad no se
-  // puede cortar por la mitad.
-  var sec=function(title,content){return "<div style='margin-bottom:22px'><h2>"+title+"</h2>"+content+"</div>";};
+  var row=function(l,v,color,signed){var num=parseFloat(v)||0;var disp=signed?num:Math.abs(num);var col=(color||"var(--inf-tinta)");return "<tr><td style='padding:5px 8px;font-size:12px'>"+l+"</td><td style='padding:5px 8px;font-size:12px;text-align:right;font-weight:700;color:"+col+"'>"+(signed&&num<0?"−":"")+"$"+f2l(Math.abs(disp))+" USDT</td></tr>";};
 
   // ── LA HOJA DEL INFORME (ARREGLO 79) ───────────────────────────────────
   // Esto no es una pantalla: es el documento que ella lleva a la junta con su
@@ -17599,11 +17909,51 @@ function generarInformePDF(mesKey){
   // hoja, asi que el PDF salia con la primera seccion y media y sin un solo
   // error en consola (ARREGLO 78).
   ".inf-doc .cuerpo{padding:0 24px;display:block}"+
-  // Ni una tabla ni una seccion partida entre hojas.
   ".inf-doc h2{break-after:avoid;page-break-after:avoid}"+
   ".inf-doc tr{break-inside:avoid;page-break-inside:avoid}"+
-  "@page{margin:14mm 12mm}"+
-  "@media print{*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important}body>*:not(#informePdfOverlay){display:none !important}#informePdfOverlay{position:static!important;inset:auto!important;height:auto!important;max-height:none!important;overflow:visible!important;background:var(--inf-sobre)}#informePdfOverlay .contenido{height:auto!important;overflow:visible!important;max-width:none;padding:0}#informePdfOverlay .btnBar,#informePdfOverlay .btnCerrar{display:none !important}#informePdfOverlay .hoja{box-shadow:none;height:auto!important;overflow:visible!important;width:auto!important}#informePdfOverlay .lupa{height:auto!important;overflow:visible!important}#informePdfOverlay .lupa-int{transform:none!important}}"+
+  // ── ARREGLO 90: cada apartado arranca arriba de una hoja ───────────
+  // Lo reparte _paginarInforme() midiendo el documento ya dibujado. Aqui solo
+  // van los estilos de las tres piezas que mete:
+  //  · .inf-relleno  el hueco que empuja lo siguiente a la hoja de al lado.
+  //                  Dentro de una tabla es un <tr>, y la regla global
+  //                  ".inf-doc td{border-bottom...!important}" le pintaria una
+  //                  linea en medio de la nada: hay que apagarla con la misma
+  //                  fuerza.
+  //  · .inf-h2sigue  el titulo repetido arriba de la hoja siguiente. Es el
+  //                  mismo h2 sin su margen de arriba, porque va pegado al
+  //                  borde del papel.
+  //  · .inf-cabsigue la cabecera de columnas repetida. El ARREGLO 86 dejo
+  //                  escrito que no se podia —html2pdf hace UNA imagen y la
+  //                  corta, no hay motor que repita un <thead>— y es verdad;
+  //                  esto no la repite por CSS, la CLONA al DOM antes de
+  //                  dibujar, que es otra cosa.
+  // El aire de cada apartado va en su PADDING, no en el margen del h2. Un
+  // margen de arriba se suma por fuera de la caja, asi que el apartado
+  // siguiente empezaba 24 px pasado el corte y _infAlPrincipio —que solo
+  // puede añadir— lo empujaba una hoja ENTERA: medido, una hoja 8 en blanco
+  // con el apartado 6 en la 9. Con el relleno dentro de la caja, un apartado
+  // empieza exactamente donde acabo el anterior.
+  ".inf-doc .inf-sec{padding-top:10px}"+
+  ".inf-doc .inf-sec>h2{margin-top:0}"+
+  ".inf-doc .inf-relleno td{border:none !important;padding:0 !important;background:var(--inf-sobre) !important}"+
+  ".inf-doc .inf-relleno{background:var(--inf-sobre)}"+
+  ".inf-doc .inf-h2sigue{font-size:12.5px;font-weight:800;color:var(--inf-azul);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--inf-azul);padding-bottom:6px;margin:0 0 11px}"+
+  ".inf-doc .inf-sigue td{border-bottom:none !important;padding:0 0 9px !important;background:var(--inf-sobre) !important}"+
+  // El corte de hoja se dibuja en la VISTA PREVIA, fuera de la hoja: va dentro
+  // de la lupa pero no de #reporteCapture, asi que no se captura nunca. Sin
+  // esto hay que descargar el PDF para saber donde va a cortar.
+  "#informePdfOverlay .lupa-int{position:relative}"+
+  // El ancho va a 768, el de la hoja, y no a "left:0;right:0": la capa de la
+  // lupa mide lo que su hueco (396 en el telefono) mientras la hoja de dentro
+  // se sale, asi que la raya salia a media hoja y la etiqueta en el medio.
+  "#informePdfOverlay .corte{position:absolute;left:0;width:768px;border-top:1px dashed var(--inf-azul2);pointer-events:none}"+
+  "#informePdfOverlay .corte span{position:absolute;right:4px;top:-13px;font-size:10px;color:var(--inf-tinta2);background:var(--inf-fondo);padding:0 5px;border-radius:3px}"+
+  // Los margenes del papel al IMPRIMIR son los mismos que los del PDF (8mm en
+  // A4 = 194 x 281 mm de hoja), para que el navegador corte por donde cortan
+  // los rellenos. Con los 14/12 de antes la hoja del navegador no media lo
+  // mismo que la del PDF y los huecos caian en medio.
+  "@page{margin:8mm}"+
+  "@media print{*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important}body>*:not(#informePdfOverlay){display:none !important}#informePdfOverlay{position:static!important;inset:auto!important;height:auto!important;max-height:none!important;overflow:visible!important;background:var(--inf-sobre)}#informePdfOverlay .contenido{height:auto!important;overflow:visible!important;max-width:none;padding:0}#informePdfOverlay .btnBar,#informePdfOverlay .btnCerrar,#informePdfOverlay .corte{display:none !important}#informePdfOverlay .hoja{box-shadow:none;height:auto!important;overflow:visible!important;width:auto!important}#informePdfOverlay .lupa{height:auto!important;overflow:visible!important}#informePdfOverlay .lupa-int{transform:none!important}}"+
   "@media (min-width:640px){#informePdfOverlay .btnBar{display:flex;gap:8px}#informePdfOverlay .btn{width:auto;padding:10px 18px}}"+
   ".inf-doc .tabla-scroll{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}"+
   // ARREGLO 83: aqui habia un bloque que en pantalla estrecha encogia la letra
@@ -17636,511 +17986,558 @@ function generarInformePDF(mesKey){
   "</div>"+
   "</div>"+
   "<div class='cuerpo'>"+
-  // ARREGLO 84: la version del archivo va DENTRO del papel. Dos veces en
-  // el mismo dia hubo que adivinar que copia de la app habia hecho un PDF
-  // que salia mal, mirando la forma de las tablas. Escrita aqui, cualquier
-  // captura suya lo dice sola, sin preguntarle nada — la misma idea que la
-  // version del servidor en Configuracion.
-  "<div style='background:var(--inf-suave);border:1px solid var(--inf-linea);border-radius:8px;padding:8px 12px;margin-bottom:16px;font-size:11px;color:var(--inf-tinta)'>Este PDF es una <b>foto del momento en que se generó</b>. Cualquier cambio posterior (deudas, tasas, pagos) requiere volver a generarlo.<span style='float:right;color:var(--inf-tinta2);font-size:10px'>"+APP_VERSION+"</span></div>"+
-  // RESUMEN
-  sec("Resumen General",
-    "<div class='tabla-scroll'><table><tr><th>Concepto</th><th>Monto</th></tr>"+
-    "<tr><td style='padding:5px 8px;font-size:12px'>Total operaciones realizadas</td><td style='padding:5px 8px;font-size:12px;text-align:right;font-weight:700;color:var(--inf-azul)'>"+calc.ops+" operaciones</td></tr>"+
-    row("Ganancia bruta total",calc.ganBrutaTotal,"var(--inf-tinta)")+
-    // ARREGLO 57: ver nota en rInformeCierre — el desglose tiene que cuadrar.
-    (calc.ganPrestamos>0?row("−  Intereses de préstamos ("+calc.ganPrestamosCant+" abono"+(calc.ganPrestamosCant!==1?"s":"")+", aparte: no entran en la utilidad)",calc.ganPrestamos,"var(--inf-tinta)"):"")+
-    (calc.ganExtraEmp>0?row("+ Ganancias extra empresa",calc.ganExtraEmp,"var(--inf-tinta)"):"")+
-    (calc.gasEEUU>0?row("− Gastos EE.UU compartidos (mi "+( 100-calc.socioPorcentajeEE)+"% de $"+f2(calc.gasEEUU)+")",Math.round(calc.gasEEUU*(1-calc.socioPorcentajeEE/100)*100)/100,"var(--inf-resta)"):"")+
-    (calc.socioParte>0?row("− "+calc.socioNombreEE+" ("+calc.socioPorcentajeEE+"%)",calc.socioParte,"var(--inf-resta)"):"")+
-    (calc.totalCom>0?row("− Otros socios",calc.totalCom,"var(--inf-resta)"):"")+
-    row("Mi ganancia de operaciones",calc.miGanOperaciones,"var(--inf-tinta)")+
-    row("− Egresos empresa pagados",calc.egEmpPag,"var(--inf-resta)")+
-    row("= Utilidad empresa",calc.utilidadEmpresa,"var(--inf-tinta)")+
-    "<tr><td colspan='2' style='padding:8px 8px 4px;font-size:10px;color:var(--inf-tinta2);border-top:2px solid var(--inf-linea)'>▾ Lo que puedes gastar ahora — solo lo ya cobrado de meses cerrados</td></tr>"+
-    row("Acumulado de meses ya cerrados",calc.saldoPersonalAcumuladoPrevio,"var(--inf-tinta)")+
-    row("− Gastos personales pagados este mes",calc.egPerPag,"var(--inf-resta)")+
-    row("= Disponible para gastar hoy",calc.disponiblePer,calc.disponiblePer>=0?"var(--inf-tinta)":"var(--inf-resta)",true)+
-    "<tr><td colspan='2' style='padding:6px 8px;font-size:10px;color:var(--inf-tinta);background:var(--inf-suave)'>Sueldo de este mes ("+calc.pctSueldo+"% de la utilidad): $"+f2(calc.sueldoAcumulando)+" — se acumula, no gastable hasta cerrar el mes</td></tr>"+
-    "</table></div>")+
-  // OPS POR RUTA
-  sec("Operaciones por ruta",
-    "<div class='tabla-scroll'><table><tr><th>Ruta</th><th>Ops</th><th>Volumen</th><th>Ganancia bruta</th><th>Comisión socio</th><th>Mi ganancia</th></tr>"+
-    Object.keys(porRuta).sort().map(function(rt){
-      var g=porRuta[rt];
-      // Fix1: comisión POR RUTA (no el total del socio)
-      var cs=calc.comisionesSocios.find(function(s){return s.rutas.indexOf(rt)!==-1;});
-      var csMontoRuta=cs?Math.round(g.gan*(cs.pct/100)*100)/100:0;
-      // Fix2: EE.UU muestra comisión de Paul
-      var isEERuta=!!g._isEE;
-      var eeMontoRuta=isEERuta?Math.round(g.gan*(calc.socioPorcentajeEE/100)*100)/100:0;
-      var comLabel=cs?(cs.nombre+" ("+cs.pct+"%)"):isEERuta?(calc.socioNombreEE+" ("+calc.socioPorcentajeEE+"%)"):null;
-      var comMonto=cs?csMontoRuta:isEERuta?eeMontoRuta:0;
-      var miGan=Math.round((g.gan-comMonto)*100)/100;
-      return "<tr><td>"+rt+"</td><td style='text-align:center'>"+g.ops+"</td>"+
-        "<td style='text-align:right'>"+f2l(g.vol)+" "+g.mon+"</td>"+
-        "<td style='text-align:right;color:var(--inf-tinta);font-weight:700'>$"+f2l(g.gan)+"</td>"+
-        "<td style='text-align:right;color:var(--inf-resta)'>"+(comLabel?"−$"+f2l(comMonto)+" ("+comLabel+")":"—")+"</td>"+
-        "<td style='text-align:right;font-weight:700'>$"+f2l(miGan)+"</td></tr>";
-    }).join("")+
-    "</table></div>")+
-  // BANCOS
-  sec("Saldos de cuentas al "+fechaSaldosInforme+(_esCierrePasado?" <span style='font-weight:400;font-size:10px;color:var(--inf-tinta2)'>(cierre de "+mesLabel+")</span>":""),
-    "<div class='tabla-scroll'><table><tr><th>Cuenta</th><th>Moneda</th><th>Saldo actual</th><th>≈ USDT</th></tr>"+
-    // ARREGLO 57: 6 de sus 15 cuentas estan en cero y llenaban la tabla. No
-    // aportan nada al total (cero es cero) y en un informe que se manda fuera
-    // solo hacen ruido. Se cuentan al pie para que se sepa que estan.
-    cuentasParaInforme.filter(function(c){return Math.abs(parseFloat(c.saldo)||0)>0.009;}).map(function(c){
-      var rate=getRateToUsdt(c.moneda);
-      var usdt=c.moneda==="USDT"?(parseFloat(c.saldo)||0):(rate?((parseFloat(c.saldo)||0)/rate):null);
-      return "<tr><td>"+c.nombre+"</td><td style='text-align:center'>"+c.moneda+"</td>"+
-        "<td style='text-align:right;font-weight:700'>"+f2l(parseFloat(c.saldo)||0)+"</td>"+
-        "<td style='text-align:right;color:var(--inf-azul)'>"+(usdt!==null?"≈ "+f2l(usdt):"<span style=\'color:var(--inf-resta)\'>Sin tasa</span>")+"</td></tr>";
-    }).join("")+
-    (function(){
-      var vacias=cuentasParaInforme.filter(function(c){return Math.abs(parseFloat(c.saldo)||0)<=0.009;}).length;
-      return vacias?"<tr><td colspan='4' style='font-size:10px;color:var(--inf-tinta2);font-style:italic'>"+vacias+" cuenta"+(vacias!==1?"s":"")+" más en cero, sin saldo que informar</td></tr>":"";
-    })()+
-    "<tr style='background:var(--inf-suave)'><td colspan='3' style='font-size:10px;color:var(--inf-tinta2)'>Inventario USDT disponible</td><td style='text-align:right;color:var(--inf-tinta2)'>$"+f2l(invUsdtPDF)+"</td></tr>"+
-    "<tr style='background:var(--inf-suave)'><td colspan='3'><b>TOTAL EQUIVALENTE EN USDT</b></td><td style='text-align:right;font-weight:900;color:var(--inf-tinta)'>$"+f2l(totalUsdtCuentas)+"</td></tr>"+
-    "</table></div>")+
-  // SOCIOS
-  // ARREGLO 58: sin ganancia de sus rutas, sin deuda viva y sin pagos, la
-  // seccion entera sobra: era una tabla de ceros en un informe que se manda
-  // fuera. Si algo de eso existe, vuelve sola.
-  ((Math.abs(calc.ganEEBruta)>0.009 || Math.abs(calc.deudasSocioEE)>0.009 ||
-    Math.abs(calc.socioFinalEE)>0.009 || calc.comisionesSocios.length || pagosMes.length)?
-  sec("Liquidación de socios",
-    "<div class='tabla-scroll'><table><tr><th>Socio</th><th>Rutas</th><th>Ganancia de sus rutas</th><th>Su parte</th><th>Deudas personales</th><th>Total a pagar</th></tr>"+
-    "<tr><td><b>"+calc.socioNombreEE+"</b></td><td>EE.UU</td>"+
-    "<td style='text-align:right'>$"+f2l(calc.ganEEBruta)+(calc.gasEEUU>0?" (−$"+f2l(calc.gasEEUU)+" gastos)":"")+"</td>"+
-    "<td style='text-align:right;color:var(--inf-resta);font-weight:700'>$"+f2l(calc.socioParte)+"</td>"+
-    "<td style='text-align:right;color:var(--inf-resta)'>"+(calc.deudasSocioEE>0?"−$"+f2l(calc.deudasSocioEE):"—")+"</td>"+
-    "<td style='text-align:right;font-weight:900;color:"+(calc.socioFinalEE<0?"var(--inf-resta)":"var(--inf-azul)")+"'>"+(calc.socioFinalEE<0?" Debe $"+f2l(Math.abs(calc.socioFinalEE)):"$"+f2l(calc.socioFinalEE))+"</td></tr>"+
-    calc.comisionesSocios.map(function(s){
-      return "<tr><td><b>"+s.nombre+"</b></td><td>"+s.rutas.join(", ")+"</td>"+
-        "<td style='text-align:right'>$"+f2l(s.ganRutas)+"</td>"+
-        "<td style='text-align:right;color:var(--inf-resta);font-weight:700'>$"+f2l(s.monto)+"</td>"+
-        "<td style='text-align:center'>—</td>"+
-        (function(){var fS=Math.round((s.monto-(s.deudas||0))*100)/100;return "<td style='text-align:right;font-weight:900;color:"+(fS<0?"var(--inf-resta)":"var(--inf-azul)")+"'>"+(fS<0?" Debe $"+f2l(Math.abs(fS)):"$"+f2l(fS))+"</td></tr>";})()
-    }).join("")+
-    (pagosMes.length?"<tr><td colspan='6' style='background:var(--inf-suave);font-size:11px;color:var(--inf-tinta);padding:6px'>Pagos registrados este mes: "+pagosMes.map(function(p){return p.fecha+" · "+p.socioNombre+" · $"+f2l(p.monto);}).join(" | ")+"</td></tr>":"")+
-    "</table></div>"):"")+
-  // EGRESOS EMPRESA
+  // ── EL CUERPO DEL INFORME, APARTADO POR APARTADO (ARREGLO 90) ──────
+  //
+  // Sus palabras: "quiero que el informe no se corte cuando pase de una
+  // pagina a otra. No es que todo este en una sola pagina. Es que cuando pase
+  // una hoja y venga la otra informacion, tenga su titulo alli, cada hoja
+  // tenga su titulo, a que corresponde cada hoja y que la informacion sea
+  // completa de ese titulo. Porque asi es muy tedioso, demasiada informacion
+  // en una sola hoja, brinca para un lado, brinca para otro, se corta y ya me
+  // han devuelto ese reporte muchas veces".
+  //
+  // Antes el documento era una tira continua de secciones y el PDF la cortaba
+  // cada 1.112 px, donde cayera: una hoja podia empezar a mitad de una tabla
+  // sin decir de que era. Ahora cada apartado EMPIEZA ARRIBA DE UNA HOJA y, si
+  // no cabe, la hoja siguiente repite su titulo con "(continua)" y la cabecera
+  // de columnas. Lo hace _paginarInforme() midiendo el documento ya dibujado;
+  // aqui solo se marca cada apartado con class='inf-sec'.
+  //
+  // Y se fue el detalle remesa por remesa. Sus palabras: "no me importa mucho
+  // que me deje un informe de todas las remesas que salieron, solamente por
+  // donde salieron, cuanto salio por cada ruta... si yo quiero saber cuantas
+  // operaciones, con los detalles de cada operacion, yo diria que eso no es
+  // tan relevante". En su sitio entra lo que si pidio: cuanto mando cada
+  // cliente y cuantas veces.
   (function(){
-    var catEmp={};
-    egEmpM.filter(function(e){return e.pagada;}).forEach(function(e){var c=e.categoria||e.cat||"General";if(!catEmp[c])catEmp[c]=0;catEmp[c]+=(parseFloat(e.usdt)||0);});
-    var catBarras=Object.keys(catEmp).sort(function(a,b){return catEmp[b]-catEmp[a];}).map(function(c){
-      var pct=calc.egEmpPag>0?Math.round(catEmp[c]/calc.egEmpPag*100):0;
-      return "<tr><td style='padding:4px 8px'>"+c+"</td><td style='padding:4px 8px'><div style='background:var(--inf-suave);border-radius:4px;height:10px;width:120px;display:inline-block;vertical-align:middle'><div style='background:var(--inf-azul);border-radius:4px;height:100%;width:"+pct+"%'></div></div></td><td style='padding:4px 8px;text-align:right;color:var(--inf-resta);font-weight:700'>$"+f2l(catEmp[c])+"</td><td style='padding:4px 8px;color:var(--inf-tinta2);font-size:10px'>"+pct+"%</td></tr>";
-    }).join("");
-    return sec("Egresos empresa",
-      (Object.keys(catEmp).length>1?"<div style='margin-bottom:10px'><b style='font-size:11px;color:var(--inf-tinta2)'>Por categoría:</b><table style='width:100%;margin-top:6px'>"+catBarras+"</table></div>":"")+
-      "<div class='tabla-scroll'><table><tr><th>Fecha</th><th>Categoría</th><th>Descripción</th><th>Estado</th><th>Monto original</th><th>USDT</th></tr>"+
-      egEmpM.slice().sort(function(a,b){return (a.fecha||a.d||"").localeCompare(b.fecha||b.d||"");}).map(function(e){
-        return "<tr><td>"+((e.fecha||e.d)||"")+"</td><td style='color:var(--inf-azul);font-weight:600'>"+(e.categoria||e.cat||"General")+"</td><td>"+(e.mot||e.desc||e.motivo||"—")+"</td>"+
-          "<td style='text-align:center'>"+(e.pagada?"":"⏳")+"</td>"+
-          "<td style='text-align:right;color:var(--inf-tinta2)'>"+((e.mon||"BRL")==="USDT"?"":(f2l(parseFloat(e.monto)||0)+" "+(e.mon||"BRL")))+"</td>"+
-          "<td style='text-align:right;font-weight:700;color:"+(e.pagada?"var(--inf-resta)":"var(--inf-tinta2)")+"'>$"+f2l(parseFloat(e.usdt)||0)+"</td></tr>";
-      }).join("")+
-      "<tr><td colspan='5'><b>TOTAL PAGADOS</b></td><td style='text-align:right;font-weight:900;color:var(--inf-resta)'>$"+f2l(calc.egEmpPag)+"</td></tr>"+
-      (calc.egEmpPend>0?"<tr style='background:var(--inf-suave)'><td colspan='5'><b>PENDIENTES DE PAGO</b></td><td style='text-align:right;font-weight:900;color:var(--inf-tinta)'>$"+f2l(calc.egEmpPend)+"</td></tr>":"")+
-      "</table></div>");
-  }())+
-  // PERSONAL
-  (function(){
-    var pagadosPer=egPerM.filter(function(e){return e.pagada;});
-    var totalGastadoReal=Math.round(pagadosPer.reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0)*100)/100;
-    var catPer={};
-    pagadosPer.forEach(function(e){var c=e.categoria||e.cat||"General";if(!catPer[c])catPer[c]=0;catPer[c]+=(parseFloat(e.usdt)||0);});
-    var catBarrasPer=Object.keys(catPer).sort(function(a,b){return catPer[b]-catPer[a];}).map(function(c){
-      var pct=totalGastadoReal>0?Math.round(catPer[c]/totalGastadoReal*100):0;
-      return "<tr><td style='padding:4px 8px'>"+c+"</td><td style='padding:4px 8px'><div style='background:var(--inf-suave);border-radius:4px;height:10px;width:120px;display:inline-block;vertical-align:middle'><div style='background:var(--inf-azul);border-radius:4px;height:100%;width:"+pct+"%'></div></div></td><td style='padding:4px 8px;text-align:right;color:var(--inf-tinta);font-weight:700'>$"+f2l(catPer[c])+"</td><td style='padding:4px 8px;color:var(--inf-tinta2);font-size:10px'>"+pct+"%</td></tr>";
-    }).join("");
-    return sec("Situación personal",
-      "<div style='background:"+(calc.disponiblePer>=0?"var(--inf-suave)":"var(--inf-suave)")+";border-radius:8px;padding:10px 12px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center'><span style='font-size:12px'>Acumulado: <b>$"+f2l(calc.saldoPersonalAcumuladoPrevio)+"</b> · Gastado en total: <b>$"+f2l(totalGastadoReal)+"</b></span><span style='font-weight:800;color:"+(calc.disponiblePer>=0?"var(--inf-tinta)":"var(--inf-resta)")+"'>"+(calc.disponiblePer<0?" Excediste: −$":" Disponible: $")+f2l(Math.abs(calc.disponiblePer))+" USDT</span></div>"+
-      "<div style='font-size:10.5px;color:var(--inf-tinta2);margin-bottom:10px'>De ese total, <b>$"+f2l(calc.egPerPag)+" USDT</b> salió de fondos de la empresa (el resto se pagó desde una cuenta personal, no cuenta contra tu disponible).</div>"+
-      (Object.keys(catPer).length>1?"<div style='margin-bottom:10px'><b style='font-size:11px;color:var(--inf-tinta2)'>En qué se gastó el sueldo:</b><table style='width:100%;margin-top:6px'>"+catBarrasPer+"</table></div>":"")+
-      "<div class='tabla-scroll'><table><tr><th>Fecha</th><th>Categoría</th><th>Descripción</th><th>Monto original</th><th>USDT</th></tr>"+
-      pagadosPer.map(function(e){
-        return "<tr><td>"+((e.fecha||e.d)||"")+"</td><td style='color:var(--inf-tinta);font-weight:600'>"+(e.categoria||e.cat||"General")+"</td>"+
-          "<td>"+(e.mot||e.desc||e.motivo||"Sin descripción")+"</td>"+
-          "<td style='text-align:right;color:var(--inf-tinta2)'>"+((e.mon||"BRL")===("USDT")?"":(f2l(parseFloat(e.monto)||0)+" "+(e.mon||"BRL")))+"</td>"+
-          "<td style='text-align:right;color:var(--inf-resta);font-weight:700'>$"+f2l(parseFloat(e.usdt)||0)+"</td></tr>";
-      }).join("")+
-      "<tr style='background:var(--inf-suave)'><td colspan='4'><b>Total gastado</b></td><td style='text-align:right;font-weight:900;color:var(--inf-resta)'>$"+f2l(totalGastadoReal)+"</td></tr>"+
-      "</table></div>");
-  }())+
-  // GANANCIAS EXTRA
-  (calc.ganExtraItems&&calc.ganExtraItems.length?sec("Ganancias Extra",
-    "<div class='tabla-scroll'><table><tr><th>Fecha</th><th>Descripción</th><th>Moneda</th><th>Monto</th><th>USDT</th><th>Tipo</th></tr>"+
-    calc.ganExtraItems.map(function(g){return "<tr><td>"+g.d+"</td><td>"+g.desc+"</td><td style='text-align:center'>"+g.mon+"</td>"+
-      "<td style='text-align:right'>"+f2l(g.monto)+"</td>"+
-      "<td style='text-align:right;font-weight:700;color:var(--inf-tinta)'>+$"+f2l(g.usdt)+"</td>"+
-      "<td style='text-align:center'><span style='background:"+(g.tipo==="empresa"?"var(--inf-suave)":"var(--inf-suave)")+";padding:2px 7px;border-radius:6px;font-size:10px;font-weight:700;color:"+(g.tipo==="empresa"?"var(--inf-azul)":"var(--inf-tinta)")+"'>"+g.tipo+"</span></td></tr>";}).join("")+
-    "<tr style='background:var(--inf-suave)'><td colspan='4'><b>TOTAL EXTRAS</b></td><td style='text-align:right;font-weight:900;color:var(--inf-tinta)'>+$"+f2l(calc.ganExtraEmp+calc.ganExtraPer)+"</td><td></td></tr>"+
-  "</table></div>"):"")+ 
-  // PENDIENTES Y SALDOS
-  sec("Lo que hay que apartar",
-        "<div class='tabla-scroll'><table><tr><th colspan='2' style='background:var(--inf-azul);color:var(--inf-sobre)'>LO QUE HAY QUE APARTAR PARA EL PRÓXIMO MES</th></tr>"+
-    (calc.socioFinalEE<0?"<tr style='background:var(--inf-suave)'><td colspan='2' style='color:var(--inf-resta);font-size:11px'> "+calc.socioNombreEE+" tiene deuda con la empresa por $"+f2l(Math.abs(calc.socioFinalEE))+" USDT (sus gastos superaron su ganancia). No se le paga este mes.</td></tr>"
-      :(calc.socioFinalEE>0.009?"<tr><td>Pagar "+calc.socioNombreEE+"</td><td style='text-align:right;font-weight:700'>$"+f2l(calc.socioFinalEE)+"</td></tr>":""))+
-    (calc.totalCom>0?"<tr><td>Otros socios</td><td style='text-align:right;font-weight:700'>$"+f2l(calc.totalCom)+"</td></tr>":"")+
-    (calc.egEmpPend>0?"<tr><td>Egresos empresa pendientes</td><td style='text-align:right;font-weight:700'>$"+f2l(calc.egEmpPend)+"</td></tr>":"")+
-    "<tr style='background:var(--inf-suave)'><td><b>TOTAL A APARTAR</b></td><td style='text-align:right;font-weight:900;color:var(--inf-tinta)'>$"+f2l(Math.max(0,calc.socioFinalEE)+calc.totalCom+calc.egEmpPend)+"</td></tr>"+
-    "</table></div>")+
-  // Fix6: Resumen final al cierre del PDF
-  // ═══ RESUMEN EJECUTIVO FINAL ════════════════════════════════════════
-  (function(){
-    // Calcular totales de cobrar
-    var totalCobrarUsdt=cobrarPend.reduce(function(a,c){
-      var abos=(c.abonos||[]).reduce(function(s,ab){return s+(ab.monto||0);},0);
-      var pend=Math.max(0,(c.monto||0)-abos);
-      var rate=getRateToUsdt(c.moneda||"USDT");
-      return a+((c.moneda==="USDT"||!c.moneda)?pend:(rate?pend/rate:pend));
-    },0);
-    totalCobrarUsdt=Math.round(totalCobrarUsdt*100)/100;
-    // Total préstamos activos en USDT
-    var totalPrestamosUsdt=0;
-    prestActivos.forEach(function(p){
-      var mon=p.mon||"USDT";
-      var base=parseFloat(p.monto||p.sal)||0;
-      var abos=(p.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);
-      var ent=parseFloat(p.ent)||0;
-      var pend=Math.max(0,base-abos-ent);
-      var rate=getRateToUsdt(mon);
-      totalPrestamosUsdt+=(mon==="USDT"?pend:(rate?Math.round(pend/rate*100)/100:0));
-    });
-    totalPrestamosUsdt=Math.round(totalPrestamosUsdt*100)/100;
-    // Total afuera = cobros pendientes + préstamos activos
-    var totalAfuera=Math.round((totalCobrarUsdt+totalPrestamosUsdt)*100)/100;
-    // ARREGLO 57 (14/09/2026): el capital sale de capitalRealTotal(), la misma
-    // funcion que enseña Balance de Cuentas. Antes se sumaba a mano
-    // "cuentas + afuera" y se dejaba fuera la RESERVA: con sus cifras daba
-    // 2.302,34 cuando su capital son 2.479,17 — los 176,82 de la reserva.
-    // Dos pantallas de la misma app contando distinto el mismo dinero.
-    var _capReal=(typeof capitalRealTotal==="function")?capitalRealTotal():null;
-    var siCobrasTodo=_capReal?_capReal.total:Math.round((totalUsdtCuentas+totalAfuera)*100)/100;
-    var enReservaPDF=_capReal?_capReal.enReserva:0;
-    // Neto empresa = utilidad - sueldo (lo que queda en caja después de pagarte)
-    var netoEmpresa=Math.round(((calc.utilidadEmpresa||0)-(calc.sueldo||0))*100)/100;
-    var totalApartar=Math.max(0,calc.socioFinalEE)+calc.totalCom+calc.egEmpPend;
-    // "Deberías tener" usa netoEmpresa (el sueldo es gasto personal, no queda en caja)
-    var pagosCheckList=[];
-    if(calc.socioFinalEE>0) pagosCheckList.push({lbl:"Pagar a "+calc.socioNombreEE,monto:f2l(calc.socioFinalEE)+" USDT",color:"var(--inf-resta)"});
-    if(calc.socioFinalEE<0) pagosCheckList.push({lbl:calc.socioNombreEE+" tiene deuda con la empresa",monto:" Debe $"+f2l(Math.abs(calc.socioFinalEE))+" USDT",color:"var(--inf-resta)"});
-    calc.comisionesSocios.forEach(function(s){if(s.monto>0)pagosCheckList.push({lbl:"Pagar a "+s.nombre,monto:f2l(s.monto)+" USDT",color:"var(--inf-resta)"});});
-    if(calc.egEmpPend>0) pagosCheckList.push({lbl:"Pagar egresos empresa pendientes",monto:f2l(calc.egEmpPend)+" USDT",color:"var(--inf-tinta)"});
-    if(cobrarPend.length>0) pagosCheckList.push({lbl:"Cobrar a "+cobrarPend.length+" cliente(s) pendiente(s)",monto:"$"+f2l(totalCobrarUsdt)+" USDT",color:"var(--inf-azul)"});
-    if(prestActivos.length>0) pagosCheckList.push({lbl:"Revisar "+prestActivos.length+" préstamo(s) activo(s)",monto:"",color:"var(--inf-tinta)"});
-
-    var html2=""+
-    // ── CABECERA EJECUTIVA ────────────────────────────────────────────
-    "<div style='page-break-before:always;background:var(--inf-azul);border-radius:16px;padding:28px 24px 20px;color:var(--inf-sobre);margin-bottom:20px'>"+
-      "<div style='display:flex;justify-content:space-between;align-items:flex-start'>"+
-        "<div>"+
-          "<div style='font-size:11px;letter-spacing:2px;color:var(--inf-sobre);font-weight:700;text-transform:uppercase;margin-bottom:6px'>Centro de Gestión · RemesasYA</div>"+
-          "<div style='font-size:28px;font-weight:900;color:var(--inf-sobre);line-height:1.1'>Resumen Ejecutivo</div>"+
-          "<div style='font-size:16px;color:var(--inf-sobre);font-weight:700;margin-top:4px'>"+mesLabel+"</div>"+
-        "</div>"+
-        "<div style='text-align:right'>"+
-          "<div style='font-size:10px;color:rgba(255,255,255,.5)'>Generado el</div>"+
-          "<div style='font-size:11px;color:rgba(255,255,255,.8);font-weight:700'>"+new Date().toLocaleDateString("es-VE",{day:"2-digit",month:"long",year:"numeric"})+"</div>"+
-          "<div style='font-size:10px;color:rgba(255,255,255,.5);margin-top:6px'>"+calc.ops+" operaciones realizadas</div>"+
-        "</div>"+
-      "</div>"+
-      // ── KPI CARDS (5) ───────────────────────────────────────────────
-      "<div style='display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:20px'>"+
-        "<div style='background:rgba(255,255,255,.1);border-radius:10px;padding:12px;border-top:3px solid var(--inf-linea)'>"+
-          "<div style='font-size:10px;color:var(--inf-sobre);font-weight:700;text-transform:uppercase;margin-bottom:5px'>Bruta generada</div>"+
-          "<div style='font-size:18px;font-weight:900;color:var(--inf-sobre)'>$"+f2l(calc.ganBrutaTotal)+"</div>"+
-          "<div style='font-size:10px;color:rgba(255,255,255,.5);margin-top:3px'>Total operaciones</div>"+
-        "</div>"+
-        "<div style='background:rgba(255,255,255,.1);border-radius:10px;padding:12px;border-top:3px solid var(--inf-linea)'>"+
-          "<div style='font-size:10px;color:var(--inf-sobre);font-weight:700;text-transform:uppercase;margin-bottom:5px'>Neto empresa</div>"+
-          "<div style='font-size:18px;font-weight:900;color:var(--inf-sobre)'>$"+f2l(netoEmpresa)+"</div>"+
-          "<div style='font-size:10px;color:rgba(255,255,255,.5);margin-top:3px'>Después de todo</div>"+
-        "</div>"+
-        "<div style='background:rgba(255,255,255,.1);border-radius:10px;padding:12px;border-top:3px solid var(--inf-linea)'>"+
-          "<div style='font-size:10px;color:var(--inf-sobre);font-weight:700;text-transform:uppercase;margin-bottom:5px'>Tu sueldo ("+calc.pctSueldo+"%)</div>"+
-          "<div style='font-size:18px;font-weight:900;color:var(--inf-sobre)'>$"+f2l(calc.sueldo)+"</div>"+
-          "<div style='font-size:10px;color:rgba(255,255,255,.5);margin-top:3px'>Ingreso personal</div>"+
-        "</div>"+
-        "<div style='background:rgba(255,255,255,.1);border-radius:10px;padding:12px;border-top:3px solid var(--inf-linea)'>"+
-          "<div style='font-size:10px;color:var(--inf-sobre);font-weight:700;text-transform:uppercase;margin-bottom:5px'>En cuentas</div>"+
-          "<div style='font-size:18px;font-weight:900;color:var(--inf-sobre)'>$"+f2l(totalUsdtCuentas)+"</div>"+
-          "<div style='font-size:10px;color:rgba(255,255,255,.5);margin-top:3px'>Equivalente USDT</div>"+
-        "</div>"+
-        "<div style='background:rgba(255,255,255,.1);border-radius:10px;padding:12px;border-top:3px solid var(--inf-linea)'>"+
-          "<div style='font-size:10px;color:var(--inf-sobre);font-weight:700;text-transform:uppercase;margin-bottom:5px'>Dinero afuera</div>"+
-          "<div style='font-size:18px;font-weight:900;color:var(--inf-sobre)'>$"+f2l(totalAfuera)+"</div>"+
-          "<div style='font-size:10px;color:rgba(255,255,255,.5);margin-top:3px'>"+cobrarPend.length+" cobros + "+prestActivos.length+" prest.</div>"+
-        "</div>"+
-      "</div>"+
-    "</div>"+
-
-    // ── CASCADA DE UTILIDAD ────────────────────────────────────────────
-    "<div style='margin-bottom:20px;background:var(--inf-suave);border-radius:12px;padding:18px;border:1px solid var(--inf-linea)'>"+
-      "<h3 style='font-size:13px;font-weight:800;color:var(--inf-azul);margin:0 0 14px;display:flex;align-items:center;gap:8px'>"+
-        "¿Cómo se calculó el neto?"+
-      "</h3>"+
-      // Línea bruta
-      "<div style='display:flex;align-items:center;margin-bottom:6px'>"+
-        ""+
-        "<div style='flex:1;font-size:12px;color:var(--inf-tinta2)'>Ganancia bruta de todas las operaciones</div>"+
-        "<div style='font-size:14px;font-weight:900;color:var(--inf-tinta)'>+$"+f2l(calc.ganBrutaTotal)+" USDT</div>"+
-      "</div>"+
-      // Ganancia por préstamos — línea aparte, no mezclada con remesas
-      (calc.ganPrestamos>0?"<div style='display:flex;align-items:center;margin-bottom:6px;padding-left:26px;background:var(--inf-suave);border-radius:8px;padding:8px 8px 8px 34px;margin-left:26px'>"+
-        ""+
-        "<div style='flex:1;font-size:12px;color:var(--inf-tinta);font-weight:600'>De eso, ganancia por préstamos ("+calc.ganPrestamosCant+" abono"+(calc.ganPrestamosCant!==1?"s":"")+" cobrados)</div>"+
-        "<div style='font-size:13px;font-weight:700;color:var(--inf-tinta)'>$"+f2l(calc.ganPrestamos)+" USDT</div>"+
-      "</div>":"")+
-      // Socios
-      (calc.socioParte>0?"<div style='display:flex;align-items:center;margin-bottom:6px;padding-left:26px'>"+
-        ""+
-        "<div style='flex:1;font-size:12px;color:var(--inf-tinta2)'>"+calc.socioNombreEE+" ("+calc.socioPorcentajeEE+"% EE.UU"+(calc.gasEEUU>0?" · descontando $"+f2l(calc.gasEEUU)+" gastos compartidos":"")+")"+
-        "</div>"+
-        "<div style='font-size:13px;font-weight:700;color:var(--inf-resta)'>−$"+f2l(calc.socioParte)+" USDT</div>"+
-      "</div>":"")+
-      calc.comisionesSocios.filter(function(s){return s.monto>0;}).map(function(s){
-        return "<div style='display:flex;align-items:center;margin-bottom:6px;padding-left:26px'>"+
-          ""+
-          "<div style='flex:1;font-size:12px;color:var(--inf-tinta2)'>"+s.nombre+" ("+s.pct+"% de sus rutas)</div>"+
-          "<div style='font-size:13px;font-weight:700;color:var(--inf-resta)'>−$"+f2l(s.monto)+" USDT</div>"+
-        "</div>";
-      }).join("")+
-      // Egresos empresa
-      (calc.egEmpPag>0?"<div style='display:flex;align-items:center;margin-bottom:6px;padding-left:26px'>"+
-        ""+
-        "<div style='flex:1;font-size:12px;color:var(--inf-tinta2)'>Egresos empresa pagados</div>"+
-        "<div style='font-size:13px;font-weight:700;color:var(--inf-tinta)'>−$"+f2l(calc.egEmpPag)+" USDT</div>"+
-      "</div>":"")+
-      // Subtotal = utilidad empresa (antes de sueldo)
-      "<div style='display:flex;align-items:center;padding-left:26px;margin-bottom:8px'>"+
-        "<div style='border-top:1.5px dashed var(--inf-linea);flex:1;margin-right:12px'></div>"+
-        "<div style='font-size:11px;color:var(--inf-tinta2);font-style:italic'>Utilidad empresa (antes de sueldo)</div>"+
-        "<div style='font-size:12px;font-weight:700;color:var(--inf-tinta2);margin-left:12px'>$"+f2l(calc.utilidadEmpresa)+" USDT</div>"+
-      "</div>"+
-      // Sueldo
-      (calc.sueldo>0?"<div style='display:flex;align-items:center;margin-bottom:8px;padding-left:26px;background:var(--inf-suave);border-radius:8px;padding:8px 8px 8px 34px;margin-left:26px'>"+
-        ""+
-        "<div style='flex:1;font-size:12px;color:var(--inf-tinta);font-weight:600'>Tu sueldo ("+calc.pctSueldo+"% de la utilidad empresa)</div>"+
-        "<div style='font-size:13px;font-weight:700;color:var(--inf-tinta)'>−$"+f2l(calc.sueldo)+" USDT</div>"+
-      "</div>":"")+
-      // Divisor + neto final
-      "<div style='border-top:2px solid var(--inf-azul);margin:10px 0 10px 26px'></div>"+
-      "<div style='display:flex;align-items:center;padding-left:26px'>"+
-        ""+
-        "<div style='flex:1;font-size:13px;font-weight:800;color:var(--inf-azul)'>= Neto empresa (queda en caja)</div>"+
-        "<div style='font-size:18px;font-weight:900;color:var(--inf-azul);background:var(--inf-suave);padding:4px 12px;border-radius:8px;border:1.5px solid var(--inf-linea)'>$"+f2l(netoEmpresa)+" USDT</div>"+
-      "</div>"+
-      // Nota de sueldo personal
-      (calc.sueldo>0?"<div style='margin-top:10px;margin-left:26px;padding:8px 12px;background:var(--inf-suave);border-radius:8px;font-size:11px;color:var(--inf-tinta)'>"+
-        " <b>Tu sueldo personal de $"+f2l(calc.sueldo)+" USDT</b> queda en tu bolsillo. "+
-        (calc.disponiblePer>=0?" Gastaste $"+f2l(calc.egPerPag)+" y te sobra $"+f2l(calc.disponiblePer)+" USDT de lo acumulado.":
-        " Gastaste $"+f2l(calc.egPerPag)+" USDT — excediste lo acumulado en $"+f2l(Math.abs(calc.disponiblePer))+" USDT.")+
-      "</div>":"")+
-    "</div>"+
-
-    // ── POR COBRAR ─────────────────────────────────────────────────────
-    (cobrarPend.length>0?"<div style='margin-bottom:20px;border:2px solid var(--inf-linea);border-radius:12px;overflow:hidden'>"+
-      "<div style='background:var(--inf-azul);padding:12px 16px;display:flex;justify-content:space-between;align-items:center'>"+
-        "<div style='font-size:13px;font-weight:800;color:var(--inf-sobre)'>Dinero pendiente de cobrar</div>"+
-        "<div style='font-size:12px;color:var(--inf-sobre)'>Total: <b>$"+f2l(totalCobrarUsdt)+" USDT</b> · "+cobrarPend.length+" cliente(s)</div>"+
-      "</div>"+
-      "<table style='width:100%;border-collapse:collapse'>"+
-        "<tr style='background:var(--inf-suave)'><th style='padding:7px 10px;font-size:11px;font-weight:700;color:var(--inf-tinta)'>Cliente</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:var(--inf-tinta)'>Ruta</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:var(--inf-tinta);text-align:right'>Pendiente</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:var(--inf-tinta);text-align:right'>Ganancia</th></tr>"+
-        cobrarPend.map(function(c,i){
-          var abos=(c.abonos||[]).reduce(function(a,ab){return a+(ab.monto||0);},0);
-          var pend=Math.max(0,Math.round(((c.monto||0)-abos)*100)/100);
-          var ganPend=pend>0&&c.monto>0?Math.round((parseFloat(c.ganancia)||0)*(pend/(c.monto||1))*100)/100:(parseFloat(c.ganancia)||0);
-          return "<tr style='background:"+(i%2===0?"var(--inf-sobre)":"var(--inf-suave)")+"'>"+
-            "<td style='padding:7px 10px;font-size:12px;font-weight:600'>"+c.cliente+"</td>"+
-            "<td style='padding:7px 10px;font-size:11px;color:var(--inf-tinta2)'>"+c.ruta+"</td>"+
-            "<td style='padding:7px 10px;font-size:12px;text-align:right;font-weight:700;color:var(--inf-tinta)'>"+f2l(pend)+" "+c.moneda+(abos>0?"<br><span style='font-size:10px;color:var(--inf-tinta2);font-weight:400'>abonado: "+f2l(abos)+"</span>":"")+"</td>"+
-            "<td style='padding:7px 10px;font-size:12px;text-align:right;font-weight:700;color:var(--inf-tinta)'>+$"+f2l(ganPend)+"</td>"+
-          "</tr>";
-        }).join("")+
-        "<tr style='background:var(--inf-suave)'><td colspan='2' style='padding:7px 10px;font-size:11px;font-weight:800;color:var(--inf-tinta)'>TOTAL A COBRAR</td><td colspan='2' style='padding:7px 10px;text-align:right;font-size:13px;font-weight:900;color:var(--inf-tinta)'>$"+f2l(totalCobrarUsdt)+" USDT</td></tr>"+
-      // ARREGLO 59: aqui habia un "</div>" de mas. Cerraba .cuerpo y .hoja
-      // antes de tiempo, asi que TODO lo que se pusiera despues en el informe
-      // se quedaba fuera de #reporteCapture — y html2canvas solo captura lo
-      // que hay dentro. No se notaba porque no habia nada despues; al añadir
-      // la hoja del contador y el detalle del mes, desaparecian sin error.
-      "</table></div>"
-    :"<div style='margin-bottom:20px;padding:12px 16px;background:var(--inf-suave);border-radius:10px;border:1.5px solid var(--inf-linea);font-size:12px;color:var(--inf-tinta);font-weight:700'>Sin cobros pendientes — todas las operaciones están cobradas</div>")+
-
-    // ── PRÉSTAMOS ACTIVOS ──────────────────────────────────────────────
-    (prestActivos.length>0?"<div style='margin-bottom:20px;border:2px solid var(--inf-linea);border-radius:12px;overflow:hidden'>"+"<div style='background:var(--inf-azul);padding:12px 16px;display:flex;justify-content:space-between;align-items:center'>"+"<div style='font-size:13px;font-weight:800;color:var(--inf-sobre)'>Préstamos activos</div>"+"<div style='font-size:12px;color:var(--inf-sobre)'>Total: <b>≈$"+f2l(totalPrestamosUsdt)+" USDT</b> · "+prestActivos.length+" préstamo(s)</div>"+"</div>"+"<table style='width:100%;border-collapse:collapse'>"+"<tr style='background:var(--inf-suave)'><th style='padding:7px 10px;font-size:11px;font-weight:700;color:var(--inf-resta)'>Descripción</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:var(--inf-resta)'>Moneda</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:var(--inf-resta);text-align:right'>Prestado</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:var(--inf-resta);text-align:right'>Recuperado</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:var(--inf-resta);text-align:right'>Pendiente</th><th style='padding:7px 10px;font-size:11px;font-weight:700;color:var(--inf-resta);text-align:right'>≈ USDT</th></tr>"+prestActivos.map(function(p,i){var mon=p.mon||"USDT";var base=parseFloat(p.monto||p.sal)||0;var abos=(p.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);var ent=parseFloat(p.ent)||0;var rec=Math.round((abos+ent)*100)/100;var pend=Math.max(0,Math.round((base-rec)*100)/100);var rate=getRateToUsdt(mon);var pendUsdt=(mon==="USDT"?pend:(rate?Math.round(pend/rate*100)/100:null));return "<tr style='background:"+(i%2===0?"var(--inf-sobre)":"var(--inf-suave)")+"'>"+"<td style='padding:7px 10px;font-size:12px;font-weight:600'>"+p.desc+"</td>"+"<td style='padding:7px 10px;font-size:11px;color:var(--inf-tinta2)'>"+mon+"</td>"+"<td style='padding:7px 10px;font-size:12px;text-align:right'>"+f2l(base)+"</td>"+"<td style='padding:7px 10px;font-size:12px;text-align:right;color:var(--inf-tinta)'>"+f2l(rec)+"</td>"+"<td style='padding:7px 10px;font-size:12px;text-align:right;font-weight:700;color:var(--inf-resta)'>"+f2l(pend)+"</td>"+"<td style='padding:7px 10px;font-size:12px;text-align:right;color:var(--inf-azul);font-weight:700'>"+(pendUsdt!==null?"$"+f2l(pendUsdt):"—")+"</td>"+"</tr>";}).join("")+"<tr style='background:var(--inf-suave)'><td colspan='4' style='padding:7px 10px;font-size:11px;font-weight:800;color:var(--inf-resta)'>TOTAL PRÉSTAMOS PENDIENTES</td><td colspan='2' style='padding:7px 10px;text-align:right;font-size:13px;font-weight:900;color:var(--inf-resta)'>≈$"+f2l(totalPrestamosUsdt)+" USDT</td></tr>"+"</table></div>":"")+   // ARREGLO 59: mismo "</div>" de mas que arriba
-
-    // ── RESUMEN COMPLETO: DINERO AFUERA + SI COBRAS TODO ──────────────
-    (totalAfuera>0?"<div style='margin-bottom:20px;background:var(--inf-azul);border-radius:14px;padding:18px;color:var(--inf-sobre)'>"+"<div style='font-size:13px;font-weight:800;color:var(--inf-sobre);margin-bottom:14px'>Visión completa del dinero de la empresa</div>"+"<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px'>"+"<div style='background:rgba(255,255,255,.08);border-radius:10px;padding:14px'>"+"<div style='font-size:10px;color:rgba(255,255,255,.6);text-transform:uppercase;font-weight:700;margin-bottom:4px'>En cuentas ahora</div>"+"<div style='font-size:22px;font-weight:900;color:var(--inf-sobre)'>$"+f2l(totalUsdtCuentas)+" USDT</div></div>"+"<div style='background:rgba(255,255,255,.1);border-radius:10px;padding:14px;border:1px solid rgba(255,255,255,.28)'>"+"<div style='font-size:10px;color:var(--inf-sobre);text-transform:uppercase;font-weight:700;margin-bottom:4px'>Total afuera</div>"+"<div style='font-size:22px;font-weight:900;color:var(--inf-sobre)'>$"+f2l(totalAfuera)+" USDT</div>"+(cobrarPend.length>0?"<div style='font-size:10px;color:rgba(255,255,255,.5);margin-top:4px'>Cobros: $"+f2l(totalCobrarUsdt)+" USDT</div>":"")+""+(prestActivos.length>0?"<div style='font-size:10px;color:rgba(255,255,255,.5);margin-top:2px'>Préstamos: $"+f2l(totalPrestamosUsdt)+" USDT</div>":"")+""+"</div></div>"+"<div style='border-top:1px solid rgba(255,255,255,.15);padding-top:14px;display:flex;justify-content:space-between;align-items:center'>"+"<div>"+"<div style='font-size:10px;color:rgba(255,255,255,.6);margin-bottom:2px'>Si cobras todo lo que te deben…</div>"+"<div style='font-size:11px;color:rgba(255,255,255,.5)'>En cuentas ($"+f2l(_capReal?_capReal.enCuentas:totalUsdtCuentas)+")"+(enReservaPDF>0.009?" + Reserva ($"+f2l(enReservaPDF)+")":"")+" + Afuera ($"+f2l(_capReal?_capReal.enLaCalle:totalAfuera)+")</div>"+(_capReal&&_capReal.interesPrestamos>0.009?"<div style='font-size:10px;color:rgba(255,255,255,.4);margin-top:2px'>Sin los $"+f2l(_capReal.interesPrestamos)+" de interés pactado: aún no son tuyos hasta que los cobres</div>":"")+"</div>"+"<div style='text-align:right'>"+"<div style='font-size:10px;color:var(--inf-sobre);text-transform:uppercase;font-weight:700'>Potencial total</div>"+"<div style='font-size:28px;font-weight:900;color:var(--inf-sobre)'>$"+f2l(siCobrasTodo)+" USDT</div>"+"</div></div>"+"</div>":"")+
-
-    // ── CAPITAL DE LA EMPRESA ──────────────────────────────────────────
-    // ARREGLO 57: aqui habia un "deberias haber en caja" que comparaba
-    // "cierre anterior + neto del mes" contra SOLO lo que hay en cuentas
-    // bancarias. Con sus cifras cantaba un agujero de −546,29 USDT que no
-    // existe: deja fuera la reserva (176,82), lo que le deben (66,70) y lo
-    // prestado (1.010,93) — 1.254,45 que son suyos y no estan en un banco.
-    // Y se disculpaba debajo con "puede deberse a tasas o cobros
-    // pendientes". Un numero que necesita disculparse no sirve para
-    // perseguir nada, y este ademas asusta en un informe que sale de la app.
-    // Esa pregunta —¿me falta dinero?— ya la responde la conciliacion de
-    // capital, que cuenta TODO el capital, compara contra la apertura y
-    // desglosa la diferencia. Aqui se enseña de que se compone el capital y
-    // se manda alli; dos respuestas distintas a la misma pregunta era peor
-    // que ninguna.
-    (_capReal?"<div style='margin-bottom:20px;border:1.5px solid var(--inf-azul);border-radius:12px;overflow:hidden'>"+
-      "<div style='background:var(--inf-suave);padding:10px 16px;font-size:11px;font-weight:800;color:var(--inf-azul);text-transform:uppercase'>De qué se compone el capital</div>"+
-      "<table style='width:100%;border-collapse:collapse'>"+
-        [["En cuentas",_capReal.enCuentas],["En reserva",_capReal.enReserva],
-         ["Por cobrar",_capReal.porCobrar],["Prestado",_capReal.enPrestamos]]
-          .filter(function(x){return Math.abs(x[1])>0.009;})
-          .map(function(x,i){
-            return "<tr style='background:"+(i%2===0?"var(--inf-sobre)":"var(--inf-suave)")+"'>"+
-              "<td style='padding:7px 16px;font-size:12px;color:var(--inf-tinta2)'>"+x[0]+"</td>"+
-              "<td style='padding:7px 16px;text-align:right;font-size:12px;font-weight:700;color:var(--inf-azul)'>$"+f2l(x[1])+"</td></tr>";
-          }).join("")+
-        "<tr style='background:var(--inf-suave)'><td style='padding:8px 16px;font-size:12px;font-weight:800;color:var(--inf-tinta)'>CAPITAL TOTAL</td>"+
-        "<td style='padding:8px 16px;text-align:right;font-size:15px;font-weight:900;color:var(--inf-tinta)'>$"+f2l(_capReal.total)+" USDT</td></tr>"+
-      "</table>"+
-      (_capReal.sinTasa&&_capReal.sinTasa.length?"<div style='padding:8px 16px;font-size:10px;color:var(--inf-resta);background:var(--inf-suave)'>Sin tasa para "+_unicos(_capReal.sinTasa).join(", ")+": ese dinero no está contado aquí.</div>":"")+
-      "<div style='padding:9px 16px;font-size:10px;color:var(--inf-tinta2);background:var(--inf-suave);border-top:1px solid var(--inf-linea)'>Para comprobar si falta dinero está la <b>conciliación de capital</b> (Balance de Cuentas): compara contra la apertura y desglosa la diferencia.</div>"+
-    "</div>":"")+
-
-    // ── CHECKLIST DE CIERRE ────────────────────────────────────────────
-    (pagosCheckList.length>0?"<div style='margin-bottom:16px;border:1.5px solid var(--inf-azul);border-radius:12px;overflow:hidden'>"+
-      "<div style='background:var(--inf-azul);padding:12px 16px;font-size:13px;font-weight:800;color:var(--inf-sobre)'>"+
-        " Qué hacer antes del próximo mes"+
-      "</div>"+
-      "<div style='padding:4px 0'>"+
-        pagosCheckList.map(function(item,i){
-          return "<div style='display:flex;align-items:center;padding:10px 16px;border-bottom:"+(i<pagosCheckList.length-1?"1px solid var(--inf-linea)":"none")+"'>"+
-            ""+
-            "<div style='flex:1;font-size:12px;color:var(--inf-tinta2);font-weight:600'>"+item.lbl+"</div>"+
-            (item.monto?"<div style='font-size:12px;font-weight:700;color:"+item.color+"'>"+item.monto+"</div>":"")+
-          "</div>";
-        }).join("")+
-      "</div>"+
-      (totalApartar>0?"<div style='padding:10px 16px;background:var(--inf-suave);border-top:2px solid var(--inf-linea);display:flex;justify-content:space-between;align-items:center'>"+
-        "<span style='font-size:12px;font-weight:800;color:var(--inf-tinta)'>TOTAL A APARTAR PARA PAGOS</span>"+
-        "<span style='font-size:16px;font-weight:900;color:var(--inf-tinta)'>$"+f2l(totalApartar)+" USDT</span>"+
-      "</div>":"")+
-    "</div>":"")+
-
-    // ── PIE DE PÁGINA ──────────────────────────────────────────────────
-    "<div style='border-top:2px solid var(--inf-linea);padding-top:12px;display:flex;justify-content:space-between;align-items:center'>"+
-      "<div style='font-size:10px;color:var(--inf-tinta2)'>RemesasYA · Sistema de Gestión · Informe generado automáticamente</div>"+
-      "<div style='font-size:10px;color:var(--inf-tinta2)'>"+mesLabel+" · "+new Date().toLocaleString("es-VE")+"</div>"+
-    "</div>";
-
-    return sec("Resumen Ejecutivo Final",html2);
-  }())+
-
-  // ── HOJA PARA EL CONTADOR ──────────────────────────────────────────
-  // ARREGLO 54: lo que él necesita para la declaración, y nada más. Las reglas
-  // están en resumenContador(); aquí solo se dibuja.
-  (function(){
-    var rc=resumenContador(mesKey);
-    function brl(v){ return "R$ "+f2l(v); }
-    var filaDest=rc.porDestino.map(function(d){
-      return "<tr><td>"+d.dest+"</td><td style='text-align:center'>"+d.n+"</td>"+
-        "<td style='text-align:right'>"+brl(d.entro)+"</td>"+
-        "<td style='text-align:right;color:var(--inf-tinta);font-weight:700'>"+brl(d.ganReales)+"</td></tr>";
-    }).join("");
-    var filaCta=rc.porCuenta.map(function(c){
-      return "<tr><td>"+c.nombre+"</td><td style='text-align:center'>"+c.n+"</td>"+
-        "<td style='text-align:right;font-weight:700'>"+brl(c.entro)+"</td></tr>";
-    }).join("");
-    var filaSal=rc.salidas.map(function(x){
-      return "<tr><td>"+x.concepto+"</td><td style='text-align:right'>"+brl(x.monto)+"</td></tr>";
-    }).join("");
-    var filaEg=rc.egresosReales.map(function(e){
-      return "<tr><td>"+ds(_isoDeDDMMAA(e.fecha))+"</td><td>"+e.cat+"</td><td>"+e.mot+"</td>"+
-        "<td>"+e.cuenta+"</td><td style='text-align:right;font-weight:700'>"+brl(e.monto)+"</td></tr>";
-    }).join("");
-    return sec("Hoja para el contador · "+rc.mesLabel,
-      // ARREGLO 59: el papel dice de quien es. Un informe fiscal sin razon
-      // social ni CNPJ le obliga al contador a preguntar de que empresa es.
-      "<div style='border:1.5px solid var(--inf-azul);border-radius:10px;padding:10px 14px;margin-bottom:10px;background:var(--inf-suave)'>"+
-        "<div style='font-size:13px;font-weight:800;color:var(--inf-azul)'>"+EMPRESA_RAZON+"</div>"+
-        "<div style='font-size:11px;color:var(--inf-tinta2);margin-top:2px'>CNPJ "+EMPRESA_CNPJ+" · Período: "+rc.mesLabel+"</div>"+
-      "</div>"+
-      "<div style='background:var(--inf-suave);border:1px solid var(--inf-linea);border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:11.5px;color:var(--inf-tinta);line-height:1.5'>"+
-        "Solo lo que entró <b>en reales</b> y la ganancia que dejó. Cada operación convertida con <b>su propia tasa de compra</b>, no con una tasa única del mes."+
-      "</div>"+
-      "<div class='tabla-scroll'><table>"+
-        "<tr><th>Concepto</th><th>Monto</th></tr>"+
-        "<tr><td>Operaciones que entraron en reales</td><td style='text-align:right;font-weight:700'>"+rc.operaciones+"</td></tr>"+
-        "<tr><td>Entró en las cuentas</td><td style='text-align:right;font-weight:700'>"+brl(rc.entroReales)+"</td></tr>"+
-        "<tr><td style='color:var(--inf-tinta);font-weight:700'>Ganancia de esas operaciones</td><td style='text-align:right;font-weight:800;color:var(--inf-tinta)'>"+brl(rc.ganReales)+"</td></tr>"+
-        "<tr><td style='color:var(--inf-resta)'>(−) Egresos de la empresa pagados en reales</td><td style='text-align:right;font-weight:700;color:var(--inf-resta)'>"+brl(rc.egresosRealesTotal)+"</td></tr>"+
-        "<tr><td style='font-weight:800;border-top:2px solid var(--inf-linea)'>= Resultado del mes</td><td style='text-align:right;font-weight:900;border-top:2px solid var(--inf-linea);color:"+(rc.resultadoReales>=0?"var(--inf-tinta)":"var(--inf-resta)")+"'>"+brl(rc.resultadoReales)+"</td></tr>"+
-      "</table></div>"+
-      (rc.sinTasa>0?"<div style='background:var(--inf-suave);border:1px solid var(--inf-linea);border-radius:8px;padding:8px 12px;margin-top:10px;font-size:10.5px;color:var(--inf-tinta)'> "+rc.sinTasa+" operación(es) sin tasa de compra guardada: su ganancia no se pudo pasar a reales y no está en el total.</div>":"")+
-      (rc.resultadoReales<0?"<div style='background:var(--inf-suave);border:1px solid var(--inf-linea);border-radius:8px;padding:8px 12px;margin-top:10px;font-size:10.5px;color:var(--inf-resta)'>Este mes los egresos en reales fueron mayores que la ganancia de la ruta. No es un error del sistema: es lo que pasó.</div>":"")+
-      "<h3 style='font-size:11px;font-weight:800;color:var(--inf-azul);margin:18px 0 8px'>Por destino</h3>"+
-      "<div class='tabla-scroll'><table><tr><th>Destino</th><th>Ops</th><th>Entró</th><th>Ganancia</th></tr>"+filaDest+"</table></div>"+
-      "<h3 style='font-size:11px;font-weight:800;color:var(--inf-azul);margin:18px 0 8px'>En qué cuenta entró</h3>"+
-      "<div class='tabla-scroll'><table><tr><th>Cuenta</th><th>Ops</th><th>Entró</th></tr>"+filaCta+"</table></div>"+
-      "<h3 style='font-size:11px;font-weight:800;color:var(--inf-azul);margin:18px 0 8px'>Salidas de las cuentas en reales · "+brl(rc.salidasTotal)+"</h3>"+
-      "<div class='tabla-scroll'><table><tr><th>En qué se fue</th><th>Monto</th></tr>"+filaSal+"</table></div>"+
-      "<h3 style='font-size:11px;font-weight:800;color:var(--inf-azul);margin:18px 0 8px'>Egresos de la empresa, partida por partida</h3>"+
-      (filaEg?"<div class='tabla-scroll'><table><tr><th>Fecha</th><th>Categoría</th><th>En qué se gastó</th><th>Cuenta</th><th>Monto</th></tr>"+filaEg+
-        "<tr><td colspan='4' style='font-weight:800;text-align:right'>Total en reales</td><td style='text-align:right;font-weight:900'>"+brl(rc.egresosRealesTotal)+"</td></tr>"+
-        "</table></div>":"<div style='font-size:11px;color:var(--inf-tinta2)'>Ningún egreso pagado en reales este mes.</div>")+
-      (rc.egresosOtras.length?
-        "<div style='font-size:10.5px;color:var(--inf-tinta2);margin-top:10px;line-height:1.5'><b>Pagados en otra moneda</b> (no entran en el resultado en reales):<br>"+
-        rc.egresosOtras.map(function(e){return "· "+ds(_isoDeDDMMAA(e.fecha))+" — "+e.mot+" — "+f2l(e.monto)+" "+e.mon+" ("+e.cuenta+")";}).join("<br>")+
-        "</div>":"")
-    );
-  }())+
-
-  // ── DETALLE DEL MES ────────────────────────────────────────────────
-  // "con todo a detalle de todo el movimiento del mes": un resumen no se puede
-  // auditar, una lista sí.
-  (function(){
+    var cap=(typeof capitalRealTotal==="function")?capitalRealTotal():null;
     var dm=detalleMes(mesKey);
-    function tabla(titulo, cabeceras, filas){
+
+    // Los apartados se juntan en una lista en vez de concatenarse: asi el
+    // indice de la portada sale de la MISMA lista que se dibuja. Numerarlos a
+    // mano se descuadraba en cuanto un apartado se callaba por estar vacio
+    // (un socio sin nada este mes, ARREGLO 58).
+    var apartados=[];
+    var ap=function(t,c){ if(c) apartados.push({t:t,h:c}); };
+
+    var tab=function(cab,filas,pie){
       if(!filas) return "";
-      return "<h3 style='font-size:11px;font-weight:800;color:var(--inf-azul);margin:18px 0 8px'>"+titulo+"</h3>"+
-        "<div class='tabla-scroll'><table><tr>"+cabeceras.map(function(h){return "<th>"+h+"</th>";}).join("")+"</tr>"+filas+"</table></div>";
+      return "<div class='tabla-scroll'><table>"+cab+filas+(pie||"")+"</table></div>";
+    };
+    var h3=function(t){ return "<h3 style='font-size:11px;font-weight:800;color:var(--inf-azul);margin:18px 0 8px'>"+t+"</h3>"; };
+    // El parrafo "que significa" sale de su tarjeta de Balance de Cuentas, que
+    // es la que dijo que si entendia. Un numero grande sin una linea que diga
+    // que es obliga a preguntar, y este papel se lee sin nadie al lado.
+    var nota=function(t){ return "<div style='margin-top:10px;padding:9px 12px;background:var(--inf-suave);border:1px solid var(--inf-linea);border-radius:8px;font-size:10.5px;color:var(--inf-tinta2);line-height:1.5'>"+t+"</div>"; };
+    var granNum=function(rot,val,pie){
+      return "<div style='border:1.5px solid var(--inf-azul);border-radius:12px;padding:14px 16px;margin-bottom:12px'>"+
+        "<div style='font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--inf-tinta2)'>"+rot+"</div>"+
+        "<div style='font-size:30px;font-weight:900;color:var(--inf-azul);line-height:1.15;margin-top:2px'>"+val+"</div>"+
+        (pie?"<div style='font-size:10.5px;color:var(--inf-tinta2);margin-top:4px'>"+pie+"</div>":"")+
+      "</div>";
+    };
+    // El signo va DELANTE del simbolo. f2l de un negativo devuelve "-73,26" y
+    // anteponerle el "$" escribia "$-73,26", que se lee como un precio raro en
+    // vez de como una perdida.
+    var usd=function(v){ var n=parseFloat(v)||0; return (n<0?"−$":"$")+f2l(Math.abs(n)); };
+    var sinTasaTxt=(cap&&cap.sinTasa&&cap.sinTasa.length)?cap.sinTasa.filter(_unicos).join(", "):"";
+
+    // ── 1 · QUE TIENE LA EMPRESA ──────────────────────────────────────
+    // Va primero (ARREGLO 87) y ahora ademas sola en su hoja. Sus palabras:
+    // "ese resumen que tiene balance de cuenta, me gustaria que comenzara el
+    // reporte asi. Tienes tanto un USDT, tienes tanto reserva, tienes tanto
+    // por cobrar en prestamo, tienes tanto por remesas por cobrar, tu saldo es
+    // tanto. Y despues el desglose de toda la informacion".
+    //
+    // Los numeros salen de capitalRealTotal(), el mismo sitio que ya responde
+    // esa pregunta en la conciliacion. No se recalcula nada aqui: dos
+    // respuestas al mismo numero es lo que ya hizo que dejara de fiarse de las
+    // dos (34,27 arriba y 34,28 abajo).
+    ap("Qué tiene la empresa hoy", cap?(
+      granNum("Capital total de la empresa","$"+f2l(cap.total)+" USDT",
+        "Es todo su dinero: lo que está en las cuentas, lo apartado en reserva, lo que le deben por remesas y lo que tiene prestado.")+
+      tab("<tr><th>De dónde sale</th><th style='text-align:right'>Cuánto</th></tr>",
+        [["En las cuentas",cap.enCuentas,"Lo que hay ahora mismo en los bancos y en Binance"],
+         ["Apartado en reserva",cap.enReserva,"Cuentas marcadas como reserva: no se usan para operar"],
+         ["Por cobrar de remesas",cap.porCobrar,"Remesas ya entregadas que el cliente todavía no pagó"],
+         ["Prestado",cap.enPrestamos,"Capital de préstamos que todavía no le han devuelto"]]
+          .filter(function(x){return Math.abs(x[1])>0.009;})
+          .map(function(x){
+            return "<tr><td style='font-size:12px'><b>"+x[0]+"</b><div style='font-size:10px;color:var(--inf-tinta2);font-weight:400'>"+x[2]+"</div></td>"+
+              "<td style='text-align:right;font-size:13px;font-weight:700;color:var(--inf-azul)'>$"+f2l(x[1])+"</td></tr>";
+          }).join(""),
+        "<tr style='background:var(--inf-suave)'><td style='font-size:12px;font-weight:800'>SU SALDO TOTAL</td>"+
+        "<td style='text-align:right;font-size:15px;font-weight:900;color:var(--inf-azul)'>$"+f2l(cap.total)+" USDT</td></tr>")+
+      // El desglose por moneda: sin esto no habia forma de ver cuanto tiene en
+      // bolivares sin ir sumando a mano, porque todo salia convertido a USDT.
+      // Las monedas van ordenadas por lo que pesan: la primera fila es donde
+      // de verdad esta su dinero, no la que entro antes.
+      h3("Y en qué moneda está cada parte")+
+      tab("<tr><th>Moneda</th><th style='text-align:right'>En cuentas</th><th style='text-align:right'>Reserva</th><th style='text-align:right'>Por cobrar</th><th style='text-align:right'>Prestado</th><th style='text-align:right'>Equivale a</th></tr>",
+        cap.porMoneda.map(function(m){
+          var c=function(v){ return Math.abs(v)<0.009?"<td style='text-align:right;color:var(--inf-tinta2)'>—</td>":"<td style='text-align:right'>"+f2l(v)+"</td>"; };
+          return "<tr><td style='font-weight:700'>"+m.moneda+"</td>"+
+            c(m.enCuentas)+c(m.enReserva)+c(m.porCobrar)+c(m.enPrestamos)+
+            "<td style='text-align:right;font-weight:700;color:var(--inf-azul)'>"+
+              (m.sinTasa?"<span style='color:var(--inf-resta)'>Sin tasa</span>":"$"+f2l(m.usdt)+" USDT")+
+            "</td></tr>";
+        }).join(""),
+        "<tr style='background:var(--inf-suave)'><td colspan='5' style='font-weight:800;font-size:12px'>SUMA DE TODAS LAS MONEDAS</td>"+
+        "<td style='text-align:right;font-weight:900;font-size:13px;color:var(--inf-azul)'>$"+f2l(cap.total)+" USDT</td></tr>")+
+      // El interes pendiente se dice pero NO suma (ARREGLO 71). Esconderlo
+      // seria peor —es dinero que le van a dar— y sumarlo seria inventarse
+      // capital que todavia no existe.
+      (cap.interesPrestamos>0.009?nota("Además hay <b>$"+f2l(cap.interesPrestamos)+" USDT</b> de intereses de préstamos pactados que todavía no se han cobrado. <b>No están sumados arriba</b>: no son de la empresa hasta que el cliente pague."):"")+
+      (sinTasaTxt?"<div style='margin-top:10px;font-size:10.5px;color:var(--inf-resta)'><b>Falta la tasa de "+sinTasaTxt+"</b>, así que ese dinero no entra en el total. El total está <b>incompleto</b>, no corregido.</div>":"")+
+      nota("Para comprobar si falta dinero no se usa este apartado, se usa la <b>conciliación de capital</b> (Balance de Cuentas en la app): compara contra la apertura y desglosa la diferencia línea por línea.")
+    ):"");
+
+    // ── 2 · COMO LE FUE EL MES ────────────────────────────────────────
+    var netoEmpresa=Math.round(((calc.utilidadEmpresa||0)-(calc.sueldo||0))*100)/100;
+    ap("Cómo le fue el mes",
+      granNum("Lo que dejó el mes, ya descontado todo",usd(netoEmpresa)+" USDT",
+        calc.ops+" operaciones · ganancia bruta $"+f2l(calc.ganBrutaTotal)+" USDT")+
+      tab("<tr><th>Concepto</th><th style='text-align:right'>Monto</th></tr>",
+        "<tr><td style='font-size:12px'>Operaciones realizadas en el mes</td><td style='text-align:right;font-size:12px;font-weight:700;color:var(--inf-azul)'>"+calc.ops+"</td></tr>"+
+        row("Ganancia bruta de todas las operaciones",calc.ganBrutaTotal,"var(--inf-tinta)")+
+        // ARREGLO 57: el desglose tiene que cuadrar. El interes de prestamos
+        // entra en ganBrutaTotal pero NO en miGanOperaciones, y sin esta fila
+        // el desglose saltaba de 226,89 a 221,50 sin nada que lo explicara.
+        (calc.ganPrestamos>0?row("De eso, intereses de préstamos ("+calc.ganPrestamosCant+" abono"+(calc.ganPrestamosCant!==1?"s":"")+") — se apuntan aparte y no entran en la utilidad",calc.ganPrestamos,"var(--inf-tinta)"):"")+
+        (calc.ganExtraEmp>0?row("+ Ganancias extra de la empresa",calc.ganExtraEmp,"var(--inf-tinta)"):"")+
+        (calc.gasEEUU>0?row("− Gastos de EE.UU. compartidos (su "+(100-calc.socioPorcentajeEE)+"% de $"+f2(calc.gasEEUU)+")",Math.round(calc.gasEEUU*(1-calc.socioPorcentajeEE/100)*100)/100,"var(--inf-resta)"):"")+
+        (calc.socioParte>0?row("− "+calc.socioNombreEE+" ("+calc.socioPorcentajeEE+"% de sus rutas)",calc.socioParte,"var(--inf-resta)"):"")+
+        (calc.totalCom>0?row("− Otros socios",calc.totalCom,"var(--inf-resta)"):"")+
+        row("= Ganancia de operaciones que le queda",calc.miGanOperaciones,"var(--inf-tinta)")+
+        row("− Egresos de la empresa pagados",calc.egEmpPag,"var(--inf-resta)")+
+        row("= Utilidad de la empresa",calc.utilidadEmpresa,"var(--inf-tinta)")+
+        (calc.sueldo>0?row("− Su sueldo ("+calc.pctSueldo+"% de la utilidad)",calc.sueldo,"var(--inf-resta)"):"")+
+        "<tr style='background:var(--inf-suave)'><td style='font-size:12px;font-weight:800'>= QUEDÓ EN LA EMPRESA</td>"+
+        "<td style='text-align:right;font-size:14px;font-weight:900;color:"+(netoEmpresa>=0?"var(--inf-azul)":"var(--inf-resta)")+"'>"+usd(netoEmpresa)+" USDT</td></tr>")+
+      // Las ganancias extra tienen su detalle, pero son parte de "como le fue
+      // el mes": una hoja propia para dos lineas seria media hoja en blanco.
+      (calc.ganExtraItems&&calc.ganExtraItems.length?
+        h3("Las ganancias extra, una por una")+
+        tab("<tr><th>Fecha</th><th>Qué fue</th><th>Moneda</th><th style='text-align:right'>Monto</th><th style='text-align:right'>Equivale a</th><th>Tipo</th></tr>",
+          calc.ganExtraItems.map(function(g){
+            return "<tr><td>"+g.d+"</td><td>"+g.desc+"</td><td style='text-align:center'>"+g.mon+"</td>"+
+              "<td style='text-align:right'>"+f2l(g.monto)+"</td>"+
+              "<td style='text-align:right;font-weight:700'>+$"+f2l(g.usdt)+"</td>"+
+              "<td style='text-align:center'><span class='chip'>"+g.tipo+"</span></td></tr>";
+          }).join(""),
+          "<tr style='background:var(--inf-suave)'><td colspan='4' style='font-weight:800'>TOTAL EXTRAS</td>"+
+          "<td style='text-align:right;font-weight:900'>+$"+f2l(calc.ganExtraEmp+calc.ganExtraPer)+"</td><td></td></tr>"):"")+
+      nota("<b>La ganancia es la diferencia entre lo que le costó el USDT y a cuánto lo vendió.</b> No hay otra fuente. "+
+        (calc.ganPrestamos>0?"Los intereses de préstamos se apuntan como línea aparte y no entran en la utilidad de la empresa ni en el sueldo. ":"")+
+        "El sueldo se acumula mes a mes; lo que puede gastar hoy está en el apartado de gastos personales."));
+
+    // ── 3 · POR DONDE ENTRO · RUTA POR RUTA ───────────────────────────
+    // Sus palabras: "solamente por donde salieron, cuanto salio por cada ruta".
+    ap("Por dónde entró · ruta por ruta",
+      (function(){
+        var tOps=0,tGan=0,tMi=0;
+        var filas=Object.keys(porRuta).sort().map(function(rt){
+          var g=porRuta[rt];
+          var cs=calc.comisionesSocios.find(function(s){return s.rutas.indexOf(rt)!==-1;});
+          var csMontoRuta=cs?Math.round(g.gan*(cs.pct/100)*100)/100:0;
+          var isEERuta=!!g._isEE;
+          var eeMontoRuta=isEERuta?Math.round(g.gan*(calc.socioPorcentajeEE/100)*100)/100:0;
+          var comLabel=cs?(cs.nombre+" ("+cs.pct+"%)"):isEERuta?(calc.socioNombreEE+" ("+calc.socioPorcentajeEE+"%)"):null;
+          var comMonto=cs?csMontoRuta:isEERuta?eeMontoRuta:0;
+          var miGan=Math.round((g.gan-comMonto)*100)/100;
+          tOps+=g.ops; tGan+=g.gan; tMi+=miGan;
+          return "<tr><td style='font-weight:600'>"+rt+"</td><td style='text-align:center'>"+g.ops+"</td>"+
+            "<td style='text-align:right'>"+f2l(g.vol)+" "+g.mon+"</td>"+
+            "<td style='text-align:right;font-weight:700'>$"+f2l(g.gan)+"</td>"+
+            "<td style='text-align:right;color:var(--inf-resta)'>"+(comLabel?"−$"+f2l(comMonto)+"<div style='font-size:10px'>"+comLabel+"</div>":"—")+"</td>"+
+            "<td style='text-align:right;font-weight:700;color:var(--inf-azul)'>$"+f2l(miGan)+"</td></tr>";
+        }).join("");
+        if(!filas) return "";
+        return tab("<tr><th>Ruta</th><th style='text-align:center'>Ops</th><th style='text-align:right'>Entró (volumen)</th><th style='text-align:right'>Ganancia bruta</th><th style='text-align:right'>Comisión del socio</th><th style='text-align:right'>Le queda</th></tr>",
+          filas,
+          "<tr style='background:var(--inf-suave)'><td style='font-weight:800'>TOTAL</td><td style='text-align:center;font-weight:800'>"+tOps+"</td>"+
+          "<td style='text-align:right;color:var(--inf-tinta2);font-size:10px'>cada ruta en su moneda</td>"+
+          "<td style='text-align:right;font-weight:900'>$"+f2l(tGan)+"</td><td></td>"+
+          "<td style='text-align:right;font-weight:900;color:var(--inf-azul)'>$"+f2l(tMi)+"</td></tr>")+
+          // El volumen NO se suma entre rutas: cada una entra en su moneda y
+          // sumar reales con bolivares da un numero que no existe. Es el mismo
+          // error que enseñaba "$177,00" en Por cobrar sumando 97 y 80 reales.
+          nota("El volumen de cada ruta va <b>en su propia moneda</b> y por eso la columna no lleva total: sumar reales con bolívares daría un número que no existe. Lo que sí se puede sumar es la ganancia, que está en USDT.");
+      })());
+
+    // ── 4 · MOVIMIENTOS DE BANCO ──────────────────────────────────────
+    // Sus palabras: "movimientos de banco y todo eso si me interesa". Aqui van
+    // los saldos de cada cuenta, los traspasos entre cuentas y las compras y
+    // ventas de USDT, que son las que de verdad mueven su dinero. Lo que se
+    // fue es el detalle remesa por remesa.
+    ap("Movimientos de banco",
+      h3("Saldo de cada cuenta al "+fechaSaldosInforme+(_esCierrePasado?" (cierre de "+mesLabel+")":""))+
+      tab("<tr><th>Cuenta</th><th style='text-align:center'>Moneda</th><th style='text-align:right'>Saldo</th><th style='text-align:right'>Equivale a</th></tr>",
+        // ARREGLO 57: 6 de sus 15 cuentas estan en cero. No aportan al total y
+        // en un papel que sale fuera solo hacen ruido, pero se cuentan al pie:
+        // un saldo en cero que deberia tener dinero es justo lo que querria ver.
+        cuentasParaInforme.filter(function(c){return Math.abs(parseFloat(c.saldo)||0)>0.009;}).map(function(c){
+          var rate=getRateToUsdt(c.moneda);
+          var usdt=c.moneda==="USDT"?(parseFloat(c.saldo)||0):(rate?((parseFloat(c.saldo)||0)/rate):null);
+          return "<tr><td style='font-weight:600'>"+c.nombre+"</td><td style='text-align:center'>"+c.moneda+"</td>"+
+            "<td style='text-align:right;font-weight:700'>"+f2l(parseFloat(c.saldo)||0)+"</td>"+
+            "<td style='text-align:right;color:var(--inf-azul)'>"+(usdt!==null?"≈ $"+f2l(usdt):"<span style='color:var(--inf-resta)'>Sin tasa</span>")+"</td></tr>";
+        }).join("")+
+        (function(){
+          var vacias=cuentasParaInforme.filter(function(c){return Math.abs(parseFloat(c.saldo)||0)<=0.009;}).length;
+          return vacias?"<tr><td colspan='4' style='font-size:10px;color:var(--inf-tinta2);font-style:italic'>"+vacias+" cuenta"+(vacias!==1?"s":"")+" más en cero, sin saldo que informar</td></tr>":"";
+        })(),
+        "<tr><td colspan='3' style='font-size:10.5px;color:var(--inf-tinta2)'>Inventario de USDT disponible</td>"+
+        "<td style='text-align:right;color:var(--inf-tinta2)'>$"+f2l(invUsdtPDF)+"</td></tr>"+
+        "<tr style='background:var(--inf-suave)'><td colspan='3' style='font-weight:800'>TOTAL EN LAS CUENTAS</td>"+
+        "<td style='text-align:right;font-weight:900;color:var(--inf-azul)'>$"+f2l(totalUsdtCuentas)+" USDT</td></tr>")+
+      (dm.usdt.length?
+        h3("Compras y ventas de USDT del mes · "+dm.usdt.length)+
+        tab("<tr><th>Fecha</th><th>Qué hizo</th><th style='text-align:right'>Entregó</th><th style='text-align:right'>Recibió</th><th style='text-align:right'>Tasa</th><th>Cuenta</th></tr>",
+          dm.usdt.map(function(x){
+            return "<tr><td>"+x.fecha+"</td><td style='font-weight:600'>"+(x.tipo==="compra"?"Compró USDT":"Vendió USDT")+"</td>"+
+              "<td style='text-align:right'>"+(x.tipo==="compra"?f2l(x.montOrigen)+" "+x.moneda:f2l(x.usdt)+" USDT")+"</td>"+
+              "<td style='text-align:right'>"+(x.tipo==="compra"?f2l(x.usdt)+" USDT":f2l(x.bs)+" "+x.moneda)+"</td>"+
+              "<td style='text-align:right'>"+f4(x.tasa)+"</td><td>"+x.cuenta+"</td></tr>";
+          }).join("")):"")+
+      (dm.traspasos.length?
+        h3("Traspasos entre sus cuentas · "+dm.traspasos.length)+
+        tab("<tr><th>Fecha</th><th>Desde</th><th>Hacia</th><th style='text-align:right'>Monto</th><th>Nota</th></tr>",
+          dm.traspasos.map(function(x){
+            return "<tr><td>"+ds(x.fecha)+"</td><td>"+x.origen+"</td><td>"+x.destino+"</td>"+
+              "<td style='text-align:right;font-weight:700'>"+f2l(x.monto)+" "+x.moneda+"</td><td>"+x.nota+"</td></tr>";
+          }).join("")):"")+
+      nota("La compra y la venta de USDT es de donde sale toda la ganancia, así que estas dos tablas son el movimiento de verdad. El detalle de cada remesa no va en este informe: lo que importa de las remesas está en el apartado de rutas y en el de clientes."));
+
+    // ── 5 · CLIENTES ──────────────────────────────────────────────────
+    // Sus palabras: "me gustaria saber tambien cuanto mando cada cliente,
+    // cuantas veces mando un cliente". Esto no estaba en ningun sitio del
+    // informe: habia una lista de remesas una por una, que es justo lo que
+    // dijo que no le hace falta.
+    ap("Clientes · cuánto mandó cada uno",
+      (function(){
+        var porCli={};
+        todasOps.forEach(function(r){
+          var k=String(r.cl||"").trim()||"Sin nombre";
+          if(!porCli[k]) porCli[k]={n:0,gan:0,mon:{},usdt:0,parcial:false,rutas:{}};
+          var c=porCli[k];
+          c.n++; c.gan+=parseFloat(r.pr)||0;
+          var mo=r.orig||"USDT", am=parseFloat(r.am)||0;
+          c.mon[mo]=(c.mon[mo]||0)+am;
+          if(r.rt) c.rutas[r.rt]=1;
+          // Para sumar entre monedas se convierte con getRateToUsdt(), que
+          // DIVIDE; y si a una moneda le falta la tasa el total se marca
+          // "parcial" en vez de quedarse corto en silencio. Un total corto que
+          // parece completo es peor que no dar total.
+          if(mo==="USDT") c.usdt+=am;
+          else { var t=getRateToUsdt(mo); if(t) c.usdt+=am/t; else c.parcial=true; }
+        });
+        var lista=Object.keys(porCli).map(function(k){ var o=porCli[k]; o.cl=k; return o; })
+          .sort(function(a,b){ return b.usdt-a.usdt; });
+        if(!lista.length) return "";
+        var tN=0,tU=0,tG=0,algoParcial=false;
+        var filas=lista.map(function(o){
+          tN+=o.n; tU+=o.usdt; tG+=o.gan; if(o.parcial) algoParcial=true;
+          var mandado=Object.keys(o.mon).map(function(m){ return f2l(o.mon[m])+" "+m; }).join("<br>");
+          return "<tr><td style='font-weight:700'>"+o.cl+"</td>"+
+            "<td style='text-align:center;font-weight:700'>"+o.n+"</td>"+
+            "<td style='text-align:right'>"+mandado+"</td>"+
+            "<td style='text-align:right;color:var(--inf-azul);font-weight:700'>"+(o.parcial?"<span style='color:var(--inf-resta)'>parcial</span> $"+f2l(o.usdt):"$"+f2l(o.usdt))+"</td>"+
+            "<td style='text-align:right;font-weight:700'>$"+f2l(o.gan)+"</td>"+
+            "<td style='font-size:10.5px;color:var(--inf-tinta2)'>"+Object.keys(o.rutas).join(", ")+"</td></tr>";
+        }).join("");
+        return granNum("Clientes que mandaron este mes",lista.length+(lista.length===1?" cliente":" clientes"),
+          tN+" operaciones entre todos · el que más mandó fue "+lista[0].cl+" con $"+f2l(lista[0].usdt)+" USDT en "+lista[0].n+(lista[0].n===1?" operación":" operaciones"))+
+          tab("<tr><th>Cliente</th><th style='text-align:center'>Veces</th><th style='text-align:right'>Cuánto mandó</th><th style='text-align:right'>Equivale a</th><th style='text-align:right'>Ganancia que dejó</th><th>Rutas</th></tr>",
+            filas,
+            "<tr style='background:var(--inf-suave)'><td style='font-weight:800'>TOTAL · "+lista.length+" clientes</td>"+
+            "<td style='text-align:center;font-weight:800'>"+tN+"</td><td></td>"+
+            "<td style='text-align:right;font-weight:900;color:var(--inf-azul)'>"+(algoParcial?"<span style='color:var(--inf-resta)'>parcial</span> $"+f2l(tU):"$"+f2l(tU))+"</td>"+
+            "<td style='text-align:right;font-weight:900'>$"+f2l(tG)+"</td><td></td></tr>")+
+          nota("\"Cuánto mandó\" es lo que el cliente entregó, en la moneda en que lo entregó. La columna de al lado lo pasa a USDT con la tasa de referencia para poder compararlos y sumarlos."+
+            (algoParcial?" <b>Donde dice \"parcial\" falta la tasa de alguna moneda</b>, así que ese total está incompleto.":""));
+      })());
+
+    // ── 6 · POR COBRAR ────────────────────────────────────────────────
+    // Sus palabras: "por lo menos, cuentas por cobrar. Ok, cuantas remesas son
+    // de cuentas por cobrar. Cuales son los clientes que falta por cobrar".
+    ap("Por cobrar · quién le debe y cuánto",
+      (function(){
+        if(!cobrarPend.length)
+          return "<div style='padding:14px 16px;background:var(--inf-suave);border:1.5px solid var(--inf-linea);border-radius:10px;font-size:13px;font-weight:700;color:var(--inf-azul)'>No hay nada por cobrar: todas las remesas del mes están cobradas.</div>";
+        var totalUsdt=0, parcial=false;
+        var filas=cobrarPend.map(function(c){
+          var abos=(c.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);
+          var pend=Math.max(0,Math.round(((c.monto||0)-abos)*100)/100);
+          var mo=c.moneda||"USDT";
+          var rate=getRateToUsdt(mo);
+          var pu=(mo==="USDT")?pend:(rate?Math.round(pend/rate*100)/100:null);
+          if(pu===null) parcial=true; else totalUsdt+=pu;
+          var ganPend=(pend>0&&c.monto>0)?Math.round((parseFloat(c.ganancia)||0)*(pend/(c.monto||1))*100)/100:(parseFloat(c.ganancia)||0);
+          return "<tr><td style='font-weight:700'>"+c.cliente+"</td><td style='font-size:10.5px;color:var(--inf-tinta2)'>"+(c.ruta||"")+"</td>"+
+            "<td style='text-align:right;font-weight:700'>"+f2l(pend)+" "+mo+
+              (abos>0?"<div style='font-size:10px;color:var(--inf-tinta2);font-weight:400'>ya abonó "+f2l(abos)+"</div>":"")+"</td>"+
+            "<td style='text-align:right;color:var(--inf-azul);font-weight:700'>"+(pu!==null?"$"+f2l(pu):"<span style='color:var(--inf-resta)'>Sin tasa</span>")+"</td>"+
+            "<td style='text-align:right;font-weight:700'>+$"+f2l(ganPend)+"</td></tr>";
+        }).join("");
+        totalUsdt=Math.round(totalUsdt*100)/100;
+        var clientes=cobrarPend.map(function(c){return c.cliente;}).filter(_unicos);
+        return granNum("Pendiente de cobrar","$"+f2l(totalUsdt)+" USDT",
+          cobrarPend.length+(cobrarPend.length===1?" remesa":" remesas")+" sin cobrar, de "+clientes.length+(clientes.length===1?" cliente":" clientes")+
+          (parcial?" · el total está incompleto: falta la tasa de alguna moneda":""))+
+          tab("<tr><th>Cliente</th><th>Ruta</th><th style='text-align:right'>Le debe</th><th style='text-align:right'>Equivale a</th><th style='text-align:right'>Ganancia que trae</th></tr>",
+            filas,
+            "<tr style='background:var(--inf-suave)'><td colspan='3' style='font-weight:800'>TOTAL POR COBRAR</td>"+
+            "<td style='text-align:right;font-weight:900;color:var(--inf-azul)'>"+(parcial?"<span style='color:var(--inf-resta)'>parcial</span> $"+f2l(totalUsdt):"$"+f2l(totalUsdt))+"</td><td></td></tr>")+
+          nota("Esto es dinero de remesas <b>ya entregadas al cliente</b> que él todavía no ha pagado. Los bolívares o los reales ya salieron de la cuenta: por eso cuenta como capital de la empresa, pero está afuera.");
+      })());
+
+    // ── 7 · PRESTAMOS ─────────────────────────────────────────────────
+    ap("Préstamos · quién le debe y cuánto falta",
+      (function(){
+        if(!prestActivos.length)
+          return "<div style='padding:14px 16px;background:var(--inf-suave);border:1.5px solid var(--inf-linea);border-radius:10px;font-size:13px;font-weight:700;color:var(--inf-azul)'>No hay préstamos activos.</div>";
+        var totalUsdt=0, parcial=false;
+        var filas=prestActivos.map(function(p){
+          var mon=p.mon||"USDT";
+          var base=parseFloat(p.monto||p.sal)||0;
+          var abos=(p.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);
+          var ent=parseFloat(p.ent)||0;
+          var rec=Math.round((abos+ent)*100)/100;
+          var pend=Math.max(0,Math.round((base-rec)*100)/100);
+          var rate=getRateToUsdt(mon);
+          var pu=(mon==="USDT")?pend:(rate?Math.round(pend/rate*100)/100:null);
+          if(pu===null) parcial=true; else totalUsdt+=pu;
+          var pct=base>0?Math.round(rec/base*100):0;
+          return "<tr><td style='font-weight:700'>"+(p.desc||"—")+"</td><td style='text-align:center'>"+mon+"</td>"+
+            "<td style='text-align:right'>"+f2l(base)+"</td>"+
+            "<td style='text-align:right'>"+f2l(rec)+"<div style='font-size:10px;color:var(--inf-tinta2)'>"+pct+"% devuelto</div></td>"+
+            "<td style='text-align:right;font-weight:700;color:var(--inf-resta)'>"+f2l(pend)+"</td>"+
+            "<td style='text-align:right;font-weight:700;color:var(--inf-azul)'>"+(pu!==null?"$"+f2l(pu):"<span style='color:var(--inf-resta)'>Sin tasa</span>")+"</td></tr>";
+        }).join("");
+        totalUsdt=Math.round(totalUsdt*100)/100;
+        return granNum("Prestado y todavía sin devolver","$"+f2l(totalUsdt)+" USDT",
+          prestActivos.length+(prestActivos.length===1?" préstamo activo":" préstamos activos")+
+          (parcial?" · el total está incompleto: falta la tasa de alguna moneda":""))+
+          tab("<tr><th>A quién</th><th style='text-align:center'>Moneda</th><th style='text-align:right'>Le prestó</th><th style='text-align:right'>Ya devolvió</th><th style='text-align:right'>Falta</th><th style='text-align:right'>Equivale a</th></tr>",
+            filas,
+            "<tr style='background:var(--inf-suave)'><td colspan='4' style='font-weight:800'>TOTAL QUE FALTA POR COBRAR</td>"+
+            "<td></td><td style='text-align:right;font-weight:900;color:var(--inf-azul)'>"+(parcial?"<span style='color:var(--inf-resta)'>parcial</span> $"+f2l(totalUsdt):"$"+f2l(totalUsdt))+"</td></tr>")+
+          // ARREGLO 71: el interes no es capital hasta que se cobra.
+          ((cap&&cap.interesPrestamos>0.009)?nota("Lo de arriba es el <b>capital</b> prestado que falta por devolver. Los intereses pactados —<b>$"+f2l(cap.interesPrestamos)+" USDT</b>— se cobran aparte y <b>no cuentan como capital</b> hasta que el cliente los paga."):"");
+      })());
+
+    // ── 8 · EGRESOS DE LA EMPRESA ─────────────────────────────────────
+    ap("Egresos de la empresa · en qué se fue",
+      (function(){
+        var catEmp={};
+        egEmpM.filter(function(e){return e.pagada;}).forEach(function(e){
+          var c=e.categoria||e.cat||"General"; catEmp[c]=(catEmp[c]||0)+(parseFloat(e.usdt)||0);
+        });
+        var barras=Object.keys(catEmp).sort(function(a,b){return catEmp[b]-catEmp[a];}).map(function(c){
+          var pct=calc.egEmpPag>0?Math.round(catEmp[c]/calc.egEmpPag*100):0;
+          return "<tr><td style='font-size:12px'>"+c+"</td>"+
+            "<td><div style='background:var(--inf-suave);border:1px solid var(--inf-linea);border-radius:4px;height:11px;width:140px;display:inline-block;vertical-align:middle'><div style='background:var(--inf-azul);border-radius:4px;height:100%;width:"+pct+"%'></div></div></td>"+
+            "<td style='text-align:right;color:var(--inf-resta);font-weight:700'>$"+f2l(catEmp[c])+"</td>"+
+            "<td style='color:var(--inf-tinta2);font-size:10.5px;text-align:right'>"+pct+"%</td></tr>";
+        }).join("");
+        var pctBruta=calc.ganBrutaTotal>0?Math.round(calc.egEmpPag/calc.ganBrutaTotal*100):0;
+        return granNum("Egresos pagados en el mes","$"+f2l(calc.egEmpPag)+" USDT",
+          "Se llevaron el "+pctBruta+"% de la ganancia bruta"+(calc.egEmpPend>0?" · y quedan $"+f2l(calc.egEmpPend)+" USDT pendientes de pagar":""))+
+          (Object.keys(catEmp).length>1?h3("En qué categorías")+tab("",barras):"")+
+          h3("Partida por partida")+
+          tab("<tr><th>Fecha</th><th>Categoría</th><th>En qué se gastó</th><th style='text-align:center'>Pagado</th><th style='text-align:right'>Monto original</th><th style='text-align:right'>Equivale a</th></tr>",
+            egEmpM.slice().sort(function(a,b){return String(a.fecha||a.d||"").localeCompare(String(b.fecha||b.d||""));}).map(function(e){
+              return "<tr><td>"+((e.fecha||e.d)||"")+"</td><td style='color:var(--inf-azul);font-weight:600'>"+(e.categoria||e.cat||"General")+"</td>"+
+                "<td>"+(e.mot||e.desc||e.motivo||"—")+"</td>"+
+                "<td style='text-align:center'>"+(e.pagada?"Sí":"Pendiente")+"</td>"+
+                "<td style='text-align:right;color:var(--inf-tinta2)'>"+((e.mon||"BRL")==="USDT"?"—":(f2l(parseFloat(e.monto)||0)+" "+(e.mon||"BRL")))+"</td>"+
+                "<td style='text-align:right;font-weight:700;color:"+(e.pagada?"var(--inf-resta)":"var(--inf-tinta2)")+"'>$"+f2l(parseFloat(e.usdt)||0)+"</td></tr>";
+            }).join(""),
+            "<tr style='background:var(--inf-suave)'><td colspan='5' style='font-weight:800'>TOTAL PAGADO</td>"+
+            "<td style='text-align:right;font-weight:900;color:var(--inf-resta)'>$"+f2l(calc.egEmpPag)+"</td></tr>"+
+            (calc.egEmpPend>0?"<tr><td colspan='5' style='font-weight:800'>PENDIENTE DE PAGAR</td>"+
+              "<td style='text-align:right;font-weight:900'>$"+f2l(calc.egEmpPend)+"</td></tr>":""));
+      })());
+
+    // ── 9 · LO SUYO ───────────────────────────────────────────────────
+    ap("Lo suyo · sueldo y gastos personales",
+      (function(){
+        var pagadosPer=egPerM.filter(function(e){return e.pagada;});
+        var totalGastadoReal=Math.round(pagadosPer.reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0)*100)/100;
+        var catPer={};
+        pagadosPer.forEach(function(e){ var c=e.categoria||e.cat||"General"; catPer[c]=(catPer[c]||0)+(parseFloat(e.usdt)||0); });
+        var barras=Object.keys(catPer).sort(function(a,b){return catPer[b]-catPer[a];}).map(function(c){
+          var pct=totalGastadoReal>0?Math.round(catPer[c]/totalGastadoReal*100):0;
+          return "<tr><td style='font-size:12px'>"+c+"</td>"+
+            "<td><div style='background:var(--inf-suave);border:1px solid var(--inf-linea);border-radius:4px;height:11px;width:140px;display:inline-block;vertical-align:middle'><div style='background:var(--inf-azul);border-radius:4px;height:100%;width:"+pct+"%'></div></div></td>"+
+            "<td style='text-align:right;font-weight:700'>$"+f2l(catPer[c])+"</td>"+
+            "<td style='color:var(--inf-tinta2);font-size:10.5px;text-align:right'>"+pct+"%</td></tr>";
+        }).join("");
+        return granNum(calc.disponiblePer>=0?"Lo que puede gastar hoy":"Lo que se ha pasado",
+          (calc.disponiblePer<0?"−$":"$")+f2l(Math.abs(calc.disponiblePer))+" USDT",
+          "Acumulado de meses ya cerrados $"+f2l(calc.saldoPersonalAcumuladoPrevio)+" · gastado desde la empresa este mes $"+f2l(calc.egPerPag))+
+          tab("<tr><th>Concepto</th><th style='text-align:right'>Monto</th></tr>",
+            row("Acumulado de meses ya cerrados",calc.saldoPersonalAcumuladoPrevio,"var(--inf-tinta)")+
+            row("− Gastos personales pagados con fondos de la empresa",calc.egPerPag,"var(--inf-resta)")+
+            "<tr style='background:var(--inf-suave)'><td style='font-size:12px;font-weight:800'>= DISPONIBLE PARA GASTAR HOY</td>"+
+            "<td style='text-align:right;font-size:14px;font-weight:900;color:"+(calc.disponiblePer>=0?"var(--inf-azul)":"var(--inf-resta)")+"'>"+(calc.disponiblePer<0?"−":"")+"$"+f2l(Math.abs(calc.disponiblePer))+" USDT</td></tr>"+
+            "<tr><td colspan='2' style='font-size:10.5px;color:var(--inf-tinta2)'>Sueldo de este mes ("+calc.pctSueldo+"% de la utilidad): $"+f2(calc.sueldoAcumulando)+" — se acumula y no es gastable hasta cerrar el mes</td></tr>")+
+          (Object.keys(catPer).length>1?h3("En qué se gastó")+tab("",barras):"")+
+          (pagadosPer.length?
+            h3("Gasto por gasto")+
+            tab("<tr><th>Fecha</th><th>Categoría</th><th>En qué se gastó</th><th style='text-align:right'>Monto original</th><th style='text-align:right'>Equivale a</th></tr>",
+              pagadosPer.map(function(e){
+                return "<tr><td>"+((e.fecha||e.d)||"")+"</td><td style='font-weight:600'>"+(e.categoria||e.cat||"General")+"</td>"+
+                  "<td>"+(e.mot||e.desc||e.motivo||"Sin descripción")+"</td>"+
+                  "<td style='text-align:right;color:var(--inf-tinta2)'>"+((e.mon||"BRL")==="USDT"?"—":(f2l(parseFloat(e.monto)||0)+" "+(e.mon||"BRL")))+"</td>"+
+                  "<td style='text-align:right;color:var(--inf-resta);font-weight:700'>$"+f2l(parseFloat(e.usdt)||0)+"</td></tr>";
+              }).join(""),
+              "<tr style='background:var(--inf-suave)'><td colspan='4' style='font-weight:800'>TOTAL GASTADO</td>"+
+              "<td style='text-align:right;font-weight:900;color:var(--inf-resta)'>$"+f2l(totalGastadoReal)+"</td></tr>")+
+            nota("De esos $"+f2l(totalGastadoReal)+" USDT, <b>$"+f2l(calc.egPerPag)+" USDT</b> salieron de fondos de la empresa; el resto se pagó desde una cuenta personal y no cuenta contra el disponible."):"");
+      })());
+
+    // ── 10 · SOCIOS ───────────────────────────────────────────────────
+    // ARREGLO 58: sin ganancia de sus rutas, sin deuda viva y sin pagos, el
+    // apartado entero sobra: era una tabla de ceros en un papel que sale
+    // fuera. Si algo de eso existe, vuelve solo.
+    if(Math.abs(calc.ganEEBruta)>0.009 || Math.abs(calc.deudasSocioEE)>0.009 ||
+       Math.abs(calc.socioFinalEE)>0.009 || calc.comisionesSocios.length || pagosMes.length){
+      ap("Socios · liquidación del mes",
+        tab("<tr><th>Socio</th><th>Rutas</th><th style='text-align:right'>Ganancia de sus rutas</th><th style='text-align:right'>Su parte</th><th style='text-align:right'>Deudas personales</th><th style='text-align:right'>Total a pagarle</th></tr>",
+          "<tr><td style='font-weight:700'>"+calc.socioNombreEE+"</td><td>EE.UU.</td>"+
+          "<td style='text-align:right'>$"+f2l(calc.ganEEBruta)+(calc.gasEEUU>0?"<div style='font-size:10px;color:var(--inf-tinta2)'>−$"+f2l(calc.gasEEUU)+" de gastos</div>":"")+"</td>"+
+          "<td style='text-align:right;font-weight:700'>$"+f2l(calc.socioParte)+"</td>"+
+          "<td style='text-align:right;color:var(--inf-resta)'>"+(calc.deudasSocioEE>0?"−$"+f2l(calc.deudasSocioEE):"—")+"</td>"+
+          "<td style='text-align:right;font-weight:900;color:"+(calc.socioFinalEE<0?"var(--inf-resta)":"var(--inf-azul)")+"'>"+(calc.socioFinalEE<0?"Debe $"+f2l(Math.abs(calc.socioFinalEE)):"$"+f2l(calc.socioFinalEE))+"</td></tr>"+
+          calc.comisionesSocios.map(function(s){
+            var fS=Math.round((s.monto-(s.deudas||0))*100)/100;
+            return "<tr><td style='font-weight:700'>"+s.nombre+"</td><td>"+s.rutas.join(", ")+"</td>"+
+              "<td style='text-align:right'>$"+f2l(s.ganRutas)+"</td>"+
+              "<td style='text-align:right;font-weight:700'>$"+f2l(s.monto)+"</td>"+
+              "<td style='text-align:center'>—</td>"+
+              "<td style='text-align:right;font-weight:900;color:"+(fS<0?"var(--inf-resta)":"var(--inf-azul)")+"'>"+(fS<0?"Debe $"+f2l(Math.abs(fS)):"$"+f2l(fS))+"</td></tr>";
+          }).join(""))+
+        (pagosMes.length?
+          h3("Pagos a socios registrados este mes")+
+          tab("<tr><th>Fecha</th><th>Socio</th><th style='text-align:right'>Monto</th></tr>",
+            pagosMes.map(function(p){
+              return "<tr><td>"+p.fecha+"</td><td style='font-weight:600'>"+p.socioNombre+"</td>"+
+                "<td style='text-align:right;font-weight:700'>$"+f2l(p.monto)+"</td></tr>";
+            }).join("")):"")+
+        (calc.socioFinalEE<0?nota("<b>"+calc.socioNombreEE+" tiene deuda con la empresa</b> por $"+f2l(Math.abs(calc.socioFinalEE))+" USDT: sus gastos superaron su ganancia, así que este mes no se le paga."):""));
     }
-    var fRem=dm.remesas.map(function(x){
-      return "<tr><td>"+x.fecha+"</td><td>"+x.cliente+"</td><td>"+x.ruta+"</td>"+
-        "<td style='text-align:right'>"+f2l(x.entro)+" "+x.monEntro+"</td>"+
-        "<td style='text-align:right'>"+f2l(x.entrego)+" "+x.monEntrego+"</td>"+
-        "<td>"+x.cuenta+"</td>"+
-        "<td style='text-align:right;color:"+(x.ganUsdt>=0?"var(--inf-tinta)":"var(--inf-resta)")+";font-weight:700'>$"+f2l(x.ganUsdt)+"</td></tr>";
+
+    // ── 11 · QUE HAY QUE APARTAR ──────────────────────────────────────
+    (function(){
+      var filas=[];
+      if(calc.socioFinalEE>0.009) filas.push(["Pagar a "+calc.socioNombreEE,calc.socioFinalEE]);
+      if(calc.totalCom>0)         filas.push(["Pagar a los otros socios",calc.totalCom]);
+      if(calc.egEmpPend>0)        filas.push(["Egresos de la empresa pendientes de pago",calc.egEmpPend]);
+      // Apartar un numero negativo no significa nada: si el socio debe a la
+      // empresa eso es un cobro, no algo que apartar (por eso solo entra
+      // cuando es positivo).
+      var total=filas.reduce(function(a,x){return a+x[1];},0);
+      if(!filas.length) return;
+      ap("Qué hay que apartar para el próximo mes",
+        granNum("Total a apartar","$"+f2l(Math.round(total*100)/100)+" USDT",
+          "Son compromisos ya devengados: no están pagados, pero el dinero no es libre.")+
+        tab("<tr><th>Qué hay que pagar</th><th style='text-align:right'>Cuánto</th></tr>",
+          filas.map(function(x){
+            return "<tr><td style='font-size:12px'>"+x[0]+"</td>"+
+              "<td style='text-align:right;font-size:13px;font-weight:700'>$"+f2l(x[1])+"</td></tr>";
+          }).join(""),
+          "<tr style='background:var(--inf-suave)'><td style='font-weight:800'>TOTAL A APARTAR</td>"+
+          "<td style='text-align:right;font-weight:900;color:var(--inf-azul)'>$"+f2l(Math.round(total*100)/100)+" USDT</td></tr>"));
+    })();
+
+    // ── 12 · HOJA PARA EL CONTADOR ────────────────────────────────────
+    // ARREGLO 54/59: lo que el necesita para la declaracion, y nada mas. Las
+    // reglas estan en resumenContador(); aqui solo se dibuja.
+    ap("Hoja para el contador",(function(){
+      var rc=resumenContador(mesKey);
+      function brl(v){ return "R$ "+f2l(v); }
+      return "<div style='border:1.5px solid var(--inf-azul);border-radius:10px;padding:10px 14px;margin-bottom:10px;background:var(--inf-suave)'>"+
+          "<div style='font-size:13px;font-weight:800;color:var(--inf-azul)'>"+EMPRESA_RAZON+"</div>"+
+          "<div style='font-size:11px;color:var(--inf-tinta2);margin-top:2px'>CNPJ "+EMPRESA_CNPJ+" · Período: "+rc.mesLabel+"</div>"+
+        "</div>"+
+        nota("Solo lo que entró <b>en reales</b> y la ganancia que dejó. Cada operación convertida con <b>su propia tasa de compra</b>, no con una tasa única del mes.")+
+        tab("<tr><th>Concepto</th><th style='text-align:right'>Monto</th></tr>",
+          "<tr><td>Operaciones que entraron en reales</td><td style='text-align:right;font-weight:700'>"+rc.operaciones+"</td></tr>"+
+          "<tr><td>Entró en las cuentas</td><td style='text-align:right;font-weight:700'>"+brl(rc.entroReales)+"</td></tr>"+
+          "<tr><td style='font-weight:700'>Ganancia de esas operaciones</td><td style='text-align:right;font-weight:800'>"+brl(rc.ganReales)+"</td></tr>"+
+          "<tr><td style='color:var(--inf-resta)'>(−) Egresos de la empresa pagados en reales</td><td style='text-align:right;font-weight:700;color:var(--inf-resta)'>"+brl(rc.egresosRealesTotal)+"</td></tr>"+
+          "<tr style='background:var(--inf-suave)'><td style='font-weight:800'>= Resultado del mes</td>"+
+          "<td style='text-align:right;font-weight:900;color:"+(rc.resultadoReales>=0?"var(--inf-azul)":"var(--inf-resta)")+"'>"+brl(rc.resultadoReales)+"</td></tr>")+
+        (rc.sinTasa>0?nota(rc.sinTasa+" operación(es) sin tasa de compra guardada: su ganancia no se pudo pasar a reales y no está en el total."):"")+
+        (rc.resultadoReales<0?nota("Este mes los egresos en reales fueron mayores que la ganancia de la ruta. No es un error del sistema: es lo que pasó."):"")+
+        h3("Por destino")+
+        tab("<tr><th>Destino</th><th style='text-align:center'>Ops</th><th style='text-align:right'>Entró</th><th style='text-align:right'>Ganancia</th></tr>",
+          rc.porDestino.map(function(d){
+            return "<tr><td>"+d.dest+"</td><td style='text-align:center'>"+d.n+"</td>"+
+              "<td style='text-align:right'>"+brl(d.entro)+"</td>"+
+              "<td style='text-align:right;font-weight:700'>"+brl(d.ganReales)+"</td></tr>";
+          }).join(""))+
+        h3("En qué cuenta entró")+
+        tab("<tr><th>Cuenta</th><th style='text-align:center'>Ops</th><th style='text-align:right'>Entró</th></tr>",
+          rc.porCuenta.map(function(c){
+            return "<tr><td>"+c.nombre+"</td><td style='text-align:center'>"+c.n+"</td>"+
+              "<td style='text-align:right;font-weight:700'>"+brl(c.entro)+"</td></tr>";
+          }).join(""))+
+        h3("Salidas de las cuentas en reales · "+brl(rc.salidasTotal))+
+        tab("<tr><th>En qué se fue</th><th style='text-align:right'>Monto</th></tr>",
+          rc.salidas.map(function(x){
+            return "<tr><td>"+x.concepto+"</td><td style='text-align:right'>"+brl(x.monto)+"</td></tr>";
+          }).join(""))+
+        h3("Egresos de la empresa, partida por partida")+
+        (rc.egresosReales.length?
+          tab("<tr><th>Fecha</th><th>Categoría</th><th>En qué se gastó</th><th>Cuenta</th><th style='text-align:right'>Monto</th></tr>",
+            rc.egresosReales.map(function(e){
+              return "<tr><td>"+ds(_isoDeDDMMAA(e.fecha))+"</td><td>"+e.cat+"</td><td>"+e.mot+"</td>"+
+                "<td>"+e.cuenta+"</td><td style='text-align:right;font-weight:700'>"+brl(e.monto)+"</td></tr>";
+            }).join(""),
+            "<tr style='background:var(--inf-suave)'><td colspan='4' style='font-weight:800;text-align:right'>Total en reales</td>"+
+            "<td style='text-align:right;font-weight:900'>"+brl(rc.egresosRealesTotal)+"</td></tr>")
+          :"<div style='font-size:11px;color:var(--inf-tinta2)'>Ningún egreso pagado en reales este mes.</div>")+
+        (rc.egresosOtras.length?
+          nota("<b>Pagados en otra moneda</b> (no entran en el resultado en reales):<br>"+
+            rc.egresosOtras.map(function(e){return "· "+ds(_isoDeDDMMAA(e.fecha))+" — "+e.mot+" — "+f2l(e.monto)+" "+e.mon+" ("+e.cuenta+")";}).join("<br>")):"");
+    })());
+
+    // ── LA PORTADA Y EL INDICE ────────────────────────────────────────
+    // "cada hoja tenga su titulo, a que corresponde cada hoja": el indice es
+    // lo que convierte eso en algo que se puede usar. Sale de la MISMA lista
+    // que se dibuja, asi que no puede quedar desfasado.
+    var portada=
+      "<div style='background:var(--inf-suave);border:1px solid var(--inf-linea);border-radius:8px;padding:8px 12px;margin-bottom:16px;font-size:11px;color:var(--inf-tinta)'>"+
+        "Este PDF es una <b>foto del momento en que se generó</b>. Cualquier cambio posterior (deudas, tasas, pagos) requiere volver a generarlo."+
+        "<span style='float:right;color:var(--inf-tinta2);font-size:10px'>"+APP_VERSION+"</span></div>"+
+      "<div style='display:flex;gap:10px;margin-bottom:16px'>"+
+        [["Capital de la empresa",cap?usd(cap.total):"—"],
+         ["Quedó este mes",usd(netoEmpresa)],
+         ["Operaciones",String(calc.ops)]].map(function(k){
+          return "<div style='flex:1;border:1.5px solid var(--inf-azul);border-radius:10px;padding:11px 12px'>"+
+            "<div style='font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--inf-tinta2)'>"+k[0]+"</div>"+
+            "<div style='font-size:19px;font-weight:900;color:var(--inf-azul);margin-top:2px'>"+k[1]+"</div></div>";
+        }).join("")+
+      "</div>"+
+      "<div style='border:1px solid var(--inf-linea);border-radius:10px;overflow:hidden;margin-bottom:8px'>"+
+        "<div style='background:var(--inf-cabecera);padding:9px 14px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--inf-azul);border-bottom:1px solid var(--inf-lineaFuerte)'>Qué hay en este informe · "+apartados.length+" apartados</div>"+
+        apartados.map(function(s,i){
+          return "<div style='display:flex;gap:10px;padding:7px 14px;font-size:12px;border-bottom:"+(i<apartados.length-1?"1px solid var(--inf-linea)":"none")+"'>"+
+            "<span style='font-weight:800;color:var(--inf-azul);min-width:18px'>"+(i+1)+"</span>"+
+            "<span>"+s.t+"</span></div>";
+        }).join("")+
+      "</div>"+
+      "<div style='font-size:10.5px;color:var(--inf-tinta2)'>Cada apartado empieza en una hoja nueva. Si ocupa más de una, la siguiente repite su título con <b>(continúa)</b>.</div>";
+
+    // Cada apartado va en su propio .inf-sec con su <h2>: _paginarInforme()
+    // los busca por esa clase para arrancarlos arriba de una hoja y para
+    // repetir el titulo cuando uno se parte.
+    return portada+apartados.map(function(s,i){
+      return "<div class='inf-sec'><h2>"+(i+1)+" · "+s.t+"</h2>"+s.h+"</div>";
     }).join("");
-    var fUsdt=dm.usdt.map(function(x){
-      return "<tr><td>"+x.fecha+"</td><td>"+(x.tipo==="compra"?"Compra":"Venta")+"</td>"+
-        "<td style='text-align:right'>"+(x.tipo==="compra"?f2l(x.montOrigen)+" "+x.moneda:f2l(x.usdt)+" USDT")+"</td>"+
-        "<td style='text-align:right'>"+(x.tipo==="compra"?f2l(x.usdt)+" USDT":f2l(x.bs)+" "+x.moneda)+"</td>"+
-        "<td style='text-align:right'>"+f4(x.tasa)+"</td><td>"+x.cuenta+"</td></tr>";
-    }).join("");
-    var fEg=dm.egresos.map(function(x){
-      return "<tr><td>"+x.fecha+"</td><td>"+(x.tipo==="personal"?" personal":"empresa")+"</td><td>"+x.cat+"</td><td>"+x.mot+"</td>"+
-        "<td>"+x.cuenta+"</td><td style='text-align:right;font-weight:700'>"+f2l(x.monto)+" "+x.mon+"</td></tr>";
-    }).join("");
-    var fTr=dm.traspasos.map(function(x){
-      return "<tr><td>"+ds(x.fecha)+"</td><td>"+x.origen+"</td><td>"+x.destino+"</td>"+
-        "<td style='text-align:right;font-weight:700'>"+f2l(x.monto)+" "+x.moneda+"</td><td>"+x.nota+"</td></tr>";
-    }).join("");
-    var fPr=dm.prestamos.map(function(x){
-      return "<tr><td>"+x.fecha+"</td><td>"+x.desc+"</td><td>"+x.cuenta+"</td>"+
-        "<td style='text-align:right;font-weight:700'>"+f2l(x.monto)+" "+x.mon+"</td></tr>";
-    }).join("");
-    return sec("Detalle del mes · todo el movimiento",
-      "<div style='font-size:10.5px;color:var(--inf-tinta2);margin-bottom:10px'>"+
-        dm.remesas.length+" remesas · "+dm.usdt.length+" operaciones de USDT · "+dm.egresos.length+" egresos · "+
-        dm.traspasos.length+" traspasos · "+dm.prestamos.length+" préstamos</div>"+
-      tabla("Remesas",["Fecha","Cliente","Ruta","Entró","Entregó","Cuenta","Ganancia"],fRem)+
-      tabla("Compras y ventas de USDT",["Fecha","Tipo","Salió","Entró","Tasa","Cuenta"],fUsdt)+
-      tabla("Egresos",["Fecha","Tipo","Categoría","Concepto","Cuenta","Monto"],fEg)+
-      tabla("Traspasos entre cuentas",["Fecha","Desde","Hacia","Monto","Nota"],fTr)+
-      tabla("Préstamos entregados",["Fecha","A quién","Cuenta","Monto"],fPr)
-    );
   }())+
   "</div>"+ // cierra .cuerpo
   "</div>"+ // cierra .hoja / #reporteCapture
@@ -18152,6 +18549,9 @@ function generarInformePDF(mesKey){
   var _oldStyle=document.getElementById("estiloInformePdf"); if(_oldStyle) _oldStyle.remove();
   document.head.insertAdjacentHTML("beforeend", estiloHtml);
   document.body.insertAdjacentHTML("beforeend", html);
+  // ARREGLO 90: primero el reparto en hojas —que cambia el alto del
+  // documento— y despues la lupa, que mide ese alto para no dejar hueco.
+  _paginarInforme();
   _ajustarLupaInforme();   // ARREGLO 83: encoger la vista previa si no cabe
   window.scrollTo(0,0);
  }catch(e){
@@ -18168,6 +18568,12 @@ function rInformeCierre(){
   var mesLabel=getMesLabel(partsK[1],partsK[0]);
   var esMesAct=mesKey===getMesKeyActual();
   var cierreGuardado=(S.cierresMes||[]).find(function(c){return c.mesKey===mesKey;});
+  // ARREGLO 91: el boton de Reabrir tiene que salir donde reabrirMes() deja
+  // reabrir, que desde hoy es tambien un cierre hecho HOY de un mes pasado.
+  // Si no, cerrar el mes anterior seria una puerta de un solo sentido: el
+  // boton no estaria y la unica forma de deshacerlo seria la consola.
+  var _cerradoHoy = !!(cierreGuardado && cierreGuardado.fechaCierre &&
+    new Date(cierreGuardado.fechaCierre).toDateString()===new Date().toDateString());
   var calc=calcMesCompleto(mesKey);
   // Si el mes está CERRADO, sobrescribir los totales con los datos congelados al cierre
   // para que el reporte muestre exactamente lo mismo que Evolución
@@ -18229,8 +18635,17 @@ function rInformeCierre(){
     // deshacerlo: nada en la app quitaba un mes de S.cierresMes.
     (cierreGuardado
       ? "<span style='background:#D6F5E3;color:#0f6e3a;border-radius:9px;padding:8px 12px;font-size:11px;font-weight:700'>✅ Cerrado</span>"+
-        (esMesAct?"<button onclick='reabrirMes(S._cMes)' style='padding:10px 14px;background:#fff;color:#7a5c00;border:1.5px solid #F5C518;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>🔓 Reabrir</button>":"")
-      : (esMesAct?"<button onclick='cerrarMesDesdeInforme(S._cMes)' style='padding:10px 14px;background:#1a3558;color:#fff;border:none;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>🗓️ Cerrar</button>":""))+
+        ((esMesAct||_cerradoHoy)?"<button onclick='reabrirMes(S._cMes)' style='padding:10px 14px;background:#fff;color:#7a5c00;border:1.5px solid #F5C518;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>🔓 Reabrir</button>":"")
+      // ARREGLO 91: el boton salia SOLO para el mes en curso, asi que el mes
+      // anterior —el que ella de verdad tiene que cerrar— no tenia forma de
+      // cerrarse desde ninguna parte. Sus palabras: "en la prueba no me deja
+      // cerrar el mes de septiembre que es el anterior". El ARREGLO 89 quito
+      // el cierre automatico y dejo el manual tapiado: entre los dos, el mes
+      // anterior no se cerraba de ninguna manera.
+      // Un mes FUTURO sigue sin boton: puede haber operaciones con fecha
+      // adelantada a proposito (confirmarFechaFutura) y cerrar un mes que no
+      // ha empezado no significa nada.
+      : (mesKey<=getMesKeyActual()?"<button onclick='cerrarMesDesdeInforme(S._cMes)' style='padding:10px 14px;background:#1a3558;color:#fff;border:none;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>🗓️ Cerrar</button>":""))+
   "</div>"+
   "<div style='display:flex;overflow-x:auto;gap:5px;margin-bottom:12px;scrollbar-width:none;padding-bottom:2px'>"+
     secs.map(function(s){var on=S._cSec===s;
