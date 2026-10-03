@@ -1853,6 +1853,60 @@ Ahora solo lo cierra ella, con su botón. Lo único que hace la app sola es
   que ningún `setTimeout` ni `setInterval` vuelva a llamar a
   `ejecutarCierreMes` — es por donde entró la primera vez.
 
+#### Pero quitar el automático dejó el manual tapiado (ARREGLO 91)
+
+El 89 se probó con guardias estructurales y **no se probó el camino que el
+propio aviso señala**. Lo encontró ella en `test`: *"me mandó a cerrar el mes de
+septiembre, cuando le di allí me cerró fue el mes de octubre"*.
+
+Eran dos piezas que no encajaban, y cada una sola parecía correcta:
+
+```
+el botón del aviso        llamaba a st("cierre") a secas
+la pantalla de cierre     abre en S._cMes, que por omisión es el mes EN CURSO
+el botón 🗓️ Cerrar        salía solo si esMesAct
+```
+
+O sea que el aviso la mandaba a cerrar septiembre, la dejaba en octubre, y el
+único botón de cerrar que había cerraba **octubre**. Y septiembre no se podía
+cerrar desde ninguna parte: entre el 89 —que quitó el automático— y ese
+`esMesAct`, **el mes anterior no se cerraba de ninguna manera**. Reproducido en
+Chromium contra la versión desplegada: `meses cerrados ahora: ["2026-10"]` y el
+aviso de septiembre seguía ahí.
+
+- **El botón del aviso SELECCIONA el mes** (`S._cMes`), no solo cambia de
+  pestaña. Un aviso que señala un sitio y te deja en otro es peor que no avisar.
+- **El botón Cerrar sale para cualquier mes pasado.** Un mes **futuro** sigue sin
+  botón: puede haber operaciones con fecha adelantada a propósito
+  (`confirmarFechaFutura`) y cerrar un mes que no ha empezado no significa nada.
+- **Y se dice lo que no se ve: la ganancia del mes sale de las operaciones de ESE
+  mes, pero la foto de saldos se toma HOY.** Cerrando septiembre el 3 de octubre,
+  esa foto ya lleva dentro lo que se movió en octubre. Es el precio de que lo
+  cierre ella cuando quiera y no un reloj a medianoche — callarlo le dejaría un
+  número raro sin explicación.
+- **Cerrar el mes anterior no puede ser una puerta de un solo sentido.**
+  `reabrirMes()` solo admitía el mes en curso, porque volver a cerrar tomaría los
+  saldos de hoy en vez de los de aquel día; pero **si el cierre se hizo hoy, esa
+  foto ES la de hoy** y no se pierde nada. Ahora se puede deshacer el mes en
+  curso o un cierre del mismo día, y el botón 🔓 Reabrir sale donde
+  `reabrirMes()` deja reabrir — que antes tampoco coincidían.
+
+**Y el backup del cierre no se descargaba.** Sus palabras: *"supuestamente me iba
+a descargar el archivo de forma automática cuando yo le diera cerrar mes pero no
+me generó nada"*. Iba detrás de un `setTimeout` de medio segundo **después** de
+un `alert()`: Android exige un gesto reciente para una descarga que lanza el
+código, y para entonces el permiso del toque ya había caducado. **Es exactamente
+el mismo fallo que ya costó el botón de compartir (ARREGLO 84)**, en otra
+función. Ahora se lanza dentro del toque, antes del aviso, y `autoBackupJSON()`
+**devuelve el nombre del archivo o `null`**: antes se tragaba cualquier fallo en
+un `catch` que solo escribe en la consola, así que desde fuera un backup que no
+existe se veía igual que uno que sí.
+
+**La lección, y es la segunda vez en dos arreglos seguidos:** una guardia
+estructural comprueba que el código dice lo que debe decir, no que el camino
+funcione. Cuando un arreglo añade un **botón que lleva a algún sitio**, hay que
+pulsarlo en Chromium y mirar dónde cae.
+
 ### Registra la operación — no escribas el saldo
 
 **La regla que más costó el 12/09**, y se rompió tres veces en un día.

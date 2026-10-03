@@ -2728,6 +2728,54 @@ ok(F._htmlAvisoPisado() === "", "y sin choques no ocupa ni un pixel");
     // Sin operaciones el aviso seria ruido; con el mes ya cerrado, mentira.
     ok(/cierresMes\.some/.test(rev) && /filterByMes/.test(rev),
        "y solo avisa si ese mes tiene operaciones y no esta cerrado");
+
+    // ── ARREGLO 91: el aviso tiene que LLEVAR a donde dice ─────────
+    // El 89 quito el cierre automatico y dejo el manual tapiado: el boton del
+    // aviso solo cambiaba de pestaña y la pantalla abria en S._cMes, que por
+    // omision es el mes EN CURSO; y el boton de Cerrar solo salia para ese mes
+    // en curso. Resultado medido el 03/10 reproduciendo su caso: el aviso
+    // decia "ve a cerrar Septiembre", la dejaba en Octubre y el unico boton de
+    // cerrar que habia cerro OCTUBRE. Sus palabras: "me mandó a cerrar el mes
+    // de septiembre, cuando le di allí me cerró fue el mes de octubre".
+    const avi = sacarFuncion("_htmlAvisoMesSinCerrar").replace(/\/\/[^\n]*\n/g, "\n");
+    ok(/_cMes=[\s\S]{0,12}_MES_SIN_CERRAR[\s\S]{0,60}st\(/.test(avi),
+       "el boton del aviso SELECCIONA el mes que hay que cerrar, no solo cambia de pestaña");
+
+    const inf = sacarFuncion("rInformeCierre").replace(/\/\/[^\n]*\n/g, "\n");
+    ok(/mesKey<=getMesKeyActual\(\)\?"<button onclick='cerrarMesDesdeInforme/.test(inf),
+       "y el boton Cerrar sale para cualquier mes pasado, no solo para el mes en curso");
+    ok(!/esMesAct\?"<button onclick='cerrarMesDesdeInforme/.test(inf),
+       "que era lo que dejaba el mes anterior sin forma de cerrarse");
+    // Cerrar el mes anterior no puede ser una puerta de un solo sentido.
+    ok(/\(esMesAct\|\|_cerradoHoy\)\?"<button onclick='reabrirMes/.test(inf),
+       "un cierre hecho HOY se puede deshacer: el boton de Reabrir esta ahi");
+    const rea = sacarFuncion("reabrirMes").replace(/\/\/[^\n]*\n/g, "\n");
+    ok(/_cerradoHoy/.test(rea) && /k!==getMesKeyActual\(\) && !_cerradoHoy/.test(rea),
+       "y reabrirMes deja justo eso: el mes en curso, o un cierre del mismo dia");
+
+    // Cerrar un mes pasado toma la foto de saldos de HOY, no la del dia 30.
+    // Es el precio de que lo cierre ella cuando quiera, y callarlo le dejaria
+    // un numero raro sin explicacion.
+    const cdi = sacarFuncion("cerrarMesDesdeInforme").replace(/\/\/[^\n]*\n/g, "\n");
+    ok(/foto de saldos de las cuentas se toma HOY/.test(cdi),
+       "al cerrar un mes pasado se avisa de que la foto de saldos es de hoy");
+
+    // La descarga del backup va DENTRO del toque. Android exige un gesto
+    // reciente para una descarga que lanza el codigo, y detras de un
+    // setTimeout de medio segundo mas un alert ese permiso ya caduco: el
+    // archivo no salia y el aviso seguia prometiendolo. Mismo fallo que ya
+    // costo el boton de compartir (ARREGLO 84).
+    const eje = sacarFuncion("ejecutarCierreMes").replace(/\/\/[^\n]*\n/g, "\n");
+    ok(!/setTimeout\([\s\S]{0,120}?autoBackupJSON/.test(eje),
+       "el backup del cierre no va detras de un temporizador");
+    ok(/var _bk = autoBackupJSON\(/.test(eje) &&
+       eje.indexOf("autoBackupJSON(") < eje.indexOf("alert(\"✅ Mes "),
+       "se descarga dentro del toque, antes del aviso");
+    ok(/El backup NO se pudo descargar/.test(eje),
+       "y si no sale se dice, en vez de prometer un archivo que no existe");
+    const abk = sacarFuncion("autoBackupJSON").replace(/\/\/[^\n]*\n/g, "\n");
+    ok(/return _nom;/.test(abk) && /return null;/.test(abk),
+       "autoBackupJSON contesta si lo consiguio: antes se tragaba el fallo en un catch");
   }
 
 // Y que nadie vuelva a adoptar en silencio.
