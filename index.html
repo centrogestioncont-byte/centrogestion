@@ -2597,7 +2597,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261003_v161";
+var APP_VERSION = "20261003_v162";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -4125,7 +4125,13 @@ function _htmlAvisoMesSinCerrar(){
       "<b>Todavía no has cerrado "+etq+".</b> Todo lo que registres ahora cuenta para "+
       etqAhora+", no para "+etq+". Cierra "+etq+" primero."+
     "</div>"+
-    "<button onclick='st(\"cierre\")' style='background:var(--am3);color:var(--sobre-color);border:none;"+
+    // ARREGLO 91: el boton SELECCIONA el mes, no solo cambia de pestaña.
+    // Antes llamaba a st("cierre") a secas y la pantalla abria en S._cMes, que
+    // por omision es el mes EN CURSO. O sea que el aviso decia "ve a cerrar
+    // septiembre" y la dejaba en octubre, donde el unico boton de cerrar que
+    // habia cerraba octubre. Eso fue exactamente lo que paso: el 03/10 cerro
+    // octubre creyendo que cerraba septiembre.
+    "<button onclick='S._cMes=\""+_MES_SIN_CERRAR+"\";S._cSec=\"resumen\";st(\"cierre\")' style='background:var(--am3);color:var(--sobre-color);border:none;"+
       "padding:8px 14px;border-radius:8px;font-size:12.5px;font-weight:700;cursor:pointer'>"+
       "Ir a cerrar "+etq+"</button>"+
   "</div>";
@@ -4248,9 +4254,22 @@ function ejecutarCierreMes(mesKey, manual){
   S.ultimoMesCerrado = mesKey;
   saveData();
   if(manual) {
-    // Backup automático al cerrar mes manualmente
-    setTimeout(function(){ autoBackupJSON(cierre.mesLabel); }, 500);
-    alert("✅ Mes "+cierre.mesLabel+" cerrado.\n\n📥 Se descargará un backup automático en un momento.\nGuárdalo en un lugar seguro."); R();
+    // ARREGLO 91: la descarga va AQUI, dentro del toque que la pidio, y no
+    // detras de un setTimeout de medio segundo despues de un alert. Android
+    // exige un gesto reciente para una descarga que lanza el codigo: con el
+    // temporizador y el alert por delante, el permiso del toque ya habia
+    // caducado y el archivo no salia. Es el mismo fallo que ya se arreglo en
+    // compartir el PDF (ARREGLO 84).
+    //
+    // Y se dice QUE paso. Antes el aviso prometia "se descargará un backup" y
+    // autoBackupJSON se tragaba cualquier fallo en un catch que solo escribe
+    // en la consola: desde fuera, un backup que no existe se veia igual que
+    // uno que si.
+    var _bk = autoBackupJSON(cierre.mesLabel);
+    alert("✅ Mes "+cierre.mesLabel+" cerrado.\n\n"+
+      (_bk ? "📥 Backup descargado: "+_bk+"\nGuárdalo en un lugar seguro."
+           : "⚠️ El backup NO se pudo descargar.\nGuárdalo a mano desde Configuración → Exportar."));
+    R();
   }
 }
 
@@ -4384,12 +4403,21 @@ function cerrarMesDesdeInforme(mesKey){
   var k=mesKey||S._cMes;
   var lbl=getMesLabel(k.split("-")[1],k.split("-")[0]);
   var enCurso=(k===getMesKeyActual());
+  // ARREGLO 91: cerrar un mes YA PASADO tiene una consecuencia que no se ve y
+  // hay que decirla. La ganancia sale de las operaciones de ESE mes y es
+  // correcta, pero la foto de saldos que guarda el cierre se toma HOY: si
+  // cierra septiembre el 3 de octubre, esa foto ya lleva dentro lo que se
+  // movio en octubre. Es el precio de que el mes lo cierre ella cuando quiera
+  // (ARREGLO 89) y no un reloj a medianoche, pero callarlo seria dejarle un
+  // numero raro sin explicacion.
   if(!confirm("Cerrar "+lbl+(enCurso?" (el mes EN CURSO)":"")+"\n\n"+
     "Al cerrarlo:\n"+
     "· la ganancia y el sueldo del mes quedan fijados\n"+
     "· el sueldo pasa a tu acumulado gastable\n"+
     "· las operaciones de ese mes entran desmarcadas al importar de Binance\n\n"+
-    (enCurso?"El mes todavía no ha terminado. ¿Seguro?":"¿Continuar?"))) return;
+    (enCurso
+      ? "El mes todavía no ha terminado. ¿Seguro?"
+      : "Ojo: la ganancia de "+lbl+" sale de las operaciones de ese mes, pero la foto de saldos de las cuentas se toma HOY, no el último día de "+lbl+".\n\n¿Continuar?"))) return;
   ejecutarCierreMes(k,true);
 }
 // Reabrir. Solo el mes EN CURSO, y no por capricho: el cierre guarda una foto
@@ -4400,8 +4428,17 @@ function cerrarMesDesdeInforme(mesKey){
 function reabrirMes(mesKey){
   if(!permisoEdicion()){ alert("No tienes permiso para guardar."); return; }
   var k=mesKey||S._cMes;
-  if(k!==getMesKeyActual()){
-    alert("Solo se puede reabrir el mes en curso.\n\nUn mes ya pasado guarda una foto de tus saldos del día que lo cerraste. Si se borra, al volver a cerrarlo se tomarían los saldos de hoy y los números de ese mes quedarían mal.");
+  // ARREGLO 91: tambien se puede deshacer un cierre hecho HOY, aunque sea de
+  // un mes pasado. La regla de antes —solo el mes en curso— existia porque
+  // volver a cerrar tomaria los saldos de hoy en vez de los de aquel dia; pero
+  // si el cierre se hizo hoy, esa foto ES la de hoy y no se pierde nada.
+  // Sin esto, cerrar el mes anterior seria una puerta de un solo sentido: justo
+  // lo que la dejo atrapada cuando el cierre automatico le cerro septiembre.
+  var _cz=(S.cierresMes||[]).find(function(c){return c && c.mesKey===k;});
+  var _hoy=new Date().toDateString();
+  var _cerradoHoy=!!(_cz && _cz.fechaCierre && new Date(_cz.fechaCierre).toDateString()===_hoy);
+  if(k!==getMesKeyActual() && !_cerradoHoy){
+    alert("Este mes se cerró otro día y ya no se puede reabrir.\n\nSu cierre guarda una foto de tus saldos del día que lo cerraste. Si se borra, al volver a cerrarlo se tomarían los saldos de hoy y los números de ese mes quedarían mal.\n\nUn cierre del mismo día sí se puede deshacer.");
     return;
   }
   var lbl=getMesLabel(k.split("-")[1],k.split("-")[0]);
@@ -14693,10 +14730,13 @@ function autoBackupJSON(mesLabel){
     var hoy=new Date();
     a.download="Backup_"+mesLabel+"_"+hoy.getFullYear()+"-"+String(hoy.getMonth()+1).padStart(2,"0")+"-"+String(hoy.getDate()).padStart(2,"0")+".json";
     document.body.appendChild(a);a.click();
+    var _nom=a.download;
     setTimeout(function(){document.body.removeChild(a);URL.revokeObjectURL(a.href);},1000);
-    console.log("✅ Backup automático descargado:",a.download);
+    console.log("✅ Backup automático descargado:",_nom);
+    return _nom;   // ARREGLO 91: quien llama tiene que poder decir si salio
   }catch(e){
     console.warn("Auto-backup falló (no crítico):",e);
+    return null;
   }
 }
 
@@ -18528,6 +18568,12 @@ function rInformeCierre(){
   var mesLabel=getMesLabel(partsK[1],partsK[0]);
   var esMesAct=mesKey===getMesKeyActual();
   var cierreGuardado=(S.cierresMes||[]).find(function(c){return c.mesKey===mesKey;});
+  // ARREGLO 91: el boton de Reabrir tiene que salir donde reabrirMes() deja
+  // reabrir, que desde hoy es tambien un cierre hecho HOY de un mes pasado.
+  // Si no, cerrar el mes anterior seria una puerta de un solo sentido: el
+  // boton no estaria y la unica forma de deshacerlo seria la consola.
+  var _cerradoHoy = !!(cierreGuardado && cierreGuardado.fechaCierre &&
+    new Date(cierreGuardado.fechaCierre).toDateString()===new Date().toDateString());
   var calc=calcMesCompleto(mesKey);
   // Si el mes está CERRADO, sobrescribir los totales con los datos congelados al cierre
   // para que el reporte muestre exactamente lo mismo que Evolución
@@ -18589,8 +18635,17 @@ function rInformeCierre(){
     // deshacerlo: nada en la app quitaba un mes de S.cierresMes.
     (cierreGuardado
       ? "<span style='background:#D6F5E3;color:#0f6e3a;border-radius:9px;padding:8px 12px;font-size:11px;font-weight:700'>✅ Cerrado</span>"+
-        (esMesAct?"<button onclick='reabrirMes(S._cMes)' style='padding:10px 14px;background:#fff;color:#7a5c00;border:1.5px solid #F5C518;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>🔓 Reabrir</button>":"")
-      : (esMesAct?"<button onclick='cerrarMesDesdeInforme(S._cMes)' style='padding:10px 14px;background:#1a3558;color:#fff;border:none;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>🗓️ Cerrar</button>":""))+
+        ((esMesAct||_cerradoHoy)?"<button onclick='reabrirMes(S._cMes)' style='padding:10px 14px;background:#fff;color:#7a5c00;border:1.5px solid #F5C518;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>🔓 Reabrir</button>":"")
+      // ARREGLO 91: el boton salia SOLO para el mes en curso, asi que el mes
+      // anterior —el que ella de verdad tiene que cerrar— no tenia forma de
+      // cerrarse desde ninguna parte. Sus palabras: "en la prueba no me deja
+      // cerrar el mes de septiembre que es el anterior". El ARREGLO 89 quito
+      // el cierre automatico y dejo el manual tapiado: entre los dos, el mes
+      // anterior no se cerraba de ninguna manera.
+      // Un mes FUTURO sigue sin boton: puede haber operaciones con fecha
+      // adelantada a proposito (confirmarFechaFutura) y cerrar un mes que no
+      // ha empezado no significa nada.
+      : (mesKey<=getMesKeyActual()?"<button onclick='cerrarMesDesdeInforme(S._cMes)' style='padding:10px 14px;background:#1a3558;color:#fff;border:none;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>🗓️ Cerrar</button>":""))+
   "</div>"+
   "<div style='display:flex;overflow-x:auto;gap:5px;margin-bottom:12px;scrollbar-width:none;padding-bottom:2px'>"+
     secs.map(function(s){var on=S._cSec===s;
