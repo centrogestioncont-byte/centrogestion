@@ -5450,5 +5450,23 @@ console.log("\n— FASE 2: la cuenta madre —");
      "el que copia recibe el boton que se pulso, para marcarlo a el");
 }
 
+// ── ARREGLO 93: el monto se copia CON su moneda ───────────────────────────
+// Sus palabras: "cuando yo le dé al botón de copiar que está al lado de cada
+// uno, en vez de copiar 146 solo, que copie 146 R$". Los tres botones copiaban
+// tres numeros pelados que solo se distinguian por el orden en que se pegaron.
+{
+  const c = sinComentarios(sacarFuncion("_copiarMonto"));
+  ok(/_MONEDA_DE_CAMPO\[idCampo\]/.test(c),
+     "el monto se copia con el simbolo de su campo");
+  ok(/"conv-brl":"R\$"/.test(HTML) && /"conv-ves":"Bs"/.test(HTML) && /"conv-usd":"\$"/.test(HTML),
+     "y que simbolo lleva cada campo vive en un solo sitio");
+  ok(/_nMsj\(num\)/.test(c),
+     "con separador de miles y sin el ',00' de un entero, como el mensaje al cliente");
+  ok(!/\(num%1===0\)\?String\(num\)/.test(c),
+     "y ya no copia el numero pelado");
+  ok(/Ese campo está vacío/.test(c),
+     "con el campo vacio sigue avisando en vez de copiar nada");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
