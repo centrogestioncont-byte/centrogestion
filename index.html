@@ -2597,7 +2597,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261003_v162";
+var APP_VERSION = "20261005_v163";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -21465,7 +21465,14 @@ function _rConversorBCV(){
         "<button type='button' onclick='_copiarMonto(\"conv-usd\",this)' style='background:var(--sup);border:1px solid var(--az5-h);border-radius:7px;padding:5px 8px;font-size:12px;cursor:pointer;flex-shrink:0' title='Copiar solo este monto'>📋</button>"+
       "</div>"+
     "</div>"+
-    "<button type='button' id='btn-copiar-msj' onclick='_copiarMsjCliente()' style='width:100%;margin-top:12px;padding:11px;background:var(--fondo-osc);color:var(--sobre-color);border:none;border-radius:10px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit'>📋 Copiar mensaje para el cliente</button>"+
+    // ARREGLO 92: dos botones, porque no siempre quiere mandar lo mismo. El
+    // corto es para el cliente que ya sabe la tasa y solo pregunta el monto; el
+    // completo, para el que pregunta por primera vez.
+    "<div style='display:flex;gap:8px;margin-top:12px'>"+
+      "<button type='button' id='btn-copiar-msj' onclick='_copiarMsjCliente(\"corto\",this)' style='flex:1;padding:11px 8px;background:var(--sup);color:var(--tx2);border:1.5px solid var(--ln);border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>📋 Mensaje corto</button>"+
+      "<button type='button' id='btn-copiar-msj-full' onclick='_copiarMsjCliente(\"completo\",this)' style='flex:1;padding:11px 8px;background:var(--fondo-osc);color:var(--sobre-color);border:1.5px solid var(--fondo-osc);border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>📋 Mensaje completo</button>"+
+    "</div>"+
+    "<div style='font-size:10.5px;color:var(--tx3b);margin-top:6px;line-height:1.4'>El <b>corto</b> lleva solo lo que envía y lo que le llega. El <b>completo</b> añade la tasa y el equivalente en dólares del BCV.</div>"+
     "<div style='font-size:10.5px;color:var(--tx3b);margin-top:8px;line-height:1.4'>Escribe en cualquiera de los 3 campos y los otros se calculan solos con tu tasa real.</div>"+
   "</div>";
 }
@@ -21631,28 +21638,71 @@ function _copiarMonto(idCampo,btn){
     navigator.clipboard.writeText(txt).then(ok).catch(function(){ _copiarFallback(txt,ok); });
   } else { _copiarFallback(txt,ok); }
 }
-function _copiarMsjCliente(){
+// ── ARREGLO 92 · EL MENSAJE AL CLIENTE, ESCRITO PARA EL CLIENTE ─────────────
+//
+// Sus palabras: "yo necesito que la respuesta sea como más fácil de entender al
+// usuario y no tanto del punto de vista mía, que ya conoce el sistema, porque
+// muchos me quedan como en duda".
+//
+// El mensaje de antes era una ECUACION, no una instruccion:
+//
+//     💱 100,00 BRL = 17.300,00 VES ≈ 19,85$ BCV
+//     Tasa: 1 BRL = 173,00 VES
+//
+// Cuatro cosas que confunden a quien no conoce el sistema:
+//
+//  · No dice quien paga y quien recibe. "100 BRL = 17.300 VES" se puede leer al
+//    reves —que le llegan 100 reales— y no hay nada en el texto que lo impida.
+//    Los dos rotulos los eligio ella: "tú envías y tú recibes, así sería mejor".
+//  · BRL y VES son codigos de banco. El cliente dice reais/R$ y bolivares/Bs.
+//  · El "$ BCV" iba con el mismo peso que lo demas y NO es lo que llega: nadie
+//    recibe dolares. Es una referencia, y asi se dice ahora, con las palabras
+//    que eligio ella: "segun el dolar del Banco Central de Venezuela".
+//  · Las dos tasas se escribian sin nada que las emparejara —"Tasa: 1 BRL =
+//    173,00 VES" en un sentido y "Tasa: 220,00 VES = 1 BRL" en el otro—. Lado a
+//    lado, 173 y 220 parecen contradecirse o parece que ella subio el precio.
+//    Ahora las dos llevan el mismo rotulo, "Tasa del día", y lo que el cliente
+//    MANDA va nombrado primero arriba: la direccion se lee sola.
+//
+// Y son DOS botones, porque no siempre manda lo mismo: el corto para quien ya
+// sabe la tasa y solo pregunta el monto, el completo para quien pregunta por
+// primera vez.
+//
+// Los decimales: los reales llevan sus centavos (es dinero con centavos de
+// verdad), los bolivares no cuando son enteros —y lo son siempre, porque
+// _convDesde() ya los redondea—, asi que ese ",00" era ruido en cada mensaje.
+function _nMsj(n){ return (n%1===0) ? f0(n) : f2(n); }
+function _msjCliente(modo){
   var brl=parseFloat((document.getElementById("conv-brl")||{}).value)||0;
   var ves=parseFloat((document.getElementById("conv-ves")||{}).value)||0;
   var usd=parseFloat((document.getElementById("conv-usd")||{}).value)||0;
-  if(!brl&&!ves&&!usd){ alert("Escribe un monto en alguno de los 3 campos primero."); return; }
+  if(!brl&&!ves&&!usd) return null;
   var tasaIda=_getTasaClienteBRL();
   var tasaVuelta=_getTasaVueltaVESaBRL();
-  var msg;
-  if(_convUltimoCampo==="usd"){
-    // Empezó preguntando "¿cuánto debo enviar para que le lleguen $X?"
-    msg="💱 Para que le lleguen "+f2(usd)+"$ BCV"+(ves?" ("+f2(ves)+" VES)":"")+" en Venezuela, debes enviar "+f2(brl)+" BRL";
-  } else if(_convUltimoCampo==="ves"){
-    msg="💱 "+f2(ves)+" VES"+(brl?" = "+f2(brl)+" BRL":"")+(usd?" ≈ "+f2(usd)+"$ BCV":"");
+  // Si empezo por los bolivares, el cliente MANDA bolivares y recibe reales.
+  // En los otros dos casos —escribio reales, o escribio los dolares que quiere
+  // que lleguen— manda reales y recibe bolivares.
+  var mandaVes=(_convUltimoCampo==="ves");
+  var msg="💱 Cambio de hoy\n\n"+
+    "Tú envías: "+(mandaVes ? "Bs "+_nMsj(ves) : "R$ "+f2(brl))+"\n"+
+    "Tú recibes: "+(mandaVes ? "R$ "+f2(brl)   : "Bs "+_nMsj(ves));
+  if(modo!=="completo") return msg;
+  // La redaccion la eligio ella: "debe decir tasa del dia 1R$ = 173 Bs".
+  // Las dos direcciones se escriben como una igualdad, cada una en su sentido,
+  // pero las dos con el MISMO rotulo —"Tasa del día"—: eso es lo que impide
+  // que 173 y 220 se lean como dos precios distintos o como una subida.
+  if(mandaVes){
+    if(tasaVuelta>0) msg+="\n\nTasa del día: "+_nMsj(tasaVuelta)+" Bs = 1 R$";
   } else {
-    msg="💱 "+f2(brl)+" BRL = "+f2(ves)+" VES"+(usd?" ≈ "+f2(usd)+"$ BCV":"");
+    if(tasaIda>0)    msg+="\n\nTasa del día: 1 R$ = "+_nMsj(tasaIda)+" Bs";
   }
-  if(_convUltimoCampo==="ves"){
-    if(tasaVuelta>0) msg+="\nTasa: "+f2(tasaVuelta)+" VES = 1 BRL";
-  } else {
-    if(tasaIda>0) msg+="\nTasa: 1 BRL = "+f2(tasaIda)+" VES";
-  }
-  var btn=document.getElementById("btn-copiar-msj");
+  if(usd>0) msg+="\nEquivale a unos "+f2(usd)+" $ según el dólar del Banco Central de Venezuela";
+  return msg;
+}
+function _copiarMsjCliente(modo,btn){
+  var msg=_msjCliente(modo);
+  if(!msg){ alert("Escribe un monto en alguno de los 3 campos primero."); return; }
+  if(!btn) btn=document.getElementById("btn-copiar-msj");
   function marcarCopiado(){ if(btn){var t0=btn.textContent;btn.textContent="✅ Copiado";setTimeout(function(){btn.textContent=t0;},1600);} }
   if(navigator.clipboard&&navigator.clipboard.writeText){
     navigator.clipboard.writeText(msg).then(marcarCopiado).catch(function(){ _copiarFallback(msg,marcarCopiado); });
