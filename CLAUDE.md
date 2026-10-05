@@ -1124,6 +1124,68 @@ cruzarla. **La app tiene los saldos, así que lo puede saber.**
 Por eso la pantalla **dice dónde está, no la corrige**. Marcarle la vuelta en
 rojo sería opinar sobre su negocio con la mitad de la información.
 
+### Y el mensaje que le manda al cliente se escribe para el CLIENTE (ARREGLO 92)
+
+Sus palabras: *"yo necesito que la respuesta sea como más fácil de entender al
+usuario y no tanto del punto de vista mía, que ya conoce el sistema, porque
+muchos me quedan como en duda"*.
+
+El conversor copiaba esto:
+
+```
+💱 100,00 BRL = 17.300,00 VES ≈ 19,85$ BCV
+Tasa: 1 BRL = 173,00 VES
+```
+
+Es correcto de números y es **una ecuación, no una instrucción**. Cuatro cosas
+que confunden a quien no conoce el sistema:
+
+- **No dice quién paga y quién recibe.** `100 BRL = 17.300 VES` se puede leer al
+  revés —que le llegan 100 reales— y no hay nada en el texto que lo impida.
+- **`BRL` y `VES` son códigos de banco.** El cliente dice *reais*/`R$` y
+  *bolívares*/`Bs`.
+- **El `$ BCV` iba con el mismo peso que lo demás y NO es lo que llega.** Nadie
+  recibe dólares: es una referencia. Ahora se dice con las palabras que eligió
+  ella — *"según el dólar del Banco Central de Venezuela"*.
+- **Las dos tasas se escribían sin nada que las emparejara** —`Tasa: 1 BRL =
+  173,00 VES` en un sentido y `Tasa: 220,00 VES = 1 BRL` en el otro—. Lado a
+  lado, 173 y 220 parecen contradecirse, o parece que subió el precio.
+
+Ahora las dos llevan el **mismo rótulo**, *"Tasa del día"*, y lo que el cliente
+**manda** va nombrado primero arriba: la dirección se lee sola.
+
+```
+💱 Cambio de hoy
+
+Tú envías: R$ 100,00
+Tú recibes: Bs 17.300
+
+Tasa del día: 1 R$ = 173 Bs
+Equivale a unos 19,85 $ según el dólar del Banco Central de Venezuela
+```
+
+**La redacción de esa línea la dictó ella**: *"debe decir tasa del día
+1R$ = 173 Bs"*. La de vuelta va en su sentido —`Tasa del día: 220 Bs = 1 R$`—
+con el mismo rótulo. Se propuso *"Por cada R$ 1 recibe Bs 173"* y lo descartó:
+es su mensaje y sus clientes.
+
+- **Son DOS botones**, y lo pidió ella: el **corto** se para después de *"Tú
+  recibes"* —para el cliente que ya sabe la tasa y solo pregunta el monto— y el
+  **completo** añade la tasa y la referencia.
+- **Los dos rótulos los eligió ella**: *"tú envías y tú recibes, así sería
+  mejor"*.
+- **De qué lado va cada moneda lo decide UNA bandera** (`mandaVes`), no dos
+  líneas escritas por separado: si se escribieran aparte, un día diría que el
+  cliente manda y recibe la misma moneda.
+- **Los reales llevan centavos y los bolívares no.** `_convDesde()` ya redondea
+  los bolívares a entero, así que ese `,00` era ruido en todos los mensajes.
+
+**Ojo con la regla del ARREGLO 74**, que sigue mandando por dentro: las dos
+tasas se guardan y se comparan en **bolívares por real**, la misma unidad, y
+significan cosas opuestas. Lo que cambió es **cómo se le cuentan al cliente**,
+no cómo se calculan. Invertir una de las dos en el código le daría el puesto al
+revés en los flyers.
+
 ### Su suelo: hasta dónde puede ofrecer sin perder
 
 Sus palabras: *"no sé qué tasa de compra y venta está usando mi app"* y *"no es
