@@ -5389,5 +5389,66 @@ console.log("\n— FASE 2: la cuenta madre —");
      "y al volver a preguntar, la hora vieja se borra con el dato viejo");
 }
 
+// ── ARREGLO 92: el mensaje al cliente, escrito para el CLIENTE ────────────
+// Sus palabras: "yo necesito que la respuesta sea como más fácil de entender al
+// usuario y no tanto del punto de vista mía, que ya conoce el sistema, porque
+// muchos me quedan como en duda". El mensaje era una ECUACION
+// ("100,00 BRL = 17.300,00 VES ≈ 19,85$ BCV") y se puede leer al reves.
+{
+  const m = sinComentarios(sacarFuncion("_msjCliente"));
+
+  // Lo que mas duda generaba: no decia quien paga y quien recibe.
+  ok(/Tú envías: /.test(m) && /Tú recibes: /.test(m),
+     "el mensaje dice quien envia y quien recibe, no es una ecuacion");
+  // Y las dos lineas salen de la MISMA bandera, asi que no se pueden cruzar:
+  // si alguna vez se escribieran por separado, un dia diria que manda y recibe
+  // la misma moneda.
+  ok(/var mandaVes=\(_convUltimoCampo==="ves"\);/.test(m),
+     "y de que lado va cada moneda lo decide una sola bandera");
+
+  // Codigos de banco fuera: el cliente dice reais/R$ y bolivares/Bs.
+  ok(!/"[^"]*\bBRL\b[^"]*"/.test(m) && !/"[^"]*\bVES\b[^"]*"/.test(m),
+     "no quedan codigos BRL/VES en el texto que lee el cliente");
+  ok(/"R\$ "/.test(m) && /"Bs "/.test(m),
+     "van los simbolos que el cliente usa");
+
+  // Las dos direcciones llevan el MISMO rotulo. Antes una era "Tasa: 1 BRL =
+  // 173,00 VES" y la otra "Tasa: 220,00 VES = 1 BRL": lado a lado, 173 y 220
+  // parecen contradecirse. La redaccion la eligio ella: "debe decir tasa del
+  // dia 1R$ = 173 Bs".
+  ok((m.match(/Tasa del día: /g)||[]).length === 2,
+     "las dos tasas llevan el mismo rotulo: 'Tasa del día'");
+  ok(/Tasa del día: 1 R\$ = "\+_nMsj\(tasaIda\)\+" Bs/.test(m),
+     "la de ida se escribe como ella la dicto: 1 R$ = 173 Bs");
+  ok(/Tasa del día: "\+_nMsj\(tasaVuelta\)\+" Bs = 1 R\$/.test(m),
+     "y la de vuelta en su sentido, con el mismo rotulo");
+  ok(!/Tasa: 1 BRL = /.test(m) && !/VES = 1 BRL/.test(m),
+     "y ya no queda la forma vieja, con codigos de banco");
+
+  // El dolar es una REFERENCIA, no lo que llega: nadie recibe dolares. Con las
+  // palabras que eligio ella.
+  ok(/según el dólar del Banco Central de Venezuela/.test(m),
+     "el equivalente en dolares se presenta como referencia del BCV");
+  ok(!/\$ BCV/.test(m),
+     "y no como '$ BCV' pegado al monto, que se leia como si le llegaran dolares");
+
+  // Dos botones: el corto corta antes de la tasa.
+  ok(/if\(modo!=="completo"\) return msg;/.test(m),
+     "el mensaje corto se para antes de la tasa");
+  ok(/_nMsj\(/.test(m) && /function _nMsj/.test(sinComentarios(HTML)),
+     "los bolivares enteros no arrastran un ',00' que no dice nada");
+
+  const ui = sinComentarios(sacarFuncion("_rConversorBCV"));
+  ok(/_copiarMsjCliente\(\\"corto\\",this\)/.test(ui) &&
+     /_copiarMsjCliente\(\\"completo\\",this\)/.test(ui),
+     "hay dos botones y cada uno pide su mensaje");
+  // Cada boton tiene que avisar en SU propio texto: con un solo id, pulsar el
+  // completo marcaba "copiado" en el corto.
+  ok(/id='btn-copiar-msj'/.test(ui) && /id='btn-copiar-msj-full'/.test(ui),
+     "y cada uno es un boton distinto, no el mismo id dos veces");
+  ok(/function _copiarMsjCliente\(modo,btn\)/.test(sinComentarios(HTML)),
+     "el que copia recibe el boton que se pulso, para marcarlo a el");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
