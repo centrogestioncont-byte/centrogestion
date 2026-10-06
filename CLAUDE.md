@@ -1110,6 +1110,47 @@ borrar la remesa los tres saldos y los tres lotes vuelven exactos.
 **Queda fuera el formulario de EE.UU → Venezuela** (`S.txE`, `saveTxEE`), que es
 otro camino con su propia pantalla. Si hace falta allí, es el mismo patrón.
 
+#### Pero el 97 dejó DOS sitios para elegir la comisión (ARREGLO 98)
+
+Lo cazó ella en la primera remesa real: *"arriba tú me colocas que asignes si un
+banco cobra comisión y el otro no… pero abajo también está el botón de la
+comisión. No sé si ponerlo con comisión o no, si se descuenta doble."*
+
+**Doble no se descontaba** —`saveTx` ya leía solo las filas— pero el selector
+global seguía dibujado debajo, y la **vista previa de la ganancia seguía
+leyéndolo a él**. Con una fila en pago móvil y el selector en "sin comisión", la
+pantalla enseñaba la ganancia sin descontar nada y al guardar sí se descontaba.
+
+- **Con el desglose puesto, el selector de abajo no se dibuja.** En su sitio va
+  una línea que dice dónde vive la comisión y cuánto suma. Dos sitios para lo
+  mismo, con dos respuestas distintas en la misma pantalla, es exactamente lo
+  que hace que no se pueda saber cuál manda.
+- **Y la comisión viva sale de las filas** (`comisionesDeEntregas`), no del
+  selector.
+
+**Y de paso salió un número más viejo que mentía más.** Esta pantalla
+**recalculaba la ganancia por su cuenta** en vez de leer `cTx()`, que es la que
+se guarda, y le restaba `COM()` a los dos lados **siempre** — mientras `cTx()`
+no la aplica cuando la tasa viene de un lote, porque la tasa de un lote ya lleva
+dentro lo que cobró Binance (ARREGLO 42). Con sus comisiones (0,06 USDT y **0**
+en el lado VES) y las tasas del inventario, que es el caso normal:
+
+```
+pantalla   19,82 − 18,41 = 1,41        ← restaba 0,06 a cada lado
+guardado   19,88 − 18,35 = 1,53        ← cTx(), sin restarla dos veces
+```
+
+**0,12 USDT por debajo en cada remesa.** Ahora `rNueva` lee `uc`, `uv` y `pr` de
+`cTx()`: el mismo dato no se calcula en dos sitios. La ganancia que ve es la que
+se apunta.
+
+El rótulo de esa línea también decía **"(3% banco)"**, que no es ninguna de las
+tres tarifas —son 0,3 % con mínimo, 54 fijos, o nada—. Dice "comisión del banco".
+
+**Y la lección, que es la tercera vez:** una pantalla nueva que convive con un
+control viejo tiene que **quitar el viejo**, no ponerse al lado. Lo mismo valió
+para `S.config.modulos` (FASE B) y para los dos "deberías tener" del cierre.
+
 ### La tasa de referencia sale sola — no la escribas a mano
 
 Antes mandaba lo que ella escribía en el panel 💱, y mandaba para siempre:
