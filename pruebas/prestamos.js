@@ -5816,5 +5816,50 @@ console.log("\n— FASE 2: la cuenta madre —");
      "la devolucion de los lotes esta escrita una vez y la usan los dos caminos del borrado");
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// ARREGLO 98 — la comisión se decide en UN sitio, y la pantalla ensena lo que
+// se guarda
+//
+// El 97 puso la comision por fila y dejo el selector global abajo. saveTx ya
+// lo ignoraba, pero seguia a la vista y la vista previa seguia leyendolo: con
+// una fila en pago movil y el selector en "sin comision", la GANANCIA salia
+// sin descontar nada y al guardar si se descontaba.
+// ══════════════════════════════════════════════════════════════════════════
+{
+  console.log("\n── ARREGLO 98: una sola comision, y la pantalla no miente ──");
+  const H = sinComentarios(HTML);
+  const rn = sinComentarios(sacarFuncion("rNueva"));
+
+  // 1. La ganancia que se ensena sale de cTx(), que es la que se guarda.
+  //    Recalcularla aqui es lo que la dejaba 0,12 USDT por debajo: esta
+  //    pantalla restaba COM() a los dos lados siempre y cTx() no la aplica
+  //    cuando la tasa viene de un lote (ARREGLO 42).
+  ok(/var _rTx=cTx\(\);/.test(rn) && /var uc=_rTx\.uc, uv=_rTx\.uv;/.test(rn) &&
+     /var pr=_rTx\.pr;/.test(rn),
+     "la ganancia de la pantalla sale de cTx(), no se recalcula aparte");
+  ok(!/r4\(am\/tc-_comPlat\)/.test(rn) && !/r4\(cant\/tv\+_comPlat\)/.test(rn),
+     "y no vuelve el calculo propio que restaba COM() a los dos lados");
+
+  // 2. Con el desglose puesto, la comision viva sale de las filas.
+  ok(/var _entVivo=entregasDeRemesa\(f\);/.test(rn) &&
+     /_entVivo \? comisionesDeEntregas\(_entVivo\)\.total/.test(rn),
+     "con el desglose, la comision de la vista previa sale de las filas");
+
+  // 3. Y el selector global NO se dibuja: dos sitios para lo mismo es lo que
+  //    la dejo sin saber cual mandaba.
+  // Anclado al "+(" que abre el ternario: con un "false&&" delante, o con la
+  // condicion desactivada de cualquier otra forma, deja de encajar. Escrita
+  // sin el ancla pasaba con el selector volviendo a dibujarse.
+  ok(/\+\s*\(ruta\.dest==="VES"&&_entVivo\s*\?/.test(rn) &&
+     /La comisi&oacute;n va|La comisión va/.test(rn),
+     "con el desglose el selector de abajo no se dibuja, y dice donde vive");
+  ok((rn.match(/S\.tx\.comisionBanco=this\.value/g) || []).length === 1,
+     "el selector global sigue existiendo una sola vez, para cuando no hay desglose");
+
+  // 4. El rotulo mentia: no es un 3%, es 0,3% con minimo, o una cuota fija.
+  ok(!/3% banco/.test(H),
+     "el texto ya no dice '3% banco', que no es ninguna de las tres tarifas");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
