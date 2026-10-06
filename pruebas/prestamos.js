@@ -89,6 +89,9 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "_diasEnElFuturo", "confirmarFechaFutura",
                     "comisionBancoVES", "etiquetaComisionBanco", "salidaDeCuentaEntrega",
                     "monedasDeRemesa", "pagosDeRemesa", "sumaPagos", "pagosDebe",
+                    "entregasDeRemesa", "sumaEntregas", "comisionesDeEntregas",
+                    "_uvDeParte", "_entregasParaFIFO", "consumirFIFORemesa", "simularFIFORemesa",
+                    "esBancoVES", "consumirInventarioFIFO", "_restaurarVentasFIFO",
                     "COM", "_comIU", "_localeOCR", "_numOCR",
                     "_candUSDT", "_candFiat", "_cuadrarP2P", "_parsearOCR", "_parsearConLocale", "_numLegible",
                     "_tasaAutoPago", "_deudaCubierta", "_htmlTasaInvertida",
@@ -1355,7 +1358,9 @@ ok(/var _sal=salidaDeCuentaEntrega\(_cDest, vesEntregado, uvUsdt, monDest\);/.te
 // busca por ventana, no por "todo menos parentesis".
 const _llamadas = HTML.match(/actualizarCuentasPorRemesa\([\s\S]{0,300}?\);/g) || [];
 ok(_llamadas.length === 3, "hay tres llamadas a actualizarCuentasPorRemesa", _llamadas.length);
-ok(_llamadas.every(c => c.indexOf("res.uv)") > -1),
+// El uv puede ir seguido de ")" o de "," — desde el ARREGLO 97 detras va el
+// desglose de entregas. Lo que se exige sigue siendo lo mismo: que vaya.
+ok(_llamadas.every(c => /res\.uv\s*[,)]/.test(c)),
    "y las tres le pasan el uv: sin el, una entrega de aliado no descuenta nada",
    _llamadas.filter(c => c.indexOf("res.uv)") === -1).length + " sin uv");
 ok(/La entrega la hace un aliado — ¿de qué cuenta salen los USDT\?/.test(HTML),
@@ -5671,6 +5676,232 @@ console.log("\n— FASE 2: la cuenta madre —");
   const am = sinComentarios(sacarFuncion("_acumuladosMes"));
   ok(/egPersonal:\s*parseFloat\(c\.egPerPagPropio\)/.test(am),
      "_acumuladosMes NO cambia: aperturaBase guarda el valor viejo");
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// ARREGLO 97 — la entrega pagada desde varias cuentas
+//
+// El espejo del 44. Lo que hay que fijar no es el reparto en si, que es
+// aritmetica, sino las dos cosas que NO son copiar y pegar del 44: que la
+// comision se cobre por banco y que el FIFO se consuma por cuenta.
+// ══════════════════════════════════════════════════════════════════════════
+{
+  console.log("\n── ARREGLO 97: pagar la entrega desde varias cuentas ──");
+  const H = sinComentarios(HTML);
+
+  // ── 1. Las filas tienen que sumar lo entregado, sin margen ──────────────
+  S.cuentas = [
+    {id:"cBDV",  nombre:"BANCO DE VENEZUELA", moneda:"VES", tipo:"banco", saldo:200000, activa:true},
+    {id:"cPROV", nombre:"PROVINCIAL",         moneda:"VES", tipo:"banco", saldo:100000, activa:true},
+    {id:"cNU",   nombre:"NUBANK",             moneda:"BRL", tipo:"banco", saldo:5000,   activa:true},
+    {id:"cBIN",  nombre:"BINANCE",            moneda:"USDT",tipo:"fiat",  saldo:500,    activa:true}
+  ];
+  const _ent = (filas) => F.entregasDeRemesa({entregasMulti:true, entregas:filas});
+  ok(F.sumaEntregas(_ent([{cuentaId:"cBDV",monto:"60000"},{cuentaId:"cPROV",monto:"40000"}])) === 100000,
+     "las dos partes suman lo entregado",
+     F.sumaEntregas(_ent([{cuentaId:"cBDV",monto:"60000"},{cuentaId:"cPROV",monto:"40000"}])));
+  // Sin el desglose encendido no devuelve nada: apagado es exactamente lo de antes.
+  ok(F.entregasDeRemesa({entregasMulti:false, entregas:[{cuentaId:"cBDV",monto:"1"}]}) === null,
+     "apagado, el desglose no existe y la remesa va por el camino de siempre");
+  // Una fila sin cuenta o en cero no cuenta: es una fila a medio llenar.
+  ok(_ent([{cuentaId:"cBDV",monto:"100"},{cuentaId:"",monto:"50"},{cuentaId:"cPROV",monto:""}]).length === 1,
+     "una fila sin cuenta o sin monto no entra");
+  // La coma decimal del teclado en espanol tiene que llegar bien.
+  ok(F.sumaEntregas(_ent([{cuentaId:"cBDV",monto:"1.234,56"}])) === 1234.56,
+     "el monto pasa por _leerNumero: con la coma decimal no se pierde",
+     F.sumaEntregas(_ent([{cuentaId:"cBDV",monto:"1.234,56"}])));
+
+  // ── 2. SON DOS COMISIONES, y el minimo de 14 es el que se cuela ─────────
+  S.config = {comision_banco_vzla:0.003, comision_banco_vzla_min:14, comision_banco_transferencia:54};
+  // Dos pagos moviles grandes: 0,3% de cada parte.
+  const cGrande = F.comisionesDeEntregas([{cuentaId:"cBDV",monto:60000,com:"movil"},
+                                          {cuentaId:"cPROV",monto:40000,com:"movil"}]);
+  ok(cGrande.total === 300, "dos pagos moviles cobran el 0,3% de SU parte: 180 + 120", cGrande.total);
+  // Y aqui esta lo que una comision global se come: partido, el minimo entra dos veces.
+  const cChica = F.comisionesDeEntregas([{cuentaId:"cBDV",monto:2000,com:"movil"},
+                                         {cuentaId:"cPROV",monto:2000,com:"movil"}]);
+  ok(cChica.total === 28,
+     "partido en dos, el minimo de 14 se cobra DOS veces: 28, no los 12 de una sola",
+     cChica.total);
+  ok(F.comisionBancoVES("movil", 4000) === 14,
+     "medida sobre el total esa misma entrega serian 14 — por eso la comision va por fila",
+     F.comisionBancoVES("movil", 4000));
+  // Dos transferencias son 54 + 54, no 54.
+  const cTr = F.comisionesDeEntregas([{cuentaId:"cBDV",monto:90000,com:"transf"},
+                                      {cuentaId:"cPROV",monto:10000,com:"transf"}]);
+  ok(cTr.total === 108, "dos transferencias son 54 + 54", cTr.total);
+  // Mezcladas, cada una con la suya.
+  const cMix = F.comisionesDeEntregas([{cuentaId:"cBDV",monto:60000,com:"movil"},
+                                       {cuentaId:"cPROV",monto:40000,com:"transf"}]);
+  ok(cMix.total === 234 && cMix.det.length === 2,
+     "una movil y una transferencia: 180 + 54, cada banco con su tarifa", cMix.total);
+  // Dentro del mismo banco no se cobra nada.
+  ok(F.comisionesDeEntregas([{cuentaId:"cBDV",monto:60000,com:""},
+                             {cuentaId:"cPROV",monto:40000,com:"movil"}]).total === 120,
+     "la fila dentro del mismo banco no cobra comision");
+  // Una cuenta que no es un banco venezolano no tiene este tarifario.
+  ok(F.comisionesDeEntregas([{cuentaId:"cNU",monto:1000,com:"movil"}]).total === 0,
+     "el tarifario del BCV no se le aplica a un banco que no es venezolano");
+  // El detalle tiene que decir cual cobro cuanto: un total suelto obliga a
+  // rehacer la cuenta a mano para saber si el minimo entro.
+  ok(cMix.det[0].cuentaId === "cBDV" && cMix.det[0].comision === 180 &&
+     cMix.det[1].cuentaId === "cPROV" && cMix.det[1].comision === 54,
+     "y el detalle dice que banco cobro cuanto");
+  ok(F.etiquetaComisionBanco("varias") !== "",
+     "con varias tarifas la etiqueta no se queda muda diciendo 'pago movil'");
+
+  // ── 3. El FIFO se consume de los lotes de CADA cuenta ───────────────────
+  // Dos lotes de venta de bolivares, uno por banco. Si el consumo no mirara la
+  // cuenta, los 60.000 del BDV se comerian el lote del Provincial.
+  S.inventarioUsdt = [
+    {id:1, tipo:"venta", fecha:"10/01", fechaIso:"2026-10-01", moneda:"VES",
+     cuentaDestinoId:"cBDV",  bs:70000, bsRestante:70000, usdt:70, restante:0, tasa:1000},
+    {id:2, tipo:"venta", fecha:"10/01", fechaIso:"2026-10-01", moneda:"VES",
+     cuentaDestinoId:"cPROV", bs:50000, bsRestante:50000, usdt:50, restante:0, tasa:1000},
+    {id:3, tipo:"compra", fecha:"10/01", fechaIso:"2026-10-01", moneda:"BRL",
+     cuentaOrigenId:"cNU", usdt:100, restante:100, bs:0, tasa:5}
+  ];
+  const _entFifo = [{cuentaId:"cBDV",monto:60000,com:""},{cuentaId:"cPROV",monto:40000,com:""}];
+  F.consumirFIFORemesa("BRL", 19.4, "VES", 100000, "cNU", "cBDV", _entFifo);
+  const _l = (id) => S.inventarioUsdt.find(x => x.id === id);
+  ok(_l(1).bsRestante === 10000,
+     "los 60.000 salen del lote del Banco de Venezuela", _l(1).bsRestante);
+  ok(_l(2).bsRestante === 10000,
+     "y los 40.000 del lote del Provincial — no todo de uno", _l(2).bsRestante);
+  ok(Math.abs(_l(3).restante - 80.6) < 0.001,
+     "y el USDT se consume UNA vez, no una por cada cuenta de entrega",
+     _l(3).restante);
+
+  // Sin desglose, el consumo tiene que quedar exactamente como estaba.
+  S.inventarioUsdt = [
+    {id:1, tipo:"venta", fecha:"10/01", fechaIso:"2026-10-01", moneda:"VES",
+     cuentaDestinoId:"cBDV", bs:70000, bsRestante:70000, usdt:70, restante:0, tasa:1000},
+    {id:3, tipo:"compra", fecha:"10/01", fechaIso:"2026-10-01", moneda:"BRL",
+     cuentaOrigenId:"cNU", usdt:100, restante:100, bs:0, tasa:5}
+  ];
+  F.consumirFIFORemesa("BRL", 10, "VES", 50000, "cNU", "cBDV", null);
+  ok(_l(1).bsRestante === 20000 && _l(3).restante === 90,
+     "con una sola cuenta el consumo es el de siempre",
+     _l(1).bsRestante + " / " + _l(3).restante);
+
+  // El reparto con una sola cuenta devuelve una fila: un solo camino, no dos.
+  ok(F._entregasParaFIFO(null, "cBDV", 1234.5).length === 1 &&
+     F._entregasParaFIFO(null, "cBDV", 1234.5)[0].cuentaId === "cBDV",
+     "sin desglose el reparto es una fila: el camino del FIFO es uno solo");
+
+  // ── 4. Al borrar, cada parte vuelve a los lotes de SU cuenta ────────────
+  S.inventarioUsdt = [
+    {id:1, tipo:"venta", fecha:"10/01", fechaIso:"2026-10-01", moneda:"VES",
+     cuentaDestinoId:"cBDV",  bs:70000, bsRestante:10000, usdt:70, restante:0, tasa:1000},
+    {id:2, tipo:"venta", fecha:"10/01", fechaIso:"2026-10-01", moneda:"VES",
+     cuentaDestinoId:"cPROV", bs:50000, bsRestante:10000, usdt:50, restante:0, tasa:1000}
+  ];
+  F._restaurarVentasFIFO({cuentaDest:"cBDV", entregas:_entFifo}, "VES", 100000);
+  ok(_l(1).bsRestante === 70000 && _l(2).bsRestante === 50000,
+     "borrar la remesa devuelve 60.000 al BDV y 40.000 al Provincial",
+     _l(1).bsRestante + " / " + _l(2).bsRestante);
+  // Y nunca por encima de lo que el lote tenia.
+  F._restaurarVentasFIFO({cuentaDest:"cBDV", entregas:_entFifo}, "VES", 100000);
+  ok(_l(1).bsRestante === 70000 && _l(2).bsRestante === 50000,
+     "y un lote no puede quedar con mas bolivares de los que nacio");
+
+  // ── 5. La parte de "uv" de cada fila, para la entrega que hace un aliado ─
+  ok(F._uvDeParte(100, 60, 100) === 60 && F._uvDeParte(100, 40, 100) === 40,
+     "con el aliado pagado en USDT, cada cuenta pone su parte de uv");
+  ok(F._uvDeParte(100, 60, 0) === 0,
+     "y sin total no se inventa una salida");
+
+  // ── 6. Guardias de estructura: lo que no se puede deshacer ──────────────
+  // El USDT se consume una vez. Si alguien pone res.uc dentro del bucle, se
+  // consume tantas veces como cuentas haya y la ganancia sale mal.
+  const cf = sinComentarios(sacarFuncion("consumirFIFORemesa"));
+  ok(/consumirInventarioFIFO\(monOrig, uc, monDest, 0,/.test(cf),
+     "el USDT se consume fuera del bucle de cuentas: una sola vez");
+  ok(/consumirInventarioFIFO\(monOrig, 0, monDest, p\.monto,/.test(cf),
+     "y cada cuenta consume solo SUS bolivares");
+  // La salida de cada fila pasa por salidaDeCuentaEntrega, igual que la unica:
+  // si no, un aliado pagado en USDT dejaria de descontar.
+  const ac = sinComentarios(sacarFuncion("actualizarCuentasPorRemesa"));
+  ok(/entregas\.forEach/.test(ac) && /salidaDeCuentaEntrega\(_cE/.test(ac),
+     "cada fila descuenta por el mismo camino que la cuenta unica");
+  ok(/_completarDesdeMadre\(_cE/.test(ac),
+     "y la cuenta madre completa a cada banco que se quede corto, como siempre");
+  // El desglose se guarda en la remesa: sin eso, borrarla no sabria repartir.
+  ok(/nuevaRemesa\.entregas=_entregas/.test(H),
+     "la remesa guarda de que cuentas salio");
+  // Y cuentaDest sigue siendo la primera fila: el Balance por cuenta, los
+  // filtros y el cierre leen ese campo y no se enteran del desglose.
+  ok(/f\.cuentaDest=_entregas\[0\]\.cuentaId/.test(H),
+     "cuentaDest queda en la primera cuenta: lo que ya leia ese campo no cambia");
+  // No se guarda si las filas no suman lo entregado.
+  ok(/sumaEntregas\(_entregas\)-res\.cant/.test(H),
+     "no deja guardar si las filas no suman exactamente lo entregado");
+  // Ni con una cuenta repetida, que descuadraria la comprobacion del FIFO.
+  ok(/\u00e1 dos veces/.test(HTML) && /_vistas\[e\.cuentaId\]/.test(HTML),
+     "ni con la misma cuenta dos veces");
+  // Ni mezclando monedas.
+  ok(/no son todas de la misma moneda/.test(HTML),
+     "ni mezclando cuentas de monedas distintas");
+  // El total de la pantalla sale de cTx(), que es de donde lo saca saveTx.
+  const eh = sinComentarios(sacarFuncion("_txEntregasHTML"));
+  ok(/cTx\(\)\.cant/.test(eh),
+     "lo entregado que ensena la pantalla sale de cTx(), el mismo sitio que valida al guardar");
+  ok(/comisionesDeEntregas\(/.test(eh),
+     "y la pantalla ensena lo que va a cobrar cada banco ANTES de guardar");
+  // El boton existe y esta apagado por omision.
+  ok(/onclick='txEntregasToggle\(\)'/.test(H) && /desde varias cuentas/.test(H),
+     "hay un boton para encenderlo, al lado de la cuenta de entrega");
+  ok(/entregasMulti:false/.test(H),
+     "y arranca apagado: son casos esporadicos, no puede estorbar siempre");
+  // La reversion vive en un solo sitio, no en dos copias.
+  ok((HTML.match(/function _restaurarVentasFIFO\(/g) || []).length === 1 &&
+     (HTML.match(/_restaurarVentasFIFO\(r, monDest, cant\);/g) || []).length === 2,
+     "la devolucion de los lotes esta escrita una vez y la usan los dos caminos del borrado");
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// ARREGLO 98 — la comisión se decide en UN sitio, y la pantalla ensena lo que
+// se guarda
+//
+// El 97 puso la comision por fila y dejo el selector global abajo. saveTx ya
+// lo ignoraba, pero seguia a la vista y la vista previa seguia leyendolo: con
+// una fila en pago movil y el selector en "sin comision", la GANANCIA salia
+// sin descontar nada y al guardar si se descontaba.
+// ══════════════════════════════════════════════════════════════════════════
+{
+  console.log("\n── ARREGLO 98: una sola comision, y la pantalla no miente ──");
+  const H = sinComentarios(HTML);
+  const rn = sinComentarios(sacarFuncion("rNueva"));
+
+  // 1. La ganancia que se ensena sale de cTx(), que es la que se guarda.
+  //    Recalcularla aqui es lo que la dejaba 0,12 USDT por debajo: esta
+  //    pantalla restaba COM() a los dos lados siempre y cTx() no la aplica
+  //    cuando la tasa viene de un lote (ARREGLO 42).
+  ok(/var _rTx=cTx\(\);/.test(rn) && /var uc=_rTx\.uc, uv=_rTx\.uv;/.test(rn) &&
+     /var pr=_rTx\.pr;/.test(rn),
+     "la ganancia de la pantalla sale de cTx(), no se recalcula aparte");
+  ok(!/r4\(am\/tc-_comPlat\)/.test(rn) && !/r4\(cant\/tv\+_comPlat\)/.test(rn),
+     "y no vuelve el calculo propio que restaba COM() a los dos lados");
+
+  // 2. Con el desglose puesto, la comision viva sale de las filas.
+  ok(/var _entVivo=entregasDeRemesa\(f\);/.test(rn) &&
+     /_entVivo \? comisionesDeEntregas\(_entVivo\)\.total/.test(rn),
+     "con el desglose, la comision de la vista previa sale de las filas");
+
+  // 3. Y el selector global NO se dibuja: dos sitios para lo mismo es lo que
+  //    la dejo sin saber cual mandaba.
+  // Anclado al "+(" que abre el ternario: con un "false&&" delante, o con la
+  // condicion desactivada de cualquier otra forma, deja de encajar. Escrita
+  // sin el ancla pasaba con el selector volviendo a dibujarse.
+  ok(/\+\s*\(ruta\.dest==="VES"&&_entVivo\s*\?/.test(rn) &&
+     /La comisi&oacute;n va|La comisión va/.test(rn),
+     "con el desglose el selector de abajo no se dibuja, y dice donde vive");
+  ok((rn.match(/S\.tx\.comisionBanco=this\.value/g) || []).length === 1,
+     "el selector global sigue existiendo una sola vez, para cuando no hay desglose");
+
+  // 4. El rotulo mentia: no es un 3%, es 0,3% con minimo, o una cuota fija.
+  ok(!/3% banco/.test(H),
+     "el texto ya no dice '3% banco', que no es ninguna de las tres tarifas");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
