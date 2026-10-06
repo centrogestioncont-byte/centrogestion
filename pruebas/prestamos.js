@@ -1955,7 +1955,10 @@ ok(/Vuelve a fijar la apertura/.test(_blq),
    "y el de apertura vieja tambien");
 // ARREGLO 71: el veredicto dejo de ser un parrafo repetido debajo y es el
 // TITULAR. Lo que se prueba sigue siendo lo mismo: que se ve sin desplegar nada.
-ok(/"✅ Cuadra"/.test(_blq) && /Falta por explicar/.test(_blq) && /Sobra sin explicar/.test(_blq),
+// ARREGLO 99: el veredicto bajo de titular de 22px a semaforo de una linea.
+// Lo que se prueba sigue siendo lo mismo: que se ve sin desplegar nada, y que
+// dice en PALABRAS si falta o sobra — un numero sin rotulo se lee al reves.
+ok(/"✅ Cuadra"/.test(_blq) && /falta por explicar/.test(_blq) && /sobra sin explicar/.test(_blq),
    "el veredicto tambien se ve siempre: es la respuesta a la pregunta");
 
 
@@ -2546,10 +2549,9 @@ ok(_resto.moraMultaPct===2 && _resto.ntfyCanal==="b",
 // ARREGLO 71: los dos siguen, pero ya no compiten. El grande es el que hay que
 // perseguir —el sin explicar— y la resta que ella hace a mano va entera en una
 // linea pequena debajo. Sus palabras sobre la tarjeta: "mucha letra".
-ok(/Falta por explicar \$"\+f2\(Math\.abs\(sinExp\)\)/.test(HTML) &&
-   /Sobra sin explicar \$"\+f2\(Math\.abs\(sinExp\)\)/.test(HTML),
+ok(/"\$"\+f2\(Math\.abs\(sinExp\)\)/.test(HTML),
    "el titular sigue enseñando el 'sin explicar', con su numero");
-ok(/te faltan |te sobran /.test(HTML) && /deberías tener <b/.test(HTML) && /Tienes <b/.test(HTML),
+ok(/te faltan |te sobran /.test(HTML) && /deberías tener \$/.test(HTML) && /"Tienes \$"/.test(HTML),
    "y la diferencia dice en PALABRAS si falta o sobra: un '+65,37' en verde se lee al reves");
 ok(/Math\.abs\(dif\)<0\.005 \? " · clavado"/.test(HTML),
    "cuando no hay diferencia lo dice, en vez de un $0,00 con signo");
@@ -2558,14 +2560,18 @@ ok(/Math\.abs\(dif\)<0\.005 \? " · clavado"/.test(HTML),
   // leyeran como si dijeran lo contrario el uno del otro.
   // Se ancla en el literal del codigo, no en el texto suelto: "sin explicar"
   // aparece tambien en los comentarios y el primero que salia era uno de esos.
-  const i = HTML.indexOf('"⚠️ Sobra sin explicar $"');
-  const j = HTML.indexOf("deberías tener <b", i);
-  ok(i > -1 && j > i && j - i < 900,
+  // El numero grande y la palabra que dice si falta o sobra tienen que ir
+  // pegados: un "$215,47" suelto no dice de que lado esta.
+  const i = HTML.indexOf('"$"+f2(Math.abs(sinExp))');
+  const j = HTML.indexOf('sobra sin explicar', i);
+  const k = HTML.indexOf('"Tienes $"', i);
+  ok(i > -1 && j > i && j - i < 400 && k > i && k - i < 1200,
      "los dos van juntos en el titular, cada uno con su rotulo");
   ok(/el margen normal es ±\$/.test(HTML) && /de ruido normal/.test(HTML),
      "y si el sin explicar se pasa de la tolerancia, lo dice ahi mismo");
 }
-ok(/que no se pueden situar/.test(HTML), "el aviso de los ajustes en el aire esta fuera del desplegable");
+ok(/ajuste"\+\(aj\.nMismoDia!==1\?"s":""\)\+" sin situar/.test(HTML),
+   "el aviso de los ajustes en el aire esta fuera del desplegable");
 ok(/aperturaSaldos:\(S\.config\|\|\{\}\)\.aperturaSaldos/.test(HTML),
    "la conciliacion dice si la apertura tiene foto de saldos");
 
@@ -5051,8 +5057,13 @@ console.log("\n— FASE 2: la cuenta madre —");
   const abierto = HTML.slice(HTML.indexOf("var tablasCuenta="), HTML.indexOf("return \"<div style='background:\"+bg"));
   ok(/Saldo de apertura/.test(abierto) && /Deberías tener/.test(abierto),
      "la resta de 'deberias tener' se declara aparte para poder plegarla");
-  const cuerpo = HTML.slice(HTML.indexOf("return \"<div style='background:\"+bg"),
-                            HTML.indexOf("S._concDetalle=!S._concDetalle"));
+  // ARREGLO 99: el contenedor ya no se pinta del color de la alarma, asi que
+  // el ancla vieja ("background:"+bg) no existe. Si el recorte no encuentra su
+  // principio, slice(-1) devuelve el archivo entero y estas guardias dejan de
+  // medir lo que creen medir — por eso se exige que el ancla exista.
+  const _iCuerpo = HTML.indexOf("return \"<div style='background:var(--sup2);border:1px solid var(--ln)");
+  ok(_iCuerpo > -1, "la tarjeta sigue teniendo su contenedor, y el recorte lo encuentra");
+  const cuerpo = HTML.slice(_iCuerpo, HTML.indexOf("S._concDetalle=!S._concDetalle"));
   ok(!/Saldo de apertura/.test(cuerpo) && !/lineaReal/.test(cuerpo),
      "y ninguna de las dos tablas se dibuja ya sin desplegar");
   // ARREGLO 94: entre el "?" y tablasCuenta entro la tabla de la diferencia,
@@ -5061,7 +5072,8 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(/S\._concDetalle\?[\s\S]{0,4000}tablasCuenta\+/.test(HTML),
      "estan dentro del desplegable, no borradas");
   // Lo urgente sigue fuera: un aviso escondido no es un aviso (ARREGLO 48/60).
-  ok(/que no se pueden situar/.test(cuerpo), "el aviso de los ajustes en el aire sigue fuera");
+  ok(/ sin situar/.test(cuerpo) && /situarAjustesEnElAire\(\)/.test(cuerpo),
+     "el aviso de los ajustes en el aire sigue fuera, con su boton");
   // ARREGLO 94: el desglose sigue viendose sin desplegar nada, pero ya no es la
   // tabla vieja: es el resumen de arriba, que ademas CUADRA con el total —
   // lleva los ajustes a mano y el desfase de tasas, que a la tabla vieja le
@@ -5069,6 +5081,10 @@ console.log("\n— FASE 2: la cuenta madre —");
   // Se arma antes del return, en resumenSuyo, y se dibuja sin desplegar nada.
   ok(/resumenSuyo\+/.test(cuerpo) && /De qué viene esa diferencia/.test(HTML),
      "y el desglose tambien: es lo que convierte el numero en algo que perseguir");
+  // ARREGLO 99: y lo que ella abre a mirar —cuanto tiene hoy— va antes que el
+  // veredicto y en grande. El veredicto es la pregunta del contador.
+  ok(cuerpo.indexOf("resumenSuyo+") < cuerpo.indexOf("sobra sin explicar"),
+     "y va ANTES del veredicto: lo suyo primero");
   ok(!/De qué está hecha la diferencia/.test(cuerpo),
      "y no se dice dos veces: la tabla vieja ya no se dibuja sin desplegar");
   // El interes por cobrar se ve, pero dicho: no es suyo todavia.
@@ -5555,17 +5571,31 @@ console.log("\n— FASE 2: la cuenta madre —");
   // entera: "co.ajustes" y "R.enPrestamos" aparecen tambien mas abajo, asi que
   // buscandolos en toda la funcion pasaban con la fila ya borrada.
   const filas = cap.slice(cap.indexOf("var _filas=[]"), cap.indexOf("var resumenSuyo="));
-  const resum = cap.slice(cap.indexOf("var resumenSuyo="), cap.indexOf("var tablasCuenta="));
+  // ARREGLO 99: el bloque del resumen empieza en _caja, que es donde se arman
+  // las cajitas de "cuanto tienes hoy", y acaba donde empieza la otra tabla.
+  const resum = cap.slice(cap.indexOf("var _caja=function"), cap.indexOf("var tablasCuenta="));
   ok(filas.length>200 && resum.length>200, "el resumen de la tarjeta sigue en su sitio");
   ["co.bruta","co.egEmpresa","co.egPersonal","co.socios",
-   "co.intAp","co.traspPers","co.ajustes","co.tasas"].forEach(function(c){
+   "co.traspPers","co.ajustes"].forEach(function(c){
     ok(new RegExp("_filas\\.push[\\s\\S]{0,160}"+c.replace(".","\\.")).test(filas),
        "la lista de la diferencia incluye "+c+" (si no, no suma el salto)");
   });
-  ok(/Empezaste el/.test(resum) && /Hoy tienes/.test(resum),
+  // ARREGLO 99: el desfase de tasas y los intereses de la apertura van en UNA
+  // fila, "No es dinero". Siguen contando los dos —si no, la lista deja de
+  // sumar el salto— pero con el signo correcto: el desfase entra tal cual y el
+  // interes RESTA, igual que cuando eran dos filas.
+  ok(/_noEsDinero\+=co\.tasas\.total/.test(filas),
+     "la fila 'No es dinero' lleva el desfase de las tasas");
+  ok(/_noEsDinero-=co\.intAp\.total/.test(filas),
+     "y los intereses de la apertura, restando, como cuando iban aparte");
+  ok(/_filas\.push\(\["No es dinero/.test(filas),
+     "y se dibuja como una sola fila, que es lo que quita letra");
+  ok(/Empezaste el/.test(resum) && /es lo que tienes hoy/.test(resum) &&
+     /f2\(R\.total\)/.test(resum),
      "la tarjeta abre con lo que ella pidio: con cuanto empezo y cuanto tiene hoy");
+  // ARREGLO 99: el detalle pasa de cuatro lineas sangradas a cuatro cajitas.
   ["R.enCuentas","R.enReserva","R.porCobrar","R.enPrestamos"].forEach(function(c){
-    ok(new RegExp("_fRes\\([^)]{0,80}"+c.replace(".","\\.")).test(resum),
+    ok(new RegExp("_caja\\([^)]{0,60}"+c.replace(".","\\.")).test(resum),
        "y el 'hoy tienes' va detallado: "+c);
   });
   // Apartar un numero negativo no significa nada (ARREGLO 57): con sus datos
@@ -5902,6 +5932,59 @@ console.log("\n— FASE 2: la cuenta madre —");
   // 4. El rotulo mentia: no es un 3%, es 0,3% con minimo, o una cuota fija.
   ok(!/3% banco/.test(H),
      "el texto ya no dice '3% banco', que no es ninguna de las tres tarifas");
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// ARREGLO 99 — el Balance de Cuentas, con menos letra
+//
+// Sus palabras: "no lo veo practico, esas cosas amarillas, mucha letra para
+// leer". La tarjeta decia TRES cosas a la vez, cada una con su color:
+// "Diferencia +23,16" verde, "te faltan 127,66" rojo y "Sobra sin explicar
+// 215,47" ambar. Las tres correctas, y juntas no se sabe cual mirar.
+// ══════════════════════════════════════════════════════════════════════════
+{
+  console.log("\n── ARREGLO 99: el balance, con menos letra ──");
+  const cap = sinComentarios(sacarFuncion("rCapitalTotal"));
+
+  // 1. El contenedor NO se pinta del color de la alarma. Pintado asi, el bloque
+  //    de "cuanto tienes" —que no tiene nada de malo— salia dentro de un
+  //    recuadro ambar, y eso es lo que ella llamo "las cosas amarillas".
+  ok(/return "<div style='background:var\(--sup2\);border:1px solid var\(--ln\)/.test(cap),
+     "el contenedor va neutro: el color vive en el semaforo, que es quien juzga");
+  ok(!/return "<div style='background:"\+bg\+"/.test(cap),
+     "y no vuelve a pintarse entero del color de la alarma");
+
+  // 2. El semaforo lleva el color, y lo lleva en el borde: una sola cosa roja
+  //    o ambar en toda la tarjeta.
+  ok(/border-left:4px solid "\+col\+"/.test(cap),
+     "el semaforo es lo unico que lleva el color del veredicto");
+
+  // 3. Los dos avisos caben en una linea. El parrafo que explicaba por que no
+  //    se pueden situar llevaba ahi sin cambiar desde el 11/09: eso ya no se
+  //    lee. Lo que NO puede pasar es que se plieguen (ARREGLO 48/60).
+  ok(!/no se sabe si fueron antes o despu/.test(cap),
+     "el aviso de los ajustes dejo de ser un parrafo");
+  ok(!/No se dan por explicados, as/.test(cap),
+     "y el de 'no se por que' tambien");
+  // Anclado al "+(" que abre el ternario: con un "false&&" delante, o con la
+  // condicion desactivada de cualquier otra forma, deja de encajar. Escrita
+  // sin el ancla pasaba con el aviso ya apagado.
+  ok(/\+\s*\(aj\.nMismoDia>0\?\(function\(\)\{/.test(cap) &&
+     / sin situar/.test(cap) && /situarAjustesEnElAire\(\)/.test(cap),
+     "pero los dos siguen a la vista, con su numero y su boton");
+  ok(/\+\s*\(aj\.nSinSaber>0\s*\?/.test(cap),
+     "y el de 'no se por que' tampoco se apaga");
+
+  // 4. Lo que ella abre a mirar va primero y en grande.
+  ok(/font-size:28px;font-weight:900[\s\S]{0,120}f2\(R\.total\)/.test(cap),
+     "lo que tiene hoy es el numero grande de la tarjeta");
+  ok(/es lo que tienes hoy, todo junto/.test(cap),
+     "y se dice con palabras, no con un rotulo de contabilidad");
+
+  // 5. El rotulo de la apertura no se pinta de rojo: solo el numero. Pintada
+  //    entera, la linea se lee como si la apertura tuviera algo malo.
+  ok(/<span style='color:var\(--tx3\)'>Empezaste el/.test(cap),
+     "el rotulo de la apertura va en gris; el color es del numero");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
