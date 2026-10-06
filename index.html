@@ -2597,7 +2597,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261005_v164";
+var APP_VERSION = "20261006_v165";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -3218,6 +3218,11 @@ function _aplicarEstadoDeApi(estado, ts){
   // aparatos a la vez, cada uno haciéndoselo a sí mismo.
   var _huellaAntes;
   try{ _huellaAntes=_huellaCompleta(); }catch(e){ _huellaAntes=null; }
+  // ARREGLO 94: la apertura ANTES de adoptar lo que contesta el servidor. Es el
+  // punto de partida de toda la conciliación, así que si cambia desde fuera hay
+  // que apuntarlo y decirlo; sin guardarlo aquí no hay con qué comparar después.
+  var _apAntes;
+  try{ _apAntes=_fotoApertura(); }catch(e){ _apAntes={monto:null,fecha:null}; }
   DATA_KEYS.forEach(function(k){
     if(estado[k]===undefined) return;
     // Los clientes tienen su propia ruta —/clientes— y esa es la buena.
@@ -3287,6 +3292,19 @@ function _aplicarEstadoDeApi(estado, ts){
       S[k]=estado[k];
     }
   });
+  // ARREGLO 94: ¿la apertura vino distinta del servidor? Entonces la cambió el
+  // otro aparato: se apunta en el historial y se avisa, con los dos números.
+  try{
+    var _apDespues=_fotoApertura();
+    var _apIgualMonto=(_apAntes.monto===null&&_apDespues.monto===null)||
+      (_apAntes.monto!==null&&_apDespues.monto!==null&&Math.abs(_apAntes.monto-_apDespues.monto)<0.005);
+    // Sin apertura antes no hay cambio que avisar: es la primera vez que este
+    // aparato la recibe, y eso no es que nadie se la haya movido.
+    if(_apAntes.monto!==null && (!_apIgualMonto || _apAntes.fecha!==_apDespues.fecha)){
+      _anotarApertura(_apAntes, _apDespues, "llegó del otro aparato");
+      _APERTURA_CAMBIO_FUERA={antes:_apAntes, despues:_apDespues};
+    }
+  }catch(e){}
   _ESTADO_TS = ts||0;
   try{ _podarBorrados(); }catch(e){}
   try{ _espejarClientes(); }catch(e){}
@@ -3697,6 +3715,86 @@ function _htmlHistorialPisados(){
   return out;
 }
 
+// ── ARREGLO 94 · la apertura cambió y no fue en este aparato ───────────────
+// Sus palabras: "en el saldo de apertura días atrás me decía un saldo y ahorita
+// me dice que el saldo de apertura es otro monto, es como que si a escondidas
+// se modificara".
+//
+// No se modificaba a escondidas: se la cambiaba el OTRO aparato. El aviso del
+// ARREGLO 67 ya cubría un caso parecido, pero solo ese: cuando ella acababa de
+// cambiarla AQUÍ y el servidor devolvía otra cosa (eso es un choque, y sale de
+// _PISADOS). Si ella no la tocó en este aparato no hay marca, no hay choque, y
+// no salía nada: la apertura cambiaba en silencio. Y la apertura es el punto de
+// partida de TODA la conciliación — si se mueve, se mueve el "sin explicar".
+//
+// Por eso este aviso no mira las marcas: mira la apertura de antes de adoptar
+// la respuesta del servidor contra la de después (_apAntes / _fotoApertura()).
+function _htmlAvisoAperturaFuera(){
+  if(!_APERTURA_CAMBIO_FUERA) return "";
+  // Si el choque ya salió por el aviso del 67, no se repite: dos avisos del
+  // mismo suceso se leen como dos sucesos.
+  if(_PISADOS.some(function(c){ return c.apertura; })) return "";
+  var a=_APERTURA_CAMBIO_FUERA.antes||{}, d=_APERTURA_CAMBIO_FUERA.despues||{};
+  var _m=function(x){ return (x===null||x===undefined)?"—":"$"+f2(x); };
+  var _f=function(x){ return x?ds(x):"—"; };
+  var lineas="";
+  if(a.monto!==null && d.monto!==null && Math.abs(a.monto-d.monto)>=0.005)
+    lineas+="<div style='font-size:11.5px;color:var(--tx2b);margin-top:3px;line-height:1.6'>"+
+      "Monto: aquí tenías <b style='color:var(--avi-tx3)'>"+_m(a.monto)+"</b>"+
+      " · ahora dice <b style='color:var(--ok)'>"+_m(d.monto)+"</b></div>";
+  if(a.fecha!==d.fecha)
+    lineas+="<div style='font-size:11.5px;color:var(--tx2b);margin-top:3px;line-height:1.6'>"+
+      "Fecha: aquí tenías <b style='color:var(--avi-tx3)'>"+_f(a.fecha)+"</b>"+
+      " · ahora dice <b style='color:var(--ok)'>"+_f(d.fecha)+"</b></div>";
+  return "<div style='background:var(--am6);border-bottom:2px solid var(--am3);padding:10px 14px'>"+
+    "<div style='background:var(--sup);border:1.5px solid var(--am3);border-radius:9px;padding:9px 11px'>"+
+      "<div style='font-size:13px;font-weight:800;color:var(--avi-tx3)'>⚠️ La apertura la cambió el otro dispositivo</div>"+
+      "<div style='font-size:11px;color:var(--am3-a);margin-top:3px;line-height:1.55'>"+
+        "No la cambiaste en este aparato: llegó así del otro. "+
+        "<b>La apertura decide todo el Balance de Cuentas</b>, así que con ella se movió "+
+        "lo que la app te enseña como «sin explicar».</div>"+
+      lineas+
+      "<div style='font-size:10.5px;color:var(--avi-tx3);margin-top:8px;line-height:1.55'>"+
+        "Si la que quedó no es la buena, usa los botones de <b>corregir</b> del Balance de "+
+        "Cuentas. <b>No la vuelvas a fijar</b>: eso pone la diferencia en cero y borra la pista. "+
+        "El historial completo está en Configuración.</div>"+
+      "<button onclick='_APERTURA_CAMBIO_FUERA=null;R()' style='margin-top:9px;padding:7px 12px;border:1px solid var(--am3);border-radius:8px;background:transparent;color:var(--avi-tx3);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit'>Entendido</button>"+
+    "</div></div>";
+}
+
+// El historial, que es lo que contesta "¿cuánto era antes?". Vive en
+// S.histApertura, indexado por fecha, así que se UNE entre los dos aparatos
+// (_MERGE_HISTORIAL) en vez de pisarse — si se reemplazara, el aparato que
+// guarda último borraría las líneas que apuntó el otro.
+function _htmlHistorialApertura(){
+  var h=S.histApertura||{};
+  var ks=Object.keys(h).sort().reverse();
+  if(!ks.length) return "<div style='font-size:12px;color:var(--tx3);line-height:1.6'>"+
+    "Todavía no ha cambiado. Aquí queda cada vez que la apertura se mueva: cuándo, "+
+    "cuánto era, cuánto quedó y si la cambiaste tú o llegó del otro dispositivo.</div>";
+  var out="<div style='font-size:11px;color:var(--tx2b);margin-bottom:10px;line-height:1.6'>"+
+    "La apertura es el punto de partida del Balance de Cuentas. Cada vez que cambia "+
+    "queda aquí, con los dos números, para que nunca haya que adivinar cuánto era antes.</div>";
+  var _m=function(x){ return (x===null||x===undefined)?"—":"$"+f2(x); };
+  ks.forEach(function(k){
+    var e=h[k]||{};
+    var fecha=new Date(k);
+    out+="<div style='border:1px solid var(--ln2);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--sup2)'>"+
+      "<div style='font-size:11px;font-weight:800;color:var(--avi-tx3)'>"+
+        _escAud(isNaN(fecha.getTime())?k:fecha.toLocaleString("es-VE"))+
+        " · "+_escAud(e.quien||"tú")+"</div>"+
+      "<div style='font-size:11.5px;color:var(--gr2);margin-top:4px;line-height:1.6'>"+
+        "Monto: "+_m(e.antes)+" → <b>"+_m(e.despues)+"</b></div>"+
+      ((e.fechaAntes!==e.fechaDespues)
+        ? "<div style='font-size:11.5px;color:var(--gr2);margin-top:2px;line-height:1.6'>"+
+            "Fecha: "+(e.fechaAntes?_escAud(ds(e.fechaAntes)):"—")+
+            " → <b>"+(e.fechaDespues?_escAud(ds(e.fechaDespues)):"—")+"</b></div>"
+        : "")+
+      "</div>";
+  });
+  return out;
+}
+
 function _htmlAvisoPisado(){
   if(!_PISADOS.length) return "";
   // ARREGLO 67: la apertura va SIEMPRE a la vista, sin desplegar nada. Es el
@@ -4060,7 +4158,7 @@ function rComparacionApi(){
 var EMPRESA_RAZON = "SAIPHA SERVIÇOS DIGITAIS";
 var EMPRESA_CNPJ  = "66.994.057/0001-61";
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
-  "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","histComp","ajustesSaldo","_modCampos","mapaBinance"];
+  "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","histComp","histApertura","ajustesSaldo","_modCampos","mapaBinance"];
 
 // ══════════════════════════════════════════════════════════════════════
 // SISTEMA DE CIERRE AUTOMÁTICO DE MES
@@ -6768,6 +6866,69 @@ function guardarCostoOportunidad(){
   });
 }
 
+// ── ARREGLO 94 · la apertura deja rastro cuando cambia ─────────────────────
+//
+// Sus palabras: "en el saldo de apertura, días atrás me decía un saldo y
+// ahorita me dice que es otro monto; es como que si a escondidas se modificara".
+//
+// Tenía razón, y el fallo es que NO HABÍA NINGÚN HISTORIAL. En un aparato la
+// apertura solo la escriben tres cosas y las tres preguntan antes (fijarla,
+// corregir el monto, corregir la fecha). Pero entre su PC y su teléfono viaja
+// como bloque (_MERGE_BLOQUES, ARREGLO 60): si en uno vale una cosa y en el
+// otro otra, la fusión elige una y la otra desaparece. Y el aviso de choque
+// (ARREGLO 62) solo salta cuando ESTE aparato acaba de tocarla — si no la tocó,
+// el cambio entra callado y no queda ni rastro de cuánto era.
+//
+// La apertura es el punto de partida de TODA la conciliación: si se mueve sin
+// decir nada, los números de la pantalla cambian solos y no hay forma de
+// perseguir por qué. Es la misma regla del ARREGLO 62 —adoptar está bien,
+// adoptarlo en silencio no— aplicada al dato que más manda.
+//
+// Va indexado por fecha y hora, así que entra en _MERGE_HISTORIAL y en
+// DATA_KEYS: se UNE entre los dos aparatos en vez de pisarse. Si se reemplazara,
+// el historial del teléfono borraría el de la PC y volveríamos al principio.
+// Lo que hay que avisar en la próxima pintada. Vive en memoria a propósito: es
+// un suceso de ESTA sesión, no un dato del negocio, y no tiene por qué viajar
+// entre aparatos — el historial sí, y ese es el que contesta "cuánto era antes".
+var _APERTURA_CAMBIO_FUERA=null;
+
+// La foto de la apertura son DOS cosas, el monto y la fecha, y las dos se le
+// mueven. Van juntas porque "empezaste el 11/09 con $2.544,79" es una sola
+// frase: cambiar la fecha sin cambiar el monto ya le cambia lo que ve la
+// tarjeta. Es la misma razón por la que las cinco claves de la apertura viajan
+// en bloque (_MERGE_BLOQUES, ARREGLO 60).
+function _fotoApertura(){
+  var c=S.config||{};
+  var m=parseFloat(c.aperturaUsdt);
+  return { monto: isNaN(m)?null:Math.round(m*100)/100,
+           fecha: c.aperturaFecha||null };
+}
+function _anotarApertura(antes, despues, deQuien){
+  try{
+    if(!S.histApertura) S.histApertura={};
+    var a=antes||{}, d=despues||{};
+    // Un cambio que no cambia nada no se apunta: si no, el historial se llena
+    // de ruido cada vez que se vuelve a guardar lo mismo. Y sin "antes" no hay
+    // cambio que contar — es el punto de partida, no un cambio.
+    if(a.monto===null && a.fecha===null) return;
+    var mismoMonto=(a.monto===null&&d.monto===null)||
+                   (a.monto!==null&&d.monto!==null&&Math.abs(a.monto-d.monto)<0.005);
+    if(mismoMonto && a.fecha===d.fecha) return;
+    // La clave es la hora ISO porque _MERGE_HISTORIAL une por fecha. Dos
+    // cambios en el mismo milisegundo se pisaban —y con eso el tope de abajo no
+    // se podía ni medir—, así que si la clave está tomada se le añade un
+    // sufijo. Sigue ordenando bien: "…123Z" < "…123Z#1" < "…124Z".
+    var base=new Date().toISOString(), k=base, i=0;
+    while(S.histApertura[k]) k=base+"#"+(++i);
+    S.histApertura[k]={antes:a.monto, despues:d.monto,
+                       fechaAntes:a.fecha, fechaDespues:d.fecha,
+                       quien:deQuien||"tú"};
+    // 60 líneas sobran para contestar "¿cuánto era antes?" y evitan que el
+    // historial engorde el bloque de estado que viaja en cada guardado.
+    var ks=Object.keys(S.histApertura).sort();
+    if(ks.length>60) ks.slice(0,ks.length-60).forEach(function(x){ delete S.histApertura[x]; });
+  }catch(e){}
+}
 function fijarAperturaHoy(){
   var cap=capitalRealTotal();
   if(cap.sinTasa.length){
@@ -6788,6 +6949,7 @@ function fijarAperturaHoy(){
   if(!confirm(msg)) return;
   autorizarYHacer(function(){
     if(!S.config) S.config={};
+    var _apFoto=_fotoApertura();   // ARREGLO 94: antes de pisarla
     S.config.aperturaUsdt=cap.total;
     S.config.aperturaFecha=td();
     // ARREGLO 47: hasta ahora solo se guardaba el total, y cuando la diferencia
@@ -6800,6 +6962,7 @@ function fijarAperturaHoy(){
     // Foto de lo que va del mes en curso: ya esta dentro del dinero
     // contado, asi que no se puede volver a sumar.
     S.config.aperturaBase=_acumuladosMes(getMesKeyActual());
+    _anotarApertura(_apFoto, _fotoApertura(), "tú · la fijaste");   // ARREGLO 94
     logAudit("APERTURA_CAPITAL","Saldo de apertura fijado en $"+f2(cap.total)+" USDT (cuentas "+f2(cap.enCuentas)+", reserva "+f2(cap.enReserva)+", calle "+f2(cap.enLaCalle)+")");
     saveData();R();
     alert("✅ Apertura fijada en $"+f2(cap.total)+" USDT.\n\nLa diferencia arranca en cero. Si dentro de un mes sigue en cero, tu contabilidad está sana.");
@@ -6839,7 +7002,9 @@ function corregirApertura(){
     "La diferencia de la conciliación se moverá "+(dif>=0?"−":"+")+"$"+f2(Math.abs(dif))+".\n\n¿Confirmas?")) return;
   autorizarYHacer(function(){
     if(!S.config) S.config={};
+    var _apFoto=_fotoApertura();   // ARREGLO 94
     S.config.aperturaUsdt=Math.round(v*100)/100;
+    _anotarApertura(_apFoto, _fotoApertura(), "tú · corregiste el monto");
     logAudit("APERTURA_CORREGIDA","Apertura del "+cfg.aperturaFecha+": $"+f2(act)+" → $"+f2(v)+" USDT");
     saveData();R();
     alert("✅ Apertura corregida a $"+f2(v)+" USDT.\n\nLa fecha sigue siendo el "+ds(cfg.aperturaFecha)+".");
@@ -6929,7 +7094,9 @@ function corregirFechaApertura(){
   autorizarYHacer(function(){
     if(!S.config) S.config={};
     var vieja=S.config.aperturaFecha;
+    var _apFoto=_fotoApertura();   // ARREGLO 94
     S.config.aperturaFecha=iso;
+    _anotarApertura(_apFoto, _fotoApertura(), "tú · corregiste la fecha");
     logAudit("APERTURA_FECHA","Fecha de la apertura: "+vieja+" → "+iso+
              " (monto sin tocar: $"+f2(S.config.aperturaUsdt)+")");
     saveData();R();
@@ -12088,6 +12255,9 @@ function rConfigAdmin(){
     _cfgAcc("pisados","🔀","Cambios que chocaron entre dispositivos",
       (function(){ var n=_leerPisados().length; return n?(n+" "+(n===1?"vez":"veces")):"ninguno todavía"; })(),
       "var(--am3)", _htmlHistorialPisados(), false)+
+    _cfgAcc("hist_apertura","🧾","Historial del saldo de apertura",
+      (function(){ var n=Object.keys(S.histApertura||{}).length; return n?(n+" "+(n===1?"cambio":"cambios")):"no ha cambiado"; })(),
+      "var(--ac)", _htmlHistorialApertura(), false)+
     "<div style='background:var(--gr6-c);border-radius:14px;padding:14px;border:1px solid var(--ln2)'>"+
       "<div style='font-size:10px;font-weight:700;color:var(--tx3);text-transform:uppercase;margin-bottom:8px'>ℹ️ Sistema · versión "+APP_VERSION+"</div>"+
       "<div id='cfg-sistema-api'>"+_htmlSistemaApi()+"</div>"+
@@ -12599,6 +12769,88 @@ function rCapitalTotal(){
     // sobre esta tarjeta: "mucha letra, no es fácil de entender". Arriba queda
     // el veredicto, el número que hay que perseguir y los avisos; el detalle,
     // a un toque.
+    // ── ARREGLO 94 · lo que ella mira, arriba y sin párrafos ───────────
+    //
+    // Sus palabras: "me gustaría que me dijera, por lo menos, empezaste el día
+    // 11/09 con tanto de saldo, y hoy tienes tanto, que está tanto en la
+    // cuenta, tanto en préstamo, tanto en remesa por cobrar, tanto en reserva,
+    // o sea, detallado. Y obviamente me diga allí la diferencia... pero yo no
+    // quiero ver tantas cosas escritas en la aplicación, porque realmente se
+    // pierde el foco de qué es lo que realmente sirve ese botón".
+    //
+    // La tarjeta abría con el veredicto —"sobra sin explicar $X"— que es la
+    // pregunta del CONTADOR. La suya es otra y es anterior: cuánto tenía el día
+    // que empezó, cuánto tiene hoy, y a qué se debe el salto. Las dos cuentas
+    // estaban, pero repartidas y detrás del desplegable.
+    //
+    // Y la resta cuadra sola, sin inventar ningún número: lo que se movió desde
+    // la apertura lleva de "apertura" a "deberías tener", y lo que falta hasta
+    // "tienes" es justo el sin explicar. O sea
+    //
+    //     hoy − apertura  =  lo que se movió  +  lo que no se explica
+    //
+    // Por eso las filas de abajo son las MISMAS que ya calcula
+    // conciliacionCapital(): ninguna se suma aparte (es la regla de no dar dos
+    // respuestas al mismo número, la que ya costó el 34,27 contra 34,28).
+    var _fRes=function(txt,val,col,gordo,sangria){
+      return "<div style='display:flex;justify-content:space-between;gap:10px"+(sangria?";padding-left:12px":"")+"'>"+
+        "<span style='color:"+(col||"var(--tx2)")+"'>"+txt+"</span>"+
+        "<b style='color:"+(col||"var(--tx2)")+(gordo?";font-size:13px":"")+";white-space:nowrap'>"+
+          (val<0?"−":(gordo===2?"+":""))+"$"+f2(Math.abs(val))+"</b></div>";
+    };
+    var _saltoTotal=R.total-co.apertura;
+    // Las filas tienen que SUMAR el salto, al céntimo. La identidad sale de
+    // conciliacionCapital() y no hay ninguna cuenta nueva aquí:
+    //
+    //   deberias   = apertura − intAp + bruta − egEmpresa − egPersonal − socios − traspPers
+    //   diferencia = tienes − deberias
+    //   sinExplicar= diferencia − ajustes − tasas
+    //
+    //   ⇒ tienes − apertura = (bruta − egEmpresa − egPersonal − socios − intAp
+    //                          − traspPers) + ajustes + tasas + sinExplicar
+    //
+    // Por eso ajustes y tasas van AQUÍ dentro. El primer intento las dejó fuera
+    // y la lista no cuadraba con el total que ella tiene justo encima: una
+    // tarjeta que no se puede sumar a mano es peor que no dar el desglose.
+    var _filas=[];
+    if(co.bruta>0.005)       _filas.push(["Ganancia bruta",                       co.bruta,         "var(--ok)"]);
+    if(co.egEmpresa>0.005)   _filas.push(["Egresos de la empresa",               -co.egEmpresa,     "var(--mal)"]);
+    if(co.egPersonal>0.005)  _filas.push(["Gastos personales",                   -co.egPersonal,    "var(--mal)"]);
+    // El saldo de un socio puede ser NEGATIVO: eso es que él le debe a la
+    // empresa, o sea un cobro, no un pago (ARREGLO 57 lo dejó escrito para el
+    // cierre y aquí vale igual). Con sus datos vale −0,54, así que la fila
+    // decía "Pagos a socios +$0,54", que se lee como un pago en negativo.
+    if(Math.abs(co.socios)>0.005)
+                             _filas.push([co.socios>0?"Pagos a socios":"Cobrado a socios",
+                                          -co.socios, co.socios>0?"var(--mal)":"var(--ok)"]);
+    if(co.intAp&&co.intAp.total>0.005)
+                             _filas.push(["Intereses que ya iban en la apertura",-co.intAp.total,   "var(--tx4)"]);
+    if(co.traspPers&&Math.abs(co.traspPers.total)>0.005)
+                             _filas.push([co.traspPers.total>0?"Pasado a cuentas personales":"Traído de cuentas personales",
+                                          -co.traspPers.total, co.traspPers.total>0?"var(--mal)":"var(--ok)"]);
+    if(co.ajustes&&Math.abs(co.ajustes.total)>0.005)
+                             _filas.push(["Saldos que escribiste a mano ("+co.ajustes.n+")", co.ajustes.total, "var(--tx4)"]);
+    if(co.tasas&&Math.abs(co.tasas.total)>0.005)
+                             _filas.push(["Desfase de las tasas (no es dinero)",  co.tasas.total,   "var(--tx4)"]);
+    if(Math.abs(sinExp)>0.005)
+                             _filas.push([(sano?"Ruido de tasas, dentro del margen":"⚠️ Sin explicar"),
+                                          sinExp, sano?"var(--tx4)":col]);
+    var resumenSuyo=
+      "<div style='background:var(--sup);border-radius:9px;padding:11px 12px;margin-bottom:9px;font-size:11.5px;line-height:1.75'>"+
+        _fRes("Empezaste el "+ds(co.desde)+" con", co.apertura, "var(--tx2)", 1)+
+        "<div style='height:6px'></div>"+
+        _fRes("Hoy tienes", R.total, "var(--tx2)", 1)+
+        _fRes("en cuentas", R.enCuentas, "var(--tx3)", 0, 1)+
+        (R.enReserva>0  ? _fRes("en reserva",            R.enReserva,  "var(--tx3)",0,1):"")+
+        (R.porCobrar>0  ? _fRes("por cobrar de remesas", R.porCobrar,  "var(--tx3)",0,1):"")+
+        (R.enPrestamos>0? _fRes("prestado",              R.enPrestamos,"var(--tx3)",0,1):"")+
+        "<div style='border-top:1px solid var(--ln);margin-top:7px;padding-top:7px'>"+
+          _fRes("Diferencia", _saltoTotal, Math.abs(_saltoTotal)<0.005?"var(--tx2)":(_saltoTotal<0?"var(--mal)":"var(--ok)"), 2)+
+        "</div>"+
+        "<div style='margin-top:9px;font-size:10.5px;font-weight:800;color:var(--tx3);text-transform:uppercase;letter-spacing:.3px'>De qué viene esa diferencia</div>"+
+        _filas.map(function(f){ return _fRes(f[0],f[1],f[2]); }).join("")+
+      "</div>";
+
     var tablasCuenta=
       "<div style='background:var(--sup);border-radius:9px;padding:10px 12px;margin-bottom:8px;font-size:11px;color:var(--tx2);line-height:1.7'>"+
         "<div style='display:flex;justify-content:space-between'><span>Saldo de apertura</span><b>$"+f2(co.apertura)+"</b></div>"+
@@ -12623,11 +12875,12 @@ function rCapitalTotal(){
       // ruido de tasas, no una fuga. Dentro del margen el titular dice CUADRA y
       // no enseña ninguna cifra roja; la cifra sigue en la línea de abajo.
       "<div style='margin-bottom:10px'>"+
-        "<div style='display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap'>"+
-          "<div style='font-size:13px;font-weight:800;color:"+col+"'>🧾 Conciliación de capital</div>"+
+        "<div style='display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:9px'>"+
+          "<div style='font-size:13px;font-weight:800;color:"+col+"'>🧾 Balance desde que empezaste</div>"+
           "<div style='font-size:10.5px;color:var(--tx3)'>desde el "+ds(co.desde)+" · apertura $"+f2(co.apertura)+
             ((co.aperturaSaldos&&Object.keys(co.aperturaSaldos).length)?"":" <span style='color:var(--avi-tx2)'>(sin foto de saldos)</span>")+"</div>"+
         "</div>"+
+        resumenSuyo+
         "<div style='font-size:22px;font-weight:900;color:"+col+";line-height:1.2;margin-top:7px'>"+
           (sano ? "✅ Cuadra"
                 : (sinExp<0 ? "⚠️ Falta por explicar $"+f2(Math.abs(sinExp))
@@ -12667,6 +12920,51 @@ function rCapitalTotal(){
           "<button onclick='situarAjustesEnElAire()' style='width:100%;margin-top:8px;padding:8px;border:1px solid var(--am4);border-radius:8px;background:var(--sup);color:var(--tx2b);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit'>📍 Situarlos (te digo a qué número llevan antes de aplicarlo)</button>"
           :"")+
       "</div>";})():"")+
+      // ARREGLO 48/60 + 94: los avisos NO se pliegan. Al mover la tabla de la
+      // diferencia al desplegable, este aviso se iba dentro con ella — y es de
+      // los que tienen que verse siempre, porque dice que hay dinero que la
+      // cuenta de arriba NO está contando. La guardia de pruebas lo cazó.
+      (aj.sinTasa
+        ? "<div style='background:var(--am6-a);border:1px solid var(--am4);border-radius:9px;padding:9px 11px;margin-bottom:8px;font-size:11px;color:var(--mal);line-height:1.55'>"+
+            "⚠️ Algún ajuste es de una moneda sin tasa y no está contado aquí."+
+          "</div>"
+        : "")+
+      // ARREGLO 68 + 94: lo que ella marcó "no sé por qué" NO se da por explicado,
+      // así que está dentro del "sin explicar" de arriba. Esto es un AVISO, no un
+      // desglose, y por eso se queda fuera del desplegable aunque la tabla de la
+      // diferencia se haya ido dentro.
+      (aj.nSinSaber>0
+        ? "<div style='background:var(--am6-a);border:1px solid var(--am4);border-radius:9px;padding:9px 11px;margin-bottom:8px;font-size:11px;color:var(--avi-tx);line-height:1.55'>"+
+            "⚠️ "+aj.nSinSaber+" ajuste"+(aj.nSinSaber===1?"":"s")+" de saldo que marcaste <b>«no sé por qué»</b>. "+
+            "No se dan por explicados, así que están dentro del «sin explicar» de arriba."+
+          "</div>"
+        : "")+
+      // ARREGLO 71: cuando cuadra no se dice dos veces. El titular ya lo dice,
+      // y este párrafo repetido debajo era parte de la "mucha letra". Cuando NO
+      // cuadra sí se queda, porque es lo único que dice por dónde empezar, pero
+      // en una frase: el resto de la explicación está en el desplegable.
+      (sano ? "" :
+      "<div style='font-size:11px;color:"+col+";font-weight:700;line-height:1.6'>"+
+        (sinExp<0
+          ? "Dinero que salió sin quedar registrado — lo más común es lo que sacas para ti sin anotarlo. Búscalo entre las operaciones desde el "+ds(co.desde)+"."
+          : "Suele ser dinero que entró sin registrarse como ganancia, o una apertura que se guardó más baja de lo que tocaba.")+
+        " <span style='font-weight:400;color:var(--tx3)'>Volver a fijar la apertura no lo arregla: lo esconde.</span>"+
+      "</div>")+
+      (co.baseFaltante?"<div style='background:var(--am6);border:1px solid var(--am4-b);border-radius:8px;padding:9px 11px;font-size:11px;color:var(--avi-tx);line-height:1.6;margin-top:8px'>"+
+        "<b>⚠️ Vuelve a fijar la apertura.</b> Esta se guardó antes de un arreglo: contaba dos veces lo que ya llevabas ganado el mes en que la fijaste, así que la diferencia arranca torcida. Un clic en el botón de abajo lo deja en cero."+
+      "</div>":"")+
+      // El desplegable: la explicación y los botones, que se leen una vez y
+      // estorban las otras cien.
+      "<div onclick='S._concDetalle=!S._concDetalle;R()' style='display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:9px;padding:9px 11px;background:var(--sup);border:1px solid "+brd+";border-radius:9px;cursor:pointer;user-select:none;font-size:11px;font-weight:700;color:var(--tx2b)'>"+
+        "<span>ℹ️ Por qué sale este número, y qué puedo hacer</span><span style='font-size:13px;color:var(--tx3b)'>"+(S._concDetalle?"▴":"▾")+"</span>"+
+      "</div>"+
+      (S._concDetalle?
+        // ARREGLO 94: esta tabla estaba FUERA del desplegable. Desde que el
+        // resumen de arriba lleva todas sus filas —ajustes a mano, desfase de
+        // tasas y sin explicar— decía lo mismo dos veces, y "tantas cosas
+        // escritas" es justo lo que ella pidió quitar. Aquí sigue entera, porque
+        // parte la diferencia por el OTRO lado: contra "deberías tener" en vez
+        // de contra la apertura.
       // ARREGLO 46: de qué está hecha la diferencia. Un número suelto no se
       // puede perseguir; separando lo que ya tiene explicación queda a la vista
       // lo único que hay que buscar.
@@ -12690,29 +12988,8 @@ function rCapitalTotal(){
             ? "<div style='display:flex;justify-content:space-between'><span>De eso, desfase de las tasas del día ("+ta.n+" op.)</span><b>"+(ta.total<0?"−":"+")+"$"+f2(Math.abs(ta.total))+"</b></div>"
             : "")+
           "<div style='display:flex;justify-content:space-between;border-top:1px solid var(--ln);margin-top:5px;padding-top:5px;font-size:13px;color:"+colSE+"'><b>"+(Math.abs(se)<=tol?"✅ ":"⚠️ ")+"Sin explicar</b><b>"+(se<0?"−":"+")+"$"+f2(Math.abs(se))+"</b></div>"+
-          (aj.sinTasa?"<div style='font-size:11.5px;color:var(--mal);margin-top:6px'>⚠️ Algún ajuste es de una moneda sin tasa y no está contado aquí.</div>":"")+
         "</div>";
       })() : "")+
-      // ARREGLO 71: cuando cuadra no se dice dos veces. El titular ya lo dice,
-      // y este párrafo repetido debajo era parte de la "mucha letra". Cuando NO
-      // cuadra sí se queda, porque es lo único que dice por dónde empezar, pero
-      // en una frase: el resto de la explicación está en el desplegable.
-      (sano ? "" :
-      "<div style='font-size:11px;color:"+col+";font-weight:700;line-height:1.6'>"+
-        (sinExp<0
-          ? "Dinero que salió sin quedar registrado — lo más común es lo que sacas para ti sin anotarlo. Búscalo entre las operaciones desde el "+ds(co.desde)+"."
-          : "Suele ser dinero que entró sin registrarse como ganancia, o una apertura que se guardó más baja de lo que tocaba.")+
-        " <span style='font-weight:400;color:var(--tx3)'>Volver a fijar la apertura no lo arregla: lo esconde.</span>"+
-      "</div>")+
-      (co.baseFaltante?"<div style='background:var(--am6);border:1px solid var(--am4-b);border-radius:8px;padding:9px 11px;font-size:11px;color:var(--avi-tx);line-height:1.6;margin-top:8px'>"+
-        "<b>⚠️ Vuelve a fijar la apertura.</b> Esta se guardó antes de un arreglo: contaba dos veces lo que ya llevabas ganado el mes en que la fijaste, así que la diferencia arranca torcida. Un clic en el botón de abajo lo deja en cero."+
-      "</div>":"")+
-      // El desplegable: la explicación y los botones, que se leen una vez y
-      // estorban las otras cien.
-      "<div onclick='S._concDetalle=!S._concDetalle;R()' style='display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:9px;padding:9px 11px;background:var(--sup);border:1px solid "+brd+";border-radius:9px;cursor:pointer;user-select:none;font-size:11px;font-weight:700;color:var(--tx2b)'>"+
-        "<span>ℹ️ Por qué sale este número, y qué puedo hacer</span><span style='font-size:13px;color:var(--tx3b)'>"+(S._concDetalle?"▴":"▾")+"</span>"+
-      "</div>"+
-      (S._concDetalle?
         tablasCuenta+
         "<div style='background:var(--sup);border-radius:9px;padding:11px 12px;margin-top:7px;font-size:11.5px;color:var(--tx3);line-height:1.55'>"+
           (aj.nMismoDia>0?"<div style='color:var(--avi-tx2);margin-bottom:7px'>Hay "+aj.nMismoDia+" ajuste(s) del mismo día que fijaste la apertura, por "+(aj.mismoDia<0?"−":"+")+"$"+f2(Math.abs(aj.mismoDia))+". No se cuentan porque son de antes de que la app guardara la hora, y sin ella no hay forma de saber si fueron antes o después de la foto. Los de ahora en adelante ya se sitúan solos.</div>":"")+
@@ -17116,6 +17393,7 @@ function rMain(){
     // scroll, para que se vea esté ella en la pantalla que esté. Un aviso al
     // fondo de una lista de remesas no es un aviso.
     _htmlAvisoPisado()+
+    _htmlAvisoAperturaFuera()+  // ARREGLO 94
     _htmlAvisoMesSinCerrar()+   // ARREGLO 89
     "<div class='navbar3'>"+
       "<button class='menubtn' onclick='document.getElementById(\"navMenuWrap\").classList.add(\"show\")'>☰ Menú</button>"+
@@ -25798,7 +26076,7 @@ var _MERGE_OBJETOS = ["config","tasasDia","_tasasDiaMeta","tasasCambio","mapaBin
 var _MERGE_BLOQUES = {
   config: [["aperturaUsdt","aperturaFecha","aperturaSaldos","aperturaTs","aperturaBase"]]
 };
-var _MERGE_HISTORIAL = ["histBalance","histTasas","histSaldos","histComp"];
+var _MERGE_HISTORIAL = ["histBalance","histTasas","histSaldos","histComp","histApertura"];
 
 function _marcarObjetosCambiados(){
   if(!window._fotoPorClave) window._fotoPorClave={};

@@ -1580,6 +1580,120 @@ Con préstamos nuevos cada semana, ese sobrante no paraba de crecer.
 Comprobado: el "sin explicar" de su export no se mueve ni un céntimo (59,28
 antes y después), y prestar con interés ya no lo toca.
 
+### La apertura cambiaba sola, y no quedaba rastro (ARREGLO 94)
+
+Sus palabras: *"en el saldo de apertura días atrás me decía un saldo y ahorita me
+dice que el saldo de apertura es otro monto, es como que si a escondidas se
+modificara"*.
+
+No se modificaba a escondidas: **se la cambiaba el otro aparato**. En un solo
+dispositivo la apertura solo la tocan tres botones, los tres con confirmación —
+pero `_aplicarEstadoDeApi()` adopta lo que contesta el servidor, y ahí entra
+entera (`_MERGE_BLOQUES`, ARREGLO 60). El aviso del ARREGLO 67 cubría el choque:
+cuando ella la cambió **aquí** y el servidor devolvió otra cosa. Si no la tocó en
+este aparato no hay marca, no hay choque, y **no salía nada**.
+
+Y lo peor no era que cambiara: era que **no quedaba con qué contestar "¿cuánto
+era antes?"**. La apertura es el punto de partida de toda la conciliación — si se
+mueve, se mueve el "sin explicar" — y no había historial de ninguna clase.
+
+- **El historial es `S.histApertura`**, indexado por fecha, así que va en
+  `_MERGE_HISTORIAL` **y** en `DATA_KEYS`: se une entre los dos aparatos en vez de
+  pisarse. Si se reemplazara, el que guarda último borraría las líneas del otro.
+- **La apertura son DOS cosas, el monto y la fecha**, y las dos se mueven. Van
+  juntas en `_fotoApertura()` porque *"empezaste el 11/09 con $2.544,79"* es una
+  sola frase. La fecha también se queda mal: pasó el 14/09.
+- **Los CUATRO escritores la apuntan**: `fijarAperturaHoy()`,
+  `corregirApertura()`, `corregirFechaApertura()` y la adopción del servidor.
+  Dejarse uno fuera es volver a que cambie en silencio, y la prueba los exige los
+  cuatro por nombre.
+- **La foto de ANTES se toma antes de adoptar.** Tomada después, los dos valores
+  son el mismo y no hay cambio que detectar nunca. (La guardia de esto se escribió
+  primero con un `indexOf` a secas y **pasaba con la línea borrada**: `-1` es menor
+  que cualquier posición. Hay que exigir además que exista.)
+- **Dos cambios en el mismo milisegundo se pisaban**, porque la clave es la hora
+  ISO. Si está tomada se le añade un sufijo — y así el tope de 60 líneas se puede
+  medir, que antes no.
+- **El aviso no se repite con el del 67.** Dos avisos del mismo suceso se leen
+  como dos sucesos.
+
+#### Y la tarjeta ahora abre contestando lo suyo
+
+Sus palabras: *"me gustaría que me dijera, por lo menos, empezaste el día 11/09
+con tanto de saldo, y hoy tienes tanto, que está tanto en la cuenta, tanto en
+préstamo, tanto en remesa por cobrar, tanto en reserva, o sea, detallado. Y
+obviamente me diga allí la diferencia… pero yo no quiero ver tantas cosas
+escritas en la aplicación, porque realmente se pierde el foco de qué es lo que
+realmente sirve ese botón"*.
+
+La tarjeta abría con el veredicto —*"sobra sin explicar $X"*—, que es la pregunta
+del **contador**. La suya es otra y es anterior: cuánto tenía el día que empezó,
+cuánto tiene hoy, y a qué se debe el salto. Las dos cuentas ya estaban, pero
+repartidas y detrás del desplegable.
+
+**Las filas tienen que SUMAR el salto, al céntimo.** La identidad sale entera de
+`conciliacionCapital()` y no se calcula nada nuevo:
+
+```
+deberias    = apertura − intAp + bruta − egEmpresa − egPersonal − socios − traspPers
+diferencia  = tienes − deberias
+sinExplicar = diferencia − ajustes − tasas
+
+⇒ tienes − apertura = (bruta − egEmpresa − egPersonal − socios − intAp − traspPers)
+                      + ajustes + tasas + sinExplicar
+```
+
+**El primer intento dejó fuera los ajustes a mano y el desfase de tasas**, y la
+lista no cuadraba con el total que ella tiene justo encima. Una tarjeta que no se
+puede sumar a mano es peor que no dar el desglose. Medido con su export: salto
+−13,98 y la suma de las filas −13,98, descuadre **0**.
+
+- **La tabla vieja "De qué está hecha la diferencia" se fue al desplegable**,
+  porque desde que el resumen lleva sus filas decía lo mismo dos veces. Sigue
+  entera ahí, porque parte la diferencia por el **otro** lado: contra "deberías
+  tener" en vez de contra la apertura.
+- **Pero los AVISOS no se van con ella.** Al moverla se llevó dentro el de
+  *"algún ajuste es de una moneda sin tasa"* — uno de los que CLAUDE.md ya exige
+  siempre a la vista, porque dice que hay dinero que la cuenta de arriba **no
+  está contando**. Lo cazó una guardia de hace cuatro arreglos. Está fuera otra
+  vez, y el de *"no sé por qué"* con él.
+- **Un saldo de socio NEGATIVO se dice "cobrado", no "pagos" en negativo.** Con
+  sus datos vale −0,54: el socio le debe. Es la misma regla del ARREGLO 57
+  —apartar un número negativo no significa nada— aplicada a esta fila.
+
+### El mismo gasto personal se resta DOS veces (pendiente, medido)
+
+Sale de medir el ARREGLO 94 y **no está arreglado**: es decisión suya porque le
+mueve los números.
+
+Un gasto personal pagado desde una cuenta 💜 **personal** se resta de "deberías
+tener" por `egPerPagPropio`. Pero una cuenta 💜 no está dentro del capital de la
+empresa —comprobado: sumarle 1.000 a una 💜 no mueve "lo que tienes"— así que ese
+dinero **ya había salido** cuando se traspasó a esa cuenta, y `traspasosAPersonal()`
+ya lo restó. Se resta dos veces.
+
+Reproducido con su export, y las dos mitades se ven una encima de la otra en la
+propia tarjeta:
+
+```
+12/09  traspaso  BINANCE SAIPA → MI SUELDO BINANCE 💜   51,52 USDT
+18/09  gasto     "CAMIDA PARA LA CASA", desde 💜        51,52 USDT
+
+Gastos personales            −$51,52
+Pasado a cuentas personales  −$51,52   ← el mismo dinero
+```
+
+```
+             sin explicar      veredicto
+hoy ............  +59,28       ⚠️ Sobra sin explicar
+corregido ......   +7,76       ✅ Cuadra   (margen ±50,62)
+```
+
+O sea que esto es **la mitad de su *"nunca está en 0 siempre tiene un
+desajuste"***. El arreglo sería no restar de `deberias` los gastos personales
+pagados desde una cuenta 💜; los pagados desde una cuenta de la empresa se siguen
+restando, porque esos sí salieron de ella.
+
 ### La tarjeta de conciliación: un solo número grande
 
 Sus palabras: *"mucha letra, no es fácil de entender, nunca está en 0 siempre
