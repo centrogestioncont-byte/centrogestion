@@ -5572,5 +5572,63 @@ console.log("\n— FASE 2: la cuenta madre —");
      "ningun numero de la tarjeta se vuelve a calcular por su cuenta");
 }
 
+// ── ARREGLO 95: la tarjeta de credito es una cuenta, y su saldo es DEUDA ───
+// Sus palabras: "el saldo que yo utilizo de ahi es el mismo limite de reserva
+// que yo tengo en el banco". Una compra con la tarjeta se apuntaba como si
+// saliera del efectivo del banco el dia de la compra; del banco no sale nada
+// hasta que se paga la factura. Medido contra su extracto: PagBank en 199,81
+// con el banco en 0,00.
+{
+  const H = sinComentarios(HTML);
+
+  // 1. Una tarjeta NO entra en el aviso de saldo negativo: ahi el negativo es
+  //    la deuda, que es lo normal. Es el guardia que separa los dos avisos.
+  const neg = sinComentarios(sacarFuncion("_cuentasEnNegativo"));
+  ok(/c\.esTarjeta/.test(neg),
+     "una tarjeta de credito no sale en el aviso de saldo en negativo");
+  ok(/activa===false/.test(neg),
+     "y una cuenta pausada tampoco");
+
+  // 2. El aviso de negativo existe y se dibuja arriba del panel, fuera del
+  //    scroll (ARREGLO 62): un aviso al fondo de una lista no es un aviso.
+  ok(/function _htmlAvisoSaldoNegativo\(\)/.test(H),
+     "hay aviso cuando una cuenta de banco queda en negativo");
+  ok(/_htmlAvisoSaldoNegativo\(\)\+/.test(H),
+     "y se dibuja arriba del panel, no dentro de una pantalla suelta");
+  const avn = sinComentarios(sacarFuncion("_htmlAvisoSaldoNegativo"));
+  ok(/No lo arregles escribiendo el saldo/.test(avn),
+     "y dice que no se arregla escribiendo el saldo, que es lo que borra la pista");
+  ok(/tarjeta de cr/.test(avn),
+     "y apunta a la causa mas probable: que se pago con la tarjeta");
+
+  // 3. La deuda se lee del saldo en negativo, y un positivo NO es deuda.
+  const dt = sinComentarios(sacarFuncion("_deudaTarjeta"));
+  ok(/s<0/.test(dt),
+     "lo que se debe en la tarjeta es el saldo en negativo, leido al derecho");
+
+  // 4. La comision del Pix con tarjeta: su comprobante del 05/10 dice 4,98%
+  //    sobre 50,00 = 2,49, total 52,49. El 4,98 es el valor por omision.
+  const cm = sinComentarios(sacarFuncion("_comisionPixTarjeta"));
+  ok(/4\.98/.test(cm),
+     "la comision del Pix con tarjeta trae el 4,98% de su comprobante por omision");
+  ok(/pct<0\|\|pct>100/.test(cm),
+     "y un porcentaje fuera de rango se ignora en vez de destrozar la cuenta");
+  ok(/pctPixTarjeta/.test(H) && /id='inp-pix-tarjeta'/.test(H) &&
+     /function guardarPixTarjeta\(\)/.test(H),
+     "y se puede editar en Configuracion: si no, no hay donde escribirla");
+
+  // 5. Marcar una cuenta como tarjeta no puede hacerse sobre una personal, una
+  //    de reserva ni la madre — ahi el negativo significa otra cosa.
+  const tg = sinComentarios(sacarFuncion("toggleCuentaTarjeta"));
+  ok(/esPersonal\|\|c\.esReserva\|\|c\.esMadre/.test(tg),
+     "una cuenta personal, de reserva o madre no puede marcarse como tarjeta");
+  ok(/_leerNumero\(/.test(tg),
+     "el limite pasa por _leerNumero: con el teclado en espanol la coma es decimal");
+
+  // 6. El limite se puede cambiar sin desmarcar la tarjeta.
+  ok(/function editarLimiteTarjeta\(/.test(H),
+     "el limite se cambia sin tener que desmarcar y volver a marcar");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

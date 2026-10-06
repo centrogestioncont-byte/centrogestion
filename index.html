@@ -2597,7 +2597,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261006_v165";
+var APP_VERSION = "20261006_v166";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -3729,6 +3729,46 @@ function _htmlHistorialPisados(){
 //
 // Por eso este aviso no mira las marcas: mira la apertura de antes de adoptar
 // la respuesta del servidor contra la de después (_apAntes / _fotoApertura()).
+// ── ARREGLO 95 · una cuenta de banco no puede estar en negativo ────────────
+// Esto es lo que habria cazado solo lo de PagBank, en septiembre, sin que nadie
+// tuviera que pedirle un extracto al banco.
+//
+// Reconstruyendo PagBank contra su extracto, el saldo tuvo que irse a negativo
+// dos dias —el 12/09 por 178 y el 18/09 por 293— porque habia entradas que no
+// se registraron. En un banco eso no existe: si la app dice que una cuenta esta
+// en negativo, o falta registrar una entrada o sobra una salida. Las dos cosas
+// se arreglan en el momento y en un mes ya no hay quien las encuentre.
+//
+// La tarjeta de credito queda FUERA: ahi el negativo es la deuda, que es lo
+// normal. Su aviso es el del limite, y va en su propia tarjeta.
+function _cuentasEnNegativo(){
+  return (S.cuentas||[]).filter(function(c){
+    if(c.activa===false || c.esTarjeta) return false;
+    return (parseFloat(c.saldo)||0) < -0.005;
+  });
+}
+function _htmlAvisoSaldoNegativo(){
+  var malas=_cuentasEnNegativo();
+  if(!malas.length) return "";
+  return "<div style='background:var(--mal-sup);border-bottom:2px solid var(--mal-ln);padding:10px 14px'>"+
+    "<div style='background:var(--sup);border:1.5px solid var(--mal-ln);border-radius:9px;padding:9px 11px'>"+
+      "<div style='font-size:13px;font-weight:800;color:var(--mal)'>⚠️ "+
+        (malas.length===1?"Una cuenta está en negativo":"Hay "+malas.length+" cuentas en negativo")+"</div>"+
+      "<div style='font-size:11px;color:var(--tx2b);margin-top:3px;line-height:1.55'>"+
+        "Eso en un banco no existe. O falta registrar algo que entró, o sobra algo que salió."+
+        "</div>"+
+      malas.map(function(c){
+        return "<div style='font-size:11.5px;color:var(--tx2);margin-top:4px;display:flex;justify-content:space-between;gap:10px'>"+
+          "<span>"+_escAud(c.nombre)+"</span>"+
+          "<b style='color:var(--mal);white-space:nowrap'>−"+c.moneda+" "+f2(Math.abs(parseFloat(c.saldo)||0))+"</b></div>";
+      }).join("")+
+      "<div style='font-size:10.5px;color:var(--tx3);margin-top:8px;line-height:1.55'>"+
+        "Si la pagaste con la <b>tarjeta de crédito</b>, la salida va de la tarjeta, no de esta cuenta. "+
+        "<b>No lo arregles escribiendo el saldo</b>: eso cuadra la pantalla y borra la pista."+
+        "</div>"+
+    "</div></div>";
+}
+
 function _htmlAvisoAperturaFuera(){
   if(!_APERTURA_CAMBIO_FUERA) return "";
   // Si el choque ya salió por el aviso del 67, no se repite: dos avisos del
@@ -6351,6 +6391,89 @@ function _cuentaOMadre(destinoDelLote, cuentaId, moneda){
   if(destinoDelLote===cuentaId) return true;
   var m=_cuentaMadre(moneda);
   return !!(m && destinoDelLote===m.id);
+}
+
+// ── ARREGLO 95 · la tarjeta de crédito es una cuenta, y su saldo es DEUDA ───
+// Sus palabras: "el saldo que yo utilizo de ahí es el mismo límite de reserva
+// que yo tengo en el banco... no tengo dinero propio del banco para utilizar".
+//
+// La tarjeta de PagBank está respaldada por los R$ 1.004 que tiene bloqueados en
+// PAGBANK RESERVA. Hasta ahora la app no la conocía, así que una compra con la
+// tarjeta se apuntaba como si saliera del EFECTIVO de PagBank el día de la
+// compra — cuando del banco no sale nada hasta que se paga la factura.
+//
+// Medido contra su extracto del banco, eso es lo que dejó PagBank en R$ 199,81
+// con el banco en R$ 0,00. El desglose exacto, al céntimo:
+//
+//   +332,31  la factura del 05/10 (932,50) menos lo que sí registró (Claude 600,19)
+//    −80,00  una remesa que entró al banco y no estaba registrada
+//    −52,00  la entrega de la remesa #131, que salió de la TARJETA, no del efectivo
+//     −0,50  medio real de antes del 15/09
+//   ───────
+//    199,81
+//
+// Con la tarjeta como cuenta, cada cosa cae donde toca y las fechas coinciden:
+//
+//   compra con la tarjeta  →  sale de la TARJETA (la deuda sube)
+//   pagar la factura       →  traspaso banco → tarjeta (baja el efectivo y la deuda)
+//   Pix pagado con tarjeta →  la entrega sale de la TARJETA, y su comisión es un egreso
+//
+// No hace falta ningún movimiento nuevo: son el traspaso y el egreso de siempre.
+// Lo único que faltaba era que la cuenta existiera y que su saldo se LEYERA como
+// deuda, porque en una tarjeta el negativo es lo normal — y por eso necesita su
+// propia guardia de límite en vez de la de saldo en negativo.
+function toggleCuentaTarjeta(cid){
+  var c=(S.cuentas||[]).find(function(x){return x.id===cid;});
+  if(!c) return;
+  if(!c.esTarjeta){
+    if(c.esPersonal||c.esReserva||c.esMadre){
+      alert("Una cuenta personal, de reserva o madre no puede ser una tarjeta de crédito."); return;
+    }
+    var t=prompt("💳 Marcar \""+c.nombre+"\" como TARJETA DE CRÉDITO.\n\n"+
+      "Su saldo pasa a leerse como DEUDA: lo que debes, no lo que tienes.\n\n"+
+      "¿Cuál es el límite, en "+c.moneda+"? (déjalo vacío si no quieres fijarlo)",
+      c.limiteTarjeta||"");
+    if(t===null) return;
+    var lim=String(t).trim()?_leerNumero(t,c.moneda):0;
+    if(String(t).trim() && (isNaN(lim)||lim<0)){ alert("Límite inválido."); return; }
+    c.esTarjeta=true; c.limiteTarjeta=lim||0;
+  } else {
+    if(!confirm("Quitar la marca de tarjeta a \""+c.nombre+"\".\n\n"+
+      "Su saldo vuelve a leerse como dinero, y un negativo volverá a salir como aviso.\n\n¿Confirmar?")) return;
+    c.esTarjeta=false;
+  }
+  c._mod=Date.now();
+  logAudit("CUENTA_TARJETA",c.nombre+" → esTarjeta="+c.esTarjeta+(c.esTarjeta?" (límite "+f2(c.limiteTarjeta||0)+")":""));
+  saveData();R();
+}
+function editarLimiteTarjeta(cid){
+  var c=(S.cuentas||[]).find(function(x){return x.id===cid;});
+  if(!c||!c.esTarjeta) return;
+  var t=prompt("Límite de \""+c.nombre+"\", en "+c.moneda+":", c.limiteTarjeta||"");
+  if(t===null) return;
+  var lim=String(t).trim()?_leerNumero(t,c.moneda):0;
+  if(isNaN(lim)||lim<0){ alert("Límite inválido."); return; }
+  c.limiteTarjeta=lim; c._mod=Date.now();
+  logAudit("CUENTA_TARJETA_LIMITE",c.nombre+" → límite "+f2(lim));
+  saveData();R();
+}
+// Lo que se debe en una tarjeta es el saldo en negativo, leído al derecho.
+// Un saldo POSITIVO en una tarjeta es que pagó de más, y eso no es deuda.
+function _deudaTarjeta(c){
+  var s=parseFloat(c&&c.saldo)||0;
+  return s<0 ? Math.round(-s*100)/100 : 0;
+}
+// Lo que cuesta de verdad un Pix pagado con la tarjeta. El comprobante del
+// 05/10 lo dice con todas las letras: R$ 50,00 de transferencia, 4,98% de
+// "taxa do cartão" = R$ 2,49, total R$ 52,49. Ese 2,49 no es parte de lo que
+// recibe el cliente: es un gasto financiero, y metido dentro de la entrega
+// deforma la tasa de la operación (11.000 Bs / 50 son 220, su tasa de vuelta;
+// metiéndole la comisión salen 211,54, que es una tasa que no le dio a nadie).
+function _comisionPixTarjeta(monto){
+  var pct=parseFloat((S.config||{}).pctPixTarjeta);
+  if(isNaN(pct)||pct<0||pct>100) pct=4.98;
+  var m=parseFloat(monto)||0;
+  return { pct:pct, comision:Math.round(m*pct)/100, total:Math.round((m+m*pct/100)*100)/100 };
 }
 
 // Marca una cuenta como jurídica (CNPJ) de la empresa — para diferenciarla de
@@ -11338,6 +11461,15 @@ function delCatPersonal(cat){
   S.config.cats_personal=S.config.cats_personal.filter(function(c){return c!==cat;});
   saveData();R();
 }
+function guardarPixTarjeta(){
+  var v=_leerNumero(document.getElementById("inp-pix-tarjeta").value);
+  if(isNaN(v)||v<0||v>100){ alert("Porcentaje invalido. Escribe por ejemplo 4,98 para 4,98%."); return; }
+  if(!S.config) S.config={};
+  S.config.pctPixTarjeta=v;
+  var e=_comisionPixTarjeta(100);
+  saveData();R();
+  alert("\u2705 Guardado: "+f2(v)+"%.\n\nUn Pix de 100,00 con la tarjeta te cuesta "+f2(e.total)+".");
+}
 function guardarComisionBanco(){
   var v=_leerNumero(document.getElementById("inp-com-banco").value);
   if(isNaN(v)||v<0||v>0.5){alert("Porcentaje inválido. Usa ej: 0.003 para 0,3%");return;}
@@ -11864,7 +11996,14 @@ function rConfigAdmin(){
       "</div>"+
       "<div style=\'display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px\'>";
     csMon.forEach(function(c){
-      var saldo=parseFloat(c.saldo)||0,isNeg=saldo<0,inac=c.activa===false;
+      var saldo=parseFloat(c.saldo)||0,inac=c.activa===false;
+      // ARREGLO 95: en una tarjeta de credito el saldo negativo es lo normal
+      // -es lo que debe-, asi que no se pinta como alarma. Lo que si avisa ahi
+      // es pasarse del limite, que es otra cosa y tiene su propia guardia.
+      var esTj=!!c.esTarjeta, deuda=_deudaTarjeta(c);
+      var limTj=parseFloat(c.limiteTarjeta)||0;
+      var pasada=esTj&&limTj>0&&deuda>limTj;
+      var isNeg=esTj ? pasada : (saldo<0);
       var pct=maxS>0?Math.min(100,Math.abs(saldo)/maxS*100):0;
       var bc=isNeg?"var(--mal-ln)":cfg.color;
       listaCuentas+=
@@ -11879,9 +12018,12 @@ function rConfigAdmin(){
             "</div>"+
             "<div style=\'font-size:10px;color:var(--tx4);margin-top:2px\'>"+(c.tipo||"")+(c.operador&&c.operador!=="general"?" · "+c.operador:"")+"</div>"+
           "</div>"+
-          "<div style=\'background:"+(isNeg?"var(--mal-sup)":cfg.bg)+";border-radius:8px;padding:5px 9px;text-align:right;min-width:75px\'>"+
-            "<div style=\'font-size:15px;font-weight:800;color:"+(isNeg?"var(--mal)":cfg.color)+"\'>"+(isNeg?"−":"")+f2(Math.abs(saldo))+"</div>"+
-            "<div style=\'font-size:10.5px;color:var(--tx4);font-weight:600\'>"+mon+"</div>"+
+          // ARREGLO 95: en una tarjeta la cifra grande NO puede salir como
+          // dinero. Sin esto una deuda de 652,68 se pintaba en verde y sin
+          // signo, exactamente igual que un saldo a favor de 652,68.
+          "<div style=\'background:"+(isNeg?"var(--mal-sup)":esTj?"var(--am6)":cfg.bg)+";border-radius:8px;padding:5px 9px;text-align:right;min-width:75px\'>"+
+            "<div style=\'font-size:15px;font-weight:800;color:"+(isNeg?"var(--mal)":esTj?"var(--am3)":cfg.color)+"\'>"+((isNeg||(esTj&&deuda>0))?"−":"")+f2(Math.abs(saldo))+"</div>"+
+            "<div style=\'font-size:10.5px;color:var(--tx4);font-weight:600\'>"+(esTj&&deuda>0?"debes "+mon:mon)+"</div>"+
           "</div>"+
         "</div>"+
         "<div style=\'background:var(--sup2g);border-radius:100px;height:5px;margin-bottom:10px;overflow:hidden\'>"+
@@ -11894,6 +12036,12 @@ function rConfigAdmin(){
         // porque el diseño se acomoda distinto. Ahora el campo tiene un ancho
         // minimo propio y los botones bajan de linea si no entran.
         (c.esReserva?"<div style=\'font-size:10.5px;font-weight:800;color:var(--mo3-j1);background:var(--mo6-j1);border-radius:6px;padding:2px 6px;margin-bottom:4px;display:inline-block\'>&var(--vd2-j2); RESERVADO &mdash; no cuenta en el disponible</div>":"")+
+        // ARREGLO 95: una tarjeta no dice "saldo", dice cuanto DEBE, de cuanto
+        // y cuanto le queda. El numero de arriba a secas se lee como dinero.
+        (esTj?"<div style=\'font-size:10.5px;font-weight:800;color:"+(pasada?"var(--mal)":"var(--tx2b)")+";background:"+(pasada?"var(--mal-sup)":"var(--sup2)")+";border:1px solid "+(pasada?"var(--mal-ln)":"var(--ln2)")+";border-radius:6px;padding:3px 7px;margin-bottom:4px;display:inline-block\'>"+
+          "&#128179; TARJETA &mdash; debes <b>"+c.moneda+" "+f2(deuda)+"</b>"+
+          (limTj>0?" de "+c.moneda+" "+f2(limTj)+" &middot; "+(pasada?"<b>te pasaste por "+c.moneda+" "+f2(deuda-limTj)+"</b>":"te quedan "+c.moneda+" "+f2(limTj-deuda)):"")+
+          "</div>":"")+
         // FASE 2: la madre se dice, no se adivina por el nombre.
         (c.esMadre?"<div style=\'font-size:10.5px;font-weight:800;color:var(--ok);background:var(--vd6-c);border-radius:6px;padding:2px 6px;margin-bottom:4px;display:inline-block\'>&var(--az2-j1); CUENTA MADRE &mdash; aqu&iacute; caen los "+c.moneda+" de tus USDT</div>":"")+
         "<div style=\'display:flex;gap:5px;align-items:center;flex-wrap:wrap\'>"+
@@ -11905,6 +12053,8 @@ function rConfigAdmin(){
             "style=\'padding:6px 9px;border:1.5px solid "+(c.esPersonal?"var(--az5-g)":"var(--gr6-d)")+";border-radius:8px;font-size:12px;cursor:pointer;background:"+(c.esPersonal?"var(--az6)":"var(--gr6-c)")+"\'>"+(c.esPersonal?"💜":"🤍")+"</button>"+
           "<button onclick=\'toggleCuentaJuridica(\""+c.id+"\")\' title=\'"+(c.esJuridica?"Cuenta jurídica (CNPJ) — click para quitar marca":"Marcar como cuenta jurídica (CNPJ) de la empresa")+"\' "+
             "style=\'padding:6px 9px;border:1.5px solid "+(c.esJuridica?"var(--az5-j1)":"var(--gr6-d)")+";border-radius:8px;font-size:12px;cursor:pointer;background:"+(c.esJuridica?"var(--az6-c)":"var(--gr6-c)")+"\'>🏛️</button>"+
+          "<button onclick=\'"+(c.esTarjeta?"editarLimiteTarjeta":"toggleCuentaTarjeta")+"(\""+c.id+"\")\' title=\'"+(c.esTarjeta?"Tarjeta de credito - click para cambiar el limite":"Marcar como tarjeta de credito (su saldo es lo que debes)")+"\' "+
+            "style=\'padding:6px 9px;border:1.5px solid "+(c.esTarjeta?"var(--am4)":"var(--gr6-d)")+";border-radius:8px;font-size:12px;cursor:pointer;background:"+(c.esTarjeta?"var(--am6)":"var(--gr6-c)")+"\'>&#128179;</button>"+
           "<button onclick=\'toggleCuentaMadre(\""+c.id+"\")\' title=\'"+(c.esMadre?"Cuenta madre — click para quitar marca":"Marcar como cuenta madre: aquí caen los "+c.moneda+" de tus compras y ventas de USDT")+"\' "+
             "style=\'padding:6px 9px;border:1.5px solid "+(c.esMadre?"var(--vd4-j1)":"var(--gr6-d)")+";border-radius:8px;font-size:12px;cursor:pointer;background:"+(c.esMadre?"var(--vd6-c)":"var(--gr6-c)")+"\'>🏦</button>"+
           "<button data-cid=\'"+c.id+"\' onclick=\'toggleCuenta(this)\' title=\'"+(inac?"Reactivar":"Pausar")+"\' "+
@@ -12072,6 +12222,21 @@ function rConfigAdmin(){
             "<input type='text' inputmode='decimal' id='inp-com-banco-transf' value='"+(((S.config||{}).comision_banco_transferencia!==undefined)?S.config.comision_banco_transferencia:54)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
           "</div>"+
           "<button onclick='guardarComisionBanco()' style='padding:9px 14px;background:var(--mal);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
+        "</div>"+
+        // ARREGLO 95: lo que cobra PagBank por hacer un Pix con la tarjeta de
+        // credito. Va aqui, junto a la comision del banco venezolano, porque es
+        // lo mismo: un costo del medio de pago que ella asume y que hasta ahora
+        // no estaba en ninguna parte. Su comprobante del 05/10 dice 4,98%.
+        "<div style='margin-top:14px;padding-top:14px;border-top:1px solid var(--ln2)'>"+
+          "<div style='font-size:12px;font-weight:700;color:var(--tx2);margin-bottom:8px'>&#128179; Pix pagado con la tarjeta de cr&eacute;dito</div>"+
+          "<div style='font-size:11px;color:var(--tx3);margin-bottom:8px'>Lo que cobra PagBank por adelantarte el dinero. <b>No es parte de lo que recibe el cliente</b>: va como gasto financiero, aparte de la entrega.</div>"+
+          "<div style='display:flex;gap:8px;align-items:center;max-width:420px;margin-bottom:8px'>"+
+            "<span style='font-size:11px;color:var(--tx2);min-width:116px'>Comisi&oacute;n &middot; %</span>"+
+            "<input type='text' inputmode='decimal' id='inp-pix-tarjeta' value='"+(((S.config||{}).pctPixTarjeta!==undefined)?S.config.pctPixTarjeta:4.98)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+          "</div>"+
+          (function(){ var e=_comisionPixTarjeta(100);
+            return "<div style='font-size:11px;color:var(--tx3);margin-bottom:8px'>Con "+f2(e.pct)+"%, un Pix de 100,00 te cuesta <b>"+f2(e.total)+"</b> (comisi&oacute;n "+f2(e.comision)+").</div>"; })()+
+          "<button onclick='guardarPixTarjeta()' style='padding:9px 14px;background:var(--am3);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
         "</div>"+
         "<div style='margin-top:14px;padding-top:14px;border-top:1px solid var(--ln2)'>"+
           "<div style='font-size:12px;font-weight:700;color:var(--tx2);margin-bottom:6px'>🚨 Alertas inteligentes</div>"+
@@ -17394,6 +17559,7 @@ function rMain(){
     // fondo de una lista de remesas no es un aviso.
     _htmlAvisoPisado()+
     _htmlAvisoAperturaFuera()+  // ARREGLO 94
+    _htmlAvisoSaldoNegativo()+  // ARREGLO 95
     _htmlAvisoMesSinCerrar()+   // ARREGLO 89
     "<div class='navbar3'>"+
       "<button class='menubtn' onclick='document.getElementById(\"navMenuWrap\").classList.add(\"show\")'>☰ Menú</button>"+

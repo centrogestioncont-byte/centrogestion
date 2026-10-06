@@ -2083,6 +2083,99 @@ estructural comprueba que el código dice lo que debe decir, no que el camino
 funcione. Cuando un arreglo añade un **botón que lleva a algún sitio**, hay que
 pulsarlo en Chromium y mirar dónde cae.
 
+### La tarjeta de crédito es una cuenta, y su saldo es DEUDA (ARREGLO 95)
+
+Sus palabras: *"el saldo que yo utilizo de ahí es el mismo límite de reserva que yo
+tengo en el banco… no tengo dinero propio del banco para utilizar"*.
+
+La tarjeta de PagBank está respaldada por los **R$ 1.004 bloqueados en PAGBANK
+RESERVA**. La app no la conocía, así que una compra con la tarjeta se apuntaba
+**saliendo del efectivo del banco el día de la compra** — y del banco no sale nada
+hasta que se paga la factura. Es un desfase de fechas que no cierra solo.
+
+Medido contra su extracto OFX de PagBank, eso dejó la cuenta en **R$ 199,81** con
+el banco en **R$ 0,00**. El desglose, al céntimo:
+
+```
++332,31   la factura del 05/10 (932,50) menos lo que sí registró (Claude 600,19)
+ −80,00   una remesa que entró al banco y no estaba registrada
+ −52,00   la entrega de la remesa #131, que salió de la TARJETA, no del efectivo
+  −0,50   medio real de antes del 15/09
+────────
+ 199,81
+```
+
+Y la factura cuadra sola: **600,19 de Claude + 332,31 de los relojes = 932,50**.
+
+**No hace falta ningún movimiento nuevo.** Son el traspaso y el egreso de siempre;
+lo único que faltaba era que la cuenta existiera:
+
+```
+compra con la tarjeta   →  sale de la TARJETA (la deuda sube)
+pagar la factura        →  traspaso banco → tarjeta (baja el efectivo y la deuda)
+Pix pagado con tarjeta  →  la entrega sale de la TARJETA, y su comisión es un egreso
+```
+
+- **En una tarjeta el negativo es lo NORMAL**, así que no se pinta de alarma y no
+  entra en el aviso de saldo negativo. Su guardia es otra: pasarse del límite.
+- **Pero la cifra grande tampoco puede salir como dinero.** El primer intento
+  pintaba una deuda de 652,68 en **verde y sin signo**, idéntica a un saldo a
+  favor. Va en ámbar, con el signo y con *"debes"* debajo.
+- **La comisión del Pix con tarjeta es un GASTO FINANCIERO, no parte de la
+  entrega.** Su comprobante del 05/10: R$ 50,00 de transferencia, *taxa do cartão*
+  **4,98 % = R$ 2,49**, total R$ 52,49. Metida dentro de lo entregado deforma la
+  tasa: 11.000 Bs ÷ 50 son **220**, su tasa de vuelta; con la comisión dentro salen
+  **211,54**, que es una tasa que no le dio a nadie. El porcentaje se edita en
+  Configuración, al lado de la comisión del banco venezolano.
+
+#### Y una cuenta de banco en negativo es un aviso, no un detalle
+
+Esto es lo que habría cazado todo lo anterior **solo, en septiembre**, sin pedirle
+un extracto al banco. Reconstruyendo PagBank, el saldo tuvo que irse a negativo dos
+días —**el 12/09 por 178 y el 18/09 por 293**— porque había entradas sin registrar.
+En un banco eso no existe.
+
+El aviso va arriba del panel, fuera del scroll (ARREGLO 62), dice qué cuenta y
+cuánto, y apunta a las dos causas: que se pagó con la tarjeta, o que falta
+registrar una entrada. **Y dice que no se arregla escribiendo el saldo**, que es lo
+que borra la pista.
+
+#### Lo que esto NO repara
+
+Lo ya registrado se queda como está (la regla de siempre). Para dejar PagBank
+cuadrado contra el banco hay que rehacer cuatro cosas a mano, una vez, y la
+**apertura de la tarjeta son los relojes**: `−332,31`, que es la parte de la
+factura que no está en ninguna otra cuenta.
+
+```
+                                                        PagBank    tarjeta
+apertura de la tarjeta: los relojes                                 −332,31
+Claude (600,19) sale de la TARJETA, no del efectivo      800,00     −932,50
+el pago de la factura (932,50) SÍ sale de PagBank       −132,50        0,00
+la entrega de la #131 (50,00 + 2,49 de comisión)         −80,50      −52,49
+la remesa que faltaba del 01/10 (80,00)                   −0,50
+```
+
+PagBank queda en **−0,50** contra los 0,00 del banco, y la tarjeta debiendo
+**52,49** — que es justo el Pix de las 10:01, hecho **después** de pagar la
+factura, así que entra en la siguiente.
+
+**Los relojes NO se tocan.** Están como préstamo a ella de 336,91 del 29/08 contra
+PagBank. En agosto la app llegó a estar **4.900 por encima** del banco y lo que la
+trajo de vuelta fueron sus ajustes a mano del 2 al 12 de septiembre: los relojes
+quedaron dentro de ese reseteo. Moverlos ahora reabre algo ya cerrado. (La tarjeta
+cobró 332,31 y el préstamo dice 336,91 — 4,60 de diferencia que no se persiguió.)
+
+**Y la lección de método, que es la que vale para la próxima:** reconstruir una
+cuenta desde fuera del navegador falló **dos veces** —primero perdiendo las 192
+remesas por buscar la fecha en el campo equivocado (`d`, no `fecha`), y después
+olvidando que **dar un préstamo saca el capital de la cuenta**—. Lo que lo resolvió
+fue el **extracto OFX del banco**: comparar movimiento contra movimiento, con
+margen de días, y mirar **en qué día cambia la diferencia**, no el saldo de cada
+día — `histSaldos` se toma a media jornada y no sirve para comparar cierres.
+
+---
+
 ### Registra la operación — no escribas el saldo
 
 **La regla que más costó el 12/09**, y se rompió tres veces en un día.
