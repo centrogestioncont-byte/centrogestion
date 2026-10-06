@@ -1661,19 +1661,15 @@ puede sumar a mano es peor que no dar el desglose. Medido con su export: salto
   sus datos vale −0,54: el socio le debe. Es la misma regla del ARREGLO 57
   —apartar un número negativo no significa nada— aplicada a esta fila.
 
-### El mismo gasto personal se resta DOS veces (pendiente, medido)
+### El mismo gasto personal se restaba DOS veces (ARREGLO 96)
 
-Sale de medir el ARREGLO 94 y **no está arreglado**: es decisión suya porque le
-mueve los números.
-
-Un gasto personal pagado desde una cuenta 💜 **personal** se resta de "deberías
-tener" por `egPerPagPropio`. Pero una cuenta 💜 no está dentro del capital de la
-empresa —comprobado: sumarle 1.000 a una 💜 no mueve "lo que tienes"— así que ese
+Un gasto personal pagado desde una cuenta 💜 **personal** se restaba de "deberías
+tener" por `egPerPagPropio`. Pero una cuenta 💜 **no está dentro del capital de la
+empresa** —comprobado: sumarle 1.000 a una 💜 no mueve "lo que tienes"— así que ese
 dinero **ya había salido** cuando se traspasó a esa cuenta, y `traspasosAPersonal()`
-ya lo restó. Se resta dos veces.
+ya lo restó. Se restaba dos veces.
 
-Reproducido con su export, y las dos mitades se ven una encima de la otra en la
-propia tarjeta:
+Las dos mitades se veían una encima de la otra en la propia tarjeta:
 
 ```
 12/09  traspaso  BINANCE SAIPA → MI SUELDO BINANCE 💜   51,52 USDT
@@ -1683,16 +1679,58 @@ Gastos personales            −$51,52
 Pasado a cuentas personales  −$51,52   ← el mismo dinero
 ```
 
+Lo arregla `egresosPersonalesDesdeCuentaPersonal()`. Los pagados desde una cuenta
+**de la empresa** se siguen restando: esos sí salieron de ella.
+
+**El corte de fecha es el MISMO que usa la resta a la que corrige**
+(`traspasosAPersonal`): `iso > desdeIso`, y los del mismo día aparte. No es un
+detalle — un descuento con otro corte que la resta que corrige deja un hueco o
+cuenta de más.
+
+**Y lo que NO hay que hacer nunca: cambiarlo en `_acumuladosMes`.** `aperturaBase`
+guarda el valor con la definición vieja, así que el mes nuevo menos la base vieja
+daba **−471,13** con sus datos y le inventaba capital. Hay una guardia que exige
+que `_acumuladosMes` siga leyendo `egPerPagPropio` tal cual.
+
+Medido en sus dos exports, y **el segundo importa tanto como el primero**:
+
 ```
-             sin explicar      veredicto
-hoy ............  +59,28       ⚠️ Sobra sin explicar
-corregido ......   +7,76       ✅ Cuadra   (margen ±50,62)
+                  antes      después
+19/09          59,28 ⚠️    7,76 ✅ Cuadra
+hoy 06/10     716,61 ⚠️  506,06 ⚠️
 ```
 
-O sea que esto es **la mitad de su *"nunca está en 0 siempre tiene un
-desajuste"***. El arreglo sería no restar de `deberias` los gastos personales
-pagados desde una cuenta 💜; los pagados desde una cuenta de la empresa se siguen
-restando, porque esos sí salieron de ella.
+Quita **210,55** de doble descuento, pero con los datos del 06/10 **no la deja en
+cuadra**: lo que queda es otra cosa (la tarjeta de crédito sin modelar y lo de
+PagBank sin reparar). Un arreglo que se presenta como "ahora cuadra" cuando en sus
+datos de hoy no cuadra es peor que no arreglarlo.
+
+### El sueldo se calcula pero NO se aparta (medido, pendiente)
+
+Sus palabras: *"la aplicación lo suelta pero no lo separa… no hay un apartado donde
+me diga mira, tienes que hacer un traspaso de tal cuenta a tal cuenta para apartar
+tu sueldo"*.
+
+Tiene razón, y está medido con su export del 06/10:
+
+```
+pct_sueldo ................  30 %
+utilidad de la empresa ....  296,79
+sueldo del mes ............   89,04   ← el "$90 a mi favor" que ve en Personal
+acumulado de antes ........    2,63
+MI SUELDO BINANCE 💜 ......    0,00   ← nunca se apartó nada
+```
+
+**Y el capital de la empresa NO lo descuenta.** Comprobado subiendo `pct_sueldo` al
+50 %: `capitalRealTotal()` devuelve **2.615,28 antes y después**. O sea que la app
+dice que la empresa tiene 2.615,28 cuando 89,04 de eso ya son de ella.
+
+Es un número, no un movimiento: se acumula en teoría y no sale de ninguna cuenta
+hasta que ella haga el traspaso a mano — y la app no se lo dice en ninguna parte.
+
+**Lo que falta, cuando se toque:** una tarjeta que diga cuánto lleva acumulado, en
+qué cuenta debería estar, y el botón que haga el traspaso. Y decidir si el capital
+de la empresa debe descontarlo — **eso le cambia los números y es decisión suya**.
 
 ### La tarjeta de conciliación: un solo número grande
 

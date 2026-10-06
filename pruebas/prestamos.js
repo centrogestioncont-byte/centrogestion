@@ -74,7 +74,7 @@ const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora"
                     "_mesesDesde", "_acumuladosMes",
                     "conciliacionCapital", "getMesKeyActual", "ajustesDesdeApertura",
                     "_tsDeUid", "_tsDeAjuste", "_deducirHoraApertura", "_isoDeDDMMAA", "_motivoDelAjuste", "_ajusteAEgreso", "_cuentaMadre", "_cuentaOMadre", "_completarDesdeMadre", "toggleCuentaMadre",
-                    "traspasosAPersonal", "efectoTasasDesde", "_isoDeFechaLote",
+                    "traspasosAPersonal", "egresosPersonalesDesdeCuentaPersonal", "efectoTasasDesde", "_isoDeFechaLote",
                     "tasaDeReferencia", "_tasaFijadaAMano", "setTasaDia", "soltarTasaDia",
                     "_isoDeLote", "_fechaLoteIso", "_num", "_horaLote", "_horaAhora", "_horaDe",
                     "_diasDesdeLote", "_fechaLoteLegible", "getLastTasaVenta",
@@ -5628,6 +5628,49 @@ console.log("\n— FASE 2: la cuenta madre —");
   // 6. El limite se puede cambiar sin desmarcar la tarjeta.
   ok(/function editarLimiteTarjeta\(/.test(H),
      "el limite se cambia sin tener que desmarcar y volver a marcar");
+}
+
+// ── ARREGLO 96: un gasto personal pagado DESDE una cuenta 💜 ya salio ──────
+// Una cuenta 💜 no esta dentro del capital de la empresa, asi que ese dinero ya
+// habia salido con el traspaso a esa cuenta: restarlo otra vez en la
+// conciliacion lo contaba dos veces. Medido con su export del 19/09: el "sin
+// explicar" pasa de 59,28 a 7,76, o sea de aviso a Cuadra.
+{
+  const H = sinComentarios(HTML);
+  const f = sinComentarios(sacarFuncion("egresosPersonalesDesdeCuentaPersonal"));
+
+  // Ojo: buscar "esPersonal" a secas pasaba con el filtro roto, porque el mapa
+  // de cuentas 💜 se construye arriba con ese mismo nombre. Hay que exigir que
+  // el filtro lo USE.
+  ok(/esPersonal/.test(f) && /!pers\[e\.cuentaId\]/.test(f),
+     "solo se descuenta lo pagado desde una cuenta marcada 💜");
+  ok(/e\.pagada/.test(f),
+     "y solo lo que de verdad se pago");
+  // El corte tiene que ser el MISMO que usa la resta a la que corrige
+  // (traspasosAPersonal): iso>desdeIso, y los del mismo dia aparte.
+  ok(/iso>desdeIso/.test(f) && /mismoDia/.test(f),
+     "la fecha se compara igual que en traspasosAPersonal, con el mismo corte");
+  ok(/iso<desdeIso\)\s*return/.test(f),
+     "lo anterior a la apertura no entra: eso ya lo descuenta aperturaBase");
+
+  // Se engancha en la conciliacion, y la tarjeta ensena el numero CORREGIDO:
+  // si devolviera el bruto, la lista de la tarjeta dejaria de sumar el salto.
+  const cc = sinComentarios(sacarFuncion("conciliacionCapital"));
+  ok(/egPersDesdePers=egresosPersonalesDesdeCuentaPersonal\(desde\)/.test(cc),
+     "la conciliacion lo descuenta");
+  ok(/egPersonalEmpresa=r2v\(egPersonal-egPersDesdePers\.total\)/.test(cc),
+     "y lo que queda es solo lo que salio de una cuenta de la EMPRESA");
+  ok(/deberias=r2v\([^)]*-egPersonalEmpresa-/.test(cc),
+     "'deberias tener' usa el numero corregido, no el bruto");
+  ok(/egPersonal:egPersonalEmpresa/.test(cc),
+     "y la tarjeta ensena el mismo, para que su lista siga sumando el salto");
+
+  // Lo que NO hay que hacer nunca: cambiarlo en _acumuladosMes. aperturaBase
+  // guarda el valor viejo, asi que el mes nuevo menos la base vieja daria
+  // -471,13 con sus datos y le inventaria capital.
+  const am = sinComentarios(sacarFuncion("_acumuladosMes"));
+  ok(/egPersonal:\s*parseFloat\(c\.egPerPagPropio\)/.test(am),
+     "_acumuladosMes NO cambia: aperturaBase guarda el valor viejo");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
