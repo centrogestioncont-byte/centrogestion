@@ -2598,7 +2598,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261006_v170";
+var APP_VERSION = "20261006_v171";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -13280,29 +13280,58 @@ function rCapitalTotal(){
     if(Math.abs(co.socios)>0.005)
                              _filas.push([co.socios>0?"Pagos a socios":"Cobrado a socios",
                                           -co.socios, co.socios>0?"var(--mal)":"var(--ok)"]);
-    if(co.intAp&&co.intAp.total>0.005)
-                             _filas.push(["Intereses que ya iban en la apertura",-co.intAp.total,   "var(--tx4)"]);
     if(co.traspPers&&Math.abs(co.traspPers.total)>0.005)
                              _filas.push([co.traspPers.total>0?"Pasado a cuentas personales":"Traído de cuentas personales",
                                           -co.traspPers.total, co.traspPers.total>0?"var(--mal)":"var(--ok)"]);
     if(co.ajustes&&Math.abs(co.ajustes.total)>0.005)
                              _filas.push(["Saldos que escribiste a mano ("+co.ajustes.n+")", co.ajustes.total, "var(--tx4)"]);
-    if(co.tasas&&Math.abs(co.tasas.total)>0.005)
-                             _filas.push(["Desfase de las tasas (no es dinero)",  co.tasas.total,   "var(--tx4)"]);
+    // ARREGLO 99: el desfase de las tasas y los intereses que ya iban dentro de
+    // la apertura van JUNTOS en una sola fila. Sus palabras sobre esta tarjeta:
+    // "no lo veo práctico, mucha letra para leer". De las nueve filas, esas dos
+    // eran las únicas que ella no puede perseguir ni corregir —no son dinero
+    // que entró o salió, son aritmética— y una de ellas, el desfase, era la MÁS
+    // GRANDE de todas (−255,32 con sus datos del 06/10), así que la lista
+    // parecía hablar sobre todo de algo que no se puede tocar.
+    // Juntarlas no rompe la suma: la fila lleva el total de las dos, así que el
+    // desglose sigue sumando el salto al céntimo, que es la regla que no se
+    // puede romper aquí.
+    var _noEsDinero=0, _nedPart=[];
+    if(co.tasas&&Math.abs(co.tasas.total)>0.005){ _noEsDinero+=co.tasas.total; _nedPart.push("tasas"); }
+    if(co.intAp&&co.intAp.total>0.005){ _noEsDinero-=co.intAp.total; _nedPart.push("intereses"); }
+    _noEsDinero=Math.round(_noEsDinero*100)/100;
+    if(_nedPart.length)
+                             _filas.push(["No es dinero ("+_nedPart.join(" + ")+")", _noEsDinero, "var(--tx4)"]);
     if(Math.abs(sinExp)>0.005)
                              _filas.push([(sano?"Ruido de tasas, dentro del margen":"⚠️ Sin explicar"),
                                           sinExp, sano?"var(--tx4)":col]);
+    // ARREGLO 99: lo que tiene va en GRANDE y repartido en cajitas, no en una
+    // lista de cuatro líneas sangradas. Sus palabras: "no lo veo práctico, mucha
+    // letra para leer". Lo que ella abre esta pantalla a mirar es cuánto tiene;
+    // el veredicto del contador es otra pregunta y ahora va debajo, aparte.
+    var _caja=function(rot,val){
+      return "<div style='background:var(--sup2);border-radius:9px;padding:8px 10px'>"+
+        "<div style='font-size:10.5px;color:var(--tx3)'>"+rot+"</div>"+
+        "<div style='font-size:14px;font-weight:700;color:var(--tx2);margin-top:1px'>$"+f2(val)+"</div></div>";
+    };
+    var _cajas=[];
+    _cajas.push(_caja("En cuentas", R.enCuentas));
+    if(R.enPrestamos>0) _cajas.push(_caja("Prestado",   R.enPrestamos));
+    if(R.enReserva>0)   _cajas.push(_caja("En reserva", R.enReserva));
+    if(R.porCobrar>0)   _cajas.push(_caja("Por cobrar", R.porCobrar));
     var resumenSuyo=
-      "<div style='background:var(--sup);border-radius:9px;padding:11px 12px;margin-bottom:9px;font-size:11.5px;line-height:1.75'>"+
-        _fRes("Empezaste el "+ds(co.desde)+" con", co.apertura, "var(--tx2)", 1)+
-        "<div style='height:6px'></div>"+
-        _fRes("Hoy tienes", R.total, "var(--tx2)", 1)+
-        _fRes("en cuentas", R.enCuentas, "var(--tx3)", 0, 1)+
-        (R.enReserva>0  ? _fRes("en reserva",            R.enReserva,  "var(--tx3)",0,1):"")+
-        (R.porCobrar>0  ? _fRes("por cobrar de remesas", R.porCobrar,  "var(--tx3)",0,1):"")+
-        (R.enPrestamos>0? _fRes("prestado",              R.enPrestamos,"var(--tx3)",0,1):"")+
-        "<div style='border-top:1px solid var(--ln);margin-top:7px;padding-top:7px'>"+
-          _fRes("Diferencia", _saltoTotal, Math.abs(_saltoTotal)<0.005?"var(--tx2)":(_saltoTotal<0?"var(--mal)":"var(--ok)"), 2)+
+      "<div style='background:var(--sup);border-radius:9px;padding:13px 13px 11px;margin-bottom:9px;font-size:11.5px;line-height:1.75'>"+
+        "<div style='font-size:28px;font-weight:900;letter-spacing:-.02em;line-height:1;color:var(--tx2)'>$"+f2(R.total)+"</div>"+
+        "<div style='font-size:11px;color:var(--tx3);margin-top:3px'>es lo que tienes hoy, todo junto</div>"+
+        "<div style='display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:11px'>"+_cajas.join("")+"</div>"+
+        "<div style='border-top:1px solid var(--ln);margin-top:11px;padding-top:9px'>"+
+          // El rótulo va en gris y solo el número lleva color: pintada entera de
+          // rojo, la línea se lee como si la apertura tuviera algo malo.
+          "<div style='display:flex;justify-content:space-between;gap:10px'>"+
+            "<span style='color:var(--tx3)'>Empezaste el "+ds(co.desde)+" con $"+f2(co.apertura)+"</span>"+
+            "<b style='font-size:13px;white-space:nowrap;color:"+
+              (Math.abs(_saltoTotal)<0.005?"var(--tx2)":(_saltoTotal<0?"var(--mal)":"var(--ok)"))+"'>"+
+              (_saltoTotal<0?"−":"+")+"$"+f2(Math.abs(_saltoTotal))+"</b>"+
+          "</div>"+
         "</div>"+
         "<div style='margin-top:9px;font-size:10.5px;font-weight:800;color:var(--tx3);text-transform:uppercase;letter-spacing:.3px'>De qué viene esa diferencia</div>"+
         _filas.map(function(f){ return _fRes(f[0],f[1],f[2]); }).join("")+
@@ -13320,7 +13349,11 @@ function rCapitalTotal(){
         "<div style='display:flex;justify-content:space-between;border-top:1px solid var(--ln);margin-top:5px;padding-top:5px;font-size:13px'><b>Deberías tener</b><b>$"+f2(co.deberias)+"</b></div>"+
       "</div>"+
       "<div style='background:var(--sup);border-radius:9px;padding:10px 12px;margin-bottom:8px'>"+lineaReal+"</div>";
-    return "<div style='background:"+bg+";border:1.5px solid "+brd+";border-radius:12px;padding:14px;margin-bottom:12px'>"+
+    // ARREGLO 99: el contenedor ya no se pinta entero del color de la alarma.
+    // Pintado así, el bloque de "cuánto tienes" —que es lo que ella abre a
+    // mirar y que no tiene nada de malo— salía dentro de un recuadro ámbar.
+    // El color vive ahora en el semáforo, que es lo único que lo dice.
+    return "<div style='background:var(--sup2);border:1px solid var(--ln);border-radius:12px;padding:14px;margin-bottom:12px'>"+
       // ARREGLO 71: la cabecera tenía DOS números grandes compitiendo —la
       // diferencia bruta y el sin explicar— y tres tablas debajo. Sus palabras:
       // "mucha letra, no es fácil de entender". Ahora manda uno solo, el que hay
@@ -13333,25 +13366,32 @@ function rCapitalTotal(){
       // no enseña ninguna cifra roja; la cifra sigue en la línea de abajo.
       "<div style='margin-bottom:10px'>"+
         "<div style='display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:9px'>"+
-          "<div style='font-size:13px;font-weight:800;color:"+col+"'>🧾 Balance desde que empezaste</div>"+
+          "<div style='font-size:13px;font-weight:800;color:var(--tx2)'>💰 Balance de Cuentas</div>"+
           "<div style='font-size:10.5px;color:var(--tx3)'>desde el "+ds(co.desde)+" · apertura $"+f2(co.apertura)+
             ((co.aperturaSaldos&&Object.keys(co.aperturaSaldos).length)?"":" <span style='color:var(--avi-tx2)'>(sin foto de saldos)</span>")+"</div>"+
         "</div>"+
         resumenSuyo+
-        "<div style='font-size:22px;font-weight:900;color:"+col+";line-height:1.2;margin-top:7px'>"+
-          (sano ? "✅ Cuadra"
-                : (sinExp<0 ? "⚠️ Falta por explicar $"+f2(Math.abs(sinExp))
-                            : "⚠️ Sobra sin explicar $"+f2(Math.abs(sinExp))))+"</div>"+
-        "<div style='font-size:11px;color:var(--tx3);margin-top:4px;line-height:1.6'>"+
-          "Tienes <b style='color:var(--tx2)'>$"+f2(R.total)+"</b> · deberías tener <b style='color:var(--tx2)'>$"+f2(co.deberias)+"</b>"+
-          (Math.abs(dif)<0.005 ? " · clavado"
-            // ARREGLO 71: dentro del margen la resta se dice igual, pero sin
-            // color de alarma. Un "te faltan $68,44" en rojo dentro de una
-            // tarjeta verde es la misma contradiccion que el ARREGLO 69 vino a
-            // quitar, solo que al reves.
-            : " · <b style='color:"+(sano?"var(--tx2)":colDif)+"'>"+(dif<0?"te faltan ":"te sobran ")+"$"+f2(Math.abs(dif))+"</b>")+
-          (sano ? " ("+(Math.abs(sinExp)<0.005?"nada sin explicar":"lo que no encaja cabe en el ±$"+f2(tol)+" de ruido normal")+")"
-                : " · el margen normal es ±$"+f2(tol))+
+      "</div>"+
+      // ARREGLO 99: el veredicto era un titular de 22px con un párrafo debajo
+      // que se plegaba en tres renglones. Es la pregunta del contador, no la
+      // suya, así que baja a un semáforo de una línea con su número y su color.
+      // La resta que ella hace a mano sigue entera (ARREGLO 69: esconderla la
+      // dejó sin entender de dónde salía el titular), pero en letra pequeña
+      // debajo, no compitiendo con él.
+      "<div style='display:flex;align-items:center;gap:11px;background:var(--sup);"+
+        "border:1px solid var(--ln);border-left:4px solid "+col+";border-radius:11px;padding:11px 13px;margin-bottom:9px'>"+
+        "<div style='min-width:0'>"+
+          "<div style='font-size:19px;font-weight:900;color:"+col+";line-height:1.15'>"+
+            (sano ? "✅ Cuadra" : "$"+f2(Math.abs(sinExp)))+"</div>"+
+          "<div style='font-size:11px;color:var(--tx3);margin-top:3px;line-height:1.5'>"+
+            (sano ? (Math.abs(sinExp)<0.005?"nada sin explicar":"lo que no encaja cabe en el ±$"+f2(tol)+" de ruido normal")
+                  : (sinExp<0?"falta por explicar":"sobra sin explicar")+" · el margen normal es ±$"+f2(tol))+
+          "</div>"+
+          "<div style='font-size:10.5px;color:var(--tx4);margin-top:3px;line-height:1.5'>"+
+            "Tienes $"+f2(R.total)+" · deberías tener $"+f2(co.deberias)+
+            (Math.abs(dif)<0.005 ? " · clavado"
+              : " · <b style='color:"+(sano?"var(--tx4)":colDif)+"'>"+(dif<0?"te faltan ":"te sobran ")+"$"+f2(Math.abs(dif))+"</b>")+
+          "</div>"+
         "</div>"+
       "</div>"+
       // ARREGLO 60: esto estaba DENTRO del desplegable "por qué sale este
@@ -13362,27 +13402,29 @@ function rCapitalTotal(){
       // ARREGLO 72: el aviso decía "no se pueden situar" y no daba con qué
       // juzgarlo. Ahora la hora de cada uno sale del propio id, así que se
       // enseñan —con su hora y su monto— y hay un botón que los sitúa.
+      // ARREGLO 99: era un párrafo de tres renglones con las horas de cada
+      // ajuste debajo y un botón de ancho completo, y lleva ahí sin cambiar
+      // desde el 11/09: eso ya no se lee, es papel pintado. Ahora es UNA línea
+      // con el número y el botón al lado. No se pliega —un aviso escondido no
+      // es un aviso, y este dice que hay dinero que la cuenta de arriba no está
+      // contando— pero deja de ocupar media pantalla. El detalle con las horas
+      // sigue entero dentro del botón, que simula antes de aplicar nada.
       (aj.nMismoDia>0?(function(){
-        var hhm=function(t){var q=new Date(t);
-          return String(q.getHours()).padStart(2,"0")+":"+String(q.getMinutes()).padStart(2,"0");};
         var conHora=(aj.enElAire||[]).filter(function(q){return q.ts>0;});
-        return "<div style='background:var(--am6-a);border:1px solid var(--am4);border-radius:9px;padding:9px 11px;margin-bottom:8px;font-size:11px;color:var(--avi-tx);line-height:1.5'>"+
-        "⚠️ <b>"+aj.nMismoDia+" ajuste"+(aj.nMismoDia!==1?"s":"")+" de saldo por "+(aj.mismoDia<0?"−":"+")+"$"+f2(Math.abs(aj.mismoDia))+" que no se pueden situar.</b> "+
-        "Del mismo día que la apertura, que se fijó sin hora: no se sabe si fueron antes o después, así que ni cuentan ni se descartan."+
-        (conHora.length?"<div style='margin-top:6px;font-size:10.5px;color:var(--avi-tx2)'>"+
-          conHora.slice().sort(function(a,b){return a.ts-b.ts;}).map(function(q){
-            return hhm(q.ts)+" <b>"+(q.usdt<0?"−":"+")+"$"+f2(Math.abs(q.usdt))+"</b>";
-          }).join(" · ")+"</div>":"")+
-        (conHora.length===aj.nMismoDia?
-          "<button onclick='situarAjustesEnElAire()' style='width:100%;margin-top:8px;padding:8px;border:1px solid var(--am4);border-radius:8px;background:var(--sup);color:var(--tx2b);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit'>📍 Situarlos (te digo a qué número llevan antes de aplicarlo)</button>"
-          :"")+
-      "</div>";})():"")+
+        return "<div style='display:flex;align-items:center;gap:9px;background:var(--sup);border:1px solid var(--am4);"+
+          "border-radius:10px;padding:9px 12px;margin-bottom:8px;font-size:11.5px;color:var(--avi-tx)'>"+
+          "<span>⚠️ "+aj.nMismoDia+" ajuste"+(aj.nMismoDia!==1?"s":"")+" sin situar · "+
+            "<b>"+(aj.mismoDia<0?"−":"+")+"$"+f2(Math.abs(aj.mismoDia))+"</b></span>"+
+          (conHora.length===aj.nMismoDia?
+            "<button onclick='situarAjustesEnElAire()' style='margin-left:auto;padding:6px 12px;border:1px solid var(--am4);border-radius:8px;background:var(--sup2);color:var(--tx2b);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap'>📍 Situarlos</button>"
+            :"<span style='margin-left:auto;font-size:10.5px;color:var(--tx4);white-space:nowrap'>sin hora</span>")+
+        "</div>";})():"")+
       // ARREGLO 48/60 + 94: los avisos NO se pliegan. Al mover la tabla de la
       // diferencia al desplegable, este aviso se iba dentro con ella — y es de
       // los que tienen que verse siempre, porque dice que hay dinero que la
       // cuenta de arriba NO está contando. La guardia de pruebas lo cazó.
       (aj.sinTasa
-        ? "<div style='background:var(--am6-a);border:1px solid var(--am4);border-radius:9px;padding:9px 11px;margin-bottom:8px;font-size:11px;color:var(--mal);line-height:1.55'>"+
+        ? "<div style='background:var(--sup);border:1px solid var(--am4);border-radius:10px;padding:9px 12px;margin-bottom:8px;font-size:11.5px;color:var(--mal)'>"+
             "⚠️ Algún ajuste es de una moneda sin tasa y no está contado aquí."+
           "</div>"
         : "")+
@@ -13391,28 +13433,33 @@ function rCapitalTotal(){
       // desglose, y por eso se queda fuera del desplegable aunque la tabla de la
       // diferencia se haya ido dentro.
       (aj.nSinSaber>0
-        ? "<div style='background:var(--am6-a);border:1px solid var(--am4);border-radius:9px;padding:9px 11px;margin-bottom:8px;font-size:11px;color:var(--avi-tx);line-height:1.55'>"+
-            "⚠️ "+aj.nSinSaber+" ajuste"+(aj.nSinSaber===1?"":"s")+" de saldo que marcaste <b>«no sé por qué»</b>. "+
-            "No se dan por explicados, así que están dentro del «sin explicar» de arriba."+
+        ? "<div style='background:var(--sup);border:1px solid var(--am4);border-radius:10px;padding:9px 12px;margin-bottom:8px;font-size:11.5px;color:var(--avi-tx)'>"+
+            "⚠️ "+aj.nSinSaber+" ajuste"+(aj.nSinSaber===1?"":"s")+" <b>«no sé por qué»</b>"+
+            " <span style='color:var(--tx4);font-size:10.5px'>· cuenta"+(aj.nSinSaber===1?"":"n")+" dentro del sin explicar</span>"+
           "</div>"
         : "")+
       // ARREGLO 71: cuando cuadra no se dice dos veces. El titular ya lo dice,
       // y este párrafo repetido debajo era parte de la "mucha letra". Cuando NO
       // cuadra sí se queda, porque es lo único que dice por dónde empezar, pero
       // en una frase: el resto de la explicación está en el desplegable.
+      // ARREGLO 99: la pista de por dónde empezar se queda —es lo único que
+      // dice qué hacer con el número— pero en gris y pequeña. En negrita y del
+      // color de la alarma competía con el semáforo, que es quien da el veredicto.
       (sano ? "" :
-      "<div style='font-size:11px;color:"+col+";font-weight:700;line-height:1.6'>"+
+      "<div style='font-size:10.5px;color:var(--tx3);line-height:1.55;margin-bottom:2px'>"+
         (sinExp<0
           ? "Dinero que salió sin quedar registrado — lo más común es lo que sacas para ti sin anotarlo. Búscalo entre las operaciones desde el "+ds(co.desde)+"."
           : "Suele ser dinero que entró sin registrarse como ganancia, o una apertura que se guardó más baja de lo que tocaba.")+
-        " <span style='font-weight:400;color:var(--tx3)'>Volver a fijar la apertura no lo arregla: lo esconde.</span>"+
+        " <span style='color:var(--tx4)'>Volver a fijar la apertura no lo arregla: lo esconde.</span>"+
       "</div>")+
       (co.baseFaltante?"<div style='background:var(--am6);border:1px solid var(--am4-b);border-radius:8px;padding:9px 11px;font-size:11px;color:var(--avi-tx);line-height:1.6;margin-top:8px'>"+
         "<b>⚠️ Vuelve a fijar la apertura.</b> Esta se guardó antes de un arreglo: contaba dos veces lo que ya llevabas ganado el mes en que la fijaste, así que la diferencia arranca torcida. Un clic en el botón de abajo lo deja en cero."+
       "</div>":"")+
       // El desplegable: la explicación y los botones, que se leen una vez y
       // estorban las otras cien.
-      "<div onclick='S._concDetalle=!S._concDetalle;R()' style='display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:9px;padding:9px 11px;background:var(--sup);border:1px solid "+brd+";border-radius:9px;cursor:pointer;user-select:none;font-size:11px;font-weight:700;color:var(--tx2b)'>"+
+      // ARREGLO 99: en gris. Con el borde de la alarma parecía otro aviso, y no
+      // lo es: es donde vive la explicación, que se lee una vez.
+      "<div onclick='S._concDetalle=!S._concDetalle;R()' style='display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:9px;padding:9px 11px;background:var(--sup);border:1px solid var(--ln);border-radius:9px;cursor:pointer;user-select:none;font-size:11px;font-weight:700;color:var(--tx3b)'>"+
         "<span>ℹ️ Por qué sale este número, y qué puedo hacer</span><span style='font-size:13px;color:var(--tx3b)'>"+(S._concDetalle?"▴":"▾")+"</span>"+
       "</div>"+
       (S._concDetalle?

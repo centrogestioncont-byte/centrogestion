@@ -1868,6 +1868,73 @@ explicar— y **tres tablas** debajo, 14 filas entre las dos restas.
   ruido de tasas, no una fuga; por eso existe la tolerancia. Dentro del margen el
   titular dice **Cuadra** y no enseña ninguna cifra roja.
 
+#### Y aun así decía TRES cosas a la vez (ARREGLO 99)
+
+Sus palabras: *"no lo veo práctico, esas cosas amarillas, mucha letra para
+leer"*. Con sus datos del 06/10 la tarjeta enseñaba, una debajo de otra:
+
+```
+Diferencia           +$23,16   verde
+te faltan           −$127,66   rojo
+Sobra sin explicar  +$215,47   ámbar
+```
+
+Las tres son correctas y suman bien. Juntas, no se puede saber cuál mirar — es
+el mismo fallo del ARREGLO 60 y del 71, por tercera vez y en otra forma.
+
+- **El contenedor dejó de pintarse del color de la alarma.** Pintado así, el
+  bloque de *cuánto tienes* —que no tiene nada de malo— salía dentro de un
+  recuadro ámbar. **Eso son "las cosas amarillas"**: el color lo lleva ahora
+  solo el semáforo, en su borde izquierdo.
+- **Lo que ella abre a mirar va primero y en grande:** cuánto tiene hoy, en un
+  número de 28px, con cuatro cajitas debajo (en cuentas / prestado / en reserva
+  / por cobrar). El veredicto es la pregunta del **contador** y baja a un
+  semáforo de una línea.
+- **La resta que ella hace a mano sigue entera** (ARREGLO 69: esconderla la dejó
+  sin entender de dónde salía el titular), pero en letra pequeña dentro del
+  semáforo, no compitiendo con él.
+- **El rótulo de la apertura va en gris y solo el número lleva color.** Pintada
+  entera de rojo, *"Empezaste el 11/09 con $2.544,79"* se lee como si la
+  apertura tuviera algo malo.
+
+**Los dos recuadros amarillos pasan a una línea cada uno**, con su número y su
+botón al lado:
+
+```
+⚠️ 7 ajustes sin situar · −$239,02        [📍 Situarlos]
+⚠️ 1 ajuste «no sé por qué» · cuenta dentro del sin explicar
+```
+
+**No se pliegan** —un aviso escondido no es un aviso, y estos dicen que hay
+dinero que la cuenta de arriba no está contando— pero llevaban ahí sin cambiar
+**desde el 11/09**: un aviso permanente escrito en tres renglones deja de
+leerse. La guardia está anclada al `+(` que abre el ternario, porque escrita
+sin ancla pasaba con el aviso ya apagado.
+
+**Y las dos filas que NO son dinero van juntas en una.** De las nueve del
+desglose, el desfase de las tasas y los intereses que ya iban en la apertura
+eran las únicas que ella no puede perseguir ni corregir — y el desfase era **la
+más grande de todas** (−$253,94 con sus datos), así que la lista parecía hablar
+sobre todo de algo que no se puede tocar:
+
+```
+No es dinero (tasas + intereses)   −$279,16
+```
+
+Juntarlas **no rompe la suma**, que es la regla que aquí no se puede romper: la
+fila lleva el total de las dos. Comprobado con su export del 06/10: salto
+**−0,64** y suma de las filas **−0,64**, descuadre **0**.
+
+**Lo que NO se hizo, aunque la maqueta lo proponía: plegar el desglose.** Esa
+lista es lo que convierte un número en algo que se puede perseguir, y ya hay una
+guardia de hace cinco arreglos que exige que se vea sin desplegar nada. Se
+redujo (de 9 filas a 8) en vez de esconderla.
+
+**Y una corrección sobre el diagnóstico, por si vuelve a surgir:** el desfase de
+las tasas **nunca estuvo dentro del "sin explicar"** —`sinExplicar = diferencia
+− ajustes − tasas` ya lo descuenta—. Lo que estaba mal era que ocupara la fila
+más grande de una lista de cosas que perseguir.
+
 ### Evolución mide la tendencia, no el capital
 
 Tenía un "Resumen total" que restaba la ganancia sumada de los meses menos lo
