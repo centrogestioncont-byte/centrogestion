@@ -2598,7 +2598,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261006_v171";
+var APP_VERSION = "20261006_v172";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -13249,12 +13249,6 @@ function rCapitalTotal(){
     // Por eso las filas de abajo son las MISMAS que ya calcula
     // conciliacionCapital(): ninguna se suma aparte (es la regla de no dar dos
     // respuestas al mismo número, la que ya costó el 34,27 contra 34,28).
-    var _fRes=function(txt,val,col,gordo,sangria){
-      return "<div style='display:flex;justify-content:space-between;gap:10px"+(sangria?";padding-left:12px":"")+"'>"+
-        "<span style='color:"+(col||"var(--tx2)")+"'>"+txt+"</span>"+
-        "<b style='color:"+(col||"var(--tx2)")+(gordo?";font-size:13px":"")+";white-space:nowrap'>"+
-          (val<0?"−":(gordo===2?"+":""))+"$"+f2(Math.abs(val))+"</b></div>";
-    };
     var _saltoTotal=R.total-co.apertura;
     // Las filas tienen que SUMAR el salto, al céntimo. La identidad sale de
     // conciliacionCapital() y no hay ninguna cuenta nueva aquí:
@@ -13269,45 +13263,79 @@ function rCapitalTotal(){
     // Por eso ajustes y tasas van AQUÍ dentro. El primer intento las dejó fuera
     // y la lista no cuadraba con el total que ella tiene justo encima: una
     // tarjeta que no se puede sumar a mano es peor que no dar el desglose.
+    // ── ARREGLO 100 · la pregunta de verdad: ¿está creciendo? ──────────
+    //
+    // Sus palabras: "lo que me interesa saber es que el dinero realmente esté
+    // creciendo como dice... que la ganancia que supuestamente me dice que me
+    // estoy ganando mensual, realmente sea esa. Y no que me digas 'ganaste este
+    // mes 200 dólares' pero resulta que no tengo de qué forma ver que sean 200,
+    // porque el saldo sigue siendo el mismo."
+    //
+    // La tarjeta tenía DOS "deberías tener" y salían a la vez: la lista de
+    // arriba iba de la apertura a lo que tiene (cuadraba), y el semáforo decía
+    // "deberías tener 2.695,61 · te faltan 127,66". Los dos son correctos y
+    // responden preguntas distintas, pero juntos no hay forma de saber cuál
+    // mirar — que es exactamente lo que ella dijo: "no estoy entendiendo ese
+    // punto".
+    //
+    // Ahora manda UNA cadena, la suya, en tres cifras:
+    //
+    //     GANASTE (en el papel)  −  lo que CRECIÓ  =  la DIFERENCIA
+    //
+    // y debajo, las cinco cosas que hacen esa diferencia. Medido con su export
+    // del 06/10: ganó 201,18 en el papel y su capital no creció (−0,64), y la
+    // diferencia de −201,82 sale entera de las cinco filas, al céntimo:
+    //
+    //     pasó a sus cuentas 💜      −51,52
+    //     sus bolívares valen menos −253,94   ← la pieza grande
+    //     saldos escritos a mano     −87,88
+    //     intereses de la apertura   −25,22
+    //     sin explicar              +216,74
+    //
+    // O sea que la respuesta a "¿de verdad gané 200?" es: sí los ganó, y están
+    // casi todos en bolívares que hoy valen menos. Eso es lo que ella no podía
+    // ver, y es justo el riesgo que ella misma explicó.
+    var _saltoTotal2=_saltoTotal;
+    var _r2=function(n){return Math.round(n*100)/100;};
+    var _enPapel=_r2(co.bruta-co.egEmpresa-co.egPersonal-co.socios);
+    var _dif3=_r2(_saltoTotal2-_enPapel);
+    // Las cinco filas tienen que SUMAR esa diferencia, al céntimo. Sale de la
+    // identidad de conciliacionCapital() y no se calcula nada nuevo:
+    //
+    //   salto = (bruta − egEmpresa − egPersonal − socios) − intAp − traspPers
+    //           + ajustes + tasas + sinExplicar
+    //   ⇒ salto − enPapel = −traspPers − intAp + ajustes + tasas + sinExplicar
     var _filas=[];
-    if(co.bruta>0.005)       _filas.push(["Ganancia bruta",                       co.bruta,         "var(--ok)"]);
-    if(co.egEmpresa>0.005)   _filas.push(["Egresos de la empresa",               -co.egEmpresa,     "var(--mal)"]);
-    if(co.egPersonal>0.005)  _filas.push(["Gastos personales",                   -co.egPersonal,    "var(--mal)"]);
-    // El saldo de un socio puede ser NEGATIVO: eso es que él le debe a la
-    // empresa, o sea un cobro, no un pago (ARREGLO 57 lo dejó escrito para el
-    // cierre y aquí vale igual). Con sus datos vale −0,54, así que la fila
-    // decía "Pagos a socios +$0,54", que se lee como un pago en negativo.
-    if(Math.abs(co.socios)>0.005)
-                             _filas.push([co.socios>0?"Pagos a socios":"Cobrado a socios",
-                                          -co.socios, co.socios>0?"var(--mal)":"var(--ok)"]);
     if(co.traspPers&&Math.abs(co.traspPers.total)>0.005)
-                             _filas.push([co.traspPers.total>0?"Pasado a cuentas personales":"Traído de cuentas personales",
-                                          -co.traspPers.total, co.traspPers.total>0?"var(--mal)":"var(--ok)"]);
+      _filas.push([co.traspPers.total>0?"Pasaste a tus cuentas 💜":"Trajiste de tus cuentas 💜",
+                   -co.traspPers.total, "var(--tx4)",
+                   co.traspPers.total>0?"sigue siendo tuyo":""]);
+    // ARREGLO 100: esta fila se llamaba "no es dinero" y eso era FALSO para la
+    // pregunta que ella hace. efectoTasasDesde() valora cada movimiento a la
+    // tasa de HOY y lo compara con la ganancia que se apuntó aquel día, así que
+    // esto es, sobre todo, sus bolívares valiendo menos hoy que cuando entraron
+    // — que es justo el riesgo que ella misma explicó ("tener muchos bolívares
+    // parados sí me perjudica"). Con sus datos es −255,32: la pieza más grande
+    // del hueco. Llamarlo "no es dinero" le tapaba la respuesta.
+    if(co.tasas&&Math.abs(co.tasas.total)>0.005)
+      _filas.push([co.tasas.total<0?"Tus bolívares valen menos hoy":"Tus saldos valen más hoy",
+                   co.tasas.total, "var(--tx4)", ""]);
     if(co.ajustes&&Math.abs(co.ajustes.total)>0.005)
-                             _filas.push(["Saldos que escribiste a mano ("+co.ajustes.n+")", co.ajustes.total, "var(--tx4)"]);
-    // ARREGLO 99: el desfase de las tasas y los intereses que ya iban dentro de
-    // la apertura van JUNTOS en una sola fila. Sus palabras sobre esta tarjeta:
-    // "no lo veo práctico, mucha letra para leer". De las nueve filas, esas dos
-    // eran las únicas que ella no puede perseguir ni corregir —no son dinero
-    // que entró o salió, son aritmética— y una de ellas, el desfase, era la MÁS
-    // GRANDE de todas (−255,32 con sus datos del 06/10), así que la lista
-    // parecía hablar sobre todo de algo que no se puede tocar.
-    // Juntarlas no rompe la suma: la fila lleva el total de las dos, así que el
-    // desglose sigue sumando el salto al céntimo, que es la regla que no se
-    // puede romper aquí.
-    var _noEsDinero=0, _nedPart=[];
-    if(co.tasas&&Math.abs(co.tasas.total)>0.005){ _noEsDinero+=co.tasas.total; _nedPart.push("tasas"); }
-    if(co.intAp&&co.intAp.total>0.005){ _noEsDinero-=co.intAp.total; _nedPart.push("intereses"); }
-    _noEsDinero=Math.round(_noEsDinero*100)/100;
-    if(_nedPart.length)
-                             _filas.push(["No es dinero ("+_nedPart.join(" + ")+")", _noEsDinero, "var(--tx4)"]);
+      _filas.push(["Saldos que escribiste a mano ("+co.ajustes.n+")", co.ajustes.total, "var(--tx4)", ""]);
+    if(co.intAp&&co.intAp.total>0.005)
+      _filas.push(["Intereses que ya iban en la apertura", -co.intAp.total, "var(--tx4)", ""]);
     if(Math.abs(sinExp)>0.005)
-                             _filas.push([(sano?"Ruido de tasas, dentro del margen":"⚠️ Sin explicar"),
-                                          sinExp, sano?"var(--tx4)":col]);
-    // ARREGLO 99: lo que tiene va en GRANDE y repartido en cajitas, no en una
-    // lista de cuatro líneas sangradas. Sus palabras: "no lo veo práctico, mucha
-    // letra para leer". Lo que ella abre esta pantalla a mirar es cuánto tiene;
-    // el veredicto del contador es otra pregunta y ahora va debajo, aparte.
+      _filas.push([(sano?"Ruido de tasas, dentro del margen":"⚠️ Sin explicar"), sinExp,
+                   sano?"var(--tx4)":col, sano?"":"a perseguir ↓"]);
+
+    // Las tres cifras grandes. Es lo que ella abre a mirar, y cabe de un vistazo.
+    var _tile=function(rot,val,pie,c){
+      return "<div style='flex:1;min-width:0;background:var(--sup2);border-radius:10px;padding:9px 8px;text-align:center'>"+
+        "<div style='font-size:10px;font-weight:800;color:var(--tx3);text-transform:uppercase;letter-spacing:.2px'>"+rot+"</div>"+
+        "<div style='font-size:16px;font-weight:900;color:"+c+";margin-top:3px;white-space:nowrap'>"+
+          (val<0?"−":"+")+"$"+f2(Math.abs(val))+"</div>"+
+        "<div style='font-size:10px;color:var(--tx4);margin-top:1px;line-height:1.3'>"+pie+"</div></div>";
+    };
     var _caja=function(rot,val){
       return "<div style='background:var(--sup2);border-radius:9px;padding:8px 10px'>"+
         "<div style='font-size:10.5px;color:var(--tx3)'>"+rot+"</div>"+
@@ -13318,32 +13346,47 @@ function rCapitalTotal(){
     if(R.enPrestamos>0) _cajas.push(_caja("Prestado",   R.enPrestamos));
     if(R.enReserva>0)   _cajas.push(_caja("En reserva", R.enReserva));
     if(R.porCobrar>0)   _cajas.push(_caja("Por cobrar", R.porCobrar));
+    var _dias=(function(){
+      try{ var a=new Date(co.desde+"T00:00:00"), b=new Date();
+           var d=Math.round((b-a)/86400000); return d>0?d:0; }catch(e){ return 0; }
+    })();
     var resumenSuyo=
       "<div style='background:var(--sup);border-radius:9px;padding:13px 13px 11px;margin-bottom:9px;font-size:11.5px;line-height:1.75'>"+
         "<div style='font-size:28px;font-weight:900;letter-spacing:-.02em;line-height:1;color:var(--tx2)'>$"+f2(R.total)+"</div>"+
         "<div style='font-size:11px;color:var(--tx3);margin-top:3px'>es lo que tienes hoy, todo junto</div>"+
         "<div style='display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:11px'>"+_cajas.join("")+"</div>"+
-        "<div style='border-top:1px solid var(--ln);margin-top:11px;padding-top:9px'>"+
-          // El rótulo va en gris y solo el número lleva color: pintada entera de
-          // rojo, la línea se lee como si la apertura tuviera algo malo.
-          "<div style='display:flex;justify-content:space-between;gap:10px'>"+
-            "<span style='color:var(--tx3)'>Empezaste el "+ds(co.desde)+" con $"+f2(co.apertura)+"</span>"+
-            "<b style='font-size:13px;white-space:nowrap;color:"+
-              (Math.abs(_saltoTotal)<0.005?"var(--tx2)":(_saltoTotal<0?"var(--mal)":"var(--ok)"))+"'>"+
-              (_saltoTotal<0?"−":"+")+"$"+f2(Math.abs(_saltoTotal))+"</b>"+
-          "</div>"+
+      "</div>"+
+      // La cadena suya, en tres cifras: ganaste → creció → la diferencia.
+      "<div style='background:var(--sup);border-radius:9px;padding:11px 12px;margin-bottom:9px'>"+
+        "<div style='font-size:10.5px;color:var(--tx3);margin-bottom:8px'>"+
+          "Empezaste el "+ds(co.desde)+" con <b style='color:var(--tx2)'>$"+f2(co.apertura)+"</b>"+
+          (_dias>0?" · hace "+_dias+" día"+(_dias===1?"":"s"):"")+"</div>"+
+        "<div style='display:flex;gap:6px'>"+
+          _tile("Ganaste", _enPapel, "en el papel", _enPapel<0?"var(--mal)":"var(--ok)")+
+          _tile("Creció", _saltoTotal2, "tu capital", _saltoTotal2<0?"var(--mal)":"var(--ok)")+
+          _tile("Diferencia", _dif3, "de dónde sale ↓", Math.abs(_dif3)<0.005?"var(--tx2)":"var(--avi-tx2)")+
         "</div>"+
-        "<div style='margin-top:9px;font-size:10.5px;font-weight:800;color:var(--tx3);text-transform:uppercase;letter-spacing:.3px'>De qué viene esa diferencia</div>"+
-        _filas.map(function(f){ return _fRes(f[0],f[1],f[2]); }).join("")+
+        "<div style='margin-top:10px;font-size:11.5px;line-height:1.7'>"+
+          _filas.map(function(x){
+            return "<div style='display:flex;justify-content:space-between;gap:10px'>"+
+              "<span style='color:"+(x[2]||"var(--tx2)")+"'>"+x[0]+
+                (x[3]?" <span style='font-size:10px;color:var(--tx4)'>· "+x[3]+"</span>":"")+"</span>"+
+              "<b style='color:"+(x[2]||"var(--tx2)")+";white-space:nowrap'>"+
+                (x[1]<0?"−":"+")+"$"+f2(Math.abs(x[1]))+"</b></div>";
+          }).join("")+
+        "</div>"+
       "</div>";
-
     var tablasCuenta=
       "<div style='background:var(--sup);border-radius:9px;padding:10px 12px;margin-bottom:8px;font-size:11px;color:var(--tx2);line-height:1.7'>"+
         "<div style='display:flex;justify-content:space-between'><span>Saldo de apertura</span><b>$"+f2(co.apertura)+"</b></div>"+
         "<div style='display:flex;justify-content:space-between;color:var(--ok)'><span>+ Ganancia bruta</span><b>+$"+f2(co.bruta)+"</b></div>"+
         (co.egEmpresa>0?"<div style='display:flex;justify-content:space-between;color:var(--mal)'><span>− Egresos empresa</span><b>−$"+f2(co.egEmpresa)+"</b></div>":"")+
         (co.egPersonal>0?"<div style='display:flex;justify-content:space-between;color:var(--mal)'><span>− Gastos personales (de una cuenta)</span><b>−$"+f2(co.egPersonal)+"</b></div>":"")+
-        (co.socios>0?"<div style='display:flex;justify-content:space-between;color:var(--mal)'><span>− Pagos a socios</span><b>−$"+f2(co.socios)+"</b></div>":"")+
+        // ARREGLO 57: apartar un numero negativo no significa nada. Si el socio
+        // le debe a la empresa su saldo es negativo, y eso es un COBRO, no un
+        // pago en negativo. Y la fila no puede desaparecer cuando pasa: sin ella
+        // la tabla deja de sumar el "Deberías tener" que tiene justo debajo.
+        (Math.abs(co.socios)>0.005?"<div style='display:flex;justify-content:space-between;color:"+(co.socios>0?"var(--mal)":"var(--ok)")+"'><span>"+(co.socios>0?"− Pagos a socios":"+ Cobrado a socios")+"</span><b>"+(co.socios>0?"−":"+")+"$"+f2(Math.abs(co.socios))+"</b></div>":"")+
         ((co.intAp&&co.intAp.total>0.005)?"<div style='display:flex;justify-content:space-between;color:var(--tx4)'><span>− Intereses que iban dentro de la apertura ("+co.intAp.n+")</span><b>−$"+f2(co.intAp.total)+"</b></div>":"")+
         ((co.traspPers&&Math.abs(co.traspPers.total)>0.005)?"<div style='display:flex;justify-content:space-between;color:"+(co.traspPers.total>0?"var(--mal)":"var(--ok)")+"'><span>"+(co.traspPers.total>0?"− Pasado a cuentas personales":"+ Metido desde cuentas personales")+" ("+co.traspPers.n+")</span><b>"+(co.traspPers.total>0?"−":"+")+"$"+f2(Math.abs(co.traspPers.total))+"</b></div>":"")+
         "<div style='display:flex;justify-content:space-between;border-top:1px solid var(--ln);margin-top:5px;padding-top:5px;font-size:13px'><b>Deberías tener</b><b>$"+f2(co.deberias)+"</b></div>"+
@@ -13375,9 +13418,14 @@ function rCapitalTotal(){
       // ARREGLO 99: el veredicto era un titular de 22px con un párrafo debajo
       // que se plegaba en tres renglones. Es la pregunta del contador, no la
       // suya, así que baja a un semáforo de una línea con su número y su color.
-      // La resta que ella hace a mano sigue entera (ARREGLO 69: esconderla la
-      // dejó sin entender de dónde salía el titular), pero en letra pequeña
-      // debajo, no compitiendo con él.
+      // ARREGLO 100: la resta "Tienes X · deberías tener Y" se fue de aquí al
+      // desplegable. Sus palabras mirando esta misma tarjeta: "me dice que
+      // debería de tener 2600 y que tengo 2500, no estoy entendiendo ese punto".
+      // Son DOS cuentas distintas de la misma diferencia —la de arriba parte de
+      // la apertura, esta de "deberías tener"— y a la vista se leen como dos
+      // respuestas que no cuadran. ARREGLO 69 sigue valiendo (esconderla del
+      // todo la dejó sin saber de dónde salía el titular): no se borró, vive
+      // dentro de la tabla que la desglosa, que es su misma cuenta.
       "<div style='display:flex;align-items:center;gap:11px;background:var(--sup);"+
         "border:1px solid var(--ln);border-left:4px solid "+col+";border-radius:11px;padding:11px 13px;margin-bottom:9px'>"+
         "<div style='min-width:0'>"+
@@ -13386,11 +13434,6 @@ function rCapitalTotal(){
           "<div style='font-size:11px;color:var(--tx3);margin-top:3px;line-height:1.5'>"+
             (sano ? (Math.abs(sinExp)<0.005?"nada sin explicar":"lo que no encaja cabe en el ±$"+f2(tol)+" de ruido normal")
                   : (sinExp<0?"falta por explicar":"sobra sin explicar")+" · el margen normal es ±$"+f2(tol))+
-          "</div>"+
-          "<div style='font-size:10.5px;color:var(--tx4);margin-top:3px;line-height:1.5'>"+
-            "Tienes $"+f2(R.total)+" · deberías tener $"+f2(co.deberias)+
-            (Math.abs(dif)<0.005 ? " · clavado"
-              : " · <b style='color:"+(sano?"var(--tx4)":colDif)+"'>"+(dif<0?"te faltan ":"te sobran ")+"$"+f2(Math.abs(dif))+"</b>")+
           "</div>"+
         "</div>"+
       "</div>"+
@@ -13447,10 +13490,14 @@ function rCapitalTotal(){
       // color de la alarma competía con el semáforo, que es quien da el veredicto.
       (sano ? "" :
       "<div style='font-size:10.5px;color:var(--tx3);line-height:1.55;margin-bottom:2px'>"+
+        // ARREGLO 100: era un parrafo de dos renglones. Dice lo mismo en una
+        // linea; el resto sigue dentro del desplegable, que es donde se lee una
+        // vez. Lo que NO se quita es el "no la vuelvas a fijar": ese es el
+        // atajo que pone la diferencia en cero y borra la pista.
         (sinExp<0
-          ? "Dinero que salió sin quedar registrado — lo más común es lo que sacas para ti sin anotarlo. Búscalo entre las operaciones desde el "+ds(co.desde)+"."
-          : "Suele ser dinero que entró sin registrarse como ganancia, o una apertura que se guardó más baja de lo que tocaba.")+
-        " <span style='color:var(--tx4)'>Volver a fijar la apertura no lo arregla: lo esconde.</span>"+
+          ? "Suele ser dinero que salió sin registrarse — lo que sacas para ti sin anotarlo."
+          : "Suele ser dinero que entró sin registrarse como ganancia.")+
+        " <span style='color:var(--tx4)'>Volver a fijar la apertura lo esconde, no lo arregla.</span>"+
       "</div>")+
       (co.baseFaltante?"<div style='background:var(--am6);border:1px solid var(--am4-b);border-radius:8px;padding:9px 11px;font-size:11px;color:var(--avi-tx);line-height:1.6;margin-top:8px'>"+
         "<b>⚠️ Vuelve a fijar la apertura.</b> Esta se guardó antes de un arreglo: contaba dos veces lo que ya llevabas ganado el mes en que la fijaste, así que la diferencia arranca torcida. Un clic en el botón de abajo lo deja en cero."+
@@ -13477,6 +13524,14 @@ function rCapitalTotal(){
         var colSE=Math.abs(se)<=tol?"var(--ok)":"var(--avi-tx2)";
         return "<div style='background:var(--sup);border-radius:9px;padding:10px 12px;margin-bottom:8px;font-size:11px;color:var(--tx2);line-height:1.7'>"+
           "<div style='font-size:11.5px;font-weight:800;color:var(--tx3);text-transform:uppercase;letter-spacing:.3px;margin-bottom:5px'>De qué está hecha la diferencia</div>"+
+          // ARREGLO 100: esta es la resta que antes competía arriba con el
+          // resumen. Aquí no compite: es justo la cabecera de la tabla que la
+          // desglosa.
+          "<div style='color:var(--tx3);margin-bottom:3px'>"+
+            "Tienes $"+f2(R.total)+" · deberías tener $"+f2(co.deberias)+
+            (Math.abs(dif)<0.005 ? " · clavado"
+              : " · <b style='color:"+colDif+"'>"+(dif<0?"te faltan ":"te sobran ")+"$"+f2(Math.abs(dif))+"</b>")+
+          "</div>"+
           "<div style='display:flex;justify-content:space-between'><span>Diferencia total</span><b>"+(dif>=0?"+$":"−$")+f2(Math.abs(dif))+"</b></div>"+
           (aj.n>0
             ? "<div style='display:flex;justify-content:space-between'><span>De eso, ajustes de saldo a mano ("+aj.n+")</span><b>"+(aj.total<0?"−":"+")+"$"+f2(Math.abs(aj.total))+"</b></div>"
