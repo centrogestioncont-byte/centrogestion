@@ -2598,7 +2598,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261006_v169";
+var APP_VERSION = "20261006_v170";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -5042,6 +5042,51 @@ function ajustesDesdeApertura(desdeIso){
 // Se restan de "deberías tener" porque ya no están en "lo que tienes": así los
 // dos lados bajan igual y la diferencia no se mueve. Al revés también: meter
 // dinero personal en una cuenta de la empresa lo sube.
+// ── ARREGLO 96 · un gasto personal pagado DESDE una cuenta 💜 ya salió ──────
+// Sale de medir el ARREGLO 94 y es la mitad de su "nunca está en 0 siempre
+// tiene un desajuste".
+//
+// Un gasto personal pagado desde una cuenta 💜 se restaba de "deberías tener"
+// por `egPerPagPropio`. Pero una cuenta 💜 NO está dentro del capital de la
+// empresa —comprobado: sumarle 1.000 a una 💜 no mueve "lo que tienes"— así que
+// ese dinero ya había salido cuando se traspasó a esa cuenta, y
+// traspasosAPersonal() ya lo restó. Se restaba DOS veces.
+//
+// Reproducido con su export, y las dos mitades se veían una encima de la otra
+// en la propia tarjeta:
+//
+//   12/09  traspaso  BINANCE SAIPA → MI SUELDO BINANCE 💜   51,52 USDT
+//   18/09  gasto     "CAMIDA PARA LA CASA", desde 💜        51,52 USDT
+//
+//              sin explicar      veredicto
+//   antes ....... +59,28       ⚠️ Sobra sin explicar
+//   después .....  +7,76       ✅ Cuadra   (margen ±50,62)
+//
+// Los pagados desde una cuenta de la EMPRESA se siguen restando: esos sí
+// salieron de ella.
+//
+// La fecha se compara igual que en traspasosAPersonal —`iso > desdeIso`, los
+// del mismo día aparte— y eso no es un detalle: el descuento tiene que usar el
+// MISMO corte que la resta a la que corrige. Cambiarlo en `_acumuladosMes`
+// habría sido peor: `aperturaBase` guarda el valor viejo, así que el mes nuevo
+// menos la base vieja daba −471,13 y le inventaba capital.
+function egresosPersonalesDesdeCuentaPersonal(desdeIso){
+  var r={total:0, n:0, mismoDia:0, nMismoDia:0};
+  if(!desdeIso) return r;
+  var pers={};
+  (S.cuentas||[]).forEach(function(c){ if(c.esPersonal) pers[c.id]=1; });
+  (S.egresos_personales||[]).forEach(function(e){
+    if(!e.pagada || !e.cuentaId || !pers[e.cuentaId]) return;
+    var iso=_isoDeDDMMAA(e.d||e.fecha) || String(e.d||e.fecha||"").slice(0,10);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(iso) || iso<desdeIso) return;
+    var u=parseFloat(e.usdt)||0;
+    if(iso>desdeIso){ r.total+=u; r.n++; } else { r.mismoDia+=u; r.nMismoDia++; }
+  });
+  r.total=Math.round(r.total*100)/100;
+  r.mismoDia=Math.round(r.mismoDia*100)/100;
+  return r;
+}
+
 function traspasosAPersonal(desdeIso){
   var r={total:0, n:0, mismoDia:0, nMismoDia:0};
   if(!desdeIso) return r;
@@ -5191,7 +5236,11 @@ function conciliacionCapital(){
   // que los dos lados midan lo mismo; si no, queda un hueco fijo que no cierra
   // nunca porque no es dinero, es el punto de partida mal puesto.
   var intAp=interesDentroDeApertura(desde);
-  var deberias=r2v(apertura-intAp.total+bruta-egEmpresa-egPersonal-socios-traspPers.total);
+  // ARREGLO 96: lo pagado desde una cuenta 💜 ya salio con el traspaso a esa
+  // cuenta. Restarlo aqui tambien lo contaba dos veces.
+  var egPersDesdePers=egresosPersonalesDesdeCuentaPersonal(desde);
+  var egPersonalEmpresa=r2v(egPersonal-egPersDesdePers.total);
+  var deberias=r2v(apertura-intAp.total+bruta-egEmpresa-egPersonalEmpresa-socios-traspPers.total);
   var diferencia=r2v(real.total-deberias);
   // De qué está hecha esa diferencia: los ajustes a mano y el desfase de las
   // tasas se explican solos, lo que quede es lo único que hay que perseguir.
@@ -5201,8 +5250,9 @@ function conciliacionCapital(){
   return {
     configurada:true, apertura:r2v(apertura), desde:desde, meses:meses.length,
     baseFaltante:baseFaltante,
-    bruta:r2v(bruta), egEmpresa:r2v(egEmpresa), egPersonal:r2v(egPersonal),
+    bruta:r2v(bruta), egEmpresa:r2v(egEmpresa), egPersonal:egPersonalEmpresa,
     egPersonalSin:r2v(egPersonalSin), socios:r2v(socios),
+    egPersDesdePers:egPersDesdePers,
     deberias:deberias, real:real, diferencia:diferencia,
     ajustes:ajustes, tasas:tasas, traspPers:traspPers, intAp:intAp, sinExplicar:sinExplicar,
     // ARREGLO 60: la tarjeta dice contra qué apertura está midiendo. Una
