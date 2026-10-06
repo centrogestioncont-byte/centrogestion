@@ -2598,7 +2598,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261006_v168";
+var APP_VERSION = "20261006_v169";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -23375,13 +23375,33 @@ function rNueva(){
   var tcAuto=parseFloat(f.tc_manual)||(rates.tc||0);
   var tvAuto=parseFloat(f.tv_manual)||(rates.tv||0);
   var hasInv=rates.hasRates;
-  var _comPlat=COM();
+  // ARREGLO 98: la ganancia que se ENSEÑA sale de cTx(), que es la que se
+  // guarda. Esta pantalla la recalculaba por su cuenta y le restaba COM() a los
+  // dos lados siempre, mientras cTx() no la aplica cuando la tasa viene de un
+  // lote — porque la tasa de un lote YA lleva dentro lo que cobró Binance, y
+  // restarla otra vez la contaría dos veces (ARREGLO 42). Con sus comisiones
+  // (0,06 USDT y 0 en el lado VES) y las tasas del inventario, que es el caso
+  // normal, la pantalla se quedaba 0,12 USDT POR DEBAJO de lo que se apuntaba:
+  // medido con su remesa del 06/10, decía 1,41 y guardaba 1,53.
+  // El mismo dato no se calcula en dos sitios.
+  var _rTx=cTx();
   var tc=tcAuto,tv=tvAuto;
-  var uc=tc>0?r4(am/tc-_comPlat):0;
-  var uv=tv>0?r4(cant/tv+_comPlat):0;
-  var pr=r4(uc-uv);
-  // Comisión bancaria VES: se suma al descuento según la forma de pago elegida
-  var comVesVivo=(f.comisionBanco&&ruta.dest==="VES")?comisionBancoVES(f.comisionBanco,cant):0;
+  var uc=_rTx.uc, uv=_rTx.uv;
+  var pr=_rTx.pr;
+  // Comisión bancaria VES: se suma al descuento según la forma de pago elegida.
+  //
+  // ARREGLO 98 (06/10/2026): con el desglose del 97 puesto, la comisión la
+  // deciden las FILAS, no el selector de abajo — y saveTx ya lo hacía así. Pero
+  // esta vista previa seguía leyendo el selector, así que con una fila en pago
+  // móvil y el selector en "sin comisión" la GANANCIA salía SIN descontar nada
+  // y al guardar sí se descontaba. Medido con su remesa del 06/10: la pantalla
+  // decía +1,41 USDT y quedaba en +1,36 (52,92 Bs ÷ 980,97). Un número de la
+  // pantalla que no es el que se guarda se deja de mirar.
+  var _entVivo=entregasDeRemesa(f);
+  var comVesVivo=(ruta.dest==="VES")
+    ? (_entVivo ? comisionesDeEntregas(_entVivo).total
+                : (f.comisionBanco ? comisionBancoVES(f.comisionBanco,cant) : 0))
+    : 0;
   // Tarifas para enseñarlas en el desplegable — las de verdad las aplica
   // comisionBancoVES(), esto es solo el texto.
   var _cfgCom=S.config||{};
@@ -23545,7 +23565,7 @@ function rNueva(){
     "</div>":"<div id='s2-tx'></div><div id='s3-tx'></div>")+
     "</div>"+
     "<div id='cp-tx' class='result-box"+(ok&&prNeto>0&&tc>0&&tv>0?" gain":"")+"'>"+
-    (ok&&tc>0&&tv>0?"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:6px'><div style='font-size:11px;font-weight:700;color:var(--tx3)'>GANANCIA = USDT comprados − USDT vendidos</div><div style='font-size:22px;font-weight:800;color:"+(prNeto>0?"var(--ok)":"var(--mal)")+"'>"+(prNeto>0?"+ ":"")+f2(prNeto)+" USDT</div></div><div style='font-size:11px;color:var(--tx2b)'>"+f2(uc)+" − "+f2(uv)+""+(comUsdtVivo>0?" − "+f2(comUsdtVivo)+" (3% banco)": "")+" = <b style='color:"+(prNeto>0?"var(--ok)":"var(--mal)")+"'>"+f2(prNeto)+"</b></div>":"<div style='text-align:center;color:var(--tx4);font-size:12px;padding:8px'>Completa monto, tasa del día y tasas USDT</div>")+
+    (ok&&tc>0&&tv>0?"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:6px'><div style='font-size:11px;font-weight:700;color:var(--tx3)'>GANANCIA = USDT comprados − USDT vendidos</div><div style='font-size:22px;font-weight:800;color:"+(prNeto>0?"var(--ok)":"var(--mal)")+"'>"+(prNeto>0?"+ ":"")+f2(prNeto)+" USDT</div></div><div style='font-size:11px;color:var(--tx2b)'>"+f2(uc)+" − "+f2(uv)+""+(comUsdtVivo>0?" − "+f2(comUsdtVivo)+" (comisión del banco)": "")+" = <b style='color:"+(prNeto>0?"var(--ok)":"var(--mal)")+"'>"+f2(prNeto)+"</b></div>":"<div style='text-align:center;color:var(--tx4);font-size:12px;padding:8px'>Completa monto, tasa del día y tasas USDT</div>")+
     "</div>"+
     "<div style='font-size:11px;color:var(--tx3b);margin-bottom:10px'>🔒 Al guardar queda bloqueado. Modificar requiere sesión de administrador.</div>"+
     "<div style='background:var(--avi-sup);border:1.5px solid var(--avi-ln);border-radius:10px;padding:12px 14px;margin-bottom:12px'>"+ 
@@ -23554,7 +23574,19 @@ function rNueva(){
     "⏳ Cliente pagará después (queda pendiente por cobrar)</label>"+
     (S.tx.pendiente?"<div style='margin-top:8px;font-size:11px;color:var(--avi-tx)'>💡 Se creará una <b>cuenta por cobrar</b> con el monto y la comisión. Cuando el cliente pague, lo marcas como cobrado en la sección 💳 Por Cobrar.</div>":"")+
     "</div>"+
-    (ruta.dest==="VES"?"<div style='background:var(--rj6-h);border:1.5px solid var(--rj4a88);border-radius:10px;padding:12px 14px;margin-bottom:12px'>"+
+    // ARREGLO 98: con el desglose puesto, este selector NO decide nada —
+    // saveTx lee las filas y lo ignora. Dejarlo a la vista era pedirle que
+    // eligiera dos veces lo mismo, y con dos respuestas distintas en pantalla
+    // ("sin comisión" abajo, −52,92 Bs arriba) no hay forma de saber cuál manda.
+    // Ahora en su sitio queda una línea que dice dónde vive la comisión.
+    (ruta.dest==="VES"&&_entVivo
+      ?"<div style='background:var(--rj6-h);border:1.5px solid var(--rj4a88);border-radius:10px;padding:11px 14px;margin-bottom:12px;font-size:12px;color:var(--rj3)'>"+
+         "🏦 La comisión va <b>por cuenta, arriba</b> — cada banco cobra la suya."+
+         (comVesVivo>0?"<br><span style='font-size:11.5px'>Total: <b>"+f2(comVesVivo)+" Bs</b>"+
+            (tv>0?" ≈ "+f4(comUsdtVivo)+" USDT, ya descontados de la ganancia":"")+"</span>"
+          :"<br><span style='font-size:11.5px'>Ninguna de las cuentas cobra comisión.</span>")+
+       "</div>"
+    :ruta.dest==="VES"?"<div style='background:var(--rj6-h);border:1.5px solid var(--rj4a88);border-radius:10px;padding:12px 14px;margin-bottom:12px'>"+
 "<div style='font-size:13px;font-weight:700;color:var(--rj3);margin-bottom:8px'>🏦 ¿Cómo le pagas los bolívares?</div>"+
     "<select onchange=\"S.tx.comisionBanco=this.value;R()\" style='width:100%;padding:9px;border:1.5px solid var(--rj4a88);border-radius:8px;font-size:13px;background:var(--sup)'>"+
       "<option value=''"+(!_ctTx?" selected":"")+">Dentro del mismo banco — sin comisión</option>"+
