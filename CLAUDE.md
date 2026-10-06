@@ -1935,6 +1935,83 @@ las tasas **nunca estuvo dentro del "sin explicar"** —`sinExplicar = diferenci
 − ajustes − tasas` ya lo descuenta—. Lo que estaba mal era que ocupara la fila
 más grande de una lista de cosas que perseguir.
 
+#### Y la pregunta que había debajo de todo: ¿está creciendo? (ARREGLO 100)
+
+Sus palabras, con la tarjeta del 99 delante: *"en uno arriba me dice que el saldo
+de apertura fue de 2500 y algo, y me dice que debería de tener 2600 y que tengo
+2500. O sea, no estoy entendiendo ese punto… lo que me interesa saber es que el
+dinero realmente esté creciendo como dice. Y no que me digas 'ganaste este mes
+200 dólares' pero resulta que no tengo de qué forma ver que sean 200 dólares,
+porque el saldo sigue siendo el mismo."*
+
+Son dos cosas y la segunda es la de verdad.
+
+**Había DOS "deberías tener" y salían a la vez.** La lista de arriba iba de la
+apertura a lo que tiene; el semáforo decía *"Tienes $2.544,15 · deberías tener
+$2.669,23 · te faltan $125,08"*. Los dos son correctos y parten la **misma**
+diferencia por lados distintos — pero juntos no hay forma de saber cuál mirar,
+que es lo que ella dijo con esas palabras. Es el fallo del ARREGLO 60 por cuarta
+vez.
+
+**La resta no se borra: eso ya falló.** El ARREGLO 69 está ahí porque esconderla
+la dejó sin saber de dónde salía el titular. Se fue al desplegable, **de cabecera
+de la tabla que la desglosa**, y ahí sigue entera, con sus palabras ("te faltan",
+"te sobran", "clavado"). Arriba manda una sola cuenta: la suya.
+
+**Y la pregunta se contesta con tres cifras y cinco filas.** Medido con su export
+del 06/10:
+
+```
+GANASTE    +$201,18   en el papel
+CRECIÓ       −$0,64   tu capital
+DIFERENCIA −$201,82   de dónde sale ↓
+
+   Pasaste a tus cuentas 💜       −51,52   (sigue siendo tuyo)
+   Tus bolívares valen menos hoy −253,94   ← la pieza grande
+   Saldos que escribiste a mano   −87,88
+   Intereses de la apertura       −25,22
+   ⚠️ Sin explicar               +216,74
+```
+
+O sea: **sí ganó los 201, y están sobre todo en bolívares que hoy valen menos**
+que cuando entraron. Es exactamente el riesgo que ella misma explicó —*"tener
+muchos bolívares parados sí me perjudica"*— y no había manera de verlo en
+ninguna pantalla.
+
+**Y un error que es justo lo que tapaba la respuesta.** Esa fila se llamaba
+*"No es dinero"*. Para su pregunta eso es **falso**: `efectoTasasDesde()` valora
+cada movimiento a la tasa de **hoy** y lo compara con la ganancia que se apuntó
+aquel día, así que lo que mide es, sobre todo, su dinero parado perdiendo valor.
+Llamarlo "no es dinero" escondía la pieza más grande del hueco detrás de una
+etiqueta que invitaba a no mirarla.
+
+**Las filas tienen que SUMAR la diferencia, al céntimo**, y eso no se negocia
+(es la misma regla del 34,27 contra 34,28). Sale entera de
+`conciliacionCapital()` y no se calcula nada nuevo:
+
+```
+salto = (bruta − egEmpresa − egPersonal − socios) − intAp − traspPers
+        + ajustes + tasas + sinExplicar
+⇒ salto − enPapel = −traspPers − intAp + ajustes + tasas + sinExplicar
+```
+
+Comprobado: diferencia **−201,82** y suma de las cinco filas **−201,82**,
+descuadre **0**. La guardia fija la **expresión entera**, no los nombres sueltos:
+buscándolos a secas, la prueba negativa pasaba con el término multiplicado por
+cero o renombrado a `co.egEmpresaX` — el nombre seguía ahí y la cuenta ya no.
+
+**Y dos cosas que salieron de medir, no de pensar:**
+
+- **Un saldo de socio NEGATIVO hacía desaparecer su fila** de la tabla de
+  "deberías tener" (la condición era `co.socios>0`), así que la tabla dejaba de
+  sumar su propio total. Ahora sale en los dos sentidos y en negativo dice
+  *"cobrado"*, que es lo que es (ARREGLO 57).
+- **Dos guardias se anclaban en texto suelto que un COMENTARIO puede repetir.**
+  Un comentario de este mismo arreglo nombró *"De qué está hecha la diferencia"*
+  8.000 caracteres antes que el rótulo de verdad, y las dos pasaron a medir otro
+  trozo del archivo. **Ancladas al marcado** (`>…</div>`), que solo existe una
+  vez. Es el mismo tipo de agujero que el ancla que dejó de existir en el 99.
+
 ### Evolución mide la tendencia, no el capital
 
 Tenía un "Resumen total" que restaba la ganancia sumada de los meses menos lo
