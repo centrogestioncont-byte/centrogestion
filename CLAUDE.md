@@ -1043,6 +1043,73 @@ lleva los bolívares que se le entregaron al cliente, y la comisión es un cobro
 aparte del banco. Por eso la cuenta va siempre un poco por debajo del FIFO,
 justo lo que se llevó el banco. No lo "arregles".
 
+### Y cuando la entrega sale de DOS bancos, son dos comisiones (ARREGLO 97)
+
+Sus palabras: *"me faltaría cuando yo pago de dos cuentas diferentes… pagué una
+parte por el banco provincial y pagué otra parte por el banco de Venezuela…
+sería bueno que yo pueda colocar por qué banco pagué tal cosa y por qué banco
+pagué el restante, y que descuente de forma correcta, igual que en la parte del
+FIFO que esté vinculado. Pero no me gustaría que eso esté allí todo el tiempo
+visible porque son casos esporádicos."*
+
+Es el espejo del ARREGLO 44 —que ya hacía esto cuando el cliente paga de varias
+formas— por el lado de la salida, y con el mismo botón escondido: apagado, el
+formulario es exactamente el de siempre, una sola cuenta.
+
+Antes había que descontarlo todo de un banco y cuadrar el otro con un traspaso
+que nunca ocurrió. Dos cosas **no** son copiar y pegar del 44, y son las que
+cuestan:
+
+- **Son DOS comisiones, y el mínimo es el que se cuela.** `comisionBancoVES()`
+  cobra por banco y sobre el monto de **ese** banco, así que el tipo de pago va
+  **por fila**, no por remesa. Partido en dos, el mínimo de 14 entra dos veces:
+
+  ```
+  una entrega de 4.000 por pago móvil ....... 14 Bs   (el 0,3% son 12)
+  partida en 2.000 + 2.000 ................... 28 Bs   ← 14 + 14
+  ```
+
+  Medida sobre el total se quedaría en 14 y faltarían otros 14 que el banco sí
+  se llevó. **Partir el pago le CUESTA más comisión**, y el desglose lo dice en
+  pantalla antes de guardar — no después, cuando el saldo ya no cuadra.
+- **El FIFO se parte igual.** Los bolívares salen de los lotes de la cuenta que
+  de verdad los pagó (`cuentaDestinoId`), así que el consumo va cuenta por
+  cuenta. Aquí sale limpio porque se **consume**, no se crea un lote: es justo
+  lo que obligó al 44 a bloquear el desglose cuando lo que **entra** son
+  bolívares, donde sí nace un lote y nace pegado a una sola cuenta.
+
+Lo que no hay que deshacer:
+
+- **El USDT se consume UNA vez**, fuera del bucle de cuentas. Depende de la
+  cuenta de **entrada**, no de por dónde se pagó: metido dentro del bucle se
+  consumiría tantas veces como bancos haya y la ganancia saldría mal.
+- **Con una sola cuenta el camino es el MISMO.** `_entregasParaFIFO()` devuelve
+  una fila cuando no hay desglose, para que no haya dos maneras de consumir el
+  FIFO que se separen con el primer cambio.
+- **No guarda si las filas no suman exactamente lo entregado**, ni con una
+  cuenta repetida (dos filas de la misma cuenta verían el mismo saldo de lotes
+  entero y la app diría que alcanza cuando no alcanza), ni mezclando monedas.
+- **Lo entregado que enseña la pantalla sale de `cTx()`**, que es de donde lo
+  saca `saveTx()` al validar. La pantalla tenía su propio redondeo y en la ruta
+  VZLA→BRL no coincidía: ella cuadraba contra el número de arriba y al guardar
+  le decía que no cuadra.
+- **`cuentaDest` se queda en la primera fila.** El Balance por cuenta, los
+  filtros, el cierre y el reporte leen ese campo y no se enteran del desglose.
+- **Al borrar, cada parte vuelve a los lotes de SU cuenta**
+  (`_restaurarVentasFIFO()`, escrita una vez y usada por los dos caminos del
+  borrado). Devolverlo todo a la primera dejaría a un banco con lotes que nunca
+  gastó y al otro sin los suyos — y de los lotes salen las tasas que sugiere.
+- **El tipo de comisión guardado pasa a `"varias"`** cuando hubo más de una. Si
+  se quedara con una sola, las pantallas dirían "pago móvil" de una remesa que
+  fue un pago móvil **y** una transferencia.
+
+Probado en Chromium con dos bancos y sus lotes: las dos cuentas bajan su parte
+más su comisión, cada lote pierde lo suyo, el USDT se consume una vez, y al
+borrar la remesa los tres saldos y los tres lotes vuelven exactos.
+
+**Queda fuera el formulario de EE.UU → Venezuela** (`S.txE`, `saveTxEE`), que es
+otro camino con su propia pantalla. Si hace falta allí, es el mismo patrón.
+
 ### La tasa de referencia sale sola — no la escribas a mano
 
 Antes mandaba lo que ella escribía en el panel 💱, y mandaba para siempre:

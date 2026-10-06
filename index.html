@@ -2238,7 +2238,7 @@ let S={
   traspasos:[],
   nTraspaso:{fecha:"",cuentaOrig:"",cuentaDest:"",monto:"",nota:""},
   nCuenta:{nombre:"",tipo:"fiat",moneda:"USD",institucion:"",saldo:0,operador:"general"},
-  tx:{date:"",id:"",cl:"",rt:"BRL ↔ VZLA",am:"",tdia:"",tc:"",tv:"",tc_manual:"",tv_manual:"",pais:"VENEZUELA",pagosMulti:false,pagos:[],_savedDate:"",_tcLock:null,_tvLock:null,_amLock:null,_tdiaLock:null,_rtLock:null},
+  tx:{date:"",id:"",cl:"",rt:"BRL ↔ VZLA",am:"",tdia:"",tc:"",tv:"",tc_manual:"",tv_manual:"",pais:"VENEZUELA",pagosMulti:false,pagos:[],entregasMulti:false,entregas:[],_savedDate:"",_tcLock:null,_tvLock:null,_amLock:null,_tdiaLock:null,_rtLock:null},
   calc:{tcCompra:"",tvVenta:"",margen:"10",tvVentaIda:"",tcCompraVuelta:"",margenVuelta:"10",simIda:"100",simVuelta:"100",modoCalc:"fijas",exOrig:"BRL",exDest:"VES",exTcCompra:"",exTvVenta:"",exMargen:"9",exSim:"",exComCompra:"0.004",exComVenta:"0.004"},
   txE:{date:"",id:"",cl:"",am:"",tdia:"",tc:"1.010",tv:"",tc_manual:"",tv_manual:"",pais:"VENEZUELA"},
   nEg:{date:"",cat:"GASTOS FIJOS EMPRESA",mot:"",monto:"",usdt:"",fija:false,pagada:false,tipo:"empresa"},
@@ -2537,6 +2537,7 @@ function comisionBancoVES(tipo, montoBs){
 // Cómo se llama cada una, para no repetir el texto en cada pantalla.
 function etiquetaComisionBanco(tipo){
   if(tipo===true) tipo="movil";
+  if(tipo==="varias") return "varias cuentas, cada una con su tarifa";   // ARREGLO 97
   if(tipo==="movil")  return "pago móvil a otro banco";
   if(tipo==="transf") return "transferencia a otro banco";
   return "";
@@ -2597,7 +2598,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261006_v166";
+var APP_VERSION = "20261006_v168";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -7826,6 +7827,168 @@ function acreditarPagos(filas, mov){
     mov.push({cuentaId:c.id, delta:p.monto});
   });
 }
+// ── Cuando ELLA paga la entrega desde varias cuentas ─────────────────────────
+// ARREGLO 97 (06/10/2026): el espejo del 44, por el lado de la salida. Sus
+// palabras: "pagué una parte por el banco provincial y pagué otra parte por el
+// banco de Venezuela". Con una sola cuenta de entrega había que descontarlo
+// todo de una y cuadrar la otra con un traspaso que nunca ocurrió; mientras
+// tanto los dos saldos decían cosas que no eran.
+//
+// Dos cosas que NO son copiar y pegar del 44, y son donde está el trabajo:
+//
+//  · SON DOS COMISIONES, no una. comisionBancoVES() cobra por banco y sobre el
+//    monto de ESE banco: dos pagos móviles son dos veces el mínimo de 14 Bs, y
+//    dos transferencias son 54 + 54. Una comisión global medida sobre el total
+//    se queda corta justo donde el mínimo muerde — y el mínimo es el que se
+//    cuela. Por eso el tipo de pago va POR FILA, no por remesa.
+//  · EL FIFO SE PARTE IGUAL. Los bolívares salen de los lotes de la cuenta que
+//    de verdad los pagó (cuentaDestinoId), así que el consumo va cuenta por
+//    cuenta. Aquí sale limpio porque se CONSUME, no se crea un lote: es justo
+//    lo que obligó al 44 a bloquear el desglose cuando lo que ENTRA son
+//    bolívares, donde sí nace un lote y nace pegado a una sola cuenta.
+function txEntregasToggle(){
+  S.tx.entregasMulti=!S.tx.entregasMulti;
+  if(S.tx.entregasMulti && !(S.tx.entregas||[]).length){
+    // Arranca con la cuenta que ya estuviera elegida y con el tipo de comisión
+    // que ya hubiera escogido, para no empezar en blanco ni perder lo tecleado.
+    var _c0=(S.tx.comisionBanco===true?"movil":(S.tx.comisionBanco||""));
+    S.tx.entregas=[{cuentaId:S.tx.cuentaDest||"",monto:"",com:_c0},{cuentaId:"",monto:"",com:_c0}];
+  }
+  R();
+}
+function txEntregaSet(i,campo,val){
+  S.tx.entregas=S.tx.entregas||[];
+  if(!S.tx.entregas[i]) S.tx.entregas[i]={cuentaId:"",monto:"",com:""};
+  S.tx.entregas[i][campo]=val;
+  // La primera cuenta de verdad manda: es la que queda guardada en la remesa
+  // como cuentaDest, igual que cuando hay una sola. El Balance por cuenta, los
+  // filtros y el cierre siguen leyendo ese campo y no se enteran del desglose.
+  var prim=(S.tx.entregas||[]).find(function(p){return p.cuentaId;});
+  S.tx.cuentaDest=prim?prim.cuentaId:"";
+  if(campo!=="monto") R();
+}
+function txEntregaAdd(){ S.tx.entregas=(S.tx.entregas||[]).concat([{cuentaId:"",monto:"",com:""}]); R(); }
+function txEntregaDel(i){ S.tx.entregas=(S.tx.entregas||[]).filter(function(_,k){return k!==i;}); txEntregaSet(0,"_",""); R(); }
+// Las filas listas para guardar: cuenta, monto y tipo de comisión de ESE banco.
+function entregasDeRemesa(f){
+  if(!f||!f.entregasMulti) return null;
+  var filas=(f.entregas||[]).map(function(p){
+    return {cuentaId:(p.cuentaId||""), monto:Math.round((_leerNumero(p.monto)||0)*100)/100, com:(p.com||"")};
+  }).filter(function(p){ return p.cuentaId && p.monto>0; });
+  return filas.length?filas:null;
+}
+function sumaEntregas(filas){
+  return Math.round((filas||[]).reduce(function(a,p){return a+(parseFloat(p.monto)||0);},0)*100)/100;
+}
+// La parte de "uv" que le toca a esta fila. Solo se usa cuando la cuenta de
+// entrega está en USDT (la entrega la hace un aliado, ARREGLO: Colombia): ahí
+// lo que sale no es la moneda de destino sino lo que costó la entrega.
+function _uvDeParte(uvTotal, parte, total){
+  var t=parseFloat(total)||0;
+  if(!(t>0)) return 0;
+  return Math.round(((parseFloat(uvTotal)||0)*((parseFloat(parte)||0)/t))*10000)/10000;
+}
+// El reparto del consumo de bolívares, con desglose o sin él. Con una sola
+// cuenta devuelve una fila: así el camino es EL MISMO y no hay dos maneras de
+// consumir el FIFO que puedan separarse con el primer cambio.
+function _entregasParaFIFO(entregas, cuentaDest, cant){
+  if(entregas && entregas.length)
+    return entregas.map(function(e){ return {cuentaId:e.cuentaId, monto:e.monto}; });
+  return [{cuentaId:cuentaDest||"", monto:Math.round((parseFloat(cant)||0)*100)/100}];
+}
+// El USDT se consume UNA vez: depende de la cuenta de ENTRADA, no de por dónde
+// se pagó. Partirlo por fila lo consumiría tantas veces como cuentas haya.
+function consumirFIFORemesa(monOrig, uc, monDest, cant, ctaOrig, ctaDest, entregas){
+  consumirInventarioFIFO(monOrig, uc, monDest, 0, ctaOrig, ctaDest);
+  _entregasParaFIFO(entregas, ctaDest, cant).forEach(function(p){
+    consumirInventarioFIFO(monOrig, 0, monDest, p.monto, ctaOrig, p.cuentaId);
+  });
+}
+function simularFIFORemesa(monOrig, uc, monDest, cant, ctaOrig, ctaDest, entregas){
+  var r=simularConsumoFIFO(monOrig, uc, monDest, 0, ctaOrig, ctaDest);
+  var out={compras:r.compras||[], ventas:[]};
+  _entregasParaFIFO(entregas, ctaDest, cant).forEach(function(p){
+    var s=simularConsumoFIFO(monOrig, 0, monDest, p.monto, ctaOrig, p.cuentaId);
+    out.ventas=out.ventas.concat(s.ventas||[]);
+  });
+  return out;
+}
+// Lo que cobra cada banco por SU parte. Devuelve el total y el detalle, porque
+// la pantalla tiene que poder decir cuál cobró cuánto: un total suelto obliga a
+// rehacer la cuenta a mano para saber si el mínimo de 14 entró o no.
+function comisionesDeEntregas(filas){
+  var det=[], total=0;
+  (filas||[]).forEach(function(e){
+    if(!e.com || !esBancoVES(e.cuentaId)) return;
+    var cv=comisionBancoVES(e.com, e.monto);
+    if(!(cv>0)) return;
+    det.push({cuentaId:e.cuentaId, tipo:e.com, comision:cv});
+    total+=cv;
+  });
+  return {total:Math.round(total*100)/100, det:det};
+}
+// La pantalla del desglose. Enseña SIEMPRE cuánto llevas asignado y cuánto
+// falta —cuadrarlo de cabeza es donde se cuelan los descuadres— y, debajo, lo
+// que va a cobrar cada banco: partir el pago CUESTA más comisión, y ese número
+// tiene que verse antes de guardar, no después.
+function _txEntregasHTML(cuentasDest, destMon){
+  var filas=S.tx.entregas||[];
+  // Lo entregado sale de cTx(), que es de donde lo saca saveTx al validar. La
+  // pantalla tenía su propio redondeo y en la ruta VZLA→BRL no coincidía: ella
+  // cuadraba contra el número de arriba y al guardar le decía que no cuadra.
+  var total=(function(){ try{ return Math.round((parseFloat(cTx().cant)||0)*100)/100; }catch(e){ return 0; } })();
+  var leidas=filas.map(function(p){
+    return {cuentaId:p.cuentaId||"", monto:Math.round((_leerNumero(p.monto)||0)*100)/100, com:p.com||""};
+  });
+  var asignado=sumaEntregas(leidas);
+  var falta=Math.round((total-asignado)*100)/100;
+  var com=comisionesDeEntregas(leidas.filter(function(p){return p.cuentaId&&p.monto>0;}));
+  var h="<label>📤 ¿De qué cuentas salieron los "+destMon+"?</label>"+
+    "<div style='background:var(--mo6-a);border:1px solid var(--mo5);border-radius:10px;padding:10px'>";
+  filas.forEach(function(p,i){
+    var opts="<option value=''>-- elige --</option>"+
+      cuentasDest.map(function(c){
+        var s=parseFloat(c.saldo)||0;
+        return "<option value='"+c.id+"'"+(p.cuentaId===c.id?" selected":"")+">"+
+          c.nombre+" ("+f2(s)+" "+destMon+")"+(s<0?" ⚠️":"")+"</option>";
+      }).join("");
+    h+="<div style='display:flex;gap:6px;align-items:center;margin-bottom:4px'>"+
+         "<select onchange='txEntregaSet("+i+",\"cuentaId\",this.value)' style='flex:2;padding:8px;border:1.5px solid var(--ln);border-radius:8px;font-size:13px;font-family:inherit'>"+opts+"</select>"+
+         "<input type='text' inputmode='decimal' placeholder='0,00' value='"+(p.monto||"")+"' oninput='txEntregaSet("+i+",\"monto\",this.value)' onblur='R()' style='flex:1;min-width:70px;padding:8px;border:1.5px solid var(--ln);border-radius:8px;font-size:13px;font-family:inherit'>"+
+         (filas.length>1?"<button type='button' onclick='txEntregaDel("+i+")' style='border:none;background:var(--mal-sup);color:var(--mal);border-radius:7px;padding:7px 9px;cursor:pointer'>✕</button>":"")+
+       "</div>";
+    // El tipo de pago solo tiene sentido en un banco venezolano: es su tarifario.
+    if(esBancoVES(p.cuentaId)){
+      var _cv=p.com?comisionBancoVES(p.com, leidas[i].monto):0;
+      h+="<div style='display:flex;gap:6px;align-items:center;margin-bottom:8px'>"+
+           "<select onchange='txEntregaSet("+i+",\"com\",this.value)' style='flex:1;padding:6px 8px;border:1.5px solid var(--ln);border-radius:8px;font-size:11.5px;font-family:inherit;background:var(--sup)'>"+
+             "<option value=''"+(!p.com?" selected":"")+">Mismo banco — sin comisión</option>"+
+             "<option value='movil'"+(p.com==="movil"?" selected":"")+">Pago móvil a otro banco</option>"+
+             "<option value='transf'"+(p.com==="transf"?" selected":"")+">Transferencia a otro banco</option>"+
+           "</select>"+
+           "<span style='font-size:11px;color:"+(_cv>0?"var(--mal)":"var(--tx4c)")+";min-width:76px;text-align:right'>"+
+             (_cv>0?"−"+f2(_cv)+" Bs":"sin comisión")+"</span>"+
+         "</div>";
+    }
+  });
+  if(filas.length<4) h+="<div onclick='txEntregaAdd()' style='font-size:11px;color:var(--mo3);cursor:pointer;font-weight:600;margin-bottom:8px'>➕ Otra cuenta</div>";
+  var col=Math.abs(falta)<0.005?"var(--ok)":"var(--mal)";
+  h+="<div style='border-top:1px dashed var(--mo5);padding-top:7px;font-size:12px;display:flex;justify-content:space-between'>"+
+       "<span style='color:var(--tx3c)'>Asignado</span><b>"+f2(asignado)+" "+destMon+"</b></div>"+
+     "<div style='font-size:12px;display:flex;justify-content:space-between'>"+
+       "<span style='color:var(--tx3c)'>Le entregas</span><b>"+f2(total)+" "+destMon+"</b></div>"+
+     "<div style='font-size:13px;display:flex;justify-content:space-between;margin-top:3px;color:"+col+"'>"+
+       "<b>"+(Math.abs(falta)<0.005?"✔ Cuadra":(falta>0?"Falta":"Sobra"))+"</b>"+
+       "<b>"+(Math.abs(falta)<0.005?"":f2(Math.abs(falta))+" "+destMon)+"</b></div>";
+  if(com.total>0){
+    h+="<div style='border-top:1px dashed var(--mo5);margin-top:7px;padding-top:7px;font-size:11.5px;display:flex;justify-content:space-between;color:var(--mal)'>"+
+         "<span>Comisión de los bancos ("+com.det.length+")</span><b>−"+f2(com.total)+" Bs</b></div>"+
+       "<div style='font-size:10.5px;color:var(--tx4c);margin-top:2px'>Cada banco cobra la suya sobre su parte — se descuenta de tu ganancia.</div>";
+  }
+  h+="<div onclick='txEntregasToggle()' style='font-size:11px;color:var(--tx3);cursor:pointer;margin-top:8px'>↩️ Volver a una sola cuenta</div>"+
+   "</div>";
+  return h;
+}
 // FASE 2. El dinero de las ventas de USDT cae en la cuenta madre, porque
 // Binance no dice a que banco entro. Pero las remesas se pagan desde un banco de
 // verdad, y el archivo de su esposo dira cual. Sin esto ese banco se iria a
@@ -7853,7 +8016,7 @@ function _completarDesdeMadre(cDest, sal, adj, soloComprobar){
   adj(m.id, -mover, sal.moneda);
   adj(cDest.id, +mover, sal.moneda);
 }
-function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaDestId, cant, skipOrigen, soloComprobar, uvUsdt){
+function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaDestId, cant, skipOrigen, soloComprobar, uvUsdt, entregas){
   _cuentasNoEncontradas = [];
   // Actualiza saldos de cuentas para CUALQUIER moneda automáticamente.
   // Retorna _mov: lista de movimientos realizados para que saveTx los guarde en la remesa
@@ -7925,7 +8088,19 @@ function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaD
   // La regla es la cuenta, no la ruta: si la cuenta de entrega está en USDT,
   // sale "uv" en USDT. Vale para Colombia hoy y para cualquier aliado mañana,
   // sin tocar nada de Venezuela ni de Brasil.
-  if(cuentaDestId){
+  if(entregas && entregas.length){
+    // ARREGLO 97: la entrega salió de varias cuentas. Cada fila descuenta lo
+    // suyo por el MISMO camino que la cuenta única —salidaDeCuentaEntrega() y
+    // _completarDesdeMadre()— y queda anotada en _mov, que es de donde sale la
+    // reversión exacta al borrar la remesa. Por eso el borrado no cambia.
+    entregas.forEach(function(e){
+      if(!e || !e.cuentaId) return;
+      var _cE=(S.cuentas||[]).find(function(x){return x.id===e.cuentaId;});
+      var _sE=salidaDeCuentaEntrega(_cE, e.monto, _uvDeParte(uvUsdt, e.monto, vesEntregado), monDest);
+      _completarDesdeMadre(_cE, _sE, adj, soloComprobar);
+      adj(e.cuentaId, -_sE.monto, _sE.moneda);
+    });
+  } else if(cuentaDestId){
     var _cDest=(S.cuentas||[]).find(function(x){return x.id===cuentaDestId;});
     var _sal=salidaDeCuentaEntrega(_cDest, vesEntregado, uvUsdt, monDest);
     _completarDesdeMadre(_cDest, _sal, adj, soloComprobar);   // FASE 2
@@ -8037,6 +8212,47 @@ function saveTx(){
       return;
     }
   }
+  // ARREGLO 97: lo mismo por el lado de la salida. Si las filas no suman
+  // exactamente lo entregado, la diferencia se queda en un banco que en la
+  // realidad ya no la tiene — y eso es justo lo que deja un saldo sin
+  // explicación que después hay que perseguir con un extracto del banco.
+  var _entregas=entregasDeRemesa(f);
+  if(f.entregasMulti){
+    if(!_entregas){ alert("Pon al menos una cuenta con su monto, o apaga \"pagué desde varias cuentas\"."); return; }
+    var _difE=Math.round((sumaEntregas(_entregas)-res.cant)*100)/100;
+    if(Math.abs(_difE)>0.01){
+      alert("Las cuentas de entrega no cuadran con lo que le entregas al cliente.\n\n"+
+            "Le entregas: "+f2(res.cant)+" "+(ruta.dest||"VES")+"\n"+
+            "Sumado:      "+f2(sumaEntregas(_entregas))+" "+(ruta.dest||"VES")+"\n"+
+            (_difE<0?"Faltan:      ":"Sobran:      ")+f2(Math.abs(_difE))+" "+(ruta.dest||"VES")+"\n\n"+
+            "Ajusta los montos hasta que cuadre.");
+      return;
+    }
+    // Una cuenta repetida descuadra la comprobación del FIFO: las dos filas
+    // verían el mismo saldo de lotes entero y la app diría que alcanza cuando
+    // no alcanza. Y no hace falta para nada: se suman en una sola fila.
+    var _vistas={}, _rep=null;
+    _entregas.forEach(function(e){ if(_vistas[e.cuentaId]) _rep=e.cuentaId; _vistas[e.cuentaId]=1; });
+    if(_rep){
+      var _cR=(S.cuentas||[]).find(function(x){return x.id===_rep;});
+      alert("La cuenta \""+((_cR&&_cR.nombre)||_rep)+"\" está dos veces.\n\nJúntalas en una sola fila con el total que salió de ahí.");
+      return;
+    }
+    // Todas las filas en la misma moneda. Mezclar una cuenta en USDT (la
+    // entrega la hace un aliado) con una en la moneda de destino obliga a
+    // repartir el costo entre dos reglas distintas, y eso se hace aparte y con
+    // su prueba. Suele pasar por armar el desglose y cambiar de ruta después.
+    var _monsE={};
+    _entregas.forEach(function(e){
+      var _c=(S.cuentas||[]).find(function(x){return x.id===e.cuentaId;});
+      if(_c&&_c.moneda) _monsE[_c.moneda]=1;
+    });
+    if(Object.keys(_monsE).length>1){
+      alert("Las cuentas del desglose no son todas de la misma moneda ("+Object.keys(_monsE).join(", ")+").\n\nSuele pasar por armar el desglose y cambiar de ruta después. Revisa las filas.");
+      return;
+    }
+    f.cuentaDest=_entregas[0].cuentaId;
+  }
 
   // ── Dos comprobaciones ANTES de guardar ─────────────────────────────────
   // 1) ¿Existen las cuentas que esta remesa va a mover? Si una no se encuentra,
@@ -8045,7 +8261,7 @@ function saveTx(){
   //    mover un céntimo, y la app se quedó con 20.010 Bs de más hasta que se
   //    miró el banco. Se usa el mismo recorrido en modo "solo comprobar".
   actualizarCuentasPorRemesa(f.rt,res.am,res.tc,res.tv,res.pr,f.cuentaBanco||"",
-                             f.cuentaDest||"",res.cant,f.pendiente===true,true,res.uv);
+                             f.cuentaDest||"",res.cant,f.pendiente===true,true,res.uv,_entregas);
   if(_cuentasNoEncontradas.length){
     var _faltan=_cuentasNoEncontradas.map(function(x){
       return "• "+(x.moneda?x.moneda+" · ":"")+"\""+x.cuenta+"\"  ("+(x.delta>0?"+":"")+f2(x.delta)+")";
@@ -8059,8 +8275,8 @@ function saveTx(){
   //    El orden de registro es parte del método —primero las operaciones de USDT
   //    del día, después las remesas—, así que una remesa que no encuentra lote
   //    casi siempre significa que falta registrar una compra o una venta.
-  var _simPrev=simularConsumoFIFO(ruta.orig,res.uc,ruta.dest==="VES"?"VES":ruta.dest,
-                                  res.cant,f.cuentaBanco,f.cuentaDest);
+  var _simPrev=simularFIFORemesa(ruta.orig,res.uc,ruta.dest==="VES"?"VES":ruta.dest,
+                                 res.cant,f.cuentaBanco,f.cuentaDest,_entregas);
   var _sum=function(a,k){return a.reduce(function(t,x){return t+(parseFloat(x[k])||0);},0);};
   var _faltaU=Math.round(((parseFloat(res.uc)||0)-_sum(_simPrev.compras,"usdt"))*10000)/10000;
   var _faltaB=Math.round(((parseFloat(res.cant)||0)-_sum(_simPrev.ventas,"bs"))*100)/100;
@@ -8078,14 +8294,15 @@ function saveTx(){
   var nn=arr.length?Math.max.apply(null,arr.map(function(x){return x.n;}))+1:1;
   var nuevaRemesa={n:nn,_uid:_newUid(),d:ds(f.date),h:_horaDe(f.hora),id:f.id,cl:f.cl.toUpperCase(),rt:f.rt,am:res.am,orig:ruta.orig,dest:ruta.dest,tdia:res.tdia,cant:res.cant,tc:res.tc,uc:res.uc,pais:f.pais,uv:res.uv,tv:res.tv,total:res.cant,pr:res.pr,cuentaBanco:f.cuentaBanco||"",cuentaDest:f.cuentaDest||"",locked:true};
   if(_pagos) nuevaRemesa.pagos=_pagos;   // el desglose, para verlo y para revertirlo
+  if(_entregas) nuevaRemesa.entregas=_entregas;   // ARREGLO 97: de qué cuentas salió
   arr.push(nuevaRemesa);
   arr.sort(function(a,b){var da=a.d.split("/"),db=b.d.split("/");return (parseInt(da[1])*100+parseInt(da[0]))-(parseInt(db[1])*100+parseInt(db[0]))||a.n-b.n;});
   registrarMovimientoCapital({fecha:ds(f.date),rutaOrig:ruta.orig,rutaDest:ruta.dest,amOrigen:res.am,amDestino:res.cant,concepto:f.cl+" · "+f.rt,remesaId:nn});
   // Capturar desglose de lotes ANTES de consumir (solo lectura)
-  var _lotesSnap = simularConsumoFIFO(ruta.orig, res.uc, ruta.dest==="VES"?"VES":ruta.dest, res.cant, f.cuentaBanco, f.cuentaDest);
+  var _lotesSnap = simularFIFORemesa(ruta.orig, res.uc, ruta.dest==="VES"?"VES":ruta.dest, res.cant, f.cuentaBanco, f.cuentaDest, _entregas);
   if(_lotesSnap.compras.length||_lotesSnap.ventas.length) nuevaRemesa._lotesConsumidos=_lotesSnap;
   // Consumir inventario FIFO (más viejo primero): USDT comprados y bolívares de ventas
-  consumirInventarioFIFO(ruta.orig,res.uc,ruta.dest==="VES"?"VES":ruta.dest,res.cant,f.cuentaBanco,f.cuentaDest);
+  consumirFIFORemesa(ruta.orig,res.uc,ruta.dest==="VES"?"VES":ruta.dest,res.cant,f.cuentaBanco,f.cuentaDest,_entregas);
   // Los BOLÍVARES que entran y se quedan en la cuenta crean su propio lote, con
   // lo que la app dijo que valen (ver crearLoteRecibido). Solo bolívares: los
   // reales que entran se convierten en USDT y esa compra se registra aparte.
@@ -8156,13 +8373,36 @@ function saveTx(){
   // salte el origen y se acredita aquí cada parte en la suya. Todo queda anotado
   // en _mov, que es de donde sale la reversión exacta al borrar la remesa.
   var _saltarOrigen = f.pendiente===true || !!_pagos;
-  var _mov = actualizarCuentasPorRemesa(f.rt, res.am, res.tc, res.tv, res.pr, f.cuentaBanco||"", f.cuentaDest||"", res.cant, _saltarOrigen, false, res.uv);
+  var _mov = actualizarCuentasPorRemesa(f.rt, res.am, res.tc, res.tv, res.pr, f.cuentaBanco||"", f.cuentaDest||"", res.cant, _saltarOrigen, false, res.uv, _entregas);
   _mov = _mov || [];
   if(_pagos) acreditarPagos(_pagos, _mov);
   if(_mov && _mov.length) nuevaRemesa._mov = _mov;
   // Comisión bancaria VES: lo que cobra el banco por sacar los bolívares.
   // Sale de comisionBancoVES(), que es el único sitio que sabe las tarifas.
-  if(f.comisionBanco && esBancoVES(f.cuentaDest)){
+  if(_entregas){
+    // ARREGLO 97: con el desglose son DOS comisiones, cada una medida sobre lo
+    // que pagó SU banco. Una sola medida sobre el total se queda corta justo
+    // donde muerde el mínimo de 14 Bs: 60.000 + 40.000 por pago móvil son
+    // 180 + 120 = 300, pero dos entregas de 2.000 son 14 + 14 = 28, no 12.
+    var _comE=comisionesDeEntregas(_entregas);
+    if(_comE.total>0){
+      nuevaRemesa._mov=nuevaRemesa._mov||[];
+      _comE.det.forEach(function(d){
+        var _cC=(S.cuentas||[]).find(function(x){return x.id===d.cuentaId;});
+        if(!_cC) return;
+        _cC.saldo=Math.round(((parseFloat(_cC.saldo)||0)-d.comision)*100)/100;
+        _cC._mod=Date.now();
+        nuevaRemesa._mov.push({cuentaId:_cC.id,delta:-d.comision});
+      });
+      var _comUE=res.tv>0?Math.round(_comE.total/res.tv*10000)/10000:0;
+      nuevaRemesa.pr=Math.round((nuevaRemesa.pr-_comUE)*10000)/10000;
+      nuevaRemesa.comisionBancoVes=_comE.total;
+      // El tipo ya no es uno solo: vive en cada fila de "entregas". Se guarda
+      // "varias" para que las pantallas que lo escriben no mientan diciendo
+      // "pago móvil" cuando fue un pago móvil y una transferencia.
+      nuevaRemesa.comisionBancoTipo=(_comE.det.length>1?"varias":_comE.det[0].tipo);
+    }
+  } else if(f.comisionBanco && esBancoVES(f.cuentaDest)){
     var comVes=comisionBancoVES(f.comisionBanco, res.cant);
     // Descontar comisión extra de la cuenta VES
     var cDstB=(S.cuentas||[]).find(function(x){return x.id===f.cuentaDest;});
@@ -8189,6 +8429,8 @@ function saveTx(){
     cuentaBanco:"",
     cuentaDest:"",
     pagosMulti:false,
+    entregasMulti:false,
+    entregas:[],
     pagos:[],
     pais:f.pais,
     _tcLock:null,_tvLock:null,_amLock:null,_tdiaLock:null,_rtLock:null};
@@ -15521,6 +15763,38 @@ function monedasDeRemesa(tipo, r){
   return { orig: tipo==="brl"?"BRL":tipo==="vzla"?"VES":"USD",
            dest: tipo==="vzla"?"BRL":"VES" };
 }
+// Devuelve los bolívares (o reales) a los lotes de venta de la cuenta que de
+// verdad los pagó. Con el desglose del ARREGLO 97 son varias cuentas, y cada
+// parte tiene que volver a SUS lotes: devolverlo todo a la primera dejaría a un
+// banco con lotes que nunca gastó y al otro sin los suyos — y de los lotes
+// salen las tasas que la app sugiere.
+// Está escrito una vez porque el borrado lo hace en dos sitios (con _mov y sin
+// él) y dos copias de esto se separan con el primer cambio.
+function _restaurarVentasFIFO(r, monDest, cant){
+  if(!(cant>0)) return;
+  var partes=(r.entregas&&r.entregas.length)
+    ? r.entregas.map(function(e){ return {cuentaId:e.cuentaId, monto:parseFloat(e.monto)||0}; })
+    : [{cuentaId:r.cuentaDest||"", monto:cant}];
+  var ventasTodas=S.inventarioUsdt.filter(function(l){
+    return l.tipo==="venta"&&l.moneda===monDest;
+  }).sort(function(a,b){return(b.id||0)-(a.id||0);}); // más nuevo primero para revertir
+  partes.forEach(function(pt){
+    if(!(pt.monto>0)) return;
+    var ventas=pt.cuentaId?ventasTodas.filter(function(l){return _cuentaOMadre(l.cuentaDestinoId,pt.cuentaId,monDest);}):ventasTodas;
+    if(pt.cuentaId&&!ventas.length) ventas=ventasTodas;   // esa cuenta nunca tuvo lotes propios
+    var resto=pt.monto;
+    for(var j=0;j<ventas.length&&resto>0.001;j++){
+      var cap=parseFloat(ventas[j].bs)||0;
+      var act=parseFloat(ventas[j].bsRestante)||0;
+      var dev=Math.min(resto, cap-act);
+      if(dev>0){
+        ventas[j].bsRestante=Math.round((act+dev)*100)/100;
+        ventas[j]._mod=Date.now();
+        resto-=dev;
+      }
+    }
+  });
+}
 function revertirSaldosRemesa(tipo, r){
   // El lote que creó esta remesa se va con ella: ese dinero deja de existir en
   // el inventario igual que deja de existir en la cuenta.
@@ -15557,25 +15831,8 @@ function revertirSaldosRemesa(tipo, r){
         }
       }
     }
-    // Restaurar BS/BRL al lote de venta — misma cuenta que se usó primero
-    if(cant>0){
-      var ventasTodas=S.inventarioUsdt.filter(function(l){
-        return l.tipo==="venta"&&l.moneda===monDest;
-      }).sort(function(a,b){return(b.id||0)-(a.id||0);}); // más nuevo primero para revertir
-      var ventas=r.cuentaDest?ventasTodas.filter(function(l){return _cuentaOMadre(l.cuentaDestinoId,r.cuentaDest,monDest);}):ventasTodas;
-      if(r.cuentaDest&&!ventas.length) ventas=ventasTodas; // esa cuenta nunca tuvo lotes propios
-      var restCant=cant;
-      for(var j=0;j<ventas.length&&restCant>0.001;j++){
-        var capV=parseFloat(ventas[j].bs)||0;
-        var actualV=parseFloat(ventas[j].bsRestante)||0;
-        var devolverV=Math.min(restCant, capV-actualV);
-        if(devolverV>0){
-          ventas[j].bsRestante=Math.round((actualV+devolverV)*100)/100;
-          ventas[j]._mod=Date.now();
-          restCant-=devolverV;
-        }
-      }
-    }
+    // Restaurar BS/BRL al lote de venta — cada parte a los lotes de SU cuenta
+    _restaurarVentasFIFO(r, monDest, cant);
     return;
   }
 
@@ -15627,20 +15884,7 @@ function revertirSaldosRemesa(tipo, r){
       if(dev>0){compras2[ci].restante=Math.round((act+dev)*100)/100;compras2[ci]._mod=Date.now();restUc-=dev;}
     }
   }
-  if(cant>0){
-    var ventasTodas2=S.inventarioUsdt.filter(function(l){
-      return l.tipo==="venta"&&l.moneda===monDest;
-    }).sort(function(a,b){return(b.id||0)-(a.id||0);});
-    var ventas2=r.cuentaDest?ventasTodas2.filter(function(l){return _cuentaOMadre(l.cuentaDestinoId,r.cuentaDest,monDest);}):ventasTodas2;
-    if(r.cuentaDest&&!ventas2.length) ventas2=ventasTodas2;
-    var restCant=cant;
-    for(var vi=0;vi<ventas2.length&&restCant>0.001;vi++){
-      var capV=parseFloat(ventas2[vi].bs)||0;
-      var actV=parseFloat(ventas2[vi].bsRestante)||0;
-      var devV=Math.min(restCant,capV-actV);
-      if(devV>0){ventas2[vi].bsRestante=Math.round((actV+devV)*100)/100;ventas2[vi]._mod=Date.now();restCant-=devV;}
-    }
-  }
+  _restaurarVentasFIFO(r, monDest, cant);
 }
 
 // Revierte saldos cuando se elimina un movimiento de inventario USDT
@@ -23217,13 +23461,20 @@ function rNueva(){
           }
         }
         if(destMon!=="USDT"&&cuentasDest.length){
-          var optsD="<option value=''>-- No registrar --</option>"+cuentasDest.map(function(c){
-            var s=parseFloat(c.saldo)||0;
-            return "<option value='"+c.id+"'"+(S.tx.cuentaDest===c.id?" selected":"")+">"+
-              c.nombre+" ("+f2(s)+" "+destMon+")"+(s<0?" ⚠️ déficit":"")+"</option>";
-          }).join("");
-          html+="<div class='fl'><label>📤 ¿De qué cuenta salen los "+destMon+"? </label>"+
-            "<select onchange='S.tx.cuentaDest=this.value'>"+optsD+"</select></div>";
+          // ARREGLO 97: una entrega grande no siempre cabe en un solo banco.
+          // Apagado, esto es exactamente lo de siempre: una sola cuenta.
+          if(!S.tx.entregasMulti){
+            var optsD="<option value=''>-- No registrar --</option>"+cuentasDest.map(function(c){
+              var s=parseFloat(c.saldo)||0;
+              return "<option value='"+c.id+"'"+(S.tx.cuentaDest===c.id?" selected":"")+">"+
+                c.nombre+" ("+f2(s)+" "+destMon+")"+(s<0?" ⚠️ déficit":"")+"</option>";
+            }).join("");
+            html+="<div class='fl'><label>📤 ¿De qué cuenta salen los "+destMon+"? </label>"+
+              "<select onchange='S.tx.cuentaDest=this.value'>"+optsD+"</select>"+
+              "<div onclick='txEntregasToggle()' style='font-size:11px;color:var(--mo3);cursor:pointer;margin-top:6px;font-weight:600'>➕ Pagué desde varias cuentas</div></div>";
+          } else {
+            html+="<div class='fl' style='grid-column:1/-1'>"+_txEntregasHTML(cuentasDest,destMon)+"</div>";
+          }
         } else if(destMon!=="USDT"&&!cuentasDest.length){
           // Sin cuentas en la moneda de destino, la entrega la hace un aliado y
           // se le paga en USDT. Antes aquí no se ofrecía nada: la remesa se
