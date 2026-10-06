@@ -1580,6 +1580,120 @@ Con préstamos nuevos cada semana, ese sobrante no paraba de crecer.
 Comprobado: el "sin explicar" de su export no se mueve ni un céntimo (59,28
 antes y después), y prestar con interés ya no lo toca.
 
+### La apertura cambiaba sola, y no quedaba rastro (ARREGLO 94)
+
+Sus palabras: *"en el saldo de apertura días atrás me decía un saldo y ahorita me
+dice que el saldo de apertura es otro monto, es como que si a escondidas se
+modificara"*.
+
+No se modificaba a escondidas: **se la cambiaba el otro aparato**. En un solo
+dispositivo la apertura solo la tocan tres botones, los tres con confirmación —
+pero `_aplicarEstadoDeApi()` adopta lo que contesta el servidor, y ahí entra
+entera (`_MERGE_BLOQUES`, ARREGLO 60). El aviso del ARREGLO 67 cubría el choque:
+cuando ella la cambió **aquí** y el servidor devolvió otra cosa. Si no la tocó en
+este aparato no hay marca, no hay choque, y **no salía nada**.
+
+Y lo peor no era que cambiara: era que **no quedaba con qué contestar "¿cuánto
+era antes?"**. La apertura es el punto de partida de toda la conciliación — si se
+mueve, se mueve el "sin explicar" — y no había historial de ninguna clase.
+
+- **El historial es `S.histApertura`**, indexado por fecha, así que va en
+  `_MERGE_HISTORIAL` **y** en `DATA_KEYS`: se une entre los dos aparatos en vez de
+  pisarse. Si se reemplazara, el que guarda último borraría las líneas del otro.
+- **La apertura son DOS cosas, el monto y la fecha**, y las dos se mueven. Van
+  juntas en `_fotoApertura()` porque *"empezaste el 11/09 con $2.544,79"* es una
+  sola frase. La fecha también se queda mal: pasó el 14/09.
+- **Los CUATRO escritores la apuntan**: `fijarAperturaHoy()`,
+  `corregirApertura()`, `corregirFechaApertura()` y la adopción del servidor.
+  Dejarse uno fuera es volver a que cambie en silencio, y la prueba los exige los
+  cuatro por nombre.
+- **La foto de ANTES se toma antes de adoptar.** Tomada después, los dos valores
+  son el mismo y no hay cambio que detectar nunca. (La guardia de esto se escribió
+  primero con un `indexOf` a secas y **pasaba con la línea borrada**: `-1` es menor
+  que cualquier posición. Hay que exigir además que exista.)
+- **Dos cambios en el mismo milisegundo se pisaban**, porque la clave es la hora
+  ISO. Si está tomada se le añade un sufijo — y así el tope de 60 líneas se puede
+  medir, que antes no.
+- **El aviso no se repite con el del 67.** Dos avisos del mismo suceso se leen
+  como dos sucesos.
+
+#### Y la tarjeta ahora abre contestando lo suyo
+
+Sus palabras: *"me gustaría que me dijera, por lo menos, empezaste el día 11/09
+con tanto de saldo, y hoy tienes tanto, que está tanto en la cuenta, tanto en
+préstamo, tanto en remesa por cobrar, tanto en reserva, o sea, detallado. Y
+obviamente me diga allí la diferencia… pero yo no quiero ver tantas cosas
+escritas en la aplicación, porque realmente se pierde el foco de qué es lo que
+realmente sirve ese botón"*.
+
+La tarjeta abría con el veredicto —*"sobra sin explicar $X"*—, que es la pregunta
+del **contador**. La suya es otra y es anterior: cuánto tenía el día que empezó,
+cuánto tiene hoy, y a qué se debe el salto. Las dos cuentas ya estaban, pero
+repartidas y detrás del desplegable.
+
+**Las filas tienen que SUMAR el salto, al céntimo.** La identidad sale entera de
+`conciliacionCapital()` y no se calcula nada nuevo:
+
+```
+deberias    = apertura − intAp + bruta − egEmpresa − egPersonal − socios − traspPers
+diferencia  = tienes − deberias
+sinExplicar = diferencia − ajustes − tasas
+
+⇒ tienes − apertura = (bruta − egEmpresa − egPersonal − socios − intAp − traspPers)
+                      + ajustes + tasas + sinExplicar
+```
+
+**El primer intento dejó fuera los ajustes a mano y el desfase de tasas**, y la
+lista no cuadraba con el total que ella tiene justo encima. Una tarjeta que no se
+puede sumar a mano es peor que no dar el desglose. Medido con su export: salto
+−13,98 y la suma de las filas −13,98, descuadre **0**.
+
+- **La tabla vieja "De qué está hecha la diferencia" se fue al desplegable**,
+  porque desde que el resumen lleva sus filas decía lo mismo dos veces. Sigue
+  entera ahí, porque parte la diferencia por el **otro** lado: contra "deberías
+  tener" en vez de contra la apertura.
+- **Pero los AVISOS no se van con ella.** Al moverla se llevó dentro el de
+  *"algún ajuste es de una moneda sin tasa"* — uno de los que CLAUDE.md ya exige
+  siempre a la vista, porque dice que hay dinero que la cuenta de arriba **no
+  está contando**. Lo cazó una guardia de hace cuatro arreglos. Está fuera otra
+  vez, y el de *"no sé por qué"* con él.
+- **Un saldo de socio NEGATIVO se dice "cobrado", no "pagos" en negativo.** Con
+  sus datos vale −0,54: el socio le debe. Es la misma regla del ARREGLO 57
+  —apartar un número negativo no significa nada— aplicada a esta fila.
+
+### El mismo gasto personal se resta DOS veces (pendiente, medido)
+
+Sale de medir el ARREGLO 94 y **no está arreglado**: es decisión suya porque le
+mueve los números.
+
+Un gasto personal pagado desde una cuenta 💜 **personal** se resta de "deberías
+tener" por `egPerPagPropio`. Pero una cuenta 💜 no está dentro del capital de la
+empresa —comprobado: sumarle 1.000 a una 💜 no mueve "lo que tienes"— así que ese
+dinero **ya había salido** cuando se traspasó a esa cuenta, y `traspasosAPersonal()`
+ya lo restó. Se resta dos veces.
+
+Reproducido con su export, y las dos mitades se ven una encima de la otra en la
+propia tarjeta:
+
+```
+12/09  traspaso  BINANCE SAIPA → MI SUELDO BINANCE 💜   51,52 USDT
+18/09  gasto     "CAMIDA PARA LA CASA", desde 💜        51,52 USDT
+
+Gastos personales            −$51,52
+Pasado a cuentas personales  −$51,52   ← el mismo dinero
+```
+
+```
+             sin explicar      veredicto
+hoy ............  +59,28       ⚠️ Sobra sin explicar
+corregido ......   +7,76       ✅ Cuadra   (margen ±50,62)
+```
+
+O sea que esto es **la mitad de su *"nunca está en 0 siempre tiene un
+desajuste"***. El arreglo sería no restar de `deberias` los gastos personales
+pagados desde una cuenta 💜; los pagados desde una cuenta de la empresa se siguen
+restando, porque esos sí salieron de ella.
+
 ### La tarjeta de conciliación: un solo número grande
 
 Sus palabras: *"mucha letra, no es fácil de entender, nunca está en 0 siempre
@@ -1968,6 +2082,99 @@ existe se veía igual que uno que sí.
 estructural comprueba que el código dice lo que debe decir, no que el camino
 funcione. Cuando un arreglo añade un **botón que lleva a algún sitio**, hay que
 pulsarlo en Chromium y mirar dónde cae.
+
+### La tarjeta de crédito es una cuenta, y su saldo es DEUDA (ARREGLO 95)
+
+Sus palabras: *"el saldo que yo utilizo de ahí es el mismo límite de reserva que yo
+tengo en el banco… no tengo dinero propio del banco para utilizar"*.
+
+La tarjeta de PagBank está respaldada por los **R$ 1.004 bloqueados en PAGBANK
+RESERVA**. La app no la conocía, así que una compra con la tarjeta se apuntaba
+**saliendo del efectivo del banco el día de la compra** — y del banco no sale nada
+hasta que se paga la factura. Es un desfase de fechas que no cierra solo.
+
+Medido contra su extracto OFX de PagBank, eso dejó la cuenta en **R$ 199,81** con
+el banco en **R$ 0,00**. El desglose, al céntimo:
+
+```
++332,31   la factura del 05/10 (932,50) menos lo que sí registró (Claude 600,19)
+ −80,00   una remesa que entró al banco y no estaba registrada
+ −52,00   la entrega de la remesa #131, que salió de la TARJETA, no del efectivo
+  −0,50   medio real de antes del 15/09
+────────
+ 199,81
+```
+
+Y la factura cuadra sola: **600,19 de Claude + 332,31 de los relojes = 932,50**.
+
+**No hace falta ningún movimiento nuevo.** Son el traspaso y el egreso de siempre;
+lo único que faltaba era que la cuenta existiera:
+
+```
+compra con la tarjeta   →  sale de la TARJETA (la deuda sube)
+pagar la factura        →  traspaso banco → tarjeta (baja el efectivo y la deuda)
+Pix pagado con tarjeta  →  la entrega sale de la TARJETA, y su comisión es un egreso
+```
+
+- **En una tarjeta el negativo es lo NORMAL**, así que no se pinta de alarma y no
+  entra en el aviso de saldo negativo. Su guardia es otra: pasarse del límite.
+- **Pero la cifra grande tampoco puede salir como dinero.** El primer intento
+  pintaba una deuda de 652,68 en **verde y sin signo**, idéntica a un saldo a
+  favor. Va en ámbar, con el signo y con *"debes"* debajo.
+- **La comisión del Pix con tarjeta es un GASTO FINANCIERO, no parte de la
+  entrega.** Su comprobante del 05/10: R$ 50,00 de transferencia, *taxa do cartão*
+  **4,98 % = R$ 2,49**, total R$ 52,49. Metida dentro de lo entregado deforma la
+  tasa: 11.000 Bs ÷ 50 son **220**, su tasa de vuelta; con la comisión dentro salen
+  **211,54**, que es una tasa que no le dio a nadie. El porcentaje se edita en
+  Configuración, al lado de la comisión del banco venezolano.
+
+#### Y una cuenta de banco en negativo es un aviso, no un detalle
+
+Esto es lo que habría cazado todo lo anterior **solo, en septiembre**, sin pedirle
+un extracto al banco. Reconstruyendo PagBank, el saldo tuvo que irse a negativo dos
+días —**el 12/09 por 178 y el 18/09 por 293**— porque había entradas sin registrar.
+En un banco eso no existe.
+
+El aviso va arriba del panel, fuera del scroll (ARREGLO 62), dice qué cuenta y
+cuánto, y apunta a las dos causas: que se pagó con la tarjeta, o que falta
+registrar una entrada. **Y dice que no se arregla escribiendo el saldo**, que es lo
+que borra la pista.
+
+#### Lo que esto NO repara
+
+Lo ya registrado se queda como está (la regla de siempre). Para dejar PagBank
+cuadrado contra el banco hay que rehacer cuatro cosas a mano, una vez, y la
+**apertura de la tarjeta son los relojes**: `−332,31`, que es la parte de la
+factura que no está en ninguna otra cuenta.
+
+```
+                                                        PagBank    tarjeta
+apertura de la tarjeta: los relojes                                 −332,31
+Claude (600,19) sale de la TARJETA, no del efectivo      800,00     −932,50
+el pago de la factura (932,50) SÍ sale de PagBank       −132,50        0,00
+la entrega de la #131 (50,00 + 2,49 de comisión)         −80,50      −52,49
+la remesa que faltaba del 01/10 (80,00)                   −0,50
+```
+
+PagBank queda en **−0,50** contra los 0,00 del banco, y la tarjeta debiendo
+**52,49** — que es justo el Pix de las 10:01, hecho **después** de pagar la
+factura, así que entra en la siguiente.
+
+**Los relojes NO se tocan.** Están como préstamo a ella de 336,91 del 29/08 contra
+PagBank. En agosto la app llegó a estar **4.900 por encima** del banco y lo que la
+trajo de vuelta fueron sus ajustes a mano del 2 al 12 de septiembre: los relojes
+quedaron dentro de ese reseteo. Moverlos ahora reabre algo ya cerrado. (La tarjeta
+cobró 332,31 y el préstamo dice 336,91 — 4,60 de diferencia que no se persiguió.)
+
+**Y la lección de método, que es la que vale para la próxima:** reconstruir una
+cuenta desde fuera del navegador falló **dos veces** —primero perdiendo las 192
+remesas por buscar la fecha en el campo equivocado (`d`, no `fecha`), y después
+olvidando que **dar un préstamo saca el capital de la cuenta**—. Lo que lo resolvió
+fue el **extracto OFX del banco**: comparar movimiento contra movimiento, con
+margen de días, y mirar **en qué día cambia la diferencia**, no el saldo de cada
+día — `histSaldos` se toma a media jornada y no sirve para comparar cierres.
+
+---
 
 ### Registra la operación — no escribas el saldo
 

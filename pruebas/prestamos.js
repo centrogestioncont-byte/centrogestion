@@ -5050,12 +5050,22 @@ console.log("\n— FASE 2: la cuenta madre —");
                             HTML.indexOf("S._concDetalle=!S._concDetalle"));
   ok(!/Saldo de apertura/.test(cuerpo) && !/lineaReal/.test(cuerpo),
      "y ninguna de las dos tablas se dibuja ya sin desplegar");
-  ok(/S\._concDetalle\?\s*\n?\s*tablasCuenta\+/.test(HTML),
+  // ARREGLO 94: entre el "?" y tablasCuenta entro la tabla de la diferencia,
+  // que antes se dibujaba fuera. Lo que se exige sigue siendo lo mismo: que
+  // tablasCuenta este DENTRO del desplegable y no se haya borrado.
+  ok(/S\._concDetalle\?[\s\S]{0,4000}tablasCuenta\+/.test(HTML),
      "estan dentro del desplegable, no borradas");
   // Lo urgente sigue fuera: un aviso escondido no es un aviso (ARREGLO 48/60).
   ok(/que no se pueden situar/.test(cuerpo), "el aviso de los ajustes en el aire sigue fuera");
-  ok(/De qué está hecha la diferencia/.test(cuerpo),
+  // ARREGLO 94: el desglose sigue viendose sin desplegar nada, pero ya no es la
+  // tabla vieja: es el resumen de arriba, que ademas CUADRA con el total —
+  // lleva los ajustes a mano y el desfase de tasas, que a la tabla vieja le
+  // faltaban. La tabla se fue al desplegable porque decia lo mismo dos veces.
+  // Se arma antes del return, en resumenSuyo, y se dibuja sin desplegar nada.
+  ok(/resumenSuyo\+/.test(cuerpo) && /De qué viene esa diferencia/.test(HTML),
      "y el desglose tambien: es lo que convierte el numero en algo que perseguir");
+  ok(!/De qué está hecha la diferencia/.test(cuerpo),
+     "y no se dice dos veces: la tabla vieja ya no se dibuja sin desplegar");
   // El interes por cobrar se ve, pero dicho: no es suyo todavia.
   ok(/intereses por cobrar \(aún no son tuyos\)/.test(HTML),
      "la tarjeta dice que el interes pendiente no cuenta como capital");
@@ -5466,6 +5476,158 @@ console.log("\n— FASE 2: la cuenta madre —");
      "y ya no copia el numero pelado");
   ok(/Ese campo está vacío/.test(c),
      "con el campo vacio sigue avisando en vez de copiar nada");
+}
+
+// ── ARREGLO 94: la apertura deja rastro, y la tarjeta contesta lo suyo ────
+// Sus palabras: "en el saldo de apertura dias atras me decia un saldo y ahorita
+// me dice que el saldo de apertura es otro monto, es como que si a escondidas
+// se modificara". Se la cambiaba el otro aparato por la fusion, y no quedaba
+// ni rastro: no habia con que contestar "¿cuanto era antes?".
+{
+  const H = sinComentarios(HTML);
+
+  // 1. El historial se UNE entre aparatos y viaja. Si faltara en cualquiera de
+  //    las dos listas, el remoto lo reemplazaria entero y se perderia justo lo
+  //    que este aparato apunto.
+  ok(/_MERGE_HISTORIAL\s*=\s*\[[^\]]*"histApertura"/.test(H),
+     "histApertura se une por fecha en vez de pisarse");
+  ok(/DATA_KEYS\s*=\s*\[[^\]]*"histApertura"/.test(H),
+     "y viaja al servidor, que si no no sale de este aparato");
+
+  // 2. Los CUATRO escritores de la apertura la apuntan. Este es el guardia que
+  //    de verdad importa: cualquiera que se deje fuera vuelve a cambiarla en
+  //    silencio, que es el fallo que ella reporto.
+  const escritores = ["fijarAperturaHoy","corregirApertura","corregirFechaApertura"];
+  escritores.forEach(function(fn){
+    ok(/_anotarApertura\(/.test(sinComentarios(sacarFuncion(fn))),
+       "el que la cambia la apunta: "+fn);
+  });
+  ok(/_anotarApertura\(_apAntes,\s*_apDespues,\s*"llegó del otro aparato"\)/.test(H),
+     "y cuando la cambia el otro aparato tambien queda apuntada");
+  // La foto de ANTES se toma antes de adoptar la respuesta del servidor; si se
+  // tomara despues, los dos valores serian el mismo y nunca habria cambio.
+  const ap = sinComentarios(sacarFuncion("_aplicarEstadoDeApi"));
+  // Ojo con el indexOf a secas: si la linea se borra devuelve -1, que es menor
+  // que cualquier posicion y la guardia pasaba con el codigo roto.
+  ok(ap.indexOf("_apAntes=_fotoApertura()") >= 0 &&
+     ap.indexOf("_apAntes=_fotoApertura()") < ap.indexOf("_anotarApertura("),
+     "la foto de antes se toma ANTES de adoptar lo del servidor");
+
+  // 3. La apertura son DOS cosas y las dos cambian: monto y fecha.
+  ok(/function _fotoApertura\(\)/.test(H) &&
+     /aperturaUsdt/.test(sinComentarios(sacarFuncion("_fotoApertura"))) &&
+     /aperturaFecha/.test(sinComentarios(sacarFuncion("_fotoApertura"))),
+     "la foto lleva el monto y la fecha, no solo el monto");
+
+  const an = sinComentarios(sacarFuncion("_anotarApertura"));
+  // Sin apertura previa no es un cambio: es el punto de partida. Y un cambio
+  // que no cambia nada llenaria el historial de ruido en cada guardado.
+  ok(/a\.monto===null\s*&&\s*a\.fecha===null/.test(an),
+     "sin apertura previa no se apunta nada: no es un cambio");
+  ok(/mismoMonto\s*&&\s*a\.fecha===d\.fecha/.test(an),
+     "y lo que no cambia tampoco se apunta");
+  // Dos cambios en el mismo milisegundo se pisaban: la clave es la hora ISO.
+  ok(/while\(S\.histApertura\[k\]\)/.test(an),
+     "dos cambios en el mismo milisegundo no se pisan");
+
+  // 4. El aviso: tres cosas que no se pueden quitar.
+  const av = sinComentarios(sacarFuncion("_htmlAvisoAperturaFuera"));
+  ok(/_PISADOS\.some\(/.test(av),
+     "si el aviso del 67 ya lo dijo, este no lo repite");
+  ok(/No la vuelvas a fijar/.test(av),
+     "y dice que NO la vuelva a fijar: eso pone la diferencia en cero y borra la pista");
+  ok(/antes/.test(av) && /despues/.test(av),
+     "el aviso lleva los DOS numeros, no solo el que quedo");
+  // Va arriba del panel, fuera de la zona que hace scroll (ARREGLO 62).
+  ok(/_htmlAvisoAperturaFuera\(\)/.test(H.replace(/function _htmlAvisoAperturaFuera[\s\S]*?\n\}/,"")),
+     "y se dibuja arriba del panel, no dentro de una pantalla suelta");
+
+  // 5. La tarjeta: las filas tienen que SUMAR el salto. El primer intento
+  //    dejaba fuera los ajustes a mano y el desfase de tasas, y la lista no
+  //    cuadraba con el total que ella tiene justo encima.
+  const cap = sinComentarios(sacarFuncion("rCapitalTotal"));
+  // Las guardias se miden SOBRE EL BLOQUE del resumen, no sobre la funcion
+  // entera: "co.ajustes" y "R.enPrestamos" aparecen tambien mas abajo, asi que
+  // buscandolos en toda la funcion pasaban con la fila ya borrada.
+  const filas = cap.slice(cap.indexOf("var _filas=[]"), cap.indexOf("var resumenSuyo="));
+  const resum = cap.slice(cap.indexOf("var resumenSuyo="), cap.indexOf("var tablasCuenta="));
+  ok(filas.length>200 && resum.length>200, "el resumen de la tarjeta sigue en su sitio");
+  ["co.bruta","co.egEmpresa","co.egPersonal","co.socios",
+   "co.intAp","co.traspPers","co.ajustes","co.tasas"].forEach(function(c){
+    ok(new RegExp("_filas\\.push[\\s\\S]{0,160}"+c.replace(".","\\.")).test(filas),
+       "la lista de la diferencia incluye "+c+" (si no, no suma el salto)");
+  });
+  ok(/Empezaste el/.test(resum) && /Hoy tienes/.test(resum),
+     "la tarjeta abre con lo que ella pidio: con cuanto empezo y cuanto tiene hoy");
+  ["R.enCuentas","R.enReserva","R.porCobrar","R.enPrestamos"].forEach(function(c){
+    ok(new RegExp("_fRes\\([^)]{0,80}"+c.replace(".","\\.")).test(resum),
+       "y el 'hoy tienes' va detallado: "+c);
+  });
+  // Apartar un numero negativo no significa nada (ARREGLO 57): con sus datos
+  // socios vale -0,54, o sea que el socio le debe. La fila cambia de nombre.
+  ok(/Cobrado a socios/.test(cap),
+     "un saldo de socio negativo se dice 'cobrado', no 'pagos' en negativo");
+  // Y las cuentas no se calculan aparte: salen de conciliacionCapital().
+  ok(!/capitalRealTotal\(\)[\s\S]{0,400}Empezaste el/.test(cap),
+     "ningun numero de la tarjeta se vuelve a calcular por su cuenta");
+}
+
+// ── ARREGLO 95: la tarjeta de credito es una cuenta, y su saldo es DEUDA ───
+// Sus palabras: "el saldo que yo utilizo de ahi es el mismo limite de reserva
+// que yo tengo en el banco". Una compra con la tarjeta se apuntaba como si
+// saliera del efectivo del banco el dia de la compra; del banco no sale nada
+// hasta que se paga la factura. Medido contra su extracto: PagBank en 199,81
+// con el banco en 0,00.
+{
+  const H = sinComentarios(HTML);
+
+  // 1. Una tarjeta NO entra en el aviso de saldo negativo: ahi el negativo es
+  //    la deuda, que es lo normal. Es el guardia que separa los dos avisos.
+  const neg = sinComentarios(sacarFuncion("_cuentasEnNegativo"));
+  ok(/c\.esTarjeta/.test(neg),
+     "una tarjeta de credito no sale en el aviso de saldo en negativo");
+  ok(/activa===false/.test(neg),
+     "y una cuenta pausada tampoco");
+
+  // 2. El aviso de negativo existe y se dibuja arriba del panel, fuera del
+  //    scroll (ARREGLO 62): un aviso al fondo de una lista no es un aviso.
+  ok(/function _htmlAvisoSaldoNegativo\(\)/.test(H),
+     "hay aviso cuando una cuenta de banco queda en negativo");
+  ok(/_htmlAvisoSaldoNegativo\(\)\+/.test(H),
+     "y se dibuja arriba del panel, no dentro de una pantalla suelta");
+  const avn = sinComentarios(sacarFuncion("_htmlAvisoSaldoNegativo"));
+  ok(/No lo arregles escribiendo el saldo/.test(avn),
+     "y dice que no se arregla escribiendo el saldo, que es lo que borra la pista");
+  ok(/tarjeta de cr/.test(avn),
+     "y apunta a la causa mas probable: que se pago con la tarjeta");
+
+  // 3. La deuda se lee del saldo en negativo, y un positivo NO es deuda.
+  const dt = sinComentarios(sacarFuncion("_deudaTarjeta"));
+  ok(/s<0/.test(dt),
+     "lo que se debe en la tarjeta es el saldo en negativo, leido al derecho");
+
+  // 4. La comision del Pix con tarjeta: su comprobante del 05/10 dice 4,98%
+  //    sobre 50,00 = 2,49, total 52,49. El 4,98 es el valor por omision.
+  const cm = sinComentarios(sacarFuncion("_comisionPixTarjeta"));
+  ok(/4\.98/.test(cm),
+     "la comision del Pix con tarjeta trae el 4,98% de su comprobante por omision");
+  ok(/pct<0\|\|pct>100/.test(cm),
+     "y un porcentaje fuera de rango se ignora en vez de destrozar la cuenta");
+  ok(/pctPixTarjeta/.test(H) && /id='inp-pix-tarjeta'/.test(H) &&
+     /function guardarPixTarjeta\(\)/.test(H),
+     "y se puede editar en Configuracion: si no, no hay donde escribirla");
+
+  // 5. Marcar una cuenta como tarjeta no puede hacerse sobre una personal, una
+  //    de reserva ni la madre — ahi el negativo significa otra cosa.
+  const tg = sinComentarios(sacarFuncion("toggleCuentaTarjeta"));
+  ok(/esPersonal\|\|c\.esReserva\|\|c\.esMadre/.test(tg),
+     "una cuenta personal, de reserva o madre no puede marcarse como tarjeta");
+  ok(/_leerNumero\(/.test(tg),
+     "el limite pasa por _leerNumero: con el teclado en espanol la coma es decimal");
+
+  // 6. El limite se puede cambiar sin desmarcar la tarjeta.
+  ok(/function editarLimiteTarjeta\(/.test(H),
+     "el limite se cambia sin tener que desmarcar y volver a marcar");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
