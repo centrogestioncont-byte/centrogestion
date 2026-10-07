@@ -1823,7 +1823,7 @@ ok(!/var sano=Math\.abs\(dif\)<=tol;/.test(HTML),
    "y ya no la diferencia bruta");
 ok(/sinExplicar:sinExplicar/.test(HTML) && /ajustes:ajustes/.test(HTML),
    "conciliacionCapital devuelve el desglose");
-ok(/Volver a fijar la apertura no lo arregla: lo esconde/.test(HTML),
+ok(/Volver a fijar la apertura lo esconde, no lo arregla|Volver a fijar la apertura no lo arregla: lo esconde/.test(HTML),
    "y le dice que refijar la apertura no arregla nada");
 
 
@@ -2549,6 +2549,14 @@ ok(_resto.moraMultaPct===2 && _resto.ntfyCanal==="b",
 // ARREGLO 71: los dos siguen, pero ya no compiten. El grande es el que hay que
 // perseguir —el sin explicar— y la resta que ella hace a mano va entera en una
 // linea pequena debajo. Sus palabras sobre la tarjeta: "mucha letra".
+//
+// ARREGLO 100: y dejaron de salir los dos a la vez. Son la MISMA diferencia
+// contada desde dos sitios —la cadena de arriba parte de la apertura, esta de
+// "deberias tener"— y juntas se leen como dos respuestas que no cuadran. Sus
+// palabras mirando esta tarjeta: "me dice que deberia de tener 2600 y que tengo
+// 2500, no estoy entendiendo ese punto". La resta no se borro, que es lo que
+// fallo antes del 69: se fue al desplegable, de cabecera de la tabla que la
+// desglosa, y ahi sigue ENTERA, con las palabras incluidas.
 ok(/"\$"\+f2\(Math\.abs\(sinExp\)\)/.test(HTML),
    "el titular sigue enseñando el 'sin explicar', con su numero");
 ok(/te faltan |te sobran /.test(HTML) && /deberías tener \$/.test(HTML) && /"Tienes \$"/.test(HTML),
@@ -2564,11 +2572,20 @@ ok(/Math\.abs\(dif\)<0\.005 \? " · clavado"/.test(HTML),
   // pegados: un "$215,47" suelto no dice de que lado esta.
   const i = HTML.indexOf('"$"+f2(Math.abs(sinExp))');
   const j = HTML.indexOf('sobra sin explicar', i);
-  const k = HTML.indexOf('"Tienes $"', i);
-  ok(i > -1 && j > i && j - i < 400 && k > i && k - i < 1200,
-     "los dos van juntos en el titular, cada uno con su rotulo");
+  ok(i > -1 && j > i && j - i < 400,
+     "el numero grande lleva pegada la palabra que dice de que lado esta");
   ok(/el margen normal es ±\$/.test(HTML) && /de ruido normal/.test(HTML),
      "y si el sin explicar se pasa de la tolerancia, lo dice ahi mismo");
+  // ARREGLO 100: la resta de ella va DENTRO del desplegable, pegada a la tabla
+  // que la desglosa. Se exige la distancia en los dos sentidos: lejos del
+  // titular (si no, vuelve a competir) y cerca de "De que esta hecha la
+  // diferencia" (si no, se quedo suelta en cualquier parte).
+  const k = HTML.indexOf('"Tienes $"+f2(R.total)');
+  const t = HTML.indexOf('>De qué está hecha la diferencia</div>');
+  ok(k > -1 && t > -1 && k > t && k - t < 600,
+     "y la resta de ella va de cabecera de la tabla que la desglosa");
+  ok(k > i + 1200,
+     "o sea bien lejos del titular: arriba manda una sola cuenta");
 }
 ok(/ajuste"\+\(aj\.nMismoDia!==1\?"s":""\)\+" sin situar/.test(HTML),
    "el aviso de los ajustes en el aire esta fuera del desplegable");
@@ -4807,7 +4824,10 @@ console.log("\n— ARREGLO 68: por que no cuadraba —");
 }
 // Lo que se deja fuera tiene que VERSE. Un descuento silencioso no se revisa.
 {
-  const i0 = HTML.indexOf("De qué está hecha la diferencia");
+  // Anclado en el MARCADO, no en el texto suelto: el rotulo se repite en los
+  // comentarios y el primero que salia era uno de esos, asi que la guardia
+  // medía otro trozo del archivo (paso en el ARREGLO 100).
+  const i0 = HTML.indexOf(">De qué está hecha la diferencia</div>");
   const card = sinComentarios(HTML.slice(i0, i0 + 2500));
   ok(/aj\.nSinSaber\s*>\s*0/.test(card), "la tarjeta dice cuantos marco 'no se por que'");
   const i1 = card.indexOf("Ajustes de saldo a mano</span><b>ninguno");
@@ -5079,7 +5099,15 @@ console.log("\n— FASE 2: la cuenta madre —");
   // lleva los ajustes a mano y el desfase de tasas, que a la tabla vieja le
   // faltaban. La tabla se fue al desplegable porque decia lo mismo dos veces.
   // Se arma antes del return, en resumenSuyo, y se dibuja sin desplegar nada.
-  ok(/resumenSuyo\+/.test(cuerpo) && /De qué viene esa diferencia/.test(HTML),
+  // ARREGLO 100: el desglose perdio su titulo ("De que viene esa diferencia")
+  // porque la cifra de la que cuelga ya lo dice —"Diferencia · de donde sale ↓"—
+  // y un titulo mas era letra de la que ella pidio quitar. Lo que se exige
+  // sigue siendo lo mismo, y es lo unico que importa: que las filas se dibujen
+  // SIN desplegar nada, y que haya algo que lleve de la cifra a ellas. Esa
+  // lista es lo que convierte un numero en algo que se puede perseguir, y ya
+  // hay cinco arreglos apoyados en que se vea (ARREGLO 48/60/94/99).
+  ok(/resumenSuyo\+/.test(cuerpo) && /_filas\.map\(function/.test(HTML) &&
+     /"de dónde sale ↓"/.test(HTML),
      "y el desglose tambien: es lo que convierte el numero en algo que perseguir");
   // ARREGLO 99: y lo que ella abre a mirar —cuanto tiene hoy— va antes que el
   // veredicto y en grande. El veredicto es la pregunta del contador.
@@ -5575,21 +5603,83 @@ console.log("\n— FASE 2: la cuenta madre —");
   // las cajitas de "cuanto tienes hoy", y acaba donde empieza la otra tabla.
   const resum = cap.slice(cap.indexOf("var _caja=function"), cap.indexOf("var tablasCuenta="));
   ok(filas.length>200 && resum.length>200, "el resumen de la tarjeta sigue en su sitio");
-  ["co.bruta","co.egEmpresa","co.egPersonal","co.socios",
-   "co.traspPers","co.ajustes"].forEach(function(c){
-    ok(new RegExp("_filas\\.push[\\s\\S]{0,160}"+c.replace(".","\\.")).test(filas),
-       "la lista de la diferencia incluye "+c+" (si no, no suma el salto)");
+
+  // ── ARREGLO 100: GANASTE − CRECIO = DIFERENCIA, y las filas la suman ──
+  //
+  // Sus palabras: "lo que me interesa saber es que el dinero realmente este
+  // creciendo como dice... y no que me digas 'ganaste este mes 200 dolares'
+  // pero resulta que no tengo de que forma ver que sean 200, porque el saldo
+  // sigue siendo el mismo".
+  //
+  // La identidad sale entera de conciliacionCapital() y no se calcula nada
+  // nuevo aqui:
+  //
+  //   salto = (bruta − egEmpresa − egPersonal − socios) − intAp − traspPers
+  //           + ajustes + tasas + sinExplicar
+  //   ⇒ salto − enPapel = −traspPers − intAp + ajustes + tasas + sinExplicar
+  //
+  // Si alguien quita un termino de un lado sin quitarlo del otro, la tarjeta
+  // deja de sumarse a mano — y una tarjeta que no se puede sumar a mano es
+  // peor que no dar el desglose (es lo que ya costo el 34,27 contra 34,28).
+  const papel = cap.slice(cap.indexOf("var _enPapel="), cap.indexOf("var _filas=[]"));
+  ok(papel.length>20, "el 'ganaste en el papel' sigue en su sitio");
+  // Se fija la EXPRESION entera, no los nombres por separado. Buscandolos a
+  // secas la prueba negativa pasaba con "co.egEmpresaX" y con el termino
+  // multiplicado por cero: el nombre seguia ahi y la cuenta ya no.
+  ok(/_enPapel=_r2\(co\.bruta-co\.egEmpresa-co\.egPersonal-co\.socios\)/.test(papel),
+     "lo que GANASTE en el papel es bruta − egresos − personales − socios, entero");
+  ok(/_dif3=_r2\(_saltoTotal2-_enPapel\)/.test(cap),
+     "y la DIFERENCIA es lo que crecio menos eso: ni un termino mas");
+  // Y el otro lado: las cinco filas son exactamente los cinco terminos que
+  // sobran de la identidad. Se miden sobre el bloque de _filas, no sobre la
+  // funcion entera: estos nombres vuelven a salir mas abajo en la tabla del
+  // desplegable y buscandolos en toda la funcion pasarian con la fila borrada.
+  [["-co.traspPers.total","lo que pasaste a tus cuentas 💜"],
+   ["co.tasas.total",     "el desfase de las tasas"],
+   ["co.ajustes.total",   "los saldos que escribiste a mano"],
+   ["-co.intAp.total",    "los intereses que ya iban en la apertura"],
+   ["sinExp",             "lo que queda sin explicar"]].forEach(function(x){
+    ok(new RegExp("_filas\\.push\\(\\[[^\\]]{0,160}?,\\s*"+
+                  x[0].replace(/[.\-]/g,function(m){return "\\"+m;})+
+                  "\\s*,\\s*(sano\\?)?\"?var\\(--").test(filas),
+       "la diferencia desglosa "+x[1]+" (si no, las filas no la suman)");
   });
-  // ARREGLO 99: el desfase de tasas y los intereses de la apertura van en UNA
-  // fila, "No es dinero". Siguen contando los dos —si no, la lista deja de
-  // sumar el salto— pero con el signo correcto: el desfase entra tal cual y el
-  // interes RESTA, igual que cuando eran dos filas.
-  ok(/_noEsDinero\+=co\.tasas\.total/.test(filas),
-     "la fila 'No es dinero' lleva el desfase de las tasas");
-  ok(/_noEsDinero-=co\.intAp\.total/.test(filas),
-     "y los intereses de la apertura, restando, como cuando iban aparte");
-  ok(/_filas\.push\(\["No es dinero/.test(filas),
-     "y se dibuja como una sola fila, que es lo que quita letra");
+  // Las tres cifras grandes: es la cadena que ella pidio, y va entera o no va.
+  ["Ganaste","Creció","Diferencia"].forEach(function(r){
+    ok(new RegExp('_tile\\("'+r+'"').test(resum),
+       "la cadena lleva su cifra de "+r);
+  });
+  // ARREGLO 100: esta fila se llamaba "No es dinero" y para su pregunta eso era
+  // FALSO. efectoTasasDesde() valora cada movimiento a la tasa de HOY contra la
+  // ganancia que se apunto aquel dia: con sus datos son −255,32, que son sobre
+  // todo sus bolivares valiendo menos — justo el riesgo que ella explico. Es la
+  // pieza mas grande del hueco, y llamarla "no es dinero" le tapaba la
+  // respuesta a lo unico que pregunto.
+  ok(!/No es dinero/.test(cap),
+     "la fila de las tasas ya no dice 'no es dinero', que era falso para su pregunta");
+  ok(/valen menos hoy/.test(filas),
+     "y dice lo que de verdad pasa: sus bolivares valen menos hoy");
+  // Un traspaso a una cuenta 💜 baja el capital de la empresa pero no es una
+  // perdida: el dinero sigue siendo suyo. Sin esa coletilla la fila se lee como
+  // dinero que se fue.
+  ok(/sigue siendo tuyo/.test(filas),
+     "y lo que paso a sus cuentas 💜 se dice que no es perdida");
+  // ARREGLO 100: el semaforo tenia "Tienes $X · deberias tener $Y", que es la
+  // MISMA diferencia contada desde el otro lado. A la vista competia con la
+  // cadena de arriba: "me dice que deberia de tener 2600 y que tengo 2500, no
+  // estoy entendiendo ese punto". No se borro (ARREGLO 69: esconderla del todo
+  // la dejo sin saber de donde salia el titular): vive dentro del desplegable,
+  // de cabecera de la tabla que la desglosa.
+  const _iSem = cap.indexOf('(sano ? "✅ Cuadra"');
+  const _fSem = cap.indexOf("S._concDetalle=!S._concDetalle");
+  // Si un ancla deja de existir, slice(-1, …) devuelve el archivo entero y la
+  // guardia deja de medir lo que cree medir. Por eso se exigen las dos.
+  ok(_iSem > -1 && _fSem > _iSem, "el semaforo sigue estando donde se mide");
+  const _semaforo = cap.slice(_iSem, _fSem);
+  ok(!/deberías tener/.test(_semaforo),
+     "arriba manda UNA sola cuenta: el segundo 'deberias tener' no compite ahi");
+  ok(/deberías tener/.test(cap.slice(cap.indexOf("S._concDetalle=!S._concDetalle"))),
+     "pero no se borro: sigue entera dentro del desplegable (ARREGLO 69)");
   ok(/Empezaste el/.test(resum) && /es lo que tienes hoy/.test(resum) &&
      /f2\(R\.total\)/.test(resum),
      "la tarjeta abre con lo que ella pidio: con cuanto empezo y cuanto tiene hoy");
@@ -5983,8 +6073,13 @@ console.log("\n— FASE 2: la cuenta madre —");
 
   // 5. El rotulo de la apertura no se pinta de rojo: solo el numero. Pintada
   //    entera, la linea se lee como si la apertura tuviera algo malo.
-  ok(/<span style='color:var\(--tx3\)'>Empezaste el/.test(cap),
+  // ARREGLO 100: la linea paso de span dentro de otra a un div propio, pero la
+  // regla es la misma: el gris lo lleva el rotulo y el color solo el numero.
+  ok(/color:var\(--tx3\)[^>]{0,60}'>"\+\s*\n?\s*"Empezaste el/.test(cap) ||
+     /color:var\(--tx3\)[^>]{0,60}'>"\+"Empezaste el/.test(cap),
      "el rotulo de la apertura va en gris; el color es del numero");
+  ok(/Empezaste el "\+ds\(co\.desde\)\+" con <b style='color:var\(--tx2\)'>/.test(cap),
+     "y el monto de la apertura es lo unico que resalta de esa linea");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
