@@ -2430,6 +2430,42 @@ cuánto, y apunta a las dos causas: que se pagó con la tarjeta, o que falta
 registrar una entrada. **Y dice que no se arregla escribiendo el saldo**, que es lo
 que borra la pista.
 
+#### Y el 95 se dejó TRES pantallas (ARREGLO 101)
+
+El 95 enseñó lo de la tarjeta al aviso de arriba del panel y a Balance de
+Cuentas, y las demás siguieron con su propia copia de la regla. Lo vio ella el
+07/10 con PagBank ya cuadrado contra el banco **al céntimo**:
+
+```
+Inventario USDT ......  ⚠️ sobre su −112,56
+alertas del Resumen ..  🔴 "Cuenta en negativo" ROJA y urgente, todos los días
+informe del Cierre ...  "⚠️ Saldo negativo — revisar", y ese papel sale FUERA
+```
+
+Las tres decían que había algo que revisar en una cuenta que estaba perfecta.
+**Una alarma roja permanente que no significa nada es lo que enseña a no leer
+las alarmas**, y en esta app las rojas cuestan dinero.
+
+- **La del Resumen llevaba una SEGUNDA copia del filtro**, y era justo la que no
+  sabía de tarjetas: `_cuentasEnNegativo()` ya lo hacía bien desde el 95. Ahora
+  lee de ahí. Es la misma regla del 34,27 contra 34,28.
+- **La alarma la dispara el LÍMITE, no el signo.** Comprobado por los dos lados:
+  debiendo 112,56 de 1.004 no sale nada; debiendo 1.200 vuelve el ⚠️ y dice
+  *"te pasaste del límite por BRL 196,00"*. Quitar la alarma falsa sin dejar la
+  de verdad habría sido cambiar un fallo por otro peor.
+- **Y la deuda no se pinta como dinero** (ARREGLO 95 otra vez). En el inventario
+  va en ámbar —`--avi`, el color que esa pantalla ya usa para sus títulos, así
+  que sobre ese panel oscuro está probado que se lee— con el signo y con
+  *"💳 debes"* debajo.
+
+**Lo que hay que sacar de aquí, porque es la misma forma del 85 y del 98:**
+cuando una regla nueva —"una tarjeta no es una cuenta normal"— entra en la app,
+no basta con aplicarla donde saltó el problema. Hay que **buscar todas las
+copias** de la regla vieja. Aquí eran cuatro sitios leyendo `saldo < 0` por su
+cuenta, y el 95 arregló uno. La guardia de `pruebas/prestamos.js` cubre los
+tres, y lo que fija de la del Resumen es que **no vuelva a haber una copia
+propia del filtro**.
+
 #### Lo que esto NO repara
 
 Lo ya registrado se queda como está (la regla de siempre). Para dejar PagBank
