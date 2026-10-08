@@ -60,7 +60,7 @@ const CONSTANTES = ["_PODA_CATS", "_MOTIVOS_AJUSTE",
                     "PERMISOS_APP", "PERMISOS_POR_ROL", "PERMISO_DE_TAB",
                     "_CONFIG_PROHIBIDO", "_ETIQUETA_ROL"];
 
-const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
+const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
                     "congelarMora", "_sumarMeses", "_isoDeFecha", "calcularAmortizacion",
                     "tasaAnualEfectiva", "_periodDaysDe", "perfilRiesgoCliente",
                     "puntoEquilibrio", "tasaSugerida", "_conDiaDelMes",
@@ -125,6 +125,10 @@ global.document = global.document || { getElementById: function(){ return null; 
 global.avisos = [];
 global.saveData = () => {};
 global.R = () => {};
+// _quienSoy() lee la sesion guardada del navegador. Aqui no hay localStorage,
+// asi que se le pone una sesion de mentira: lo que se prueba es el sello, no
+// de donde sale el nombre.
+global._apiSesionGuardada = () => ({ u: { nombre: "PRUEBA" } });
 global.alert = (m) => { global.avisos.push(String(m)); };
 // S es el estado global de la app; aca solo hacen falta config y prestamos.
 const S = { config: {}, prestamos: [] };
@@ -663,11 +667,14 @@ console.log("\nLa marca de 'esto lo toque yo'");
 const memo = {};
 const cobro = { id: 1, cliente: "EVELYN", monto: 100, estado: "pendiente" };
 
-F._marcarCambiados([cobro], memo);
+// El quinto argumento es "primera pasada sobre este campo", y aqui lo es:
+// el memo viene vacio. Asi se llama tambien en la app.
+F._marcarCambiados([cobro], memo, "id", "cuentasCobrar", true);
 ok(cobro._mod === undefined, "el primer guardado tras abrir no marca nada");
+ok(cobro._por === undefined, "ni sella: en la primera pasada todo parece nuevo");
 
 cobro.estado = "cobrado";
-F._marcarCambiados([cobro], memo);
+F._marcarCambiados([cobro], memo, "id", "cuentasCobrar", false);
 ok(typeof cobro._mod === "number", "pero un cambio de verdad si se marca");
 
 const marcaPrimera = cobro._mod;
@@ -2607,7 +2614,10 @@ console.log("\nArreglo 62 · avisar cuando el otro aparato piso algo");
   const src2 = sacarFuncion("_marcarObjetosCambiados");
   ok((src2.match(/_anotarTocado\("@"\+campo/g) || []).length === 2,
      "y _marcarObjetosCambiados lo anota en sus dos ramas");
-  ok(/_marcarCambiados\(S\[k\],\s*window\._fotoPorCampo\[k\],\s*ids\[k\]\|\|"id",\s*k\)/
+  // El quinto argumento ("primera pasada sobre este campo") entro con el
+  // sello de quien registro. Lo que esta guardia fija sigue siendo lo mismo:
+  // que se le pasa el NOMBRE del campo, para que el aviso sepa de que habla.
+  ok(/_marcarCambiados\(S\[k\],\s*window\._fotoPorCampo\[k\],\s*ids\[k\]\|\|"id",\s*k\s*(,\s*primeraVez\s*)?\)/
        .test(sacarFuncion("_marcarTodoLoQueSeFusiona")),
      "y le pasa el nombre del campo, para que el aviso sepa de que habla");
 }
@@ -3796,12 +3806,12 @@ console.log("\nArreglo 64 · entrar con huella");
 // esta en 10,9.
 {
   const c = sinComentarios(sacarFuncion("rClientes"));
-  ok(/font-weight:700;font-size:14\.5px;color:var\(--tx\)[^']*'>"\+cl\.n/.test(c),
+  ok(/font-weight:700;font-size:14\.5px;color:var\(--tx\)[^']*'>"\+_escAud\(cl\.n\)/.test(c),
      "el nombre del cliente es lo mas grande de la fila y usa el color del texto");
-  ok(!/color:var\(--az1-a\)'>"\+cl\.n/.test(c),
+  ok(!/color:var\(--az1-a\)'>"\+_escAud\(cl\.n\)/.test(c),
      "y ya no se pinta con el azul oscuro que no se leia");
   // El codigo y el telefono son datos secundarios: se leen, pero no compiten.
-  ok(/#"\+cl\.cod/.test(c) && !/font-size:9px[^']*'>#"\+cl\.cod/.test(c),
+  ok(/#"\+_escAud\(cl\.cod\)/.test(c) && !/font-size:9px[^']*'>#"\+_escAud\(cl\.cod\)/.test(c),
      "el codigo sigue estando, pero ya no a 9px");
 }
 
@@ -6133,6 +6143,327 @@ console.log("\n— FASE 2: la cuenta madre —");
      "el rotulo de la apertura va en gris; el color es del numero");
   ok(/Empezaste el "\+ds\(co\.desde\)\+" con <b style='color:var\(--tx2\)'>/.test(cap),
      "y el monto de la apertura es lo unico que resalta de esa linea");
+}
+
+// ── ARREGLO 102: un nombre de cliente no puede ejecutar codigo ─────────────
+// Medido el 08/10 en Chromium con su export: metiendo codigo en el nombre de
+// un cliente, de una cuenta o en el motivo de un egreso, ese codigo se
+// ejecutaba al abrir la pantalla. 104 veces solo en Clientes, 7 pantallas en
+// total. Con un solo usuario da casi igual —se lo escribiria ella misma— pero
+// la app va a tener operadores: uno escribe el veneno, ella abre Clientes como
+// administradora, y corre dentro de SU sesion, con su testigo delante.
+//
+// Hay DOS escapes y no son intercambiables:
+//   _escAud  para el cuerpo del HTML
+//   _jsAttr  para dentro de un onclick, donde el navegador decodifica las
+//            entidades ANTES de leer el JavaScript (por eso el
+//            .replace(/"/g,"&quot;") que habia alli no servia de nada)
+{
+  const H = sinComentarios(HTML);
+
+  ok(/function _escAud\(/.test(H) && /function _jsAttr\(/.test(H),
+     "estan los dos escapes, el del HTML y el del onclick");
+  // El de onclick tiene que escapar a \uXXXX: una entidad HTML no sobrevive,
+  // porque el navegador la decodifica justo a tiempo de romper la cadena.
+  const ja = sinComentarios(sacarFuncion("_jsAttr"));
+  ok(/\\\\u/.test(ja) && /charCodeAt/.test(ja),
+     "el de onclick escapa a \\uXXXX, no a entidades HTML");
+  ok(/&/.test(ja.slice(ja.indexOf("replace"), ja.indexOf("replace")+60)),
+     "y escapa tambien el &, que si no vuelve a formar la entidad");
+
+  // Y el patron viejo no puede volver: escapaba solo la comilla doble, y a
+  // entidad, que es justo lo que no funciona dentro de un atributo.
+  // Anclado a ".algo.replace(" — si no, encajaba con el cuerpo del propio
+  // _escAud(), que sí escapa a entidades y ahí está bien.
+  ok(!/\.\w+\.replace\(\/"\/g,\s*"&quot;"\)/.test(H),
+     "no vuelve el escape de comillas a entidad dentro de un onclick");
+
+  // Los campos que ella teclea, en el sitio donde se dibujan. Se exige el
+  // escape pegado al campo: sin esto, cualquiera de los 7 agujeros vuelve.
+  [["cl\\.n", "el nombre del cliente"],
+   ["cl\\.tel", "su telefono"],
+   ["cl\\.ruta", "su ruta"],
+   ["cl\\.cod", "su codigo"],
+   ["p\\.desc", "la descripcion del prestamo"],
+   ["e\\.cat", "la categoria del egreso"],
+   ["r\\.rt", "la ruta de la remesa"],
+   ["r\\.plataforma", "la plataforma del lote"],
+   ["t\\.nota", "la nota del traspaso"]].forEach(function(x){
+    const suelto = new RegExp('(?<!_escAud\\()(?<!_jsAttr\\()' + x[0] + '\\b\\s*\\+\\s*"[^"]*[<>]');
+    ok(!suelto.test(H), "no queda sin escapar " + x[1]);
+  });
+
+  // nombreCuentaEg() devuelve el nombre crudo a proposito —lo usa tambien el
+  // registro de auditoria, que se escapa al DIBUJARLO, no al escribirlo— asi
+  // que cada sitio que lo pinta tiene que envolverlo el.
+  const todas   = (H.match(/nombreCuentaEg\(/g) || []).length;
+  const envueltas = (H.match(/_escAud\(nombreCuentaEg\(/g) || []).length;
+  // 1 es la definicion de la funcion y 1 el logAudit, que va crudo a proposito:
+  // la auditoria se escapa al DIBUJARLA, no al escribirla.
+  ok(todas - envueltas <= 2,
+     "el nombre de cuenta se escapa en cada sitio que lo dibuja (" +
+     (todas - envueltas) + " crudos de " + todas + ")");
+}
+
+// ── ARREGLO 103: el respaldo se hace solo, y se VE ─────────────────────────
+// Auditado el 07/10: armar_respaldo() existia desde hacia tiempo pero no habia
+// nada programado, asi que lo unico que separaba sus datos de la nada era que
+// ella se acordara de exportar. El servidor ya guarda una copia al dia; esta
+// parte es que la app lo enseñe, porque un respaldo que nadie mira es uno del
+// que nadie se entera cuando lleva tres semanas sin hacerse.
+{
+  const H = sinComentarios(HTML);
+  const rp = sinComentarios(sacarFuncion("_htmlRespaldos"));
+
+  ok(/function _pedirRespaldos\(/.test(H) && /\/respaldo\/estado/.test(H),
+     "la app le pregunta al servidor por el estado de las copias");
+  ok(rp.length > 200, "y hay una linea que lo enseña");
+
+  // Lo que NO puede faltar: que diga lo que la copia del servidor no cubre.
+  // Vive DENTRO de la misma base, asi que la salva de un borrado por error
+  // pero no de perder la base entera. Sin esa frase, "copia automatica: hoy"
+  // se lee como que ya no hace falta bajarse nada.
+  ok(/dentro de la misma base/.test(rp),
+     "y dice que la copia del servidor no la salva de perder la base");
+  ok(/Restaurar/.test(rp),
+     "y le dice con que boton se baja una");
+
+  // El aviso se calla cuando bajo una hace poco: si saliera siempre, deja de
+  // leerse (la misma regla del aviso permanente del ARREGLO 99).
+  ok(/db===null\|\|db>7/.test(rp),
+     "el aviso sale solo si lleva mas de una semana sin bajar una");
+
+  // Y se anota cuando de verdad se baja, no cuando se pulsa: el boton puede
+  // fallar antes de que haya archivo.
+  const rb = sinComentarios(sacarFuncion("restoreFromBackup"));
+  const iAnota = rb.indexOf("_anotarBajada()");
+  const iBlob  = rb.indexOf("new Blob(");
+  ok(iAnota > -1 && iBlob > -1 && iAnota < iBlob && (iBlob - iAnota) < 200,
+     "la fecha de descarga se anota junto al archivo, no al pulsar");
+}
+
+// ── ARREGLO 104: el candado de contenido (_headers) ────────────────────────
+// Es el cinturon del ARREGLO 102. Aquel cerro los agujeros por los que un
+// nombre podia ejecutar codigo; este dice que, si un dia se abre otro, ese
+// codigo no pueda mandarse los datos fuera.
+//
+// Medido en Chromium sirviendo la app con estas cabeceras: con ellas el
+// navegador RECHAZA la conexion, la imagen y el script hacia un servidor que
+// no esta en la lista; sin ellas, el script de fuera entra. Y la app sigue
+// viva: 24 de 24 pestañas, 0 bloqueos, 0 errores.
+{
+  const CAB = fs.readFileSync(__dirname + "/../_headers", "utf8");
+  const mCsp = CAB.match(/Content-Security-Policy:\s*(.+)/);
+  ok(!!mCsp, "_headers lleva el candado de contenido");
+  const csp = mCsp ? mCsp[1] : "";
+
+  // Lo que de verdad frena una fuga: a donde puede hablar la pagina y de
+  // donde puede cargar imagenes. Un comodin aqui deja el candado sin fuerza,
+  // porque una imagen a un servidor ajeno ya se lleva los datos en la URL.
+  [["connect-src", "a donde puede hablar la app"],
+   ["img-src", "de donde puede cargar imagenes"],
+   ["script-src", "de donde puede cargar codigo"]].forEach(function(x){
+    const m = csp.match(new RegExp(x[0] + " ([^;]+)"));
+    ok(!!m, "el candado dice " + x[1]);
+    if (!m) return;
+    ok(!/[\s]\*|\shttps:(\s|$)|unsafe-eval/.test(" " + m[1]),
+       x[0] + " sin comodines: " + m[1].trim().slice(0, 60));
+  });
+
+  // Y su servidor tiene que estar en la lista, o la app se queda sin datos.
+  ok(/centrogestion-api-production\.up\.railway\.app/.test(csp) &&
+     /gallant-caring-production-6c35\.up\.railway\.app/.test(csp),
+     "los dos servidores suyos estan permitidos (produccion y pruebas)");
+  // Las dos CDN de las que salen html2canvas, SheetJS, Tesseract y html2pdf.
+  ok(/cdnjs\.cloudflare\.com/.test(csp) && /cdn\.jsdelivr\.net/.test(csp),
+     "y las dos CDN de las librerias");
+
+  ok(/object-src 'none'/.test(csp), "nada de objetos incrustados");
+  ok(/frame-ancestors 'none'/.test(csp), "y nadie puede meter la app en un marco ajeno");
+  ok(/base-uri 'self'/.test(csp), "ni cambiarle la base a los enlaces");
+}
+
+
+// ── PASO 3: lo que el servidor NO dejo guardar se DICE ───────────────────
+//
+// Desde el paso 3 de la auditoria, PUT /estado saca del bloque las claves que
+// esa persona no puede tocar y las devuelve en `clavesRechazadas`. Si la app
+// no lo dice, la persona registra un egreso, lo ve en su pantalla —porque en
+// su navegador si se guardo— y al siguiente repintado desaparece sin que nada
+// explique por que. Es el mismo fallo mudo que la tarjeta del mercado cuando
+// decia "sin lectura" a secas: si el servidor sabe por que dijo no, la
+// pantalla lo dice.
+{
+  ok(/var _RECHAZADAS\s*=\s*\[\]/.test(HTML),
+     "la app guarda lo que el servidor rechazo");
+  ok(/d\.clavesRechazadas\s*&&\s*d\.clavesRechazadas\.length/.test(HTML),
+     "y lo lee de la respuesta del guardado");
+  // Anclado en el MARCADO, no en el nombre de la funcion: un comentario que
+  // la nombre aparece antes y la guardia mediria otro trozo del archivo. Ya
+  // paso tres veces en este proyecto.
+  ok(/_htmlAvisoRechazado\(\)\+\s*\/\/ PASO 3/.test(HTML),
+     "el aviso se pinta arriba del panel, fuera de la zona que hace scroll");
+
+  // ARREGLO 32: repintar rehace el HTML y cierra lo que haya abierto bajo el
+  // dedo. Cerrar un aviso se hace cambiando el display por su id.
+  // Y se miden los comentarios FUERA. El comentario que explica el ARREGLO 32
+  // dentro de esta funcion nombra R(), asi que la guardia se media a si misma
+  // y fallaba con el codigo bueno. Es la cuarta vez en este proyecto que un
+  // comentario secuestra una guardia: lo que se mide es el CODIGO.
+  const sinComentarios = t => t.replace(/\/\/[^\n]*/g, "");
+  const cerrar = sinComentarios(
+    (HTML.match(/function _cerrarAvisoRechazado\(\)\{[\s\S]*?\n\}/) || [""])[0]);
+  ok(cerrar.length > 40, "existe el boton de cerrar el aviso");
+  ok(!/\bR\(\)/.test(cerrar),
+     "cerrarlo NO llama a R() (ARREGLO 32)");
+  ok(/getElementById\("aviso-rechazado"\)/.test(cerrar),
+     "lo cierra por su id");
+
+  // El nombre de la clave acaba dentro de innerHTML. Viene del servidor, pero
+  // la regla de este archivo es la misma para todo lo que se pinta.
+  const aviso = (HTML.match(/function _htmlAvisoRechazado\(\)\{[\s\S]*?\n\}/) || [""])[0];
+  ok(/_escAud\(/.test(aviso), "y los nombres se escapan al pintarlos (ARREGLO 102)");
+  // Ella nunca ha visto la palabra "cuentasCobrar": el servidor manda el
+  // nombre interno y la pantalla tiene que traducirlo.
+  ok(/_NOMBRE_DE_CLAVE\s*=\s*\{/.test(HTML) &&
+     /egresos_personales:\s*"Gastos personales"/.test(HTML),
+     "las claves se enseñan con el nombre que ella conoce");
+}
+
+
+// ── Una casilla marcada A MANO abre su pestaña, y el arranque cae en una que
+//    la persona tenga ────────────────────────────────────────────────────
+//
+// Los dos fallos salieron del primer operador de verdad (08/10):
+//
+//   1. Marcarle "💸 Egresos" no hacia NADA. El menu se arma de TABS[rol], y
+//      TABS.brl son cuatro pestañas fijas: el permiso solo podia QUITAR de
+//      esa lista, nunca añadir. De las 21 casillas, a un operador le servian
+//      4. Es el mismo fallo que S.config.modulos (FASE B) y que el selector
+//      doble de la comision (ARREGLO 98): dos cosas decidiendo lo mismo y la
+//      vieja ganando en silencio.
+//
+//   2. Entraba y le salia "Sin acceso · No tienes permiso para acceder a BRL"
+//      en una pantalla vacia. La pestaña por omision la decide el ROL y los
+//      permisos son de la PERSONA, asi que no tienen por que coincidir.
+{
+  const sinCom = t => t.replace(/\/\/[^\n]*/g, "");
+
+  ok(/var _TABS_QUE_ABRE_UNA_CASILLA\s*=\s*\[/.test(HTML),
+     "existe la lista de pestañas que puede abrir una casilla");
+  const lista = (HTML.match(/_TABS_QUE_ABRE_UNA_CASILLA\s*=\s*\[([\s\S]*?)\]/) || ["",""])[1];
+  const abren = (lista.match(/"([a-z_]+)"/g) || []).map(x => x.replace(/"/g, ""));
+
+  // El menu de la administradora NO se puede mover ni una pestaña. Se cumple
+  // sola mientras todo lo de esa lista ya este en TABS.admin: lo que ya tiene
+  // no se le puede añadir.
+  const admin = (HTML.match(/admin:\s*\[([^\]]*)\]/) || ["",""])[1];
+  abren.forEach(function(t){
+    ok(admin.indexOf('"' + t + '"') >= 0,
+       "'" + t + "' ya esta en el menu de la administradora: su menu no se mueve");
+  });
+  // Y las que dependen de la RUTA de cada rol no se reparten por casilla: a un
+  // operador de Brasil no se le abre la pestaña de EE.UU marcando una casilla.
+  ["brl","vzla","eeuu","mi_ganancia","op_diario","nueva_eeuu"].forEach(function(t){
+    ok(abren.indexOf(t) < 0, "'" + t + "' NO se abre por casilla: va con el rol");
+  });
+  ok(abren.indexOf("config_admin") < 0,
+     "y Configuracion tampoco: ahi se tocan los permisos de todos");
+
+  // Marcada A MANO quiere decir decidida para ESA persona. Si valiera el valor
+  // por omision del rol, la lista de arriba le abriria pestañas a todo el mundo.
+  const marcada = sinCom((HTML.match(/function _permisoMarcadoAMano\(perm\)\{[\s\S]*?\n\}/) || [""])[0]);
+  ok(marcada.length > 40, "existe _permisoMarcadoAMano");
+  ok(/===\s*true/.test(marcada),
+     "solo cuenta un true explicito, no el valor por omision del rol");
+  ok(!/_permisoPorOmision/.test(marcada),
+     "y no se apoya en el valor por omision");
+  ok(/rol\s*===\s*"admin"/.test(marcada),
+     "la administradora no pasa por aqui: ya las tiene todas por TABS.admin");
+
+  // El arranque: si la pestaña no es una de las suyas, se cambia.
+  ok(/ts\.indexOf\(S\.tab\)<0\)\s*S\.tab=_primera/.test(HTML),
+     "si la pestaña de arranque no es suya, se cambia por una que si");
+  const primera = sinCom((HTML.match(/function _primeraPesta[\s\S]*?\n\}/) || [""])[0]);
+  // Anclado en lo que DEVUELVE, no en que el nombre aparezca: con el nombre a
+  // secas la prueba negativa pasaba con la funcion ya rota (devolvia ts[0] y
+  // _GRUPOS_MENU seguia nombrado en el bucle de al lado).
+  ok(/return _GRUPOS_MENU\[/.test(primera),
+     "y devuelve una pestaña del MENU, que es el unico sitio donde vive el orden");
+  ok(!/\bR\(\)/.test(primera + sinCom((HTML.match(/if\(ts\.length && ts\.indexOf\(S\.tab\)<0\)[^\n]*/) || [""])[0])),
+     "sin llamar a R(): esto corre dentro del dibujado");
+}
+
+
+// ── Quién registró cada cosa ──────────────────────────────────────────────
+//
+// Sus palabras: "me gustaría que yo como administradora pueda ver quién
+// registró cada cosa. O sea, operado por fulano de tal."
+//
+// Lo que esto vigila sobre todo es lo contrario de lo que parece: no que se
+// selle, sino que NO se selle de mas. En la primera pasada sobre un campo
+// TODOS los registros parecen nuevos —no hay foto de nada—, asi que sellar
+// ahi le pondria el nombre de quien tiene la app abierta encima de sus 192
+// remesas. Medido en Chromium: cargando sus 192, selladas 0.
+{
+  const sinCom = t => t.replace(/\/\/[^\n]*/g, "");
+  const marcar = sinCom((HTML.match(/function _marcarCambiados\([\s\S]*?\n\}/) || [""])[0]);
+  ok(marcar.length > 200, "existe _marcarCambiados");
+
+  // El sello va AQUI, en el mismo sitio que ya decide que cambio. Ponerlo
+  // funcion por funcion es el camino que ya fallo cuatro veces.
+  ok(/_por\b/.test(marcar) && /_porUlt\b/.test(marcar),
+     "el sello se pone donde ya se decide que cambio, no funcion por funcion");
+  ok(/if\(!primeraVez\)/.test(marcar),
+     "y NO en la primera pasada sobre el campo (si no, sella sus 192 de golpe)");
+  // Las DOS ramas, contadas. Con una sola comprobacion esta guardia pasaba
+  // con la otra rama ya rota: la de "registro nuevo" y la de "registro que
+  // cambio" protegen _por por separado.
+  ok((marcar.match(/if\(!it\._por\)\s*it\._por=/g) || []).length === 2,
+     "quien lo creo no se sobrescribe nunca, en ninguna de las dos ramas",
+     (marcar.match(/it\._por=/g) || []).length);
+
+  // Igual que _mod: si el sello entrara en la foto, sellar cambiaria la foto,
+  // la foto distinta volveria a sellar, y no pararia nunca.
+  ok(/k!=="_mod"&&k!=="_por"&&k!=="_porUlt"/.test(marcar),
+     "los sellos quedan FUERA de la foto, igual que _mod");
+
+  // Y el que decide si es la primera pasada.
+  ok(/var primeraVez=!window\._fotoPorCampo\[k\]/.test(HTML),
+     "la primera pasada se decide por si ya hay foto de ESE campo");
+
+  // Se dibuja en un solo sitio. Si cada pantalla se lo pinta a su manera, en
+  // dos semanas hay diecisiete formas de decir lo mismo.
+  ok(/function _htmlQuien\(r\)\{/.test(HTML), "se dibuja en un solo sitio");
+  const quien = sinCom((HTML.match(/function _htmlQuien\(r\)\{[\s\S]*?\n\}/) || [""])[0]);
+  // Los dos sitios donde se mete un nombre, por nombre. Pidiendo solo que
+  // _escAud aparezca, esta guardia pasaba con el primero ya sin escapar.
+  ok(/_escAud\(creo\|\|ult\)/.test(quien) && /_escAud\(ult\)/.test(quien),
+     "y los dos nombres se escapan al pintarlos (ARREGLO 102)", quien.slice(0, 200));
+  ok(/if\(!creo && !ult\) return ""/.test(quien),
+     "lo de antes del sello se calla, no dice «registrado por —»");
+  ok((HTML.match(/_htmlQuien\(/g) || []).length >= 4,
+     "y se usa en Operaciones y en los dos tipos de egreso");
+
+  // Quien borro: un registro borrado ya no esta para llevar su sello.
+  ok(/push\(\{id:id,ts:Date\.now\(\),por:_quienSoy\(\)\}\)/.test(HTML),
+     "la marca de borrado lleva quien borro");
+
+  // El registro de auditoria lo escribe la app, asi que un sitio que se
+  // olvide es un sitio del que no queda rastro. Estos tres no anotaban nada.
+  // Cortando el texto de la funcion por indice, no con una expresion: la
+  // expresion se me enredo con los escapes y la prueba no llegaba a correr.
+  [["saveTxEE", "REMESA EE.UU"], ["saveTraspaso", "TRASPASO"],
+   ["saveIU", "INVENTARIO USDT"]].forEach(function(x){
+    const i = HTML.indexOf("function " + x[0] + "(");
+    const j = HTML.indexOf("\n}", i);
+    // Sin comentarios: comentar la linea dejaba el texto ahi y la guardia
+    // pasaba con la funcion ya sin rastro. Van cinco veces en este proyecto.
+    const fn = i < 0 ? "" : sinCom(HTML.slice(i, j));
+    ok(i >= 0, "existe " + x[0]);
+    ok(fn.indexOf('logAudit("' + x[1] + '"') >= 0,
+       x[0] + " deja rastro en la auditoria");
+  });
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

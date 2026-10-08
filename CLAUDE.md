@@ -2502,6 +2502,148 @@ día — `histSaldos` se toma a media jornada y no sirve para comparar cierres.
 
 ---
 
+## El candado de contenido vive en `_headers` (ARREGLO 104)
+
+Es el **cinturón** del ARREGLO 102: aquel cerró los agujeros por los que un
+nombre podía ejecutar código; este dice que, si un día se abre otro, ese código
+**no pueda mandarse los datos fuera**.
+
+Medido en Chromium sirviendo la app con estas cabeceras de verdad:
+
+```
+                     con candado                sin candado
+fetch a un ajeno     "Refused to connect"       falla solo por CORS
+imagen a un ajeno    "Refused to load"          falla solo por CORS
+script de un ajeno   "Refused to connect"       ENTRA
+```
+
+Y la app sigue viva: **24 de 24 pestañas, 0 bloqueos, 0 errores**.
+
+**La primera versión de esa prueba no valía**, y es la trampa de siempre:
+apuntaba a un dominio que no existe, y aquí no hay red, así que fallaba igual con
+candado y sin él. Solo contra un servidor local **que sí responde** se distingue
+"bloqueado por la política" de "no hay red".
+
+- **`connect-src` e `img-src` son los que frenan la fuga**, y por eso la guardia
+  prohíbe comodines en los dos. Un `img-src *` deja el candado sin fuerza: una
+  imagen a un servidor ajeno ya se lleva los datos en la propia dirección.
+- **`'unsafe-inline'` en `script-src` no se puede quitar**, y hay que saberlo:
+  todo el código de esta app es inline y los botones usan `onclick`. Eso limita
+  lo que el candado puede hacer contra el código inyectado — **lo que sí hace, y
+  es lo que vale aquí, es impedir que ese código hable con fuera.**
+- **La lista tiene que llevar los DOS servidores suyos** (producción y pruebas)
+  y las **dos CDN** de donde salen html2canvas, SheetJS, Tesseract y html2pdf.
+  Si cae una, la app se queda sin datos o sin librerías **y no lo dice**: el
+  navegador lo bloquea en silencio. Por eso la guardia los exige por nombre.
+
+**Lo que no se puede probar desde aquí:** la política de red del entorno bloquea
+las CDN, así que las librerías no llegan a cargarse ni con candado ni sin él. Que
+los dos nombres del `script-src` son los correctos se comprueba contra las
+etiquetas `<script src=>` del propio archivo, no ejecutándolas.
+
+## El respaldo se hace solo — y lo que NO cubre (ARREGLO 103)
+
+`armar_respaldo()` existía desde hacía tiempo, pero **solo si alguien se lo pedía
+a mano**. Auditado el 07/10: no había nada programado, así que lo único que
+separaba sus datos de la nada era que se acordara de exportar.
+
+**Lo que cubre y lo que no, que es la mitad importante:**
+
+```
+un borrado por error, una fusión que se come algo   SÍ
+perder la base entera (la cuenta, el proveedor)     NO
+```
+
+Una copia **dentro de la misma base** no sobrevive a que se pierda la base. Esto
+no sustituye a que ella se baje un archivo: hace que esa descarga sea de ayer y
+no de hace tres meses. **Y la app se lo dice**, con la frase entera, cuando lleva
+más de una semana sin bajar una — un "copia automática: hoy" a secas se lee como
+que ya no hace falta bajarse nada.
+
+- **El hilo lo intenta cada hora y hace una al día.** Dormir 24 h de golpe no
+  sirve: este servidor se reinicia con cada despliegue, y una semana de
+  despliegues seguidos no dejaría ni una copia.
+- **`respaldos` va FUERA de las colecciones que se copian**, y no es un detalle.
+  `armar_respaldo()` recorre toda la base: sin esa línea, la copia de hoy se
+  lleva dentro las trece anteriores, la de mañana esas catorce otra vez, y en una
+  semana la base no cabe. Hay una prueba negativa dedicada.
+- **La copia se toma bajo `_candado_estado`**, el mismo que las escrituras. Un
+  guardado toca varios documentos, uno por clave; copiar en medio se lleva un
+  estado a medias —las remesas nuevas con los saldos viejos— y **es justo esa
+  copia la que se restauraría**. Como no se puede ver desde fuera (sale igual con
+  candado y sin él), la guardia mira el código.
+- **Un fallo aquí no puede tumbar la API**: se anota y se reintenta a la hora.
+- **La fecha de descarga se anota junto al archivo, no al pulsar.** El botón
+  puede fallar antes de que haya nada que guardar.
+
+## Un nombre de cliente no puede ejecutar código (ARREGLO 102)
+
+Salió de la auditoría del 08/10 y **está reproducido**, no deducido: metiendo
+código dentro del nombre de un cliente, de una cuenta o del motivo de un egreso,
+ese código **se ejecutaba al abrir la pantalla**. Medido en Chromium con su
+export:
+
+```
+Clientes          104 veces          Egresos      14
+Inventario USDT    39                Préstamos     4
+Diario             27                Por cobrar    1
+Balance de Cuentas 19
+```
+
+**Hoy, con un solo usuario, casi no importa:** se lo escribiría ella misma. **Con
+operadores sí importa**, y es lo que bloqueaba el plan de dar usuarios: uno
+escribe el veneno en un nombre, ella abre Clientes **como administradora**, y el
+código corre dentro de SU sesión, con su testigo delante.
+
+### Hay DOS escapes y NO son intercambiables
+
+```
+_escAud(t)   para el CUERPO del HTML          →  & " ' < >  a entidades
+_jsAttr(t)   para dentro de un onclick        →  a \uXXXX
+```
+
+**La segunda es la que no se ve venir.** En un atributo, el navegador decodifica
+las entidades **antes** de que el JavaScript se lea, así que un `&quot;` vuelve a
+ser comilla justo a tiempo de romper la cadena. Por eso el
+`.replace(/"/g,"&quot;")` que ya había en los buscadores de cliente **no servía
+de nada**: medido, el `onclick` de Clientes ejecutaba 270 veces. Lo que sí
+sobrevive es un escape de JavaScript (`\u0022`): seis caracteres que el HTML deja
+pasar tal cual y que el JavaScript lee después como la comilla de dentro.
+
+Y `_jsAttr` **tiene que escapar también el `&`**; si no, un `&quot;` tecleado por
+una persona vuelve a formar la entidad y el agujero sigue abierto.
+
+### Tres cosas que costaron encontrarse
+
+- **El nombre de un cliente vive en `n`, no en `nombre`.** La primera prueba
+  envenenaba `nombre` —que en un cliente real no existe— y Clientes salía
+  "limpio" con el agujero abierto. Es la trampa de siempre: **medir no vale si
+  mides otra cosa.** Los campos de verdad se sacaron del export, colección por
+  colección, y con esos se barrió.
+- **El regex no alcanza; el navegador sí.** Buscar `"+campo+"` en el archivo
+  encontró 85 sitios y se dejó 28. Lo que los encontró fue marcar cada campo con
+  una etiqueta única, dibujar las 35 pantallas y preguntarle al DOM dónde había
+  quedado sin escapar.
+- **Y al revés también:** la guardia estructural encontró 13 sitios a los que la
+  prueba del navegador no llegaba (pantallas que no se dibujan sin cierto
+  estado). **Hacen falta las dos**, y por eso las dos se quedan.
+
+### Lo que NO se escapa, a propósito
+
+- **Los avisos y las confirmaciones** (`alert`, `confirm`): ahí `&amp;` se vería
+  tal cual. Son 51 sitios y se dejaron fuera uno por uno.
+- **`nombreCuentaEg()` devuelve el nombre crudo.** Lo usa también `logAudit`, y
+  el registro de auditoría **se escapa al dibujarlo, no al escribirlo**. Por eso
+  cada uno de los ocho sitios que lo pinta lo envuelve él; la guardia cuenta
+  cuántas llamadas quedan sin envolver y admite dos (la definición y el
+  `logAudit`).
+
+Comprobado al terminar: **0 ejecuciones** recorriendo las 24 pestañas con `R()`
+y pulsando lo que hay en cada una, con tres formas de payload; el nombre
+`Café & Cía "Ltda" <São> 'Paulo'` se lee **tal cual** y ninguno de los 270
+botones de cliente se rompió. En la captura de antes el navegador se comía
+`<São Paulo>` como si fuera una etiqueta.
+
 ### Registra la operación — no escribas el saldo
 
 **La regla que más costó el 12/09**, y se rompió tres veces en un día.
