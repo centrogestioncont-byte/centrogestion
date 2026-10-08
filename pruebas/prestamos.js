@@ -6232,5 +6232,46 @@ console.log("\n— FASE 2: la cuenta madre —");
      "la fecha de descarga se anota junto al archivo, no al pulsar");
 }
 
+// ── ARREGLO 104: el candado de contenido (_headers) ────────────────────────
+// Es el cinturon del ARREGLO 102. Aquel cerro los agujeros por los que un
+// nombre podia ejecutar codigo; este dice que, si un dia se abre otro, ese
+// codigo no pueda mandarse los datos fuera.
+//
+// Medido en Chromium sirviendo la app con estas cabeceras: con ellas el
+// navegador RECHAZA la conexion, la imagen y el script hacia un servidor que
+// no esta en la lista; sin ellas, el script de fuera entra. Y la app sigue
+// viva: 24 de 24 pestañas, 0 bloqueos, 0 errores.
+{
+  const CAB = fs.readFileSync(__dirname + "/../_headers", "utf8");
+  const mCsp = CAB.match(/Content-Security-Policy:\s*(.+)/);
+  ok(!!mCsp, "_headers lleva el candado de contenido");
+  const csp = mCsp ? mCsp[1] : "";
+
+  // Lo que de verdad frena una fuga: a donde puede hablar la pagina y de
+  // donde puede cargar imagenes. Un comodin aqui deja el candado sin fuerza,
+  // porque una imagen a un servidor ajeno ya se lleva los datos en la URL.
+  [["connect-src", "a donde puede hablar la app"],
+   ["img-src", "de donde puede cargar imagenes"],
+   ["script-src", "de donde puede cargar codigo"]].forEach(function(x){
+    const m = csp.match(new RegExp(x[0] + " ([^;]+)"));
+    ok(!!m, "el candado dice " + x[1]);
+    if (!m) return;
+    ok(!/[\s]\*|\shttps:(\s|$)|unsafe-eval/.test(" " + m[1]),
+       x[0] + " sin comodines: " + m[1].trim().slice(0, 60));
+  });
+
+  // Y su servidor tiene que estar en la lista, o la app se queda sin datos.
+  ok(/centrogestion-api-production\.up\.railway\.app/.test(csp) &&
+     /gallant-caring-production-6c35\.up\.railway\.app/.test(csp),
+     "los dos servidores suyos estan permitidos (produccion y pruebas)");
+  // Las dos CDN de las que salen html2canvas, SheetJS, Tesseract y html2pdf.
+  ok(/cdnjs\.cloudflare\.com/.test(csp) && /cdn\.jsdelivr\.net/.test(csp),
+     "y las dos CDN de las librerias");
+
+  ok(/object-src 'none'/.test(csp), "nada de objetos incrustados");
+  ok(/frame-ancestors 'none'/.test(csp), "y nadie puede meter la app en un marco ajeno");
+  ok(/base-uri 'self'/.test(csp), "ni cambiarle la base a los enlaces");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
