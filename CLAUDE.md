@@ -2502,6 +2502,45 @@ día — `histSaldos` se toma a media jornada y no sirve para comparar cierres.
 
 ---
 
+## El candado de contenido vive en `_headers` (ARREGLO 104)
+
+Es el **cinturón** del ARREGLO 102: aquel cerró los agujeros por los que un
+nombre podía ejecutar código; este dice que, si un día se abre otro, ese código
+**no pueda mandarse los datos fuera**.
+
+Medido en Chromium sirviendo la app con estas cabeceras de verdad:
+
+```
+                     con candado                sin candado
+fetch a un ajeno     "Refused to connect"       falla solo por CORS
+imagen a un ajeno    "Refused to load"          falla solo por CORS
+script de un ajeno   "Refused to connect"       ENTRA
+```
+
+Y la app sigue viva: **24 de 24 pestañas, 0 bloqueos, 0 errores**.
+
+**La primera versión de esa prueba no valía**, y es la trampa de siempre:
+apuntaba a un dominio que no existe, y aquí no hay red, así que fallaba igual con
+candado y sin él. Solo contra un servidor local **que sí responde** se distingue
+"bloqueado por la política" de "no hay red".
+
+- **`connect-src` e `img-src` son los que frenan la fuga**, y por eso la guardia
+  prohíbe comodines en los dos. Un `img-src *` deja el candado sin fuerza: una
+  imagen a un servidor ajeno ya se lleva los datos en la propia dirección.
+- **`'unsafe-inline'` en `script-src` no se puede quitar**, y hay que saberlo:
+  todo el código de esta app es inline y los botones usan `onclick`. Eso limita
+  lo que el candado puede hacer contra el código inyectado — **lo que sí hace, y
+  es lo que vale aquí, es impedir que ese código hable con fuera.**
+- **La lista tiene que llevar los DOS servidores suyos** (producción y pruebas)
+  y las **dos CDN** de donde salen html2canvas, SheetJS, Tesseract y html2pdf.
+  Si cae una, la app se queda sin datos o sin librerías **y no lo dice**: el
+  navegador lo bloquea en silencio. Por eso la guardia los exige por nombre.
+
+**Lo que no se puede probar desde aquí:** la política de red del entorno bloquea
+las CDN, así que las librerías no llegan a cargarse ni con candado ni sin él. Que
+los dos nombres del `script-src` son los correctos se comprueba contra las
+etiquetas `<script src=>` del propio archivo, no ejecutándolas.
+
 ## El respaldo se hace solo — y lo que NO cubre (ARREGLO 103)
 
 `armar_respaldo()` existía desde hacía tiempo, pero **solo si alguien se lo pedía
