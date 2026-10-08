@@ -2502,6 +2502,41 @@ día — `histSaldos` se toma a media jornada y no sirve para comparar cierres.
 
 ---
 
+## El respaldo se hace solo — y lo que NO cubre (ARREGLO 103)
+
+`armar_respaldo()` existía desde hacía tiempo, pero **solo si alguien se lo pedía
+a mano**. Auditado el 07/10: no había nada programado, así que lo único que
+separaba sus datos de la nada era que se acordara de exportar.
+
+**Lo que cubre y lo que no, que es la mitad importante:**
+
+```
+un borrado por error, una fusión que se come algo   SÍ
+perder la base entera (la cuenta, el proveedor)     NO
+```
+
+Una copia **dentro de la misma base** no sobrevive a que se pierda la base. Esto
+no sustituye a que ella se baje un archivo: hace que esa descarga sea de ayer y
+no de hace tres meses. **Y la app se lo dice**, con la frase entera, cuando lleva
+más de una semana sin bajar una — un "copia automática: hoy" a secas se lee como
+que ya no hace falta bajarse nada.
+
+- **El hilo lo intenta cada hora y hace una al día.** Dormir 24 h de golpe no
+  sirve: este servidor se reinicia con cada despliegue, y una semana de
+  despliegues seguidos no dejaría ni una copia.
+- **`respaldos` va FUERA de las colecciones que se copian**, y no es un detalle.
+  `armar_respaldo()` recorre toda la base: sin esa línea, la copia de hoy se
+  lleva dentro las trece anteriores, la de mañana esas catorce otra vez, y en una
+  semana la base no cabe. Hay una prueba negativa dedicada.
+- **La copia se toma bajo `_candado_estado`**, el mismo que las escrituras. Un
+  guardado toca varios documentos, uno por clave; copiar en medio se lleva un
+  estado a medias —las remesas nuevas con los saldos viejos— y **es justo esa
+  copia la que se restauraría**. Como no se puede ver desde fuera (sale igual con
+  candado y sin él), la guardia mira el código.
+- **Un fallo aquí no puede tumbar la API**: se anota y se reintenta a la hora.
+- **La fecha de descarga se anota junto al archivo, no al pulsar.** El botón
+  puede fallar antes de que haya nada que guardar.
+
 ## Un nombre de cliente no puede ejecutar código (ARREGLO 102)
 
 Salió de la auditoría del 08/10 y **está reproducido**, no deducido: metiendo

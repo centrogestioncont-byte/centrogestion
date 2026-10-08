@@ -6195,5 +6195,42 @@ console.log("\n— FASE 2: la cuenta madre —");
      (todas - envueltas) + " crudos de " + todas + ")");
 }
 
+// ── ARREGLO 103: el respaldo se hace solo, y se VE ─────────────────────────
+// Auditado el 07/10: armar_respaldo() existia desde hacia tiempo pero no habia
+// nada programado, asi que lo unico que separaba sus datos de la nada era que
+// ella se acordara de exportar. El servidor ya guarda una copia al dia; esta
+// parte es que la app lo enseñe, porque un respaldo que nadie mira es uno del
+// que nadie se entera cuando lleva tres semanas sin hacerse.
+{
+  const H = sinComentarios(HTML);
+  const rp = sinComentarios(sacarFuncion("_htmlRespaldos"));
+
+  ok(/function _pedirRespaldos\(/.test(H) && /\/respaldo\/estado/.test(H),
+     "la app le pregunta al servidor por el estado de las copias");
+  ok(rp.length > 200, "y hay una linea que lo enseña");
+
+  // Lo que NO puede faltar: que diga lo que la copia del servidor no cubre.
+  // Vive DENTRO de la misma base, asi que la salva de un borrado por error
+  // pero no de perder la base entera. Sin esa frase, "copia automatica: hoy"
+  // se lee como que ya no hace falta bajarse nada.
+  ok(/dentro de la misma base/.test(rp),
+     "y dice que la copia del servidor no la salva de perder la base");
+  ok(/Restaurar/.test(rp),
+     "y le dice con que boton se baja una");
+
+  // El aviso se calla cuando bajo una hace poco: si saliera siempre, deja de
+  // leerse (la misma regla del aviso permanente del ARREGLO 99).
+  ok(/db===null\|\|db>7/.test(rp),
+     "el aviso sale solo si lleva mas de una semana sin bajar una");
+
+  // Y se anota cuando de verdad se baja, no cuando se pulsa: el boton puede
+  // fallar antes de que haya archivo.
+  const rb = sinComentarios(sacarFuncion("restoreFromBackup"));
+  const iAnota = rb.indexOf("_anotarBajada()");
+  const iBlob  = rb.indexOf("new Blob(");
+  ok(iAnota > -1 && iBlob > -1 && iAnota < iBlob && (iBlob - iAnota) < 200,
+     "la fecha de descarga se anota junto al archivo, no al pulsar");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

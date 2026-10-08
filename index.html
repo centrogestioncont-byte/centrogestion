@@ -2598,7 +2598,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261008_v174";
+var APP_VERSION = "20261008_v175";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -12180,6 +12180,67 @@ function _cfgAcc(id,icon,title,subtitle,color,bodyHtml,defaultOpen){
 // La version del servidor esta aca porque hubo que preguntarla a mano: se
 // paso una tarde buscando un problema en el despliegue cuando el despliegue
 // estaba bien. /salud ya la traia; lo que faltaba era enseñarsela.
+// ── ARREGLO 103 · el respaldo, a la vista ─────────────────────────────────
+//
+// El servidor ya se guarda una copia al dia solo. Esto lo ENSEÑA, por la misma
+// razon por la que se enseña la version del servidor: un respaldo que nadie
+// mira es un respaldo del que nadie se entera cuando lleva tres semanas sin
+// hacerse.
+//
+// Y dice lo que la copia NO cubre, que es la mitad importante: vive DENTRO de
+// la misma base, asi que la salva de un borrado por error pero no de perder la
+// base entera. Para eso hace falta que ella se baje un archivo de vez en
+// cuando, y por eso aqui se le dice cuanto hace que no lo hace.
+var _API_RESPALDOS=null;
+var _BAJADA_KEY="cg_ultimo_respaldo_bajado";
+
+function _ultimaBajada(){
+  try{ var v=localStorage.getItem(_BAJADA_KEY); return v?parseInt(v,10):0; }catch(e){ return 0; }
+}
+function _anotarBajada(){
+  try{ localStorage.setItem(_BAJADA_KEY, String(Date.now())); }catch(e){}
+}
+function _diasDesde(ms){
+  if(!ms) return null;
+  return Math.floor((Date.now()-ms)/86400000);
+}
+function _pedirRespaldos(){
+  if(!apiSesionActiva()) return Promise.resolve();
+  return apiFetch("/respaldo/estado")
+    .then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(d){ if(d&&d.ok) _API_RESPALDOS=d; })
+    .catch(function(){});
+}
+// La linea del recuadro. Sale aparte para poder probarla suelta.
+function _htmlRespaldos(){
+  var r=_API_RESPALDOS;
+  var auto;
+  if(!apiSesionActiva()) auto="<span style='color:var(--tx4)'>entra con tu correo para verlo</span>";
+  else if(!r) auto="<span style='color:var(--tx4)'>consultando…</span>";
+  else if(!r.copias) auto="<span style='color:var(--avi-tx2);font-weight:700'>todavía ninguna</span>";
+  else {
+    var d=_diasDesde((r.ultima||{}).ts);
+    var cuando = d===0?"hoy" : d===1?"ayer" : "hace "+d+" días";
+    // Mas de dos dias sin copia significa que el servidor no esta haciendolas:
+    // deberia haber una cada dia.
+    var col = (d!==null&&d>2) ? "var(--mal)" : "var(--ok)";
+    auto="<span style='color:"+col+";font-weight:700'>"+cuando+"</span>"+
+         " <span style='font-size:10.5px;color:var(--tx4)'>· "+r.copias+" guardada"+(r.copias===1?"":"s")+"</span>";
+  }
+  var db=_diasDesde(_ultimaBajada());
+  var tuya;
+  if(db===null) tuya="<span style='color:var(--avi-tx2);font-weight:700'>nunca</span>";
+  else if(db===0) tuya="hoy";
+  else if(db===1) tuya="ayer";
+  else tuya=(db>7?"<span style='color:var(--avi-tx2);font-weight:700'>hace "+db+" días</span>":"hace "+db+" días");
+  return "<b>Copia automática:</b> "+auto+"<br>"+
+    "<b>Tu última descarga:</b> "+tuya+
+    ((db===null||db>7)
+      ? "<div style='font-size:10.5px;color:var(--tx3);margin-top:3px;line-height:1.5'>"+
+        "La copia del servidor vive <b>dentro de la misma base</b>: te salva de un borrado, no de perder la base. "+
+        "Baja una con 🔒 Restaurar y guárdala fuera.</div>"
+      : "")+"<br>";
+}
 function _htmlSistemaApi(){
   var v=_API_VERSION||{};
   var b=_API_BASE||{};
@@ -12223,6 +12284,7 @@ function _htmlSistemaApi(){
     ((_API_AMBIENTE_REAL&&_API_AMBIENTE_REAL!==_API_AMBIENTE_ESPERADO)?" <span style='color:var(--mal);font-weight:800'>⚠️ NO COINCIDE</span>":"")+"<br>"+
     "<b>Versión del servidor:</b> "+versionTxt+"<br>"+
     "<b>Base de datos:</b> "+baseTxt+"<br>"+
+    _htmlRespaldos()+
     "<b>API:</b> <span style='font-size:10px;word-break:break-all'>"+_API_URL+"</span><br>"+
     "<b>Sesión por correo:</b> "+(apiSesionActiva()?"activa":"no")+
     (_API_BLOQUEADA?"<br><span style='color:var(--mal);font-weight:800'>Acceso por correo desactivado — "+(_API_DOMINIO_DESCONOCIDO?"esta dirección no está autorizada":"desajuste de ambiente")+"</span>":"")+
@@ -12236,8 +12298,10 @@ function _refrescarSistemaApi(){
     if(n) n.innerHTML=_htmlSistemaApi();
   };
   _API_VERSION=null; _API_BASE=null; _API_LEIDO=0; pintar();  // "consultando…" mientras va
+  _API_RESPALDOS=null;
   var p=_apiComprobarAmbiente();
   if(p&&p.then) p.then(pintar,pintar); else pintar();
+  _pedirRespaldos().then(pintar,pintar);
 }
 function rConfigAdmin(){
   if(!S.config) S.config={};
@@ -12734,6 +12798,15 @@ function rConfigAdmin(){
       "var(--ac)", _htmlHistorialApertura(), false)+
     "<div style='background:var(--gr6-c);border-radius:14px;padding:14px;border:1px solid var(--ln2)'>"+
       "<div style='font-size:10px;font-weight:700;color:var(--tx3);text-transform:uppercase;margin-bottom:8px'>ℹ️ Sistema · versión "+APP_VERSION+"</div>"+
+      // ARREGLO 103: el estado de los respaldos se pide al abrir, no solo al
+      // pulsar "volver a preguntar" — si no, la linea diria "consultando..."
+      // para siempre. Mismo patron que la auditoria: se dibuja y se completa.
+      (function(){ setTimeout(function(){
+        _pedirRespaldos().then(function(){
+          var n=document.getElementById("cfg-sistema-api");
+          if(n) n.innerHTML=_htmlSistemaApi();
+        });
+      },250); return ""; })()+
       "<div id='cfg-sistema-api'>"+_htmlSistemaApi()+"</div>"+
       // Si el servidor esta rechazando los guardados hay que decirlo ACA,
       // que es donde se mira cuando algo anda raro. Antes esto solo se
@@ -15191,6 +15264,7 @@ function restoreFromBackup(){
       return r.text();
     })
     .then(function(texto){
+      _anotarBajada();   // ARREGLO 103: para poder decirle cuanto hace que no baja una
       var blob=new Blob([texto],{type:"application/json"});
       var a=document.createElement("a");
       a.href=URL.createObjectURL(blob);
