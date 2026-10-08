@@ -2598,7 +2598,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261008_v177";
+var APP_VERSION = "20261008_v178";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -6034,6 +6034,9 @@ function saveTraspaso(){
   cD.saldo=Math.round((cD.saldo+montoDest)*10000)/10000;
   S.traspasos.push({id:Date.now(),fecha:f.fecha,origen:f.cuentaOrigen,destino:f.cuentaDestino,moneda:cO.moneda,monto:monto,monedaDestino:cD.moneda,montoDestino:montoDest,nota:f.nota||"",locked:true});
   S.nTraspaso={fecha:f.fecha,cuentaOrigen:"",cuentaDestino:"",monto:"",montoDestino:"",nota:""};
+  // Esta tampoco anotaba nada, y mover dinero entre cuentas es justo de lo
+  // que ella querría saber quién lo hizo.
+  logAudit("TRASPASO",f2(monto)+" "+cO.moneda+" · "+(cO.nombre||"")+" → "+(cD.nombre||""));
   saveData();R();
 }
 
@@ -8645,6 +8648,9 @@ function saveTxEE(){
     cuentaBanco:"",cuentaDest:"",
     pais:"VENEZUELA"};
   notificarNtfy("💸 Remesa EE.UU registrada", "USD ↔ VZLA · $"+f2(parseFloat(f.am)||0)+" USD");
+  // Esta no anotaba nada. El registro de la auditoría lo escribe la app, así
+  // que un sitio que se olvide es un sitio del que no queda rastro.
+  logAudit("REMESA EE.UU","$"+f2(parseFloat(f.am)||0)+" USD · "+((f.cl||"").toUpperCase()||"sin cliente"));
   saveData();
   // Si el mes ya estaba cerrado, recalcular y actualizar el resumen archivado
   if(_txeCierreMes) ejecutarCierreMes(_txeMesKey, false);
@@ -11531,6 +11537,7 @@ function saveIU(){
   S.nIU={fecha:f.fecha,tipo:f.tipo,moneda:f.moneda||"BRL",monedaVenta:f.monedaVenta||"VES",montOrigen:"",usdt:"",tasa:"",plataforma:f.plataforma||"",comision:COM(),cuentaId:"",bsRecibidos:"",cuentaOrigenId:"",cuentaDestinoId:"",ordenId:""};
   _olvidarAutoIU();   // el formulario se vacia: lo que la app habia calculado ya no vale
   // NO llamar sincronizarSaldosUsdt() aqui: los ajustes puntuales ya son correctos
+  logAudit("INVENTARIO USDT",(f.tipo==="venta"?"Venta":"Compra")+" "+f2(usdt)+" USDT a "+f2n(tasa,4)+" "+(f.moneda||""));
   saveData();R();
   var cNombre="";
   if(cuentaAfectada){var cF=(S.cuentas||[]).find(function(c){return c.id===cuentaAfectada;});if(cF)cNombre=" · "+cF.nombre+" actualizado";}
@@ -22038,7 +22045,7 @@ function rTblUnificada(){
     return "<tr style='border-bottom:1px solid var(--ln2b);background:"+(isEd?"var(--vd6-a)":"")+"'>"+
       "<td style='"+td+";font-size:12.5px;color:var(--tx3);white-space:nowrap'>"+dFmt(r.d)+"</td>"+
       "<td style='"+tdc+";font-size:11.5px;color:var(--tx4)'>"+(r.id||r.n||"")+"</td>"+
-      "<td style='"+td+";font-size:13px;font-weight:700;color:var(--tit)'>"+_escAud(r.cl)+"</td>"+
+      "<td style='"+td+";font-size:13px;font-weight:700;color:var(--tit)'>"+_escAud(r.cl)+_htmlQuien(r)+"</td>"+
       "<td style='"+tdc+"'>"+rtBadge+"</td>"+
       (isEd?"<td style='"+tdr+"'><input id='edit-am' type='number' value='"+r.am+"' style='"+edInStyle+"'></td>":"<td style='"+tdr+";font-size:13px;font-weight:700'>"+f2n(r.am)+" <span style='font-size:10.5px;color:var(--tx3)'>"+r.orig+"</span></td>")+
       "<td style='"+tdr+";font-size:13px;font-weight:700'>"+f2n(r.cant)+" <span style='font-size:10.5px;color:var(--tx3)'>"+r.dest+"</span></td>"+
@@ -24820,7 +24827,7 @@ function rEgresos(){
   var rowsEmp=egEmp.filter(function(e){return e.pagada;}).slice().reverse().map(function(e){
     return "<tr><td>"+e.d+"</td>"+
     "<td><span style='background:var(--az6-j);color:var(--tit);padding:2px 6px;border-radius:5px;font-size:11px;font-weight:700'>"+_escAud(e.cat.replace("GASTOS ","").replace(" EMPRESA",""))+"</span></td>"+
-    "<td style='font-size:12px'>"+_escAud(e.mot)+(e.cuentaId?"<div style='font-size:10.5px;color:var(--tx4)'>🏦 "+_escAud(nombreCuentaEg(e.cuentaId))+"</div>":"")+"</td>"+
+    "<td style='font-size:12px'>"+_escAud(e.mot)+(e.cuentaId?"<div style='font-size:10.5px;color:var(--tx4)'>🏦 "+_escAud(nombreCuentaEg(e.cuentaId))+"</div>":"")+_htmlQuien(e)+"</td>"+
     "<td style='text-align:right;font-size:11px'>"+f2(e.monto)+" <span style='color:var(--tx4)'>"+(e.mon||"BRL")+"</span></td>"+
     "<td style='text-align:right;font-weight:700;color:var(--mal)'>$"+f2(e.usdt)+"</td>"+
     "<td><button class='del-btn' onclick='delEg("+JSON.stringify(e.id)+")'>🗑️</button></td></tr>";
@@ -24830,7 +24837,7 @@ function rEgresos(){
   var rowsPer=epMes.filter(function(e){return e.pagada;}).slice().reverse().map(function(e){
     return "<tr><td>"+e.d+"</td>"+
     "<td><span style='background:var(--mo6-b);color:var(--rol-ee);padding:2px 6px;border-radius:5px;font-size:11px;font-weight:700'>"+_escAud(e.cat)+"</span></td>"+
-    "<td style='font-size:12px'>"+_escAud(e.mot)+"</td>"+
+    "<td style='font-size:12px'>"+_escAud(e.mot)+_htmlQuien(e)+"</td>"+
     "<td style='text-align:right;font-size:11px'>"+f2(e.monto)+" <span style='color:var(--tx4)'>"+(e.mon||"BRL")+"</span></td>"+
     "<td style='text-align:right;font-weight:700;color:var(--mal)'>$"+f2(e.usdt)+"</td>"+
     "<td><button class='del-btn' onclick='delEgPer("+JSON.stringify(e.id)+")'>🗑️</button></td></tr>";
@@ -26824,7 +26831,53 @@ var _fbSaveTimer = null;
 // o un préstamo: son más de quince, y la que se olvide reabre el agujero.
 // Se compara la foto del registro contra la del guardado anterior; si
 // cambió de verdad, lleva marca.
-function _marcarCambiados(arr, memo, idField, clave){
+// ══════════════════════════════════════════════════════════════════════════
+// QUIÉN REGISTRÓ CADA COSA
+// ══════════════════════════════════════════════════════════════════════════
+//
+// Sus palabras: "me gustaría que yo como administradora pueda ver quién
+// registró cada cosa. O sea, operado por fulano de tal. Para yo saber a la
+// hora de buscar qué pasó con esa remesa, alguna eventualidad, yo pueda
+// saber quién la registró o quién hizo tal cambio."
+//
+// Dos campos por registro, y significan cosas distintas:
+//
+//   _por      quién lo CREÓ.           No se sobrescribe nunca.
+//   _porUlt   quién lo tocó la ÚLTIMA vez.
+//
+// Y van EN UN SOLO SITIO, aquí dentro, por la misma razón que las marcas de
+// fusión: sellarlo función por función es el camino que ya falló cuatro
+// veces, y son más de cien funciones que escriben datos. Una función nueva
+// queda cubierta sola.
+//
+// OJO: esto es el sello CÓMODO, el que se ve al momento sin esperar al
+// servidor. El que manda es el del servidor, que sabe de quién es la sesión
+// y vuelve a sellar lo que acepta — este se puede falsear desde las
+// herramientas del navegador y el otro no.
+function _quienSoy(){
+  try{
+    var ses=_apiSesionGuardada();
+    var u=(ses&&ses.u)||null;
+    return (u&&(u.nombre||u.correo))||S.usuario||"";
+  }catch(e){ return S.usuario||""; }
+}
+
+// Cómo se enseña, y se escribe UNA vez. Si cada pantalla se lo pinta a su
+// manera, en dos semanas hay diecisiete formas de decir lo mismo — que es de
+// donde venimos con las tarjetas.
+//
+// Lo de antes del sello no tiene nada que enseñar, y ahí no se inventa: se
+// calla. Un "registrado por —" en cada fila vieja sería ruido en 192 líneas.
+function _htmlQuien(r){
+  if(!r) return "";
+  var creo=r._por||"", ult=r._porUlt||"";
+  if(!creo && !ult) return "";
+  var txt="👤 "+_escAud(creo||ult);
+  if(ult && creo && ult!==creo) txt+=" · ✏️ "+_escAud(ult);
+  return "<div style='font-size:10.5px;color:var(--tx4);font-weight:600;margin-top:1px'>"+txt+"</div>";
+}
+
+function _marcarCambiados(arr, memo, idField, clave, primeraVez){
   if(!Array.isArray(arr)||!memo) return;
   idField = idField || "id";
   arr.forEach(function(it){
@@ -26832,9 +26885,11 @@ function _marcarCambiados(arr, memo, idField, clave){
     var id=it[idField];
     if(id===undefined||id===null) return;
     // _mod se deja fuera de la foto: si entrara, marcar cambiaría la foto,
-    // la foto distinta volvería a marcar, y no pararía nunca.
+    // la foto distinta volvería a marcar, y no pararía nunca. _por y _porUlt
+    // van fuera por lo mismo: sellar cambiaría la foto y el registro quedaría
+    // marcado como cambiado en cada guardado, para siempre.
     var copia={};
-    for(var k in it){ if(k!=="_mod") copia[k]=it[k]; }
+    for(var k in it){ if(k!=="_mod"&&k!=="_por"&&k!=="_porUlt") copia[k]=it[k]; }
     var foto=JSON.stringify(copia);
     var previo=memo[id];
     // Sin foto previa solo se anota, no se marca. Si se marcara, el PRIMER
@@ -26845,6 +26900,29 @@ function _marcarCambiados(arr, memo, idField, clave){
     // para el aviso de choque. Anotarlo en cada función que toca datos ya se
     // probó y no funciona: la que se olvide es la que calla el aviso.
     if(previo!==undefined && previo!==foto){ it._mod=Date.now(); _anotarTocado(clave,id); }
+    // El sello sigue la MISMA cautela, y aquí es todavía más importante: en
+    // la primera pasada sobre un campo TODOS los registros parecen nuevos
+    // —no hay foto de nada—, así que sellarlos pondría el nombre de quien
+    // tenga la app abierta encima de sus 192 remesas de golpe. Por eso hace
+    // falta distinguir "no hay foto todavía" de "este registro es nuevo",
+    // que con la foto a secas son lo mismo.
+    if(!primeraVez){
+      var yo=_quienSoy();
+      if(yo){
+        if(previo===undefined){
+          // Registro creado en ESTE aparato desde la última foto.
+          if(!it._por) it._por=yo;
+          it._porUlt=it._por;
+        }else if(previo!==foto){
+          // Lo de antes del sello no tiene _por y no hay de dónde sacarlo.
+          // Se le pone el de quien lo está tocando: es menos exacto que
+          // dejarlo vacío, pero "lo tocó alguien y no sé quién" no sirve
+          // para nada cuando lo que se busca es a quién preguntarle.
+          if(!it._por) it._por=yo;
+          it._porUlt=yo;
+        }
+      }
+    }
     memo[id]=foto;
   });
 }
@@ -26867,8 +26945,14 @@ function _marcarTodoLoQueSeFusiona(){
   var ids=(typeof _MERGE_ID_FIELD!=="undefined"&&_MERGE_ID_FIELD)||{};
   campos.forEach(function(k){
     if(!Array.isArray(S[k])) return;
-    if(!window._fotoPorCampo[k]) window._fotoPorCampo[k]={};
-    _marcarCambiados(S[k], window._fotoPorCampo[k], ids[k]||"id", k);
+    // "Primera pasada" = todavía no hay foto de ESTE campo. Es lo que separa
+    // un registro nuevo de un campo recién fotografiado, que sin esto son
+    // indistinguibles. _refotografiar() las borra todas y las vuelve a
+    // tomar, así que después de cada guardado la primera pasada vuelve a
+    // ser primera — y eso está bien: ahí tampoco hay nada nuevo que sellar.
+    var primeraVez=!window._fotoPorCampo[k];
+    if(primeraVez) window._fotoPorCampo[k]={};
+    _marcarCambiados(S[k], window._fotoPorCampo[k], ids[k]||"id", k, primeraVez);
   });
 }
 // Después de traer datos del servidor, las fotos que teníamos son de antes de
@@ -27328,7 +27412,9 @@ function _marcarBorradoMerge(campo,id){
     // cualquier ausencia razonable con 2-3 dispositivos.
     var cutoff=Date.now()-2592000000; // 30 días
     S._deletedMerge[campo]=S._deletedMerge[campo].filter(function(x){return x.ts>cutoff;});
-    S._deletedMerge[campo].push({id:id,ts:Date.now()});
+    // Quién borró. Un registro borrado ya no está para llevar su sello, así
+    // que si no va en la marca no queda en ninguna parte.
+    S._deletedMerge[campo].push({id:id,ts:Date.now(),por:_quienSoy()});
   }catch(e){}
 }
 // Quita la marca de borrado de un registro. Sin esto, volver a crear algo que

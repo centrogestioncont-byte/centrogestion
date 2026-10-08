@@ -60,7 +60,7 @@ const CONSTANTES = ["_PODA_CATS", "_MOTIVOS_AJUSTE",
                     "PERMISOS_APP", "PERMISOS_POR_ROL", "PERMISO_DE_TAB",
                     "_CONFIG_PROHIBIDO", "_ETIQUETA_ROL"];
 
-const NECESARIAS = ["r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
+const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
                     "congelarMora", "_sumarMeses", "_isoDeFecha", "calcularAmortizacion",
                     "tasaAnualEfectiva", "_periodDaysDe", "perfilRiesgoCliente",
                     "puntoEquilibrio", "tasaSugerida", "_conDiaDelMes",
@@ -125,6 +125,10 @@ global.document = global.document || { getElementById: function(){ return null; 
 global.avisos = [];
 global.saveData = () => {};
 global.R = () => {};
+// _quienSoy() lee la sesion guardada del navegador. Aqui no hay localStorage,
+// asi que se le pone una sesion de mentira: lo que se prueba es el sello, no
+// de donde sale el nombre.
+global._apiSesionGuardada = () => ({ u: { nombre: "PRUEBA" } });
 global.alert = (m) => { global.avisos.push(String(m)); };
 // S es el estado global de la app; aca solo hacen falta config y prestamos.
 const S = { config: {}, prestamos: [] };
@@ -663,11 +667,14 @@ console.log("\nLa marca de 'esto lo toque yo'");
 const memo = {};
 const cobro = { id: 1, cliente: "EVELYN", monto: 100, estado: "pendiente" };
 
-F._marcarCambiados([cobro], memo);
+// El quinto argumento es "primera pasada sobre este campo", y aqui lo es:
+// el memo viene vacio. Asi se llama tambien en la app.
+F._marcarCambiados([cobro], memo, "id", "cuentasCobrar", true);
 ok(cobro._mod === undefined, "el primer guardado tras abrir no marca nada");
+ok(cobro._por === undefined, "ni sella: en la primera pasada todo parece nuevo");
 
 cobro.estado = "cobrado";
-F._marcarCambiados([cobro], memo);
+F._marcarCambiados([cobro], memo, "id", "cuentasCobrar", false);
 ok(typeof cobro._mod === "number", "pero un cambio de verdad si se marca");
 
 const marcaPrimera = cobro._mod;
@@ -2607,7 +2614,10 @@ console.log("\nArreglo 62 · avisar cuando el otro aparato piso algo");
   const src2 = sacarFuncion("_marcarObjetosCambiados");
   ok((src2.match(/_anotarTocado\("@"\+campo/g) || []).length === 2,
      "y _marcarObjetosCambiados lo anota en sus dos ramas");
-  ok(/_marcarCambiados\(S\[k\],\s*window\._fotoPorCampo\[k\],\s*ids\[k\]\|\|"id",\s*k\)/
+  // El quinto argumento ("primera pasada sobre este campo") entro con el
+  // sello de quien registro. Lo que esta guardia fija sigue siendo lo mismo:
+  // que se le pasa el NOMBRE del campo, para que el aviso sepa de que habla.
+  ok(/_marcarCambiados\(S\[k\],\s*window\._fotoPorCampo\[k\],\s*ids\[k\]\|\|"id",\s*k\s*(,\s*primeraVez\s*)?\)/
        .test(sacarFuncion("_marcarTodoLoQueSeFusiona")),
      "y le pasa el nombre del campo, para que el aviso sepa de que habla");
 }
@@ -6382,6 +6392,78 @@ console.log("\n— FASE 2: la cuenta madre —");
      "y devuelve una pestaña del MENU, que es el unico sitio donde vive el orden");
   ok(!/\bR\(\)/.test(primera + sinCom((HTML.match(/if\(ts\.length && ts\.indexOf\(S\.tab\)<0\)[^\n]*/) || [""])[0])),
      "sin llamar a R(): esto corre dentro del dibujado");
+}
+
+
+// ── Quién registró cada cosa ──────────────────────────────────────────────
+//
+// Sus palabras: "me gustaría que yo como administradora pueda ver quién
+// registró cada cosa. O sea, operado por fulano de tal."
+//
+// Lo que esto vigila sobre todo es lo contrario de lo que parece: no que se
+// selle, sino que NO se selle de mas. En la primera pasada sobre un campo
+// TODOS los registros parecen nuevos —no hay foto de nada—, asi que sellar
+// ahi le pondria el nombre de quien tiene la app abierta encima de sus 192
+// remesas. Medido en Chromium: cargando sus 192, selladas 0.
+{
+  const sinCom = t => t.replace(/\/\/[^\n]*/g, "");
+  const marcar = sinCom((HTML.match(/function _marcarCambiados\([\s\S]*?\n\}/) || [""])[0]);
+  ok(marcar.length > 200, "existe _marcarCambiados");
+
+  // El sello va AQUI, en el mismo sitio que ya decide que cambio. Ponerlo
+  // funcion por funcion es el camino que ya fallo cuatro veces.
+  ok(/_por\b/.test(marcar) && /_porUlt\b/.test(marcar),
+     "el sello se pone donde ya se decide que cambio, no funcion por funcion");
+  ok(/if\(!primeraVez\)/.test(marcar),
+     "y NO en la primera pasada sobre el campo (si no, sella sus 192 de golpe)");
+  // Las DOS ramas, contadas. Con una sola comprobacion esta guardia pasaba
+  // con la otra rama ya rota: la de "registro nuevo" y la de "registro que
+  // cambio" protegen _por por separado.
+  ok((marcar.match(/if\(!it\._por\)\s*it\._por=/g) || []).length === 2,
+     "quien lo creo no se sobrescribe nunca, en ninguna de las dos ramas",
+     (marcar.match(/it\._por=/g) || []).length);
+
+  // Igual que _mod: si el sello entrara en la foto, sellar cambiaria la foto,
+  // la foto distinta volveria a sellar, y no pararia nunca.
+  ok(/k!=="_mod"&&k!=="_por"&&k!=="_porUlt"/.test(marcar),
+     "los sellos quedan FUERA de la foto, igual que _mod");
+
+  // Y el que decide si es la primera pasada.
+  ok(/var primeraVez=!window\._fotoPorCampo\[k\]/.test(HTML),
+     "la primera pasada se decide por si ya hay foto de ESE campo");
+
+  // Se dibuja en un solo sitio. Si cada pantalla se lo pinta a su manera, en
+  // dos semanas hay diecisiete formas de decir lo mismo.
+  ok(/function _htmlQuien\(r\)\{/.test(HTML), "se dibuja en un solo sitio");
+  const quien = sinCom((HTML.match(/function _htmlQuien\(r\)\{[\s\S]*?\n\}/) || [""])[0]);
+  // Los dos sitios donde se mete un nombre, por nombre. Pidiendo solo que
+  // _escAud aparezca, esta guardia pasaba con el primero ya sin escapar.
+  ok(/_escAud\(creo\|\|ult\)/.test(quien) && /_escAud\(ult\)/.test(quien),
+     "y los dos nombres se escapan al pintarlos (ARREGLO 102)", quien.slice(0, 200));
+  ok(/if\(!creo && !ult\) return ""/.test(quien),
+     "lo de antes del sello se calla, no dice «registrado por —»");
+  ok((HTML.match(/_htmlQuien\(/g) || []).length >= 4,
+     "y se usa en Operaciones y en los dos tipos de egreso");
+
+  // Quien borro: un registro borrado ya no esta para llevar su sello.
+  ok(/push\(\{id:id,ts:Date\.now\(\),por:_quienSoy\(\)\}\)/.test(HTML),
+     "la marca de borrado lleva quien borro");
+
+  // El registro de auditoria lo escribe la app, asi que un sitio que se
+  // olvide es un sitio del que no queda rastro. Estos tres no anotaban nada.
+  // Cortando el texto de la funcion por indice, no con una expresion: la
+  // expresion se me enredo con los escapes y la prueba no llegaba a correr.
+  [["saveTxEE", "REMESA EE.UU"], ["saveTraspaso", "TRASPASO"],
+   ["saveIU", "INVENTARIO USDT"]].forEach(function(x){
+    const i = HTML.indexOf("function " + x[0] + "(");
+    const j = HTML.indexOf("\n}", i);
+    // Sin comentarios: comentar la linea dejaba el texto ahi y la guardia
+    // pasaba con la funcion ya sin rastro. Van cinco veces en este proyecto.
+    const fn = i < 0 ? "" : sinCom(HTML.slice(i, j));
+    ok(i >= 0, "existe " + x[0]);
+    ok(fn.indexOf('logAudit("' + x[1] + '"') >= 0,
+       x[0] + " deja rastro en la auditoria");
+  });
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
