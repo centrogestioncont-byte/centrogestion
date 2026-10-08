@@ -2598,7 +2598,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261008_v175";
+var APP_VERSION = "20261008_v176";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -3836,6 +3836,63 @@ function _htmlHistorialApertura(){
   return out;
 }
 
+// ─── Lo que el servidor NO dejó guardar (PASO 3) ─────────────────────────
+//
+// Desde el paso 3 de la auditoría, PUT /estado ya no se cree que cualquiera
+// con "editar" puede escribir cualquier cosa: saca del bloque las claves que
+// esa persona no tiene permitidas y las devuelve en `clavesRechazadas`.
+//
+// Y eso hay que DECIRLO. Si no, la persona registra un egreso, la pantalla se
+// lo pinta —porque en su navegador sí se guardó— y al siguiente repintado
+// desaparece sin que nada explique por qué. Es el mismo fallo que el de la
+// tarjeta del mercado cuando decía "sin lectura" a secas: si el servidor sabe
+// por qué dijo no, la pantalla lo dice.
+var _RECHAZADAS = [];
+
+// Cómo se llama cada clave en la pantalla. El servidor manda el nombre
+// interno; ella nunca ha visto la palabra "cuentasCobrar".
+var _NOMBRE_DE_CLAVE = {
+  prestamos:"Préstamos", egresos:"Egresos", egresos_personales:"Gastos personales",
+  cierresMes:"Cierre de mes", pagosSocios:"Pagos a socios",
+  gastos_socios:"Gastos de socios", deudas_paul:"Deudas de socios",
+  gastos_eeuu:"Gastos de EE.UU", eeuu:"Operaciones de EE.UU",
+  traspasos:"Traspasos entre cuentas", config:"Configuración",
+  ajustesSaldo:"Saldos escritos a mano", tasasDia:"Tasas del día",
+  _tasasDiaMeta:"Tasas del día", mapaBinance:"Cuentas del importador de Binance"
+};
+
+function _nombreDeClave(k){ return _NOMBRE_DE_CLAVE[k] || k; }
+
+function _cerrarAvisoRechazado(){
+  _RECHAZADAS=[];
+  var n=document.getElementById("aviso-rechazado");
+  if(n) n.style.display="none";   // ARREGLO 32: no se llama a R()
+}
+
+function _htmlAvisoRechazado(){
+  if(!_RECHAZADAS.length) return "";
+  // Se nombran sin repetir: tasasDia y _tasasDiaMeta son la misma pantalla
+  // para ella, y verla dos veces en la lista parece que fallaron dos cosas.
+  var vistos={}, nombres=[];
+  _RECHAZADAS.forEach(function(k){
+    var n=_nombreDeClave(k);
+    if(!vistos[n]){ vistos[n]=1; nombres.push(n); }
+  });
+  return "<div id='aviso-rechazado' style='background:var(--am6);border-bottom:2px solid var(--am3);padding:10px 14px;"+
+    "display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap'>"+
+    "<div style='flex:1;min-width:200px'>"+
+      "<div style='font-size:13px;font-weight:800;color:var(--avi-tx3)'>"+
+        "🔒 El servidor no guardó "+(nombres.length===1?"un cambio":nombres.length+" cosas")+"</div>"+
+      "<div style='font-size:11px;color:var(--am3-a);margin-top:3px;line-height:1.5'>"+
+        "No tienes permiso para modificar: <b>"+_escAud(nombres.join(" · "))+"</b>. "+
+        "Lo demás sí se guardó. Si lo necesitas, pídele el permiso a quien administra la app."+
+      "</div>"+
+    "</div>"+
+    "<button onclick='_cerrarAvisoRechazado()' style='background:var(--am3);border:none;color:var(--sobre-color);"+
+      "padding:6px 11px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit'>Entendido</button>"+
+  "</div>";
+}
+
 function _htmlAvisoPisado(){
   if(!_PISADOS.length) return "";
   // ARREGLO 67: la apertura va SIEMPRE a la vista, sin desplegar nada. Es el
@@ -4078,6 +4135,12 @@ function _dobleEnviarAhora(obj){
       .then(function(d){
         if(!d||!d.ok||!d.estado){ _unirTocado(_TOCADO_AQUI,_tocado); return; }
         _DOBLE_CORTADA="";   // salio bien: se limpia el aviso anterior
+        // PASO 3: lo que el servidor se negó a guardar por falta de permiso.
+        // Va antes de adoptar, igual que los choques: después ya no se sabe.
+        if(d.clavesRechazadas && d.clavesRechazadas.length){
+          _RECHAZADAS=d.clavesRechazadas.slice(0);
+          console.warn("🔒 El servidor no guardó (sin permiso):", _RECHAZADAS);
+        }
         if(FUENTE_API){
           // Fase 7.3: el servidor es el arbitro. Lo que devuelve NO se
           // compara, se adopta: es el resultado de fusionar lo que mando
@@ -4100,7 +4163,7 @@ function _dobleEnviarAhora(obj){
             _guardarPisados(_ch);
             console.warn("🔀 El servidor devolvió distinto lo que este aparato cambió:", _ch);
           }
-          if(_cambio||_ch.length){ try{ R(); }catch(e){} }
+          if(_cambio||_ch.length||_RECHAZADAS.length){ try{ R(); }catch(e){} }
           return;
         }
         var difs=_dobleComparar(d.estado, obj);
@@ -18045,6 +18108,7 @@ function rMain(){
     // scroll, para que se vea esté ella en la pantalla que esté. Un aviso al
     // fondo de una lista de remesas no es un aviso.
     _htmlAvisoPisado()+
+    _htmlAvisoRechazado()+      // PASO 3: lo que el servidor no dejó guardar
     _htmlAvisoAperturaFuera()+  // ARREGLO 94
     _htmlAvisoSaldoNegativo()+  // ARREGLO 95
     _htmlAvisoMesSinCerrar()+   // ARREGLO 89
