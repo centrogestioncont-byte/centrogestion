@@ -3796,12 +3796,12 @@ console.log("\nArreglo 64 · entrar con huella");
 // esta en 10,9.
 {
   const c = sinComentarios(sacarFuncion("rClientes"));
-  ok(/font-weight:700;font-size:14\.5px;color:var\(--tx\)[^']*'>"\+cl\.n/.test(c),
+  ok(/font-weight:700;font-size:14\.5px;color:var\(--tx\)[^']*'>"\+_escAud\(cl\.n\)/.test(c),
      "el nombre del cliente es lo mas grande de la fila y usa el color del texto");
-  ok(!/color:var\(--az1-a\)'>"\+cl\.n/.test(c),
+  ok(!/color:var\(--az1-a\)'>"\+_escAud\(cl\.n\)/.test(c),
      "y ya no se pinta con el azul oscuro que no se leia");
   // El codigo y el telefono son datos secundarios: se leen, pero no compiten.
-  ok(/#"\+cl\.cod/.test(c) && !/font-size:9px[^']*'>#"\+cl\.cod/.test(c),
+  ok(/#"\+_escAud\(cl\.cod\)/.test(c) && !/font-size:9px[^']*'>#"\+_escAud\(cl\.cod\)/.test(c),
      "el codigo sigue estando, pero ya no a 9px");
 }
 
@@ -6133,6 +6133,66 @@ console.log("\n— FASE 2: la cuenta madre —");
      "el rotulo de la apertura va en gris; el color es del numero");
   ok(/Empezaste el "\+ds\(co\.desde\)\+" con <b style='color:var\(--tx2\)'>/.test(cap),
      "y el monto de la apertura es lo unico que resalta de esa linea");
+}
+
+// ── ARREGLO 102: un nombre de cliente no puede ejecutar codigo ─────────────
+// Medido el 08/10 en Chromium con su export: metiendo codigo en el nombre de
+// un cliente, de una cuenta o en el motivo de un egreso, ese codigo se
+// ejecutaba al abrir la pantalla. 104 veces solo en Clientes, 7 pantallas en
+// total. Con un solo usuario da casi igual —se lo escribiria ella misma— pero
+// la app va a tener operadores: uno escribe el veneno, ella abre Clientes como
+// administradora, y corre dentro de SU sesion, con su testigo delante.
+//
+// Hay DOS escapes y no son intercambiables:
+//   _escAud  para el cuerpo del HTML
+//   _jsAttr  para dentro de un onclick, donde el navegador decodifica las
+//            entidades ANTES de leer el JavaScript (por eso el
+//            .replace(/"/g,"&quot;") que habia alli no servia de nada)
+{
+  const H = sinComentarios(HTML);
+
+  ok(/function _escAud\(/.test(H) && /function _jsAttr\(/.test(H),
+     "estan los dos escapes, el del HTML y el del onclick");
+  // El de onclick tiene que escapar a \uXXXX: una entidad HTML no sobrevive,
+  // porque el navegador la decodifica justo a tiempo de romper la cadena.
+  const ja = sinComentarios(sacarFuncion("_jsAttr"));
+  ok(/\\\\u/.test(ja) && /charCodeAt/.test(ja),
+     "el de onclick escapa a \\uXXXX, no a entidades HTML");
+  ok(/&/.test(ja.slice(ja.indexOf("replace"), ja.indexOf("replace")+60)),
+     "y escapa tambien el &, que si no vuelve a formar la entidad");
+
+  // Y el patron viejo no puede volver: escapaba solo la comilla doble, y a
+  // entidad, que es justo lo que no funciona dentro de un atributo.
+  // Anclado a ".algo.replace(" — si no, encajaba con el cuerpo del propio
+  // _escAud(), que sí escapa a entidades y ahí está bien.
+  ok(!/\.\w+\.replace\(\/"\/g,\s*"&quot;"\)/.test(H),
+     "no vuelve el escape de comillas a entidad dentro de un onclick");
+
+  // Los campos que ella teclea, en el sitio donde se dibujan. Se exige el
+  // escape pegado al campo: sin esto, cualquiera de los 7 agujeros vuelve.
+  [["cl\\.n", "el nombre del cliente"],
+   ["cl\\.tel", "su telefono"],
+   ["cl\\.ruta", "su ruta"],
+   ["cl\\.cod", "su codigo"],
+   ["p\\.desc", "la descripcion del prestamo"],
+   ["e\\.cat", "la categoria del egreso"],
+   ["r\\.rt", "la ruta de la remesa"],
+   ["r\\.plataforma", "la plataforma del lote"],
+   ["t\\.nota", "la nota del traspaso"]].forEach(function(x){
+    const suelto = new RegExp('(?<!_escAud\\()(?<!_jsAttr\\()' + x[0] + '\\b\\s*\\+\\s*"[^"]*[<>]');
+    ok(!suelto.test(H), "no queda sin escapar " + x[1]);
+  });
+
+  // nombreCuentaEg() devuelve el nombre crudo a proposito —lo usa tambien el
+  // registro de auditoria, que se escapa al DIBUJARLO, no al escribirlo— asi
+  // que cada sitio que lo pinta tiene que envolverlo el.
+  const todas   = (H.match(/nombreCuentaEg\(/g) || []).length;
+  const envueltas = (H.match(/_escAud\(nombreCuentaEg\(/g) || []).length;
+  // 1 es la definicion de la funcion y 1 el logAudit, que va crudo a proposito:
+  // la auditoria se escapa al DIBUJARLA, no al escribirla.
+  ok(todas - envueltas <= 2,
+     "el nombre de cuenta se escapa en cada sitio que lo dibuja (" +
+     (todas - envueltas) + " crudos de " + todas + ")");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

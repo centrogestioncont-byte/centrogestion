@@ -2502,6 +2502,74 @@ día — `histSaldos` se toma a media jornada y no sirve para comparar cierres.
 
 ---
 
+## Un nombre de cliente no puede ejecutar código (ARREGLO 102)
+
+Salió de la auditoría del 08/10 y **está reproducido**, no deducido: metiendo
+código dentro del nombre de un cliente, de una cuenta o del motivo de un egreso,
+ese código **se ejecutaba al abrir la pantalla**. Medido en Chromium con su
+export:
+
+```
+Clientes          104 veces          Egresos      14
+Inventario USDT    39                Préstamos     4
+Diario             27                Por cobrar    1
+Balance de Cuentas 19
+```
+
+**Hoy, con un solo usuario, casi no importa:** se lo escribiría ella misma. **Con
+operadores sí importa**, y es lo que bloqueaba el plan de dar usuarios: uno
+escribe el veneno en un nombre, ella abre Clientes **como administradora**, y el
+código corre dentro de SU sesión, con su testigo delante.
+
+### Hay DOS escapes y NO son intercambiables
+
+```
+_escAud(t)   para el CUERPO del HTML          →  & " ' < >  a entidades
+_jsAttr(t)   para dentro de un onclick        →  a \uXXXX
+```
+
+**La segunda es la que no se ve venir.** En un atributo, el navegador decodifica
+las entidades **antes** de que el JavaScript se lea, así que un `&quot;` vuelve a
+ser comilla justo a tiempo de romper la cadena. Por eso el
+`.replace(/"/g,"&quot;")` que ya había en los buscadores de cliente **no servía
+de nada**: medido, el `onclick` de Clientes ejecutaba 270 veces. Lo que sí
+sobrevive es un escape de JavaScript (`\u0022`): seis caracteres que el HTML deja
+pasar tal cual y que el JavaScript lee después como la comilla de dentro.
+
+Y `_jsAttr` **tiene que escapar también el `&`**; si no, un `&quot;` tecleado por
+una persona vuelve a formar la entidad y el agujero sigue abierto.
+
+### Tres cosas que costaron encontrarse
+
+- **El nombre de un cliente vive en `n`, no en `nombre`.** La primera prueba
+  envenenaba `nombre` —que en un cliente real no existe— y Clientes salía
+  "limpio" con el agujero abierto. Es la trampa de siempre: **medir no vale si
+  mides otra cosa.** Los campos de verdad se sacaron del export, colección por
+  colección, y con esos se barrió.
+- **El regex no alcanza; el navegador sí.** Buscar `"+campo+"` en el archivo
+  encontró 85 sitios y se dejó 28. Lo que los encontró fue marcar cada campo con
+  una etiqueta única, dibujar las 35 pantallas y preguntarle al DOM dónde había
+  quedado sin escapar.
+- **Y al revés también:** la guardia estructural encontró 13 sitios a los que la
+  prueba del navegador no llegaba (pantallas que no se dibujan sin cierto
+  estado). **Hacen falta las dos**, y por eso las dos se quedan.
+
+### Lo que NO se escapa, a propósito
+
+- **Los avisos y las confirmaciones** (`alert`, `confirm`): ahí `&amp;` se vería
+  tal cual. Son 51 sitios y se dejaron fuera uno por uno.
+- **`nombreCuentaEg()` devuelve el nombre crudo.** Lo usa también `logAudit`, y
+  el registro de auditoría **se escapa al dibujarlo, no al escribirlo**. Por eso
+  cada uno de los ocho sitios que lo pinta lo envuelve él; la guardia cuenta
+  cuántas llamadas quedan sin envolver y admite dos (la definición y el
+  `logAudit`).
+
+Comprobado al terminar: **0 ejecuciones** recorriendo las 24 pestañas con `R()`
+y pulsando lo que hay en cada una, con tres formas de payload; el nombre
+`Café & Cía "Ltda" <São> 'Paulo'` se lee **tal cual** y ninguno de los 270
+botones de cliente se rompió. En la captura de antes el navegador se comía
+`<São Paulo>` como si fuera una etiqueta.
+
 ### Registra la operación — no escribas el saldo
 
 **La regla que más costó el 12/09**, y se rompió tres veces en un día.
