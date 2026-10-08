@@ -6273,5 +6273,52 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(/base-uri 'self'/.test(csp), "ni cambiarle la base a los enlaces");
 }
 
+
+// ── PASO 3: lo que el servidor NO dejo guardar se DICE ───────────────────
+//
+// Desde el paso 3 de la auditoria, PUT /estado saca del bloque las claves que
+// esa persona no puede tocar y las devuelve en `clavesRechazadas`. Si la app
+// no lo dice, la persona registra un egreso, lo ve en su pantalla —porque en
+// su navegador si se guardo— y al siguiente repintado desaparece sin que nada
+// explique por que. Es el mismo fallo mudo que la tarjeta del mercado cuando
+// decia "sin lectura" a secas: si el servidor sabe por que dijo no, la
+// pantalla lo dice.
+{
+  ok(/var _RECHAZADAS\s*=\s*\[\]/.test(HTML),
+     "la app guarda lo que el servidor rechazo");
+  ok(/d\.clavesRechazadas\s*&&\s*d\.clavesRechazadas\.length/.test(HTML),
+     "y lo lee de la respuesta del guardado");
+  // Anclado en el MARCADO, no en el nombre de la funcion: un comentario que
+  // la nombre aparece antes y la guardia mediria otro trozo del archivo. Ya
+  // paso tres veces en este proyecto.
+  ok(/_htmlAvisoRechazado\(\)\+\s*\/\/ PASO 3/.test(HTML),
+     "el aviso se pinta arriba del panel, fuera de la zona que hace scroll");
+
+  // ARREGLO 32: repintar rehace el HTML y cierra lo que haya abierto bajo el
+  // dedo. Cerrar un aviso se hace cambiando el display por su id.
+  // Y se miden los comentarios FUERA. El comentario que explica el ARREGLO 32
+  // dentro de esta funcion nombra R(), asi que la guardia se media a si misma
+  // y fallaba con el codigo bueno. Es la cuarta vez en este proyecto que un
+  // comentario secuestra una guardia: lo que se mide es el CODIGO.
+  const sinComentarios = t => t.replace(/\/\/[^\n]*/g, "");
+  const cerrar = sinComentarios(
+    (HTML.match(/function _cerrarAvisoRechazado\(\)\{[\s\S]*?\n\}/) || [""])[0]);
+  ok(cerrar.length > 40, "existe el boton de cerrar el aviso");
+  ok(!/\bR\(\)/.test(cerrar),
+     "cerrarlo NO llama a R() (ARREGLO 32)");
+  ok(/getElementById\("aviso-rechazado"\)/.test(cerrar),
+     "lo cierra por su id");
+
+  // El nombre de la clave acaba dentro de innerHTML. Viene del servidor, pero
+  // la regla de este archivo es la misma para todo lo que se pinta.
+  const aviso = (HTML.match(/function _htmlAvisoRechazado\(\)\{[\s\S]*?\n\}/) || [""])[0];
+  ok(/_escAud\(/.test(aviso), "y los nombres se escapan al pintarlos (ARREGLO 102)");
+  // Ella nunca ha visto la palabra "cuentasCobrar": el servidor manda el
+  // nombre interno y la pantalla tiene que traducirlo.
+  ok(/_NOMBRE_DE_CLAVE\s*=\s*\{/.test(HTML) &&
+     /egresos_personales:\s*"Gastos personales"/.test(HTML),
+     "las claves se enseñan con el nombre que ella conoce");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
