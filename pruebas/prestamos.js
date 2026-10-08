@@ -6466,5 +6466,75 @@ console.log("\n— FASE 2: la cuenta madre —");
   });
 }
 
+
+// ── Filtrar por operador ──────────────────────────────────────────────────
+//
+// Sus palabras: "me gustaría que agregaras algo donde yo pueda filtrar por
+// operador… para yo poder saber todas las actividades de cada operador".
+{
+  const sinCom = t => t.replace(/\/\/[^\n]*/g, "");
+  const ops = sinCom((HTML.match(/function rTblUnificada\(\)\{[\s\S]*?\n\}/) || [""])[0]);
+
+  ok(/por:""/.test(HTML), "el filtro por operador tiene su sitio en S._ops");
+  ok(/S\._ops\.por=this\.value/.test(ops), "y su desplegable en Operaciones");
+
+  // Por quien la CREO, no por quien la toco: la pregunta es "que registro
+  // Carlos", y una remesa que ella corrigio despues la registro Carlos igual.
+  ok(/f\.por==="__sin" \? !r\._por : r\._por===f\.por/.test(ops),
+     "filtra por quien la CREO (_por), no por quien la toco");
+  ok(/okQ&&okSrc&&okRuta&&okBanco&&okPor/.test(ops),
+     "y se suma a los filtros que ya habia, sin sustituir ninguno");
+
+  // Las de antes del sello se NOMBRAN. Escondiendolas, la suma de los
+  // operadores no da el total y parece que faltan remesas.
+  // Anclado en lo que lo DISPARA, no en el texto: con el texto a secas la
+  // prueba negativa pasaba con la opcion ya apagada. Va la sexta vez.
+  ok(/\(_sinSello\?"<option value='__sin'/.test(ops) &&
+     /Sin registrar qui[eé]n/.test(ops),
+     "las de antes del sello salen nombradas cuando las hay, no escondidas");
+
+  // Un desplegable con una sola opcion no es un filtro, es un adorno.
+  ok(/\(_quienes\.length\|\|_sinSello\)\?/.test(ops),
+     "el desplegable solo sale si hay a quien filtrar");
+
+  // Sale de los registros, no de la lista de usuarios: asi aparece quien de
+  // verdad registro algo aunque ya no tenga usuario.
+  ok(/base\.forEach\(function\(r\)\{\s*if\(!r\._por\)/.test(ops),
+     "quien aparece sale de los registros, no de la lista de usuarios");
+
+  // Limpiar filtros tiene que limpiarlo tambien, o queda un filtro puesto
+  // que no se ve en ninguna parte.
+  ok(/banco:\\"\\",por:\\"\\"/.test(HTML), "y «Limpiar filtros» lo limpia");
+}
+
+// ── Qué ha hecho cada persona (Auditoría) ────────────────────────────────
+{
+  const sinCom = t => t.replace(/\/\/[^\n]*/g, "");
+
+  ok(/id='aud-quien'/.test(HTML),
+     "la Auditoria filtra por PERSONA");
+  ok(!/id='aud-role'/.test(HTML),
+     "y ya no por rol: dos personas con el mismo rol no se distinguian");
+  ok(/q\.push\("usuario="\+encodeURIComponent\(qF\)\)/.test(HTML),
+     "el filtro va en la consulta, no se filtran 300 entradas aqui");
+
+  const pintar = sinCom((HTML.match(/function _pintarResumenAudit\(\)\{[\s\S]*?\n\}/) || [""])[0]);
+  ok(pintar.length > 200, "existe la pantalla del resumen");
+  ok(/_escAud\(p\.usuario\)/.test(pintar),
+     "el nombre se escapa al pintarlo (ARREGLO 102)");
+  ok(/a\[0\]==="BORRAR"/.test(pintar),
+     "los borrados van PRIMERO: es lo que hay que ver cuando algo no cuadra");
+  ok(/d\.cortado/.test(pintar),
+     "y si el resumen esta cortado se dice: un numero cortado que parece completo es peor");
+  ok(/_NOMBRE_ACCION/.test(HTML) && /BORRAR:"borrados"/.test(HTML),
+     "las acciones se enseñan con palabras, no con la clave interna");
+
+  // El resumen no depende de los filtros de abajo: volver a pedirlo en cada
+  // cambio seria recorrer la coleccion por nada.
+  const cargar = sinCom((HTML.match(/function _cargarAudit\(\)\{[\s\S]*?\n\}/) || [""])[0]);
+  ok(/if\(!_AUD_RESUMEN\) _cargarResumenAudit\(\)/.test(cargar),
+     "el resumen se pide una vez, no en cada cambio de filtro");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
