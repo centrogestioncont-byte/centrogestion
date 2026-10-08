@@ -5755,6 +5755,59 @@ console.log("\n— FASE 2: la cuenta madre —");
      "el limite se cambia sin tener que desmarcar y volver a marcar");
 }
 
+// ── ARREGLO 101: TODA pantalla que pinte un saldo negativo sabe de tarjetas ──
+// El 95 lo arreglo en el aviso de arriba del panel y en Balance de Cuentas, y
+// quedaron TRES sitios mas con su propia copia de la regla. Ella lo vio el
+// 07/10 con PagBank ya cuadrado contra el banco al centimo:
+//
+//   Inventario USDT ....  ⚠️ sobre su −112,56
+//   alertas del Resumen   🔴 "Cuenta en negativo" ROJA y urgente, todos los dias
+//   informe del Cierre .  "⚠️ Saldo negativo — revisar", y ese papel sale fuera
+//
+// En una tarjeta el negativo es la DEUDA, que es lo normal; lo que avisa ahi es
+// pasarse del LIMITE. Una alarma roja permanente que no significa nada es lo que
+// ensena a no leer las alarmas, y en esta app las rojas cuestan dinero.
+{
+  const H = sinComentarios(HTML);
+
+  // 1. Las alertas del Resumen leen _cuentasEnNegativo(), que ya sabe de
+  //    tarjetas, en vez de llevar su propia copia del filtro. El mismo dato no
+  //    se calcula en dos sitios: la copia era justo la que no sabia.
+  ok(/var ctasNeg=_cuentasEnNegativo\(\)/.test(H),
+     "la alerta del Resumen sale del mismo filtro que ya excluye la tarjeta");
+  ok(!/ctasNeg=\(S\.cuentas\|\|\[\]\)\.filter/.test(H),
+     "y no se quedo una segunda copia del filtro al lado");
+
+  // 2. Inventario USDT. Se mide SOBRE EL BLOQUE de las cajitas: "esTarjeta"
+  //    sale por toda la funcion y buscandolo suelto pasaba con el arreglo
+  //    borrado.
+  const inv = sinComentarios(sacarFuncion("rInventarioUsdt"));
+  const cajas = inv.slice(inv.indexOf("csMon.forEach(function(c){"),
+                          inv.indexOf("// VES: mostrar total"));
+  ok(cajas.length > 200, "las cajitas de cuentas siguen en su sitio");
+  ok(/var esTj=!!c\.esTarjeta/.test(cajas) && /_deudaTarjeta\(c\)/.test(cajas),
+     "las cajitas del inventario saben si la cuenta es una tarjeta");
+  // Lo que decide la ALARMA tiene que ser el limite, no el signo.
+  ok(/isNeg=esTj \? pasada : \(s<0\)/.test(cajas),
+     "y el ⚠️ lo dispara pasarse del limite, no que el saldo sea negativo");
+  // Pero una deuda tampoco puede salir pintada como dinero (ARREGLO 95).
+  ok(/\(esTj&&deuda>0\)\?"var\(--avi\)"/.test(cajas),
+     "una deuda no se pinta del mismo verde que un saldo a favor");
+  ok(/💳 debes/.test(cajas),
+     "y se dice con palabras que eso es lo que debe");
+
+  // 3. El informe del Cierre. Este ademas sale HACIA FUERA —lo ve Julio y lo ve
+  //    el contador— asi que una tarjeta marcada "revisar" todos los meses es
+  //    peor aqui que en pantalla.
+  const inf = sinComentarios(sacarFuncion("rInformeCierre"));
+  ok(/var isNeg=_esTj \? _pasoTj : \(\(parseFloat\(c\.saldo\)\|\|0\)<0\)/.test(inf),
+     "el informe del cierre tampoco marca 'revisar' una tarjeta que debe lo normal");
+  ok(/Te pasaste del límite de la tarjeta/.test(inf),
+     "y cuando SI hay que avisar, dice lo que de verdad pasa");
+  ok(/💳 debes/.test(inf),
+     "y la cifra de una tarjeta lleva su 'debes', no sale como saldo a favor");
+}
+
 // ── ARREGLO 96: un gasto personal pagado DESDE una cuenta 💜 ya salio ──────
 // Una cuenta 💜 no esta dentro del capital de la empresa, asi que ese dinero ya
 // habia salido con el traspaso a esa cuenta: restarlo otra vez en la

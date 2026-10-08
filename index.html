@@ -2598,7 +2598,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261006_v172";
+var APP_VERSION = "20261007_v173";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -19774,7 +19774,14 @@ function rInformeCierre(){
     var _vaciasIds=_vacias.map(function(c){return c.id;});
     cuentasAct=cuentasAct.filter(function(c){return _vaciasIds.indexOf(c.id)===-1;});
     var rows=cuentasAct.map(function(c){
-      var isNeg=(parseFloat(c.saldo)||0)<0;
+      // ARREGLO 101: tercera copia de lo mismo. En una tarjeta de credito el
+      // negativo es la DEUDA, no un descuadre, asi que este informe le estampaba
+      // "⚠️ Saldo negativo — revisar" todos los meses a una cuenta correcta. Y
+      // este papel sale HACIA FUERA: lo ve Julio y lo ve el contador.
+      var _esTj=!!c.esTarjeta, _deuTj=_deudaTarjeta(c);
+      var _limTj=parseFloat(c.limiteTarjeta)||0;
+      var _pasoTj=_esTj&&_limTj>0&&_deuTj>_limTj;
+      var isNeg=_esTj ? _pasoTj : ((parseFloat(c.saldo)||0)<0);
       var usdtEq=c.moneda==="USDT"?parseFloat(c.saldo)||0:(getRateToUsdt(c.moneda)?((parseFloat(c.saldo)||0)/getRateToUsdt(c.moneda)):null);
       var egsC=egPorCuenta[c.id]||0;
       var fl=_flujoCuentaMes(c.id,mesKey);
@@ -19788,12 +19795,16 @@ function rInformeCierre(){
             "<div style='font-size:9.5px;color:#9aa3b5;font-weight:600;text-transform:uppercase;letter-spacing:.3px;margin-top:1px'>"+c.moneda+(c.tipo?" · "+c.tipo:"")+"</div>"+
           "</div>"+
           "<div style='text-align:right;flex-shrink:0'>"+
-            "<div style='font-size:18px;font-weight:900;color:"+(isNeg?"#c0392b":"#16233d")+";letter-spacing:-.3px'>"+(isNeg?"−":"")+f2(Math.abs(parseFloat(c.saldo)||0))+"</div>"+
+            // Una deuda tampoco puede salir como dinero: el signo va siempre que
+            // la tarjeta deba algo, lo este pasada de limite o no.
+            "<div style='font-size:18px;font-weight:900;color:"+(isNeg?"#c0392b":_esTj&&_deuTj>0?"#9a6b00":"#16233d")+";letter-spacing:-.3px'>"+((isNeg||(_esTj&&_deuTj>0))?"−":"")+f2(Math.abs(parseFloat(c.saldo)||0))+"</div>"+
+            (_esTj&&_deuTj>0?"<div style='font-size:10px;color:#9a6b00;font-weight:700;margin-top:1px'>💳 debes</div>":"")+
             (usdtEq!==null&&c.moneda!=="USDT"?"<div style='font-size:10px;color:#7c8aa8;font-weight:600;margin-top:1px'>≈ $"+f2(usdtEq)+" USDT</div>":"")+
           "</div>"+
         "</div>"+
         (egsC>0?"<div style='font-size:10.5px;color:#c0392b;font-weight:600;margin:0 16px 10px;background:#FFF5F5;border-radius:8px;padding:6px 10px'>↓ Salieron en egresos: −$"+f2(egsC)+" USDT</div>":"")+
-        (isNeg?"<div style='font-size:10.5px;background:#e74c3c;color:#fff;border-radius:8px;padding:6px 10px;margin:0 16px 10px;font-weight:700'>⚠️ Saldo negativo — revisar</div>":"")+
+        (isNeg?"<div style='font-size:10.5px;background:#e74c3c;color:#fff;border-radius:8px;padding:6px 10px;margin:0 16px 10px;font-weight:700'>"+
+          (_esTj?"⚠️ Te pasaste del límite de la tarjeta por "+c.moneda+" "+f2(_deuTj-_limTj):"⚠️ Saldo negativo — revisar")+"</div>":"")+
         "<div onclick='S._flujoAbierto_"+c.id+"=!S._flujoAbierto_"+c.id+";R()' style='cursor:pointer;padding:10px 16px;background:#FAFBFD;border-top:1px solid #F0F1F5;display:flex;justify-content:space-between;align-items:center'>"+
           "<span style='font-size:11px;color:#4a6fa5;font-weight:700'>📊 Movimientos del mes</span>"+
           "<span style='font-size:10px;color:#b8c0d4;transition:transform .15s'>"+(flAbierto?"▲":"▼")+"</span>"+
@@ -20442,7 +20453,13 @@ function rDash(){
     var cmpCntAct=getCompromisosParaMes?getCompromisosParaMes(mkAct2).filter(function(c){var p=getCmpPago(c,mkAct2);return !p||!p.pagado;}).length:0;
     alertas.push({color:"var(--avi-tx)",bg:"var(--avi-sup)",brd:"var(--avi-ln)",ico:"📅",msg:cmpCntAct+" compromiso"+(cmpCntAct>1?"s":"")+" pendiente"+(cmpCntAct>1?"s":"")+" este mes: $"+f2(cmpPendAct)+" USDT",accion:"egresos_compromisos",aLbl:"Ver →"});
   }
-  var ctasNeg=(S.cuentas||[]).filter(function(c){return c.activa!==false&&(parseFloat(c.saldo)||0)<0;});
+  // ARREGLO 101: esto era una SEGUNDA copia del filtro "cuentas en negativo",
+  // y solo la otra sabia de tarjetas. Con la TARJETA PAGBANK en −112,56 —que es
+  // su deuda, o sea lo normal— esta sacaba una alerta ROJA y urgente en el
+  // Resumen todos los dias. Una alarma roja permanente que no significa nada es
+  // lo que ensena a no leer las alarmas, y aqui las rojas cuestan dinero.
+  // El mismo dato no se calcula en dos sitios: se lee de _cuentasEnNegativo().
+  var ctasNeg=_cuentasEnNegativo();
   if(ctasNeg.length>0) alertas.push({urg:1,color:"var(--mal)",bg:"var(--mal-sup)",brd:"var(--mal-ln)",ico:"🔴",msg:"Cuenta"+(ctasNeg.length>1?"s":"")+" en negativo: "+ctasNeg.map(function(c){return c.nombre+" ("+f2(c.saldo)+")";}).join(", "),accion:"config_admin",aLbl:"Ver cuentas →"});
   var lotesRiesgo=(S.inventarioUsdt||[]).filter(function(r){
     if(r.tipo==="compra"){var t=parseFloat(r.usdt)||0,res=parseFloat(r.restante)||0;return t>0&&res>0&&res/t<0.10;}
@@ -24042,10 +24059,29 @@ function rInventarioUsdt(){
         var cards="";
         csMon.forEach(function(c){
           var s=parseFloat(c.saldo)||0;
-          var isNeg=s<0;
+          // ARREGLO 101: esta pantalla no sabía de tarjetas, así que a la
+          // TARJETA PAGBANK le ponía ⚠️ sobre su −112,56 — y en una tarjeta el
+          // negativo es lo NORMAL: es lo que debe. Ella lo vio el 07/10 con la
+          // cuenta ya cuadrada contra el banco al céntimo. Es la misma regla
+          // del ARREGLO 95, que se aplicó en Balance de Cuentas y aquí no: una
+          // tarjeta avisa cuando se pasa del LÍMITE, que es otra cosa.
+          var esTj=!!c.esTarjeta, deuda=_deudaTarjeta(c);
+          var limTj=parseFloat(c.limiteTarjeta)||0;
+          var pasada=esTj&&limTj>0&&deuda>limTj;
+          var isNeg=esTj ? pasada : (s<0);
+          // Pero la cifra tampoco puede salir como dinero (ARREGLO 95 otra vez):
+          // una deuda pintada en el mismo verde que un saldo a favor se lee como
+          // que tiene ese dinero. Va en ámbar, con el signo y con "debes".
+          // El ámbar es --avi, que es el que esta pantalla ya usa para sus
+          // títulos: sobre este panel oscuro está probado que se lee.
+          var colNum=isNeg?"var(--mal-cl)":(esTj&&deuda>0)?"var(--avi)":"var(--ok-cl2)";
           cards+="<div style='background:rgba(255,255,255,.12);border-radius:9px;padding:10px;text-align:center;border:1px solid rgba(255,255,255,"+(isNeg?".5":".2")+")'>" +
             "<div style='font-size:10.5px;opacity:.75;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'>"+c.nombre+"</div>"+
-            "<div style='font-size:16px;font-weight:800;color:"+(isNeg?"var(--mal-cl)":"var(--ok-cl2)")+"'>"+(isNeg?"⚠️ ":"")+f2(s)+"</div>"+
+            "<div style='font-size:16px;font-weight:800;color:"+colNum+"'>"+(isNeg?"⚠️ ":"")+f2(s)+"</div>"+
+            // Y se dice con palabras de qué número se trata. El signo solo no
+            // distingue "te pasaste del límite" de "esto es tu deuda".
+            (esTj?"<div style='font-size:10px;margin-top:2px;color:"+(pasada?"var(--mal-cl)":"var(--avi)")+";opacity:.9'>"+
+              (deuda>0?(pasada?"💳 te pasaste del límite":"💳 debes"):"💳 tarjeta · al día")+"</div>":"")+
           "</div>";
         });
         // VES: mostrar total si hay múltiples cuentas
