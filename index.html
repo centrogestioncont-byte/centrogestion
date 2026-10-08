@@ -2598,7 +2598,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261008_v176";
+var APP_VERSION = "20261008_v177";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -16708,6 +16708,42 @@ function _permisosApi(){
   }catch(e){ return null; }
 }
 
+// ── Una casilla marcada A MANO puede ABRIR una pestaña ───────────────────
+//
+// Visto con su primer operador el 08/10: marcarle "💸 Egresos" a un operador
+// no hacía absolutamente nada. El menú se arma a partir de TABS[rol], y
+// TABS.brl son cuatro pestañas fijas; el permiso solo podía QUITAR de esa
+// lista, nunca añadir. O sea que de las 21 casillas de la pantalla de
+// permisos, a un operador solo le servían 4 — y "un día quiero que registren
+// egresos" era justo lo que no se podía.
+//
+// Es el mismo fallo que S.config.modulos (FASE B) y que el selector doble de
+// la comisión (ARREGLO 98): dos cosas decidiendo lo mismo, y la vieja gana en
+// silencio. Aquí TABS[rol] seguía siendo una puerta por delante de la puerta.
+//
+// La regla es la de la FASE B, sin inventar nada: el rol es el punto de
+// partida y lo marcado a mano manda. TABS[rol] se queda como lo que el rol
+// TRAE puesto, y una casilla marcada a mano AÑADE su pestaña.
+//
+// Solo estas, y la lista es corta a propósito: son las que ya están en el
+// menú de la administradora, así que su menú no se mueve ni una pestaña
+// (pruebas/prestamos.js lo compara casilla por casilla para cada rol). Las
+// que NO están aquí —brl, vzla, eeuu, mi_ganancia, op_diario, nueva_eeuu—
+// son las que dependen de la ruta de cada rol y no se reparten por casilla.
+var _TABS_QUE_ABRE_UNA_CASILLA = ["dash","diario","ops","evolucion",
+  "salud_financiera","cierre","calculadora","inventario_usdt","capital_total",
+  "egresos","traspasos","prestamos","cobrar","clientes","auditoria"];
+
+// Marcada a mano quiere decir que está decidida en los permisos de ESA
+// persona, no que se la dé su rol por omisión. Si contara el valor por
+// omisión, la lista de arriba le abriría pestañas a todo el mundo.
+function _permisoMarcadoAMano(perm){
+  var api=_permisosApi();
+  if(!api) return false;
+  if(api.rol==="admin") return false;   // ya las tiene todas por TABS.admin
+  return (api.permisos||{})[perm]===true;
+}
+
 function tienePermiso(perm){
   var api=_permisosApi();
   if(api){
@@ -17965,6 +18001,18 @@ var _GRUPOS_MENU=[
   ["Crédito",   ["prestamos","cobrar"]],
   ["Gestión",   ["clientes","cierre","auditoria","config_admin"]]
 ];
+// Cuál es el primer botón del menú. Sale de _GRUPOS_MENU, que es el único
+// sitio donde vive el orden, y respeta su regla: una pestaña que no esté en
+// ningún grupo cae al final, pero se sigue alcanzando.
+function _primeraPestaña(ts){
+  for(var i=0;i<_GRUPOS_MENU.length;i++){
+    for(var j=0;j<_GRUPOS_MENU[i][1].length;j++){
+      if(ts.indexOf(_GRUPOS_MENU[i][1][j])>=0) return _GRUPOS_MENU[i][1][j];
+    }
+  }
+  return ts[0];
+}
+
 // La chapita del numero es la misma en los dos menus.
 function _chapaTab(t){
   if(t==="cobrar"){
@@ -18026,10 +18074,28 @@ function rMain(){
   // estar en el menú y contestar "Sin acceso" al tocarla.
   //
   // Una pestaña sin entrada en PERMISO_DE_TAB no se filtra: no tiene puerta.
+  // Lo que trae el rol, MÁS lo que ella le marcó a mano. Sin esto el permiso
+  // solo podía quitar pestañas, nunca dar una (ver _TABS_QUE_ABRE_UNA_CASILLA).
+  _TABS_QUE_ABRE_UNA_CASILLA.forEach(function(tab){
+    if(ts.indexOf(tab)>=0) return;
+    var k=PERMISO_DE_TAB[tab];
+    if(k && _permisoMarcadoAMano(k)) ts.push(tab);
+  });
   ts=ts.filter(function(tab){
     var k=PERMISO_DE_TAB[tab];
     return k===undefined || tienePermiso(k);
   });
+  // Y si la pestaña en la que está no es ninguna de esas, se la cambia por la
+  // PRIMERA que sí tiene. Visto con el primer operador de verdad: entraba y le
+  // salía "Sin acceso · No tienes permiso para acceder a BRL" en una pantalla
+  // vacía, con un solo botón en el menú que no había pulsado todavía. La
+  // pestaña por omisión se decide por el ROL (_loginApiAplicar) y los permisos
+  // son de la PERSONA, así que no tienen por qué coincidir — es el mismo hueco
+  // que la FASE B cerró entre el menú y el contenido, pero en el arranque.
+  //
+  // Se elige en el ORDEN DEL MENÚ, no en el de TABS, para que sea el primer
+  // botón que ve. Y no se llama a R(): esto corre dentro del dibujado.
+  if(ts.length && ts.indexOf(S.tab)<0) S.tab=_primeraPestaña(ts);
   var real=dinReal();
   var nt=gNeta();
   var bgMap={admin:"linear-gradient(135deg,var(--fondo-osc3),var(--az2-s1))",lector:"linear-gradient(135deg,var(--fondo-osc3),var(--az2-s1))",brl:"linear-gradient(135deg,var(--ok),var(--pos))",vzla:"linear-gradient(135deg,var(--rj2-j2),var(--mal))",eeuu:"linear-gradient(135deg,var(--info),var(--az3-f))"};

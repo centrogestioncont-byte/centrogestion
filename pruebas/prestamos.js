@@ -6320,5 +6320,69 @@ console.log("\n— FASE 2: la cuenta madre —");
      "las claves se enseñan con el nombre que ella conoce");
 }
 
+
+// ── Una casilla marcada A MANO abre su pestaña, y el arranque cae en una que
+//    la persona tenga ────────────────────────────────────────────────────
+//
+// Los dos fallos salieron del primer operador de verdad (08/10):
+//
+//   1. Marcarle "💸 Egresos" no hacia NADA. El menu se arma de TABS[rol], y
+//      TABS.brl son cuatro pestañas fijas: el permiso solo podia QUITAR de
+//      esa lista, nunca añadir. De las 21 casillas, a un operador le servian
+//      4. Es el mismo fallo que S.config.modulos (FASE B) y que el selector
+//      doble de la comision (ARREGLO 98): dos cosas decidiendo lo mismo y la
+//      vieja ganando en silencio.
+//
+//   2. Entraba y le salia "Sin acceso · No tienes permiso para acceder a BRL"
+//      en una pantalla vacia. La pestaña por omision la decide el ROL y los
+//      permisos son de la PERSONA, asi que no tienen por que coincidir.
+{
+  const sinCom = t => t.replace(/\/\/[^\n]*/g, "");
+
+  ok(/var _TABS_QUE_ABRE_UNA_CASILLA\s*=\s*\[/.test(HTML),
+     "existe la lista de pestañas que puede abrir una casilla");
+  const lista = (HTML.match(/_TABS_QUE_ABRE_UNA_CASILLA\s*=\s*\[([\s\S]*?)\]/) || ["",""])[1];
+  const abren = (lista.match(/"([a-z_]+)"/g) || []).map(x => x.replace(/"/g, ""));
+
+  // El menu de la administradora NO se puede mover ni una pestaña. Se cumple
+  // sola mientras todo lo de esa lista ya este en TABS.admin: lo que ya tiene
+  // no se le puede añadir.
+  const admin = (HTML.match(/admin:\s*\[([^\]]*)\]/) || ["",""])[1];
+  abren.forEach(function(t){
+    ok(admin.indexOf('"' + t + '"') >= 0,
+       "'" + t + "' ya esta en el menu de la administradora: su menu no se mueve");
+  });
+  // Y las que dependen de la RUTA de cada rol no se reparten por casilla: a un
+  // operador de Brasil no se le abre la pestaña de EE.UU marcando una casilla.
+  ["brl","vzla","eeuu","mi_ganancia","op_diario","nueva_eeuu"].forEach(function(t){
+    ok(abren.indexOf(t) < 0, "'" + t + "' NO se abre por casilla: va con el rol");
+  });
+  ok(abren.indexOf("config_admin") < 0,
+     "y Configuracion tampoco: ahi se tocan los permisos de todos");
+
+  // Marcada A MANO quiere decir decidida para ESA persona. Si valiera el valor
+  // por omision del rol, la lista de arriba le abriria pestañas a todo el mundo.
+  const marcada = sinCom((HTML.match(/function _permisoMarcadoAMano\(perm\)\{[\s\S]*?\n\}/) || [""])[0]);
+  ok(marcada.length > 40, "existe _permisoMarcadoAMano");
+  ok(/===\s*true/.test(marcada),
+     "solo cuenta un true explicito, no el valor por omision del rol");
+  ok(!/_permisoPorOmision/.test(marcada),
+     "y no se apoya en el valor por omision");
+  ok(/rol\s*===\s*"admin"/.test(marcada),
+     "la administradora no pasa por aqui: ya las tiene todas por TABS.admin");
+
+  // El arranque: si la pestaña no es una de las suyas, se cambia.
+  ok(/ts\.indexOf\(S\.tab\)<0\)\s*S\.tab=_primera/.test(HTML),
+     "si la pestaña de arranque no es suya, se cambia por una que si");
+  const primera = sinCom((HTML.match(/function _primeraPesta[\s\S]*?\n\}/) || [""])[0]);
+  // Anclado en lo que DEVUELVE, no en que el nombre aparezca: con el nombre a
+  // secas la prueba negativa pasaba con la funcion ya rota (devolvia ts[0] y
+  // _GRUPOS_MENU seguia nombrado en el bucle de al lado).
+  ok(/return _GRUPOS_MENU\[/.test(primera),
+     "y devuelve una pestaña del MENU, que es el unico sitio donde vive el orden");
+  ok(!/\bR\(\)/.test(primera + sinCom((HTML.match(/if\(ts\.length && ts\.indexOf\(S\.tab\)<0\)[^\n]*/) || [""])[0])),
+     "sin llamar a R(): esto corre dentro del dibujado");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
