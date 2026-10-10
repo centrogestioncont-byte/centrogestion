@@ -2718,7 +2718,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261010_v183";
+var APP_VERSION = "20261010_v184";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -26047,7 +26047,7 @@ function estadoCuentaDe(clave){
               estado:(falta===null)?"pagada":((c.iso&&c.iso<td())?"vencida":"pendiente")};
     });
     var mora=(typeof moraPendiente==="function")?Math.round((moraPendiente(p)||0)*100)/100:0;
-    out.prestamos.push({id:p.id,fecha:p.d||"",mon:mon,
+    out.prestamos.push({id:p.id,fecha:_ecFechaPago({fecha:p.d||"",id:p.id}),mon:mon,
       capital:Math.round((parseFloat(p.capital!==undefined?p.capital:base)||0)*100)/100,
       total:base,abonado:abonado,premio:premio,pendiente:pend,mora:mora,
       cuotas:cuotas,pagos:pagos,saldado:pend<=0.009&&mora<=0.009});
@@ -26069,9 +26069,11 @@ function _ecFecha(f){
   var m=t.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   return m?(m[3]+"/"+m[2]+"/"+m[1].slice(-2)):t;
 }
-// Un dd/mm sin año no se puede completar solo, pero la hora de un abono
-// vive dentro de su id (es un Date.now()), así que de ahí sale el año.
-// Fuera del rango creíble se deja como está, en vez de inventarse 1970.
+// Un dd/mm sin año no se puede completar solo, pero la hora de un abono —y
+// la de un préstamo— vive dentro de su id (es un Date.now()), así que de ahí
+// sale el año. Si el id NO es una hora creíble (los registros viejos llevan
+// ids cortos), se deja el dd/mm tal cual: mejor sin año que con uno
+// inventado. Es la misma regla que ya manda en _tsDeUid().
 function _ecFechaPago(a){
   var t=_ecFecha((a&&a.fecha)||(a&&a.d)||"");
   if(!/^\d{2}\/\d{2}$/.test(t)) return t;
@@ -26100,11 +26102,69 @@ var EC_ANCHO=1080;
 // El nombre con el que la conocen sus clientes, que es el del flyer que
 // reciben — no la razón social, que es la que ve el contador.
 var EC_MARCA="RemesasYA";
+// Cuántos préstamos vivos caben con su cronograma entero antes de pasar a
+// una línea por préstamo. Medido: con 12 activos y detalle, la hoja se va a
+// 6.038 px y la imagen a 1404 × 7849 — una tira que por WhatsApp llega como
+// miniatura. El cliente normal tiene uno o dos.
+var EC_MAX_DETALLE=3;
 function _htmlEstadoCuenta(ec){
   var hoy=new Date();
   var fh=String(hoy.getDate()).padStart(2,"0")+"/"+String(hoy.getMonth()+1).padStart(2,"0")+"/"+hoy.getFullYear();
   var P=function(t){return _escAud(String(t===undefined||t===null?"":t));};
-  var bloques=ec.prestamos.map(function(pr){
+  // ── Los saldados van en UNA línea cada uno ───────────────────────────
+  //
+  // Medido con un cliente suyo de verdad: con 12 préstamos la hoja salía de
+  // 7.834 px y la imagen 1188 × 8617, o sea una tira de 1:7 que por WhatsApp
+  // llega como miniatura y no se lee ni en la PC. Casi todo ese alto era el
+  // detalle cuota a cuota de préstamos YA PAGADOS, que al cliente no le
+  // sirve: lo que quiere saber de un préstamo saldado es que está saldado.
+  //
+  // El detalle entero sigue en la app. Lo que sale hacia fuera es lo que se
+  // puede leer de un vistazo.
+  var saldados=ec.prestamos.filter(function(x){return x.saldado;});
+  var vivos=ec.prestamos.filter(function(x){return !x.saldado;});
+  // Y si tiene MUCHOS préstamos vivos, tampoco cabe el detalle de todos:
+  // con 12 activos la hoja se iba a 6.038 px y con 25 a 11.969. A partir de
+  // aquí va una línea por préstamo, que es lo que contesta "cuánto debo y
+  // cuándo". El cliente normal tiene uno o dos y ve su cronograma entero.
+  var conDetalle=vivos.length<=EC_MAX_DETALLE?vivos:[];
+  var soloLinea=vivos.length<=EC_MAX_DETALLE?[]:vivos;
+  // Una tabla igual para los dos resúmenes: los vivos que no caben con su
+  // detalle, y los saldados. Escrita una vez, para que no acaben diciendo
+  // cosas distintas.
+  function _ecResumen(titulo,lista,vivo){
+    if(!lista.length) return "";
+    return "<div style='margin-top:34px'>"+
+      "<div style='font-size:30px;font-weight:800;color:var(--ec-tinta);"+
+        "border-bottom:3px solid var(--ec-cab);padding-bottom:10px'>"+
+        P(titulo)+" · "+lista.length+"</div>"+
+      "<table><tr><th>PRESTADO EL</th><th>RECIBIÓ</th>"+
+        "<th class='ec-num'>"+(vivo?"YA PAGÓ":"DEVOLVIÓ")+"</th>"+
+        "<th class='ec-est'>"+(vivo?"LE FALTA":"ESTADO")+"</th></tr>"+
+      lista.map(function(pr){
+        var prox=null;
+        (pr.cuotas||[]).forEach(function(c){ if(c.falta!==null&&!prox) prox=c; });
+        return "<tr><td>"+P(pr.fecha)+
+            (vivo&&prox?"<br><span style='font-size:19px;color:var(--ec-tinta2)'>próxima cuota "+P(prox.fecha)+"</span>":"")+
+          "</td>"+
+          "<td>"+f2(pr.capital)+" "+P(pr.mon)+"</td>"+
+          "<td class='ec-num'>"+f2(pr.abonado)+" "+P(pr.mon)+"</td>"+
+          (vivo
+            ? "<td class='ec-est'>"+f2(pr.pendiente)+" "+P(pr.mon)+
+              (pr.mora>0.009?"<br><span class='ec-mal' style='font-size:19px'>+ "+f2(pr.mora)+" de mora</span>":"")+"</td>"
+            : "<td class='ec-est ec-ok'>Saldado</td>")+
+        "</tr>";
+      }).join("")+
+      "</table>"+
+      (vivo?"<div style='font-size:19px;color:var(--ec-tinta2);margin-top:10px'>"+
+        "Son "+lista.length+" préstamos: aquí va el resumen de cada uno. "+
+        "Si quieres el detalle cuota por cuota de alguno, pídemelo.</div>":"")+
+    "</div>";
+  }
+  var tablaSaldados=_ecResumen("Préstamos ya saldados",saldados,false);
+  var tablaVivos=_ecResumen("Préstamos activos",soloLinea,true);
+
+  var bloques=conDetalle.map(function(pr){
     var filas=pr.cuotas.map(function(c){
       var cls=c.estado==="pagada"?"ec-ok":c.estado==="vencida"?"ec-mal":"ec-pend";
       var txt=c.estado==="pagada"?"Pagada":c.estado==="vencida"?"Vencida":"Pendiente";
@@ -26179,7 +26239,7 @@ function _htmlEstadoCuenta(ec){
       "Además, "+_ecMon(ec.mora)+" de mora por atraso.</div>":"")+
     (ec.premio.length?"<div style='margin:10px 38px 0;font-size:20px;color:var(--ec-avi)'>"+
       "De lo pagado, "+_ecMon(ec.premio)+" es descuento por pagar adelantado.</div>":"")+
-    "<div style='padding:0 38px'>"+bloques+"</div>"+
+    "<div style='padding:0 38px'>"+bloques+tablaVivos+tablaSaldados+"</div>"+
     "<div style='margin:34px 38px 0;padding-top:16px;border-top:2px solid var(--ec-linea);"+
       "font-size:19px;color:var(--ec-tinta2);line-height:1.6'>"+
       // Cada moneda va en la suya y no se suman entre ellas. Si alguna vez
