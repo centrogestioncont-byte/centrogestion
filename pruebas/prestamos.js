@@ -3125,8 +3125,10 @@ console.log("\nArreglo 64 · entrar con huella");
   // y ella imprime, no una pantalla; el tema es del aparato.
   // Y los --inf-* (ARREGLO 79): el informe del mes es el documento que va a la
   // junta con el socio. Misma razon, tercera vez.
+  // Y los --ec-*: el estado de cuenta que ella le manda al cliente por
+  // WhatsApp y el cliente imprime. Cuarta vez con la misma forma.
   const sinOscuro = [...enClaro].filter(function(k){
-    return !enOsc.has(k) && !/^--(radius|shadow|ent-|fly-|inf-)/.test(k);
+    return !enOsc.has(k) && !/^--(radius|shadow|ent-|fly-|inf-|ec-)/.test(k);
   });
   ok(sinOscuro.length === 0, "todo color tiene su version oscura",
      sinOscuro.slice(0, 6).join(", "));
@@ -3178,6 +3180,33 @@ console.log("\nArreglo 64 · entrar con huella");
     ok(fueraFly.length === 0,
        "el flyer y el mini flyer solo usan sus propios colores (--fly-*)",
        fueraFly.slice(0, 6).join(", "));
+  }
+
+  // ── El estado de cuenta del cliente (--ec-*) ──────────────────────────
+  //
+  // Cuarta vez con la misma forma: sale de la app HACIA FUERA -ella se lo
+  // manda al cliente por WhatsApp y el cliente lo imprime-, asi que sus
+  // colores son suyos. El tema es del aparato de quien lo genera; esto ya
+  // no esta en ese aparato.
+  {
+    ok(/--ec-papel:\s*#ffffff/.test(HTML) && /--ec-tinta:\s*#111111/.test(HTML),
+       "el estado de cuenta tiene sus propios colores, declarados en :root");
+    const pap3 = (HTML.match(/html\[data-tema="papel"\]\{[\s\S]*?\n\}/) || [""])[0];
+    const pisEc = [];
+    [["suave", osc], ["papel", pap3]].forEach(function(par){
+      (par[1].match(/--ec-[\w-]+\s*:/g) || []).forEach(function(d){
+        pisEc.push(par[0] + " " + d.replace(/\s*:$/, ""));
+      });
+    });
+    ok(pisEc.length === 0,
+       "ningun tema lo repinta: sale igual desde la PC y desde el telefono",
+       pisEc.slice(0, 6).join(", "));
+    const fueraEc = [];
+    (sacarFuncion("_htmlEstadoCuenta").match(/var\(--[\w-]+\)/g) || []).forEach(function(v){
+      if (!/^var\(--ec-/.test(v)) fueraEc.push(v);
+    });
+    ok(fueraEc.length === 0,
+       "y solo usa sus propios colores (--ec-*)", fueraEc.slice(0, 6).join(", "));
   }
 
   // Y la entrada no puede volver a usar un nombre del tema. Un nombre nuevo
@@ -6601,8 +6630,12 @@ console.log("\n— FASE 2: la cuenta madre —");
 
   ok(/var gruposPag=bkAgrupar\(pagados/.test(pr),
      "los saldados se agrupan por cliente, como los activos");
-  ok(/_prPagCliOpen/.test(pr) && /_prPagosOpen/.test(pr),
-     "y cada grupo y cada tarjeta se abren por su cuenta");
+  // El grupo plegable de saldados se fue con los paneles: ahora los saldados
+  // de un cliente salen dentro de SU ficha. Lo que sigue teniendo que
+  // abrirse por su cuenta es la lista de pagos de cada prestamo.
+  ok(/_prPagosOpen/.test(pr), "cada tarjeta abre sus pagos por su cuenta");
+  ok(/gS\.items\.map\(cardPagado\)/.test(pr),
+     "y los saldados del cliente salen en su ficha");
   // Antes se recorria la lista al reves, o sea por el orden en que estan
   // guardados: con dos clientes eso ya puede salir al reves de lo que paso.
   ok(!/pagados\.slice\(\)\.reverse\(\)/.test(pr),
@@ -6611,24 +6644,115 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(/g\.items\.sort\(_ordenSaldado\)/.test(pr), "y se aplica");
 }
 
-// ── El formulario de registrar, plegado ──────────────────────────────────
+// ── UNA PANTALLA A LA VEZ ────────────────────────────────────────────────
 //
-// Sus palabras: "la parte de registrar préstamos debería ser desplegable
-// también para que no colapse la vista en el teléfono". Son ~250 lineas
-// siempre abiertas: medido a 412px, cerrarlo ahorra 1.018 px de scroll.
+// Sus palabras: "todo asi como en linea, con una lista desplegable hacia
+// abajo, yo siento que asi es muy borroso trabajar en esa pestaña". Medido
+// con 4 clientes sobre la version anterior: el primer cliente empezaba en el
+// pixel 794 y entraban CERO sin bajar, detras de 4 paneles apilados.
+//
+// Lo que estas guardias impiden es volver a apilar: que el formulario, la
+// ficha y la lista compartan pantalla otra vez.
 {
   const sinCom = t => t.replace(/\/\/[^\n]*/g, "");
   const pr = sinCom((HTML.match(/function rPrestamos\(\)\{[\s\S]*?\n\}/) || [""])[0]);
 
-  ok(/_togglePrForm\(\)/.test(pr), "el titulo abre y cierra el formulario");
-  ok(/\(_prFormAbierto\?"":";display:none"\)/.test(pr),
-     "y cerrado NO se dibuja");
-  // Queda abierto mientras lo este llenando: el formulario se repinta con
-  // cada tecla, y sin esto se cerraria solo a mitad de escribir.
-  const decide = sinCom((pr.match(/var _prFormAbierto =[\s\S]*?;\n/) || [""])[0]);
-  ok(/S\._prFormOpen/.test(decide), "se abre cuando ella lo abre");
-  ok(/f\.desc/.test(decide) && /f\.monto/.test(decide),
-     "y sigue abierto si ya empezo a llenarlo (si no, se cierra al teclear)");
+  // El reparto esta en UN sitio y es excluyente: tres `return`, no tres
+  // trozos concatenados. Si alguien los suma, vuelven los paneles apilados.
+  ok(/if\(S\._prVista==="nuevo"\) return [^\n]*formHtml;/.test(pr),
+     "el formulario se dibuja SOLO en su pantalla");
+  ok(/if\(S\._prVista==="ficha"\) return [^\n]*fichaHtml\(\);/.test(pr),
+     "la ficha del cliente, SOLO en la suya");
+  ok(/\n  return modalCaptura\+entradaCaptura\+listaHtml\(\);/.test(pr),
+     "y la lista es lo que queda");
+  ok(!/_togglePrForm/.test(HTML) && !/_prFormAbierto/.test(HTML),
+     "el plegado viejo del formulario ya no existe");
+  // Los cuatro paneles que habia que abrir y cerrar se fueron: ni se
+  // reconstruyen aqui ni quedan sus interruptores.
+  ok(!/activosHtml/.test(HTML) && !/pagadosHtml/.test(HTML),
+     "no quedan los paneles de activos y saldados");
+  ok(!/S\._verPagados/.test(HTML) && !/_prCliOpen/.test(HTML),
+     "ni los interruptores que los abrian");
+  ok(!/_mostrarResumenClientes/.test(HTML),
+     "ni el panel de estado de cuenta por cliente, que repetia la lista");
+
+  // Se entra y se sale. Sin la vuelta, la ficha es un callejon.
+  const cuerpoFicha = (pr.match(/function fichaHtml\(\)\{[\s\S]*?\n  \}/) || [""])[0];
+  const cuerpoForm  = (pr.match(/var formHtml =[\s\S]*?\n    "<\/div>";/) || [""])[0];
+  const cabFicha = (cuerpoFicha.match(/"<div class='pr-ftop'>"\+[\s\S]{0,260}/) || [""])[0];
+  ok(/pr-vuelta' onclick='_prIrA\(\\"\\"\)/.test(cabFicha),
+     "de la ficha se vuelve a la lista, desde su cabecera");
+  ok(cuerpoForm.length > 100 && /_prIrA\(\\"\\"\)/.test(cuerpoForm),
+     "y del formulario tambien");
+  ok(/function _prIrA\(vista,clave\)\{/.test(HTML), "y la navegacion vive en un solo sitio");
+  // Volver desde una ficha larga dejaba la lista a la altura de la ficha.
+  ok(/if\(pn\) pn\.scrollTop=0;/.test(HTML),
+     "y al cambiar de pantalla se sube arriba");
+  // Guardado el prestamo se vuelve a la lista: quedarse en el formulario
+  // vacio no dice si se guardo.
+  const sp = sinCom((HTML.match(/function savePr\(\)\{[\s\S]*?\n\}/) || [""])[0]);
+  ok(/S\._prVista="";/.test(sp), "y al guardar un prestamo se vuelve a la lista");
+}
+
+// ── El bloque rojo y los filtros leen la MISMA ventana ───────────────────
+//
+// Con dos numeros, un cliente salia en el bloque de arriba y no en el filtro
+// "Esta semana", o al reves. Es la regla de siempre: el mismo dato no se
+// calcula en dos sitios.
+{
+  const sinCom = t => t.replace(/\/\/[^\n]*/g, "");
+  const pr = sinCom((HTML.match(/function rPrestamos\(\)\{[\s\S]*?\n\}/) || [""])[0]);
+
+  ok(/var PR_DIAS_AGENDA=\d+;/.test(pr), "la ventana de cobranza es una constante");
+  ok(!/setDate\(_limite\.getDate\(\)\+\d+\)/.test(pr),
+     "y el limite de la agenda no lleva su propio numero");
+  ok(/_limite\.setDate\(_limite\.getDate\(\)\+PR_DIAS_AGENDA\)/.test(pr),
+     "la agenda la lee");
+  ok(/g\.diasProx<=PR_DIAS_AGENDA\)\?"semana"/.test(pr), "y el filtro tambien");
+
+  // El bloque rojo NO se pliega: lo urgente no se esconde nunca.
+  ok(/function bloqueUrgente\(\)\{/.test(pr), "hay un bloque de lo urgente");
+  const blo = sinCom((pr.match(/function bloqueUrgente\(\)\{[\s\S]*?\n  \}/) || [""])[0]);
+  ok(blo.length > 100 && !/bkAbierto|_verUrg|display:none/.test(blo),
+     "y no se pliega de ninguna manera");
+  ok(/agendaItems\.forEach/.test(blo),
+     "sale de agendaItems, el mismo calculo que ya habia");
+
+  // Las cuotas vencidas se cuentan UNA vez. Antes la lista miraba solo
+  // proximaCuotaPendiente() -una por prestamo- y decia "1 cuota vencida" de
+  // un cliente que debia tres, mientras el bloque decia 3.
+  ok(/if\(x\.cuota\.iso<hoyIso\) vencidas\+\+;/.test(pr),
+     "las vencidas se cuentan cuota por cuota");
+  ok(!/proximaCuotaPendiente\(p\);\s*\n\s*if\(cuG&&cuG\.iso&&cuG\.iso<td\(\)\) g\.vencidos\+\+/.test(pr),
+     "y ya no hay una segunda cuenta por prestamo");
+  // Ordenar antes de contarlas era ordenar por un cero.
+  const iCuenta = pr.indexOf("g.vencidos=vencidas;");
+  const iOrden  = pr.indexOf("gruposPr.sort(function(a,b){return (b.vencidos");
+  ok(iCuenta >= 0 && iOrden >= 0 && iCuenta < iOrden,
+     "y el orden va DESPUES de contarlas",
+     "cuenta en " + iCuenta + ", orden en " + iOrden);
+}
+
+// ── Un grupo que se abre solo tiene que poder cerrarse ───────────────────
+//
+// Sus palabras: "si abro uno, despues no se cierra". Con `if(unico) return
+// true` a secas, el grupo de un cliente unico se quedaba abierto hiciera lo
+// que hiciera: lo que se VE es abierto y lo guardado es undefined, asi que
+// negar lo guardado volvia a dar abierto.
+{
+  const fn = (HTML.match(/function bkAbierto\([\s\S]*?\n\}/) || [""])[0];
+  ok(!/if\(unico\) return true;/.test(fn), "el automatico ya no manda siempre");
+  ok(/hasOwnProperty\.call\(mapaAbiertos,clave\)/.test(fn),
+     "solo manda MIENTRAS ella no haya decidido");
+  const tg = (HTML.match(/function bkToggleCli\([\s\S]*?\n\}/) || [""])[0];
+  ok(/function bkToggleCli\(mapa,clave,abiertoAhora\)/.test(tg),
+     "y el toggle recibe el estado que se esta viendo");
+  ok(/\(abiertoAhora===undefined\)\?/.test(tg), "sin romper a quien no se lo pase");
+  // Y quien lo llama se lo pasa, o el arreglo no llega a la pantalla.
+  const llamadas = HTML.match(/bkToggleCli\(\\"[a-zA-Z_]+\\"[\s\S]{0,200}?\+"\)'/g) || [];
+  ok(llamadas.length > 0 && llamadas.every(function(l){ return /ab\?"true":"false"/.test(l); }),
+     "y cada sitio que lo llama le pasa el estado",
+     llamadas.filter(function(l){ return !/ab\?/.test(l); }).join(" · "));
 }
 
 
@@ -6678,6 +6802,110 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(/es descuento por pagar adelantado/.test(HTML) &&
      /Pag[oó] "\+f2\(totalAbonado-_premio\)/.test(HTML),
      "y se dice cuanto entro de verdad a la cuenta");
+}
+
+// ── EL ESTADO DE CUENTA QUE SE MANDA AL CLIENTE ──────────────────────────
+//
+// Sus palabras: "quiero que agregues como un pequeño descargable de lo que ya
+// pago cada cliente y tambien lo que debe cada cliente, que se pueda hacer
+// como una descarga para enviar por WhatsApp".
+//
+// Es un documento que sale de la app, asi que le aplican las tres reglas que
+// ya costaron cuatro arreglos: sus colores son suyos (arriba), su ancho es
+// fijo, y su estilo tiene que viajar CON la hoja.
+{
+  const sinCom = t => t.replace(/\/\/[^\n]*/g, "");
+  const hoja = sinCom(sacarFuncion("_htmlEstadoCuenta"));
+  const lienzo = sinCom(sacarFuncion("_ecCanvas"));
+  const datos = sinCom(sacarFuncion("estadoCuentaDe"));
+
+  // 1. ARREGLO 85: html2canvas no dibuja el elemento donde esta, lo CLONA y
+  //    lo cuelga de <body>. Todo lo escrito como "#_ecHoja ..." dejaria de
+  //    aplicar en ese clon y mandaria el estilo general de la app. Medido
+  //    antes de ponerle la clase: tinta #dcdae0 y cabecera azul oscuro del
+  //    tema, sobre papel blanco.
+  ok(/id='_ecHoja' class='ec-doc'/.test(hoja),
+     "la hoja lleva su clase encima, que viaja con el clon");
+  const reglasPorId = (HTML.match(/#_ecHoja[\s>.,:[]/g) || []).length;
+  ok(reglasPorId === 0,
+     "y ninguna regla de estilo cuelga del id del contenedor", reglasPorId + " reglas");
+  ok(/\.ec-doc td,\.ec-doc th\{/.test(HTML), "las reglas cuelgan de .ec-doc");
+  // Hay un tema que pinta th y td con !important, asi que una clase a secas
+  // PIERDE aunque sea mas especifica.
+  ok(/\.ec-doc td,\.ec-doc th\{color:var\(--ec-tinta\)!important/.test(HTML),
+     "y ganan al !important que el tema pone sobre td y th");
+
+  // 2. Ancho FIJO. Con el de la pantalla, el documento mide una cosa desde la
+  //    PC y otra desde el telefono (ARREGLO 83: 77 celdas fuera de la hoja).
+  ok(/var EC_ANCHO=\d+;/.test(HTML), "el ancho de la hoja es una constante");
+  ok(/width:"\+EC_ANCHO\+"px/.test(hoja), "y la hoja la usa");
+  ok(!/window\.innerWidth|document\.body\.clientWidth/.test(hoja),
+     "y en ningun sitio mide la pantalla");
+
+  // 3. ARREGLO 84: al marco del clon hay que darle los CUATRO numeros. Sin
+  //    windowWidth, html2canvas usa el ancho de la pantalla: 412 en su
+  //    telefono con la hoja en 1080.
+  ["width", "height", "windowWidth", "windowHeight"].forEach(function(k){
+    ok(new RegExp(k + ":").test(lienzo), "al lienzo se le pasa " + k);
+  });
+  // Y la escala se MIDE contra un presupuesto: Android corta por encima de su
+  // tope sin un solo error y devuelve una imagen recortada.
+  ok(/var EC_PRESUPUESTO=\d+;/.test(HTML), "hay un presupuesto de pixeles");
+  ok(/EC_PRESUPUESTO\/\(EC_ANCHO\*alto\)/.test(lienzo),
+     "y la escala sale de medir contra el, no de darla por hecha");
+  ok(!/scale:\s*[23]\s*,/.test(lienzo), "la escala no esta escrita a mano");
+
+  // 4. Compartir tiene que DECIR la verdad. Android pide un gesto reciente y
+  //    dibujar tarda, asi que share() se rechaza a menudo; un catch vacio se
+  //    tragaba el rechazo y desde fuera parecia que se habia mandado.
+  const comp = sinCom(sacarFuncion("compartirEstadoCuenta"));
+  ok(/err&&err\.name==="AbortError"/.test(comp),
+     "cancelar a proposito no se trata como un fallo");
+  ok(/catch\(function\(err\)\{[\s\S]*?bajar\(\);[\s\S]*?alert\(/.test(comp),
+     "y un rechazo de verdad descarga Y lo dice");
+  ok(!/catch\(function\(\)\{\}\)/.test(comp) && !/catch\(\(\)=>\{\}\)/.test(comp),
+     "no queda ningun catch vacio");
+
+  // 5. Los numeros no se calculan aparte. Un estado de cuenta que diga un
+  //    numero distinto al de la app es peor que no darlo.
+  ok(/cuotasPendientesDe\(p\)/.test(datos),
+     "las cuotas salen de cuotasPendientesDe(), como la pantalla");
+  ok(/moraPendiente\(p\)/.test(datos), "y la mora de moraPendiente()");
+  // La mora vive en p.mora y NUNCA baja el saldo: sumarla al pendiente
+  // descuadraria los ~25 sitios que calculan el saldo con p.abonos.
+  ok(/_ecSuma\(out\.mora,mon,mora\)/.test(datos) && !/pend\s*\+\s*mora/.test(datos),
+     "la mora va aparte, no sumada al pendiente");
+  // Sumar reales con bolivares da un numero que no existe.
+  const suma = sinCom(sacarFuncion("_ecSuma"));
+  ok(/lista\[i\]\.mon===mon/.test(suma) && !/getRateToUsdt|bkUsdt/.test(suma),
+     "cada moneda se suma con la suya y no se convierte");
+  ok(/no se suman entre monedas/.test(hoja), "y el papel lo dice");
+  // El premio baja la deuda pero no entro a la cuenta: decir "pago" sin
+  // separarlo le cobra al cliente un dinero que no dio.
+  ok(/descuento por pagar adelantado/.test(hoja) &&
+     /de descuento por adelantar/.test(hoja),
+     "el descuento por adelantar se separa de lo que pago");
+  // Y la version va DENTRO del papel: dos veces el mismo dia hubo que
+  // adivinar que copia de la app habia hecho un documento que salia mal.
+  ok(/APP_VERSION/.test(hoja), "la version de la app va escrita en la hoja");
+}
+
+// ── Dos detalles que ella caza y la app no ───────────────────────────────
+{
+  const sinCom = t => t.replace(/\/\/[^\n]*/g, "");
+  const pr = sinCom((HTML.match(/function rPrestamos\(\)\{[\s\S]*?\n\}/) || [""])[0]);
+
+  // Buscar "jose" tiene que encontrar a "JOSÉ": si no, parece que el
+  // prestamo no existe.
+  ok(/function _sinTildes\(t\)\{/.test(HTML), "hay una forma de comparar sin tildes");
+  ok(/normalize\("NFD"\)/.test(sacarFuncion("_sinTildes")), "y quita la tilde de verdad");
+  ok(/var _filtroPrest=_sinTildes\(/.test(pr) && /_sinTildes\(p\.desc\|\|""\)/.test(pr),
+     "y el buscador de prestamos la usa en los dos lados");
+
+  // "mensual" + "s" daba "mensuals". Las tres frecuencias acaban en -l.
+  ok(/function _plFrec\(f\)\{/.test(HTML), "el plural de la frecuencia esta en un sitio");
+  ok(!/frecuencia\+"s"/.test(HTML) && !/\|\|"mensual"\)\+"s\)"/.test(HTML),
+     "y ya no queda ningun «mensuals»");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
