@@ -2598,7 +2598,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261008_v178";
+var APP_VERSION = "20261008_v179";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -9251,12 +9251,12 @@ function rAuditoria(){
   return "<div class='sec'>"+
     "<div class='sec-title'>📋 Log de Auditoría — últimos 90 días</div>"+
     "<div style='display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap'>"+
-    "<select id='aud-role' onchange='_cargarAudit()' style='padding:8px 12px;border:1.5px solid var(--ln-c);border-radius:8px;font-family:inherit;font-size:12px'>"+
-    "<option value=''>Todos los usuarios</option>"+
-    "<option value='admin'>Admin</option>"+
-    "<option value='brl'>Operador BRL</option>"+
-    "<option value='vzla'>Operador VZLA</option>"+
-    "<option value='eeuu'>Operador EE.UU</option>"+
+    // Por PERSONA, no por rol. Sus palabras: "para yo poder saber todas las
+    // actividades de cada operador". Dos personas pueden tener el mismo rol,
+    // así que filtrar por rol no contesta "qué hizo Carlos". La lista se
+    // rellena con el resumen, que es quien sabe quién ha hecho algo.
+    "<select id='aud-quien' onchange='_cargarAudit()' style='padding:8px 12px;border:1.5px solid var(--ln-c);border-radius:8px;font-family:inherit;font-size:12px'>"+
+    "<option value=''>Todas las personas</option>"+
     "</select>"+
     "<select id='aud-tipo' onchange='_cargarAudit()' style='padding:8px 12px;border:1.5px solid var(--ln-c);border-radius:8px;font-family:inherit;font-size:12px'>"+
     "<option value=''>Todas las acciones</option>"+
@@ -9267,8 +9267,96 @@ function rAuditoria(){
     "</select>"+
     "<button onclick='_cargarAudit()' style='background:var(--fondo-osc);color:var(--sobre-color);border:none;padding:8px 16px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>🔄 Actualizar</button>"+
     "</div>"+
+    "<div id='aud-resumen'></div>"+
     "<div id='aud-tabla'><div style='text-align:center;color:var(--tx4);padding:40px'>Cargando...</div></div>"+
     "</div>";
+}
+
+// ── Qué ha hecho cada persona ─────────────────────────────────────────────
+//
+// La lista de abajo sale toda mezclada y cortada a las 300 últimas: no
+// contesta "qué ha hecho Carlos este mes". Esto lo cuenta el servidor y aquí
+// solo se dibuja.
+var _AUD_RESUMEN=null;
+
+function _cargarResumenAudit(){
+  if(!apiSesionActiva()) return;
+  apiFetch("/auditoria/resumen?dias=30")
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(!d||!d.ok) return;
+      _AUD_RESUMEN=d;
+      _pintarResumenAudit();
+      _llenarQuienAudit();
+    }).catch(function(){});
+}
+
+// El desplegable se llena con quien DE VERDAD ha hecho algo, no con la lista
+// de usuarios: así no salen los que nunca registraron nada, y sí sale alguien
+// a quien ya le quitaste el usuario pero dejó movimientos.
+function _llenarQuienAudit(){
+  var sel=document.getElementById("aud-quien");
+  if(!sel||!_AUD_RESUMEN) return;
+  var antes=sel.value;
+  sel.innerHTML="<option value=''>Todas las personas</option>"+
+    (_AUD_RESUMEN.personas||[]).map(function(p){
+      return "<option value='"+_escAud(p.usuario)+"'>👤 "+_escAud(p.usuario)+" ("+p.total+")</option>";
+    }).join("");
+  if(antes) sel.value=antes;
+}
+
+// Cómo se llama cada acción en la pantalla. El servidor manda la palabra
+// interna; "BORRAR" dicho así no es lo que ella leería.
+var _NOMBRE_ACCION={
+  REMESA:"remesas", EGRESO:"egresos", TRASPASO:"traspasos", COBRO:"cobros",
+  PRESTAMO:"préstamos", INVENTARIO:"operaciones USDT", BORRAR:"borrados",
+  CONFIG:"cambios de configuración", LOGIN:"entradas", LOGOUT:"salidas",
+  CIERRE:"cierres de mes", CLIENTE:"clientes"
+};
+
+function _pintarResumenAudit(){
+  var el=document.getElementById("aud-resumen");
+  if(!el) return;
+  var d=_AUD_RESUMEN;
+  if(!d||!(d.personas||[]).length){
+    el.innerHTML="<div style='font-size:12px;color:var(--tx4);margin-bottom:14px'>"+
+      "Sin actividad en los últimos "+(d?d.dias:30)+" días.</div>";
+    return;
+  }
+  var h="<div style='font-size:11.5px;font-weight:700;color:var(--az3-e);text-transform:uppercase;"+
+        "letter-spacing:.6px;margin-bottom:10px'>👥 Qué ha hecho cada persona · últimos "+d.dias+" días</div>"+
+        "<div class='pz-rejilla' style='margin-bottom:18px'>";
+  d.personas.forEach(function(p){
+    // Los borrados primero y en rojo: es lo que de verdad hay que poder ver
+    // cuando algo no cuadra. El resto, de más a menos.
+    var pares=Object.keys(p.acciones||{}).map(function(k){ return [k,p.acciones[k]]; });
+    pares.sort(function(a,b){
+      if((a[0]==="BORRAR")!==(b[0]==="BORRAR")) return a[0]==="BORRAR"?-1:1;
+      return b[1]-a[1];
+    });
+    h+="<div class='pz-card'>"+
+       "<div style='font-size:13.5px;font-weight:800;color:var(--tit)'>👤 "+_escAud(p.usuario)+"</div>"+
+       "<div style='font-size:10.5px;color:var(--tx4);margin-bottom:7px'>"+
+         _escAud(p.role||"")+" · última actividad "+_escAud(p.ultima||"—")+"</div>";
+    pares.forEach(function(x){
+      var esBorrado=x[0]==="BORRAR";
+      h+="<div style='display:flex;justify-content:space-between;gap:10px;font-size:12px;padding:2px 0"+
+         (esBorrado?";color:var(--mal);font-weight:700":";color:var(--tx2b)")+"'>"+
+         "<span>"+(esBorrado?"🗑️ ":"")+_escAud(_NOMBRE_ACCION[x[0]]||x[0].toLowerCase())+"</span>"+
+         "<b>"+x[1]+"</b></div>";
+    });
+    h+="<div class='pz-pie' style='margin-top:7px'>"+p.total+" en total</div>"+
+       "<button onclick='document.getElementById(\"aud-quien\").value="+JSON.stringify(p.usuario)+";_cargarAudit()' "+
+       "style='width:100%;margin-top:8px;padding:6px;border:1px solid var(--ln);border-radius:7px;"+
+       "background:var(--sup);color:var(--tx2b);font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit'>"+
+       "Ver sus movimientos</button>"+
+       "</div>";
+  });
+  h+="</div>";
+  // Un número cortado que parece completo es peor que no darlo.
+  if(d.cortado) h+="<div style='font-size:11px;color:var(--avi-tx3);margin:-10px 0 14px'>"+
+    "⚠️ Hay más movimientos de los que caben en este resumen: los números se quedan cortos.</div>";
+  el.innerHTML=h;
 }
 function _cargarAudit(){
   var el=document.getElementById("aud-tabla");
@@ -9276,12 +9364,15 @@ function _cargarAudit(){
     if(el) el.innerHTML="<div style='text-align:center;color:var(--tx4);padding:40px'>Entra con tu correo para ver la auditoría</div>";
     return;
   }
-  var rF=document.getElementById("aud-role")?document.getElementById("aud-role").value:"";
+  var qF=document.getElementById("aud-quien")?document.getElementById("aud-quien").value:"";
   var tF=document.getElementById("aud-tipo")?document.getElementById("aud-tipo").value:"";
+  // El resumen se pide una vez: no depende de los filtros de abajo, y
+  // volver a pedirlo en cada cambio sería recorrer la colección por nada.
+  if(!_AUD_RESUMEN) _cargarResumenAudit(); else { _pintarResumenAudit(); _llenarQuienAudit(); }
   // Los filtros van en la consulta: filtrar del lado del servidor evita
   // bajarse 300 entradas para mostrar tres.
   var q=[];
-  if(rF) q.push("role="+encodeURIComponent(rF));
+  if(qF) q.push("usuario="+encodeURIComponent(qF));
   if(tF) q.push("tipo="+encodeURIComponent(tF));
   apiFetch("/auditoria"+(q.length?"?"+q.join("&"):""))
     .then(function(r){ return r.json(); })
@@ -21694,7 +21785,7 @@ function rTbl(data,type){
 // sin modificarlos. Todos los datos quedan intactos.
 // ══════════════════════════════════════════════════════════════
 function rTblUnificada(){
-  if(!S._ops) S._ops={mes:"",q:"",src:"",rutas:[],banco:""};
+  if(!S._ops) S._ops={mes:"",q:"",src:"",rutas:[],banco:"",por:""};
   if(S._ops.ruta!==undefined){S._ops.rutas=S._ops.ruta?[S._ops.ruta]:[];delete S._ops.ruta;}
   if(!Array.isArray(S._ops.rutas)) S._ops.rutas=[];
   var f=S._ops;
@@ -21724,7 +21815,13 @@ function rTblUnificada(){
     var okSrc=!f.src||r._src===f.src;
     var okRuta=!f.rutas.length||f.rutas.indexOf(r.rt)!==-1;
     var okBanco=!f.banco||(r.cuentaBanco===f.banco||r.cuentaDest===f.banco);
-    return okQ&&okSrc&&okRuta&&okBanco;
+    // Por QUIEN LA CREO, no por quien la tocó: la pregunta es "qué registró
+    // Carlos", y una remesa que ella corrigió después la registró Carlos
+    // igual. Para ver lo que TOCÓ alguien está la pestaña de Auditoría.
+    // "__sin" son las de antes del sello: no se pueden repartir y esconderlas
+    // haría que la suma de los operadores no diera el total.
+    var okPor=!f.por||(f.por==="__sin" ? !r._por : r._por===f.por);
+    return okQ&&okSrc&&okRuta&&okBanco&&okPor;
   }).slice().sort(function(a,b){
     // Ordenar por fecha desc, y dentro del mismo día por el momento REAL en
     // que se registró cada una (usando el código único _uid, que trae la
@@ -21769,6 +21866,27 @@ function rTblUnificada(){
     [...new Set(base.map(function(r){return r.rt;}).filter(Boolean))].sort().map(function(rt){
       return "<option value='"+rt+"'"+(f.ruta===rt?" selected":"")+">"+rt+"</option>";
     }).join("");
+  // Quién aparece: se saca de los registros que hay en pantalla, no de la
+  // lista de usuarios. Así sale quien de verdad registró algo —aunque ya no
+  // tenga usuario— y no sale quien no ha registrado nada.
+  var _quienes=[], _sinSello=0;
+  base.forEach(function(r){
+    if(!r._por){ _sinSello++; return; }
+    if(_quienes.indexOf(r._por)===-1) _quienes.push(r._por);
+  });
+  _quienes.sort();
+  var porOpts='<option value="">Todos los operadores</option>'+
+    _quienes.map(function(n){
+      var cuantas=base.filter(function(r){return r._por===n;}).length;
+      // _escAud y no _jsAttr: esto es el valor de un atributo HTML que el
+      // navegador decodifica antes de que this.value lo lea, no una cadena
+      // dentro de un onclick (ARREGLO 102).
+      return "<option value='"+_escAud(n)+"'"+(f.por===n?" selected":"")+">👤 "+_escAud(n)+" ("+cuantas+")</option>";
+    }).join("")+
+    // Las de antes del sello. Se nombran en vez de esconderse: si no, la suma
+    // de los operadores no da el total y parece que faltan remesas.
+    (_sinSello?"<option value='__sin'"+(f.por==="__sin"?" selected":"")+">Sin registrar quién ("+_sinSello+")</option>":"");
+
   var bancoOpts='<option value="">Todos los bancos</option>'+
     S.cuentas.filter(function(c){return c.activa;}).map(function(c){
       return "<option value='"+c.id+"'"+(f.banco===c.id?" selected":"")+">"+_escAud(c.nombre)+"</option>";
@@ -21804,7 +21922,11 @@ function rTblUnificada(){
   "</div>":"")+ // ruta chips
   "<div style='display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;align-items:center'>"+
   "<select onchange='S._ops.banco=this.value;R()' style='padding:7px 10px;border:1px solid var(--ln);border-radius:8px;font-size:13px;background:var(--sup);cursor:pointer;min-width:160px'>"+bancoOpts+"</select>"+
-  (f.q||f.src||tieneRutas||f.banco?"<button onclick='S._ops={mes:S._ops.mes,q:\"\",src:\"\",rutas:[],banco:\"\"};R()' style='padding:7px 14px;background:var(--mal-ln);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:13px'>&var(--mo1-j2); Limpiar filtros</button>":"")+
+  // Solo si hay a quién filtrar. Un desplegable con una sola opción no es un
+  // filtro, es un adorno que ocupa sitio.
+  ((_quienes.length||_sinSello)?
+    "<select onchange='S._ops.por=this.value;R()' style='padding:7px 10px;border:1.5px solid "+(f.por?"var(--ac)":"var(--ln)")+";border-radius:8px;font-size:13px;background:"+(f.por?"var(--am6-c)":"var(--sup)")+";cursor:pointer;min-width:170px;font-weight:"+(f.por?"700":"400")+"'>"+porOpts+"</select>":"")+
+  (f.q||f.src||tieneRutas||f.banco||f.por?"<button onclick='S._ops={mes:S._ops.mes,q:\"\",src:\"\",rutas:[],banco:\"\",por:\"\"};R()' style='padding:7px 14px;background:var(--mal-ln);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:13px'>&var(--mo1-j2); Limpiar filtros</button>":"")+
   "</div>";
 
   // ── Tarjetas dinámicas según filtro activo ───────────────────
