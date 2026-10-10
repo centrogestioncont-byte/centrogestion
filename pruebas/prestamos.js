@@ -6536,5 +6536,100 @@ console.log("\n— FASE 2: la cuenta madre —");
      "el resumen se pide una vez, no en cada cambio de filtro");
 }
 
+
+// ── Los pagos de un préstamo saldado ─────────────────────────────────────
+//
+// Sus palabras: "no hay forma de revisar los pagos ya realizados de cada
+// cliente y que se ordenen según el tiempo que pagaron… tampoco sale la
+// información completa, la mora, en qué moneda, cuenta, cuánto pagó".
+//
+// Nada hubo que empezar a guardarlo: ya estaba todo. Lo que faltaba era
+// enseñarlo.
+{
+  const sinCom = t => t.replace(/\/\/[^\n]*/g, "");
+  const pr = sinCom((HTML.match(/function rPrestamos\(\)\{[\s\S]*?\n\}/) || [""])[0]);
+
+  // LA HORA NUNCA SE PERDIO: `fecha` es solo el dia, pero el id de cada pago
+  // es Date.now(). Sin esto, los tres pagos que haga un cliente el mismo dia
+  // salen en un orden cualquiera — que es justo lo que no podia revisar.
+  ok(/function _tsDePago\(x\)\{/.test(pr), "la hora de un pago sale de su id");
+  const ts = sinCom((pr.match(/function _tsDePago\(x\)\{[\s\S]*?\n  \}/) || [""])[0]);
+  // El mismo rango que _tsDeUid: un id que no sea una hora creible se
+  // descarta en vez de inventarse una fecha de 1970.
+  ok(/1\.4e12/.test(ts) && /2\.5e12/.test(ts),
+     "y un id que no es una hora creible se descarta, no se inventa");
+
+  const pagos = sinCom((pr.match(/function _pagosDe\(p\)\{[\s\S]*?\n  \}/) || [""])[0]);
+  ok(pagos.length > 100, "existe la lista de pagos");
+  ok(/p\.abonos/.test(pagos) && /mora\|\|\{\}\)\.historial/.test(pagos),
+     "junta los abonos y la MORA en una sola lista");
+  ok(/return tb-ta/.test(pagos), "ordenada por cuando se pago, lo mas reciente arriba");
+
+  const html = sinCom((pr.match(/function _htmlPagosDe\(p\)\{[\s\S]*?\n  \}/) || [""])[0]);
+  // Anclado en lo que se PINTA, no en la variable: quitando solo la salida,
+  // la asignacion seguia ahi y la guardia pasaba con la cuenta ya invisible.
+  ok(/_escAud\(nombreCuentaEg\(x\.cuentaId\)\)/.test(html) &&
+     /🏦 "\+cta\+"/.test(html),
+     "dice a que CUENTA entro, escapada ahi mismo (ARREGLO 102) y pintada");
+  // Igual: x.monedaPago y x.montoPago viven en dos asignaciones que la
+  // sabotaje no tocaba. Lo que importa es que SALGA.
+  ok(/f2\(cash\)\+" "\+_escAud\(monPago\)/.test(html),
+     "y pinta cuanto pago de verdad, en que MONEDA");
+  ok(/var distinta=/.test(html),
+     "solo cuando pago en OTRA moneda: repetirlo en cada fila es ruido");
+  ok(/_escAud\(/.test(html), "con el texto escapado (ARREGLO 102)");
+
+  // La mora NO se suma al abonado. Sumarlas en un solo numero diria que la
+  // deuda bajo mas de lo que bajo — es la razon por la que la mora vive en
+  // p.mora y no en p.abonos, y aqui se rompe igual de facil.
+  // Anclado en lo que lo DISPARA. Con el texto a secas, apagar el ternario
+  // dejaba la frase ahi muerta y la guardia pasaba. Va la septima vez en
+  // este proyecto: lo que se mide es el codigo, no el texto.
+  ok(/Abonado a la deuda/.test(html) &&
+     /if\(totMo>0\.009\) h\+=/.test(html) && /Mora cobrada aparte/.test(html),
+     "la mora se totaliza APARTE cuando la hay, no sumada al abonado");
+  const totales = html.slice(html.indexOf("var totAb"));
+  ok(/totAb=\(p\.abonos\|\|\[\]\)/.test(totales.replace(/\s/g, "")),
+     "el abonado sale solo de p.abonos");
+  ok(!/totAb\s*\+\s*totMo/.test(totales), "y en ningun sitio se suman los dos");
+}
+
+// ── Los saldados: agrupados por cliente y ordenados por cuando pagaron ───
+{
+  const sinCom = t => t.replace(/\/\/[^\n]*/g, "");
+  const pr = sinCom((HTML.match(/function rPrestamos\(\)\{[\s\S]*?\n\}/) || [""])[0]);
+
+  ok(/var gruposPag=bkAgrupar\(pagados/.test(pr),
+     "los saldados se agrupan por cliente, como los activos");
+  ok(/_prPagCliOpen/.test(pr) && /_prPagosOpen/.test(pr),
+     "y cada grupo y cada tarjeta se abren por su cuenta");
+  // Antes se recorria la lista al reves, o sea por el orden en que estan
+  // guardados: con dos clientes eso ya puede salir al reves de lo que paso.
+  ok(!/pagados\.slice\(\)\.reverse\(\)/.test(pr),
+     "ya no se ordenan por el orden en que estan guardados");
+  ok(/function _ordenSaldado\(a,b\)\{/.test(pr), "hay un orden propio");
+  ok(/g\.items\.sort\(_ordenSaldado\)/.test(pr), "y se aplica");
+}
+
+// ── El formulario de registrar, plegado ──────────────────────────────────
+//
+// Sus palabras: "la parte de registrar préstamos debería ser desplegable
+// también para que no colapse la vista en el teléfono". Son ~250 lineas
+// siempre abiertas: medido a 412px, cerrarlo ahorra 1.018 px de scroll.
+{
+  const sinCom = t => t.replace(/\/\/[^\n]*/g, "");
+  const pr = sinCom((HTML.match(/function rPrestamos\(\)\{[\s\S]*?\n\}/) || [""])[0]);
+
+  ok(/_togglePrForm\(\)/.test(pr), "el titulo abre y cierra el formulario");
+  ok(/\(_prFormAbierto\?"":";display:none"\)/.test(pr),
+     "y cerrado NO se dibuja");
+  // Queda abierto mientras lo este llenando: el formulario se repinta con
+  // cada tecla, y sin esto se cerraria solo a mitad de escribir.
+  const decide = sinCom((pr.match(/var _prFormAbierto =[\s\S]*?;\n/) || [""])[0]);
+  ok(/S\._prFormOpen/.test(decide), "se abre cuando ella lo abre");
+  ok(/f\.desc/.test(decide) && /f\.monto/.test(decide),
+     "y sigue abierto si ya empezo a llenarlo (si no, se cierra al teclear)");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

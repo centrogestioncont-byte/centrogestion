@@ -2598,7 +2598,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261008_v179";
+var APP_VERSION = "20261010_v180";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -25785,6 +25785,14 @@ function nombresClientesConocidos(){
   (S.cuentasCobrar||[]).forEach(function(c){if(c.cliente) set[c.cliente.trim()]=true;});
   return Object.keys(set).sort();
 }
+// Abrir y cerrar el formulario de registrar. Aquí SÍ se repinta: lo que
+// cambia es que el bloque entero entra o sale, y cuando está cerrado no hay
+// ningún campo a medio escribir que se pueda perder (ARREGLO 32).
+function _togglePrForm(){
+  S._prFormOpen=!S._prFormOpen;
+  R();
+}
+
 function rPrestamos(){
   // Combina defaults con lo que ya exista en S.nPr, en vez de reemplazarlo
   // por completo — así, si S.nPr ya existía pero incompleto (por ejemplo
@@ -26187,18 +26195,126 @@ function rPrestamos(){
   }
 
   // ── Tarjeta de cobrado ──
+  // ── Los pagos de un préstamo, uno por uno ─────────────────────────────
+  //
+  // Sus palabras: "no hay forma de revisar los pagos ya realizados de cada
+  // cliente y que se ordenen según el tiempo que pagaron… tampoco sale la
+  // información completa, la mora, en qué moneda, cuenta, cuánto pagó".
+  //
+  // Nada de esto hubo que empezar a guardarlo: ya estaba todo. Cada abono
+  // lleva su cuentaId, su monedaPago y su montoPago desde siempre, y la mora
+  // cobrada lleva lo mismo en p.mora.historial. Lo que faltaba era enseñarlo.
+  //
+  // Y LA HORA NUNCA SE PERDIÓ. `fecha` es solo el día, pero el id de cada
+  // pago es Date.now(), así que la hora exacta está ahí dentro. Es el mismo
+  // truco que ya sitúa los ajustes de saldo (ARREGLO 72) y las remesas. Sin
+  // esto, los tres pagos que haga un cliente el mismo día salen en un orden
+  // cualquiera — que es justo lo que ella no podía revisar.
+  function _tsDePago(x){
+    var t=parseFloat(x&&x.id);
+    // El mismo rango que _tsDeUid: un id que no sea una hora creíble se
+    // descarta en vez de inventarse una fecha de 1970 o de 2340.
+    return (isFinite(t)&&t>=1.4e12&&t<=2.5e12)?t:0;
+  }
+  function _horaDePago(x){
+    var t=_tsDePago(x);
+    if(!t) return "";
+    var d=new Date(t);
+    return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");
+  }
+
+  // Los abonos y la mora, en una sola lista ordenada por cuándo se pagó.
+  // Van juntos a propósito: ella cobra las dos cosas en el mismo acto, y
+  // verlas en dos listas obliga a cruzarlas a mano. Marcados, eso sí — la
+  // mora es un cargo aparte que NO baja el saldo.
+  function _pagosDe(p){
+    var fila=[];
+    (p.abonos||[]).forEach(function(x){ fila.push({x:x,mora:false}); });
+    (((p.mora||{}).historial)||[]).forEach(function(x){ fila.push({x:x,mora:true}); });
+    fila.sort(function(a,b){
+      var ta=_tsDePago(a.x), tb=_tsDePago(b.x);
+      if(ta&&tb&&ta!==tb) return tb-ta;            // lo más reciente arriba
+      var fa=String(a.x.fecha||""), fb=String(b.x.fecha||"");
+      return fa<fb?1:(fa>fb?-1:0);
+    });
+    return fila;
+  }
+
+  function _htmlPagosDe(p){
+    var fila=_pagosDe(p);
+    if(!fila.length) return "<div style='padding:10px 12px;font-size:11.5px;color:var(--ink3)'>"+
+      "Sin pagos registrados.</div>";
+    var monP=p.mon||"USDT";
+    var h="<div style='padding:4px 10px 10px'>";
+    fila.forEach(function(it){
+      var x=it.x, hora=_horaDePago(x);
+      // Escapado AQUI, en la asignación, y no más abajo: la guardia del
+      // ARREGLO 102 cuenta las llamadas crudas a nombreCuentaEg y no puede
+      // ver que se escape tres líneas después. Tenía razón en quejarse.
+      var cta=x.cuentaId?_escAud(nombreCuentaEg(x.cuentaId)):"";
+      // Lo que entró de VERDAD al banco, en la moneda en que pagó. Puede no
+      // ser la moneda del préstamo, y ahí está media pregunta suya.
+      var monPago=x.monedaPago||monP;
+      var cash=(x.montoPago!==undefined&&x.montoPago!==null)?parseFloat(x.montoPago):null;
+      var distinta=(cash!==null)&&(monPago!==monP);
+      h+="<div style='display:flex;gap:9px;align-items:flex-start;padding:7px 2px;border-bottom:1px solid var(--ln2b)'>"+
+         "<div style='flex:1;min-width:0'>"+
+           "<div style='font-size:11.5px;color:var(--tx3)'>"+_escAud(x.fecha||"")+
+             (hora?" · "+hora:"")+"</div>"+
+           "<div style='font-size:12.5px;font-weight:700;color:"+(it.mora?"var(--mal)":"var(--tx)")+";margin-top:1px'>"+
+             (it.mora?"🔴 Mora":(x.cuotaN?"Cuota "+_escAud(String(x.cuotaN)):"Abono"))+
+             (x.premio>0?" <span style=\'font-size:10.5px;color:var(--ok)\'>+premio "+f2(x.premio)+"</span>":"")+
+           "</div>"+
+           (cta?"<div style='font-size:10.5px;color:var(--tx4);margin-top:1px'>🏦 "+cta+"</div>":"")+
+           (x.nota?"<div style='font-size:10.5px;color:var(--tx4);margin-top:1px'>"+_escAud(x.nota)+"</div>":"")+
+         "</div>"+
+         "<div style='text-align:right;white-space:nowrap'>"+
+           "<div style='font-size:12.5px;font-weight:700;color:"+(it.mora?"var(--mal)":"var(--posDeep)")+"'>"+
+             f2(parseFloat(x.monto)||0)+" "+_escAud(monP)+"</div>"+
+           // Solo cuando pagó en OTRA moneda: repetir "3.500 VES · pagó
+           // 3.500 VES" en cada fila es ruido en todas las demás.
+           (distinta?"<div style='font-size:10.5px;color:var(--tx4);margin-top:1px'>pagó "+
+             f2(cash)+" "+_escAud(monPago)+"</div>":"")+
+         "</div>"+
+      "</div>";
+    });
+    // El total se parte en dos: lo que bajó la deuda y la mora. Sumarlos en
+    // un solo número diría que la deuda bajó más de lo que bajó — es la
+    // misma razón por la que la mora vive en p.mora y no en p.abonos.
+    var totAb=(p.abonos||[]).reduce(function(a,x){return a+(parseFloat(x.monto)||0);},0);
+    var totMo=((((p.mora||{}).historial)||[])).reduce(function(a,x){return a+(parseFloat(x.monto)||0);},0);
+    h+="<div style='display:flex;justify-content:space-between;padding:8px 2px 0;font-size:12px'>"+
+       "<span style='color:var(--tx2b);font-weight:700'>Abonado a la deuda</span>"+
+       "<b style='color:var(--posDeep)'>"+f2(totAb)+" "+_escAud(monP)+"</b></div>";
+    if(totMo>0.009) h+="<div style='display:flex;justify-content:space-between;padding:3px 2px 0;font-size:12px'>"+
+       "<span style='color:var(--mal);font-weight:700'>Mora cobrada aparte</span>"+
+       "<b style='color:var(--mal)'>"+f2(totMo)+" "+_escAud(monP)+"</b></div>";
+    return h+"</div>";
+  }
+
   function cardPagado(p){
     var monP=p.mon||"USDT";
     var totalAbonado=(p.abonos||[]).reduce(function(a,ab){return a+ab.monto;},0)||parseFloat(p.montoCobrado||p.monto||p.ent||0);
+    // La tarjeta se abre y enseña los pagos. Antes decía la fecha, el Ref y
+    // el total, y nada más: con eso no se puede contestar "¿cuándo pagó?",
+    // "¿en qué moneda?", "¿a qué cuenta entró?" ni "¿cuánto fue de mora?".
+    var ab=bkAbierto(S._prPagosOpen,String(p.id),false);
+    var n=(p.abonos||[]).length+((((p.mora||{}).historial)||[]).length);
     return "<div class='bk-item is-ok'>"+
-      "<div class='bk-item-top'>"+
+      "<div class='bk-item-top' style='cursor:pointer' onclick='bkToggleCli(\"_prPagosOpen\","+JSON.stringify(String(p.id))+")'>"+
         "<div style='flex:1;min-width:0'>"+
           "<div class='bk-ref'>"+p.d+(p.fechaPago?" · saldado "+p.fechaPago:"")+" · Ref "+p.id+"</div>"+
           "<div class='bk-item-desc' style='margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>👤 "+_escAud(p.desc)+"</div>"+
-          "<div style='margin-top:5px'><span class='bk-chip ok'>✓ Saldado</span></div>"+
+          "<div style='margin-top:5px'><span class='bk-chip ok'>✓ Saldado</span>"+
+            (n?" <span style='font-size:10.5px;color:var(--tx4)'>"+n+" pago"+(n!==1?"s":"")+"</span>":"")+
+          "</div>"+
         "</div>"+
-        "<div class='bk-item-amt bk-num' style='color:var(--posDeep)'>"+f2(totalAbonado)+" "+monP+"</div>"+
+        "<div style='text-align:right'>"+
+          "<div class='bk-item-amt bk-num' style='color:var(--posDeep)'>"+f2(totalAbonado)+" "+monP+"</div>"+
+          "<div style='font-size:11px;color:var(--tx4);margin-top:2px'>"+(ab?"▲ ocultar":"▼ ver pagos")+"</div>"+
+        "</div>"+
       "</div>"+
+      (ab?_htmlPagosDe(p):"")+
     "</div>";
   }
 
@@ -26246,8 +26362,55 @@ function rPrestamos(){
       }).join("")
     : "<div style='text-align:center;padding:26px;color:var(--ink3);font-size:13px'>No hay préstamos activos ✅</div>";
 
-  var pagadosHtml=pagados.length
-    ? "<div class='bk-cli-body' style='padding:2px 10px 10px'>"+pagados.slice().reverse().map(cardPagado).join("")+"</div>"
+  // Agrupados por cliente, igual que los activos. Una lista plana con veinte
+  // saldados no deja encontrar a nadie — que es lo que ella pidió poder hacer.
+  //
+  // Y ordenados por CUÁNDO SE SALDARON. Antes se recorría la lista al revés,
+  // o sea por el orden en que están guardados: con dos clientes eso ya puede
+  // salir al revés de lo que pasó.
+  function _tsSaldado(p){
+    var t=0;
+    (p.abonos||[]).forEach(function(x){ var v=_tsDePago(x); if(v>t) t=v; });
+    ((((p.mora||{}).historial)||[])).forEach(function(x){ var v=_tsDePago(x); if(v>t) t=v; });
+    return t;
+  }
+  function _ordenSaldado(a,b){
+    var ta=_tsSaldado(a), tb=_tsSaldado(b);
+    if(ta&&tb&&ta!==tb) return tb-ta;
+    // Sin hora útil en los ids (préstamos viejos), la fecha de saldado.
+    var fa=String(a.fechaPago||a.d||""), fb=String(b.fechaPago||b.d||"");
+    return fa<fb?1:(fa>fb?-1:0);
+  }
+  var gruposPag=bkAgrupar(pagados,function(p){return p.desc;});
+  gruposPag.forEach(function(g){
+    g.items.sort(_ordenSaldado);
+    g.ultimo=g.items.length?_tsSaldado(g.items[0]):0;
+    g.pares=g.items.map(function(p){
+      var tot=(p.abonos||[]).reduce(function(a,x){return a+(parseFloat(x.monto)||0);},0)||
+              parseFloat(p.montoCobrado||p.monto||p.ent||0)||0;
+      return {monto:tot,mon:p.mon||"USDT"};
+    });
+  });
+  // El que pagó más recientemente, primero: es a quien se está buscando.
+  gruposPag.sort(function(a,b){return (b.ultimo-a.ultimo)||a.nombre.localeCompare(b.nombre);});
+  var unicoPag=gruposPag.length===1;
+
+  var pagadosHtml=gruposPag.length
+    ? gruposPag.map(function(g){
+        var ab=bkAbierto(S._prPagCliOpen,g.clave,unicoPag);
+        return "<div class='bk-cli"+(ab?" open":"")+"'>"+
+          "<div class='bk-cli-head' onclick='bkToggleCli(\"_prPagCliOpen\","+JSON.stringify(g.clave)+")'>"+
+            "<div class='bk-ava' style='background:"+bkColorAvatar(g.nombre)+"'>"+bkIniciales(g.nombre)+"</div>"+
+            "<div style='flex:1;min-width:0'>"+
+              "<div class='bk-cli-name'>"+_escAud(g.nombre)+"</div>"+
+              "<div class='bk-cli-meta'>"+g.items.length+" saldado"+(g.items.length!==1?"s":"")+"</div>"+
+            "</div>"+
+            "<div class='bk-cli-amt bk-num'>"+bkPorMoneda(g.pares)+"</div>"+
+            "<div class='bk-chev'>"+(ab?"▲":"▼")+"</div>"+
+          "</div>"+
+          (ab?"<div class='bk-cli-body'>"+g.items.map(cardPagado).join("")+"</div>":"")+
+        "</div>";
+      }).join("")
     : "<div style='text-align:center;padding:18px;color:var(--ink3);font-size:12px'>Sin préstamos saldados aún</div>";
 
   // ── Agenda de cobranza: próximas cuotas pendientes de préstamos ACTIVOS,
@@ -26307,6 +26470,13 @@ function rPrestamos(){
       "</div>";
     }
   }
+
+  // Abierto si ella lo abrió, o si ya empezó a llenarlo. Lo segundo importa:
+  // el formulario se repinta con cada tecla, y sin esto se cerraría solo a
+  // mitad de escribir. Es la misma idea del ARREGLO 32 por el otro lado.
+  var _prFormAbierto = !!S._prFormOpen ||
+    !!(f && ((f.desc||"").trim() || (f.monto||"").toString().trim() ||
+             (f.cod||"").toString().trim() || (f.nota||"").trim()));
 
   return (
     modalCaptura+
@@ -26378,10 +26548,21 @@ function rPrestamos(){
       "</div>"+
       (S._verPagados?pagadosHtml:"")+
     "</div>"+
-    // Formulario nuevo préstamo
+    // Formulario nuevo préstamo — PLEGADO por omisión.
+    //
+    // Sus palabras: "la parte de registrar préstamos debería ser desplegable
+    // también para que no colapse la vista en el teléfono". Son ~250 líneas
+    // de formulario siempre abiertas: en su pantalla de 412px se come todo
+    // lo de arriba, que es justo lo que ella entra a mirar.
+    //
+    // Y queda abierto mientras lo esté llenando: cerrarlo bajo el dedo a
+    // mitad de escribir sería peor que tenerlo siempre abierto.
     "<div class='sec'>"+
-      "<div class='sec-title'>➕ Registrar préstamo</div>"+
-      "<div style='display:flex;flex-direction:column;gap:10px'>"+
+      "<div class='sec-title' style='cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px' onclick='_togglePrForm()'>"+
+        "<span>➕ Registrar préstamo</span>"+
+        "<span style='font-size:12px;font-weight:700;color:var(--tx3)'>"+(_prFormAbierto?"▲ cerrar":"▼ abrir")+"</span>"+
+      "</div>"+
+      "<div style='display:flex;flex-direction:column;gap:10px"+(_prFormAbierto?"":";display:none")+"'>"+
         "<div><label style='font-size:11.5px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>Fecha</label>"+
         "<input type='date' value='"+(f.date||td())+"' onchange='S.nPr.date=this.value' style='width:100%;padding:12px;font-size:16px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'></div>"+
         "<div><label style='font-size:11.5px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>Nombre / A quién (código o nombre — busca en tu base de clientes)</label>"+
