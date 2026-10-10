@@ -7039,5 +7039,54 @@ console.log("\n— FASE 2: la cuenta madre —");
      "el nombre del archivo quita la tilde antes de limpiar, no despues");
 }
 
+// ── EL PAPEL NO PUEDE CRECER SIN LIMITE ──────────────────────────────────
+//
+// Su archivo real salio 1188 x 9974 px: una tira que por WhatsApp llega como
+// miniatura y que ni en la PC se lee. Reproducido con un cliente de 12
+// prestamos: hoja de 7.834 px, escala 1,1. Casi todo ese alto era el detalle
+// cuota a cuota de prestamos YA PAGADOS, que al cliente no le sirve.
+//
+//    prestamos   antes            ahora
+//      1         1.020 px  1:0,9   1.020 px  1:0,9
+//     12         7.834 px  1:7,3   2.180 px  1:2,0
+//     25        16.066 px  1:14,9  2.879 px  1:2,7
+//
+// Y es la misma leccion del ARREGLO 88: lo que sale hacia fuera no puede
+// depender de las circunstancias —alli del aparato, aqui de cuantos
+// prestamos tenga el cliente.
+{
+  const sinCom = t => t.replace(/\/\/[^\n]*/g, "");
+  const hoja = sinCom(sacarFuncion("_htmlEstadoCuenta"));
+
+  const tope = parseInt((HTML.match(/var EC_MAX_DETALLE=(\d+);/) || [0, 0])[1], 10);
+  ok(tope >= 1 && tope <= 6,
+     "el tope de prestamos con detalle es un numero chico", "vale " + tope);
+  ok(/var saldados=ec\.prestamos\.filter\(function\(x\)\{return x\.saldado;\}\)/.test(hoja),
+     "los saldados se separan");
+  ok(/var conDetalle=vivos\.length<=EC_MAX_DETALLE\?vivos:\[\]/.test(hoja),
+     "y con muchos vivos tampoco se dibuja el detalle de todos");
+  ok(/var bloques=conDetalle\.map/.test(hoja),
+     "el detalle cuota a cuota sale SOLO de los que caben");
+  ok(!/var bloques=ec\.prestamos\.map/.test(hoja) && !/var bloques=vivos\.map/.test(hoja),
+     "y nunca de la lista entera");
+  // La tabla resumen se escribe una vez y la usan los dos: con dos copias
+  // acabarian diciendo cosas distintas del mismo prestamo.
+  ok(/function _ecResumen\(titulo,lista,vivo\)\{/.test(hoja) &&
+     (hoja.match(/<th>PRESTADO EL<\/th>/g) || []).length === 1,
+     "la tabla resumen esta escrita una sola vez");
+  ok(/_ecResumen\("Préstamos ya saldados",saldados,false\)/.test(hoja) &&
+     /_ecResumen\("Préstamos activos",soloLinea,true\)/.test(hoja),
+     "y la usan los saldados y los vivos que no caben");
+  // Nada se pierde en silencio: las dos tablas salen en el papel.
+  ok(/\+bloques\+tablaVivos\+tablaSaldados\+/.test(hoja),
+     "el papel lleva el detalle Y los dos resumenes");
+  // Y se dice por que no esta el detalle, en vez de que parezca que falta.
+  ok(/pídemelo/.test(hoja), "y se dice que el detalle se puede pedir");
+  // La fecha del prestamo saca el año de su id, igual que la de los abonos.
+  const datos = sinCom(sacarFuncion("estadoCuentaDe"));
+  ok(/fecha:_ecFechaPago\(\{fecha:p\.d\|\|"",id:p\.id\}\)/.test(datos),
+     "la fecha del prestamo tambien se normaliza");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
