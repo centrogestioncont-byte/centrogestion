@@ -7158,5 +7158,44 @@ console.log("\n— FASE 2: la cuenta madre —");
      "una cuota pasada se dice vencida, no «proxima»");
 }
 
+// ── EL ORDEN DE LA PANTALLA NUEVA ────────────────────────────────────────
+//
+// Sus palabras: "donde me ponga a colocar qué paga cada uno y después que me
+// ponga a seleccionar en qué cuenta entró cada dinero. Porque siento que el
+// orden no es el correcto".
+//
+// Las cuentas estaban ANTES del paso 1, o sea que pedían la cuenta antes de
+// saber de cuánto era la remesa. Y el desglose de "Pagó de varias formas"
+// valida contra el total recibido: puesto arriba, enseñaba "Envía el cliente
+// 0,00" y "Falta" sobre un campo que ella todavía no había rellenado.
+{
+  const sinCom = t => t.replace(/\/\/[^\n]*/g, "");
+
+  // El orden se mide por DÓNDE aparece cada título dentro de la función, no
+  // buscándolos sueltos: lo que se arregló es el orden.
+  [["rNueva", "Monto recibido en "], ["rNuevaEE", "Monto USD"]].forEach(function(par){
+    const fn = sinCom(sacarFuncion(par[0]));
+    const iMonto = fn.indexOf("1️⃣ " + par[1]);
+    const iCtas  = fn.indexOf("2️⃣ Cuentas afectadas");
+    const iTasas = fn.indexOf("3️⃣ Tasas USDT");
+    ok(iMonto > 0 && iCtas > 0 && iTasas > 0 && iMonto < iCtas && iCtas < iTasas,
+       par[0] + ": primero el monto, luego las cuentas, luego las tasas",
+       "monto " + iMonto + " · cuentas " + iCtas + " · tasas " + iTasas);
+  });
+  // Y no queda ninguna sección sin numerar entre las numeradas: la secuencia
+  // se leía 1 → (nada) → 2.
+  ok(!/>🏦 Cuentas afectadas</.test(HTML) && !/>\\'🏦 Cuentas afectadas/.test(HTML),
+     "la sección de cuentas lleva su número");
+
+  // En cada fila del desglose, el MONTO va antes que la cuenta.
+  ["_txPagosHTML", "_txEntregasHTML"].forEach(function(f){
+    const c = sinCom(sacarFuncion(f));
+    const iInp = c.indexOf("<input type='text' inputmode='decimal'");
+    const iSel = c.indexOf("<select onchange=");
+    ok(iInp > 0 && iSel > 0 && iInp < iSel,
+       f + ": el monto va antes que la cuenta", "monto " + iInp + " · cuenta " + iSel);
+  });
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
