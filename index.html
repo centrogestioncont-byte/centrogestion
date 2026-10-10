@@ -2718,7 +2718,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261010_v184";
+var APP_VERSION = "20261010_v185";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -26015,28 +26015,19 @@ function estadoCuentaDe(clave){
   });
   if(!suyos.length) return null;
   var out={nombre:(suyos[0].desc||"").trim(),cod:suyos[0].cod||"",
-           prestamos:[],pagado:[],debe:[],mora:[],premio:[],sinTasa:[],saldados:0};
+           prestamos:[],pagos:[],pagado:[],debe:[],mora:[],moraCobrada:[],
+           premio:[],sinTasa:[],saldados:0};
   suyos.forEach(function(p){
     var mon=p.mon||"USDT";
     var base=Math.round((parseFloat(p.monto||p.sal)||0)*100)/100;
-    var abonado=0, premio=0, pagos=[];
+    var abonado=0, premio=0;
     (p.abonos||[]).forEach(function(a){
-      var m=parseFloat(a.monto)||0;
-      abonado+=m; premio+=parseFloat(a.premio)||0;
-      pagos.push({monto:Math.round(m*100)/100,
-                  premio:Math.round((parseFloat(a.premio)||0)*100)/100,
-                  fecha:_ecFechaPago(a),cuotaN:a.cuotaN||null,
-                  monedaPago:a.monedaPago||"",
-                  montoPago:Math.round((parseFloat(a.montoPago)||0)*100)/100,
-                  // La hora vive dentro del id (Date.now()), asi que el
-                  // orden sale aunque el abono no guarde hora aparte.
-                  ts:(typeof _tsDeUid==="function"&&a.id)?_tsDeUid(String(a.id)):0});
+      abonado+=parseFloat(a.monto)||0;
+      premio+=parseFloat(a.premio)||0;
     });
     abonado=Math.round(abonado*100)/100;
     premio=Math.round(premio*100)/100;
     var pend=Math.max(0,Math.round((base-abonado)*100)/100);
-    // El orden es por CUÁNDO pagó, no por el orden en que están guardados.
-    pagos.sort(function(a,b){ return (a.ts&&b.ts)?a.ts-b.ts:0; });
     var cuotas=(p.cuotas||[]).map(function(c){
       var falta=null;
       (cuotasPendientesDe(p)||[]).forEach(function(x){
@@ -26048,16 +26039,54 @@ function estadoCuentaDe(clave){
     });
     var mora=(typeof moraPendiente==="function")?Math.round((moraPendiente(p)||0)*100)/100:0;
     out.prestamos.push({id:p.id,fecha:_ecFechaPago({fecha:p.d||"",id:p.id}),mon:mon,
+      // Para qué era. Ella lo escribe al registrar ("préstamo por compra de
+      // tal cosa") y es lo que le dice al cliente de cuál le está hablando.
+      nota:(p.notaDesc||"").trim(),
       capital:Math.round((parseFloat(p.capital!==undefined?p.capital:base)||0)*100)/100,
       total:base,abonado:abonado,premio:premio,pendiente:pend,mora:mora,
-      cuotas:cuotas,pagos:pagos,saldado:pend<=0.009&&mora<=0.009});
+      cuotas:cuotas,saldado:pend<=0.009&&mora<=0.009});
     if(pend<=0.009&&mora<=0.009) out.saldados++;
+    // ── Los pagos, sueltos y con a QUÉ corresponde cada uno ───────────
+    //
+    // Sus palabras: "él necesita saber a qué corresponde cada pago, cuándo
+    // se creó el préstamo, cuándo lo pagó él". El papel iba ordenado por la
+    // fecha del préstamo, que es justo la que no le sirve.
+    //
+    // Cada pago se lleva consigo de qué préstamo es, para qué era y si
+    // llegó tarde. Suelto, para poder ordenarlos por CUÁNDO PAGÓ.
+    var _nota=(p.notaDesc||"").trim();
+    if(_nota.length>30) _nota=_nota.slice(0,29).replace(/\s+\S*$/,"")+"…";
+    var _etiqueta=_ecFechaPago({fecha:p.d||"",id:p.id})+(_nota?" — "+_nota:"");
+    (p.abonos||[]).forEach(function(a){
+      var m=parseFloat(a.monto)||0;
+      if(!(Math.abs(m)>0.009)) return;
+      out.pagos.push(_ecPago(p,a,mon,_etiqueta,"cuota",m));
+    });
+    // La mora se cobra aparte de la cuota y tiene su propio registro: si no
+    // sale, el cliente no entiende por qué entregó más de lo que debía.
+    ((((p.mora||{}).historial)||[])).forEach(function(h){
+      var m=parseFloat(h.monto)||0;
+      if(!(Math.abs(m)>0.009)) return;
+      out.pagos.push(_ecPago(p,h,mon,_etiqueta,"mora",m));
+    });
     _ecSuma(out.pagado,mon,abonado);
     _ecSuma(out.debe,mon,pend);
     _ecSuma(out.mora,mon,mora);
+    _ecSuma(out.moraCobrada,mon,Math.round((parseFloat((p.mora||{}).cobrada)||0)*100)/100);
     if(premio>0.009) _ecSuma(out.premio,mon,premio);
     if(!bkHayTasa(mon)&&out.sinTasa.indexOf(mon)===-1) out.sinTasa.push(mon);
   });
+  // En el ORDEN EN QUE PAGÓ, no en el que están guardados ni por la fecha
+  // del préstamo. Sus palabras: "una cosa es la fecha de creación del
+  // préstamo y otra la fecha en que él pagó". Dentro del mismo día manda la
+  // hora; sin hora en el id (registros viejos) se quedan donde estaban, que
+  // es mejor que moverlos a un sitio inventado.
+  out.pagos.sort(function(a,b){
+    if(a.iso!==b.iso) return a.iso<b.iso?-1:1;
+    return (a.ts&&b.ts)?a.ts-b.ts:0;
+  });
+  out.totalPagos=out.pagos.length;
+  if(out.pagos.length>EC_MAX_PAGOS) out.pagos=out.pagos.slice(-EC_MAX_PAGOS);
   return out;
 }
 // Las fechas del papel van TODAS en dd/mm/aa. Dentro conviven tres
@@ -26080,6 +26109,36 @@ function _ecFechaPago(a){
   var ts=parseFloat(a&&a.id);
   if(!(isFinite(ts)&&ts>=1.4e12&&ts<=2.5e12)) return t;
   return t+"/"+String(new Date(ts).getFullYear()).slice(-2);
+}
+// Un pago, con todo lo que hace falta para saber a qué corresponde. La
+// hora exacta vive dentro del id (es un Date.now()) y nunca se perdió; lo
+// que faltaba era sacarla.
+function _ecPago(p,a,mon,etiqueta,tipo,monto){
+  var ts=parseFloat(a&&a.id);
+  if(!(isFinite(ts)&&ts>=1.4e12&&ts<=2.5e12)) ts=0;
+  var d=ts?new Date(ts):null;
+  var iso=String((a&&a.fecha)||"").match(/^\d{4}-\d{2}-\d{2}$/)
+    ? a.fecha
+    : (d?d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"):"");
+  // Si pagó tarde se dice, y cuánto: es la mitad de lo que el cliente viene
+  // a comprobar. Sale de comparar el día del pago con el de SU cuota.
+  var tarde=null, cu=null;
+  if(tipo==="cuota"&&a&&a.cuotaN!=null){
+    (p.cuotas||[]).forEach(function(c){ if(c.n===a.cuotaN) cu=c; });
+    if(cu&&cu.iso&&iso){
+      var dias=_diasIso(cu.iso,iso);
+      if(dias>0) tarde=dias;
+    }
+  }
+  return {tipo:tipo,ts:ts,iso:iso,
+          fecha:_ecFechaPago({fecha:(a&&a.fecha)||"",id:a&&a.id}),
+          hora:d?(String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0")):"",
+          prestamo:etiqueta, cuotaN:(a&&a.cuotaN)||null,
+          cuotaFecha:cu?cu.fecha:"", tarde:tarde,
+          monto:Math.round(monto*100)/100, mon:mon,
+          premio:Math.round((parseFloat(a&&a.premio)||0)*100)/100,
+          monedaPago:(a&&a.monedaPago)||"",
+          montoPago:Math.round((parseFloat(a&&a.montoPago)||0)*100)/100};
 }
 // Suma por moneda, sin convertir: sumar reales con bolívares da un número
 // que no existe (la misma regla que manda en Por cobrar y en el informe).
@@ -26107,6 +26166,11 @@ var EC_MARCA="RemesasYA";
 // 6.038 px y la imagen a 1404 × 7849 — una tira que por WhatsApp llega como
 // miniatura. El cliente normal tiene uno o dos.
 var EC_MAX_DETALLE=3;
+// Cuántos pagos caben en el papel. Medido: cada fila son ~70 px, así que
+// 25 son unos 1.750 y la hoja se queda por debajo de 1:3. Con 40 volvía la
+// tira (69 pagos daban 1:6,1). Si hay más, se enseñan los ÚLTIMOS y el
+// papel dice cuántos quedaron fuera y que se pueden pedir.
+var EC_MAX_PAGOS=25;
 function _htmlEstadoCuenta(ec){
   var hoy=new Date();
   var fh=String(hoy.getDate()).padStart(2,"0")+"/"+String(hoy.getMonth()+1).padStart(2,"0")+"/"+hoy.getFullYear();
@@ -26128,44 +26192,109 @@ function _htmlEstadoCuenta(ec){
   // aquí va una línea por préstamo, que es lo que contesta "cuánto debo y
   // cuándo". El cliente normal tiene uno o dos y ve su cronograma entero.
   var conDetalle=vivos.length<=EC_MAX_DETALLE?vivos:[];
-  var soloLinea=vivos.length<=EC_MAX_DETALLE?[]:vivos;
-  // Una tabla igual para los dos resúmenes: los vivos que no caben con su
-  // detalle, y los saldados. Escrita una vez, para que no acaben diciendo
-  // cosas distintas.
-  function _ecResumen(titulo,lista,vivo){
+  // ── PAGOS RECIBIDOS: el eje del papel ────────────────────────────────
+  //
+  // Agrupados por día, con su subtotal, y dentro del día EN EL ORDEN EN QUE
+  // PAGÓ. Un cliente que entregó cinco pagos en una tarde quiere ver esa
+  // tarde entera y a qué fue cada uno.
+  var _EC_DIAS=["domingo","lunes","martes","miércoles","jueves","viernes","sábado"];
+  function _ecDiaLargo(iso){
+    var m=String(iso||"").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if(!m) return iso||"Sin fecha";
+    var d=new Date(+m[1],+m[2]-1,+m[3]);
+    return _EC_DIAS[d.getDay()]+" "+m[3]+"/"+m[2]+"/"+m[1];
+  }
+  var tablaPagos=(function(){
+    if(!ec.pagos.length) return "<div style='margin-top:34px'>"+
+      "<div style='font-size:30px;font-weight:800;color:var(--ec-tinta);"+
+        "border-bottom:3px solid var(--ec-cab);padding-bottom:10px'>Pagos recibidos</div>"+
+      "<div style='padding:18px 2px;font-size:22px;color:var(--ec-tinta2)'>"+
+        "Todavía no ha hecho pagos.</div></div>";
+    var dias=[], mapa={};
+    ec.pagos.forEach(function(g){
+      if(!mapa[g.iso]){ mapa[g.iso]={iso:g.iso,items:[],tot:[]}; dias.push(g.iso); }
+      mapa[g.iso].items.push(g);
+      _ecSuma(mapa[g.iso].tot,g.mon,g.monto);
+    });
+    return "<div style='margin-top:34px'>"+
+      "<div style='font-size:30px;font-weight:800;color:var(--ec-tinta);"+
+        "border-bottom:3px solid var(--ec-cab);padding-bottom:10px'>"+
+        "Pagos recibidos · "+ec.totalPagos+"</div>"+
+      (ec.totalPagos>ec.pagos.length
+        ? "<div style='font-size:19px;color:var(--ec-tinta2);margin-top:8px'>"+
+          "Aquí van los últimos "+ec.pagos.length+". Los "+(ec.totalPagos-ec.pagos.length)+
+          " anteriores no caben en esta hoja; pídemelos si los necesitas.</div>" : "")+
+      "<table>"+
+      dias.map(function(k){
+        var d=mapa[k];
+        return "<tr><th colspan='3'>"+P(_ecDiaLargo(d.iso))+"</th>"+
+            "<th class='ec-num'>"+P(_ecMon(d.tot))+"</th></tr>"+
+          d.items.map(function(g){
+            var _extra=[];
+            if(g.tipo==="cuota"&&g.cuotaFecha) _extra.push(
+              "<span style='color:"+(g.tarde?"var(--ec-mal)":"var(--ec-ok)")+"'>"+
+              (g.tarde?g.tarde+" día"+(g.tarde!==1?"s":"")+" tarde":"al día")+"</span>");
+            if(g.premio>0.009) _extra.push("<span style='color:var(--ec-avi)'>"+
+              f2(g.premio)+" de descuento</span>");
+            if(g.monedaPago&&g.monedaPago!==g.mon&&g.montoPago>0.009)
+              _extra.push("entregó "+f2(g.montoPago)+" "+P(g.monedaPago));
+            return "<tr>"+
+              "<td style='white-space:nowrap'>"+(g.hora?P(g.hora):"—")+"</td>"+
+              "<td colspan='2'>"+
+                (g.tipo==="mora"
+                  ? "<b>Mora</b>"
+                  : (g.cuotaN?"<b>Cuota "+P(g.cuotaN)+"</b>":"<b>Abono</b>"))+
+                " · "+P(g.prestamo)+
+                (_extra.length?"<span style='font-size:19px;color:var(--ec-tinta2)'> · "+
+                  _extra.join(" · ")+"</span>":"")+
+              "</td>"+
+              "<td class='ec-num'>"+f2(g.monto)+" "+P(g.mon)+"</td>"+
+            "</tr>";
+          }).join("");
+      }).join("")+
+      "</table></div>";
+  })();
+
+  // ── SUS PRÉSTAMOS: uno por línea, con PARA QUÉ era ───────────────────
+  //
+  // Una sola tabla con todos, activos y saldados. Antes eran dos y ninguna
+  // decía para qué era el préstamo, que es por donde el cliente los
+  // distingue: "el de la moto", no "el del 15/08".
+  function _ecTablaPrestamos(lista){
     if(!lista.length) return "";
     return "<div style='margin-top:34px'>"+
       "<div style='font-size:30px;font-weight:800;color:var(--ec-tinta);"+
         "border-bottom:3px solid var(--ec-cab);padding-bottom:10px'>"+
-        P(titulo)+" · "+lista.length+"</div>"+
-      "<table><tr><th>PRESTADO EL</th><th>RECIBIÓ</th>"+
-        "<th class='ec-num'>"+(vivo?"YA PAGÓ":"DEVOLVIÓ")+"</th>"+
-        "<th class='ec-est'>"+(vivo?"LE FALTA":"ESTADO")+"</th></tr>"+
+        "Sus préstamos · "+lista.length+"</div>"+
+      "<table><tr><th>PRESTADO EL</th><th>PARA QUÉ</th>"+
+        "<th class='ec-num'>RECIBIÓ / A DEVOLVER</th><th class='ec-est'>ESTADO</th></tr>"+
       lista.map(function(pr){
         var prox=null;
         (pr.cuotas||[]).forEach(function(c){ if(c.falta!==null&&!prox) prox=c; });
-        return "<tr><td>"+P(pr.fecha)+
-            (vivo&&prox?"<br><span style='font-size:19px;color:var(--ec-tinta2)'>próxima cuota "+P(prox.fecha)+"</span>":"")+
-          "</td>"+
-          "<td>"+f2(pr.capital)+" "+P(pr.mon)+"</td>"+
-          "<td class='ec-num'>"+f2(pr.abonado)+" "+P(pr.mon)+"</td>"+
-          (vivo
-            ? "<td class='ec-est'>"+f2(pr.pendiente)+" "+P(pr.mon)+
-              (pr.mora>0.009?"<br><span class='ec-mal' style='font-size:19px'>+ "+f2(pr.mora)+" de mora</span>":"")+"</td>"
-            : "<td class='ec-est ec-ok'>Saldado</td>")+
+        return "<tr>"+
+          "<td style='white-space:nowrap'>"+P(pr.fecha)+"</td>"+
+          "<td>"+(pr.nota?P(pr.nota):"<span style='color:var(--ec-tinta2)'>—</span>")+"</td>"+
+          "<td class='ec-num'>"+f2(pr.capital)+" / "+f2(pr.total)+" "+P(pr.mon)+
+            "<br><span style='font-size:19px;color:var(--ec-tinta2)'>pagó "+f2(pr.abonado)+"</span></td>"+
+          (pr.saldado
+            ? "<td class='ec-est ec-ok'>Saldado</td>"
+            : "<td class='ec-est'>Falta "+f2(pr.pendiente)+" "+P(pr.mon)+
+              (pr.mora>0.009?"<br><span class='ec-mal' style='font-size:19px'>+ "+f2(pr.mora)+" de mora</span>":"")+
+              (prox
+                ? (prox.estado==="vencida"
+                    ? "<br><span class='ec-mal' style='font-size:19px'>venció el "+P(prox.fecha)+"</span>"
+                    : "<br><span style='font-size:19px;color:var(--ec-tinta2)'>próxima "+P(prox.fecha)+"</span>")
+                : "")+
+              "</td>")+
         "</tr>";
       }).join("")+
-      "</table>"+
-      (vivo?"<div style='font-size:19px;color:var(--ec-tinta2);margin-top:10px'>"+
-        "Son "+lista.length+" préstamos: aquí va el resumen de cada uno. "+
-        "Si quieres el detalle cuota por cuota de alguno, pídemelo.</div>":"")+
-    "</div>";
+      "</table></div>";
   }
-  var tablaSaldados=_ecResumen("Préstamos ya saldados",saldados,false);
-  var tablaVivos=_ecResumen("Préstamos activos",soloLinea,true);
+  var tablaPrestamos=_ecTablaPrestamos(ec.prestamos);
 
   var bloques=conDetalle.map(function(pr){
-    var filas=pr.cuotas.map(function(c){
+    var _pend=pr.cuotas.filter(function(c){return c.falta!==null;});
+    var filas=_pend.map(function(c){
       var cls=c.estado==="pagada"?"ec-ok":c.estado==="vencida"?"ec-mal":"ec-pend";
       var txt=c.estado==="pagada"?"Pagada":c.estado==="vencida"?"Vencida":"Pendiente";
       return "<tr>"+
@@ -26176,21 +26305,6 @@ function _htmlEstadoCuenta(ec){
           ((c.falta!==null&&Math.abs(c.falta-c.monto)>0.009)?"<br><span style='font-weight:400;font-size:19px'>falta "+f2(c.falta)+"</span>":"")+
         "</td></tr>";
     }).join("");
-    var pagos=pr.pagos.length
-      ? pr.pagos.map(function(g){
-          return "<tr><td colspan='2'>"+(g.fecha?P(g.fecha):"Pago")+
-            (g.cuotaN?"<br><span style='font-size:19px;color:var(--ec-tinta2)'>cuota "+P(g.cuotaN)+"</span>":"")+"</td>"+
-            "<td colspan='2' class='ec-num'>"+f2(g.monto)+" "+P(pr.mon)+
-            // Si pago en otra moneda, lo que el reconoce es lo que entrego.
-            ((g.monedaPago&&g.monedaPago!==pr.mon&&g.montoPago>0.009)
-              ?"<br><span style='font-size:19px;color:var(--ec-tinta2)'>entregó "+f2(g.montoPago)+" "+P(g.monedaPago)+"</span>":"")+
-            // El premio por pagar adelantado baja la deuda pero NO entró a
-            // la cuenta. Decir "pagó" sin separarlo le cobra al cliente un
-            // dinero que no dio.
-            (g.premio>0.009?"<br><span style='font-size:19px;color:var(--ec-avi)'>incluye "+f2(g.premio)+" "+P(pr.mon)+" de descuento por adelantar</span>":"")+
-            "</td></tr>";
-        }).join("")
-      : "<tr><td colspan='4' class='ec-vacio'>Todavía no ha hecho pagos.</td></tr>";
     return "<div style='margin-top:34px'>"+
       "<div style='display:flex;justify-content:space-between;align-items:flex-end;gap:16px;"+
         "border-bottom:3px solid var(--ec-cab);padding-bottom:10px'>"+
@@ -26204,10 +26318,9 @@ function _htmlEstadoCuenta(ec){
           (pr.mora>0.009?"<div style='font-size:21px;color:var(--ec-mal);font-weight:700'>+ "+f2(pr.mora)+" de mora</div>":"")+
         "</div>"+
       "</div>"+
-      "<table>"+
-        "<tr><th colspan='4'>CUOTAS</th></tr>"+filas+
-        "<tr><th colspan='4'>PAGOS RECIBIDOS</th></tr>"+pagos+
-      "</table>"+
+      (_pend.length
+        ? "<table><tr><th colspan='4'>CUOTAS QUE LE FALTAN</th></tr>"+filas+"</table>"
+        : "")+
     "</div>";
   }).join("");
 
@@ -26228,6 +26341,11 @@ function _htmlEstadoCuenta(ec){
         "<div style='font-size:34px;font-weight:800;color:var(--ec-ok);margin-top:6px;font-variant-numeric:tabular-nums'>"+_ecMon(ec.pagado)+"</div>"+
         (ec.saldados?"<div style='font-size:19px;color:var(--ec-tinta2);margin-top:4px'>incluye "+
           ec.saldados+" ya saldado"+(ec.saldados!==1?"s":"")+"</div>":"")+
+        // La mora pagada va aparte porque no baja la deuda, pero el cliente
+        // la entregó: sin esta línea suma los pagos de abajo y no le cuadra
+        // con el número de arriba.
+        (ec.moraCobrada.length?"<div style='font-size:19px;color:var(--ec-tinta2);margin-top:4px'>"+
+          "y además "+_ecMon(ec.moraCobrada)+" de mora</div>":"")+
       "</div>"+
       "<div style='flex:1;border:2px solid var(--ec-linea);border-radius:14px;padding:18px 20px'>"+
         "<div style='font-size:20px;letter-spacing:1px;color:var(--ec-tinta2)'>DEBE</div>"+
@@ -26239,7 +26357,7 @@ function _htmlEstadoCuenta(ec){
       "Además, "+_ecMon(ec.mora)+" de mora por atraso.</div>":"")+
     (ec.premio.length?"<div style='margin:10px 38px 0;font-size:20px;color:var(--ec-avi)'>"+
       "De lo pagado, "+_ecMon(ec.premio)+" es descuento por pagar adelantado.</div>":"")+
-    "<div style='padding:0 38px'>"+bloques+tablaVivos+tablaSaldados+"</div>"+
+    "<div style='padding:0 38px'>"+tablaPagos+tablaPrestamos+bloques+"</div>"+
     "<div style='margin:34px 38px 0;padding-top:16px;border-top:2px solid var(--ec-linea);"+
       "font-size:19px;color:var(--ec-tinta2);line-height:1.6'>"+
       // Cada moneda va en la suya y no se suman entre ellas. Si alguna vez

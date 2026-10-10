@@ -6883,8 +6883,8 @@ console.log("\n— FASE 2: la cuenta madre —");
   // El premio baja la deuda pero no entro a la cuenta: decir "pago" sin
   // separarlo le cobra al cliente un dinero que no dio.
   ok(/descuento por pagar adelantado/.test(hoja) &&
-     /de descuento por adelantar/.test(hoja),
-     "el descuento por adelantar se separa de lo que pago");
+     /f2\(g\.premio\)/.test(hoja),
+     "el descuento por adelantar se separa, y se dice en el pago donde fue");
   // Y la version va DENTRO del papel: dos veces el mismo dia hubo que
   // adivinar que copia de la app habia hecho un documento que salia mal.
   ok(/APP_VERSION/.test(hoja), "la version de la app va escrita en la hoja");
@@ -7029,7 +7029,9 @@ console.log("\n— FASE 2: la cuenta madre —");
 
   // Dentro conviven tres formatos de fecha y en el papel salian mezcladas.
   ok(/function _ecFechaPago\(a\)\{/.test(HTML), "las fechas de los pagos se normalizan");
-  ok(/fecha:_ecFechaPago\(a\)/.test(datos), "y se usa");
+  ok(/fecha:_ecFechaPago\(\{fecha:\(a&&a\.fecha\)\|\|"",id:a&&a\.id\}\)/
+       .test(sinCom(sacarFuncion("_ecPago"))),
+     "y la usa cada pago");
   ok(/fecha:_ecFecha\(c\.iso\)\|\|c\.fecha/.test(datos),
      "las de las cuotas salen del ISO, que si lleva el año");
 
@@ -7069,23 +7071,91 @@ console.log("\n— FASE 2: la cuenta madre —");
      "el detalle cuota a cuota sale SOLO de los que caben");
   ok(!/var bloques=ec\.prestamos\.map/.test(hoja) && !/var bloques=vivos\.map/.test(hoja),
      "y nunca de la lista entera");
-  // La tabla resumen se escribe una vez y la usan los dos: con dos copias
-  // acabarian diciendo cosas distintas del mismo prestamo.
-  ok(/function _ecResumen\(titulo,lista,vivo\)\{/.test(hoja) &&
-     (hoja.match(/<th>PRESTADO EL<\/th>/g) || []).length === 1,
-     "la tabla resumen esta escrita una sola vez");
-  ok(/_ecResumen\("Préstamos ya saldados",saldados,false\)/.test(hoja) &&
-     /_ecResumen\("Préstamos activos",soloLinea,true\)/.test(hoja),
-     "y la usan los saldados y los vivos que no caben");
-  // Nada se pierde en silencio: las dos tablas salen en el papel.
-  ok(/\+bloques\+tablaVivos\+tablaSaldados\+/.test(hoja),
-     "el papel lleva el detalle Y los dos resumenes");
-  // Y se dice por que no esta el detalle, en vez de que parezca que falta.
-  ok(/pídemelo/.test(hoja), "y se dice que el detalle se puede pedir");
+  // Una sola tabla de prestamos, con PARA QUE era cada uno: es por donde el
+  // cliente los distingue ("el de la moto", no "el del 15/08").
+  ok((hoja.match(/<th>PRESTADO EL<\/th>/g) || []).length === 1,
+     "la tabla de prestamos esta escrita una sola vez");
+  ok(/<th>PARA QUÉ<\/th>/.test(hoja) && /pr\.nota\?P\(pr\.nota\)/.test(hoja),
+     "y lleva la descripcion que ella escribio al registrarlo");
+  ok(/\+tablaPagos\+tablaPrestamos\+bloques\+/.test(hoja),
+     "el papel va: pagos primero, luego los prestamos, luego el detalle");
   // La fecha del prestamo saca el año de su id, igual que la de los abonos.
   const datos = sinCom(sacarFuncion("estadoCuentaDe"));
   ok(/fecha:_ecFechaPago\(\{fecha:p\.d\|\|"",id:p\.id\}\)/.test(datos),
      "la fecha del prestamo tambien se normaliza");
+}
+
+// ── EL PAPEL SE ORGANIZA POR PAGOS, NO POR PRÉSTAMOS ─────────────────────
+//
+// Sus palabras: "él necesita saber a qué corresponde cada pago, cuándo se
+// creó el préstamo, cuándo lo pagó él... ese resumen solamente me dice la
+// fecha en que se creó el préstamo, la cantidad y ya".
+//
+// Y la distincion que ella subrayo: "una cosa es la fecha de creacion del
+// prestamo y otra la fecha que el pago".
+{
+  const sinCom = t => t.replace(/\/\/[^\n]*/g, "");
+  const hoja = sinCom(sacarFuncion("_htmlEstadoCuenta"));
+  const datos = sinCom(sacarFuncion("estadoCuentaDe"));
+  const pago = sinCom(sacarFuncion("_ecPago"));
+
+  // Los pagos salen sueltos, con a QUE prestamo pertenece cada uno.
+  ok(/out\.pagos\.push\(_ecPago\(p,a,mon,_etiqueta,"cuota",m\)\)/.test(datos),
+     "cada abono entra en la lista de pagos");
+  ok(/out\.pagos\.push\(_ecPago\(p,h,mon,_etiqueta,"mora",m\)\)/.test(datos),
+     "y la mora cobrada tambien, que es dinero que el entrego");
+  ok(/p\.notaDesc/.test(datos) && /_etiqueta=/.test(datos),
+     "y cada pago se lleva para que era el prestamo");
+
+  // ORDENADOS POR CUANDO PAGO. Es lo que ella pidio con todas las letras.
+  const orden = (datos.match(/out\.pagos\.sort\([\s\S]*?\}\);/) || [""])[0];
+  ok(/a\.iso!==b\.iso/.test(orden) && /a\.ts-b\.ts/.test(orden),
+     "ordenados por el dia del pago y, dentro del dia, por la hora");
+  ok(!/\.fecha<b\.fecha/.test(orden) && !/p\.d/.test(orden),
+     "y NUNCA por la fecha en que se creo el prestamo");
+
+  // La hora exacta vive dentro del id y nunca se perdio.
+  ok(/ts>=1\.4e12&&ts<=2\.5e12/.test(pago), "la hora sale del id, con su rango");
+  ok(/getHours\(\)/.test(pago), "y se enseña");
+
+  // Si pago tarde se dice, y cuanto: es la mitad de lo que el viene a
+  // comprobar. Sale de comparar el dia del pago con el de SU cuota.
+  ok(/_diasIso\(cu\.iso,iso\)/.test(pago), "se mide el atraso de cada pago");
+  ok(/días? tarde|día"\+\(g\.tarde!==1\?"s":""\)\+" tarde/.test(hoja) &&
+     /al día/.test(hoja), "y el papel lo dice, tarde o al dia");
+
+  // Agrupados por dia y con subtotal: asi "lo del dia de ayer" es un bloque.
+  ok(/_ecDiaLargo\(d\.iso\)/.test(hoja), "los pagos van agrupados por dia");
+  ok(/_ecSuma\(mapa\[g\.iso\]\.tot,g\.mon,g\.monto\)/.test(hoja),
+     "cada dia lleva su subtotal, por moneda");
+
+  // La mora pagada se dice en el resumen: si no, el cliente suma los pagos
+  // de abajo y no le cuadra con el "ya pago" de arriba. Medido: 1.200 arriba
+  // contra 1.221,50 de pagos listados.
+  ok(/y además "\+_ecMon\(ec\.moraCobrada\)\+" de mora/.test(hoja),
+     "el resumen dice la mora cobrada aparte, para que los pagos cuadren");
+  ok(/_ecSuma\(out\.moraCobrada,mon,/.test(datos), "y se calcula");
+
+  // El papel no puede volver a ser una tira: cada pago es UNA linea.
+  ok(/var EC_MAX_PAGOS=\d+;/.test(HTML), "hay un tope de pagos en el papel");
+  const topeP = parseInt((HTML.match(/var EC_MAX_PAGOS=(\d+);/) || [0, 0])[1], 10);
+  ok(topeP >= 10 && topeP <= 30, "y es un numero chico", "vale " + topeP);
+  ok(/out\.pagos=out\.pagos\.slice\(-EC_MAX_PAGOS\)/.test(datos),
+     "se enseñan los ULTIMOS, no los primeros");
+  ok(/Aquí van los últimos /.test(hoja) && /no caben en esta hoja/.test(hoja),
+     "y se dice cuantos quedaron fuera");
+  // Con tres renglones por pago, 40 pagos eran 4.500 px y volvia la tira.
+  ok(!/<br><span style='font-size:19px;color:"\+\(g\.tarde/.test(hoja),
+     "cada pago cabe en una linea");
+
+  // Las cuotas ya pagadas no se repiten abajo: estan arriba con su hora.
+  ok(/var _pend=pr\.cuotas\.filter\(function\(c\)\{return c\.falta!==null;\}\)/.test(hoja),
+     "el cronograma solo enseña las cuotas que le faltan");
+  ok(/CUOTAS QUE LE FALTAN/.test(hoja), "y lo dice en el titulo");
+
+  // Una cuota ya vencida no se anuncia como "proxima".
+  ok(/venció el "\+P\(prox\.fecha\)/.test(hoja),
+     "una cuota pasada se dice vencida, no «proxima»");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
