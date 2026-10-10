@@ -2042,7 +2042,7 @@ tr:last-child td{border-bottom:none}
    Todo sale de los nombres del tema: esta pantalla SÍ sigue al tema,
    porque no sale de la app — lo que sale fuera (el estado de cuenta) usa
    los suyos.                                                             */
-.pr-pant{padding-bottom:84px}
+.pr-pant{padding-bottom:104px}
 /* La barra no se va con el scroll: ella la consulta mientras recorre. */
 .pr-bar{position:sticky;top:0;z-index:20;background:var(--fondo-osc);
   margin:-4px -4px 0;padding:13px 16px 12px;border-radius:0 0 14px 14px}
@@ -2718,7 +2718,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261010_v182";
+var APP_VERSION = "20261010_v183";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -6773,6 +6773,23 @@ function togglePagarPrest(id){
     };
   }
   R();
+  // El formulario se dibuja DEBAJO del cronograma, así que en el teléfono
+  // nacía fuera de la pantalla: ella tocaba "Abonar" y lo único que veía
+  // cambiar era el botón, que pasaba a "Cancelar". Medido a 412 px: el
+  // botón en 615 y el formulario empezando en 786. Hay que llevarla hasta
+  // él, o el botón parece que no hace nada.
+  if(S._pagarPrestId) _irAlFormularioDeAbono();
+}
+// Va después del repintado —R() rehace el HTML, así que el elemento de
+// antes ya no existe— y lo centra, no lo pega al borde: pegado abajo se ve
+// el título y nada más.
+function _irAlFormularioDeAbono(){
+  setTimeout(function(){
+    var f=document.getElementById("pp-abono");
+    if(!f||!f.scrollIntoView) return;
+    try{ f.scrollIntoView({behavior:"smooth",block:"center"}); }
+    catch(e){ f.scrollIntoView(); }
+  },0);
 }
 // ── ARREGLO 55 (14/09/2026): la tasa de un abono se escribe como ella la
 // dice, no al reves ──────────────────────────────────────────────────────
@@ -12115,10 +12132,11 @@ function editComision(){
 function buscarClienteEE(val){
   var lista=document.getElementById("lista-cl-ee");
   if(!lista) return;
-  var ql=val.toLowerCase().trim();
+  // Sin tildes, igual que los otros cuatro buscadores de cliente.
+  var ql=_sinTildes(val);
   if(!ql){lista.style.display="none";return;}
   var results=clientesVivos().filter(function(cl){
-    return cl.nota==="EEUU" && cl.n.toLowerCase().includes(ql);
+    return cl.nota==="EEUU" && _sinTildes(cl.n).includes(ql);
   });
   if(!results.length){lista.style.display="none";return;}
   lista.innerHTML=results.map(function(cl){
@@ -17114,10 +17132,11 @@ function buscarClienteTx(val){
   S.tx.id=val;
   var lista=document.getElementById("tx-lista"),nm=document.getElementById("tx-nm");
   if(!lista)return;
-  var exacto=S.clientes.find(function(c){return c.cod.toLowerCase()===val.toLowerCase();});
+  var exacto=S.clientes.find(function(c){return _sinTildes(c.cod)===_sinTildes(val);});
   if(exacto){S.tx.cl=exacto.n;if(nm){nm.value=exacto.n;nm.style.background="var(--vd6-a)";nm.style.borderColor="var(--ok-ln)";}lista.style.display="none";return;}
-  var ql=val.toLowerCase();
-  var res=ql.length>=1?clientesVivos().filter(function(c){return c.nota!=="EEUU"&&(c.cod.toLowerCase().includes(ql)||c.n.toLowerCase().includes(ql));}):[];
+  // Sin tildes, igual que los otros tres buscadores de cliente.
+  var ql=_sinTildes(val);
+  var res=ql.length>=1?clientesVivos().filter(function(c){return c.nota!=="EEUU"&&(_sinTildes(c.cod).includes(ql)||_sinTildes(c.n).includes(ql));}):[];
   if(res.length&&ql.length>=1){
     lista.innerHTML=res.map(function(cl){return "<div onclick='selClTx(\""+_jsAttr(cl.cod)+"\",\""+_jsAttr(cl.n)+"\")' style='padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--ln2b);font-size:12px' onmouseover='this.style.background=\"var(--vd6-j3)\"' onmouseout='this.style.background=\"\"'><b style='color:var(--ok-ln)'>"+_escAud(cl.cod)+"</b> · "+_escAud(cl.n)+"</div>";}).join("");
     lista.style.display="block";
@@ -17138,10 +17157,14 @@ function buscarClientePr(val){
   S.nPr.cod=""; // ARREGLO 20: al escribir libre se limpia; se repone al elegir
   var lista=document.getElementById("pr-cl-lista");
   if(!lista)return;
-  var exacto=S.clientes.find(function(c){return c.cod.toLowerCase()===val.toLowerCase();});
+  var exacto=S.clientes.find(function(c){return _sinTildes(c.cod)===_sinTildes(val);});
   if(exacto){S.nPr.cod=exacto.cod;S.nPr.desc=exacto.n;lista.style.display="none";R();return;} // ARREGLO 20
-  var ql=val.toLowerCase();
-  var res=ql.length>=1?clientesVivos().filter(function(c){return c.cod.toLowerCase().indexOf(ql)!==-1||c.n.toLowerCase().indexOf(ql)!==-1;}):[];
+  // Sin tildes: escribía "maria" y no le salía MARÍA PÉREZ, así que parecía
+  // que la clienta no estaba dada de alta y acababa escribiendo el nombre a
+  // mano — que es justo lo que rompe la relación entre el préstamo y su
+  // ficha (ARREGLO 20).
+  var ql=_sinTildes(val);
+  var res=ql.length>=1?clientesVivos().filter(function(c){return _sinTildes(c.cod).indexOf(ql)!==-1||_sinTildes(c.n).indexOf(ql)!==-1;}):[];
   if(res.length&&ql.length>=1){
     lista.innerHTML=res.slice(0,8).map(function(cl){return "<div onclick='selClPr(\""+_jsAttr(cl.cod)+"\",\""+_jsAttr(cl.n)+"\")' style='padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--ln2b);font-size:12px' onmouseover='this.style.background=\"var(--vd6-j3)\"' onmouseout='this.style.background=\"\"'><b style='color:var(--ok-ln)'>"+_escAud(cl.cod)+"</b> · "+_escAud(cl.n)+"</div>";}).join("");
     lista.style.display="block";
@@ -17172,10 +17195,14 @@ function buscarClienteEditPr(val){
   S.nEditPr.desc=val;
   var lista=document.getElementById("pr-edit-cl-lista");
   if(!lista)return;
-  var exacto=S.clientes.find(function(c){return c.cod.toLowerCase()===val.toLowerCase();});
+  var exacto=S.clientes.find(function(c){return _sinTildes(c.cod)===_sinTildes(val);});
   if(exacto){S.nEditPr.desc=exacto.n;lista.style.display="none";R();return;}
-  var ql=val.toLowerCase();
-  var res=ql.length>=1?clientesVivos().filter(function(c){return c.cod.toLowerCase().indexOf(ql)!==-1||c.n.toLowerCase().indexOf(ql)!==-1;}):[];
+  // Sin tildes: escribía "maria" y no le salía MARÍA PÉREZ, así que parecía
+  // que la clienta no estaba dada de alta y acababa escribiendo el nombre a
+  // mano — que es justo lo que rompe la relación entre el préstamo y su
+  // ficha (ARREGLO 20).
+  var ql=_sinTildes(val);
+  var res=ql.length>=1?clientesVivos().filter(function(c){return _sinTildes(c.cod).indexOf(ql)!==-1||_sinTildes(c.n).indexOf(ql)!==-1;}):[];
   if(res.length&&ql.length>=1){
     lista.innerHTML=res.slice(0,8).map(function(cl){return "<div onclick='selClEditPr(\""+_jsAttr(cl.cod)+"\",\""+_jsAttr(cl.n)+"\")' style='padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--ln2b);font-size:12px' onmouseover='this.style.background=\"var(--vd6-j3)\"' onmouseout='this.style.background=\"\"'><b style='color:var(--ok-ln)'>"+_escAud(cl.cod)+"</b> · "+_escAud(cl.n)+"</div>";}).join("");
     lista.style.display="block";
@@ -17210,10 +17237,14 @@ function buscarClienteEditCC(val){
   S.nEditCC.cliente=val;
   var lista=document.getElementById("cc-edit-cl-lista");
   if(!lista)return;
-  var exacto=S.clientes.find(function(c){return c.cod.toLowerCase()===val.toLowerCase();});
+  var exacto=S.clientes.find(function(c){return _sinTildes(c.cod)===_sinTildes(val);});
   if(exacto){S.nEditCC.cliente=exacto.n;lista.style.display="none";R();return;}
-  var ql=val.toLowerCase();
-  var res=ql.length>=1?clientesVivos().filter(function(c){return c.cod.toLowerCase().indexOf(ql)!==-1||c.n.toLowerCase().indexOf(ql)!==-1;}):[];
+  // Sin tildes: escribía "maria" y no le salía MARÍA PÉREZ, así que parecía
+  // que la clienta no estaba dada de alta y acababa escribiendo el nombre a
+  // mano — que es justo lo que rompe la relación entre el préstamo y su
+  // ficha (ARREGLO 20).
+  var ql=_sinTildes(val);
+  var res=ql.length>=1?clientesVivos().filter(function(c){return _sinTildes(c.cod).indexOf(ql)!==-1||_sinTildes(c.n).indexOf(ql)!==-1;}):[];
   if(res.length&&ql.length>=1){
     lista.innerHTML=res.slice(0,8).map(function(cl){return "<div onclick='selClEditCC(\""+_jsAttr(cl.cod)+"\",\""+_jsAttr(cl.n)+"\")' style='padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--ln2b);font-size:12px' onmouseover='this.style.background=\"var(--vd6-j3)\"' onmouseout='this.style.background=\"\"'><b style='color:var(--ok-ln)'>"+_escAud(cl.cod)+"</b> · "+_escAud(cl.n)+"</div>";}).join("");
     lista.style.display="block";
@@ -18112,6 +18143,24 @@ function _rOfflineBlock(){
 function R(){
   var el=document.getElementById("app");
   if(!_hayConexionReal){ el.innerHTML=_rOfflineBlock(); return; }
+  // El buscador de Préstamos filtra MIENTRAS ella teclea, así que vive
+  // abierto bajo el dedo. Cualquier R() que caiga en medio —el aviso de
+  // arranque, una respuesta del servidor, el repaso de cada 5 minutos—
+  // rehace el HTML y se lleva el foco y el cursor a mitad de palabra. El
+  // texto no se pierde (se vuelve a dibujar desde S._filtroCliente); lo
+  // que se pierde es dónde estaba escribiendo. Se anota antes y se repone
+  // después. Acotado a ESE campo a propósito: R() se llama desde cien
+  // sitios y devolver el foco donde nadie lo pidió sería peor.
+  var _focoBusca=null;
+  try{
+    var _ae=document.activeElement;
+    if(_ae&&_ae.id==="pr-buscador") _focoBusca=_ae.selectionStart;
+  }catch(e){}
+  if(_focoBusca!==null) setTimeout(function(){
+    var c=document.getElementById("pr-buscador");
+    if(!c) return;
+    try{ c.focus(); c.setSelectionRange(_focoBusca,_focoBusca); }catch(e){ c.focus(); }
+  },0);
   // Borrador del formulario de préstamo — guardado local (no Firebase),
   // para que si el teléfono mata la app en segundo plano mientras esperas
   // que el cliente confirme, no se pierda lo ya escrito.
@@ -25966,7 +26015,7 @@ function estadoCuentaDe(clave){
   });
   if(!suyos.length) return null;
   var out={nombre:(suyos[0].desc||"").trim(),cod:suyos[0].cod||"",
-           prestamos:[],pagado:[],debe:[],mora:[],premio:[],sinTasa:[]};
+           prestamos:[],pagado:[],debe:[],mora:[],premio:[],sinTasa:[],saldados:0};
   suyos.forEach(function(p){
     var mon=p.mon||"USDT";
     var base=Math.round((parseFloat(p.monto||p.sal)||0)*100)/100;
@@ -25976,7 +26025,7 @@ function estadoCuentaDe(clave){
       abonado+=m; premio+=parseFloat(a.premio)||0;
       pagos.push({monto:Math.round(m*100)/100,
                   premio:Math.round((parseFloat(a.premio)||0)*100)/100,
-                  fecha:a.fecha||a.d||"",cuotaN:a.cuotaN||null,
+                  fecha:_ecFechaPago(a),cuotaN:a.cuotaN||null,
                   monedaPago:a.monedaPago||"",
                   montoPago:Math.round((parseFloat(a.montoPago)||0)*100)/100,
                   // La hora vive dentro del id (Date.now()), asi que el
@@ -25993,7 +26042,7 @@ function estadoCuentaDe(clave){
       (cuotasPendientesDe(p)||[]).forEach(function(x){
         if(x.cuota&&x.cuota.n===c.n) falta=x.falta;
       });
-      return {n:c.n,fecha:c.fecha,iso:c.iso,monto:Math.round((parseFloat(c.monto)||0)*100)/100,
+      return {n:c.n,fecha:_ecFecha(c.iso)||c.fecha,iso:c.iso,monto:Math.round((parseFloat(c.monto)||0)*100)/100,
               falta:falta,
               estado:(falta===null)?"pagada":((c.iso&&c.iso<td())?"vencida":"pendiente")};
     });
@@ -26002,6 +26051,7 @@ function estadoCuentaDe(clave){
       capital:Math.round((parseFloat(p.capital!==undefined?p.capital:base)||0)*100)/100,
       total:base,abonado:abonado,premio:premio,pendiente:pend,mora:mora,
       cuotas:cuotas,pagos:pagos,saldado:pend<=0.009&&mora<=0.009});
+    if(pend<=0.009&&mora<=0.009) out.saldados++;
     _ecSuma(out.pagado,mon,abonado);
     _ecSuma(out.debe,mon,pend);
     _ecSuma(out.mora,mon,mora);
@@ -26009,6 +26059,25 @@ function estadoCuentaDe(clave){
     if(!bkHayTasa(mon)&&out.sinTasa.indexOf(mon)===-1) out.sinTasa.push(mon);
   });
   return out;
+}
+// Las fechas del papel van TODAS en dd/mm/aa. Dentro conviven tres
+// formatos —los abonos guardan ISO (td()), las cuotas dd/mm o dd/mm/aa— y
+// en el papel salían mezcladas: "2026-08-15" al lado de "16/08/26". Un
+// documento que va al cliente no puede escribir dos fechas de dos maneras.
+function _ecFecha(f){
+  var t=String(f||"");
+  var m=t.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m?(m[3]+"/"+m[2]+"/"+m[1].slice(-2)):t;
+}
+// Un dd/mm sin año no se puede completar solo, pero la hora de un abono
+// vive dentro de su id (es un Date.now()), así que de ahí sale el año.
+// Fuera del rango creíble se deja como está, en vez de inventarse 1970.
+function _ecFechaPago(a){
+  var t=_ecFecha((a&&a.fecha)||(a&&a.d)||"");
+  if(!/^\d{2}\/\d{2}$/.test(t)) return t;
+  var ts=parseFloat(a&&a.id);
+  if(!(isFinite(ts)&&ts>=1.4e12&&ts<=2.5e12)) return t;
+  return t+"/"+String(new Date(ts).getFullYear()).slice(-2);
 }
 // Suma por moneda, sin convertir: sumar reales con bolívares da un número
 // que no existe (la misma regla que manda en Por cobrar y en el informe).
@@ -26028,6 +26097,9 @@ function _ecMon(lista){
 // el teléfono (la misma razón por la que el informe mide 768 fijos; medido
 // el 02/10, con el ancho de la pantalla se quedaban 77 celdas fuera).
 var EC_ANCHO=1080;
+// El nombre con el que la conocen sus clientes, que es el del flyer que
+// reciben — no la razón social, que es la que ve el contador.
+var EC_MARCA="RemesasYA";
 function _htmlEstadoCuenta(ec){
   var hoy=new Date();
   var fh=String(hoy.getDate()).padStart(2,"0")+"/"+String(hoy.getMonth()+1).padStart(2,"0")+"/"+hoy.getFullYear();
@@ -26083,15 +26155,19 @@ function _htmlEstadoCuenta(ec){
     "font-family:Segoe UI,system-ui,-apple-system,sans-serif;color:var(--ec-tinta);"+
     "padding:0 0 38px'>"+
     "<div style='background:var(--ec-cab);color:var(--ec-sobre);padding:30px 38px'>"+
-      "<div style='font-size:22px;letter-spacing:3px;opacity:.85'>ESTADO DE CUENTA</div>"+
+      "<div style='font-size:26px;font-weight:800;letter-spacing:1px'>"+P(EC_MARCA)+"</div>"+
+      "<div style='font-size:21px;letter-spacing:3px;opacity:.8;margin-top:6px'>ESTADO DE CUENTA</div>"+
       "<div style='font-size:44px;font-weight:800;margin-top:7px'>"+P(ec.nombre)+"</div>"+
       "<div style='font-size:21px;opacity:.85;margin-top:5px'>"+
         (ec.cod?"Código "+P(ec.cod)+" · ":"")+"Al "+fh+"</div>"+
     "</div>"+
     "<div style='display:flex;gap:16px;padding:26px 38px 0'>"+
       "<div style='flex:1;border:2px solid var(--ec-linea);border-radius:14px;padding:18px 20px'>"+
-        "<div style='font-size:20px;letter-spacing:1px;color:var(--ec-tinta2)'>YA PAGÓ</div>"+
+        "<div style='font-size:20px;letter-spacing:1px;color:var(--ec-tinta2)'>YA PAGÓ"+
+          (ec.saldados?" · TODOS SUS PRÉSTAMOS":"")+"</div>"+
         "<div style='font-size:34px;font-weight:800;color:var(--ec-ok);margin-top:6px;font-variant-numeric:tabular-nums'>"+_ecMon(ec.pagado)+"</div>"+
+        (ec.saldados?"<div style='font-size:19px;color:var(--ec-tinta2);margin-top:4px'>incluye "+
+          ec.saldados+" ya saldado"+(ec.saldados!==1?"s":"")+"</div>":"")+
       "</div>"+
       "<div style='flex:1;border:2px solid var(--ec-linea);border-radius:14px;padding:18px 20px'>"+
         "<div style='font-size:20px;letter-spacing:1px;color:var(--ec-tinta2)'>DEBE</div>"+
@@ -26109,7 +26185,8 @@ function _htmlEstadoCuenta(ec){
       // Cada moneda va en la suya y no se suman entre ellas. Si alguna vez
       // se juntan, el número de arriba deja de existir.
       "Cada monto está en la moneda en que se pactó el préstamo; no se suman entre monedas.<br>"+
-      "Documento generado por "+P(EMPRESA_RAZON||"Centro de Gestión")+" el "+fh+" · app "+APP_VERSION+
+      "Documento emitido por <b>"+P(EC_MARCA)+"</b> el "+fh+
+      "<br><span style='font-size:16px;opacity:.65'>"+P(EMPRESA_RAZON||"")+" · app "+APP_VERSION+"</span>"+
     "</div>"+
   "</div>";
 }
@@ -26135,7 +26212,7 @@ function _ecCanvas(ec){
 }
 function _ecNombreArchivo(ec){
   var hoy=new Date();
-  return "EstadoCuenta_"+(ec.nombre||"cliente").replace(/[^A-Za-z0-9]+/g,"_").slice(0,30)+
+  return "EstadoCuenta_"+_sinTildes(ec.nombre||"cliente").replace(/[^A-Za-z0-9]+/g,"_").slice(0,30)+
     "_"+hoy.getFullYear()+String(hoy.getMonth()+1).padStart(2,"0")+String(hoy.getDate()).padStart(2,"0")+".png";
 }
 function descargarEstadoCuenta(clave){
@@ -26220,9 +26297,72 @@ function _prIrA(vista,clave){
   var pn=document.querySelector(".panel");
   if(pn) pn.scrollTop=0;
 }
+// Cambiar de filtro o buscar NO repinta la pantalla (ARREGLO 32: repintar
+// rehace el HTML y cierra lo que haya bajo el dedo — y en el buscador se
+// lleva el foco y el cursor a mitad de palabra). Las filas están todas en
+// el DOM; aquí solo se decide cuál se ve.
 function _prFiltro(cual){
   S._prFiltroEst=cual||"todos";
-  R();
+  document.querySelectorAll(".pr-chip").forEach(function(c){
+    c.classList.toggle("on",c.getAttribute("data-chip")===S._prFiltroEst);
+  });
+  _prPintarFiltro();
+}
+function _prBuscar(txt,limpiar){
+  S._filtroCliente=txt||"";
+  var caja=document.getElementById("pr-buscador");
+  if(limpiar&&caja) caja.value="";
+  var bl=document.getElementById("pr-limpiar");
+  if(bl) bl.style.display=S._filtroCliente?"block":"none";
+  _prPintarFiltro();
+}
+// El nombre de cada chip, para poder decir CUÁL está puesto cuando la lista
+// se queda vacía por su culpa.
+var _PR_NOMBRE_CHIP={todos:"Todos",vencido:"Vencidos",semana:"Esta semana",
+                     aldia:"Al día",saldados:"Saldados"};
+function _prPintarFiltro(){
+  var est=S._prFiltroEst||"todos";
+  var q=_sinTildes(S._filtroCliente||"");
+  var filas=document.querySelectorAll(".pr-fila");
+  if(!filas.length) return;
+  var visibles=0, porEstado={todos:0,vencido:0,semana:0,aldia:0,saldados:0};
+  filas.forEach(function(f){
+    var fe=f.getAttribute("data-est")||"";
+    var nom=f.getAttribute("data-nom")||"";
+    var pasaTexto=!q||nom.indexOf(q)!==-1;
+    // Las cuentas de los chips se miden sobre lo que la BÚSQUEDA deja, para
+    // que un chip no prometa clientes que el buscador ya descartó.
+    if(pasaTexto){
+      if(fe==="saldado") porEstado.saldados++; else { porEstado[fe]++; porEstado.todos++; }
+    }
+    var pasaChip=(est==="saldados")?(fe==="saldado")
+                :(est==="todos")?(fe!=="saldado"):(fe===est);
+    var ver=pasaTexto&&pasaChip;
+    f.style.display=ver?"":"none";
+    if(ver) visibles++;
+  });
+  Object.keys(porEstado).forEach(function(k){
+    var b=document.querySelector("[data-cuenta='"+k+"']");
+    if(b) b.textContent=porEstado[k];
+  });
+  var vac=document.getElementById("pr-vacio");
+  if(!vac) return;
+  if(visibles){ vac.style.display="none"; return; }
+  vac.style.display="block";
+  var hayTexto=!!q, chipPuesto=est!=="todos";
+  // Decir qué es lo que está escondiendo, y dar el botón para quitarlo. El
+  // chip puede estar fuera de la pantalla a la derecha, así que "sin
+  // préstamos saldados" se leía como "este cliente no tiene nada".
+  vac.innerHTML=
+    (hayTexto&&chipPuesto
+      ? "Ningún cliente con «"+_escAud(S._filtroCliente)+"» dentro del filtro <b>"+
+        _escAud(_PR_NOMBRE_CHIP[est]||est)+"</b>.<br>"+
+        "<span onclick='_prFiltro(\"todos\")' style='color:var(--tit);font-weight:700;cursor:pointer;text-decoration:underline'>Buscar en todos</span>"
+      : hayTexto
+        ? "Ningún cliente con «"+_escAud(S._filtroCliente)+"».<br>"+
+          "<span onclick='_prBuscar(\"\",true)' style='color:var(--tit);font-weight:700;cursor:pointer;text-decoration:underline'>Borrar la búsqueda</span>"
+        : "Ningún cliente en <b>"+_escAud(_PR_NOMBRE_CHIP[est]||est)+"</b>.<br>"+
+          "<span onclick='_prFiltro(\"todos\")' style='color:var(--tit);font-weight:700;cursor:pointer;text-decoration:underline'>Ver todos</span>");
 }
 
 function rPrestamos(){
@@ -26257,15 +26397,12 @@ function rPrestamos(){
     if(base>0){var ab=(p.abonos||[]).reduce(function(s,x){return s+(parseFloat(x.monto)||0);},0);return ab>=base-0.001;}
     return (p.ent||0)>=(p.sal||0)&&(p.sal||0)>0;
   });
-  // Filtro por cliente. Compara SIN TILDES: ella escribe "jose" y el cliente
-  // está guardado como "JOSÉ", así que la búsqueda no lo encontraba y
-  // parecía que el préstamo no existía.
-  var _filtroPrest=_sinTildes(S._filtroCliente||"");
-  if(_filtroPrest){
-    var _coincide=function(p){return _sinTildes(p.desc||"").indexOf(_filtroPrest)!==-1;};
-    activos=activos.filter(_coincide);
-    pagados=pagados.filter(_coincide);
-  }
+  // El filtro por nombre NO se aplica aquí. Recortar las listas antes de
+  // sumar hacía que buscar "JOSE" dejara la barra de arriba diciendo
+  // «cartera $99,00» cuando su cartera son $2.149 — el titular de una
+  // pantalla no puede cambiar porque ella escriba en un buscador. Y de
+  // paso, un cliente filtrado dejaba de poder abrirse por su ficha.
+  // Ahora se esconden filas ya dibujadas, en _prPintarFiltro().
   // ── El total NO puede quedarse corto en silencio ──────────────────────
   //
   // Esto sumaba 0 cuando a una moneda le faltaba la tasa, y la tarjeta
@@ -26509,7 +26646,7 @@ function rPrestamos(){
           "</label>"+
         "</div>";
       }
-      abonoForm="<div style='background:var(--sup2c);border:1px solid var(--line);border-left:3px solid var(--posDeep);border-radius:10px;padding:13px;margin-top:11px'>"+
+      abonoForm="<div id='pp-abono' style='background:var(--sup2c);border:1px solid var(--line);border-left:3px solid var(--posDeep);border-radius:10px;padding:13px;margin-top:11px'>"+
         "<div style='font-size:11.5px;font-weight:800;color:var(--ink2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:11px'>Registrar abono · pendiente <b style='color:var(--ink)'>"+f2(saldoPend)+" "+monP+"</b>"+(_moraPend>0.009?" <span style='color:var(--mal)'>+ "+f2(_moraPend)+" de mora</span>":"")+"</div>"+
         "<div style='display:flex;flex-direction:column;gap:8px;margin-bottom:10px'>"+
           moraFormHtml+
@@ -27015,7 +27152,9 @@ function rPrestamos(){
         var e=mapa[k];
         var dias=e.prox?_diasIso(hoyIso,e.prox):null;
         var col=e.venc?"var(--mal)":"var(--avi-tx3)";
-        return "<div class='pr-urg-fila'>"+
+        // La fila entera lleva a la ficha, no solo el botón: tocar el
+        // nombre no hacía nada y es lo primero que se toca.
+        return "<div class='pr-urg-fila' style='cursor:pointer' onclick='_prIrA(\"ficha\","+JSON.stringify(k)+")'>"+
           "<div class='pr-ava' style='background:"+bkColorAvatar(e.nombre)+"'>"+bkIniciales(e.nombre)+"</div>"+
           "<div style='flex:1;min-width:0'>"+
             "<div class='pr-nom'>"+_escAud(e.nombre)+"</div>"+
@@ -27024,42 +27163,52 @@ function rPrestamos(){
               : (dias===0?"Vence hoy":dias===1?"Vence mañana":"Vence en "+dias+" días"))+"</div>"+
           "</div>"+
           "<div class='pr-amt' style='color:"+col+"'>"+bkPorMoneda(e.pares)+"</div>"+
-          "<button class='pr-cobrar' onclick='_prIrA(\"ficha\","+JSON.stringify(k)+")'>Cobrar</button>"+
+          "<button class='pr-cobrar' onclick='event.stopPropagation();_prIrA(\"ficha\","+JSON.stringify(k)+")'>Cobrar</button>"+
         "</div>";
       }).join("")+
     "</div>";
   }
 
   // ── La lista: una fila por cliente, densa ────────────────────────────
-  function listaHtml(){
-    var ver=(_fEst==="saldados")
-      ? gruposPag
-      : gruposPr.filter(function(g){return _fEst==="todos"||g.estado===_fEst;});
-    var filas=ver.length
-      ? ver.map(function(g){
-          var saldado=_fEst==="saldados";
-          var est=saldado?"saldado":g.estado;
-          var pct=saldado?100:_pctCubierto(g);
-          return "<div class='pr-fila' style='border-left-color:"+PR_COLOR[est]+"' "+
-                 "onclick='_prIrA(\"ficha\","+JSON.stringify(g.clave)+")'>"+
-            "<div class='pr-ava' style='background:"+(saldado?"var(--gr2-b)":bkColorAvatar(g.nombre))+"'>"+bkIniciales(g.nombre)+"</div>"+
-            "<div style='flex:1;min-width:0'>"+
-              "<div class='pr-nom'>"+_escAud(g.nombre)+"</div>"+
-              "<div class='pr-met'>"+(saldado
-                ? g.items.length+" préstamo"+(g.items.length!==1?"s":"")+" saldado"+(g.items.length!==1?"s":"")
-                : _escAud(g.nota))+"</div>"+
-              "<div class='pr-barra'><i style='width:"+Math.max(pct,2)+"%;background:"+PR_COLOR[est]+"'></i></div>"+
-            "</div>"+
-            "<div class='pr-amt' style='color:"+(est==="vencido"?"var(--mal)":"var(--tx)")+"'>"+
-              bkPorMoneda(g.pares)+
-              (saldado?"<small>cobrado</small>":"<small>"+(g.saldoUsdt>0?"≈ $"+f2(g.saldoUsdt)+(g.sinTasa?" parcial":""):"sin tasa")+"</small>")+
-            "</div>"+
-            "<div class='pr-fle'>›</div>"+
-          "</div>";
-        }).join("")
-      : "<div style='text-align:center;padding:24px;color:var(--ink3);font-size:12.5px'>"+
-        (_fEst==="saldados"?"Sin préstamos saldados todavía":"Ningún cliente en este filtro")+"</div>";
+  // ── La lista: TODAS las filas en el DOM, y el filtro se aplica encima ──
+  //
+  // Dos razones para dibujarlas todas y esconder con display, en vez de
+  // repintar:
+  //
+  // 1. Buscar tiene que filtrar MIENTRAS teclea. Llamar a R() en cada letra
+  //    rehace el HTML y destruye el input bajo el dedo (ARREGLO 32), que es
+  //    justo por lo que esto estaba en `onblur` y había que pulsar Enter.
+  //    Sin repintar, el campo conserva el foco y el cursor.
+  // 2. Antes la búsqueda filtraba `activos` ANTES de sumar, así que buscar
+  //    "JOSE" dejaba la barra de arriba diciendo «cartera $99,00» cuando su
+  //    cartera son $2.149. El titular de una pantalla no puede cambiar
+  //    porque ella escriba en un buscador.
+  function filaCliente(g,est){
+    var saldado=est==="saldado";
+    var pct=saldado?100:_pctCubierto(g);
+    return "<div class='pr-fila' data-est='"+est+"' data-nom='"+_escAud(_sinTildes(g.nombre))+"' "+
+           "style='border-left-color:"+PR_COLOR[est]+"' "+
+           "onclick='_prIrA(\"ficha\","+JSON.stringify(g.clave)+")'>"+
+      "<div class='pr-ava' style='background:"+(saldado?"var(--gr2-b)":bkColorAvatar(g.nombre))+"'>"+bkIniciales(g.nombre)+"</div>"+
+      "<div style='flex:1;min-width:0'>"+
+        "<div class='pr-nom'>"+_escAud(g.nombre)+"</div>"+
+        "<div class='pr-met'>"+(saldado
+          ? g.items.length+" préstamo"+(g.items.length!==1?"s":"")+" saldado"+(g.items.length!==1?"s":"")
+          : _escAud(g.nota))+"</div>"+
+        "<div class='pr-barra'><i style='width:"+Math.max(pct,2)+"%;background:"+PR_COLOR[est]+"'></i></div>"+
+      "</div>"+
+      "<div class='pr-amt' style='color:"+(est==="vencido"?"var(--mal)":"var(--tx)")+"'>"+
+        bkPorMoneda(g.pares)+
+        (saldado?"<small>cobrado</small>":"<small>"+(g.saldoUsdt>0?"≈ $"+f2(g.saldoUsdt)+(g.sinTasa?" parcial":""):"sin tasa")+"</small>")+
+      "</div>"+
+      "<div class='pr-fle'>›</div>"+
+    "</div>";
+  }
 
+  function listaHtml(){
+    var filas=gruposPr.map(function(g){return filaCliente(g,g.estado);}).join("")+
+              gruposPag.map(function(g){return filaCliente(g,"saldado");}).join("");
+    var vacio=(!gruposPr.length&&!gruposPag.length);
     return "<div class='pr-pant'>"+
       // Barra fija: el único número grande de la pantalla, y no se va con
       // el scroll — ella la consulta mientras recorre la lista.
@@ -27074,15 +27223,26 @@ function rPrestamos(){
       "</div>"+
       bloqueUrgente()+
       "<div class='pr-chips'>"+_CHIPS.map(function(c){
-        return "<span class='pr-chip"+(_fEst===c[0]?" on":"")+"' onclick='_prFiltro("+JSON.stringify(c[0])+")'>"+
-               c[1]+" · "+(_cuenta[c[0]]||0)+"</span>";
+        return "<span class='pr-chip"+(_fEst===c[0]?" on":"")+"' data-chip='"+c[0]+"' "+
+               "onclick='_prFiltro("+JSON.stringify(c[0])+")'>"+
+               c[1]+" · <b data-cuenta='"+c[0]+"'>"+(_cuenta[c[0]]||0)+"</b></span>";
       }).join("")+"</div>"+
       "<div class='pr-busca'>"+
-        "<input type='text' placeholder='🔍 Buscar cliente…' value='"+_escAud(S._filtroCliente||"")+"' "+
-          "oninput='S._filtroCliente=this.value' onblur='R()' onkeyup='if(event.key===\"Enter\")R()'>"+
-        (S._filtroCliente?"<button onclick='S._filtroCliente=\"\";R()'>✕</button>":"")+
+        // Filtra al teclear, SIN repintar: _prBuscar esconde filas, no rehace
+        // la pantalla. Por eso el campo no pierde el foco.
+        "<input id='pr-buscador' type='text' placeholder='🔍 Buscar cliente…' "+
+          "value='"+_escAud(S._filtroCliente||"")+"' autocomplete='off' "+
+          "oninput='_prBuscar(this.value)'>"+
+        "<button id='pr-limpiar' style='display:"+(S._filtroCliente?"block":"none")+
+          "' onclick='_prBuscar(\"\",true)'>✕</button>"+
       "</div>"+
-      "<div class='pr-lista'>"+filas+"</div>"+
+      "<div class='pr-lista'>"+filas+
+        // El mensaje de "no hay nada" dice POR QUÉ no hay nada y ofrece
+        // deshacerlo: con el chip fuera de pantalla a la derecha, "sin
+        // préstamos saldados" parecía que el cliente no tenía nada.
+        "<div id='pr-vacio' style='display:none;text-align:center;padding:22px 16px;color:var(--ink3);font-size:12.5px'></div>"+
+      "</div>"+
+      (vacio?"<div style='text-align:center;padding:26px;color:var(--ink3);font-size:13px'>Aún no tienes préstamos. Toca «Nuevo préstamo» para registrar el primero.</div>":"")+
       (_carteraParcial?"<div class='pr-aviso'>⚠ Falta la tasa de "+_escAud(_carteraSinTasa.join(" y "))+
         ": ese dinero NO está sumado al total</div>":"")+
       "<button class='pr-fab' onclick='_prIrA(\"nuevo\")'>➕  Nuevo préstamo</button>"+
@@ -27129,7 +27289,7 @@ function rPrestamos(){
         "</div>"+
         (gA?"<div class='pr-fbig'>"+bkPorMoneda(gA.pares)+"</div>"+
             "<div class='pr-fsub'>"+(gA.saldoUsdt>0?"≈ $"+f2(gA.saldoUsdt)+" USDT"+(gA.sinTasa?" (parcial)":""):"sin tasa USDT")+
-            " · "+pct+"% cubierto</div>"+
+            " · "+pct+"% cubierto de "+(gA.items.length===1?"este préstamo":"sus préstamos activos")+"</div>"+
             (gA.vencidos?"<div class='pr-fmal'>⚠ "+_escAud(gA.nota)+"</div>":"")
           :"<div class='pr-fbig'>Sin deuda</div>")+
       "</div>"+
@@ -27254,12 +27414,31 @@ function rPrestamos(){
                   "Lo sano es prestar un monto mayor, juntarlo con otro préstamo del mismo cliente, o cobrar una comisión fija en vez de un porcentaje."+
                 "</div>"
               :"")+
-            "<div style='font-size:11.5px;color:"+(_pctActual<sg.piso?"var(--mal)":(_pctActual>sg.max?"var(--am3-k)":"var(--vd2-a)"))+";font-weight:700;margin-top:7px'>"+
-              (_pctActual<=0?"Escribe un % abajo para comparar."
-               :_pctActual<sg.piso?"⚠️ El "+_pctActual+"% que tienes puesto está por DEBAJO de tu punto de equilibrio: con este préstamo pierdes."
-               :_pctActual>sg.max?"⚠️ El "+_pctActual+"% que tienes puesto está por encima de lo que este cliente necesita — te arriesgas a que se vaya."
-               :"✅ El "+_pctActual+"% que tienes puesto está en el rango adecuado para este cliente.")+
-            "</div>"+
+            // La palabra "rango" significaba DOS cosas en la misma tarjeta:
+            // arriba era sg.min–sg.max y aquí era sg.piso–sg.max. Con piso
+            // 6,3 y rango 9,3–12,3, un 7% salía en verde y "en el rango
+            // adecuado" — fuera del rango que la propia tarjeta acababa de
+            // enseñar. Son CUATRO estados, no tres: por debajo del piso
+            // pierdes, entre el piso y el rango no pierdes pero cobras por
+            // debajo de lo sugerido, dentro del rango está bien, y por
+            // encima te arriesgas. El del medio es ámbar, no verde: el
+            // color se lee antes que la letra.
+            (function(){
+              var _est=_pctActual<=0?"vacio"
+                      :_pctActual<sg.piso?"pierdes"
+                      :_pctActual<sg.min?"flojo"
+                      :_pctActual>sg.max?"alto":"bien";
+              var _col={vacio:"var(--tx3)",pierdes:"var(--mal)",flojo:"var(--am3-k)",
+                        alto:"var(--am3-k)",bien:"var(--vd2-a)"}[_est];
+              var _txt={
+                vacio:"Escribe un % abajo para comparar.",
+                pierdes:"⚠️ El "+_pctActual+"% que tienes puesto está por DEBAJO de tu punto de equilibrio ("+sg.piso+"%): con este préstamo pierdes.",
+                flojo:"⚠️ El "+_pctActual+"% no te hace perder (el piso es "+sg.piso+"%), pero está por debajo del "+sg.min+"% que sugiere para este cliente.",
+                alto:"⚠️ El "+_pctActual+"% que tienes puesto está por encima de lo que este cliente necesita — te arriesgas a que se vaya.",
+                bien:"✅ El "+_pctActual+"% que tienes puesto está dentro del "+sg.min+"–"+sg.max+"% sugerido para este cliente."
+              }[_est];
+              return "<div style='font-size:11.5px;color:"+_col+";font-weight:700;margin-top:7px'>"+_txt+"</div>";
+            })()+
             (function(){
               var lim=limiteCredito(f.desc,f.cod,mon);
               if(lim.tope===null) return "<div style='font-size:11.5px;color:var(--avi-tx2);margin-top:7px'>Sin tasa de "+mon+" para calcular el límite de crédito.</div>";
@@ -27425,6 +27604,10 @@ function rPrestamos(){
   // cualquiera.
   if(S._prVista==="nuevo") return modalCaptura+entradaCaptura+formHtml;
   if(S._prVista==="ficha") return modalCaptura+entradaCaptura+fichaHtml();
+  // El filtro se aplica DESPUÉS de que el HTML esté en la página: las filas
+  // se dibujan todas y _prPintarFiltro decide cuáles se ven. Sin esto, al
+  // volver de una ficha se verían todas aunque ella tuviera un chip puesto.
+  setTimeout(_prPintarFiltro,0);
   return modalCaptura+entradaCaptura+listaHtml();
 }
 

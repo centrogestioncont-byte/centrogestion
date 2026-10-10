@@ -6899,13 +6899,144 @@ console.log("\n— FASE 2: la cuenta madre —");
   // prestamo no existe.
   ok(/function _sinTildes\(t\)\{/.test(HTML), "hay una forma de comparar sin tildes");
   ok(/normalize\("NFD"\)/.test(sacarFuncion("_sinTildes")), "y quita la tilde de verdad");
-  ok(/var _filtroPrest=_sinTildes\(/.test(pr) && /_sinTildes\(p\.desc\|\|""\)/.test(pr),
-     "y el buscador de prestamos la usa en los dos lados");
+  ok(/var q=_sinTildes\(S\._filtroCliente/.test(sinCom(sacarFuncion("_prPintarFiltro"))),
+     "lo tecleado se compara sin tildes");
+  ok(/data-nom='"\+_escAud\(_sinTildes\(g\.nombre\)\)/.test(pr),
+     "y el nombre de la fila tambien, o la comparacion falla por un lado");
 
   // "mensual" + "s" daba "mensuals". Las tres frecuencias acaban en -l.
   ok(/function _plFrec\(f\)\{/.test(HTML), "el plural de la frecuencia esta en un sitio");
   ok(!/frecuencia\+"s"/.test(HTML) && !/\|\|"mensual"\)\+"s\)"/.test(HTML),
      "y ya no queda ningun «mensuals»");
+}
+
+// ── LO QUE SALIO DE PROBARLA CON SUS DATOS ───────────────────────────────
+{
+  const sinCom = t => t.replace(/\/\/[^\n]*/g, "");
+  const pr = sinCom((HTML.match(/function rPrestamos\(\)\{[\s\S]*?\n\}/) || [""])[0]);
+
+  // 1. Buscar sin tildes en los CINCO buscadores de cliente, no solo en el
+  //    que salto. Escribia "maria" y no le salia MARIA PEREZ, asi que
+  //    parecia que no estaba dada de alta y escribia el nombre a mano —
+  //    que es lo que rompe la relacion prestamo↔ficha (ARREGLO 20).
+  ["buscarClienteTx", "buscarClientePr", "buscarClienteEditPr",
+   "buscarClienteEditCC", "buscarClienteEE"].forEach(function(f){
+    const c = sinCom(sacarFuncion(f));
+    ok(/_sinTildes\(val\)/.test(c) && !/val\.toLowerCase\(\)/.test(c),
+       f + " compara sin tildes");
+  });
+
+  // 2. Al tocar Abonar, el formulario tiene que quedar A LA VISTA. Nace
+  //    debajo del cronograma: medido a 412px, el boton en 615 y el
+  //    formulario en 786, asi que en el telefono lo unico que ella veia
+  //    cambiar era el boton pasando a "Cancelar".
+  const tg = sinCom(sacarFuncion("togglePagarPrest"));
+  ok(/if\(S\._pagarPrestId\) _irAlFormularioDeAbono\(\);/.test(tg),
+     "al abrir el abono se va hasta el formulario");
+  const ir = sinCom(sacarFuncion("_irAlFormularioDeAbono"));
+  ok(/setTimeout\(/.test(ir), "despues del repintado, no antes (R() rehace el HTML)");
+  ok(/block:"center"/.test(ir), "y lo centra, no lo pega al borde de abajo");
+  ok(/id='pp-abono'/.test(pr), "y el formulario tiene a donde ir");
+
+  // 3. "Rango" significaba DOS cosas en la misma tarjeta: arriba sg.min–sg.max
+  //    y en el veredicto sg.piso–sg.max. Con piso 6,3 y rango 9,3–12,3, un 7%
+  //    salia en VERDE y "en el rango adecuado".
+  ok(/_pctActual<sg\.min\?"flojo"/.test(pr),
+     "hay un estado entre el piso y el rango sugerido");
+  ok(/flojo:"var\(--am3-k\)"/.test(pr), "y es ambar, no verde");
+  ok(/dentro del "\+sg\.min\+"–"\+sg\.max\+"% sugerido/.test(pr),
+     "y el ✅ dice dentro de QUE rango esta");
+  ok(!/:"✅ El "\+_pctActual\+"% que tienes puesto está en el rango adecuado/.test(pr),
+     "ya no queda el veredicto de tres estados");
+
+  // 4. Buscar filtra MIENTRAS teclea, y sin repintar: R() en cada letra
+  //    rehace el HTML y se lleva el foco y el cursor (ARREGLO 32).
+  ok(/oninput='_prBuscar\(this\.value\)'/.test(pr), "el buscador filtra al teclear");
+  const bu = sinCom(sacarFuncion("_prBuscar"));
+  const pi = sinCom(sacarFuncion("_prPintarFiltro"));
+  const pint = pi;
+  ok(!/\bR\(\)/.test(bu) && !/\bR\(\)/.test(pi),
+     "y no repinta: el campo conserva el foco y el cursor");
+  ok(/f\.style\.display=ver\?"":"none"/.test(pi), "esconde filas, no las rehace");
+  const fi = sinCom(sacarFuncion("_prFiltro"));
+  ok(!/\bR\(\)/.test(fi), "cambiar de chip tampoco repinta");
+  // Y si R() cae en medio por otra razon (el aviso de arranque a los 2s, una
+  // respuesta del servidor, el repaso de cada 5 minutos), el cursor vuelve a
+  // su sitio: el texto se redibuja desde el estado, pero el sitio donde
+  // estaba escribiendo no.
+  const rr = sinCom(sacarFuncion("R"));
+  ok(/_ae\.id==="pr-buscador"/.test(rr), "R() anota si estaba escribiendo en el buscador");
+  ok(/setSelectionRange\(_focoBusca,_focoBusca\)/.test(rr),
+     "y le devuelve el cursor donde lo tenia");
+  // Y la barra de arriba deja de cambiar con la busqueda: antes filtraba
+  // `activos` ANTES de sumar, asi que buscar "JOSE" dejaba la cartera en
+  // $99,00 cuando son $2.149. El titular no puede moverlo un buscador.
+  ok(!/_sinTildes\(S\._filtroCliente/.test(pr),
+     "rPrestamos no compara lo tecleado: eso vive en _prPintarFiltro");
+  ok((pint.match(/_sinTildes\(S\._filtroCliente/g) || []).length === 1,
+     "y alli se compara una sola vez");
+  ok(!/activos=activos\.filter/.test(pr) && !/pagados=pagados\.filter/.test(pr),
+     "y ninguna lista se recorta antes de sumar la cartera");
+
+  // 5. Con un chip puesto, la lista vacia decia "sin saldados" y el chip
+  //    estaba fuera de pantalla a la derecha: parecia que el cliente no
+  //    tenia nada.
+  ok(/dentro del filtro <b>/.test(pi), "el mensaje de vacio dice QUE filtro esta puesto");
+  ok(/Buscar en todos|Ver todos/.test(pi), "y da el botón para quitarlo");
+
+  // 6. Tocar el nombre en el bloque rojo no hacia nada.
+  ok(/class='pr-urg-fila' style='cursor:pointer' onclick='_prIrA/.test(pr),
+     "la fila entera del bloque rojo lleva a la ficha");
+  ok(/pr-cobrar' onclick='event\.stopPropagation\(\)/.test(pr),
+     "y el boton no dispara las dos cosas");
+
+  // 7. El boton flotante tapaba la ultima fila. Mide 50 y vive a 16 del
+  //    borde, asi que el hueco tiene que pasar de 66.
+  const hueco = (HTML.match(/\.pr-pant\{padding-bottom:(\d+)px\}/) || [0, 0])[1];
+  ok(parseInt(hueco, 10) > 66, "el hueco de abajo deja ver la ultima fila", hueco + "px");
+}
+
+// ── EL PAPEL QUE VE EL CLIENTE ───────────────────────────────────────────
+{
+  const sinCom = t => t.replace(/\/\/[^\n]*/g, "");
+  const hoja = sinCom(sacarFuncion("_htmlEstadoCuenta"));
+  const datos = sinCom(sacarFuncion("estadoCuentaDe"));
+
+  // El cliente la conoce como RemesasYA, que es el nombre del flyer que
+  // recibe. EMPRESA_RAZON es la razon social, la que ve el contador.
+  ok(/var EC_MARCA="RemesasYA";/.test(HTML), "el papel lleva el nombre que el cliente conoce");
+  ok((hoja.match(/P\(EC_MARCA\)/g) || []).length >= 2,
+     "y la hoja lo lleva arriba y en el pie");
+  ok(/Documento emitido por <b>"\+P\(EC_MARCA\)/.test(hoja),
+     "el pie dice que lo emite ella, con el nombre que el cliente conoce");
+  // El CNPJ NO va en el papel del cliente: decision suya.
+  ok(!/EMPRESA_CNPJ/.test(hoja), "y el CNPJ no sale en el papel del cliente");
+  // La version se queda: es lo unico que dice que copia de la app hizo un
+  // papel que salio mal, y eso ya costo dos diagnosticos a ciegas.
+  ok(/APP_VERSION/.test(hoja), "la version sigue dentro del papel");
+
+  // "Ya pago" suma TODOS sus prestamos, incluido el saldado, mientras la
+  // ficha enseña el % de los activos. Los dos son correctos; lo que faltaba
+  // era que dijeran de que hablan.
+  ok(/TODOS SUS PRÉSTAMOS/.test(hoja), "el papel dice que suma todos sus prestamos");
+  ok(/incluye "\+\s*\n?\s*ec\.saldados\+" ya saldado/.test(hoja.replace(/\s+/g, " ")) ||
+     /incluye "\+ec\.saldados\+" ya saldado/.test(hoja.replace(/\s+/g, "")),
+     "y cuantos de ellos ya estan saldados");
+  ok(/out\.saldados\+\+/.test(datos), "y se cuentan");
+  const pr2 = sinCom((HTML.match(/function rPrestamos\(\)\{[\s\S]*?\n\}/) || [""])[0]);
+  ok(/% cubierto de "\+\(gA\.items\.length===1\?"este préstamo":"sus préstamos activos"\)/.test(pr2),
+     "y la ficha dice de que prestamo es su porcentaje");
+
+  // Dentro conviven tres formatos de fecha y en el papel salian mezcladas.
+  ok(/function _ecFechaPago\(a\)\{/.test(HTML), "las fechas de los pagos se normalizan");
+  ok(/fecha:_ecFechaPago\(a\)/.test(datos), "y se usa");
+  ok(/fecha:_ecFecha\(c\.iso\)\|\|c\.fecha/.test(datos),
+     "las de las cuotas salen del ISO, que si lleva el año");
+
+  // El nombre del archivo se comia las tildes: EstadoCuenta_JOS_RODR_GUEZ.
+  const nom = sinCom(sacarFuncion("_ecNombreArchivo"));
+  ok(/_sinTildes\(ec\.nombre/.test(nom),
+     "el nombre del archivo quita la tilde antes de limpiar, no despues");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
