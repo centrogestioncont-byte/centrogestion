@@ -6631,5 +6631,54 @@ console.log("\n— FASE 2: la cuenta madre —");
      "y sigue abierto si ya empezo a llenarlo (si no, se cierra al teclear)");
 }
 
+
+// ── TANDA 1: que los números no mientan ──────────────────────────────────
+//
+// Los tres salieron de una lectura ciega de la pestaña por otro agente, y
+// los tres se verificaron contra el código antes de tocar nada.
+{
+  const sinCom = t => t.replace(/\/\/[^\n]*/g, "");
+  const pr = sinCom((HTML.match(/function rPrestamos\(\)\{[\s\S]*?\n\}/) || [""])[0]);
+
+  // 1. La cartera NO puede quedarse corta en silencio. Sumaba 0 cuando a una
+  //    moneda le faltaba la tasa y la tarjeta grande lo pintaba como total
+  //    completo. Medido: $2.149 con 586,67 USD fuera.
+  ok(/_carteraSinTasa\.push\(mon\)/.test(pr),
+     "la cartera APUNTA la moneda que no pudo convertir");
+  ok(/_carteraParcial\?"<span[^"]*>parcial/.test(pr),
+     "y la tarjeta grande dice «parcial», no solo el panel de abajo");
+  ok(/Falta la tasa de "\+_escAud\(_carteraSinTasa\.join/.test(pr),
+     "diciendo QUE moneda falta, no solo que falta algo");
+
+  // 2. La agenda contaba PRESTAMOS, no cuotas: un cliente con tres cuotas
+  //    vencidas salia una vez y por el monto de una. Medido: 240 de 720.
+  const cp = sinCom((HTML.match(/function cuotasPendientesDe\(p\)\{[\s\S]*?\n\}/) || [""])[0]);
+  ok(cp.length > 150, "existe la lista de TODAS las cuotas pendientes");
+  ok(/salida\.push\(\{cuota:c,falta:/.test(cp),
+     "y cada una dice lo que le FALTA, no la cuota entera");
+  // El mismo dato no se calcula en dos sitios: proximaCuotaPendiente lee de
+  // aqui, o un dia dicen cosas distintas sobre la misma deuda.
+  const pcp = sinCom((HTML.match(/function proximaCuotaPendiente\(p\)\{[\s\S]*?\n\}/) || [""])[0]);
+  ok(/cuotasPendientesDe\(p\)/.test(pcp),
+     "proximaCuotaPendiente lee de ahi, no tiene su propia cuenta");
+  ok(/cuotasPendientesDe\(p\)\.forEach/.test(pr),
+     "y la agenda mete una linea por CUOTA, no por prestamo");
+  ok(/Vencido: "\+bkPorMoneda\(pares\)/.test(pr),
+     "la agenda dice CUANTO suma lo vencido, por moneda y sin convertir");
+
+  // 3. El premio por adelantar se guarda como un abono mas. La contabilidad
+  //    esta bien (no cuenta como ganancia), pero la pantalla decia "Abonado
+  //    241" de un cliente que entrego 236.
+  // Acotado a rPrestamos: en Por Cobrar sigue diciendo "Abonado" y ahi es
+  // correcto, porque esos abonos no llevan premio y no se infla nada.
+  // Prohibirlo en TODO el archivo era pasarse, y la guardia fallaba con el
+  // codigo bueno.
+  ok(/Cubierto: <b>/.test(pr), "la tarjeta del prestamo dice «cubierto»");
+  ok(!/Abonado: <b>/.test(pr), "y no llama «abonado» a lo que no se pago");
+  ok(/es descuento por pagar adelantado/.test(HTML) &&
+     /Pag[oó] "\+f2\(totalAbonado-_premio\)/.test(HTML),
+     "y se dice cuanto entro de verdad a la cuenta");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
