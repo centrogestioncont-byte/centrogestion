@@ -6466,5 +6466,170 @@ console.log("\n— FASE 2: la cuenta madre —");
   });
 }
 
+
+// ── Filtrar por operador ──────────────────────────────────────────────────
+//
+// Sus palabras: "me gustaría que agregaras algo donde yo pueda filtrar por
+// operador… para yo poder saber todas las actividades de cada operador".
+{
+  const sinCom = t => t.replace(/\/\/[^\n]*/g, "");
+  const ops = sinCom((HTML.match(/function rTblUnificada\(\)\{[\s\S]*?\n\}/) || [""])[0]);
+
+  ok(/por:""/.test(HTML), "el filtro por operador tiene su sitio en S._ops");
+  ok(/S\._ops\.por=this\.value/.test(ops), "y su desplegable en Operaciones");
+
+  // Por quien la CREO, no por quien la toco: la pregunta es "que registro
+  // Carlos", y una remesa que ella corrigio despues la registro Carlos igual.
+  ok(/f\.por==="__sin" \? !r\._por : r\._por===f\.por/.test(ops),
+     "filtra por quien la CREO (_por), no por quien la toco");
+  ok(/okQ&&okSrc&&okRuta&&okBanco&&okPor/.test(ops),
+     "y se suma a los filtros que ya habia, sin sustituir ninguno");
+
+  // Las de antes del sello se NOMBRAN. Escondiendolas, la suma de los
+  // operadores no da el total y parece que faltan remesas.
+  // Anclado en lo que lo DISPARA, no en el texto: con el texto a secas la
+  // prueba negativa pasaba con la opcion ya apagada. Va la sexta vez.
+  ok(/\(_sinSello\?"<option value='__sin'/.test(ops) &&
+     /Sin registrar qui[eé]n/.test(ops),
+     "las de antes del sello salen nombradas cuando las hay, no escondidas");
+
+  // Un desplegable con una sola opcion no es un filtro, es un adorno.
+  ok(/\(_quienes\.length\|\|_sinSello\)\?/.test(ops),
+     "el desplegable solo sale si hay a quien filtrar");
+
+  // Sale de los registros, no de la lista de usuarios: asi aparece quien de
+  // verdad registro algo aunque ya no tenga usuario.
+  ok(/base\.forEach\(function\(r\)\{\s*if\(!r\._por\)/.test(ops),
+     "quien aparece sale de los registros, no de la lista de usuarios");
+
+  // Limpiar filtros tiene que limpiarlo tambien, o queda un filtro puesto
+  // que no se ve en ninguna parte.
+  ok(/banco:\\"\\",por:\\"\\"/.test(HTML), "y «Limpiar filtros» lo limpia");
+}
+
+// ── Qué ha hecho cada persona (Auditoría) ────────────────────────────────
+{
+  const sinCom = t => t.replace(/\/\/[^\n]*/g, "");
+
+  ok(/id='aud-quien'/.test(HTML),
+     "la Auditoria filtra por PERSONA");
+  ok(!/id='aud-role'/.test(HTML),
+     "y ya no por rol: dos personas con el mismo rol no se distinguian");
+  ok(/q\.push\("usuario="\+encodeURIComponent\(qF\)\)/.test(HTML),
+     "el filtro va en la consulta, no se filtran 300 entradas aqui");
+
+  const pintar = sinCom((HTML.match(/function _pintarResumenAudit\(\)\{[\s\S]*?\n\}/) || [""])[0]);
+  ok(pintar.length > 200, "existe la pantalla del resumen");
+  ok(/_escAud\(p\.usuario\)/.test(pintar),
+     "el nombre se escapa al pintarlo (ARREGLO 102)");
+  ok(/a\[0\]==="BORRAR"/.test(pintar),
+     "los borrados van PRIMERO: es lo que hay que ver cuando algo no cuadra");
+  ok(/d\.cortado/.test(pintar),
+     "y si el resumen esta cortado se dice: un numero cortado que parece completo es peor");
+  ok(/_NOMBRE_ACCION/.test(HTML) && /BORRAR:"borrados"/.test(HTML),
+     "las acciones se enseñan con palabras, no con la clave interna");
+
+  // El resumen no depende de los filtros de abajo: volver a pedirlo en cada
+  // cambio seria recorrer la coleccion por nada.
+  const cargar = sinCom((HTML.match(/function _cargarAudit\(\)\{[\s\S]*?\n\}/) || [""])[0]);
+  ok(/if\(!_AUD_RESUMEN\) _cargarResumenAudit\(\)/.test(cargar),
+     "el resumen se pide una vez, no en cada cambio de filtro");
+}
+
+
+// ── Los pagos de un préstamo saldado ─────────────────────────────────────
+//
+// Sus palabras: "no hay forma de revisar los pagos ya realizados de cada
+// cliente y que se ordenen según el tiempo que pagaron… tampoco sale la
+// información completa, la mora, en qué moneda, cuenta, cuánto pagó".
+//
+// Nada hubo que empezar a guardarlo: ya estaba todo. Lo que faltaba era
+// enseñarlo.
+{
+  const sinCom = t => t.replace(/\/\/[^\n]*/g, "");
+  const pr = sinCom((HTML.match(/function rPrestamos\(\)\{[\s\S]*?\n\}/) || [""])[0]);
+
+  // LA HORA NUNCA SE PERDIO: `fecha` es solo el dia, pero el id de cada pago
+  // es Date.now(). Sin esto, los tres pagos que haga un cliente el mismo dia
+  // salen en un orden cualquiera — que es justo lo que no podia revisar.
+  ok(/function _tsDePago\(x\)\{/.test(pr), "la hora de un pago sale de su id");
+  const ts = sinCom((pr.match(/function _tsDePago\(x\)\{[\s\S]*?\n  \}/) || [""])[0]);
+  // El mismo rango que _tsDeUid: un id que no sea una hora creible se
+  // descarta en vez de inventarse una fecha de 1970.
+  ok(/1\.4e12/.test(ts) && /2\.5e12/.test(ts),
+     "y un id que no es una hora creible se descarta, no se inventa");
+
+  const pagos = sinCom((pr.match(/function _pagosDe\(p\)\{[\s\S]*?\n  \}/) || [""])[0]);
+  ok(pagos.length > 100, "existe la lista de pagos");
+  ok(/p\.abonos/.test(pagos) && /mora\|\|\{\}\)\.historial/.test(pagos),
+     "junta los abonos y la MORA en una sola lista");
+  ok(/return tb-ta/.test(pagos), "ordenada por cuando se pago, lo mas reciente arriba");
+
+  const html = sinCom((pr.match(/function _htmlPagosDe\(p\)\{[\s\S]*?\n  \}/) || [""])[0]);
+  // Anclado en lo que se PINTA, no en la variable: quitando solo la salida,
+  // la asignacion seguia ahi y la guardia pasaba con la cuenta ya invisible.
+  ok(/_escAud\(nombreCuentaEg\(x\.cuentaId\)\)/.test(html) &&
+     /🏦 "\+cta\+"/.test(html),
+     "dice a que CUENTA entro, escapada ahi mismo (ARREGLO 102) y pintada");
+  // Igual: x.monedaPago y x.montoPago viven en dos asignaciones que la
+  // sabotaje no tocaba. Lo que importa es que SALGA.
+  ok(/f2\(cash\)\+" "\+_escAud\(monPago\)/.test(html),
+     "y pinta cuanto pago de verdad, en que MONEDA");
+  ok(/var distinta=/.test(html),
+     "solo cuando pago en OTRA moneda: repetirlo en cada fila es ruido");
+  ok(/_escAud\(/.test(html), "con el texto escapado (ARREGLO 102)");
+
+  // La mora NO se suma al abonado. Sumarlas en un solo numero diria que la
+  // deuda bajo mas de lo que bajo — es la razon por la que la mora vive en
+  // p.mora y no en p.abonos, y aqui se rompe igual de facil.
+  // Anclado en lo que lo DISPARA. Con el texto a secas, apagar el ternario
+  // dejaba la frase ahi muerta y la guardia pasaba. Va la septima vez en
+  // este proyecto: lo que se mide es el codigo, no el texto.
+  ok(/Abonado a la deuda/.test(html) &&
+     /if\(totMo>0\.009\) h\+=/.test(html) && /Mora cobrada aparte/.test(html),
+     "la mora se totaliza APARTE cuando la hay, no sumada al abonado");
+  const totales = html.slice(html.indexOf("var totAb"));
+  ok(/totAb=\(p\.abonos\|\|\[\]\)/.test(totales.replace(/\s/g, "")),
+     "el abonado sale solo de p.abonos");
+  ok(!/totAb\s*\+\s*totMo/.test(totales), "y en ningun sitio se suman los dos");
+}
+
+// ── Los saldados: agrupados por cliente y ordenados por cuando pagaron ───
+{
+  const sinCom = t => t.replace(/\/\/[^\n]*/g, "");
+  const pr = sinCom((HTML.match(/function rPrestamos\(\)\{[\s\S]*?\n\}/) || [""])[0]);
+
+  ok(/var gruposPag=bkAgrupar\(pagados/.test(pr),
+     "los saldados se agrupan por cliente, como los activos");
+  ok(/_prPagCliOpen/.test(pr) && /_prPagosOpen/.test(pr),
+     "y cada grupo y cada tarjeta se abren por su cuenta");
+  // Antes se recorria la lista al reves, o sea por el orden en que estan
+  // guardados: con dos clientes eso ya puede salir al reves de lo que paso.
+  ok(!/pagados\.slice\(\)\.reverse\(\)/.test(pr),
+     "ya no se ordenan por el orden en que estan guardados");
+  ok(/function _ordenSaldado\(a,b\)\{/.test(pr), "hay un orden propio");
+  ok(/g\.items\.sort\(_ordenSaldado\)/.test(pr), "y se aplica");
+}
+
+// ── El formulario de registrar, plegado ──────────────────────────────────
+//
+// Sus palabras: "la parte de registrar préstamos debería ser desplegable
+// también para que no colapse la vista en el teléfono". Son ~250 lineas
+// siempre abiertas: medido a 412px, cerrarlo ahorra 1.018 px de scroll.
+{
+  const sinCom = t => t.replace(/\/\/[^\n]*/g, "");
+  const pr = sinCom((HTML.match(/function rPrestamos\(\)\{[\s\S]*?\n\}/) || [""])[0]);
+
+  ok(/_togglePrForm\(\)/.test(pr), "el titulo abre y cierra el formulario");
+  ok(/\(_prFormAbierto\?"":";display:none"\)/.test(pr),
+     "y cerrado NO se dibuja");
+  // Queda abierto mientras lo este llenando: el formulario se repinta con
+  // cada tecla, y sin esto se cerraria solo a mitad de escribir.
+  const decide = sinCom((pr.match(/var _prFormAbierto =[\s\S]*?;\n/) || [""])[0]);
+  ok(/S\._prFormOpen/.test(decide), "se abre cuando ella lo abre");
+  ok(/f\.desc/.test(decide) && /f\.monto/.test(decide),
+     "y sigue abierto si ya empezo a llenarlo (si no, se cierra al teclear)");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
