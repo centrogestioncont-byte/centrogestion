@@ -68,7 +68,7 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "ajusteDiasPrimeraCuota", "interesPorAjusteDias",
                     "cuotasRecomendadas", "limiteCredito",
                     "costoOperativoPorPrestamo", "pctCostoOperativo",
-                    "_competidores", "_compDelDia", "_setComp", "_misTasasPublicadas", "_posicionMercado",
+                    "_misTasasPublicadas",
                     "_equilibrio",
                     "esRutaCalce", "esCalceDirecto",
                     "_loteYaEnApertura", "_fiatDeLote", "_deltaDeLote",
@@ -5222,69 +5222,52 @@ console.log("\n— FASE 2: la cuenta madre —");
 }
 
 
-// ── ARREGLO 74 · el mercado: donde queda ella contra la competencia ────────
-// "todas esas casas de cambio todos los dias tengo que revisar para poder
-// colocar mi tasa". Las dos direcciones se escriben en la MISMA unidad
-// -bolivares por real- pero significan lo contrario: en la ida ella ENTREGA
-// bolivares (mas es mejor para el cliente) y en la vuelta ENTREGA reales
-// (menos es mejor). Invertir uno de los dos le daria el puesto al reves, que
-// es justo lo que la haria publicar una tasa mala.
+// ── ARREGLO 110 · fuera la competencia, y su tasa publicada se queda ───────
+// El ARREGLO 74 pedia apuntar a mano lo que cobraban cuatro sitios. Sus
+// palabras del 11/10: "yo quiero que me quites esos botones porque ya no los
+// estoy usando - eso asi ya no me es funcional". Se fueron las filas, los
+// campos y el recuadro del puesto; lo apuntado NO se borra.
 {
-  const CONF = [
-    {id:"retorna", nombre:"Retorna",  vuelta:false},
-    {id:"dorado",  nombre:"Dorado",   vuelta:true},
-    {id:"g1",      nombre:"Grupo 1",  vuelta:true},
-    {id:"g2",      nombre:"Grupo 2",  vuelta:true}
-  ];
-  S.config = {competidores: CONF, tasasDia:{tdia_brl:172.5, tdia_ves_brl:220}};
-  S.histComp = {};
-  const hoy = F.td();
-  S.histComp[hoy] = {
-    retorna:{ida:171.54}, dorado:{ida:173, vuelta:200},
-    g1:{ida:175}, g2:{ida:170, vuelta:200}
-  };
-  const m = F._posicionMercado();
-  // Sus numeros del 26/09, tal y como me los dio.
-  ok(m.posIda.puesto === 3 && m.posIda.de === 5,
-     "en la ida cuenta cuantos dan MAS bolivares que ella",
-     m.posIda.puesto + "/" + m.posIda.de);
-  ok(m.posIda.mejor.nombre === undefined && m.posIda.mejor.n === "Grupo 1" && m.posIda.mejor.v === 175,
-     "y el mejor de la ida es el que mas da");
-  ok(m.posVuelta.puesto === 3 && m.posVuelta.de === 3,
-     "en la vuelta cuenta cuantos piden MENOS: ahi queda la ultima",
-     m.posVuelta.puesto + "/" + m.posVuelta.de);
-  ok(m.posVuelta.mejor.v === 200 && m.posVuelta.brechaMejor === 20,
-     "y la brecha con el mejor son los 20 Bs por real", m.posVuelta.brechaMejor);
-  // Retorna solo publica ida: no puede colarse en el ranking de vuelta.
-  ok(m.vuelta.length === 2 && !m.vuelta.some(function(x){return x.n==="Retorna";}),
-     "quien solo publica ida no entra en la vuelta", m.vuelta.length);
-  // Si todavia no ha publicado hoy, no se le inventa una tasa.
-  S.config.tasasDia = {};
-  const sinPublicar = F._posicionMercado();
-  ok(sinPublicar.mias.ida === null && sinPublicar.posIda === null,
-     "sin tasa publicada no se inventa un puesto");
-  S.config.tasasDia = {tdia_brl:172.5, tdia_ves_brl:220};
+  // Nada de la competencia puede volver a dibujarse. Si alguien la reintroduce
+  // sin los avisos, esto falla.
+  const muertas = ["_competidores","_compDelDia","_setComp","_posicionMercado",
+                   "_htmlCompResumen","_renombrarComp","_COMPETIDORES_POR_OMISION"];
+  muertas.forEach(function(nom){
+    ok(HTML.indexOf(nom) < 0, "no queda nada de " + nom + " en el archivo");
+  });
+  // Y el contenedor del recuadro tampoco: era lo que _setComp refrescaba.
+  ok(HTML.indexOf("comp-resumen") < 0, "ni el recuadro del puesto");
+  // La tarjeta es ahora solo el suelo. Anclado al marcado, que existe una vez
+  // sola: un comentario puede repetir el rotulo (paso en el ARREGLO 100).
+  const tarjeta = sacarFuncion("_htmlMercadoHoy");
+  ok(/_htmlSuelo\(\)/.test(tarjeta), "la tarjeta sigue dibujando el suelo");
+  ok(/id='mercado-suelo'/.test(tarjeta),
+     "y conserva el id por el que _refrescarSuelo lo rehace sin R()");
 
-  // La coma decimal: es lo primero que se pierde con el teclado en espanol, y
-  // 171,54 entraria como 17154 -cien veces su tasa-.
-  S.histComp = {};
-  F._setComp("retorna", "ida", "171,54");
-  ok(F._compDelDia()[ "retorna" ].ida === "171.54",
-     "el campo del mercado pasa por _num(): 171,54 no se vuelve 17154",
-     F._compDelDia()["retorna"].ida);
-  ok(/type='text' inputmode='decimal'/.test(sacarFuncion("_htmlMercadoHoy")) &&
-     !/type='number'/.test(sacarFuncion("_htmlMercadoHoy")),
-     "y el campo es de texto, no type=number");
-  // ARREGLO 32: teclear no puede repintar la pantalla entera.
-  ok(!/\bR\(\)/.test(sinComentarios(sacarFuncion("_setComp"))) &&
-     /getElementById\("comp-resumen"\)/.test(sacarFuncion("_setComp")),
-     "apuntar una tasa no repinta: refresca el recuadro por su id");
-  // El historial va indexado por fecha y se UNE entre aparatos, nunca se pisa.
+  // Lo apuntado en septiembre SIGUE viajando. Quitar la pantalla no puede
+  // borrarle datos: si histComp se cae de estas dos listas, el remoto lo
+  // reemplaza entero y se pierde lo que tenga el otro aparato.
   ok(/_MERGE_HISTORIAL = \[[^\]]*"histComp"/.test(HTML),
-     "histComp se une por fecha entre los dos aparatos");
+     "histComp se sigue uniendo por fecha entre los dos aparatos");
   ok(/DATA_KEYS = \[[\s\S]{0,800}"histComp"/.test(HTML),
-     "y esta en DATA_KEYS: si no, el remoto lo reemplaza entero");
-  S.config = {}; S.histComp = {};
+     "y sigue en DATA_KEYS: lo apuntado no se borra al quitar la pantalla");
+
+  // Lo UNICO que se rescato de ahi, porque lo lee el suelo: su tasa
+  // publicada. Las dos direcciones van en la MISMA unidad -bolivares por
+  // real- y significan lo contrario: en la ida ella ENTREGA bolivares (mas es
+  // mejor para el cliente) y en la vuelta ENTREGA reales (menos es mejor).
+  // Invertir una de las dos le daria el puesto al reves en los flyers.
+  S.config = {tasasDia:{tdia_brl:172.5, tdia_ves_brl:220}};
+  const pub = F._misTasasPublicadas();
+  ok(pub.ida === 172.5 && pub.vuelta === 220,
+     "su tasa publicada sale de tasasDia, ida y vuelta en bolivares por real",
+     pub.ida + " / " + pub.vuelta);
+  // Sin publicar no se le inventa una.
+  S.config.tasasDia = {};
+  const vacia = F._misTasasPublicadas();
+  ok(vacia.ida === null && vacia.vuelta === null,
+     "si no ha publicado hoy no se inventa una tasa");
+  S.config = {};
 }
 
 
