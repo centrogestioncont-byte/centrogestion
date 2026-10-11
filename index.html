@@ -2780,7 +2780,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261011_v190";
+var APP_VERSION = "20261011_v191";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -5285,8 +5285,10 @@ function _isoDeDDMMAA(f){
 // baja la cuenta Y baja el "deberías tener", así que la conciliación no salta.
 // Por eso esa opción no ajusta nada: lleva a registrarlo donde toca.
 var _MOTIVOS_AJUSTE = {
-  "1": {tipo:"dedazo", txt:"Me equivoqué al teclear"},
-  "3": {tipo:"nose",   txt:"No sé por qué"}
+  "1": {tipo:"dedazo",   txt:"Me equivoqué al teclear"},
+  "3": {tipo:"nose",     txt:"No sé por qué"},
+  // ARREGLO 108: lo movio la APP, no ella. Ver ajustesDesdeApertura().
+  "4": {tipo:"appError", txt:"Lo movió la app por error"}
 };
 // ── ARREGLO 72: la hora nunca se perdió, está dentro del id ───────────────
 // _newUid() es Date.now().toString(36)+"_"+azar, así que CADA registro creado
@@ -5415,6 +5417,28 @@ function ajustesDesdeApertura(desdeIso){
     // Se clasifica DESPUÉS de situarlo: uno anterior a la apertura ya está
     // dentro del punto de partida y no cuenta de ninguna manera.
     function _contar(){
+      // ARREGLO 108 · lo movio la APP por error, no ella.
+      //
+      // Sus palabras (11/10/2026): "¿que hago yo despues? mas adelante me van
+      // a salir errores por estar editando el saldo a mano". Tenia razon, y la
+      // opcion que parece la correcta es justo la mala. Medido con su export,
+      // deshaciendo los dos saldos que el boton del banco le movio:
+      //
+      //    ahora, con los saldos rotos ...  sin explicar  1.057,98
+      //    corregir y poner "dedazo" .....                1.057,97  <- el error
+      //                                                              se queda
+      //                                                              metido
+      //    corregir y poner "no se" ......                  918,58  <- el bueno
+      //
+      // 918,58 es el que tenia antes del fallo. "Dedazo" dice "este salto no
+      // es dinero, descartalo", y aqui el salto SI hay que contarlo: lo que
+      // sobra es el apunte de la app, no el dinero. Marcarlo asi arrastra los
+      // 139,40 USDT del fallo hacia dentro y los deja ahi para siempre.
+      //
+      // "No se por que" da el numero bueno, pero le deja un ⚠️ permanente en
+      // la tarjeta — y ella SI sabe por que. Por eso un tercer tipo: ni se da
+      // por explicado (eso arrastraria el error) ni se avisa.
+      if(a.tipo==="appError") return;
       if(a.tipo==="nose"){ r.nSinSaber++; return; }   // se queda SIN explicar
       r.total+=u; r.n++;                              // explicado: no ensucia
     }
@@ -6740,14 +6764,17 @@ function _motivoDelAjuste(c, delta){
     "     cuenta y baja también lo que deberías tener.\n\n"+
     "3  No sé por qué\n"+
     "     Queda como diferencia sin explicar en la conciliación.\n\n"+
-    "Escribe 1, 2 o 3:", "");
+    "4  La app me movió el saldo por error\n"+
+    "     Lo deshace y la conciliación se queda como estaba: ese\n"+
+    "     dinero nunca se movió y la app nunca debió apuntarlo.\n\n"+
+    "Escribe 1, 2, 3 o 4:", "");
   if(q===null) return null;
   q=String(q).trim();
   if(q==="2"){ _ajusteAEgreso(c, delta); return null; }
   var m=_MOTIVOS_AJUSTE[q];
   if(!m){
     alert("No entendí \""+q+"\".\n\n\""+c.nombre+"\" se queda como estaba. "+
-          "Vuelve a intentarlo y escribe 1, 2 o 3.");
+          "Vuelve a intentarlo y escribe 1, 2, 3 o 4.");
     return null;
   }
   return m;
