@@ -7515,5 +7515,58 @@ console.log("\n— FASE 2: la cuenta madre —");
      "la pantalla dice que no hay comision de Binance");
 }
 
+// ── ARREGLO 108 · «lo movió la app por error» ────────────────────────────
+//
+// Sus palabras: "¿que hago yo despues? mas adelante me van a salir errores
+// por estar editando el saldo a mano". Tenia razon. Medido con su export,
+// deshaciendo los dos saldos que el boton del banco le movio:
+//
+//    ahora, con los saldos rotos ...  sin explicar  1.057,98
+//    corregir y poner "dedazo" .....                1.057,97  <- el error se
+//                                                               queda dentro
+//    corregir y poner "no se" ......                  918,58
+//    corregir y poner "lo movio la app"               918,58  <- y sin aviso
+//    el VERDADERO (sin apuntar nada)                  918,58
+{
+  const sinCom = t => t.replace(/\/\/[^\n]*/g, "");
+
+  // El motivo existe y es un tipo propio: reusar "nose" daria el numero bueno
+  // pero le dejaria un ⚠️ permanente, y ella SI sabe por que.
+  ok(/"4": \{tipo:"appError",\s*txt:"Lo movió la app por error"\}/.test(HTML),
+     "existe el motivo «lo movió la app por error»");
+  ok(/"Escribe 1, 2, 3 o 4:"/.test(HTML), "y la pregunta lo ofrece");
+  ok(/escribe 1, 2, 3 o 4\./.test(HTML), "y el aviso de «no entendí» tambien");
+
+  // Ni cuenta como explicado (eso arrastraria el error dentro) ni avisa.
+  const aj = sinCom(sacarFuncion("ajustesDesdeApertura"));
+  ok(/if\(a\.tipo==="appError"\) return;/.test(aj),
+     "no se da por explicado y no suma al aviso");
+  // Y va ANTES del de "nose": detras, caeria en el contador del ⚠️.
+  const iApp = aj.indexOf('a.tipo==="appError"'), iNose = aj.indexOf('a.tipo==="nose"');
+  ok(iApp >= 0 && iNose >= 0 && iApp < iNose,
+     "y se mira antes que «no sé por qué», o caeria en su aviso",
+     "app " + iApp + " · nose " + iNose);
+
+  // La aritmetica, con los tres tipos, sobre la misma cuenta.
+  S.config = S.config || {};
+  S.config.aperturaFecha = "2026-09-11"; S.config.aperturaTs = 0;
+  S.cuentas = [{id:"c1", nombre:"BDV", moneda:"USDT", saldo:100, activa:true}];
+  const unAjuste = (tipo) => {
+    S.ajustesSaldo = [{id:"a1", fecha:"20/09/26", ts:Date.parse("2026-09-20"),
+                       cuentaId:"c1", delta:-50, tipo:tipo, motivo:"x"}];
+    return F.ajustesDesdeApertura("2026-09-11");
+  };
+  const d = unAjuste("dedazo"), nn = unAjuste("nose"), ap = unAjuste("appError");
+  ok(d.total === -50 && d.nSinSaber === 0, "«dedazo» se da por explicado", d.total);
+  ok(nn.total === 0 && nn.nSinSaber === 1, "«no sé» no se explica y avisa", nn.nSinSaber);
+  ok(ap.total === 0 && ap.nSinSaber === 0, "«lo movió la app» ni se explica ni avisa",
+     ap.total + " / " + ap.nSinSaber);
+  // Que es lo mismo que si no se hubiera apuntado nada: ese es el punto.
+  S.ajustesSaldo = [];
+  const nada = F.ajustesDesdeApertura("2026-09-11");
+  ok(ap.total === nada.total && ap.nSinSaber === nada.nSinSaber,
+     "o sea: deja la conciliacion igual que si no se hubiera apuntado");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
