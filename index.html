@@ -2562,6 +2562,49 @@ function gNeta(){return gE()-gGE();}
 function tEgP(){return S.egresos.filter(function(e){return e.pagada;}).reduce(function(a,e){return a+e.usdt;},0);}
 function tEgPend(){return S.egresos.filter(function(e){return !e.pagada;}).reduce(function(a,e){return a+e.usdt;},0);}
 function dinReal(){return gB()+gV()-tEgP()-tEgPend();}
+// ══ ARREGLO 106 · CALCE DIRECTO (permuta BRL <-> VES, sin USDT en medio) ══
+//
+// Sus palabras: "se elimina la intermediacion de USDT... la ganancia bruta
+// depende del diferencial entre la Tasa Cliente y la Tasa Mercado/Permuta:
+// G_VES = M_BRL × (T_Mercado − T_Cliente)".
+//
+// LO PRIMERO, PORQUE ES LO QUE EVITO ESCRIBIR UN MOTOR NUEVO: esa formula y
+// la que ya calcula la app son LA MISMA. Medido corriendo cTx() con sus
+// cifras, en tres casos suyos distintos:
+//
+//   compra 5,1638 R$/USDT · vende 948 Bs/USDT · ofrece 172 Bs/R$
+//     su formula  M × (T_Mercado − T_Cliente) ...  11.585,73 Bs
+//     la app      pr × tv .....................    11.585,70 Bs
+//
+// Porque T_Mercado = tv ÷ tc (Bs por USDT ÷ reales por USDT = Bs por real),
+// que es la misma cuenta del "suelo" de la tarjeta de tasas. Con la comision
+// de Binance puesta se separaban 57 Bs CLAVADOS en los tres —0,06 USDT × tv—,
+// y en calce esa comision no existe porque no hay Binance.
+//
+// Asi que pr = uc − uv se queda tal cual, y con el Diario, el Resumen, el
+// Cierre, la conciliacion y el informe. Lo UNICO que cambia es de donde sale
+// la tasa de compra: antes del lote de USDT, ahora de la permuta.
+//
+// Solo el par BRL <-> VES. En las rutas de Colombia y Peru la permuta no se
+// escribe en bolivares por real y la cuenta de arriba no valdria: un selector
+// que apareciera alli daria un numero que no existe.
+function esRutaCalce(ruta){
+  if(!ruta) return false;
+  var o=ruta.orig, d=ruta.dest||"VES";
+  return (o==="BRL"&&d==="VES") || (o==="VES"&&d==="BRL");
+}
+function esCalceDirecto(f, ruta){
+  return !!(f && f.metodo==="calce" && esRutaCalce(ruta));
+}
+// Cambiar de metodo no puede dejar puesto lo del otro: una tasa de compra
+// escrita a mano en P2P no significa nada en calce, y la permuta no significa
+// nada en P2P. Dejarlas se lee como que siguen mandando.
+function txMetodo(m){
+  S.tx.metodo = (m==="calce") ? "calce" : "p2p";
+  if(S.tx.metodo==="calce") S.tx.tc_manual="";
+  else S.tx.permuta="";
+  R();
+}
 function cTx(){
   var f=S.tx,am=parseFloat(f.am)||0,td2=parseFloat(f.tdia)||0;
   var ruta=getRutas().find(function(r){return r.rt===f.rt;})||getRutas()[0];
@@ -2595,13 +2638,32 @@ function cTx(){
   // isVzla=false → dest=VES (BRL↔VZLA): uc usa BRL, uv usa VES
   var comUc = tcDeLote ? 0 : (isVzla ? comVes : comOtr);
   var comUv = tvDeLote ? 0 : (isVzla ? comOtr : comVes);
-  if(!tc||!tv) return{am:am,tdia:td2,cant:cant,tc:tc,uc:0,tv:tv,uv:0,pr:0,com:comOtr,comUc:comUc,comUv:comUv};
+  // ARREGLO 106 · calce directo. Sin USDT en medio no hay comision de Binance
+  // que descontar, y la tasa de compra sale de la permuta.
+  //
+  // La permuta se escribe SIEMPRE en bolivares por real, la misma unidad que
+  // sus dos tasas publicadas (ARREGLO 74): invertir una de las dos le daria
+  // el puesto al reves en los flyers. De ahi la tasa de compra implicita:
+  //
+  //   orig BRL (ida)     tv va en Bs/USDT   →  tc = tv ÷ permuta   (BRL/USDT)
+  //   orig VES (vuelta)  tv va en BRL/USDT  →  tc = permuta × tv   (Bs/USDT)
+  //
+  // Sin permuta, tc queda en 0 y se sale por el return de abajo con pr 0: una
+  // ganancia inventada aqui es lo unico que este formulario no se puede
+  // permitir.
+  var _calce = esCalceDirecto(f, ruta);
+  var _permuta = _calce ? (parseFloat(f.permuta)||0) : 0;
+  if(_calce){
+    comUc = 0; comUv = 0;
+    tc = (_permuta>0 && tv>0) ? (isVzla ? _permuta*tv : tv/_permuta) : 0;
+  }
+  if(!tc||!tv) return{am:am,tdia:td2,cant:cant,tc:tc,uc:0,tv:tv,uv:0,pr:0,com:comOtr,comUc:comUc,comUv:comUv,calce:_calce,permuta:_permuta};
   var uc_r = am/tc - comUc;
   var uv_r = isVzla ? (cant/tv + comUv) : (am*td2)/tv + comUv;
   var uc = r4(uc_r);
   var uv = r4(uv_r);
   var pr = r4(uc_r - uv_r);
-  return{am:am,tdia:td2,cant:cant,tc:tc,uc:uc,tv:tv,uv:uv,pr:pr,com:comOtr,comUc:comUc,comUv:comUv};
+  return{am:am,tdia:td2,cant:cant,tc:tc,uc:uc,tv:tv,uv:uv,pr:pr,com:comOtr,comUc:comUc,comUv:comUv,calce:_calce,permuta:_permuta};
 }
 function cTxE(){
   var f=S.txE,am=parseFloat(f.am)||0,td2=parseFloat(f.tdia)||0;
@@ -2718,7 +2780,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261011_v187";
+var APP_VERSION = "20261011_v188";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -6375,6 +6437,8 @@ function tasaDeReferencia(moneda){
     for(var i=0;i<(arr||[]).length;i++){
       var l=arr[i];
       if(l.moneda!==moneda || !((parseFloat(l.usdt)||0)>0)) continue;
+      // ARREGLO 106: un lote de permuta no es una operacion de USDT.
+      if(l.permuta) continue;
       var f=_isoDeLote(l), id=parseFloat(l.id)||0;
       if(!u || f>uF || (f===uF && id>=uId)){ u=l; uF=f; uId=id; }
     }
@@ -8312,14 +8376,22 @@ function _entregasParaFIFO(entregas, cuentaDest, cant){
 }
 // El USDT se consume UNA vez: depende de la cuenta de ENTRADA, no de por dónde
 // se pagó. Partirlo por fila lo consumiría tantas veces como cuentas haya.
-function consumirFIFORemesa(monOrig, uc, monDest, cant, ctaOrig, ctaDest, entregas){
-  consumirInventarioFIFO(monOrig, uc, monDest, 0, ctaOrig, ctaDest);
+function consumirFIFORemesa(monOrig, uc, monDest, cant, ctaOrig, ctaDest, entregas, calce){
+  // ARREGLO 106: en calce directo no se compro USDT, asi que no hay lote de
+  // compra que gastar. La moneda que ENTRA crea su lote (crearLoteRecibido)
+  // en vez de consumir uno. Consumirlo igual se comeria lotes de compra que
+  // no tienen nada que ver con esta operacion — y de esos lotes salen las
+  // tasas que la app sugiere. Es el fallo del 12/09 por el otro lado.
+  //
+  // El lado que SALE no cambia: esos bolivares (o reales) si estaban, y si
+  // tienen su lote con su costo.
+  if(!calce) consumirInventarioFIFO(monOrig, uc, monDest, 0, ctaOrig, ctaDest);
   _entregasParaFIFO(entregas, ctaDest, cant).forEach(function(p){
     consumirInventarioFIFO(monOrig, 0, monDest, p.monto, ctaOrig, p.cuentaId);
   });
 }
-function simularFIFORemesa(monOrig, uc, monDest, cant, ctaOrig, ctaDest, entregas){
-  var r=simularConsumoFIFO(monOrig, uc, monDest, 0, ctaOrig, ctaDest);
+function simularFIFORemesa(monOrig, uc, monDest, cant, ctaOrig, ctaDest, entregas, calce){
+  var r=calce?{compras:[]}:simularConsumoFIFO(monOrig, uc, monDest, 0, ctaOrig, ctaDest);
   var out={compras:r.compras||[], ventas:[]};
   _entregasParaFIFO(entregas, ctaDest, cant).forEach(function(p){
     var s=simularConsumoFIFO(monOrig, 0, monDest, p.monto, ctaOrig, p.cuentaId);
@@ -8542,6 +8614,7 @@ function saveTx(){
   }
 
   var ruta=getRutas().find(function(r){return r.rt===f.rt;})||getRutas()[0];
+  var _calceTx=esCalceDirecto(f, ruta);
   // ARREGLO 44: con varias formas de pago, la PRIMERA cuenta de verdad manda:
   // es la que decide de qué lote sale la tasa y la que queda guardada en la
   // remesa como cuentaBanco. Se fija aquí y no solo en la pantalla, para que no
@@ -8593,7 +8666,17 @@ function saveTx(){
   var tvF=parseFloat(f.tv_manual)||rates.tv||0;
   // tc/tv opcionales — se auto-asignan desde inventario USDT
   S.tx.tc=String(tcF);S.tx.tv=String(tvF);
-  if(!rates.hasRates){
+  // Sin inventario, la app deja dos lotes en blanco con la tasa escrita, para
+  // rellenarlos cuando ella registre la compra y la venta de USDT de ese dia.
+  //
+  // ARREGLO 106: en CALCE DIRECTO esa operacion de USDT no va a existir nunca,
+  // asi que esos dos lotes se quedarian ahi para siempre. Y con la tasa de
+  // compra en blanco —en calce no se teclea, se deriva— nacerian con tasa 0,
+  // que es justo lo que crearLoteRecibido se niega a hacer porque envenena las
+  // tasas que la app sugiere. Ademas no llevan origenRemesa, asi que el
+  // borrado no se los lleva: medido, guardar una remesa de calce dejaba TRES
+  // lotes donde debia dejar uno, y al borrarla se quedaban dos para siempre.
+  if(!rates.hasRates && !_calceTx){
     // La fecha de un lote va SIEMPRE en mm/dd, como todas las demás: ds()
     // devuelve dd/mm/aa y ordenFIFO lo leía como otro día.
     var fd=_fechaLote(f.date), fdIso=_fechaLoteIso(f.date);   // ARREGLO 51: el año, aparte
@@ -8690,9 +8773,11 @@ function saveTx(){
   //    del día, después las remesas—, así que una remesa que no encuentra lote
   //    casi siempre significa que falta registrar una compra o una venta.
   var _simPrev=simularFIFORemesa(ruta.orig,res.uc,ruta.dest==="VES"?"VES":ruta.dest,
-                                 res.cant,f.cuentaBanco,f.cuentaDest,_entregas);
+                                 res.cant,f.cuentaBanco,f.cuentaDest,_entregas,_calceTx);
   var _sum=function(a,k){return a.reduce(function(t,x){return t+(parseFloat(x[k])||0);},0);};
-  var _faltaU=Math.round(((parseFloat(res.uc)||0)-_sum(_simPrev.compras,"usdt"))*10000)/10000;
+  // En calce no se consume ese lado, asi que "falta todo" seria el aviso de
+  // siempre en todas las remesas — y un aviso que sale siempre deja de leerse.
+  var _faltaU=_calceTx?0:Math.round(((parseFloat(res.uc)||0)-_sum(_simPrev.compras,"usdt"))*10000)/10000;
   var _faltaB=Math.round(((parseFloat(res.cant)||0)-_sum(_simPrev.ventas,"bs"))*100)/100;
   if(_faltaU>0.0001 || _faltaB>0.01){
     var _av="⚠️ No hay saldo suficiente en el inventario FIFO:\n\n";
@@ -8707,23 +8792,28 @@ function saveTx(){
   var isV=ruta.orig==="VES";var arr=isV?S.vzla:S.brl;
   var nn=arr.length?Math.max.apply(null,arr.map(function(x){return x.n;}))+1:1;
   var nuevaRemesa={n:nn,_uid:_newUid(),d:ds(f.date),h:_horaDe(f.hora),id:f.id,cl:f.cl.toUpperCase(),rt:f.rt,am:res.am,orig:ruta.orig,dest:ruta.dest,tdia:res.tdia,cant:res.cant,tc:res.tc,uc:res.uc,pais:f.pais,uv:res.uv,tv:res.tv,total:res.cant,pr:res.pr,cuentaBanco:f.cuentaBanco||"",cuentaDest:f.cuentaDest||"",locked:true};
+  // ARREGLO 106: el metodo viaja CON la remesa. El borrado decide con el si
+  // devuelve lotes de compra o no, y deducirlo despues seria imposible.
+  if(_calceTx){ nuevaRemesa.metodo="calce"; nuevaRemesa.permuta=parseFloat(f.permuta)||0; }
   if(_pagos) nuevaRemesa.pagos=_pagos;   // el desglose, para verlo y para revertirlo
   if(_entregas) nuevaRemesa.entregas=_entregas;   // ARREGLO 97: de qué cuentas salió
   arr.push(nuevaRemesa);
   arr.sort(function(a,b){var da=a.d.split("/"),db=b.d.split("/");return (parseInt(da[1])*100+parseInt(da[0]))-(parseInt(db[1])*100+parseInt(db[0]))||a.n-b.n;});
   registrarMovimientoCapital({fecha:ds(f.date),rutaOrig:ruta.orig,rutaDest:ruta.dest,amOrigen:res.am,amDestino:res.cant,concepto:f.cl+" · "+f.rt,remesaId:nn});
   // Capturar desglose de lotes ANTES de consumir (solo lectura)
-  var _lotesSnap = simularFIFORemesa(ruta.orig, res.uc, ruta.dest==="VES"?"VES":ruta.dest, res.cant, f.cuentaBanco, f.cuentaDest, _entregas);
+  var _lotesSnap = simularFIFORemesa(ruta.orig, res.uc, ruta.dest==="VES"?"VES":ruta.dest, res.cant, f.cuentaBanco, f.cuentaDest, _entregas, _calceTx);
   if(_lotesSnap.compras.length||_lotesSnap.ventas.length) nuevaRemesa._lotesConsumidos=_lotesSnap;
   // Consumir inventario FIFO (más viejo primero): USDT comprados y bolívares de ventas
-  consumirFIFORemesa(ruta.orig,res.uc,ruta.dest==="VES"?"VES":ruta.dest,res.cant,f.cuentaBanco,f.cuentaDest,_entregas);
+  consumirFIFORemesa(ruta.orig,res.uc,ruta.dest==="VES"?"VES":ruta.dest,res.cant,f.cuentaBanco,f.cuentaDest,_entregas,_calceTx);
   // Los BOLÍVARES que entran y se quedan en la cuenta crean su propio lote, con
   // lo que la app dijo que valen (ver crearLoteRecibido). Solo bolívares: los
   // reales que entran se convierten en USDT y esa compra se registra aparte.
   // Y solo si de verdad entraron: si el cliente paga después, el lote nace el
   // día que se cobre, igual que el saldo de la cuenta.
-  if(ruta.orig==="VES" && !f.pendiente){
-    crearLoteRecibido(ruta.orig, res.am, res.uc, f.cuentaBanco||"", ds(f.date), nuevaRemesa._uid, f.hora);
+  // ARREGLO 106: en calce tambien nace el lote cuando lo que entra son REALES
+  // —no se convierten en USDT, se quedan— y es el que pagara la vuelta.
+  if((ruta.orig==="VES" || _calceTx) && !f.pendiente){
+    crearLoteRecibido(ruta.orig, res.am, res.uc, f.cuentaBanco||"", ds(f.date), nuevaRemesa._uid, f.hora, _calceTx);
   }
   // ARREGLO 44: la parte que el cliente queda debiendo. Va a Cuentas por Cobrar
   // porque es de la misma naturaleza que una remesa pendiente — dinero de una
@@ -16570,7 +16660,11 @@ function revertirSaldosRemesa(tipo, r){
     normalizarInventarioFIFO();
     // Restaurar USDT al lote de compra — primero a los de la MISMA cuenta que
     // se usó (más nuevo primero), igual criterio que consumirInventarioFIFO.
-    if(uc>0){
+    // ARREGLO 106: una remesa de calce no consumio lotes de compra, asi que
+    // devolverle "uc" a los lotes de otra operacion les regalaria saldo que
+    // nunca gastaron — y de ahi salen las tasas que la app sugiere. El lote
+    // de entrada que SI creo ya se fue arriba con quitarLoteDeRemesa().
+    if(uc>0 && r.metodo!=="calce"){
       var comprasTodas=S.inventarioUsdt.filter(function(l){
         return l.tipo==="compra"&&l.moneda===monOrig;
       }).sort(function(a,b){return(b.id||0)-(a.id||0);}); // más nuevo primero para revertir
@@ -16627,7 +16721,8 @@ function revertirSaldosRemesa(tipo, r){
   var monOrig=_mon2.orig, monDest=_mon2.dest;
   normalizarInventarioFIFO();
   var uc=parseFloat(r.uc)||0;
-  if(uc>0){
+  // ARREGLO 106, el mismo caso por el camino sin _mov.
+  if(uc>0 && r.metodo!=="calce"){
     var comprasTodas2=S.inventarioUsdt.filter(function(l){
       return l.tipo==="compra"&&l.moneda===monOrig;
     }).sort(function(a,b){return(b.id||0)-(a.id||0);});
@@ -17990,7 +18085,7 @@ function toggleLotes(n,tipo){
 //
 // El lote va marcado como "Remesa" para que se distinga de una compra o venta de
 // USDT de verdad: el inventario es de USDT, y esto no lo es.
-function crearLoteRecibido(moneda, monto, usdtValor, cuentaDestinoId, fecha, refUid, hora){
+function crearLoteRecibido(moneda, monto, usdtValor, cuentaDestinoId, fecha, refUid, hora, calce){
   // SOLO bolívares. El inventario es de compra y venta de USDT; lo único que se
   // acordó meter aquí que no lo sea son los bolívares que entran por una remesa
   // y se quedan parados en la cuenta, para saber a qué valor se gastan después.
@@ -18000,7 +18095,12 @@ function crearLoteRecibido(moneda, monto, usdtValor, cuentaDestinoId, fecha, ref
   // real en la siguiente remesa VZLA→BRL que pagara por esa cuenta, y de esos
   // lotes salen las tasas que la app sugiere. Pasó el 12/09 con una remesa de
   // 30 reales: apareció un "vendí 30 BRL a 5,1424" que nadie hizo.
-  if(moneda!=="VES") return null;
+  // ARREGLO 106: en CALCE DIRECTO los reales que entran tampoco se convierten
+  // en USDT — se quedan, y son justo los que van a pagar la operacion del
+  // sentido contrario. Ahi el lote es real y hace falta: sin el, esos reales
+  // se gastarian despues sin saber a que valor entraron. Fuera del calce la
+  // regla de arriba sigue intacta.
+  if(moneda!=="VES" && !(calce && moneda==="BRL")) return null;
   var m = Math.round((parseFloat(monto)||0)*100)/100;
   if(m<=0) return null;
   // Sin cuenta no se puede emparejar: el consumo FIFO filtra por cuentaDestinoId
@@ -18029,6 +18129,14 @@ function crearLoteRecibido(moneda, monto, usdtValor, cuentaDestinoId, fecha, ref
     origenRemesa:refUid||"",
     _mod:Date.now()
   };
+  if(calce){
+    // Marcado para dos cosas: que la pantalla no lo llame "venta de USDT" —no
+    // lo es— y, sobre todo, para que tasaDeReferencia() no lo mire. Su tasa
+    // sale de un cruce BRL/VES, no de Binance; si entrara ahi, la tasa con la
+    // que se valora TODO el dinero parado pasaria a salir de las permutas.
+    lote.permuta=true;
+    lote.plataforma="Permuta";
+  }
   S.inventarioUsdt=S.inventarioUsdt||[];
   S.inventarioUsdt.push(lote);
   return lote;
@@ -24289,6 +24397,11 @@ function rNueva(){
   // El mismo dato no se calcula en dos sitios.
   var _rTx=cTx();
   var tc=tcAuto,tv=tvAuto;
+  // ARREGLO 106: en calce la tasa de compra NO es la del inventario —sale de
+  // la permuta—, y esta es la que pinta el recuadro "am ÷ tc = +uc". Dejando
+  // la del lote, el recuadro enseñaria una division que no da el uc de al
+  // lado: dos numeros que no cuadran entre si en la misma pantalla.
+  if(_rTx.calce) tc=parseFloat(_rTx.tc)||0;
   var uc=_rTx.uc, uv=_rTx.uv;
   var pr=_rTx.pr;
   // Comisión bancaria VES: se suma al descuento según la forma de pago elegida.
@@ -24435,9 +24548,35 @@ function rNueva(){
       }
       return html;
     })()+
-    "<div class='sec' style='border-left:3px solid var(--ok);background:"+(hasInv?"var(--vd6-k)":"var(--sup)")+"'><div class='sec-title' style='color:var(--ok)'>3️⃣ Tasas USDT"+
-    (hasInv?"<span style='background:var(--ok-sup);color:var(--ok);font-size:11px;padding:2px 8px;border-radius:10px;margin-left:8px;font-weight:600'>✅ Auto desde inventario</span>":"<span style='background:var(--mal-sup);color:var(--mal);font-size:11px;padding:2px 8px;border-radius:10px;margin-left:8px'>Sin inventario</span>")+
+    "<div class='sec' style='border-left:3px solid var(--ok);background:"+((hasInv||_rTx.calce)?"var(--vd6-k)":"var(--sup)")+"'><div class='sec-title' style='color:var(--ok)'>3️⃣ "+(_rTx.calce?"Permuta":"Tasas USDT")+
+    (_rTx.calce?"<span style='background:var(--mo6-b);color:var(--rol-ee);font-size:11px;padding:2px 8px;border-radius:10px;margin-left:8px;font-weight:600'>🤝 Sin USDT</span>"
+     :hasInv?"<span style='background:var(--ok-sup);color:var(--ok);font-size:11px;padding:2px 8px;border-radius:10px;margin-left:8px;font-weight:600'>✅ Auto desde inventario</span>":"<span style='background:var(--mal-sup);color:var(--mal);font-size:11px;padding:2px 8px;border-radius:10px;margin-left:8px'>Sin inventario</span>")+
     "</div>"+
+    // ARREGLO 106 · el selector de metodo. Solo en el par BRL <-> VES: en las
+    // rutas de Colombia y Peru la permuta no se escribe en bolivares por real
+    // y la cuenta no valdria.
+    (esRutaCalce(ruta)?
+      "<div style='display:flex;background:var(--sup2f);border-radius:9px;padding:3px;gap:3px;margin-bottom:10px'>"+
+        "<button type='button' onclick='txMetodo(\"p2p\")' style='flex:1;padding:8px;border:none;border-radius:7px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;background:"+(_rTx.calce?"transparent":"var(--ok)")+";color:"+(_rTx.calce?"var(--tx3)":"var(--sobre-color)")+"'>🔁 Con USDT (P2P)</button>"+
+        "<button type='button' onclick='txMetodo(\"calce\")' style='flex:1;padding:8px;border:none;border-radius:7px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;background:"+(_rTx.calce?"var(--rol-ee)":"transparent")+";color:"+(_rTx.calce?"var(--sobre-color)":"var(--tx3)")+"'>🤝 Calce directo</button>"+
+      "</div>"
+    :"")+
+    (_rTx.calce?
+      // La permuta va SIEMPRE en bolivares por real, la misma unidad que sus
+      // dos tasas publicadas (ARREGLO 74). Y de ella sale la tasa de compra
+      // implicita, que se enseña: un numero derivado que no se ve obliga a
+      // comprobar la ganancia a mano.
+      "<div class='f2' style='margin-bottom:8px'>"+
+        "<div class='fl'><label>Tasa de permuta (Bs por real)</label><input type='text' inputmode='decimal' placeholder='ej: 183,59' value='"+(f.permuta||"")+"' oninput='S.tx.permuta=_num(this.value);upC(\"tx\")'></div>"+
+        "<div class='fl'><label>Tasa venta USDT ("+ruta.dest+"/USDT)</label><input type='text' inputmode='decimal' placeholder='ej: 948' value='"+(f.tv_manual||tvAuto||"")+"' oninput='S.tx.tv_manual=_num(this.value);upC(\"tx\")'></div>"+
+      "</div>"+
+      ((_rTx.permuta>0&&tv>0)
+        ?"<div style='background:var(--mo6-a);border:1px solid var(--mo5);border-radius:8px;padding:9px 12px;margin-bottom:8px;font-size:11.5px;color:var(--tx2)'>"+
+           "Aquí no pasa nada por Binance: los "+ruta.orig+" se quedan en tu cuenta y los "+ruta.dest+" salen de la tuya."+
+           "<br>Tu costo implícito sale en <b>"+f4(tc)+" "+ruta.orig+"/USDT</b> · sin comisión de Binance."+
+         "</div>"
+        :"<div style='background:var(--avi-sup2);border:1px solid var(--avi-ln);border-radius:8px;padding:9px 12px;margin-bottom:8px;font-size:11.5px;color:var(--avi-tx)'>⚠️ Sin la permuta y la tasa de venta no hay ganancia que calcular — no se inventa ninguna.</div>")
+    :
     // Mostrar tasas auto si hay inventario
     (hasInv?
       // Con inventario: mostrar tasas auto + botón editar
@@ -24469,7 +24608,7 @@ function rNueva(){
           }).join("")+
           "</div></div>";
       })()
-    :"")+
+    :""))+
     (ok&&tc>0&&tv>0?"<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px'>"+
       "<div id='s2-tx' class='step-box' style='background:var(--ok-sup);border:1px solid var(--vd2a33)'><span style='font-size:11px;color:var(--ok)'>"+f2(am)+" ÷ "+f4(tc)+" = </span><span style='font-weight:700;font-size:13px;color:var(--ok)'>+"+f2(uc)+" USDT</span></div>"+
       "<div id='s3-tx' class='step-box' style='background:var(--mal-sup);border:1px solid var(--rj3a33)'><span style='font-size:11px;color:var(--mal)'>"+f0(cant)+" "+ruta.dest+" ÷ "+f2(tv)+" = </span><span style='font-weight:700;font-size:13px;color:var(--mal)'>−"+f2(uv)+" USDT</span></div>"+
