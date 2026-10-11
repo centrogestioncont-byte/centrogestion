@@ -72,6 +72,7 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "_equilibrio",
                     "esRutaCalce", "esCalceDirecto",
                     "_loteYaEnApertura", "_fiatDeLote", "_deltaDeLote",
+                    "f2n", "f0", "f4",
                     "capitalRealTotal", "_fraccionInteresPrestamo", "interesDentroDeApertura",
                     "_mesesDesde", "_acumuladosMes",
                     "conciliacionCapital", "getMesKeyActual", "ajustesDesdeApertura",
@@ -7566,6 +7567,51 @@ console.log("\n— FASE 2: la cuenta madre —");
   const nada = F.ajustesDesdeApertura("2026-09-11");
   ok(ap.total === nada.total && ap.nSinSaber === nada.nSinSaber,
      "o sea: deja la conciliacion igual que si no se hubiera apuntado");
+}
+
+// ── ARREGLO 109 · una funcion de formato que NO EXISTE ───────────────────
+//
+// Sus palabras: "le doy a pegar el texto que extraigo de la imagen y le doy
+// registrar y se queda como que no se registra nada".
+//
+// No era el pegado: saveIU() se caia con "f2n is not defined" en su ULTIMA
+// linea —la del registro de auditoria— DESPUES de meter el lote y mover los
+// saldos, y ANTES de saveData() y R(). Desde fuera no pasa nada: ni aviso,
+// ni lote en la lista, ni error a la vista. Reproducido pegando un
+// comprobante y pulsando Registrar:
+//
+//   ReferenceError: f2n is not defined   at saveIU (index.html:12172)
+//   lotes creados: NINGUNO
+//
+// Habia 24 llamadas: 1 en saveIU y 23 en rTblUnificada (la pestaña
+// Operaciones), que es la misma bomba sin estallar.
+{
+  // f2n existe y se porta como sus tres hermanas.
+  ok(typeof F.f2n === "function", "f2n existe");
+  // Con decimales las cuatro dan lo mismo y la comprobacion no discrimina:
+  // hace falta un numero REDONDO, que es donde se ve el minimo de decimales.
+  ok(F.f2n(1000) === F.f2(1000) && F.f2n(1234.5678) === F.f2(1234.5678),
+     "f2n(x) formatea como f2", F.f2n(1000) + " / " + F.f2n(1234.5678));
+  ok(F.f2n(1000, 0) === F.f0(1000) && F.f2n(1234.5678, 0) === F.f0(1234.5678),
+     "f2n(x,0) como f0", F.f2n(1000,0) + " / " + F.f2n(1234.5678,0));
+  ok(F.f2n(1000, 4) === F.f4(1000) && F.f2n(5.1636, 4) === F.f4(5.1636),
+     "f2n(x,4) como f4", F.f2n(1000,4) + " / " + F.f2n(5.1636,4));
+
+  // LA DE VERDAD: ninguna funcion de formato llamada en el archivo puede
+  // faltar. Es la guardia que habria cazado esto sola — una llamada a algo
+  // que no existe no se ve hasta que alguien pulsa el boton, y entonces se
+  // lleva por delante media funcion sin decir nada.
+  const sinCom = HTML.replace(/\/\/[^\n]*/g, "");
+  const usadas = new Set();
+  const re = /(^|[^.\w$])(f\d[A-Za-z0-9_]*)\s*\(/g;
+  let m;
+  while ((m = re.exec(sinCom)) !== null) usadas.add(m[2]);
+  const faltan = [...usadas].filter(nom =>
+    !new RegExp("function\\s+" + nom + "\\s*\\(").test(sinCom) &&
+    !new RegExp("(?:var|let|const)\\s+" + nom + "\\s*=").test(sinCom));
+  ok(faltan.length === 0,
+     "todas las funciones de formato que se llaman existen",
+     faltan.length ? "faltan: " + faltan.join(", ") : "revisadas " + usadas.size);
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
