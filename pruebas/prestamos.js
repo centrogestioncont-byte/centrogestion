@@ -7431,7 +7431,31 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(/crearLoteRecibido\(ruta\.orig, res\.am, res\.uc, f\.cuentaBanco\|\|"", ds\(f\.date\), nuevaRemesa\._uid, f\.hora, _calceTx\)/.test(sv),
      "y al lote de entrada tambien");
 
-  // 8. La pantalla. El selector solo donde la cuenta vale, y cambiar de
+  // 8. PENDIENTE. En calce la remesa tampoco crea lote al guardarse —el
+  //    dinero no entro—, pero al COBRARSE si tiene que nacer, y puede ser en
+  //    reales. Reproducido antes de arreglarlo: se cobraban los 1.000 R$ y el
+  //    lote no nacia, asi que esos reales se gastaban despues sin saber a que
+  //    valor habian entrado.
+  const lc = sinCom(sacarFuncion("_loteAlCobrar"));
+  ok(/if\(c\.moneda!=="VES" && c\.metodo!=="calce"\) return null;/.test(lc),
+     "al cobrar un pendiente de calce, los reales SI llevan lote");
+  ok(/c\.refUid\|\|"", "", c\.metodo==="calce"\)/.test(lc),
+     "y se le pasa el metodo a crearLoteRecibido");
+  // Los TRES sitios que crean la cuenta por cobrar tienen que guardarlo: uno
+  // que se olvide deja ese cobro sin lote y no hay forma de saberlo despues.
+  const nMet = (HTML.match(/metodo:_calceTx\?"calce":""|metodo:r\.metodo\|\|""/g) || []).length;
+  ok(nMet === 3, "los tres sitios que crean la cuenta por cobrar guardan el metodo",
+     "salen " + nMet + " de 3");
+
+  // 9. En el inventario, una permuta no se puede leer como una venta de USDT.
+  //    Sin esto la fila decia "⬆️ VENTA · BRL · −193,66 USDT" de unos USDT que
+  //    nunca salieron — el "vendi 30 BRL que nadie hizo" del 12/09, otra vez.
+  ok(/r\.permuta\?"🤝 PERMUTA":isComp\?"⬇️ COMPRA":"⬆️ VENTA"/.test(HTML),
+     "el inventario la llama permuta, no venta");
+  ok(/r\.permuta\?"≈ "\+f4\(r\.usdt\)\+" USDT"/.test(HTML),
+     "y su USDT va sin signo: ahi no se movio ninguno");
+
+  // 10. La pantalla. El selector solo donde la cuenta vale, y cambiar de
   //    metodo limpia lo del otro: una tasa escrita a mano que ya no manda se
   //    lee como que sigue mandando (ARREGLO 98).
   const rn = sinCom(sacarFuncion("rNueva"));

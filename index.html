@@ -2780,7 +2780,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261011_v188";
+var APP_VERSION = "20261011_v189";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -8175,7 +8175,8 @@ function marcarRemesaPendiente(tipo,n){
       // Lo que VALE en USDT el dinero que va a entrar (uc, no uv — ver
       // crearLoteRecibido), para que el lote nazca con el valor del día en que
       // se pactó y no con el del día del pago.
-      usdtValor:parseFloat(r.uc)||0
+      usdtValor:parseFloat(r.uc)||0,
+      metodo:r.metodo||""      // ARREGLO 106: para que el lote nazca al cobrar
     });
     logAudit("MARCAR_PENDIENTE","Marcó operación #"+r.n+" ("+r.cl+") como pago pendiente");
     saveData();R();
@@ -8840,6 +8841,7 @@ function saveTx(){
       cuentaBanco:_ctaCobro,          // donde entrará cuando pague; se confirma al cobrar
       cuentaDest:f.cuentaDest||"",
       usdtValor:Math.round((res.uc*(res.am>0?_debe/res.am:0))*10000)/10000,
+      metodo:_calceTx?"calce":"",   // ARREGLO 106: para que el lote nazca al cobrar
       parcial:true                    // no es la remesa entera, solo lo que le fio
     });
   }
@@ -8866,7 +8868,8 @@ function saveTx(){
       // Lo que VALE en USDT el dinero que va a entrar (ver crearLoteRecibido:
       // es "uc", no "uv"). Se guarda aquí para que el lote que nazca al cobrar
       // lleve el valor del día en que se pactó, no el del día del pago.
-      usdtValor:res.uc
+      usdtValor:res.uc,
+      metodo:_calceTx?"calce":""   // ARREGLO 106: para que el lote nazca al cobrar
     });
   }
   // Actualizar saldos y guardar movimientos exactos en la remesa para reversion precisa
@@ -18145,14 +18148,19 @@ function crearLoteRecibido(moneda, monto, usdtValor, cuentaDestinoId, fecha, ref
 // puede ser parcial (un abono), así que el valor en USDT va a prorrata.
 function _loteAlCobrar(c, montoEntrado, cuentaDestinoId){
   if(!c || !(montoEntrado>0) || !cuentaDestinoId) return null;
-  if(c.moneda!=="VES") return null;   // solo los bolívares llevan lote (ver crearLoteRecibido)
+  // ARREGLO 106: una remesa de CALCE marcada pendiente tampoco crea su lote al
+  // guardarse —el dinero no ha entrado— pero al cobrarse SI tiene que nacer, y
+  // en calce puede ser en reales. Reproducido antes de arreglarlo: se cobraban
+  // los 1.000 R$ y el lote no nacia, asi que esos reales se gastaban despues
+  // sin saber a que valor habian entrado.
+  if(c.moneda!=="VES" && c.metodo!=="calce") return null;   // si no, solo los bolívares (ver crearLoteRecibido)
   var total=parseFloat(c.monto)||0;
   var valor=parseFloat(c.usdtValor)||0;
   if(valor<=0) return null;          // cobro viejo, sin valor guardado
   var parte=total>0 ? (montoEntrado/total) : 1;
   // El cobro entra HOY, así que su hora es la de ahora: _horaDe("") la pone.
   return crearLoteRecibido(c.moneda, montoEntrado, valor*parte,
-                           cuentaDestinoId, td(), c.refUid||"", "");
+                           cuentaDestinoId, td(), c.refUid||"", "", c.metodo==="calce");
 }
 // Quita el lote que creó una remesa. Se usa al borrarla y al pasarla a
 // pendiente: en los dos casos ese dinero no entró, así que su lote no existe.
@@ -24870,11 +24878,22 @@ function rInventarioUsdt(){
     var flag=(MONEDAS_COMPRA.concat(MONEDAS_VENTA).find(function(m){return m.id===r.moneda;})||{flag:"💵"}).flag;
     var bancoId=isComp?r.cuentaOrigenId:r.cuentaDestinoId;
     var bancoNom=bancoId?_escAud(_cuentasNomInv[bancoId]||"—"):"—";
-    return "<tr style='background:"+(isComp?"var(--vd6-a)":"var(--rj6-i)")+"'>"+
+    // ARREGLO 106: en esta tabla el verde es "compra de USDT" y el rojo
+    // "venta de USDT". Una permuta no es ninguna de las dos, y el color se
+    // lee antes que la letra: dejarla en rojo la contaba como una venta
+    // aunque la chapa dijera otra cosa.
+    return "<tr style='background:"+(r.permuta?"var(--mo6-a)":isComp?"var(--vd6-a)":"var(--rj6-i)")+"'>"+
       "<td>"+r.fecha+"</td>"+
-      "<td><span class='bd' style='background:"+(isComp?"var(--ok-sup)":"var(--mal-sup)")+";color:"+(isComp?"var(--ok-tx)":"var(--rj2)")+"'>"+(isComp?"⬇️ COMPRA":"⬆️ VENTA")+"</span></td>"+
+      // ARREGLO 106: un lote de PERMUTA no es una venta de USDT. Sin esto la
+      // fila decia "⬆️ VENTA · BRL · −193,66 USDT" de unos USDT que nunca
+      // salieron — que es exactamente el "vendi 30 BRL que nadie hizo" del
+      // 12/09, con otra forma.
+      "<td><span class='bd' style='background:"+(r.permuta?"var(--mo6-b)":isComp?"var(--ok-sup)":"var(--mal-sup)")+";color:"+(r.permuta?"var(--rol-ee)":isComp?"var(--ok-tx)":"var(--rj2)")+"'>"+(r.permuta?"🤝 PERMUTA":isComp?"⬇️ COMPRA":"⬆️ VENTA")+"</span></td>"+
       "<td style='text-align:center'>"+flag+" "+r.moneda+"</td>"+
-      "<td style='text-align:right;font-weight:700;color:"+(isComp?"var(--ok)":"var(--mal)")+"'>"+(isComp?"+":"-")+f4(r.usdt)+" USDT</td>"+
+      // Y en una permuta no se movio USDT: ese numero es lo que VALEN los
+      // reales que entraron, no una salida. Va sin signo y sin color de
+      // movimiento, que es lo que lo hacia leerse como una venta.
+      "<td style='text-align:right;font-weight:700;color:"+(r.permuta?"var(--tx3)":isComp?"var(--ok)":"var(--mal)")+"'>"+(r.permuta?"≈ "+f4(r.usdt)+" USDT":(isComp?"+":"-")+f4(r.usdt)+" USDT")+"</td>"+
       "<td style='text-align:right'>"+f2(r.tasa)+"</td>"+
       "<td style='text-align:right;font-size:11.5px;color:var(--tx3)'>"+f2(r.comision)+"</td>"+
       "<td style='text-align:right;font-weight:700;color:"+(isComp?"var(--mal)":"var(--ok)")+"'>"+(isComp&&r.montOrigen?"-"+f2(r.montOrigen)+" "+r.moneda:(!isComp?"+"+f2(r.bs)+" "+r.moneda:""))+"</td>"+
