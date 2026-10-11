@@ -2780,7 +2780,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261011_v189";
+var APP_VERSION = "20261011_v190";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -11335,8 +11335,62 @@ function _binSinBanco(){
     return !(l.tipo==="compra"?l.cuentaOrigenId:l.cuentaDestinoId);
   }).sort(function(a,b){ return ordenFIFO(b,a); });
 }
-// Asignar el banco a un lote ya guardado, y mover el saldo de esa cuenta: el
-// dinero entro o salio de verdad, solo que hasta ahora no se sabia de donde.
+// ── ARREGLO 107 · Poner el banco NO puede mover el saldo en silencio ────────
+//
+// Sus palabras (11/10/2026): "en inventario usdt me decia que habia varios
+// lotes sin asignar banco, pense que era solo colocar el nombre a esos lotes
+// viejos pero resulta que me altero todos los saldos de la cuenta PAGBANK y
+// banco vzla".
+//
+// Leyo exactamente lo que la pantalla decia: "lo unico que falta es de que
+// cuenta salio o a cual entro el dinero". Y el boton, ademas de poner la
+// etiqueta, MOVIA el saldo. Medido en su export de las 14:42:
+//
+//   14:41  4 compras de BRL (400+218+625+1.047)  → PAGBANK          −2.290,00
+//   14:42  4 ventas de VES (200k+50k+250k+100k)  → BANCO VENEZUELA +600.001,00
+//
+//   PAGBANK EMPRESA     1.077,00  →  −1.213,00
+//   BANCO DE VENEZUELA 20.904,48  →  620.905,48
+//
+// Los ocho lotes eran de JUNIO, tres meses antes de su apertura del 11/09. Ese
+// dinero ya estaba dentro de la foto de saldos de la apertura, asi que volver
+// a aplicarlo lo contaba dos veces. Y 620.905 Bs es ocho veces mas de lo que
+// ha tenido nunca en esa cuenta (su histSaldos va de 10.014 a 74.607).
+//
+// El movimiento no siempre sobra: un lote recien importado de Binance cuyo
+// lado fiat todavia no se reflejo SI tiene que mover el saldo. La app no
+// puede distinguir los dos casos — pero ella si, y para uno de los dos hay
+// una regla que no falla: si el lote es ANTERIOR a la apertura, su dinero ya
+// esta dentro de la foto, y moverlo lo cuenta dos veces SIEMPRE.
+//
+// Asi que: elegir el banco solo pone la etiqueta, que es lo que ella esperaba;
+// mover el saldo es otro boton, dice el antes y el despues antes de hacerlo, y
+// en un lote anterior a la apertura ni se ofrece.
+function _loteYaEnApertura(l){
+  var ap=(S.config||{}).aperturaFecha||"";
+  if(!ap) return false;
+  var iso=""; try{ iso=_isoDeLote(l)||""; }catch(e){ iso=""; }
+  return !!iso && iso < ap;
+}
+// Lo que ese lote movio en su cuenta: la compra gasta moneda de origen, la
+// venta la recibe. Escrito una vez porque lo leen el boton, el aviso y la
+// propia lista — tres copias de esto se separan con el primer cambio.
+function _fiatDeLote(l){
+  if(!l) return 0;
+  var v=(l.tipo==="compra")?(parseFloat(l.montOrigen)||0):(parseFloat(l.bs)||0);
+  return Math.round(v*100)/100;
+}
+function _deltaDeLote(l){ return (l.tipo==="compra")?-_fiatDeLote(l):_fiatDeLote(l); }
+
+// Elegir en el desplegable no escribe nada: solo apunta cual se eligio, para
+// que los botones de debajo puedan decir que va a pasar con ese banco.
+function _binElegirBanco(loteId, cuentaId){
+  if(!S._binBanco) S._binBanco={};
+  if(cuentaId) S._binBanco[String(loteId)]=cuentaId;
+  else delete S._binBanco[String(loteId)];
+  R();
+}
+// Solo la etiqueta. No toca ni un saldo.
 function _binPonerBanco(loteId, cuentaId){
   if(!permisoEdicion()){ alert("No tienes permiso para guardar."); return; }
   var l=(S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[])
@@ -11344,14 +11398,41 @@ function _binPonerBanco(loteId, cuentaId){
   if(!l||!cuentaId) return;
   var c=(S.cuentas||[]).find(function(x){ return x.id===cuentaId; });
   if(!c) return;
-  if(l.tipo==="compra"){
-    l.cuentaOrigenId=cuentaId;
-    c.saldo=Math.round(((parseFloat(c.saldo)||0)-(parseFloat(l.montOrigen)||0))*100)/100;
-  }else{
-    l.cuentaDestinoId=cuentaId;
-    c.saldo=Math.round(((parseFloat(c.saldo)||0)+(parseFloat(l.bs)||0))*100)/100;
-  }
+  if(l.tipo==="compra") l.cuentaOrigenId=cuentaId; else l.cuentaDestinoId=cuentaId;
   l._mod=Date.now();
+  if(S._binBanco) delete S._binBanco[String(loteId)];
+  saveData(); R();
+}
+// La etiqueta Y el movimiento, que es lo que antes pasaba sin preguntar.
+function _binMoverSaldoLote(loteId, cuentaId){
+  if(!permisoEdicion()){ alert("No tienes permiso para guardar."); return; }
+  var l=(S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[])
+        .find(function(x){ return String(x.id)===String(loteId); });
+  if(!l||!cuentaId) return;
+  var c=(S.cuentas||[]).find(function(x){ return x.id===cuentaId; });
+  if(!c) return;
+  if(_loteYaEnApertura(l)){
+    alert("Este lote es del "+(l.fecha||"?")+", anterior a tu apertura del "+ds((S.config||{}).aperturaFecha)+".\n\nEse dinero ya está dentro de la foto de saldos de la apertura, así que moverlo lo contaría dos veces. Solo se le pone el banco.");
+    return;
+  }
+  var antes=Math.round((parseFloat(c.saldo)||0)*100)/100;
+  var delta=_deltaDeLote(l);
+  var despues=Math.round((antes+delta)*100)/100;
+  // El antes y el despues, con todas sus letras. Un saldo que cambia sin que
+  // se haya visto el numero es lo que costo esta tarde.
+  if(!confirm("Vas a MOVER el saldo de "+c.nombre+":\n\n"+
+              "   ahora      "+f2(antes)+" "+c.moneda+"\n"+
+              "   "+(delta<0?"sale      −":"entra     +")+f2(Math.abs(delta))+" "+c.moneda+"\n"+
+              "   quedaría   "+f2(despues)+" "+c.moneda+"\n\n"+
+              "Hazlo SOLO si ese dinero todavía no está reflejado en el saldo.\n"+
+              "Si la operación es vieja y su dinero ya entró o salió, usa «Solo poner el banco».\n\n"+
+              "¿Mover el saldo?")) return;
+  if(l.tipo==="compra") l.cuentaOrigenId=cuentaId; else l.cuentaDestinoId=cuentaId;
+  c.saldo=despues;
+  c._mod=Date.now();   // sin esto la fusion lo pisa con la copia vieja del otro aparato
+  l._mod=Date.now();
+  if(S._binBanco) delete S._binBanco[String(loteId)];
+  logAudit("LOTE_BANCO_SALDO", c.nombre+" "+f2(antes)+" → "+f2(despues)+" "+c.moneda+" · lote "+(l.fecha||l.id));
   saveData(); R();
 }
 function _htmlPendientesBanco(){
@@ -11365,7 +11446,7 @@ function _htmlPendientesBanco(){
       "<b style='font-size:12px;color:var(--avi-tx)'>🏦 "+p.length+" operaciones sin banco</b>"+
       "<button type='button' onclick='S._verSinBanco=false;R()' style='background:var(--sup3);border:none;padding:5px 11px;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer'>Cerrar</button>"+
     "</div>"+
-    "<div style='font-size:11px;color:var(--avi-tx);margin-bottom:9px;line-height:1.5'>La ganancia de estas ya está bien contada. Lo único que falta es de qué cuenta salió o a cuál entró el dinero — búscalas en tu extracto por el monto y la fecha.</div>"+
+    "<div style='font-size:11px;color:var(--avi-tx);margin-bottom:9px;line-height:1.5'>La ganancia de estas ya está bien contada. Lo único que falta es de qué cuenta salió o a cuál entró el dinero — búscalas en tu extracto por el monto y la fecha.<br><b>Elegir el banco solo pone la etiqueta: no mueve ningún saldo.</b> Si además ese dinero todavía no está reflejado en la cuenta, hay un segundo botón que lo mueve y te dice antes cómo queda.</div>"+
     p.slice(0,40).map(function(l){
       var cf=(S.cuentas||[]).filter(function(c){return c.activa!==false&&c.moneda===l.moneda;});
       var monto=l.tipo==="compra"?(parseFloat(l.montOrigen)||0):(parseFloat(l.bs)||0);
@@ -11375,9 +11456,24 @@ function _htmlPendientesBanco(){
         "<span style='min-width:110px;text-align:right;font-weight:700'>"+f2(monto)+" "+l.moneda+"</span>"+
         (l.contraparte?"<span style='color:var(--tx3);min-width:105px'>"+l.contraparte+"</span>":"")+
         _htmlOrdenCopiable(l.ordenId)+
-        (cf.length?"<select onchange='_binPonerBanco(\""+l.id+"\",this.value)' style='flex:1;min-width:150px;padding:5px;border:1px solid var(--ln);border-radius:6px;font-family:inherit;font-size:11px'>"+
-          "<option value=''>— elegir banco —</option>"+
-          cf.map(function(c){return "<option value='"+c.id+"'>"+_escAud(c.nombre)+"</option>";}).join("")+"</select>"
+        (cf.length?(function(){
+          // ARREGLO 107: el select ya no HACE nada, solo elige. Lo que se haga
+          // con esa eleccion se decide debajo, y el que mueve dinero lo dice.
+          var sel=((S._binBanco||{})[String(l.id)])||"";
+          var cSel=sel?cf.find(function(c){return String(c.id)===String(sel);}):null;
+          var vieja=_loteYaEnApertura(l);
+          var delta=_deltaDeLote(l);
+          var h="<select onchange='_binElegirBanco(\""+l.id+"\",this.value)' style='flex:1;min-width:150px;padding:5px;border:1px solid var(--ln);border-radius:6px;font-family:inherit;font-size:11px'>"+
+            "<option value=''>— elegir banco —</option>"+
+            cf.map(function(c){return "<option value='"+c.id+"'"+(String(sel)===String(c.id)?" selected":"")+">"+_escAud(c.nombre)+"</option>";}).join("")+"</select>";
+          if(!cSel) return h;
+          h+="<button type='button' onclick='_binPonerBanco(\""+l.id+"\",\""+_jsAttr(String(sel))+"\")' style='background:var(--ok);color:var(--sobre-color);border:none;padding:5px 10px;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit'>Solo poner el banco</button>";
+          if(vieja)
+            h+="<span style='font-size:10px;color:var(--tx3);flex-basis:100%'>Es anterior a tu apertura del "+ds((S.config||{}).aperturaFecha)+": ese dinero ya está dentro de la foto de saldos, mover el saldo lo contaría dos veces.</span>";
+          else
+            h+="<button type='button' onclick='_binMoverSaldoLote(\""+l.id+"\",\""+_jsAttr(String(sel))+"\")' style='background:var(--avi-sup2);color:var(--avi-tx);border:1.5px solid var(--avi-ln);padding:5px 10px;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit'>y mover el saldo "+(delta<0?"−":"+")+f2(Math.abs(delta))+"</button>";
+          return h;
+        })()
          :"<span style='color:var(--mal);font-size:10px'>no tienes ninguna cuenta en "+l.moneda+" — créala en Configuración</span>")+
       "</div>";
     }).join("")+
