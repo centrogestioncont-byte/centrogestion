@@ -71,6 +71,7 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "_competidores", "_compDelDia", "_setComp", "_misTasasPublicadas", "_posicionMercado",
                     "_equilibrio",
                     "esRutaCalce", "esCalceDirecto",
+                    "_loteYaEnApertura", "_fiatDeLote", "_deltaDeLote",
                     "capitalRealTotal", "_fraccionInteresPrestamo", "interesDentroDeApertura",
                     "_mesesDesde", "_acumuladosMes",
                     "conciliacionCapital", "getMesKeyActual", "ajustesDesdeApertura",
@@ -4553,13 +4554,56 @@ S.inventarioUsdt_cerrado = [];
 // la lista. La app ya los marca aparte como "registro sin montos".
 S.inventarioUsdt.push({ id: 5, tipo: "venta", moneda: "VES", bs: 0, cuentaDestinoId: "", fecha: "09/06" });
 ok(!F._binSinBanco().some((l) => l.id === 5), "un lote en blanco no entra en los pendientes");
-// Asignarlo despues tiene que mover el saldo: el dinero entro o salio de
-// verdad, solo que no se sabia de donde.
+// ── ARREGLO 107 · poner el banco NO mueve el saldo ──────────────────────
+//
+// Sus palabras: "pense que era solo colocar el nombre a esos lotes viejos
+// pero resulta que me altero todos los saldos de la cuenta PAGBANK y banco
+// vzla". Medido en su export: ocho lotes de JUNIO, tres meses antes de su
+// apertura del 11/09, le movieron PAGBANK de 1.077,00 a −1.213,00 y el Banco
+// de Venezuela de 20.904,48 a 620.905,48. Ese dinero ya estaba dentro de la
+// foto de saldos de la apertura: se conto dos veces.
 {
   const pon = sinComentarios(sacarFuncion("_binPonerBanco"));
-  ok(/c\.saldo=/.test(pon), "al asignar el banco se mueve el saldo de esa cuenta");
+  ok(!/c\.saldo\s*=/.test(pon), "poner el banco NO toca ningun saldo");
   ok(/l\._mod=Date\.now\(\)/.test(pon), "y el lote queda marcado para la sincronizacion");
   ok(/permisoEdicion\(\)/.test(pon), "con permiso de guardar");
+
+  // El movimiento existe, pero aparte y diciendo lo que va a pasar.
+  const mov = sinComentarios(sacarFuncion("_binMoverSaldoLote"));
+  ok(/c\.saldo=despues;/.test(mov), "mover el saldo es otra funcion");
+  ok(/if\(!confirm\(/.test(mov) && /quedaría/.test(mov),
+     "que pregunta antes, con el antes y el despues");
+  ok(/if\(_loteYaEnApertura\(l\)\)\{/.test(mov),
+     "y se niega en un lote anterior a la apertura");
+  ok(/c\._mod=Date\.now\(\)/.test(mov),
+     "la cuenta queda marcada, o la fusion la pisa (ARREGLO 22)");
+  ok(/logAudit\("LOTE_BANCO_SALDO"/.test(mov), "y queda en la auditoria");
+
+  // El desplegable ya no HACE nada: elige. Lo que se haga se decide debajo.
+  ok(/onchange='_binElegirBanco\(/.test(HTML) && !/onchange='_binPonerBanco\(/.test(HTML),
+     "el desplegable solo elige, no aplica");
+  // Y la pantalla lo dice, que es lo que leyo al reves.
+  ok(/Elegir el banco solo pone la etiqueta: no mueve ningún saldo/.test(HTML),
+     "la pantalla dice que elegir el banco no mueve nada");
+
+  // La regla que no falla: antes de la apertura, ese dinero ya esta contado.
+  S.config = S.config || {}; S.config.aperturaFecha = "2026-09-11";
+  ok(F._loteYaEnApertura({fecha:"06/02", fechaIso:"2026-06-02"}) === true,
+     "un lote de junio esta dentro de la apertura del 11/09");
+  ok(F._loteYaEnApertura({fecha:"09/20", fechaIso:"2026-09-20"}) === false,
+     "y uno de despues, no");
+  // Sin apertura fijada no se puede afirmar nada, asi que no se bloquea.
+  S.config.aperturaFecha = "";
+  ok(F._loteYaEnApertura({fecha:"06/02", fechaIso:"2026-06-02"}) === false,
+     "sin apertura fijada no se da por contado");
+  S.config.aperturaFecha = "2026-09-11";
+  // Lo que movio cada lote sale de un solo sitio.
+  ok(F._fiatDeLote({tipo:"compra", montOrigen:1047}) === 1047 &&
+     F._fiatDeLote({tipo:"venta", bs:200000}) === 200000,
+     "el monto fiat del lote sale de donde toca segun el tipo");
+  ok(F._deltaDeLote({tipo:"compra", montOrigen:1047}) === -1047 &&
+     F._deltaDeLote({tipo:"venta", bs:200000}) === 200000,
+     "la compra resta de la cuenta y la venta suma");
 }
 // La contraparte viene en el archivo y antes se tiraba.
 {
