@@ -70,6 +70,7 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "costoOperativoPorPrestamo", "pctCostoOperativo",
                     "_competidores", "_compDelDia", "_setComp", "_misTasasPublicadas", "_posicionMercado",
                     "_equilibrio",
+                    "esRutaCalce", "esCalceDirecto",
                     "capitalRealTotal", "_fraccionInteresPrestamo", "interesDentroDeApertura",
                     "_mesesDesde", "_acumuladosMes",
                     "conciliacionCapital", "getMesKeyActual", "ajustesDesdeApertura",
@@ -1095,16 +1096,30 @@ ok(F.crearLoteRecibido("USD", 100, 100, "zelle", "12/09", "x") === null,
    "ninguna otra moneda tampoco");
 ok(F.crearLoteRecibido("VES", 20010, 21.3563, "bdv", "12/09", "x") !== null,
    "los bolivares si, que es lo unico que se acordo");
+// ARREGLO 106: y los reales SOLO con el metodo de calce, nunca sin el.
+S.inventarioUsdt = [];
+var _lcCalce = F.crearLoteRecibido("BRL", 1000, 193.5958, "pagbank", "12/09", "c1", "", true);
+ok(_lcCalce !== null, "en calce directo los reales SI crean lote");
+ok(_lcCalce && _lcCalce.permuta === true && _lcCalce.plataforma === "Permuta",
+   "marcado como permuta, para que no lo mire la tasa de referencia");
+ok(F.crearLoteRecibido("USD", 100, 100, "zelle", "12/09", "c2", "", true) === null,
+   "y ni en calce se abre a otra moneda");
 S.inventarioUsdt = [];
 ok(F._loteAlCobrar({ monto:500, moneda:"BRL", usdtValor:98, refUid:"z" }, 500, "pagbank") === null,
    "y al cobrar un pendiente en reales, tampoco");
 ok(S.inventarioUsdt.length === 0, "sigue sin quedar nada");
 S.inventarioUsdt = [];
-// Y que saveTx solo lo llame con bolivares: el fallo estaba en la condicion.
-ok(/if\(ruta\.orig==="VES" && !f\.pendiente\)/.test(HTML),
-   "saveTx crea el lote solo cuando lo que entra son bolivares");
-ok(!/ruta\.orig==="BRL"[^)]*\)\s*\{\s*\n\s*crearLoteRecibido/.test(HTML),
-   "y ya no con reales");
+// Y que saveTx solo lo llame con bolivares — o en CALCE DIRECTO, donde los
+// reales que entran tampoco se convierten en USDT (ARREGLO 106). Fuera del
+// calce la regla del 12/09 sigue intacta: un lote de reales de una remesa
+// normal es una venta que nunca ocurrio.
+ok(/if\(\(ruta\.orig==="VES" \|\| _calceTx\) && !f\.pendiente\)/.test(HTML),
+   "saveTx crea el lote con bolivares, o con reales si es calce directo");
+ok(/crearLoteRecibido\(ruta\.orig, res\.am, res\.uc, f\.cuentaBanco\|\|"", ds\(f\.date\), nuevaRemesa\._uid, f\.hora, _calceTx\)/.test(HTML),
+   "y le pasa el metodo, que es lo unico que abre la puerta a los reales");
+// La puerta se abre SOLO para BRL en calce: ni USD ni ninguna otra.
+ok(/if\(moneda!=="VES" && !\(calce && moneda==="BRL"\)\) return null;/.test(HTML),
+   "crearLoteRecibido sigue cerrado a todo lo demas");
 
 // ── La fecha del lote, y con ella el orden FIFO ─────────────────────────────
 // El 12/09 los lotes de 11.000 y 33.000 Bs que habian entrado por la manana se
@@ -7177,7 +7192,9 @@ console.log("\n— FASE 2: la cuenta madre —");
     const fn = sinCom(sacarFuncion(par[0]));
     const iMonto = fn.indexOf("1️⃣ " + par[1]);
     const iCtas  = fn.indexOf("2️⃣ Cuentas afectadas");
-    const iTasas = fn.indexOf("3️⃣ Tasas USDT");
+    // El titulo del paso 3 cambia con el metodo desde el ARREGLO 106
+    // ("3️⃣ Permuta" en calce), asi que se ancla al numero del paso.
+    const iTasas = fn.indexOf("3️⃣ ");
     ok(iMonto > 0 && iCtas > 0 && iTasas > 0 && iMonto < iCtas && iCtas < iTasas,
        par[0] + ": primero el monto, luego las cuentas, luego las tasas",
        "monto " + iMonto + " · cuentas " + iCtas + " · tasas " + iTasas);
@@ -7311,6 +7328,147 @@ console.log("\n— FASE 2: la cuenta madre —");
   //    no lo cuenta.
   ok(!/el capital lo cuenta como suyo/.test(eg),
      "y no dice que el capital lo siga contando");
+}
+
+// ── ARREGLO 106 · CALCE DIRECTO (permuta BRL <-> VES, sin USDT) ──────────
+//
+// Sus palabras: "se elimina la intermediacion de USDT... G_VES = M_BRL ×
+// (T_Mercado − T_Cliente)", y "de donde salen los bolivares que recibe tu
+// cliente: de tu cuenta en Venezuela".
+//
+// Lo medido en Chromium, que es lo que estas guardias protegen:
+//
+//   su formula  M × (T_Mercado − T_Cliente) ...  11.590,00 Bs
+//   la app      pr × tv .....................    11.589,96 Bs   (redondeo)
+//
+//   IDA  BRL→VES   PAGBANK 1000→2000 · BDV 300.000→128.000
+//                  lote de compra BRL 100 → 100   <- NO se toca
+//                  lote de venta VES  189.600 → 17.600
+//                  nace 1 lote de reales a 5,1637, marcado permuta
+//   VUELTA VES→BRL consume ese mismo lote de reales: 1000 → 500
+//   Al borrar, las dos vuelven exactas.
+{
+  const sinCom = t => t.replace(/\/\/[^\n]*/g, "");
+
+  // 1. Solo el par BRL <-> VES. En Colombia y Peru la permuta no se escribe
+  //    en bolivares por real y la cuenta de arriba no valdria.
+  ok(F.esRutaCalce({orig:"BRL",dest:"VES"}) && F.esRutaCalce({orig:"VES",dest:"BRL"}),
+     "el calce vale en los dos sentidos de BRL <-> VES");
+  ok(!F.esRutaCalce({orig:"BRL",dest:"COP"}) && !F.esRutaCalce({orig:"BRL",dest:"PEN"}) &&
+     !F.esRutaCalce({orig:"USD",dest:"VES"}) && !F.esRutaCalce(null),
+     "y en ninguna otra ruta");
+  // Y hace falta LAS DOS cosas: el metodo y la ruta.
+  ok(F.esCalceDirecto({metodo:"calce"}, {orig:"BRL",dest:"VES"}) === true,
+     "es calce con el metodo puesto y la ruta buena");
+  ok(F.esCalceDirecto({metodo:"calce"}, {orig:"BRL",dest:"COP"}) === false &&
+     F.esCalceDirecto({metodo:"p2p"},   {orig:"BRL",dest:"VES"}) === false &&
+     F.esCalceDirecto({},               {orig:"BRL",dest:"VES"}) === false,
+     "y nunca con una sola de las dos");
+
+  // 2. cTx: sin Binance no hay comision, y la tasa de compra sale de la
+  //    permuta — en cada sentido la suya. Se exige la EXPRESION ENTERA:
+  //    buscar "permuta" suelto pasaria con el termino renombrado o a cero
+  //    (ARREGLO 100).
+  const ct = sinCom(sacarFuncion("cTx"));
+  ok(/comUc = 0; comUv = 0;/.test(ct),
+     "en calce no se descuenta comision de Binance");
+  ok(/tc = \(_permuta>0 && tv>0\) \? \(isVzla \? _permuta\*tv : tv\/_permuta\) : 0;/.test(ct),
+     "la tasa de compra sale de la permuta, con su sentido");
+  // Los DOS returns, no uno: cTx sale por el de arriba cuando falta la tasa,
+  // y la guardia escrita sin contar pasaba con el de abajo vaciado.
+  const nRet = (ct.match(/calce:_calce,permuta:_permuta/g) || []).length;
+  ok(nRet === 2, "cTx devuelve las dos por sus dos salidas", "sale " + nRet + " de 2");
+  // Sin permuta, pr queda en 0 y no se inventa nada.
+  ok(/if\(!tc\|\|!tv\) return\{[^}]*pr:0/.test(ct),
+     "sin permuta no hay ganancia inventada");
+
+  // 3. El FIFO: lo que ENTRA no consume. Es lo que impide comerse lotes de
+  //    compra de USDT que esta operacion nunca uso — y de esos lotes salen
+  //    las tasas que la app sugiere (el fallo del 12/09, por el otro lado).
+  ok(/if\(!calce\) consumirInventarioFIFO\(monOrig, uc, monDest, 0, ctaOrig, ctaDest\);/.test(HTML),
+     "en calce no se consume el lado de la moneda que entra");
+  ok(/var r=calce\?\{compras:\[\]\}:simularConsumoFIFO\(/.test(HTML),
+     "y el simulador dice lo mismo que el consumo");
+  // El lado que SALE se consume siempre, calce o no.
+  const cf = sinCom(sacarFuncion("consumirFIFORemesa"));
+  ok(/_entregasParaFIFO\(entregas, ctaDest, cant\)\.forEach/.test(cf) &&
+     !/if\(!calce\)[\s\S]*_entregasParaFIFO/.test(cf.replace(/if\(!calce\) consumirInventarioFIFO[^\n]*\n/,"")),
+     "lo que sale si consume, siempre");
+
+  // 4. El lote de entrada: solo BRL y solo en calce, y marcado.
+  ok(/if\(moneda!=="VES" && !\(calce && moneda==="BRL"\)\) return null;/.test(HTML),
+     "crearLoteRecibido abre la puerta solo a los reales en calce");
+  ok(/lote\.permuta=true;\s*\n\s*lote\.plataforma="Permuta";/.test(HTML),
+     "y lo marca, para que no lo miren las tasas");
+
+  // 5. LO MAS IMPORTANTE: ese lote no puede alimentar la tasa con la que se
+  //    valora TODO el dinero parado. Su tasa sale de un cruce BRL/VES, no de
+  //    Binance.
+  ok(/if\(l\.permuta\) continue;/.test(sinCom(sacarFuncion("tasaDeReferencia"))),
+     "tasaDeReferencia no mira los lotes de permuta");
+
+  // 6. Al borrar no se devuelve lo que nunca se consumio. Son DOS caminos
+  //    (con _mov y sin el) y los dos tienen que llevarlo: uno solo deja la
+  //    mitad de los borrados regalando saldo a lotes de otra operacion.
+  const rv = sinCom(sacarFuncion("revertirSaldosRemesa"));
+  const nGuardas = (rv.match(/if\(uc>0 && r\.metodo!=="calce"\)/g) || []).length;
+  ok(nGuardas === 2, "los dos caminos del borrado respetan el calce",
+     "salen " + nGuardas + " de 2");
+  ok(!/if\(uc>0\)\s*\{/.test(rv), "y no queda ninguno sin guardia");
+
+  // 7. saveTx: ni lotes en blanco, ni el aviso de FIFO del lado que no
+  //    consume, y el metodo viaja CON la remesa (el borrado lo lee de ahi).
+  const sv = sinCom(sacarFuncion("saveTx"));
+  ok(/if\(!rates\.hasRates && !_calceTx\)\{/.test(sv),
+     "en calce no nacen los dos lotes en blanco de «Operación»");
+  ok(/var _faltaU=_calceTx\?0:/.test(sv),
+     "ni salta el aviso de «falta saldo FIFO» por el lado que no consume");
+  ok(/nuevaRemesa\.metodo="calce"; nuevaRemesa\.permuta=parseFloat\(f\.permuta\)\|\|0;/.test(sv),
+     "el metodo y la permuta se guardan en la remesa");
+  const nPasa = (sv.match(/_entregas,_calceTx\)|_entregas, _calceTx\)/g) || []).length;
+  ok(nPasa === 3, "y se pasa a la simulacion, al consumo y a la foto de lotes",
+     "sale " + nPasa + " de 3");
+  ok(/crearLoteRecibido\(ruta\.orig, res\.am, res\.uc, f\.cuentaBanco\|\|"", ds\(f\.date\), nuevaRemesa\._uid, f\.hora, _calceTx\)/.test(sv),
+     "y al lote de entrada tambien");
+
+  // 8. PENDIENTE. En calce la remesa tampoco crea lote al guardarse —el
+  //    dinero no entro—, pero al COBRARSE si tiene que nacer, y puede ser en
+  //    reales. Reproducido antes de arreglarlo: se cobraban los 1.000 R$ y el
+  //    lote no nacia, asi que esos reales se gastaban despues sin saber a que
+  //    valor habian entrado.
+  const lc = sinCom(sacarFuncion("_loteAlCobrar"));
+  ok(/if\(c\.moneda!=="VES" && c\.metodo!=="calce"\) return null;/.test(lc),
+     "al cobrar un pendiente de calce, los reales SI llevan lote");
+  ok(/c\.refUid\|\|"", "", c\.metodo==="calce"\)/.test(lc),
+     "y se le pasa el metodo a crearLoteRecibido");
+  // Los TRES sitios que crean la cuenta por cobrar tienen que guardarlo: uno
+  // que se olvide deja ese cobro sin lote y no hay forma de saberlo despues.
+  const nMet = (HTML.match(/metodo:_calceTx\?"calce":""|metodo:r\.metodo\|\|""/g) || []).length;
+  ok(nMet === 3, "los tres sitios que crean la cuenta por cobrar guardan el metodo",
+     "salen " + nMet + " de 3");
+
+  // 9. En el inventario, una permuta no se puede leer como una venta de USDT.
+  //    Sin esto la fila decia "⬆️ VENTA · BRL · −193,66 USDT" de unos USDT que
+  //    nunca salieron — el "vendi 30 BRL que nadie hizo" del 12/09, otra vez.
+  ok(/r\.permuta\?"🤝 PERMUTA":isComp\?"⬇️ COMPRA":"⬆️ VENTA"/.test(HTML),
+     "el inventario la llama permuta, no venta");
+  ok(/r\.permuta\?"≈ "\+f4\(r\.usdt\)\+" USDT"/.test(HTML),
+     "y su USDT va sin signo: ahi no se movio ninguno");
+
+  // 10. La pantalla. El selector solo donde la cuenta vale, y cambiar de
+  //    metodo limpia lo del otro: una tasa escrita a mano que ya no manda se
+  //    lee como que sigue mandando (ARREGLO 98).
+  const rn = sinCom(sacarFuncion("rNueva"));
+  ok(/\(esRutaCalce\(ruta\)\?/.test(rn), "el selector solo sale en la ruta BRL <-> VES");
+  ok(/if\(_rTx\.calce\) tc=parseFloat\(_rTx\.tc\)\|\|0;/.test(rn),
+     "el recuadro «am ÷ tc» usa la tasa derivada, no la del inventario");
+  const tm = sinCom(sacarFuncion("txMetodo"));
+  ok(/S\.tx\.tc_manual=""/.test(tm) && /S\.tx\.permuta=""/.test(tm),
+     "cambiar de metodo limpia lo que ya no aplica");
+  // Y se dice que ahi no hay comision de Binance: es la diferencia entera
+  // entre los dos metodos y no se puede dejar implicita.
+  ok(/sin comisión de Binance/.test(rn),
+     "la pantalla dice que no hay comision de Binance");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
