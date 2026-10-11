@@ -2718,7 +2718,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261010_v186";
+var APP_VERSION = "20261011_v187";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -4935,7 +4935,27 @@ function capitalRealTotal(){
     enPrestamos+=pendCap/r; interesPrestamos+=pendInt/r; mp.usdt+=pendCap/r;
   });
   var r2v=function(n){return Math.round(n*100)/100;};
-  var total=r2v(enCuentas+enReserva+porCobrar+enPrestamos);
+  // ARREGLO 105 · decision suya (11/10/2026): "yo quiero que en el capital
+  // final, en el monto de 'tienes tanto', 'deberias tener tanto', ya este
+  // descontado mi sueldo". El sueldo acumulado que todavia no aparto es
+  // dinero suyo metido en las cuentas de la empresa, y hasta aqui el capital
+  // lo contaba como capital.
+  //
+  // LO QUE NO SE PUEDE HACER ES RESTARLO DE UN LADO SOLO. La apertura del
+  // 11/09 se fijo con ese sueldo dentro, asi que restarlo aqui y no en
+  // "deberias tener" abriria un hueco fijo del tamaño del sueldo — y que
+  // encima crece cada mes. Es el ARREGLO 71 con los intereses, calcado.
+  //
+  // Por eso conciliacionCapital() resta ESTE MISMO numero
+  // (real.sueldoPendiente) al otro lado. Los dos bajan igual, el "sin
+  // explicar" no se mueve, y la apertura se queda donde esta — que es
+  // justo lo que no hay que tocar. Y el dia que lo aparte tampoco salta: el
+  // dinero se va a una cuenta 💜, que ya esta fuera de este total, y
+  // traspasosAPersonal() ya baja los dos lados. Medido: el "sin explicar"
+  // sale identico antes y despues del traspaso.
+  var sueldoPendiente=0;
+  try{ sueldoPendiente=(sueldoApartado()||{}).falta||0; }catch(e){ sueldoPendiente=0; }
+  var total=r2v(enCuentas+enReserva+porCobrar+enPrestamos-sueldoPendiente);
   // Las monedas se ordenan por lo que pesan en USDT: la primera fila del
   // informe es donde de verdad esta su dinero, no la que entro antes.
   var lista=Object.keys(porMoneda).map(function(m){
@@ -4950,7 +4970,141 @@ function capitalRealTotal(){
   return {enCuentas:r2v(enCuentas), enReserva:r2v(enReserva), porCobrar:r2v(porCobrar),
           enPrestamos:r2v(enPrestamos), interesPrestamos:r2v(interesPrestamos),
           enLaCalle:r2v(porCobrar+enPrestamos), total:total, porMoneda:lista,
+          sueldoPendiente:r2v(sueldoPendiente),
           sinTasa:sinTasa.filter(function(m,i,a){return a.indexOf(m)===i;})};
+}
+
+// ── ARREGLO 105 · El sueldo era un numero, no dinero apartado ───────────────
+// Sus palabras (11/10/2026): "el sistema me esta arrojando el 30% de mi
+// ganancia como mi sueldo... pero yo sacando toda la cuenta, siento que no me
+// esta sobrando esa plata... tu me dices que tengo tanto, pero yo realmente no
+// lo veo reflejado mas en ningun lado que no sea ahi... no lo veo en balance
+// de cuenta... no lo veo en las pestañas del inventario".
+//
+// Tenia razon por partida doble, y las dos mitades se midieron sobre la v186:
+//
+//   capitalRealTotal() con el sueldo al 30 % ....  800
+//   capitalRealTotal() con el sueldo al 50 % ....  800   <- no lo descuenta
+//   subir 1.000 a una cuenta personal ...........  800   <- las 💜 estan fuera
+//   la palabra "sueldo" en Balance de Cuentas ...  0 veces
+//                        en Inventario USDT .....  0
+//                        en Resumen y en Diario .  0
+//
+// (Ojo al medir esto: su cuenta se llama "MI SUELDO BINANCE", asi que buscar
+// "sueldo" a secas encuentra el NOMBRE DE LA CUENTA y no una mencion del
+// sueldo. Descontado el nombre, cero.)
+//
+// O sea: el sueldo vivia en una sola pantalla y el dinero nunca salia de las
+// cuentas de la empresa. Por eso "no le sobraba": esta trabajando dentro del
+// negocio, y el capital lo cuenta como capital.
+//
+// LO QUE NO SE HACE AQUI, Y ES A PROPOSITO: restarlo de capitalRealTotal().
+// La apertura del 11/09 se fijo CON ese sueldo dentro, asi que restarlo ahora
+// abriria un hueco fijo que no cierra nunca — es exactamente el problema que
+// el ARREGLO 71 tuvo con el interes de los prestamos, y que obligo a escribir
+// interesDentroDeApertura(). Lo que SI cuadra la cuenta sola es APARTAR el
+// dinero de verdad: en cuanto el traspaso lo deja en una cuenta 💜,
+// capitalRealTotal() baja solo (las 💜 ya estan fuera) y traspasosAPersonal()
+// ya baja los DOS lados de la conciliacion, asi que no salta. Decision suya,
+// 11/10/2026: "solo 1 y 2".
+//
+// Un solo sitio lo calcula y tres pantallas lo leen. Si cada una sumara lo
+// suyo volveriamos al 34,27 arriba y 34,28 abajo.
+function sueldoApartado(){
+  var r={acumulado:0, esteMes:0, apartado:0, falta:0, cuentas:[], sinTasa:[]};
+  var calc=null;
+  try{ calc=calcMesCompleto(getMesKeyActual()); }catch(e){ calc=null; }
+  if(calc){
+    // Lo GASTABLE hoy, que es lo que de verdad ya es suyo: lo acumulado de los
+    // meses ya cerrados, menos lo que gasto, mas lo que repuso. El sueldo de
+    // ESTE mes no entra — no es suyo hasta cerrar el mes, y es la misma regla
+    // que ya manda en la pantalla de Egresos. Se lee de calcMesCompleto() y no
+    // se recalcula: es el mismo numero que ella ve ahi arriba.
+    r.acumulado=Math.round((parseFloat(calc.disponiblePer)||0)*100)/100;
+    r.esteMes  =Math.round((parseFloat(calc.sueldoAcumulando)||0)*100)/100;
+  }
+  (S.cuentas||[]).filter(function(c){return c.activa!==false&&c.esPersonal;}).forEach(function(c){
+    var saldo=parseFloat(c.saldo)||0, u=null;
+    if(c.moneda==="USDT"||c.moneda==="USD") u=saldo;
+    else { var t=getRateToUsdt(c.moneda); if(t&&!isNaN(t)&&t>0) u=saldo/t; }
+    // Una 💜 en una moneda sin tasa no se cuenta como cero en silencio: se
+    // dice. Un "apartado" corto que parece completo le haria apartar de mas.
+    if(u===null){ if(r.sinTasa.indexOf(c.moneda)<0) r.sinTasa.push(c.moneda); }
+    else r.apartado+=u;
+    r.cuentas.push({id:c.id,nombre:c.nombre,moneda:c.moneda,saldo:saldo,
+                    usdt:(u===null?null:Math.round(u*100)/100)});
+  });
+  r.apartado=Math.round(r.apartado*100)/100;
+  r.falta=Math.round(Math.max(0,r.acumulado-r.apartado)*100)/100;
+  return r;
+}
+
+// La cifra que va en las cabeceras de Balance de Cuentas y de Inventario USDT,
+// las dos pantallas donde dijo que no lo veia. En la conciliacion no va esta
+// linea: ahi tiene su propia caja, al lado de las otras.
+//
+// Sus palabras (11/10/2026): "no me gusta que quede como un simple comentario
+// alli". Por eso no es una frase sobre el total: es su cifra, con su rotulo,
+// como las demas de esa cabecera. El total de arriba YA la lleva descontada.
+//
+// Se calla sola cuando no queda nada por apartar — una linea permanente que no
+// significa nada es lo que enseña a no leer la pantalla (ARREGLO 101).
+//
+// sobreCabecera: dos de los tres sitios son CABECERAS de color, y su color
+// CAMBIA CON EL TEMA — en Suave son oscuras y en Claro y Papel, claras. El
+// primer intento les escribio un color fijo, rgba(255,255,255,.75), que es
+// exactamente el fallo de las pantallas de entrada. Medido en los tres temas:
+//
+//              Claro   Papel   Suave
+//   texto       1,13    1,04   16,86     <- invisible en dos de los tres
+//   numero      1,24    1,23    9,04
+//
+// Ahora HEREDA el color de la cabecera, igual que sus vecinas, y el enfasis
+// lo lleva la negrita en vez de un tono. En el panel de la conciliacion, que
+// no cambia asi, si se puede usar el ambar que esa tarjeta ya usa.
+//
+// yaDescontado: en Balance de Cuentas el total de arriba SI lo lleva restado,
+// y en Inventario USDT no — esas cuatro cifras son saldos de cuenta en crudo,
+// y el sueldo sigue fisicamente dentro de ellos. Decir "ya descontado" alli
+// seria mentir justo al lado del numero que lo desmiente. El texto se escribe
+// igual en un solo sitio; lo que cambia es la cola.
+function _htmlSueldoSinApartar(sobreCabecera, yaDescontado){
+  var s;
+  try{ s=sueldoApartado(); }catch(e){ return ""; }
+  if(!s || s.falta<=0.005) return "";
+  var est = sobreCabecera ? "color:inherit;opacity:.95" : "color:var(--tx3)";
+  var cNu = sobreCabecera ? "inherit" : "var(--avi-tx2)";
+  var cola = yaDescontado ? "· ya descontado de arriba, falta apartarlo"
+                          : "· tuyo, todavía dentro de estas cuentas";
+  return "<div style='font-size:10.5px;"+est+";margin-top:5px;line-height:1.45'>"+
+    "💜 Tu sueldo: <b style='color:"+cNu+";font-size:12.5px'>$"+f2(s.falta)+"</b> "+
+    "<span style='opacity:.85'>"+cola+"</span></div>";
+}
+
+// El boton de la tarjeta de Egresos. No hace el traspaso: lo deja ESCRITO en
+// el formulario de siempre y lleva ahi. Un segundo camino para mover dinero
+// seria un segundo sitio donde cuadrar las cuentas — es lo mismo que el
+// ARREGLO 98 tuvo que deshacer con la comision en dos sitios.
+function irAApartarSueldo(cuentaOrigenId){
+  var s=sueldoApartado();
+  if(s.falta<=0.005){ alert("No te falta nada por apartar."); return; }
+  var destino=(S.cuentas||[]).filter(function(c){return c.activa!==false&&c.esPersonal&&c.moneda==="USDT";})[0];
+  if(!destino){
+    alert("No tienes ninguna cuenta 💜 personal en USDT donde apartarlo.\n\nCréala en ⚙️ Configuración y márcala como personal.");
+    return;
+  }
+  var origen=(S.cuentas||[]).find(function(c){return String(c.id)===String(cuentaOrigenId);});
+  if(!origen){ alert("Elige primero de qué cuenta USDT de la empresa sale."); return; }
+  var hoy=new Date().toISOString().slice(0,10);
+  // Si en esa cuenta no alcanza, se aparta lo que haya y se dice. Dejarla
+  // teclear un monto que el traspaso va a rechazar es hacerle perder el viaje.
+  var monto=Math.min(s.falta, Math.round((parseFloat(origen.saldo)||0)*100)/100);
+  if(monto<=0){ alert(origen.nombre+" no tiene saldo. Elige otra cuenta."); return; }
+  S.nTraspaso={fecha:hoy, cuentaOrigen:origen.id, cuentaDestino:destino.id,
+               monto:String(monto), montoDestino:"", nota:"Apartar sueldo acumulado"};
+  st("traspasos");
+  if(monto<s.falta-0.005)
+    setTimeout(function(){ alert("En "+origen.nombre+" solo hay $"+f2(monto)+", así que se aparta eso. Te quedarían $"+f2(Math.round((s.falta-monto)*100)/100)+" por apartar."); },120);
 }
 
 // ARREGLO 71 · la otra mitad. La apertura se fijo con el capital de ENTONCES,
@@ -5423,7 +5577,11 @@ function conciliacionCapital(){
   // cuenta. Restarlo aqui tambien lo contaba dos veces.
   var egPersDesdePers=egresosPersonalesDesdeCuentaPersonal(desde);
   var egPersonalEmpresa=r2v(egPersonal-egPersDesdePers.total);
-  var deberias=r2v(apertura-intAp.total+bruta-egEmpresa-egPersonalEmpresa-socios-traspPers.total);
+  // El sueldo sin apartar se resta en los DOS lados, y el de aqui sale del
+  // mismo sitio que el de alla (real.sueldoPendiente). Calcularlo aparte seria
+  // la segunda respuesta a la misma pregunta, y con que difieran en un centimo
+  // el "sin explicar" se mueve solo.
+  var deberias=r2v(apertura-intAp.total+bruta-egEmpresa-egPersonalEmpresa-socios-traspPers.total-(real.sueldoPendiente||0));
   var diferencia=r2v(real.total-deberias);
   // De qué está hecha esa diferencia: los ajustes a mano y el desfase de las
   // tasas se explican solos, lo que quede es lo único que hay que perseguir.
@@ -7316,6 +7474,9 @@ function fijarAperturaHoy(){
     (cap.enReserva>0?"En reserva:   $"+f2(cap.enReserva)+"\n":"")+
     (cap.porCobrar>0?"Por cobrar:   $"+f2(cap.porCobrar)+"\n":"")+
     (cap.enPrestamos>0?"En préstamos: $"+f2(cap.enPrestamos)+" (capital)\n":"")+
+    // ARREGLO 105: el total ya va sin el sueldo, asi que la resta tiene que
+    // verse. Sin esta linea los numeros de arriba no suman el de abajo.
+    ((cap.sueldoPendiente||0)>0.005?"− Tu sueldo:  $"+f2(cap.sueldoPendiente)+" (tuyo, sin apartar)\n":"")+
     "─────────────────\nTOTAL:        $"+f2(cap.total)+" USDT\n\n"+
     // ARREGLO 71: el interés pactado no entra en el total. Se dice aquí porque
     // este número se queda fijo como punto de partida: si no cuadra con lo que
@@ -13371,6 +13532,14 @@ function rCapitalTotal(){
     if(rateOk) totalUsdt+=saldo/rate;
   });
   totalUsdt=Math.round(totalUsdt*100)/100;
+  // ARREGLO 105: esta cabecera suma las cuentas POR SU CUENTA, no sale de
+  // capitalRealTotal(). El primer intento dejo aqui la linea del sueldo
+  // diciendo "ya descontado de arriba" sobre un total que NO lo descontaba:
+  // un numero que miente de la peor manera, porque la frase de al lado jura
+  // que no. Se descuenta aqui tambien, y la linea de debajo lo dice.
+  var _sueldoCab=0;
+  try{ _sueldoCab=(sueldoApartado()||{}).falta||0; }catch(e){ _sueldoCab=0; }
+  totalUsdt=Math.round((totalUsdt-_sueldoCab)*100)/100;
   // Total de las cuentas personales (💜) — se muestra aparte, nunca sumado al de empresa
   var capPersonal = cap.filter(function(c){return c.esPersonal;});
   var totalUsdtPersonal = 0;
@@ -13752,16 +13921,30 @@ function rCapitalTotal(){
           (val<0?"−":"+")+"$"+f2(Math.abs(val))+"</div>"+
         "<div style='font-size:10px;color:var(--tx4);margin-top:1px;line-height:1.3'>"+pie+"</div></div>";
     };
-    var _caja=function(rot,val){
+    var _caja=function(rot,val,col,pie){
       return "<div style='background:var(--sup2);border-radius:9px;padding:8px 10px'>"+
         "<div style='font-size:10.5px;color:var(--tx3)'>"+rot+"</div>"+
-        "<div style='font-size:14px;font-weight:700;color:var(--tx2);margin-top:1px'>$"+f2(val)+"</div></div>";
+        "<div style='font-size:14px;font-weight:700;color:"+(col||"var(--tx2)")+";margin-top:1px'>$"+f2(val)+"</div>"+
+        // var(--tx4) a 10px da 2,09 de contraste aqui (medido sobre los
+        // pixeles). El rotulo de al lado usa --tx3 y da 3,14: el mismo.
+        (pie?"<div style='font-size:10px;color:var(--tx3);margin-top:1px;line-height:1.3'>"+pie+"</div>":"")+"</div>";
     };
     var _cajas=[];
     _cajas.push(_caja("En cuentas", R.enCuentas));
     if(R.enPrestamos>0) _cajas.push(_caja("Prestado",   R.enPrestamos));
     if(R.enReserva>0)   _cajas.push(_caja("En reserva", R.enReserva));
     if(R.porCobrar>0)   _cajas.push(_caja("Por cobrar", R.porCobrar));
+    // ARREGLO 105: su cuadro, al lado de los demas. Lo pidio asi.
+    //
+    // Va con el signo MENOS delante porque estas cajas tienen que sumar el
+    // numero grande de arriba, y ese numero ya va sin el sueldo. Una caja de
+    // "$91,67" en positivo haria que las cuatro no cuadraran con el total —
+    // y una lista que no se puede sumar a mano es peor que no darla.
+    // El morado var(--rol-ee) daba 2,21 de contraste en Suave, contra el 8,07
+    // de las cajas de al lado. El ambar de esta misma tarjeta aguanta los tres
+    // temas, y es el que ya marca aqui lo que hay que mirar.
+    if(R.sueldoPendiente>0.005)
+      _cajas.push(_caja("− Tu sueldo", R.sueldoPendiente, "var(--avi-tx2)", "tuyo · falta apartarlo"));
     var _dias=(function(){
       try{ var a=new Date(co.desde+"T00:00:00"), b=new Date();
            var d=Math.round((b-a)/86400000); return d>0?d:0; }catch(e){ return 0; }
@@ -13770,6 +13953,9 @@ function rCapitalTotal(){
       "<div style='background:var(--sup);border-radius:9px;padding:13px 13px 11px;margin-bottom:9px;font-size:11.5px;line-height:1.75'>"+
         "<div style='font-size:28px;font-weight:900;letter-spacing:-.02em;line-height:1;color:var(--tx2)'>$"+f2(R.total)+"</div>"+
         "<div style='font-size:11px;color:var(--tx3);margin-top:3px'>es lo que tienes hoy, todo junto</div>"+
+        // Aqui no va la linea: lo dice su propia caja, abajo. Dos sitios con
+        // el mismo dato en la misma tarjeta es el ARREGLO 60 otra vez.
+        ""+
         "<div style='display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:11px'>"+_cajas.join("")+"</div>"+
       "</div>"+
       // La cadena suya, en tres cifras: ganaste → creció → la diferencia.
@@ -14001,6 +14187,8 @@ function rCapitalTotal(){
         "<div style='font-size:11.5px;font-weight:700;color:var(--ac);text-transform:uppercase;margin-bottom:2px'>🏢 Total empresa (USDT equiv.)</div>"+
         "<div style='font-size:28px;font-weight:900;color:var(--avi);line-height:1'>$"+f2(totalUsdt)+"</div>"+
         (function(){var _t=getLastTasaCompra("BRL")||getRateToUsdt("BRL")||0;return _t>0?"<div style='font-size:12px;color:var(--avi);opacity:.75;margin-top:1px'>≈ R$"+f2(totalUsdt*_t)+"</div>":"";}())+
+        // ARREGLO 105: "no lo veo en balance de cuenta". Aqui lo ve.
+        _htmlSueldoSinApartar(true,true)+
         (sinTasaCount>0?"<div style='font-size:10.5px;color:var(--am3-d);margin-top:3px'>⚠️ "+sinTasaCount+" cuenta(s) sin tasa — edita ↓</div>":
         "<div style='font-size:10.5px;color:rgba(255,255,255,.5);margin-top:3px'>Todas las tasas activas</div>")+
       "</div>"+
@@ -24594,6 +24782,8 @@ function rInventarioUsdt(){
         "<div style='font-size:20px;font-weight:800;color:var(--avi)'>"+(st.sugTasaVenta?f2(st.sugTasaVenta):"—")+" BS/USDT</div>"+
       "</div>"+
     "</div>"+
+    // ARREGLO 105: "no lo veo en las pestañas del inventario". Aqui lo ve.
+    (function(){var _l=_htmlSueldoSinApartar(true,false);return _l?"<div style='margin-bottom:12px'>"+_l+"</div>":"";}())+
     "<div style='background:rgba(0,0,0,.25);border-radius:8px;padding:10px 14px;font-size:11px;opacity:.9'>📐 <b>Compra:</b> gastas moneda origen, recibes USDT &nbsp;|&nbsp; <b>Venta:</b> BS = (USDT − 0.06) × tasa &nbsp;|&nbsp; Comisión: <b>0.06 USDT</b></div>"+
     // ── Tarjetas de saldo por cuenta (dinámicas desde S.cuentas) ─────
     // Agrupadas visualmente por moneda, con encabezado de sección, para
@@ -25307,6 +25497,57 @@ function rEgresos(){
     "<div style='background:var(--mo6-d);border:1.5px solid var(--mo5-a);border-radius:12px;padding:12px;text-align:center'><div style='font-size:10.5px;font-weight:700;color:var(--tx3);text-transform:uppercase;margin-bottom:5px'>💸 Gastado</div><div style='font-size:18px;font-weight:800;color:var(--rol-ee)'>$"+f2(epPag)+"</div><div style='font-size:10.5px;color:var(--tx4)'>"+epMes.filter(function(e){return e.pagada && !e.cuentaId;}).length+" gastos</div></div>"+
     "<div style='background:"+(dispPersonal>=0?"var(--vd6-b)":"var(--rj6-j)")+";border:2px solid "+(dispPersonal>=0?"var(--vd5)":"var(--mal)")+";border-radius:12px;padding:12px;text-align:center'><div style='font-size:10.5px;font-weight:700;color:var(--tx3);text-transform:uppercase;margin-bottom:5px'>💵 Disponible</div><div style='font-size:18px;font-weight:800;color:"+(dispPersonal>=0?"var(--ok)":"var(--mal)")+"'>$"+f2(dispPersonal)+"</div></div>"+
     "</div>"+
+    // ── ARREGLO 105 · ¿el sueldo esta apartado, o solo calculado? ──────────
+    // Hasta aqui la pantalla decia cuanto le toca y nada mas. El dinero no se
+    // movia de ninguna cuenta, asi que "no le sobraba". Esta tarjeta compara
+    // lo que es suyo contra lo que hay de verdad en sus cuentas 💜 y deja
+    // escrito el traspaso que falta.
+    (function(){
+      var sa=sueldoApartado();
+      var ctasEmp=(S.cuentas||[]).filter(function(c){return c.activa!==false&&!c.esPersonal&&!c.esReserva&&c.moneda==="USDT";});
+      var dest=(S.cuentas||[]).filter(function(c){return c.activa!==false&&c.esPersonal&&c.moneda==="USDT";})[0];
+      var listaPer=sa.cuentas.length
+        ? "<div style='font-size:10.5px;color:var(--tx4);margin-top:7px;line-height:1.6'>"+
+            sa.cuentas.map(function(c){
+              return "💜 "+_escAud(c.nombre)+": <b style='color:var(--tx3)'>"+f2(c.saldo)+" "+c.moneda+"</b>"+
+                     (c.usdt===null?" <span style='color:var(--am3-g)'>(sin tasa)</span>":"");
+            }).join(" · ")+
+          "</div>"
+        : "";
+      var fila=function(rot,val,col,gordo){
+        return "<div style='display:flex;justify-content:space-between;gap:10px'>"+
+          "<span style='color:var(--tx3)'>"+rot+"</span>"+
+          "<b style='color:"+(col||"var(--tx2)")+";white-space:nowrap"+(gordo?";font-size:15px":"")+"'>$"+f2(val)+"</b></div>";
+      };
+      return "<div style='background:var(--mo6-d);border:1.5px solid var(--mo5-a);border-radius:12px;padding:13px;margin-bottom:14px'>"+
+                // El morado var(--rol-ee) sobre esta tarjeta da 2,09 de contraste en
+        // Suave (medido). El 💜 ya dice de que va; el titulo va en la tinta
+        // normal, que es la unica que aguanta los tres temas.
+        "<div style='font-size:11px;font-weight:800;color:var(--tx2);margin-bottom:8px'>💜 TU SUELDO, APARTADO</div>"+
+        "<div style='font-size:11.5px;line-height:1.85'>"+
+          fila("Tuyo acumulado (gastable hoy)", sa.acumulado)+
+          fila("Apartado en tus cuentas 💜", sa.apartado)+
+          (sa.falta>0.005
+            ? fila("Te falta apartar", sa.falta, "var(--avi-tx2)", true)
+            : "<div style='color:var(--ok);font-weight:700;margin-top:3px'>✅ Está apartado — ese dinero ya está fuera de la empresa</div>")+
+        "</div>"+
+        listaPer+
+        (sa.sinTasa.length?"<div style='font-size:10.5px;color:var(--am3-g);margin-top:6px'>⚠️ No hay tasa para "+_escAud(sa.sinTasa.join(", "))+", así que esa cuenta 💜 no está contada en lo apartado.</div>":"")+
+        (sa.falta>0.005?
+          (!dest
+            ? "<div style='font-size:11px;color:var(--am3-g);margin-top:9px'>Para apartarlo necesitas una cuenta en USDT marcada como personal 💜. Créala en ⚙️ Configuración.</div>"
+            : (!ctasEmp.length
+              ? "<div style='font-size:11px;color:var(--am3-g);margin-top:9px'>No tienes ninguna cuenta USDT de la empresa de donde sacarlo.</div>"
+              : "<div style='display:flex;gap:7px;align-items:center;margin-top:10px;flex-wrap:wrap'>"+
+                  "<select id='ap-sueldo-cta' style='flex:1;min-width:150px;padding:8px;border:1px solid var(--ln);border-radius:8px;font-size:12px;font-family:inherit'>"+
+                    ctasEmp.map(function(c){return "<option value='"+_jsAttr(String(c.id))+"'>"+_escAud(c.nombre)+" ($"+f2(c.saldo)+")</option>";}).join("")+
+                  "</select>"+
+                  "<button type='button' onclick='irAApartarSueldo(document.getElementById(\"ap-sueldo-cta\").value)' style='background:var(--rol-ee);color:var(--sobre-color);border:none;padding:9px 14px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>📤 Apartar a "+_escAud(dest.nombre)+"</button>"+
+                "</div>"))
+          :"")+
+        (sa.falta>0.005?"<div style='font-size:10.5px;color:var(--tx4);margin-top:8px;line-height:1.55'>Este dinero ya NO cuenta como capital de la empresa en ninguna pantalla. Lo que falta es sacarlo del banco: el botón deja el traspaso escrito y lo confirmas tú en Traspasos.</div>":"")+
+      "</div>";
+    })()+
     repUI+
     (catPerSort.length?
       "<div style='font-size:10.5px;font-weight:700;color:var(--tx3);text-transform:uppercase;margin-bottom:10px'>📊 Distribución personal</div>"+

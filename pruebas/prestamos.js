@@ -7197,5 +7197,121 @@ console.log("\n— FASE 2: la cuenta madre —");
   });
 }
 
+// ── ARREGLO 105 · EL SUELDO SE DESCUENTA DEL CAPITAL ─────────────────────
+//
+// Sus palabras (11/10/2026): "yo quiero que en el capital final, en el monto
+// de 'tienes tanto', 'deberias tener tanto', 'tienes tanto', ya este
+// descontado mi sueldo", y "una pestaña al lado asi como los demas cuadros".
+//
+// Antes el sueldo era un numero que vivia en una sola pantalla. Medido sobre
+// la v186: capitalRealTotal() daba 800 con el sueldo al 30 % y 800 con el
+// 50 %, y la palabra "sueldo" salia 0 veces en Balance de Cuentas, 0 en
+// Inventario USDT y 0 en Resumen y Diario.
+{
+  const sinCom = t => t.replace(/\/\/[^\n]*/g, "");
+
+  // 1. El numero sale de calcMesCompleto, no se recalcula aqui. Es el mismo
+  //    que ella ve en Egresos; dos cuentas para lo mismo es el 34,27 arriba
+  //    y 34,28 abajo.
+  const sa = sinCom(sacarFuncion("sueldoApartado"));
+  ok(/calc\.disponiblePer/.test(sa),
+     "sueldoApartado lee disponiblePer de calcMesCompleto");
+  ok(!/saldoPersonalAcumulado\s*=/.test(sa) && !/cierresMes/.test(sa),
+     "y no se arma su propio acumulado");
+  ok(/sinTasa\.push|sinTasa\.indexOf/.test(sa),
+     "una cuenta 💜 sin tasa se dice, no se cuenta como cero");
+  ok(/activa!==false&&c\.esPersonal/.test(sa),
+     "lo apartado son las cuentas 💜 activas");
+
+  // 2. EL CAPITAL YA VA SIN EL SUELDO. Es lo que pidio ella.
+  const crt = sinCom(sacarFuncion("capitalRealTotal"));
+  ok(/var total=r2v\(enCuentas\+enReserva\+porCobrar\+enPrestamos-sueldoPendiente\);/.test(crt),
+     "capitalRealTotal descuenta el sueldo del total");
+  ok(/sueldoPendiente:r2v\(sueldoPendiente\)/.test(crt),
+     "y lo devuelve aparte, para que el otro lado reste EL MISMO numero");
+
+  // 3. Y LA CONCILIACION LO RESTA TAMBIEN, leyendolo de ahi. Esto es lo que
+  //    impide que se abra un hueco fijo contra la apertura del 11/09, que se
+  //    fijo con el sueldo dentro — el ARREGLO 71 calcado. Se exige la
+  //    EXPRESION ENTERA: buscar "sueldoPendiente" suelto pasaria con el
+  //    termino multiplicado por cero o renombrado (ARREGLO 100).
+  const cc = sinCom(sacarFuncion("conciliacionCapital"));
+  ok(/var deberias=r2v\(apertura-intAp\.total\+bruta-egEmpresa-egPersonalEmpresa-socios-traspPers\.total-\(real\.sueldoPendiente\|\|0\)\);/.test(cc),
+     "«deberias tener» resta el MISMO sueldo que «tienes»");
+  ok(!/sueldoApartado\(/.test(cc),
+     "y no lo vuelve a calcular por su cuenta");
+
+  // 4. Su caja, al lado de las otras, y con el signo delante: estas cajas
+  //    tienen que SUMAR el numero grande, que ya va sin el sueldo.
+  ok(/_cajas\.push\(_caja\("− Tu sueldo", R\.sueldoPendiente/.test(HTML),
+     "la caja «− Tu sueldo» va con las demas");
+  ok(/if\(R\.sueldoPendiente>0\.005\)\s*\n\s*_cajas\.push\(_caja\("− Tu sueldo"/.test(HTML),
+     "y solo sale cuando queda algo por apartar");
+
+  // 5. El mensaje de fijar la apertura imprime la resta: sin eso los numeros
+  //    de arriba no suman el TOTAL de abajo.
+  const fa = sinCom(sacarFuncion("fijarAperturaHoy"));
+  ok(/cap\.sueldoPendiente/.test(fa),
+     "al fijar la apertura se ve la resta del sueldo");
+
+  // 6. La cifra de las dos cabeceras se escribe UNA vez. Y son DOS llamadas
+  //    mas la definicion: en la conciliacion lo dice la caja, no la linea
+  //    (dos sitios con el mismo dato en la misma tarjeta es el ARREGLO 60).
+  const vecesFrase = (HTML.match(/ya descontado de arriba, falta apartarlo/g) || []).length;
+  ok(vecesFrase === 1, "la cifra se escribe en un solo sitio", "sale " + vecesFrase + " veces");
+  const nLlam = (HTML.match(/_htmlSueldoSinApartar\(/g) || []).length;
+  ok(nLlam === 3, "dos pantallas la leen, y nada mas", "aparece " + nLlam + " veces");
+  //    Cada una anclada a SU marcado: buscarla dentro de rCapitalTotal no
+  //    vale, porque la tarjeta de conciliacion vive en esa misma funcion y
+  //    la guardia pasaba con la linea del Balance borrada.
+  ok(/f2\(totalUsdt\)\+"<\/div>"[\s\S]{0,400}?_htmlSueldoSinApartar\(true,true\)/.test(HTML),
+     "Balance de Cuentas lo dice debajo del total de la empresa, ya descontado");
+  //    Y ese total TIENE que llevarlo descontado: esa cabecera suma las
+  //    cuentas por su cuenta, no sale de capitalRealTotal(). Con la linea
+  //    puesta sobre un total sin descontar, el numero miente.
+  ok(/totalUsdt=Math\.round\(\(totalUsdt-_sueldoCab\)\*100\)\/100;/.test(sinCom(sacarFuncion("rCapitalTotal"))),
+     "y ese total lo lleva descontado de verdad");
+  //    En Inventario esas cuatro cifras son saldos en crudo: el sueldo sigue
+  //    dentro. Decir alli "ya descontado" seria mentir al lado del numero que
+  //    lo desmiente, asi que va con la otra cola.
+  ok(/_htmlSueldoSinApartar\(true,false\)/.test(sinCom(sacarFuncion("rInventarioUsdt"))),
+     "Inventario USDT lo dice sin prometer que esta descontado");
+  ok(/yaDescontado \? "· ya descontado de arriba, falta apartarlo"/.test(sinCom(sacarFuncion("_htmlSueldoSinApartar"))),
+     "y las dos colas se escriben en el mismo sitio");
+
+  // 7. Esas dos cabeceras CAMBIAN DE COLOR con el tema. Un color fijo las
+  //    dejo en 1,13 de contraste en Claro (medido sobre los pixeles). Hereda.
+  const hs = sinCom(sacarFuncion("_htmlSueldoSinApartar"));
+  ok(/sobreCabecera \? "color:inherit/.test(hs),
+     "sobre las cabeceras hereda el color, no se lo escribe");
+  ok(/if\(!s \|\| s\.falta<=0\.005\) return "";/.test(hs),
+     "y desaparece sola cuando ya esta apartado");
+
+  // 8. El boton NO mueve dinero: deja el traspaso escrito y lleva al
+  //    formulario de siempre (ARREGLO 98: un segundo camino es un segundo
+  //    sitio donde cuadrar las cuentas).
+  const ir = sinCom(sacarFuncion("irAApartarSueldo"));
+  ok(/S\.nTraspaso=\{/.test(ir) && /st\("traspasos"\)/.test(ir),
+     "el boton deja el traspaso escrito y lleva a Traspasos");
+  ok(!/S\.traspasos\.push/.test(ir) && !/\.saldo\s*=/.test(ir) && !/saveData\(\)/.test(ir),
+     "y no mueve ni un centavo por su cuenta");
+  ok(/Math\.min\(s\.falta/.test(ir),
+     "nunca pide mas de lo que hay en la cuenta de origen");
+
+  // 9. La tarjeta de Egresos compara las dos cifras y nombra la que falta.
+  const eg = sinCom(sacarFuncion("rEgresos"));
+  ok(/💜 TU SUELDO, APARTADO/.test(eg), "la tarjeta esta en Egresos → Personal");
+  ok(/Tuyo acumulado \(gastable hoy\)/.test(eg) &&
+     /Apartado en tus cuentas 💜/.test(eg) &&
+     /Te falta apartar/.test(eg),
+     "y dice las tres cifras: lo tuyo, lo apartado y lo que falta");
+  ok(/var sa=sueldoApartado\(\);/.test(eg),
+     "que salen del mismo sitio que el capital");
+  //    Y ya no puede decir que el capital lo cuenta como suyo: desde el 105
+  //    no lo cuenta.
+  ok(!/el capital lo cuenta como suyo/.test(eg),
+     "y no dice que el capital lo siga contando");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
