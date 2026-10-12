@@ -75,6 +75,8 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "avisoTasa", "_umbralAviso", "_refSuelo", "_sueloDeFecha", "guardarTasaCalcHoy",
                     "_cgSoltar", "_htmlCabeceraTasas", "_montoMercado",
                     "_apuntarAvisoParaPush", "_htmlAvisosTelefono", "_pushSoportado",
+                    "_cgPublicar", "_pieFlyer", "_refrescarTasasTodo",
+                    "_refrescarAvisosTasa", "_htmlFilasTasas", "_cgRedibujar",
                     "esRutaCalce", "esCalceDirecto",
                     "_loteYaEnApertura", "_fiatDeLote", "_deltaDeLote",
                     "f2n", "f0", "f4",
@@ -8238,6 +8240,70 @@ console.log("\n— FASE 2: la cuenta madre —");
      "el de las remesas normales");
   ok(/\n  avisarAlTelefono\("\u{1F4B8} Remesa EE\.UU registrada"/u.test(sinCom115),
      "y el de las de EE.UU.");
+}
+
+
+// ── ARREGLO 116 · publicar desde donde la decide ─────────────────────────
+// Sus palabras del 12/10: "al descargar el flayer la tasas no se cambian".
+// No era el flyer. Reproducido: cambiando la tasa en la CABECERA el flyer
+// sale con la nueva; cambiandola en la CALCULADORA sale con la anterior.
+// Es correcto —el flyer imprime lo PUBLICADO— pero ella la teclea abajo, que
+// es donde ve cuanto gana. El sitio donde decide y el sitio donde publica
+// quedaron separados en el ARREGLO 111, cuando se fue el boton de "guardar
+// como tasa de hoy" que vivia justo donde tecleaba.
+{
+  const pub = sinComentarios(sacarFuncion("_cgPublicar"));
+  // Una sola puerta para escribir la tasa publicada: la de siempre, que es la
+  // que tambien limpia el override del conversor.
+  ok(/guardarTasaCalcHoy\(campo, v, true\)/.test(pub),
+     "publicar pasa por guardarTasaCalcHoy, la puerta de siempre");
+  ok(/g\[campo\+"Tocada"\]=false;/.test(pub),
+     "y la tasa deja de ser 'suya': vuelve a seguir a la publicada, que ya es la misma");
+  ok(/if\(!\(v>0\)\)/.test(pub), "no se publica una tasa vacia o cero");
+  // ARREGLO 32: publicar cambia cuatro cosas de la pantalla y ninguna se
+  // rehace con R(), que destruiria el campo bajo el dedo.
+  const todo = sinComentarios(sacarFuncion("_refrescarTasasTodo"));
+  ok(!/\bR\(\)/.test(pub) && !/\bR\(\)/.test(todo),
+     "y no se repinta la pantalla entera");
+  ["tasas-cab","tasas-filas"].forEach(function(id){
+    ok(new RegExp('getElementById\\("'+id+'"\\)').test(todo),
+       "se rehace " + id + " por su id");
+  });
+  ok(/_refrescarAvisosTasa\(\)/.test(todo) && /_cgRedibujar\(\)/.test(todo),
+     "y tambien los avisos y la calculadora: publicar los cambia a los cuatro");
+
+  // El enlace esta donde ya decia "volver", que es donde ella ve que no
+  // coinciden.
+  const cuerpo = sacarFuncion("_htmlCalceCuerpo");
+  ok(/_cgPublicar\(/.test(cuerpo) && /publicar esta/.test(cuerpo),
+     "el enlace de publicar sale al lado del de volver");
+
+  // La fila del flyer dice CON QUE TASAS va a salir, y lo saca de la MISMA
+  // fuente que el flyer: si se calculara aparte, la fila podria prometer una
+  // tasa y el papel llevar otra.
+  const pie = sacarFuncion("_pieFlyer");
+  ok(/_misTasasPublicadas\(\)/.test(pie),
+     "el pie del flyer sale de la misma fuente que el flyer");
+  ok(/_calcTasas/.test(HTML) && /_misTasasPublicadas\(\)/.test(sacarFuncion("_calcTasas")),
+     "y el flyer lee de ahi tambien");
+  ok(/_pieFlyer\(\)/.test(sacarFuncion("_htmlFilasTasas")),
+     "y la fila lo usa");
+  // El rotulo va con el escape \u00ed en el archivo, no con la tilde literal:
+  // buscando solo la tilde, la guardia pasaba con el texto borrado.
+  ok(/todav(\u00ed|\\u00ed)a no has publicado ninguna tasa/.test(pie),
+     "y si no hay ninguna publicada, lo dice en vez de prometer un papel vacio");
+
+  // Funcional: teclear abajo, publicar, y el flyer cambia.
+  S.calc = {}; S.config = {tasasDia:{tdia_brl:188, tdia_ves_brl:210}};
+  ok(F._calcTasas().ida.cliente === 188, "el flyer saldria con 188");
+  F._cgSet("ida", "201");
+  ok(F._calcTasas().ida.cliente === 188 && F._cg().idaTocada === true,
+     "tecleando abajo el flyer NO cambia todavia: eso es lo que ella vio");
+  F._cgPublicar("ida");
+  ok(F._calcTasas().ida.cliente === 201 && !F._cg().idaTocada,
+     "y al publicar, si", F._calcTasas().ida.cliente);
+  ok(/201/.test(F._pieFlyer()), "y la fila lo dice antes de pulsarlo", F._pieFlyer());
+  S.calc = {}; S.config = {};
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
