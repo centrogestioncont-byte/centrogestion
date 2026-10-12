@@ -2581,6 +2581,66 @@ cuenta, y el 95 arregló uno. La guardia de `pruebas/prestamos.js` cubre los
 tres, y lo que fija de la del Resumen es que **no vuelva a haber una copia
 propia del filtro**.
 
+#### Y el 101 se dejó NUEVE copias, no una (ARREGLO 119)
+
+Lo vio ella el 12/10 con PagBank ya cuadrado contra el banco al céntimo: la lista
+de Balance de Cuentas le pintaba un **⚠️ rojo** sobre una tarjeta que debía 113
+de un límite de 1.004.
+
+El 101 dejó escrito *"hay que buscar todas las copias de la regla vieja"* y se
+buscaron cuatro. Faltaban:
+
+```
+rCapitalTotal     la fila de la lista          ← el ⚠️ que ella vio
+rCapitalTotal     el panel "Salud de cartera"
+rHistorialMeses   los saldos de meses cerrados
+6 selectores      "de qué cuenta sale el dinero" — decían "⚠️ déficit"
+                  sobre la deuda normal de una tarjeta
+```
+
+**La causa no era el descuido: era que no había dónde preguntarlo.** Nueve sitios
+escribían `saldo < 0` cada uno por su cuenta, así que arreglar la regla en uno no
+arreglaba nada en los otros ocho. Ahora se pregunta en `_saldoConProblema()`, y
+la guardia **recorre el archivo y prohíbe que vuelva a escribirse suelto** en
+cualquier función que no sea esa o `_deudaTarjeta()` (donde `saldo < 0` **sí** es
+correcto: es la definición de lo que debe).
+
+- **En el selector una tarjeta dice `💳 debes 113,48`**, no "⚠️ déficit". Lo que
+  tiene es deuda, que es para lo que está.
+- **La foto de un mes cerrado no guarda si era tarjeta**, solo `cuentaId`: se mira
+  la cuenta viva por su id (`_cuentaDeFoto`).
+
+**Y quitar el ⚠️ dejó la deuda pintada del VERDE DEL DINERO** — el ARREGLO 95 por
+tercera vez. Medido en Chromium: su −113,48 salía en `#31db7e`, el mismo verde
+que un saldo a favor. Va en **ámbar** y con *"💳 debes"* debajo, como ya se hizo en
+Inventario USDT. **Arreglar una alarma falsa no puede convertir una deuda en
+dinero.**
+
+#### Y "ida"/"vuelta" era MI vocabulario, no el suyo (ARREGLO 119)
+
+Sus palabras: *"lo que quiero saber es cuál es la que me está sugiriendo de Brasil
+a Vzla y cuál de Vzla a Brasil"*.
+
+La calculadora contestaba *"Bs por real en la vuelta"*. Ella piensa en **rutas**
+—es como las publica y como se las pide el cliente— y tenía que traducir dos
+palabras en cada número. Traducirlas al revés cuesta dinero: las dos se escriben
+en bolívares por real y significan lo contrario (ARREGLO 74).
+
+La tabla vive en `_RUTA_DE` y la leen el resultado, el botón de publicar, los
+rótulos de los campos, los botones de modo y el tope. Escrita en cada sitio, un
+día uno diría Brasil → Venezuela donde otro dice lo contrario.
+
+- **El titular lleva la ruta con palabras** y debajo **quién da qué**
+  (*"el cliente te da bolívares, tú entregas reales"*), que es lo que no se podía
+  deducir de "vuelta".
+- **Dentro de una frase van solo las banderas** (`🇻🇪→🇧🇷`): la ruta entera no
+  cabe en un botón ni en una línea de texto. Comprobado a 390, 412, 768 y 1280 px:
+  ningún botón se desborda.
+- **Y el tope se contradecía solo.** Decía *"Tu tope en 🇧🇷→🇻🇪 es 220,00 — la
+  vuelta que te dan"*: dos rutas en una frase sin decir qué hace cada una. Ahora
+  dice **lo que es y de dónde sale** — *"Lo más que puedes dar en 🇧🇷→🇻🇪 sin
+  perder son 220,00 Bs por real, y sale de los 220,00 que te dan en 🇻🇪→🇧🇷"*.
+
 #### Lo que esto NO repara
 
 Lo ya registrado se queda como está (la regla de siempre). Para dejar PagBank

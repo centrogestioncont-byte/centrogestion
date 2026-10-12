@@ -50,7 +50,7 @@ function sacarConstante(nombre) {
   }
   throw new Error("la constante " + nombre + " no termina en ';'");
 }
-const CONSTANTES = ["_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO", "_AVISO_UMBRAL", "_MERCADO_MONTO_DEF",
+const CONSTANTES = ["_RUTA_DE", "_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO", "_AVISO_UMBRAL", "_MERCADO_MONTO_DEF",
                     "_BIN_COLS_C2C", "_BIN_COLS_TX", "MONEDAS_COMPRA", "MONEDAS_VENTA",
                     "MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
                     "_MERGE_OBJETOS", "_MERGE_BLOQUES", "_MERGE_HISTORIAL", "_RATE_LIMITS",
@@ -79,6 +79,8 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "_origenTasaCotiza", "_rotuloPublicada", "_getTasaClienteBRL",
                     "_getTasaVueltaVESaBRL", "_convOtraTasa", "_convVolverPublicada",
                     "_convSetOtra", "_refrescarConversor", "_htmlTasaCotiza", "_reconvertirBCV", "_htmlFilasTasas",
+                    "_saldoConProblema", "_notaSaldoCuenta", "_cuentaDeFoto",
+                    "_deudaTarjeta", "_cuentasEnNegativo", "_ruta",
                     "_cgTasaResultado", "_htmlPublicarRes", "_cgPublicarRes",
                     "_cgPublicarPar", "_cgSoltarTrasPublicar", "_cgModo", "_cgFuente",
                     "_msjCliente", "_comaCab",
@@ -5908,8 +5910,8 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(/var esTj=!!c\.esTarjeta/.test(cajas) && /_deudaTarjeta\(c\)/.test(cajas),
      "las cajitas del inventario saben si la cuenta es una tarjeta");
   // Lo que decide la ALARMA tiene que ser el limite, no el signo.
-  ok(/isNeg=esTj \? pasada : \(s<0\)/.test(cajas),
-     "y el ⚠️ lo dispara pasarse del limite, no que el saldo sea negativo");
+  ok(/isNeg=_saldoConProblema\(c\)/.test(cajas),
+     "y el ⚠️ lo decide _saldoConProblema (ARREGLO 119), no un saldo<0 propio");
   // Pero una deuda tampoco puede salir pintada como dinero (ARREGLO 95).
   ok(/\(esTj&&deuda>0\)\?"var\(--avi\)"/.test(cajas),
      "una deuda no se pinta del mismo verde que un saldo a favor");
@@ -5920,7 +5922,7 @@ console.log("\n— FASE 2: la cuenta madre —");
   //    el contador— asi que una tarjeta marcada "revisar" todos los meses es
   //    peor aqui que en pantalla.
   const inf = sinComentarios(sacarFuncion("rInformeCierre"));
-  ok(/var isNeg=_esTj \? _pasoTj : \(\(parseFloat\(c\.saldo\)\|\|0\)<0\)/.test(inf),
+  ok(/var isNeg=_saldoConProblema\(c\)/.test(inf),
      "el informe del cierre tampoco marca 'revisar' una tarjeta que debe lo normal");
   ok(/Te pasaste del límite de la tarjeta/.test(inf),
      "y cuando SI hay que avisar, dice lo que de verdad pasa");
@@ -8507,8 +8509,17 @@ console.log("\n— FASE 2: la cuenta madre —");
   // 6) El tope es de IDA. Escrito "tu tope" a secas debajo de una vuelta de
   //    236,64 se lee como que esa vuelta pierde — y en la vuelta es al reves
   //    (ARREGLO 74). Anclado al marcado, que un comentario no repite.
-  ok(/Tu tope <b style='color:var\(--tit\)'>de ida<\/b>/.test(HTML),
-     "el tope dice que es de ida");
+  // ARREGLO 119: el tope sigue diciendo de que direccion habla, pero ahora con
+  // la RUTA, que es como ella la lee. Anclado al marcado, no al texto suelto.
+  // El tope se contradecia solo: "Tu tope en Brasil → Venezuela es 220 — la
+  // vuelta que te dan", dos rutas en una frase sin decir que hace cada una.
+  // Ahora dice LO QUE ES (lo mas que puede dar) y DE DONDE SALE.
+  ok(/Lo m\\u00e1s que puedes dar en <b style='color:var\(--tit\)'>"\+_ruta\("ida"\)\.flechas/.test(HTML),
+     "el tope dice en que ruta manda");
+  ok(/que te dan en "\+_ruta\("vuelta"\)\.flechas/.test(HTML),
+     "y de donde sale, que es la otra ruta");
+  ok(!/en la ida y cobrando/.test(sinComentarios(HTML)),
+     "y la frase de la cuenta ya no dice 'en la ida'");
 
   // Funcional, con el arnes: su caso exacto.
   S.calc = {}; S.config = {tasasDia:{tdia_brl:188, tdia_ves_brl:210}};
@@ -8536,6 +8547,113 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(F._cgTasaResultado() === null, "sin meta no hay respuesta que publicar");
   ok(F._htmlPublicarRes() === "", "y el boton no se dibuja");
   S.calc = {}; S.config = {};
+}
+
+
+// ── ARREGLO 119 · una puerta para el negativo, y la calculadora dice la RUTA ─
+//
+// a) El ARREGLO 101 dejo escrito "hay que buscar TODAS las copias" y se
+//    buscaron cuatro. Quedaban NUEVE, y una era la lista de Balance de Cuentas:
+//    ella vio un ⚠️ rojo sobre una tarjeta que debia 113 de un limite de 1.004,
+//    con PagBank ya cuadrado contra el banco al centimo.
+{
+  const sin = sinComentarios(HTML);
+
+  // LA guardia: nadie decide por su cuenta si un saldo esta mal. Si alguien
+  // vuelve a escribirlo suelto, esto falla y le dice donde.
+  {
+    const permitidas = ["_saldoConProblema", "_deudaTarjeta"];
+    const malas = [];
+    [/saldo\s*\)\s*\|\|\s*0\s*\)\s*<\s*-?0/g, /\bsaldo\s*<\s*0/g, /\bs\s*<\s*0\b/g].forEach(function(re){
+      let m;
+      while ((m = re.exec(sin)) !== null) {
+        // en que funcion cae
+        let fn = "?";
+        const fre = /^function ([A-Za-z_0-9]+)\(/gm;
+        let f;
+        while ((f = fre.exec(sin)) !== null) { if (f.index < m.index) fn = f[1]; else break; }
+        if (permitidas.indexOf(fn) === -1) malas.push(fn + " @" + m.index);
+      }
+    });
+    ok(malas.length === 0,
+       "nadie decide por su cuenta si un saldo esta mal: solo _saldoConProblema",
+       malas.join(", "));
+  }
+
+  // Y los sitios que lo preguntan, lo preguntan AHI.
+  ["rCapitalTotal","rHistorialMeses","rConfigAdmin","rInformeCierre","rInventarioUsdt","_cuentasEnNegativo"]
+    .forEach(function(f){
+      ok(/_saldoConProblema\(/.test(sinComentarios(sacarFuncion(f))),
+         f + " pregunta por la puerta unica");
+    });
+  // Los seis selectores de "de que cuenta sale el dinero".
+  ok((sin.match(/_notaSaldoCuenta\(/g)||[]).length >= 7,
+     "los selectores de cuenta leen _notaSaldoCuenta",
+     (sin.match(/_notaSaldoCuenta\(/g)||[]).length);
+  ok(!/\(s<0\?" \\u26a0\\ufe0f/.test(sin) && !/\(s<0\?" ⚠️/.test(sin),
+     "y ninguno se escribe su propio ⚠️");
+
+  // ARREGLO 95 por TERCERA vez: quitarle el ⚠️ a la tarjeta la dejaba pintada
+  // en el MISMO verde que el dinero. Medido en Chromium: su -113,48 salia en
+  // #31db7e, el verde de un saldo a favor. Una deuda no se puede gastar.
+  {
+    const fila = sinComentarios(sacarFuncion("rCapitalTotal"));
+    ok(/item\.esTarjeta&&_deudaTarjeta\(item\)>0\)\?"var\(--avi\)"/.test(fila),
+       "una deuda de tarjeta va en ambar, no en el verde del dinero");
+    ok(/\\ud83d\\udcb3 debes/.test(fila),
+       "y se dice con palabras que eso es lo que debe");
+  }
+
+  // Funcional, por los dos lados (la regla del ARREGLO 95 y 101).
+  const tarj = {id:"t1", nombre:"TARJETA PAGBANK", moneda:"BRL", esTarjeta:true, limiteTarjeta:1004, saldo:-113.48};
+  const banco= {id:"b1", nombre:"PAGBANK EMPRESA", moneda:"BRL", saldo:-113.48};
+  ok(F._saldoConProblema(tarj) === false,
+     "debiendo 113,48 de 1.004 la tarjeta NO avisa");
+  ok(F._saldoConProblema(banco) === true,
+     "pero un banco en -113,48 si avisa: eso no existe");
+  ok(F._saldoConProblema(Object.assign({}, tarj, {saldo:-1200})) === true,
+     "y pasada del limite, la tarjeta vuelve a avisar");
+  ok(/debes/.test(F._notaSaldoCuenta(tarj)) && !/\u26a0/.test(F._notaSaldoCuenta(tarj)),
+     "en el selector una tarjeta dice lo que debe, sin alarma", F._notaSaldoCuenta(tarj));
+  ok(/d\u00e9ficit|déficit/.test(F._notaSaldoCuenta(banco, " \u26a0\ufe0f d\u00e9ficit")),
+     "y un banco en negativo si sale marcado");
+  ok(F._notaSaldoCuenta({saldo:500, moneda:"BRL"}) === "",
+     "una cuenta sana no escribe nada");
+  // Y la tarjeta se queda fuera del aviso de "una cuenta en negativo".
+  S.cuentas = [tarj, {id:"b2", nombre:"BANCO", moneda:"BRL", saldo:-5}];
+  ok(F._cuentasEnNegativo().length === 1 && F._cuentasEnNegativo()[0].id === "b2",
+     "el aviso de arriba del panel sigue sin contar la tarjeta");
+  // La foto de un mes cerrado no guarda si era tarjeta: se mira por su id.
+  ok(F._saldoConProblema(F._cuentaDeFoto({cuentaId:"t1", saldo:-113.48})) === false,
+     "un mes ya cerrado tampoco marca la tarjeta");
+  S.cuentas = [];
+}
+
+// b) "ida" y "vuelta" eran MI vocabulario. Sus palabras: "lo que quiero saber
+//    es cual es la que me esta sugiriendo de Brasil a Vzla y cual de Vzla a
+//    Brasil".
+{
+  const sin = sinComentarios(HTML);
+  ok(/Brasil \u2192 Venezuela|Brasil → Venezuela/.test(JSON.stringify(F._RUTA_DE.ida)),
+     "la ida es Brasil → Venezuela", F._RUTA_DE.ida.corto);
+  ok(/Venezuela \u2192 Brasil|Venezuela → Brasil/.test(JSON.stringify(F._RUTA_DE.vuelta)),
+     "la vuelta es Venezuela → Brasil", F._RUTA_DE.vuelta.corto);
+  // Quien da que, que es lo que no se podia deducir de "ida"/"vuelta".
+  ok(/da reales/.test(F._ruta("ida").quien) && /entregas bol/.test(F._ruta("ida").quien),
+     "y se dice quien da y quien recibe en la ida", F._ruta("ida").quien);
+  ok(/da bol/.test(F._ruta("vuelta").quien) && /entregas reales/.test(F._ruta("vuelta").quien),
+     "y en la vuelta", F._ruta("vuelta").quien);
+  // La ruta vive en UN sitio: el resultado, el boton, los campos y el tope la leen.
+  ["_htmlCalceRes","_htmlPublicarRes","_htmlCalceCuerpo"].forEach(function(f){
+    ok(/_ruta\(/.test(sinComentarios(sacarFuncion(f))), f + " lee la ruta de _ruta()");
+  });
+  ok(!/Bs por real en la (ida|vuelta)/.test(sin),
+     "no queda ningun 'Bs por real en la ida/vuelta' suelto");
+  ok(!/"Tasa de ida"|"Tasa de vuelta"/.test(sin),
+     "ni rotulos de campo escritos a mano");
+  // El boton de publicar nombra la ruta, no "ida".
+  ok(/Publicar "\+f2\(r\.v\)\+" en "\+rot/.test(sinComentarios(sacarFuncion("_htmlPublicarRes"))),
+     "el boton de publicar nombra la ruta");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
