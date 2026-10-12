@@ -76,6 +76,10 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "_cgSoltar", "_htmlCabeceraTasas", "_montoMercado",
                     "_apuntarAvisoParaPush", "_htmlAvisosTelefono", "_pushSoportado",
                     "_cgPublicar", "_pieFlyer", "_refrescarTasasTodo",
+                    "_origenTasaCotiza", "_rotuloPublicada", "_getTasaClienteBRL",
+                    "_getTasaVueltaVESaBRL", "_convOtraTasa", "_convVolverPublicada",
+                    "_convSetOtra", "_refrescarConversor", "_htmlTasaCotiza", "_reconvertirBCV", "_htmlFilasTasas",
+                    "_msjCliente", "_comaCab",
                     "_refrescarAvisosTasa", "_htmlFilasTasas", "_cgRedibujar",
                     "esRutaCalce", "esCalceDirecto",
                     "_loteYaEnApertura", "_fiatDeLote", "_deltaDeLote",
@@ -8304,6 +8308,147 @@ console.log("\n— FASE 2: la cuenta madre —");
      "y al publicar, si", F._calcTasas().ida.cliente);
   ok(/201/.test(F._pieFlyer()), "y la fila lo dice antes de pulsarlo", F._pieFlyer());
   S.calc = {}; S.config = {};
+}
+
+
+// ── ARREGLO 117 · la cotización lee la tasa que ella elige, y lo DICE ────
+// Sus palabras: "tienes que hacer que también la parte de cotización al cliente
+// lea también la tasa que yo elija".
+//
+// El numero ya la leia —medido: publica 201 y el conversor pasa de 188 a 201—.
+// Lo que fallaba era lo de alrededor: el rotulo decia SIEMPRE "la que pusiste
+// en Configuracion", el override tecleado en el propio conversor se quedaba
+// puesto sin decirlo y sin vuelta, y habia que tocar dos veces para abrirlo.
+{
+  const org = sinComentarios(sacarFuncion("_origenTasaCotiza"));
+  const fila = sinComentarios(sacarFuncion("_htmlTasaCotiza"));
+
+  // 1) El numero y su rotulo salen del MISMO sitio. Antes el numero lo daba
+  //    _getTasaClienteBRL() con su propia cadena de decision y el rotulo se
+  //    escribia aparte en la pantalla: dos copias de la misma regla, y por eso
+  //    el texto podia hablar de Configuracion mientras el numero venia de un
+  //    override.
+  ["_getTasaClienteBRL","_getTasaVueltaVESaBRL"].forEach(function(f){
+    const c = sinComentarios(sacarFuncion(f));
+    ok(/_origenTasaCotiza\("(ida|vuelta)"\)\.tasa/.test(c),
+       f+" lee de _origenTasaCotiza, no de su propia cadena");
+    ok(!/tdia_brl|tdia_ves_brl/.test(c),
+       "y no vuelve a mirar tasasDia por su cuenta: " + f);
+  });
+  ok(/rotulo:/.test(org), "el rotulo sale de ahi tambien, con el numero");
+  ok(/o\.rotulo/.test(fila), "y la fila lo pinta, no se escribe uno propio");
+
+  // 2) El rotulo viejo mentia: la mandaba a Configuracion, donde ya no la pone.
+  //    Anclado al marcado del conversor para que un comentario no lo salve.
+  ok(!/la que pusiste en Configuraci(ó|\\u00f3)n/.test(sinComentarios(HTML)),
+     "fuera el rotulo que la mandaba a Configuracion a buscar la tasa");
+
+  // 3) Salirse de la publicada es una DECISION: no se teclea sin pedirlo, se
+  //    ve mientras este puesta, y hay vuelta. Son los TRES valores del
+  //    ARREGLO 67: a que cotiza, cual es la publicada y como se vuelve.
+  ok(/_convOtraTasa\(/.test(fila), "para salirse de la publicada hay que pedirlo");
+  ok(/_convVolverPublicada\(/.test(fila) && /volver a tu /.test(fila),
+     "y hay boton para volver a la publicada");
+  ok(/o\.pub/.test(fila), "que dice cual es esa publicada, no solo 'volver'");
+  ok(/tasa suelta/.test(org), "y mientras este puesta, la pantalla lo dice");
+  ["_convOtraTasa","_convVolverPublicada","_convSetOtra","_refrescarConversor"].forEach(function(f){
+    ok(!/\bR\(\)/.test(sinComentarios(sacarFuncion(f))),
+       "ARREGLO 32: " + f + " no repinta la pantalla entera");
+  });
+  // ARREGLO 55: la cifra grande tiene que seguir al campo mientras teclea. Si
+  // solo se recalculan los montos, arriba se queda la tasa anterior y la
+  // pantalla ensena dos numeros que no cuadran entre si.
+  ok(/getElementById\("tasa-cotiza-"\+dir\)/.test(sinComentarios(sacarFuncion("_convSetOtra"))),
+     "y la cifra grande se refresca en vivo, por su id");
+
+  // 4) Un solo toque. El ARREGLO 111 ya puso la fila que se abre y se cierra;
+  //    el acordeon viejo de dentro era un segundo control para lo mismo.
+  ok(!/_convBcvAbierto/.test(HTML),
+     "fuera el acordeon interno: la fila de Tasas ya es el acordeon (ARREGLO 98)");
+
+  // 5) La VUELTA no se presta de la IDA. Las dos se escriben en Bs por real y
+  //    significan lo contrario (ARREGLO 74): con la ida de 188 puesta de
+  //    vuelta le entregaria mas reales de los que toca —su vuelta es 210— y
+  //    perderia en cada operacion.
+  ok(!/return _getTasaClienteBRL\(\);/.test(sinComentarios(HTML)),
+     "sin vuelta publicada no se usa la de ida como respaldo");
+  // Y entonces el mensaje al cliente no se arma: medido, decia "Tu recibes:
+  // R$ 0,00", que un cliente lee como que no recibe nada.
+  ok(/falta:"vuelta"/.test(sinComentarios(sacarFuncion("_msjCliente"))) &&
+     /falta:"ida"/.test(sinComentarios(sacarFuncion("_msjCliente"))),
+     "sin la tasa de ese sentido no se arma la cotizacion");
+  ok(/msg\.falta/.test(sinComentarios(sacarFuncion("_copiarMsjCliente"))),
+     "y el boton de copiar dice que falta, en vez de copiar un cero");
+
+  // 6) UNA puerta para publicar la tasa. Habia cinco sitios escribiendo
+  //    tdia_brl/tdia_ves_brl y solo dos pasaban por guardarTasaCalcHoy, que es
+  //    quien sella tdia_fecha —de donde sale el aviso "tu suelo se movio un X%
+  //    desde que publicaste" (ARREGLO 112)— y limpia el override.
+  ["saveTasasConfig","guardarTasaHoyDirecto"].forEach(function(f){
+    const c = sinComentarios(sacarFuncion(f));
+    ok(/guardarTasaCalcHoy\(/.test(c), f + " publica por la puerta unica");
+    ok(!/tasasDia\.tdia_brl\s*=/.test(c) && !/tasasDia\[k\]\s*=\s*[^;]*tdia_brl/.test(c),
+       "y no escribe tdia_brl a pelo: " + f);
+  });
+  // Quien si puede escribirla directo: la puerta, y la cabecera mientras ella
+  // teclea (el % de arriba depende de lo que acaba de escribir).
+  {
+    const sin = sinComentarios(HTML);
+    const esc = (sin.match(/tasasDia(\.tdia_brl|\.tdia_ves_brl|\[dir==="ida"\?"tdia_brl":"tdia_ves_brl"\])\s*=/g)||[]);
+    // Son TRES escrituras y ni una mas: las dos claves de guardarTasaCalcHoy
+    // (ida y vuelta) y la del ternario de _setTasaPub, que es la cabecera
+    // escribiendo mientras ella teclea —el % de arriba depende de eso—.
+    ok(esc.length === 3,
+       "solo la puerta y la cabecera escriben la tasa publicada",
+       esc.length + " -> " + esc.join(" | "));
+    ok(/tasasDia\.tdia_brl\s*=/.test(sinComentarios(sacarFuncion("guardarTasaCalcHoy"))) &&
+       /tasasDia\.tdia_ves_brl\s*=/.test(sinComentarios(sacarFuncion("guardarTasaCalcHoy"))),
+       "dos de ellas son las de la puerta");
+    ok(/tasasDia\[dir==="ida"\?"tdia_brl":"tdia_ves_brl"\]\s*=/.test(sinComentarios(sacarFuncion("_setTasaPub"))),
+       "y la tercera es la cabecera mientras teclea");
+  }
+
+  // 7) Los campos de dinero del conversor se comian la coma decimal, y su
+  //    lector es la mitad que no se puede dejar a medias: en texto con un
+  //    parseFloat detras, "1.500,50" se lee 1,5.
+  ["conv-brl","conv-ves","conv-usd"].forEach(function(id){
+    ok(new RegExp("<input id='"+id+"' type='text' inputmode='decimal'").test(HTML),
+       id + " acepta la coma");
+  });
+  ["tdia_brl","tdia_vzla","tdia_usd","tdia_ves_brl","tdia_usd_brl"].forEach(function(k){
+    ok(new RegExp("<input type='text' inputmode='decimal' id='tasa-"+k+"'").test(HTML),
+       "tasa-" + k + " acepta la coma");
+  });
+  ["_convDesde","_msjCliente","_copiarMonto","saveTasasConfig","guardarTasaHoyDirecto"].forEach(function(f){
+    const c = sinComentarios(sacarFuncion(f));
+    ok(!/parseFloat\((el|elBrl|elVes|elUsd)\.value\)/.test(c) &&
+       !/parseFloat\(\(document\.getElementById\("conv-/.test(c),
+       "y su lector pasa por _leerNumero: " + f);
+  });
+
+  // Funcional, con el arnes: publica, se sale, vuelve.
+  S.config = {tasasDia:{tdia_brl:188, tdia_ves_brl:210, tdia_fecha:F.td()}};
+  S._convTasaOverride = null; S._convTasaOverrideVuelta = null;
+  ok(F._getTasaClienteBRL() === 188 && F._getTasaVueltaVESaBRL() === 210,
+     "cotiza con las dos publicadas");
+  ok(/publicada hoy/.test(F._origenTasaCotiza("ida").rotulo),
+     "y dice que son las de hoy", F._origenTasaCotiza("ida").rotulo);
+  F.guardarTasaCalcHoy("ida", 201, true);
+  ok(F._getTasaClienteBRL() === 201, "publica 201 y la cotizacion la sigue");
+  F._convOtraTasa("ida"); F._convSetOtra("ida", "150");
+  const o150 = F._origenTasaCotiza("ida");
+  ok(F._getTasaClienteBRL() === 150 && o150.otra === true && o150.pub === 201,
+     "una tasa suelta de 150 con la publicada de 201 al lado");
+  ok(F._calcTasas().ida.cliente === 201,
+     "y el flyer sigue con la publicada: lo que sale HACIA FUERA no es una cotizacion suelta");
+  F._convVolverPublicada("ida");
+  ok(F._getTasaClienteBRL() === 201 && S._convTasaOverride === null,
+     "volver la devuelve a la publicada");
+  // Sin vuelta publicada no hay vuelta, y no se presta la de ida.
+  delete S.config.tasasDia.tdia_ves_brl;
+  ok(F._getTasaVueltaVESaBRL() === 0 && F._origenTasaCotiza("vuelta").tasa === null,
+     "sin vuelta publicada no hay vuelta", F._getTasaVueltaVESaBRL());
+  S.config = {}; S._convTasaOverride = null; S._convTasaOverrideVuelta = null;
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
