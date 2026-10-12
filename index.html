@@ -2810,7 +2810,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261012_v194";
+var APP_VERSION = "20261012_v197";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -4474,7 +4474,12 @@ function rComparacionApi(){
 var EMPRESA_RAZON = "SAIPHA SERVIÇOS DIGITAIS";
 var EMPRESA_CNPJ  = "66.994.057/0001-61";
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
-  "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","histComp","histApertura","ajustesSaldo","_modCampos","mapaBinance"];
+  "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","histComp","histApertura","ajustesSaldo","_modCampos","mapaBinance",
+  // ARREGLO 114: el aviso que el servidor reparte al telefono. Dato DERIVADO
+  // —se recalcula en cada guardado— asi que NO va en ninguna lista de fusion
+  // a proposito: que lo reemplace el remoto es justo lo correcto, gana el
+  // ultimo que lo calculo. Pero tiene que estar aqui o no viaja.
+  "avisoPush"];
 
 // ══════════════════════════════════════════════════════════════════════
 // SISTEMA DE CIERRE AUTOMÁTICO DE MES
@@ -4966,8 +4971,18 @@ function capitalRealTotal(){
   // pudiera ver cuanto tiene de verdad en cada moneda.
   var porMoneda={};
   var _mon=function(m){
+    // ARREGLO 112: usdtCuentas es lo que hay EN CUENTAS de esa moneda, ya
+    // convertido. Existe porque enCuentas va en la moneda NATIVA —bolivares
+    // como bolivares, que es lo que hace util este desglose— y "usdt" suma
+    // ademas la reserva, lo por cobrar y lo prestado. Para preguntar "que
+    // parte de mi efectivo esta en bolivares" hacen falta las dos partes de
+    // la division en la MISMA unidad: comparar 620.949 bolivares contra 953
+    // USDT da un porcentaje que no existe, que es el mismo error del
+    // "$177,00" de Por cobrar. Se calcula aqui, donde ya se hizo la
+    // conversion, y no en quien pregunta.
     if(!porMoneda[m]) porMoneda[m]={moneda:m,enCuentas:0,enReserva:0,porCobrar:0,
-                                    enPrestamos:0,interesPrestamos:0,usdt:0,sinTasa:false};
+                                    enPrestamos:0,interesPrestamos:0,usdt:0,
+                                    usdtCuentas:0,sinTasa:false};
     return porMoneda[m];
   };
   var enCuentas=0, enReserva=0, sinTasa=[];
@@ -4983,7 +4998,8 @@ function capitalRealTotal(){
     }
     if(acc.esReserva) enReserva+=usdt; else enCuentas+=usdt;
     var mm=_mon(acc.moneda);
-    if(acc.esReserva) mm.enReserva+=saldo; else mm.enCuentas+=saldo;
+    if(acc.esReserva) mm.enReserva+=saldo;
+    else { mm.enCuentas+=saldo; mm.usdtCuentas+=usdt; }
     mm.usdt+=usdt;
   });
   var porCobrar=0;
@@ -5054,7 +5070,8 @@ function capitalRealTotal(){
     var x=porMoneda[m];
     return {moneda:m, enCuentas:r2v(x.enCuentas), enReserva:r2v(x.enReserva),
             porCobrar:r2v(x.porCobrar), enPrestamos:r2v(x.enPrestamos),
-            interesPrestamos:r2v(x.interesPrestamos), usdt:r2v(x.usdt), sinTasa:x.sinTasa};
+            interesPrestamos:r2v(x.interesPrestamos), usdt:r2v(x.usdt),
+            usdtCuentas:r2v(x.usdtCuentas), sinTasa:x.sinTasa};
   }).filter(function(x){
     return Math.abs(x.enCuentas)>0.009||Math.abs(x.enReserva)>0.009||
            Math.abs(x.porCobrar)>0.009||Math.abs(x.enPrestamos)>0.009;
@@ -13514,6 +13531,7 @@ function rConfigAdmin(){
     _cfgAcc("categorias","🏷️","Categorías","empresa y personales","var(--rol-ee)",categoriasBody,false)+
     _cfgAcc("rutas","🛣️","Rutas de operación",null,"var(--az3-c)",rutasBody,false)+
     _cfgAcc("tasas","📊","Tasas del día","solo afecta nuevos registros","var(--rol-na)",tasasHTML,false)+
+    _cfgAcc("avisostel","🔔","Avisos al teléfono","para enterarte sin abrir la app","var(--rol-na)",_htmlAvisosTelefono(),false)+
     _cfgAcc("mercado_monto","📐","Tamaño de tus operaciones","con qué monto se lee el P2P","var(--ac)",_htmlMontosMercado(),false)+
     _cfgAcc("usuarios_api","👥","Usuarios y permisos","quién entra y qué ve cada uno","var(--az3-b)",rUsuariosApi(),false)+
     "<div id='cfg-tema'>"+_cfgAcc("tema","🎨","Colores de la app",
@@ -16221,6 +16239,11 @@ function saveData(){
     // vez (ARREGLO 33, 04/09/2026: "el telefono revirtio los saldos
     // corregidos en la laptop", tres veces el mismo día).
     _marcarTodoLoQueSeFusiona();
+    // ARREGLO 114: se deja escrito el aviso para que el servidor lo reparta
+    // al telefono. Va AQUI, en el mismo punto central que marca lo que se
+    // fusiona, por la misma razon: apuntarlo funcion por funcion es el camino
+    // que ya fallo cuatro veces, y son mas de cien funciones que escriben.
+    _apuntarAvisoParaPush();
     // Y lo que no son listas: configuración, tasas e historiales.
     _marcarObjetosCambiados();
     var obj={_ts:Date.now()};
@@ -18928,6 +18951,7 @@ function rMain(){
     _htmlAvisoAperturaFuera()+  // ARREGLO 94
     _htmlAvisoSaldoNegativo()+  // ARREGLO 95
     _htmlAvisoMesSinCerrar()+   // ARREGLO 89
+    _htmlAvisoTasaFijo()+       // ARREGLO 112
     "<div class='navbar3'>"+
       "<button class='menubtn' onclick='document.getElementById(\"navMenuWrap\").classList.add(\"show\")'>☰ Menú</button>"+
       "<div class='cursec'>"+(TL[S.tab]||S.tab||"")+"</div>"+
@@ -22951,6 +22975,11 @@ function guardarTasaCalcHoy(dir,valor,silencioso){
   if(v<=0){if(!silencioso)alert("Tasa inválida.");return;}
   if(!S.config) S.config={};
   if(!S.config.tasasDia) S.config.tasasDia={};
+  // ARREGLO 112: se apunta CUANDO la publico. Sin esto, "tu suelo se movio un
+  // 9% desde que publicaste" no se puede decir — y ese es justo el aviso que
+  // habria cazado el 15/09, cuando su 188 estaba por debajo del suelo de
+  // 182,23 y no habia nada que se lo dijera.
+  S.config.tasasDia.tdia_fecha=td();
   if(dir==="ida"){
     S.config.tasasDia.tdia_brl=v;
     S._convTasaOverride=null; // limpia cualquier override manual del conversor
@@ -23590,6 +23619,9 @@ function _refrescarSuelo(){
   // lo ÚNICO que se ve.
   var cab=document.getElementById("tasas-cab");
   if(cab) cab.innerHTML=_htmlCabeceraTasas();
+  // La lectura del mercado mueve el suelo, y el suelo decide dos de los tres
+  // avisos. Si no se rehicieran, el aviso quedaria hablando del suelo viejo.
+  _refrescarAvisosTasa();
 }
 
 // El punto de equilibrio: cuantos bolivares por real puede dar sin perder.
@@ -23752,6 +23784,393 @@ function margenSobreSuelo(){
   if(mia===null || !(Q.v>0)) return null;
   return {mia:mia, base:Q.v, manda:Q.manda,
           pct:Math.round(((Q.v-mia)/Q.v)*1000)/10};
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 112 · LOS AVISOS DE MOVER LA TASA
+// ══════════════════════════════════════════════════════════════════════
+// Sus palabras del 11/10: "crees que me puedes dar un aviso cuando deba
+// modificar las tasas, bien sea porque me llene de muchos Bs o me llene de
+// muchos reales o la tasa del mercado cambió — quiero que me dé avisos de si
+// debo subir o bajar la tasa de Brasil a Vzla o viceversa".
+//
+// Los tres salen de datos que la app YA calcula. Ninguno inventa un número:
+// la concentración sale de capitalRealTotal(), el suelo de sueloQueManda() y
+// el movimiento del mercado de histTasas, que es la foto diaria que ya se
+// guarda desde hace meses.
+//
+// ── Por qué subir las DOS tasas cuando sobran bolívares ────────────────
+// Las dos van en bolívares por real y significan lo contrario (ARREGLO 74):
+//
+//   ida    -> ella ENTREGA bolívares. Subirla = dar MÁS por real = más
+//             atractiva = entran más idas = SALEN bolívares.
+//   vuelta -> ella COBRA bolívares. Subirla = pedir MÁS por real = menos
+//             atractiva = entran menos vueltas = ENTRAN menos bolívares.
+//
+// O sea que para gastar bolívares las dos suben, cada una por su motivo. Lo
+// contrario con reales — pero ojo, que no es simétrico: ella lo dijo, "tener
+// reales parados no me perjudica" y "tener muchos bolívares parados sí me
+// perjudica, por la devaluación". Así que sobrar reales no es una alarma: es
+// que puede BAJAR la vuelta, porque con reales en mano no tiene que hacer el
+// P2P que esa vuelta alta le estaba cubriendo.
+//
+// ── Los umbrales salen de SUS datos, no de una opinión ─────────────────
+// Medido sobre los 21 días de histSaldos de su export del 11/10, con las
+// tasas de cada día: su parte en bolívares tiene una mediana del 4,5% y su
+// máximo histórico fue 32,6% (el 03/09). El día que lo pidió estaba en 39,8%,
+// por encima de cualquier día medido — su instinto era correcto.
+//
+// Con el umbral en 25% habría saltado UNA vez en esos 21 días. Eso es lo que
+// tiene que ser: una alarma que suena todos los días enseña a no leerlas, y
+// aquí las rojas cuestan dinero (ARREGLO 101, el ⚠️ de PagBank).
+var _AVISO_UMBRAL = {conc:25, flojo:2, ancho:8, mercado:5};
+function _umbralAviso(k){
+  var v=parseFloat((S.config||{})["avisoUmbral_"+k]);
+  return (isFinite(v) && v>=0) ? v : _AVISO_UMBRAL[k];
+}
+
+// El suelo de un día cualquiera, reconstruido de la foto de tasas que la app
+// guarda desde hace meses. Misma cuenta que hoy (_equilibrio), para que la
+// comparación sea entre dos números hechos igual.
+function _sueloDeFecha(iso){
+  var t=(S.histTasas||{})[iso];
+  if(!t) return null;
+  return _equilibrio(t.BRL, t.VES);
+}
+// Contra qué se compara el suelo de hoy: contra el día en que publicó su
+// tasa, que es la pregunta de verdad. Si nunca lo guardó —el sello es nuevo—
+// se compara contra el día más viejo de los últimos 14, y se DICE que es eso:
+// un "se movió un 8%" sin decir desde cuándo no se puede perseguir.
+function _refSuelo(){
+  var ht=S.histTasas||{};
+  var pub=((S.config||{}).tasasDia||{}).tdia_fecha;
+  if(pub && ht[pub] && _sueloDeFecha(pub)!==null)
+    return {iso:pub, suelo:_sueloDeFecha(pub), txt:"que publicaste el "+ds(pub)};
+  var hoy=td(), mejor=null;
+  Object.keys(ht).sort().forEach(function(d){
+    if(mejor!==null) return;
+    if(_diasIso(d,hoy)<=14 && d<hoy && _sueloDeFecha(d)!==null) mejor=d;
+  });
+  if(mejor===null) return null;
+  return {iso:mejor, suelo:_sueloDeFecha(mejor), txt:"hace "+_diasIso(mejor,hoy)+" días"};
+}
+
+// Devuelve la lista de avisos, el más grave primero. Vacía cuando no hay
+// nada que decir — que es lo normal y es la gracia.
+//
+// Cada aviso lleva su CLAVE, que es lo que el servidor usa para no repetir
+// la notificación: lleva los números redondeados, así que mientras la
+// situación siga siendo la misma no vuelve a sonar.
+function avisoTasa(){
+  var av=[];
+  var f=function(n){return f2(n);};
+
+  // ── 1 · Te llenaste de una moneda ───────────────────────────────────
+  // Se mira lo que hay EN CUENTAS, no el capital entero: lo prestado y lo
+  // por cobrar también se devalúa, pero no se puede gastar en pagar una ida.
+  var R=null; try{ R=capitalRealTotal(); }catch(e){ R=null; }
+  if(R && R.porMoneda && R.porMoneda.length){
+    // En USDT, que es la unica forma de comparar entre monedas. El primer
+    // intento sumo enCuentas tal cual —620.949 bolivares junto a 953 USDT—
+    // y le dijo que tenia el 99,61% en bolivares. Era el "$177,00" de Por
+    // cobrar otra vez: la suma cruda de monedas distintas no es un numero.
+    var enCta=0;
+    R.porMoneda.forEach(function(x){ enCta+=Math.abs(x.usdtCuentas); });
+    if(enCta>1){
+      var ves=null, brl=null;
+      R.porMoneda.forEach(function(x){
+        if(x.moneda==="VES") ves=x.usdtCuentas;
+        if(x.moneda==="BRL") brl=x.usdtCuentas;
+      });
+      var uC=_umbralAviso("conc");
+      var pVes=(ves!==null)?(ves/enCta*100):0;
+      if(pVes>=uC){
+        av.push({id:"conc_ves", nivel:"ambar",
+          clave:"conc_ves_"+Math.round(pVes/5)*5,
+          titulo:"Te llenaste de bolívares",
+          texto:"El "+f(pVes)+"% de lo que tienes en cuentas está en bolívares, y parados se devalúan. "+
+                "Para gastarlos: SUBE la ida (das más Bs por real, entran más) y SUBE la vuelta "+
+                "(pides más Bs por real, entran menos).",
+          tab:"calculadora"});
+      }
+      var pBrl=(brl!==null)?(brl/enCta*100):0;
+      if(pBrl>=uC){
+        // Esto NO es una alarma: tener reales parados no le perjudica. Es una
+        // oportunidad — con reales en mano no tiene que hacer el P2P que su
+        // vuelta alta le estaba cubriendo. Sus palabras: "en eso no puedo
+        // perder por no tener el capital en reales".
+        av.push({id:"conc_brl", nivel:"info",
+          clave:"conc_brl_"+Math.round(pBrl/5)*5,
+          titulo:"Tienes reales de sobra",
+          texto:"El "+f(pBrl)+"% de lo que tienes en cuentas está en reales. Eso no te perjudica, "+
+                "pero puedes BAJAR la vuelta: con reales en mano no tienes que hacer el P2P que "+
+                "esa vuelta alta te cubre.",
+          tab:"calculadora"});
+      }
+    }
+  }
+
+  // ── 2 · Tu ida contra el suelo ──────────────────────────────────────
+  var m=null; try{ m=margenSobreSuelo(); }catch(e){ m=null; }
+  if(m){
+    var uF=_umbralAviso("flojo"), uA=_umbralAviso("ancho");
+    if(m.pct<=0){
+      // El único que cuesta dinero en CADA remesa que registre. Va arriba del
+      // panel, fuera del scroll, y no se puede cerrar.
+      av.push({id:"bajo_suelo", nivel:"rojo", fijo:true,
+        clave:"bajo_suelo_"+Math.round(m.mia),
+        titulo:"Tu ida está por encima de tu suelo",
+        texto:"Estás ofreciendo "+f(m.mia)+" y tu suelo es "+f(m.base)+": pierdes en cada remesa. "+
+              "BAJA la ida por debajo de "+f(m.base)+".",
+        tab:"calculadora"});
+    }else if(m.pct<uF){
+      av.push({id:"margen_flojo", nivel:"ambar",
+        clave:"margen_flojo_"+Math.round(m.mia),
+        titulo:"Te queda muy poco margen",
+        texto:"Ofreciendo "+f(m.mia)+" contra un suelo de "+f(m.base)+" te queda +"+f(m.pct)+"%. "+
+              "Y el suelo no lleva la comisión del banco venezolano ni tus egresos.",
+        tab:"calculadora"});
+    }else if(m.pct>uA){
+      av.push({id:"margen_ancho", nivel:"info",
+        clave:"margen_ancho_"+Math.round(m.mia),
+        titulo:"Puedes ofrecer mejor tasa",
+        texto:"Ofreciendo "+f(m.mia)+" te queda +"+f(m.pct)+"% sobre un suelo de "+f(m.base)+". "+
+              "Puedes SUBIR la ida y traer más volumen sin bajar de tu suelo.",
+        tab:"calculadora"});
+    }
+  }
+
+  // ── 3 · El suelo se movió y tu tasa se quedó ────────────────────────
+  // Medido en su export: el suelo pasó de 182,23 el 15/09 a 199,16 el 11/10
+  // —un 9,3% arriba— y su ida siguió en 188 todo ese tiempo. El 15/09, con
+  // 188 publicado, estaba REGALANDO.
+  var ref=_refSuelo();
+  if(m && ref && ref.suelo>0){
+    var mov=Math.round(((m.base-ref.suelo)/ref.suelo)*1000)/10;
+    if(Math.abs(mov)>=_umbralAviso("mercado")){
+      var subio=(mov>0);
+      av.push({id:"mercado_movio", nivel:subio?"info":"ambar",
+        clave:"mercado_"+(subio?"subio":"bajo")+"_"+Math.round(Math.abs(mov)),
+        titulo:"Tu suelo "+(subio?"subió":"bajó")+" "+f(Math.abs(mov))+"% y tu tasa sigue igual",
+        texto:"Desde "+ref.txt+" tu suelo pasó de "+f(ref.suelo)+" a "+f(m.base)+". "+
+              (subio ? "Puedes dar más bolívares por real y seguir ganando."
+                     : "Revisa tu ida: lo que ofrecías antes puede haberse quedado sin margen."),
+        tab:"calculadora"});
+    }
+  }
+
+  // El más grave primero: el color se lee antes que la letra.
+  var peso={rojo:0, ambar:1, info:2};
+  av.sort(function(a,b){ return peso[a.nivel]-peso[b.nivel]; });
+  return av;
+}
+
+// ── Dónde se ven ───────────────────────────────────────────────────────
+// El ROJO va arriba del panel, fuera de la zona que hace scroll (ARREGLO 62),
+// y no se puede cerrar: es el único que cuesta dinero en CADA remesa que
+// registre, así que esconderlo tiene precio. Los demás viven en la pestaña de
+// Tasas, que es donde decide — repetirlos arriba del panel todo el día es lo
+// que enseña a no leer las alarmas (ARREGLO 101, el ⚠️ de PagBank).
+function _htmlAvisoTasaFijo(){
+  var rojos=avisoTasa().filter(function(a){ return a.nivel==="rojo"; });
+  if(!rojos.length) return "";
+  return rojos.map(function(a){
+    return "<div style='background:var(--mal-sup);border-bottom:2px solid var(--mal-ln);padding:10px 14px'>"+
+      "<div style='background:var(--sup);border:1.5px solid var(--mal-ln);border-radius:9px;padding:9px 11px'>"+
+        "<div style='font-size:13px;font-weight:800;color:var(--mal)'>⚠️ "+_escAud(a.titulo)+"</div>"+
+        "<div style='font-size:11.5px;color:var(--tx2b);margin-top:3px;line-height:1.55'>"+_escAud(a.texto)+"</div>"+
+        "<div onclick='st(\"calculadora\")' style='font-size:11.5px;font-weight:700;color:var(--ac);margin-top:6px;cursor:pointer'>Ir a Tasas ›</div>"+
+      "</div></div>";
+  }).join("");
+}
+
+// El bloque de la pestaña de Tasas: los que no son rojos. El rojo ya está
+// arriba y repetirlo aquí sería decir dos veces lo mismo.
+function _htmlAvisosTasa(){
+  var av=avisoTasa().filter(function(a){ return a.nivel!=="rojo"; });
+  if(!av.length) return "";
+  var col=function(n){ return (n==="ambar") ? "var(--avi-tx2)" : "var(--tx2)"; };
+  var ic =function(n){ return (n==="ambar") ? "⚠️" : "💡"; };
+  return av.map(function(a){
+    // El color va en el borde, no en el relleno: un bloque entero de color es
+    // lo que ella llamó "esas cosas amarillas" (ARREGLO 99). Y el croma del
+    // fondo se queda por debajo de 22, que es el tope medido.
+    return "<div style='background:var(--sup);border:1.5px solid var(--ln2);border-left:3px solid "+col(a.nivel)+";"+
+      "border-radius:10px;padding:10px 12px;margin-bottom:8px'>"+
+      "<div style='font-size:12.5px;font-weight:800;color:"+col(a.nivel)+"'>"+ic(a.nivel)+" "+_escAud(a.titulo)+"</div>"+
+      "<div style='font-size:11px;color:var(--tx2);margin-top:3px;line-height:1.55'>"+_escAud(a.texto)+"</div>"+
+    "</div>";
+  }).join("");
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 114 · LA NOTIFICACIÓN AL TELÉFONO
+// ══════════════════════════════════════════════════════════════════════
+// Sus palabras del 11/10: "quiero que esta notificación me llegue al teléfono
+// no solo cuando yo abra la app".
+//
+// ── Quién decide el aviso ──────────────────────────────────────────────
+// La app. El servidor solo lo reparte. El suelo sale de sus lotes y esa
+// cuenta vive aquí; escribirla también en Python daría DOS suelos —el de la
+// pantalla y el de la notificación— que un día dirían cosas distintas. Sería
+// el 34,27 contra 34,28 de Por cobrar, pero en un número con el que publica.
+//
+// Por eso al guardar se deja escrito el aviso ya hecho, con su CLAVE, en una
+// clave más del estado. El servidor mira esa clave y manda una sola vez por
+// aviso distinto: mientras la situación siga igual, no vuelve a sonar.
+//
+// ── Lo que esto NO alcanza, y hay que saberlo ──────────────────────────
+// Los dos avisos que salen de SUS datos —te llenaste de bolívares, tu tasa
+// quedó bajo el suelo— se recalculan cuando ella guarda, así que la
+// notificación sale después de que use la app. Eso sirve: registra las
+// remesas, cierra, y el aviso le llega al rato. Lo que NO llega con la app
+// cerrada es "el mercado se movió", porque ese precio cambia solo y el suelo
+// que hace falta para medirlo vive aquí. Está dicho en la tarjeta.
+
+// Qué se guarda para que el servidor lo reparta. Es dato DERIVADO: lo
+// recalcula cada guardado, así que no va en ninguna lista de fusión a
+// propósito —el remoto lo reemplaza entero y eso es justo lo correcto, gana
+// el último que lo calculó. Sí va en DATA_KEYS, o no viajaría.
+function _apuntarAvisoParaPush(){
+  try{
+    var av=avisoTasa();
+    if(!av.length){ S.avisoPush=null; return; }
+    var a=av[0];   // el más grave: avisoTasa() ya los ordena
+    S.avisoPush={clave:a.clave, titulo:a.titulo, texto:a.texto,
+                 nivel:a.nivel, ts:Date.now()};
+  }catch(e){ /* un fallo aquí no puede impedir que guarde */ }
+}
+
+// ── El alta en este aparato ────────────────────────────────────────────
+// Tres cosas tienen que ir bien y las tres fallan distinto, así que se
+// distinguen: un "no se pudo activar" a secas la deja sin saber qué tocar.
+function _pushSoportado(){
+  return (typeof navigator!=="undefined") && ("serviceWorker" in navigator) &&
+         (typeof window!=="undefined") && ("PushManager" in window) &&
+         (typeof Notification!=="undefined");
+}
+// En iPhone esto solo existe con la app instalada en la pantalla de inicio.
+// En Android da igual, pero el diagnóstico tiene que poder decirlo.
+function _appInstalada(){
+  try{
+    return (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) ||
+           (navigator.standalone===true);
+  }catch(e){ return false; }
+}
+var _PUSH_ESTADO = {sus:null, leido:0, clave:"", motivo:""};
+
+function _b64aBytes(b64){
+  var s=(b64+"=".repeat((4-b64.length%4)%4)).replace(/-/g,"+").replace(/_/g,"/");
+  var raw=atob(s), out=new Uint8Array(raw.length);
+  for(var i=0;i<raw.length;i++) out[i]=raw.charCodeAt(i);
+  return out;
+}
+// Mira cómo está este aparato, sin pedir permiso de nada.
+function _revisarPush(){
+  _PUSH_ESTADO.leido=Date.now();
+  if(!_pushSoportado()){ _PUSH_ESTADO.motivo="este navegador no sabe hacerlo"; return Promise.resolve(); }
+  return navigator.serviceWorker.ready.then(function(reg){
+    return reg.pushManager.getSubscription();
+  }).then(function(s){
+    _PUSH_ESTADO.sus=s||null; _PUSH_ESTADO.motivo="";
+  }).catch(function(e){
+    _PUSH_ESTADO.sus=null; _PUSH_ESTADO.motivo=String(e&&e.message||e);
+  });
+}
+
+function activarAvisos(){
+  if(!_pushSoportado()){
+    alert("Este navegador no sabe mandar notificaciones.\n\nEn el teléfono, abre la app desde el icono de la pantalla de inicio.");
+    return;
+  }
+  // El permiso se pide DENTRO del toque. Android exige un gesto reciente, y
+  // es el mismo fallo que ya costó el botón de compartir (ARREGLO 84) y el
+  // respaldo del cierre (ARREGLO 91): medio segundo después, el permiso del
+  // toque ya caducó.
+  Notification.requestPermission().then(function(p){
+    if(p!=="granted"){
+      alert(p==="denied"
+        ? "Las notificaciones están BLOQUEADAS para esta app.\n\nEn Android: mantén pulsado el icono → Información de la aplicación → Notificaciones, y actívalas."
+        : "No diste permiso. Puedes volver a intentarlo cuando quieras.");
+      R(); return;
+    }
+    return apiFetch("/push/clave").then(function(r){ return r.json(); }).then(function(d){
+      if(!d||!d.ok||!d.configurado||!d.clave)
+        throw new Error("tu servidor todavía no tiene configuradas las claves VAPID");
+      return navigator.serviceWorker.ready.then(function(reg){
+        return reg.pushManager.subscribe({
+          userVisibleOnly:true,
+          applicationServerKey:_b64aBytes(d.clave)
+        });
+      });
+    }).then(function(sus){
+      return apiFetch("/push/suscribir",{method:"POST",body:sus.toJSON()})
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+          if(!d||!d.ok) throw new Error((d&&d.error)||"el servidor no la aceptó");
+          _PUSH_ESTADO.sus=sus;
+          alert("✅ Listo. Los avisos de tasa te van a llegar al teléfono aunque no tengas la app abierta.");
+          R();
+        });
+    });
+  }).catch(function(e){
+    // Un fallo mudo obliga a adivinar, y adivinar ya costó tres diagnósticos
+    // equivocados en una sesión.
+    alert("No se pudo activar: "+(e&&e.message||e));
+    R();
+  });
+}
+
+function desactivarAvisos(){
+  if(!_PUSH_ESTADO.sus){ R(); return; }
+  var punto=_PUSH_ESTADO.sus.endpoint;
+  _PUSH_ESTADO.sus.unsubscribe().catch(function(){}).then(function(){
+    return apiFetch("/push/olvidar",{method:"POST",body:{endpoint:punto}});
+  }).catch(function(){}).then(function(){
+    _PUSH_ESTADO.sus=null;
+    alert("Los avisos dejaron de llegar a este aparato.");
+    R();
+  });
+}
+
+// ── La tarjeta de Configuración ────────────────────────────────────────
+// Dice si PUEDEN llegarle, no solo si están activados. Un permiso que parece
+// concedido y no entrega nada es peor que no tenerlo.
+function _htmlAvisosTelefono(){
+  var sop=_pushSoportado();
+  var perm=(typeof Notification!=="undefined") ? Notification.permission : "default";
+  var activo=!!_PUSH_ESTADO.sus;
+  var fila=function(ic,txt,col){
+    return "<div style='display:flex;gap:7px;align-items:flex-start;font-size:11.5px;color:"+(col||"var(--tx2)")+";line-height:1.5;margin-top:4px'>"+
+      "<span>"+ic+"</span><span>"+txt+"</span></div>";
+  };
+  var cuerpo="";
+  if(!sop){
+    cuerpo=fila("\\u26d4","Este navegador no sabe mandar notificaciones.","var(--mal)")+
+      fila("\\ud83d\\udca1","En el teléfono, abre la app desde el icono de la pantalla de inicio, no desde el navegador.");
+  }else if(perm==="denied"){
+    cuerpo=fila("\\u26d4","Las notificaciones están BLOQUEADAS para esta app.","var(--mal)")+
+      fila("\\ud83d\\udca1","En Android: mantén pulsado el icono \\u2192 Información de la aplicación \\u2192 Notificaciones, y actívalas. Desde aquí no se puede.");
+  }else if(activo){
+    cuerpo=fila("\\u2705","Activadas en este aparato.","var(--ok)")+
+      fila("\\ud83d\\udd14","Te llega el aviso aunque no tengas la app abierta, una sola vez por aviso distinto y nunca entre las 10 de la noche y las 7 de la mañana.")+
+      "<button onclick='desactivarAvisos()' style='margin-top:9px;padding:8px 13px;border:1.5px solid var(--ln);border-radius:9px;background:var(--sup);color:var(--tx2);font-size:12px;font-weight:700;font-family:inherit;cursor:pointer'>Dejar de recibirlos en este aparato</button>";
+  }else{
+    cuerpo=fila("\\ud83d\\udd15","Todavía no están activadas en este aparato.","var(--tx3)")+
+      (!_appInstalada()
+        ? fila("\\u26a0\\ufe0f","Lo estás viendo desde el navegador. En el iPhone las notificaciones <b>solo</b> llegan con la app instalada en la pantalla de inicio; en Android funcionan igual, pero instalada va mejor.","var(--avi-tx2)")
+        : "")+
+      "<button onclick='activarAvisos()' style='margin-top:9px;padding:9px 14px;border:none;border-radius:9px;background:var(--ac);color:var(--sobre-color);font-size:12.5px;font-weight:800;font-family:inherit;cursor:pointer'>\\ud83d\\udd14 Activar en este aparato</button>";
+  }
+  return "<div style='font-size:11px;color:var(--tx2b);margin-bottom:10px;line-height:1.6'>"+
+      "Los avisos de la pestaña de Tasas —te llenaste de bolívares, tu tasa quedó bajo el suelo— "+
+      "te llegan al teléfono sin abrir la app. "+
+      "<b>El de \\u201cel mercado se movió\\u201d no</b>: ese precio cambia solo y el suelo para medirlo se calcula aquí, "+
+      "así que ese lo ves al abrir.</div>"+
+    "<div style='background:var(--sup2d);border-radius:10px;padding:11px 13px'>"+cuerpo+"</div>"+
+    "<div style='font-size:10.5px;color:var(--tx4);margin-top:8px;line-height:1.5'>"+
+      "Cada aparato se activa por separado. Lo que va dentro de la notificación viaja <b>cifrado</b>: "+
+      "el servicio de Google la transporta sin poder leerla.</div>";
 }
 
 function _htmlSuelo(){
@@ -23993,25 +24412,48 @@ function _cg(){
   if(!S.calc) S.calc={};
   var g=S.calc.gan;
   if(!g){
-    var pub=_misTasasPublicadas();
     var rc=(typeof tasaDeReferencia==="function")?tasaDeReferencia("BRL"):null;
     g=S.calc.gan={
       modo:"gan", fuente:"cruce",
       monto:String(_montoMercado("BRL")),
-      ida:(pub.ida!==null?String(pub.ida):""),
-      vuelta:(pub.vuelta!==null?String(pub.vuelta):""),
       meta:"", pct:"50",
       usdbrl:((rc&&rc.tasa>0)?String(Math.round(rc.tasa*10000)/10000):"5")
     };
   }
+  // ── ARREGLO 113 · la ida y la vuelta SIGUEN a la publicada ──
+  // Lo cazó ella en su teléfono el 12/10: arriba decía TU IDA 188 y la
+  // calculadora, cuatro dedos más abajo, 188.86. El valor se copiaba UNA vez,
+  // al abrir la calculadora por primera vez, y ahí se quedaba congelado —
+  // cambiaba su tasa en la cabecera y la de abajo seguía con la de antes.
+  //
+  // Dos números para la misma cosa en la MISMA pantalla es lo que ya hizo que
+  // dejara de fiarse de los dos totales de Por cobrar (34,27 arriba, 34,28
+  // abajo). Aquí era peor: el de abajo es con el que calcula si le conviene.
+  //
+  // Ahora el campo sale de la tasa publicada mientras ella no lo toque. En
+  // cuanto lo escribe queda marcado como suyo —probar una tasa que todavía no
+  // publica es justo para lo que sirve esta calculadora— y entonces la
+  // pantalla DICE que es distinta de la publicada, con un botón para volver.
+  var pub=_misTasasPublicadas();
+  if(!g.idaTocada)    g.ida    = (pub.ida   !==null) ? String(pub.ida)    : "";
+  if(!g.vueltaTocada) g.vuelta = (pub.vuelta!==null) ? String(pub.vuelta) : "";
   return g;
+}
+// Volver a la tasa que tiene publicada: deja de ser suya y vuelve a seguirla.
+function _cgSoltar(campo){
+  var g=_cg();
+  g[campo+"Tocada"]=false;
+  _cgRedibujar();
 }
 // ARREGLO 32: repintar con R() rehace el HTML y destruye el campo bajo el
 // dedo. Mientras teclea solo se rehace el recuadro del resultado, por su id.
 function _cgSet(campo,val){
   // _num() en la puerta: con el teclado en español la coma decimal es lo
   // primero que se pierde, y detrás hay parseFloat.
-  _cg()[campo]=_num(val);
+  var g=_cg();
+  g[campo]=_num(val);
+  // ARREGLO 113: escribirla la hace suya y deja de seguir a la publicada.
+  if(campo==="ida"||campo==="vuelta") g[campo+"Tocada"]=true;
   var n=document.getElementById("cg-res");
   if(n) n.innerHTML=_htmlCalceRes();
 }
@@ -24138,14 +24580,35 @@ function _htmlCalceCuerpo(){
       (on?"var(--sobre-color)":"var(--tx2)")+";font-size:11.5px;font-weight:800;font-family:inherit;cursor:pointer;line-height:1.25'>"+
       rot+"</button>";
   };
+  // ARREGLO 113: lo que se ENSEÑA lleva coma. _num() guarda "188.86" con
+  // punto a proposito —detras hay cien parseFloat— pero ensenarselo asi en un
+  // campo donde ella escribe con coma es pedirle que lea en dos idiomas. Solo
+  // se toca lo que se dibuja; lo guardado no cambia.
+  var _coma=function(v){
+    var s=String(v===undefined||v===null?"":v);
+    return (/^-?\d+\.\d+$/.test(s)) ? s.replace(".",",") : s;
+  };
+  var pub=_misTasasPublicadas();
   var campo=function(clave,rot,pie,ph){
+    // Si la toco y no coincide con la publicada, se DICE, y se puede volver.
+    // Una tasa distinta de la de arriba sin explicacion es justo lo que la
+    // hizo preguntar cual mandaba.
+    var dif="";
+    if((clave==="ida"||clave==="vuelta") && g[clave+"Tocada"]){
+      var pv=pub[clave];
+      if(pv!==null && Math.abs((parseFloat(g[clave])||0)-pv)>0.005)
+        dif="<div style='font-size:10px;color:var(--avi-tx2);margin-top:2px;line-height:1.4'>"+
+          "distinta de tu "+clave+" publicada ("+f2(pv)+") \u00b7 "+
+          "<span onclick='_cgSoltar(\""+clave+"\")' style='cursor:pointer;font-weight:700;text-decoration:underline'>volver</span></div>";
+    }
     return "<div style='flex:1 1 130px;min-width:0'>"+
       "<label style='font-size:10.5px;font-weight:700;color:var(--tx3);display:block;margin-bottom:3px'>"+rot+"</label>"+
-      "<input type='text' inputmode='decimal' placeholder='"+(ph||"")+"' value='"+_escAud(g[clave]||"")+"' "+
+      "<input type='text' inputmode='decimal' placeholder='"+(ph||"")+"' value='"+_escAud(_coma(g[clave]))+"' "+
         "oninput='_cgSet(\""+clave+"\",this.value)' "+
         "style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:9px;font-size:15px;font-weight:800;"+
         "font-family:inherit;background:var(--sup);color:var(--tit)'>"+
       (pie?"<div style='font-size:10px;color:var(--tx4);margin-top:2px;line-height:1.4'>"+pie+"</div>":"")+
+      dif+
     "</div>";
   };
   var esP2P=(g.fuente==="p2p");
@@ -24160,14 +24623,16 @@ function _htmlCalceCuerpo(){
   if(g.fuente==="mixto")
     campos.push(campo("pct","Cuánto cruzo","% · el resto va por P2P","50"));
 
-  return "<div style='display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:9px'>"+
-      "<div style='font-size:13px;font-weight:800;color:var(--tit)'>🧮 Cuánto ganas con esta tasa</div>"+
+  // ARREGLO 113: el título lo dice la fila que se acaba de abrir. Repetirlo
+  // aquí ponía "Cuánto gano con esta tasa" y justo debajo "Cuánto ganas con
+  // esta tasa" — dos renglones casi iguales antes de llegar a lo que importa.
+  return "<div style='display:flex;justify-content:flex-end;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:9px'>"+
       // El USD/BRL va arriba y se puede cambiar, pero NO empieza en 5,00: la
       // app ya sabe a cuanto compra sus reales y ese es el numero con el que
       // valora todo su dinero. Un 5,00 de ejemplo convertiria mal la meta.
       "<div style='display:flex;align-items:baseline;gap:5px'>"+
         "<span style='font-size:10.5px;color:var(--tx4);font-weight:700'>USD/BRL</span>"+
-        "<input type='text' inputmode='decimal' value='"+_escAud(g.usdbrl||"")+"' "+
+        "<input type='text' inputmode='decimal' value='"+_escAud(_coma(g.usdbrl))+"' "+
           "oninput='_cgSet(\"usdbrl\",this.value)' "+
           "style='width:62px;padding:4px 6px;border:1.5px solid var(--ln);border-radius:7px;font-size:12px;"+
           "font-weight:800;text-align:center;font-family:inherit;background:var(--sup);color:var(--tit)'>"+
@@ -24272,6 +24737,16 @@ function _setTasaPub(dir,val){
   // donde está el % que depende de lo que acaba de escribir.
   var n=document.getElementById("tasas-cab");
   if(n) n.innerHTML=_htmlCabeceraTasas();
+  // ARREGLO 112: el aviso depende de la ida que acaba de escribir —baja de
+  // 188 a 210 y el aviso rojo tiene que aparecer—, asi que se rehace con
+  // ella. Dejarlo solo en el repintado haria que el aviso hablara de la tasa
+  // anterior mientras el veredicto de arriba ya habla de la nueva.
+  _refrescarAvisosTasa();
+}
+// Los avisos se rehacen por su id, nunca con R() (ARREGLO 32).
+function _refrescarAvisosTasa(){
+  var n=document.getElementById("tasas-avisos");
+  if(n) n.innerHTML=_htmlAvisosTasa();
 }
 // Al soltar el campo se guarda, y se guarda por la MISMA puerta de siempre
 // (guardarTasaCalcHoy), que es la que también limpia el override del
@@ -24282,6 +24757,13 @@ function _guardarTasaPub(dir){
   if(v>0) guardarTasaCalcHoy(dir, v, true);
 }
 
+// ARREGLO 113: con coma, igual que la calculadora. Son los mismos numeros en
+// la misma pantalla; escribirlos de dos maneras es pedirle que lea en dos
+// idiomas.
+function _comaCab(v){
+  var s=String(v===undefined||v===null?"":v);
+  return (/^-?\d+\.\d+$/.test(s)) ? s.replace(".",",") : s;
+}
 function _htmlCabeceraTasas(){
   var m=margenSobreSuelo();
   var Q=sueloQueManda();
@@ -24289,7 +24771,7 @@ function _htmlCabeceraTasas(){
   var campo=function(dir,rot,val){
     return "<div style='flex:1 1 0;min-width:0;text-align:center'>"+
       "<div style='font-size:10.5px;color:var(--tx4);font-weight:700;text-transform:uppercase;letter-spacing:.4px'>"+rot+"</div>"+
-      "<input type='text' inputmode='decimal' placeholder='\u2014' value='"+_escAud(val===null?"":val)+"' "+
+      "<input type='text' inputmode='decimal' placeholder='\u2014' value='"+_escAud(_comaCab(val))+"' "+
         "oninput='_setTasaPub(\""+dir+"\",this.value)' onchange='_guardarTasaPub(\""+dir+"\")' "+
         "style='width:100%;border:none;border-bottom:1.5px dashed var(--ln);background:transparent;"+
         "font-size:22px;font-weight:900;color:var(--tit);text-align:center;font-family:inherit;padding:1px 0 2px'>"+
@@ -24426,6 +24908,9 @@ function rCalculadora(){
     "<div id='tasas-cab' style='background:var(--sup);border:1.5px solid var(--ln2);border-radius:14px;padding:14px 12px 13px;margin-bottom:10px'>"+
       _htmlCabeceraTasas()+
     "</div>"+
+    // ARREGLO 112: los avisos van ENTRE la cabecera y las filas. Arriba del
+    // todo esta el estado; esto es lo que hay que hacer con el.
+    "<div id='tasas-avisos'>"+_htmlAvisosTasa()+"</div>"+
     "<div id='tasas-filas'>"+_htmlFilasTasas()+"</div>"+
   "</div>";
 }
