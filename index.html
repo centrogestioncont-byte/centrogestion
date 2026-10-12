@@ -2810,7 +2810,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261012_v195";
+var APP_VERSION = "20261012_v196";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -24231,25 +24231,48 @@ function _cg(){
   if(!S.calc) S.calc={};
   var g=S.calc.gan;
   if(!g){
-    var pub=_misTasasPublicadas();
     var rc=(typeof tasaDeReferencia==="function")?tasaDeReferencia("BRL"):null;
     g=S.calc.gan={
       modo:"gan", fuente:"cruce",
       monto:String(_montoMercado("BRL")),
-      ida:(pub.ida!==null?String(pub.ida):""),
-      vuelta:(pub.vuelta!==null?String(pub.vuelta):""),
       meta:"", pct:"50",
       usdbrl:((rc&&rc.tasa>0)?String(Math.round(rc.tasa*10000)/10000):"5")
     };
   }
+  // ── ARREGLO 113 · la ida y la vuelta SIGUEN a la publicada ──
+  // Lo cazó ella en su teléfono el 12/10: arriba decía TU IDA 188 y la
+  // calculadora, cuatro dedos más abajo, 188.86. El valor se copiaba UNA vez,
+  // al abrir la calculadora por primera vez, y ahí se quedaba congelado —
+  // cambiaba su tasa en la cabecera y la de abajo seguía con la de antes.
+  //
+  // Dos números para la misma cosa en la MISMA pantalla es lo que ya hizo que
+  // dejara de fiarse de los dos totales de Por cobrar (34,27 arriba, 34,28
+  // abajo). Aquí era peor: el de abajo es con el que calcula si le conviene.
+  //
+  // Ahora el campo sale de la tasa publicada mientras ella no lo toque. En
+  // cuanto lo escribe queda marcado como suyo —probar una tasa que todavía no
+  // publica es justo para lo que sirve esta calculadora— y entonces la
+  // pantalla DICE que es distinta de la publicada, con un botón para volver.
+  var pub=_misTasasPublicadas();
+  if(!g.idaTocada)    g.ida    = (pub.ida   !==null) ? String(pub.ida)    : "";
+  if(!g.vueltaTocada) g.vuelta = (pub.vuelta!==null) ? String(pub.vuelta) : "";
   return g;
+}
+// Volver a la tasa que tiene publicada: deja de ser suya y vuelve a seguirla.
+function _cgSoltar(campo){
+  var g=_cg();
+  g[campo+"Tocada"]=false;
+  _cgRedibujar();
 }
 // ARREGLO 32: repintar con R() rehace el HTML y destruye el campo bajo el
 // dedo. Mientras teclea solo se rehace el recuadro del resultado, por su id.
 function _cgSet(campo,val){
   // _num() en la puerta: con el teclado en español la coma decimal es lo
   // primero que se pierde, y detrás hay parseFloat.
-  _cg()[campo]=_num(val);
+  var g=_cg();
+  g[campo]=_num(val);
+  // ARREGLO 113: escribirla la hace suya y deja de seguir a la publicada.
+  if(campo==="ida"||campo==="vuelta") g[campo+"Tocada"]=true;
   var n=document.getElementById("cg-res");
   if(n) n.innerHTML=_htmlCalceRes();
 }
@@ -24376,14 +24399,35 @@ function _htmlCalceCuerpo(){
       (on?"var(--sobre-color)":"var(--tx2)")+";font-size:11.5px;font-weight:800;font-family:inherit;cursor:pointer;line-height:1.25'>"+
       rot+"</button>";
   };
+  // ARREGLO 113: lo que se ENSEÑA lleva coma. _num() guarda "188.86" con
+  // punto a proposito —detras hay cien parseFloat— pero ensenarselo asi en un
+  // campo donde ella escribe con coma es pedirle que lea en dos idiomas. Solo
+  // se toca lo que se dibuja; lo guardado no cambia.
+  var _coma=function(v){
+    var s=String(v===undefined||v===null?"":v);
+    return (/^-?\d+\.\d+$/.test(s)) ? s.replace(".",",") : s;
+  };
+  var pub=_misTasasPublicadas();
   var campo=function(clave,rot,pie,ph){
+    // Si la toco y no coincide con la publicada, se DICE, y se puede volver.
+    // Una tasa distinta de la de arriba sin explicacion es justo lo que la
+    // hizo preguntar cual mandaba.
+    var dif="";
+    if((clave==="ida"||clave==="vuelta") && g[clave+"Tocada"]){
+      var pv=pub[clave];
+      if(pv!==null && Math.abs((parseFloat(g[clave])||0)-pv)>0.005)
+        dif="<div style='font-size:10px;color:var(--avi-tx2);margin-top:2px;line-height:1.4'>"+
+          "distinta de tu "+clave+" publicada ("+f2(pv)+") \u00b7 "+
+          "<span onclick='_cgSoltar(\""+clave+"\")' style='cursor:pointer;font-weight:700;text-decoration:underline'>volver</span></div>";
+    }
     return "<div style='flex:1 1 130px;min-width:0'>"+
       "<label style='font-size:10.5px;font-weight:700;color:var(--tx3);display:block;margin-bottom:3px'>"+rot+"</label>"+
-      "<input type='text' inputmode='decimal' placeholder='"+(ph||"")+"' value='"+_escAud(g[clave]||"")+"' "+
+      "<input type='text' inputmode='decimal' placeholder='"+(ph||"")+"' value='"+_escAud(_coma(g[clave]))+"' "+
         "oninput='_cgSet(\""+clave+"\",this.value)' "+
         "style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:9px;font-size:15px;font-weight:800;"+
         "font-family:inherit;background:var(--sup);color:var(--tit)'>"+
       (pie?"<div style='font-size:10px;color:var(--tx4);margin-top:2px;line-height:1.4'>"+pie+"</div>":"")+
+      dif+
     "</div>";
   };
   var esP2P=(g.fuente==="p2p");
@@ -24398,14 +24442,16 @@ function _htmlCalceCuerpo(){
   if(g.fuente==="mixto")
     campos.push(campo("pct","Cuánto cruzo","% · el resto va por P2P","50"));
 
-  return "<div style='display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:9px'>"+
-      "<div style='font-size:13px;font-weight:800;color:var(--tit)'>🧮 Cuánto ganas con esta tasa</div>"+
+  // ARREGLO 113: el título lo dice la fila que se acaba de abrir. Repetirlo
+  // aquí ponía "Cuánto gano con esta tasa" y justo debajo "Cuánto ganas con
+  // esta tasa" — dos renglones casi iguales antes de llegar a lo que importa.
+  return "<div style='display:flex;justify-content:flex-end;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:9px'>"+
       // El USD/BRL va arriba y se puede cambiar, pero NO empieza en 5,00: la
       // app ya sabe a cuanto compra sus reales y ese es el numero con el que
       // valora todo su dinero. Un 5,00 de ejemplo convertiria mal la meta.
       "<div style='display:flex;align-items:baseline;gap:5px'>"+
         "<span style='font-size:10.5px;color:var(--tx4);font-weight:700'>USD/BRL</span>"+
-        "<input type='text' inputmode='decimal' value='"+_escAud(g.usdbrl||"")+"' "+
+        "<input type='text' inputmode='decimal' value='"+_escAud(_coma(g.usdbrl))+"' "+
           "oninput='_cgSet(\"usdbrl\",this.value)' "+
           "style='width:62px;padding:4px 6px;border:1.5px solid var(--ln);border-radius:7px;font-size:12px;"+
           "font-weight:800;text-align:center;font-family:inherit;background:var(--sup);color:var(--tit)'>"+
@@ -24530,6 +24576,13 @@ function _guardarTasaPub(dir){
   if(v>0) guardarTasaCalcHoy(dir, v, true);
 }
 
+// ARREGLO 113: con coma, igual que la calculadora. Son los mismos numeros en
+// la misma pantalla; escribirlos de dos maneras es pedirle que lea en dos
+// idiomas.
+function _comaCab(v){
+  var s=String(v===undefined||v===null?"":v);
+  return (/^-?\d+\.\d+$/.test(s)) ? s.replace(".",",") : s;
+}
 function _htmlCabeceraTasas(){
   var m=margenSobreSuelo();
   var Q=sueloQueManda();
@@ -24537,7 +24590,7 @@ function _htmlCabeceraTasas(){
   var campo=function(dir,rot,val){
     return "<div style='flex:1 1 0;min-width:0;text-align:center'>"+
       "<div style='font-size:10.5px;color:var(--tx4);font-weight:700;text-transform:uppercase;letter-spacing:.4px'>"+rot+"</div>"+
-      "<input type='text' inputmode='decimal' placeholder='\u2014' value='"+_escAud(val===null?"":val)+"' "+
+      "<input type='text' inputmode='decimal' placeholder='\u2014' value='"+_escAud(_comaCab(val))+"' "+
         "oninput='_setTasaPub(\""+dir+"\",this.value)' onchange='_guardarTasaPub(\""+dir+"\")' "+
         "style='width:100%;border:none;border-bottom:1.5px dashed var(--ln);background:transparent;"+
         "font-size:22px;font-weight:900;color:var(--tit);text-align:center;font-family:inherit;padding:1px 0 2px'>"+

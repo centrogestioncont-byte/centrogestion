@@ -50,7 +50,7 @@ function sacarConstante(nombre) {
   }
   throw new Error("la constante " + nombre + " no termina en ';'");
 }
-const CONSTANTES = ["_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO", "_AVISO_UMBRAL",
+const CONSTANTES = ["_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO", "_AVISO_UMBRAL", "_MERCADO_MONTO_DEF",
                     "_BIN_COLS_C2C", "_BIN_COLS_TX", "MONEDAS_COMPRA", "MONEDAS_VENTA",
                     "MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
                     "_MERGE_OBJETOS", "_MERGE_BLOQUES", "_MERGE_HISTORIAL", "_RATE_LIMITS",
@@ -73,6 +73,7 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "_calceK", "_calceGan", "_calceVuelta", "_calceIda", "_cg", "_cgSet", "_cgFraccion",
                     "margenSobreSuelo", "_calcTasas", "_misTasasPublicadas", "_fpTasa",
                     "avisoTasa", "_umbralAviso", "_refSuelo", "_sueloDeFecha", "guardarTasaCalcHoy",
+                    "_cgSoltar", "_htmlCabeceraTasas", "_montoMercado",
                     "esRutaCalce", "esCalceDirecto",
                     "_loteYaEnApertura", "_fiatDeLote", "_deltaDeLote",
                     "f2n", "f0", "f4",
@@ -8041,6 +8042,73 @@ console.log("\n— FASE 2: la cuenta madre —");
      "el texto del aviso se escapa al dibujarlo");
 
   S.config={}; S.cuentas=[]; S.inventarioUsdt=[]; S.inventarioUsdt_cerrado=[]; S.histTasas={};
+}
+
+
+// ── ARREGLO 113 · lo que cazó ella en su teléfono el 12/10 ────────────────
+// Su captura: arriba "TU IDA 188" y cuatro dedos mas abajo, en la misma
+// pantalla, "Tasa de ida 188.86". Tres cosas en una foto.
+{
+  const cg = sacarFuncion("_cg");
+  // 1 · La ida y la vuelta SIGUEN a la publicada. Se copiaban UNA vez, al
+  // abrir la calculadora por primera vez, y ahi se quedaban congeladas.
+  // Dos numeros para la misma cosa en la MISMA pantalla es el 34,27 contra
+  // 34,28 de Por cobrar — y aqui el de abajo es con el que decide si le
+  // conviene la tasa.
+  ok(/if\(!g\.idaTocada\)/.test(cg) && /if\(!g\.vueltaTocada\)/.test(cg),
+     "la ida y la vuelta siguen a la publicada mientras ella no las toque");
+  ok(!/ida:\(pub\.ida/.test(cg) && !/vuelta:\(pub\.vuelta/.test(cg),
+     "y ya no se copian una sola vez al crear el estado");
+  // Tocarla la hace suya: probar una tasa que todavia no publica es para lo
+  // que sirve esta calculadora.
+  ok(/g\[campo\+"Tocada"\]=true;/.test(sacarFuncion("_cgSet")),
+     "escribirla la hace suya y deja de seguir a la publicada");
+  ok(/g\[campo\+"Tocada"\]=false;/.test(sacarFuncion("_cgSoltar")),
+     "y hay como volver a la publicada");
+  // Funcional: la sigue, deja de seguirla, y vuelve.
+  S.calc = {}; S.config = {tasasDia:{tdia_brl:188, tdia_ves_brl:210}};
+  ok(F._cg().ida === "188", "arranca en la publicada", F._cg().ida);
+  S.config.tasasDia.tdia_brl = 193.5;
+  ok(F._cg().ida === "193.5", "y la sigue cuando ella la cambia arriba", F._cg().ida);
+  F._cgSet("ida", "188,86");
+  S.config.tasasDia.tdia_brl = 200;
+  ok(F._cg().ida === "188.86", "una vez tocada, ya no la sigue", F._cg().ida);
+  F._cg().idaTocada = false;
+  ok(F._cg().ida === "200", "y al soltarla vuelve a seguirla", F._cg().ida);
+
+  // 2 · Y cuando no coinciden, se DICE. Una tasa distinta de la de arriba sin
+  // explicacion es justo lo que la hizo preguntar cual mandaba.
+  const cuerpo = sacarFuncion("_htmlCalceCuerpo");
+  ok(/distinta de tu "\+clave\+" publicada/.test(cuerpo),
+     "si la tocó y no coincide con la publicada, la pantalla lo dice");
+  ok(/_cgSoltar\(/.test(cuerpo), "y ofrece volver a la publicada");
+
+  // 3 · La coma decimal. _num() guarda "188.86" con punto a proposito
+  // —detras hay cien parseFloat— pero ensenarselo asi en un campo donde ella
+  // escribe con coma es pedirle que lea en dos idiomas.
+  ok(/_escAud\(_coma\(g\[clave\]\)\)/.test(cuerpo) && /_escAud\(_coma\(g\.usdbrl\)\)/.test(cuerpo),
+     "los campos de la calculadora se enseñan con coma");
+  ok(/_escAud\(_comaCab\(val\)\)/.test(sacarFuncion("_htmlCabeceraTasas")),
+     "y los de la cabecera también: son los mismos números");
+  // Lo que se guarda NO cambia: con punto, que es lo que lee parseFloat.
+  ok(/_num\(val\)/.test(sacarFuncion("_cgSet")),
+     "pero lo guardado sigue pasando por _num(), con punto");
+
+  // 4 · El titulo, una sola vez. La fila que se abre ya dice "Cuanto gano con
+  // esta tasa"; la tarjeta repetia "Cuanto ganas con esta tasa" justo debajo.
+  // Las dos formas, la tilde literal y el escape: la prueba negativa metio el
+  // titulo con \u00e1 y esta guardia, que solo miraba la tilde, lo dejo pasar.
+  // Sin comentarios: el comentario de este mismo arreglo nombra el rotulo que
+  // quito, y la guardia fallaba por su propia explicacion. Es el agujero del
+  // ARREGLO 100, y ya van dos veces en esta sesion.
+  ok(!/Cu(\u00e1|\\u00e1)nto gan\w+ con esta tasa/.test(sinComentarios(cuerpo)),
+     "la tarjeta no repite el título que ya dice su fila");
+  // La fila lo escribe con el escape \u00e1, no con la tilde literal, asi que
+  // la guardia admite las dos formas: buscando solo una, pasaba con el rotulo
+  // borrado.
+  ok(/Cu(\u00e1|\\u00e1)nto gano con esta tasa/.test(sacarFuncion("_htmlFilasTasas")),
+     "que lo sigue diciendo la fila");
+  S.calc = {}; S.config = {};
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
