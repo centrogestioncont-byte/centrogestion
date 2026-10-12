@@ -1365,6 +1365,50 @@ cinco de Configuración eran `type="number"`. Se pasaron a texto **y se arregló
 lector en la misma pasada** —`_leerNumero()`—, que es la mitad que no se puede
 dejar a medias: en texto con un `parseFloat` detrás, `1.500,50` se lee **1,5**.
 
+#### Y la RESPUESTA de la calculadora también se publica (ARREGLO 118)
+
+Sus palabras del 12/10, con la pantalla delante: *"por más que edite los números en
+la parte de abajo para cuadrar la tasa, en la pestaña principal de arriba, que es
+la que lee el flyer, nada que cambia — sigue estático 188 210"*.
+
+**Y no era que no cambiara: es que no había por dónde.** El ARREGLO 116 puso
+*"publicar esta"* solo en los campos que **ella escribe**. Reproducido con sus
+números —monto 500, ida 189, meta $20, cruce—:
+
+```
+modo Tasa de vuelta → "CÓBRALE AL MENOS 236,64"   sin botón de publicar
+modo Tasa de ida    → "NO DES MÁS DE 167,73"      sin botón de publicar
+la cabecera                                       188 · 210, intacta
+```
+
+O sea que el único número que esta calculadora existe para darle era justo el que
+no podía llegar al flyer: había que leerlo, acordarse, subir y teclearlo.
+
+- **El botón va debajo del número grande**, que es donde ella lo está mirando, y
+  publica por la puerta única del ARREGLO 117 (sella la fecha, limpia la tasa
+  suelta del conversor).
+- **La respuesta sale de UN sitio** (`_cgTasaResultado()`), que leen la pantalla
+  que la dibuja y el botón que la publica. Calculada aparte en el botón, bastaría
+  un redondeo distinto para publicar un número que no es el que ella ve.
+- **Y publicar SOLO la respuesta deja un par que no da la cuenta.** La vuelta de
+  236,64 se despejó con la ida de 189 que ella tecleó; con la ida publicada en 188
+  esa pareja ya no gana los $20. Por eso sale el segundo botón —*"publicar las
+  dos"*— y se dice por qué. Callarlo sería darle una tasa que no cumple lo que
+  acaba de leer.
+- **En modo *Ganancia* no sale botón:** ahí la respuesta son reales, no una tasa.
+
+**Lo que NO se hace, y es a propósito: que la cabecera siga sus teclas sola.**
+Publicar escribe la tasa que leen el flyer, el conversor y cada remesa nueva;
+siguiendo el tecleo, empezar a escribir "236" publicaría un **2**. Un toque, no
+cero.
+
+**Y el tope dice de qué dirección habla.** El pie ponía *"Tu tope es 210,00 Bs por
+real… por encima pierdes"* justo debajo de una **vuelta de 236,64**, y eso se lee
+como que esa vuelta está en pérdida. El tope es de la **ida** —cuántos bolívares
+puede dar por real— y en la vuelta es al revés: cuantos más pida, mejor para ella
+(ARREGLO 74). Dos números en la misma unidad que significan lo contrario necesitan
+que el rótulo diga de cuál habla.
+
 ### Su suelo: hasta dónde puede ofrecer sin perder
 
 Sus palabras: *"no sé qué tasa de compra y venta está usando mi app"* y *"no es
