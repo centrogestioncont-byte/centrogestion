@@ -50,7 +50,7 @@ function sacarConstante(nombre) {
   }
   throw new Error("la constante " + nombre + " no termina en ';'");
 }
-const CONSTANTES = ["_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO",
+const CONSTANTES = ["_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO", "_AVISO_UMBRAL", "_MERCADO_MONTO_DEF",
                     "_BIN_COLS_C2C", "_BIN_COLS_TX", "MONEDAS_COMPRA", "MONEDAS_VENTA",
                     "MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
                     "_MERGE_OBJETOS", "_MERGE_BLOQUES", "_MERGE_HISTORIAL", "_RATE_LIMITS",
@@ -72,6 +72,8 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "_equilibrio", "sueloQueManda",
                     "_calceK", "_calceGan", "_calceVuelta", "_calceIda", "_cg", "_cgSet", "_cgFraccion",
                     "margenSobreSuelo", "_calcTasas", "_misTasasPublicadas", "_fpTasa",
+                    "avisoTasa", "_umbralAviso", "_refSuelo", "_sueloDeFecha", "guardarTasaCalcHoy",
+                    "_cgSoltar", "_htmlCabeceraTasas", "_montoMercado",
                     "esRutaCalce", "esCalceDirecto",
                     "_loteYaEnApertura", "_fiatDeLote", "_deltaDeLote",
                     "f2n", "f0", "f4",
@@ -2751,13 +2753,19 @@ ok(/el otro ten[ií]a/.test(F._htmlAvisoPisado()) && /qued[oó]/.test(F._htmlAvi
    "y ensena los tres valores: lo tuyo, lo del otro y lo que quedo");
 F._pruebaPisados([], false);
 ok(F._htmlAvisoPisado() === "", "y sin choques no ocupa ni un pixel");
-  // ARREGLO 89: ahora hay DOS avisos ahi arriba —el de choques y el del mes sin
-  // cerrar—, los dos fuera de la zona que hace scroll. La guardia admite otro
-  // aviso en medio, pero ninguno puede caerse dentro del scroll.
-  ok(/_htmlAvisoPisado\(\)\+[\s\S]{0,160}?"<div class='navbar3'>"/.test(HTML.replace(/\/\/[^\n]*\n/g, "\n")),
+  // ARREGLO 89: ahora hay varios avisos ahi arriba —choques, rechazo,
+  // apertura, saldo negativo, mes sin cerrar y la tasa bajo el suelo
+  // (ARREGLO 112)—, todos fuera de la zona que hace scroll. El margen es un
+  // presupuesto: admite que entre otro aviso, pero no que la lista crezca
+  // sin control ni que alguno se caiga dentro del scroll.
+  ok(/_htmlAvisoPisado\(\)\+[\s\S]{0,260}?"<div class='navbar3'>"/.test(HTML.replace(/\/\/[^\n]*\n/g, "\n")),
    "el aviso va arriba del panel, fuera del scroll");
-  ok(/_htmlAvisoMesSinCerrar\(\)\+[\s\S]{0,160}?"<div class='navbar3'>"/.test(HTML.replace(/\/\/[^\n]*\n/g, "\n")),
+  ok(/_htmlAvisoMesSinCerrar\(\)\+[\s\S]{0,260}?"<div class='navbar3'>"/.test(HTML.replace(/\/\/[^\n]*\n/g, "\n")),
      "y el aviso del mes sin cerrar, tambien");
+  // ARREGLO 112: y el de la tasa por debajo del suelo, que es el unico de los
+  // nuevos que cuesta dinero en CADA remesa que registre.
+  ok(/_htmlAvisoTasaFijo\(\)\+[\s\S]{0,260}?"<div class='navbar3'>"/.test(HTML.replace(/\/\/[^\n]*\n/g, "\n")),
+     "y el de la tasa bajo el suelo, tambien");
 
   // ── ARREGLO 89: cerrar un mes es decision suya, no del reloj ──────
   // Sus palabras: "ya estaba cerrado por voluntad propia del sistema, cosa que
@@ -7875,6 +7883,232 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(/id='mercado-suelo'/.test(filas),
      "y el detalle conserva el id por el que se refresca solo");
   S.config = {}; S.inventarioUsdt = []; S.inventarioUsdt_cerrado = [];
+}
+
+
+// ── ARREGLO 112 · los avisos de mover la tasa ─────────────────────────────
+// Sus palabras del 11/10: "crees que me puedes dar un aviso cuando deba
+// modificar las tasas, bien sea porque me llene de muchos Bs o me llene de
+// muchos reales o la tasa del mercado cambio".
+{
+  // ── EL ERROR QUE CASI SE PUBLICA, y por eso esta guardia va primero ──
+  // El primer intento sumo porMoneda[].enCuentas tal cual para sacar el
+  // porcentaje. Pero enCuentas va en la moneda NATIVA: con su export sumo
+  // 620.949 bolivares junto a 953 USDT y le dijo que tenia el 99,61% en
+  // bolivares. El numero de verdad es 32,78%. Es el "$177,00" de Por cobrar
+  // otra vez — la suma cruda de monedas distintas no es un numero.
+  const av = sacarFuncion("avisoTasa");
+  ok(/x\.usdtCuentas/.test(av) && !/x\.enCuentas/.test(av),
+     "la concentracion se mide en USDT (usdtCuentas), nunca sumando monedas nativas");
+  ok(/usdtCuentas:r2v\(x\.usdtCuentas\)/.test(sacarFuncion("capitalRealTotal")),
+     "y usdtCuentas sale de capitalRealTotal, donde ya se hizo la conversion");
+  // La RESERVA no cuenta: son bolivares que tampoco puede gastar en pagar una
+  // ida, igual que lo prestado. Metida dentro, el porcentaje habla de dinero
+  // que no se puede mover — y el aviso dice justo "para gastarlos".
+  S.config={}; S.cuentasCobrar=[]; S.prestamos=[]; S.inventarioUsdt=[]; S.inventarioUsdt_cerrado=[];
+  S.cuentas=[{id:"r",nombre:"RESERVA",moneda:"VES",saldo:900*TASAS.VES,activa:true,esReserva:true},
+             {id:"u",nombre:"BIN",moneda:"USDT",saldo:100,activa:true}];
+  const conRes = F.capitalRealTotal().porMoneda.find(x=>x.moneda==="VES");
+  ok(conRes && conRes.usdtCuentas === 0 && conRes.enReserva > 0,
+     "lo que esta en reserva no entra en usdtCuentas", conRes && conRes.usdtCuentas);
+  ok(F.avisoTasa().filter(a=>a.id==="conc_ves").length === 0,
+     "asi que 900 USDT en bolivares de RESERVA no disparan el aviso");
+
+  // ── Los tres avisos, con sus numeros ──────────────────────────────
+  // Lotes que dan un suelo de 200 exacto: 1.000 Bs de venta / 5 R$ de compra,
+  // sin comision, para que los umbrales se puedan comprobar a mano.
+  // El USDT va en el banco de pruebas a proposito: su reparto real es USDT
+  // 62% / VES 33%, asi que una prueba con solo dos monedas al 50% hace que
+  // las dos pasen de cualquier umbral y no prueba nada. El primer intento lo
+  // tenia asi y fallaba por el fixture, no por el codigo.
+  const montar = (saldoVes, saldoBrl, ida, saldoUsdt) => {
+    S.config = {comision_binance:0, tasasDia:{tdia_brl:ida, tdia_ves_brl:210}};
+    S.inventarioUsdt = [
+      {id:"1760000000000",tipo:"compra",moneda:"BRL",montOrigen:5000,usdt:1000,restante:1000,fecha:"10/10",fechaIso:"2026-10-10",tasa:5},
+      {id:"1760000001000",tipo:"venta",moneda:"VES",bs:1000000,usdt:1000,bsRestante:1000000,fecha:"10/10",fechaIso:"2026-10-10",tasa:1000}];
+    S.inventarioUsdt_cerrado = [];
+    // 1 USDT = 1.000 Bs y 5 R$, asi que estos saldos son USDT directos x mil / x5
+    // Los saldos se escriben en USDT y se convierten con las tasas FALSAS del
+    // banco de pruebas (TASAS: VES 200, BRL 5,4), no con las de los lotes de
+    // arriba: capitalRealTotal usa el getRateToUsdt inyectado, mientras que el
+    // suelo sale de tasaDeReferencia, que si mira los lotes. Son dos fuentes y
+    // la prueba tiene que respetar cada una — convertir con 1.000 daba un 35,9%
+    // donde el fixture queria un 10%.
+    S.cuentas = [{id:"v",nombre:"VZLA",moneda:"VES",saldo:saldoVes*TASAS.VES,activa:true},
+                 {id:"b",nombre:"PAG", moneda:"BRL",saldo:saldoBrl*TASAS.BRL,activa:true},
+                 {id:"u",nombre:"BIN", moneda:"USDT",saldo:(saldoUsdt===undefined?800:saldoUsdt),activa:true}];
+    S.cuentasCobrar=[]; S.prestamos=[]; S.histTasas={}; S.histSaldos={};
+    // tasaDeReferencia mira PRIMERO la tasa fijada a mano y solo despues los
+    // lotes (ARREGLO 49). Un resto de otra prueba aqui y los lotes de arriba
+    // no se miran: medido, VES salia a 200 en vez de 1.000 y el porcentaje
+    // era otro. Montar lotes sin limpiar esto es medir otra cosa.
+    S.tasasDia={}; S._tasasDiaMeta={};
+  };
+  const ids = () => F.avisoTasa().map(a=>a.id);
+
+  // Suelo 200 y ofrece 188: +6% — dentro de lo normal, no dice nada. Y mitad
+  // y mitad en cuentas, por debajo del 25%.
+  montar(100, 100, 188);   // VES 10%, BRL 10% de 1.000 USDT en cuentas
+  ok(ids().length === 0, "con todo en orden no sale ni un aviso", JSON.stringify(ids()));
+
+  // Medido en sus 21 dias de histSaldos: su mediana en bolivares es 4,5% y su
+  // maximo historico 32,6%. Con el umbral en 25 esto habria saltado UNA vez.
+  ok(F._umbralAviso("conc") === 25, "el umbral de concentracion es 25%");
+  montar(400, 100, 188, 100);   // 400 de 600: el 66% en bolivares
+  ok(ids().indexOf("conc_ves") >= 0, "con dos tercios en bolivares avisa", JSON.stringify(ids()));
+  const aVes = F.avisoTasa().find(a=>a.id==="conc_ves");
+  // Las dos tasas SUBEN, y cada una por su motivo (ARREGLO 74: significan lo
+  // contrario). Si alguna vez esto dice "baja", le esta diciendo que haga
+  // entrar MAS bolivares teniendo de sobra.
+  ok(/SUBE la ida/.test(aVes.texto) && /SUBE la vuelta/.test(aVes.texto),
+     "y dice subir las DOS: la ida para gastarlos, la vuelta para frenarlos");
+  // Reales de sobra NO es alarma: ella lo dijo, "tener reales parados no me
+  // perjudica". Es que puede BAJAR la vuelta, porque no tiene que hacer P2P.
+  montar(100, 400, 188, 100);
+  const aBrl = F.avisoTasa().find(a=>a.id==="conc_brl");
+  ok(aBrl && aBrl.nivel === "info" && /BAJAR la vuelta/.test(aBrl.texto),
+     "sobrar reales no es alarma: es que puede bajar la vuelta");
+
+  // El unico que cuesta dinero en cada remesa.
+  montar(100, 100, 210);   // ofrece 210 con suelo 200
+  const rojo = F.avisoTasa().find(a=>a.id==="bajo_suelo");
+  ok(rojo && rojo.nivel === "rojo" && rojo.fijo === true,
+     "ofrecer por encima del suelo es ROJO y va fijo arriba del panel");
+  montar(100, 100, 197);   // +1,5%
+  ok(ids().indexOf("margen_flojo") >= 0, "con +1,5% de margen avisa que queda poco");
+  montar(100, 100, 175);   // +12,5%
+  const ancho = F.avisoTasa().find(a=>a.id==="margen_ancho");
+  ok(ancho && ancho.nivel === "info" && /SUBIR la ida/.test(ancho.texto),
+     "con +12,5% dice que puede ofrecer mejor tasa");
+
+  // ── El suelo se movio y su tasa se quedo ──────────────────────────
+  // Medido en su export: de 182,23 el 15/09 a 199,16 el 11/10, +9,3%, con su
+  // ida clavada en 188 todo el mes. El 15/09 estaba REGALANDO y no habia nada
+  // que se lo dijera.
+  montar(100, 100, 188);
+  S.histTasas = {"2026-09-15":{BRL:5.1574, VES:946.44}};
+  S.config.tasasDia.tdia_fecha = "2026-09-15";
+  const ref = F._refSuelo();
+  ok(ref && Math.abs(ref.suelo - 183.51) < 0.02 && /publicaste/.test(ref.txt),
+     "se compara contra el suelo del dia en que publico", ref && ref.suelo);
+  ok(ids().indexOf("mercado_movio") >= 0,
+     "y si se movio mas del 5% lo dice", JSON.stringify(ids()));
+  // Sin el sello no se calla: se compara contra el dia mas viejo de los 14
+  // ultimos y se DICE que es eso. Un "se movio un 8%" sin decir desde cuando
+  // no se puede perseguir.
+  delete S.config.tasasDia.tdia_fecha;
+  S.histTasas = {}; S.histTasas[F._diasIso ? F.td() : F.td()] = null;
+  S.histTasas = {}; 
+  const hace3 = new Date(new Date(F.td()+"T00:00:00").getTime()-3*86400000).toISOString().slice(0,10);
+  S.histTasas[hace3] = {BRL:5.1574, VES:946.44};
+  const ref2 = F._refSuelo();
+  ok(ref2 && /hace 3 días/.test(ref2.txt),
+     "sin el sello se compara contra el dia mas viejo de los 14 y se dice cual", ref2 && ref2.txt);
+  // Y el sello se escribe al publicar: sin el, ese aviso no existe.
+  ok(/S\.config\.tasasDia\.tdia_fecha=td\(\);/.test(sacarFuncion("guardarTasaCalcHoy")),
+     "publicar una tasa apunta la fecha");
+
+  // ── La clave: una notificacion por aviso DISTINTO ─────────────────
+  // Lleva los numeros redondeados, asi que mientras la situacion siga siendo
+  // la misma no vuelve a sonar. Una alarma que suena todos los dias en la
+  // pantalla de bloqueo enseña a no leerlas (ARREGLO 101).
+  montar(400, 100, 188, 100);
+  const c1 = F.avisoTasa().find(a=>a.id==="conc_ves").clave;
+  S.cuentas[0].saldo = 401*TASAS.VES;     // un pelin mas de bolivares
+  const c2 = F.avisoTasa().find(a=>a.id==="conc_ves").clave;
+  ok(c1 === c2, "un cambio pequeño NO cambia la clave: no vuelve a sonar", c1+" / "+c2);
+  S.cuentas[0].saldo = 100*TASAS.VES; S.cuentas[1].saldo = 100*TASAS.BRL; S.cuentas[2].saldo = 800;
+  ok(F.avisoTasa().length === 0, "y cuando se arregla, el aviso desaparece");
+
+  // ── Donde se ven ──────────────────────────────────────────────────
+  // El rojo arriba del panel, fuera del scroll (ARREGLO 62), y NO repetido
+  // en la pestaña: dos avisos del mismo suceso se leen como dos sucesos.
+  ok(/_htmlAvisoTasaFijo\(\)/.test(HTML), "el rojo se dibuja arriba del panel");
+  ok(/nivel==="rojo"/.test(sacarFuncion("_htmlAvisoTasaFijo")),
+     "y arriba solo va el rojo");
+  ok(/nivel!=="rojo"/.test(sacarFuncion("_htmlAvisosTasa")),
+     "y el bloque de Tasas no lo repite");
+  // ARREGLO 32: teclear la tasa cambia el aviso, y se rehace por su id.
+  const ra = sinComentarios(sacarFuncion("_refrescarAvisosTasa"));
+  ok(!/\bR\(\)/.test(ra) && /getElementById\("tasas-avisos"\)/.test(ra),
+     "los avisos se rehacen por su id, nunca con R()");
+  ["_setTasaPub","_refrescarSuelo"].forEach(function(nom){
+    ok(/_refrescarAvisosTasa\(\)/.test(sacarFuncion(nom)),
+       nom + " rehace los avisos: si no, hablarian de la tasa anterior");
+  });
+  // Lo que escribe un nombre de cuenta no puede ejecutarse (ARREGLO 102).
+  ok(/_escAud\(a\.titulo\)/.test(sacarFuncion("_htmlAvisosTasa")) &&
+     /_escAud\(a\.texto\)/.test(sacarFuncion("_htmlAvisosTasa")),
+     "el texto del aviso se escapa al dibujarlo");
+
+  S.config={}; S.cuentas=[]; S.inventarioUsdt=[]; S.inventarioUsdt_cerrado=[]; S.histTasas={};
+}
+
+
+// ── ARREGLO 113 · lo que cazó ella en su teléfono el 12/10 ────────────────
+// Su captura: arriba "TU IDA 188" y cuatro dedos mas abajo, en la misma
+// pantalla, "Tasa de ida 188.86". Tres cosas en una foto.
+{
+  const cg = sacarFuncion("_cg");
+  // 1 · La ida y la vuelta SIGUEN a la publicada. Se copiaban UNA vez, al
+  // abrir la calculadora por primera vez, y ahi se quedaban congeladas.
+  // Dos numeros para la misma cosa en la MISMA pantalla es el 34,27 contra
+  // 34,28 de Por cobrar — y aqui el de abajo es con el que decide si le
+  // conviene la tasa.
+  ok(/if\(!g\.idaTocada\)/.test(cg) && /if\(!g\.vueltaTocada\)/.test(cg),
+     "la ida y la vuelta siguen a la publicada mientras ella no las toque");
+  ok(!/ida:\(pub\.ida/.test(cg) && !/vuelta:\(pub\.vuelta/.test(cg),
+     "y ya no se copian una sola vez al crear el estado");
+  // Tocarla la hace suya: probar una tasa que todavia no publica es para lo
+  // que sirve esta calculadora.
+  ok(/g\[campo\+"Tocada"\]=true;/.test(sacarFuncion("_cgSet")),
+     "escribirla la hace suya y deja de seguir a la publicada");
+  ok(/g\[campo\+"Tocada"\]=false;/.test(sacarFuncion("_cgSoltar")),
+     "y hay como volver a la publicada");
+  // Funcional: la sigue, deja de seguirla, y vuelve.
+  S.calc = {}; S.config = {tasasDia:{tdia_brl:188, tdia_ves_brl:210}};
+  ok(F._cg().ida === "188", "arranca en la publicada", F._cg().ida);
+  S.config.tasasDia.tdia_brl = 193.5;
+  ok(F._cg().ida === "193.5", "y la sigue cuando ella la cambia arriba", F._cg().ida);
+  F._cgSet("ida", "188,86");
+  S.config.tasasDia.tdia_brl = 200;
+  ok(F._cg().ida === "188.86", "una vez tocada, ya no la sigue", F._cg().ida);
+  F._cg().idaTocada = false;
+  ok(F._cg().ida === "200", "y al soltarla vuelve a seguirla", F._cg().ida);
+
+  // 2 · Y cuando no coinciden, se DICE. Una tasa distinta de la de arriba sin
+  // explicacion es justo lo que la hizo preguntar cual mandaba.
+  const cuerpo = sacarFuncion("_htmlCalceCuerpo");
+  ok(/distinta de tu "\+clave\+" publicada/.test(cuerpo),
+     "si la tocó y no coincide con la publicada, la pantalla lo dice");
+  ok(/_cgSoltar\(/.test(cuerpo), "y ofrece volver a la publicada");
+
+  // 3 · La coma decimal. _num() guarda "188.86" con punto a proposito
+  // —detras hay cien parseFloat— pero ensenarselo asi en un campo donde ella
+  // escribe con coma es pedirle que lea en dos idiomas.
+  ok(/_escAud\(_coma\(g\[clave\]\)\)/.test(cuerpo) && /_escAud\(_coma\(g\.usdbrl\)\)/.test(cuerpo),
+     "los campos de la calculadora se enseñan con coma");
+  ok(/_escAud\(_comaCab\(val\)\)/.test(sacarFuncion("_htmlCabeceraTasas")),
+     "y los de la cabecera también: son los mismos números");
+  // Lo que se guarda NO cambia: con punto, que es lo que lee parseFloat.
+  ok(/_num\(val\)/.test(sacarFuncion("_cgSet")),
+     "pero lo guardado sigue pasando por _num(), con punto");
+
+  // 4 · El titulo, una sola vez. La fila que se abre ya dice "Cuanto gano con
+  // esta tasa"; la tarjeta repetia "Cuanto ganas con esta tasa" justo debajo.
+  // Las dos formas, la tilde literal y el escape: la prueba negativa metio el
+  // titulo con \u00e1 y esta guardia, que solo miraba la tilde, lo dejo pasar.
+  // Sin comentarios: el comentario de este mismo arreglo nombra el rotulo que
+  // quito, y la guardia fallaba por su propia explicacion. Es el agujero del
+  // ARREGLO 100, y ya van dos veces en esta sesion.
+  ok(!/Cu(\u00e1|\\u00e1)nto gan\w+ con esta tasa/.test(sinComentarios(cuerpo)),
+     "la tarjeta no repite el título que ya dice su fila");
+  // La fila lo escribe con el escape \u00e1, no con la tilde literal, asi que
+  // la guardia admite las dos formas: buscando solo una, pasaba con el rotulo
+  // borrado.
+  ok(/Cu(\u00e1|\\u00e1)nto gano con esta tasa/.test(sacarFuncion("_htmlFilasTasas")),
+     "que lo sigue diciendo la fila");
+  S.calc = {}; S.config = {};
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
