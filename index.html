@@ -2810,7 +2810,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261012_v200";
+var APP_VERSION = "20261012_v201";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -24653,6 +24653,113 @@ function _cgFraccion(){
   return p/100;
 }
 // El recuadro del resultado. Se rehace solo (por su id) mientras ella teclea.
+// ═══════════════════════════════════════════════════════════════════════
+// ARREGLO 118 · la RESPUESTA de la calculadora también se puede publicar
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Sus palabras del 12/10, con la pantalla delante: "por más que edite los
+// números en la parte de abajo para cuadrar la tasa, en la pestaña principal de
+// arriba, que es la que lee el flyer, nada que cambia — sigue estático 188 210".
+//
+// Y no era que no cambiara: es que NO HABÍA POR DÓNDE. El ARREGLO 116 puso
+// "publicar esta" solo en los campos que ELLA ESCRIBE (la ida que teclea para
+// despejar la vuelta). Reproducido con sus números —monto 500, ida 189, meta
+// $20, cruce—:
+//
+//     modo Tasa de vuelta → "CÓBRALE AL MENOS 236,64"   sin botón de publicar
+//     modo Tasa de ida    → "NO DES MÁS DE 167,73"      sin botón de publicar
+//     la cabecera                                        188 · 210, intacta
+//
+// O sea que el único número que esta calculadora existe para darle era justo el
+// que no podía llegar al flyer. Había que leerlo, acordarse, subir y teclearlo.
+//
+// LO QUE NO SE HACE, Y ES A PROPÓSITO: que la cabecera siga sus teclas sola.
+// Publicar escribe la tasa que leen el flyer, el conversor y cada remesa nueva;
+// siguiendo el tecleo, empezar a escribir "236" publicaría un 2. Un toque, no
+// cero.
+//
+// Y LA RESPUESTA SALE DE UN SOLO SITIO. _cgTasaResultado() la calcula, y la leen
+// la pantalla que la dibuja y el botón que la publica. Calculada aparte en el
+// botón, bastaría un redondeo distinto para publicar un número que no es el que
+// ella está viendo — la regla del 34,27 contra 34,28.
+function _cgTasaResultado(){
+  var g=_cg();
+  if(g.modo!=="vuelta" && g.modo!=="ida") return null;   // "Ganancia" no despeja ninguna tasa
+  var M=parseFloat(g.monto), ida=parseFloat(g.ida);
+  var usd=parseFloat(g.usdbrl), metaUsd=parseFloat(g.meta);
+  var suelo=sueloQueManda().v, f=_cgFraccion();
+  if(f===null || !(M>0) || !(metaUsd>0) || !(usd>0)) return null;
+  var metaBrl=metaUsd*usd;
+  if(!(metaBrl<M)) return null;
+  if(g.modo==="vuelta"){
+    if(!(ida>0)) return null;
+    var V=_calceVuelta(M, ida, metaBrl, suelo, f);
+    return (V>0) ? {dir:"vuelta", v:V, ida:ida} : null;
+  }
+  var K=_calceK(parseFloat(g.vuelta), suelo, f);
+  if(!K) return null;
+  var I=_calceIda(M, metaBrl, K);
+  return (I>0) ? {dir:"ida", v:I, vuelta:parseFloat(g.vuelta)} : null;
+}
+// El botón va DEBAJO del número grande, que es donde ella lo está mirando.
+//
+// Y dice cuando publicar solo la respuesta deja un par que no da la cuenta: en
+// modo "Tasa de vuelta" la respuesta se despejó con la ida que ella TECLEÓ, así
+// que publicando solo la vuelta, la cabecera queda con la ida vieja y esa pareja
+// ya no gana lo que dice. Por eso sale el segundo botón, el de las dos. Callarlo
+// sería darle una tasa que no cumple lo que acaba de leer.
+function _htmlPublicarRes(){
+  var r=_cgTasaResultado();
+  if(!r) return "";
+  var pub=_misTasasPublicadas();
+  var otro=(r.dir==="vuelta") ? {clave:"ida", val:r.ida, pubVal:pub.ida}
+                              : {clave:"vuelta", val:r.vuelta, pubVal:pub.vuelta};
+  var desfase=(otro.val>0 && otro.pubVal!==null && Math.abs(otro.val-otro.pubVal)>0.005);
+  var bot=function(fn,txt,fuerte){
+    return "<button type='button' onclick='"+fn+"' style='flex:1 1 170px;min-width:0;padding:9px 10px;border-radius:10px;"+
+      "border:1.5px solid "+(fuerte?"var(--ok)":"var(--ln)")+";background:"+(fuerte?"var(--ok)":"var(--sup)")+";"+
+      "color:"+(fuerte?"var(--sobre-color)":"var(--tx2)")+";font-size:11.5px;font-weight:800;font-family:inherit;"+
+      "cursor:pointer;line-height:1.3'>"+txt+"</button>";
+  };
+  var rot=(r.dir==="vuelta")?"vuelta":"ida";
+  return "<div style='display:flex;gap:7px;flex-wrap:wrap;margin-top:9px'>"+
+      bot("_cgPublicarRes()", "\ud83d\udccc Publicar "+f2(r.v)+" como tu "+rot, !desfase)+
+      (desfase ? bot("_cgPublicarPar()",
+          "\ud83d\udccc Publicar las dos ("+otro.clave+" "+f2(otro.val)+" · "+rot+" "+f2(r.v)+")", true) : "")+
+    "</div>"+
+    (desfase
+      ? "<div style='font-size:10.5px;color:var(--avi-tx2);margin-top:5px;line-height:1.45'>"+
+        "Esa "+rot+" la despej\u00e9 con la "+otro.clave+" de "+f2(otro.val)+
+        ", y tu "+otro.clave+" publicada es "+f2(otro.pubVal)+
+        ". Publicando solo la "+rot+", la cabecera queda con las dos sin casar y no te da esa ganancia.</div>"
+      : "<div style='font-size:10.5px;color:var(--tx4);margin-top:5px'>Va a la cabecera, al flyer y al conversor.</div>");
+}
+// Las dos publican por guardarTasaCalcHoy(), la puerta única del ARREGLO 117:
+// sella la fecha y limpia la tasa suelta del conversor.
+function _cgPublicarRes(){
+  var r=_cgTasaResultado();
+  if(!r){ alert("Todav\u00eda no hay un n\u00famero que publicar."); return; }
+  guardarTasaCalcHoy(r.dir, r.v, true);
+  _cgSoltarTrasPublicar(r.dir);
+}
+function _cgPublicarPar(){
+  var r=_cgTasaResultado();
+  if(!r){ alert("Todav\u00eda no hay un n\u00famero que publicar."); return; }
+  var otroC=(r.dir==="vuelta")?"ida":"vuelta";
+  var otroV=(r.dir==="vuelta")?r.ida:r.vuelta;
+  if(otroV>0) guardarTasaCalcHoy(otroC, otroV, true);
+  guardarTasaCalcHoy(r.dir, r.v, true);
+  _cgSoltarTrasPublicar(r.dir);
+  _cgSoltarTrasPublicar(otroC);
+}
+// Publicada, la tasa deja de ser "suya": el campo vuelve a seguir a la de
+// arriba, que ya es la misma. Si no, la pantalla seguiría diciendo "distinta de
+// tu ida publicada" con las dos ya iguales.
+function _cgSoltarTrasPublicar(clave){
+  var g=_cg();
+  if(clave==="ida"||clave==="vuelta") g[clave+"Tocada"]=false;
+  _refrescarTasasTodo();
+}
 function _htmlCalceRes(){
   var g=_cg();
   var M=parseFloat(g.monto), ida=parseFloat(g.ida), vta=parseFloat(g.vuelta);
@@ -24690,8 +24797,13 @@ function _htmlCalceRes(){
   var deDonde=(f===1) ? " \u2014 la vuelta que te dan"
             : (f===0) ? (" \u2014 tu suelo ("+Q.manda.nombre+")")
             : (", mezclando "+pc(f)+"% a "+f2(vta)+" con el resto a "+f2(suelo));
-  var pieTope=chico("Tu tope es <b style='color:var(--tit)'>"+f2(tope)+"</b> Bs por real"+deDonde+
-    ". Por debajo te deja ganancia; por encima pierdes.");
+  // ARREGLO 118: "tope" a secas, puesto justo debajo de una VUELTA de 236,64,
+  // se lee como que esa vuelta esta en perdida. El tope es de la IDA —cuantos
+  // bolivares puede DAR por real— y en la vuelta es al reves: cuantos mas pida,
+  // mejor para ella (ARREGLO 74). Dos numeros en la misma unidad que significan
+  // lo contrario necesitan que el rotulo diga de cual habla.
+  var pieTope=chico("Tu tope <b style='color:var(--tit)'>de ida</b> es <b style='color:var(--tit)'>"+f2(tope)+
+    "</b> Bs por real"+deDonde+". Ofreciendo por debajo te deja ganancia; por encima pierdes.");
 
   if(g.modo==="gan"){
     if(!(ida>0)) return chico("Escribe la tasa de ida para ver cuánto ganas.");
@@ -24725,6 +24837,7 @@ function _htmlCalceRes(){
     return grande("Cóbrale al menos", f2(V), "var(--ac)", "Bs por real en la vuelta")+
       chico("Dando "+f2(ida)+" en la ida y cobrando "+f2(V)+" en la vuelta ganas "+
             du(metaUsd)+" sobre "+f2(M)+" R$. Si cobras menos, no llegas.")+
+      _htmlPublicarRes()+
       pieTope;
   }
   // modo "ida": a cuánto puede comprar
@@ -24733,6 +24846,7 @@ function _htmlCalceRes(){
   return grande("No des más de", f2(I), "var(--ac)", "Bs por real en la ida")+
     chico("Ofreciendo "+f2(I)+" ganas exactamente "+du(metaUsd)+" sobre "+f2(M)+" R$. "+
           "Cada bolívar de más que des, baja la ganancia.")+
+    _htmlPublicarRes()+
     pieTope;
 }
 

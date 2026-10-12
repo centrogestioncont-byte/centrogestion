@@ -79,6 +79,8 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "_origenTasaCotiza", "_rotuloPublicada", "_getTasaClienteBRL",
                     "_getTasaVueltaVESaBRL", "_convOtraTasa", "_convVolverPublicada",
                     "_convSetOtra", "_refrescarConversor", "_htmlTasaCotiza", "_reconvertirBCV", "_htmlFilasTasas",
+                    "_cgTasaResultado", "_htmlPublicarRes", "_cgPublicarRes",
+                    "_cgPublicarPar", "_cgSoltarTrasPublicar", "_cgModo", "_cgFuente",
                     "_msjCliente", "_comaCab",
                     "_refrescarAvisosTasa", "_htmlFilasTasas", "_cgRedibujar",
                     "esRutaCalce", "esCalceDirecto",
@@ -8449,6 +8451,91 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(F._getTasaVueltaVESaBRL() === 0 && F._origenTasaCotiza("vuelta").tasa === null,
      "sin vuelta publicada no hay vuelta", F._getTasaVueltaVESaBRL());
   S.config = {}; S._convTasaOverride = null; S._convTasaOverrideVuelta = null;
+}
+
+
+// ── ARREGLO 118 · la RESPUESTA de la calculadora tambien se publica ─────
+// Sus palabras del 12/10: "por mas que edite los numeros en la parte de abajo
+// para cuadrar la tasa, en la pestana principal de arriba, que es la que lee el
+// flyer, nada que cambia - sigue estatico 188 210".
+//
+// Reproducido con sus numeros (500 / ida 189 / meta 20 / cruce): la calculadora
+// contesta "COBRALE AL MENOS 236,64" y no habia NINGUN boton para publicarlo.
+// El ARREGLO 116 solo puso "publicar esta" en los campos que ella ESCRIBE.
+{
+  const r   = sinComentarios(sacarFuncion("_cgTasaResultado"));
+  const htm = sinComentarios(sacarFuncion("_htmlPublicarRes"));
+  const res = sinComentarios(sacarFuncion("_htmlCalceRes"));
+
+  // 1) El boton cuelga del numero grande, en los DOS modos que despejan tasa.
+  ok((res.match(/_htmlPublicarRes\(\)/g)||[]).length === 2,
+     "el boton sale en los dos modos que despejan una tasa",
+     (res.match(/_htmlPublicarRes\(\)/g)||[]).length);
+
+  // 2) La respuesta se calcula en UN sitio y la leen la pantalla y el boton.
+  //    Calculada aparte en el boton, un redondeo distinto publicaria un numero
+  //    que no es el que ella esta viendo (la regla del 34,27 contra 34,28).
+  ["_cgPublicarRes","_cgPublicarPar","_htmlPublicarRes"].forEach(function(f){
+    ok(/_cgTasaResultado\(\)/.test(sinComentarios(sacarFuncion(f))),
+       f + " lee la respuesta de _cgTasaResultado");
+    ok(!/_calceVuelta\(|_calceIda\(/.test(sinComentarios(sacarFuncion(f))),
+       "y no la vuelve a despejar por su cuenta: " + f);
+  });
+
+  // 3) Publicar pasa por la puerta unica (ARREGLO 117): sella la fecha y
+  //    limpia la tasa suelta del conversor.
+  ["_cgPublicarRes","_cgPublicarPar"].forEach(function(f){
+    const c = sinComentarios(sacarFuncion(f));
+    ok(/guardarTasaCalcHoy\(/.test(c), f + " publica por la puerta unica");
+    ok(!/tasasDia\./.test(c), "y no escribe la tasa a pelo: " + f);
+    ok(!/\bR\(\)/.test(c), "ARREGLO 32: " + f + " no repinta la pantalla entera");
+  });
+  ok(/_refrescarTasasTodo\(\)/.test(sinComentarios(sacarFuncion("_cgSoltarTrasPublicar"))),
+     "y se refresca la cabecera, los avisos, las filas y la calculadora");
+
+  // 4) El modo "Ganancia" no despeja ninguna tasa: ahi no hay nada que publicar.
+  ok(/modo!=="vuelta" && g\.modo!=="ida"/.test(r) || /g\.modo!=="vuelta"[\s\S]{0,40}g\.modo!=="ida"/.test(r),
+     "en modo Ganancia no hay respuesta que publicar");
+
+  // 5) Publicar SOLO la respuesta deja un par que no da la cuenta: la vuelta se
+  //    despejo con la ida que ella TECLEO. Se dice, y se ofrece publicar las dos.
+  ok(/desfase/.test(htm) && /_cgPublicarPar\(\)/.test(htm),
+     "cuando la otra tasa no es la publicada, sale el boton de publicar las dos");
+  ok(/sin casar/.test(htm),
+     "y se explica por que, en vez de dejarle una pareja que no gana lo que dice");
+
+  // 6) El tope es de IDA. Escrito "tu tope" a secas debajo de una vuelta de
+  //    236,64 se lee como que esa vuelta pierde — y en la vuelta es al reves
+  //    (ARREGLO 74). Anclado al marcado, que un comentario no repite.
+  ok(/Tu tope <b style='color:var\(--tit\)'>de ida<\/b>/.test(HTML),
+     "el tope dice que es de ida");
+
+  // Funcional, con el arnes: su caso exacto.
+  S.calc = {}; S.config = {tasasDia:{tdia_brl:188, tdia_ves_brl:210}};
+  F._cgModo("vuelta"); F._cgFuente("cruce");
+  F._cgSet("monto","500"); F._cgSet("ida","189"); F._cgSet("meta","20"); F._cgSet("usdbrl","5.0327");
+  const sol = F._cgTasaResultado();
+  ok(sol && sol.dir === "vuelta" && Math.abs(sol.v - 236.64) < 0.01,
+     "despeja la vuelta de su caso: 236,64", sol && sol.v);
+  ok(F._misTasasPublicadas().vuelta === 210,
+     "y la cabecera NO se mueve sola mientras teclea");
+  F._cgPublicarPar();
+  ok(F._misTasasPublicadas().ida === 189 && F._misTasasPublicadas().vuelta === 236.64,
+     "publicar las dos las lleva a la cabecera",
+     JSON.stringify(F._misTasasPublicadas()));
+  ok(/189/.test(F._pieFlyer()) && /236,64/.test(F._pieFlyer()),
+     "y el flyer saldria con las dos", F._pieFlyer());
+  ok(F._getTasaClienteBRL() === 189 && F._getTasaVueltaVESaBRL() === 236.64,
+     "y el conversor cotiza con ellas");
+  ok(S.config.tasasDia.tdia_fecha === F.td(),
+     "con su fecha sellada (ARREGLO 112)");
+  ok(F._cg().idaTocada === false && F._cg().vueltaTocada === false,
+     "y los campos dejan de ser 'suyos': ya son la publicada");
+  // Sin meta no hay numero, y el boton no publica nada.
+  F._cgSet("meta","");
+  ok(F._cgTasaResultado() === null, "sin meta no hay respuesta que publicar");
+  ok(F._htmlPublicarRes() === "", "y el boton no se dibuja");
+  S.calc = {}; S.config = {};
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
