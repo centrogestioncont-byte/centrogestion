@@ -50,7 +50,7 @@ function sacarConstante(nombre) {
   }
   throw new Error("la constante " + nombre + " no termina en ';'");
 }
-const CONSTANTES = ["_PODA_CATS", "_MOTIVOS_AJUSTE",
+const CONSTANTES = ["_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO",
                     "_BIN_COLS_C2C", "_BIN_COLS_TX", "MONEDAS_COMPRA", "MONEDAS_VENTA",
                     "MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
                     "_MERGE_OBJETOS", "_MERGE_BLOQUES", "_MERGE_HISTORIAL", "_RATE_LIMITS",
@@ -71,6 +71,7 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "_misTasasPublicadas",
                     "_equilibrio", "sueloQueManda",
                     "_calceK", "_calceGan", "_calceVuelta", "_calceIda", "_cg", "_cgSet", "_cgFraccion",
+                    "margenSobreSuelo", "_calcTasas", "_misTasasPublicadas", "_fpTasa",
                     "esRutaCalce", "esCalceDirecto",
                     "_loteYaEnApertura", "_fiatDeLote", "_deltaDeLote",
                     "f2n", "f0", "f4",
@@ -5238,10 +5239,11 @@ console.log("\n— FASE 2: la cuenta madre —");
   });
   // Y el contenedor del recuadro tampoco: era lo que _setComp refrescaba.
   ok(HTML.indexOf("comp-resumen") < 0, "ni el recuadro del puesto");
-  // La tarjeta es ahora solo el suelo. Anclado al marcado, que existe una vez
-  // sola: un comentario puede repetir el rotulo (paso en el ARREGLO 100).
-  const tarjeta = sacarFuncion("_htmlMercadoHoy");
-  ok(/_htmlSuelo\(\)/.test(tarjeta), "la tarjeta sigue dibujando el suelo");
+  // El suelo sigue dibujandose, ahora desde su fila (ARREGLO 111: la tarjeta
+  // _htmlMercadoHoy se fue con la calculadora vieja). Anclado al marcado, que
+  // existe una vez sola: un comentario puede repetir el rotulo (ARREGLO 100).
+  const tarjeta = sacarFuncion("_htmlFilasTasas");
+  ok(/_htmlSuelo\(\)/.test(tarjeta), "el suelo se sigue dibujando");
   ok(/id='mercado-suelo'/.test(tarjeta),
      "y conserva el id por el que _refrescarSuelo lo rehace sin R()");
 
@@ -7760,6 +7762,119 @@ console.log("\n— FASE 2: la cuenta madre —");
   // — y es un precio de hace un minuto, como la lectura del mercado.
   ok(!/DATA_KEYS = \[[^\]]*"calc"/.test(HTML),
      "y no viajan entre aparatos: calc no esta en DATA_KEYS");
+}
+
+
+// ── ARREGLO 111 · la pestaña de Tasas, sin lo repetido ────────────────────
+// Sus palabras del 12/10: "quiero que la pestaña tasa no esté saturada".
+// Medido antes de tocar: 2.493 px a 390 px (tres pantallas de teléfono), y el
+// 53% era una SEGUNDA calculadora —los dos bloques de ruta mas la comision de
+// Binance que solo existia para alimentarlos— que pedia teclear a mano lo que
+// la app ya sabe. Es el ARREGLO 98 otra vez: una pantalla nueva que convive
+// con el control viejo tiene que QUITARLO, no ponerse al lado.
+{
+  // Nada de la calculadora vieja puede volver. Se busca en el archivo SIN
+  // comentarios: el comentario de este mismo arreglo nombra los campos que
+  // quito, y buscandolos a secas la guardia fallaba por su propia explicacion.
+  // Es el agujero del ARREGLO 100 al reves.
+  const sinCom111 = HTML.replace(/\/\/[^\n]*/g, "");
+  ["_calcResHTML","calcUpdate(","calcSet(","calcSetMargen(","calcObjetivoIda",
+   "calcObjetivoVuelta","calcSetModoCalc","_htmlMercadoHoy","modoCalc",
+   "tcCompraVuelta","tvVentaIda","margenVuelta"].forEach(function(nom){
+    ok(sinCom111.indexOf(nom) < 0, "no queda nada de " + nom);
+  });
+
+  // ── La trampa que casi se cuela ───────────────────────────────────
+  // El boton "Guardar como tasa de hoy" vivia DENTRO de esa calculadora y era
+  // uno de los dos unicos sitios que escriben su tasa publicada —la que leen
+  // el suelo, el conversor y el flyer—. Y _calcTasas() sacaba la tasa del
+  // flyer de esos campos: quitando la pantalla y dejando la lectura, el flyer
+  // habria impreso lo que ella tecleo en SEPTIEMBRE, sin decir nada. Un dato
+  // que ya nadie actualiza no es un respaldo, es una trampa (ARREGLO 49).
+  const ct = sacarFuncion("_calcTasas");
+  ok(/_misTasasPublicadas\(\)/.test(ct),
+     "_calcTasas sale de la tasa publicada, la misma que el suelo y la cabecera");
+  ok(!/c\.tcCompra|c\.tvVenta|c\.margen|objetivoIda|objetivoVuelta/.test(ct),
+     "y NO lee los campos viejos: el flyer no puede imprimir la tasa de septiembre");
+  S.config = {tasasDia:{tdia_brl:188, tdia_ves_brl:210}};
+  const tt = F._calcTasas();
+  ok(tt.ida.ok && tt.ida.cliente===188 && tt.vuelta.ok && tt.vuelta.cliente===210,
+     "lo que imprimiria el flyer es lo que ella publico", tt.ida.cliente+" / "+tt.vuelta.cliente);
+  S.config = {};
+  const tv = F._calcTasas();
+  ok(!tv.ida.ok && !tv.vuelta.ok,
+     "y sin tasa publicada no se inventa ninguna");
+
+  // ── El % se calcula UNA vez ───────────────────────────────────────
+  // Lo enseñan la cabecera y la tarjeta del suelo. Calculado dos veces, un
+  // dia diferirian en una decima y no habria forma de saber cual mirar: es el
+  // 34,27 arriba y 34,28 abajo de Por cobrar.
+  const cab = sacarFuncion("_htmlCabeceraTasas");
+  const sue = sacarFuncion("_htmlSuelo");
+  ok(/margenSobreSuelo\(\)/.test(cab) && /margenSobreSuelo\(\)/.test(sue),
+     "la cabecera y el detalle leen el % de margenSobreSuelo()");
+  const ms = sacarFuncion("margenSobreSuelo");
+  ok(/\(Q\.v-mia\)\/Q\.v/.test(ms),
+     "y la resta vive ahi");
+  ok(!/-mia\)\/|mia\)\s*\/\s*base/.test(cab) && !/\(base-mia\)/.test(sue),
+     "ninguno de los dos la vuelve a hacer por su cuenta");
+  // Sin tasa publicada o sin suelo no hay porcentaje, y no se inventa: uno
+  // inventado es justo el que la haria publicar mal.
+  S.config = {}; S.inventarioUsdt = []; S.inventarioUsdt_cerrado = [];
+  ok(F.margenSobreSuelo() === null, "sin suelo ni tasa publicada no hay %");
+
+  // ── Una sola fila abierta a la vez ────────────────────────────────
+  // Si se pudieran abrir todas, en dos semanas esta otra vez en tres
+  // pantallas, que es de donde venimos.
+  const ab = sinComentarios(sacarFuncion("_tasasAbrir"));
+  ok(/S\._tasasAbierto\s*=\s*\(S\._tasasAbierto===id\)\s*\?\s*null\s*:\s*id;/.test(ab),
+     "abrir una fila cierra la que estuviera abierta");
+  // ARREGLO 32: con R() se rehace la pantalla y se pierde donde estaba mirando.
+  ok(!/\bR\(\)/.test(ab) && /getElementById\("tasas-filas"\)/.test(ab),
+     "y se rehacen solo las filas, por su id, nunca con R()");
+
+  // ── La tasa publicada se escribe en la cabecera ───────────────────
+  const st = sinComentarios(sacarFuncion("_setTasaPub"));
+  ok(/_num\(val\)/.test(st),
+     "la tasa pasa por _num(): con el teclado en español 188,5 no se vuelve 1885");
+  ok(!/\bR\(\)/.test(st) && /getElementById\("tasas-cab"\)/.test(st),
+     "teclear refresca la cabecera por su id, no la pantalla");
+  ok(/type='text' inputmode='decimal'/.test(cab) && !/type='number'/.test(cab),
+     "y los campos son de texto, que es lo que acepta la coma");
+  // Una sola puerta para guardar: la que tambien limpia el override del
+  // conversor. Dos sitios escribiendo la tasa publicada acabarian divergiendo.
+  ok(/guardarTasaCalcHoy\(dir, v, true\)/.test(sacarFuncion("_guardarTasaPub")),
+     "y al soltar el campo se guarda por la puerta de siempre");
+  // El suelo NO se escribe a mano: sale de sus lotes y del mercado, y
+  // escribirlo seria "registra la operacion, no escribas el saldo" otra vez.
+  // Anclado en QUIEN dibuja cada uno, no en contar "<input" en el codigo: el
+  // campo es una plantilla que se usa dos veces, asi que contarla daba 1 y la
+  // guardia fallaba midiendo otra cosa.
+  ok(/campo\("ida"/.test(cab) && /campo\("vuelta"/.test(cab),
+     "la ida y la vuelta son campos que se escriben");
+  ok(/fijo\("Tu suelo"/.test(cab) && !/campo\("suelo"/.test(cab),
+     "y el suelo se dibuja, no se escribe");
+
+  // ── La lectura del mercado refresca TAMBIEN la cabecera ───────────
+  // Si no, el detalle se actualizaba y el numero grande de arriba se quedaba
+  // con el viejo: dos suelos distintos en la misma pantalla. Y la fila del
+  // detalle puede estar cerrada, con lo que la cabecera es lo unico que se ve.
+  const rs = sacarFuncion("_refrescarSuelo");
+  ok(/getElementById\("mercado-suelo"\)/.test(rs) && /getElementById\("tasas-cab"\)/.test(rs),
+     "al llegar la lectura del mercado se refrescan el detalle Y la cabecera");
+
+  // ── Y no se perdio nada por el camino ─────────────────────────────
+  const filas = sacarFuncion("_htmlFilasTasas");
+  [["gan","_htmlCalceGan"],["suelo","_htmlSuelo"],["conv","_rConversorBCV"],
+   ["flyer","generarFlyer"],["exo","_htmlRutasExoticas"]].forEach(function(par){
+    ok(new RegExp('_tasasFila\\("'+par[0]+'"').test(filas) && filas.indexOf(par[1])>=0,
+       "la fila «"+par[0]+"» sigue ahi y dibuja "+par[1]);
+  });
+  // El contenedor por el que _refrescarSuelo rehace el detalle tiene que
+  // seguir existiendo dentro de su fila.
+  ok(/id='mercado-suelo'/.test(filas),
+     "y el detalle conserva el id por el que se refresca solo");
+  S.config = {}; S.inventarioUsdt = []; S.inventarioUsdt_cerrado = [];
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

@@ -2359,7 +2359,11 @@ let S={
   nTraspaso:{fecha:"",cuentaOrig:"",cuentaDest:"",monto:"",nota:""},
   nCuenta:{nombre:"",tipo:"fiat",moneda:"USD",institucion:"",saldo:0,operador:"general"},
   tx:{date:"",id:"",cl:"",rt:"BRL ↔ VZLA",am:"",tdia:"",tc:"",tv:"",tc_manual:"",tv_manual:"",pais:"VENEZUELA",pagosMulti:false,pagos:[],entregasMulti:false,entregas:[],_savedDate:"",_tcLock:null,_tvLock:null,_amLock:null,_tdiaLock:null,_rtLock:null},
-  calc:{tcCompra:"",tvVenta:"",margen:"10",tvVentaIda:"",tcCompraVuelta:"",margenVuelta:"10",simIda:"100",simVuelta:"100",modoCalc:"fijas",exOrig:"BRL",exDest:"VES",exTcCompra:"",exTvVenta:"",exMargen:"9",exSim:"",exComCompra:"0.004",exComVenta:"0.004"},
+  // ARREGLO 111: se fueron tcCompra, tvVenta, margen, tvVentaIda,
+  // tcCompraVuelta, margenVuelta, simIda, simVuelta y modoCalc — eran los
+  // campos de la calculadora de "Rutas fijas", que ya no existe. Lo que queda
+  // es lo de rutas exóticas y lo de la calculadora de ganancia (gan).
+  calc:{exOrig:"BRL",exDest:"VES",exTcCompra:"",exTvVenta:"",exMargen:"9",exSim:"",exComCompra:"0.004",exComVenta:"0.004"},
   txE:{date:"",id:"",cl:"",am:"",tdia:"",tc:"1.010",tv:"",tc_manual:"",tv_manual:"",pais:"VENEZUELA"},
   nEg:{date:"",cat:"GASTOS FIJOS EMPRESA",mot:"",monto:"",usdt:"",fija:false,pagada:false,tipo:"empresa"},
   nPr:{date:"",desc:"",ent:"",sal:"",soc:""},
@@ -2806,7 +2810,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261011_v193";
+var APP_VERSION = "20261012_v194";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -18645,10 +18649,9 @@ function R(){
   setTimeout(function(){
     var _newScrollEl = document.querySelector(".panel > div:last-child");
     if(_newScrollEl && _scrollTop > 0) _newScrollEl.scrollTop = _scrollTop;
-    if(S.tab==="calculadora"){
-      if((S.calc.modoCalc||"fijas")==="exoticas") calcUpdateExotico();
-      else calcUpdate();
-    }
+    // ARREGLO 111: ya no hay dos calculadoras que refrescar. La de rutas
+    // fijas se fue; la exótica sigue teniendo su recuadro por id.
+    if(S.tab==="calculadora" && S._tasasAbierto==="exo") calcUpdateExotico();
   }, 0);
   _saveDataSiCambio(); // ARREGLO 9e: guarda solo si el contenido cambio
   if(S.role==="admin"){
@@ -22958,46 +22961,7 @@ function guardarTasaCalcHoy(dir,valor,silencioso){
   saveData();
   if(!silencioso) alert("✅ Guardada: "+(dir==="ida"?"1 R$ = "+v+" Bs (ida)":v+" Bs = 1 R$ (vuelta)")+" — ya se usa en el Conversor rápido y en cotizaciones/registros nuevos.");
 }
-function calcSet(campo,val){ S.calc[campo]=val; calcUpdate(); }
-// ── Al revés: escribes la tasa que quieres OFRECER al cliente y se
-// calcula solo el % de margen que le corresponde (en vez de ir probando
-// porcentajes hasta que el resultado cuadre con el mercado). Usa la
-// MISMA fórmula exacta de _calcTasas() para que sea consistente.
-function calcObjetivoIda(val){
-  if(!S.calc) S.calc={};
-  S.calc.objetivoIda=val;
-  var cli=parseFloat(val)||0;
-  var tcC=parseFloat(S.calc.tcCompra)||0, tvV=parseFloat(S.calc.tvVenta)||0;
-  if(cli>0 && tcC>0 && tvV>0){
-    var binFee=parseFloat((S.config||{}).comision_binance)||parseFloat(S.calc.exComCompra)||0.004;
-    var tcEfec=tcC*(1-binFee);
-    var real=tvV/tcEfec;
-    if(real>0){
-      var mg=Math.round(((1-cli/real)*100)*100)/100;
-      S.calc.margen=mg;
-    }
-  }
-  R();
-}
-// Igual, pero para la VUELTA (Venezuela → Brasil): cliente = real*(1+mg/100)
-function calcObjetivoVuelta(val){
-  if(!S.calc) S.calc={};
-  S.calc.objetivoVuelta=val;
-  var cli=parseFloat(val)||0;
-  var tvI=parseFloat(S.calc.tvVentaIda)||0, tcVu=parseFloat(S.calc.tcCompraVuelta)||0;
-  if(cli>0 && tvI>0 && tcVu>0){
-    var binFee=parseFloat((S.config||{}).comision_binance)||parseFloat(S.calc.exComCompra)||0.004;
-    var tcVuEfec=tcVu*(1-binFee);
-    var realV=tvI/tcVuEfec;
-    if(realV>0){
-      var mgV=Math.round(((cli/realV-1)*100)*100)/100;
-      S.calc.margenVuelta=mgV;
-    }
-  }
-  R();
-}
 function calcSetExotico(campo,val){ S.calc[campo]=val; calcUpdateExotico(); }
-function calcSetModoCalc(modo){ S.calc.modoCalc=modo; R(); }
 function calcSetExOrig(val){
   if(S.calc.exDest===val){
     var opts=(MONEDAS_VENTA||[]).filter(function(m){return m.id!==val;});
@@ -23146,113 +23110,29 @@ function calcUpdateExotico(){
   }
   el.innerHTML=html;
 }
-// Botones de margen: estos SÍ re-renderizan para mover el resaltado.
-function calcSetMargen(campo,val){ S.calc[campo]=val; R(); }
 
-// Calcula las tasas a ofrecer al cliente según compra, venta y margen.
+// ── ARREGLO 111 · la tasa que sale de aquí es LA PUBLICADA ────────
+// Antes esto sacaba la tasa a ofrecer de las dos tasas de Binance tecleadas a
+// mano más un % de ganancia, en la calculadora de "Rutas fijas". Esa
+// calculadora se fue: la app ya sabe esas dos tasas (de sus lotes y de
+// /mercado) y la pregunta la contesta _htmlCalceGan() desde el ARREGLO 110.
+//
+// Y los campos viejos NO se pueden seguir leyendo "por si acaso". Siguen
+// guardados en S.calc con lo que tecleó en septiembre, y nadie los escribe ya:
+// el flyer habría impreso aquella tasa en vez de la de hoy, sin decir nada.
+// Un dato que ya nadie actualiza no es un respaldo, es una trampa — es la
+// misma razón por la que la tasa de referencia dejó de ser la que ella
+// escribió una vez (ARREGLO 49).
+//
+// Lo leen el flyer y el conversor, y la fuente es _misTasasPublicadas(): la
+// misma que la cabecera de Tasas, el suelo y la calculadora.
 function _calcTasas(){
-  var c=S.calc, r={};
-  // Comisión Binance global (decimal: 0.004 = 0.4%). Configurable en S.config.comision_binance
-  var binFee=parseFloat((S.config||{}).comision_binance)||parseFloat(c.exComCompra)||0.004;
-
-  // IDA: Brasil → Venezuela (cliente da reales, recibe bolívares)
-  var tcC=parseFloat(c.tcCompra)||0, tvV=parseFloat(c.tvVenta)||0, mg=parseFloat(c.margen)||0;
-  var objIda=parseFloat(c.objetivoIda)||0;
-  if(objIda>0){
-    // ── Tasa escrita directamente a mano: manda ella sola, NO hace falta
-    // compra/venta para nada — es una forma alterna de trabajar, no un
-    // paso extra sobre la otra. ──
-    r.ida={ok:true,cliente:objIda,manual:true,real:(tcC>0&&tvV>0)?(tvV/(tcC*(1-binFee))):null,binFee:binFee};
-    var xR2=parseFloat(c.simIda)||0;
-    if(xR2>0){
-      r.ida.simMonto=xR2;
-      if(tcC>0&&tvV>0){
-        var usdtObtengo2=(xR2/tcC)*(1-binFee);
-        var usdtEntrego2=(xR2*objIda)/tvV;
-        r.ida.simGanUsdt=usdtObtengo2-usdtEntrego2;
-      }
-    }
-  } else if(tcC>0 && tvV>0){
-    // Tasa efectiva: Binance retiene binFee al comprar USDT con BRL
-    var tcEfec=tcC*(1-binFee);
-    var real=tvV/tcEfec;  // costo real Bs/R$ incluyendo fee
-    // Redondeo a TU favor: BR→VE le entregamos MENOS bolívares → floor (baja)
-    var cli=Math.floor(real*(1-mg/100));
-    r.ida={real:real,realSinFee:tvV/tcC,ok:true,binFee:binFee,cliente:cli};
-    // Simulador: cliente da "simIda" reales → mi ganancia en USDT
-    var xR=parseFloat(c.simIda)||0;
-    if(xR>0){
-      var usdtObtengo=(xR/tcC)*(1-binFee); // USDT reales recibidos (Binance descuenta fee)
-      var bsEntrego=xR*cli;                 // bolívares que le entrego al cliente
-      var usdtEntrego=bsEntrego/tvV;        // esos bolívares en USDT a mi tasa P2P
-      r.ida.simMonto=xR;
-      r.ida.simGanUsdt=usdtObtengo-usdtEntrego;
-    }
-  } else { r.ida={ok:false}; }
-  // VUELTA: Venezuela → Brasil (cliente da bolívares, recibe reales)
-  var tvI=parseFloat(c.tvVentaIda)||0, tcVu=parseFloat(c.tcCompraVuelta)||0, mgV=parseFloat(c.margenVuelta)||0;
-  var objVuelta=parseFloat(c.objetivoVuelta)||0;
-  if(objVuelta>0){
-    r.vuelta={ok:true,cliente:objVuelta,manual:true,real:(tvI>0&&tcVu>0)?(tvI/(tcVu*(1-binFee))):null,binFee:binFee};
-    var xV2=parseFloat(c.simVuelta)||0;
-    if(xV2>0){
-      r.vuelta.simMonto=xV2;
-      if(tvI>0&&tcVu>0){
-        var brlEntrego2=xV2/objVuelta;
-        var usdtCompro2=xV2/tvI;
-        var usdtEntrego3=(brlEntrego2*tcVu)*(1+binFee);
-        r.vuelta.simGanUsdt=usdtEntrego3-usdtCompro2;
-      }
-    }
-  } else if(tvI>0 && tcVu>0){
-    // Tasa efectiva: Binance retiene binFee al vender USDT por BRL
-    var tcVuEfec=tcVu*(1-binFee);
-    var realV=tvI/tcVuEfec;  // costo real Bs/R$ con fee
-    // Redondeo a TU favor: VE→BR le cobramos MÁS bolívares al cliente → ceil (sube)
-    var cliV=Math.ceil(realV*(1+mgV/100));
-    r.vuelta={real:realV,realSinFee:tvI/tcVu,ok:true,binFee:binFee,cliente:cliV};
-    // Simulador: cliente da "simVuelta" bolívares → mi ganancia en USDT
-    var xB=parseFloat(c.simVuelta)||0;
-    if(xB>0){
-      var usdtObtengoV=xB/tvI;               // compro USDT con los bolívares (P2P, sin fee)
-      var realesEntrego=xB/cliV;             // reales que le entrego al cliente
-      var usdtEntregoV=realesEntrego/tcVuEfec;// USDT necesarios para dar esos reales (con fee)
-      r.vuelta.simMonto=xB;
-      r.vuelta.simGanUsdt=usdtObtengoV-usdtEntregoV;
-    }
-  } else { r.vuelta={ok:false}; }
-  return r;
+  var pub=_misTasasPublicadas();
+  var uno=function(v){ return (v>0) ? {ok:true, cliente:v} : {ok:false}; };
+  return {ida:uno(pub.ida), vuelta:uno(pub.vuelta)};
 }
 
-// Genera el HTML del bloque de resultado (tasa + simulador) para una dirección
-function _calcResHTML(dir,t){
-  if(!t.ok) return "<div style='font-size:12px;color:var(--ink3);text-align:center;padding:8px'>Ingresa compra y venta para ver la tasa ↑</div>";
-  var tasaTxt = dir==="ida" ? ("1 R$ = "+t.cliente.toFixed(2)+" Bs") : (t.cliente.toFixed(2)+" Bs = 1 R$");
-  var feeStr = t.binFee>0 ? " <span style='color:var(--mal);font-size:10.5px'>(+"+( t.binFee*100).toFixed(1)+"% Binance)</span>" : "";
-  var html = "<div style='font-size:10px;color:var(--ink2);font-weight:700;text-transform:uppercase;letter-spacing:.3px'>Ofrécele a tu cliente"+(t.manual?" <span style='color:var(--ac3)'>(tasa manual)</span>":"")+"</div>"+
-    "<div style='font-size:30px;font-weight:900;color:var(--brandDeep);margin:3px 0'>"+tasaTxt+"</div>"+
-    (t.real!==null&&t.real!==undefined?"<div style='font-size:10px;color:var(--ink3)'>costo real (con fee Binance): "+t.real.toFixed(2)+" Bs/R$"+feeStr+"</div>":"<div style='font-size:10px;color:var(--mal)'>⚠️ Sin compra/venta no se puede saber tu ganancia real — solo se usará esta tasa tal cual la escribiste.</div>")+
-    "<button type='button' onclick='guardarTasaCalcHoy(\""+dir+"\","+t.cliente+")' style='margin-top:8px;width:100%;padding:8px;border:none;border-radius:8px;background:var(--ok);color:var(--sobre-color);font-size:11px;font-weight:700;cursor:pointer'>💾 Guardar como tasa de hoy (para el Conversor)</button>";
-  if(t.simGanUsdt!==undefined){
-    var moneda = dir==="ida" ? "R$" : "Bs";
-    var gan = t.simGanUsdt;
-    html += "<div style='border-top:1px dashed var(--am5-e);margin-top:11px;padding-top:11px'>"+
-      "<div style='font-size:10px;color:var(--ink2);font-weight:700'>Con "+t.simMonto.toLocaleString('es')+" "+moneda+" ganarías</div>"+
-      "<div style='font-size:24px;font-weight:900;color:var(--pos);margin-top:2px'>"+(gan>=0?"":"-")+Math.abs(gan).toFixed(2)+" USDT</div>"+
-      (t.binFee>0?"<div style='font-size:10.5px;color:var(--mal);margin-top:2px'>⚠️ Ya descontado "+(t.binFee*100).toFixed(1)+"% comisión Binance</div>":"")+
-    "</div>";
-  }
-  return html;
-}
 
-// Actualiza SOLO los textos de resultado leyendo del estado, sin re-renderizar la página.
-function calcUpdate(){
-  var t=_calcTasas();
-  var elI=document.getElementById("calc-res-ida");
-  if(elI) elI.innerHTML=_calcResHTML("ida",t.ida);
-  var elV=document.getElementById("calc-res-vuelta");
-  if(elV) elV.innerHTML=_calcResHTML("vuelta",t.vuelta);
-}
 
 // Pantalla completa de la calculadora (pestaña propia)
 // ══════════════════════════════════════════════════════════════════
@@ -23275,7 +23155,7 @@ function _rConversorBCV(){
   if(tasaConfig>0){
     tasaCliente=tasaConfig; fuenteTasa="la que pusiste en Configuración → Tasas del día (BRL → VZLA, ida)";
   } else if(conMargen){
-    tasaCliente=t.ida.cliente; fuenteTasa="con tu margen — la misma de \"Rutas fijas\"";
+    tasaCliente=t.ida.cliente; fuenteTasa="tu tasa de ida, la de la cabecera de Tasas";
   } else {
     var rBrl=getRateToUsdt("BRL"), rVes=getRateToUsdt("VES");
     tasaCliente=(rBrl&&rVes)?(rVes/rBrl):null;
@@ -23702,6 +23582,14 @@ function _pedirMercado(forzar){
 function _refrescarSuelo(){
   var n=document.getElementById("mercado-suelo");
   if(n) n.innerHTML=_htmlSuelo();
+  // ARREGLO 111: la cabecera enseña el mismo suelo y el mismo %, así que la
+  // lectura del mercado tiene que refrescarla también. Si no, el detalle se
+  // actualizaba y el número grande de arriba se quedaba con el viejo — dos
+  // suelos distintos en la misma pantalla, que es lo que esto existe para
+  // evitar. Y la fila del detalle puede estar cerrada: entonces la cabecera es
+  // lo ÚNICO que se ve.
+  var cab=document.getElementById("tasas-cab");
+  if(cab) cab.innerHTML=_htmlCabeceraTasas();
 }
 
 // El punto de equilibrio: cuantos bolivares por real puede dar sin perder.
@@ -23851,6 +23739,21 @@ function sueloQueManda(){
           v:(manda?manda.v:null)};
 }
 
+// ── ARREGLO 111 · el % contra el suelo, calculado UNA vez ──────────────
+// Lo enseñan la cabecera de Tasas y la tarjeta del suelo. Calculado en los
+// dos sitios, un día diferirían en una décima y no habría forma de saber cuál
+// mirar — es el 34,27 arriba y 34,28 abajo de Por cobrar.
+//
+// Devuelve null cuando falta un lado: sin tasa publicada o sin suelo no hay
+// porcentaje, y uno inventado es justo el que la haría publicar mal.
+function margenSobreSuelo(){
+  var Q=sueloQueManda();
+  var mia=_misTasasPublicadas().ida;
+  if(mia===null || !(Q.v>0)) return null;
+  return {mia:mia, base:Q.v, manda:Q.manda,
+          pct:Math.round(((Q.v-mia)/Q.v)*1000)/10};
+}
+
 function _htmlSuelo(){
   var f=function(n){return f2(n);};
   var fp=_fpTasa;
@@ -23982,8 +23885,9 @@ function _htmlSuelo(){
     for(var cj=0;cj<cands.length;cj++)
       suelos+=linea(cands[cj].rot, cands[cj].v,
                     cands[cj]===manda?"var(--ok)":"var(--tx3)", cands[cj].pie);
-    if(mia!==null&&base){
-      var mg=Math.round(((base-mia)/base)*1000)/10;
+    var _m=margenSobreSuelo();
+    if(_m){
+      var mg=_m.pct;
       suelos+="<div style='font-size:11.5px;margin-top:5px;color:"+(mg>0?"var(--ok)":"var(--mal)")+";font-weight:700'>"+
         "Ofreciendo "+f(mia)+" te queda "+(mg>0?"+":"")+String(mg).replace(".",",")+"%"+
         (mg<=0?" — por encima del suelo PIERDES":"")+"</div>";
@@ -24297,139 +24201,162 @@ function _htmlCalceGan(){
     _htmlCalceCuerpo()+"</div>";
 }
 
-// La tarjeta entera, arriba de la calculadora: es donde decide la tasa.
-// ARREGLO 110: antes esto llevaba debajo las cuatro filas de la competencia.
-// Ya no las usa, así que la tarjeta es solo el suelo.
-function _htmlMercadoHoy(){
-  return "<div style='background:var(--sup);border:1.5px solid var(--ln2);border-radius:14px;padding:14px 16px;margin-bottom:16px'>"+
-    "<div style='display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:8px;flex-wrap:wrap'>"+
-      "<div style='font-size:13px;font-weight:800;color:var(--tit)'>\ud83d\udcca Tu suelo hoy</div>"+
-      "<div style='font-size:10.5px;color:var(--tx4)'>"+ds(td())+" · en bolívares por real</div>"+
+
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 111 · LA PESTAÑA DE TASAS: fuera lo repetido, arriba lo que mira
+// ══════════════════════════════════════════════════════════════════════
+// Sus palabras del 12/10: "quiero que la pestaña tasa no esté saturada".
+//
+// Medido antes de tocar nada, a 390 px: 2.493 px —tres pantallas de teléfono—
+// 15 campos y 21 botones. Y el reparto decía dónde estaba el problema:
+//
+//     563 px  23%   la calculadora de ganancia (ARREGLO 110)
+//     556 px  22%   🇧🇷 → 🇻🇪 Brasil hacia Venezuela   ← la vieja
+//     556 px  22%   🇻🇪 → 🇧🇷 Venezuela hacia Brasil   ← la vieja
+//     283 px  11%   el suelo
+//     143 px   6%   la comisión de Binance, que solo existía para alimentarlas
+//
+// O sea que el 53% de la pestaña era una SEGUNDA calculadora. Pedía teclear a
+// mano las dos tasas de Binance y un % de ganancia para devolver la tasa a
+// ofrecer — y la app ya sabe esas dos tasas (de sus lotes y de /mercado) y ya
+// contesta esa pregunta, al revés y en seis formas, desde el ARREGLO 110. Eso
+// no se arregla moviendo cajas: es el ARREGLO 98 otra vez, una pantalla nueva
+// que convive con el control viejo tiene que QUITARLO, no ponerse al lado.
+// Pasó igual con S.config.modulos (FASE B) y con los dos "deberías tener" del
+// cierre.
+//
+// Lo que se fue: los dos bloques de ruta, la comisión de Binance (que ya se
+// edita en Configuración, que es donde viven las demás) y las sub-pestañas.
+// Lo que se quedó, entero: el suelo, la calculadora, el conversor, el flyer y
+// las rutas exóticas — ahora detrás de una fila cada uno.
+//
+// ── Y lo que NO se podía perder al quitarla ─────────────────────
+// El botón "💾 Guardar como tasa de hoy" vivía DENTRO de esa calculadora, y era
+// uno de los dos únicos sitios que escriben su tasa publicada —la que leen el
+// suelo, el conversor y el flyer—. El otro es generar el flyer. Quitarla sin
+// más la habría dejado sin poder publicar una tasa salvo generando un flyer.
+// Por eso la ida y la vuelta se escriben AQUÍ, en la cabecera: es el mismo
+// dato, en el sitio donde ya estaba mirándolo.
+
+// Una sola fila abierta a la vez. Si se pudieran abrir todas, en dos semanas
+// está otra vez en tres pantallas, que es de donde venimos.
+function _tasasAbrir(id){
+  S._tasasAbierto = (S._tasasAbierto===id) ? null : id;
+  // ARREGLO 32: con R() se rehace la pantalla entera y se pierde dónde estaba
+  // mirando. Se rehacen solo las filas, por su id.
+  var n=document.getElementById("tasas-filas");
+  if(n) n.innerHTML=_htmlFilasTasas();
+}
+function _tasasFila(id, ic, rot, pie, cuerpo){
+  var on=(S._tasasAbierto===id);
+  return "<div style='background:var(--sup);border:1.5px solid "+(on?"var(--ac)":"var(--ln2)")+";border-radius:12px;margin-bottom:9px;overflow:hidden'>"+
+    "<div onclick='_tasasAbrir(\""+id+"\")' style='display:flex;align-items:center;gap:10px;padding:13px 15px;cursor:pointer'>"+
+      "<div style='font-size:17px'>"+ic+"</div>"+
+      "<div style='flex:1;min-width:0'>"+
+        "<div style='font-size:13px;font-weight:800;color:var(--tit)'>"+rot+"</div>"+
+        "<div style='font-size:10.5px;color:var(--tx4);margin-top:1px'>"+pie+"</div>"+
+      "</div>"+
+      "<div style='font-size:15px;color:var(--tx4);transform:rotate("+(on?"90deg":"0deg")+")'>\u203a</div>"+
     "</div>"+
-    "<div id='mercado-suelo' style='background:var(--sup2d);border-radius:10px;padding:10px 12px'>"+_htmlSuelo()+"</div>"+
+    (on?("<div style='padding:0 13px 13px'>"+cuerpo()+"</div>"):"")+
   "</div>";
 }
 
-function rCalculadora(){
-  // ARREGLO 75: se pide al entrar, no en cada repintado — _pedirMercado() se
-  // calla solo si la lectura tiene menos de 5 minutos. Va en un setTimeout
-  // para no retrasar el dibujado: la tarjeta se pinta con "leyendo…" y se
-  // rellena sola cuando llega.
-  setTimeout(function(){ _pedirMercado(false); }, 0);
-  var c=S.calc;
-  var modo=c.modoCalc||"fijas";
-  var t=_calcTasas();
-  function mbtn(campo,val,actual){
-    return "<button onclick='calcSetMargen(\""+campo+"\",\""+val+"\")' style='flex:1;padding:9px;border:1.5px solid "+(actual===val?"var(--brand)":"var(--line)")+";border-radius:11px;background:"+(actual===val?"var(--brandSoft)":"var(--sup)")+";font-size:13px;font-weight:800;color:var(--brandDeep);cursor:pointer'>"+val+"%</button>";
+// La tasa publicada se escribe aquí. _num() en la puerta, como todo campo de
+// dinero: con el teclado en español la coma decimal es lo primero que se
+// pierde y detrás hay cien parseFloat.
+function _setTasaPub(dir,val){
+  S.config=S.config||{}; S.config.tasasDia=S.config.tasasDia||{};
+  S.config.tasasDia[dir==="ida"?"tdia_brl":"tdia_ves_brl"]=_num(val);
+  // ARREGLO 32: mientras teclea no se repinta. Se rehace la cabecera, que es
+  // donde está el % que depende de lo que acaba de escribir.
+  var n=document.getElementById("tasas-cab");
+  if(n) n.innerHTML=_htmlCabeceraTasas();
+}
+// Al soltar el campo se guarda, y se guarda por la MISMA puerta de siempre
+// (guardarTasaCalcHoy), que es la que también limpia el override del
+// conversor. Dos sitios escribiendo la tasa publicada acabarían divergiendo.
+function _guardarTasaPub(dir){
+  var t=(S.config||{}).tasasDia||{};
+  var v=parseFloat(dir==="ida"?t.tdia_brl:t.tdia_ves_brl);
+  if(v>0) guardarTasaCalcHoy(dir, v, true);
+}
+
+function _htmlCabeceraTasas(){
+  var m=margenSobreSuelo();
+  var Q=sueloQueManda();
+  var pub=_misTasasPublicadas();
+  var campo=function(dir,rot,val){
+    return "<div style='flex:1 1 0;min-width:0;text-align:center'>"+
+      "<div style='font-size:10.5px;color:var(--tx4);font-weight:700;text-transform:uppercase;letter-spacing:.4px'>"+rot+"</div>"+
+      "<input type='text' inputmode='decimal' placeholder='\u2014' value='"+_escAud(val===null?"":val)+"' "+
+        "oninput='_setTasaPub(\""+dir+"\",this.value)' onchange='_guardarTasaPub(\""+dir+"\")' "+
+        "style='width:100%;border:none;border-bottom:1.5px dashed var(--ln);background:transparent;"+
+        "font-size:22px;font-weight:900;color:var(--tit);text-align:center;font-family:inherit;padding:1px 0 2px'>"+
+    "</div>";
+  };
+  // El suelo NO es un campo: sale de sus lotes y del mercado. Escribirlo a
+  // mano sería el "registra la operación, no escribas el saldo" otra vez.
+  var fijo=function(rot,val,col){
+    return "<div style='flex:1 1 0;min-width:0;text-align:center'>"+
+      "<div style='font-size:10.5px;color:var(--tx4);font-weight:700;text-transform:uppercase;letter-spacing:.4px'>"+rot+"</div>"+
+      "<div style='font-size:22px;font-weight:900;color:"+col+";line-height:1.35'>"+val+"</div>"+
+    "</div>";
+  };
+  var veredicto;
+  if(m){
+    // El color va con el veredicto, no con el número de arriba: el color se
+    // lee antes que la letra (ARREGLO 99).
+    var gana=(m.pct>0);
+    veredicto="<div style='text-align:center;font-size:12.5px;font-weight:800;color:"+(gana?"var(--ok)":"var(--mal)")+"'>"+
+      (gana?"\u2705 ":"\u26a0\ufe0f ")+"Ofreciendo "+f2(m.mia)+" te queda "+(gana?"+":"")+String(m.pct).replace(".",",")+"%"+
+      (gana?"":" \u2014 por encima del suelo PIERDES")+"</div>";
+  }else if(!(Q.v>0)){
+    veredicto="<div style='text-align:center;font-size:11.5px;color:var(--tx3)'>Todav\u00eda no hay suelo: falta tu \u00faltima compra o tu \u00faltima venta de USDT.</div>";
+  }else{
+    veredicto="<div style='text-align:center;font-size:11.5px;color:var(--tx3)'>Escribe tu ida arriba y te digo cu\u00e1nto te queda.</div>";
   }
+  var pie = (Q.manda && Q.manda.c>0 && Q.manda.s>0)
+    ? ("tu compra "+_fpTasa(Q.manda.c)+" R$ \u00b7 tu venta "+_fpTasa(Q.manda.s)+" Bs"+
+       ((Q.rc&&Q.rc.fecha)?(" \u00b7 "+_escAud(Q.rc.fecha)):""))
+    : "en bol\u00edvares por real";
+  return "<div style='display:flex;gap:4px;margin-bottom:9px'>"+
+      campo("ida","Tu ida",pub.ida)+
+      campo("vuelta","Tu vuelta",pub.vuelta)+
+      fijo("Tu suelo",(Q.v>0?f2(Q.v):"\u2014"),"var(--ac)")+
+    "</div>"+
+    "<div style='border-top:1px solid var(--ln);padding-top:9px'>"+veredicto+
+      "<div style='text-align:center;font-size:10.5px;color:var(--tx4);margin-top:3px'>"+pie+"</div>"+
+    "</div>";
+}
+
+function _htmlFilasTasas(){
+  return _tasasFila("gan","\ud83e\uddee","Cu\u00e1nto gano con esta tasa","cruce, P2P o mitad y mitad", _htmlCalceGan)+
+    _tasasFila("suelo","\ud83d\udcca","De d\u00f3nde sale tu suelo","tus \u00faltimas operaciones y el mercado",
+      function(){ return "<div id='mercado-suelo' style='background:var(--sup2d);border-radius:10px;padding:10px 12px'>"+_htmlSuelo()+"</div>"; })+
+    _tasasFila("conv","\ud83d\udcac","Cotizar a un cliente","cu\u00e1nto env\u00eda, cu\u00e1nto recibe", _rConversorBCV)+
+    _tasasFila("flyer","\ud83d\udcf2","Generar el flyer","con las tasas de arriba", function(){
+      return "<button onclick='generarFlyer()' class='btn-main btn-blue'>\ud83d\udcf2 Generar flyer para el cliente</button>"+
+        "<div style='font-size:10.5px;color:var(--tx4);text-align:center;margin-top:7px;line-height:1.5'>"+
+        "Usa la fecha y la hora del momento en que lo generas, y las tasas de arriba.</div>"; })+
+    _tasasFila("exo","\ud83c\udf0d","Rutas ex\u00f3ticas","Colombia, Per\u00fa, EE.UU. y las dem\u00e1s", _htmlRutasExoticas);
+}
+
+function _htmlRutasExoticas(){
+  var c=S.calc;
   function mbtnEx(val,actual){
     return "<button onclick='calcSetMargenExotico(\""+val+"\")' style='flex:1;padding:9px;border:1.5px solid "+(actual===val?"var(--brand)":"var(--line)")+";border-radius:11px;background:"+(actual===val?"var(--brandSoft)":"var(--sup)")+";font-size:13px;font-weight:800;color:var(--brandDeep);cursor:pointer'>"+val+"%</button>";
   }
-
-  // ── Selector de monedas exótico ──
   var allOrig=(typeof MONEDAS_COMPRA!=="undefined"?MONEDAS_COMPRA:[]);
   var allDest=(typeof MONEDAS_VENTA!=="undefined"?MONEDAS_VENTA:[]);
   var selOrig=c.exOrig||"BRL";
   var selDest=c.exDest||"VES";
   var moSelOrig=allOrig.find(function(m){return m.id===selOrig;})||allOrig[0]||{flag:"",label:selOrig,hint:""};
   var moSelDest=allDest.find(function(m){return m.id===selDest;})||allDest[0]||{flag:"",label:selDest};
-
   var optOrig=allOrig.map(function(m){return "<option value='"+m.id+"'"+(m.id===selOrig?" selected":"")+">"+m.flag+" "+m.label+"</option>";}).join("");
   var optDest=allDest.filter(function(m){return m.id!==selOrig;}).map(function(m){return "<option value='"+m.id+"'"+(m.id===selDest?" selected":"")+">"+m.flag+" "+m.label+"</option>";}).join("");
-
-  // ── Sub-pestañas ──
-  var subTabs="<div style='display:flex;gap:0;background:var(--sup2g);border-radius:12px;padding:3px;margin-bottom:14px'>"+
-    "<button onclick='calcSetModoCalc(\"fijas\")' style='flex:1;padding:9px;border:none;border-radius:10px;font-size:12px;font-weight:800;cursor:pointer;transition:all .2s;background:"+(modo==="fijas"?"var(--sup)":"transparent")+";color:"+(modo==="fijas"?"var(--am3-h)":"var(--tx3)")+";box-shadow:"+(modo==="fijas"?"0 1px 4px rgba(0,0,0,.12)":"none")+"'>🇧🇷🇻🇪 Rutas fijas</button>"+
-    "<button onclick='calcSetModoCalc(\"exoticas\")' style='flex:1;padding:9px;border:none;border-radius:10px;font-size:12px;font-weight:800;cursor:pointer;transition:all .2s;background:"+(modo==="exoticas"?"var(--sup)":"transparent")+";color:"+(modo==="exoticas"?"var(--am3-h)":"var(--tx3)")+";box-shadow:"+(modo==="exoticas"?"0 1px 4px rgba(0,0,0,.12)":"none")+"'>🌍 Rutas exóticas</button>"+
-  "</div>";
-
-  var html="<div style='max-width:560px;margin:0 auto'>"+
-    // Encabezado
-    "<div style='background:linear-gradient(135deg,var(--gr1-b),var(--am2-g));border-radius:var(--radius);padding:18px 20px;color:var(--sobre-color);margin-bottom:16px;box-shadow:var(--shadow-md)'>"+
-      "<div style='font-size:19px;font-weight:900;display:flex;align-items:center;gap:8px'>🧮 Calculadora de tasas</div>"+
-      "<div style='font-size:12px;opacity:.85;margin-top:3px'>Calcula la tasa para tu cliente y genera el flyer</div>"+
-    "</div>"+
-    _rConversorBCV()+
-    // ARREGLO 74: va ARRIBA, antes de las sub-pestañas. Es lo primero que mira
-    // antes de decidir la tasa, no un apéndice al final.
-    _htmlMercadoHoy()+
-    // ARREGLO 110: debajo del suelo, que es el numero con el que se mide, y
-    // ARRIBA de las sub-pestanas: es lo primero que mira para decidir la tasa.
-    _htmlCalceGan()+
-    subTabs;
-
-  // ══════════════════════
-  // MODO FIJAS
-  // ══════════════════════
-  if(modo==="fijas"){
-    var binFeePct=Math.round((parseFloat((S.config||{}).comision_binance)||parseFloat(c.exComCompra)||0.004)*1000)/10;
-    html+=
-    "<div style='font-size:12px;color:var(--ink2);margin-bottom:14px;line-height:1.5;padding:0 2px'>Pon las tasas de Binance del momento y tu % de ganancia. La app calcula sola qué tasa ofrecerle al cliente.</div>"+
-
-    // ── Campo comisión Binance ─────────────────────────────────────────
-    "<div style='background:var(--am6-e);border:1.5px solid var(--ac);border-radius:12px;padding:12px 14px;margin-bottom:14px'>"+
-      "<div style='font-size:11px;font-weight:800;color:var(--avi-tx);text-transform:uppercase;margin-bottom:6px'>⚙️ Comisión Binance (aplica a todas las rutas)</div>"+
-      "<div style='display:flex;gap:6px;align-items:center;flex-wrap:wrap'>"+
-        ["0","0.1","0.3","0.4","0.5"].map(function(v){
-          var active=binFeePct===parseFloat(v);
-          return "<button onclick='if(!S.config)S.config={};S.config.comision_binance="+v+"/100;calcUpdate();R()' style='padding:7px 11px;border:1.5px solid "+(active?"var(--ac)":"var(--ln)")+";border-radius:9px;background:"+(active?"var(--ac)":"var(--sup)")+";color:"+(active?"var(--sobre-color)":"var(--tx2b)")+";font-size:11px;font-weight:700;cursor:pointer'>"+v+"%</button>";
-        }).join("")+
-        "<span style='font-size:11px;color:var(--tx3);margin-left:4px'>o ingresar:</span>"+
-        "<input type='number' inputmode='decimal' step='0.01' min='0' max='5' value='"+binFeePct+"' oninput='if(!S.config)S.config={};S.config.comision_binance=this.value/100;calcUpdate()' style='width:64px;padding:6px 8px;border:1.5px solid var(--ln);border-radius:8px;font-size:12px'>"+
-        "<span style='font-size:11px;color:var(--avi-tx)'>%</span>"+
-      "</div>"+
-      "<div style='font-size:11px;color:var(--tx3);margin-top:6px'>Binance cobra ~0.4% al convertir. Entrás "+binFeePct+"% menos USDT del precio de lista.</div>"+
-    "</div>"+
-
-    // IDA: Brasil → Venezuela
-    "<div class='sec'>"+
-      "<div style='font-size:13px;font-weight:800;color:var(--ink);margin-bottom:12px'>🇧🇷 → 🇻🇪 Brasil hacia Venezuela</div>"+
-      "<div class='fl'><label>Compra USDT en Binance (R$ por USDT)</label><input type='number' inputmode='decimal' step='any' placeholder='ej: 5.40' value='"+(c.tcCompra||"")+"' oninput='calcSet(\"tcCompra\",this.value)'></div>"+
-      "<div class='fl'><label>Venta USDT en Binance (Bs por USDT)</label><input type='number' inputmode='decimal' step='any' placeholder='ej: 280' value='"+(c.tvVenta||"")+"' oninput='calcSet(\"tvVenta\",this.value)'></div>"+
-      "<label style='font-size:11px;color:var(--ink2);font-weight:700;text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:6px'>Mi ganancia</label>"+
-      "<div style='display:flex;gap:8px;margin-bottom:12px'>"+mbtn("margen","8",c.margen)+mbtn("margen","9",c.margen)+mbtn("margen","10",c.margen)+
-        "<input type='number' inputmode='decimal' step='any' placeholder='otro' value='"+(c.margen||"")+"' oninput='calcSet(\"margen\",this.value)' style='flex:1;text-align:center'></div>"+
-      "<div style='background:var(--mo6);border:1.5px dashed var(--ac3);border-radius:10px;padding:10px 12px;margin-bottom:12px'>"+
-        "<label style='font-size:11px;font-weight:700;color:var(--ac3);display:block;margin-bottom:4px'>🎯 O escribe la tasa que quieres ofrecer (Bs por 1 R$) — calcula el % solo</label>"+
-        (!(c.tcCompra&&c.tvVenta)?"<div style='font-size:11px;color:var(--az2-e);font-weight:700;margin-bottom:6px'>💡 Puedes usar esto solo, sin llenar Compra/Venta — pero entonces no vas a ver cuál es tu ganancia real en USDT.</div>":"")+
-        "<input type='number' inputmode='decimal' step='any' placeholder='ej: 164' value='"+(c.objetivoIda||"")+"' oninput='S.calc.objetivoIda=this.value' onblur='calcObjetivoIda(this.value)' style='width:100%;padding:9px;border:1.5px solid var(--ac3);border-radius:8px;font-size:14px;font-weight:700'>"+
-      "</div>"+
-      "<div class='fl'><label>💡 Simular: si el cliente envía (R$)</label><input type='number' inputmode='decimal' step='any' placeholder='ej: 100' value='"+(c.simIda||"")+"' oninput='calcSet(\"simIda\",this.value)'></div>"+
-      "<div id='calc-res-ida' style='background:var(--brandSoft);border-radius:12px;padding:13px 16px;text-align:center'>"+
-        _calcResHTML("ida",t.ida)+
-      "</div>"+
-    "</div>"+
-
-    // VUELTA: Venezuela → Brasil
-    "<div class='sec'>"+
-      "<div style='font-size:13px;font-weight:800;color:var(--ink);margin-bottom:12px'>🇻🇪 → 🇧🇷 Venezuela hacia Brasil</div>"+
-      "<div class='fl'><label>Compra USDT en Binance (Bs por USDT)</label><input type='number' inputmode='decimal' step='any' placeholder='ej: 280' value='"+(c.tvVentaIda||"")+"' oninput='calcSet(\"tvVentaIda\",this.value)'></div>"+
-      "<div class='fl'><label>Venta USDT en Binance (R$ por USDT)</label><input type='number' inputmode='decimal' step='any' placeholder='ej: 5.40' value='"+(c.tcCompraVuelta||"")+"' oninput='calcSet(\"tcCompraVuelta\",this.value)'></div>"+
-      "<label style='font-size:11px;color:var(--ink2);font-weight:700;text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:6px'>Mi ganancia</label>"+
-      "<div style='display:flex;gap:8px;margin-bottom:12px'>"+mbtn("margenVuelta","8",c.margenVuelta)+mbtn("margenVuelta","9",c.margenVuelta)+mbtn("margenVuelta","10",c.margenVuelta)+
-        "<input type='number' inputmode='decimal' step='any' placeholder='otro' value='"+(c.margenVuelta||"")+"' oninput='calcSet(\"margenVuelta\",this.value)' style='flex:1;text-align:center'></div>"+
-      "<div style='background:var(--mo6);border:1.5px dashed var(--ac3);border-radius:10px;padding:10px 12px;margin-bottom:12px'>"+
-        "<label style='font-size:11px;font-weight:700;color:var(--ac3);display:block;margin-bottom:4px'>🎯 O escribe la tasa que quieres cobrar (Bs por 1 R$) — calcula el % solo</label>"+
-        (!(c.tvVentaIda&&c.tcCompraVuelta)?"<div style='font-size:11px;color:var(--az2-e);font-weight:700;margin-bottom:6px'>💡 Puedes usar esto solo, sin llenar Compra/Venta — pero entonces no vas a ver cuál es tu ganancia real en USDT.</div>":"")+
-        "<input type='number' inputmode='decimal' step='any' placeholder='ej: 150' value='"+(c.objetivoVuelta||"")+"' oninput='S.calc.objetivoVuelta=this.value' onblur='calcObjetivoVuelta(this.value)' style='width:100%;padding:9px;border:1.5px solid var(--ac3);border-radius:8px;font-size:14px;font-weight:700'>"+
-      "</div>"+
-      "<div class='fl'><label>💡 Simular: si el cliente envía (Bs)</label><input type='number' inputmode='decimal' step='any' placeholder='ej: 5000' value='"+(c.simVuelta||"")+"' oninput='calcSet(\"simVuelta\",this.value)'></div>"+
-      "<div id='calc-res-vuelta' style='background:var(--brandSoft);border-radius:12px;padding:13px 16px;text-align:center'>"+
-        _calcResHTML("vuelta",t.vuelta)+
-      "</div>"+
-    "</div>"+
-
-    // Botón flyer
-    "<button onclick='generarFlyer()' class='btn-main btn-blue'>📲 Generar flyer para el cliente</button>"+
-    "<div style='font-size:11px;color:var(--ink3);text-align:center;margin-top:8px;margin-bottom:8px'>El flyer usa la fecha y hora del momento en que lo generas</div>";
-  }
-
-  // ══════════════════════
-  // MODO EXÓTICAS
-  // ══════════════════════
-  else {
     var tEx=_calcTasasExotico();
-    html+=
+    var html=
     "<div style='font-size:12px;color:var(--ink2);margin-bottom:14px;line-height:1.5;padding:0 2px'>Rutas esporádicas: PEN, COP, TTD, EUR y más. Elige origen y destino, pon las tasas de Binance y calcula.</div>"+
 "<div style='display:flex;gap:10px;margin-bottom:12px;align-items:center'>"+
 "<div style='font-size:11px;color:var(--ink3);font-weight:700;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap'>% Binance:</div>"+
@@ -24481,10 +24408,26 @@ function rCalculadora(){
 
     // Mini flyer para rutas exóticas
     "<button onclick='generarMiniFlyer()' class='btn-main btn-blue'>📲 Generar mini flyer para el cliente</button>";
-  }
-
-  html+="</div>";
   return html;
+}
+
+function rCalculadora(){
+  // ARREGLO 75: se pide al entrar, no en cada repintado — _pedirMercado() se
+  // calla solo si la lectura tiene menos de 5 minutos. Va en un setTimeout
+  // para no retrasar el dibujado.
+  setTimeout(function(){ _pedirMercado(false); }, 0);
+  return "<div style='max-width:560px;margin:0 auto'>"+
+    "<div style='background:linear-gradient(135deg,var(--gr1-b),var(--am2-g));border-radius:var(--radius);padding:16px 18px;color:var(--sobre-color);margin-bottom:12px;box-shadow:var(--shadow-md)'>"+
+      "<div style='font-size:18px;font-weight:900'>\ud83e\uddee Tasas</div>"+
+      "<div style='font-size:11.5px;opacity:.85;margin-top:2px'>Tu tasa del d\u00eda, tu suelo y lo que ganas con ella</div>"+
+    "</div>"+
+    // La cabecera: lo que mira diez veces al día, sin abrir nada ni hacer
+    // scroll. Lo demás va detrás de una fila.
+    "<div id='tasas-cab' style='background:var(--sup);border:1.5px solid var(--ln2);border-radius:14px;padding:14px 12px 13px;margin-bottom:10px'>"+
+      _htmlCabeceraTasas()+
+    "</div>"+
+    "<div id='tasas-filas'>"+_htmlFilasTasas()+"</div>"+
+  "</div>";
 }
 
 
@@ -24632,7 +24575,7 @@ function generarMiniFlyer(){
 
 function generarFlyer(){
   var t=_calcTasas();
-  if(!t.ida.ok && !t.vuelta.ok){ alert("Primero ingresa las tasas de compra y venta para calcular."); return; }
+  if(!t.ida.ok && !t.vuelta.ok){ alert("Primero escribe tu tasa de ida o de vuelta arriba, en la cabecera de Tasas."); return; }
   var fh=_flyerFechaHora();
 
   // Tarjetas verticales: bandera + dirección + número grande + "Bs", línea de acento abajo
