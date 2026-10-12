@@ -71,7 +71,7 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "_misTasasPublicadas",
                     "_equilibrio", "sueloQueManda",
                     "_calceK", "_calceGan", "_calceVuelta", "_calceIda", "_cg", "_cgSet", "_cgFraccion",
-                    "_htmlPalancaVenta", "_htmlCalceRes", "_htmlCalceCuerpo", "_cgModo", "_cgFuente",
+                    "_htmlPalancaVenta", "_cgBase", "_cgGanUsdt", "_htmlComparaTasa", "_htmlCabeceraTasas", "_htmlCalceRes", "_htmlCalceCuerpo", "_cgModo", "_cgFuente",
                     "margenSobreSuelo", "_calcTasas", "_misTasasPublicadas", "_fpTasa",
                     "avisoTasa", "_umbralAviso", "_refSuelo", "_sueloDeFecha", "guardarTasaCalcHoy",
                     "_cgSoltar", "_htmlCabeceraTasas", "_montoMercado",
@@ -8722,13 +8722,20 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(!/fuente:"cruce"/.test(cg), "y no queda ningun cruce por omision");
   ok(F._cg().fuente === "p2p", "medido: el estado nuevo nace en p2p", F._cg().fuente);
 
-  // 2) El monto se fue, y con el su campo. La base vive en UN sitio.
-  ok(F.CG_BASE === 500, "la base son 500 reales", F.CG_BASE);
-  ok(!/campo\("monto"/.test(cue), "el campo del monto ya no se dibuja");
+  // 2) La base vive en UN sitio (ARREGLO 122: el monto volvió, con 500 puesto).
+  ok(F.CG_BASE === 500, "la medida por omisión son 500 reales", F.CG_BASE);
+  ok(/campo\("monto","Por cada"/.test(cue), "el campo del monto se dibuja, y dice 'Por cada'");
+  ok(/var M=_cgBase\(\)/.test(res) && /var M=_cgBase\(\)/.test(tres),
+     "el resultado y el despeje leen la MISMA base, no cada uno la suya");
   ok(!/parseFloat\(g\.monto\)/.test(res) && !/parseFloat\(g\.monto\)/.test(tres),
-     "y nadie lo lee: la base sale de CG_BASE");
-  ok(/var M=CG_BASE/.test(res) && /var M=CG_BASE/.test(tres),
-     "las dos la leen de la constante, no cada una la suya");
+     "y ninguno se lo lee del campo por su cuenta");
+  {
+    const gm=F._cg(), antesM=gm.monto;
+    gm.monto="";    ok(F._cgBase()===500, "en blanco vuelve a 500, no a cero", F._cgBase());
+    gm.monto="0";   ok(F._cgBase()===500, "y un cero tampoco lo deja en cero", F._cgBase());
+    gm.monto="9000";ok(F._cgBase()===9000, "escribiendo 9.000 mide sobre 9.000", F._cgBase());
+    gm.monto=antesM;
+  }
 
   // 3) UN numero, en la unidad de la app. Los otros tres se fueron.
   ok(/USDT por cada "\+f0\(M\)\+" R\$/.test(res), "la respuesta va en USDT por cada 500 R$");
@@ -8739,7 +8746,8 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(/du\(Math\.abs\(gu\)\)/.test(res), "el numero grande es el de USDT");
 
   // 4) La meta esta en su unidad.
-  ok(/USDT por cada "\+CG_BASE\+" R\$/.test(cue), "la meta se pide por cada 500 R$");
+  ok(/USDT por cada "\+f0\(_cgBase\(\)\)\+" R\$/.test(cue),
+     "la meta se pide por cada tantos R$, y sigue al monto");
   ok(!/"en dólares"|"en dólares"/.test(cue), "ya no dice 'en dolares'");
 
   // 5) La otra palanca: vender mas caro en vez de bajarle al cliente.
@@ -8829,6 +8837,77 @@ console.log("\n— FASE 2: la cuenta madre —");
     ok(!/[^\w.]pasada\b/.test(sinComentarios(sacarFuncion(fn))),
        fn + ": no queda ninguna 'pasada' suelta");
   });
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// ARREGLO 122 · la cabecera habla su idioma, y el precio de cada tasa
+// ═══════════════════════════════════════════════════════════════════════
+// Sus palabras del 12/10, con las dos pantallas delante: "revisa el tema de las
+// banderas en ambas direcciones, no sé si está correctamente expresada de Brasil
+// a Venezuela, de Venezuela a Brasil con respecto a lo que yo coloco abajo y las
+// banderas que están arriba".
+//
+// Los números estaban bien. Lo que no: la cabecera seguía diciendo "TU IDA" y
+// "TU VUELTA" —las dos palabras que el 119 sacó de la calculadora por ser mi
+// vocabulario y no el suyo— así que arriba se leía una cosa y abajo otra.
+{
+  const cab = sinComentarios(sacarFuncion("_htmlCabeceraTasas"));
+  const res2 = sinComentarios(sacarFuncion("_htmlCalceRes"));
+  const cmp = sinComentarios(sacarFuncion("_htmlComparaTasa"));
+
+  // 1) La cabecera nombra la RUTA, y por la misma tabla que la calculadora.
+  ok(!/"Tu ida"|"Tu vuelta"/.test(cab), "la cabecera ya no dice 'Tu ida' ni 'Tu vuelta'");
+  ok(/_ruta\(dir\)\.flechas/.test(cab), "el rótulo sale de _ruta(), la misma tabla del 119");
+  ok(/campo\("ida","le das"/.test(cab) && /campo\("vuelta","te dan"/.test(cab),
+     "y debajo dice quién da qué, que es lo que el símbolo no dice");
+  ok(!/Escribe tu ida arriba/.test(cab), "ni el pie manda a 'escribir tu ida'");
+
+  // 2) El precio de dar otra tasa. Las dos líneas salen de la MISMA cuenta.
+  ok(/_cgGanUsdt\(/.test(cmp)===false, "_htmlComparaTasa solo dibuja: la ganancia se la dan hecha");
+  ok(/_calceGan\(M, ida, K\)/.test(sinComentarios(sacarFuncion("_cgGanUsdt"))),
+     "_cgGanUsdt sale de _calceGan, no de una fórmula propia");
+  const vecesCmp=(res2.match(/_htmlComparaTasa\(/g)||[]).length;
+  ok(vecesCmp===3, "la comparación sale en los tres modos", vecesCmp);
+  ok(/g:_cgGanUsdt\(M, ida, _calceK\(pubV, suelo, f\), usd\)/.test(res2) &&
+     /g:_cgGanUsdt\(M, ida, _calceK\(V, suelo, f\), usd\)/.test(res2),
+     "en el modo de la vuelta cada lado entra con SU K, también el de la respuesta");
+  ok(!/\{t:V, g:_cgGanUsdt\(M, ida, K, usd\)/.test(res2),
+     "y no con la K de la vuelta tecleada, que es otra tasa");
+
+  // 3) Funcional, con sus números del 12/10 (publica 171, teclea 189).
+  const invP = S.inventarioUsdt, tdP = S._tasasDiaMeta, tdiaP = S.tasasDia;
+  const cfgP = JSON.stringify(S.config || {});
+  const calcP = JSON.stringify(S.calc || null);
+  S.config = S.config || {};
+  S.config.comision_binance = 0.007;
+  S.config.tasasDia = {tdia_brl:171, tdia_ves_brl:220};
+  S.inventarioUsdt = [{id:1, tipo:"compra", moneda:"BRL", fecha:"10/10", fechaIso:"2026-10-10",
+    tasa:5.0327, usdt:100, neto:100, restante:100, montOrigen:503.27, comision:0}];
+  S._tasasDiaMeta = {VES:{fijada:true, iso:"2026-10-10"}};
+  S.tasasDia = {VES:1013};
+  {
+    const g=F._cg();
+    g.modo="gan"; g.fuente="p2p"; g.usdbrl="5.0327"; g.meta=""; g.monto="9000";
+    g.ida="189"; g.idaTocada=true; g.vuelta="220"; g.vueltaTocada=true;
+    const t=F._htmlCalceRes();
+    ok(/por cada 9\.000 R\$/.test(t), "con 9.000 en el campo, mide sobre 9.000 R$",
+       (t.match(/por cada [\d.]+ R\$/)||[""])[0]);
+    ok(/publicada\)/.test(t) && /(MÁS|MENOS)/.test(t),
+       "y dice cuánto gana contra la que tiene publicada",
+       (t.match(/A <b[^>]*>[^<]+<\/b>[^|]{0,120}/)||[""])[0].replace(/<[^>]+>/g,""));
+    // 189 da MÁS bolívares por real que 171, así que gana MENOS — y esto es
+    // justo el ARREGLO 74: en la 🇧🇷→🇻🇪 ella ENTREGA bolívares, cuantos más dé
+    // peor para ella. Escrito al revés, esta línea le diría que suba la tasa.
+    ok(/MENOS/.test(t) && !/MÁS<\/b>/.test(t),
+       "dando 189 en vez de su 171 publicada, gana MENOS: más bolívares por real");
+    // Y con la publicada escrita, no hay nada que comparar.
+    g.ida="171";
+    ok(!/publicada\)/.test(F._htmlCalceRes()),
+       "escribiendo la misma que publica, la línea no sale");
+  }
+  S.inventarioUsdt=invP; S._tasasDiaMeta=tdP; S.tasasDia=tdiaP;
+  S.config=JSON.parse(cfgP);
+  if(calcP!==null) S.calc=JSON.parse(calcP); else delete S.calc;
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

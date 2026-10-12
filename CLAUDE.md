@@ -1513,6 +1513,66 @@ límite"* (`_saldoConProblema`, la puerta única del 119). Y queda una guardia q
 exige que **las cuatro variables de la tarjeta estén declaradas en la función que
 las usa** — vale para la siguiente que alguien añada, no solo para `pasada`.
 
+#### Las banderas estaban bien; lo que fallaba era el rótulo (ARREGLO 122)
+
+Sus palabras del 12/10, con las dos pantallas delante: *"revisa el tema de las
+banderas en ambas direcciones, no sé si está correctamente expresada de Brasil a
+Venezuela, de Venezuela a Brasil con respecto a lo que yo coloco abajo y las
+banderas que están arriba"*.
+
+Comprobado en sus dos capturas: los dos sentidos salen **correctos**. En *Tasa
+🇻🇪→🇧🇷* responde 210,01 (*Venezuela → Brasil*, ella entrega reales) y en *Tasa
+🇧🇷→🇻🇪* responde 193,49 (*Brasil → Venezuela*, ella entrega bolívares), y el pie
+lo escribe entero. Lo que fallaba era otra cosa:
+
+- **La cabecera seguía diciendo "TU IDA" y "TU VUELTA".** El ARREGLO 119 sacó esas
+  dos palabras de la calculadora —son mi vocabulario, no el suyo— y las dejó en la
+  pantalla de justo encima. Arriba una cosa, abajo otra, y nada que las empareje.
+  Ahora la cabecera lee de `_ruta()`, la misma tabla, y debajo de cada número dice
+  **quién da qué** (*"le das"* / *"te dan"*), que es lo único que el símbolo no
+  dice.
+- **El botón y el campo se escribían igual.** `Tasa 🇻🇪→🇧🇷` arriba (lo que pides)
+  y `Tasa 🇧🇷→🇻🇪` justo debajo (lo que escribes), sin nada que diga cuál es cuál.
+
+#### El monto vuelve: la TASA no depende de él, los DÓLARES sí (ARREGLO 122)
+
+El ARREGLO 121 lo quitó diciendo que *"no cambia nada"*, y eso es cierto **para la
+tasa** —500, 1.059 o 2.000 R$ dan la misma— y **falso para lo que ella mira con un
+cliente delante**. Sus palabras: *"a veces yo quiero saber cuánto me voy a ganar
+por 1000, por 2000, por el monto que yo quiera… si un día me quiere mandar 9000
+reais yo puedo calcular, bueno, le puedo ofrecer tanto y no pierdo"*.
+
+Vuelve **con 500 ya escrito**, que es la diferencia con antes: no hay que teclearlo
+para usar la pantalla, solo para salirse de su medida de siempre. La base sale de
+`_cgBase()` y de ningún otro sitio —la leen el resultado, el despeje de la tasa y
+la comparación— y **en blanco vuelve a 500, no a cero**.
+
+#### Y el precio de dar otra tasa, escrito (ARREGLO 122)
+
+Sus palabras: *"si yo estoy dando una tasa diferente a la que supuestamente me da
+el sistema, me diga: bueno, a esta tasa le estás ganando tanto, o a esta tasa
+estás menos tanto"*.
+
+La pantalla contestaba **una** tasa y ahí se acababa. Pero la que ella da no
+siempre es esa, y el precio de esa decisión había que sacarlo cambiando el número,
+mirando, y volviéndolo a cambiar. Ahora, en los tres modos:
+
+```
+A 189,00 ganas $97,26 por cada 9.000 R$
+$161,05 MENOS que a 171,00 (🇧🇷→🇻🇪 publicada)
+```
+
+- **La ganancia sale de `_cgGanUsdt()`**, que sale de `_calceGan()`: las dos líneas
+  que se restan pasan por la misma cuenta. Calculadas aparte, un redondeo distinto
+  haría que la resta no cuadrara con sus dos sumandos.
+- **Dos tasas iguales, o una diferencia de cero, no escriben nada.** Un *"$0,00
+  MÁS"* es ruido, no un dato.
+- **Y cada lado entra con SU K.** Lo cazó medirlo: en el modo de la vuelta el
+  segundo lado se calculaba con la K de la vuelta que ella **tecleó** (215) y el
+  rótulo decía *"que a 210,15"*, la despejada. Con sus números la diferencia salía
+  **1,98** donde son **4,00**. Un número con el rótulo de otro es el 34,27 contra
+  el 34,28, y sólo se ve ejecutándolo.
+
 ### Su suelo: hasta dónde puede ofrecer sin perder
 
 Sus palabras: *"no sé qué tasa de compra y venta está usando mi app"* y *"no es
