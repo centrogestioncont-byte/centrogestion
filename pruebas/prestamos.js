@@ -68,8 +68,9 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "ajusteDiasPrimeraCuota", "interesPorAjusteDias",
                     "cuotasRecomendadas", "limiteCredito",
                     "costoOperativoPorPrestamo", "pctCostoOperativo",
-                    "_competidores", "_compDelDia", "_setComp", "_misTasasPublicadas", "_posicionMercado",
-                    "_equilibrio",
+                    "_misTasasPublicadas",
+                    "_equilibrio", "sueloQueManda",
+                    "_calceK", "_calceGan", "_calceVuelta", "_calceIda", "_cg", "_cgSet", "_cgFraccion",
                     "esRutaCalce", "esCalceDirecto",
                     "_loteYaEnApertura", "_fiatDeLote", "_deltaDeLote",
                     "f2n", "f0", "f4",
@@ -5222,69 +5223,52 @@ console.log("\n— FASE 2: la cuenta madre —");
 }
 
 
-// ── ARREGLO 74 · el mercado: donde queda ella contra la competencia ────────
-// "todas esas casas de cambio todos los dias tengo que revisar para poder
-// colocar mi tasa". Las dos direcciones se escriben en la MISMA unidad
-// -bolivares por real- pero significan lo contrario: en la ida ella ENTREGA
-// bolivares (mas es mejor para el cliente) y en la vuelta ENTREGA reales
-// (menos es mejor). Invertir uno de los dos le daria el puesto al reves, que
-// es justo lo que la haria publicar una tasa mala.
+// ── ARREGLO 110 · fuera la competencia, y su tasa publicada se queda ───────
+// El ARREGLO 74 pedia apuntar a mano lo que cobraban cuatro sitios. Sus
+// palabras del 11/10: "yo quiero que me quites esos botones porque ya no los
+// estoy usando - eso asi ya no me es funcional". Se fueron las filas, los
+// campos y el recuadro del puesto; lo apuntado NO se borra.
 {
-  const CONF = [
-    {id:"retorna", nombre:"Retorna",  vuelta:false},
-    {id:"dorado",  nombre:"Dorado",   vuelta:true},
-    {id:"g1",      nombre:"Grupo 1",  vuelta:true},
-    {id:"g2",      nombre:"Grupo 2",  vuelta:true}
-  ];
-  S.config = {competidores: CONF, tasasDia:{tdia_brl:172.5, tdia_ves_brl:220}};
-  S.histComp = {};
-  const hoy = F.td();
-  S.histComp[hoy] = {
-    retorna:{ida:171.54}, dorado:{ida:173, vuelta:200},
-    g1:{ida:175}, g2:{ida:170, vuelta:200}
-  };
-  const m = F._posicionMercado();
-  // Sus numeros del 26/09, tal y como me los dio.
-  ok(m.posIda.puesto === 3 && m.posIda.de === 5,
-     "en la ida cuenta cuantos dan MAS bolivares que ella",
-     m.posIda.puesto + "/" + m.posIda.de);
-  ok(m.posIda.mejor.nombre === undefined && m.posIda.mejor.n === "Grupo 1" && m.posIda.mejor.v === 175,
-     "y el mejor de la ida es el que mas da");
-  ok(m.posVuelta.puesto === 3 && m.posVuelta.de === 3,
-     "en la vuelta cuenta cuantos piden MENOS: ahi queda la ultima",
-     m.posVuelta.puesto + "/" + m.posVuelta.de);
-  ok(m.posVuelta.mejor.v === 200 && m.posVuelta.brechaMejor === 20,
-     "y la brecha con el mejor son los 20 Bs por real", m.posVuelta.brechaMejor);
-  // Retorna solo publica ida: no puede colarse en el ranking de vuelta.
-  ok(m.vuelta.length === 2 && !m.vuelta.some(function(x){return x.n==="Retorna";}),
-     "quien solo publica ida no entra en la vuelta", m.vuelta.length);
-  // Si todavia no ha publicado hoy, no se le inventa una tasa.
-  S.config.tasasDia = {};
-  const sinPublicar = F._posicionMercado();
-  ok(sinPublicar.mias.ida === null && sinPublicar.posIda === null,
-     "sin tasa publicada no se inventa un puesto");
-  S.config.tasasDia = {tdia_brl:172.5, tdia_ves_brl:220};
+  // Nada de la competencia puede volver a dibujarse. Si alguien la reintroduce
+  // sin los avisos, esto falla.
+  const muertas = ["_competidores","_compDelDia","_setComp","_posicionMercado",
+                   "_htmlCompResumen","_renombrarComp","_COMPETIDORES_POR_OMISION"];
+  muertas.forEach(function(nom){
+    ok(HTML.indexOf(nom) < 0, "no queda nada de " + nom + " en el archivo");
+  });
+  // Y el contenedor del recuadro tampoco: era lo que _setComp refrescaba.
+  ok(HTML.indexOf("comp-resumen") < 0, "ni el recuadro del puesto");
+  // La tarjeta es ahora solo el suelo. Anclado al marcado, que existe una vez
+  // sola: un comentario puede repetir el rotulo (paso en el ARREGLO 100).
+  const tarjeta = sacarFuncion("_htmlMercadoHoy");
+  ok(/_htmlSuelo\(\)/.test(tarjeta), "la tarjeta sigue dibujando el suelo");
+  ok(/id='mercado-suelo'/.test(tarjeta),
+     "y conserva el id por el que _refrescarSuelo lo rehace sin R()");
 
-  // La coma decimal: es lo primero que se pierde con el teclado en espanol, y
-  // 171,54 entraria como 17154 -cien veces su tasa-.
-  S.histComp = {};
-  F._setComp("retorna", "ida", "171,54");
-  ok(F._compDelDia()[ "retorna" ].ida === "171.54",
-     "el campo del mercado pasa por _num(): 171,54 no se vuelve 17154",
-     F._compDelDia()["retorna"].ida);
-  ok(/type='text' inputmode='decimal'/.test(sacarFuncion("_htmlMercadoHoy")) &&
-     !/type='number'/.test(sacarFuncion("_htmlMercadoHoy")),
-     "y el campo es de texto, no type=number");
-  // ARREGLO 32: teclear no puede repintar la pantalla entera.
-  ok(!/\bR\(\)/.test(sinComentarios(sacarFuncion("_setComp"))) &&
-     /getElementById\("comp-resumen"\)/.test(sacarFuncion("_setComp")),
-     "apuntar una tasa no repinta: refresca el recuadro por su id");
-  // El historial va indexado por fecha y se UNE entre aparatos, nunca se pisa.
+  // Lo apuntado en septiembre SIGUE viajando. Quitar la pantalla no puede
+  // borrarle datos: si histComp se cae de estas dos listas, el remoto lo
+  // reemplaza entero y se pierde lo que tenga el otro aparato.
   ok(/_MERGE_HISTORIAL = \[[^\]]*"histComp"/.test(HTML),
-     "histComp se une por fecha entre los dos aparatos");
+     "histComp se sigue uniendo por fecha entre los dos aparatos");
   ok(/DATA_KEYS = \[[\s\S]{0,800}"histComp"/.test(HTML),
-     "y esta en DATA_KEYS: si no, el remoto lo reemplaza entero");
-  S.config = {}; S.histComp = {};
+     "y sigue en DATA_KEYS: lo apuntado no se borra al quitar la pantalla");
+
+  // Lo UNICO que se rescato de ahi, porque lo lee el suelo: su tasa
+  // publicada. Las dos direcciones van en la MISMA unidad -bolivares por
+  // real- y significan lo contrario: en la ida ella ENTREGA bolivares (mas es
+  // mejor para el cliente) y en la vuelta ENTREGA reales (menos es mejor).
+  // Invertir una de las dos le daria el puesto al reves en los flyers.
+  S.config = {tasasDia:{tdia_brl:172.5, tdia_ves_brl:220}};
+  const pub = F._misTasasPublicadas();
+  ok(pub.ida === 172.5 && pub.vuelta === 220,
+     "su tasa publicada sale de tasasDia, ida y vuelta en bolivares por real",
+     pub.ida + " / " + pub.vuelta);
+  // Sin publicar no se le inventa una.
+  S.config.tasasDia = {};
+  const vacia = F._misTasasPublicadas();
+  ok(vacia.ida === null && vacia.vuelta === null,
+     "si no ha publicado hoy no se inventa una tasa");
+  S.config = {};
 }
 
 
@@ -5368,19 +5352,22 @@ console.log("\n— FASE 2: la cuenta madre —");
   // bolivares se leyeron (957,01) y los reales no, y la pantalla seguia
   // enseñando solo su suelo viejo con medio dato nuevo sin usar.
   var suelo=sacarFuncion("_htmlSuelo");
-  ok(/eqMixto=_equilibrio\(miC,mv\)/.test(suelo) &&
-     /eqMixto=_equilibrio\(mc,miV\)/.test(suelo),
+  // ARREGLO 110: la cuenta vive en sueloQueManda() y _htmlSuelo() solo dibuja.
+  // La calculadora de abajo lee el mismo numero de ahi.
+  var sManda=sacarFuncion("sueloQueManda");
+  ok(/eqMixto=_equilibrio\(miC,mv\)/.test(sManda) &&
+     /eqMixto=_equilibrio\(mc,miV\)/.test(sManda),
      "con media lectura se completa el lado que falta con lo suyo, en las dos direcciones");
   // Y SUSTITUYE al suyo. Dos suelos parecidos para la misma pregunta es lo que
   // ya hizo que dejara de fiarse de los dos (34,27 arriba y 34,28 abajo).
-  ok(/if\(eqMixto\)\{[\s\S]{0,400}\}else if\(eqMio\)\{/.test(suelo),
+  ok(/if\(eqMixto\)\{[\s\S]{0,400}\}else if\(eqMio\)\{/.test(sManda),
      "y ocupa el sitio del suyo, no se pone al lado");
   // Sin ninguno de los dos lados no hay mixto: eso seria inventar.
-  ok(/if\(!eqMerc\)\{/.test(suelo),
+  ok(/if\(!eqMerc\)\{/.test(sManda),
      "con lectura completa del mercado no se calcula ningún mixto");
   // El rotulo tiene que decir de donde sale cada mitad. Un tercer numero sin
   // explicar como se hizo es lo que hace que dejen de creerse los tres.
-  ok(/pieMixto="tu compra de "/.test(suelo) && /con la venta de hoy/.test(suelo),
+  ok(/pieMixto="tu compra de "/.test(sManda) && /con la venta de hoy/.test(sManda),
      "y dice de dónde sale cada mitad, con las dos tasas");
   // ── ARREGLO 77: manda el suelo MAS BAJO ───────────────────────────
   // El suelo es venta ÷ compra, asi que una compra mas cara lo BAJA. El 30/09
@@ -5399,13 +5386,13 @@ console.log("\n— FASE 2: la cuenta madre —");
   // El porcentaje se mide contra el mas bajo de los que esten a la vista, no
   // contra el del mercado. Un suelo optimista es peor que ninguno: con el
   // publicaria una tasa que no aguanta su propio costo.
-  ok(/for\(var ci=0;ci<cands\.length;ci\+\+\) if\(!manda\|\|cands\[ci\]\.v<manda\.v\) manda=cands\[ci\];/.test(suelo) &&
-     /var base=manda\?manda\.v:null;/.test(suelo),
+  ok(/for\(var ci=0;ci<cands\.length;ci\+\+\) if\(!manda\|\|cands\[ci\]\.v<manda\.v\) manda=cands\[ci\];/.test(sManda) &&
+     /var cands=Q\.cands, manda=Q\.manda, base=Q\.v;/.test(suelo),
      "el \"te queda +X%\" se mide contra el suelo mas bajo de los que se enseñan");
   // Y los candidatos son exactamente los que se dibujan: si uno se enseña y no
   // entra en la comparacion, el % puede salir de un numero que no esta arriba.
   // Por eso se dibuja RECORRIENDO la lista de candidatos, en un solo sitio.
-  ok((suelo.match(/cands\.push\(/g)||[]).length === 3 &&
+  ok((sManda.match(/cands\.push\(/g)||[]).length === 3 &&
      (suelo.match(/suelos\+=linea\(/g)||[]).length === 1 &&
      /for\(var cj=0;cj<cands\.length;cj\+\+\)\s*\n?\s*suelos\+=linea\(cands\[cj\]/.test(suelo),
      "cada suelo que se dibuja entra en la comparacion, y ninguno mas");
@@ -5494,8 +5481,20 @@ console.log("\n— FASE 2: la cuenta madre —");
      "y dice lo que el suelo NO incluye");
   // Los 4 decimales de la tasa de compra: entre 5,16 y 5,1638 hay 0,07% de
   // su margen, que sobre su volumen no es redondeo.
-  ok(/f4\(n\) : f2\(n\)/.test(sacarFuncion("_htmlSuelo")),
+  ok(/f4\(n\) : f2\(n\)/.test(sacarFuncion("_fpTasa")) &&
+     /var fp=_fpTasa;/.test(sacarFuncion("_htmlSuelo")),
      "la tasa de compra de USDT se enseña con sus cuatro decimales");
+  // ── ARREGLO 110: el suelo se calcula en UN sitio ───────────────────
+  // _htmlSuelo() dibuja; la cuenta la hace sueloQueManda(), y de ahi la lee
+  // tambien la calculadora. Si _htmlSuelo volviera a calcular por su cuenta,
+  // la tarjeta y la calculadora podrian decir dos suelos distintos — que es el
+  // 34,27 arriba y 34,28 abajo de Por cobrar.
+  ok(/var Q=sueloQueManda\(\);/.test(suelo) &&
+     !/_equilibrio\(/.test(suelo) &&
+     !/tasaDeReferencia\(/.test(suelo),
+     "_htmlSuelo no recalcula el suelo: lo lee de sueloQueManda()");
+  ok(/tasaDeReferencia\("BRL"\)/.test(sManda) && /tasaDeReferencia\("VES"\)/.test(sManda),
+     "y sueloQueManda sale de tasaDeReferencia, la misma que valora su dinero");
 
   // ── La version del servidor, en Configuracion ──────────────────────
   // Existe porque hubo que preguntarla a mano: se paso una tarde buscando un
@@ -7612,6 +7611,155 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(faltan.length === 0,
      "todas las funciones de formato que se llaman existen",
      faltan.length ? "faltan: " + faltan.join(", ") : "revisadas " + usadas.size);
+}
+
+
+// ── ARREGLO 110 · la calculadora: cruce, P2P o mitad y mitad ───────────────
+// Sus palabras del 11/10: "quiero que tambien me ayudes a saber cuanto es mi
+// tope piso para yo cambiar de reais a bolivares, porque tengo que tomar en
+// cuenta si en algun momento me toca hacer un P2P. No toda mi ganancia va a
+// ser nada mas asi como eso. Entonces tiene que hacer mi sistema hibrido".
+//
+// Todas las tasas van en BOLIVARES POR REAL (ARREGLO 74). Lo unico que cambia
+// entre cruzar y hacer P2P es el precio al que recupera el real, asi que los
+// seis casos salen de UNA cuenta y los otros dos modos son esa misma igualdad
+// despejada. Escribirlos como tres formulas sueltas es lo que hace que un modo
+// diga una cosa y otro la contraria (34,27 arriba y 34,28 abajo en Por cobrar).
+{
+  // Sus numeros de la captura del 11/10.
+  const M = 1000, ida = 188, V = 210, P = 201.49, USD = 5;
+  const Kc = F._calceK(V, P, 1), Kp = F._calceK(V, P, 0), Km = F._calceK(V, P, 0.5);
+  const gc = F._calceGan(M, ida, Kc), gp = F._calceGan(M, ida, Kp), gm = F._calceGan(M, ida, Km);
+
+  ok(Math.abs(gc.brl - M*(V-ida)/V) < 1e-9,
+     "cruzando, la ganancia en reales es M x (vuelta - ida) / vuelta",
+     gc.brl.toFixed(4));
+  // Su formula, tal y como la dio: G_VES = M_BRL x (T_Mercado - T_Cliente).
+  ok(Math.abs(gc.ves - M*(V-ida)) < 1e-9,
+     "y en bolivares es M x (vuelta - ida), su formula",
+     gc.ves.toFixed(2));
+  ok(Math.abs(gp.brl - M*(P-ida)/P) < 1e-9,
+     "con P2P es la misma cuenta con el SUELO en el sitio de la vuelta",
+     gp.brl.toFixed(4));
+  // Cruzar no toca Binance, asi que se queda la brecha entera. Es justo lo que
+  // ella explico: "si mas adelante tengo mas movimiento eso puede cambiar... y
+  // no hacer el p2p".
+  ok(gc.brl > gp.brl, "con estas tasas cruzar deja mas que el P2P",
+     gc.brl.toFixed(2) + " vs " + gp.brl.toFixed(2));
+  ok(gm.brl > gp.brl && gm.brl < gc.brl,
+     "y el mixto queda entre los dos, nunca fuera", gm.brl.toFixed(2));
+
+  // ── Los despejes son el INVERSO EXACTO del primer modo ─────────────
+  // Si no lo fueran, la tasa que la app le diga no daria la ganancia que la
+  // app le prometio en la pantalla anterior.
+  [[1,"cruce"],[0,"P2P"],[0.5,"mitad y mitad"],[0.3,"cruzando 30%"]].forEach(function(par){
+    const f = par[0], K = F._calceK(V, P, f), g = F._calceGan(M, ida, K).brl;
+    ok(Math.abs(F._calceIda(M, g, K) - ida) < 1e-9,
+       "despejar la ida devuelve la de partida (" + par[1] + ")");
+    if (f > 0)
+      ok(Math.abs(F._calceVuelta(M, ida, g, P, f) - V) < 1e-9,
+         "y despejar la vuelta tambien (" + par[1] + ")");
+  });
+  // Y al reves: la tasa que saca cumple la meta al centimo.
+  const meta = 20 * USD;
+  const Vn = F._calceVuelta(M, ida, meta, P, 1);
+  ok(Math.abs(F._calceGan(M, ida, F._calceK(Vn, P, 1)).brl - meta) < 1e-9,
+     "la vuelta que calcula da exactamente la meta", Vn.toFixed(2));
+  const In = F._calceIda(M, meta, F._calceK(V, P, 1));
+  ok(Math.abs(F._calceGan(M, In, F._calceK(V, P, 1)).brl - meta) < 1e-9,
+     "y la ida que calcula, tambien", In.toFixed(2));
+
+  // ── El tope sale de la MISMA cuenta, con meta cero ─────────────────
+  // "cuanto es mi tope piso para yo cambiar de reais a bolivares". Calcularlo
+  // aparte seria una segunda respuesta a la misma pregunta.
+  ok(Math.abs(F._calceIda(M, 0, Kc) - 1/Kc) < 1e-9 &&
+     Math.abs(F._calceIda(M, 0, Kp) - P) < 1e-9,
+     "el tope es la ida con meta cero: 1/K, y en P2P es su suelo",
+     F._calceIda(M, 0, Kp));
+  ok(F._calceGan(M, V, Kc).brl < 0,
+     "ofreciendo justo el tope en la ida ya no gana nada, por encima pierde");
+
+  // ── Lo que NO se puede inventar ────────────────────────────────────
+  // Sin las dos tasas no hay suelo y no se inventa: un suelo optimista es peor
+  // que ninguno, porque con el publica una tasa que no aguanta.
+  ok(F._calceK(V, null, 0) === null, "sin suelo, el modo P2P no da numero");
+  ok(F._calceK(null, P, 1) === null, "sin vuelta, el modo cruce no da numero");
+  ok(F._calceK(null, P, 0.5) === null, "y al mixto le hacen falta LAS DOS");
+  ok(F._calceK(V, P, 1.5) === null && F._calceK(V, P, -0.2) === null,
+     "un % de cruce fuera de 0..100 no da numero");
+  // La ganancia sale de los reales que entran, asi que no puede ser el monto
+  // entero. Antes de esto el despeje devolvia 0 o un negativo con cara de tasa.
+  ok(F._calceIda(M, M, Kc) === null && F._calceIda(M, M*2, Kc) === null,
+     "no se puede ganar el monto entero, ni mas");
+  ok(F._calceVuelta(M, ida, M, P, 1) === null,
+     "una meta imposible no devuelve una tasa rara: devuelve nada");
+  // El caso que solo aparece en el mixto: la parte que va por P2P ya se lleva
+  // mas que la meta, asi que no hay vuelta que la salve aunque la meta sea
+  // menor que el monto.
+  ok(F._calceVuelta(M, ida, 900, P, 0.5) === null,
+     "si la mitad en P2P ya se come la meta, no hay vuelta que valga");
+
+  // ── El suelo lo lee de UN sitio ────────────────────────────────────
+  const res = sacarFuncion("_htmlCalceRes");
+  ok(/sueloQueManda\(\)/.test(res) && !/_equilibrio\(/.test(res),
+     "la calculadora lee el suelo de sueloQueManda(), no lo recalcula");
+  // Y cuando el suelo falta, lo dice: no cae a cero ni a un numero de ejemplo.
+  ok(/No hay suelo todavía/.test(res),
+     "y si no hay suelo lo dice, en vez de inventarse uno");
+
+  // ── ARREGLO 32: teclear no puede repintar la pantalla ──────────────
+  const cgSet = sinComentarios(sacarFuncion("_cgSet"));
+  ok(!/\bR\(\)/.test(cgSet) && /getElementById\("cg-res"\)/.test(cgSet),
+     "teclear refresca el resultado por su id, nunca con R()");
+  ok(/_num\(val\)/.test(cgSet),
+     "y el campo pasa por _num(): con el teclado en español 5,16 no se vuelve 516");
+  // Un boton si cambia que campos se dibujan, pero tampoco usa R(): con R() se
+  // pierde donde estaba mirando.
+  const redib = sinComentarios(sacarFuncion("_cgRedibujar"));
+  ok(!/\bR\(\)/.test(redib) && /getElementById\("cg-card"\)/.test(redib),
+     "cambiar de modo rehace solo la tarjeta, por su id");
+  ["_cgModo","_cgFuente"].forEach(function(nom){
+    const f = sinComentarios(sacarFuncion(nom));
+    ok(!/\bR\(\)/.test(f) && /_cgRedibujar\(\)/.test(f),
+     nom + " rehace la tarjeta y no la pantalla entera");
+  });
+
+  // ── Los campos son de texto, que es lo que acepta la coma ──────────
+  const cuerpo = sacarFuncion("_htmlCalceCuerpo");
+  ok(/type='text' inputmode='decimal'/.test(cuerpo) && !/type='number'/.test(cuerpo),
+     "ningun campo de la calculadora es type=number");
+  ok((cuerpo.match(/oninput='_cgSet\(/g)||[]).length ===
+     (cuerpo.match(/<input /g)||[]).length,
+     "y todos los campos escriben con _cgSet, ninguno se lee con getElementById");
+
+  // ── En P2P no hay vuelta que ajustar ──────────────────────────────
+  // El retorno es su suelo y ella no lo pone. Un boton que no puede contestar
+  // nada es peor que no tenerlo: es el mismo fallo del ARREGLO 98, dos sitios
+  // para lo mismo con dos respuestas distintas.
+  ok(/esP2P\?"":btn\("_cgModo","vuelta"/.test(cuerpo),
+     "en P2P el boton de la tasa de vuelta no se dibuja");
+  ok(/if\(v==="p2p" && g\.modo==="vuelta"\) g\.modo="ida";/.test(sacarFuncion("_cgFuente")),
+     "y si estaba en ese modo, pasar a P2P la deja en uno que si contesta");
+
+  // ── Lo que se puede rellenar solo, se rellena solo ────────────────
+  // Su "USD/BRL 5,00" por omision es la tasa con la que la app YA valora todo
+  // su dinero, no un numero de ejemplo: con un 5,00 inventado la meta en
+  // dolares se convertiria mal a reales.
+  const cg = sacarFuncion("_cg");
+  // Anclado en la ASIGNACION, no en que tasaDeReferencia aparezca por ahi: la
+  // prueba negativa pasaba poniendo usdbrl:"5" y dejando la linea de rc viva
+  // pero sin usar. El nombre seguia ahi y la cuenta ya no — el mismo agujero
+  // que el ARREGLO 100 tuvo que cerrar con la expresion entera.
+  ok(/tasaDeReferencia\("BRL"\)/.test(cg) &&
+     /usdbrl:\(\(rc&&rc\.tasa>0\)/.test(cg),
+     "el USD/BRL arranca de su tasa de compra real, no de un 5,00 de ejemplo");
+  ok(/_misTasasPublicadas\(\)/.test(cg),
+     "y la ida y la vuelta arrancan de lo que publico");
+  // Son valores de trabajo de ESTE aparato. Sincronizarlos haria que el monto
+  // que teclea en el telefono le cambiara la pantalla de la PC a media cuenta
+  // — y es un precio de hace un minuto, como la lectura del mercado.
+  ok(!/DATA_KEYS = \[[^\]]*"calc"/.test(HTML),
+     "y no viajan entre aparatos: calc no esta en DATA_KEYS");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
