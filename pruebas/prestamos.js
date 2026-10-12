@@ -2557,10 +2557,13 @@ const _empate = fusionarConfig(
   {aperturaUsdt:2450.20, aperturaFecha:"2026-09-12"}, {aperturaUsdt:T2, aperturaFecha:T2});
 ok(_empate.aperturaUsdt===2544.79, "en un empate se queda la de este aparato");
 // El resto de config se sigue fusionando clave por clave, como siempre.
+// ARREGLO 115: la segunda clave era "ntfyCanal", que ahora esta prohibida.
+// Una prueba que fusiona una clave que la app borra al llegar no prueba lo
+// que dice probar: se cambia por otra viva.
 const _resto = fusionarConfig(
-  {moraMultaPct:2, ntfyCanal:"a"}, {moraMultaPct:T2, ntfyCanal:T1},
-  {moraMultaPct:5, ntfyCanal:"b"}, {moraMultaPct:T1, ntfyCanal:T2});
-ok(_resto.moraMultaPct===2 && _resto.ntfyCanal==="b",
+  {moraMultaPct:2, pct_sueldo:"a"}, {moraMultaPct:T2, pct_sueldo:T1},
+  {moraMultaPct:5, pct_sueldo:"b"}, {moraMultaPct:T1, pct_sueldo:T2});
+ok(_resto.moraMultaPct===2 && _resto.pct_sueldo==="b",
    "lo demas de config no cambia de comportamiento", JSON.stringify(_resto));
 
 // La tarjeta: los avisos no se pliegan (7 ajustes por −233,46 estaban dentro de
@@ -8189,6 +8192,52 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(/El de \\u201cel mercado se movió\\u201d no/.test(tar) ||
      /mercado se movió/.test(tar),
      "y dice cual de los avisos NO va a llegarle con la app cerrada");
+}
+
+
+// ── ARREGLO 115 · un solo sitio para los avisos al telefono ───────────────
+// Habia DOS sistemas de notificacion, cada uno con su tarjeta de campana en
+// Configuracion: ntfy y el del ARREGLO 114. Es el ARREGLO 98 otra vez. Y el
+// canal de ntfy era PUBLICO —en ntfy.sh un canal no lleva contrasena— asi que
+// por ahi salia, remesa por remesa, la ruta, el nombre del cliente y la
+// ganancia.
+{
+  const sinCom115 = HTML.replace(/\/\/[^\n]*/g, "");
+  // Nada de ntfy puede volver a ejecutarse. Se busca sin comentarios: los de
+  // este arreglo lo nombran para explicar por que se fue.
+  ["notificarNtfy","guardarCanalNtfy","ntfy-canal-inp","ntfy.sh",'_cfgAcc("ntfy"'].forEach(function(nom){
+    ok(sinCom115.indexOf(nom) < 0, "no queda nada de " + nom);
+  });
+  // Y el dominio sale del candado de contenido: dejarlo abierto es dejar una
+  // puerta por la que ya no pasa nadie (ARREGLO 104).
+  const CAB = require("fs").readFileSync(__dirname + "/../_headers", "utf8");
+  ok(CAB.indexOf("ntfy.sh") < 0, "ni el dominio en la cabecera de seguridad");
+  // El canal no puede volver desde un aparato viejo. Mientras siga guardado,
+  // sigue siendo un nombre que alguien puede usar para escuchar sus remesas.
+  ok(/_CONFIG_PROHIBIDO = \[[^\]]*"ntfyCanal"/.test(HTML),
+     "y el canal guardado se borra al llegar, como paso con modulos");
+
+  // El aviso de remesa NO se pierde: cambia de via.
+  const av = sacarFuncion("avisarAlTelefono");
+  ok(/apiFetch\("\/push\/ahora"/.test(av),
+     "la remesa registrada avisa por la via nueva, cifrada");
+  ok(/excluir:excluir/.test(av) && /_PUSH_ESTADO\.sus&&_PUSH_ESTADO\.sus\.endpoint/.test(av),
+     "y no le vuelve al aparato que la acaba de registrar");
+  // Fire-and-forget: la remesa ya esta guardada y esto no puede estorbarlo.
+  ok(/\.catch\(function\(\)\{\}\)/.test(av) && /try\{/.test(av),
+     "si falla el aviso, el guardado no se entera");
+  // Los dos sitios que avisaban siguen avisando.
+  // Los dos sitios que avisaban siguen avisando, y la llamada tiene que ser
+  // una INSTRUCCION suelta: contar cuantas veces aparece el nombre dejaba
+  // pasar un "0&&avisarAlTelefono(...)", que la apaga sin quitarla.
+  const sueltas = sinCom115.match(/\n  avisarAlTelefono\("/g) || [];
+  ok(sueltas.length === 2,
+     "siguen los dos avisos de remesa, y ninguno esta apagado con un &&",
+     sueltas.length);
+  ok(/\n  avisarAlTelefono\("\u{1F4B8} Remesa registrada"/u.test(sinCom115),
+     "el de las remesas normales");
+  ok(/\n  avisarAlTelefono\("\u{1F4B8} Remesa EE\.UU registrada"/u.test(sinCom115),
+     "y el de las de EE.UU.");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
