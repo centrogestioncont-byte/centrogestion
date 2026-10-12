@@ -79,6 +79,7 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "_origenTasaCotiza", "_rotuloPublicada", "_getTasaClienteBRL",
                     "_getTasaVueltaVESaBRL", "_convOtraTasa", "_convVolverPublicada",
                     "_convSetOtra", "_refrescarConversor", "_htmlTasaCotiza", "_reconvertirBCV", "_htmlFilasTasas",
+                    "_htmlAvisoCalce",
                     "_saldoConProblema", "_notaSaldoCuenta", "_cuentaDeFoto",
                     "_deudaTarjeta", "_cuentasEnNegativo", "_ruta",
                     "_cgTasaResultado", "_htmlPublicarRes", "_cgPublicarRes",
@@ -7535,8 +7536,12 @@ console.log("\n— FASE 2: la cuenta madre —");
      "cambiar de metodo limpia lo que ya no aplica");
   // Y se dice que ahi no hay comision de Binance: es la diferencia entera
   // entre los dos metodos y no se puede dejar implicita.
-  ok(/sin comisión de Binance/.test(rn),
+  // ARREGLO 120: ese recuadro se mudo a _htmlAvisoCalce() para poder
+  // refrescarlo al teclear. Lo que prueba esta guardia no cambia.
+  ok(/sin comisión de Binance/.test(sinCom(sacarFuncion("_htmlAvisoCalce"))),
      "la pantalla dice que no hay comision de Binance");
+  ok(/_htmlAvisoCalce\(_rTx, ruta\)/.test(rn),
+     "y rNueva lo dibuja desde ahi");
 }
 
 // ── ARREGLO 108 · «lo movió la app por error» ────────────────────────────
@@ -8654,6 +8659,49 @@ console.log("\n— FASE 2: la cuenta madre —");
   // El boton de publicar nombra la ruta, no "ida".
   ok(/Publicar "\+f2\(r\.v\)\+" en "\+rot/.test(sinComentarios(sacarFuncion("_htmlPublicarRes"))),
      "el boton de publicar nombra la ruta");
+}
+
+
+// ── ARREGLO 120 · el aviso del calce decia que no podia, calculando ──────
+// Lo vio ella el 12/10 registrando una vuelta de 147.000 Bs: "⚠️ Sin la permuta
+// y la tasa de venta no hay ganancia que calcular" con las dos escritas y con
+// los USDT ya calculados justo debajo. upC() refrescaba los montos por su id y
+// ese recuadro no tenia id, asi que se quedaba del ultimo repintado.
+{
+  const av = sinComentarios(sacarFuncion("_htmlAvisoCalce"));
+  const up = sinComentarios(sacarFuncion("upC"));
+  const rn2 = sinComentarios(sacarFuncion("rNueva"));
+
+  // 1) Sale de UN sitio, y lo refrescan la pantalla y upC.
+  ok(/_htmlAvisoCalce\(/.test(rn2), "rNueva dibuja el aviso desde la funcion");
+  ok(/_htmlAvisoCalce\(res, ruta\)/.test(up), "y upC lo vuelve a dibujar al teclear");
+  ok(/getElementById\("calce-nota-"\+key\)/.test(up),
+     "por su id, como los montos (ARREGLO 55)");
+  ok(/id='calce-nota-tx'/.test(HTML), "y el hueco existe en la pantalla");
+
+  // 2) Lee de cTx(), no de variables sueltas de la pantalla (ARREGLO 98).
+  ok(/res\.permuta>0 && res\.tv>0/.test(av),
+     "decide con lo que devuelve cTx, no con las variables de la pantalla");
+  ok(!/\btvAuto\b|\btcAuto\b/.test(av), "sin releer las de rNueva");
+
+  // 3) Y dice CUAL falta. "Sin la permuta y la tasa de venta" con una puesta
+  //    manda a revisar la que ya esta bien.
+  ok(/la tasa de permuta y la de venta/.test(av) && /\bFalta \"\+falta/.test(av.replace(/\\u[0-9a-f]{4}/g,"")) || /Falta "\+falta/.test(av),
+     "dice cual de las dos falta");
+
+  // Funcional: los tres estados, con sus numeros del 12/10.
+  const ruta = {orig:"VES", dest:"BRL"};
+  const vacio = F._htmlAvisoCalce({calce:true, permuta:0, tv:0, tc:0}, ruta);
+  const media = F._htmlAvisoCalce({calce:true, permuta:188.88, tv:0, tc:0}, ruta);
+  const lleno = F._htmlAvisoCalce({calce:true, permuta:188.88, tv:5.09, tc:961.3992}, ruta);
+  ok(/Falta/.test(vacio) && /permuta/.test(vacio) && /venta/.test(vacio),
+     "sin nada escrito, pide las dos");
+  ok(/Falta/.test(media) && /venta/.test(media) && !/permuta y/.test(media),
+     "con la permuta puesta, pide solo la de venta", media.slice(0,120));
+  ok(!/Falta/.test(lleno) && /961,3992|961\.3992/.test(lleno),
+     "y con las dos, el aviso se va y sale el costo implicito", lleno.slice(0,160));
+  ok(F._htmlAvisoCalce({calce:false, permuta:0, tv:0}, ruta) === "",
+     "en P2P no se dibuja nada");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

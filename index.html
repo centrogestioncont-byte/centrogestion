@@ -2810,7 +2810,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261012_v202";
+var APP_VERSION = "20261012_v203";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -17814,6 +17814,48 @@ setInterval(function(){ _revisarMesSinCerrar(); }, 300000);
 
 
 // upC — live calculation update
+// ═══════════════════════════════════════════════════════════════════════
+// ARREGLO 120 · el aviso del calce se quedaba pegado diciendo que no podía
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Lo vio ella el 12/10 registrando una vuelta de 147.000 Bs: la pantalla decía
+// **"⚠️ Sin la permuta y la tasa de venta no hay ganancia que calcular"** con
+// las dos escritas (188,88 y 5,09) y con los USDT ya calculados justo debajo.
+//
+// Reproducido en Chromium con su export:
+//
+//     campos vacíos ...................  sale el ⚠️        (correcto)
+//     escribe 188,88 y 5,09 ...........  el ⚠️ SE QUEDA, y los USDT sí salen
+//     se repinta la pantalla ..........  el ⚠️ se va y sale el recuadro verde
+//
+// La causa: `upC()` refresca por su id los montos (`s1-`, `s2-`, `s3-`, `cp-`)
+// y la línea de tasas, pero ese recuadro no tenía id, así que se quedaba del
+// último repintado — cuando los campos estaban vacíos. Es el ARREGLO 55 otra
+// vez: lo que se recalcula al teclear tiene que refrescarse al teclear, o la
+// pantalla enseña dos cosas que no cuadran entre sí.
+//
+// **Y un aviso que dice "no puedo calcular" mientras calcula es peor que no
+// tenerlo**: es lo que enseña a no leer los avisos, y en esta app los avisos
+// cuestan dinero.
+//
+// Sale de aquí y de ningún otro sitio, y lee de `cTx()` —la misma que decide
+// la ganancia que se guarda— en vez de las variables sueltas de la pantalla,
+// que es lo que ya mordía en el ARREGLO 98.
+function _htmlAvisoCalce(res, ruta){
+  if(!res || !res.calce) return "";
+  var o=(ruta&&ruta.orig)||"VES", d=(ruta&&ruta.dest)||"BRL";
+  if(res.permuta>0 && res.tv>0)
+    return "<div style='background:var(--mo6-a);border:1px solid var(--mo5);border-radius:8px;padding:9px 12px;margin-bottom:8px;font-size:11.5px;color:var(--tx2)'>"+
+      "Aqu\u00ed no pasa nada por Binance: los "+o+" se quedan en tu cuenta y los "+d+" salen de la tuya."+
+      "<br>Tu costo impl\u00edcito sale en <b>"+f4(res.tc)+" "+o+"/USDT</b> · sin comisión de Binance."+
+      "</div>";
+  // Y se dice CUÁL falta, no "las dos": con una puesta, "sin la permuta y la
+  // tasa de venta" manda a revisar la que ya está bien.
+  var falta = (!(res.permuta>0) && !(res.tv>0)) ? "la tasa de permuta y la de venta"
+            : (!(res.permuta>0) ? "la tasa de permuta" : "la tasa de venta de USDT");
+  return "<div style='background:var(--avi-sup2);border:1px solid var(--avi-ln);border-radius:8px;padding:9px 12px;margin-bottom:8px;font-size:11.5px;color:var(--avi-tx)'>"+
+    "\u26a0\ufe0f Falta "+falta+" — sin eso no hay ganancia que calcular, y no se inventa ninguna.</div>";
+}
 function upC(key){
   var res=key==="tx"?cTx():cTxE();
   var ok=res.am>0&&res.tdia>0&&res.tc>0&&res.tv>0;
@@ -17845,6 +17887,10 @@ function upC(key){
   if(s2&&!ok)s2.innerHTML="";
   if(s3&&ok)s3.innerHTML="<div class='step-box' style='background:var(--mal-sup);border:1px solid var(--rj3a33)'><span style='font-size:11px;color:var(--mal)'>"+f0(res.cant)+" "+ruta.dest+" ÷ "+f4(res.tv)+" = </span><span style='font-weight:700;font-size:14px;color:var(--mal)'>−"+f2(res.uv)+" USDT</span></div>";
   if(s3&&!ok)s3.innerHTML="";
+  // ARREGLO 120: el recuadro del calce se refresca con lo demas. Era el unico
+  // trozo que cambia al teclear y no tenia id.
+  var cn=document.getElementById("calce-nota-"+key);
+  if(cn) cn.innerHTML=_htmlAvisoCalce(res, ruta);
 }
 
 // ── INVENTORY HELPERS ────────────────────────────────
@@ -25751,12 +25797,10 @@ function rNueva(){
         "<div class='fl'><label>Tasa de permuta (Bs por real)</label><input type='text' inputmode='decimal' placeholder='ej: 183,59' value='"+(f.permuta||"")+"' oninput='S.tx.permuta=_num(this.value);upC(\"tx\")'></div>"+
         "<div class='fl'><label>Tasa venta USDT ("+ruta.dest+"/USDT)</label><input type='text' inputmode='decimal' placeholder='ej: 948' value='"+(f.tv_manual||tvAuto||"")+"' oninput='S.tx.tv_manual=_num(this.value);upC(\"tx\")'></div>"+
       "</div>"+
-      ((_rTx.permuta>0&&tv>0)
-        ?"<div style='background:var(--mo6-a);border:1px solid var(--mo5);border-radius:8px;padding:9px 12px;margin-bottom:8px;font-size:11.5px;color:var(--tx2)'>"+
-           "Aquí no pasa nada por Binance: los "+ruta.orig+" se quedan en tu cuenta y los "+ruta.dest+" salen de la tuya."+
-           "<br>Tu costo implícito sale en <b>"+f4(tc)+" "+ruta.orig+"/USDT</b> · sin comisión de Binance."+
-         "</div>"
-        :"<div style='background:var(--avi-sup2);border:1px solid var(--avi-ln);border-radius:8px;padding:9px 12px;margin-bottom:8px;font-size:11.5px;color:var(--avi-tx)'>⚠️ Sin la permuta y la tasa de venta no hay ganancia que calcular — no se inventa ninguna.</div>")
+      // ARREGLO 120: con su id, para que upC() lo refresque al teclear. Sin id
+      // se quedaba del ultimo repintado y decia "no puedo calcular" con la
+      // cuenta ya hecha debajo.
+      "<div id='calce-nota-tx'>"+_htmlAvisoCalce(_rTx, ruta)+"</div>"
     :
     // Mostrar tasas auto si hay inventario
     (hasInv?

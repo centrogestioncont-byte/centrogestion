@@ -1151,6 +1151,45 @@ tres tarifas —son 0,3 % con mínimo, 54 fijos, o nada—. Dice "comisión del 
 control viejo tiene que **quitar el viejo**, no ponerse al lado. Lo mismo valió
 para `S.config.modulos` (FASE B) y para los dos "deberías tener" del cierre.
 
+### El aviso del calce decía que no podía, calculando (ARREGLO 120)
+
+Lo vio ella el 12/10 registrando una vuelta de 147.000 Bs: la pantalla decía
+**"⚠️ Sin la permuta y la tasa de venta no hay ganancia que calcular"** con las
+dos escritas (188,88 y 5,09) y con los USDT ya calculados justo debajo.
+
+Reproducido en Chromium con su export, tecleando de verdad en el campo:
+
+```
+campos vacíos ..............  sale el ⚠️           correcto
+escribe la permuta .........  el ⚠️ SE QUEDA       y los USDT sí salen
+se repinta la pantalla .....  el ⚠️ se va
+```
+
+**La causa:** `upC()` refresca por su id los montos (`s1-`, `s2-`, `s3-`, `cp-`)
+y la línea de tasas, pero ese recuadro **no tenía id**, así que se quedaba del
+último repintado — cuando los campos estaban vacíos. Es el ARREGLO 55 otra vez:
+**lo que se recalcula al teclear tiene que refrescarse al teclear**, o la
+pantalla enseña dos cosas que no cuadran entre sí.
+
+Y un aviso que dice *"no puedo calcular"* mientras calcula es peor que no
+tenerlo: es lo que enseña a no leer los avisos, y en esta app los avisos cuestan
+dinero.
+
+- **Sale de `_htmlAvisoCalce()` y de ningún otro sitio**, y lo dibujan la
+  pantalla y `upC()`.
+- **Lee de `cTx()`**, no de las variables sueltas de `rNueva` — que es justo lo
+  que mordía en el ARREGLO 98.
+- **Y dice CUÁL falta.** *"Sin la permuta y la tasa de venta"* con una puesta
+  manda a revisar la que ya está bien.
+
+**Lo que hay que saber de ese formulario, porque no es obvio:** la **tasa de
+venta de USDT la pone la app sola** desde el inventario (medido: 5,09 con sus
+lotes). La única que escribe ella es la **permuta**, y es la tasa de **ida** a la
+que va a entregar esos bolívares — con 188,88 sobre 147.000 Bs y 700 R$
+entregados salen **15,38 USDT**. Por el otro camino, *Con USDT (P2P)*, la app usa
+sus lotes y con sus datos sale **17,36 USDT**: no es que uno esté mal, es que son
+dos operaciones distintas y hay que elegir la que de verdad va a hacer.
+
 ### La tasa de referencia sale sola — no la escribas a mano
 
 Antes mandaba lo que ella escribía en el panel 💱, y mandaba para siempre:
