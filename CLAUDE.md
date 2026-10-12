@@ -1151,6 +1151,45 @@ tres tarifas —son 0,3 % con mínimo, 54 fijos, o nada—. Dice "comisión del 
 control viejo tiene que **quitar el viejo**, no ponerse al lado. Lo mismo valió
 para `S.config.modulos` (FASE B) y para los dos "deberías tener" del cierre.
 
+### El aviso del calce decía que no podía, calculando (ARREGLO 120)
+
+Lo vio ella el 12/10 registrando una vuelta de 147.000 Bs: la pantalla decía
+**"⚠️ Sin la permuta y la tasa de venta no hay ganancia que calcular"** con las
+dos escritas (188,88 y 5,09) y con los USDT ya calculados justo debajo.
+
+Reproducido en Chromium con su export, tecleando de verdad en el campo:
+
+```
+campos vacíos ..............  sale el ⚠️           correcto
+escribe la permuta .........  el ⚠️ SE QUEDA       y los USDT sí salen
+se repinta la pantalla .....  el ⚠️ se va
+```
+
+**La causa:** `upC()` refresca por su id los montos (`s1-`, `s2-`, `s3-`, `cp-`)
+y la línea de tasas, pero ese recuadro **no tenía id**, así que se quedaba del
+último repintado — cuando los campos estaban vacíos. Es el ARREGLO 55 otra vez:
+**lo que se recalcula al teclear tiene que refrescarse al teclear**, o la
+pantalla enseña dos cosas que no cuadran entre sí.
+
+Y un aviso que dice *"no puedo calcular"* mientras calcula es peor que no
+tenerlo: es lo que enseña a no leer los avisos, y en esta app los avisos cuestan
+dinero.
+
+- **Sale de `_htmlAvisoCalce()` y de ningún otro sitio**, y lo dibujan la
+  pantalla y `upC()`.
+- **Lee de `cTx()`**, no de las variables sueltas de `rNueva` — que es justo lo
+  que mordía en el ARREGLO 98.
+- **Y dice CUÁL falta.** *"Sin la permuta y la tasa de venta"* con una puesta
+  manda a revisar la que ya está bien.
+
+**Lo que hay que saber de ese formulario, porque no es obvio:** la **tasa de
+venta de USDT la pone la app sola** desde el inventario (medido: 5,09 con sus
+lotes). La única que escribe ella es la **permuta**, y es la tasa de **ida** a la
+que va a entregar esos bolívares — con 188,88 sobre 147.000 Bs y 700 R$
+entregados salen **15,38 USDT**. Por el otro camino, *Con USDT (P2P)*, la app usa
+sus lotes y con sus datos sale **17,36 USDT**: no es que uno esté mal, es que son
+dos operaciones distintas y hay que elegir la que de verdad va a hacer.
+
 ### La tasa de referencia sale sola — no la escribas a mano
 
 Antes mandaba lo que ella escribía en el panel 💱, y mandaba para siempre:
@@ -2580,6 +2619,66 @@ copias** de la regla vieja. Aquí eran cuatro sitios leyendo `saldo < 0` por su
 cuenta, y el 95 arregló uno. La guardia de `pruebas/prestamos.js` cubre los
 tres, y lo que fija de la del Resumen es que **no vuelva a haber una copia
 propia del filtro**.
+
+#### Y el 101 se dejó NUEVE copias, no una (ARREGLO 119)
+
+Lo vio ella el 12/10 con PagBank ya cuadrado contra el banco al céntimo: la lista
+de Balance de Cuentas le pintaba un **⚠️ rojo** sobre una tarjeta que debía 113
+de un límite de 1.004.
+
+El 101 dejó escrito *"hay que buscar todas las copias de la regla vieja"* y se
+buscaron cuatro. Faltaban:
+
+```
+rCapitalTotal     la fila de la lista          ← el ⚠️ que ella vio
+rCapitalTotal     el panel "Salud de cartera"
+rHistorialMeses   los saldos de meses cerrados
+6 selectores      "de qué cuenta sale el dinero" — decían "⚠️ déficit"
+                  sobre la deuda normal de una tarjeta
+```
+
+**La causa no era el descuido: era que no había dónde preguntarlo.** Nueve sitios
+escribían `saldo < 0` cada uno por su cuenta, así que arreglar la regla en uno no
+arreglaba nada en los otros ocho. Ahora se pregunta en `_saldoConProblema()`, y
+la guardia **recorre el archivo y prohíbe que vuelva a escribirse suelto** en
+cualquier función que no sea esa o `_deudaTarjeta()` (donde `saldo < 0` **sí** es
+correcto: es la definición de lo que debe).
+
+- **En el selector una tarjeta dice `💳 debes 113,48`**, no "⚠️ déficit". Lo que
+  tiene es deuda, que es para lo que está.
+- **La foto de un mes cerrado no guarda si era tarjeta**, solo `cuentaId`: se mira
+  la cuenta viva por su id (`_cuentaDeFoto`).
+
+**Y quitar el ⚠️ dejó la deuda pintada del VERDE DEL DINERO** — el ARREGLO 95 por
+tercera vez. Medido en Chromium: su −113,48 salía en `#31db7e`, el mismo verde
+que un saldo a favor. Va en **ámbar** y con *"💳 debes"* debajo, como ya se hizo en
+Inventario USDT. **Arreglar una alarma falsa no puede convertir una deuda en
+dinero.**
+
+#### Y "ida"/"vuelta" era MI vocabulario, no el suyo (ARREGLO 119)
+
+Sus palabras: *"lo que quiero saber es cuál es la que me está sugiriendo de Brasil
+a Vzla y cuál de Vzla a Brasil"*.
+
+La calculadora contestaba *"Bs por real en la vuelta"*. Ella piensa en **rutas**
+—es como las publica y como se las pide el cliente— y tenía que traducir dos
+palabras en cada número. Traducirlas al revés cuesta dinero: las dos se escriben
+en bolívares por real y significan lo contrario (ARREGLO 74).
+
+La tabla vive en `_RUTA_DE` y la leen el resultado, el botón de publicar, los
+rótulos de los campos, los botones de modo y el tope. Escrita en cada sitio, un
+día uno diría Brasil → Venezuela donde otro dice lo contrario.
+
+- **El titular lleva la ruta con palabras** y debajo **quién da qué**
+  (*"el cliente te da bolívares, tú entregas reales"*), que es lo que no se podía
+  deducir de "vuelta".
+- **Dentro de una frase van solo las banderas** (`🇻🇪→🇧🇷`): la ruta entera no
+  cabe en un botón ni en una línea de texto. Comprobado a 390, 412, 768 y 1280 px:
+  ningún botón se desborda.
+- **Y el tope se contradecía solo.** Decía *"Tu tope en 🇧🇷→🇻🇪 es 220,00 — la
+  vuelta que te dan"*: dos rutas en una frase sin decir qué hace cada una. Ahora
+  dice **lo que es y de dónde sale** — *"Lo más que puedes dar en 🇧🇷→🇻🇪 sin
+  perder son 220,00 Bs por real, y sale de los 220,00 que te dan en 🇻🇪→🇧🇷"*.
 
 #### Lo que esto NO repara
 

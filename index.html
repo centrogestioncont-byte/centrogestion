@@ -2810,7 +2810,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261012_v201";
+var APP_VERSION = "20261012_v203";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -3958,10 +3958,66 @@ function _htmlHistorialPisados(){
 //
 // La tarjeta de credito queda FUERA: ahi el negativo es la deuda, que es lo
 // normal. Su aviso es el del limite, y va en su propia tarjeta.
+// ═══════════════════════════════════════════════════════════════════════
+// ARREGLO 119 · UNA puerta para "¿este saldo tiene un problema?"
+// ═══════════════════════════════════════════════════════════════════════
+//
+// El ARREGLO 101 dejó escrito que había que buscar TODAS las copias de la regla
+// vieja, y se buscaron cuatro. Quedaban NUEVE. Lo vio ella el 12/10 con PagBank
+// ya cuadrado contra el banco al céntimo: la lista de Balance de Cuentas le
+// pintaba un ⚠️ rojo sobre una tarjeta que debía 113 de un límite de 1.004.
+//
+// Las que faltaban:
+//
+//     rCapitalTotal      la fila de la lista        ← el ⚠️ que ella vio
+//     rCapitalTotal      el panel "Salud de cartera"
+//     rHistorialMeses    los saldos de meses cerrados
+//     6 selectores       de qué cuenta sale el dinero, en Nueva remesa,
+//                        EE.UU, inventario y el desglose de entregas
+//
+// La causa no era el descuido: era que NO HABÍA dónde preguntarlo. Nueve sitios
+// escribían "saldo < 0" cada uno por su cuenta, así que arreglar la regla en uno
+// no arreglaba nada en los otros ocho. Ahora se pregunta aquí, y la guardia
+// prohíbe que vuelva a escribirse suelto.
+//
+// LA REGLA, que es la del ARREGLO 95: en una cuenta de banco el negativo no
+// existe y es un aviso; en una TARJETA el negativo es lo normal —es lo que
+// debe— y lo que avisa es pasarse del límite.
+function _saldoConProblema(c){
+  if(!c) return false;
+  if(c.esTarjeta){
+    var lim=parseFloat(c.limiteTarjeta)||0;
+    return lim>0 && _deudaTarjeta(c)>lim;
+  }
+  return (parseFloat(c.saldo)||0) < -0.005;
+}
+// Lo que se escribe al lado de una cuenta cuando se elige de dónde sale el
+// dinero. En una tarjeta "⚠️ déficit" es falso y encima asusta: lo que tiene es
+// deuda, que es para lo que está. Se dice con palabras y sin alarma (ARREGLO
+// 95: una deuda tampoco se pinta como dinero).
+function _notaSaldoCuenta(c, textoProblema){
+  if(!c) return "";
+  if(c.esTarjeta){
+    if(_saldoConProblema(c)) return " \u26a0\ufe0f pasada del l\u00edmite";
+    var d=_deudaTarjeta(c);
+    return d>0 ? " \ud83d\udcb3 debes "+f2(d) : "";
+  }
+  return _saldoConProblema(c) ? (textoProblema||" \u26a0\ufe0f") : "";
+}
+// La foto de saldos de un mes cerrado guarda nombre, moneda, saldo y cuentaId,
+// pero no si era una tarjeta. Se mira la cuenta viva por su id; si ya no
+// existe, se queda con lo que hay y se lee como una cuenta normal.
+function _cuentaDeFoto(sc){
+  var c=(S.cuentas||[]).find(function(x){return String(x.id)===String(sc&&sc.cuentaId);});
+  return c ? {saldo:sc.saldo, esTarjeta:c.esTarjeta, limiteTarjeta:c.limiteTarjeta} : sc;
+}
 function _cuentasEnNegativo(){
+  // ARREGLO 119: las tarjetas se siguen quedando fuera de ESTE aviso —el de
+  // "una cuenta en negativo no existe en un banco"— porque de una tarjeta
+  // avisa otra cosa, pasarse del límite, y eso lo dice su propia pantalla.
   return (S.cuentas||[]).filter(function(c){
     if(c.activa===false || c.esTarjeta) return false;
-    return (parseFloat(c.saldo)||0) < -0.005;
+    return _saldoConProblema(c);
   });
 }
 function _htmlAvisoSaldoNegativo(){
@@ -6189,7 +6245,7 @@ function rHistorialMeses(){
       "<div style='display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px'>";
     cierre.saldosCierre.forEach(function(sc){
       var col=monColores[sc.moneda]||"var(--tx2)";
-      var isNeg=sc.saldo<0;
+      var isNeg=_saldoConProblema(_cuentaDeFoto(sc));   // ARREGLO 119
       saldosHtml += "<div style='background:var(--sup2b);border-radius:10px;padding:11px 13px;border-left:3px solid "+(isNeg?"var(--mal)":col)+"'>"+
         "<div style='font-size:10px;color:var(--tx3);margin-bottom:4px;font-weight:700'>"+_escAud(sc.nombre)+"</div>"+
         "<div style='font-size:17px;font-weight:900;color:"+(isNeg?"var(--mal)":col)+"'>"+f2(sc.saldo)+" "+sc.moneda+"</div>"+
@@ -8515,7 +8571,7 @@ function _txEntregasHTML(cuentasDest, destMon){
       cuentasDest.map(function(c){
         var s=parseFloat(c.saldo)||0;
         return "<option value='"+c.id+"'"+(p.cuentaId===c.id?" selected":"")+">"+
-          _escAud(c.nombre)+" ("+f2(s)+" "+destMon+")"+(s<0?" ⚠️":"")+"</option>";
+          _escAud(c.nombre)+" ("+f2(s)+" "+destMon+")"+_notaSaldoCuenta(c)+"</option>";
       }).join("");
     h+="<div style='display:flex;gap:6px;align-items:center;margin-bottom:4px'>"+
          "<input type='text' inputmode='decimal' placeholder='0,00' value='"+(p.monto||"")+"' oninput='txEntregaSet("+i+",\"monto\",this.value)' onblur='R()' style='flex:1;min-width:70px;padding:8px;border:1.5px solid var(--ln);border-radius:8px;font-size:13px;font-family:inherit'>"+
@@ -13128,9 +13184,7 @@ function rConfigAdmin(){
       // -es lo que debe-, asi que no se pinta como alarma. Lo que si avisa ahi
       // es pasarse del limite, que es otra cosa y tiene su propia guardia.
       var esTj=!!c.esTarjeta, deuda=_deudaTarjeta(c);
-      var limTj=parseFloat(c.limiteTarjeta)||0;
-      var pasada=esTj&&limTj>0&&deuda>limTj;
-      var isNeg=esTj ? pasada : (saldo<0);
+      var isNeg=_saldoConProblema(c);   // ARREGLO 119: la puerta única
       var pct=maxS>0?Math.min(100,Math.abs(saldo)/maxS*100):0;
       var bc=isNeg?"var(--mal-ln)":cfg.color;
       listaCuentas+=
@@ -13847,7 +13901,9 @@ function rCapitalTotal(){
   // ── Filas de cuentas — Opción B: expandibles con ✏️ ───────────────
   var capRows = capOrdenado.map(function(item,idxOrd){
     var saldo = parseFloat(item.saldo)||0;
-    var isNeg = saldo < 0;
+    // ARREGLO 119: por la puerta única. Escrito "saldo < 0" aquí, una tarjeta
+    // con 113 de deuda y 1.004 de límite salía con ⚠️ rojo todos los días.
+    var isNeg = _saldoConProblema(item);
     var lim   = _RATE_LIMITS[item.moneda];
     var rate  = getRateToUsdt(item.moneda);
     var rateOk= rate&&(!lim||(rate>=lim[0]&&rate<=lim[1]));
@@ -13872,7 +13928,16 @@ function rCapitalTotal(){
           "<div style='font-size:11.5px;color:var(--tx4)'>"+item.moneda+(fuenteTasa?" · "+fuenteTasa:"")+"</div>"+
         "</div>"+
         "<div style='text-align:right;flex-shrink:0'>"+
-          "<div style='font-size:13px;font-weight:800;color:"+(isNeg?"var(--mal)":"var(--ok)")+"'>"+(isNeg?"⚠️ ":"")+f2(saldo)+"</div>"+
+          // ARREGLO 119 (y 95 por tercera vez): quitarle el ⚠️ a la tarjeta la
+          // dejaba pintada en el MISMO verde que el dinero. Medido: su
+          // -113,48 salía en #31db7e, el verde de un saldo a favor. Una deuda
+          // no es un saldo —no la puede gastar— así que va en ámbar y con
+          // palabras, igual que ya se hizo en Inventario USDT.
+          "<div style='font-size:13px;font-weight:800;color:"+
+            (isNeg?"var(--mal)":(item.esTarjeta&&_deudaTarjeta(item)>0)?"var(--avi)":"var(--ok)")+
+            "'>"+(isNeg?"⚠️ ":"")+f2(saldo)+"</div>"+
+          ((!isNeg&&item.esTarjeta&&_deudaTarjeta(item)>0)
+            ? "<div style='font-size:10.5px;color:var(--avi-tx);font-weight:700'>\ud83d\udcb3 debes</div>" : "")+
           (usdt!==null
             ? "<div style='font-size:11px;color:var(--info);font-weight:600'>≈ "+f2(usdt)+" USDT</div>"
             : "<div style='font-size:11.5px;color:var(--mal);font-weight:700'>⚠️ sin tasa</div>")+
@@ -13954,7 +14019,7 @@ function rCapitalTotal(){
   var riesgoGlobal = riesgoScore<0.5?"🟢 Cartera estable":riesgoScore<1.5?"🟡 Riesgo moderado":"🔴 Alta exposición VES";
 
   // Cuentas negativas
-  var negCuentas = cap.filter(function(c){return (parseFloat(c.saldo)||0)<0;});
+  var negCuentas = cap.filter(_saldoConProblema);   // ARREGLO 119: la misma puerta
 
   var panelSalud =
     "<div style='background:var(--sup);border:1.5px solid var(--ln2);border-radius:14px;padding:14px;margin-bottom:12px'>" +
@@ -17749,6 +17814,48 @@ setInterval(function(){ _revisarMesSinCerrar(); }, 300000);
 
 
 // upC — live calculation update
+// ═══════════════════════════════════════════════════════════════════════
+// ARREGLO 120 · el aviso del calce se quedaba pegado diciendo que no podía
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Lo vio ella el 12/10 registrando una vuelta de 147.000 Bs: la pantalla decía
+// **"⚠️ Sin la permuta y la tasa de venta no hay ganancia que calcular"** con
+// las dos escritas (188,88 y 5,09) y con los USDT ya calculados justo debajo.
+//
+// Reproducido en Chromium con su export:
+//
+//     campos vacíos ...................  sale el ⚠️        (correcto)
+//     escribe 188,88 y 5,09 ...........  el ⚠️ SE QUEDA, y los USDT sí salen
+//     se repinta la pantalla ..........  el ⚠️ se va y sale el recuadro verde
+//
+// La causa: `upC()` refresca por su id los montos (`s1-`, `s2-`, `s3-`, `cp-`)
+// y la línea de tasas, pero ese recuadro no tenía id, así que se quedaba del
+// último repintado — cuando los campos estaban vacíos. Es el ARREGLO 55 otra
+// vez: lo que se recalcula al teclear tiene que refrescarse al teclear, o la
+// pantalla enseña dos cosas que no cuadran entre sí.
+//
+// **Y un aviso que dice "no puedo calcular" mientras calcula es peor que no
+// tenerlo**: es lo que enseña a no leer los avisos, y en esta app los avisos
+// cuestan dinero.
+//
+// Sale de aquí y de ningún otro sitio, y lee de `cTx()` —la misma que decide
+// la ganancia que se guarda— en vez de las variables sueltas de la pantalla,
+// que es lo que ya mordía en el ARREGLO 98.
+function _htmlAvisoCalce(res, ruta){
+  if(!res || !res.calce) return "";
+  var o=(ruta&&ruta.orig)||"VES", d=(ruta&&ruta.dest)||"BRL";
+  if(res.permuta>0 && res.tv>0)
+    return "<div style='background:var(--mo6-a);border:1px solid var(--mo5);border-radius:8px;padding:9px 12px;margin-bottom:8px;font-size:11.5px;color:var(--tx2)'>"+
+      "Aqu\u00ed no pasa nada por Binance: los "+o+" se quedan en tu cuenta y los "+d+" salen de la tuya."+
+      "<br>Tu costo impl\u00edcito sale en <b>"+f4(res.tc)+" "+o+"/USDT</b> · sin comisión de Binance."+
+      "</div>";
+  // Y se dice CUÁL falta, no "las dos": con una puesta, "sin la permuta y la
+  // tasa de venta" manda a revisar la que ya está bien.
+  var falta = (!(res.permuta>0) && !(res.tv>0)) ? "la tasa de permuta y la de venta"
+            : (!(res.permuta>0) ? "la tasa de permuta" : "la tasa de venta de USDT");
+  return "<div style='background:var(--avi-sup2);border:1px solid var(--avi-ln);border-radius:8px;padding:9px 12px;margin-bottom:8px;font-size:11.5px;color:var(--avi-tx)'>"+
+    "\u26a0\ufe0f Falta "+falta+" — sin eso no hay ganancia que calcular, y no se inventa ninguna.</div>";
+}
 function upC(key){
   var res=key==="tx"?cTx():cTxE();
   var ok=res.am>0&&res.tdia>0&&res.tc>0&&res.tv>0;
@@ -17780,6 +17887,10 @@ function upC(key){
   if(s2&&!ok)s2.innerHTML="";
   if(s3&&ok)s3.innerHTML="<div class='step-box' style='background:var(--mal-sup);border:1px solid var(--rj3a33)'><span style='font-size:11px;color:var(--mal)'>"+f0(res.cant)+" "+ruta.dest+" ÷ "+f4(res.tv)+" = </span><span style='font-weight:700;font-size:14px;color:var(--mal)'>−"+f2(res.uv)+" USDT</span></div>";
   if(s3&&!ok)s3.innerHTML="";
+  // ARREGLO 120: el recuadro del calce se refresca con lo demas. Era el unico
+  // trozo que cambia al teclear y no tenia id.
+  var cn=document.getElementById("calce-nota-"+key);
+  if(cn) cn.innerHTML=_htmlAvisoCalce(res, ruta);
 }
 
 // ── INVENTORY HELPERS ────────────────────────────────
@@ -20786,9 +20897,7 @@ function rInformeCierre(){
       // "⚠️ Saldo negativo — revisar" todos los meses a una cuenta correcta. Y
       // este papel sale HACIA FUERA: lo ve Julio y lo ve el contador.
       var _esTj=!!c.esTarjeta, _deuTj=_deudaTarjeta(c);
-      var _limTj=parseFloat(c.limiteTarjeta)||0;
-      var _pasoTj=_esTj&&_limTj>0&&_deuTj>_limTj;
-      var isNeg=_esTj ? _pasoTj : ((parseFloat(c.saldo)||0)<0);
+      var isNeg=_saldoConProblema(c);   // ARREGLO 119: la puerta única
       var usdtEq=c.moneda==="USDT"?parseFloat(c.saldo)||0:(getRateToUsdt(c.moneda)?((parseFloat(c.saldo)||0)/getRateToUsdt(c.moneda)):null);
       var egsC=egPorCuenta[c.id]||0;
       var fl=_flujoCuentaMes(c.id,mesKey);
@@ -24682,6 +24791,32 @@ function _cgFraccion(){
 // la pantalla que la dibuja y el botón que la publica. Calculada aparte en el
 // botón, bastaría un redondeo distinto para publicar un número que no es el que
 // ella está viendo — la regla del 34,27 contra 34,28.
+// ── ARREGLO 119 · "ida" y "vuelta" son MI vocabulario, no el suyo ───────
+//
+// Sus palabras del 12/10, con la calculadora delante: *"lo que quiero saber es
+// cuál es la que me está sugiriendo de Brasil a Vzla y cuál de Vzla a Brasil"*.
+//
+// La pantalla contestaba "Bs por real en la vuelta". Ella piensa en RUTAS —es
+// como las publica y como se las pide el cliente— y tenía que traducir dos
+// palabras en cada número. Y traducirlas al revés cuesta dinero: las dos se
+// escriben en bolívares por real y significan lo contrario (ARREGLO 74).
+//
+// Vive aquí y en ningún otro sitio: el resultado, el botón de publicar, los
+// rótulos de los campos y el tope leen de esta tabla. Escrita en cada sitio,
+// un día uno diría Brasil → Venezuela donde otro dice lo contrario.
+var _RUTA_DE = {
+  ida:    {corto:"\ud83c\udde7\ud83c\uddf7\u2192\ud83c\uddfb\ud83c\uddea Brasil \u2192 Venezuela",
+           quien:"el cliente te da reales, t\u00fa entregas bol\u00edvares",
+           campo:"Bs que le das por real",
+           boton:"Tasa \ud83c\udde7\ud83c\uddf7\u2192\ud83c\uddfb\ud83c\uddea",
+           flechas:"\ud83c\udde7\ud83c\uddf7\u2192\ud83c\uddfb\ud83c\uddea"},
+  vuelta: {corto:"\ud83c\uddfb\ud83c\uddea\u2192\ud83c\udde7\ud83c\uddf7 Venezuela \u2192 Brasil",
+           quien:"el cliente te da bol\u00edvares, t\u00fa entregas reales",
+           campo:"Bs que te dan por real",
+           boton:"Tasa \ud83c\uddfb\ud83c\uddea\u2192\ud83c\udde7\ud83c\uddf7",
+           flechas:"\ud83c\uddfb\ud83c\uddea\u2192\ud83c\udde7\ud83c\uddf7"}
+};
+function _ruta(dir){ return _RUTA_DE[dir] || _RUTA_DE.ida; }
 function _cgTasaResultado(){
   var g=_cg();
   if(g.modo!=="vuelta" && g.modo!=="ida") return null;   // "Ganancia" no despeja ninguna tasa
@@ -24721,17 +24856,17 @@ function _htmlPublicarRes(){
       "color:"+(fuerte?"var(--sobre-color)":"var(--tx2)")+";font-size:11.5px;font-weight:800;font-family:inherit;"+
       "cursor:pointer;line-height:1.3'>"+txt+"</button>";
   };
-  var rot=(r.dir==="vuelta")?"vuelta":"ida";
+  var rot=_ruta(r.dir).flechas, rotO=_ruta(otro.clave).flechas;
   return "<div style='display:flex;gap:7px;flex-wrap:wrap;margin-top:9px'>"+
-      bot("_cgPublicarRes()", "\ud83d\udccc Publicar "+f2(r.v)+" como tu "+rot, !desfase)+
+      bot("_cgPublicarRes()", "\ud83d\udccc Publicar "+f2(r.v)+" en "+rot, !desfase)+
       (desfase ? bot("_cgPublicarPar()",
-          "\ud83d\udccc Publicar las dos ("+otro.clave+" "+f2(otro.val)+" · "+rot+" "+f2(r.v)+")", true) : "")+
+          "\ud83d\udccc Publicar las dos ("+rotO+" "+f2(otro.val)+" · "+rot+" "+f2(r.v)+")", true) : "")+
     "</div>"+
     (desfase
       ? "<div style='font-size:10.5px;color:var(--avi-tx2);margin-top:5px;line-height:1.45'>"+
-        "Esa "+rot+" la despej\u00e9 con la "+otro.clave+" de "+f2(otro.val)+
-        ", y tu "+otro.clave+" publicada es "+f2(otro.pubVal)+
-        ". Publicando solo la "+rot+", la cabecera queda con las dos sin casar y no te da esa ganancia.</div>"
+        "Esa tasa la despej\u00e9 con la de "+rotO+" en "+f2(otro.val)+
+        ", y la que tienes publicada ah\u00ed es "+f2(otro.pubVal)+
+        ". Publicando solo una, las dos de arriba quedan sin casar y no te dan esa ganancia.</div>"
       : "<div style='font-size:10.5px;color:var(--tx4);margin-top:5px'>Va a la cabecera, al flyer y al conversor.</div>");
 }
 // Las dos publican por guardarTasaCalcHoy(), la puerta única del ARREGLO 117:
@@ -24794,16 +24929,16 @@ function _htmlCalceRes(){
   // 50 y no "50,00": un porcentaje entero con dos decimales se lee como si
   // tuviera una precision que no tiene.
   var pc=function(x){ return String(Math.round(x*1000)/10).replace(".",","); };
-  var deDonde=(f===1) ? " \u2014 la vuelta que te dan"
-            : (f===0) ? (" \u2014 tu suelo ("+Q.manda.nombre+")")
+  var deDonde=(f===1) ? (", y sale de los "+f2(vta)+" que te dan en "+_ruta("vuelta").flechas)
+            : (f===0) ? (", y sale de tu suelo ("+Q.manda.nombre+")")
             : (", mezclando "+pc(f)+"% a "+f2(vta)+" con el resto a "+f2(suelo));
   // ARREGLO 118: "tope" a secas, puesto justo debajo de una VUELTA de 236,64,
   // se lee como que esa vuelta esta en perdida. El tope es de la IDA —cuantos
   // bolivares puede DAR por real— y en la vuelta es al reves: cuantos mas pida,
   // mejor para ella (ARREGLO 74). Dos numeros en la misma unidad que significan
   // lo contrario necesitan que el rotulo diga de cual habla.
-  var pieTope=chico("Tu tope <b style='color:var(--tit)'>de ida</b> es <b style='color:var(--tit)'>"+f2(tope)+
-    "</b> Bs por real"+deDonde+". Ofreciendo por debajo te deja ganancia; por encima pierdes.");
+  var pieTope=chico("Lo m\u00e1s que puedes dar en <b style='color:var(--tit)'>"+_ruta("ida").flechas+
+    "</b> sin perder son <b style='color:var(--tit)'>"+f2(tope)+"</b> Bs por real"+deDonde+".");
 
   if(g.modo==="gan"){
     if(!(ida>0)) return chico("Escribe la tasa de ida para ver cuánto ganas.");
@@ -24834,16 +24969,18 @@ function _htmlCalceRes(){
       return aviso("Con esa ida no hay tasa de vuelta que llegue a "+du(metaUsd)+".")+
         chico((f<1?"La parte que va por P2P ya se lleva más que eso. ":"")+
               "Baja la ida, baja la meta o cruza una parte mayor.");
-    return grande("Cóbrale al menos", f2(V), "var(--ac)", "Bs por real en la vuelta")+
-      chico("Dando "+f2(ida)+" en la ida y cobrando "+f2(V)+" en la vuelta ganas "+
-            du(metaUsd)+" sobre "+f2(M)+" R$. Si cobras menos, no llegas.")+
+    return grande("Cóbrale al menos", f2(V), "var(--ac)", _ruta("vuelta").corto)+
+      chico("<b style='color:var(--tit)'>"+_ruta("vuelta").quien+"</b> · la tasa va en bolívares por real.")+
+      chico("Dando "+f2(ida)+" en "+_ruta("ida").flechas+" y cobrando "+f2(V)+" en "+
+            _ruta("vuelta").flechas+" ganas "+du(metaUsd)+" sobre "+f2(M)+" R$. Si cobras menos, no llegas.")+
       _htmlPublicarRes()+
       pieTope;
   }
   // modo "ida": a cuánto puede comprar
   var I=_calceIda(M, metaBrl, K);
   if(!I) return aviso("No sale número con esos datos.");
-  return grande("No des más de", f2(I), "var(--ac)", "Bs por real en la ida")+
+  return grande("No des más de", f2(I), "var(--ac)", _ruta("ida").corto)+
+    chico("<b style='color:var(--tit)'>"+_ruta("ida").quien+"</b> · la tasa va en bolívares por real.")+
     chico("Ofreciendo "+f2(I)+" ganas exactamente "+du(metaUsd)+" sobre "+f2(M)+" R$. "+
           "Cada bolívar de más que des, baja la ganancia.")+
     _htmlPublicarRes()+
@@ -24899,9 +25036,9 @@ function _htmlCalceCuerpo(){
   var campos=[];
   campos.push(campo("monto","Monto del cliente","en reales","1.000"));
   if(g.modo==="gan"||g.modo==="vuelta")
-    campos.push(campo("ida","Tasa de ida","Bs que le das por real","188"));
+    campos.push(campo("ida",_ruta("ida").boton,_ruta("ida").campo,"188"));
   if((g.modo==="gan"||g.modo==="ida") && !esP2P)
-    campos.push(campo("vuelta","Tasa de vuelta","Bs que te dan por real","210"));
+    campos.push(campo("vuelta",_ruta("vuelta").boton,_ruta("vuelta").campo,"210"));
   if(g.modo==="vuelta"||g.modo==="ida")
     campos.push(campo("meta","Quiero ganar","en dólares","20"));
   if(g.fuente==="mixto")
@@ -24928,8 +25065,8 @@ function _htmlCalceCuerpo(){
       // En P2P puro no hay vuelta que ajustar: el retorno es su suelo y ella
       // no lo pone. Un boton que no puede contestar nada es peor que no
       // tenerlo, asi que ahi no se dibuja.
-      (esP2P?"":btn("_cgModo","vuelta",g.modo,"Tasa de vuelta"))+
-      btn("_cgModo","ida",g.modo,"Tasa de ida")+
+      (esP2P?"":btn("_cgModo","vuelta",g.modo,_ruta("vuelta").boton))+
+      btn("_cgModo","ida",g.modo,_ruta("ida").boton)+
     "</div>"+
     "<div style='font-size:10.5px;color:var(--tx4);font-weight:700;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px'>De dónde salen los bolívares</div>"+
     "<div style='display:flex;gap:6px;margin-bottom:4px'>"+
@@ -25582,7 +25719,7 @@ function rNueva(){
           var optsO="<option value=''>-- No registrar --</option>"+cuentasOrig.map(function(c){
             var s=parseFloat(c.saldo)||0;
             return "<option value='"+c.id+"'"+(S.tx.cuentaBanco===c.id?" selected":"")+">"+
-              _escAud(c.nombre)+" ("+f2(s)+" "+origMon+")"+(s<0?" ⚠️":"")+"</option>";
+              _escAud(c.nombre)+" ("+f2(s)+" "+origMon+")"+_notaSaldoCuenta(c)+"</option>";
           }).join("");
           // ARREGLO 44: el cliente que paga de varias formas — una parte en
           // efectivo, otra por Pix, y otra que queda debiendo. Apagado, esto es
@@ -25605,7 +25742,7 @@ function rNueva(){
             var optsD="<option value=''>-- No registrar --</option>"+cuentasDest.map(function(c){
               var s=parseFloat(c.saldo)||0;
               return "<option value='"+c.id+"'"+(S.tx.cuentaDest===c.id?" selected":"")+">"+
-                _escAud(c.nombre)+" ("+f2(s)+" "+destMon+")"+(s<0?" ⚠️ déficit":"")+"</option>";
+                _escAud(c.nombre)+" ("+f2(s)+" "+destMon+")"+_notaSaldoCuenta(c," \u26a0\ufe0f d\u00e9ficit")+"</option>";
             }).join("");
             html+="<div class='fl'><label>📤 ¿De qué cuenta salen los "+destMon+"? </label>"+
               "<select onchange='S.tx.cuentaDest=this.value'>"+optsD+"</select>"+
@@ -25626,7 +25763,7 @@ function rNueva(){
             var optsU="<option value=''>-- No registrar --</option>"+cuentasUsdt.map(function(c){
               var s=parseFloat(c.saldo)||0;
               return "<option value='"+c.id+"'"+(S.tx.cuentaDest===c.id?" selected":"")+">"+
-                _escAud(c.nombre)+" ("+f2(s)+" USDT)"+(s<0?" ⚠️":"")+"</option>";
+                _escAud(c.nombre)+" ("+f2(s)+" USDT)"+_notaSaldoCuenta(c)+"</option>";
             }).join("");
             html+="<div class='fl'><label>📤 La entrega la hace un aliado — ¿de qué cuenta salen los USDT?</label>"+
               "<select onchange='S.tx.cuentaDest=this.value'>"+optsU+"</select>"+
@@ -25660,12 +25797,10 @@ function rNueva(){
         "<div class='fl'><label>Tasa de permuta (Bs por real)</label><input type='text' inputmode='decimal' placeholder='ej: 183,59' value='"+(f.permuta||"")+"' oninput='S.tx.permuta=_num(this.value);upC(\"tx\")'></div>"+
         "<div class='fl'><label>Tasa venta USDT ("+ruta.dest+"/USDT)</label><input type='text' inputmode='decimal' placeholder='ej: 948' value='"+(f.tv_manual||tvAuto||"")+"' oninput='S.tx.tv_manual=_num(this.value);upC(\"tx\")'></div>"+
       "</div>"+
-      ((_rTx.permuta>0&&tv>0)
-        ?"<div style='background:var(--mo6-a);border:1px solid var(--mo5);border-radius:8px;padding:9px 12px;margin-bottom:8px;font-size:11.5px;color:var(--tx2)'>"+
-           "Aquí no pasa nada por Binance: los "+ruta.orig+" se quedan en tu cuenta y los "+ruta.dest+" salen de la tuya."+
-           "<br>Tu costo implícito sale en <b>"+f4(tc)+" "+ruta.orig+"/USDT</b> · sin comisión de Binance."+
-         "</div>"
-        :"<div style='background:var(--avi-sup2);border:1px solid var(--avi-ln);border-radius:8px;padding:9px 12px;margin-bottom:8px;font-size:11.5px;color:var(--avi-tx)'>⚠️ Sin la permuta y la tasa de venta no hay ganancia que calcular — no se inventa ninguna.</div>")
+      // ARREGLO 120: con su id, para que upC() lo refresque al teclear. Sin id
+      // se quedaba del ultimo repintado y decia "no puedo calcular" con la
+      // cuenta ya hecha debajo.
+      "<div id='calce-nota-tx'>"+_htmlAvisoCalce(_rTx, ruta)+"</div>"
     :
     // Mostrar tasas auto si hay inventario
     (hasInv?
@@ -25814,7 +25949,7 @@ function rNuevaEE(){
           var optsU="<option value=\'\'>-- No registrar --</option>"+cuentasUSD.map(function(c){
             var s=parseFloat(c.saldo)||0;
             return "<option value=\'"+c.id+"\'"+( S.txE.cuentaBanco===c.id?" selected":"")+">"+
-              _escAud(c.nombre)+" ("+f2(s)+" USD)"+(s<0?" ⚠️":"")+"></option>";
+              _escAud(c.nombre)+" ("+f2(s)+" USD)"+_notaSaldoCuenta(c)+"></option>";
           }).join("");
           html+="<div class=\'fl\'><label>📥 ¿A qué cuenta entró el USD?</label>"+
             "<select onchange=\'S.txE.cuentaBanco=this.value\'>"+optsU+"</select></div>";
@@ -25823,7 +25958,7 @@ function rNuevaEE(){
           var optsV="<option value=\'\'>-- No registrar --</option>"+cuentasVES.map(function(c){
             var s=parseFloat(c.saldo)||0;
             return "<option value=\'"+c.id+"\'"+( S.txE.cuentaDest===c.id?" selected":"")+">"+
-              _escAud(c.nombre)+" ("+f2(s)+" VES)"+(s<0?" ⚠️ déficit":"")+"></option>";
+              _escAud(c.nombre)+" ("+f2(s)+" VES)"+_notaSaldoCuenta(c," \u26a0\ufe0f d\u00e9ficit")+"></option>";
           }).join("");
           html+="<div class=\'fl\'><label>📤 ¿De qué cuenta salen los bolívares?</label>"+
             "<select onchange=\'S.txE.cuentaDest=this.value\'>"+optsV+"</select></div>";
@@ -26051,9 +26186,7 @@ function rInventarioUsdt(){
           // del ARREGLO 95, que se aplicó en Balance de Cuentas y aquí no: una
           // tarjeta avisa cuando se pasa del LÍMITE, que es otra cosa.
           var esTj=!!c.esTarjeta, deuda=_deudaTarjeta(c);
-          var limTj=parseFloat(c.limiteTarjeta)||0;
-          var pasada=esTj&&limTj>0&&deuda>limTj;
-          var isNeg=esTj ? pasada : (s<0);
+          var isNeg=_saldoConProblema(c);   // ARREGLO 119: la puerta única
           // Pero la cifra tampoco puede salir como dinero (ARREGLO 95 otra vez):
           // una deuda pintada en el mismo verde que un saldo a favor se lee como
           // que tiene ese dinero. Va en ámbar, con el signo y con "debes".
@@ -26203,7 +26336,7 @@ function rInventarioUsdt(){
       if(cuentasOrig.length){
         var origOpts="<option value=''>-- No descontar --</option>"+cuentasOrig.map(function(c){
           var s=parseFloat(c.saldo)||0;
-          return "<option value='"+c.id+"'"+(S.nIU.cuentaOrigenId===c.id?" selected":"")+">"+_escAud(c.nombre)+" ("+f2(s)+" "+monOrigen+")"+(s<0?" ⚠️":"")+"></option>";
+          return "<option value='"+c.id+"'"+(S.nIU.cuentaOrigenId===c.id?" selected":"")+">"+_escAud(c.nombre)+" ("+f2(s)+" "+monOrigen+")"+_notaSaldoCuenta(c)+"></option>";
         }).join("");
         html+="<div class='fl'><label>📤 Sale de ("+monOrigen+")</label>"+
           "<select onchange='S.nIU.cuentaOrigenId=this.value'>"+origOpts+"</select></div>";
