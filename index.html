@@ -2810,7 +2810,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261012_v198";
+var APP_VERSION = "20261012_v199";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -24437,6 +24437,41 @@ function _cgSoltar(campo){
   g[campo+"Tocada"]=false;
   _cgRedibujar();
 }
+// ── ARREGLO 116 · publicar DESDE donde la decide ─────────────────────────
+// Lo cazó ella el 12/10: "al descargar el flyer las tasas no se cambian".
+// No era el flyer. Reproducido: cambiando la tasa en la CABECERA el flyer
+// sale con la nueva; cambiándola en la CALCULADORA sale con la anterior.
+//
+// Y es correcto —el flyer imprime lo PUBLICADO— pero ella la teclea abajo,
+// que es donde ve cuánto gana y donde de verdad la decide. El sitio donde
+// decide y el sitio donde publica quedaron separados, y eso lo hice yo: la
+// calculadora vieja tenía un "💾 Guardar como tasa de hoy" justo donde
+// tecleaba, y lo quité en el ARREGLO 111 sin poner nada en su lugar.
+//
+// Pasa por guardarTasaCalcHoy(), la puerta de siempre, que es la que también
+// limpia el override del conversor. Dos sitios escribiendo la tasa publicada
+// acabarían divergiendo — que es justo lo que este arreglo viene a cerrar.
+function _cgPublicar(campo){
+  var g=_cg();
+  var v=parseFloat(g[campo]);
+  if(!(v>0)){ alert("Escribe una tasa antes de publicarla."); return; }
+  guardarTasaCalcHoy(campo, v, true);
+  // Deja de ser "suya": a partir de ahora vuelve a seguir a la publicada,
+  // que es la misma. Si no, el aviso de "distinta de tu ida publicada"
+  // seguiría saliendo con las dos iguales.
+  g[campo+"Tocada"]=false;
+  _refrescarTasasTodo();
+}
+// Publicar cambia el número de arriba, el veredicto, los avisos Y lo que dirá
+// el flyer. Se rehacen los cuatro por su id, nunca con R() (ARREGLO 32).
+function _refrescarTasasTodo(){
+  var c=document.getElementById("tasas-cab");
+  if(c) c.innerHTML=_htmlCabeceraTasas();
+  _refrescarAvisosTasa();
+  var f=document.getElementById("tasas-filas");
+  if(f) f.innerHTML=_htmlFilasTasas();
+  _cgRedibujar();
+}
 // ARREGLO 32: repintar con R() rehace el HTML y destruye el campo bajo el
 // dedo. Mientras teclea solo se rehace el recuadro del resultado, por su id.
 function _cgSet(campo,val){
@@ -24591,7 +24626,11 @@ function _htmlCalceCuerpo(){
       if(pv!==null && Math.abs((parseFloat(g[clave])||0)-pv)>0.005)
         dif="<div style='font-size:10px;color:var(--avi-tx2);margin-top:2px;line-height:1.4'>"+
           "distinta de tu "+clave+" publicada ("+f2(pv)+") \u00b7 "+
-          "<span onclick='_cgSoltar(\""+clave+"\")' style='cursor:pointer;font-weight:700;text-decoration:underline'>volver</span></div>";
+          "<span onclick='_cgSoltar(\""+clave+"\")' style='cursor:pointer;font-weight:700;text-decoration:underline'>volver</span>"+
+          " \u00b7 "+
+          // ARREGLO 116: publicar desde aqui. Sin esto, la tasa que decide
+          // abajo no llega al flyer y se lo manda al cliente con la anterior.
+          "<span onclick='_cgPublicar(\""+clave+"\")' style='cursor:pointer;font-weight:700;text-decoration:underline;color:var(--ok)'>publicar esta</span></div>";
     }
     return "<div style='flex:1 1 130px;min-width:0'>"+
       "<label style='font-size:10.5px;font-weight:700;color:var(--tx3);display:block;margin-bottom:3px'>"+rot+"</label>"+
@@ -24804,12 +24843,28 @@ function _htmlCabeceraTasas(){
     "</div>";
 }
 
+// Lo que el flyer va a imprimir, dicho antes de pulsarlo. Sale de
+// _misTasasPublicadas(), que es de donde lo saca _calcTasas() al generarlo:
+// si esto se calculara aparte, la fila podria prometer una tasa y el papel
+// llevar otra.
+function _pieFlyer(){
+  var p=_misTasasPublicadas();
+  if(p.ida===null && p.vuelta===null) return "todav\u00eda no has publicado ninguna tasa";
+  var t=[];
+  if(p.ida!==null)    t.push("ida "+f2(p.ida));
+  if(p.vuelta!==null) t.push("vuelta "+f2(p.vuelta));
+  return "saldr\u00e1 con "+t.join(" \u00b7 ");
+}
+
 function _htmlFilasTasas(){
   return _tasasFila("gan","\ud83e\uddee","Cu\u00e1nto gano con esta tasa","cruce, P2P o mitad y mitad", _htmlCalceGan)+
     _tasasFila("suelo","\ud83d\udcca","De d\u00f3nde sale tu suelo","tus \u00faltimas operaciones y el mercado",
       function(){ return "<div id='mercado-suelo' style='background:var(--sup2d);border-radius:10px;padding:10px 12px'>"+_htmlSuelo()+"</div>"; })+
     _tasasFila("conv","\ud83d\udcac","Cotizar a un cliente","cu\u00e1nto env\u00eda, cu\u00e1nto recibe", _rConversorBCV)+
-    _tasasFila("flyer","\ud83d\udcf2","Generar el flyer","con las tasas de arriba", function(){
+    // ARREGLO 116: la fila dice CON QUE TASAS va a salir. Antes decia "con
+    // las tasas de arriba", que es cierto y no sirve: no hay forma de
+    // descargarlo sin saber que lleva.
+    _tasasFila("flyer","\ud83d\udcf2","Generar el flyer",_pieFlyer(), function(){
       return "<button onclick='generarFlyer()' class='btn-main btn-blue'>\ud83d\udcf2 Generar flyer para el cliente</button>"+
         "<div style='font-size:10.5px;color:var(--tx4);text-align:center;margin-top:7px;line-height:1.5'>"+
         "Usa la fecha y la hora del momento en que lo generas, y las tasas de arriba.</div>"; })+
