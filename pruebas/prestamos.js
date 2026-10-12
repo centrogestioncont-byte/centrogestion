@@ -50,7 +50,7 @@ function sacarConstante(nombre) {
   }
   throw new Error("la constante " + nombre + " no termina en ';'");
 }
-const CONSTANTES = ["_RUTA_DE", "_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO", "_AVISO_UMBRAL", "_MERCADO_MONTO_DEF",
+const CONSTANTES = ["_RUTA_DE", "CG_BASE", "_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO", "_AVISO_UMBRAL", "_MERCADO_MONTO_DEF",
                     "_BIN_COLS_C2C", "_BIN_COLS_TX", "MONEDAS_COMPRA", "MONEDAS_VENTA",
                     "MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
                     "_MERGE_OBJETOS", "_MERGE_BLOQUES", "_MERGE_HISTORIAL", "_RATE_LIMITS",
@@ -71,6 +71,7 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "_misTasasPublicadas",
                     "_equilibrio", "sueloQueManda",
                     "_calceK", "_calceGan", "_calceVuelta", "_calceIda", "_cg", "_cgSet", "_cgFraccion",
+                    "_htmlPalancaVenta", "_htmlCalceRes", "_htmlCalceCuerpo", "_cgModo", "_cgFuente",
                     "margenSobreSuelo", "_calcTasas", "_misTasasPublicadas", "_fpTasa",
                     "avisoTasa", "_umbralAviso", "_refSuelo", "_sueloDeFecha", "guardarTasaCalcHoy",
                     "_cgSoltar", "_htmlCabeceraTasas", "_montoMercado",
@@ -8702,6 +8703,132 @@ console.log("\n— FASE 2: la cuenta madre —");
      "y con las dos, el aviso se va y sale el costo implicito", lleno.slice(0,160));
   ok(F._htmlAvisoCalce({calce:false, permuta:0, tv:0}, ruta) === "",
      "en P2P no se dibuja nada");
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// ARREGLO 121 · por cada 500 reales, un solo numero, y la otra palanca
+// ═══════════════════════════════════════════════════════════════════════
+// Sus palabras del 12/10: "por cada 500 reales" y "no quiero que me satures la
+// pantalla con tantas cosas, lo que no sirva o sea redundante quitalo".
+{
+  const cg   = sinComentarios(sacarFuncion("_cg"));
+  const res  = sinComentarios(sacarFuncion("_htmlCalceRes"));
+  const cue  = sinComentarios(sacarFuncion("_htmlCalceCuerpo"));
+  const tres = sinComentarios(sacarFuncion("_cgTasaResultado"));
+  const pal  = sinComentarios(sacarFuncion("_htmlPalancaVenta"));
+
+  // 1) El por omision deja de ser el MAS OPTIMISTA de los tres.
+  ok(/fuente:"p2p"/.test(cg), "la calculadora abre en P2P, no en cruce");
+  ok(!/fuente:"cruce"/.test(cg), "y no queda ningun cruce por omision");
+  ok(F._cg().fuente === "p2p", "medido: el estado nuevo nace en p2p", F._cg().fuente);
+
+  // 2) El monto se fue, y con el su campo. La base vive en UN sitio.
+  ok(F.CG_BASE === 500, "la base son 500 reales", F.CG_BASE);
+  ok(!/campo\("monto"/.test(cue), "el campo del monto ya no se dibuja");
+  ok(!/parseFloat\(g\.monto\)/.test(res) && !/parseFloat\(g\.monto\)/.test(tres),
+     "y nadie lo lee: la base sale de CG_BASE");
+  ok(/var M=CG_BASE/.test(res) && /var M=CG_BASE/.test(tres),
+     "las dos la leen de la constante, no cada una la suya");
+
+  // 3) UN numero, en la unidad de la app. Los otros tres se fueron.
+  ok(/USDT por cada "\+f0\(M\)\+" R\$/.test(res), "la respuesta va en USDT por cada 500 R$");
+  ok(!/margen "\+f2\(mg\)/.test(res), "fuera el 'margen %', que se parecia al +X% de la cabecera");
+  ok(!/En bolívares la ganancia son|En bolívares la ganancia son/.test(res),
+     "fuera la ganancia repetida en bolivares");
+  ok(!/"R\$ "\+f2\(Math\.abs\(r\.brl\)\)/.test(res), "y el numero grande ya no va en reales");
+  ok(/du\(Math\.abs\(gu\)\)/.test(res), "el numero grande es el de USDT");
+
+  // 4) La meta esta en su unidad.
+  ok(/USDT por cada "\+CG_BASE\+" R\$/.test(cue), "la meta se pide por cada 500 R$");
+  ok(!/"en dólares"|"en dólares"/.test(cue), "ya no dice 'en dolares'");
+
+  // 5) La otra palanca: vender mas caro en vez de bajarle al cliente.
+  ok(/_htmlPalancaVenta\(I, K, f, vta, Q\)/.test(res), "el modo Tasa 🇧🇷→🇻🇪 dibuja la palanca");
+  ok(/I\*K\/idaPub/.test(pal), "y sale de la MISMA K, no de una formula aparte");
+  ok(/Q\.manda\.s\*sueloNec\/Q\.v/.test(pal),
+     "la venta se escala con el suelo, sin volver a aplicar la comision");
+  ok(/_misTasasPublicadas\(\)\.ida/.test(pal), "compara contra la ida que tiene PUBLICADA");
+  ok(/!\(f<1\)/.test(pal), "y en cruce puro no se dibuja: ahi no hay venta que subir");
+
+  // ── Funcional, con sus numeros del 12/10 ──
+  const antes = JSON.stringify(S.calc || null);
+  // Sus tasas del 12/10, puestas a mano: compra 5,0327 R$ y venta 1.013 Bs
+  // fijada. De ahi sale el suelo de 199,87 que ensena su pantalla.
+  const invPrev = S.inventarioUsdt, tdPrev = S._tasasDiaMeta, tdiaPrev = S.tasasDia;
+  const cfgPrev = JSON.stringify(S.config || {});
+  S.config = S.config || {};
+  S.config.comision_binance = 0.007;
+  S.config.tasasDia = {tdia_brl:189, tdia_ves_brl:220};
+  S.inventarioUsdt = [
+    {id:1, tipo:"compra", moneda:"BRL", fecha:"10/10", fechaIso:"2026-10-10",
+     tasa:5.0327, usdt:100, neto:100, restante:100, montOrigen:503.27, comision:0}
+  ];
+  S._tasasDiaMeta = {VES:{fijada:true, iso:"2026-10-10", fecha:"10/10/2026"}};
+  S.tasasDia = {VES:1013};
+  const sueloV = F.sueloQueManda();
+  ok(sueloV && Math.abs(sueloV.v - 199.87) < 0.02,
+     "el suelo de sus numeros del 12/10 sale 199,87", sueloV && sueloV.v);
+  {
+    const g = F._cg();
+    g.modo="gan"; g.fuente="p2p"; g.usdbrl="5.0327"; g.meta="";
+    // ARREGLO 113: la ida sigue a la publicada mientras no se marque como suya.
+    g.ida="189"; g.idaTocada=true; g.vuelta="220"; g.vueltaTocada=true;
+    const salida = F._htmlCalceRes();
+    ok(/Ganas/.test(salida), "con 189 en P2P dice que gana");
+    ok(/USDT por cada 500 R\$/.test(salida), "y lo dice por cada 500 R$", 
+       (salida.match(/>[^<]*USDT por cada[^<]*</)||[""])[0]);
+    ok(!/margen/.test(salida), "sin el margen repetido");
+    // El cruce es otro numero, y mas alto: por eso no puede ser el por omision.
+    g.fuente="cruce"; g.vuelta="220";
+    const cruz = F._htmlCalceRes();
+    const num = t => { const m=t.match(/font-size:28px[^>]*>([^<]+)</); return m?m[1]:""; };
+    ok(num(cruz) !== num(salida),
+       "cruzando sale otro numero, que es justo lo que confundia", num(salida)+" vs "+num(cruz));
+    g.fuente="p2p";
+    // La palanca: pidiendo mas de lo que da su ida publicada, dice a cuanto
+    // tendria que vender el USDT para no bajarsela al cliente.
+    g.modo="ida"; g.meta="20";
+    const ida20 = F._htmlCalceRes();
+    ok(/O sin bajarle al cliente/.test(ida20),
+       "y ofrece la otra palanca: vender mas caro en vez de bajar la tasa",
+       (ida20.match(/O sin bajarle al cliente[^<]*(<[^>]+>)?[^<]*/)||[""])[0].slice(0,140));
+  }
+  S.inventarioUsdt = invPrev; S._tasasDiaMeta = tdPrev; S.tasasDia = tdiaPrev;
+  S.config = JSON.parse(cfgPrev);
+  if(antes !== null) S.calc = JSON.parse(antes); else delete S.calc;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// ARREGLO 121 · una variable que no existe se lee igual que una que si
+// ═══════════════════════════════════════════════════════════════════════
+// El 119 dejo "pasada" escrita en DOS sitios y declarada en ninguno, y llego a
+// produccion: Inventario USDT y Configuracion tiraban un ReferenceError y se
+// quedaban EN BLANCO para cualquiera que tenga una tarjeta. Ella la tiene.
+//
+// No lo cazo ninguna guardia porque todas miran que el texto diga lo que debe
+// decir, y el texto lo decia. Lo cazo el barrido de las pestanas en Chromium —
+// la misma leccion del ARREGLO 91: una guardia estructural comprueba el codigo,
+// no que el camino funcione.
+//
+// Esto es lo que si se puede fijar desde aqui: que las cuatro variables de la
+// tarjeta esten DECLARADAS en la funcion que las usa. Vale para la siguiente
+// que alguien anada, no solo para "pasada".
+{
+  const DE_TARJETA = ["esTj", "deuda", "isNeg", "limTj"];
+  ["rConfigAdmin", "rInventarioUsdt", "rCapitalTotal"].forEach(function(fn){
+    const cuerpo = sinComentarios(sacarFuncion(fn));
+    DE_TARJETA.forEach(function(v){
+      const usa = new RegExp("[^\\w.\"']" + v + "\\b").test(cuerpo);
+      if(!usa) return;
+      const declarada = new RegExp("(var|let|const)\\s[^;\\n]*\\b" + v + "\\s*=").test(cuerpo);
+      ok(declarada, fn + " declara '" + v + "' antes de usarla");
+    });
+  });
+  // Y que no vuelva el nombre concreto que se colo.
+  ["rConfigAdmin", "rInventarioUsdt"].forEach(function(fn){
+    ok(!/[^\w.]pasada\b/.test(sinComentarios(sacarFuncion(fn))),
+       fn + ": no queda ninguna 'pasada' suelta");
+  });
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

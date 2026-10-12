@@ -1448,6 +1448,71 @@ puede dar por real— y en la vuelta es al revés: cuantos más pida, mejor para
 (ARREGLO 74). Dos números en la misma unidad que significan lo contrario necesitan
 que el rótulo diga de cuál habla.
 
+#### Y la calculadora abría en el modo que más promete (ARREGLO 121)
+
+Sus palabras del 12/10: *"me hace un cambio de mil real y lo que le dan no son
+$10, o sea no entiendo"*. Y detrás, lo que de verdad pedía: *"yo quiero que el
+sistema me diga: mira, me tienes que vender según el mercado a tal tasa de
+bolívares para que tú tengas una ganancia de tanto"*.
+
+La fila 🧮 abría en **Cruce**. Con su tasa de 189 sobre 1.000 R$, medido:
+
+```
+Cruce   $28,00     ← lo que leía
+P2P     $10,81     ← lo que de verdad ganó (la remesa dio $10,50)
+Mitad   $19,40
+```
+
+Los tres son correctos —cruzando, los bolívares los pone un cliente de vuelta y
+no toca Binance, así que le queda la brecha entera— pero sus bolívares de ese día
+salieron de comprar USDT. **Lo que estaba mal no era la cuenta: era cuál sale
+sola.** Es la misma regla por la que el suelo que manda es el **más bajo** de los
+dos (ARREGLO 77): por ningún lado le puede salir el número optimista.
+
+- **El campo "Monto del cliente" se fue, y no por sitio: es que no cambia nada.**
+  Medido pidiendo $10 por cada 500: 500 R$ → 178,70, 1.059 → 178,70, 2.000 →
+  178,70. La cuenta entera es proporcional, así que el campo solo multiplicaba la
+  respuesta por un número que ella tecleaba cada vez. **La base son 500 reales**
+  (`CG_BASE`) y así la respuesta se puede seguir en el tiempo: *"gano 5,40 por
+  cada 500"* se compara entre días, *"gano R$ 54,39"* no dice nada sin saber sobre
+  cuánto.
+- **Un número, no cuatro.** Salía `R$ 54,39 · $10,81 · margen 5,44% · 10.870 Bs`,
+  y ninguno en USDT por operación, que es como se lo cuenta la cabecera de la app,
+  el Diario, el Cierre y cada remesa. El *margen %* además se parecía al *+5,4%*
+  de la cabecera de Tasas **sin ser lo mismo** —ése se mide contra el suelo, éste
+  contra lo que entra—, que es el peor tipo de repetición: dos números casi
+  iguales que no son el mismo. **La línea de debajo se queda**, porque un número
+  que no dice de dónde sale hay que perseguirlo aparte y entonces la pantalla no
+  ahorra nada.
+- **La otra palanca, que es la que pidió primero.** Para ganar más hay dos
+  caminos y la app solo enseñaba uno: bajarle la tasa al cliente. El otro es no
+  tocársela y **vender su USDT más caro en bolívares**, y es el que no le cuesta
+  clientes. Sale de la **misma K**, no de una fórmula aparte: si con la ida `I`
+  gana la meta, con la que ya publica la gana cuando `K' = I·K/idaPub`; de ahí se
+  despeja el suelo que haría falta, y la venta se escala en línea con él — **no se
+  vuelve a aplicar la comisión aquí**, que sería la segunda respuesta a la misma
+  pregunta con otro redondeo. En cruce puro no se dibuja: ahí no hay venta que
+  subir.
+- **Los tres botones de origen se quedan.** Ese mismo día hizo una mezcla de
+  verdad: 147.000 Bs de una vuelta y el resto de un lote comprado.
+
+#### Y una variable que no existía, en producción (ARREGLO 121)
+
+El ARREGLO 119 dejó `pasada` escrita en **dos** sitios y declarada en ninguno, y
+`limTj` en uno. **Inventario USDT y Configuración tiraban un `ReferenceError` y
+se quedaban en blanco** para cualquiera que tenga una tarjeta — ella la tiene.
+
+No lo cazó ninguna guardia **porque todas miran que el texto diga lo que debe
+decir, y el texto lo decía**. Lo cazó el barrido de las pestañas en Chromium. Es
+la lección del ARREGLO 91 otra vez: una guardia estructural comprueba que el
+código dice lo que debe, no que el camino funcione. **Cuando un arreglo toca lo
+que se DIBUJA, hay que dibujarlo.**
+
+El dato correcto es `isNeg`, que en una tarjeta es exactamente *"te pasaste del
+límite"* (`_saldoConProblema`, la puerta única del 119). Y queda una guardia que
+exige que **las cuatro variables de la tarjeta estén declaradas en la función que
+las usa** — vale para la siguiente que alguien añada, no solo para `pasada`.
+
 ### Su suelo: hasta dónde puede ofrecer sin perder
 
 Sus palabras: *"no sé qué tasa de compra y venta está usando mi app"* y *"no es
