@@ -2810,7 +2810,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261012_v196";
+var APP_VERSION = "20261012_v197";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -4474,7 +4474,12 @@ function rComparacionApi(){
 var EMPRESA_RAZON = "SAIPHA SERVIÇOS DIGITAIS";
 var EMPRESA_CNPJ  = "66.994.057/0001-61";
 var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
-  "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","histComp","histApertura","ajustesSaldo","_modCampos","mapaBinance"];
+  "inventarioUsdt","gastos_eeuu","deudas_paul","clientes","movimientosCapital","config","cierresMes","cuentas","tasasCambio","traspasos","cuentasCobrar","egresos_personales","_deleted","inventarioUsdt_cerrado","reposiciones","pagosSocios","gananciaExtra","tasasDia","_tasasDiaMeta","gastos_socios","compromisos","_deletedMerge","histBalance","histTasas","histSaldos","histComp","histApertura","ajustesSaldo","_modCampos","mapaBinance",
+  // ARREGLO 114: el aviso que el servidor reparte al telefono. Dato DERIVADO
+  // —se recalcula en cada guardado— asi que NO va en ninguna lista de fusion
+  // a proposito: que lo reemplace el remoto es justo lo correcto, gana el
+  // ultimo que lo calculo. Pero tiene que estar aqui o no viaja.
+  "avisoPush"];
 
 // ══════════════════════════════════════════════════════════════════════
 // SISTEMA DE CIERRE AUTOMÁTICO DE MES
@@ -13526,6 +13531,7 @@ function rConfigAdmin(){
     _cfgAcc("categorias","🏷️","Categorías","empresa y personales","var(--rol-ee)",categoriasBody,false)+
     _cfgAcc("rutas","🛣️","Rutas de operación",null,"var(--az3-c)",rutasBody,false)+
     _cfgAcc("tasas","📊","Tasas del día","solo afecta nuevos registros","var(--rol-na)",tasasHTML,false)+
+    _cfgAcc("avisostel","🔔","Avisos al teléfono","para enterarte sin abrir la app","var(--rol-na)",_htmlAvisosTelefono(),false)+
     _cfgAcc("mercado_monto","📐","Tamaño de tus operaciones","con qué monto se lee el P2P","var(--ac)",_htmlMontosMercado(),false)+
     _cfgAcc("usuarios_api","👥","Usuarios y permisos","quién entra y qué ve cada uno","var(--az3-b)",rUsuariosApi(),false)+
     "<div id='cfg-tema'>"+_cfgAcc("tema","🎨","Colores de la app",
@@ -16233,6 +16239,11 @@ function saveData(){
     // vez (ARREGLO 33, 04/09/2026: "el telefono revirtio los saldos
     // corregidos en la laptop", tres veces el mismo día).
     _marcarTodoLoQueSeFusiona();
+    // ARREGLO 114: se deja escrito el aviso para que el servidor lo reparta
+    // al telefono. Va AQUI, en el mismo punto central que marca lo que se
+    // fusiona, por la misma razon: apuntarlo funcion por funcion es el camino
+    // que ya fallo cuatro veces, y son mas de cien funciones que escriben.
+    _apuntarAvisoParaPush();
     // Y lo que no son listas: configuración, tasas e historiales.
     _marcarObjetosCambiados();
     var obj={_ts:Date.now()};
@@ -23990,6 +24001,176 @@ function _htmlAvisosTasa(){
       "<div style='font-size:11px;color:var(--tx2);margin-top:3px;line-height:1.55'>"+_escAud(a.texto)+"</div>"+
     "</div>";
   }).join("");
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 114 · LA NOTIFICACIÓN AL TELÉFONO
+// ══════════════════════════════════════════════════════════════════════
+// Sus palabras del 11/10: "quiero que esta notificación me llegue al teléfono
+// no solo cuando yo abra la app".
+//
+// ── Quién decide el aviso ──────────────────────────────────────────────
+// La app. El servidor solo lo reparte. El suelo sale de sus lotes y esa
+// cuenta vive aquí; escribirla también en Python daría DOS suelos —el de la
+// pantalla y el de la notificación— que un día dirían cosas distintas. Sería
+// el 34,27 contra 34,28 de Por cobrar, pero en un número con el que publica.
+//
+// Por eso al guardar se deja escrito el aviso ya hecho, con su CLAVE, en una
+// clave más del estado. El servidor mira esa clave y manda una sola vez por
+// aviso distinto: mientras la situación siga igual, no vuelve a sonar.
+//
+// ── Lo que esto NO alcanza, y hay que saberlo ──────────────────────────
+// Los dos avisos que salen de SUS datos —te llenaste de bolívares, tu tasa
+// quedó bajo el suelo— se recalculan cuando ella guarda, así que la
+// notificación sale después de que use la app. Eso sirve: registra las
+// remesas, cierra, y el aviso le llega al rato. Lo que NO llega con la app
+// cerrada es "el mercado se movió", porque ese precio cambia solo y el suelo
+// que hace falta para medirlo vive aquí. Está dicho en la tarjeta.
+
+// Qué se guarda para que el servidor lo reparta. Es dato DERIVADO: lo
+// recalcula cada guardado, así que no va en ninguna lista de fusión a
+// propósito —el remoto lo reemplaza entero y eso es justo lo correcto, gana
+// el último que lo calculó. Sí va en DATA_KEYS, o no viajaría.
+function _apuntarAvisoParaPush(){
+  try{
+    var av=avisoTasa();
+    if(!av.length){ S.avisoPush=null; return; }
+    var a=av[0];   // el más grave: avisoTasa() ya los ordena
+    S.avisoPush={clave:a.clave, titulo:a.titulo, texto:a.texto,
+                 nivel:a.nivel, ts:Date.now()};
+  }catch(e){ /* un fallo aquí no puede impedir que guarde */ }
+}
+
+// ── El alta en este aparato ────────────────────────────────────────────
+// Tres cosas tienen que ir bien y las tres fallan distinto, así que se
+// distinguen: un "no se pudo activar" a secas la deja sin saber qué tocar.
+function _pushSoportado(){
+  return (typeof navigator!=="undefined") && ("serviceWorker" in navigator) &&
+         (typeof window!=="undefined") && ("PushManager" in window) &&
+         (typeof Notification!=="undefined");
+}
+// En iPhone esto solo existe con la app instalada en la pantalla de inicio.
+// En Android da igual, pero el diagnóstico tiene que poder decirlo.
+function _appInstalada(){
+  try{
+    return (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) ||
+           (navigator.standalone===true);
+  }catch(e){ return false; }
+}
+var _PUSH_ESTADO = {sus:null, leido:0, clave:"", motivo:""};
+
+function _b64aBytes(b64){
+  var s=(b64+"=".repeat((4-b64.length%4)%4)).replace(/-/g,"+").replace(/_/g,"/");
+  var raw=atob(s), out=new Uint8Array(raw.length);
+  for(var i=0;i<raw.length;i++) out[i]=raw.charCodeAt(i);
+  return out;
+}
+// Mira cómo está este aparato, sin pedir permiso de nada.
+function _revisarPush(){
+  _PUSH_ESTADO.leido=Date.now();
+  if(!_pushSoportado()){ _PUSH_ESTADO.motivo="este navegador no sabe hacerlo"; return Promise.resolve(); }
+  return navigator.serviceWorker.ready.then(function(reg){
+    return reg.pushManager.getSubscription();
+  }).then(function(s){
+    _PUSH_ESTADO.sus=s||null; _PUSH_ESTADO.motivo="";
+  }).catch(function(e){
+    _PUSH_ESTADO.sus=null; _PUSH_ESTADO.motivo=String(e&&e.message||e);
+  });
+}
+
+function activarAvisos(){
+  if(!_pushSoportado()){
+    alert("Este navegador no sabe mandar notificaciones.\n\nEn el teléfono, abre la app desde el icono de la pantalla de inicio.");
+    return;
+  }
+  // El permiso se pide DENTRO del toque. Android exige un gesto reciente, y
+  // es el mismo fallo que ya costó el botón de compartir (ARREGLO 84) y el
+  // respaldo del cierre (ARREGLO 91): medio segundo después, el permiso del
+  // toque ya caducó.
+  Notification.requestPermission().then(function(p){
+    if(p!=="granted"){
+      alert(p==="denied"
+        ? "Las notificaciones están BLOQUEADAS para esta app.\n\nEn Android: mantén pulsado el icono → Información de la aplicación → Notificaciones, y actívalas."
+        : "No diste permiso. Puedes volver a intentarlo cuando quieras.");
+      R(); return;
+    }
+    return apiFetch("/push/clave").then(function(r){ return r.json(); }).then(function(d){
+      if(!d||!d.ok||!d.configurado||!d.clave)
+        throw new Error("tu servidor todavía no tiene configuradas las claves VAPID");
+      return navigator.serviceWorker.ready.then(function(reg){
+        return reg.pushManager.subscribe({
+          userVisibleOnly:true,
+          applicationServerKey:_b64aBytes(d.clave)
+        });
+      });
+    }).then(function(sus){
+      return apiFetch("/push/suscribir",{method:"POST",body:sus.toJSON()})
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+          if(!d||!d.ok) throw new Error((d&&d.error)||"el servidor no la aceptó");
+          _PUSH_ESTADO.sus=sus;
+          alert("✅ Listo. Los avisos de tasa te van a llegar al teléfono aunque no tengas la app abierta.");
+          R();
+        });
+    });
+  }).catch(function(e){
+    // Un fallo mudo obliga a adivinar, y adivinar ya costó tres diagnósticos
+    // equivocados en una sesión.
+    alert("No se pudo activar: "+(e&&e.message||e));
+    R();
+  });
+}
+
+function desactivarAvisos(){
+  if(!_PUSH_ESTADO.sus){ R(); return; }
+  var punto=_PUSH_ESTADO.sus.endpoint;
+  _PUSH_ESTADO.sus.unsubscribe().catch(function(){}).then(function(){
+    return apiFetch("/push/olvidar",{method:"POST",body:{endpoint:punto}});
+  }).catch(function(){}).then(function(){
+    _PUSH_ESTADO.sus=null;
+    alert("Los avisos dejaron de llegar a este aparato.");
+    R();
+  });
+}
+
+// ── La tarjeta de Configuración ────────────────────────────────────────
+// Dice si PUEDEN llegarle, no solo si están activados. Un permiso que parece
+// concedido y no entrega nada es peor que no tenerlo.
+function _htmlAvisosTelefono(){
+  var sop=_pushSoportado();
+  var perm=(typeof Notification!=="undefined") ? Notification.permission : "default";
+  var activo=!!_PUSH_ESTADO.sus;
+  var fila=function(ic,txt,col){
+    return "<div style='display:flex;gap:7px;align-items:flex-start;font-size:11.5px;color:"+(col||"var(--tx2)")+";line-height:1.5;margin-top:4px'>"+
+      "<span>"+ic+"</span><span>"+txt+"</span></div>";
+  };
+  var cuerpo="";
+  if(!sop){
+    cuerpo=fila("\\u26d4","Este navegador no sabe mandar notificaciones.","var(--mal)")+
+      fila("\\ud83d\\udca1","En el teléfono, abre la app desde el icono de la pantalla de inicio, no desde el navegador.");
+  }else if(perm==="denied"){
+    cuerpo=fila("\\u26d4","Las notificaciones están BLOQUEADAS para esta app.","var(--mal)")+
+      fila("\\ud83d\\udca1","En Android: mantén pulsado el icono \\u2192 Información de la aplicación \\u2192 Notificaciones, y actívalas. Desde aquí no se puede.");
+  }else if(activo){
+    cuerpo=fila("\\u2705","Activadas en este aparato.","var(--ok)")+
+      fila("\\ud83d\\udd14","Te llega el aviso aunque no tengas la app abierta, una sola vez por aviso distinto y nunca entre las 10 de la noche y las 7 de la mañana.")+
+      "<button onclick='desactivarAvisos()' style='margin-top:9px;padding:8px 13px;border:1.5px solid var(--ln);border-radius:9px;background:var(--sup);color:var(--tx2);font-size:12px;font-weight:700;font-family:inherit;cursor:pointer'>Dejar de recibirlos en este aparato</button>";
+  }else{
+    cuerpo=fila("\\ud83d\\udd15","Todavía no están activadas en este aparato.","var(--tx3)")+
+      (!_appInstalada()
+        ? fila("\\u26a0\\ufe0f","Lo estás viendo desde el navegador. En el iPhone las notificaciones <b>solo</b> llegan con la app instalada en la pantalla de inicio; en Android funcionan igual, pero instalada va mejor.","var(--avi-tx2)")
+        : "")+
+      "<button onclick='activarAvisos()' style='margin-top:9px;padding:9px 14px;border:none;border-radius:9px;background:var(--ac);color:var(--sobre-color);font-size:12.5px;font-weight:800;font-family:inherit;cursor:pointer'>\\ud83d\\udd14 Activar en este aparato</button>";
+  }
+  return "<div style='font-size:11px;color:var(--tx2b);margin-bottom:10px;line-height:1.6'>"+
+      "Los avisos de la pestaña de Tasas —te llenaste de bolívares, tu tasa quedó bajo el suelo— "+
+      "te llegan al teléfono sin abrir la app. "+
+      "<b>El de \\u201cel mercado se movió\\u201d no</b>: ese precio cambia solo y el suelo para medirlo se calcula aquí, "+
+      "así que ese lo ves al abrir.</div>"+
+    "<div style='background:var(--sup2d);border-radius:10px;padding:11px 13px'>"+cuerpo+"</div>"+
+    "<div style='font-size:10.5px;color:var(--tx4);margin-top:8px;line-height:1.5'>"+
+      "Cada aparato se activa por separado. Lo que va dentro de la notificación viaja <b>cifrado</b>: "+
+      "el servicio de Google la transporta sin poder leerla.</div>";
 }
 
 function _htmlSuelo(){

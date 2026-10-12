@@ -74,6 +74,7 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "margenSobreSuelo", "_calcTasas", "_misTasasPublicadas", "_fpTasa",
                     "avisoTasa", "_umbralAviso", "_refSuelo", "_sueloDeFecha", "guardarTasaCalcHoy",
                     "_cgSoltar", "_htmlCabeceraTasas", "_montoMercado",
+                    "_apuntarAvisoParaPush", "_htmlAvisosTelefono", "_pushSoportado",
                     "esRutaCalce", "esCalceDirecto",
                     "_loteYaEnApertura", "_fiatDeLote", "_deltaDeLote",
                     "f2n", "f0", "f4",
@@ -8109,6 +8110,85 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(/Cu(\u00e1|\\u00e1)nto gano con esta tasa/.test(sacarFuncion("_htmlFilasTasas")),
      "que lo sigue diciendo la fila");
   S.calc = {}; S.config = {};
+}
+
+
+// ── ARREGLO 114 · la notificación al teléfono ─────────────────────────────
+// "quiero que esta notificación me llegue al teléfono no solo cuando yo abra
+// la app". El service worker se prueba de verdad en Chromium servido por
+// localhost; aqui van las guardias de lo que el navegador no puede enseñar.
+{
+  const SW = require("fs").readFileSync(__dirname + "/../sw.js", "utf8");
+
+  // El service worker tiene que escuchar las dos cosas: la que la dibuja y
+  // la que la abre. Sin notificationclick, tocarla no lleva a ningun lado.
+  ok(/addEventListener\("push"/.test(SW), "el service worker escucha el push");
+  ok(/addEventListener\("notificationclick"/.test(SW),
+     "y tocarla abre la app");
+  ok(/showNotification\(/.test(SW), "y la dibuja");
+  // El contenido viaja CIFRADO de extremo a extremo por el propio protocolo,
+  // asi que el texto va dentro del push. Un push vacio obligaria al service
+  // worker a salir a buscar el texto a la API — justo lo que falla cuando no
+  // hay cobertura, que es cuando mas falta hace.
+  ok(/event\.data\.json\(\)/.test(SW), "lee el contenido que viene dentro");
+  ok(/d\.titulo \|\| "Centro de Gestión"/.test(SW) && /d\.texto  \|\| /.test(SW),
+     "y si viene roto no deja la pantalla de bloqueo en blanco");
+  // La clave como tag: dos del mismo aviso se reemplazan en vez de apilarse.
+  ok(/tag: d\.clave/.test(SW), "usa la clave como tag: no se apilan dos iguales");
+  // El rojo cuesta dinero en CADA remesa, asi que ese no se va solo.
+  ok(/requireInteraction: \(d\.nivel === "rojo"\)/.test(SW),
+     "y el aviso rojo se queda en la pantalla hasta que lo toque");
+  // No cachear sigue siendo obligatorio: un cache agresivo taparia el aviso
+  // de version nueva, que es lo unico que saca a un aparato de su copia vieja.
+  ok(/event\.respondWith\(fetch\(event\.request\)\)/.test(SW),
+     "y el service worker sigue sin cachear nada");
+
+  // ── Lo que se guarda para que el servidor lo reparta ──────────────
+  // En el MISMO punto central que marca lo que se fusiona. Apuntarlo funcion
+  // por funcion es el camino que ya fallo cuatro veces.
+  const sd = sinComentarios(sacarFuncion("saveData"));
+  ok(/_apuntarAvisoParaPush\(\);/.test(sd),
+     "el aviso se apunta al guardar, en el punto central");
+  const ap = sacarFuncion("_apuntarAvisoParaPush");
+  ok(/avisoTasa\(\)/.test(ap) && !/_equilibrio\(/.test(ap),
+     "y sale de avisoTasa(), no de una segunda cuenta");
+  ok(/S\.avisoPush=null/.test(ap),
+     "cuando no hay nada que decir, se borra: si no, el servidor repetiria el ultimo para siempre");
+  ok(/clave:a\.clave/.test(ap) && /ts:Date\.now\(\)/.test(ap),
+     "lleva su clave —para no sonar dos veces— y su hora —para que no suene algo viejo");
+  // Sin esto no viaja y el servidor no lo ve nunca.
+  ok(/DATA_KEYS = \[[\s\S]{0,1400}"avisoPush"/.test(HTML),
+     "avisoPush esta en DATA_KEYS");
+  // Y NO va en ninguna lista de fusion, a proposito: es dato derivado que se
+  // recalcula en cada guardado, asi que gana el ultimo que lo calculo.
+  ["_MERGE_FIELDS","_MERGE_OBJETOS","_MERGE_HISTORIAL","_MERGE_BLOQUES"].forEach(function(lista){
+    ok(!new RegExp(lista+" = \\\\[[^\\\\]]*\"avisoPush\"").test(HTML),
+       "avisoPush no va en " + lista + ": es derivado, gana el ultimo que lo calculo");
+  });
+
+  // ── El permiso se pide DENTRO del toque ───────────────────────────
+  // Android exige un gesto reciente. Es el mismo fallo que ya costo el boton
+  // de compartir (ARREGLO 84) y el respaldo del cierre (ARREGLO 91): medio
+  // segundo despues, el permiso del toque ya caduco.
+  const act = sinComentarios(sacarFuncion("activarAvisos"));
+  ok(/^[\s\S]{0,400}Notification\.requestPermission\(\)/.test(act),
+     "el permiso se pide nada mas tocar, sin nada lento por delante");
+  ok(!/setTimeout/.test(act), "y sin un setTimeout por el medio");
+  // Un fallo mudo obliga a adivinar, y adivinar ya costo tres diagnosticos
+  // equivocados en una sesion.
+  ok(/alert\("No se pudo activar: "\+/.test(act),
+     "si falla, dice por que");
+  ok(/denied/.test(act) && /Información de la aplicación/.test(act),
+     "y si esta bloqueado dice donde se desbloquea, que no es desde aqui");
+
+  // ── La tarjeta dice si PUEDEN llegarle, no solo si estan activadas ──
+  // Un permiso que parece concedido y no entrega nada es peor que no tenerlo.
+  const tar = sacarFuncion("_htmlAvisosTelefono");
+  ok(/_pushSoportado\(\)/.test(tar) && /denied/.test(tar) && /_appInstalada\(\)/.test(tar),
+     "la tarjeta distingue: no se puede, esta bloqueado, o falta activarlo");
+  ok(/El de \\u201cel mercado se movió\\u201d no/.test(tar) ||
+     /mercado se movió/.test(tar),
+     "y dice cual de los avisos NO va a llegarle con la app cerrada");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
