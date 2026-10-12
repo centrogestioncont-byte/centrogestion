@@ -2810,7 +2810,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261012_v194";
+var APP_VERSION = "20261012_v195";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -4966,8 +4966,18 @@ function capitalRealTotal(){
   // pudiera ver cuanto tiene de verdad en cada moneda.
   var porMoneda={};
   var _mon=function(m){
+    // ARREGLO 112: usdtCuentas es lo que hay EN CUENTAS de esa moneda, ya
+    // convertido. Existe porque enCuentas va en la moneda NATIVA —bolivares
+    // como bolivares, que es lo que hace util este desglose— y "usdt" suma
+    // ademas la reserva, lo por cobrar y lo prestado. Para preguntar "que
+    // parte de mi efectivo esta en bolivares" hacen falta las dos partes de
+    // la division en la MISMA unidad: comparar 620.949 bolivares contra 953
+    // USDT da un porcentaje que no existe, que es el mismo error del
+    // "$177,00" de Por cobrar. Se calcula aqui, donde ya se hizo la
+    // conversion, y no en quien pregunta.
     if(!porMoneda[m]) porMoneda[m]={moneda:m,enCuentas:0,enReserva:0,porCobrar:0,
-                                    enPrestamos:0,interesPrestamos:0,usdt:0,sinTasa:false};
+                                    enPrestamos:0,interesPrestamos:0,usdt:0,
+                                    usdtCuentas:0,sinTasa:false};
     return porMoneda[m];
   };
   var enCuentas=0, enReserva=0, sinTasa=[];
@@ -4983,7 +4993,8 @@ function capitalRealTotal(){
     }
     if(acc.esReserva) enReserva+=usdt; else enCuentas+=usdt;
     var mm=_mon(acc.moneda);
-    if(acc.esReserva) mm.enReserva+=saldo; else mm.enCuentas+=saldo;
+    if(acc.esReserva) mm.enReserva+=saldo;
+    else { mm.enCuentas+=saldo; mm.usdtCuentas+=usdt; }
     mm.usdt+=usdt;
   });
   var porCobrar=0;
@@ -5054,7 +5065,8 @@ function capitalRealTotal(){
     var x=porMoneda[m];
     return {moneda:m, enCuentas:r2v(x.enCuentas), enReserva:r2v(x.enReserva),
             porCobrar:r2v(x.porCobrar), enPrestamos:r2v(x.enPrestamos),
-            interesPrestamos:r2v(x.interesPrestamos), usdt:r2v(x.usdt), sinTasa:x.sinTasa};
+            interesPrestamos:r2v(x.interesPrestamos), usdt:r2v(x.usdt),
+            usdtCuentas:r2v(x.usdtCuentas), sinTasa:x.sinTasa};
   }).filter(function(x){
     return Math.abs(x.enCuentas)>0.009||Math.abs(x.enReserva)>0.009||
            Math.abs(x.porCobrar)>0.009||Math.abs(x.enPrestamos)>0.009;
@@ -18928,6 +18940,7 @@ function rMain(){
     _htmlAvisoAperturaFuera()+  // ARREGLO 94
     _htmlAvisoSaldoNegativo()+  // ARREGLO 95
     _htmlAvisoMesSinCerrar()+   // ARREGLO 89
+    _htmlAvisoTasaFijo()+       // ARREGLO 112
     "<div class='navbar3'>"+
       "<button class='menubtn' onclick='document.getElementById(\"navMenuWrap\").classList.add(\"show\")'>☰ Menú</button>"+
       "<div class='cursec'>"+(TL[S.tab]||S.tab||"")+"</div>"+
@@ -22951,6 +22964,11 @@ function guardarTasaCalcHoy(dir,valor,silencioso){
   if(v<=0){if(!silencioso)alert("Tasa inválida.");return;}
   if(!S.config) S.config={};
   if(!S.config.tasasDia) S.config.tasasDia={};
+  // ARREGLO 112: se apunta CUANDO la publico. Sin esto, "tu suelo se movio un
+  // 9% desde que publicaste" no se puede decir — y ese es justo el aviso que
+  // habria cazado el 15/09, cuando su 188 estaba por debajo del suelo de
+  // 182,23 y no habia nada que se lo dijera.
+  S.config.tasasDia.tdia_fecha=td();
   if(dir==="ida"){
     S.config.tasasDia.tdia_brl=v;
     S._convTasaOverride=null; // limpia cualquier override manual del conversor
@@ -23590,6 +23608,9 @@ function _refrescarSuelo(){
   // lo ÚNICO que se ve.
   var cab=document.getElementById("tasas-cab");
   if(cab) cab.innerHTML=_htmlCabeceraTasas();
+  // La lectura del mercado mueve el suelo, y el suelo decide dos de los tres
+  // avisos. Si no se rehicieran, el aviso quedaria hablando del suelo viejo.
+  _refrescarAvisosTasa();
 }
 
 // El punto de equilibrio: cuantos bolivares por real puede dar sin perder.
@@ -23752,6 +23773,223 @@ function margenSobreSuelo(){
   if(mia===null || !(Q.v>0)) return null;
   return {mia:mia, base:Q.v, manda:Q.manda,
           pct:Math.round(((Q.v-mia)/Q.v)*1000)/10};
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 112 · LOS AVISOS DE MOVER LA TASA
+// ══════════════════════════════════════════════════════════════════════
+// Sus palabras del 11/10: "crees que me puedes dar un aviso cuando deba
+// modificar las tasas, bien sea porque me llene de muchos Bs o me llene de
+// muchos reales o la tasa del mercado cambió — quiero que me dé avisos de si
+// debo subir o bajar la tasa de Brasil a Vzla o viceversa".
+//
+// Los tres salen de datos que la app YA calcula. Ninguno inventa un número:
+// la concentración sale de capitalRealTotal(), el suelo de sueloQueManda() y
+// el movimiento del mercado de histTasas, que es la foto diaria que ya se
+// guarda desde hace meses.
+//
+// ── Por qué subir las DOS tasas cuando sobran bolívares ────────────────
+// Las dos van en bolívares por real y significan lo contrario (ARREGLO 74):
+//
+//   ida    -> ella ENTREGA bolívares. Subirla = dar MÁS por real = más
+//             atractiva = entran más idas = SALEN bolívares.
+//   vuelta -> ella COBRA bolívares. Subirla = pedir MÁS por real = menos
+//             atractiva = entran menos vueltas = ENTRAN menos bolívares.
+//
+// O sea que para gastar bolívares las dos suben, cada una por su motivo. Lo
+// contrario con reales — pero ojo, que no es simétrico: ella lo dijo, "tener
+// reales parados no me perjudica" y "tener muchos bolívares parados sí me
+// perjudica, por la devaluación". Así que sobrar reales no es una alarma: es
+// que puede BAJAR la vuelta, porque con reales en mano no tiene que hacer el
+// P2P que esa vuelta alta le estaba cubriendo.
+//
+// ── Los umbrales salen de SUS datos, no de una opinión ─────────────────
+// Medido sobre los 21 días de histSaldos de su export del 11/10, con las
+// tasas de cada día: su parte en bolívares tiene una mediana del 4,5% y su
+// máximo histórico fue 32,6% (el 03/09). El día que lo pidió estaba en 39,8%,
+// por encima de cualquier día medido — su instinto era correcto.
+//
+// Con el umbral en 25% habría saltado UNA vez en esos 21 días. Eso es lo que
+// tiene que ser: una alarma que suena todos los días enseña a no leerlas, y
+// aquí las rojas cuestan dinero (ARREGLO 101, el ⚠️ de PagBank).
+var _AVISO_UMBRAL = {conc:25, flojo:2, ancho:8, mercado:5};
+function _umbralAviso(k){
+  var v=parseFloat((S.config||{})["avisoUmbral_"+k]);
+  return (isFinite(v) && v>=0) ? v : _AVISO_UMBRAL[k];
+}
+
+// El suelo de un día cualquiera, reconstruido de la foto de tasas que la app
+// guarda desde hace meses. Misma cuenta que hoy (_equilibrio), para que la
+// comparación sea entre dos números hechos igual.
+function _sueloDeFecha(iso){
+  var t=(S.histTasas||{})[iso];
+  if(!t) return null;
+  return _equilibrio(t.BRL, t.VES);
+}
+// Contra qué se compara el suelo de hoy: contra el día en que publicó su
+// tasa, que es la pregunta de verdad. Si nunca lo guardó —el sello es nuevo—
+// se compara contra el día más viejo de los últimos 14, y se DICE que es eso:
+// un "se movió un 8%" sin decir desde cuándo no se puede perseguir.
+function _refSuelo(){
+  var ht=S.histTasas||{};
+  var pub=((S.config||{}).tasasDia||{}).tdia_fecha;
+  if(pub && ht[pub] && _sueloDeFecha(pub)!==null)
+    return {iso:pub, suelo:_sueloDeFecha(pub), txt:"que publicaste el "+ds(pub)};
+  var hoy=td(), mejor=null;
+  Object.keys(ht).sort().forEach(function(d){
+    if(mejor!==null) return;
+    if(_diasIso(d,hoy)<=14 && d<hoy && _sueloDeFecha(d)!==null) mejor=d;
+  });
+  if(mejor===null) return null;
+  return {iso:mejor, suelo:_sueloDeFecha(mejor), txt:"hace "+_diasIso(mejor,hoy)+" días"};
+}
+
+// Devuelve la lista de avisos, el más grave primero. Vacía cuando no hay
+// nada que decir — que es lo normal y es la gracia.
+//
+// Cada aviso lleva su CLAVE, que es lo que el servidor usa para no repetir
+// la notificación: lleva los números redondeados, así que mientras la
+// situación siga siendo la misma no vuelve a sonar.
+function avisoTasa(){
+  var av=[];
+  var f=function(n){return f2(n);};
+
+  // ── 1 · Te llenaste de una moneda ───────────────────────────────────
+  // Se mira lo que hay EN CUENTAS, no el capital entero: lo prestado y lo
+  // por cobrar también se devalúa, pero no se puede gastar en pagar una ida.
+  var R=null; try{ R=capitalRealTotal(); }catch(e){ R=null; }
+  if(R && R.porMoneda && R.porMoneda.length){
+    // En USDT, que es la unica forma de comparar entre monedas. El primer
+    // intento sumo enCuentas tal cual —620.949 bolivares junto a 953 USDT—
+    // y le dijo que tenia el 99,61% en bolivares. Era el "$177,00" de Por
+    // cobrar otra vez: la suma cruda de monedas distintas no es un numero.
+    var enCta=0;
+    R.porMoneda.forEach(function(x){ enCta+=Math.abs(x.usdtCuentas); });
+    if(enCta>1){
+      var ves=null, brl=null;
+      R.porMoneda.forEach(function(x){
+        if(x.moneda==="VES") ves=x.usdtCuentas;
+        if(x.moneda==="BRL") brl=x.usdtCuentas;
+      });
+      var uC=_umbralAviso("conc");
+      var pVes=(ves!==null)?(ves/enCta*100):0;
+      if(pVes>=uC){
+        av.push({id:"conc_ves", nivel:"ambar",
+          clave:"conc_ves_"+Math.round(pVes/5)*5,
+          titulo:"Te llenaste de bolívares",
+          texto:"El "+f(pVes)+"% de lo que tienes en cuentas está en bolívares, y parados se devalúan. "+
+                "Para gastarlos: SUBE la ida (das más Bs por real, entran más) y SUBE la vuelta "+
+                "(pides más Bs por real, entran menos).",
+          tab:"calculadora"});
+      }
+      var pBrl=(brl!==null)?(brl/enCta*100):0;
+      if(pBrl>=uC){
+        // Esto NO es una alarma: tener reales parados no le perjudica. Es una
+        // oportunidad — con reales en mano no tiene que hacer el P2P que su
+        // vuelta alta le estaba cubriendo. Sus palabras: "en eso no puedo
+        // perder por no tener el capital en reales".
+        av.push({id:"conc_brl", nivel:"info",
+          clave:"conc_brl_"+Math.round(pBrl/5)*5,
+          titulo:"Tienes reales de sobra",
+          texto:"El "+f(pBrl)+"% de lo que tienes en cuentas está en reales. Eso no te perjudica, "+
+                "pero puedes BAJAR la vuelta: con reales en mano no tienes que hacer el P2P que "+
+                "esa vuelta alta te cubre.",
+          tab:"calculadora"});
+      }
+    }
+  }
+
+  // ── 2 · Tu ida contra el suelo ──────────────────────────────────────
+  var m=null; try{ m=margenSobreSuelo(); }catch(e){ m=null; }
+  if(m){
+    var uF=_umbralAviso("flojo"), uA=_umbralAviso("ancho");
+    if(m.pct<=0){
+      // El único que cuesta dinero en CADA remesa que registre. Va arriba del
+      // panel, fuera del scroll, y no se puede cerrar.
+      av.push({id:"bajo_suelo", nivel:"rojo", fijo:true,
+        clave:"bajo_suelo_"+Math.round(m.mia),
+        titulo:"Tu ida está por encima de tu suelo",
+        texto:"Estás ofreciendo "+f(m.mia)+" y tu suelo es "+f(m.base)+": pierdes en cada remesa. "+
+              "BAJA la ida por debajo de "+f(m.base)+".",
+        tab:"calculadora"});
+    }else if(m.pct<uF){
+      av.push({id:"margen_flojo", nivel:"ambar",
+        clave:"margen_flojo_"+Math.round(m.mia),
+        titulo:"Te queda muy poco margen",
+        texto:"Ofreciendo "+f(m.mia)+" contra un suelo de "+f(m.base)+" te queda +"+f(m.pct)+"%. "+
+              "Y el suelo no lleva la comisión del banco venezolano ni tus egresos.",
+        tab:"calculadora"});
+    }else if(m.pct>uA){
+      av.push({id:"margen_ancho", nivel:"info",
+        clave:"margen_ancho_"+Math.round(m.mia),
+        titulo:"Puedes ofrecer mejor tasa",
+        texto:"Ofreciendo "+f(m.mia)+" te queda +"+f(m.pct)+"% sobre un suelo de "+f(m.base)+". "+
+              "Puedes SUBIR la ida y traer más volumen sin bajar de tu suelo.",
+        tab:"calculadora"});
+    }
+  }
+
+  // ── 3 · El suelo se movió y tu tasa se quedó ────────────────────────
+  // Medido en su export: el suelo pasó de 182,23 el 15/09 a 199,16 el 11/10
+  // —un 9,3% arriba— y su ida siguió en 188 todo ese tiempo. El 15/09, con
+  // 188 publicado, estaba REGALANDO.
+  var ref=_refSuelo();
+  if(m && ref && ref.suelo>0){
+    var mov=Math.round(((m.base-ref.suelo)/ref.suelo)*1000)/10;
+    if(Math.abs(mov)>=_umbralAviso("mercado")){
+      var subio=(mov>0);
+      av.push({id:"mercado_movio", nivel:subio?"info":"ambar",
+        clave:"mercado_"+(subio?"subio":"bajo")+"_"+Math.round(Math.abs(mov)),
+        titulo:"Tu suelo "+(subio?"subió":"bajó")+" "+f(Math.abs(mov))+"% y tu tasa sigue igual",
+        texto:"Desde "+ref.txt+" tu suelo pasó de "+f(ref.suelo)+" a "+f(m.base)+". "+
+              (subio ? "Puedes dar más bolívares por real y seguir ganando."
+                     : "Revisa tu ida: lo que ofrecías antes puede haberse quedado sin margen."),
+        tab:"calculadora"});
+    }
+  }
+
+  // El más grave primero: el color se lee antes que la letra.
+  var peso={rojo:0, ambar:1, info:2};
+  av.sort(function(a,b){ return peso[a.nivel]-peso[b.nivel]; });
+  return av;
+}
+
+// ── Dónde se ven ───────────────────────────────────────────────────────
+// El ROJO va arriba del panel, fuera de la zona que hace scroll (ARREGLO 62),
+// y no se puede cerrar: es el único que cuesta dinero en CADA remesa que
+// registre, así que esconderlo tiene precio. Los demás viven en la pestaña de
+// Tasas, que es donde decide — repetirlos arriba del panel todo el día es lo
+// que enseña a no leer las alarmas (ARREGLO 101, el ⚠️ de PagBank).
+function _htmlAvisoTasaFijo(){
+  var rojos=avisoTasa().filter(function(a){ return a.nivel==="rojo"; });
+  if(!rojos.length) return "";
+  return rojos.map(function(a){
+    return "<div style='background:var(--mal-sup);border-bottom:2px solid var(--mal-ln);padding:10px 14px'>"+
+      "<div style='background:var(--sup);border:1.5px solid var(--mal-ln);border-radius:9px;padding:9px 11px'>"+
+        "<div style='font-size:13px;font-weight:800;color:var(--mal)'>⚠️ "+_escAud(a.titulo)+"</div>"+
+        "<div style='font-size:11.5px;color:var(--tx2b);margin-top:3px;line-height:1.55'>"+_escAud(a.texto)+"</div>"+
+        "<div onclick='st(\"calculadora\")' style='font-size:11.5px;font-weight:700;color:var(--ac);margin-top:6px;cursor:pointer'>Ir a Tasas ›</div>"+
+      "</div></div>";
+  }).join("");
+}
+
+// El bloque de la pestaña de Tasas: los que no son rojos. El rojo ya está
+// arriba y repetirlo aquí sería decir dos veces lo mismo.
+function _htmlAvisosTasa(){
+  var av=avisoTasa().filter(function(a){ return a.nivel!=="rojo"; });
+  if(!av.length) return "";
+  var col=function(n){ return (n==="ambar") ? "var(--avi-tx2)" : "var(--tx2)"; };
+  var ic =function(n){ return (n==="ambar") ? "⚠️" : "💡"; };
+  return av.map(function(a){
+    // El color va en el borde, no en el relleno: un bloque entero de color es
+    // lo que ella llamó "esas cosas amarillas" (ARREGLO 99). Y el croma del
+    // fondo se queda por debajo de 22, que es el tope medido.
+    return "<div style='background:var(--sup);border:1.5px solid var(--ln2);border-left:3px solid "+col(a.nivel)+";"+
+      "border-radius:10px;padding:10px 12px;margin-bottom:8px'>"+
+      "<div style='font-size:12.5px;font-weight:800;color:"+col(a.nivel)+"'>"+ic(a.nivel)+" "+_escAud(a.titulo)+"</div>"+
+      "<div style='font-size:11px;color:var(--tx2);margin-top:3px;line-height:1.55'>"+_escAud(a.texto)+"</div>"+
+    "</div>";
+  }).join("");
 }
 
 function _htmlSuelo(){
@@ -24272,6 +24510,16 @@ function _setTasaPub(dir,val){
   // donde está el % que depende de lo que acaba de escribir.
   var n=document.getElementById("tasas-cab");
   if(n) n.innerHTML=_htmlCabeceraTasas();
+  // ARREGLO 112: el aviso depende de la ida que acaba de escribir —baja de
+  // 188 a 210 y el aviso rojo tiene que aparecer—, asi que se rehace con
+  // ella. Dejarlo solo en el repintado haria que el aviso hablara de la tasa
+  // anterior mientras el veredicto de arriba ya habla de la nueva.
+  _refrescarAvisosTasa();
+}
+// Los avisos se rehacen por su id, nunca con R() (ARREGLO 32).
+function _refrescarAvisosTasa(){
+  var n=document.getElementById("tasas-avisos");
+  if(n) n.innerHTML=_htmlAvisosTasa();
 }
 // Al soltar el campo se guarda, y se guarda por la MISMA puerta de siempre
 // (guardarTasaCalcHoy), que es la que también limpia el override del
@@ -24426,6 +24674,9 @@ function rCalculadora(){
     "<div id='tasas-cab' style='background:var(--sup);border:1.5px solid var(--ln2);border-radius:14px;padding:14px 12px 13px;margin-bottom:10px'>"+
       _htmlCabeceraTasas()+
     "</div>"+
+    // ARREGLO 112: los avisos van ENTRE la cabecera y las filas. Arriba del
+    // todo esta el estado; esto es lo que hay que hacer con el.
+    "<div id='tasas-avisos'>"+_htmlAvisosTasa()+"</div>"+
     "<div id='tasas-filas'>"+_htmlFilasTasas()+"</div>"+
   "</div>";
 }
