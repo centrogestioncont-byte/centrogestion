@@ -1294,6 +1294,77 @@ significan cosas opuestas. Lo que cambió es **cómo se le cuentan al cliente**,
 no cómo se calculan. Invertir una de las dos en el código le daría el puesto al
 revés en los flyers.
 
+#### Y la cotización lee la tasa que ELLA elige — y lo dice (ARREGLO 117)
+
+Sus palabras: *"tienes que hacer que también la parte de cotización al cliente lea
+también la tasa que yo elija"*.
+
+**El número ya la leía.** Medido antes de tocar nada: publica 201 en la cabecera y
+el conversor pasa de 188 a 201. Lo que estaba mal era todo lo de alrededor, y eso
+sí la hacía cotizar con otra tasa sin enterarse.
+
+- **El rótulo mentía, siempre.** Decía *"la que pusiste en Configuración → Tasas
+  del día (BRL → VZLA, ida)"* pasara lo que pasara. Desde el ARREGLO 110/111 ella
+  no la pone ahí: la pone en la cabecera de Tasas o con *"publicar esta"* en la
+  calculadora. Y lo decía **también cuando el número venía de un override
+  tecleado en el propio conversor**. Ahora el número y su rótulo salen del
+  **mismo sitio** (`_origenTasaCotiza`): es la regla del 34,27 contra 34,28
+  aplicada a un texto.
+- **El override era pegajoso, invisible y sin vuelta.** El campo de la tasa era
+  editable a secas: tecleaba 150, el conversor cotizaba a 150 **para siempre**
+  con la publicada en 201, nada lo decía y no había botón para volver. **Eso es
+  "no lee la tasa que yo elijo".** Ahora la publicada se enseña y no se teclea;
+  salirse hay que pedirlo (*"otra tasa solo para esta cotización"*), y mientras
+  esté puesta se ve en ámbar con **los tres valores**: a qué cotiza, cuál es la
+  publicada y el botón de volver. Mismo patrón del ARREGLO 116.
+- **Y había que tocar DOS veces para abrirlo.** El 111 lo metió en una fila que ya
+  se abre y se cierra, y dejó dentro el acordeón viejo (*"📡 Conversor rápido — ▼
+  toca para abrir"*). Se quitó el viejo (ARREGLO 98, otra vez).
+- **La cifra grande se refresca en vivo, por su id.** Repintar la fila mata el
+  campo bajo el dedo (ARREGLO 32) y no repintar nada deja arriba la tasa anterior
+  (ARREGLO 55): medido, escribía 150 abajo y arriba seguía leyéndose 201.
+
+**La vuelta NO se presta de la ida.** `_getTasaVueltaVESaBRL()` acababa en
+`return _getTasaClienteBRL()`. Las dos se escriben en bolívares por real y
+significan lo contrario (ARREGLO 74): con la ida de 188 puesta de vuelta, a un
+cliente que trae bolívares le entregaría **más reales de los que toca** —su vuelta
+real es 210— y perdería en cada operación. Es la misma regla que ya prohibió
+prestarle la tasa del bolívar al sol y al peso.
+
+Y entonces **el mensaje al cliente no se arma**: medido, decía *"Tú recibes: R$
+0,00"*, que un cliente lee como que no recibe nada. Dice qué falta y dónde
+publicarla.
+
+**Y la tasa publicada se escribe por UNA puerta.** Había **cinco** sitios
+escribiendo `tdia_brl`/`tdia_ves_brl` y solo dos pasaban por
+`guardarTasaCalcHoy()`, que es quien sella `tdia_fecha` y limpia el override:
+
+```
+cabecera de Tasas .................... pasaba ✔
+"publicar esta" de la calculadora .... pasaba ✔
+Configuración → Tasas del día ........ NO
+Balance de Cuentas → "calculadora
+  de tasa para publicar" (💾 Usar hoy)  NO
+el override del conversor ............ no escribía: tapaba
+```
+
+Lo que costaba: publicando desde los dos de abajo, `tdia_fecha` se quedaba con la
+del último día que usó la cabecera, así que el aviso del ARREGLO 112 —*"tu suelo
+se movió un X% desde que publicaste"*— **medía desde una fecha que no era la de
+esa tasa**. La guardia cuenta las escrituras y exige **tres y solo tres**: las dos
+claves de la puerta y la del ternario de `_setTasaPub`, que es la cabecera
+escribiendo mientras ella teclea.
+
+**El flyer sigue con la publicada, no con la cotización suelta.** Lo que sale
+HACIA FUERA no puede llevar un número de un caso puntual (misma regla del 85 y el
+116), y la fila del flyer lo dice al lado: *"saldrá con ida 188,00"* mientras el
+conversor cotiza a 177,50.
+
+**Y ocho campos de dinero se comían la coma.** Los tres montos del conversor y los
+cinco de Configuración eran `type="number"`. Se pasaron a texto **y se arregló su
+lector en la misma pasada** —`_leerNumero()`—, que es la mitad que no se puede
+dejar a medias: en texto con un `parseFloat` detrás, `1.500,50` se lee **1,5**.
+
 ### Su suelo: hasta dónde puede ofrecer sin perder
 
 Sus palabras: *"no sé qué tasa de compra y venta está usando mi app"* y *"no es

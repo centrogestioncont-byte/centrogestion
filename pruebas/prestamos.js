@@ -75,6 +75,12 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "avisoTasa", "_umbralAviso", "_refSuelo", "_sueloDeFecha", "guardarTasaCalcHoy",
                     "_cgSoltar", "_htmlCabeceraTasas", "_montoMercado",
                     "_apuntarAvisoParaPush", "_htmlAvisosTelefono", "_pushSoportado",
+                    "_cgPublicar", "_pieFlyer", "_refrescarTasasTodo",
+                    "_origenTasaCotiza", "_rotuloPublicada", "_getTasaClienteBRL",
+                    "_getTasaVueltaVESaBRL", "_convOtraTasa", "_convVolverPublicada",
+                    "_convSetOtra", "_refrescarConversor", "_htmlTasaCotiza", "_reconvertirBCV", "_htmlFilasTasas",
+                    "_msjCliente", "_comaCab",
+                    "_refrescarAvisosTasa", "_htmlFilasTasas", "_cgRedibujar",
                     "esRutaCalce", "esCalceDirecto",
                     "_loteYaEnApertura", "_fiatDeLote", "_deltaDeLote",
                     "f2n", "f0", "f4",
@@ -2557,10 +2563,13 @@ const _empate = fusionarConfig(
   {aperturaUsdt:2450.20, aperturaFecha:"2026-09-12"}, {aperturaUsdt:T2, aperturaFecha:T2});
 ok(_empate.aperturaUsdt===2544.79, "en un empate se queda la de este aparato");
 // El resto de config se sigue fusionando clave por clave, como siempre.
+// ARREGLO 115: la segunda clave era "ntfyCanal", que ahora esta prohibida.
+// Una prueba que fusiona una clave que la app borra al llegar no prueba lo
+// que dice probar: se cambia por otra viva.
 const _resto = fusionarConfig(
-  {moraMultaPct:2, ntfyCanal:"a"}, {moraMultaPct:T2, ntfyCanal:T1},
-  {moraMultaPct:5, ntfyCanal:"b"}, {moraMultaPct:T1, ntfyCanal:T2});
-ok(_resto.moraMultaPct===2 && _resto.ntfyCanal==="b",
+  {moraMultaPct:2, pct_sueldo:"a"}, {moraMultaPct:T2, pct_sueldo:T1},
+  {moraMultaPct:5, pct_sueldo:"b"}, {moraMultaPct:T1, pct_sueldo:T2});
+ok(_resto.moraMultaPct===2 && _resto.pct_sueldo==="b",
    "lo demas de config no cambia de comportamiento", JSON.stringify(_resto));
 
 // La tarjeta: los avisos no se pliegan (7 ajustes por −233,46 estaban dentro de
@@ -8189,6 +8198,257 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(/El de \\u201cel mercado se movió\\u201d no/.test(tar) ||
      /mercado se movió/.test(tar),
      "y dice cual de los avisos NO va a llegarle con la app cerrada");
+}
+
+
+// ── ARREGLO 115 · un solo sitio para los avisos al telefono ───────────────
+// Habia DOS sistemas de notificacion, cada uno con su tarjeta de campana en
+// Configuracion: ntfy y el del ARREGLO 114. Es el ARREGLO 98 otra vez. Y el
+// canal de ntfy era PUBLICO —en ntfy.sh un canal no lleva contrasena— asi que
+// por ahi salia, remesa por remesa, la ruta, el nombre del cliente y la
+// ganancia.
+{
+  const sinCom115 = HTML.replace(/\/\/[^\n]*/g, "");
+  // Nada de ntfy puede volver a ejecutarse. Se busca sin comentarios: los de
+  // este arreglo lo nombran para explicar por que se fue.
+  ["notificarNtfy","guardarCanalNtfy","ntfy-canal-inp","ntfy.sh",'_cfgAcc("ntfy"'].forEach(function(nom){
+    ok(sinCom115.indexOf(nom) < 0, "no queda nada de " + nom);
+  });
+  // Y el dominio sale del candado de contenido: dejarlo abierto es dejar una
+  // puerta por la que ya no pasa nadie (ARREGLO 104).
+  const CAB = require("fs").readFileSync(__dirname + "/../_headers", "utf8");
+  ok(CAB.indexOf("ntfy.sh") < 0, "ni el dominio en la cabecera de seguridad");
+  // El canal no puede volver desde un aparato viejo. Mientras siga guardado,
+  // sigue siendo un nombre que alguien puede usar para escuchar sus remesas.
+  ok(/_CONFIG_PROHIBIDO = \[[^\]]*"ntfyCanal"/.test(HTML),
+     "y el canal guardado se borra al llegar, como paso con modulos");
+
+  // El aviso de remesa NO se pierde: cambia de via.
+  const av = sacarFuncion("avisarAlTelefono");
+  ok(/apiFetch\("\/push\/ahora"/.test(av),
+     "la remesa registrada avisa por la via nueva, cifrada");
+  ok(/excluir:excluir/.test(av) && /_PUSH_ESTADO\.sus&&_PUSH_ESTADO\.sus\.endpoint/.test(av),
+     "y no le vuelve al aparato que la acaba de registrar");
+  // Fire-and-forget: la remesa ya esta guardada y esto no puede estorbarlo.
+  ok(/\.catch\(function\(\)\{\}\)/.test(av) && /try\{/.test(av),
+     "si falla el aviso, el guardado no se entera");
+  // Los dos sitios que avisaban siguen avisando.
+  // Los dos sitios que avisaban siguen avisando, y la llamada tiene que ser
+  // una INSTRUCCION suelta: contar cuantas veces aparece el nombre dejaba
+  // pasar un "0&&avisarAlTelefono(...)", que la apaga sin quitarla.
+  const sueltas = sinCom115.match(/\n  avisarAlTelefono\("/g) || [];
+  ok(sueltas.length === 2,
+     "siguen los dos avisos de remesa, y ninguno esta apagado con un &&",
+     sueltas.length);
+  ok(/\n  avisarAlTelefono\("\u{1F4B8} Remesa registrada"/u.test(sinCom115),
+     "el de las remesas normales");
+  ok(/\n  avisarAlTelefono\("\u{1F4B8} Remesa EE\.UU registrada"/u.test(sinCom115),
+     "y el de las de EE.UU.");
+}
+
+
+// ── ARREGLO 116 · publicar desde donde la decide ─────────────────────────
+// Sus palabras del 12/10: "al descargar el flayer la tasas no se cambian".
+// No era el flyer. Reproducido: cambiando la tasa en la CABECERA el flyer
+// sale con la nueva; cambiandola en la CALCULADORA sale con la anterior.
+// Es correcto —el flyer imprime lo PUBLICADO— pero ella la teclea abajo, que
+// es donde ve cuanto gana. El sitio donde decide y el sitio donde publica
+// quedaron separados en el ARREGLO 111, cuando se fue el boton de "guardar
+// como tasa de hoy" que vivia justo donde tecleaba.
+{
+  const pub = sinComentarios(sacarFuncion("_cgPublicar"));
+  // Una sola puerta para escribir la tasa publicada: la de siempre, que es la
+  // que tambien limpia el override del conversor.
+  ok(/guardarTasaCalcHoy\(campo, v, true\)/.test(pub),
+     "publicar pasa por guardarTasaCalcHoy, la puerta de siempre");
+  ok(/g\[campo\+"Tocada"\]=false;/.test(pub),
+     "y la tasa deja de ser 'suya': vuelve a seguir a la publicada, que ya es la misma");
+  ok(/if\(!\(v>0\)\)/.test(pub), "no se publica una tasa vacia o cero");
+  // ARREGLO 32: publicar cambia cuatro cosas de la pantalla y ninguna se
+  // rehace con R(), que destruiria el campo bajo el dedo.
+  const todo = sinComentarios(sacarFuncion("_refrescarTasasTodo"));
+  ok(!/\bR\(\)/.test(pub) && !/\bR\(\)/.test(todo),
+     "y no se repinta la pantalla entera");
+  ["tasas-cab","tasas-filas"].forEach(function(id){
+    ok(new RegExp('getElementById\\("'+id+'"\\)').test(todo),
+       "se rehace " + id + " por su id");
+  });
+  ok(/_refrescarAvisosTasa\(\)/.test(todo) && /_cgRedibujar\(\)/.test(todo),
+     "y tambien los avisos y la calculadora: publicar los cambia a los cuatro");
+
+  // El enlace esta donde ya decia "volver", que es donde ella ve que no
+  // coinciden.
+  const cuerpo = sacarFuncion("_htmlCalceCuerpo");
+  ok(/_cgPublicar\(/.test(cuerpo) && /publicar esta/.test(cuerpo),
+     "el enlace de publicar sale al lado del de volver");
+
+  // La fila del flyer dice CON QUE TASAS va a salir, y lo saca de la MISMA
+  // fuente que el flyer: si se calculara aparte, la fila podria prometer una
+  // tasa y el papel llevar otra.
+  const pie = sacarFuncion("_pieFlyer");
+  ok(/_misTasasPublicadas\(\)/.test(pie),
+     "el pie del flyer sale de la misma fuente que el flyer");
+  ok(/_calcTasas/.test(HTML) && /_misTasasPublicadas\(\)/.test(sacarFuncion("_calcTasas")),
+     "y el flyer lee de ahi tambien");
+  ok(/_pieFlyer\(\)/.test(sacarFuncion("_htmlFilasTasas")),
+     "y la fila lo usa");
+  // El rotulo va con el escape \u00ed en el archivo, no con la tilde literal:
+  // buscando solo la tilde, la guardia pasaba con el texto borrado.
+  ok(/todav(\u00ed|\\u00ed)a no has publicado ninguna tasa/.test(pie),
+     "y si no hay ninguna publicada, lo dice en vez de prometer un papel vacio");
+
+  // Funcional: teclear abajo, publicar, y el flyer cambia.
+  S.calc = {}; S.config = {tasasDia:{tdia_brl:188, tdia_ves_brl:210}};
+  ok(F._calcTasas().ida.cliente === 188, "el flyer saldria con 188");
+  F._cgSet("ida", "201");
+  ok(F._calcTasas().ida.cliente === 188 && F._cg().idaTocada === true,
+     "tecleando abajo el flyer NO cambia todavia: eso es lo que ella vio");
+  F._cgPublicar("ida");
+  ok(F._calcTasas().ida.cliente === 201 && !F._cg().idaTocada,
+     "y al publicar, si", F._calcTasas().ida.cliente);
+  ok(/201/.test(F._pieFlyer()), "y la fila lo dice antes de pulsarlo", F._pieFlyer());
+  S.calc = {}; S.config = {};
+}
+
+
+// ── ARREGLO 117 · la cotización lee la tasa que ella elige, y lo DICE ────
+// Sus palabras: "tienes que hacer que también la parte de cotización al cliente
+// lea también la tasa que yo elija".
+//
+// El numero ya la leia —medido: publica 201 y el conversor pasa de 188 a 201—.
+// Lo que fallaba era lo de alrededor: el rotulo decia SIEMPRE "la que pusiste
+// en Configuracion", el override tecleado en el propio conversor se quedaba
+// puesto sin decirlo y sin vuelta, y habia que tocar dos veces para abrirlo.
+{
+  const org = sinComentarios(sacarFuncion("_origenTasaCotiza"));
+  const fila = sinComentarios(sacarFuncion("_htmlTasaCotiza"));
+
+  // 1) El numero y su rotulo salen del MISMO sitio. Antes el numero lo daba
+  //    _getTasaClienteBRL() con su propia cadena de decision y el rotulo se
+  //    escribia aparte en la pantalla: dos copias de la misma regla, y por eso
+  //    el texto podia hablar de Configuracion mientras el numero venia de un
+  //    override.
+  ["_getTasaClienteBRL","_getTasaVueltaVESaBRL"].forEach(function(f){
+    const c = sinComentarios(sacarFuncion(f));
+    ok(/_origenTasaCotiza\("(ida|vuelta)"\)\.tasa/.test(c),
+       f+" lee de _origenTasaCotiza, no de su propia cadena");
+    ok(!/tdia_brl|tdia_ves_brl/.test(c),
+       "y no vuelve a mirar tasasDia por su cuenta: " + f);
+  });
+  ok(/rotulo:/.test(org), "el rotulo sale de ahi tambien, con el numero");
+  ok(/o\.rotulo/.test(fila), "y la fila lo pinta, no se escribe uno propio");
+
+  // 2) El rotulo viejo mentia: la mandaba a Configuracion, donde ya no la pone.
+  //    Anclado al marcado del conversor para que un comentario no lo salve.
+  ok(!/la que pusiste en Configuraci(ó|\\u00f3)n/.test(sinComentarios(HTML)),
+     "fuera el rotulo que la mandaba a Configuracion a buscar la tasa");
+
+  // 3) Salirse de la publicada es una DECISION: no se teclea sin pedirlo, se
+  //    ve mientras este puesta, y hay vuelta. Son los TRES valores del
+  //    ARREGLO 67: a que cotiza, cual es la publicada y como se vuelve.
+  ok(/_convOtraTasa\(/.test(fila), "para salirse de la publicada hay que pedirlo");
+  ok(/_convVolverPublicada\(/.test(fila) && /volver a tu /.test(fila),
+     "y hay boton para volver a la publicada");
+  ok(/o\.pub/.test(fila), "que dice cual es esa publicada, no solo 'volver'");
+  ok(/tasa suelta/.test(org), "y mientras este puesta, la pantalla lo dice");
+  ["_convOtraTasa","_convVolverPublicada","_convSetOtra","_refrescarConversor"].forEach(function(f){
+    ok(!/\bR\(\)/.test(sinComentarios(sacarFuncion(f))),
+       "ARREGLO 32: " + f + " no repinta la pantalla entera");
+  });
+  // ARREGLO 55: la cifra grande tiene que seguir al campo mientras teclea. Si
+  // solo se recalculan los montos, arriba se queda la tasa anterior y la
+  // pantalla ensena dos numeros que no cuadran entre si.
+  ok(/getElementById\("tasa-cotiza-"\+dir\)/.test(sinComentarios(sacarFuncion("_convSetOtra"))),
+     "y la cifra grande se refresca en vivo, por su id");
+
+  // 4) Un solo toque. El ARREGLO 111 ya puso la fila que se abre y se cierra;
+  //    el acordeon viejo de dentro era un segundo control para lo mismo.
+  ok(!/_convBcvAbierto/.test(HTML),
+     "fuera el acordeon interno: la fila de Tasas ya es el acordeon (ARREGLO 98)");
+
+  // 5) La VUELTA no se presta de la IDA. Las dos se escriben en Bs por real y
+  //    significan lo contrario (ARREGLO 74): con la ida de 188 puesta de
+  //    vuelta le entregaria mas reales de los que toca —su vuelta es 210— y
+  //    perderia en cada operacion.
+  ok(!/return _getTasaClienteBRL\(\);/.test(sinComentarios(HTML)),
+     "sin vuelta publicada no se usa la de ida como respaldo");
+  // Y entonces el mensaje al cliente no se arma: medido, decia "Tu recibes:
+  // R$ 0,00", que un cliente lee como que no recibe nada.
+  ok(/falta:"vuelta"/.test(sinComentarios(sacarFuncion("_msjCliente"))) &&
+     /falta:"ida"/.test(sinComentarios(sacarFuncion("_msjCliente"))),
+     "sin la tasa de ese sentido no se arma la cotizacion");
+  ok(/msg\.falta/.test(sinComentarios(sacarFuncion("_copiarMsjCliente"))),
+     "y el boton de copiar dice que falta, en vez de copiar un cero");
+
+  // 6) UNA puerta para publicar la tasa. Habia cinco sitios escribiendo
+  //    tdia_brl/tdia_ves_brl y solo dos pasaban por guardarTasaCalcHoy, que es
+  //    quien sella tdia_fecha —de donde sale el aviso "tu suelo se movio un X%
+  //    desde que publicaste" (ARREGLO 112)— y limpia el override.
+  ["saveTasasConfig","guardarTasaHoyDirecto"].forEach(function(f){
+    const c = sinComentarios(sacarFuncion(f));
+    ok(/guardarTasaCalcHoy\(/.test(c), f + " publica por la puerta unica");
+    ok(!/tasasDia\.tdia_brl\s*=/.test(c) && !/tasasDia\[k\]\s*=\s*[^;]*tdia_brl/.test(c),
+       "y no escribe tdia_brl a pelo: " + f);
+  });
+  // Quien si puede escribirla directo: la puerta, y la cabecera mientras ella
+  // teclea (el % de arriba depende de lo que acaba de escribir).
+  {
+    const sin = sinComentarios(HTML);
+    const esc = (sin.match(/tasasDia(\.tdia_brl|\.tdia_ves_brl|\[dir==="ida"\?"tdia_brl":"tdia_ves_brl"\])\s*=/g)||[]);
+    // Son TRES escrituras y ni una mas: las dos claves de guardarTasaCalcHoy
+    // (ida y vuelta) y la del ternario de _setTasaPub, que es la cabecera
+    // escribiendo mientras ella teclea —el % de arriba depende de eso—.
+    ok(esc.length === 3,
+       "solo la puerta y la cabecera escriben la tasa publicada",
+       esc.length + " -> " + esc.join(" | "));
+    ok(/tasasDia\.tdia_brl\s*=/.test(sinComentarios(sacarFuncion("guardarTasaCalcHoy"))) &&
+       /tasasDia\.tdia_ves_brl\s*=/.test(sinComentarios(sacarFuncion("guardarTasaCalcHoy"))),
+       "dos de ellas son las de la puerta");
+    ok(/tasasDia\[dir==="ida"\?"tdia_brl":"tdia_ves_brl"\]\s*=/.test(sinComentarios(sacarFuncion("_setTasaPub"))),
+       "y la tercera es la cabecera mientras teclea");
+  }
+
+  // 7) Los campos de dinero del conversor se comian la coma decimal, y su
+  //    lector es la mitad que no se puede dejar a medias: en texto con un
+  //    parseFloat detras, "1.500,50" se lee 1,5.
+  ["conv-brl","conv-ves","conv-usd"].forEach(function(id){
+    ok(new RegExp("<input id='"+id+"' type='text' inputmode='decimal'").test(HTML),
+       id + " acepta la coma");
+  });
+  ["tdia_brl","tdia_vzla","tdia_usd","tdia_ves_brl","tdia_usd_brl"].forEach(function(k){
+    ok(new RegExp("<input type='text' inputmode='decimal' id='tasa-"+k+"'").test(HTML),
+       "tasa-" + k + " acepta la coma");
+  });
+  ["_convDesde","_msjCliente","_copiarMonto","saveTasasConfig","guardarTasaHoyDirecto"].forEach(function(f){
+    const c = sinComentarios(sacarFuncion(f));
+    ok(!/parseFloat\((el|elBrl|elVes|elUsd)\.value\)/.test(c) &&
+       !/parseFloat\(\(document\.getElementById\("conv-/.test(c),
+       "y su lector pasa por _leerNumero: " + f);
+  });
+
+  // Funcional, con el arnes: publica, se sale, vuelve.
+  S.config = {tasasDia:{tdia_brl:188, tdia_ves_brl:210, tdia_fecha:F.td()}};
+  S._convTasaOverride = null; S._convTasaOverrideVuelta = null;
+  ok(F._getTasaClienteBRL() === 188 && F._getTasaVueltaVESaBRL() === 210,
+     "cotiza con las dos publicadas");
+  ok(/publicada hoy/.test(F._origenTasaCotiza("ida").rotulo),
+     "y dice que son las de hoy", F._origenTasaCotiza("ida").rotulo);
+  F.guardarTasaCalcHoy("ida", 201, true);
+  ok(F._getTasaClienteBRL() === 201, "publica 201 y la cotizacion la sigue");
+  F._convOtraTasa("ida"); F._convSetOtra("ida", "150");
+  const o150 = F._origenTasaCotiza("ida");
+  ok(F._getTasaClienteBRL() === 150 && o150.otra === true && o150.pub === 201,
+     "una tasa suelta de 150 con la publicada de 201 al lado");
+  ok(F._calcTasas().ida.cliente === 201,
+     "y el flyer sigue con la publicada: lo que sale HACIA FUERA no es una cotizacion suelta");
+  F._convVolverPublicada("ida");
+  ok(F._getTasaClienteBRL() === 201 && S._convTasaOverride === null,
+     "volver la devuelve a la publicada");
+  // Sin vuelta publicada no hay vuelta, y no se presta la de ida.
+  delete S.config.tasasDia.tdia_ves_brl;
+  ok(F._getTasaVueltaVESaBRL() === 0 && F._origenTasaCotiza("vuelta").tasa === null,
+     "sin vuelta publicada no hay vuelta", F._getTasaVueltaVESaBRL());
+  S.config = {}; S._convTasaOverride = null; S._convTasaOverrideVuelta = null;
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
