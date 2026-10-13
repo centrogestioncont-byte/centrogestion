@@ -2913,7 +2913,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261013_v208";
+var APP_VERSION = "20261013_v209";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -18568,7 +18568,7 @@ function simularConsumoFIFO(monedaOrig, usdtUsados, monedaDest, bsEntregados, cu
       var disp=parseFloat(compras[i].restante)||0;
       if(disp<=0) continue;
       var usar=Math.min(disp,u);
-      resCompras.push({fecha:compras[i].fecha,tasa:_tasaEfectivaLote(compras[i]),usdt:Math.round(usar*10000)/10000});
+      resCompras.push({id:compras[i].id,fecha:compras[i].fecha,tasa:_tasaEfectivaLote(compras[i]),usdt:Math.round(usar*10000)/10000});
       u-=usar;
     }
   }
@@ -18580,11 +18580,112 @@ function simularConsumoFIFO(monedaOrig, usdtUsados, monedaDest, bsEntregados, cu
       var dispB=parseFloat(ventas[k].bsRestante)||0;
       if(dispB<=0) continue;
       var usarB=Math.min(dispB,b);
-      resVentas.push({fecha:ventas[k].fecha,tasa:_tasaEfectivaLote(ventas[k]),bs:Math.round(usarB*100)/100});
+      resVentas.push({id:ventas[k].id,fecha:ventas[k].fecha,tasa:_tasaEfectivaLote(ventas[k]),bs:Math.round(usarB*100)/100});
       b-=usarB;
     }
   }
   return {compras:resCompras, ventas:resVentas};
+}
+// ── ARREGLO 126 · quién se comió cada lote ──────────────────────
+//
+// Sus palabras del 13/10: "en la parte de inventario, cuando yo hago de
+// bolívares arriba aparece ahí la adquisición de los bolívares, mas no cuando es
+// de reales allá a bolívar".
+//
+// Tiene razón y es asimétrico: una VUELTA crea un lote y se ve; una IDA lo
+// GASTA y no se veía en ninguna parte. El dato existía —cada remesa guarda su
+// _lotesConsumidos desde hace tiempo— pero solo se podía leer del lado de la
+// remesa. Esto lo lee del lado del lote, que es la pregunta que ella hace
+// mirando el inventario: "estos bolívares, ¿dónde se fueron?".
+//
+// Va por ÍNDICE, no por búsqueda. Con sus ~290 lotes y ~700 remesas, preguntar
+// lote por lote son 200.000 comparaciones en cada repintado — el mismo coste que
+// ya hizo falta quitar de getRateToUsdt (280 ms por dibujo). Se recorre una vez.
+//
+// Los registros VIEJOS no llevan el id del lote, así que se indexan también por
+// fecha+tasa. No es exacto —dos lotes del mismo día a la misma tasa caen en la
+// misma clave— y por eso el id manda cuando está: lo que no se puede es dejar
+// fuera todo lo anterior a este arreglo.
+// El desplegable de un lote NO llama a R() (ARREGLO 32): repintar la tabla
+// entera cierra la fila bajo el dedo. Se cambia el display por su id.
+function toggleComieron(id){
+  var k="_verCom_"+id;
+  S[k]=!S[k];
+  var el=document.getElementById("com-"+id);
+  if(el) el.style.display=S[k]?"table-row":"none";
+  var b=document.getElementById("com-btn-"+id);
+  if(b) b.textContent=S[k]?"\u25b2":"\ud83e\uddfe";
+}
+function _filaComieron(idx, r, cols){
+  var c=_comieronEsteLote(idx, r);
+  if(!c.regs.length) return {btn:"", fila:""};
+  var abierto=!!S["_verCom_"+r.id];
+  var uni=(r.tipo==="compra")?"USDT":r.moneda;
+  var tot=c.regs.reduce(function(a,x){return a+x.monto;},0);
+  var btn="<button type='button' id='com-btn-"+r.id+"' onclick='toggleComieron("+r.id+")' "+
+    "style='background:none;border:none;cursor:pointer;font-size:12px' "+
+    "title='Qu\u00e9 remesas gastaron este lote'>"+(abierto?"\u25b2":"\ud83e\uddfe")+"</button>";
+  var d="<div style='font-size:11px;padding:7px 9px'>"+
+    "<div style='font-weight:700;color:var(--tit);margin-bottom:4px'>"+
+      "Se gast\u00f3 en "+c.regs.length+" remesa"+(c.regs.length>1?"s":"")+" \u00b7 "+
+      ((r.tipo==="compra")?f4(tot):f2(tot))+" "+uni+"</div>";
+  c.regs.forEach(function(x){
+    d+="<div style='display:flex;justify-content:space-between;gap:8px;padding:2px 0;color:var(--tx2)'>"+
+      "<span>#"+x.n+" \u00b7 "+_escAud(x.fecha)+" \u00b7 "+_escAud(x.cliente||"\u2014")+"</span>"+
+      "<span style='white-space:nowrap;color:var(--tx3)'>"+((x.campo==="usdt")?f4(x.monto):f2(x.monto))+" "+uni+"</span>"+
+    "</div>";
+  });
+  // Lo que no consta, se dice. Las remesas de antes de este arreglo no
+  // guardaron el id del lote, as\u00ed que se casan por fecha y tasa.
+  if(!c.exacto)
+    d+="<div style='margin-top:5px;font-size:10.5px;color:"+(c.ambiguo?"var(--mal)":"var(--tx4)")+"'>"+
+      (c.ambiguo
+        ? "\u26a0\ufe0f Hay m\u00e1s de un lote con esta misma fecha y tasa, y estas remesas no dicen de cu\u00e1l salieron: se reparten entre todos. Las nuevas s\u00ed lo dicen."
+        : "Casado por fecha y tasa: estas remesas son anteriores y no guardaron de qu\u00e9 lote salieron.")+
+    "</div>";
+  d+="</div>";
+  var fila="<tr id='com-"+r.id+"' style='display:"+(abierto?"table-row":"none")+";background:var(--az6-t);border-top:1px dashed var(--az5-j)'>"+
+    "<td colspan='"+cols+"'>"+d+"</td></tr>";
+  return {btn:btn, fila:fila};
+}
+function _claveLoteVieja(fecha, tasa){
+  return "vj:"+(fecha||"")+"|"+Math.round((parseFloat(tasa)||0)*100);
+}
+function _indiceLotesComidos(){
+  var por={}, ambiguas={}, vistas={};
+  ["brl","vzla","eeuu"].forEach(function(k){
+    (S[k]||[]).forEach(function(t){
+      var lc=t&&t._lotesConsumidos;
+      if(!lc) return;
+      [["compras","usdt"],["ventas","bs"]].forEach(function(par){
+        (lc[par[0]]||[]).forEach(function(l){
+          var reg={lista:k, n:t.n, cliente:t.cl||"", fecha:t.d||"", monto:parseFloat(l[par[1]])||0, campo:par[1]};
+          var clave=(l.id!==undefined&&l.id!==null) ? ("id:"+l.id) : _claveLoteVieja(l.fecha,l.tasa);
+          if(!por[clave]) por[clave]=[];
+          por[clave].push(reg);
+        });
+      });
+    });
+  });
+  // Qué claves viejas puede reclamar MÁS DE UN lote. Medido en su export:
+  // 63 de 367 lotes (el 17%) comparten fecha y tasa con otro, el peor grupo
+  // con cuatro. Para esos, lo de abajo es lo que se puede deducir, no lo que
+  // consta — y se dice en la propia fila. Un dato deducido presentado como
+  // seguro es peor que no darlo.
+  (S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[]).forEach(function(l){
+    var k=_claveLoteVieja(l.fecha,_tasaEfectivaLote(l));
+    if(vistas[k]) ambiguas[k]=true; else vistas[k]=1;
+  });
+  return {por:por, ambiguas:ambiguas};
+}
+function _comieronEsteLote(idx, lote){
+  var vacio={regs:[], exacto:true, ambiguo:false};
+  if(!idx||!idx.por||!lote) return vacio;
+  var kId="id:"+lote.id;
+  if(idx.por[kId]) return {regs:idx.por[kId], exacto:true, ambiguo:false};
+  var kV=_claveLoteVieja(lote.fecha,_tasaEfectivaLote(lote));
+  if(!idx.por[kV]) return vacio;
+  return {regs:idx.por[kV], exacto:false, ambiguo:!!idx.ambiguas[kV]};
 }
 function toggleLotes(n,tipo){
   var key="_showLotes_"+tipo+"_"+n;
@@ -26560,12 +26661,16 @@ function rInventarioUsdt(){
   var mVentaOpts=MONEDAS_VENTA.map(function(m){return "<option value='"+m.id+"'"+(f.monedaVenta===m.id?" selected":"")+">"+m.flag+" "+m.label+"</option>";}).join("");
   var tipoOpts=["exchange","banco","efectivo","billetera"];
   var _cuentasNomInv={}; (S.cuentas||[]).forEach(function(c){_cuentasNomInv[c.id]=c.nombre||c.id;});
+  // ARREGLO 126: se arma UNA vez por dibujo. Preguntarlo lote por lote serian
+  // 200.000 comparaciones en cada repintado (medido: asi cuesta 2 ms).
+  var _idxCom=_indiceLotesComidos();
   var rows=S.inventarioUsdt.slice().sort(function(a,b){return ordenFIFO(b,a);}).map(function(r){
     var enBlanco=!(parseFloat(r.usdt)||0)&&!(parseFloat(r.bs)||0);
     if(enBlanco){
       return "<tr style='background:var(--am6-f)'><td>"+(r.fecha||"—")+"</td><td colspan='9' style='color:var(--am3-g);font-size:11.5px'>⚠️ Registro en blanco (sin montos) — puedes eliminarlo</td><td></td><td><button class='del-btn' onclick='reqDel(\"inventarioUsdt\","+r.id+",\"id\")'>🗑️</button></td></tr>";
     }
     var isComp=r.tipo==="compra";
+    var _com=_filaComieron(_idxCom, r, 12);
     var flag=(MONEDAS_COMPRA.concat(MONEDAS_VENTA).find(function(m){return m.id===r.moneda;})||{flag:"💵"}).flag;
     var bancoId=isComp?r.cuentaOrigenId:r.cuentaDestinoId;
     var bancoNom=bancoId?_escAud(_cuentasNomInv[bancoId]||"—"):"—";
@@ -26594,9 +26699,9 @@ function rInventarioUsdt(){
         (r.usdt||r.bs?((isComp?f4(parseFloat(r.restante)||0)+" USDT":f2(r.bsRestante!==undefined?r.bsRestante:(parseFloat(r.bs)||0))+" "+r.moneda)+
         " <button type='button' onclick='editRestanteInv("+r.id+")' style='background:none;border:none;cursor:pointer;font-size:11px' title='Ajustar restante'>✏️</button>"):"")+
       "</td>"+
-      "<td style='text-align:center'>"+(r.locked?"🔒":"")+"</td>"+
+      "<td style='text-align:center'>"+(r.locked?"🔒":"")+_com.btn+"</td>"+
       "<td><button class='del-btn' onclick='reqDel(\"inventarioUsdt\","+r.id+",\"id\")'>🗑️</button></td>"+
-    "</tr>";
+    "</tr>"+_com.fila;
   }).join("");
   var comActual=COM();
   return "<div style='background:var(--info-osc);border:2px solid var(--avi);border-radius:10px;padding:13px 16px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px'>"+

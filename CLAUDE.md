@@ -1352,6 +1352,68 @@ decir. Lo cazó **ejecutarlo con sus lotes** y restar los dos números.
   así que unas fechas de prueba `11/10` y `12/10` salieron en orden invertido. No
   era un fallo: es la regla del cambio de año haciendo su trabajo.
 
+### Y quién se comió cada lote (ARREGLO 126)
+
+Sus palabras del 13/10: *"en la parte de inventario, cuando yo hago de bolívares
+arriba aparece ahí la adquisición de los bolívares, mas no cuando es de reales
+allá a bolívar"*.
+
+Tenía razón y era **asimétrico**: una vuelta **crea** un lote y se ve en el
+inventario; una ida lo **gasta** y no se veía en ninguna parte. El dato existía
+desde hacía tiempo —cada remesa guarda su `_lotesConsumidos`— pero solo se podía
+leer **del lado de la remesa**, y la pregunta que ella hace mirando el inventario
+es la contraria: *"estos bolívares, ¿dónde se fueron?"*.
+
+```
+Se gastó en 6 remesas · 138,2157 USDT
+  #805 · 10/10/26 · YANEISI DEL ROSARIO      8,2657 USDT
+  #806 · 10/10/26 · RUDI MARIN              52,8543 USDT
+  ...
+```
+
+- **Va por ÍNDICE, no por búsqueda.** Con sus ~290 lotes y ~700 remesas,
+  preguntarlo lote por lote son 200.000 comparaciones **en cada repintado** — el
+  mismo coste que ya hubo que quitar de `getRateToUsdt()`. Se recorre una vez por
+  dibujo: medido, **2 ms**. Hay una guardia que exige que `_indiceLotesComidos()`
+  se llame **una sola vez** y **fuera** del bucle de lotes.
+- **Desplegar no llama a `R()`** (ARREGLO 32): repintar la tabla cierra la fila
+  bajo el dedo. Se cambia el `display` por su id.
+- **El `colspan` sigue a la TABLA, no a un número escrito a mano.** La guardia
+  cuenta las `<th>` de esa cabecera y exige que la llamada pase esa misma cifra:
+  si algún día se añade una columna, falla hasta que se actualice.
+
+#### Lo deducido se dice que es deducido
+
+**Las remesas anteriores a este arreglo no guardaron de qué lote salieron.**
+`simularConsumoFIFO()` apuntaba `{fecha, tasa, monto}` y ya apunta también el
+**id**, pero lo viejo hay que casarlo por **fecha + tasa**, y eso no siempre
+distingue. Medido en su export:
+
+```
+lotes en total (vivos + cerrados) ....... 367
+que comparten fecha y tasa con otro ......  63   (el 17%, el peor grupo con 4)
+```
+
+Para esos, las mismas remesas aparecen bajo todos los lotes del grupo. **Se dice
+en la propia fila**, en rojo: *"Hay más de un lote con esta misma fecha y tasa, y
+estas remesas no dicen de cuál salieron: se reparten entre todos. Las nuevas sí
+lo dicen."* Y cuando no hay choque pero tampoco id, se dice más suave: *"Casado
+por fecha y tasa"*. Un dato deducido presentado como seguro es peor que no darlo
+— es la misma regla que la hora deducida de la apertura (ARREGLO 72), que tampoco
+se aplica sola.
+
+**Un lote que nadie gastó no dibuja nada**: ni botón ni fila. Si no, la pantalla
+se llena de desplegables vacíos.
+
+#### Y una trampa del método, que costó el trabajo entero una vez
+
+Las pruebas negativas (`neg<N>.py`) **restauran su propia copia de `index.html`
+al terminar**. Correr la del 125 después de haber escrito el 126 devolvió el
+archivo al estado del 125 y **se llevó por delante el 126 sin avisar** — lo cacó
+la suite, que de pronto no encontraba una función recién escrita. **Una prueba
+negativa vieja es una máquina del tiempo.** Antes de correr cualquiera, hay que
+volver a tomar su copia sobre el estado actual.
+
 ### La tasa de referencia sale sola — no la escribas a mano
 
 Antes mandaba lo que ella escribía en el panel 💱, y mandaba para siempre:

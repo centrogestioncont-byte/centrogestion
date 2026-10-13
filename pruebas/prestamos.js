@@ -106,6 +106,7 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "crearLoteRecibido", "quitarLoteDeRemesa", "_loteAlCobrar",
                     "ordenFIFO", "normalizarInventarioFIFO", "simularConsumoFIFO", "_tasaEfectivaLote",
                     "_repartoFIFO", "getTasaVentaPonderada", "_bsPorReal", "_htmlDeDondeSalen",
+                    "_claveLoteVieja", "_indiceLotesComidos", "_comieronEsteLote", "_filaComieron", "toggleComieron",
                     "f4", "f0", "_leerNumero", "_avisoCambioSaldo", "_fechaLote", "_idLoteNuevo",
                     "_diasEnElFuturo", "confirmarFechaFutura",
                     "comisionBancoVES", "etiquetaComisionBanco", "salidaDeCuentaEntrega",
@@ -9151,6 +9152,109 @@ console.log("\nARREGLO 125 · de dónde salen los bolívares");
      "_bsPorReal DIVIDE por la tasa de compra de reales");
   ok(/if\(!\(brl>0\)\) return null;/.test(sinComentarios(sacarFuncion("_bsPorReal"))),
      "y sin esa tasa devuelve null en vez de un número inventado");
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// ARREGLO 126 · quién se comió cada lote
+// ═══════════════════════════════════════════════════════════════════════
+// Sus palabras del 13/10: "en la parte de inventario, cuando yo hago de
+// bolívares arriba aparece ahí la adquisición de los bolívares, mas no cuando
+// es de reales allá a bolívar". Una vuelta CREA un lote y se ve; una ida lo
+// GASTA y no se veía. El dato ya estaba en cada remesa (_lotesConsumidos);
+// faltaba poder leerlo del lado del lote.
+console.log("\nARREGLO 126 · quién se comió cada lote");
+{
+  const inv = S.inventarioUsdt, brl = S.brl, vz = S.vzla, ee = S.eeuu, cer = S.inventarioUsdt_cerrado;
+  const L = (id,fecha,tasa,bs) => ({id:id,tipo:"venta",moneda:"VES",fecha:fecha,usdt:bs/tasa,bs:bs,bsRestante:bs,tasa:tasa,cuentaDestinoId:"bdv"});
+  S.inventarioUsdt_cerrado = [];
+  S.vzla = []; S.eeuu = [];
+  S.inventarioUsdt = [ L(1,"10/11",1000,100000), L(2,"10/12",950,95000) ];
+
+  // 1) Lo NUEVO se casa por id, que es exacto.
+  S.brl = [
+    { n:501, cl:"ANA", d:"11/10/26", _lotesConsumidos:{ ventas:[{id:1, fecha:"10/11", tasa:1000, bs:40000}] } },
+    { n:502, cl:"LUIS", d:"11/10/26", _lotesConsumidos:{ ventas:[{id:1, fecha:"10/11", tasa:1000, bs:25000},
+                                                                 {id:2, fecha:"10/12", tasa:950,  bs:10000}] } }
+  ];
+  let idx = F._indiceLotesComidos();
+  let c1 = F._comieronEsteLote(idx, S.inventarioUsdt[0]);
+  ok(c1.regs.length === 2, "el lote 1 lo gastaron dos remesas", c1.regs.length);
+  ok(c1.exacto === true && c1.ambiguo === false, "casadas por id: exacto y sin ambigüedad");
+  ok(c1.regs[0].n === 501 && c1.regs[1].n === 502, "y son las suyas, con su número");
+  ok(F._comieronEsteLote(idx, S.inventarioUsdt[1]).regs.length === 1,
+     "y el lote 2 solo lo tocó una");
+
+  // 2) Lo VIEJO no lleva id: se casa por fecha+tasa, y eso se DICE.
+  S.brl = [ { n:601, cl:"PEDRO", d:"02/10/26", _lotesConsumidos:{ ventas:[{fecha:"10/11", tasa:1000, bs:30000}] } } ];
+  idx = F._indiceLotesComidos();
+  let c2 = F._comieronEsteLote(idx, S.inventarioUsdt[0]);
+  ok(c2.regs.length === 1 && c2.exacto === false,
+     "sin id se casa por fecha y tasa, y queda marcado como no exacto");
+  let h2 = F._filaComieron(idx, S.inventarioUsdt[0], 12).fila;
+  ok(/Casado por fecha y tasa/.test(h2), "y la fila lo dice en vez de darlo por seguro");
+
+  // 3) Y si DOS lotes comparten fecha y tasa, eso no se puede repartir: se
+  //    avisa. En su export son 63 de 367 lotes, el 17%.
+  S.inventarioUsdt = [ L(1,"10/11",1000,100000), L(3,"10/11",1000,50000) ];
+  idx = F._indiceLotesComidos();
+  let c3 = F._comieronEsteLote(idx, S.inventarioUsdt[0]);
+  ok(c3.ambiguo === true, "dos lotes con la misma fecha y tasa salen marcados como ambiguos");
+  let h3 = F._filaComieron(idx, S.inventarioUsdt[0], 12).fila;
+  ok(/más de un lote/.test(h3), "y la fila avisa de que no se sabe de cuál salieron");
+  ok(/var\(--mal\)/.test(h3), "en rojo, porque es un dato que no consta");
+  // El id manda: con id, el mismo par de lotes deja de ser ambiguo.
+  S.brl = [ { n:701, cl:"EVA", d:"11/10/26", _lotesConsumidos:{ ventas:[{id:1, fecha:"10/11", tasa:1000, bs:30000}] } } ];
+  idx = F._indiceLotesComidos();
+  ok(F._comieronEsteLote(idx, S.inventarioUsdt[0]).ambiguo === false,
+     "pero con el id guardado deja de serlo: por eso se guarda");
+
+  // 4) Un lote que nadie tocó no dibuja botón ni fila: la pantalla no se llena
+  //    de desplegables vacíos.
+  const vacia = F._filaComieron(idx, S.inventarioUsdt[1], 12);
+  ok(vacia.btn === "" && vacia.fila === "", "un lote que nadie gastó no dibuja nada");
+
+  // 5) La fila tapa la tabla entera.
+  ok(/colspan='12'/.test(h3), "la fila cubre las 12 columnas de la tabla");
+
+  S.inventarioUsdt = inv; S.brl = brl; S.vzla = vz; S.eeuu = ee; S.inventarioUsdt_cerrado = cer;
+}
+{
+  const sim = sinComentarios(sacarFuncion("simularConsumoFIFO"));
+  const tog = sinComentarios(sacarFuncion("toggleComieron"));
+  const inv = sinComentarios(sacarFuncion("rInventarioUsdt"));
+
+  // El id se guarda en los DOS lados, o la mitad del inventario sigue a ciegas.
+  ok(/resCompras\.push\(\{id:compras\[i\]\.id,/.test(sim),
+     "el espejo guarda el id del lote de compra");
+  ok(/resVentas\.push\(\{id:ventas\[k\]\.id,/.test(sim),
+     "y el del lote de venta");
+
+  // ARREGLO 32: desplegar no puede repintar la tabla bajo el dedo.
+  ok(!/\bR\(\)/.test(tog) && /style\.display=/.test(tog),
+     "desplegar cambia el display por su id, no llama a R()");
+
+  // El índice se arma UNA vez por dibujo. Lote por lote son 200.000
+  // comparaciones en cada repintado, que es el coste que ya hubo que quitar
+  // de getRateToUsdt.
+  ok((inv.match(/_indiceLotesComidos\(\)/g)||[]).length === 1,
+     "el índice se arma una sola vez por dibujo");
+  ok(/var _idxCom=_indiceLotesComidos\(\);/.test(inv) &&
+     inv.indexOf("var _idxCom=") < inv.indexOf(".map(function(r){"),
+     "y fuera del bucle de lotes, no dentro");
+
+  // El colspan tiene que seguir a la TABLA, no a un número escrito a mano.
+  // Si algún día se añade una columna y esto se queda en 12, la fila deja de
+  // taparla y la tabla sale torcida. Se cuentan las <th> de la cabecera que
+  // lleva estas filas y se exige que la llamada pase esa misma cifra.
+  {
+    const i = inv.indexOf("<tbody>\"+rows");
+    const ini = inv.lastIndexOf("<thead>", i);
+    const cols = (inv.slice(ini, i).match(/<th[ >]/g) || []).length;
+    const m = inv.match(/_filaComieron\(_idxCom, r, (\d+)\)/);
+    ok(cols > 0 && m && Number(m[1]) === cols,
+       "el colspan de la fila es el número de columnas de la tabla",
+       "columnas " + cols + " / colspan " + (m ? m[1] : "(no se llama)"));
+  }
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
