@@ -1342,12 +1342,37 @@ enseña el número, no que hay algo que registrar.
 verdes con la lista y la tasa separadas, porque el código decía lo que debía
 decir. Lo cazó **ejecutarlo con sus lotes** y restar los dos números.
 
+#### Y un número se escribe UNA vez (ARREGLO 125)
+
+Sus palabras del 13/10: *"no saturar ninguna pestaña"*. Medido el primer intento
+con sus lotes: el bloque ocupaba **166 px** para decir **200,76 cuatro veces** —
+en las dos filas, en el pie y otra vez en el aviso.
+
+La regla que sale de aquí, y vale para la próxima pantalla: **la traducción por
+fila existe para COMPARAR orígenes.** Con una sola tasa no hay nada que comparar
+y el pie ya la dice, así que no se escribe; con dos o más sí, en cada fila. El
+aviso tampoco repite la tasa: la tiene al lado, en su propia fila.
+
+```
+un solo origen   0 en las filas + 1 en el pie     138 px
+dos orígenes     2 en las filas + 1 en el pie     se comparan de un vistazo
+```
+
+**Y en reposo no ocupa nada.** Medido el alto de **las 21 pestañas** contra la
+versión desplegada: **ninguna crece ni un píxel**. El bloque sale cuando ya hay un
+monto escrito, y el desplegable del 126 nace cerrado. Lo que ocupa sitio es lo que
+ella pidió ver, cuando lo pide.
+
 #### Dos cosas del entorno que costaron, por si vuelven
 
 - **`getTasaCompraPonderada()` tiene el MISMO bucle** y no se tocó: el 125 va del
   dinero que **sale**. Una prueba negativa anclada en `usdt+=usar/tasa;` inyectó
   el fallo en esa otra función y la suite pasó — el ancla tenía que incluir el
   `filas.push`. **Un ancla ambigua convierte una prueba negativa en nada.**
+- **`L` ya significa otra cosa en `prestamos.js`** (`_leerNumero`). Una prueba
+  nueva que lo reusa como constructor de lotes deja un **número** donde debía
+  haber un lote: la prueba corre, no da error y **no prueba nada**. Es la misma
+  familia que el ancla ambigua — un nombre tomado no avisa.
 - **Un lote con fecha a más de 30 días vista se lee del año pasado** (ARREGLO 51),
   así que unas fechas de prueba `11/10` y `12/10` salieron en orden invertido. No
   era un fallo: es la regla del cambio de año haciendo su trabajo.

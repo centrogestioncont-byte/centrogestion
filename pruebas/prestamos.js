@@ -9092,9 +9092,15 @@ console.log("\nARREGLO 125 · de dónde salen los bolívares");
   ok(/104\.000/.test(htmlCorto), "con el número que no sale de ningún lote");
   ok(/tasa prestada/.test(htmlCorto), "y diciendo que esa tasa es prestada");
   // Y el aviso de abajo, que es el que dice QUÉ HACER. La fila sola no basta:
-  // enseña el número, no que hay que registrar la operación que lo trajo.
-  ok(/se están valorando a/.test(htmlCorto) && /Registra primero/.test(htmlCorto),
-     "y el aviso dice a qué tasa se están valorando y qué hacer");
+  // enseña el número, no que hay algo que registrar.
+  ok(/Registra la compra o venta de USDT/.test(htmlCorto),
+     "y el aviso dice qué hacer, no solo que falta");
+  // La tasa con la que se valora esa parte sigue estando a la vista, en su
+  // fila. No se repite en el aviso: decírla dos veces es lo que saturaba.
+  ok(/1\.010,00/.test(htmlCorto) || /1010/.test(htmlCorto),
+     "y la tasa prestada se ve en la fila");
+  ok(!/se están valorando a/.test(htmlCorto),
+     "sin repetirla también en el aviso");
 
   // 4) La traducción a Bs/real es una DIVISIÓN por su tasa de compra de reales.
   //    Multiplicarla daría un número 26 veces más grande y creíble.
@@ -9116,6 +9122,31 @@ console.log("\nARREGLO 125 · de dónde salen los bolívares");
   const htmlBrl = F._htmlDeDondeSalen({ cant:400, tdia:0 }, { orig:"VES", dest:"BRL" });
   ok(htmlBrl !== "" && !/Bs\/real/.test(htmlBrl),
      "en los lotes de reales no se escribe ningún Bs/real");
+
+  // ── No saturar: un número una vez ──────────────────────────────────────
+  // Sus palabras del 13/10: "no saturar ninguna pestaña". Con un solo origen
+  // la traducción por fila no compara nada y el pie ya la dice: medido, el
+  // mismo 200,76 salía cuatro veces en 166 px.
+  // Hace falta tasa de reales: sin ella no hay traducción que contar.
+  // Y el lote se arma aquí: `L` ya es `_leerNumero` en este archivo, así que
+  // reusar ese nombre dejó un número donde debía haber un lote — una prueba
+  // que pasaba sin probar nada, y sin dar error.
+  const LOTE = function(id,fecha,tasa,bs){ return {id:id,tipo:"venta",moneda:"VES",fecha:fecha,usdt:bs/tasa,bs:bs,bsRestante:bs,tasa:tasa,cuentaDestinoId:"bdv"}; };
+  S.inventarioUsdt = [ LOTE(1,"10/11",1000,100000), { id:77, tipo:"compra", moneda:"BRL", fecha:"10/11", usdt:100, monto:509, restante:509, tasa:5.09, cuentaDestinoId:"bin" } ];
+  const unaSola = F._htmlDeDondeSalen({ cant:50000, tdia:189 }, { orig:"BRL", dest:"VES" });
+  ok((unaSola.match(/Bs\/real/g)||[]).length === 0 &&
+     (unaSola.match(/Bs por real/g)||[]).length === 1,
+     "con un solo origen el número se escribe UNA vez, en el pie",
+     "filas " + (unaSola.match(/Bs\/real/g)||[]).length +
+     " / pie " + (unaSola.match(/Bs por real/g)||[]).length);
+  // Pero con dos orígenes sí: ahí la fila existe para poder compararlos.
+  S.inventarioUsdt = [ LOTE(1,"10/11",1000,20000), LOTE(2,"10/12",950,95000), { id:77, tipo:"compra", moneda:"BRL", fecha:"10/11", usdt:100, monto:509, restante:509, tasa:5.09, cuentaDestinoId:"bin" } ];
+  const dos = F._htmlDeDondeSalen({ cant:50000, tdia:189 }, { orig:"BRL", dest:"VES" });
+  ok((dos.match(/Bs\/real/g)||[]).length === 2 &&
+     (dos.match(/Bs por real/g)||[]).length === 1,
+     "con dos tasas distintas sale en cada fila, para poder compararlas",
+     "filas " + (dos.match(/Bs\/real/g)||[]).length +
+     " / pie " + (dos.match(/Bs por real/g)||[]).length);
 
   S.inventarioUsdt = inv; S.tx = tx; S.monedas = mon;
 }
