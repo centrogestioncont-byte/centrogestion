@@ -1875,6 +1875,101 @@ $161,05 MENOS que a 171,00 (🇧🇷→🇻🇪 publicada)
   **1,98** donde son **4,00**. Un número con el rótulo de otro es el 34,27 contra
   el 34,28, y sólo se ve ejecutándolo.
 
+### La tarjeta que contesta "¿qué publico hoy?" (ARREGLO 128)
+
+Sus palabras del 13/10: *"se me es muy difícil poder decidir qué tasa tengo que
+ofrecerle a mi cliente día a día o cualquier hora del día según el mercado, de
+verdad que no sé si gano plata o pierdo plata, no sé cómo hacer hoy y amanecer y
+saber qué tasa debo publicar"*.
+
+**La app tenía todas las piezas y ninguna respuesta.** El suelo en una tarjeta,
+el margen en otra, los avisos sueltos, y una calculadora con 2 modos × 3 orígenes
+—seis pantallas antes de ver un número—. Nada decía *publica 186*.
+
+**Y la respuesta estaba en sus propios datos.** Medido octubre entero, remesa a
+remesa, con la tasa que dio y lo que le costaron esos bolívares:
+
+```
+61 operaciones · margen medio 6,8% · 151,44 USDT
+```
+
+Ya tenía una regla sin saberlo: **publicaba su suelo menos un 7%**, todos los
+días del mes. El colchón de la vuelta es el otro: 210 sobre un suelo de 200, un
+5%. Los dos se editan en Configuración; si cambia de criterio se toca ahí.
+
+**Las dos tasas giran alrededor del MISMO número, y eso es lo que le faltaba:**
+
+```
+            suelo
+     ida ────┤        por debajo del suelo, la IDA gana
+   vuelta    ├────    por encima del suelo, la VUELTA gana
+```
+
+No son dos problemas: es uno. Y mover cada una **hacia** el suelo es su palanca
+de inventario — sin bolívares, baja la vuelta para que entren; lleno de
+bolívares, sube la ida para que salgan. Eso ya lo decidía `avisoTasa()` desde el
+ARREGLO 112; lo que faltaba era subirlo al sitio donde se toma la decisión.
+
+- **Las dos tasas salen de `_tasasRecomendadas()` y de ningún otro sitio**, que
+  leen la tarjeta que las dibuja **y** el botón que las publica. Calculadas
+  aparte en el botón, bastaría un redondeo distinto para publicar un número que
+  no es el que está mirando — el 34,27 contra el 34,28.
+- **Publicar pasa por `guardarTasaCalcHoy()`**, la puerta única del ARREGLO 117,
+  que sella `tdia_fecha` y limpia el override del conversor.
+- **La línea de qué hacer sale de `avisoTasa()`.** Escrita otra vez en la
+  tarjeta, un día diría "sube la ida" con el aviso de abajo diciendo "baja la
+  ida", y no habría forma de saber cuál mirar.
+- **Sin suelo no se inventa una tasa.** Se dice qué falta. Un suelo adivinado es
+  con el que publicaría mal.
+- **Y se escribe entera.** `f2` daba *185,00*: cuatro caracteres de ruido en el
+  número más grande de la pantalla, fingiendo una precisión que no tiene.
+  `_tasaCorta()`.
+
+#### La tasa aproximada de hoy, y las tres cosas que NO hace
+
+Sus palabras: *"si dentro de 1 día no entra compra y venta de USDT el sistema
+debe preguntar la tasa aproximada de cómo está el USDT, o lo agarra del que él
+me había dado que no era Binance"*.
+
+La segunda mitad ya existía —la lectura de mercado trae los reales de CoinGecko
+o de Mercado Bitcoin cuando Binance bloquea al servidor por país— y se usa
+**antes**. El orden es:
+
+```
+1. ¿hay operación de USDT suya de hoy?   → la suya
+2. ¿no, y el mercado contesta?            → esa, diciendo de dónde salió
+3. ¿tampoco?                              → se le PIDE, un campo
+4. ¿no escribe nada?                      → no se inventa. Se dice qué falta.
+```
+
+- **NO se fija (📌).** Lo fijado manda para siempre: su VES llevaba desde el
+  10/10 valorando todo a 1.013 que escribió una vez, por encima de sus ventas
+  reales de 1.008,72 y 1.010,66. Esto vale el día que se escribe y muere con él.
+- **NO entra en `tasaDeReferencia()`.** No revalora su capital, ni la
+  conciliación, ni el cierre, ni la ganancia de ninguna remesa. Un número mirado
+  a ojo no puede mover su contabilidad: vale para el **suelo**, que es la
+  pregunta que hizo. Hay una prueba negativa dedicada.
+- **NO se sincroniza.** Es un precio de este momento leído en una pantalla,
+  igual que la lectura de mercado, que tampoco va en `DATA_KEYS` por lo mismo:
+  entre dos aparatos se pisarían lecturas de horas distintas. Vive en
+  `localStorage`, donde ya vive el tema y por la misma razón — es del aparato,
+  no del negocio.
+
+Y **solo entra si la suya tiene un día o más**: con una operación de hoy manda
+lo medido, no lo mirado a ojo.
+
+#### Lo que esto NO contesta, y está dicho
+
+**La competencia.** De sus cuatro referencias, dos son apps y dos son grupos de
+WhatsApp: no hay de dónde leerlas (ARREGLO 110 ya las quitó de la pantalla). La
+tarjeta dice si **gana**; si **compite** lo sigue sabiendo ella, y para eso la
+calculadora entera sigue debajo, en su fila, cerrada.
+
+**Y el suelo sigue sin llevar la comisión del banco venezolano ni los egresos.**
+Es el suelo de la operación, no el de la empresa — la misma advertencia del
+ARREGLO 75, que aquí vale el doble porque ahora de ese número sale directamente
+lo que publica.
+
 ### Su suelo: hasta dónde puede ofrecer sin perder
 
 Sus palabras: *"no sé qué tasa de compra y venta está usando mi app"* y *"no es

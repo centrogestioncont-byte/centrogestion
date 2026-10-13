@@ -2913,7 +2913,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261013_v210";
+var APP_VERSION = "20261013_v211";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -12691,6 +12691,22 @@ function guardarPixTarjeta(){
   saveData();R();
   alert("\u2705 Guardado: "+f2(v)+"%.\n\nUn Pix de 100,00 con la tarjeta te cuesta "+f2(e.total)+".");
 }
+// ARREGLO 128: los dos colchones de la tasa recomendada. Se guardan en % para
+// que ella escriba 7 y no 0,07 — el 0,003 de la comisión del banco ya enseñó
+// que un número con tres ceros delante se teclea mal.
+function guardarColchones(){
+  var i=_leerNumero(document.getElementById("inp-colchon-ida").value);
+  var v=_leerNumero(document.getElementById("inp-colchon-vuelta").value);
+  if(isNaN(i)||i<0||i>=50){alert("Colchón de la ida inválido. Usa ej: 7 para 7%.");return;}
+  if(isNaN(v)||v<0||v>=50){alert("Colchón de la vuelta inválido. Usa ej: 5 para 5%.");return;}
+  if(!S.config)S.config={};
+  S.config.colchonIda=i/100;
+  S.config.colchonVuelta=v/100;
+  saveData();R();
+  var r=_tasasRecomendadas();
+  alert("✅ Colchones guardados: ida "+f2(i)+"% · vuelta "+f2(v)+"%."+
+        (r?("\n\nCon tu suelo de "+f2(r.suelo)+" eso es "+_tasaCorta(r.ida)+" y "+_tasaCorta(r.vuelta)+"."):""));
+}
 function guardarComisionBanco(){
   var v=_leerNumero(document.getElementById("inp-com-banco").value);
   if(isNaN(v)||v<0||v>0.5){alert("Porcentaje inválido. Usa ej: 0.003 para 0,3%");return;}
@@ -13495,6 +13511,25 @@ function rConfigAdmin(){
             "<input type='text' inputmode='decimal' id='inp-com-banco-transf' value='"+(((S.config||{}).comision_banco_transferencia!==undefined)?S.config.comision_banco_transferencia:54)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
           "</div>"+
           "<button onclick='guardarComisionBanco()' style='padding:9px 14px;background:var(--mal);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
+        "</div>"+
+        // ARREGLO 128: los dos colchones con que se calcula la tasa que la
+        // pestaña de Tasas recomienda cada mañana. Van aquí y no en la propia
+        // tarjeta a propósito: se tocan una vez cada varios meses y la tarjeta
+        // existe para no tener que decidir nada.
+        "<div style='margin-top:14px;padding-top:14px;border-top:1px solid var(--ln2)'>"+
+          "<div style='font-size:12px;font-weight:700;color:var(--tx2);margin-bottom:8px'>\ud83e\uddee Tasa recomendada \u00b7 tus colchones</div>"+
+          "<div style='font-size:11px;color:var(--tx3);margin-bottom:8px'>Cu\u00e1nto se aparta del suelo la tasa que te recomienda la pesta\u00f1a de Tasas. "+
+            "En la <b>ida</b> se resta (ganas por debajo del suelo) y en la <b>vuelta</b> se suma (ganas por encima).<br>"+
+            "El 7% de la ida sale de tu octubre: 61 operaciones con un margen medio del 6,8%.</div>"+
+          "<div style='display:flex;gap:8px;align-items:center;max-width:420px;margin-bottom:6px'>"+
+            "<span style='font-size:11px;color:var(--tx2);min-width:116px'>Ida \u00b7 % por debajo</span>"+
+            "<input type='text' inputmode='decimal' id='inp-colchon-ida' value='"+(Math.round(_colchon("ida")*1000)/10)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+          "</div>"+
+          "<div style='display:flex;gap:8px;align-items:center;max-width:420px;margin-bottom:8px'>"+
+            "<span style='font-size:11px;color:var(--tx2);min-width:116px'>Vuelta \u00b7 % por encima</span>"+
+            "<input type='text' inputmode='decimal' id='inp-colchon-vuelta' value='"+(Math.round(_colchon("vuelta")*1000)/10)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+          "</div>"+
+          "<button onclick='guardarColchones()' style='padding:9px 14px;background:var(--ac);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
         "</div>"+
         // ARREGLO 95: lo que cobra PagBank por hacer un Pix con la tarjeta de
         // credito. Va aqui, junto a la comision del banco venezolano, porque es
@@ -24406,12 +24441,78 @@ function _htmlMontosMercado(){
 // necesitan: 948 no tiene decimales que perder.
 function _fpTasa(n){ return (n<100) ? f4(n) : f2(n); }
 
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 128 · LA TASA APROXIMADA DE HOY
+// ══════════════════════════════════════════════════════════════════════
+// Sus palabras del 13/10: "si dentro de 1 día no entra compra y venta de USDT
+// el sistema debe preguntar la tasa aproximada de cómo está el USDT, o lo
+// agarra del que él me había dado que no era Binance".
+//
+// La segunda mitad ya existe: la lectura de mercado trae los reales de
+// CoinGecko o de Mercado Bitcoin cuando Binance bloquea al servidor por país,
+// y esa se usa ANTES que esto. Lo de aquí es el tercer escalón —cuando su
+// última operación de USDT tiene más de un día Y el mercado no contesta— y
+// el cuarto es no inventar nada.
+//
+// Tres cosas que NO hace, y cada una es un error que ya costó caro aquí:
+//
+//  · NO se FIJA (📌). Lo fijado manda para siempre: su VES lleva desde el
+//    10/10 valorando todo a 1.013 que escribió una vez, por encima de sus
+//    ventas reales de 1.008,72 y 1.010,66. Esto vale el día que se escribe y
+//    muere con él — mañana no existe.
+//  · NO entra en tasaDeReferencia(), así que NO revalora su capital, ni la
+//    conciliación, ni el cierre, ni la ganancia de ninguna remesa. Un número
+//    mirado a ojo no puede mover su contabilidad. Vale para el SUELO, que es
+//    la pregunta que hizo: qué tasa publico hoy.
+//  · NO se sincroniza. Es un precio de este momento leído en una pantalla,
+//    igual que la lectura de mercado, que tampoco va en DATA_KEYS por lo
+//    mismo: entre dos aparatos se pisarían lecturas de horas distintas. Vive
+//    en localStorage, que es donde ya vive el tema y por la misma razón — es
+//    del aparato, no del negocio.
+var _APROX_LS = "cgTasaAprox";
+function _aproxTodas(){
+  try{ var o=JSON.parse(localStorage.getItem(_APROX_LS)||"{}"); return (o&&typeof o==="object")?o:{}; }
+  catch(e){ return {}; }
+}
+// Devuelve el número solo si se escribió HOY. Una tasa de ayer mirada a ojo
+// es justo lo que esto viene a evitar, no algo que haya que conservar.
+function _tasaAprox(mon){
+  var o=_aproxTodas()[mon];
+  if(!o || o.iso!==td()) return null;
+  var v=parseFloat(o.v);
+  return (v>0)?v:null;
+}
+function _guardarTasaAprox(mon,val){
+  var n=parseFloat(_num(val));
+  var o=_aproxTodas();
+  if(!(n>0)) delete o[mon]; else o[mon]={v:n, iso:td()};
+  try{ localStorage.setItem(_APROX_LS, JSON.stringify(o)); }catch(e){}
+}
+// Cuántos días tiene la tasa de referencia de esa moneda. null cuando no se
+// puede saber — fijada a mano, escrita sin fecha, o sin tasa. Ahí no se avisa
+// de vieja ni se pide aproximada: lo fijado es una decisión suya, no un
+// olvido, que es la regla que ya manda en tasaDeReferencia().
+function _diasDeRef(ref){
+  if(!ref || ref.origen!=="auto" || !ref.iso) return null;
+  return _diasIso(ref.iso, td());
+}
+
 function sueloQueManda(){
   var fp=_fpTasa;
   // Lo suyo: la misma tasa de referencia que ya valora su dinero.
   var rc=(typeof tasaDeReferencia==="function")?tasaDeReferencia("BRL"):null;
   var rv=(typeof tasaDeReferencia==="function")?tasaDeReferencia("VES"):null;
   var miC=rc&&rc.tasa, miV=rv&&rv.tasa;
+  // ARREGLO 128: si su operación de esa moneda tiene más de un día y ella
+  // escribió una aproximada HOY, para el SUELO manda la de hoy. Un suelo
+  // calculado con una compra de hace tres días sale optimista o pesimista por
+  // un precio que ya no existe, y el suelo es lo único que no se puede
+  // permitir salir optimista: con él publica.
+  var dC=_diasDeRef(rc), dV=_diasDeRef(rv);
+  var aC=_tasaAprox("BRL"), aV=_tasaAprox("VES");
+  var apxC=false, apxV=false;
+  if(aC>0 && (!(miC>0) || (dC!==null&&dC>=1))){ miC=aC; apxC=true; }
+  if(aV>0 && (!(miV>0) || (dV!==null&&dV>=1))){ miV=aV; apxV=true; }
   var eqMio=_equilibrio(miC,miV);
   // El mercado, si hay lectura.
   var m=_MERCADO.datos, mc=null, mv=null, eqMerc=null;
@@ -24446,8 +24547,12 @@ function sueloQueManda(){
     cands.push({v:eqMixto, rot:rotMixto, pie:pieMixto, nombre:"la mezcla de arriba",
                 c:(mv>0&&miC>0)?miC:mc, s:(mv>0&&miC>0)?mv:miV});
   }else if(eqMio){
-    cands.push({v:eqMio, rot:"Tu suelo con lo que ya compraste", pie:"",
-                nombre:"tu costo", c:miC, s:miV});
+    // El rótulo dice de dónde salió cada mitad. Un suelo hecho con un número
+    // que ella miró a ojo no se puede presentar igual que uno hecho con sus
+    // operaciones: es la misma regla del suelo mixto del 29/09.
+    cands.push({v:eqMio,
+                rot:(apxC||apxV)?"Tu suelo con la tasa que escribiste hoy":"Tu suelo con lo que ya compraste",
+                pie:"", nombre:(apxC||apxV)?"lo que escribiste":"tu costo", c:miC, s:miV});
   }
   if(eqMerc){
     cands.push({v:eqMerc, rot:"Tu suelo al precio de hoy", pie:"",
@@ -24463,6 +24568,7 @@ function sueloQueManda(){
   var manda=null;
   for(var ci=0;ci<cands.length;ci++) if(!manda||cands[ci].v<manda.v) manda=cands[ci];
   return {rc:rc, rv:rv, miC:miC, miV:miV, eqMio:eqMio,
+          dC:dC, dV:dV, apxC:apxC, apxV:apxV,
           m:m, mc:mc, mv:mv, eqMerc:eqMerc,
           eqMixto:eqMixto, cands:cands, manda:manda,
           v:(manda?manda.v:null)};
@@ -25804,6 +25910,208 @@ function _comaCab(v){
   var s=String(v===undefined||v===null?"":v);
   return (/^-?\d+\.\d+$/.test(s)) ? s.replace(".",",") : s;
 }
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 128 · PUBLICA HOY — un número, no una calculadora
+// ══════════════════════════════════════════════════════════════════════
+// Sus palabras del 13/10: "se me es muy difícil poder decidir qué tasa tengo
+// que ofrecerle a mi cliente día a día... de verdad que no sé si gano plata o
+// pierdo plata, no sé cómo hacer hoy y amanecer y saber qué tasa debo
+// publicar".
+//
+// La app tenía todas las piezas y ninguna respuesta: el suelo en una tarjeta,
+// el margen en otra, los avisos sueltos, y una calculadora con 2 modos × 3
+// orígenes — seis pantallas antes de ver un número. Esto contesta la pregunta
+// y deja todo lo demás donde estaba, cerrado.
+//
+// LAS DOS TASAS GIRAN ALREDEDOR DEL MISMO NÚMERO, que es lo que le faltaba:
+//
+//            suelo
+//     ida ────┤        por debajo del suelo, la ida gana
+//   vuelta    ├────    por encima del suelo, la vuelta gana
+//
+// Los dos colchones son SUYOS, no míos. El 7% de la ida sale de medirle
+// octubre entero — 61 operaciones, margen medio 6,8%, 151,44 USDT — y el 5%
+// de la vuelta es donde ya estaba (210 sobre un suelo de 200). Se editan en
+// Configuración; si algún día cambia de criterio, se toca ahí y no aquí.
+var _COLCHON_DEF = {ida:0.07, vuelta:0.05};
+function _colchon(dir){
+  var v=parseFloat((S.config||{})[dir==="ida"?"colchonIda":"colchonVuelta"]);
+  // Un colchón absurdo (negativo, o mayor que medio suelo) daría una tasa con
+  // la que pierde en cada remesa. Fuera de rango se ignora, igual que ya se
+  // ignora una comisión de Binance fuera de rango en _equilibrio().
+  if(!(v>=0) || v>=0.5) return _COLCHON_DEF[dir];
+  return v;
+}
+// Las dos tasas recomendadas salen de AQUÍ y de ningún otro sitio: lo leen la
+// tarjeta que las dibuja y el botón que las publica. Calculadas aparte en el
+// botón, bastaría un redondeo distinto para publicar un número que no es el
+// que ella está mirando — es el 34,27 contra el 34,28 de Por cobrar.
+// Una tasa que ella publica entera se escribe entera. El ",00" de f2 finge
+// una precisión que el número no tiene —recomienda 185, no 185,00— y en una
+// tarjeta cuya gracia es que se lea de un vistazo son cuatro caracteres de
+// ruido en el número más grande de la pantalla.
+function _tasaCorta(n){
+  var v=parseFloat(n);
+  if(!isFinite(v)) return "\u2014";
+  return (Math.abs(v-Math.round(v))<0.005) ? f0(Math.round(v)) : f2(v);
+}
+function _tasasRecomendadas(){
+  var Q=sueloQueManda();
+  if(!Q || !(Q.v>0)) return null;
+  return {Q:Q, suelo:Q.v,
+          ida:Math.round(Q.v*(1-_colchon("ida"))),
+          vuelta:Math.round(Q.v*(1+_colchon("vuelta")))};
+}
+// Lo que escribe aquí NO repinta la pantalla (ARREGLO 32): repintar mata el
+// campo bajo el dedo. Se rehace la tarjeta por su id, que es lo que ya hacen
+// la cabecera y los avisos.
+function _setAprox(mon,val){
+  _guardarTasaAprox(mon,val);
+  var n=document.getElementById("tasas-publica");
+  if(n) n.innerHTML=_htmlPublicaHoy();
+  var c=document.getElementById("tasas-cab");
+  if(c) c.innerHTML=_htmlCabeceraTasas();
+  _refrescarAvisosTasa();
+}
+// Publicar pasa por guardarTasaCalcHoy(), que es la puerta única del ARREGLO
+// 117: sella tdia_fecha y limpia el override del conversor. Escribir aquí
+// tdia_brl a pelo volvería a abrir el agujero que dejaba el aviso del 112
+// midiendo desde una fecha que no era la de esa tasa.
+function publicarRecomendadas(){
+  var r=_tasasRecomendadas();
+  if(!r){ alert("Todavía no hay suelo, así que no hay nada que recomendar."); return; }
+  if(!confirm("¿Publicar "+_tasaCorta(r.ida)+" en Brasil → Venezuela y "+_tasaCorta(r.vuelta)+" en Venezuela → Brasil?\n\n"+
+              "Es lo que van a usar el flyer, el conversor y cada remesa nueva.")) return;
+  guardarTasaCalcHoy("ida", r.ida, true);
+  guardarTasaCalcHoy("vuelta", r.vuelta, true);
+  R();
+}
+// Un campo para la tasa de hoy mirada a ojo. Sale SOLO cuando hace falta: su
+// operación de esa moneda tiene más de un día (o no hay) y el mercado no
+// contestó por ese lado. Si el mercado contesta no se pregunta nada — una
+// lectura de verdad vale más que un número recordado.
+function _campoAprox(mon,rot,ph){
+  var v=_tasaAprox(mon);
+  return "<div style='flex:1 1 140px;min-width:0'>"+
+    "<label style='font-size:10.5px;font-weight:700;color:var(--tx3);display:block;margin-bottom:3px'>"+rot+"</label>"+
+    "<input type='text' inputmode='decimal' placeholder='"+ph+"' value='"+_escAud(v!==null?_comaCab(String(v)):"")+"' "+
+      "oninput='_setAprox(\""+mon+"\",this.value)' "+
+      "style='width:100%;padding:9px;border:1.5px solid var(--avi-ln);border-radius:9px;font-size:15px;"+
+      "font-weight:800;font-family:inherit;background:var(--sup);color:var(--tit)'>"+
+  "</div>";
+}
+function _htmlPublicaHoy(){
+  var r=_tasasRecomendadas();
+  var Q=r?r.Q:sueloQueManda();
+  var hayMerc=!!(Q&&Q.m&&Q.m.disponible);
+  // Se pide por LADO, no cuando fallan los dos. Sin las dos tasas no hay
+  // suelo, así que media lectura vieja es un suelo viejo igual.
+  var pideC=(!hayMerc||!(Q&&Q.mc>0)) && !Q.apxC && (!(Q.miC>0) || (Q.dC!==null&&Q.dC>=1));
+  var pideV=(!hayMerc||!(Q&&Q.mv>0)) && !Q.apxV && (!(Q.miV>0) || (Q.dV!==null&&Q.dV>=1));
+  var h="<div style='font-size:10.5px;color:var(--tx4);font-weight:800;text-transform:uppercase;"+
+        "letter-spacing:.4px;margin-bottom:11px'>Publica hoy</div>";
+
+  if(!r){
+    // No se inventa un número. Se dice qué falta, que es lo único honesto:
+    // un suelo adivinado es con el que publicaría mal.
+    h+="<div style='font-size:12.5px;color:var(--avi-tx);line-height:1.55;margin-bottom:10px'>"+
+       "Todavía no puedo recomendarte una tasa: falta saber a cómo está el USDT."+
+       "</div>"+
+       "<div style='display:flex;gap:9px;flex-wrap:wrap'>"+
+         _campoAprox("BRL","USDT en reales","ej: 5,03")+
+         _campoAprox("VES","USDT en bolívares","ej: 1.010")+
+       "</div>"+
+       "<div style='font-size:10.5px;color:var(--tx4);margin-top:7px;line-height:1.5'>"+
+       "Lo que escribas aquí vale <b>solo hoy</b> y no cambia tu contabilidad: "+
+       "en cuanto registres una compra o venta de USDT, manda la de verdad.</div>";
+    return h;
+  }
+
+  function caja(flechas,val){
+    return "<div style='flex:1;background:var(--sup);border:1px solid var(--ln);border-radius:11px;padding:11px 12px'>"+
+      "<div style='font-size:11px;color:var(--tx3);font-weight:700;margin-bottom:5px'>"+flechas+"</div>"+
+      "<div style='font-size:34px;font-weight:800;color:var(--ok);line-height:1'>"+_tasaCorta(val)+"</div>"+
+      "<div style='font-size:10.5px;color:var(--tx4);margin-top:5px;font-weight:600'>Bs por real</div>"+
+    "</div>";
+  }
+  h+="<div style='display:flex;gap:10px'>"+
+       caja(_ruta("ida").flechas, r.ida)+
+       caja(_ruta("vuelta").flechas, r.vuelta)+
+     "</div>";
+
+  // La barra. Es un esquema, no una escala: las posiciones son fijas para que
+  // se lea igual con cualquier suelo. Lo que tiene que entenderse de un
+  // vistazo es el LADO, no la distancia.
+  h+="<div style='margin-top:15px;background:var(--sup);border:1px solid var(--ln);border-radius:11px;padding:13px 12px 11px'>"+
+    "<div style='position:relative;height:38px'>"+
+      "<div style='position:absolute;left:0;right:0;top:24px;height:3px;background:var(--ln-d);border-radius:2px'></div>"+
+      "<div style='position:absolute;left:0;top:24px;width:36%;height:3px;background:var(--ok);border-radius:2px'></div>"+
+      "<div style='position:absolute;right:0;top:24px;width:36%;height:3px;background:var(--ok);border-radius:2px'></div>"+
+      "<div style='position:absolute;left:50%;top:19px;width:3px;height:13px;background:var(--ac);transform:translateX(-50%)'></div>"+
+      "<div style='position:absolute;left:22%;top:0;transform:translateX(-50%);font-size:12.5px;font-weight:800;color:var(--ok)'>"+_tasaCorta(r.ida)+"</div>"+
+      "<div style='position:absolute;left:50%;top:0;transform:translateX(-50%);font-size:12.5px;font-weight:800;color:var(--tit)'>"+f2(r.suelo)+"</div>"+
+      "<div style='position:absolute;left:78%;top:0;transform:translateX(-50%);font-size:12.5px;font-weight:800;color:var(--ok)'>"+_tasaCorta(r.vuelta)+"</div>"+
+    "</div>"+
+    "<div style='display:flex;justify-content:space-between;margin-top:3px'>"+
+      "<div style='font-size:10.5px;color:var(--tx4);font-weight:700'>◄ ida: ganas por debajo</div>"+
+      "<div style='font-size:10.5px;color:var(--tx4);font-weight:700'>vuelta: por encima ►</div>"+
+    "</div>"+
+    "<div style='text-align:center;font-size:10.5px;color:var(--tx3);margin-top:7px;font-weight:700'>"+
+      "tu suelo · "+_escAud((Q.manda&&Q.manda.nombre)||"")+
+      ((Q.miC>0&&Q.miV>0)?(" · "+_fpTasa(Q.manda?Q.manda.c:Q.miC)+" R$ y "+_fpTasa(Q.manda?Q.manda.s:Q.miV)+" Bs"):"")+
+    "</div>"+
+  "</div>";
+
+  // La situación sale de avisoTasa(), que YA decide esto hoy. Escrita aquí
+  // otra vez, un día la tarjeta diría "sube la ida" y el aviso de abajo "baja
+  // la ida" — y no habría forma de saber cuál mirar.
+  var sit=null;
+  try{
+    (avisoTasa()||[]).forEach(function(a){
+      if(!sit && (a.id==="conc_ves"||a.id==="conc_brl")) sit=a;
+    });
+  }catch(e){}
+  if(sit){
+    h+="<div style='margin-top:11px;background:var(--avi-sup);border-left:3px solid var(--avi-ln);"+
+       "border-radius:7px;padding:9px 11px'>"+
+       "<div style='font-size:11.5px;color:var(--avi-tx);line-height:1.5'>"+
+       "<b>"+_escAud(sit.titulo)+".</b> "+_escAud(sit.texto)+"</div></div>";
+  }
+
+  // El campo de la aproximada también sale CON tasa recomendada: que haya
+  // suelo no quiere decir que sea de hoy. Decir los días y no dar dónde
+  // corregirlo es la mitad del aviso.
+  if(pideC||pideV){
+    var dias=Math.max(pideC?(Q.dC||0):0, pideV?(Q.dV||0):0);
+    h+="<div style='margin-top:11px;background:var(--avi-sup2);border:1px solid var(--avi-ln);"+
+       "border-radius:9px;padding:10px 11px'>"+
+       "<div style='font-size:11.5px;color:var(--avi-tx);line-height:1.5;margin-bottom:8px'>"+
+       "Tu última operación de USDT tiene <b>"+f0(dias)+(dias===1?" día":" días")+"</b> y el mercado "+
+       "no contesta. Si sabes a cómo está hoy, escríbelo y el suelo se recalcula.</div>"+
+       "<div style='display:flex;gap:9px;flex-wrap:wrap'>"+
+         (pideC?_campoAprox("BRL","USDT en reales","ej: 5,03"):"")+
+         (pideV?_campoAprox("VES","USDT en bolívares","ej: 1.010"):"")+
+       "</div>"+
+       "<div style='font-size:10.5px;color:var(--tx4);margin-top:7px;line-height:1.5'>"+
+       "Vale <b>solo hoy</b> y no cambia tu contabilidad.</div>"+
+       "</div>";
+  }
+
+  // El botón usa la clase que ya existe (ARREGLO: una tarjeta se define en UN
+  // sitio). Escribirle los colores a mano aquí es como acaban saliendo
+  // diecisiete botones distintos, y además lo caza la guardia de colores.
+  h+="<button onclick='publicarRecomendadas()' class='btn-main btn-green' "+
+     "style='margin-top:12px'>Publicar las dos</button>";
+
+  var pub=_misTasasPublicadas();
+  h+="<div style='font-size:10.5px;color:var(--tx4);text-align:center;margin-top:7px;font-weight:600'>"+
+     ((pub.ida>0||pub.vuelta>0)
+       ? ("Ahora tienes publicado "+(pub.ida>0?_tasaCorta(pub.ida):"—")+" · "+(pub.vuelta>0?_tasaCorta(pub.vuelta):"—"))
+       : "Todavía no has publicado ninguna")+
+     "</div>";
+  return h;
+}
+
 function _htmlCabeceraTasas(){
   var m=margenSobreSuelo();
   var Q=sueloQueManda();
@@ -25967,6 +26275,15 @@ function rCalculadora(){
     "<div style='background:linear-gradient(135deg,var(--gr1-b),var(--am2-g));border-radius:var(--radius);padding:16px 18px;color:var(--sobre-color);margin-bottom:12px;box-shadow:var(--shadow-md)'>"+
       "<div style='font-size:18px;font-weight:900'>\ud83e\uddee Tasas</div>"+
       "<div style='font-size:11.5px;opacity:.85;margin-top:2px'>Tu tasa del d\u00eda, tu suelo y lo que ganas con ella</div>"+
+    "</div>"+
+    // ARREGLO 128: la respuesta va ANTES que los datos con que se hizo. La
+    // cabecera de abajo sigue siendo donde publica a mano y donde ve el %
+    // contra el suelo; esto es lo que contesta "¿qué publico hoy?" sin que
+    // tenga que decidir nada. No se pone al lado del control viejo: dice al
+    // pie lo que hay publicado ahora, para que se vea cuál es cuál.
+    "<div id='tasas-publica' style='background:var(--sup);border:1.5px solid var(--ac);"+
+      "border-radius:14px;padding:16px 14px 14px;margin-bottom:10px'>"+
+      _htmlPublicaHoy()+
     "</div>"+
     // La cabecera: lo que mira diez veces al día, sin abrir nada ni hacer
     // scroll. Lo demás va detrás de una fila.
