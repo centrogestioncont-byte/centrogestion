@@ -107,6 +107,7 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "ordenFIFO", "normalizarInventarioFIFO", "simularConsumoFIFO", "_tasaEfectivaLote",
                     "_repartoFIFO", "getTasaVentaPonderada", "_bsPorReal", "_htmlDeDondeSalen",
                     "_claveLoteVieja", "_indiceLotesComidos", "_comieronEsteLote", "_filaComieron", "toggleComieron",
+                    "_revivirLote", "_loteDelEspejo", "_restaurarVentasFIFO", "_restaurarComprasFIFO",
                     "f4", "f0", "_leerNumero", "_avisoCambioSaldo", "_fechaLote", "_idLoteNuevo",
                     "_diasEnElFuturo", "confirmarFechaFutura",
                     "comisionBancoVES", "etiquetaComisionBanco", "salidaDeCuentaEntrega",
@@ -7484,14 +7485,20 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(/if\(l\.permuta\) continue;/.test(sinCom(sacarFuncion("tasaDeReferencia"))),
      "tasaDeReferencia no mira los lotes de permuta");
 
-  // 6. Al borrar no se devuelve lo que nunca se consumio. Son DOS caminos
-  //    (con _mov y sin el) y los dos tienen que llevarlo: uno solo deja la
-  //    mitad de los borrados regalando saldo a lotes de otra operacion.
+  // 6. Al borrar no se devuelve lo que nunca se consumio. Eran DOS caminos
+  //    (con _mov y sin el) y cada uno llevaba su copia del chequeo; desde el
+  //    ARREGLO 127 los dos llaman a _restaurarComprasFIFO, asi que el chequeo
+  //    vive ahi, UNA vez. Lo que se exige sigue siendo lo mismo: que ningun
+  //    camino devuelva USDT que un calce nunca consumio.
   const rv = sinCom(sacarFuncion("revertirSaldosRemesa"));
-  const nGuardas = (rv.match(/if\(uc>0 && r\.metodo!=="calce"\)/g) || []).length;
-  ok(nGuardas === 2, "los dos caminos del borrado respetan el calce",
-     "salen " + nGuardas + " de 2");
-  ok(!/if\(uc>0\)\s*\{/.test(rv), "y no queda ninguno sin guardia");
+  const rc = sinCom(sacarFuncion("_restaurarComprasFIFO"));
+  ok((rv.match(/_restaurarComprasFIFO\(/g) || []).length === 2,
+     "los dos caminos del borrado pasan por la misma funcion de compras");
+  ok(/r\.metodo==="calce"/.test(rc), "que es donde vive el chequeo del calce");
+  ok(/if\(!\(uc>0\) \|\| r\.metodo==="calce"\) return;/.test(rc),
+     "y corta antes de devolver nada");
+  ok(!/if\(uc>0\)\s*\{/.test(rv) && !/comprasTodas/.test(rv),
+     "y no queda ninguna copia suelta sin guardia");
 
   // 7. saveTx: ni lotes en blanco, ni el aviso de FIFO del lado que no
   //    consume, y el metodo viaja CON la remesa (el borrado lo lee de ahi).
@@ -9286,6 +9293,95 @@ console.log("\nARREGLO 126 · quién se comió cada lote");
        "el colspan de la fila es el número de columnas de la tabla",
        "columnas " + cols + " / colspan " + (m ? m[1] : "(no se llama)"));
   }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 127 · al borrar, el dinero vuelve al lote QUE SE GASTÓ
+// ══════════════════════════════════════════════════════════════════════
+console.log("\nARREGLO 127 · al borrar, el dinero vuelve al lote que se gastó");
+{
+  const inv=S.inventarioUsdt, cer=S.inventarioUsdt_cerrado, del=S._deletedMerge;
+  const L=(id,bs,rest,tasa)=>({id:id,tipo:"venta",moneda:"VES",fecha:"10/11",fechaIso:"2026-10-11",
+    usdt:bs/tasa,bs:bs,bsRestante:rest,tasa:tasa,cuentaDestinoId:"bdv"});
+
+  // 1) Un lote ARCHIVADO recupera lo suyo y vuelve a la lista viva.
+  S.inventarioUsdt=[]; S.inventarioUsdt_cerrado=[Object.assign(L(11,10000,0,1000),{_cerrado:true})];
+  S._deletedMerge={inventarioUsdt:[{id:11,ts:Date.now(),por:"x"}]};
+  F._restaurarVentasFIFO({cuentaDest:"bdv", _lotesConsumidos:{ventas:[{id:11,fecha:"10/11",tasa:1000,bs:10000}]}}, "VES", 10000);
+  ok(S.inventarioUsdt.length===1 && S.inventarioUsdt[0].id===11,
+     "el lote archivado vuelve a la lista viva");
+  ok(S.inventarioUsdt[0].bsRestante===10000, "con su dinero", S.inventarioUsdt[0].bsRestante);
+  ok(!S.inventarioUsdt[0]._cerrado, "y sin la marca de cerrado");
+  ok(!(S._deletedMerge.inventarioUsdt||[]).some(x=>x.id===11),
+     "y sin la marca de borrado, o el otro aparato lo borra otra vez");
+
+  // 2) Cada lote recibe LO SUYO, no el primero todo. Es el fallo que se midió
+  //    al borrar su #818: los 200.000 se metían enteros en el lote vivo.
+  S.inventarioUsdt=[L(21,150000,100000,1000), L(22,60000,0,900)];
+  S.inventarioUsdt_cerrado=[]; S._deletedMerge={};
+  F._restaurarVentasFIFO({cuentaDest:"bdv", _lotesConsumidos:{ventas:[
+      {id:21,fecha:"10/11",tasa:1000,bs:20000},{id:22,fecha:"10/11",tasa:900,bs:30000}]}}, "VES", 50000);
+  ok(S.inventarioUsdt[0].bsRestante===120000, "al primero vuelven sus 20.000", S.inventarioUsdt[0].bsRestante);
+  ok(S.inventarioUsdt[1].bsRestante===30000,  "y al segundo los suyos",        S.inventarioUsdt[1].bsRestante);
+
+  // 3) Nunca se devuelve más de lo que el lote puede llevar ni más que el total.
+  S.inventarioUsdt=[L(31,10000,9000,1000)]; S.inventarioUsdt_cerrado=[];
+  F._restaurarVentasFIFO({cuentaDest:"bdv", _lotesConsumidos:{ventas:[{id:31,fecha:"10/11",tasa:1000,bs:99999}]}}, "VES", 99999);
+  ok(S.inventarioUsdt[0].bsRestante===10000, "un lote nunca pasa de su monto original", S.inventarioUsdt[0].bsRestante);
+
+  // 4) Sin espejo (remesas viejas) se cae al camino de siempre.
+  S.inventarioUsdt=[L(41,10000,2000,1000)]; S.inventarioUsdt_cerrado=[];
+  F._restaurarVentasFIFO({cuentaDest:"bdv"}, "VES", 5000);
+  ok(S.inventarioUsdt[0].bsRestante===7000, "sin espejo se reparte como antes", S.inventarioUsdt[0].bsRestante);
+
+  // 5) El id manda sobre fecha+tasa. Dos lotes iguales de fecha y tasa: el
+  //    espejo nombra el segundo por su id y ahí tiene que ir el dinero. Con la
+  //    guardia escrita como texto esto pasaba con el `if` del id desactivado.
+  S.inventarioUsdt=[L(51,10000,0,1000), L(52,10000,0,1000)]; S.inventarioUsdt_cerrado=[];
+  F._restaurarVentasFIFO({cuentaDest:"bdv", _lotesConsumidos:{ventas:[{id:52,fecha:"10/11",tasa:1000,bs:4000}]}}, "VES", 4000);
+  ok(S.inventarioUsdt[0].bsRestante===0 && S.inventarioUsdt[1].bsRestante===4000,
+     "con dos lotes idénticos, el dinero va al que dice el id",
+     S.inventarioUsdt[0].bsRestante+" / "+S.inventarioUsdt[1].bsRestante);
+
+  S.inventarioUsdt=inv; S.inventarioUsdt_cerrado=cer; S._deletedMerge=del;
+}
+{
+  const ven=sinComentarios(sacarFuncion("_restaurarVentasFIFO"));
+  const com=sinComentarios(sacarFuncion("_restaurarComprasFIFO"));
+  const esp=sinComentarios(sacarFuncion("_loteDelEspejo"));
+  const rev=sinComentarios(sacarFuncion("_revivirLote"));
+  const vol=sinComentarios(sacarFuncion("revertirSaldosRemesa"));
+
+  // Lo exacto primero: lo que la remesa dice haber gastado.
+  ok(/_lotesConsumidos\|\|\{\}\)\.ventas/.test(ven), "las ventas se devuelven por el espejo");
+  ok(/_lotesConsumidos\|\|\{\}\)\.compras/.test(com), "y las compras también");
+
+  // El ARREGLO 127 midió que meter los archivados en el reparto "del más nuevo
+  // al más viejo" es PEOR que el fallo: todos están en cero y el primero se
+  // traga la devolución entera. El camino de respaldo mira solo los vivos.
+  ok(!/inventarioUsdt_cerrado/.test(ven.split("_lotesConsumidos")[1]||""),
+     "el respaldo de ventas NO reparte entre los archivados");
+  ok(/S\.inventarioUsdt\.filter/.test(ven), "sino solo entre los vivos");
+
+  // Revivir no basta con moverlo: la marca de borrado tiene que irse.
+  ok(/inventarioUsdt_cerrado=\(S\.inventarioUsdt_cerrado\|\|\[\]\)\.filter/.test(rev) &&
+     /S\.inventarioUsdt=\(S\.inventarioUsdt\|\|\[\]\)\.concat/.test(rev),
+     "_revivirLote lo saca del archivo y lo mete en los vivos");
+  ok(/_deletedMerge\[.inventarioUsdt.\]=m\.filter/.test(rev),
+     "y le quita la marca de borrado");
+
+
+  // Una sola copia del lado de compras: estaba escrito dos veces.
+  ok((vol.match(/_restaurarComprasFIFO\(/g)||[]).length===2,
+     "los dos caminos del borrado llaman a la MISMA función de compras");
+  ok(!/comprasTodas/.test(vol), "y ya no queda ninguna copia suelta");
+
+  // Consumir descuenta a 4 decimales; devolver tiene que hacerlo igual.
+  // Los DOS caminos de la devolución (el del espejo y el de respaldo). Pedir
+  // uno solo dejaba pasar que el otro perdiera decimales.
+  ok((com.match(/restante=Math\.round\(\(act\+dev\)\*10000\)\/10000/g)||[]).length===2,
+     "las compras se devuelven con los mismos 4 decimales con que se gastan, por los dos caminos",
+     (com.match(/restante=Math\.round/g)||[]).length+" sitios");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

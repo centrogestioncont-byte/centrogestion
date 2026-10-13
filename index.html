@@ -2913,7 +2913,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261013_v209";
+var APP_VERSION = "20261013_v210";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -16980,27 +16980,116 @@ function monedasDeRemesa(tipo, r){
 // salen las tasas que la app sugiere.
 // Está escrito una vez porque el borrado lo hace en dos sitios (con _mov y sin
 // él) y dos copias de esto se separan con el primer cambio.
+// ── ARREGLO 127 · al borrar, el dinero vuelve al lote QUE SE GASTÓ ───────
+//
+// Dos fallos, y el segundo lo encontré arreglando el primero.
+//
+// 1. Solo se miraba `S.inventarioUsdt`. Un lote que una remesa deja en cero se
+//    ARCHIVA en `inventarioUsdt_cerrado` —lo hace `sincronizarFIFOconCuentas()`
+//    al dibujar Inventario—, así que al BORRAR esa misma remesa los bolívares
+//    no encontraban dónde volver: la cuenta SÍ se corregía y el inventario no.
+//
+// 2. El primer intento fue añadir los archivados al recorrido "del más nuevo al
+//    más viejo". **Medido: peor que el fallo.** Todos los lotes archivados
+//    están en cero, así que el primero de la lista se tragaba la devolución
+//    entera — el dinero volvía a un lote que esta remesa nunca tocó, y de los
+//    lotes salen las tasas que la app sugiere.
+//
+// Lo correcto no hay que adivinarlo: cada remesa YA apunta lo que gastó, en
+// `_lotesConsumidos`. Se devuelve ahí, lote por lote. Lo que no se pueda casar
+// —remesas viejas sin espejo, o un lote que ya no existe— cae al recorrido de
+// siempre, **solo por los lotes vivos**, que es como se venía comportando.
+//
+// Desde fuera esto no se ve: hay que sumar lo que las remesas dicen haber
+// consumido y restarlo del lote. Así salió, con su export del 13/10.
+function _revivirLote(l){
+  // Un lote que vuelve a tener saldo tiene que VOLVER A LA LISTA VIVA: en el
+  // archivo el FIFO no lo gasta nunca, así que ese dinero quedaría escondido.
+  // Y hay que quitarle la marca de borrado — se la puso el archivado a
+  // propósito para que la fusión no lo reviviera, y si se queda puesta el otro
+  // aparato lo vuelve a borrar en cuanto sincronice.
+  if(!l || !l._cerrado) return;
+  delete l._cerrado; delete l._fechaCierre;
+  S.inventarioUsdt_cerrado=(S.inventarioUsdt_cerrado||[]).filter(function(x){return x!==l;});
+  S.inventarioUsdt=(S.inventarioUsdt||[]).concat([l]);
+  var m=(S._deletedMerge||{})["inventarioUsdt"];
+  if(m) S._deletedMerge["inventarioUsdt"]=m.filter(function(x){return x.id!==l.id;});
+}
+// El lote que nombra una línea del espejo. Por id cuando lo hay (ARREGLO 126);
+// lo anterior se casa por fecha y tasa, que no siempre distingue — de los que
+// empatan se coge el que tenga hueco donde devolver.
+function _loteDelEspejo(v, tipo, moneda){
+  var todos=(S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[]);
+  if(v.id!==undefined && v.id!==null){
+    var porId=todos.filter(function(l){return l.id===v.id;})[0];
+    if(porId) return porId;
+  }
+  var llenos=(tipo==="venta")
+    ? function(l){return (parseFloat(l.bs)||0)-(parseFloat(l.bsRestante)||0);}
+    : function(l){return (parseFloat(l.usdt)||0)-(parseFloat(l.restante)||0);};
+  var cand=todos.filter(function(l){
+    return l.tipo===tipo && l.moneda===moneda && String(l.fecha)===String(v.fecha)
+        && Math.abs(_tasaEfectivaLote(l)-(parseFloat(v.tasa)||0))<0.01;
+  });
+  for(var i=0;i<cand.length;i++) if(llenos(cand[i])>0.001) return cand[i];
+  return cand[0]||null;
+}
+function _restaurarComprasFIFO(r, monOrig, uc){
+  if(!(uc>0) || r.metodo==="calce") return;
+  var resto=uc;
+  ((r._lotesConsumidos||{}).compras||[]).forEach(function(v){
+    if(resto<=0.0001) return;
+    var l=_loteDelEspejo(v,"compra",monOrig); if(!l) return;
+    var cap=parseFloat(l.usdt)||0, act=parseFloat(l.restante)||0;
+    var dev=Math.min(resto, parseFloat(v.usdt)||0, cap-act);
+    // A CUATRO decimales, los mismos con los que consumirInventarioFIFO
+    // descuenta. Devolviendo a dos, borrar y volver a registrar la misma
+    // remesa no dejaba el lote como estaba.
+    if(dev>0){ l.restante=Math.round((act+dev)*10000)/10000; l._mod=Date.now(); _revivirLote(l); resto-=dev; }
+  });
+  if(resto<=0.0001) return;
+  var todas=(S.inventarioUsdt||[]).filter(function(l){
+    return l.tipo==="compra"&&l.moneda===monOrig;
+  }).sort(function(a,b){return(b.id||0)-(a.id||0);});  // más nuevo primero para revertir
+  var compras=r.cuentaBanco?todas.filter(function(l){return l.cuentaOrigenId===r.cuentaBanco;}):todas;
+  if(r.cuentaBanco&&!compras.length) compras=todas;   // esa cuenta nunca tuvo lotes propios
+  for(var i=0;i<compras.length&&resto>0.0001;i++){
+    var cap=parseFloat(compras[i].usdt)||0;
+    var act=parseFloat(compras[i].restante)||0;
+    var dev=Math.min(resto, cap-act);
+    if(dev>0){ compras[i].restante=Math.round((act+dev)*10000)/10000; compras[i]._mod=Date.now(); resto-=dev; }
+  }
+}
 function _restaurarVentasFIFO(r, monDest, cant){
   if(!(cant>0)) return;
+  var resto=cant;
+  ((r._lotesConsumidos||{}).ventas||[]).forEach(function(v){
+    if(resto<=0.001) return;
+    var l=_loteDelEspejo(v,"venta",monDest); if(!l) return;
+    var cap=parseFloat(l.bs)||0, act=parseFloat(l.bsRestante)||0;
+    var dev=Math.min(resto, parseFloat(v.bs)||0, cap-act);
+    if(dev>0){ l.bsRestante=Math.round((act+dev)*100)/100; l._mod=Date.now(); _revivirLote(l); resto-=dev; }
+  });
+  if(resto<=0.001) return;
   var partes=(r.entregas&&r.entregas.length)
     ? r.entregas.map(function(e){ return {cuentaId:e.cuentaId, monto:parseFloat(e.monto)||0}; })
-    : [{cuentaId:r.cuentaDest||"", monto:cant}];
+    : [{cuentaId:r.cuentaDest||"", monto:resto}];
   var ventasTodas=S.inventarioUsdt.filter(function(l){
     return l.tipo==="venta"&&l.moneda===monDest;
-  }).sort(function(a,b){return(b.id||0)-(a.id||0);}); // más nuevo primero para revertir
+  }).sort(function(a,b){return(b.id||0)-(a.id||0);});
   partes.forEach(function(pt){
-    if(!(pt.monto>0)) return;
+    if(!(pt.monto>0)||resto<=0.001) return;
     var ventas=pt.cuentaId?ventasTodas.filter(function(l){return _cuentaOMadre(l.cuentaDestinoId,pt.cuentaId,monDest);}):ventasTodas;
     if(pt.cuentaId&&!ventas.length) ventas=ventasTodas;   // esa cuenta nunca tuvo lotes propios
-    var resto=pt.monto;
-    for(var j=0;j<ventas.length&&resto>0.001;j++){
+    var dePate=Math.min(pt.monto, resto);
+    for(var j=0;j<ventas.length&&dePate>0.001;j++){
       var cap=parseFloat(ventas[j].bs)||0;
       var act=parseFloat(ventas[j].bsRestante)||0;
-      var dev=Math.min(resto, cap-act);
+      var dev=Math.min(dePate, cap-act);
       if(dev>0){
         ventas[j].bsRestante=Math.round((act+dev)*100)/100;
         ventas[j]._mod=Date.now();
-        resto-=dev;
+        dePate-=dev; resto-=dev;
       }
     }
   });
@@ -17027,24 +17116,7 @@ function revertirSaldosRemesa(tipo, r){
     // devolverle "uc" a los lotes de otra operacion les regalaria saldo que
     // nunca gastaron — y de ahi salen las tasas que la app sugiere. El lote
     // de entrada que SI creo ya se fue arriba con quitarLoteDeRemesa().
-    if(uc>0 && r.metodo!=="calce"){
-      var comprasTodas=S.inventarioUsdt.filter(function(l){
-        return l.tipo==="compra"&&l.moneda===monOrig;
-      }).sort(function(a,b){return(b.id||0)-(a.id||0);}); // más nuevo primero para revertir
-      var compras=r.cuentaBanco?comprasTodas.filter(function(l){return l.cuentaOrigenId===r.cuentaBanco;}):comprasTodas;
-      if(r.cuentaBanco&&!compras.length) compras=comprasTodas; // esa cuenta nunca tuvo lotes propios
-      var restUc=uc;
-      for(var i=0;i<compras.length&&restUc>0.001;i++){
-        var cap=parseFloat(compras[i].usdt)||0;
-        var actual=parseFloat(compras[i].restante)||0;
-        var devolver=Math.min(restUc, cap-actual);
-        if(devolver>0){
-          compras[i].restante=Math.round((actual+devolver)*100)/100;
-          compras[i]._mod=Date.now();
-          restUc-=devolver;
-        }
-      }
-    }
+    _restaurarComprasFIFO(r, monOrig, uc);
     // Restaurar BS/BRL al lote de venta — cada parte a los lotes de SU cuenta
     _restaurarVentasFIFO(r, monDest, cant);
     return;
@@ -17085,20 +17157,7 @@ function revertirSaldosRemesa(tipo, r){
   normalizarInventarioFIFO();
   var uc=parseFloat(r.uc)||0;
   // ARREGLO 106, el mismo caso por el camino sin _mov.
-  if(uc>0 && r.metodo!=="calce"){
-    var comprasTodas2=S.inventarioUsdt.filter(function(l){
-      return l.tipo==="compra"&&l.moneda===monOrig;
-    }).sort(function(a,b){return(b.id||0)-(a.id||0);});
-    var compras2=r.cuentaBanco?comprasTodas2.filter(function(l){return l.cuentaOrigenId===r.cuentaBanco;}):comprasTodas2;
-    if(r.cuentaBanco&&!compras2.length) compras2=comprasTodas2;
-    var restUc=uc;
-    for(var ci=0;ci<compras2.length&&restUc>0.001;ci++){
-      var cap=parseFloat(compras2[ci].usdt)||0;
-      var act=parseFloat(compras2[ci].restante)||0;
-      var dev=Math.min(restUc,cap-act);
-      if(dev>0){compras2[ci].restante=Math.round((act+dev)*100)/100;compras2[ci]._mod=Date.now();restUc-=dev;}
-    }
-  }
+  _restaurarComprasFIFO(r, monOrig, uc);
   _restaurarVentasFIFO(r, monDest, cant);
 }
 
