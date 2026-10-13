@@ -1439,6 +1439,59 @@ la suite, que de pronto no encontraba una función recién escrita. **Una prueba
 negativa vieja es una máquina del tiempo.** Antes de correr cualquiera, hay que
 volver a tomar su copia sobre el estado actual.
 
+### Al borrar, el dinero vuelve al lote QUE SE GASTÓ (ARREGLO 127)
+
+Salió persiguiendo un descuadre suyo del 13/10: las remesas decían haber gastado
+**128.805,76 Bs** de un lote de 147.000, así que debían quedar 18.194,24 — y el
+lote decía **6.462,84**. Al tirar del hilo aparecieron **dos** fallos en la
+devolución, y el segundo lo trajo el arreglo del primero.
+
+**1. Solo se miraban los lotes VIVOS.** Un lote que una remesa deja en cero se
+archiva en `inventarioUsdt_cerrado` (lo hace `sincronizarFIFOconCuentas()` al
+dibujar Inventario). Al **borrar** esa misma remesa los bolívares no encontraban
+dónde volver: **la cuenta sí se corregía y el inventario no.**
+
+**2. Añadir los archivados al reparto "del más nuevo al más viejo" es PEOR que el
+fallo.** Todos los archivados están en cero, así que el primero de la lista se
+traga la devolución entera. Medido con sus datos antes de darlo por bueno.
+
+**Lo correcto no hay que adivinarlo: cada remesa ya apunta lo que gastó**, en
+`_lotesConsumidos`. Se devuelve ahí, lote por lote, por **id** cuando lo hay
+(ARREGLO 126) y por fecha+tasa en lo anterior. Lo que no se pueda casar cae al
+recorrido de siempre, **solo por los lotes vivos**.
+
+Medido borrando sus remesas reales, código viejo contra nuevo:
+
+```
+borrar la #818 (entregó 200.000 de DOS lotes)      viejo        nuevo
+  lote 10/12, vivo                                147.000     16.684,60
+  lote 10/11, archivado                                 0    189.778,24
+  sus tres lotes de compra                              0   50,28 · 42,78 · 78,54
+borrar las #819-#822 (un solo lote, vivo)          sin una sola diferencia
+```
+
+El viejo metía los 200.000 **enteros en el lote equivocado** y lo llenaba hasta
+su tope. Lo de los lotes archivados se perdía del todo.
+
+- **Un lote que recupera saldo vuelve a la lista viva** (`_revivirLote`), y **se
+  le quita la marca de borrado**: se la puso el archivado a propósito para que
+  la fusión no lo reviviera, y si se queda puesta el otro aparato lo borra en
+  cuanto sincronice.
+- **El lado de las COMPRAS estaba escrito dos veces**, una por camino del
+  borrado — justo lo que el ARREGLO 97 ya evitó en el lado de las ventas. Ahora
+  es `_restaurarComprasFIFO()`, y la guardia del calce (ARREGLO 106) vive ahí
+  en vez de duplicada.
+- **Y se devuelve con los mismos 4 decimales con que se gasta.** `consumir`
+  descontaba a 4 y `restaurar` devolvía a 2: borrar y volver a registrar la
+  misma remesa no dejaba el lote como estaba.
+
+**Lo que esto NO explica, y hay que decirlo:** su descuadre de 11.731,40 Bs **no
+era esto** — su lote seguía vivo. Repasadas todas las líneas que bajan
+`bsRestante`, solo quedan el botón ✏️ de editar el restante a mano o un cambio
+llegado del otro aparato. **El registro de auditoría vive en su servidor y desde
+el entorno de desarrollo no se alcanza**, así que esa parte se queda sin cerrar.
+
+
 ### La tasa de referencia sale sola — no la escribas a mano
 
 Antes mandaba lo que ella escribía en el panel 💱, y mandaba para siempre:
