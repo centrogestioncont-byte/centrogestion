@@ -2913,7 +2913,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261013_v212";
+var APP_VERSION = "20261013_v214";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -6646,13 +6646,43 @@ var _RATE_LIMITS={USD:[0.8,2],EUR:[0.8,2],TTD:[5,10],BRL:[3,8],COP:[3000,6000],P
 //     960,2328 —la del bolívar— porque al no hallar lotes en soles se iba a
 //     "todas las ventas". Hoy lo tapa el filtro de rangos, pero estaba ahí.
 //
-// Lo que ella fija a mano (📌) sigue mandando: es una decisión suya, no un
-// olvido. Por eso se marca aparte, con su fecha, para que se vea envejecer.
+// Lo que ella escribe a mano se marca aparte, con su fecha y su hora, para que
+// se vea envejecer. Aquí decía que "sigue mandando: es una decisión suya, no un
+// olvido" — eso lo revirtió ella el 13/10, y el porqué está justo debajo.
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 131 · LO ESCRITO A MANO YA NO MANDA PARA SIEMPRE
+// ══════════════════════════════════════════════════════════════════════
+// Esto REVIERTE una regla escrita, y la revierte ella. Sus palabras del 13/10:
+// "ya no puedo fijar ninguna tasa del inventario de USDT según la compra y la
+// venta, porque se supone que cada día eso puede variar. Entonces no puedes
+// colocarle como que yo fijé una tasa, se supone que debe de ir
+// actualizándose... y en algún caso esos bolívares me duran dos o tres días,
+// yo tengo que actualizar... no se puede fijar eso".
+//
+// La regla vieja —"la que ella fijó a mano manda, es una decisión suya, no un
+// olvido"— salió de una conversación anterior y en su día era correcta. Dejó
+// de serlo cuando se midió lo que costaba: su VES llevaba desde el 10/10
+// valorando TODO su dinero a 1.013 que escribió una vez, por encima de sus
+// ventas reales de 1.008,72, 1.010,66 y 1.010,50. Un número que ella escribió
+// hace tres días no puede ganarle a una operación que registró hace un rato.
+//
+// Ahora es UNA sola regla para los dos casos, la del ARREGLO 129: MANDA LA MÁS
+// NUEVA. Lo que escriba vale mientras sea lo último que pasó; en cuanto
+// registre una compra o venta de USDT de esa moneda, manda la operación.
+//
+// Lo escrito NO desaparece ni hay que ir a soltarlo: los que ya estén fijados
+// dejan de ganar solos, sin que ella toque nada. Pedirle que vaya a quitar una
+// marca que ya no significa nada sería dejar el arreglo a medias.
 function _tasaFijadaAMano(moneda){
   var meta=(S._tasasDiaMeta||{})[moneda]||{};
   if(!meta.fijada) return null;
   var v=parseFloat((S.tasasDia||{})[moneda]);
-  return (v>0)?v:null;
+  if(!(v>0)) return null;
+  // La hora en que la escribió. Las de antes de este arreglo no la tienen, así
+  // que cualquier operación de USDT les gana — que es justo lo que ella pide.
+  var t=parseFloat(meta.ts)||0;
+  if(t<=_tsUltimaOpUSDT(moneda)) return null;
+  return v;
 }
 function tasaDeReferencia(moneda){
   if(moneda==="USDT") return {tasa:1, origen:"usdt"};
@@ -6743,7 +6773,9 @@ function setTasaDia(moneda, tasa){
   S._tasasDiaMeta[moneda]={
     fecha:new Date().toLocaleDateString("es-VE"),
     hora:new Date().toLocaleTimeString("es-VE",{hour:"2-digit",minute:"2-digit"}),
-    fijada:true, iso:td()
+    // ARREGLO 131: la HORA, para que la regla "manda la más nueva" pueda
+    // compararla con la última operación de USDT de esa moneda.
+    fijada:true, iso:td(), ts:Date.now()
   };
   saveData();R();
 }
@@ -6753,7 +6785,7 @@ function soltarTasaDia(moneda){
   var r=tasaDeReferencia(moneda);
   saveData();R();
   if(r.origen==="auto") alert("🔄 "+moneda+" vuelve a salir sola: "+(r.tasa<100?f4(r.tasa):f2(r.tasa))+" "+moneda+"/USDT, de tu "+(r.tipo==="compra"?"compra":"venta")+" de USDT del "+_fechaLoteLegible(r.fecha)+".");
-  else alert("🔄 "+moneda+" ya no está fijada.\n\nTodavía no hay ninguna operación de USDT en "+moneda+", así que se sigue usando el último valor que escribiste hasta que registres una.");
+  else alert("🔄 "+moneda+" ya no lleva lo que escribiste.\n\nTodavía no hay ninguna operación de USDT en "+moneda+", así que se sigue usando ese mismo valor hasta que registres una.");
 }
 // Hace cuántos días fue esa operación. Una tasa automática también envejece:
 // si su lote es de hace cinco semanas, valorar con ella no es mejor que
@@ -6821,7 +6853,7 @@ function rBalancePlus(){
               "style='flex:1;padding:9px 11px;font-size:14px;border:1.5px solid "+(tieneRate?"var(--vd5)":"var(--avi-ln)")+";border-radius:7px;font-family:inherit'>"+
             "<div style='font-size:10.5px;color:var(--tx4);text-align:right;min-width:82px'>"+
               (ref.origen==="auto" ? "🔄 sale sola<br>"+(ref.tipo==="compra"?"compra":"venta")+" "+_fechaLoteLegible(ref.fecha)
-               : ref.origen==="fijada" ? "📌 fijada<br>"+(meta.fecha||"")
+               : ref.origen==="fijada" ? "✍️ la escribiste<br>"+(meta.fecha||"")
                : (meta.fecha?""+meta.fecha+"<br>"+meta.hora:"nunca actualizada"))+
             "</div>"+
           "</div>"+
@@ -12283,6 +12315,83 @@ function _refrescarIU(){
   }catch(e){}
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 130 · EL TRASPASO QUE FALTA PARA UNA VENTA DE USDT
+// ══════════════════════════════════════════════════════════════════════
+// Sus palabras del 13/10: "son dos cuentas distintas, una es de reales que es
+// Binance Saipa y la otra es de moneda Vzla que es Binance Julio… para no
+// tener que hacer traspaso para las compras o ventas de USDT". Y después, la
+// que decide la forma: "igual yo señalo por dónde sale, solo que me ahorraría
+// el tema del traspaso, porque si Binance Julio está en 0 y Binance Saipa
+// tiene 100 USDT y registro una venta de USDT por Binance Julio, se supone que
+// deben ser esos 100 de Saipa porque no hay más cuentas".
+//
+// Tiene razón y eso cambia la regla: cuando SOLO HAY UN SITIO de donde pueden
+// salir, no hay nada que preguntar — el dato está forzado, no inventado. Con
+// dos o más sí se pregunta, porque ahí sí hay una decisión.
+//
+// Y esto no es comodidad: es de donde salió el descuadre que persiguió ese
+// mismo día. Medido en su export —el 11/10 vendió 368,06 USDT desde Binance
+// Julio a las 22:13 y traspasó 323,21 a las 22:16— faltaron 44,85. De ahí los
+// 75,93 que la app decía tener en Saipa con su Binance en cero. Con el
+// traspaso saliendo por el monto exacto de la venta, esa diferencia no se abre.
+//
+// Lo que NO se hace en silencio: el traspaso automático SE DICE, con su cuenta
+// y su monto, en el mismo aviso que confirma la venta. Un movimiento de dinero
+// que la app escribe sola y no cuenta es justo lo que haría que dejara de
+// fiarse de los saldos.
+function _saldoCtaUsdt(id){
+  var c=(S.cuentas||[]).find(function(x){return x.id===id;});
+  return c?(parseFloat(c.saldo)||0):0;
+}
+// Las otras cuentas de USDT con saldo. Las personales (💜) quedan fuera: ese
+// dinero ya salió de la empresa (ARREGLO 96) y traerlo de vuelta solo porque
+// hace falta sería inventarse un movimiento que ella no hizo.
+function _otrasCtasUsdt(idExcluir){
+  return (S.cuentas||[]).filter(function(c){
+    return c.moneda==="USDT" && c.activa!==false && !c.esPersonal &&
+           c.id!==idExcluir && (parseFloat(c.saldo)||0)>0.0001;
+  });
+}
+// Devuelve el texto de lo que se traspasó, o "" si no hizo falta nada. Lo
+// escribe quien avisa, para que el aviso y el movimiento no puedan separarse.
+function _cubrirUsdtParaVenta(f, usdt){
+  var id=f.cuentaId;
+  if(!id || !(usdt>0)) return "";
+  var hay=_saldoCtaUsdt(id);
+  var falta=Math.round((usdt-hay)*10000)/10000;
+  if(falta<=0.0001) return "";
+  var cDest=(S.cuentas||[]).find(function(x){return x.id===id;});
+  var otras=_otrasCtasUsdt(id);
+  if(!otras.length){
+    alert("⚠️ En \""+(cDest?cDest.nombre:"esa cuenta")+"\" hay "+f2(hay)+" USDT y vas a vender "+
+      f2(usdt)+".\n\nNo hay ninguna otra cuenta de USDT con saldo, así que no puedo traspasar los "+
+      f2(falta)+" que faltan. La venta se registra igual y esa cuenta queda en negativo.");
+    return "";
+  }
+  var cOrig=otras[0];
+  if(otras.length>1){
+    // Con dos o más sí hay decisión, y es suya.
+    var lista=otras.map(function(c,i){return (i+1)+") "+c.nombre+" — "+f2(parseFloat(c.saldo)||0)+" USDT";}).join("\n");
+    var r=prompt("En \""+cDest.nombre+"\" faltan "+f2(falta)+" USDT.\n\n¿Desde cuál los traspaso?\n\n"+
+                 lista+"\n\nEscribe el número, o deja vacío para no traspasar.");
+    if(r===null) return "";
+    var k=parseInt(r,10);
+    if(!(k>=1 && k<=otras.length)) return "";
+    cOrig=otras[k-1];
+  }
+  // El traspaso es el de siempre: mismo formato, misma lista, nada nuevo que
+  // fusionar entre aparatos.
+  S.traspasos=(S.traspasos||[]).concat([{
+    id:Date.now(), fecha:td(), origen:cOrig.id, destino:cDest.id,
+    moneda:"USDT", monto:falta, monedaDestino:"USDT", montoDestino:falta,
+    nota:"Traspaso automático para la venta de USDT", locked:true
+  }]);
+  cOrig.saldo=Math.round(((parseFloat(cOrig.saldo)||0)-falta)*100)/100;
+  cDest.saldo=Math.round(((parseFloat(cDest.saldo)||0)+falta)*100)/100;
+  return f2(falta)+" USDT desde "+cOrig.nombre;
+}
+
 function saveIU(){
   var f=S.nIU;
   var usdt=parseFloat(f.usdt)||0,tasa=parseFloat(f.tasa)||0,com=_comIU(f.comision);
@@ -12315,6 +12424,12 @@ function saveIU(){
   }else{
     var cDest0=(S.cuentas||[]).find(function(c){return c.id===f.cuentaDestinoId;});
     if(!confirm("Vas a registrar:\n\nVENTA de "+f2(usdt)+" USDT\nrecibiendo "+(f.monedaVenta||"VES")+"\nen: "+(cDest0?cDest0.nombre:"(sin cuenta seleccionada)")+"\n\n¿Es correcto? Si recibiste otra moneda o en otra cuenta, cancela y corrígelo arriba."))return;
+    // ARREGLO 130: si en la cuenta de USDT no alcanza, el traspaso sale solo
+    // por el monto exacto. Va DESPUÉS de que confirme la venta y ANTES de
+    // escribir el lote: hacerlo antes dejaría el dinero movido sin operación
+    // detrás si cancela. Y lo que mueva SE DICE, aquí mismo.
+    var _trasp=_cubrirUsdtParaVenta(f, usdt);
+    if(_trasp) alert("↔️ Traspasé "+_trasp+" para cubrir esta venta.\n\nQueda registrado como un traspaso normal, lo puedes ver en Balance de Cuentas.");
   }
   // ── Verificar Order ID duplicado ──────────────────────────────────────────
   var ordenId=(f.ordenId||'').trim();
@@ -13938,7 +14053,7 @@ function rCapitalTotal(){
       // ARREGLO 49: de dónde sale el número, y de cuándo. Una tasa fijada a mano
       // envejece en silencio — el 5,22 llevaba semanas valorándolo todo.
       var origen = ref.origen==="fijada"
-          ? "📌 <b>La fijaste tú</b>"+(meta.fecha?" el "+meta.fecha:"")
+          ? "✍️ <b>La escribiste tú</b>"+(meta.fecha?" el "+meta.fecha:"")+" · manda hasta que registres una operación de USDT en "+mon
           : ref.origen==="auto"
             ? "🔄 Sale sola de tu "+(ref.tipo==="compra"?"compra":"venta")+" de USDT del "+_fechaLoteLegible(ref.fecha)+
               ((_diasDesdeLote(ref.fecha)||0)>7?" <b style='color:var(--avi-tx2)'>· de hace "+_diasDesdeLote(ref.fecha)+" días</b>":"")
@@ -13966,7 +14081,7 @@ function rCapitalTotal(){
     panelTasas=
       "<div style='background:var(--avi-sup);border:2px solid var(--avi-ln);border-radius:12px;padding:12px 14px;margin-bottom:12px'>"+
         "<div style='font-size:13px;font-weight:800;color:var(--avi-tx);margin-bottom:4px'>💱 Tasas de referencia</div>"+
-        "<div style='font-size:11.5px;color:var(--avi-tx);margin-bottom:10px;line-height:1.5'>Salen solas de tu última compra o venta de USDT de cada moneda. Escribe una aquí solo si quieres <b>fijarla</b> tú; queda marcada 📌 con su fecha hasta que la sueltes.</div>"+
+        "<div style='font-size:11.5px;color:var(--avi-tx);margin-bottom:10px;line-height:1.5'>Salen solas de tu última compra o venta de USDT de cada moneda. Si escribes una aquí, manda <b>mientras sea lo último que pasó</b>: en cuanto registres una compra o una venta de esa moneda, vuelve a salir sola.</div>"+
         filasTasas+
       "</div>";
   }
@@ -24498,18 +24613,26 @@ function _guardarTasaAprox(mon,val){
 // de un lote es Date.now() desde hace tiempo; los viejos no lo son y
 // devuelven 0, así que ahí gana lo que ella escriba — que es lo correcto:
 // un lote sin hora no se puede comparar con una tasa de esta mañana.
-function _tsUltimaOpUSDT(mon){
-  var mejor=0;
+// La ultima operacion de USDT de esa moneda, el lote entero. Lo leen la hora
+// (para decidir si manda la tasa que ella escribio) y la tarjeta (para poder
+// decirle "usa la de tu venta de hoy"). Dos recorridos distintos acabarian
+// senalando lotes distintos el dia que uno cambie el filtro.
+function _ultimaOpUSDT(mon){
+  var mejor=null, mt=0;
   function _mirar(arr){
     for(var i=0;i<(arr||[]).length;i++){
       var l=arr[i];
       if(l.moneda!==mon || l.permuta || !((parseFloat(l.usdt)||0)>0)) continue;
       var t=parseFloat(l.id)||0;
-      if(t>1.5e12 && t>mejor) mejor=t;
+      if(t>1.5e12 && t>mt){ mt=t; mejor=l; }
     }
   }
   _mirar(S.inventarioUsdt); _mirar(S.inventarioUsdt_cerrado);
   return mejor;
+}
+function _tsUltimaOpUSDT(mon){
+  var l=_ultimaOpUSDT(mon);
+  return l?(parseFloat(l.id)||0):0;
 }
 // ¿Manda lo que ella escribió? Solo si es de hoy Y lo escribió DESPUÉS de la
 // última operación de USDT de esa moneda.
@@ -24519,10 +24642,11 @@ function _aproxManda(mon){
   if(!((parseFloat(o.v)||0)>0)) return false;
   return (parseFloat(o.ts)||0) > _tsUltimaOpUSDT(mon);
 }
-// Cuántos días tiene la tasa de referencia de esa moneda. null cuando no se
-// puede saber — fijada a mano, escrita sin fecha, o sin tasa. Ahí no se avisa
-// de vieja ni se pide aproximada: lo fijado es una decisión suya, no un
-// olvido, que es la regla que ya manda en tasaDeReferencia().
+// Cuántos días tiene la tasa de referencia de esa moneda. null cuando no sale
+// de una operación — escrita a mano, sin fecha, o sin tasa. Ahí no se avisa de
+// vieja ni se pide aproximada: desde el ARREGLO 131 lo escrito a mano solo
+// manda mientras sea lo más nuevo que pasó, así que no puede estar envejecido
+// por detrás de una operación suya.
 function _diasDeRef(ref){
   if(!ref || ref.origen!=="auto" || !ref.iso) return null;
   return _diasIso(ref.iso, td());
@@ -25089,7 +25213,8 @@ function _htmlSuelo(){
   // Paso el 30/09 — la tarjeta enseñaba 187,90 con una compra del 18/09 y ella
   // habia comprado a 5,27 esa misma mañana. El numero no estaba mal, estaba
   // VIEJO, que para lo que sirve un suelo es lo mismo. No se avisa de la tasa
-  // fijada a mano: esa es una decision suya, no un olvido.
+  // escrita a mano: desde el ARREGLO 131 esa solo manda mientras sea lo mas
+  // nuevo que paso, asi que no puede estar tapando una operacion suya.
   var tasaVieja=function(){
     if(!rc||rc.origen!=="auto"||!rc.iso) return "";
     var dias=Math.floor((new Date(td()+"T00:00:00")-new Date(rc.iso+"T00:00:00"))/86400000);
@@ -26088,6 +26213,52 @@ function _botonTasaUsdt(rot, fuerte){
     "color:var(--"+(fuerte?"avi-tx":"tx4")+");font-weight:"+(fuerte?"800":"700")+";"+
     "cursor:pointer;text-decoration:underline'>"+rot+"</span></div>";
 }
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 130 · DE DÓNDE SALE CADA MITAD DEL SUELO
+// ══════════════════════════════════════════════════════════════════════
+// Sus palabras del 13/10: "el sistema está agarrando como referencia una tasa
+// vieja, pero yo hace ratico acabo de registrar una venta de USDT por
+// bolívares y la tasa es de menos".
+//
+// Y la tarjeta del 128 le contestaba: "Tu última operación de USDT tiene 3
+// días... así que el suelo sale de esa". ERA MENTIRA del lado de los
+// bolívares: no salía de ninguna operación, salía del 1.013 que ella fijó a
+// mano el 10/10. Medido en su export: su venta de ese mismo día fue a
+// 1.010,50, y el suelo con una y con otra no es el mismo:
+//
+//     con la fijada (1.013,00)        199,87  →  186 · 210
+//     con su venta de hoy (1.010,50)  199,38  →  185 · 209
+//
+// Poco, pero va A SU FAVOR en la pantalla — el único lado del que un suelo no
+// se puede equivocar. Lo fijado sigue mandando, que es su decisión (la regla
+// de tasaDeReferencia no se toca); lo que cambia es que la tarjeta DICE de
+// dónde sale cada mitad y le da la salida en un toque.
+function _origenLado(mon, Q){
+  var ref = (mon==="BRL") ? Q.rc : Q.rv;
+  var apx = (mon==="BRL") ? Q.apxC : Q.apxV;
+  var mkt = (mon==="BRL") ? Q.mc : Q.mv;
+  var usaMerc = !!(Q.manda && Q.manda.nombre==="el mercado") ||
+                !!(Q.manda && Q.manda.nombre==="la mezcla de arriba" && mkt>0 && !apx);
+  if(apx)      return {txt:"la que escribiste hoy"};
+  if(usaMerc && mkt>0) return {txt:"el mercado"};
+  if(!ref || !(ref.tasa>0)) return {txt:"falta"};
+  if(ref.origen==="fijada"){
+    // ARREGLO 131: ya no "fijada" — lo escrito a mano manda solo mientras sea
+    // lo último que pasó. Si llega una operación de USDT, gana ella sola, así
+    // que aquí ya no hay nada que ofrecer: el botón "usar la de tu venta" del
+    // ARREGLO 130 se quitó en vez de dejarlo al lado sin poder hacer nada
+    // (ARREGLO 98 — una pantalla nueva quita el control viejo).
+    return {txt:"\u270d\ufe0f la escribiste t\u00fa"+((ref.meta&&ref.meta.fecha)?(" el "+_escAud(String(ref.meta.fecha))):"")+
+                " \u00b7 manda hasta que registres una operaci\u00f3n", escrita:true};
+  }
+  if(ref.origen==="auto"){
+    var d=_diasDeRef(ref);
+    return {txt:"tu "+(ref.tipo==="compra"?"compra":"venta")+" del "+_escAud(String(ref.fecha||""))+
+                ((d!==null&&d>0)?(" · "+f0(d)+(d===1?" día":" días")):"")};
+  }
+  return {txt:"lo último que escribiste"};
+}
+
 function _htmlPublicaHoy(){
   var r=_tasasRecomendadas();
   var Q=r?r.Q:sueloQueManda();
@@ -26178,15 +26349,23 @@ function _htmlPublicaHoy(){
   var usandoOtra=(Q.apxC||Q.apxV);
   var falta=(pideC||pideV);       // la app no tiene dato fresco de ese lado
   // El aviso de que su tasa envejeció sale SIEMPRE; los campos, nunca solos.
+  // ARREGLO 130: en vez de UNA frase que habla de "tu última operación" —y que
+  // para el lado fijado a mano era falsa— se dice de dónde sale CADA mitad, y
+  // cuando una está fijada con una operación más nueva detrás, se ofrece.
+  var oC=_origenLado("BRL",Q), oV=_origenLado("VES",Q);
   if(falta && !probando && !usandoOtra){
-    var d0=Math.max(pideC?(Q.dC||0):0, pideV?(Q.dV||0):0);
+    function _fila(rot,o){
+      return "<div style='display:flex;gap:8px;align-items:baseline;margin-bottom:4px'>"+
+        "<div style='font-size:10.5px;color:var(--tx4);font-weight:700;min-width:62px'>"+rot+"</div>"+
+        "<div style='flex:1;min-width:0;font-size:11.5px;color:var(--avi-tx);line-height:1.5'>"+o.txt+"</div>"+
+      "</div>";
+    }
     h+="<div style='margin-top:11px;background:var(--avi-sup2);border:1px solid var(--avi-ln);"+
        "border-radius:9px;padding:10px 11px'>"+
-       "<div style='font-size:11.5px;color:var(--avi-tx);line-height:1.5'>"+
-       (d0>0 ? ("Tu última operación de USDT tiene <b>"+f0(d0)+(d0===1?" día":" días")+
-                "</b> y el mercado no contesta, así que el suelo sale de esa.")
-             : "El mercado no contesta, así que el suelo sale de tus operaciones.")+
-       "</div>"+
+       "<div style='font-size:10.5px;color:var(--tx4);font-weight:800;text-transform:uppercase;"+
+       "letter-spacing:.4px;margin-bottom:7px'>De dónde sale tu suelo</div>"+
+       _fila("reales",oC)+
+       _fila("bolívares",oV)+
        _botonTasaUsdt("escribir la tasa de hoy", true)+
        "</div>";
   }
