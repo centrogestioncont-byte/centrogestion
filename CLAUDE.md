@@ -1986,8 +1986,14 @@ preguntarse *"¿y si está a 1.050?"*, que es justo para lo que los quería.
   primer redondeo.
 - **Volver borra las DOS.** Probar con una y dejarse la otra puesta da un suelo
   salido de una mezcla que ella no eligió.
-- **En reposo es una línea gris** (*"probar con otra tasa de USDT"*), no un
-  bloque abierto: la regla de no saturar del ARREGLO 125.
+- **Los campos NO se abren solos NUNCA.** Sus palabras: *"no quiero saturar la
+  pantalla, no me lo pongas allí afuera para que de una vez coloque la nueva
+  tasa de USDT, sino como un botón, si en dado caso yo quiero agregar una
+  nueva"*. Lo que sale solo es el **aviso** —que su tasa tiene tres días es algo
+  que necesita saber— y debajo el botón. Escribirla es decisión suya. Es **una
+  regla sola, sin excepciones**, también cuando no hay suelo ninguno: con dos
+  reglas, un día se abre cuando no toca. El botón se dibuja desde un solo sitio
+  (`_botonTasaUsdt`) en los tres estados, y la guardia cuenta las llamadas.
 
 #### El botón de arriba es la PREGUNTA; el campo de abajo, el DATO (ARREGLO 129)
 

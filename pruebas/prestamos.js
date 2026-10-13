@@ -74,7 +74,7 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "_aproxTodas", "_tasaAprox", "_guardarTasaAprox", "_diasDeRef",
                     "_colchon", "_tasasRecomendadas", "_tasaCorta", "_tasasConLoMio",
                     "_tsUltimaOpUSDT", "_aproxManda", "_toggleProbar", "_volverAMiTasa", "_setAprox", "publicarRecomendadas",
-                    "_campoAprox", "_htmlPublicaHoy", "guardarColchones", "_htmlCalceCuerpo",
+                    "_campoAprox", "_htmlPublicaHoy", "guardarColchones", "_htmlCalceCuerpo", "_botonTasaUsdt",
                     "_calceK", "_calceGan", "_calceVuelta", "_calceIda", "_cg", "_cgSet", "_cgFraccion",
                     "_htmlPalancaVenta", "_permutaSugerida", "_prConPermuta", "_htmlPermutaFuera", "_usarPermutaSugerida", "txMetodo", "esCalceDirecto", "esRutaCalce", "getAutoRates", "_cgBase", "_cgGanUsdt", "_htmlComparaTasa", "_htmlCabeceraTasas", "_htmlCalceRes", "_htmlCalceCuerpo", "_cgModo", "_cgFuente",
                     "margenSobreSuelo", "_calcTasas", "_misTasasPublicadas", "_fpTasa",
@@ -9468,6 +9468,21 @@ console.log("\nARREGLO 128 · la tasa que publica, recomendada sola");
   // ── Sin suelo no se inventa un número ───────────────────────────────
   ok(/if\(!r\)\{/.test(tar) && /falta saber a c/.test(tar),
      "sin suelo la tarjeta dice qué falta en vez de inventar una tasa");
+
+  // ARREGLO 129b: los campos NUNCA se abren solos. Sus palabras: "no me lo
+  // pongas allí afuera para que de una vez coloque la nueva tasa de USDT,
+  // sino como un botón". Lo que sale solo es el AVISO de que su tasa
+  // envejeció; escribirla es decisión suya.
+  ok(!/if\(pideC\|\|pideV\)\{/.test(tar),
+     "los campos no se abren por que la app no tenga dato fresco");
+  ok((tar.match(/_campoAprox\(/g)||[]).length===4,
+     "los cuatro campos cuelgan de que ella lo pida",
+     (tar.match(/_campoAprox\(/g)||[]).length+" llamadas");
+  ok(/_botonTasaUsdt\(/.test(tar) && /S\._probarTasa/.test(tar),
+     "y la puerta es el botón, en los dos caminos");
+  ok((tar.match(/_botonTasaUsdt\(/g)||[]).length===3,
+     "el botón se dibuja desde UN sitio, en los tres estados",
+     (tar.match(/_botonTasaUsdt\(/g)||[]).length+" llamadas");
 
   // ── Funcional: la aproximada caduca y solo entra si la suya es vieja ─
   const guardado = {};
