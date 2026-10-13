@@ -2104,11 +2104,28 @@ supone que deben ser esos 100 de Saipa porque no hay más cuentas"*.
 salir, no hay nada que preguntar: el dato está **forzado**, no inventado. Con dos
 o más sí se pregunta, porque ahí sí hay una decisión.
 
-**Y esto no es comodidad.** Es de donde salió el descuadre que persiguió ese
-mismo día: el 11/10 vendió **368,06** USDT desde Binance Julio a las 22:13 y
-traspasó **323,21** a las 22:16 — 44,85 de menos. De ahí los **75,93** que la app
-decía tener en Saipa con su Binance en cero. Con el traspaso saliendo por el
-monto exacto de la venta, esa diferencia no se abre.
+**Y esto no es comodidad.** El 11/10 vendió **368,06** USDT desde Binance Julio y
+traspasó **323,21** — 44,85 de menos. Con el traspaso saliendo por el monto exacto
+de la venta, esa diferencia no se abre.
+
+**Corrección, porque aquí quedó escrito como causa probada y no lo era:** esos
+44,85 se dieron por *"de ahí salen los 75,93 que la app decía tener en Saipa"*, y
+el 13/10 ella aportó el dato que lo tumba — el mismo día había pasado **74,69
+USDT de su Binance personal al de Julio**, así que JULIO sí tenía con qué vender y
+no falta ningún traspaso. Deducir la causa de un descuadre **a partir de lo que
+está registrado** da una respuesta que se cae en cuanto aparece un movimiento que
+no lo estaba. Al perseguirlo con todo dentro salió otra cosa, y más grande: los
+saldos de esas dos cuentas **no se pueden reconstruir desde los movimientos**.
+Medido desde el 12/09, los movimientos registrados dan −478,53 y para llegar a
+los 75,93 de hoy ese día habría tenido que haber 554,46 donde la app decía
+474,76 — **79,70 de deriva**. La causa de fondo: muchas ventas de bolívares están
+registradas saliendo de **SAIPA** cuando el USDT estaba en **JULIO**, y
+reconstruida la cuenta SAIPA se va a negativo imposible una y otra vez desde
+septiembre. Entre eso, el `manual_override` de las dos y el **0 escrito a mano**
+en JULIO, ese saldo lleva un mes sin seguir a los movimientos. Se cerró con un
+ajuste a mano —el caso legítimo: el banco y la app discrepan y ya se sabe por
+qué— y lo que lo evita de aquí en adelante es elegir **la cuenta correcta en la
+venta**, que es justo lo que el traspaso automático hace posible.
 
 - **Se DICE, no se hace en silencio**: *"Traspasé 100,00 USDT desde BINANCE
   SAIPA"*, en el mismo aviso que confirma la venta. Un movimiento de dinero que
@@ -2124,6 +2141,108 @@ monto exacto de la venta, esa diferencia no se abre.
 
 **Lo que esto NO repara:** los 75,93 que ya están. El arreglo vale de aquí en
 adelante; esa diferencia hay que corregirla a mano una vez.
+
+#### Y la ida sube sola cuando hay bolívares parados (ARREGLO 132)
+
+Sus palabras del 13/10: *"ya yo aquí tengo bs de usdt que tuve que vender,
+entonces quiero que mientras tenga más de lo equivalente a 200 reales en bs tenga
+mejor tasa, porque ahorita mi competencia tiene una tasa de reales más alta y
+entonces me está mandando a bajar a 185"*.
+
+**El aviso del ARREGLO 112 ya decía "te llenaste de bolívares, SUBE la ida", pero
+mide en PORCENTAJE.** Medido en su export del 13/10:
+
+```
+bolívares en cuentas   170.604 Bs = 850 R$   ← 4 veces su umbral
+lo que decía la app    "tienes reales de sobra"
+```
+
+Con el 51% en bolívares no llegaba al umbral del aviso, así que la app creía que
+no pasaba nada mientras ella tenía 850 reales perdiendo valor y la competencia
+publicando por encima. **Su regla es ABSOLUTA y pequeña** —200 reales— porque lo
+que le duele no es la proporción, es el monto parado.
+
+Ahora el colchón de la ida tiene dos valores y el inventario decide cuál manda:
+
+```
+                        colchón   publica   gana por cada 500 R$
+normal                     7%       185          7,09 USDT
+con bolívares parados      5%       189          4,10 USDT
+```
+
+Los dos números los eligió ella (5% y 200 R$) y se editan en Configuración, al
+lado de los otros dos colchones. **La vuelta no se toca**: lo decidió así.
+
+- **El inventario se mide en UN solo sitio** (`_inventarioBs`) y lo leen el
+  colchón que decide la tasa **y** el aviso que la explica. Calculado aparte, un
+  día la tarjeta subiría la ida mientras el aviso de abajo dice que todo va bien.
+- **La conversión a reales MULTIPLICA.** `usdtCuentas` ya está en USDT, así que
+  para pasarlo a reales se multiplica por los reales que vale un USDT. La regla
+  de *"getRateToUsdt divide"* es para el camino contrario; dividir aquí daba 33 R$
+  donde hay 850 y el umbral no saltaba nunca.
+- **Sin tasa de reales no se decide nada** y manda el colchón de siempre. Un
+  umbral adivinado movería la tasa que publica.
+- **`_colchon()` sigue devolviendo lo GUARDADO** —es lo que tienen que enseñar los
+  campos de Configuración— y quien mira el inventario es `_colchonIdaAhora()`.
+- **La comparación sale de la MISMA cuenta** (`_tasasSinBs`, con su `finally`,
+  igual que `_tasasConLoMio` y `_prConPermuta`): mirar el resultado no puede ser
+  ya haberlo aplicado.
+- **Y va en UN recuadro, no en dos.** El primer intento dibujaba la comparación
+  encima del aviso y la tarjeta decía *"850,36 R$"* y *"200,00 R$"* dos veces
+  seguidas, en dos bloques ámbar pegados — el ARREGLO 125 otra vez.
+
+**SIN memo, a propósito.** El primer intento guardaba la respuesta 300 ms y la
+prueba de al lado empezó a medir la del bloque anterior: con el memo puesto, el
+número que decide la tasa que ella publica depende de **cuándo se preguntó**, y eso
+no se ve desde fuera. Medido en Chromium: la pestaña de Tasas se dibuja en **8,6
+ms** sin él, y las 24 pestañas sin un error.
+
+Comprobado con sus datos del 13/10: con 170.604 Bs (850,36 R$) sale **189 · 209**
+con el colchón al 5%, y bajando a 2.000 Bs vuelve a **185 · 209** con el 7%.
+
+#### Y la vuelta baja sola cuando hay reales parados (ARREGLO 133)
+
+Sus palabras del 13/10: *"de bs a reales que pase, lo mida con esa misma lógica
+pero al contrario"*.
+
+**Al contrario quiere decir esto, y el motivo es SUYO** (ARREGLO 74): su vuelta
+alta existe para cubrirle el P2P que tiene que hacer cuando entra una vuelta
+grande y **no** tiene reales. Con reales en mano ese costo no lo tiene, así que
+puede **BAJAR** la vuelta — pide menos Bs por real, entran más vueltas, salen
+reales y entran bolívares.
+
+```
+                        colchón   publica
+vuelta normal              5%       209
+con reales parados         3%       205
+```
+
+**El umbral NO es el mismo, y por eso se pregunta aparte.** Medido en su
+histórico, los reales en cuentas se mueven mucho:
+
+```
+hoy 3.252 · 08/10 346 · 06/10 92 · 17/09 2.271 · 03/09 199
+```
+
+Con 200 —el de los bolívares— estaría en *"me sobran"* **9 de los últimos 13
+días**, o sea casi siempre, y eso es cambiar el colchón de base en vez de
+reaccionar. **1.000** son unas cinco vueltas de su tamaño medio (193 R$) en mano:
+por debajo de eso todavía puede necesitar el P2P y ese 5% se lo gana.
+
+- **Los reales NO se convierten.** `enCuentas` de BRL ya está en reales; pasarlo
+  por `usdtCuentas` y multiplicar sería dar dos veces la vuelta a un número que ya
+  estaba bien, con un redondeo de regalo. Es la otra mitad de la regla del 132,
+  donde los bolívares **sí** hay que convertir.
+- **Los DOS lados pueden estar activos a la vez** — ella tiene 850 R$ en
+  bolívares y 3.252 en reales. Enseñando solo el primero, la vuelta se movería
+  sin que nada lo diga, que es justo lo que ese bloque existe para evitar: van los
+  dos, una línea cada uno, **en el mismo recuadro**.
+- **Cada lado con SU umbral y SU colchón**, y los cuatro se editan juntos en
+  Configuración.
+
+Medido en Chromium con sus datos del 13/10 (850 R$ en bolívares, 3.252 en
+reales): **189 · 205**, contra los 185 · 209 de antes. Bajando los bolívares a
+2.000 Bs vuelve a **185 · 205** — cada lado se mueve solo por lo suyo.
 
 #### Lo que esto NO contesta, y está dicho
 
