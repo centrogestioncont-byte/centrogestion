@@ -73,7 +73,10 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     // ARREGLO 128 - la tasa recomendada y la aproximada de hoy
                     "_aproxTodas", "_tasaAprox", "_guardarTasaAprox", "_diasDeRef",
                     "_colchon", "_tasasRecomendadas", "_tasaCorta", "_tasasConLoMio",
-                    "_tsUltimaOpUSDT", "_aproxManda", "_toggleProbar", "_volverAMiTasa", "_setAprox", "publicarRecomendadas",
+                    "_tsUltimaOpUSDT", "_aproxManda", "_toggleProbar", "_volverAMiTasa",
+                    // ARREGLO 130
+                    "_ultimaOpUSDT", "_origenLado",
+                    "_saldoCtaUsdt", "_otrasCtasUsdt", "_cubrirUsdtParaVenta", "_setAprox", "publicarRecomendadas",
                     "_campoAprox", "_htmlPublicaHoy", "guardarColchones", "_htmlCalceCuerpo", "_botonTasaUsdt",
                     "_calceK", "_calceGan", "_calceVuelta", "_calceIda", "_cg", "_cgSet", "_cgFraccion",
                     "_htmlPalancaVenta", "_permutaSugerida", "_prConPermuta", "_htmlPermutaFuera", "_usarPermutaSugerida", "txMetodo", "esCalceDirecto", "esRutaCalce", "getAutoRates", "_cgBase", "_cgGanUsdt", "_htmlComparaTasa", "_htmlCabeceraTasas", "_htmlCalceRes", "_htmlCalceCuerpo", "_cgModo", "_cgFuente",
@@ -2120,7 +2123,10 @@ ok(/getRateToUsdt\(moneda\)\{[\s\S]{0,400}tasaDeReferencia\(moneda\)/.test(HTML)
    "getRateToUsdt pasa por tasaDeReferencia");
 ok(!/if\(S\.tasasDia&&S\.tasasDia\[moneda\]\) return parseFloat/.test(HTML),
    "y ya no da prioridad ciega a lo escrito a mano");
-ok(/Sale sola de tu/.test(HTML) && /La fijaste tú/.test(HTML) && /Que salga sola/.test(HTML),
+// ARREGLO 131: el rotulo pasa de "La fijaste tu" a "La escribiste tu", porque
+// lo escrito ya no manda para siempre. El boton de soltarla se queda: es la
+// unica forma de volver a lo automatico sin registrar una operacion.
+ok(/Sale sola de tu/.test(HTML) && /La escribiste tú/.test(HTML) && /Que salga sola/.test(HTML),
    "el panel dice el origen y deja soltarla");
 ok(/if\(dest!=="VES"\) return null;/.test(HTML),
    "el rescate de 'todas las ventas' es solo para bolivares");
@@ -9591,6 +9597,127 @@ console.log("\nARREGLO 128 · la tasa que publica, recomendada sola");
      "así que una permuta posterior no le gana a la tasa que ella escribió");
 
   delete global.localStorage;
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 130 · de dónde sale cada mitad, y el traspaso de la venta
+// ══════════════════════════════════════════════════════════════════════
+console.log("\nARREGLO 130 · el origen de cada mitad y el traspaso que falta");
+{
+  const hoy=F.td();
+  const T0=Date.now();
+  S.config={comision_binance:0.007};
+  S.inventarioUsdt=[
+    {id:T0-6e4,tipo:"compra",moneda:"BRL",fecha:"10/10",fechaIso:hoy,tasa:5.0327,usdt:400,restante:400},
+    {id:T0-6e4,tipo:"venta", moneda:"VES",fecha:"10/13",fechaIso:hoy,tasa:1010.50,usdt:168,bs:169764,bsRestante:0}
+  ];
+  S.inventarioUsdt_cerrado=[];
+  S.tasasDia={}; S._tasasDiaMeta={};
+
+  // ── El origen se dice por LADO ─────────────────────────────────────
+  let Q=F.sueloQueManda();
+  ok(/tu compra del/.test(F._origenLado("BRL",Q).txt),
+     "sin nada fijado, el lado de los reales dice de qué operación sale");
+  ok(/tu venta del/.test(F._origenLado("VES",Q).txt),
+     "y el de los bolívares, de la suya");
+
+  // ── ARREGLO 131: lo escrito a mano YA NO gana a una operación ──────
+  // Esto es lo que mordía: su VES llevaba desde el 10/10 valorando todo a
+  // 1.013 que escribió una vez, con ventas reales a 1.008,72 y 1.010,50.
+  S.tasasDia={VES:1013};
+  S._tasasDiaMeta={VES:{fijada:true, fecha:"10/10/2026", iso:"2026-10-10", ts:T0-120000}};
+  ok(F._tasaFijadaAMano("VES")===null,
+     "una tasa escrita ANTES de la última operación deja de mandar");
+  ok(Math.abs(F.tasaDeReferencia("VES").tasa-1010.50)<0.5 &&
+     F.tasaDeReferencia("VES").origen==="auto",
+     "y la referencia pasa a ser la de su operación",
+     JSON.stringify(F.tasaDeReferencia("VES")));
+
+  // Escrita DESPUÉS sí manda, hasta que registre otra.
+  S._tasasDiaMeta={VES:{fijada:true, fecha:"13/10/2026", iso:"2026-10-13", ts:T0}};
+  ok(F._tasaFijadaAMano("VES")===1013,
+     "escrita después de la última operación, sí manda");
+  Q=F.sueloQueManda();
+  const oV=F._origenLado("VES",Q);
+  ok(/la escribiste t/.test(oV.txt) && oV.escrita===true,
+     "y la tarjeta dice que la escribió ella, no que salga de una operación");
+  ok(/manda hasta que registres/.test(oV.txt),
+     "diciendo hasta cuándo vale");
+
+  // Una de las viejas, sin hora, pierde contra cualquier operación.
+  S._tasasDiaMeta={VES:{fijada:true, fecha:"10/10/2026", iso:"2026-10-10"}};
+  ok(F._tasaFijadaAMano("VES")===null,
+     "las fijadas de antes de este arreglo (sin hora) dejan de ganar solas");
+
+  // Y escribirla guarda la hora, o la regla no se puede aplicar.
+  ok(/ts:Date\.now\(\)/.test(sacarFuncion("setTasaDia")),
+     "escribir una tasa guarda su hora");
+  // La comparación tiene que estar en la puerta, no en quien la llama: por ahí
+  // pasan la conciliación, el cierre y cada remesa.
+  ok(/_tsUltimaOpUSDT\(moneda\)/.test(sacarFuncion("_tasaFijadaAMano")),
+     "y la puerta compara contra la última operación de esa moneda");
+  // ARREGLO 98: la pantalla de Tasas prometía que lo escrito duraba "hasta que
+  // la sueltes". Con el 131 eso es falso y un texto que miente se deja de leer.
+  ok(!/hasta que la sueltes/.test(HTML),
+     "la pantalla de Tasas ya no promete que lo escrito dure hasta soltarlo");
+  ok(!/La fijaste t\u00fa/.test(HTML) && !/La fijaste tú/.test(HTML),
+     "ni lo llama \"la fijaste tú\"");
+  ok(!/\u00faltima operaci\u00f3n de USDT tiene/.test(sacarFuncion("_htmlPublicaHoy")) ||
+     /_origenLado\(/.test(sacarFuncion("_htmlPublicaHoy")),
+     "la tarjeta ya no afirma que el suelo sale de una operación sin mirarlo");
+  ok((sacarFuncion("_htmlPublicaHoy").match(/_origenLado\(/g)||[]).length===2,
+     "y pregunta por los DOS lados, no por uno");
+
+  // El botón del ARREGLO 130 ("usar la de tu venta") se QUITÓ: con el 131 la
+  // app ya lo hace sola, y un botón que no puede cambiar nada enseña a no
+  // pulsar los botones (ARREGLO 98).
+  ok(!/_usarLaDeMiOperacion/.test(HTML),
+     "el botón de usar la de la operación se quitó, no se dejó al lado");
+  ok(!/o\.mejor/.test(sacarFuncion("_htmlPublicaHoy")),
+     "y la tarjeta ya no lo dibuja");
+
+  // ── El traspaso que falta ──────────────────────────────────────────
+  // Un solo origen posible: sale solo, porque no hay nada que decidir.
+  S.cuentas=[
+    {id:"julio",nombre:"BINANCE JULIO",moneda:"USDT",saldo:0,activa:true},
+    {id:"saipa",nombre:"BINANCE SAIPA",moneda:"USDT",saldo:100,activa:true}
+  ];
+  S.traspasos=[];
+  let txt=F._cubrirUsdtParaVenta({cuentaId:"julio"}, 100);
+  ok(/100,00 USDT desde BINANCE SAIPA/.test(txt),
+     "con un solo origen posible, el traspaso sale solo y lo dice", txt);
+  ok(S.traspasos.length===1 && Math.abs(S.traspasos[0].monto-100)<0.001 &&
+     S.traspasos[0].origen==="saipa" && S.traspasos[0].destino==="julio" &&
+     S.traspasos[0].moneda==="USDT",
+     "queda como un traspaso normal, con su origen y su destino");
+  ok(Math.abs(F._saldoCtaUsdt("saipa"))<0.001 && Math.abs(F._saldoCtaUsdt("julio")-100)<0.001,
+     "y los dos saldos se mueven por el monto exacto de la venta");
+
+  // Lo que sobra no se toca.
+  S.cuentas=[{id:"julio",nombre:"BINANCE JULIO",moneda:"USDT",saldo:300,activa:true},
+             {id:"saipa",nombre:"BINANCE SAIPA",moneda:"USDT",saldo:100,activa:true}];
+  S.traspasos=[];
+  ok(F._cubrirUsdtParaVenta({cuentaId:"julio"}, 100)==="" && S.traspasos.length===0,
+     "si ya hay bastante, no se traspasa nada");
+
+  // Una cuenta PERSONAL no es un origen: ese dinero ya salió de la empresa.
+  S.cuentas=[{id:"julio",nombre:"BINANCE JULIO",moneda:"USDT",saldo:0,activa:true},
+             {id:"mio",nombre:"MI SUELDO",moneda:"USDT",saldo:500,activa:true,esPersonal:true}];
+  ok(F._otrasCtasUsdt("julio").length===0,
+     "una cuenta personal 💜 no se usa para cubrir una venta de la empresa");
+
+  // Y una apagada tampoco.
+  S.cuentas=[{id:"julio",nombre:"BINANCE JULIO",moneda:"USDT",saldo:0,activa:true},
+             {id:"off",nombre:"VIEJA",moneda:"USDT",saldo:500,activa:false}];
+  ok(F._otrasCtasUsdt("julio").length===0, "ni una cuenta desactivada");
+
+  // ── El traspaso se dice, no se hace en silencio ────────────────────
+  const sv=sacarFuncion("saveIU");
+  ok(/_cubrirUsdtParaVenta\(/.test(sv) && /Traspas/.test(sv),
+     "saveIU avisa de lo que traspasó");
+  ok(sv.indexOf("_cubrirUsdtParaVenta(") > sv.indexOf("VENTA de "),
+     "y lo hace DESPUÉS de que ella confirme la venta, no antes");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

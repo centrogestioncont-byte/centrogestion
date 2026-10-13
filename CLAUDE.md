@@ -1508,11 +1508,12 @@ como "desfase de las tasas del día".
 
 `tasaDeReferencia(moneda)` decide, en este orden:
 
-1. La que ella **fijó a mano** (`_tasasDiaMeta[mon].fijada`). Es una decisión
-   suya, no un olvido: manda.
+1. La que ella **escribió a mano** (`_tasasDiaMeta[mon]`), **y solo mientras sea
+   más nueva que su última operación de USDT de esa moneda** (ARREGLO 131 — aquí
+   decía "es una decisión suya, no un olvido: manda", y lo revirtió ella).
 2. La **última operación de USDT de esa misma moneda** — compra o venta,
    mirando también `inventarioUsdt_cerrado`, con `_tasaEfectivaLote()`.
-3. Lo último que escribió, aunque no lo fijara.
+3. Lo último que escribió, aunque fuera antes.
 4. Nada.
 
 Tres cosas que costó medir y que no hay que deshacer:
@@ -1942,9 +1943,10 @@ o de Mercado Bitcoin cuando Binance bloquea al servidor por país— y se usa
 4. ¿no escribe nada?                      → no se inventa. Se dice qué falta.
 ```
 
-- **NO se fija (📌).** Lo fijado manda para siempre: su VES llevaba desde el
-  10/10 valorando todo a 1.013 que escribió una vez, por encima de sus ventas
-  reales de 1.008,72 y 1.010,66. Esto vale el día que se escribe y muere con él.
+- **NO se fija (📌).** Esto vale el día que se escribe y muere con él. (Cuando se
+  escribió esto, lo fijado mandaba para siempre y por eso había que apartarse de
+  ello; desde el ARREGLO 131 ya no, pero la aproximada sigue muriendo con el día
+  y sigue sin tocar `tasaDeReferencia()`.)
 - **NO entra en `tasaDeReferencia()`.** No revalora su capital, ni la
   conciliación, ni el cierre, ni la ganancia de ninguna remesa. Un número mirado
   a ojo no puede mover su contabilidad: vale para el **suelo**, que es la
@@ -2011,6 +2013,117 @@ Ahora el campo tiene su propio rótulo (`campoRot`): **"Tu 🇧🇷→🇻🇪 d
 guardia exige que `campoRot` y `boton` sean distintos **y** que la calculadora
 lo use en los **dos** campos: pidiendo solo que apareciera, cambiar uno de los
 dos pasaba la prueba con el rótulo viejo puesto en el otro.
+
+#### Y la tarjeta decía de dónde sale el suelo sin mirarlo (ARREGLO 130)
+
+Sus palabras del 13/10: *"el sistema está agarrando como referencia una tasa
+vieja, pero yo hace ratico acabo de registrar una venta de USDT por bolívares y
+la tasa es de menos"*.
+
+**Y la tarjeta del 128 le contestaba una mentira.** Decía *"Tu última operación
+de USDT tiene 3 días… así que el suelo sale de esa"* — cierto para los reales,
+**falso para los bolívares**: ese lado no salía de ninguna operación, salía del
+**1.013 que ella fijó a mano el 10/10**. Medido en su export, su venta de ese
+mismo día fue a 1.010,50:
+
+```
+con la fijada (1.013,00)        199,87  →  186 · 210
+con su venta de hoy (1.010,14)  199,31  →  185 · 209
+```
+
+Poco, y **a su favor en la pantalla** — el único lado del que un suelo no se
+puede equivocar.
+
+- **La tarjeta dice de dónde sale cada mitad** (`_origenLado`) en vez de afirmar
+  una sola cosa de las dos. Eso es lo que queda del 130 y no se toca.
+- **`_ultimaOpUSDT()` es un solo recorrido**, y lo leen la hora (para la regla
+  del 129) y la tarjeta. Dos recorridos acabarían señalando lotes distintos.
+
+**Lo que el 130 hizo aquí y el 131 se llevó, un día después:** como lo fijado
+seguía mandando, la tarjeta ofrecía un botón —*"usar la de tu venta del 10/13"*—
+para soltarlo a mano. Con el 131 la app lo hace sola, así que el botón se quitó
+en vez de dejarlo al lado sin poder cambiar nada (ARREGLO 98).
+
+#### Y lo escrito a mano ya no manda para siempre (ARREGLO 131)
+
+**Esto REVIERTE una regla escrita de este documento, y la revierte ella.** Sus
+palabras del 13/10, mirando la tarjeta del 130: *"ya no puedo fijar ninguna tasa
+del inventario de USDT según la compra y la venta, porque se supone que cada día
+eso puede variar. Entonces no puedes colocarle como que yo fijé una tasa, se
+supone que debe de ir actualizándose… y en algún caso esos bolívares me duran dos
+o tres días, yo tengo que actualizar… no se puede fijar eso"*.
+
+La regla vieja —*"la que ella fijó a mano manda: es una decisión suya, no un
+olvido"*— en su día era correcta, y dejó de serlo cuando se midió lo que costaba:
+su VES llevaba **desde el 10/10** valorando todo su dinero a **1.013** que
+escribió una vez, por encima de sus ventas reales de 1.008,72, 1.010,66 y
+1.010,50. Un número que escribió hace tres días no puede ganarle a una operación
+que registró hace un rato.
+
+**Ahora es UNA sola regla para los dos casos, la del 129: manda la MÁS NUEVA.**
+Lo que escriba vale mientras sea lo último que pasó; en cuanto registre una compra
+o una venta de USDT de esa moneda, manda la operación. Medido en Chromium con sus
+datos (compra BRL del 10/10, VES fijada en 1.013 el 10/10, venta de hoy a 1.010,50):
+
+```
+                              suelo      publica
+antes (mandaba la fijada)    199,87      186 · 210
+ahora (manda su venta)       199,31      185 · 209
+escrita HOY, tras la venta   199,87      186 · 210   ← sigue mandando la suya
+```
+
+- **Lo fijado no hay que ir a soltarlo.** Los que ya estén marcados dejan de ganar
+  solos, sin que ella toque nada: las marcas de antes de este arreglo no guardan
+  hora, así que cualquier operación les gana. Pedirle que vaya a quitar una marca
+  que ya no significa nada sería dejar el arreglo a medias.
+- **Escribir una tasa guarda su HORA** (`ts:Date.now()` en `setTasaDia`), que es
+  lo único que hace comparable la regla: el id de un lote es `Date.now()`.
+- **La comparación vive en la puerta** (`_tasaFijadaAMano`), no en quien la llama.
+  Por ahí pasan la conciliación, el cierre y cada remesa.
+- **Y los textos de pantalla cambiaron con la regla.** La pantalla de Tasas
+  prometía que lo escrito *"queda marcado 📌 con su fecha hasta que la sueltes"* —
+  con el 131 eso es falso. Ahora dice *"✍️ La escribiste tú el … · manda hasta que
+  registres una operación de USDT en VES"*. Un texto que miente se deja de leer, y
+  dos guardias lo fijan.
+
+**Lo que esto le cambia, y hay que decírselo:** su referencia de VES pasa de
+1.013 a ~1.010,14, así que **todos sus bolívares se revalúan un poco** (≈+0,48
+USDT sobre sus 170.560 Bs) y la conciliación se mueve otro tanto. No aparece ni
+desaparece dinero: lo que cambia es la tasa con la que se mira.
+
+#### El traspaso que falta para una venta de USDT (ARREGLO 130)
+
+Sus palabras: *"son dos cuentas distintas, una es de reales que es Binance Saipa
+y la otra es de moneda Vzla que es Binance Julio… para no tener que hacer
+traspaso"*. Y después, la que decide la forma: *"igual yo señalo por dónde sale,
+solo que me ahorraría el tema del traspaso, porque si Binance Julio está en 0 y
+Binance Saipa tiene 100 USDT y registro una venta de USDT por Binance Julio, se
+supone que deben ser esos 100 de Saipa porque no hay más cuentas"*.
+
+**Tiene razón, y eso cambia la regla.** Cuando solo hay un sitio de donde pueden
+salir, no hay nada que preguntar: el dato está **forzado**, no inventado. Con dos
+o más sí se pregunta, porque ahí sí hay una decisión.
+
+**Y esto no es comodidad.** Es de donde salió el descuadre que persiguió ese
+mismo día: el 11/10 vendió **368,06** USDT desde Binance Julio a las 22:13 y
+traspasó **323,21** a las 22:16 — 44,85 de menos. De ahí los **75,93** que la app
+decía tener en Saipa con su Binance en cero. Con el traspaso saliendo por el
+monto exacto de la venta, esa diferencia no se abre.
+
+- **Se DICE, no se hace en silencio**: *"Traspasé 100,00 USDT desde BINANCE
+  SAIPA"*, en el mismo aviso que confirma la venta. Un movimiento de dinero que
+  la app escribe sola y no cuenta es lo que haría que dejara de fiarse de los
+  saldos.
+- **Va DESPUÉS de que confirme la venta.** Antes, cancelar la venta dejaría el
+  dinero movido sin operación detrás.
+- **Una cuenta 💜 personal no es un origen.** Ese dinero ya salió de la empresa
+  (ARREGLO 96) y traerlo de vuelta sería inventarse un movimiento que ella no
+  hizo. Una cuenta desactivada tampoco.
+- **Es un traspaso normal**, con el mismo formato de siempre: nada nuevo que
+  fusionar entre aparatos.
+
+**Lo que esto NO repara:** los 75,93 que ya están. El arreglo vale de aquí en
+adelante; esa diferencia hay que corregirla a mano una vez.
 
 #### Lo que esto NO contesta, y está dicho
 
