@@ -2810,7 +2810,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261012_v204";
+var APP_VERSION = "20261012_v205";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -24636,6 +24636,14 @@ function _htmlSuelo(){
 // 500" se puede seguir en el tiempo; "gano R$ 54,39" no dice nada sin saber
 // sobre cuanto.
 var CG_BASE = 500;
+// Sobre cuantos reales se mide todo. Lo leen el resultado, el despeje de la
+// tasa y la comparacion: escrito en cada sitio, un dia uno mediria sobre 500 y
+// otro sobre lo que ella tecleo, y la pantalla diria dos ganancias distintas
+// para la misma tasa (el 34,27 contra el 34,28).
+function _cgBase(){
+  var m=parseFloat(_cg().monto);
+  return (m>0)?m:CG_BASE;
+}
 function _calceK(vuelta, suelo, f){
   if(!(f>=0)||!(f<=1)) return null;
   var k=0;
@@ -24695,6 +24703,14 @@ function _cg(){
       // puede ser el por omision — es la misma regla por la que el suelo que
       // manda es el MAS BAJO de los dos (ARREGLO 77).
       modo:"gan", fuente:"p2p",
+      // ARREGLO 122: el monto vuelve. El 121 lo quito diciendo que "no cambia
+      // nada" — cierto para la TASA (500, 1.059 o 2.000 R$ dan la misma) y falso
+      // para los DOLARES, que es lo que ella necesita con un cliente concreto.
+      // Sus palabras: "a veces yo quiero saber cuanto me voy a ganar por 1000,
+      // por 2000, por el monto que yo quiera... si un dia me quiere mandar 9000
+      // reais yo puedo calcular, bueno, le puedo ofrecer tanto y no pierdo".
+      // Arranca en 500, que es su unidad, pero se escribe.
+      monto:String(CG_BASE),
       meta:"", pct:"50",
       usdbrl:((rc&&rc.tasa>0)?String(Math.round(rc.tasa*10000)/10000):"5")
     };
@@ -24856,7 +24872,7 @@ function _ruta(dir){ return _RUTA_DE[dir] || _RUTA_DE.ida; }
 function _cgTasaResultado(){
   var g=_cg();
   if(g.modo!=="vuelta" && g.modo!=="ida") return null;   // "Ganancia" no despeja ninguna tasa
-  var M=CG_BASE, ida=parseFloat(g.ida);
+  var M=_cgBase(), ida=parseFloat(g.ida);
   var usd=parseFloat(g.usdbrl), metaUsd=parseFloat(g.meta);
   var suelo=sueloQueManda().v, f=_cgFraccion();
   if(f===null || !(metaUsd>0) || !(usd>0)) return null;
@@ -24931,9 +24947,45 @@ function _cgSoltarTrasPublicar(clave){
   if(clave==="ida"||clave==="vuelta") g[clave+"Tocada"]=false;
   _refrescarTasasTodo();
 }
+// ── ARREGLO 122 · "a esta tasa le estas ganando tanto, o tanto menos" ──
+//
+// Sus palabras del 12/10: "si yo estoy dando una tasa diferente a la que
+// supuestamente me da el sistema, me diga: bueno, a esta tasa le estas ganando
+// tanto, o a esta tasa estas menos tanto".
+//
+// La pantalla contestaba UNA tasa y ahi se acababa. Pero la tasa que ella da no
+// siempre es esa —le ajusta al cliente, o sigue con la publicada— y el precio de
+// esa decision no estaba escrito en ninguna parte: habia que cambiar el numero,
+// mirar el resultado, y volver a cambiarlo.
+//
+// La ganancia sale de _cgGanUsdt() y de ningun otro sitio: las dos lineas que se
+// comparan pasan por la misma cuenta. Calculadas aparte, un redondeo distinto
+// haria que la resta no cuadrara con sus dos sumandos.
+function _cgGanUsdt(M, ida, K, usd){
+  if(!(M>0)||!(ida>0)||!(K>0)||!(usd>0)) return null;
+  var r=_calceGan(M, ida, K);
+  return r ? (r.brl/usd) : null;
+}
+// A es lo que ella va a dar; B, con lo que se compara. Cada uno trae su tasa
+// para ensenar, su ganancia YA en USDT y el rotulo que dice de donde sale.
+function _htmlComparaTasa(M, A, B){
+  if(!A||!B||A.g===null||B.g===null||A.g===undefined||B.g===undefined) return "";
+  if(!(A.t>0)||!(B.t>0)) return "";
+  if(!(Math.abs(A.t-B.t)>0.005)) return "";     // es la misma: no hay nada que decir
+  var du=function(n){ var v=parseFloat(n)||0; return (v<0?"\u2212$":"$")+f2(Math.abs(v)); };
+  var d=A.g-B.g, mas=(d>0);
+  // Dos tasas distintas que dan lo mismo: un "$0,00 MÁS" es ruido, no un dato.
+  if(!(Math.abs(d)>0.005)) return "";
+  return "<div style='font-size:11.5px;color:var(--tx3);line-height:1.6;margin-top:8px;"+
+      "border-top:1px solid var(--ln);padding-top:8px'>"+
+      "A <b style='color:var(--tit)'>"+f2(A.t)+"</b>"+(A.rot?(" "+A.rot):"")+
+      " ganas <b style='color:var(--tit)'>"+du(A.g)+"</b> por cada "+f0(M)+" R$"+
+      "<br><b style='color:"+(mas?"var(--ok)":"var(--mal)")+"'>"+du(Math.abs(d))+
+      (mas?" MÁS":" MENOS")+"</b> que a "+f2(B.t)+(B.rot?(" "+B.rot):"")+"</div>";
+}
 function _htmlCalceRes(){
   var g=_cg();
-  var M=CG_BASE, ida=parseFloat(g.ida), vta=parseFloat(g.vuelta);
+  var M=_cgBase(), ida=parseFloat(g.ida), vta=parseFloat(g.vuelta);
   var usd=parseFloat(g.usdbrl), metaUsd=parseFloat(g.meta);
   var Q=sueloQueManda(), suelo=Q.v;
   var f=_cgFraccion();
@@ -25001,6 +25053,12 @@ function _htmlCalceRes(){
       chico("Dando <b style='color:var(--tit)'>"+f2(ida)+"</b> entregas "+f0(r.bs)+
             " Bs por cada "+f0(M)+" R$, y recuperar esos bolívares te cuesta "+f2(r.pagaR)+" R$.")+
       (gana?"":chico("Estás dando más bolívares por real de lo que te cuesta conseguirlos.","var(--mal)"))+
+      // Lo que le cuesta —o le da— apartarse de la que tiene publicada.
+      _htmlComparaTasa(M,
+        {t:ida, g:gu, rot:""},
+        {t:_misTasasPublicadas().ida,
+         g:_cgGanUsdt(M, _misTasasPublicadas().ida, K, usd),
+         rot:"("+_ruta("ida").flechas+" publicada)"})+
       pieTope;
   }
   if(!(metaUsd>0)) return chico("Escribe cuánto quieres ganar por cada "+f0(M)+" R$ para ver la tasa que hace falta.");
@@ -25011,7 +25069,8 @@ function _htmlCalceRes(){
       chico("La ganancia sale de los reales que entran, así que no puede ser todo lo que entra. Baja la meta.");
 
   if(g.modo==="vuelta"){
-    if(!(ida>0)) return chico("Escribe la tasa de ida para despejar la vuelta.");
+    if(!(ida>0)) return chico("Escribe la tasa de "+_ruta("ida").flechas+" para despejar la otra.");
+    var pubV=_misTasasPublicadas().vuelta;
     var V=_calceVuelta(M, ida, metaBrl, suelo, f);
     if(!V)
       return aviso("Con esa ida no hay tasa de vuelta que llegue a "+du(metaUsd)+".")+
@@ -25021,6 +25080,18 @@ function _htmlCalceRes(){
       chico("<b style='color:var(--tit)'>"+_ruta("vuelta").quien+"</b> · la tasa va en bolívares por real.")+
       chico("Dando "+f2(ida)+" en "+_ruta("ida").flechas+" y cobrando "+f2(V)+" en "+
             _ruta("vuelta").flechas+" ganas "+du(metaUsd)+" por cada "+f0(M)+" R$. Si cobras menos, no llegas.")+
+      // ARREGLO 122: aquí lo que cambia es la VUELTA, y la vuelta cambia la K
+      // (es de donde salen los bolívares cuando cruza), así que cada lado entra
+      // con la suya. La ida se queda fija: es la que ella acaba de teclear.
+      // Y OJO: la K de abajo es la de la vuelta que ella TECLEÓ, no la de la que
+      // se acaba de despejar. Medido con sus números (ida 189, tecleada 215,
+      // respuesta 210,15): el rótulo decía "que a 210,15" y la cuenta estaba
+      // hecha a 215, así que la diferencia salía 1,98 donde son 4,00. Un número
+      // con el rótulo de otro es el 34,27 contra el 34,28 otra vez.
+      _htmlComparaTasa(M,
+        {t:pubV, g:_cgGanUsdt(M, ida, _calceK(pubV, suelo, f), usd),
+         rot:"("+_ruta("vuelta").flechas+" publicada)"},
+        {t:V, g:_cgGanUsdt(M, ida, _calceK(V, suelo, f), usd), rot:""})+
       _htmlPublicarRes()+
       pieTope;
   }
@@ -25031,6 +25102,12 @@ function _htmlCalceRes(){
     chico("<b style='color:var(--tit)'>"+_ruta("ida").quien+"</b> · la tasa va en bolívares por real.")+
     chico("Ofreciendo "+f2(I)+" ganas exactamente "+du(metaUsd)+" por cada "+f0(M)+" R$. "+
           "Cada bolívar de más que des, baja la ganancia.")+
+    // ARREGLO 122: y si sigue dando la que tiene publicada, cuánto cambia.
+    _htmlComparaTasa(M,
+      {t:_misTasasPublicadas().ida,
+       g:_cgGanUsdt(M, _misTasasPublicadas().ida, K, usd),
+       rot:"("+_ruta("ida").flechas+" publicada)"},
+      {t:I, g:_cgGanUsdt(M, I, K, usd), rot:""})+
     _htmlPublicarRes()+
     _htmlPalancaVenta(I, K, f, vta, Q)+
     pieTope;
@@ -25122,15 +25199,17 @@ function _htmlCalceCuerpo(){
   };
   var esP2P=(g.fuente==="p2p");
   var campos=[];
-  // ARREGLO 121: el campo "Monto del cliente" se fue. Ver CG_BASE: la tasa y el
-  // margen salen iguales con 500, 1.059 o 2.000 R$, asi que solo multiplicaba
-  // la respuesta por un numero que ella tenia que teclear cada vez.
+  // ARREGLO 122: vuelve, con 500 escrito ya. La TASA no depende de el —por eso
+  // el 121 lo quito— pero los DOLARES si, y es lo que ella mira con un cliente
+  // delante. Dejarlo relleno es la diferencia con antes: no hay que teclearlo
+  // para usar la pantalla, solo para salirse de su medida de siempre.
+  campos.push(campo("monto","Por cada","reales del cliente","500"));
   if(g.modo==="gan"||g.modo==="vuelta")
     campos.push(campo("ida",_ruta("ida").boton,_ruta("ida").campo,"188"));
   if((g.modo==="gan"||g.modo==="ida") && !esP2P)
     campos.push(campo("vuelta",_ruta("vuelta").boton,_ruta("vuelta").campo,"210"));
   if(g.modo==="vuelta"||g.modo==="ida")
-    campos.push(campo("meta","Quiero ganar","USDT por cada "+CG_BASE+" R$","10"));
+    campos.push(campo("meta","Quiero ganar","USDT por cada "+f0(_cgBase())+" R$","10"));
   if(g.fuente==="mixto")
     campos.push(campo("pct","Cuánto cruzo","% · el resto va por P2P","50"));
 
@@ -25279,21 +25358,30 @@ function _htmlCabeceraTasas(){
   var m=margenSobreSuelo();
   var Q=sueloQueManda();
   var pub=_misTasasPublicadas();
-  var campo=function(dir,rot,val){
+  // ── ARREGLO 122 · la cabecera seguia hablando de "ida" y "vuelta" ──
+  // El ARREGLO 119 saco esas dos palabras de la calculadora —son mi vocabulario,
+  // no el suyo— y las dejo AQUI, en la pantalla de justo encima. Lo cazo ella el
+  // 12/10 mirando las dos a la vez: arriba "TU IDA", abajo banderas, y nada que
+  // las empareje. Ahora las dos pantallas dicen la ruta igual, y debajo del
+  // numero va QUIEN DA QUE, que es lo unico que no se puede deducir del simbolo.
+  var campo=function(dir,sub,val){
+    var rot="Tu "+_ruta(dir).flechas;
     return "<div style='flex:1 1 0;min-width:0;text-align:center'>"+
       "<div style='font-size:10.5px;color:var(--tx4);font-weight:700;text-transform:uppercase;letter-spacing:.4px'>"+rot+"</div>"+
       "<input type='text' inputmode='decimal' placeholder='\u2014' value='"+_escAud(_comaCab(val))+"' "+
         "oninput='_setTasaPub(\""+dir+"\",this.value)' onchange='_guardarTasaPub(\""+dir+"\")' "+
         "style='width:100%;border:none;border-bottom:1.5px dashed var(--ln);background:transparent;"+
         "font-size:22px;font-weight:900;color:var(--tit);text-align:center;font-family:inherit;padding:1px 0 2px'>"+
+      "<div style='font-size:10px;color:var(--tx4);margin-top:2px;line-height:1.3'>"+sub+"</div>"+
     "</div>";
   };
   // El suelo NO es un campo: sale de sus lotes y del mercado. Escribirlo a
   // mano sería el "registra la operación, no escribas el saldo" otra vez.
-  var fijo=function(rot,val,col){
+  var fijo=function(rot,val,col,sub){
     return "<div style='flex:1 1 0;min-width:0;text-align:center'>"+
       "<div style='font-size:10.5px;color:var(--tx4);font-weight:700;text-transform:uppercase;letter-spacing:.4px'>"+rot+"</div>"+
       "<div style='font-size:22px;font-weight:900;color:"+col+";line-height:1.35'>"+val+"</div>"+
+      "<div style='font-size:10px;color:var(--tx4);margin-top:2px;line-height:1.3'>"+(sub||"")+"</div>"+
     "</div>";
   };
   var veredicto;
@@ -25307,16 +25395,16 @@ function _htmlCabeceraTasas(){
   }else if(!(Q.v>0)){
     veredicto="<div style='text-align:center;font-size:11.5px;color:var(--tx3)'>Todav\u00eda no hay suelo: falta tu \u00faltima compra o tu \u00faltima venta de USDT.</div>";
   }else{
-    veredicto="<div style='text-align:center;font-size:11.5px;color:var(--tx3)'>Escribe tu ida arriba y te digo cu\u00e1nto te queda.</div>";
+    veredicto="<div style='text-align:center;font-size:11.5px;color:var(--tx3)'>Escribe tu "+_ruta("ida").flechas+" arriba y te digo cu\u00e1nto te queda.</div>";
   }
   var pie = (Q.manda && Q.manda.c>0 && Q.manda.s>0)
     ? ("tu compra "+_fpTasa(Q.manda.c)+" R$ \u00b7 tu venta "+_fpTasa(Q.manda.s)+" Bs"+
        ((Q.rc&&Q.rc.fecha)?(" \u00b7 "+_escAud(Q.rc.fecha)):""))
     : "en bol\u00edvares por real";
   return "<div style='display:flex;gap:4px;margin-bottom:9px'>"+
-      campo("ida","Tu ida",pub.ida)+
-      campo("vuelta","Tu vuelta",pub.vuelta)+
-      fijo("Tu suelo",(Q.v>0?f2(Q.v):"\u2014"),"var(--ac)")+
+      campo("ida","le das",pub.ida)+
+      campo("vuelta","te dan",pub.vuelta)+
+      fijo("Tu suelo",(Q.v>0?f2(Q.v):"\u2014"),"var(--ac)","no pases de aqu\u00ed")+
     "</div>"+
     "<div style='border-top:1px solid var(--ln);padding-top:9px'>"+veredicto+
       "<div style='text-align:center;font-size:10.5px;color:var(--tx4);margin-top:3px'>"+pie+"</div>"+
