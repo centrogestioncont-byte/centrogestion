@@ -105,6 +105,8 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "_huellaCompleta", "_conteoRapido",
                     "crearLoteRecibido", "quitarLoteDeRemesa", "_loteAlCobrar",
                     "ordenFIFO", "normalizarInventarioFIFO", "simularConsumoFIFO", "_tasaEfectivaLote",
+                    "_repartoFIFO", "getTasaVentaPonderada", "_bsPorReal", "_htmlDeDondeSalen",
+                    "_claveLoteVieja", "_indiceLotesComidos", "_comieronEsteLote", "_filaComieron", "toggleComieron",
                     "f4", "f0", "_leerNumero", "_avisoCambioSaldo", "_fechaLote", "_idLoteNuevo",
                     "_diasEnElFuturo", "confirmarFechaFutura",
                     "comisionBancoVES", "etiquetaComisionBanco", "salidaDeCuentaEntrega",
@@ -1651,8 +1653,12 @@ ok(F._tasaEfectivaLote({ tipo: "venta", usdt: 50.06, bs: 47000, tasa: 940 }) ===
    "un lote viejo tambien da su tasa efectiva, sin migrar nada");
 
 // Las cuatro funciones que dan las tasas tienen que leer la efectiva.
+// ARREGLO 125: getTasaVentaPonderada ya no recorre los lotes, delega en
+// _repartoFIFO. Vale igual mientras sea ESE el que pregunta por la tasa
+// efectiva, así que _repartoFIFO entra en la misma lista y la delegación
+// cuenta. Lo que no puede pasar es que ninguno de los dos la use.
 ["getLastTasaCompra", "getLastTasaVenta", "getTasaCompraPonderada",
- "getTasaVentaPonderada", "simularConsumoFIFO"].forEach(function (fn) {
+ "getTasaVentaPonderada", "simularConsumoFIFO", "_repartoFIFO"].forEach(function (fn) {
   const i = HTML.indexOf("function " + fn + "(");
   let prof = 0, k = HTML.indexOf("{", i), fin = k;
   for (; fin < HTML.length; fin++) {
@@ -1660,7 +1666,8 @@ ok(F._tasaEfectivaLote({ tipo: "venta", usdt: 50.06, bs: 47000, tasa: 940 }) ===
     else if (HTML[fin] === "}" && --prof === 0) break;
   }
   const cuerpo = HTML.slice(i, fin + 1);
-  ok(/_tasaEfectivaLote\(/.test(cuerpo), fn + " pregunta por la tasa efectiva");
+  ok(/_tasaEfectivaLote\(/.test(cuerpo) || /_repartoFIFO\(/.test(cuerpo),
+     fn + " pregunta por la tasa efectiva (o delega en quien lo hace)");
   ok(!/return\s+(todas|arr|propias|lotes)\[[^\]]+\]\.tasa\s*;/.test(cuerpo),
      "y " + fn + " ya no devuelve la de Binance a pelo");
 });
@@ -8691,7 +8698,9 @@ console.log("\n— FASE 2: la cuenta madre —");
      "dice cual de las dos falta");
 
   // Funcional: los tres estados, con sus numeros del 12/10.
-  const ruta = {orig:"VES", dest:"BRL"};
+  // ARREGLO 124: esto se mide en la IDA. En la vuelta la permuta ya no se
+  // teclea —es la tasa de la propia remesa— y el aviso dice otra cosa.
+  const ruta = {orig:"BRL", dest:"VES"};
   const vacio = F._htmlAvisoCalce({calce:true, permuta:0, tv:0, tc:0}, ruta);
   const media = F._htmlAvisoCalce({calce:true, permuta:188.88, tv:0, tc:0}, ruta);
   const lleno = F._htmlAvisoCalce({calce:true, permuta:188.88, tv:5.09, tc:961.3992}, ruta);
@@ -8703,6 +8712,26 @@ console.log("\n— FASE 2: la cuenta madre —");
      "y con las dos, el aviso se va y sale el costo implicito", lleno.slice(0,160));
   ok(F._htmlAvisoCalce({calce:false, permuta:0, tv:0}, ruta) === "",
      "en P2P no se dibuja nada");
+
+  // ── ARREGLO 124 · en la VUELTA el mismo aviso dice que es una COMPRA ──
+  const vta = {orig:"VES", dest:"BRL"};
+  const compra = F._htmlAvisoCalce(
+    {calce:true, permuta:210, tv:5.09, tc:1068.9, am:147000, cant:700, tdia:210}, vta);
+  ok(/COMPRA/.test(compra), "en la vuelta dice que es una compra, no una venta");
+  ok(/210,00 Bs por real/.test(compra), "con la tasa de la propia remesa",
+     (compra.match(/a <b>[^<]+<\/b>/)||[""])[0]);
+  ok(/0,00/.test(compra) && /Ganar\u00e1s|Ganarás/.test(compra),
+     "y explica por qué la ganancia sale 0,00");
+  ok(!/permuta/i.test(compra), "sin hablar de permuta: ahí ya no hay campo");
+  const vacia = F._htmlAvisoCalce({calce:true, permuta:0, tv:0, tc:0, am:0, tdia:0}, vta);
+  ok(/Escribe el monto y la tasa/.test(vacia), "sin monto ni tasa, pide los dos");
+  // Funcional + estructural: la funcional sola pasaba con la salida borrada,
+  // porque sin lotes en la caja la sugerida sale null y devuelve "" igual.
+  ok(F._htmlPermutaFuera({calce:true, permuta:999, tv:5, tc:1}, vta) === "",
+     "y en la vuelta no sale el aviso de permuta fuera de rango");
+  ok(/if\(ruta && ruta\.orig==="VES"\) return "";/
+       .test(sinComentarios(sacarFuncion("_htmlPermutaFuera"))),
+     "y la salida está escrita, no es que no haya lotes");
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -8958,6 +8987,304 @@ console.log("\n— FASE 2: la cuenta madre —");
     ok(/tc = \(_permuta>0 && tv>0\) \? \(isVzla \? _permuta\*tv : tv\/_permuta\) : 0/.test(ct),
        "en calce la tasa de compra se despeja de la permuta, cada ruta por su lado");
     ok(/comUc = 0; comUv = 0;/.test(ct), "y sin comisión de Binance, que en un calce no se paga");
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// ARREGLO 124 · en la VUELTA no se gana: se COMPRA
+// ═══════════════════════════════════════════════════════════════════════
+// Sus palabras del 13/10: "apuntar la ganancia por adelantado es como también
+// inflar la ganancia". Cuando entran bolívares y salen reales no ha ganado
+// nada: ha cambiado una cosa por otra. Gana al soltar esos bolívares.
+{
+  const ct  = sinComentarios(sacarFuncion("cTx"));
+  const met = sinComentarios(sacarFuncion("txMetodo"));
+  const rn  = sinComentarios(sacarFuncion("rNueva"));
+
+  // 1) La permuta de la vuelta sale de la propia remesa, no de un campo.
+  ok(/var _permuta = _calce \? \(isVzla \? td2 : \(parseFloat\(f\.permuta\)\|\|0\)\) : 0;/.test(ct),
+     "en la vuelta la permuta ES la tasa de la remesa; en la ida se teclea");
+  ok(!/_permuta = _calce \? \(parseFloat\(f\.permuta\)\|\|0\)/.test(ct),
+     "y ya no se lee el campo en los dos sentidos");
+
+  // 2) El campo no se dibuja en la vuelta, y no se rellena uno que no existe.
+  ok(/\(ruta\.orig==="VES" \? "" :/.test(rn),
+     "el campo de la permuta no se dibuja en la vuelta");
+  ok(/if\(ruta && ruta\.orig==="VES"\)\{ S\.tx\.permuta=""; \}/.test(met),
+     "y al elegir calce en la vuelta se deja vacío, no se rellena");
+
+  // 3) La cuenta: con permuta = tdia, lo que entra vale lo que costó lo que
+  //    salió, así que la ganancia es 0. Eso es la DEFINICIÓN de comprar.
+  //    Comprobado con la fórmula del propio cTx, sin tocar nada:
+  //      uc = am/(tdia*tv)   uv = (am/tdia)/tv   →   uc = uv
+  {
+    const am=147000, tdia=210, tv=5.09;
+    const uc = am/(tdia*tv), uv = (am/tdia)/tv;
+    ok(Math.abs(uc-uv) < 1e-9,
+       "con la tasa de la remesa, lo que entra vale lo que costó lo que sale",
+       uc.toFixed(4)+" vs "+uv.toFixed(4));
+    // Y el lote de bolívares nace valiendo esos reales: su costo de verdad.
+    ok(Math.abs((am/uc) - tdia*tv) < 1e-6,
+       "el lote nace a tdia×tv Bs/USDT, que son los reales que salieron",
+       (am/uc).toFixed(2));
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// ARREGLO 125 · de dónde salen los bolívares, y las tasas en SU unidad
+// ═══════════════════════════════════════════════════════════════════════
+// Sus palabras del 13/10: "de qué forma lo podemos trabajar cuando haya dinero
+// de ambos lados, o sea allá en bolívares por ventas de USDT o porque yo compré
+// bolívares" y "tienen unas tasas raras ahí, a mí eso me crea confusión".
+//
+// El FIFO ya mezclaba bien. Lo que faltaba era PODER VERLO. Y el peligro de
+// enseñarlo es que la lista y la tasa de arriba se calculen por separado: con
+// el primer redondeo dirían cosas distintas (el 34,27 contra el 34,28). Por eso
+// el recorrido se escribe UNA vez, en _repartoFIFO, y las dos lo leen.
+console.log("\nARREGLO 125 · de dónde salen los bolívares");
+{
+  const inv = S.inventarioUsdt, tx = S.tx, mon = S.monedas;
+  S.inventarioUsdt = [
+    { id:1, tipo:"venta", moneda:"VES", fecha:"10/10", usdt:100, bs:95000,  bsRestante:95000,  tasa:950, cuentaDestinoId:"bdv" },
+    { id:2, tipo:"venta", moneda:"VES", fecha:"11/10", usdt:100, bs:101000, bsRestante:101000, tasa:1010, cuentaDestinoId:"bdv" }
+  ];
+
+  // 1) Reparte en orden FIFO: primero el viejo, y el nuevo solo lo que falte.
+  const r = F._repartoFIFO("VES", 147000, "bdv");
+  ok(r.filas.length === 2, "con dos lotes el reparto son dos filas", r.filas.length);
+  ok(r.filas[0].tasa === 950 && r.filas[0].usa === 95000,
+     "el lote viejo entero primero (FIFO)", r.filas[0].usa);
+  ok(r.filas[1].tasa === 1010 && r.filas[1].usa === 52000,
+     "y del nuevo solo lo que falta", r.filas[1].usa);
+  ok(Math.abs(r.filas.reduce((a,f)=>a+f.usa,0) + r.rest - 147000) < 1e-6,
+     "lo repartido más lo que falta es exactamente lo pedido");
+  ok(r.rest < 0.01, "y con lotes de sobra no falta nada", r.rest);
+
+  // 2) LA GUARDIA QUE IMPORTA: la lista y la tasa de arriba no se pueden
+  //    separar. La tasa ponderada tiene que salir de esta misma suma.
+  const tp = F.getTasaVentaPonderada("VES", 147000, "bdv");
+  const dePartes = Math.round((147000 / r.filas.reduce((a,f)=>a+f.usdt,0)) * 10000) / 10000;
+  ok(tp === dePartes,
+     "la tasa ponderada es exactamente la que sale de las filas que se enseñan",
+     tp + " vs " + dePartes);
+
+  // 3) Cuando NO alcanza, se dice. Registrar una entrega sin lotes que la
+  //    cubran deja la ganancia calculada contra una tasa prestada.
+  const corto = F._repartoFIFO("VES", 300000, "bdv");
+  const pres = corto.filas.filter(f => f.prestada);
+  ok(pres.length === 1 && Math.abs(pres[0].usa - 104000) < 1e-6,
+     "con 196.000 en lotes y 300.000 pedidos, los 104.000 que faltan son una fila",
+     pres.length ? pres[0].usa : "(ninguna)");
+  ok(pres.length === 1 && pres[0].tasa === 1010,
+     "valorada a la tasa de la última operación, que es lo que hacía siempre",
+     pres.length ? pres[0].tasa : "-");
+  ok(corto.rest < 0.01,
+     "y así no queda nada fuera de la lista: lo que se valora, se enseña", corto.rest);
+  // Y la tasa sigue saliendo de la MISMA suma, tambien cuando no alcanza. Esto
+  // es lo que se separaba: la lista decia 1.010,36 y la cuenta usaba otra cosa.
+  const tpCorto = F.getTasaVentaPonderada("VES", 300000, "bdv");
+  const dePartesCorto = Math.round((300000 / corto.filas.reduce((a,f)=>a+f.usdt,0)) * 10000) / 10000;
+  ok(tpCorto === dePartesCorto,
+     "cuando no alcanza, la tasa también es la de las filas que se enseñan",
+     tpCorto + " vs " + dePartesCorto);
+  const htmlCorto = F._htmlDeDondeSalen({ cant:300000, tdia:189 }, { orig:"BRL", dest:"VES" });
+  ok(/sin lote/.test(htmlCorto), "y la pantalla lo avisa antes de guardar");
+  ok(/104\.000/.test(htmlCorto), "con el número que no sale de ningún lote");
+  ok(/tasa prestada/.test(htmlCorto), "y diciendo que esa tasa es prestada");
+  // Y el aviso de abajo, que es el que dice QUÉ HACER. La fila sola no basta:
+  // enseña el número, no que hay algo que registrar.
+  ok(/Registra la compra o venta de USDT/.test(htmlCorto),
+     "y el aviso dice qué hacer, no solo que falta");
+  // La tasa con la que se valora esa parte sigue estando a la vista, en su
+  // fila. No se repite en el aviso: decírla dos veces es lo que saturaba.
+  ok(/1\.010,00/.test(htmlCorto) || /1010/.test(htmlCorto),
+     "y la tasa prestada se ve en la fila");
+  ok(!/se están valorando a/.test(htmlCorto),
+     "sin repetirla también en el aviso");
+
+  // 4) La traducción a Bs/real es una DIVISIÓN por su tasa de compra de reales.
+  //    Multiplicarla daría un número 26 veces más grande y creíble.
+  S.inventarioUsdt.push({ id:3, tipo:"compra", moneda:"BRL", fecha:"11/10", usdt:100, monto:509, restante:509, tasa:5.09, cuentaDestinoId:"bin" });
+  const bpr = F._bsPorReal(1010);
+  ok(bpr !== null && Math.abs(bpr - 198.43) < 0.01,
+     "1.010 Bs/USDT con reales a 5,09 son 198,43 Bs por real", bpr);
+
+  // 5) Sin tasa de reales no se inventa un número: no se escribe nada.
+  S.inventarioUsdt = S.inventarioUsdt.filter(x => x.moneda !== "BRL");
+  if (S.tasasDia) S.tasasDia.BRL = "";
+  ok(F._bsPorReal(1010) === null, "sin tasa de reales no hay traducción, y no se inventa");
+
+  // 6) Un lote de REALES no se traduce a Bs/real: ya está en reales. Dividirlo
+  //    por la tasa de compra de reales daría un "≈ 1,01 Bs/real" sin sentido.
+  S.inventarioUsdt = [
+    { id:1, tipo:"venta", moneda:"BRL", fecha:"10/10", usdt:100, bs:509, bsRestante:509, tasa:5.09, cuentaDestinoId:"pag" }
+  ];
+  const htmlBrl = F._htmlDeDondeSalen({ cant:400, tdia:0 }, { orig:"VES", dest:"BRL" });
+  ok(htmlBrl !== "" && !/Bs\/real/.test(htmlBrl),
+     "en los lotes de reales no se escribe ningún Bs/real");
+
+  // ── No saturar: un número una vez ──────────────────────────────────────
+  // Sus palabras del 13/10: "no saturar ninguna pestaña". Con un solo origen
+  // la traducción por fila no compara nada y el pie ya la dice: medido, el
+  // mismo 200,76 salía cuatro veces en 166 px.
+  // Hace falta tasa de reales: sin ella no hay traducción que contar.
+  // Y el lote se arma aquí: `L` ya es `_leerNumero` en este archivo, así que
+  // reusar ese nombre dejó un número donde debía haber un lote — una prueba
+  // que pasaba sin probar nada, y sin dar error.
+  const LOTE = function(id,fecha,tasa,bs){ return {id:id,tipo:"venta",moneda:"VES",fecha:fecha,usdt:bs/tasa,bs:bs,bsRestante:bs,tasa:tasa,cuentaDestinoId:"bdv"}; };
+  S.inventarioUsdt = [ LOTE(1,"10/11",1000,100000), { id:77, tipo:"compra", moneda:"BRL", fecha:"10/11", usdt:100, monto:509, restante:509, tasa:5.09, cuentaDestinoId:"bin" } ];
+  const unaSola = F._htmlDeDondeSalen({ cant:50000, tdia:189 }, { orig:"BRL", dest:"VES" });
+  ok((unaSola.match(/Bs\/real/g)||[]).length === 0 &&
+     (unaSola.match(/Bs por real/g)||[]).length === 1,
+     "con un solo origen el número se escribe UNA vez, en el pie",
+     "filas " + (unaSola.match(/Bs\/real/g)||[]).length +
+     " / pie " + (unaSola.match(/Bs por real/g)||[]).length);
+  // Pero con dos orígenes sí: ahí la fila existe para poder compararlos.
+  S.inventarioUsdt = [ LOTE(1,"10/11",1000,20000), LOTE(2,"10/12",950,95000), { id:77, tipo:"compra", moneda:"BRL", fecha:"10/11", usdt:100, monto:509, restante:509, tasa:5.09, cuentaDestinoId:"bin" } ];
+  const dos = F._htmlDeDondeSalen({ cant:50000, tdia:189 }, { orig:"BRL", dest:"VES" });
+  ok((dos.match(/Bs\/real/g)||[]).length === 2 &&
+     (dos.match(/Bs por real/g)||[]).length === 1,
+     "con dos tasas distintas sale en cada fila, para poder compararlas",
+     "filas " + (dos.match(/Bs\/real/g)||[]).length +
+     " / pie " + (dos.match(/Bs por real/g)||[]).length);
+
+  S.inventarioUsdt = inv; S.tx = tx; S.monedas = mon;
+}
+{
+  const rep = sinComentarios(sacarFuncion("_repartoFIFO"));
+  const pon = sinComentarios(sacarFuncion("getTasaVentaPonderada"));
+  const dds = sinComentarios(sacarFuncion("_htmlDeDondeSalen"));
+  const up  = sinComentarios(sacarFuncion("upC"));
+  const rn  = sinComentarios(sacarFuncion("rNueva"));
+
+  // El recorrido vive en UN sitio. Si la ponderada se vuelve a escribir su
+  // propio bucle, la lista y el número se separan con el primer redondeo.
+  ok(/var rep=_repartoFIFO\(dest,m,cuentaDestinoId\);/.test(pon),
+     "getTasaVentaPonderada lee el reparto, no lo repite");
+  ok(!/bsRestante/.test(pon),
+     "y ya no recorre los lotes por su cuenta");
+  ok(/_repartoFIFO\(dest, cant, S\.tx && S\.tx\.cuentaDest\)/.test(dds),
+     "y la pantalla sale del MISMO reparto");
+  ok(!/bsRestante/.test(dds),
+     "tampoco se escribe su propio recorrido");
+
+  // Es de solo lectura: mirar de dónde sale el dinero no puede gastarlo.
+  ok(!/bsRestante\s*=[^=]|\brestante\s*=[^=]|S\.inventarioUsdt\s*(=[^=]|\.push\(|\.splice\()/.test(rep),
+     "_repartoFIFO solo mira: no descuenta ni escribe en el inventario");
+
+  // ARREGLO 55: lo que se recalcula al teclear se refresca al teclear.
+  ok(/id='fifo-tx'/.test(rn), "el reparto se dibuja con su id");
+  ok(/document\.getElementById\("fifo-"\+key\)/.test(up) &&
+     /fi\.innerHTML=_htmlDeDondeSalen\(res, ruta\)/.test(up),
+     "y upC lo rehace al teclear, no se queda del último repintado");
+
+  // La traducción divide. Multiplicar daría un número creíble y falso.
+  ok(/return Math\.round\(\(t\/brl\)\*100\)\/100;/.test(sinComentarios(sacarFuncion("_bsPorReal"))),
+     "_bsPorReal DIVIDE por la tasa de compra de reales");
+  ok(/if\(!\(brl>0\)\) return null;/.test(sinComentarios(sacarFuncion("_bsPorReal"))),
+     "y sin esa tasa devuelve null en vez de un número inventado");
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// ARREGLO 126 · quién se comió cada lote
+// ═══════════════════════════════════════════════════════════════════════
+// Sus palabras del 13/10: "en la parte de inventario, cuando yo hago de
+// bolívares arriba aparece ahí la adquisición de los bolívares, mas no cuando
+// es de reales allá a bolívar". Una vuelta CREA un lote y se ve; una ida lo
+// GASTA y no se veía. El dato ya estaba en cada remesa (_lotesConsumidos);
+// faltaba poder leerlo del lado del lote.
+console.log("\nARREGLO 126 · quién se comió cada lote");
+{
+  const inv = S.inventarioUsdt, brl = S.brl, vz = S.vzla, ee = S.eeuu, cer = S.inventarioUsdt_cerrado;
+  const L = (id,fecha,tasa,bs) => ({id:id,tipo:"venta",moneda:"VES",fecha:fecha,usdt:bs/tasa,bs:bs,bsRestante:bs,tasa:tasa,cuentaDestinoId:"bdv"});
+  S.inventarioUsdt_cerrado = [];
+  S.vzla = []; S.eeuu = [];
+  S.inventarioUsdt = [ L(1,"10/11",1000,100000), L(2,"10/12",950,95000) ];
+
+  // 1) Lo NUEVO se casa por id, que es exacto.
+  S.brl = [
+    { n:501, cl:"ANA", d:"11/10/26", _lotesConsumidos:{ ventas:[{id:1, fecha:"10/11", tasa:1000, bs:40000}] } },
+    { n:502, cl:"LUIS", d:"11/10/26", _lotesConsumidos:{ ventas:[{id:1, fecha:"10/11", tasa:1000, bs:25000},
+                                                                 {id:2, fecha:"10/12", tasa:950,  bs:10000}] } }
+  ];
+  let idx = F._indiceLotesComidos();
+  let c1 = F._comieronEsteLote(idx, S.inventarioUsdt[0]);
+  ok(c1.regs.length === 2, "el lote 1 lo gastaron dos remesas", c1.regs.length);
+  ok(c1.exacto === true && c1.ambiguo === false, "casadas por id: exacto y sin ambigüedad");
+  ok(c1.regs[0].n === 501 && c1.regs[1].n === 502, "y son las suyas, con su número");
+  ok(F._comieronEsteLote(idx, S.inventarioUsdt[1]).regs.length === 1,
+     "y el lote 2 solo lo tocó una");
+
+  // 2) Lo VIEJO no lleva id: se casa por fecha+tasa, y eso se DICE.
+  S.brl = [ { n:601, cl:"PEDRO", d:"02/10/26", _lotesConsumidos:{ ventas:[{fecha:"10/11", tasa:1000, bs:30000}] } } ];
+  idx = F._indiceLotesComidos();
+  let c2 = F._comieronEsteLote(idx, S.inventarioUsdt[0]);
+  ok(c2.regs.length === 1 && c2.exacto === false,
+     "sin id se casa por fecha y tasa, y queda marcado como no exacto");
+  let h2 = F._filaComieron(idx, S.inventarioUsdt[0], 12).fila;
+  ok(/Casado por fecha y tasa/.test(h2), "y la fila lo dice en vez de darlo por seguro");
+
+  // 3) Y si DOS lotes comparten fecha y tasa, eso no se puede repartir: se
+  //    avisa. En su export son 63 de 367 lotes, el 17%.
+  S.inventarioUsdt = [ L(1,"10/11",1000,100000), L(3,"10/11",1000,50000) ];
+  idx = F._indiceLotesComidos();
+  let c3 = F._comieronEsteLote(idx, S.inventarioUsdt[0]);
+  ok(c3.ambiguo === true, "dos lotes con la misma fecha y tasa salen marcados como ambiguos");
+  let h3 = F._filaComieron(idx, S.inventarioUsdt[0], 12).fila;
+  ok(/más de un lote/.test(h3), "y la fila avisa de que no se sabe de cuál salieron");
+  ok(/var\(--mal\)/.test(h3), "en rojo, porque es un dato que no consta");
+  // El id manda: con id, el mismo par de lotes deja de ser ambiguo.
+  S.brl = [ { n:701, cl:"EVA", d:"11/10/26", _lotesConsumidos:{ ventas:[{id:1, fecha:"10/11", tasa:1000, bs:30000}] } } ];
+  idx = F._indiceLotesComidos();
+  ok(F._comieronEsteLote(idx, S.inventarioUsdt[0]).ambiguo === false,
+     "pero con el id guardado deja de serlo: por eso se guarda");
+
+  // 4) Un lote que nadie tocó no dibuja botón ni fila: la pantalla no se llena
+  //    de desplegables vacíos.
+  const vacia = F._filaComieron(idx, S.inventarioUsdt[1], 12);
+  ok(vacia.btn === "" && vacia.fila === "", "un lote que nadie gastó no dibuja nada");
+
+  // 5) La fila tapa la tabla entera.
+  ok(/colspan='12'/.test(h3), "la fila cubre las 12 columnas de la tabla");
+
+  S.inventarioUsdt = inv; S.brl = brl; S.vzla = vz; S.eeuu = ee; S.inventarioUsdt_cerrado = cer;
+}
+{
+  const sim = sinComentarios(sacarFuncion("simularConsumoFIFO"));
+  const tog = sinComentarios(sacarFuncion("toggleComieron"));
+  const inv = sinComentarios(sacarFuncion("rInventarioUsdt"));
+
+  // El id se guarda en los DOS lados, o la mitad del inventario sigue a ciegas.
+  ok(/resCompras\.push\(\{id:compras\[i\]\.id,/.test(sim),
+     "el espejo guarda el id del lote de compra");
+  ok(/resVentas\.push\(\{id:ventas\[k\]\.id,/.test(sim),
+     "y el del lote de venta");
+
+  // ARREGLO 32: desplegar no puede repintar la tabla bajo el dedo.
+  ok(!/\bR\(\)/.test(tog) && /style\.display=/.test(tog),
+     "desplegar cambia el display por su id, no llama a R()");
+
+  // El índice se arma UNA vez por dibujo. Lote por lote son 200.000
+  // comparaciones en cada repintado, que es el coste que ya hubo que quitar
+  // de getRateToUsdt.
+  ok((inv.match(/_indiceLotesComidos\(\)/g)||[]).length === 1,
+     "el índice se arma una sola vez por dibujo");
+  ok(/var _idxCom=_indiceLotesComidos\(\);/.test(inv) &&
+     inv.indexOf("var _idxCom=") < inv.indexOf(".map(function(r){"),
+     "y fuera del bucle de lotes, no dentro");
+
+  // El colspan tiene que seguir a la TABLA, no a un número escrito a mano.
+  // Si algún día se añade una columna y esto se queda en 12, la fila deja de
+  // taparla y la tabla sale torcida. Se cuentan las <th> de la cabecera que
+  // lleva estas filas y se exige que la llamada pase esa misma cifra.
+  {
+    const i = inv.indexOf("<tbody>\"+rows");
+    const ini = inv.lastIndexOf("<thead>", i);
+    const cols = (inv.slice(ini, i).match(/<th[ >]/g) || []).length;
+    const m = inv.match(/_filaComieron\(_idxCom, r, (\d+)\)/);
+    ok(cols > 0 && m && Number(m[1]) === cols,
+       "el colspan de la fila es el número de columnas de la tabla",
+       "columnas " + cols + " / colspan " + (m ? m[1] : "(no se llama)"));
   }
 }
 
