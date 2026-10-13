@@ -2012,6 +2012,73 @@ guardia exige que `campoRot` y `boton` sean distintos **y** que la calculadora
 lo use en los **dos** campos: pidiendo solo que apareciera, cambiar uno de los
 dos pasaba la prueba con el rótulo viejo puesto en el otro.
 
+#### Y la tarjeta decía de dónde sale el suelo sin mirarlo (ARREGLO 130)
+
+Sus palabras del 13/10: *"el sistema está agarrando como referencia una tasa
+vieja, pero yo hace ratico acabo de registrar una venta de USDT por bolívares y
+la tasa es de menos"*.
+
+**Y la tarjeta del 128 le contestaba una mentira.** Decía *"Tu última operación
+de USDT tiene 3 días… así que el suelo sale de esa"* — cierto para los reales,
+**falso para los bolívares**: ese lado no salía de ninguna operación, salía del
+**1.013 que ella fijó a mano el 10/10**. Medido en su export, su venta de ese
+mismo día fue a 1.010,50:
+
+```
+con la fijada (1.013,00)        199,87  →  186 · 210
+con su venta de hoy (1.010,14)  199,31  →  185 · 209
+```
+
+Poco, y **a su favor en la pantalla** — el único lado del que un suelo no se
+puede equivocar.
+
+- **Lo fijado sigue mandando.** La regla de `tasaDeReferencia()` no se toca: es
+  una decisión suya. Lo que cambia es que la tarjeta **dice de dónde sale cada
+  mitad** (`_origenLado`) en vez de afirmar una sola cosa de las dos.
+- **Y cuando la fijada tapa una operación más nueva, se ofrece**: *"usar la de
+  tu venta del 10/13 (1.010,14)"*, que llama a `soltarTasaDia()`. Un toque.
+- **La tasa que se OFRECE es la que se va a USAR** — la efectiva del lote, con
+  la comisión de Binance dentro (1.010,14, no los 1.010,50 que ella tecleó).
+  Enseñar una y aplicar otra es el 34,27 contra el 34,28.
+- **Si la fijada coincide con la operación, no se ofrece nada.** Un botón que no
+  cambia nada enseña a no pulsar los botones.
+- **`_ultimaOpUSDT()` es un solo recorrido**, y lo leen la hora (para la regla
+  del 129) y la tarjeta. Dos recorridos acabarían señalando lotes distintos.
+
+#### El traspaso que falta para una venta de USDT (ARREGLO 130)
+
+Sus palabras: *"son dos cuentas distintas, una es de reales que es Binance Saipa
+y la otra es de moneda Vzla que es Binance Julio… para no tener que hacer
+traspaso"*. Y después, la que decide la forma: *"igual yo señalo por dónde sale,
+solo que me ahorraría el tema del traspaso, porque si Binance Julio está en 0 y
+Binance Saipa tiene 100 USDT y registro una venta de USDT por Binance Julio, se
+supone que deben ser esos 100 de Saipa porque no hay más cuentas"*.
+
+**Tiene razón, y eso cambia la regla.** Cuando solo hay un sitio de donde pueden
+salir, no hay nada que preguntar: el dato está **forzado**, no inventado. Con dos
+o más sí se pregunta, porque ahí sí hay una decisión.
+
+**Y esto no es comodidad.** Es de donde salió el descuadre que persiguió ese
+mismo día: el 11/10 vendió **368,06** USDT desde Binance Julio a las 22:13 y
+traspasó **323,21** a las 22:16 — 44,85 de menos. De ahí los **75,93** que la app
+decía tener en Saipa con su Binance en cero. Con el traspaso saliendo por el
+monto exacto de la venta, esa diferencia no se abre.
+
+- **Se DICE, no se hace en silencio**: *"Traspasé 100,00 USDT desde BINANCE
+  SAIPA"*, en el mismo aviso que confirma la venta. Un movimiento de dinero que
+  la app escribe sola y no cuenta es lo que haría que dejara de fiarse de los
+  saldos.
+- **Va DESPUÉS de que confirme la venta.** Antes, cancelar la venta dejaría el
+  dinero movido sin operación detrás.
+- **Una cuenta 💜 personal no es un origen.** Ese dinero ya salió de la empresa
+  (ARREGLO 96) y traerlo de vuelta sería inventarse un movimiento que ella no
+  hizo. Una cuenta desactivada tampoco.
+- **Es un traspaso normal**, con el mismo formato de siempre: nada nuevo que
+  fusionar entre aparatos.
+
+**Lo que esto NO repara:** los 75,93 que ya están. El arreglo vale de aquí en
+adelante; esa diferencia hay que corregirla a mano una vez.
+
 #### Lo que esto NO contesta, y está dicho
 
 **La competencia.** De sus cuatro referencias, dos son apps y dos son grupos de

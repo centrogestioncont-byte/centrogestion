@@ -73,7 +73,10 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     // ARREGLO 128 - la tasa recomendada y la aproximada de hoy
                     "_aproxTodas", "_tasaAprox", "_guardarTasaAprox", "_diasDeRef",
                     "_colchon", "_tasasRecomendadas", "_tasaCorta", "_tasasConLoMio",
-                    "_tsUltimaOpUSDT", "_aproxManda", "_toggleProbar", "_volverAMiTasa", "_setAprox", "publicarRecomendadas",
+                    "_tsUltimaOpUSDT", "_aproxManda", "_toggleProbar", "_volverAMiTasa",
+                    // ARREGLO 130
+                    "_ultimaOpUSDT", "_origenLado", "_usarLaDeMiOperacion",
+                    "_saldoCtaUsdt", "_otrasCtasUsdt", "_cubrirUsdtParaVenta", "_setAprox", "publicarRecomendadas",
                     "_campoAprox", "_htmlPublicaHoy", "guardarColchones", "_htmlCalceCuerpo", "_botonTasaUsdt",
                     "_calceK", "_calceGan", "_calceVuelta", "_calceIda", "_cg", "_cgSet", "_cgFraccion",
                     "_htmlPalancaVenta", "_permutaSugerida", "_prConPermuta", "_htmlPermutaFuera", "_usarPermutaSugerida", "txMetodo", "esCalceDirecto", "esRutaCalce", "getAutoRates", "_cgBase", "_cgGanUsdt", "_htmlComparaTasa", "_htmlCabeceraTasas", "_htmlCalceRes", "_htmlCalceCuerpo", "_cgModo", "_cgFuente",
@@ -9591,6 +9594,96 @@ console.log("\nARREGLO 128 · la tasa que publica, recomendada sola");
      "así que una permuta posterior no le gana a la tasa que ella escribió");
 
   delete global.localStorage;
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 130 · de dónde sale cada mitad, y el traspaso de la venta
+// ══════════════════════════════════════════════════════════════════════
+console.log("\nARREGLO 130 · el origen de cada mitad y el traspaso que falta");
+{
+  const hoy=F.td();
+  const T0=Date.now();
+  S.config={comision_binance:0.007};
+  S.inventarioUsdt=[
+    {id:T0-6e4,tipo:"compra",moneda:"BRL",fecha:"10/10",fechaIso:hoy,tasa:5.0327,usdt:400,restante:400},
+    {id:T0-6e4,tipo:"venta", moneda:"VES",fecha:"10/13",fechaIso:hoy,tasa:1010.50,usdt:168,bs:169764,bsRestante:0}
+  ];
+  S.inventarioUsdt_cerrado=[];
+  S.tasasDia={}; S._tasasDiaMeta={};
+
+  // ── El origen se dice por LADO ─────────────────────────────────────
+  let Q=F.sueloQueManda();
+  ok(/tu compra del/.test(F._origenLado("BRL",Q).txt),
+     "sin nada fijado, el lado de los reales dice de qué operación sale");
+  ok(/tu venta del/.test(F._origenLado("VES",Q).txt),
+     "y el de los bolívares, de la suya");
+
+  // ── Fijada a mano: se DICE, y se ofrece la de verdad ───────────────
+  // Esto es lo que mordía: la tarjeta decía "sale de tu última operación"
+  // cuando salía del 1.013 que ella fijó el 10/10, con su venta a 1.010,50.
+  S.tasasDia={VES:1013};
+  S._tasasDiaMeta={VES:{fijada:true, fecha:"10/10/2026", iso:"2026-10-10"}};
+  Q=F.sueloQueManda();
+  const oV=F._origenLado("VES",Q);
+  ok(/la fijaste t/.test(oV.txt) && oV.fijada===true,
+     "con la tasa fijada a mano, lo DICE en vez de hablar de una operación");
+  ok(oV.mejor && Math.abs(oV.mejor.tasa-1010.50)<0.01 && oV.mejor.tipo==="venta",
+     "y ofrece la de su venta de verdad, que es más nueva",
+     JSON.stringify(oV.mejor));
+  ok(!/\u00faltima operaci\u00f3n de USDT tiene/.test(sacarFuncion("_htmlPublicaHoy")) ||
+     /_origenLado\(/.test(sacarFuncion("_htmlPublicaHoy")),
+     "la tarjeta ya no afirma que el suelo sale de una operación sin mirarlo");
+  ok((sacarFuncion("_htmlPublicaHoy").match(/_origenLado\(/g)||[]).length===2,
+     "y pregunta por los DOS lados, no por uno");
+
+  // Si la fijada coincide con la operación, no hay nada que ofrecer.
+  S.tasasDia={VES:1010.50};
+  Q=F.sueloQueManda();
+  ok(F._origenLado("VES",Q).mejor===null,
+     "si la fijada es la misma que su operación, no se ofrece nada");
+
+  // ── El traspaso que falta ──────────────────────────────────────────
+  // Un solo origen posible: sale solo, porque no hay nada que decidir.
+  S.cuentas=[
+    {id:"julio",nombre:"BINANCE JULIO",moneda:"USDT",saldo:0,activa:true},
+    {id:"saipa",nombre:"BINANCE SAIPA",moneda:"USDT",saldo:100,activa:true}
+  ];
+  S.traspasos=[];
+  let txt=F._cubrirUsdtParaVenta({cuentaId:"julio"}, 100);
+  ok(/100,00 USDT desde BINANCE SAIPA/.test(txt),
+     "con un solo origen posible, el traspaso sale solo y lo dice", txt);
+  ok(S.traspasos.length===1 && Math.abs(S.traspasos[0].monto-100)<0.001 &&
+     S.traspasos[0].origen==="saipa" && S.traspasos[0].destino==="julio" &&
+     S.traspasos[0].moneda==="USDT",
+     "queda como un traspaso normal, con su origen y su destino");
+  ok(Math.abs(F._saldoCtaUsdt("saipa"))<0.001 && Math.abs(F._saldoCtaUsdt("julio")-100)<0.001,
+     "y los dos saldos se mueven por el monto exacto de la venta");
+
+  // Lo que sobra no se toca.
+  S.cuentas=[{id:"julio",nombre:"BINANCE JULIO",moneda:"USDT",saldo:300,activa:true},
+             {id:"saipa",nombre:"BINANCE SAIPA",moneda:"USDT",saldo:100,activa:true}];
+  S.traspasos=[];
+  ok(F._cubrirUsdtParaVenta({cuentaId:"julio"}, 100)==="" && S.traspasos.length===0,
+     "si ya hay bastante, no se traspasa nada");
+
+  // Una cuenta PERSONAL no es un origen: ese dinero ya salió de la empresa.
+  S.cuentas=[{id:"julio",nombre:"BINANCE JULIO",moneda:"USDT",saldo:0,activa:true},
+             {id:"mio",nombre:"MI SUELDO",moneda:"USDT",saldo:500,activa:true,esPersonal:true}];
+  ok(F._otrasCtasUsdt("julio").length===0,
+     "una cuenta personal 💜 no se usa para cubrir una venta de la empresa");
+
+  // Y una apagada tampoco.
+  S.cuentas=[{id:"julio",nombre:"BINANCE JULIO",moneda:"USDT",saldo:0,activa:true},
+             {id:"off",nombre:"VIEJA",moneda:"USDT",saldo:500,activa:false}];
+  ok(F._otrasCtasUsdt("julio").length===0, "ni una cuenta desactivada");
+
+  // ── El traspaso se dice, no se hace en silencio ────────────────────
+  const sv=sacarFuncion("saveIU");
+  ok(/_cubrirUsdtParaVenta\(/.test(sv) && /Traspas/.test(sv),
+     "saveIU avisa de lo que traspasó");
+  ok(sv.indexOf("_cubrirUsdtParaVenta(") > sv.indexOf("VENTA de "),
+     "y lo hace DESPUÉS de que ella confirme la venta, no antes");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
