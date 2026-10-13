@@ -71,7 +71,7 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "_misTasasPublicadas",
                     "_equilibrio", "sueloQueManda",
                     "_calceK", "_calceGan", "_calceVuelta", "_calceIda", "_cg", "_cgSet", "_cgFraccion",
-                    "_htmlPalancaVenta", "_cgBase", "_cgGanUsdt", "_htmlComparaTasa", "_htmlCabeceraTasas", "_htmlCalceRes", "_htmlCalceCuerpo", "_cgModo", "_cgFuente",
+                    "_htmlPalancaVenta", "_permutaSugerida", "_prConPermuta", "_htmlPermutaFuera", "_usarPermutaSugerida", "txMetodo", "esCalceDirecto", "esRutaCalce", "getAutoRates", "_cgBase", "_cgGanUsdt", "_htmlComparaTasa", "_htmlCabeceraTasas", "_htmlCalceRes", "_htmlCalceCuerpo", "_cgModo", "_cgFuente",
                     "margenSobreSuelo", "_calcTasas", "_misTasasPublicadas", "_fpTasa",
                     "avisoTasa", "_umbralAviso", "_refSuelo", "_sueloDeFecha", "guardarTasaCalcHoy",
                     "_cgSoltar", "_htmlCabeceraTasas", "_montoMercado",
@@ -8908,6 +8908,57 @@ console.log("\n— FASE 2: la cuenta madre —");
   S.inventarioUsdt=invP; S._tasasDiaMeta=tdP; S.tasasDia=tdiaP;
   S.config=JSON.parse(cfgP);
   if(calcP!==null) S.calc=JSON.parse(calcP); else delete S.calc;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// ARREGLO 123 · la permuta sale de los lotes, y el margen se cuenta UNA vez
+// ═══════════════════════════════════════════════════════════════════════
+// Sus palabras del 13/10: "¿cómo yo me voy a acordar a qué tasa me entraron esos
+// bolívares? Eso me lo debería dar el mismo sistema, según por el orden FIFO".
+{
+  const sug  = sinComentarios(sacarFuncion("_permutaSugerida"));
+  const pcp  = sinComentarios(sacarFuncion("_prConPermuta"));
+  const met  = sinComentarios(sacarFuncion("txMetodo"));
+  const fuera= sinComentarios(sacarFuncion("_htmlPermutaFuera"));
+  const av   = sinComentarios(sacarFuncion("_htmlAvisoCalce"));
+
+  // 1) Sale de las dos funciones que YA valoran su dinero, no de una cuenta propia.
+  ok(/getAutoRates\(/.test(sug), "_permutaSugerida lee las tasas de getAutoRates");
+  ok(/tasaDeReferencia\("VES"\)/.test(sug) && /tasaDeReferencia\("BRL"\)/.test(sug),
+     "y cae en tasaDeReferencia cuando un lado no tiene lotes");
+  ok(/ves\/brl/.test(sug), "la permuta es Bs por USDT entre reales por USDT");
+  ok(/isVzla \? null : rates\.tv/.test(sug) && /isVzla \? rates\.tv : rates\.tc/.test(sug),
+     "cada lado sale de donde de verdad viene: lo que entrega, de sus lotes");
+
+  // 2) La simulación devuelve el campo pase lo que pase.
+  ok(/finally\{\s*S\.tx\.permuta=antes;/.test(pcp),
+     "_prConPermuta devuelve la permuta en un finally: mirar no es aplicar");
+  ok(/return cTx\(\)\.pr/.test(pcp), "y la ganancia sale de cTx(), la que se guarda");
+
+  // 3) Se rellena sola, pero no pisa lo que ella escribió.
+  ok(/_permutaSugerida\(S\.tx, ruta\)/.test(met), "al elegir calce el campo sale relleno");
+  ok(/if\(!\(parseFloat\(S\.tx\.permuta\)>0\)\)/.test(met),
+     "y solo si está vacío: si ella escribió una, manda la suya");
+
+  // 4) El aviso, con los tres valores.
+  ok(/_htmlPermutaFuera\(res, ruta\)/.test(av), "el aviso del calce lo dibuja");
+  ok(/_prConPermuta\(sug\)/.test(fuera), "y compara contra la ganancia de la sugerida");
+  ok(/_usarPermutaSugerida\(\)/.test(fuera), "con un botón para usarla");
+  ok(!/\bR\(\)/.test(sinComentarios(sacarFuncion("_usarPermutaSugerida"))),
+     "que no repinta la pantalla (ARREGLO 32)");
+
+  // El CRUCE CERRADO —que es la prueba de que el margen se cuenta una sola vez—
+  // se mide en Chromium, con la app entera cargada: aqui cTx() necesita getRUTAS
+  // y media docena de constantes mas, y una caja que hay que rellenar a medias
+  // prueba menos que el navegador. Lo que si se fija aqui es la FORMA de la
+  // cuenta, que es por donde se rompe: si cTx deja de despejar tc desde la
+  // permuta, los numeros del navegador dejan de significar lo que se midio.
+  {
+    const ct = sinComentarios(sacarFuncion("cTx"));
+    ok(/tc = \(_permuta>0 && tv>0\) \? \(isVzla \? _permuta\*tv : tv\/_permuta\) : 0/.test(ct),
+       "en calce la tasa de compra se despeja de la permuta, cada ruta por su lado");
+    ok(/comUc = 0; comUv = 0;/.test(ct), "y sin comisión de Binance, que en un calce no se paga");
+  }
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
