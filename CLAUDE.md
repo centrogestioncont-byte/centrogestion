@@ -1508,11 +1508,12 @@ como "desfase de las tasas del día".
 
 `tasaDeReferencia(moneda)` decide, en este orden:
 
-1. La que ella **fijó a mano** (`_tasasDiaMeta[mon].fijada`). Es una decisión
-   suya, no un olvido: manda.
+1. La que ella **escribió a mano** (`_tasasDiaMeta[mon]`), **y solo mientras sea
+   más nueva que su última operación de USDT de esa moneda** (ARREGLO 131 — aquí
+   decía "es una decisión suya, no un olvido: manda", y lo revirtió ella).
 2. La **última operación de USDT de esa misma moneda** — compra o venta,
    mirando también `inventarioUsdt_cerrado`, con `_tasaEfectivaLote()`.
-3. Lo último que escribió, aunque no lo fijara.
+3. Lo último que escribió, aunque fuera antes.
 4. Nada.
 
 Tres cosas que costó medir y que no hay que deshacer:
@@ -1942,9 +1943,10 @@ o de Mercado Bitcoin cuando Binance bloquea al servidor por país— y se usa
 4. ¿no escribe nada?                      → no se inventa. Se dice qué falta.
 ```
 
-- **NO se fija (📌).** Lo fijado manda para siempre: su VES llevaba desde el
-  10/10 valorando todo a 1.013 que escribió una vez, por encima de sus ventas
-  reales de 1.008,72 y 1.010,66. Esto vale el día que se escribe y muere con él.
+- **NO se fija (📌).** Esto vale el día que se escribe y muere con él. (Cuando se
+  escribió esto, lo fijado mandaba para siempre y por eso había que apartarse de
+  ello; desde el ARREGLO 131 ya no, pero la aproximada sigue muriendo con el día
+  y sigue sin tocar `tasaDeReferencia()`.)
 - **NO entra en `tasaDeReferencia()`.** No revalora su capital, ni la
   conciliación, ni el cierre, ni la ganancia de ninguna remesa. Un número mirado
   a ojo no puede mover su contabilidad: vale para el **suelo**, que es la
@@ -2032,18 +2034,62 @@ con su venta de hoy (1.010,14)  199,31  →  185 · 209
 Poco, y **a su favor en la pantalla** — el único lado del que un suelo no se
 puede equivocar.
 
-- **Lo fijado sigue mandando.** La regla de `tasaDeReferencia()` no se toca: es
-  una decisión suya. Lo que cambia es que la tarjeta **dice de dónde sale cada
-  mitad** (`_origenLado`) en vez de afirmar una sola cosa de las dos.
-- **Y cuando la fijada tapa una operación más nueva, se ofrece**: *"usar la de
-  tu venta del 10/13 (1.010,14)"*, que llama a `soltarTasaDia()`. Un toque.
-- **La tasa que se OFRECE es la que se va a USAR** — la efectiva del lote, con
-  la comisión de Binance dentro (1.010,14, no los 1.010,50 que ella tecleó).
-  Enseñar una y aplicar otra es el 34,27 contra el 34,28.
-- **Si la fijada coincide con la operación, no se ofrece nada.** Un botón que no
-  cambia nada enseña a no pulsar los botones.
+- **La tarjeta dice de dónde sale cada mitad** (`_origenLado`) en vez de afirmar
+  una sola cosa de las dos. Eso es lo que queda del 130 y no se toca.
 - **`_ultimaOpUSDT()` es un solo recorrido**, y lo leen la hora (para la regla
   del 129) y la tarjeta. Dos recorridos acabarían señalando lotes distintos.
+
+**Lo que el 130 hizo aquí y el 131 se llevó, un día después:** como lo fijado
+seguía mandando, la tarjeta ofrecía un botón —*"usar la de tu venta del 10/13"*—
+para soltarlo a mano. Con el 131 la app lo hace sola, así que el botón se quitó
+en vez de dejarlo al lado sin poder cambiar nada (ARREGLO 98).
+
+#### Y lo escrito a mano ya no manda para siempre (ARREGLO 131)
+
+**Esto REVIERTE una regla escrita de este documento, y la revierte ella.** Sus
+palabras del 13/10, mirando la tarjeta del 130: *"ya no puedo fijar ninguna tasa
+del inventario de USDT según la compra y la venta, porque se supone que cada día
+eso puede variar. Entonces no puedes colocarle como que yo fijé una tasa, se
+supone que debe de ir actualizándose… y en algún caso esos bolívares me duran dos
+o tres días, yo tengo que actualizar… no se puede fijar eso"*.
+
+La regla vieja —*"la que ella fijó a mano manda: es una decisión suya, no un
+olvido"*— en su día era correcta, y dejó de serlo cuando se midió lo que costaba:
+su VES llevaba **desde el 10/10** valorando todo su dinero a **1.013** que
+escribió una vez, por encima de sus ventas reales de 1.008,72, 1.010,66 y
+1.010,50. Un número que escribió hace tres días no puede ganarle a una operación
+que registró hace un rato.
+
+**Ahora es UNA sola regla para los dos casos, la del 129: manda la MÁS NUEVA.**
+Lo que escriba vale mientras sea lo último que pasó; en cuanto registre una compra
+o una venta de USDT de esa moneda, manda la operación. Medido en Chromium con sus
+datos (compra BRL del 10/10, VES fijada en 1.013 el 10/10, venta de hoy a 1.010,50):
+
+```
+                              suelo      publica
+antes (mandaba la fijada)    199,87      186 · 210
+ahora (manda su venta)       199,31      185 · 209
+escrita HOY, tras la venta   199,87      186 · 210   ← sigue mandando la suya
+```
+
+- **Lo fijado no hay que ir a soltarlo.** Los que ya estén marcados dejan de ganar
+  solos, sin que ella toque nada: las marcas de antes de este arreglo no guardan
+  hora, así que cualquier operación les gana. Pedirle que vaya a quitar una marca
+  que ya no significa nada sería dejar el arreglo a medias.
+- **Escribir una tasa guarda su HORA** (`ts:Date.now()` en `setTasaDia`), que es
+  lo único que hace comparable la regla: el id de un lote es `Date.now()`.
+- **La comparación vive en la puerta** (`_tasaFijadaAMano`), no en quien la llama.
+  Por ahí pasan la conciliación, el cierre y cada remesa.
+- **Y los textos de pantalla cambiaron con la regla.** La pantalla de Tasas
+  prometía que lo escrito *"queda marcado 📌 con su fecha hasta que la sueltes"* —
+  con el 131 eso es falso. Ahora dice *"✍️ La escribiste tú el … · manda hasta que
+  registres una operación de USDT en VES"*. Un texto que miente se deja de leer, y
+  dos guardias lo fijan.
+
+**Lo que esto le cambia, y hay que decírselo:** su referencia de VES pasa de
+1.013 a ~1.010,14, así que **todos sus bolívares se revalúan un poco** (≈+0,48
+USDT sobre sus 170.560 Bs) y la conciliación se mueve otro tanto. No aparece ni
+desaparece dinero: lo que cambia es la tasa con la que se mira.
 
 #### El traspaso que falta para una venta de USDT (ARREGLO 130)
 

@@ -75,7 +75,7 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "_colchon", "_tasasRecomendadas", "_tasaCorta", "_tasasConLoMio",
                     "_tsUltimaOpUSDT", "_aproxManda", "_toggleProbar", "_volverAMiTasa",
                     // ARREGLO 130
-                    "_ultimaOpUSDT", "_origenLado", "_usarLaDeMiOperacion",
+                    "_ultimaOpUSDT", "_origenLado",
                     "_saldoCtaUsdt", "_otrasCtasUsdt", "_cubrirUsdtParaVenta", "_setAprox", "publicarRecomendadas",
                     "_campoAprox", "_htmlPublicaHoy", "guardarColchones", "_htmlCalceCuerpo", "_botonTasaUsdt",
                     "_calceK", "_calceGan", "_calceVuelta", "_calceIda", "_cg", "_cgSet", "_cgFraccion",
@@ -2123,7 +2123,10 @@ ok(/getRateToUsdt\(moneda\)\{[\s\S]{0,400}tasaDeReferencia\(moneda\)/.test(HTML)
    "getRateToUsdt pasa por tasaDeReferencia");
 ok(!/if\(S\.tasasDia&&S\.tasasDia\[moneda\]\) return parseFloat/.test(HTML),
    "y ya no da prioridad ciega a lo escrito a mano");
-ok(/Sale sola de tu/.test(HTML) && /La fijaste tú/.test(HTML) && /Que salga sola/.test(HTML),
+// ARREGLO 131: el rotulo pasa de "La fijaste tu" a "La escribiste tu", porque
+// lo escrito ya no manda para siempre. El boton de soltarla se queda: es la
+// unica forma de volver a lo automatico sin registrar una operacion.
+ok(/Sale sola de tu/.test(HTML) && /La escribiste tú/.test(HTML) && /Que salga sola/.test(HTML),
    "el panel dice el origen y deja soltarla");
 ok(/if\(dest!=="VES"\) return null;/.test(HTML),
    "el rescate de 'todas las ventas' es solo para bolivares");
@@ -9619,29 +9622,60 @@ console.log("\nARREGLO 130 · el origen de cada mitad y el traspaso que falta");
   ok(/tu venta del/.test(F._origenLado("VES",Q).txt),
      "y el de los bolívares, de la suya");
 
-  // ── Fijada a mano: se DICE, y se ofrece la de verdad ───────────────
-  // Esto es lo que mordía: la tarjeta decía "sale de tu última operación"
-  // cuando salía del 1.013 que ella fijó el 10/10, con su venta a 1.010,50.
+  // ── ARREGLO 131: lo escrito a mano YA NO gana a una operación ──────
+  // Esto es lo que mordía: su VES llevaba desde el 10/10 valorando todo a
+  // 1.013 que escribió una vez, con ventas reales a 1.008,72 y 1.010,50.
   S.tasasDia={VES:1013};
-  S._tasasDiaMeta={VES:{fijada:true, fecha:"10/10/2026", iso:"2026-10-10"}};
+  S._tasasDiaMeta={VES:{fijada:true, fecha:"10/10/2026", iso:"2026-10-10", ts:T0-120000}};
+  ok(F._tasaFijadaAMano("VES")===null,
+     "una tasa escrita ANTES de la última operación deja de mandar");
+  ok(Math.abs(F.tasaDeReferencia("VES").tasa-1010.50)<0.5 &&
+     F.tasaDeReferencia("VES").origen==="auto",
+     "y la referencia pasa a ser la de su operación",
+     JSON.stringify(F.tasaDeReferencia("VES")));
+
+  // Escrita DESPUÉS sí manda, hasta que registre otra.
+  S._tasasDiaMeta={VES:{fijada:true, fecha:"13/10/2026", iso:"2026-10-13", ts:T0}};
+  ok(F._tasaFijadaAMano("VES")===1013,
+     "escrita después de la última operación, sí manda");
   Q=F.sueloQueManda();
   const oV=F._origenLado("VES",Q);
-  ok(/la fijaste t/.test(oV.txt) && oV.fijada===true,
-     "con la tasa fijada a mano, lo DICE en vez de hablar de una operación");
-  ok(oV.mejor && Math.abs(oV.mejor.tasa-1010.50)<0.01 && oV.mejor.tipo==="venta",
-     "y ofrece la de su venta de verdad, que es más nueva",
-     JSON.stringify(oV.mejor));
+  ok(/la escribiste t/.test(oV.txt) && oV.escrita===true,
+     "y la tarjeta dice que la escribió ella, no que salga de una operación");
+  ok(/manda hasta que registres/.test(oV.txt),
+     "diciendo hasta cuándo vale");
+
+  // Una de las viejas, sin hora, pierde contra cualquier operación.
+  S._tasasDiaMeta={VES:{fijada:true, fecha:"10/10/2026", iso:"2026-10-10"}};
+  ok(F._tasaFijadaAMano("VES")===null,
+     "las fijadas de antes de este arreglo (sin hora) dejan de ganar solas");
+
+  // Y escribirla guarda la hora, o la regla no se puede aplicar.
+  ok(/ts:Date\.now\(\)/.test(sacarFuncion("setTasaDia")),
+     "escribir una tasa guarda su hora");
+  // La comparación tiene que estar en la puerta, no en quien la llama: por ahí
+  // pasan la conciliación, el cierre y cada remesa.
+  ok(/_tsUltimaOpUSDT\(moneda\)/.test(sacarFuncion("_tasaFijadaAMano")),
+     "y la puerta compara contra la última operación de esa moneda");
+  // ARREGLO 98: la pantalla de Tasas prometía que lo escrito duraba "hasta que
+  // la sueltes". Con el 131 eso es falso y un texto que miente se deja de leer.
+  ok(!/hasta que la sueltes/.test(HTML),
+     "la pantalla de Tasas ya no promete que lo escrito dure hasta soltarlo");
+  ok(!/La fijaste t\u00fa/.test(HTML) && !/La fijaste tú/.test(HTML),
+     "ni lo llama \"la fijaste tú\"");
   ok(!/\u00faltima operaci\u00f3n de USDT tiene/.test(sacarFuncion("_htmlPublicaHoy")) ||
      /_origenLado\(/.test(sacarFuncion("_htmlPublicaHoy")),
      "la tarjeta ya no afirma que el suelo sale de una operación sin mirarlo");
   ok((sacarFuncion("_htmlPublicaHoy").match(/_origenLado\(/g)||[]).length===2,
      "y pregunta por los DOS lados, no por uno");
 
-  // Si la fijada coincide con la operación, no hay nada que ofrecer.
-  S.tasasDia={VES:1010.50};
-  Q=F.sueloQueManda();
-  ok(F._origenLado("VES",Q).mejor===null,
-     "si la fijada es la misma que su operación, no se ofrece nada");
+  // El botón del ARREGLO 130 ("usar la de tu venta") se QUITÓ: con el 131 la
+  // app ya lo hace sola, y un botón que no puede cambiar nada enseña a no
+  // pulsar los botones (ARREGLO 98).
+  ok(!/_usarLaDeMiOperacion/.test(HTML),
+     "el botón de usar la de la operación se quitó, no se dejó al lado");
+  ok(!/o\.mejor/.test(sacarFuncion("_htmlPublicaHoy")),
+     "y la tarjeta ya no lo dibuja");
 
   // ── El traspaso que falta ──────────────────────────────────────────
   // Un solo origen posible: sale solo, porque no hay nada que decidir.
