@@ -2913,7 +2913,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261013_v207";
+var APP_VERSION = "20261013_v208";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -17948,6 +17948,92 @@ setInterval(function(){ _revisarMesSinCerrar(); }, 300000);
 // Sale de aquí y de ningún otro sitio, y lee de `cTx()` —la misma que decide
 // la ganancia que se guarda— en vez de las variables sueltas de la pantalla,
 // que es lo que ya mordía en el ARREGLO 98.
+// ── ARREGLO 125 · las tasas, en SU unidad ───────────────────────────────
+//
+// Sus palabras del 13/10: "tienen unas tasas raras ahí, a mí eso me crea
+// confusión". Son los Bs/USDT: 961,3995 no significa nada para quien decide en
+// bolívares por real. Al lado de cada uno va su traducción.
+//
+// Es una DIVISIÓN por su tasa de compra de reales, así que cuando esa no existe
+// no se escribe nada en vez de inventarse un número.
+function _bsPorReal(tasaVesUsdt){
+  var t=parseFloat(tasaVesUsdt)||0;
+  if(!(t>0)) return null;
+  var rb=tasaDeReferencia("BRL");
+  var brl=rb && rb.tasa;
+  if(!(brl>0)) return null;
+  return Math.round((t/brl)*100)/100;
+}
+// ── ARREGLO 125 · de dónde salen los bolívares ──────────────────────────
+//
+// Sus palabras: "de qué forma lo podemos trabajar cuando haya dinero de ambos
+// lados, o sea allá en bolívares por ventas de USDT o porque yo compré
+// bolívares". El FIFO ya lo mezclaba bien —gasta del más viejo al más nuevo y
+// promedia— pero no había forma de VERLO: la pantalla enseñaba una tasa media y
+// ella no podía saber de dónde salía.
+//
+// Sale de _repartoFIFO(), que es el MISMO recorrido del que sale la tasa
+// ponderada. Calculado aparte, la lista y el número de arriba se separarían con
+// el primer redondeo (el 34,27 contra el 34,28).
+//
+// Y avisa cuando NO alcanza. Registrar una entrega sin lotes que la cubran deja
+// la ganancia calculada contra una tasa prestada, y eso hay que verlo antes de
+// guardar, no después.
+function _htmlDeDondeSalen(res, ruta){
+  if(!res || !ruta) return "";
+  var dest=ruta.dest||"VES";
+  var cant=parseFloat(res.cant)||0;
+  if(!(cant>0)) return "";
+  if(dest!=="VES" && dest!=="BRL") return "";      // sin lotes de esa moneda no hay nada que contar
+  var rep;
+  try{ rep=_repartoFIFO(dest, cant, S.tx && S.tx.cuentaDest); }catch(e){ return ""; }
+  if(!rep || !rep.filas || !rep.filas.length) return "";
+  var uni=(dest==="VES")?"Bs":dest;
+  // La traducción a Bs/real SOLO vale para los lotes de bolívares. Un lote de
+  // reales ya está en reales: dividirlo por la tasa de compra de reales daría
+  // un "≈ 1,01 Bs/real" que no significa nada.
+  var esVes=(dest==="VES");
+  var fila=function(f){
+    var bpr=esVes?_bsPorReal(f.tasa):null;
+    // La fila prestada es la que NO tiene lote detrás, y se dice con esas
+    // palabras: es la única cuya tasa no sale de una operación suya.
+    var de=f.prestada ? "<span style='color:var(--mal)'> · sin lote, tasa prestada</span>"
+                      : "<span style='color:var(--tx4)'> · "+_escAud((f.lote&&f.lote.fecha)||"")+
+                        ((f.lote&&f.lote.permuta)?" · cruce":"")+"</span>";
+    return "<div style='display:flex;justify-content:space-between;gap:8px;padding:3px 0;font-size:11.5px'>"+
+      "<span style='color:var(--tx2)'><b>"+f0(f.usa)+"</b> "+uni+de+"</span>"+
+      "<span style='color:var(--tx3);white-space:nowrap'>"+f2(f.tasa)+" "+uni+"/USDT"+
+        (bpr!==null?" <b style='color:var(--tit)'>≈ "+f2(bpr)+" Bs/real</b>":"")+"</span>"+
+    "</div>";
+  };
+  // El costo medio sale de la misma suma: lo que se gasta entre los USDT que vale.
+  var medio=(rep.usdt>0)?(cant-rep.rest)/rep.usdt:0;   // la cola prestada ya va dentro de rep.usdt
+  var medioBpr=esVes?_bsPorReal(medio):null;
+  var td=parseFloat(res.tdia)||0;
+  var pie="";
+  if(medioBpr!==null && td>0 && ruta.orig==="BRL"){
+    var gana=(td<medioBpr);
+    pie="<div style='margin-top:6px;padding-top:6px;border-top:1px solid var(--ln);font-size:11.5px;color:var(--tx2)'>"+
+      "Te cuestan <b style='color:var(--tit)'>"+f2(medioBpr)+" Bs por real</b> y los das a <b style='color:var(--tit)'>"+
+      f2(td)+"</b> \u2192 <b style='color:"+(gana?"var(--ok)":"var(--mal)")+"'>"+(gana?"ganas":"PIERDES")+"</b></div>";
+  }
+  // Lo que no sale de un lote ya se ve como fila; aquí se dice qué hacer.
+  var prest=rep.filas.filter(function(f){return f.prestada;})[0];
+  var falta="";
+  if(prest)
+    falta="<div style='margin-top:6px;font-size:11.5px;color:var(--mal);font-weight:700'>"+
+      "\u26a0\ufe0f "+f0(prest.usa)+" "+uni+" no salen de ningún lote: se están valorando a "+f2(prest.tasa)+
+      ", la tasa de tu última operación. Registra primero la compra o venta de USDT que los trajo.</div>";
+  else if(rep.rest>0.01)
+    falta="<div style='margin-top:6px;font-size:11.5px;color:var(--mal);font-weight:700'>"+
+      "\u26a0\ufe0f Te faltan "+f0(rep.rest)+" "+uni+" y no hay ninguna tasa con la que valorarlos. "+
+      "Registra la operación de USDT que los trajo.</div>";
+  return "<div style='background:var(--sup2d);border:1px solid var(--ln);border-radius:9px;padding:9px 12px;margin-bottom:8px'>"+
+    "<div style='font-size:10.5px;color:var(--tx4);font-weight:700;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px'>"+
+      "De d\u00f3nde salen los "+f0(cant)+" "+uni+"</div>"+
+    rep.filas.map(fila).join("")+ pie + falta +
+  "</div>";
+}
 function _htmlAvisoCalce(res, ruta){
   if(!res || !res.calce) return "";
   var o=(ruta&&ruta.orig)||"VES", d=(ruta&&ruta.dest)||"BRL";
@@ -18056,6 +18142,9 @@ function upC(key){
   // trozo que cambia al teclear y no tenia id.
   var cn=document.getElementById("calce-nota-"+key);
   if(cn) cn.innerHTML=_htmlAvisoCalce(res, ruta);
+  // ARREGLO 125: el reparto del FIFO cambia con el monto, así que se rehace aquí.
+  var fi=document.getElementById("fifo-"+key);
+  if(fi) fi.innerHTML=_htmlDeDondeSalen(res, ruta);
 }
 
 // ── INVENTORY HELPERS ────────────────────────────────
@@ -18828,17 +18917,29 @@ function getTasaCompraPonderada(moneda,montoOrigen,cuentaOrigenId){
 // ║  NUNCA modificar sin análisis quirúrgico y aprobación.      ║
 // ║  Las tasas TC/TV vienen SIEMPRE de los lotes FIFO reales.   ║
 // ╚══════════════════════════════════════════════════════════════╝
-function getTasaVentaPonderada(monedaDest,montoBs,cuentaDestinoId){
+// ── ARREGLO 125 · el reparto del FIFO, escrito UNA vez ──────────────────
+//
+// Sus palabras del 13/10, sobre el dinero de varios sitios: "de qué forma lo
+// podemos trabajar cuando haya dinero de ambos lados, o sea allá en bolívares
+// por ventas de USDT o porque yo compré bolívares".
+//
+// La cuenta ya la hacía getTasaVentaPonderada: recorre los lotes del más viejo
+// al más nuevo y promedia. Lo que faltaba era PODER VERLO — qué parte sale de
+// cada sitio. El recorrido se saca aquí y la tasa ponderada pasa a leerlo, para
+// que la pantalla y la cuenta no puedan separarse nunca (la regla del 34,27
+// contra el 34,28). Comprobado sobre sus lotes reales: la tasa que sale de aquí
+// es IDÉNTICA a la de antes, monto a monto.
+//
+// Es de solo lectura: no toca el inventario, solo mira.
+function _repartoFIFO(monedaDest, montoBs, cuentaDestinoId){
   normalizarInventarioFIFO();
   var dest=monedaDest||"VES";
   var m=parseFloat(montoBs)||0;
-  var base=getLastTasaVenta(dest,cuentaDestinoId);
-  if(m<=0||base===null) return base;
   var lotesTodos=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda===dest&&(parseFloat(r.tasa)||0)>0;}).sort(ordenFIFO);
   var lotes=cuentaDestinoId?lotesTodos.filter(function(r){return _cuentaOMadre(r.cuentaDestinoId,cuentaDestinoId,dest);}):lotesTodos;
   if(!lotes.length) lotes=lotesTodos; // cuenta nueva sin lotes propios → usar el pool general, igual que getLastTasaVenta
-  if(!lotes.length) return base;
-  var rest=m,usdt=0;
+  if(!lotes.length) return {filas:[], usdt:0, rest:m, lotes:lotes};
+  var rest=m,usdt=0,filas=[];
   for(var i=0;i<lotes.length&&rest>0.01;i++){
     var disp=parseFloat(lotes[i].bsRestante)||0;
     if(disp<=0) continue;
@@ -18847,10 +18948,35 @@ function getTasaVentaPonderada(monedaDest,montoBs,cuentaDestinoId){
     var usar=Math.min(disp,rest);
     usdt+=usar/tasa;
     rest-=usar;
+    filas.push({lote:lotes[i], usa:usar, tasa:tasa, usdt:usar/tasa});
   }
-  if(rest>0.01){ // bolívares insuficientes → el excedente se valora a la tasa más nueva conocida
-    var tNuevaV=_tasaEfectivaLote(lotes[lotes.length-1])||parseFloat(base)||0;
-    if(tNuevaV>0) usdt+=rest/tNuevaV;
+  // Lo que no alcanzan los lotes se valora a la tasa MÁS NUEVA, que es lo que
+  // esta función ha hecho siempre. Lo nuevo es que entra como una fila más y
+  // marcada: antes se sumaba a la tasa y no se enseñaba, así que la lista decía
+  // 1.010,36 y la cuenta usaba otra cosa. La regla del 34,27 contra el 34,28.
+  if(rest>0.01){
+    var tNueva=_tasaEfectivaLote(lotes[lotes.length-1]);
+    if(tNueva>0){
+      usdt+=rest/tNueva;
+      filas.push({lote:null, usa:rest, tasa:tNueva, usdt:rest/tNueva, prestada:true});
+      rest=0;
+    }
+  }
+  return {filas:filas, usdt:usdt, rest:rest, lotes:lotes};
+}
+function getTasaVentaPonderada(monedaDest,montoBs,cuentaDestinoId){
+  normalizarInventarioFIFO();
+  var dest=monedaDest||"VES";
+  var m=parseFloat(montoBs)||0;
+  var base=getLastTasaVenta(dest,cuentaDestinoId);
+  if(m<=0||base===null) return base;
+  var rep=_repartoFIFO(dest,m,cuentaDestinoId);
+  var lotes=rep.lotes;
+  if(!lotes.length) return base;
+  var usdt=rep.usdt;
+  if(rep.rest>0.01){ // ni el último lote tiene tasa → la última venta conocida
+    var tNuevaV=parseFloat(base)||0;
+    if(tNuevaV>0) usdt+=rep.rest/tNuevaV;
   }
   if(usdt<=0) return base;
   return Math.round((m/usdt)*10000)/10000;
@@ -26183,6 +26309,10 @@ function rNueva(){
       "<div id='s3-tx' class='step-box' style='background:var(--mal-sup);border:1px solid var(--rj3a33)'><span style='font-size:11px;color:var(--mal)'>"+f0(cant)+" "+ruta.dest+" ÷ "+f2(tv)+" = </span><span style='font-weight:700;font-size:13px;color:var(--mal)'>−"+f2(uv)+" USDT</span></div>"+
     "</div>":"<div id='s2-tx'></div><div id='s3-tx'></div>")+
     "</div>"+
+    // ARREGLO 125: de dónde salen los bolívares. Con su id, para que upC() lo
+    // refresque al teclear — si no, se queda del último repintado y enseña un
+    // reparto que ya no es el del monto que hay escrito (ARREGLO 55).
+    "<div id='fifo-tx'>"+_htmlDeDondeSalen(_rTx, ruta)+"</div>"+
     "<div id='cp-tx' class='result-box"+(ok&&prNeto>0&&tc>0&&tv>0?" gain":"")+"'>"+
     (ok&&tc>0&&tv>0?"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:6px'><div style='font-size:11px;font-weight:700;color:var(--tx3)'>GANANCIA = USDT comprados − USDT vendidos</div><div style='font-size:22px;font-weight:800;color:"+(prNeto>0?"var(--ok)":"var(--mal)")+"'>"+(prNeto>0?"+ ":"")+f2(prNeto)+" USDT</div></div><div style='font-size:11px;color:var(--tx2b)'>"+f2(uc)+" − "+f2(uv)+""+(comUsdtVivo>0?" − "+f2(comUsdtVivo)+" (comisión del banco)": "")+" = <b style='color:"+(prNeto>0?"var(--ok)":"var(--mal)")+"'>"+f2(prNeto)+"</b></div>":"<div style='text-align:center;color:var(--tx4);font-size:12px;padding:8px'>Completa monto, tasa del día y tasas USDT</div>")+
     "</div>"+

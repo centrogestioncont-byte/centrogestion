@@ -1289,6 +1289,69 @@ como *"tus bolívares valen menos hoy"*. Es la convención de toda la app —cad
 operación se valora con las tasas de su momento— y no se cambia aquí sin decidirlo
 a propósito.
 
+### De dónde salen los bolívares, y en SU unidad (ARREGLO 125)
+
+Sus palabras del 13/10: *"de qué forma lo podemos trabajar cuando haya dinero de
+ambos lados, o sea allá en bolívares por ventas de USDT o porque yo compré
+bolívares"* y *"tienen unas tasas raras ahí, a mí eso me crea confusión"*.
+
+**El FIFO ya lo mezclaba bien.** Gasta del lote más viejo al más nuevo y promedia;
+eso no había que arreglarlo. Lo que faltaba era **poder verlo**: la pantalla
+enseñaba una tasa media y no había forma de saber de dónde salía. Con sus dos
+orígenes del 13/10, ahora lo dice:
+
+```
+DE DÓNDE SALEN LOS 199.962 BS
+  147.000 Bs · 10/11 · cruce    1.010,38 Bs/USDT  ≈ 200,76 Bs/real
+   52.962 Bs · 10/12             966,67 Bs/USDT  ≈ 192,08 Bs/real
+Te cuestan 198,39 Bs por real y los das a 189,00 → ganas
+```
+
+- **El recorrido se escribe UNA vez, en `_repartoFIFO()`**, y lo leen la lista y
+  `getTasaVentaPonderada()`. Calculado aparte, con el primer redondeo la lista y
+  el número de arriba dirían cosas distintas — el 34,27 contra el 34,28.
+  Comprobado contra la versión desplegada: **idéntico en 154 comparaciones**
+  (sus lotes reales más doce inventados × 11 montos × cuentas × VES/BRL).
+- **Es de solo lectura.** Mirar de dónde sale el dinero no puede gastarlo: no
+  toca `bsRestante` ni escribe en el inventario. Hay una prueba negativa dedicada.
+- **La traducción a Bs/real es una DIVISIÓN** por su tasa de compra de reales
+  (`tasaDeReferencia("BRL")`). Multiplicar daría un número creíble y falso. Sin
+  esa tasa **no se escribe nada**, no se inventa un número.
+- **Y solo vale para los lotes de bolívares.** Un lote de reales ya está en
+  reales: dividirlo por la tasa de compra de reales daría un *"≈ 1,01 Bs/real"*
+  que no significa nada. Lo cacé escribiéndolo antes de probarlo.
+
+#### Lo que se valora, se enseña — y eso lo encontró medirlo
+
+El primer intento listaba solo los lotes, y **la lista no cuadraba con la tasa**.
+`getTasaVentaPonderada()` valora lo que no alcanzan los lotes a la tasa más nueva
+conocida — lo ha hecho siempre y está bien— pero esa parte **no se enseñaba**.
+Medido con sus lotes del 13/10, una ida de 1.058 R$ a 189:
+
+```
+la lista decía ...  196.388 Bs a 1.010,36       →  de las filas sale 1.028,74
+la cuenta usaba ..  1.010,36                   ←  con la cola dentro
+```
+
+Ahora la cola entra **como una fila más y marcada** —*"3.574 Bs · sin lote, tasa
+prestada"*— y debajo un aviso que dice **a qué tasa se están valorando y qué
+hacer**: registrar primero la operación de USDT que los trajo. Una fila sola
+enseña el número, no que hay algo que registrar.
+
+**La lección, que es la cara B de siempre:** las guardias estructurales dieron
+verdes con la lista y la tasa separadas, porque el código decía lo que debía
+decir. Lo cazó **ejecutarlo con sus lotes** y restar los dos números.
+
+#### Dos cosas del entorno que costaron, por si vuelven
+
+- **`getTasaCompraPonderada()` tiene el MISMO bucle** y no se tocó: el 125 va del
+  dinero que **sale**. Una prueba negativa anclada en `usdt+=usar/tasa;` inyectó
+  el fallo en esa otra función y la suite pasó — el ancla tenía que incluir el
+  `filas.push`. **Un ancla ambigua convierte una prueba negativa en nada.**
+- **Un lote con fecha a más de 30 días vista se lee del año pasado** (ARREGLO 51),
+  así que unas fechas de prueba `11/10` y `12/10` salieron en orden invertido. No
+  era un fallo: es la regla del cambio de año haciendo su trabajo.
+
 ### La tasa de referencia sale sola — no la escribas a mano
 
 Antes mandaba lo que ella escribía en el panel 💱, y mandaba para siempre:
