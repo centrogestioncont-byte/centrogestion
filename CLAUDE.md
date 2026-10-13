@@ -1958,6 +1958,60 @@ o de Mercado Bitcoin cuando Binance bloquea al servidor por país— y se usa
 Y **solo entra si la suya tiene un día o más**: con una operación de hoy manda
 lo medido, no lo mirado a ojo.
 
+#### Y "¿a cómo está ahorita?" hay que poder probarlo (ARREGLO 129)
+
+Sus palabras del 13/10: *"¿dónde coloco la tasa de ahorita de los USDT para ver
+si la subo o la bajo en ambos lados?"*.
+
+El 128 dejó el campo **solo cuando la app no tenía nada**. Si registraba una
+operación de USDT ese día, los campos desaparecían — y entonces no había dónde
+preguntarse *"¿y si está a 1.050?"*, que es justo para lo que los quería.
+
+- **La regla pasa a ser "manda la MÁS NUEVA".** El id de un lote es
+  `Date.now()`, así que la aproximada guarda su hora (`ts`) y se compara: si la
+  escribe después de registrar, manda la suya; si registra después de
+  escribirla, manda la medida. Antes la operación ganaba por ser del mismo día,
+  y eso dejaba el campo muerto. Un lote **de permuta no cuenta** (ARREGLO 106):
+  no es una operación de USDT.
+- **El campo sale RELLENO con lo que la app usa ahora**, no vacío. Para subirla
+  o bajarla hay que ver de dónde parte; vacío obliga a buscar el número en otra
+  pantalla antes de poder tocarlo.
+- **Los TRES valores, como siempre** (ARREGLO 116, 117, 123): *"Con esta sale
+  193 · 218; con la de la app saldría 185 · 209"*, y el botón de volver. Decir
+  solo *"estás probando"* obliga a borrarlo para saber de dónde venía.
+- **La comparación sale de la MISMA cuenta.** `_tasasConLoMio()` apaga la
+  aproximada, pregunta y la vuelve a encender **en un `finally`** — igual que
+  `_prConPermuta` y `_simularConFecha`: mirar el resultado no puede ser ya
+  haberlo aplicado. Una segunda fórmula escrita al lado se separaría con el
+  primer redondeo.
+- **Volver borra las DOS.** Probar con una y dejarse la otra puesta da un suelo
+  salido de una mezcla que ella no eligió.
+- **Los campos NO se abren solos NUNCA.** Sus palabras: *"no quiero saturar la
+  pantalla, no me lo pongas allí afuera para que de una vez coloque la nueva
+  tasa de USDT, sino como un botón, si en dado caso yo quiero agregar una
+  nueva"*. Lo que sale solo es el **aviso** —que su tasa tiene tres días es algo
+  que necesita saber— y debajo el botón. Escribirla es decisión suya. Es **una
+  regla sola, sin excepciones**, también cuando no hay suelo ninguno: con dos
+  reglas, un día se abre cuando no toca. El botón se dibuja desde un solo sitio
+  (`_botonTasaUsdt`) en los tres estados, y la guardia cuenta las llamadas.
+
+#### El botón de arriba es la PREGUNTA; el campo de abajo, el DATO (ARREGLO 129)
+
+Sus palabras, con las dos capturas delante: *"cuando le doy de br a vzla abajo
+dice otra cosa y igual del otro lado, ¿esto está bien?"*.
+
+**Está bien, y se lee mal.** Para despejar una tasa hace falta la otra, así que
+pidiendo la 🇻🇪→🇧🇷 el campo que hay que rellenar es la 🇧🇷→🇻🇪. Pero los dos se
+escribían con el mismo molde —`_ruta(dir).boton`, literalmente la misma cadena—
+así que arriba ponía `Tasa 🇻🇪→🇧🇷` y justo debajo `Tasa 🇧🇷→🇻🇪`, sin nada que
+dijera cuál era cuál. El ARREGLO 122 ya lo había señalado y lo dejó a medias.
+
+Ahora el campo tiene su propio rótulo (`campoRot`): **"Tu 🇧🇷→🇻🇪 de ahora"** —
+*tuya* y *de ahora*, o sea un dato que ella ya tiene, no la respuesta. La
+guardia exige que `campoRot` y `boton` sean distintos **y** que la calculadora
+lo use en los **dos** campos: pidiendo solo que apareciera, cambiar uno de los
+dos pasaba la prueba con el rótulo viejo puesto en el otro.
+
 #### Lo que esto NO contesta, y está dicho
 
 **La competencia.** De sus cuatro referencias, dos son apps y dos son grupos de
