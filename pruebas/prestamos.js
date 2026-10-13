@@ -50,7 +50,7 @@ function sacarConstante(nombre) {
   }
   throw new Error("la constante " + nombre + " no termina en ';'");
 }
-const CONSTANTES = ["_APROX_LS", "_COLCHON_DEF", "_RUTA_DE", "CG_BASE", "_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO", "_AVISO_UMBRAL", "_MERCADO_MONTO_DEF",
+const CONSTANTES = ["_APROX_LS", "_COLCHON_DEF", "_SIN_APROX", "_RUTA_DE", "CG_BASE", "_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO", "_AVISO_UMBRAL", "_MERCADO_MONTO_DEF",
                     "_BIN_COLS_C2C", "_BIN_COLS_TX", "MONEDAS_COMPRA", "MONEDAS_VENTA",
                     "MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
                     "_MERGE_OBJETOS", "_MERGE_BLOQUES", "_MERGE_HISTORIAL", "_RATE_LIMITS",
@@ -72,8 +72,9 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "_equilibrio", "sueloQueManda",
                     // ARREGLO 128 - la tasa recomendada y la aproximada de hoy
                     "_aproxTodas", "_tasaAprox", "_guardarTasaAprox", "_diasDeRef",
-                    "_colchon", "_tasasRecomendadas", "_tasaCorta", "_setAprox", "publicarRecomendadas",
-                    "_campoAprox", "_htmlPublicaHoy", "guardarColchones",
+                    "_colchon", "_tasasRecomendadas", "_tasaCorta", "_tasasConLoMio",
+                    "_tsUltimaOpUSDT", "_aproxManda", "_toggleProbar", "_volverAMiTasa", "_setAprox", "publicarRecomendadas",
+                    "_campoAprox", "_htmlPublicaHoy", "guardarColchones", "_htmlCalceCuerpo", "_botonTasaUsdt",
                     "_calceK", "_calceGan", "_calceVuelta", "_calceIda", "_cg", "_cgSet", "_cgFraccion",
                     "_htmlPalancaVenta", "_permutaSugerida", "_prConPermuta", "_htmlPermutaFuera", "_usarPermutaSugerida", "txMetodo", "esCalceDirecto", "esRutaCalce", "getAutoRates", "_cgBase", "_cgGanUsdt", "_htmlComparaTasa", "_htmlCabeceraTasas", "_htmlCalceRes", "_htmlCalceCuerpo", "_cgModo", "_cgFuente",
                     "margenSobreSuelo", "_calcTasas", "_misTasasPublicadas", "_fpTasa",
@@ -9468,6 +9469,21 @@ console.log("\nARREGLO 128 · la tasa que publica, recomendada sola");
   ok(/if\(!r\)\{/.test(tar) && /falta saber a c/.test(tar),
      "sin suelo la tarjeta dice qué falta en vez de inventar una tasa");
 
+  // ARREGLO 129b: los campos NUNCA se abren solos. Sus palabras: "no me lo
+  // pongas allí afuera para que de una vez coloque la nueva tasa de USDT,
+  // sino como un botón". Lo que sale solo es el AVISO de que su tasa
+  // envejeció; escribirla es decisión suya.
+  ok(!/if\(pideC\|\|pideV\)\{/.test(tar),
+     "los campos no se abren por que la app no tenga dato fresco");
+  ok((tar.match(/_campoAprox\(/g)||[]).length===4,
+     "los cuatro campos cuelgan de que ella lo pida",
+     (tar.match(/_campoAprox\(/g)||[]).length+" llamadas");
+  ok(/_botonTasaUsdt\(/.test(tar) && /S\._probarTasa/.test(tar),
+     "y la puerta es el botón, en los dos caminos");
+  ok((tar.match(/_botonTasaUsdt\(/g)||[]).length===3,
+     "el botón se dibuja desde UN sitio, en los tres estados",
+     (tar.match(/_botonTasaUsdt\(/g)||[]).length+" llamadas");
+
   // ── Funcional: la aproximada caduca y solo entra si la suya es vieja ─
   const guardado = {};
   global.localStorage = {
@@ -9486,30 +9502,93 @@ console.log("\nARREGLO 128 · la tasa que publica, recomendada sola");
   ok(F._tasaAprox("VES")===1020,
      "la de hoy sí");
 
-  // Con una operación de HOY, la aproximada no manda: lo medido gana a lo
-  // mirado a ojo.
+  // ── ARREGLO 129: manda la MÁS NUEVA ────────────────────────────────
+  // El id de un lote es Date.now(), así que se puede comparar con la hora en
+  // que ella escribió la suya. Antes la operación ganaba por ser de hoy, y
+  // eso dejaba el campo de "probar con otra tasa" sin poder hacer nada.
   S.config={comision_binance:0.007};
   S.tasasDia={}; S._tasasDiaMeta={};
+  const T0 = Date.now();
   S.inventarioUsdt=[
-    {id:1,tipo:"compra",moneda:"BRL",fecha:"10/10",fechaIso:hoy,tasa:5.0327,usdt:400,restante:400},
-    {id:2,tipo:"venta", moneda:"VES",fecha:"10/11",fechaIso:hoy,tasa:1010.66,usdt:150,bs:151599,bsRestante:0}
+    {id:T0-60000,tipo:"compra",moneda:"BRL",fecha:"10/10",fechaIso:hoy,tasa:5.0327,usdt:400,restante:400},
+    {id:T0-60000,tipo:"venta", moneda:"VES",fecha:"10/11",fechaIso:hoy,tasa:1010.66,usdt:150,bs:151599,bsRestante:0}
   ];
   S.inventarioUsdt_cerrado=[];
-  let Q=F.sueloQueManda();
-  ok(Q.apxV===false && Q.apxC===false,
-     "con una operación de hoy, la aproximada NO se usa");
 
-  // Con la operación vieja, sí.
-  S.inventarioUsdt[1].fechaIso=ayer;
-  S.inventarioUsdt[1].fecha="10/11";
-  Q=F.sueloQueManda();
-  ok(Q.dV>=1, "la operación de bolívares se lee como de hace un día o más");
+  // Escrita DESPUÉS de la operación → manda la suya.
+  guardado["cgTasaAprox"]=JSON.stringify({VES:{v:1020, iso:hoy, ts:T0}});
+  let Q=F.sueloQueManda();
   ok(Q.apxV===true && Q.miV===1020,
-     "y entonces manda la aproximada que escribió hoy");
+     "una tasa escrita DESPUÉS de la última operación manda");
+
+  // Escrita ANTES y luego registra la operación → manda la medida.
+  guardado["cgTasaAprox"]=JSON.stringify({VES:{v:1020, iso:hoy, ts:T0-120000}});
+  Q=F.sueloQueManda();
+  ok(Q.apxV===false && Math.abs(Q.miV-1010.66)<0.01,
+     "y si después registra la operación de verdad, manda la medida");
+
+  // Sin ninguna operación de esa moneda, la suya vale igual.
+  S.inventarioUsdt=[S.inventarioUsdt[0]];
+  Q=F.sueloQueManda();
+  ok(Q.apxV===true && Q.miV===1020,
+     "sin operación de esa moneda, vale lo que ella escribió aunque sea vieja del día");
 
   // Y aun así no movió la contabilidad.
+  S.inventarioUsdt=[
+    {id:T0-60000,tipo:"compra",moneda:"BRL",fecha:"10/10",fechaIso:hoy,tasa:5.0327,usdt:400,restante:400},
+    {id:T0-60000,tipo:"venta", moneda:"VES",fecha:"10/11",fechaIso:hoy,tasa:1010.66,usdt:150,bs:151599,bsRestante:0}
+  ];
+  guardado["cgTasaAprox"]=JSON.stringify({VES:{v:1020, iso:hoy, ts:T0}});
   ok(F.tasaDeReferencia("VES").tasa===1010.66,
      "pero tasaDeReferencia sigue devolviendo la de su operación");
+
+  // ── La comparación de los tres valores sale de la MISMA cuenta ─────
+  const conOtra=F._tasasRecomendadas(), conLoMio=F._tasasConLoMio();
+  ok(conOtra && conLoMio && conOtra.suelo!==conLoMio.suelo,
+     "_tasasConLoMio da el suelo SIN la tasa escrita, para poder compararlos");
+  ok(F._tasasRecomendadas().suelo===conOtra.suelo,
+     "y deja la bandera como estaba: mirar el resultado no es aplicarlo");
+  ok(/finally/.test(F._tasasConLoMio.toString()),
+     "la bandera se devuelve en un finally");
+
+  // ── Probar y volver no repintan (ARREGLO 32) ──────────────────────
+  ok(!/\bR\(\)/.test(sacarFuncion("_toggleProbar")) &&
+     !/\bR\(\)/.test(sacarFuncion("_volverAMiTasa")),
+     "abrir y cerrar 'probar con otra tasa' no llama a R()");
+  ok(/_guardarTasaAprox\("BRL",""\)/.test(sacarFuncion("_volverAMiTasa")) &&
+     /_guardarTasaAprox\("VES",""\)/.test(sacarFuncion("_volverAMiTasa")),
+     "volver borra las DOS, no deja media mezcla puesta");
+
+  // ── El botón de arriba y el campo de abajo ya no se escriben igual ─
+  ok(F._RUTA_DE.ida.campoRot!==F._RUTA_DE.ida.boton &&
+     F._RUTA_DE.vuelta.campoRot!==F._RUTA_DE.vuelta.boton,
+     "el rótulo del campo no es el mismo texto que el botón del modo");
+  // Las DOS, no una: cambiando solo la de la ida, "campoRot" seguía
+  // apareciendo y la guardia pasaba con el rótulo viejo puesto en la vuelta.
+  ok((sacarFuncion("_htmlCalceCuerpo").match(/\.campoRot/g)||[]).length===2,
+     "y la calculadora usa ese rótulo en los DOS campos, no el del botón",
+     (sacarFuncion("_htmlCalceCuerpo").match(/\.campoRot/g)||[]).length+" sitios");
+
+  // Guardar tiene que dejar la HORA escrita. Las pruebas de arriba la meten a
+  // mano en localStorage, así que sin esto se podía quitar del escritor y la
+  // regla "manda la más nueva" quedaba muerta sin que nada fallara.
+  guardado["cgTasaAprox"]="{}";
+  F._guardarTasaAprox("VES","1.030");
+  const esc=JSON.parse(guardado["cgTasaAprox"]).VES||{};
+  ok(esc.v===1030 && esc.iso===hoy && (parseFloat(esc.ts)||0)>1.5e12,
+     "guardar la aproximada deja el valor, el día Y la hora",
+     JSON.stringify(esc));
+
+  // Un lote de permuta NO es una operación de USDT (ARREGLO 106), así que no
+  // puede ganarle a lo que ella escribió.
+  S.inventarioUsdt=[{id:Date.now()+90000,tipo:"venta",moneda:"VES",fecha:"10/13",
+                     fechaIso:hoy,tasa:999,usdt:150,bs:149850,bsRestante:0,permuta:true}];
+  S.inventarioUsdt_cerrado=[];
+  ok(F._tsUltimaOpUSDT("VES")===0,
+     "un lote de permuta no cuenta como operación de USDT");
+  guardado["cgTasaAprox"]=JSON.stringify({VES:{v:1020, iso:hoy, ts:Date.now()}});
+  ok(F._aproxManda("VES")===true,
+     "así que una permuta posterior no le gana a la tasa que ella escribió");
 
   delete global.localStorage;
 }

@@ -2913,7 +2913,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261013_v211";
+var APP_VERSION = "20261013_v212";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -24485,8 +24485,39 @@ function _tasaAprox(mon){
 function _guardarTasaAprox(mon,val){
   var n=parseFloat(_num(val));
   var o=_aproxTodas();
-  if(!(n>0)) delete o[mon]; else o[mon]={v:n, iso:td()};
+  // ARREGLO 129: se guarda la HORA, no solo el día. Con ella la regla pasa a
+  // ser "manda la más nueva": si después de escribirla registra una compra o
+  // venta de USDT de verdad, manda la medida; si la escribe después de
+  // registrarla, manda la suya. Antes la operación ganaba siempre que fuera
+  // de hoy, y eso dejaba el campo de "probar con otra tasa" sin poder hacer
+  // nada — que es justo para lo que existe.
+  if(!(n>0)) delete o[mon]; else o[mon]={v:n, iso:td(), ts:Date.now()};
   try{ localStorage.setItem(_APROX_LS, JSON.stringify(o)); }catch(e){}
+}
+// Cuándo se registró la última operación de USDT de esa moneda, en ms. El id
+// de un lote es Date.now() desde hace tiempo; los viejos no lo son y
+// devuelven 0, así que ahí gana lo que ella escriba — que es lo correcto:
+// un lote sin hora no se puede comparar con una tasa de esta mañana.
+function _tsUltimaOpUSDT(mon){
+  var mejor=0;
+  function _mirar(arr){
+    for(var i=0;i<(arr||[]).length;i++){
+      var l=arr[i];
+      if(l.moneda!==mon || l.permuta || !((parseFloat(l.usdt)||0)>0)) continue;
+      var t=parseFloat(l.id)||0;
+      if(t>1.5e12 && t>mejor) mejor=t;
+    }
+  }
+  _mirar(S.inventarioUsdt); _mirar(S.inventarioUsdt_cerrado);
+  return mejor;
+}
+// ¿Manda lo que ella escribió? Solo si es de hoy Y lo escribió DESPUÉS de la
+// última operación de USDT de esa moneda.
+function _aproxManda(mon){
+  var o=_aproxTodas()[mon];
+  if(!o || o.iso!==td()) return false;
+  if(!((parseFloat(o.v)||0)>0)) return false;
+  return (parseFloat(o.ts)||0) > _tsUltimaOpUSDT(mon);
 }
 // Cuántos días tiene la tasa de referencia de esa moneda. null cuando no se
 // puede saber — fijada a mano, escrita sin fecha, o sin tasa. Ahí no se avisa
@@ -24509,10 +24540,10 @@ function sueloQueManda(){
   // un precio que ya no existe, y el suelo es lo único que no se puede
   // permitir salir optimista: con él publica.
   var dC=_diasDeRef(rc), dV=_diasDeRef(rv);
-  var aC=_tasaAprox("BRL"), aV=_tasaAprox("VES");
+  var aC=_SIN_APROX?null:_tasaAprox("BRL"), aV=_SIN_APROX?null:_tasaAprox("VES");
   var apxC=false, apxV=false;
-  if(aC>0 && (!(miC>0) || (dC!==null&&dC>=1))){ miC=aC; apxC=true; }
-  if(aV>0 && (!(miV>0) || (dV!==null&&dV>=1))){ miV=aV; apxV=true; }
+  if(aC>0 && (!(miC>0) || _aproxManda("BRL"))){ miC=aC; apxC=true; }
+  if(aV>0 && (!(miV>0) || _aproxManda("VES"))){ miV=aV; apxV=true; }
   var eqMio=_equilibrio(miC,miV);
   // El mercado, si hay lectura.
   var m=_MERCADO.datos, mc=null, mv=null, eqMerc=null;
@@ -25416,11 +25447,17 @@ var _RUTA_DE = {
   ida:    {corto:"\ud83c\udde7\ud83c\uddf7\u2192\ud83c\uddfb\ud83c\uddea Brasil \u2192 Venezuela",
            quien:"el cliente te da reales, t\u00fa entregas bol\u00edvares",
            campo:"Bs que le das por real",
+           // ARREGLO 129: el BOTÓN de arriba es la pregunta y el CAMPO de
+           // abajo es el dato. Escritos los dos como "Tasa 🇧🇷→🇻🇪" se leen
+           // igual, y para despejar una hace falta la otra — así que arriba
+           // dice una ruta y abajo la contraria, sin nada que lo explique.
+           campoRot:"Tu \ud83c\udde7\ud83c\uddf7\u2192\ud83c\uddfb\ud83c\uddea de ahora",
            boton:"Tasa \ud83c\udde7\ud83c\uddf7\u2192\ud83c\uddfb\ud83c\uddea",
            flechas:"\ud83c\udde7\ud83c\uddf7\u2192\ud83c\uddfb\ud83c\uddea"},
   vuelta: {corto:"\ud83c\uddfb\ud83c\uddea\u2192\ud83c\udde7\ud83c\uddf7 Venezuela \u2192 Brasil",
            quien:"el cliente te da bol\u00edvares, t\u00fa entregas reales",
            campo:"Bs que te dan por real",
+           campoRot:"Tu \ud83c\uddfb\ud83c\uddea\u2192\ud83c\udde7\ud83c\uddf7 de ahora",
            boton:"Tasa \ud83c\uddfb\ud83c\uddea\u2192\ud83c\udde7\ud83c\uddf7",
            flechas:"\ud83c\uddfb\ud83c\uddea\u2192\ud83c\udde7\ud83c\uddf7"}
 };
@@ -25761,9 +25798,9 @@ function _htmlCalceCuerpo(){
   // para usar la pantalla, solo para salirse de su medida de siempre.
   campos.push(campo("monto","Por cada","reales del cliente","500"));
   if(g.modo==="gan"||g.modo==="vuelta")
-    campos.push(campo("ida",_ruta("ida").boton,_ruta("ida").campo,"188"));
+    campos.push(campo("ida",_ruta("ida").campoRot,_ruta("ida").campo,"188"));
   if((g.modo==="gan"||g.modo==="ida") && !esP2P)
-    campos.push(campo("vuelta",_ruta("vuelta").boton,_ruta("vuelta").campo,"210"));
+    campos.push(campo("vuelta",_ruta("vuelta").campoRot,_ruta("vuelta").campo,"210"));
   if(g.modo==="vuelta"||g.modo==="ida")
     campos.push(campo("meta","Quiero ganar","USDT por cada "+f0(_cgBase())+" R$","10"));
   if(g.fuente==="mixto")
@@ -25955,6 +25992,16 @@ function _tasaCorta(n){
   if(!isFinite(v)) return "\u2014";
   return (Math.abs(v-Math.round(v))<0.005) ? f0(Math.round(v)) : f2(v);
 }
+// ARREGLO 129: para poder decirle "con la tuya saldría X y con la que
+// escribiste sale Y" hace falta la MISMA cuenta dos veces, no una segunda
+// fórmula escrita al lado. Se apaga la aproximada, se pregunta, y se vuelve a
+// encender en un finally — igual que _prConPermuta y _simularConFecha: mirar
+// el resultado no puede ser ya haberlo aplicado.
+var _SIN_APROX = false;
+function _tasasConLoMio(){
+  _SIN_APROX=true;
+  try{ return _tasasRecomendadas(); } finally { _SIN_APROX=false; }
+}
 function _tasasRecomendadas(){
   var Q=sueloQueManda();
   if(!Q || !(Q.v>0)) return null;
@@ -25990,15 +26037,56 @@ function publicarRecomendadas(){
 // operación de esa moneda tiene más de un día (o no hay) y el mercado no
 // contestó por ese lado. Si el mercado contesta no se pregunta nada — una
 // lectura de verdad vale más que un número recordado.
-function _campoAprox(mon,rot,ph){
+// ARREGLO 129: el campo sale relleno con lo que la app está usando AHORA, no
+// vacío. Sus palabras del 13/10: "dónde coloco la tasa de ahorita de los USDT
+// para ver si la subo o la bajo en ambos lados" — para subirla o bajarla hay
+// que ver de dónde parte. Vacío obliga a buscar el número en otra pantalla
+// antes de poder tocarlo.
+function _campoAprox(mon,rot,ph,actual){
   var v=_tasaAprox(mon);
+  var val=(v!==null)?v:((actual>0)?Math.round(actual*10000)/10000:null);
   return "<div style='flex:1 1 140px;min-width:0'>"+
     "<label style='font-size:10.5px;font-weight:700;color:var(--tx3);display:block;margin-bottom:3px'>"+rot+"</label>"+
-    "<input type='text' inputmode='decimal' placeholder='"+ph+"' value='"+_escAud(v!==null?_comaCab(String(v)):"")+"' "+
+    "<input type='text' inputmode='decimal' placeholder='"+ph+"' value='"+_escAud(val!==null?_comaCab(String(val)):"")+"' "+
       "oninput='_setAprox(\""+mon+"\",this.value)' "+
       "style='width:100%;padding:9px;border:1.5px solid var(--avi-ln);border-radius:9px;font-size:15px;"+
       "font-weight:800;font-family:inherit;background:var(--sup);color:var(--tit)'>"+
   "</div>";
+}
+// Abrir o cerrar "probar con otra tasa" NO repinta (ARREGLO 32): se rehace la
+// tarjeta por su id, como todo lo demás de esta pantalla.
+function _toggleProbar(){
+  S._probarTasa=!S._probarTasa;
+  var n=document.getElementById("tasas-publica");
+  if(n) n.innerHTML=_htmlPublicaHoy();
+}
+// Volver a la tasa de la app. Borra las dos de un toque: probar con una y
+// dejarse la otra puesta es justo lo que haría que el suelo saliera de una
+// mezcla que ella no eligió.
+function _volverAMiTasa(){
+  _guardarTasaAprox("BRL","");
+  _guardarTasaAprox("VES","");
+  S._probarTasa=false;
+  var n=document.getElementById("tasas-publica");
+  if(n) n.innerHTML=_htmlPublicaHoy();
+  var c=document.getElementById("tasas-cab");
+  if(c) c.innerHTML=_htmlCabeceraTasas();
+  _refrescarAvisosTasa();
+}
+// ARREGLO 129b. Sus palabras del 13/10: "no quiero saturar la pantalla, no me
+// lo pongas allí afuera para que de una vez coloque la nueva tasa de USDT,
+// sino como un botón, si en dado caso yo quiero agregar una nueva".
+//
+// Los campos NO se abren solos NUNCA, ni siquiera cuando la app no tiene dato
+// fresco. Lo que sale solo es el AVISO —que su tasa tiene tres días es algo
+// que necesita saber— pero escribirla es decisión suya y va detrás de este
+// botón. Una regla sola, sin excepciones: dos reglas y un día se abre cuando
+// no toca.
+function _botonTasaUsdt(rot, fuerte){
+  return "<div style='text-align:center;margin-top:"+(fuerte?"4px":"9px")+"'>"+
+    "<span onclick='_toggleProbar()' style='font-size:11."+(fuerte?"5":"")+"px;"+
+    "color:var(--"+(fuerte?"avi-tx":"tx4")+");font-weight:"+(fuerte?"800":"700")+";"+
+    "cursor:pointer;text-decoration:underline'>"+rot+"</span></div>";
 }
 function _htmlPublicaHoy(){
   var r=_tasasRecomendadas();
@@ -26016,14 +26104,17 @@ function _htmlPublicaHoy(){
     // un suelo adivinado es con el que publicaría mal.
     h+="<div style='font-size:12.5px;color:var(--avi-tx);line-height:1.55;margin-bottom:10px'>"+
        "Todavía no puedo recomendarte una tasa: falta saber a cómo está el USDT."+
-       "</div>"+
-       "<div style='display:flex;gap:9px;flex-wrap:wrap'>"+
-         _campoAprox("BRL","USDT en reales","ej: 5,03")+
-         _campoAprox("VES","USDT en bolívares","ej: 1.010")+
-       "</div>"+
-       "<div style='font-size:10.5px;color:var(--tx4);margin-top:7px;line-height:1.5'>"+
-       "Lo que escribas aquí vale <b>solo hoy</b> y no cambia tu contabilidad: "+
-       "en cuanto registres una compra o venta de USDT, manda la de verdad.</div>";
+       "</div>";
+    if(S._probarTasa){
+      h+="<div style='display:flex;gap:9px;flex-wrap:wrap'>"+
+           _campoAprox("BRL","USDT en reales","ej: 5,03",Q&&Q.miC)+
+           _campoAprox("VES","USDT en bolívares","ej: 1.010",Q&&Q.miV)+
+         "</div>"+
+         "<div style='font-size:10.5px;color:var(--tx4);margin-top:7px;line-height:1.5'>"+
+         "Vale <b>solo hoy</b> y no cambia tu contabilidad.</div>";
+    }else{
+      h+=_botonTasaUsdt("escribir la tasa del USDT", true);
+    }
     return h;
   }
 
@@ -26081,20 +26172,66 @@ function _htmlPublicaHoy(){
   // El campo de la aproximada también sale CON tasa recomendada: que haya
   // suelo no quiere decir que sea de hoy. Decir los días y no dar dónde
   // corregirlo es la mitad del aviso.
-  if(pideC||pideV){
+  // ARREGLO 129: probando, salen los DOS campos aunque la app no necesite
+  // ninguno — para ver si sube o baja hay que poder mover los dos lados.
+  var probando=!!S._probarTasa;
+  var usandoOtra=(Q.apxC||Q.apxV);
+  var falta=(pideC||pideV);       // la app no tiene dato fresco de ese lado
+  // El aviso de que su tasa envejeció sale SIEMPRE; los campos, nunca solos.
+  if(falta && !probando && !usandoOtra){
+    var d0=Math.max(pideC?(Q.dC||0):0, pideV?(Q.dV||0):0);
+    h+="<div style='margin-top:11px;background:var(--avi-sup2);border:1px solid var(--avi-ln);"+
+       "border-radius:9px;padding:10px 11px'>"+
+       "<div style='font-size:11.5px;color:var(--avi-tx);line-height:1.5'>"+
+       (d0>0 ? ("Tu última operación de USDT tiene <b>"+f0(d0)+(d0===1?" día":" días")+
+                "</b> y el mercado no contesta, así que el suelo sale de esa.")
+             : "El mercado no contesta, así que el suelo sale de tus operaciones.")+
+       "</div>"+
+       _botonTasaUsdt("escribir la tasa de hoy", true)+
+       "</div>";
+  }
+  if(probando||usandoOtra){ pideC=true; pideV=true; }
+  if(probando||usandoOtra){
     var dias=Math.max(pideC?(Q.dC||0):0, pideV?(Q.dV||0):0);
     h+="<div style='margin-top:11px;background:var(--avi-sup2);border:1px solid var(--avi-ln);"+
        "border-radius:9px;padding:10px 11px'>"+
        "<div style='font-size:11.5px;color:var(--avi-tx);line-height:1.5;margin-bottom:8px'>"+
-       "Tu última operación de USDT tiene <b>"+f0(dias)+(dias===1?" día":" días")+"</b> y el mercado "+
-       "no contesta. Si sabes a cómo está hoy, escríbelo y el suelo se recalcula.</div>"+
+       (usandoOtra
+         ? "Estás probando con una tasa de USDT que escribiste tú."
+         : (dias>0
+             ? ("Tu última operación de USDT tiene <b>"+f0(dias)+(dias===1?" día":" días")+
+                "</b> y el mercado no contesta. Si sabes a cómo está hoy, escríbelo y el suelo se recalcula.")
+             : "Mueve la tasa del USDT y mira cómo quedan las dos tasas de arriba."))+
+       "</div>"+
        "<div style='display:flex;gap:9px;flex-wrap:wrap'>"+
-         (pideC?_campoAprox("BRL","USDT en reales","ej: 5,03"):"")+
-         (pideV?_campoAprox("VES","USDT en bolívares","ej: 1.010"):"")+
+         (pideC?_campoAprox("BRL","USDT en reales","ej: 5,03",Q.miC):"")+
+         (pideV?_campoAprox("VES","USDT en bolívares","ej: 1.010",Q.miV):"")+
        "</div>"+
        "<div style='font-size:10.5px;color:var(--tx4);margin-top:7px;line-height:1.5'>"+
        "Vale <b>solo hoy</b> y no cambia tu contabilidad.</div>"+
+       // Los TRES valores, como el override del conversor (ARREGLO 117) y el
+       // aviso de la permuta (123): a qué recomienda ahora, a qué recomendaría
+       // con la tasa de la app, y el botón de volver. Decir solo "estás
+       // probando" obliga a borrarlo para saber de dónde venía.
+       (function(){
+         if(!usandoOtra) return "";
+         var mio=_tasasConLoMio();
+         if(!mio || !r || (mio.ida===r.ida && mio.vuelta===r.vuelta))
+           return "<div style='margin-top:8px'>"+
+             "<span onclick='_volverAMiTasa()' style='font-size:11px;color:var(--avi-tx);"+
+             "font-weight:800;cursor:pointer;text-decoration:underline'>volver a la tasa de la app</span></div>";
+         return "<div style='font-size:11px;color:var(--avi-tx);margin-top:8px;line-height:1.6'>"+
+           "Con esta sale <b>"+_tasaCorta(r.ida)+" · "+_tasaCorta(r.vuelta)+"</b>; "+
+           "con la de la app saldría <b>"+_tasaCorta(mio.ida)+" · "+_tasaCorta(mio.vuelta)+"</b>. "+
+           "<span onclick='_volverAMiTasa()' style='font-weight:800;cursor:pointer;"+
+           "text-decoration:underline'>volver a la suya</span></div>";
+       })()+
        "</div>";
+  }
+  // Y cuando la app no necesita nada, la puerta para probar es una línea gris.
+  // En reposo no ocupa más que eso (ARREGLO 125: no saturar la pestaña).
+  if(!probando && !usandoOtra && !falta){
+    h+=_botonTasaUsdt("probar con otra tasa de USDT", false);
   }
 
   // El botón usa la clase que ya existe (ARREGLO: una tarjeta se define en UN
