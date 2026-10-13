@@ -8691,7 +8691,9 @@ console.log("\n— FASE 2: la cuenta madre —");
      "dice cual de las dos falta");
 
   // Funcional: los tres estados, con sus numeros del 12/10.
-  const ruta = {orig:"VES", dest:"BRL"};
+  // ARREGLO 124: esto se mide en la IDA. En la vuelta la permuta ya no se
+  // teclea —es la tasa de la propia remesa— y el aviso dice otra cosa.
+  const ruta = {orig:"BRL", dest:"VES"};
   const vacio = F._htmlAvisoCalce({calce:true, permuta:0, tv:0, tc:0}, ruta);
   const media = F._htmlAvisoCalce({calce:true, permuta:188.88, tv:0, tc:0}, ruta);
   const lleno = F._htmlAvisoCalce({calce:true, permuta:188.88, tv:5.09, tc:961.3992}, ruta);
@@ -8703,6 +8705,26 @@ console.log("\n— FASE 2: la cuenta madre —");
      "y con las dos, el aviso se va y sale el costo implicito", lleno.slice(0,160));
   ok(F._htmlAvisoCalce({calce:false, permuta:0, tv:0}, ruta) === "",
      "en P2P no se dibuja nada");
+
+  // ── ARREGLO 124 · en la VUELTA el mismo aviso dice que es una COMPRA ──
+  const vta = {orig:"VES", dest:"BRL"};
+  const compra = F._htmlAvisoCalce(
+    {calce:true, permuta:210, tv:5.09, tc:1068.9, am:147000, cant:700, tdia:210}, vta);
+  ok(/COMPRA/.test(compra), "en la vuelta dice que es una compra, no una venta");
+  ok(/210,00 Bs por real/.test(compra), "con la tasa de la propia remesa",
+     (compra.match(/a <b>[^<]+<\/b>/)||[""])[0]);
+  ok(/0,00/.test(compra) && /Ganar\u00e1s|Ganarás/.test(compra),
+     "y explica por qué la ganancia sale 0,00");
+  ok(!/permuta/i.test(compra), "sin hablar de permuta: ahí ya no hay campo");
+  const vacia = F._htmlAvisoCalce({calce:true, permuta:0, tv:0, tc:0, am:0, tdia:0}, vta);
+  ok(/Escribe el monto y la tasa/.test(vacia), "sin monto ni tasa, pide los dos");
+  // Funcional + estructural: la funcional sola pasaba con la salida borrada,
+  // porque sin lotes en la caja la sugerida sale null y devuelve "" igual.
+  ok(F._htmlPermutaFuera({calce:true, permuta:999, tv:5, tc:1}, vta) === "",
+     "y en la vuelta no sale el aviso de permuta fuera de rango");
+  ok(/if\(ruta && ruta\.orig==="VES"\) return "";/
+       .test(sinComentarios(sacarFuncion("_htmlPermutaFuera"))),
+     "y la salida está escrita, no es que no haya lotes");
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -8958,6 +8980,46 @@ console.log("\n— FASE 2: la cuenta madre —");
     ok(/tc = \(_permuta>0 && tv>0\) \? \(isVzla \? _permuta\*tv : tv\/_permuta\) : 0/.test(ct),
        "en calce la tasa de compra se despeja de la permuta, cada ruta por su lado");
     ok(/comUc = 0; comUv = 0;/.test(ct), "y sin comisión de Binance, que en un calce no se paga");
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// ARREGLO 124 · en la VUELTA no se gana: se COMPRA
+// ═══════════════════════════════════════════════════════════════════════
+// Sus palabras del 13/10: "apuntar la ganancia por adelantado es como también
+// inflar la ganancia". Cuando entran bolívares y salen reales no ha ganado
+// nada: ha cambiado una cosa por otra. Gana al soltar esos bolívares.
+{
+  const ct  = sinComentarios(sacarFuncion("cTx"));
+  const met = sinComentarios(sacarFuncion("txMetodo"));
+  const rn  = sinComentarios(sacarFuncion("rNueva"));
+
+  // 1) La permuta de la vuelta sale de la propia remesa, no de un campo.
+  ok(/var _permuta = _calce \? \(isVzla \? td2 : \(parseFloat\(f\.permuta\)\|\|0\)\) : 0;/.test(ct),
+     "en la vuelta la permuta ES la tasa de la remesa; en la ida se teclea");
+  ok(!/_permuta = _calce \? \(parseFloat\(f\.permuta\)\|\|0\)/.test(ct),
+     "y ya no se lee el campo en los dos sentidos");
+
+  // 2) El campo no se dibuja en la vuelta, y no se rellena uno que no existe.
+  ok(/\(ruta\.orig==="VES" \? "" :/.test(rn),
+     "el campo de la permuta no se dibuja en la vuelta");
+  ok(/if\(ruta && ruta\.orig==="VES"\)\{ S\.tx\.permuta=""; \}/.test(met),
+     "y al elegir calce en la vuelta se deja vacío, no se rellena");
+
+  // 3) La cuenta: con permuta = tdia, lo que entra vale lo que costó lo que
+  //    salió, así que la ganancia es 0. Eso es la DEFINICIÓN de comprar.
+  //    Comprobado con la fórmula del propio cTx, sin tocar nada:
+  //      uc = am/(tdia*tv)   uv = (am/tdia)/tv   →   uc = uv
+  {
+    const am=147000, tdia=210, tv=5.09;
+    const uc = am/(tdia*tv), uv = (am/tdia)/tv;
+    ok(Math.abs(uc-uv) < 1e-9,
+       "con la tasa de la remesa, lo que entra vale lo que costó lo que sale",
+       uc.toFixed(4)+" vs "+uv.toFixed(4));
+    // Y el lote de bolívares nace valiendo esos reales: su costo de verdad.
+    ok(Math.abs((am/uc) - tdia*tv) < 1e-6,
+       "el lote nace a tdia×tv Bs/USDT, que son los reales que salieron",
+       (am/uc).toFixed(2));
   }
 }
 

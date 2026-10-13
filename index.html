@@ -2637,8 +2637,11 @@ function txMetodo(m){
     // hay que teclear de memoria en cada remesa es un campo que se teclea mal, y
     // aqui equivocarse apunta ganancia inventada. Solo si esta vacio: si ella ya
     // escribio una, manda la suya.
-    if(!(parseFloat(S.tx.permuta)>0)){
-      var ruta=getRutas().find(function(r){return r.rt===S.tx.rt;})||getRutas()[0];
+    var ruta=getRutas().find(function(r){return r.rt===S.tx.rt;})||getRutas()[0];
+    // ARREGLO 124: en la vuelta el campo ya no existe — la permuta es la tasa
+    // de la propia remesa, y cTx la toma de ahí.
+    if(ruta && ruta.orig==="VES"){ S.tx.permuta=""; }
+    else if(!(parseFloat(S.tx.permuta)>0)){
       var sug=_permutaSugerida(S.tx, ruta);
       if(sug>0) S.tx.permuta=String(sug);
     }
@@ -2752,7 +2755,37 @@ function cTx(){
   // ganancia inventada aqui es lo unico que este formulario no se puede
   // permitir.
   var _calce = esCalceDirecto(f, ruta);
-  var _permuta = _calce ? (parseFloat(f.permuta)||0) : 0;
+  // ═══════════════════════════════════════════════════════════════════
+  // ARREGLO 124 · en la VUELTA no se gana: se COMPRA
+  // ═══════════════════════════════════════════════════════════════════
+  //
+  // Sus palabras del 13/10: "apuntar la ganancia por adelantado es como también
+  // inflar la ganancia". Exacto, y eso es lo que pasaba.
+  //
+  // Cuando entran 147.000 Bs y ella entrega 700 R$, no ha ganado nada: ha
+  // CAMBIADO reales por bolívares. Es comprar mercancía. Gana el día que suelta
+  // esos bolívares, y cuánto depende de a cuánto los suelte — que ese día
+  // todavía no sabe. Escribiendo ahí una permuta de 188,88 le estaba diciendo a
+  // la app "los voy a vender a 188,88", y la app apuntaba la ganancia entera
+  // antes de vender nada. Si luego los soltaba a 195, lo apuntado nunca existió.
+  //
+  // Medido con un cruce cerrado (147.000 Bs a 210, soltados todos a 189 — 77,78
+  // R$ de ganancia de verdad):
+  //
+  //     vuelta a 188,88 → 15,38 · la ida de 60 R$ a 189 → 0,13  (1,06 por 500)
+  //     vuelta a 210    →  0,00 · la ida de 60 R$ a 189 → 1,31  (10,94 por 500)
+  //     el TOTAL de las dos patas es 17,02 en los dos casos
+  //
+  // Y el 210 NO hay que teclearlo: es la tasa de la propia remesa, que ella ya
+  // escribió (147.000 Bs ÷ 700 R$). Por eso el campo desaparece de la vuelta.
+  // Un campo que se teclea de memoria es un campo que se teclea mal, y aquí
+  // equivocarse apunta ganancia que no existe.
+  //
+  // El lote de bolívares nace entonces valiendo exactamente lo que costaron los
+  // reales que salieron — su costo de verdad— y la ganancia sale enterita en la
+  // ida, que es donde se produce. La ida sigue con su permuta, que sale sola de
+  // los lotes (ARREGLO 123).
+  var _permuta = _calce ? (isVzla ? td2 : (parseFloat(f.permuta)||0)) : 0;
   if(_calce){
     comUc = 0; comUv = 0;
     tc = (_permuta>0 && tv>0) ? (isVzla ? _permuta*tv : tv/_permuta) : 0;
@@ -2880,7 +2913,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261013_v206";
+var APP_VERSION = "20261013_v207";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -17918,6 +17951,20 @@ setInterval(function(){ _revisarMesSinCerrar(); }, 300000);
 function _htmlAvisoCalce(res, ruta){
   if(!res || !res.calce) return "";
   var o=(ruta&&ruta.orig)||"VES", d=(ruta&&ruta.dest)||"BRL";
+  // ARREGLO 124: en la VUELTA esto es una COMPRA, y hay que decirlo con esas
+  // palabras. Un "GANANCIA 0,00" sin explicación se lee como que la operación
+  // no sirvió, cuando lo que pasa es que todavía no ha vendido nada.
+  if(o==="VES"){
+    if(!(res.tdia>0) || !(res.am>0))
+      return "<div style='background:var(--avi-sup2);border:1px solid var(--avi-ln);border-radius:8px;padding:9px 12px;margin-bottom:8px;font-size:11.5px;color:var(--avi-tx)'>"+
+        "\u26a0\ufe0f Escribe el monto y la tasa para ver la compra.</div>";
+    return "<div style='background:var(--mo6-a);border:1px solid var(--mo5);border-radius:8px;padding:9px 12px;margin-bottom:8px;font-size:11.5px;color:var(--tx2);line-height:1.6'>"+
+      "\ud83d\uded2 <b>Esto es una COMPRA, no una venta.</b> Cambias <b>"+f2(res.cant)+" "+d+"</b> por <b>"+
+        f0(res.am)+" "+o+"</b>, o sea a <b>"+f2(res.tdia)+" Bs por real</b>."+
+      "<br>Por eso la ganancia sale <b>0,00</b>: todav\u00eda no has vendido nada. "+
+      "<b>Ganar\u00e1s cuando entregues esos bol\u00edvares</b>, y ah\u00ed se ver\u00e1 cu\u00e1nto."+
+      "</div>";
+  }
   if(res.permuta>0 && res.tv>0)
     return "<div style='background:var(--mo6-a);border:1px solid var(--mo5);border-radius:8px;padding:9px 12px;margin-bottom:8px;font-size:11.5px;color:var(--tx2)'>"+
       "Aqu\u00ed no pasa nada por Binance: los "+o+" se quedan en tu cuenta y los "+d+" salen de la tuya."+
@@ -17946,6 +17993,9 @@ function _htmlAvisoCalce(res, ruta){
 var _PERMUTA_MARGEN = 0.02;     // 2%: por debajo es redondeo, no otra decision
 function _htmlPermutaFuera(res, ruta){
   if(!res || !res.calce || !(res.permuta>0)) return "";
+  // ARREGLO 124: en la vuelta la permuta ya no se teclea, así que no hay nada
+  // de qué avisar — es la tasa de la propia remesa.
+  if(ruta && ruta.orig==="VES") return "";
   var sug=_permutaSugerida(S.tx, ruta);
   if(!(sug>0)) return "";
   if(Math.abs(res.permuta-sug) <= sug*_PERMUTA_MARGEN) return "";
@@ -26083,8 +26133,12 @@ function rNueva(){
       // implicita, que se enseña: un numero derivado que no se ve obliga a
       // comprobar la ganancia a mano.
       "<div class='f2' style='margin-bottom:8px'>"+
-        "<div class='fl'><label>A cu\u00e1nto entraron esos "+(ruta.orig==="VES"?"reales":"bol\u00edvares")+" (Bs por real)</label><input id='permuta-tx' type='text' inputmode='decimal' placeholder='ej: 183,59' value='"+_escAud(_comaCab(f.permuta||""))+"' oninput='S.tx.permuta=_num(this.value);upC(\"tx\")'>"+
-          "<div style='font-size:10px;color:var(--tx4);margin-top:2px;line-height:1.4'>sale de tus lotes \u00b7 c\u00e1mbiala solo si sabes que fue otra</div></div>"+
+        // ARREGLO 124: en la VUELTA este campo no se dibuja. Ahí la permuta es la
+        // tasa de la propia remesa —que ella ya escribió arriba— y pedirla otra
+        // vez era pedirle que adivinara a cuánto iba a soltar esos bolívares.
+        (ruta.orig==="VES" ? "" :
+        "<div class='fl'><label>A cu\u00e1nto entraron esos bol\u00edvares (Bs por real)</label><input id='permuta-tx' type='text' inputmode='decimal' placeholder='ej: 183,59' value='"+_escAud(_comaCab(f.permuta||""))+"' oninput='S.tx.permuta=_num(this.value);upC(\"tx\")'>"+
+          "<div style='font-size:10px;color:var(--tx4);margin-top:2px;line-height:1.4'>sale de tus lotes \u00b7 c\u00e1mbiala solo si sabes que fue otra</div></div>")+
         "<div class='fl'><label>Tasa venta USDT ("+ruta.dest+"/USDT)</label><input type='text' inputmode='decimal' placeholder='ej: 948' value='"+(f.tv_manual||tvAuto||"")+"' oninput='S.tx.tv_manual=_num(this.value);upC(\"tx\")'></div>"+
       "</div>"+
       // ARREGLO 120: con su id, para que upC() lo refresque al teclear. Sin id

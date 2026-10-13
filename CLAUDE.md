@@ -1247,6 +1247,48 @@ exista); **el cruce cerrado se mide en Chromium**, con la app entera cargada —
 `cTx()` necesita `getRUTAS` y media docena de constantes más, y una caja rellena a
 medias prueba menos que el navegador.
 
+### En la VUELTA no se gana: se COMPRA (ARREGLO 124)
+
+Sus palabras del 13/10: *"apuntar la ganancia por adelantado es como también
+inflar la ganancia"*. Exacto, y era lo que pasaba.
+
+Cuando entran 147.000 Bs y ella entrega 700 R$, **no ha ganado nada: ha
+comprado**. Cambió reales por bolívares, como una tienda que compra mercancía.
+Gana el día que suelta esos bolívares, y cuánto depende de a cuánto los suelte —
+que ese día todavía no sabe. Escribiendo ahí una permuta de 188,88 le decía a la
+app *"los voy a vender a 188,88"*, y la app apuntaba la ganancia entera **antes
+de vender nada**. Si luego los soltaba a 195, lo apuntado nunca existió.
+
+Medido en Chromium con un cruce cerrado (147.000 Bs a 210, soltados todos a 189):
+
+```
+vuelta a 188,88 → 15,38 · la ida de 60 R$ a 189 → 0,13   (1,06 por cada 500)
+vuelta a 210    →  0,00 · la ida de 60 R$ a 189 → 1,31  (10,94 por cada 500)
+                          el TOTAL de las dos patas es 17,02 en los dos casos
+```
+
+**Y el 210 no hay que teclearlo: es la tasa de la propia remesa**, que ella ya
+escribió (147.000 Bs ÷ 700 R$). Por eso el campo **desaparece de la vuelta** y
+`cTx` toma `td2` como permuta cuando `isVzla`. Un campo que se teclea de memoria
+es un campo que se teclea mal, y aquí equivocarse apunta ganancia que no existe.
+
+- **El lote de bolívares nace valiendo lo que costaron los reales que salieron** —
+  su costo de verdad— y la ganancia sale enterita en la ida, que es donde se
+  produce. La ida sigue con su permuta, que sale sola de los lotes (ARREGLO 123).
+- **El aviso dice "COMPRA" con esas palabras.** Un `GANANCIA 0,00` sin explicación
+  se lee como que la operación no sirvió.
+- **La identidad es exacta cuando el real no se mueve.** Medido: mismo día,
+  vuelta 0,00 + ida 15,28 = **15,28**, que son los 77,78 R$ de ganancia a 5,09.
+
+**Lo que NO cuadra al céntimo, y hay que saberlo:** si entre la compra y la venta
+la tasa del real contra USDT se mueve, esa diferencia aparece **dentro de la ida**.
+Medido con el real pasando de 5,09 a 5,0327: la ida apunta 17,02 donde los 77,78
+R$ a la tasa de hoy son 15,45 — **1,57 de diferencia**. No es ganancia de la
+remesa: son sus reales cambiando de valor, lo mismo que la conciliación ya separa
+como *"tus bolívares valen menos hoy"*. Es la convención de toda la app —cada
+operación se valora con las tasas de su momento— y no se cambia aquí sin decidirlo
+a propósito.
+
 ### La tasa de referencia sale sola — no la escribas a mano
 
 Antes mandaba lo que ella escribía en el panel 💱, y mandaba para siempre:
