@@ -50,7 +50,7 @@ function sacarConstante(nombre) {
   }
   throw new Error("la constante " + nombre + " no termina en ';'");
 }
-const CONSTANTES = ["_RUTA_DE", "CG_BASE", "_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO", "_AVISO_UMBRAL", "_MERCADO_MONTO_DEF",
+const CONSTANTES = ["_APROX_LS", "_COLCHON_DEF", "_RUTA_DE", "CG_BASE", "_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO", "_AVISO_UMBRAL", "_MERCADO_MONTO_DEF",
                     "_BIN_COLS_C2C", "_BIN_COLS_TX", "MONEDAS_COMPRA", "MONEDAS_VENTA",
                     "MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
                     "_MERGE_OBJETOS", "_MERGE_BLOQUES", "_MERGE_HISTORIAL", "_RATE_LIMITS",
@@ -70,6 +70,10 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "costoOperativoPorPrestamo", "pctCostoOperativo",
                     "_misTasasPublicadas",
                     "_equilibrio", "sueloQueManda",
+                    // ARREGLO 128 - la tasa recomendada y la aproximada de hoy
+                    "_aproxTodas", "_tasaAprox", "_guardarTasaAprox", "_diasDeRef",
+                    "_colchon", "_tasasRecomendadas", "_tasaCorta", "_setAprox", "publicarRecomendadas",
+                    "_campoAprox", "_htmlPublicaHoy", "guardarColchones",
                     "_calceK", "_calceGan", "_calceVuelta", "_calceIda", "_cg", "_cgSet", "_cgFraccion",
                     "_htmlPalancaVenta", "_permutaSugerida", "_prConPermuta", "_htmlPermutaFuera", "_usarPermutaSugerida", "txMetodo", "esCalceDirecto", "esRutaCalce", "getAutoRates", "_cgBase", "_cgGanUsdt", "_htmlComparaTasa", "_htmlCabeceraTasas", "_htmlCalceRes", "_htmlCalceCuerpo", "_cgModo", "_cgFuente",
                     "margenSobreSuelo", "_calcTasas", "_misTasasPublicadas", "_fpTasa",
@@ -9382,6 +9386,132 @@ console.log("\nARREGLO 127 · al borrar, el dinero vuelve al lote que se gastó"
   ok((com.match(/restante=Math\.round\(\(act\+dev\)\*10000\)\/10000/g)||[]).length===2,
      "las compras se devuelven con los mismos 4 decimales con que se gastan, por los dos caminos",
      (com.match(/restante=Math\.round/g)||[]).length+" sitios");
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 128 · la tasa recomendada y la aproximada de hoy
+// ══════════════════════════════════════════════════════════════════════
+console.log("\nARREGLO 128 · la tasa que publica, recomendada sola");
+{
+  const rec = sacarFuncion("_tasasRecomendadas");
+  const pub = sacarFuncion("publicarRecomendadas");
+  const apx = sacarFuncion("_setAprox");
+  const col = sacarFuncion("_colchon");
+  const tar = sacarFuncion("_htmlPublicaHoy");
+
+  // ── La cuenta vive en UN sitio ──────────────────────────────────────
+  // Si el botón recalculara por su cuenta, bastaría un redondeo distinto
+  // para publicar un número que no es el que ella está mirando. Es el
+  // 34,27 arriba y 34,28 abajo de Por cobrar.
+  ok(/_tasasRecomendadas\(\)/.test(pub),
+     "publicar LEE las tasas recomendadas, no las recalcula");
+  ok(!/_colchon\(/.test(pub) && !/sueloQueManda\(/.test(pub),
+     "y no vuelve a tocar ni el colchón ni el suelo por su cuenta");
+
+  // ── La puerta única del ARREGLO 117 ─────────────────────────────────
+  // Escribir tdia_brl a pelo deja tdia_fecha con la del último día que usó
+  // la cabecera, y entonces el aviso del 112 mide desde una fecha que no es
+  // la de esa tasa.
+  ok((pub.match(/guardarTasaCalcHoy\(/g)||[]).length===2,
+     "publica las dos por guardarTasaCalcHoy, que sella la fecha");
+  ok(!/tdia_brl/.test(pub) && !/tdia_ves_brl/.test(pub),
+     "y no escribe las claves publicadas a pelo");
+
+  // ── ARREGLO 32: escribir no puede repintar ──────────────────────────
+  ok(!/\bR\(\)/.test(apx),
+     "escribir la tasa aproximada NO llama a R()");
+  ok(/getElementById\(.tasas-publica.\)/.test(apx),
+     "se rehace la tarjeta por su id");
+
+  // ── Los colchones por omisión ───────────────────────────────────────
+  // Medidos: 61 operaciones de octubre, margen medio 6,8%. Si alguien los
+  // toca sin querer, la tasa que publica cambia sin que nada lo diga.
+  ok(F._COLCHON_DEF.ida===0.07 && F._COLCHON_DEF.vuelta===0.05,
+     "los colchones por omisión son 7% en la ida y 5% en la vuelta");
+  S.config={};
+  ok(F._colchon("ida")===0.07 && F._colchon("vuelta")===0.05,
+     "sin nada escrito, mandan los de por omisión");
+  S.config={colchonIda:-0.1, colchonVuelta:0.8};
+  ok(F._colchon("ida")===0.07 && F._colchon("vuelta")===0.05,
+     "un colchón fuera de rango se ignora, no publica una tasa en pérdida");
+  S.config={colchonIda:0.1, colchonVuelta:0.03};
+  ok(F._colchon("ida")===0.1 && F._colchon("vuelta")===0.03,
+     "y uno razonable se respeta");
+
+  // ── La aproximada NO revalora su contabilidad ───────────────────────
+  // Esta es la que de verdad importa: un número mirado a ojo no puede mover
+  // el capital, la conciliación, el cierre ni la ganancia de una remesa.
+  ok(!/_tasaAprox\(/.test(sacarFuncion("tasaDeReferencia")),
+     "tasaDeReferencia NO mira la tasa aproximada");
+  ok(/_tasaAprox\(/.test(sacarFuncion("sueloQueManda")),
+     "pero el suelo sí la mira");
+
+  // ── Y no se fija ni se sincroniza ───────────────────────────────────
+  const gua = sacarFuncion("_guardarTasaAprox");
+  ok(!/fijada/.test(gua) && !/_tasasDiaMeta/.test(gua),
+     "guardar la aproximada NO la fija (lo fijado manda para siempre)");
+  ok(/localStorage/.test(gua) && !/saveData\(/.test(gua),
+     "vive en el aparato y no se sincroniza");
+  ok(F.DATA_KEYS.indexOf("tasaAprox")===-1 && F.DATA_KEYS.indexOf("_APROX_LS")===-1,
+     "y no entra en DATA_KEYS");
+
+  // ── La situación sale de avisoTasa(), no de una segunda copia ───────
+  // Escrita aquí otra vez, un día la tarjeta diría "sube la ida" y el aviso
+  // de abajo "baja la ida", y no habría forma de saber cuál mirar.
+  ok(/avisoTasa\(\)/.test(tar),
+     "la línea de qué hacer sale de avisoTasa()");
+  ok(!/porMoneda/.test(tar) && !/capitalRealTotal/.test(tar),
+     "y la tarjeta no vuelve a decidir por su cuenta de qué moneda va llena");
+
+  // ── Sin suelo no se inventa un número ───────────────────────────────
+  ok(/if\(!r\)\{/.test(tar) && /falta saber a c/.test(tar),
+     "sin suelo la tarjeta dice qué falta en vez de inventar una tasa");
+
+  // ── Funcional: la aproximada caduca y solo entra si la suya es vieja ─
+  const guardado = {};
+  global.localStorage = {
+    getItem:function(k){ return guardado[k]||null; },
+    setItem:function(k,v){ guardado[k]=v; },
+    removeItem:function(k){ delete guardado[k]; }
+  };
+  const hoy = F.td();
+  const ayer = (function(){ const d=new Date(hoy+"T12:00:00"); d.setDate(d.getDate()-1);
+    return d.toISOString().slice(0,10); })();
+
+  guardado["cgTasaAprox"]=JSON.stringify({VES:{v:1020, iso:ayer}});
+  ok(F._tasaAprox("VES")===null,
+     "una aproximada de ayer no vale hoy");
+  guardado["cgTasaAprox"]=JSON.stringify({VES:{v:1020, iso:hoy}});
+  ok(F._tasaAprox("VES")===1020,
+     "la de hoy sí");
+
+  // Con una operación de HOY, la aproximada no manda: lo medido gana a lo
+  // mirado a ojo.
+  S.config={comision_binance:0.007};
+  S.tasasDia={}; S._tasasDiaMeta={};
+  S.inventarioUsdt=[
+    {id:1,tipo:"compra",moneda:"BRL",fecha:"10/10",fechaIso:hoy,tasa:5.0327,usdt:400,restante:400},
+    {id:2,tipo:"venta", moneda:"VES",fecha:"10/11",fechaIso:hoy,tasa:1010.66,usdt:150,bs:151599,bsRestante:0}
+  ];
+  S.inventarioUsdt_cerrado=[];
+  let Q=F.sueloQueManda();
+  ok(Q.apxV===false && Q.apxC===false,
+     "con una operación de hoy, la aproximada NO se usa");
+
+  // Con la operación vieja, sí.
+  S.inventarioUsdt[1].fechaIso=ayer;
+  S.inventarioUsdt[1].fecha="10/11";
+  Q=F.sueloQueManda();
+  ok(Q.dV>=1, "la operación de bolívares se lee como de hace un día o más");
+  ok(Q.apxV===true && Q.miV===1020,
+     "y entonces manda la aproximada que escribió hoy");
+
+  // Y aun así no movió la contabilidad.
+  ok(F.tasaDeReferencia("VES").tasa===1010.66,
+     "pero tasaDeReferencia sigue devolviendo la de su operación");
+
+  delete global.localStorage;
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
