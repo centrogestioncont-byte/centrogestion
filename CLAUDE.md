@@ -1247,6 +1247,198 @@ exista); **el cruce cerrado se mide en Chromium**, con la app entera cargada —
 `cTx()` necesita `getRUTAS` y media docena de constantes más, y una caja rellena a
 medias prueba menos que el navegador.
 
+### En la VUELTA no se gana: se COMPRA (ARREGLO 124)
+
+Sus palabras del 13/10: *"apuntar la ganancia por adelantado es como también
+inflar la ganancia"*. Exacto, y era lo que pasaba.
+
+Cuando entran 147.000 Bs y ella entrega 700 R$, **no ha ganado nada: ha
+comprado**. Cambió reales por bolívares, como una tienda que compra mercancía.
+Gana el día que suelta esos bolívares, y cuánto depende de a cuánto los suelte —
+que ese día todavía no sabe. Escribiendo ahí una permuta de 188,88 le decía a la
+app *"los voy a vender a 188,88"*, y la app apuntaba la ganancia entera **antes
+de vender nada**. Si luego los soltaba a 195, lo apuntado nunca existió.
+
+Medido en Chromium con un cruce cerrado (147.000 Bs a 210, soltados todos a 189):
+
+```
+vuelta a 188,88 → 15,38 · la ida de 60 R$ a 189 → 0,13   (1,06 por cada 500)
+vuelta a 210    →  0,00 · la ida de 60 R$ a 189 → 1,31  (10,94 por cada 500)
+                          el TOTAL de las dos patas es 17,02 en los dos casos
+```
+
+**Y el 210 no hay que teclearlo: es la tasa de la propia remesa**, que ella ya
+escribió (147.000 Bs ÷ 700 R$). Por eso el campo **desaparece de la vuelta** y
+`cTx` toma `td2` como permuta cuando `isVzla`. Un campo que se teclea de memoria
+es un campo que se teclea mal, y aquí equivocarse apunta ganancia que no existe.
+
+- **El lote de bolívares nace valiendo lo que costaron los reales que salieron** —
+  su costo de verdad— y la ganancia sale enterita en la ida, que es donde se
+  produce. La ida sigue con su permuta, que sale sola de los lotes (ARREGLO 123).
+- **El aviso dice "COMPRA" con esas palabras.** Un `GANANCIA 0,00` sin explicación
+  se lee como que la operación no sirvió.
+- **La identidad es exacta cuando el real no se mueve.** Medido: mismo día,
+  vuelta 0,00 + ida 15,28 = **15,28**, que son los 77,78 R$ de ganancia a 5,09.
+
+**Lo que NO cuadra al céntimo, y hay que saberlo:** si entre la compra y la venta
+la tasa del real contra USDT se mueve, esa diferencia aparece **dentro de la ida**.
+Medido con el real pasando de 5,09 a 5,0327: la ida apunta 17,02 donde los 77,78
+R$ a la tasa de hoy son 15,45 — **1,57 de diferencia**. No es ganancia de la
+remesa: son sus reales cambiando de valor, lo mismo que la conciliación ya separa
+como *"tus bolívares valen menos hoy"*. Es la convención de toda la app —cada
+operación se valora con las tasas de su momento— y no se cambia aquí sin decidirlo
+a propósito.
+
+### De dónde salen los bolívares, y en SU unidad (ARREGLO 125)
+
+Sus palabras del 13/10: *"de qué forma lo podemos trabajar cuando haya dinero de
+ambos lados, o sea allá en bolívares por ventas de USDT o porque yo compré
+bolívares"* y *"tienen unas tasas raras ahí, a mí eso me crea confusión"*.
+
+**El FIFO ya lo mezclaba bien.** Gasta del lote más viejo al más nuevo y promedia;
+eso no había que arreglarlo. Lo que faltaba era **poder verlo**: la pantalla
+enseñaba una tasa media y no había forma de saber de dónde salía. Con sus dos
+orígenes del 13/10, ahora lo dice:
+
+```
+DE DÓNDE SALEN LOS 199.962 BS
+  147.000 Bs · 10/11 · cruce    1.010,38 Bs/USDT  ≈ 200,76 Bs/real
+   52.962 Bs · 10/12             966,67 Bs/USDT  ≈ 192,08 Bs/real
+Te cuestan 198,39 Bs por real y los das a 189,00 → ganas
+```
+
+- **El recorrido se escribe UNA vez, en `_repartoFIFO()`**, y lo leen la lista y
+  `getTasaVentaPonderada()`. Calculado aparte, con el primer redondeo la lista y
+  el número de arriba dirían cosas distintas — el 34,27 contra el 34,28.
+  Comprobado contra la versión desplegada: **idéntico en 154 comparaciones**
+  (sus lotes reales más doce inventados × 11 montos × cuentas × VES/BRL).
+- **Es de solo lectura.** Mirar de dónde sale el dinero no puede gastarlo: no
+  toca `bsRestante` ni escribe en el inventario. Hay una prueba negativa dedicada.
+- **La traducción a Bs/real es una DIVISIÓN** por su tasa de compra de reales
+  (`tasaDeReferencia("BRL")`). Multiplicar daría un número creíble y falso. Sin
+  esa tasa **no se escribe nada**, no se inventa un número.
+- **Y solo vale para los lotes de bolívares.** Un lote de reales ya está en
+  reales: dividirlo por la tasa de compra de reales daría un *"≈ 1,01 Bs/real"*
+  que no significa nada. Lo cacé escribiéndolo antes de probarlo.
+
+#### Lo que se valora, se enseña — y eso lo encontró medirlo
+
+El primer intento listaba solo los lotes, y **la lista no cuadraba con la tasa**.
+`getTasaVentaPonderada()` valora lo que no alcanzan los lotes a la tasa más nueva
+conocida — lo ha hecho siempre y está bien— pero esa parte **no se enseñaba**.
+Medido con sus lotes del 13/10, una ida de 1.058 R$ a 189:
+
+```
+la lista decía ...  196.388 Bs a 1.010,36       →  de las filas sale 1.028,74
+la cuenta usaba ..  1.010,36                   ←  con la cola dentro
+```
+
+Ahora la cola entra **como una fila más y marcada** —*"3.574 Bs · sin lote, tasa
+prestada"*— y debajo un aviso que dice **a qué tasa se están valorando y qué
+hacer**: registrar primero la operación de USDT que los trajo. Una fila sola
+enseña el número, no que hay algo que registrar.
+
+**La lección, que es la cara B de siempre:** las guardias estructurales dieron
+verdes con la lista y la tasa separadas, porque el código decía lo que debía
+decir. Lo cazó **ejecutarlo con sus lotes** y restar los dos números.
+
+#### Y un número se escribe UNA vez (ARREGLO 125)
+
+Sus palabras del 13/10: *"no saturar ninguna pestaña"*. Medido el primer intento
+con sus lotes: el bloque ocupaba **166 px** para decir **200,76 cuatro veces** —
+en las dos filas, en el pie y otra vez en el aviso.
+
+La regla que sale de aquí, y vale para la próxima pantalla: **la traducción por
+fila existe para COMPARAR orígenes.** Con una sola tasa no hay nada que comparar
+y el pie ya la dice, así que no se escribe; con dos o más sí, en cada fila. El
+aviso tampoco repite la tasa: la tiene al lado, en su propia fila.
+
+```
+un solo origen   0 en las filas + 1 en el pie     138 px
+dos orígenes     2 en las filas + 1 en el pie     se comparan de un vistazo
+```
+
+**Y en reposo no ocupa nada.** Medido el alto de **las 21 pestañas** contra la
+versión desplegada: **ninguna crece ni un píxel**. El bloque sale cuando ya hay un
+monto escrito, y el desplegable del 126 nace cerrado. Lo que ocupa sitio es lo que
+ella pidió ver, cuando lo pide.
+
+#### Dos cosas del entorno que costaron, por si vuelven
+
+- **`getTasaCompraPonderada()` tiene el MISMO bucle** y no se tocó: el 125 va del
+  dinero que **sale**. Una prueba negativa anclada en `usdt+=usar/tasa;` inyectó
+  el fallo en esa otra función y la suite pasó — el ancla tenía que incluir el
+  `filas.push`. **Un ancla ambigua convierte una prueba negativa en nada.**
+- **`L` ya significa otra cosa en `prestamos.js`** (`_leerNumero`). Una prueba
+  nueva que lo reusa como constructor de lotes deja un **número** donde debía
+  haber un lote: la prueba corre, no da error y **no prueba nada**. Es la misma
+  familia que el ancla ambigua — un nombre tomado no avisa.
+- **Un lote con fecha a más de 30 días vista se lee del año pasado** (ARREGLO 51),
+  así que unas fechas de prueba `11/10` y `12/10` salieron en orden invertido. No
+  era un fallo: es la regla del cambio de año haciendo su trabajo.
+
+### Y quién se comió cada lote (ARREGLO 126)
+
+Sus palabras del 13/10: *"en la parte de inventario, cuando yo hago de bolívares
+arriba aparece ahí la adquisición de los bolívares, mas no cuando es de reales
+allá a bolívar"*.
+
+Tenía razón y era **asimétrico**: una vuelta **crea** un lote y se ve en el
+inventario; una ida lo **gasta** y no se veía en ninguna parte. El dato existía
+desde hacía tiempo —cada remesa guarda su `_lotesConsumidos`— pero solo se podía
+leer **del lado de la remesa**, y la pregunta que ella hace mirando el inventario
+es la contraria: *"estos bolívares, ¿dónde se fueron?"*.
+
+```
+Se gastó en 6 remesas · 138,2157 USDT
+  #805 · 10/10/26 · YANEISI DEL ROSARIO      8,2657 USDT
+  #806 · 10/10/26 · RUDI MARIN              52,8543 USDT
+  ...
+```
+
+- **Va por ÍNDICE, no por búsqueda.** Con sus ~290 lotes y ~700 remesas,
+  preguntarlo lote por lote son 200.000 comparaciones **en cada repintado** — el
+  mismo coste que ya hubo que quitar de `getRateToUsdt()`. Se recorre una vez por
+  dibujo: medido, **2 ms**. Hay una guardia que exige que `_indiceLotesComidos()`
+  se llame **una sola vez** y **fuera** del bucle de lotes.
+- **Desplegar no llama a `R()`** (ARREGLO 32): repintar la tabla cierra la fila
+  bajo el dedo. Se cambia el `display` por su id.
+- **El `colspan` sigue a la TABLA, no a un número escrito a mano.** La guardia
+  cuenta las `<th>` de esa cabecera y exige que la llamada pase esa misma cifra:
+  si algún día se añade una columna, falla hasta que se actualice.
+
+#### Lo deducido se dice que es deducido
+
+**Las remesas anteriores a este arreglo no guardaron de qué lote salieron.**
+`simularConsumoFIFO()` apuntaba `{fecha, tasa, monto}` y ya apunta también el
+**id**, pero lo viejo hay que casarlo por **fecha + tasa**, y eso no siempre
+distingue. Medido en su export:
+
+```
+lotes en total (vivos + cerrados) ....... 367
+que comparten fecha y tasa con otro ......  63   (el 17%, el peor grupo con 4)
+```
+
+Para esos, las mismas remesas aparecen bajo todos los lotes del grupo. **Se dice
+en la propia fila**, en rojo: *"Hay más de un lote con esta misma fecha y tasa, y
+estas remesas no dicen de cuál salieron: se reparten entre todos. Las nuevas sí
+lo dicen."* Y cuando no hay choque pero tampoco id, se dice más suave: *"Casado
+por fecha y tasa"*. Un dato deducido presentado como seguro es peor que no darlo
+— es la misma regla que la hora deducida de la apertura (ARREGLO 72), que tampoco
+se aplica sola.
+
+**Un lote que nadie gastó no dibuja nada**: ni botón ni fila. Si no, la pantalla
+se llena de desplegables vacíos.
+
+#### Y una trampa del método, que costó el trabajo entero una vez
+
+Las pruebas negativas (`neg<N>.py`) **restauran su propia copia de `index.html`
+al terminar**. Correr la del 125 después de haber escrito el 126 devolvió el
+archivo al estado del 125 y **se llevó por delante el 126 sin avisar** — lo cacó
+la suite, que de pronto no encontraba una función recién escrita. **Una prueba
+negativa vieja es una máquina del tiempo.** Antes de correr cualquiera, hay que
+volver a tomar su copia sobre el estado actual.
+
 ### La tasa de referencia sale sola — no la escribas a mano
 
 Antes mandaba lo que ella escribía en el panel 💱, y mandaba para siempre:

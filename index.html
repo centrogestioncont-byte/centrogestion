@@ -2637,8 +2637,11 @@ function txMetodo(m){
     // hay que teclear de memoria en cada remesa es un campo que se teclea mal, y
     // aqui equivocarse apunta ganancia inventada. Solo si esta vacio: si ella ya
     // escribio una, manda la suya.
-    if(!(parseFloat(S.tx.permuta)>0)){
-      var ruta=getRutas().find(function(r){return r.rt===S.tx.rt;})||getRutas()[0];
+    var ruta=getRutas().find(function(r){return r.rt===S.tx.rt;})||getRutas()[0];
+    // ARREGLO 124: en la vuelta el campo ya no existe — la permuta es la tasa
+    // de la propia remesa, y cTx la toma de ahí.
+    if(ruta && ruta.orig==="VES"){ S.tx.permuta=""; }
+    else if(!(parseFloat(S.tx.permuta)>0)){
       var sug=_permutaSugerida(S.tx, ruta);
       if(sug>0) S.tx.permuta=String(sug);
     }
@@ -2752,7 +2755,37 @@ function cTx(){
   // ganancia inventada aqui es lo unico que este formulario no se puede
   // permitir.
   var _calce = esCalceDirecto(f, ruta);
-  var _permuta = _calce ? (parseFloat(f.permuta)||0) : 0;
+  // ═══════════════════════════════════════════════════════════════════
+  // ARREGLO 124 · en la VUELTA no se gana: se COMPRA
+  // ═══════════════════════════════════════════════════════════════════
+  //
+  // Sus palabras del 13/10: "apuntar la ganancia por adelantado es como también
+  // inflar la ganancia". Exacto, y eso es lo que pasaba.
+  //
+  // Cuando entran 147.000 Bs y ella entrega 700 R$, no ha ganado nada: ha
+  // CAMBIADO reales por bolívares. Es comprar mercancía. Gana el día que suelta
+  // esos bolívares, y cuánto depende de a cuánto los suelte — que ese día
+  // todavía no sabe. Escribiendo ahí una permuta de 188,88 le estaba diciendo a
+  // la app "los voy a vender a 188,88", y la app apuntaba la ganancia entera
+  // antes de vender nada. Si luego los soltaba a 195, lo apuntado nunca existió.
+  //
+  // Medido con un cruce cerrado (147.000 Bs a 210, soltados todos a 189 — 77,78
+  // R$ de ganancia de verdad):
+  //
+  //     vuelta a 188,88 → 15,38 · la ida de 60 R$ a 189 → 0,13  (1,06 por 500)
+  //     vuelta a 210    →  0,00 · la ida de 60 R$ a 189 → 1,31  (10,94 por 500)
+  //     el TOTAL de las dos patas es 17,02 en los dos casos
+  //
+  // Y el 210 NO hay que teclearlo: es la tasa de la propia remesa, que ella ya
+  // escribió (147.000 Bs ÷ 700 R$). Por eso el campo desaparece de la vuelta.
+  // Un campo que se teclea de memoria es un campo que se teclea mal, y aquí
+  // equivocarse apunta ganancia que no existe.
+  //
+  // El lote de bolívares nace entonces valiendo exactamente lo que costaron los
+  // reales que salieron — su costo de verdad— y la ganancia sale enterita en la
+  // ida, que es donde se produce. La ida sigue con su permuta, que sale sola de
+  // los lotes (ARREGLO 123).
+  var _permuta = _calce ? (isVzla ? td2 : (parseFloat(f.permuta)||0)) : 0;
   if(_calce){
     comUc = 0; comUv = 0;
     tc = (_permuta>0 && tv>0) ? (isVzla ? _permuta*tv : tv/_permuta) : 0;
@@ -2880,7 +2913,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261013_v206";
+var APP_VERSION = "20261013_v209";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -17915,9 +17948,112 @@ setInterval(function(){ _revisarMesSinCerrar(); }, 300000);
 // Sale de aquí y de ningún otro sitio, y lee de `cTx()` —la misma que decide
 // la ganancia que se guarda— en vez de las variables sueltas de la pantalla,
 // que es lo que ya mordía en el ARREGLO 98.
+// ── ARREGLO 125 · las tasas, en SU unidad ───────────────────────────────
+//
+// Sus palabras del 13/10: "tienen unas tasas raras ahí, a mí eso me crea
+// confusión". Son los Bs/USDT: 961,3995 no significa nada para quien decide en
+// bolívares por real. Al lado de cada uno va su traducción.
+//
+// Es una DIVISIÓN por su tasa de compra de reales, así que cuando esa no existe
+// no se escribe nada en vez de inventarse un número.
+function _bsPorReal(tasaVesUsdt){
+  var t=parseFloat(tasaVesUsdt)||0;
+  if(!(t>0)) return null;
+  var rb=tasaDeReferencia("BRL");
+  var brl=rb && rb.tasa;
+  if(!(brl>0)) return null;
+  return Math.round((t/brl)*100)/100;
+}
+// ── ARREGLO 125 · de dónde salen los bolívares ──────────────────────────
+//
+// Sus palabras: "de qué forma lo podemos trabajar cuando haya dinero de ambos
+// lados, o sea allá en bolívares por ventas de USDT o porque yo compré
+// bolívares". El FIFO ya lo mezclaba bien —gasta del más viejo al más nuevo y
+// promedia— pero no había forma de VERLO: la pantalla enseñaba una tasa media y
+// ella no podía saber de dónde salía.
+//
+// Sale de _repartoFIFO(), que es el MISMO recorrido del que sale la tasa
+// ponderada. Calculado aparte, la lista y el número de arriba se separarían con
+// el primer redondeo (el 34,27 contra el 34,28).
+//
+// Y avisa cuando NO alcanza. Registrar una entrega sin lotes que la cubran deja
+// la ganancia calculada contra una tasa prestada, y eso hay que verlo antes de
+// guardar, no después.
+function _htmlDeDondeSalen(res, ruta){
+  if(!res || !ruta) return "";
+  var dest=ruta.dest||"VES";
+  var cant=parseFloat(res.cant)||0;
+  if(!(cant>0)) return "";
+  if(dest!=="VES" && dest!=="BRL") return "";      // sin lotes de esa moneda no hay nada que contar
+  var rep;
+  try{ rep=_repartoFIFO(dest, cant, S.tx && S.tx.cuentaDest); }catch(e){ return ""; }
+  if(!rep || !rep.filas || !rep.filas.length) return "";
+  var uni=(dest==="VES")?"Bs":dest;
+  // La traducción a Bs/real SOLO vale para los lotes de bolívares. Un lote de
+  // reales ya está en reales: dividirlo por la tasa de compra de reales daría
+  // un "≈ 1,01 Bs/real" que no significa nada.
+  var esVes=(dest==="VES");
+  // ¿Hay más de una tasa? Si no, la traducción por fila no compara nada — y el
+  // pie ya la dice. Repetirla era el mismo número tres veces en la misma caja.
+  var tasas={}; rep.filas.forEach(function(f){ tasas[Math.round(f.tasa*100)]=1; });
+  var varias=(Object.keys(tasas).length>1);
+  var fila=function(f){
+    var bpr=(esVes&&varias)?_bsPorReal(f.tasa):null;
+    // La fila prestada es la que NO tiene lote detrás, y se dice con esas
+    // palabras: es la única cuya tasa no sale de una operación suya.
+    var de=f.prestada ? "<span style='color:var(--mal)'> · sin lote, tasa prestada</span>"
+                      : "<span style='color:var(--tx4)'> · "+_escAud((f.lote&&f.lote.fecha)||"")+
+                        ((f.lote&&f.lote.permuta)?" · cruce":"")+"</span>";
+    return "<div style='display:flex;justify-content:space-between;gap:8px;padding:3px 0;font-size:11.5px'>"+
+      "<span style='color:var(--tx2)'><b>"+f0(f.usa)+"</b> "+uni+de+"</span>"+
+      "<span style='color:var(--tx3);white-space:nowrap'>"+f2(f.tasa)+" "+uni+"/USDT"+
+        (bpr!==null?" <b style='color:var(--tit)'>≈ "+f2(bpr)+" Bs/real</b>":"")+"</span>"+
+    "</div>";
+  };
+  // El costo medio sale de la misma suma: lo que se gasta entre los USDT que vale.
+  var medio=(rep.usdt>0)?(cant-rep.rest)/rep.usdt:0;   // la cola prestada ya va dentro de rep.usdt
+  var medioBpr=esVes?_bsPorReal(medio):null;
+  var td=parseFloat(res.tdia)||0;
+  var pie="";
+  if(medioBpr!==null && td>0 && ruta.orig==="BRL"){
+    var gana=(td<medioBpr);
+    pie="<div style='margin-top:6px;padding-top:6px;border-top:1px solid var(--ln);font-size:11.5px;color:var(--tx2)'>"+
+      "Te cuestan <b style='color:var(--tit)'>"+f2(medioBpr)+" Bs por real</b> y los das a <b style='color:var(--tit)'>"+
+      f2(td)+"</b> \u2192 <b style='color:"+(gana?"var(--ok)":"var(--mal)")+"'>"+(gana?"ganas":"PIERDES")+"</b></div>";
+  }
+  // Lo que no sale de un lote ya se ve como fila; aquí se dice qué hacer.
+  var prest=rep.filas.filter(function(f){return f.prestada;})[0];
+  var falta="";
+  if(prest)
+    falta="<div style='margin-top:6px;font-size:11.5px;color:var(--mal);font-weight:700'>"+
+      "\u26a0\ufe0f "+f0(prest.usa)+" "+uni+" no salen de ningún lote. Registra la compra o venta de USDT que los trajo.</div>";
+  else if(rep.rest>0.01)
+    falta="<div style='margin-top:6px;font-size:11.5px;color:var(--mal);font-weight:700'>"+
+      "\u26a0\ufe0f Te faltan "+f0(rep.rest)+" "+uni+" y no hay ninguna tasa con la que valorarlos. "+
+      "Registra la operación de USDT que los trajo.</div>";
+  return "<div style='background:var(--sup2d);border:1px solid var(--ln);border-radius:9px;padding:9px 12px;margin-bottom:8px'>"+
+    "<div style='font-size:10.5px;color:var(--tx4);font-weight:700;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px'>"+
+      "De d\u00f3nde salen los "+f0(cant)+" "+uni+"</div>"+
+    rep.filas.map(fila).join("")+ pie + falta +
+  "</div>";
+}
 function _htmlAvisoCalce(res, ruta){
   if(!res || !res.calce) return "";
   var o=(ruta&&ruta.orig)||"VES", d=(ruta&&ruta.dest)||"BRL";
+  // ARREGLO 124: en la VUELTA esto es una COMPRA, y hay que decirlo con esas
+  // palabras. Un "GANANCIA 0,00" sin explicación se lee como que la operación
+  // no sirvió, cuando lo que pasa es que todavía no ha vendido nada.
+  if(o==="VES"){
+    if(!(res.tdia>0) || !(res.am>0))
+      return "<div style='background:var(--avi-sup2);border:1px solid var(--avi-ln);border-radius:8px;padding:9px 12px;margin-bottom:8px;font-size:11.5px;color:var(--avi-tx)'>"+
+        "\u26a0\ufe0f Escribe el monto y la tasa para ver la compra.</div>";
+    return "<div style='background:var(--mo6-a);border:1px solid var(--mo5);border-radius:8px;padding:9px 12px;margin-bottom:8px;font-size:11.5px;color:var(--tx2);line-height:1.6'>"+
+      "\ud83d\uded2 <b>Esto es una COMPRA, no una venta.</b> Cambias <b>"+f2(res.cant)+" "+d+"</b> por <b>"+
+        f0(res.am)+" "+o+"</b>, o sea a <b>"+f2(res.tdia)+" Bs por real</b>."+
+      "<br>Por eso la ganancia sale <b>0,00</b>: todav\u00eda no has vendido nada. "+
+      "<b>Ganar\u00e1s cuando entregues esos bol\u00edvares</b>, y ah\u00ed se ver\u00e1 cu\u00e1nto."+
+      "</div>";
+  }
   if(res.permuta>0 && res.tv>0)
     return "<div style='background:var(--mo6-a);border:1px solid var(--mo5);border-radius:8px;padding:9px 12px;margin-bottom:8px;font-size:11.5px;color:var(--tx2)'>"+
       "Aqu\u00ed no pasa nada por Binance: los "+o+" se quedan en tu cuenta y los "+d+" salen de la tuya."+
@@ -17946,6 +18082,9 @@ function _htmlAvisoCalce(res, ruta){
 var _PERMUTA_MARGEN = 0.02;     // 2%: por debajo es redondeo, no otra decision
 function _htmlPermutaFuera(res, ruta){
   if(!res || !res.calce || !(res.permuta>0)) return "";
+  // ARREGLO 124: en la vuelta la permuta ya no se teclea, así que no hay nada
+  // de qué avisar — es la tasa de la propia remesa.
+  if(ruta && ruta.orig==="VES") return "";
   var sug=_permutaSugerida(S.tx, ruta);
   if(!(sug>0)) return "";
   if(Math.abs(res.permuta-sug) <= sug*_PERMUTA_MARGEN) return "";
@@ -18006,6 +18145,9 @@ function upC(key){
   // trozo que cambia al teclear y no tenia id.
   var cn=document.getElementById("calce-nota-"+key);
   if(cn) cn.innerHTML=_htmlAvisoCalce(res, ruta);
+  // ARREGLO 125: el reparto del FIFO cambia con el monto, así que se rehace aquí.
+  var fi=document.getElementById("fifo-"+key);
+  if(fi) fi.innerHTML=_htmlDeDondeSalen(res, ruta);
 }
 
 // ── INVENTORY HELPERS ────────────────────────────────
@@ -18429,7 +18571,7 @@ function simularConsumoFIFO(monedaOrig, usdtUsados, monedaDest, bsEntregados, cu
       var disp=parseFloat(compras[i].restante)||0;
       if(disp<=0) continue;
       var usar=Math.min(disp,u);
-      resCompras.push({fecha:compras[i].fecha,tasa:_tasaEfectivaLote(compras[i]),usdt:Math.round(usar*10000)/10000});
+      resCompras.push({id:compras[i].id,fecha:compras[i].fecha,tasa:_tasaEfectivaLote(compras[i]),usdt:Math.round(usar*10000)/10000});
       u-=usar;
     }
   }
@@ -18441,11 +18583,112 @@ function simularConsumoFIFO(monedaOrig, usdtUsados, monedaDest, bsEntregados, cu
       var dispB=parseFloat(ventas[k].bsRestante)||0;
       if(dispB<=0) continue;
       var usarB=Math.min(dispB,b);
-      resVentas.push({fecha:ventas[k].fecha,tasa:_tasaEfectivaLote(ventas[k]),bs:Math.round(usarB*100)/100});
+      resVentas.push({id:ventas[k].id,fecha:ventas[k].fecha,tasa:_tasaEfectivaLote(ventas[k]),bs:Math.round(usarB*100)/100});
       b-=usarB;
     }
   }
   return {compras:resCompras, ventas:resVentas};
+}
+// ── ARREGLO 126 · quién se comió cada lote ──────────────────────
+//
+// Sus palabras del 13/10: "en la parte de inventario, cuando yo hago de
+// bolívares arriba aparece ahí la adquisición de los bolívares, mas no cuando es
+// de reales allá a bolívar".
+//
+// Tiene razón y es asimétrico: una VUELTA crea un lote y se ve; una IDA lo
+// GASTA y no se veía en ninguna parte. El dato existía —cada remesa guarda su
+// _lotesConsumidos desde hace tiempo— pero solo se podía leer del lado de la
+// remesa. Esto lo lee del lado del lote, que es la pregunta que ella hace
+// mirando el inventario: "estos bolívares, ¿dónde se fueron?".
+//
+// Va por ÍNDICE, no por búsqueda. Con sus ~290 lotes y ~700 remesas, preguntar
+// lote por lote son 200.000 comparaciones en cada repintado — el mismo coste que
+// ya hizo falta quitar de getRateToUsdt (280 ms por dibujo). Se recorre una vez.
+//
+// Los registros VIEJOS no llevan el id del lote, así que se indexan también por
+// fecha+tasa. No es exacto —dos lotes del mismo día a la misma tasa caen en la
+// misma clave— y por eso el id manda cuando está: lo que no se puede es dejar
+// fuera todo lo anterior a este arreglo.
+// El desplegable de un lote NO llama a R() (ARREGLO 32): repintar la tabla
+// entera cierra la fila bajo el dedo. Se cambia el display por su id.
+function toggleComieron(id){
+  var k="_verCom_"+id;
+  S[k]=!S[k];
+  var el=document.getElementById("com-"+id);
+  if(el) el.style.display=S[k]?"table-row":"none";
+  var b=document.getElementById("com-btn-"+id);
+  if(b) b.textContent=S[k]?"\u25b2":"\ud83e\uddfe";
+}
+function _filaComieron(idx, r, cols){
+  var c=_comieronEsteLote(idx, r);
+  if(!c.regs.length) return {btn:"", fila:""};
+  var abierto=!!S["_verCom_"+r.id];
+  var uni=(r.tipo==="compra")?"USDT":r.moneda;
+  var tot=c.regs.reduce(function(a,x){return a+x.monto;},0);
+  var btn="<button type='button' id='com-btn-"+r.id+"' onclick='toggleComieron("+r.id+")' "+
+    "style='background:none;border:none;cursor:pointer;font-size:12px' "+
+    "title='Qu\u00e9 remesas gastaron este lote'>"+(abierto?"\u25b2":"\ud83e\uddfe")+"</button>";
+  var d="<div style='font-size:11px;padding:7px 9px'>"+
+    "<div style='font-weight:700;color:var(--tit);margin-bottom:4px'>"+
+      "Se gast\u00f3 en "+c.regs.length+" remesa"+(c.regs.length>1?"s":"")+" \u00b7 "+
+      ((r.tipo==="compra")?f4(tot):f2(tot))+" "+uni+"</div>";
+  c.regs.forEach(function(x){
+    d+="<div style='display:flex;justify-content:space-between;gap:8px;padding:2px 0;color:var(--tx2)'>"+
+      "<span>#"+x.n+" \u00b7 "+_escAud(x.fecha)+" \u00b7 "+_escAud(x.cliente||"\u2014")+"</span>"+
+      "<span style='white-space:nowrap;color:var(--tx3)'>"+((x.campo==="usdt")?f4(x.monto):f2(x.monto))+" "+uni+"</span>"+
+    "</div>";
+  });
+  // Lo que no consta, se dice. Las remesas de antes de este arreglo no
+  // guardaron el id del lote, as\u00ed que se casan por fecha y tasa.
+  if(!c.exacto)
+    d+="<div style='margin-top:5px;font-size:10.5px;color:"+(c.ambiguo?"var(--mal)":"var(--tx4)")+"'>"+
+      (c.ambiguo
+        ? "\u26a0\ufe0f Hay m\u00e1s de un lote con esta misma fecha y tasa, y estas remesas no dicen de cu\u00e1l salieron: se reparten entre todos. Las nuevas s\u00ed lo dicen."
+        : "Casado por fecha y tasa: estas remesas son anteriores y no guardaron de qu\u00e9 lote salieron.")+
+    "</div>";
+  d+="</div>";
+  var fila="<tr id='com-"+r.id+"' style='display:"+(abierto?"table-row":"none")+";background:var(--az6-t);border-top:1px dashed var(--az5-j)'>"+
+    "<td colspan='"+cols+"'>"+d+"</td></tr>";
+  return {btn:btn, fila:fila};
+}
+function _claveLoteVieja(fecha, tasa){
+  return "vj:"+(fecha||"")+"|"+Math.round((parseFloat(tasa)||0)*100);
+}
+function _indiceLotesComidos(){
+  var por={}, ambiguas={}, vistas={};
+  ["brl","vzla","eeuu"].forEach(function(k){
+    (S[k]||[]).forEach(function(t){
+      var lc=t&&t._lotesConsumidos;
+      if(!lc) return;
+      [["compras","usdt"],["ventas","bs"]].forEach(function(par){
+        (lc[par[0]]||[]).forEach(function(l){
+          var reg={lista:k, n:t.n, cliente:t.cl||"", fecha:t.d||"", monto:parseFloat(l[par[1]])||0, campo:par[1]};
+          var clave=(l.id!==undefined&&l.id!==null) ? ("id:"+l.id) : _claveLoteVieja(l.fecha,l.tasa);
+          if(!por[clave]) por[clave]=[];
+          por[clave].push(reg);
+        });
+      });
+    });
+  });
+  // Qué claves viejas puede reclamar MÁS DE UN lote. Medido en su export:
+  // 63 de 367 lotes (el 17%) comparten fecha y tasa con otro, el peor grupo
+  // con cuatro. Para esos, lo de abajo es lo que se puede deducir, no lo que
+  // consta — y se dice en la propia fila. Un dato deducido presentado como
+  // seguro es peor que no darlo.
+  (S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[]).forEach(function(l){
+    var k=_claveLoteVieja(l.fecha,_tasaEfectivaLote(l));
+    if(vistas[k]) ambiguas[k]=true; else vistas[k]=1;
+  });
+  return {por:por, ambiguas:ambiguas};
+}
+function _comieronEsteLote(idx, lote){
+  var vacio={regs:[], exacto:true, ambiguo:false};
+  if(!idx||!idx.por||!lote) return vacio;
+  var kId="id:"+lote.id;
+  if(idx.por[kId]) return {regs:idx.por[kId], exacto:true, ambiguo:false};
+  var kV=_claveLoteVieja(lote.fecha,_tasaEfectivaLote(lote));
+  if(!idx.por[kV]) return vacio;
+  return {regs:idx.por[kV], exacto:false, ambiguo:!!idx.ambiguas[kV]};
 }
 function toggleLotes(n,tipo){
   var key="_showLotes_"+tipo+"_"+n;
@@ -18778,17 +19021,29 @@ function getTasaCompraPonderada(moneda,montoOrigen,cuentaOrigenId){
 // ║  NUNCA modificar sin análisis quirúrgico y aprobación.      ║
 // ║  Las tasas TC/TV vienen SIEMPRE de los lotes FIFO reales.   ║
 // ╚══════════════════════════════════════════════════════════════╝
-function getTasaVentaPonderada(monedaDest,montoBs,cuentaDestinoId){
+// ── ARREGLO 125 · el reparto del FIFO, escrito UNA vez ──────────────────
+//
+// Sus palabras del 13/10, sobre el dinero de varios sitios: "de qué forma lo
+// podemos trabajar cuando haya dinero de ambos lados, o sea allá en bolívares
+// por ventas de USDT o porque yo compré bolívares".
+//
+// La cuenta ya la hacía getTasaVentaPonderada: recorre los lotes del más viejo
+// al más nuevo y promedia. Lo que faltaba era PODER VERLO — qué parte sale de
+// cada sitio. El recorrido se saca aquí y la tasa ponderada pasa a leerlo, para
+// que la pantalla y la cuenta no puedan separarse nunca (la regla del 34,27
+// contra el 34,28). Comprobado sobre sus lotes reales: la tasa que sale de aquí
+// es IDÉNTICA a la de antes, monto a monto.
+//
+// Es de solo lectura: no toca el inventario, solo mira.
+function _repartoFIFO(monedaDest, montoBs, cuentaDestinoId){
   normalizarInventarioFIFO();
   var dest=monedaDest||"VES";
   var m=parseFloat(montoBs)||0;
-  var base=getLastTasaVenta(dest,cuentaDestinoId);
-  if(m<=0||base===null) return base;
   var lotesTodos=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda===dest&&(parseFloat(r.tasa)||0)>0;}).sort(ordenFIFO);
   var lotes=cuentaDestinoId?lotesTodos.filter(function(r){return _cuentaOMadre(r.cuentaDestinoId,cuentaDestinoId,dest);}):lotesTodos;
   if(!lotes.length) lotes=lotesTodos; // cuenta nueva sin lotes propios → usar el pool general, igual que getLastTasaVenta
-  if(!lotes.length) return base;
-  var rest=m,usdt=0;
+  if(!lotes.length) return {filas:[], usdt:0, rest:m, lotes:lotes};
+  var rest=m,usdt=0,filas=[];
   for(var i=0;i<lotes.length&&rest>0.01;i++){
     var disp=parseFloat(lotes[i].bsRestante)||0;
     if(disp<=0) continue;
@@ -18797,10 +19052,35 @@ function getTasaVentaPonderada(monedaDest,montoBs,cuentaDestinoId){
     var usar=Math.min(disp,rest);
     usdt+=usar/tasa;
     rest-=usar;
+    filas.push({lote:lotes[i], usa:usar, tasa:tasa, usdt:usar/tasa});
   }
-  if(rest>0.01){ // bolívares insuficientes → el excedente se valora a la tasa más nueva conocida
-    var tNuevaV=_tasaEfectivaLote(lotes[lotes.length-1])||parseFloat(base)||0;
-    if(tNuevaV>0) usdt+=rest/tNuevaV;
+  // Lo que no alcanzan los lotes se valora a la tasa MÁS NUEVA, que es lo que
+  // esta función ha hecho siempre. Lo nuevo es que entra como una fila más y
+  // marcada: antes se sumaba a la tasa y no se enseñaba, así que la lista decía
+  // 1.010,36 y la cuenta usaba otra cosa. La regla del 34,27 contra el 34,28.
+  if(rest>0.01){
+    var tNueva=_tasaEfectivaLote(lotes[lotes.length-1]);
+    if(tNueva>0){
+      usdt+=rest/tNueva;
+      filas.push({lote:null, usa:rest, tasa:tNueva, usdt:rest/tNueva, prestada:true});
+      rest=0;
+    }
+  }
+  return {filas:filas, usdt:usdt, rest:rest, lotes:lotes};
+}
+function getTasaVentaPonderada(monedaDest,montoBs,cuentaDestinoId){
+  normalizarInventarioFIFO();
+  var dest=monedaDest||"VES";
+  var m=parseFloat(montoBs)||0;
+  var base=getLastTasaVenta(dest,cuentaDestinoId);
+  if(m<=0||base===null) return base;
+  var rep=_repartoFIFO(dest,m,cuentaDestinoId);
+  var lotes=rep.lotes;
+  if(!lotes.length) return base;
+  var usdt=rep.usdt;
+  if(rep.rest>0.01){ // ni el último lote tiene tasa → la última venta conocida
+    var tNuevaV=parseFloat(base)||0;
+    if(tNuevaV>0) usdt+=rep.rest/tNuevaV;
   }
   if(usdt<=0) return base;
   return Math.round((m/usdt)*10000)/10000;
@@ -26083,8 +26363,12 @@ function rNueva(){
       // implicita, que se enseña: un numero derivado que no se ve obliga a
       // comprobar la ganancia a mano.
       "<div class='f2' style='margin-bottom:8px'>"+
-        "<div class='fl'><label>A cu\u00e1nto entraron esos "+(ruta.orig==="VES"?"reales":"bol\u00edvares")+" (Bs por real)</label><input id='permuta-tx' type='text' inputmode='decimal' placeholder='ej: 183,59' value='"+_escAud(_comaCab(f.permuta||""))+"' oninput='S.tx.permuta=_num(this.value);upC(\"tx\")'>"+
-          "<div style='font-size:10px;color:var(--tx4);margin-top:2px;line-height:1.4'>sale de tus lotes \u00b7 c\u00e1mbiala solo si sabes que fue otra</div></div>"+
+        // ARREGLO 124: en la VUELTA este campo no se dibuja. Ahí la permuta es la
+        // tasa de la propia remesa —que ella ya escribió arriba— y pedirla otra
+        // vez era pedirle que adivinara a cuánto iba a soltar esos bolívares.
+        (ruta.orig==="VES" ? "" :
+        "<div class='fl'><label>A cu\u00e1nto entraron esos bol\u00edvares (Bs por real)</label><input id='permuta-tx' type='text' inputmode='decimal' placeholder='ej: 183,59' value='"+_escAud(_comaCab(f.permuta||""))+"' oninput='S.tx.permuta=_num(this.value);upC(\"tx\")'>"+
+          "<div style='font-size:10px;color:var(--tx4);margin-top:2px;line-height:1.4'>sale de tus lotes \u00b7 c\u00e1mbiala solo si sabes que fue otra</div></div>")+
         "<div class='fl'><label>Tasa venta USDT ("+ruta.dest+"/USDT)</label><input type='text' inputmode='decimal' placeholder='ej: 948' value='"+(f.tv_manual||tvAuto||"")+"' oninput='S.tx.tv_manual=_num(this.value);upC(\"tx\")'></div>"+
       "</div>"+
       // ARREGLO 120: con su id, para que upC() lo refresque al teclear. Sin id
@@ -26129,6 +26413,10 @@ function rNueva(){
       "<div id='s3-tx' class='step-box' style='background:var(--mal-sup);border:1px solid var(--rj3a33)'><span style='font-size:11px;color:var(--mal)'>"+f0(cant)+" "+ruta.dest+" ÷ "+f2(tv)+" = </span><span style='font-weight:700;font-size:13px;color:var(--mal)'>−"+f2(uv)+" USDT</span></div>"+
     "</div>":"<div id='s2-tx'></div><div id='s3-tx'></div>")+
     "</div>"+
+    // ARREGLO 125: de dónde salen los bolívares. Con su id, para que upC() lo
+    // refresque al teclear — si no, se queda del último repintado y enseña un
+    // reparto que ya no es el del monto que hay escrito (ARREGLO 55).
+    "<div id='fifo-tx'>"+_htmlDeDondeSalen(_rTx, ruta)+"</div>"+
     "<div id='cp-tx' class='result-box"+(ok&&prNeto>0&&tc>0&&tv>0?" gain":"")+"'>"+
     (ok&&tc>0&&tv>0?"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:6px'><div style='font-size:11px;font-weight:700;color:var(--tx3)'>GANANCIA = USDT comprados − USDT vendidos</div><div style='font-size:22px;font-weight:800;color:"+(prNeto>0?"var(--ok)":"var(--mal)")+"'>"+(prNeto>0?"+ ":"")+f2(prNeto)+" USDT</div></div><div style='font-size:11px;color:var(--tx2b)'>"+f2(uc)+" − "+f2(uv)+""+(comUsdtVivo>0?" − "+f2(comUsdtVivo)+" (comisión del banco)": "")+" = <b style='color:"+(prNeto>0?"var(--ok)":"var(--mal)")+"'>"+f2(prNeto)+"</b></div>":"<div style='text-align:center;color:var(--tx4);font-size:12px;padding:8px'>Completa monto, tasa del día y tasas USDT</div>")+
     "</div>"+
@@ -26376,12 +26664,16 @@ function rInventarioUsdt(){
   var mVentaOpts=MONEDAS_VENTA.map(function(m){return "<option value='"+m.id+"'"+(f.monedaVenta===m.id?" selected":"")+">"+m.flag+" "+m.label+"</option>";}).join("");
   var tipoOpts=["exchange","banco","efectivo","billetera"];
   var _cuentasNomInv={}; (S.cuentas||[]).forEach(function(c){_cuentasNomInv[c.id]=c.nombre||c.id;});
+  // ARREGLO 126: se arma UNA vez por dibujo. Preguntarlo lote por lote serian
+  // 200.000 comparaciones en cada repintado (medido: asi cuesta 2 ms).
+  var _idxCom=_indiceLotesComidos();
   var rows=S.inventarioUsdt.slice().sort(function(a,b){return ordenFIFO(b,a);}).map(function(r){
     var enBlanco=!(parseFloat(r.usdt)||0)&&!(parseFloat(r.bs)||0);
     if(enBlanco){
       return "<tr style='background:var(--am6-f)'><td>"+(r.fecha||"—")+"</td><td colspan='9' style='color:var(--am3-g);font-size:11.5px'>⚠️ Registro en blanco (sin montos) — puedes eliminarlo</td><td></td><td><button class='del-btn' onclick='reqDel(\"inventarioUsdt\","+r.id+",\"id\")'>🗑️</button></td></tr>";
     }
     var isComp=r.tipo==="compra";
+    var _com=_filaComieron(_idxCom, r, 12);
     var flag=(MONEDAS_COMPRA.concat(MONEDAS_VENTA).find(function(m){return m.id===r.moneda;})||{flag:"💵"}).flag;
     var bancoId=isComp?r.cuentaOrigenId:r.cuentaDestinoId;
     var bancoNom=bancoId?_escAud(_cuentasNomInv[bancoId]||"—"):"—";
@@ -26410,9 +26702,9 @@ function rInventarioUsdt(){
         (r.usdt||r.bs?((isComp?f4(parseFloat(r.restante)||0)+" USDT":f2(r.bsRestante!==undefined?r.bsRestante:(parseFloat(r.bs)||0))+" "+r.moneda)+
         " <button type='button' onclick='editRestanteInv("+r.id+")' style='background:none;border:none;cursor:pointer;font-size:11px' title='Ajustar restante'>✏️</button>"):"")+
       "</td>"+
-      "<td style='text-align:center'>"+(r.locked?"🔒":"")+"</td>"+
+      "<td style='text-align:center'>"+(r.locked?"🔒":"")+_com.btn+"</td>"+
       "<td><button class='del-btn' onclick='reqDel(\"inventarioUsdt\","+r.id+",\"id\")'>🗑️</button></td>"+
-    "</tr>";
+    "</tr>"+_com.fila;
   }).join("");
   var comActual=COM();
   return "<div style='background:var(--info-osc);border:2px solid var(--avi);border-radius:10px;padding:13px 16px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px'>"+
