@@ -2913,7 +2913,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261013_v214";
+var APP_VERSION = "20261013_v215";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -12812,14 +12812,28 @@ function guardarPixTarjeta(){
 function guardarColchones(){
   var i=_leerNumero(document.getElementById("inp-colchon-ida").value);
   var v=_leerNumero(document.getElementById("inp-colchon-vuelta").value);
+  // ARREGLO 132: el colchón de la ida cuando hay bolívares parados, y el monto
+  // en reales a partir del cual se considera que los hay.
+  var ib=_leerNumero(document.getElementById("inp-colchon-ida-bs").value);
+  var ub=_leerNumero(document.getElementById("inp-umbral-bs").value);
   if(isNaN(i)||i<0||i>=50){alert("Colchón de la ida inválido. Usa ej: 7 para 7%.");return;}
   if(isNaN(v)||v<0||v>=50){alert("Colchón de la vuelta inválido. Usa ej: 5 para 5%.");return;}
+  if(isNaN(ib)||ib<0||ib>=50){alert("Colchón de la ida con bolívares inválido. Usa ej: 5 para 5%.");return;}
+  if(isNaN(ub)||ub<0){alert("Umbral inválido. Usa ej: 200 para 200 reales en bolívares.");return;}
+  // Un colchón con bolívares MAYOR que el normal haría lo contrario de lo que
+  // ella pidió: bajaría la ida justo cuando quiere soltarlos. Se avisa y se
+  // deja decidir, porque puede querer lo contrario algún día.
+  if(ib>i && !confirm("El colchón con bolívares ("+f2(ib)+"%) es MAYOR que el normal ("+f2(i)+"%).\n\n"+
+                      "Eso BAJA la ida cuando tengas bolívares parados, que es lo contrario de soltarlos. ¿Seguro?")) return;
   if(!S.config)S.config={};
   S.config.colchonIda=i/100;
   S.config.colchonVuelta=v/100;
+  S.config.colchonIdaBs=ib/100;
+  S.config.umbralBsReales=ub;
   saveData();R();
   var r=_tasasRecomendadas();
   alert("✅ Colchones guardados: ida "+f2(i)+"% · vuelta "+f2(v)+"%."+
+        "\nCon bolívares parados por encima de "+f2(ub)+" R$, la ida usa "+f2(ib)+"%."+
         (r?("\n\nCon tu suelo de "+f2(r.suelo)+" eso es "+_tasaCorta(r.ida)+" y "+_tasaCorta(r.vuelta)+"."):""));
 }
 function guardarComisionBanco(){
@@ -13644,6 +13658,25 @@ function rConfigAdmin(){
             "<span style='font-size:11px;color:var(--tx2);min-width:116px'>Vuelta \u00b7 % por encima</span>"+
             "<input type='text' inputmode='decimal' id='inp-colchon-vuelta' value='"+(Math.round(_colchon("vuelta")*1000)/10)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
           "</div>"+
+          // ARREGLO 132: con bolívares parados la ida se acerca al suelo para
+          // soltarlos. Va aquí, al lado de los otros dos, porque es el mismo
+          // criterio suyo y se toca igual de poco.
+          "<div style='font-size:11px;color:var(--tx3);margin:10px 0 8px;padding-top:10px;border-top:1px dashed var(--ln2)'>"+
+            "Cuando tengas <b>bol\u00edvares parados</b> por encima del umbral, la ida usa este otro colch\u00f3n: "+
+            "m\u00e1s chico, o sea tasa m\u00e1s alta para el cliente, para que esos bol\u00edvares salgan.</div>"+
+          "<div style='display:flex;gap:8px;align-items:center;max-width:420px;margin-bottom:6px'>"+
+            "<span style='font-size:11px;color:var(--tx2);min-width:116px'>Ida con Bs \u00b7 % por debajo</span>"+
+            "<input type='text' inputmode='decimal' id='inp-colchon-ida-bs' value='"+(Math.round(_colchon("idaBs")*1000)/10)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+          "</div>"+
+          "<div style='display:flex;gap:8px;align-items:center;max-width:420px;margin-bottom:8px'>"+
+            "<span style='font-size:11px;color:var(--tx2);min-width:116px'>Umbral \u00b7 R$ en Bs</span>"+
+            "<input type='text' inputmode='decimal' id='inp-umbral-bs' value='"+f0(_umbralBsReales())+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+          "</div>"+
+          (function(){ var q=null; try{ q=_inventarioBs(); }catch(e){}
+            if(!q || q.reales===null) return "";
+            return "<div style='font-size:11px;color:"+(q.pasa?"var(--avi-tx)":"var(--tx3)")+";margin-bottom:8px'>"+
+              "Ahora mismo tienes <b>"+f2(q.reales)+" R$</b> en bol\u00edvares: "+
+              (q.pasa?"la ida est\u00e1 usando el colch\u00f3n con bol\u00edvares.":"manda el colch\u00f3n normal.")+"</div>"; })()+
           "<button onclick='guardarColchones()' style='padding:9px 14px;background:var(--ac);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
         "</div>"+
         // ARREGLO 95: lo que cobra PagBank por hacer un Pix con la tarjeta de
@@ -24851,6 +24884,20 @@ function avisoTasa(){
                 "(pides más Bs por real, entran menos).",
           tab:"calculadora"});
       }
+      // ARREGLO 132: el de arriba mide en PORCENTAJE y por eso con el 51% en
+      // bolívares callaba, teniendo ella 850 reales parados. Este mide el
+      // MONTO, que es como ella lo piensa, y va ANTES del de los reales: si
+      // hay bolívares que soltar, eso es lo accionable.
+      var invBs=null; try{ invBs=_inventarioBs(); }catch(e){ invBs=null; }
+      if(invBs && invBs.pasa){
+        av.push({id:"bs_parados", nivel:"ambar",
+          clave:"bs_parados_"+Math.round(invBs.reales/100)*100,
+          titulo:"Tienes bolívares para soltar",
+          texto:"Tienes "+f(invBs.reales)+" R$ en bolívares parados, por encima de los "+
+                f(invBs.umbral)+" R$ que pusiste de umbral. Mientras sigan ahí, la ida que te "+
+                "recomiendo sube sola: das más Bs por real y salen más rápido.",
+          tab:"calculadora"});
+      }
       var pBrl=(brl!==null)?(brl/enCta*100):0;
       if(pBrl>=uC){
         // Esto NO es una alarma: tener reales parados no le perjudica. Es una
@@ -26095,14 +26142,87 @@ function _comaCab(v){
 // octubre entero — 61 operaciones, margen medio 6,8%, 151,44 USDT — y el 5%
 // de la vuelta es donde ya estaba (210 sobre un suelo de 200). Se editan en
 // Configuración; si algún día cambia de criterio, se toca ahí y no aquí.
-var _COLCHON_DEF = {ida:0.07, vuelta:0.05};
+var _COLCHON_DEF = {ida:0.07, vuelta:0.05, idaBs:0.05};
+var _UMBRAL_BS_DEF = 200;
 function _colchon(dir){
-  var v=parseFloat((S.config||{})[dir==="ida"?"colchonIda":"colchonVuelta"]);
+  var k = dir==="vuelta" ? "colchonVuelta" : (dir==="idaBs" ? "colchonIdaBs" : "colchonIda");
+  var v=parseFloat((S.config||{})[k]);
   // Un colchón absurdo (negativo, o mayor que medio suelo) daría una tasa con
   // la que pierde en cada remesa. Fuera de rango se ignora, igual que ya se
   // ignora una comisión de Binance fuera de rango en _equilibrio().
   if(!(v>=0) || v>=0.5) return _COLCHON_DEF[dir];
   return v;
+}
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 132 · LA IDA SUBE SOLA CUANDO HAY BOLÍVARES PARADOS
+// ══════════════════════════════════════════════════════════════════════
+// Sus palabras del 13/10: "ya yo aquí tengo bs de usdt que tuve que vender,
+// entonces quiero que mientras tenga más de lo equivalente a 200 reales en bs
+// tenga mejor tasa, porque ahorita mi competencia tiene una tasa de reales más
+// alta y entonces me está mandando a bajar a 185".
+//
+// El aviso del ARREGLO 112 ya decía "te llenaste de bolívares, SUBE la ida",
+// pero mide en PORCENTAJE del total en cuentas. Medido en su export del 13/10:
+//
+//   bolívares en cuentas   170.604 Bs = 850 R$   ← 4 veces su umbral
+//   el aviso decía         "tienes reales de sobra"
+//
+// Con el 51% en bolívares no llegaba al umbral del aviso, así que la app creía
+// que no pasaba nada mientras ella tenía 850 reales en bolívares perdiendo
+// valor y la competencia publicando por encima. Su regla es ABSOLUTA y pequeña
+// —200 reales— porque lo que le duele no es la proporción, es el monto parado.
+//
+// Por eso el inventario se mide en UN solo sitio y lo leen los dos: el colchón
+// que decide la tasa y el aviso que explica por qué. Calculado aparte, un día
+// la tarjeta subiría la ida mientras el aviso de abajo dice que todo va bien.
+// SIN memo a propósito. El primer intento guardaba la respuesta 300 ms y la
+// prueba de aquí al lado empezó a medir la del bloque anterior: con el memo
+// puesto, el número que decide la tasa que ella publica depende de cuándo se
+// preguntó, y eso no se ve desde fuera. capitalRealTotal() ya lo llaman
+// avisoTasa() y la conciliación en cada dibujo; medido en Chromium, las 21
+// pestañas siguen dibujando igual.
+function _inventarioBs(){
+  var u=_umbralBsReales(), r=null;
+  try{ r=capitalRealTotal(); }catch(e){ r=null; }
+  var ves=null;
+  if(r && r.porMoneda) r.porMoneda.forEach(function(x){ if(x.moneda==="VES") ves=x.usdtCuentas; });
+  var out={usdt:(ves>0?ves:0), reales:null, umbral:u, pasa:false};
+  if(ves>0){
+    // usdtCuentas son esos bolívares YA valorados en USDT, así que para
+    // pasarlos a reales se MULTIPLICA por los reales que vale un USDT. La
+    // regla de "getRateToUsdt divide" es para el camino contrario; dividir
+    // aquí daría 33 R$ donde hay 850 y el umbral no saltaría nunca.
+    var rb=(typeof tasaDeReferencia==="function")?tasaDeReferencia("BRL"):null;
+    var tB=rb&&rb.tasa;
+    // Sin tasa de reales no se inventa el equivalente: se deja sin decidir y
+    // manda el colchón de siempre. Un umbral adivinado movería la tasa que
+    // publica.
+    if(tB>0){ out.reales=ves*tB; out.pasa=(out.reales>u); }
+  }
+  return out;
+}
+function _umbralBsReales(){
+  var v=parseFloat((S.config||{}).umbralBsReales);
+  if(!(v>=0) || v>=1e7) return _UMBRAL_BS_DEF;
+  return v;
+}
+// Cuál de los dos colchones de ida manda AHORA. Es lo único que mira el
+// inventario: _colchon() sigue devolviendo lo GUARDADO, que es lo que tienen
+// que enseñar los campos de Configuración.
+var _SIN_BS = false;
+function _colchonIdaAhora(){
+  if(_SIN_BS) return _colchon("ida");
+  var inv=_inventarioBs();
+  return (inv && inv.pasa) ? _colchon("idaBs") : _colchon("ida");
+}
+// Para poder decirle "sin los bolívares saldría 185 y con ellos sale 189" hace
+// falta la MISMA cuenta dos veces, no una segunda fórmula escrita al lado.
+// Misma forma que _tasasConLoMio y _prConPermuta: se apaga, se pregunta, y se
+// vuelve a encender en un finally — mirar el resultado no puede ser ya haberlo
+// aplicado.
+function _tasasSinBs(){
+  _SIN_BS=true;
+  try{ return _tasasRecomendadas(); } finally { _SIN_BS=false; }
 }
 // Las dos tasas recomendadas salen de AQUÍ y de ningún otro sitio: lo leen la
 // tarjeta que las dibuja y el botón que las publica. Calculadas aparte en el
@@ -26131,7 +26251,7 @@ function _tasasRecomendadas(){
   var Q=sueloQueManda();
   if(!Q || !(Q.v>0)) return null;
   return {Q:Q, suelo:Q.v,
-          ida:Math.round(Q.v*(1-_colchon("ida"))),
+          ida:Math.round(Q.v*(1-_colchonIdaAhora())),
           vuelta:Math.round(Q.v*(1+_colchon("vuelta")))};
 }
 // Lo que escribe aquí NO repinta la pantalla (ARREGLO 32): repintar mata el
@@ -26330,14 +26450,34 @@ function _htmlPublicaHoy(){
   var sit=null;
   try{
     (avisoTasa()||[]).forEach(function(a){
-      if(!sit && (a.id==="conc_ves"||a.id==="conc_brl")) sit=a;
+      if(!sit && (a.id==="conc_ves"||a.id==="bs_parados"||a.id==="conc_brl")) sit=a;
     });
   }catch(e){}
+  // ARREGLO 132: una tasa que sube sola sin decir por qué es una tasa que no se
+  // puede usar, así que aquí van los TRES valores (116, 117, 123, 129): lo que
+  // hay parado, el umbral que ella puso, y de cuánto a cuánto sube.
+  //
+  // Y va DENTRO del recuadro de la situación, no en uno nuevo encima. El primer
+  // intento dibujaba los dos y la tarjeta decía "850,36 R$" y "200,00 R$" dos
+  // veces seguidas, en dos bloques ámbar pegados — el ARREGLO 125 otra vez: un
+  // número se escribe UNA vez, y dos avisos del mismo suceso se leen como dos
+  // sucesos (ARREGLO 94).
+  var txtSit=sit?_escAud(sit.texto):"";
+  if(sit && sit.id==="bs_parados"){
+    var invT=null; try{ invT=_inventarioBs(); }catch(e){}
+    var sinBs=(invT&&invT.pasa)?_tasasSinBs():null;
+    if(sinBs && sinBs.ida!==r.ida){
+      txtSit="Tienes <b>"+f2(invT.reales)+" R$</b> en bol\u00edvares parados, por encima de los "+
+             f2(invT.umbral)+" R$ que pusiste de umbral. Por eso subo la ida de <b>"+
+             _tasaCorta(sinBs.ida)+"</b> a <b>"+_tasaCorta(r.ida)+
+             "</b>: das m\u00e1s Bs por real y salen m\u00e1s r\u00e1pido.";
+    }
+  }
   if(sit){
     h+="<div style='margin-top:11px;background:var(--avi-sup);border-left:3px solid var(--avi-ln);"+
        "border-radius:7px;padding:9px 11px'>"+
        "<div style='font-size:11.5px;color:var(--avi-tx);line-height:1.5'>"+
-       "<b>"+_escAud(sit.titulo)+".</b> "+_escAud(sit.texto)+"</div></div>";
+       "<b>"+_escAud(sit.titulo)+".</b> "+txtSit+"</div></div>";
   }
 
   // El campo de la aproximada también sale CON tasa recomendada: que haya

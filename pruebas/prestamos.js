@@ -50,7 +50,7 @@ function sacarConstante(nombre) {
   }
   throw new Error("la constante " + nombre + " no termina en ';'");
 }
-const CONSTANTES = ["_APROX_LS", "_COLCHON_DEF", "_SIN_APROX", "_RUTA_DE", "CG_BASE", "_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO", "_AVISO_UMBRAL", "_MERCADO_MONTO_DEF",
+const CONSTANTES = ["_APROX_LS", "_COLCHON_DEF", "_SIN_APROX", "_UMBRAL_BS_DEF", "_SIN_BS", "_RUTA_DE", "CG_BASE", "_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO", "_AVISO_UMBRAL", "_MERCADO_MONTO_DEF",
                     "_BIN_COLS_C2C", "_BIN_COLS_TX", "MONEDAS_COMPRA", "MONEDAS_VENTA",
                     "MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
                     "_MERGE_OBJETOS", "_MERGE_BLOQUES", "_MERGE_HISTORIAL", "_RATE_LIMITS",
@@ -76,6 +76,8 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "_tsUltimaOpUSDT", "_aproxManda", "_toggleProbar", "_volverAMiTasa",
                     // ARREGLO 130
                     "_ultimaOpUSDT", "_origenLado",
+                    // ARREGLO 132
+                    "_inventarioBs", "_umbralBsReales", "_colchonIdaAhora", "_tasasSinBs",
                     "_saldoCtaUsdt", "_otrasCtasUsdt", "_cubrirUsdtParaVenta", "_setAprox", "publicarRecomendadas",
                     "_campoAprox", "_htmlPublicaHoy", "guardarColchones", "_htmlCalceCuerpo", "_botonTasaUsdt",
                     "_calceK", "_calceGan", "_calceVuelta", "_calceIda", "_cg", "_cgSet", "_cgFraccion",
@@ -7988,6 +7990,12 @@ console.log("\n— FASE 2: la cuenta madre —");
     // no se miran: medido, VES salia a 200 en vez de 1.000 y el porcentaje
     // era otro. Montar lotes sin limpiar esto es medir otra cosa.
     S.tasasDia={}; S._tasasDiaMeta={};
+    // ARREGLO 132: este fixture aparca 100 USDT en bolivares, que con el umbral
+    // real (200 R$) son ~500 y harian saltar el aviso del monto parado — y
+    // estaria BIEN que saltara. Estas pruebas son de la regla del PORCENTAJE,
+    // asi que aqui se sube el umbral a proposito para medir solo eso. La regla
+    // nueva tiene su propio bloque, con sus dos lados.
+    S.config.umbralBsReales=1e6;
   };
   const ids = () => F.avisoTasa().map(a=>a.id);
 
@@ -9718,6 +9726,111 @@ console.log("\nARREGLO 130 · el origen de cada mitad y el traspaso que falta");
      "saveIU avisa de lo que traspasó");
   ok(sv.indexOf("_cubrirUsdtParaVenta(") > sv.indexOf("VENTA de "),
      "y lo hace DESPUÉS de que ella confirme la venta, no antes");
+}
+
+// ══════════════════════════════════════════════════════════════════════
+console.log("\nARREGLO 132 · la ida sube sola cuando hay bolívares parados");
+{
+  const inv=sacarFuncion("_inventarioBs");
+  const cia=sacarFuncion("_colchonIdaAhora");
+  const tr =sacarFuncion("_tasasRecomendadas");
+  const av =sacarFuncion("avisoTasa");
+  const sbs=sacarFuncion("_tasasSinBs");
+
+  // ── Un solo sitio mide el inventario ────────────────────────────────
+  // Calculado aparte, un día la tarjeta subiría la ida mientras el aviso de
+  // abajo dice que todo va bien. Es la regla del 34,27 contra el 34,28.
+  ok(/_colchonIdaAhora\(\)/.test(tr) && !/_colchon\("ida"\)/.test(tr),
+     "la ida recomendada sale del colchón que manda AHORA, no del guardado");
+  ok(/_inventarioBs\(\)/.test(cia), "y ese mira el inventario de bolívares");
+  ok(/_inventarioBs\(\)/.test(av),
+     "el aviso lee el MISMO inventario, no una segunda cuenta");
+
+  // ── La conversión MULTIPLICA ────────────────────────────────────────
+  // usdtCuentas ya está en USDT: para pasarlo a reales se multiplica por los
+  // reales que vale un USDT. Dividiendo daría 33 R$ donde hay 850 y el
+  // umbral no saltaría nunca.
+  ok(/ves\s*\*\s*tB/.test(inv), "los bolívares se pasan a reales multiplicando");
+  ok(!/ves\s*\/\s*tB/.test(inv), "no dividiendo");
+
+  // ── Sin tasa de reales no se inventa el umbral ──────────────────────
+  ok(/if\(tB>0\)/.test(inv), "sin tasa de reales no se decide nada");
+
+  // ── Mirar el resultado no puede ser ya haberlo aplicado ─────────────
+  ok(/finally\s*\{\s*_SIN_BS=false;\s*\}/.test(sbs),
+     "_tasasSinBs devuelve la bandera en un finally");
+
+  // ── Los valores por omisión ─────────────────────────────────────────
+  ok(F._COLCHON_DEF.idaBs===0.05, "el colchón con bolívares por omisión es 5%");
+  ok(F._UMBRAL_BS_DEF===200, "y el umbral, 200 reales");
+  S.config={};
+  ok(F._colchon("idaBs")===0.05 && F._umbralBsReales()===200,
+     "sin nada escrito, mandan los de por omisión");
+  S.config={colchonIdaBs:0.9, umbralBsReales:-5};
+  ok(F._colchon("idaBs")===0.05 && F._umbralBsReales()===200,
+     "y uno fuera de rango se ignora, no publica una tasa en pérdida");
+
+  // ── El comportamiento, con sus números del 13/10 ────────────────────
+  // 170.604 Bs a 1.010,14 son 168,89 USDT, que a 5,035 son 850 R$.
+  const TB132=Date.now();               // nombre propio: T0 es del bloque del 130
+  const _cuentasBs=(bs)=>[{id:"bdv",nombre:"BDV",moneda:"VES",saldo:bs,tipo:"banco",activa:true}];
+  const _lotes=()=>[
+    {id:TB132-864e5, tipo:"compra", moneda:"BRL", fecha:"10/12", fechaIso:"2026-10-12",
+     usdt:100, tasa:5.035, comision:0, restante:100, cuentaId:"saipa"},
+    {id:TB132-6e4,  tipo:"venta",  moneda:"VES", fecha:"10/13", fechaIso:"2026-10-13",
+     usdt:168.81, tasa:1010.14, comision:0, bs:170521, bsRestante:0, cuentaId:"julio"}];
+  const _poner=(bs,cfg)=>{
+    S.config=Object.assign({comision_binance:0.007}, cfg||{});
+    S.cuentas=_cuentasBs(bs);
+    S.inventarioUsdt=_lotes(); S.inventarioUsdt_cerrado=[];
+    S.prestamos=[]; S.cuentasCobrar=[]; S.brl=[]; S.vzla=[]; S.eeuu=[];
+    S.tasasDia={}; S._tasasDiaMeta={};
+  };
+  _poner(40000, {colchonIda:0.07, colchonIdaBs:0.05, umbralBsReales:200});
+  const q1=F._inventarioBs();
+  ok(q1 && q1.reales>900 && q1.reales<1100 && q1.pasa===true,
+     "con bolívares de sobra, el equivalente en reales pasa el umbral", q1 && Math.round(q1.reales));
+  ok(Math.abs(F._colchonIdaAhora()-0.05)<1e-9,
+     "y entonces manda el colchón con bolívares (5%)");
+
+  // Por debajo del umbral manda el de siempre.
+  _poner(2000, {colchonIda:0.07, colchonIdaBs:0.05, umbralBsReales:200});
+  const q2=F._inventarioBs();
+  ok(q2 && q2.pasa===false && q2.reales<200, "con pocos bolívares no pasa el umbral",
+     q2 && Math.round(q2.reales));
+  ok(Math.abs(F._colchonIdaAhora()-0.07)<1e-9, "y manda el colchón normal (7%)");
+
+  // Y mirar el de siempre no deja la bandera puesta.
+  _poner(40000, {colchonIda:0.07, colchonIdaBs:0.05, umbralBsReales:200});
+  F._tasasSinBs();
+  ok(Math.abs(F._colchonIdaAhora()-0.05)<1e-9,
+     "después de mirar 'sin bolívares', sigue mandando el de bolívares");
+
+  // ── La tarjeta dice POR QUÉ, con los tres valores ───────────────────
+  const hp=sacarFuncion("_htmlPublicaHoy");
+  ok(/_tasasSinBs\(\)/.test(hp), "la tarjeta compara con la de siempre");
+  // Los TRES valores por su FUENTE, no por el texto de alrededor: pidiendo
+  // solo que aparezca la palabra "umbral", quitar f2(invT.reales) pasaba.
+  ok(/f2\(invT\.reales\)/.test(hp) && /f2\(invT\.umbral\)/.test(hp),
+     "dice cuánto hay parado y cuál es el umbral, con sus dos números");
+  ok(/_tasaCorta\(sinBs\.ida\)/.test(hp) && /_tasaCorta\(r\.ida\)/.test(hp),
+     "y de cuánto a cuánto sube, con los dos");
+  // ARREGLO 125: un número se escribe UNA vez. El primer intento dibujaba la
+  // comparación en su propio recuadro, encima del aviso, y los dos decían
+  // "850,36 R$" y "200,00 R$" pegados.
+  ok((hp.match(/_inventarioBs\(\)/g)||[]).length===1,
+     "el inventario se pregunta una sola vez en la tarjeta");
+  ok(/txtSit/.test(hp) && (hp.match(/background:var\(--avi-sup\);border-left/g)||[]).length===1,
+     "y la comparación va DENTRO del recuadro de la situación, no en uno nuevo");
+
+  // ── Guardar escribe las dos claves nuevas ───────────────────────────
+  const gc=sacarFuncion("guardarColchones");
+  ok(/colchonIdaBs\s*=/.test(gc) && /umbralBsReales\s*=/.test(gc),
+     "Configuración guarda el colchón con bolívares y el umbral");
+  ok(/inp-colchon-ida-bs/.test(HTML) && /inp-umbral-bs/.test(HTML),
+     "y los dos campos existen en la pantalla");
+  ok(!/_INV_BS/.test(HTML),
+     "el inventario no se guarda en un memo: el número que decide la tasa no puede depender de cuándo se preguntó");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
