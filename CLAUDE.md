@@ -1190,6 +1190,63 @@ entregados salen **15,38 USDT**. Por el otro camino, *Con USDT (P2P)*, la app us
 sus lotes y con sus datos sale **17,36 USDT**: no es que uno esté mal, es que son
 dos operaciones distintas y hay que elegir la que de verdad va a hacer.
 
+### La permuta sale de los LOTES, y el margen se cuenta UNA vez (ARREGLO 123)
+
+Sus palabras del 13/10: *"imagínate si la tasa varía en todo el día y son muchas
+operaciones, ¿cómo yo me voy a acordar a qué tasa me entraron esos bolívares? Eso
+me lo debería dar el mismo sistema, según por el orden FIFO"*.
+
+Tiene razón, y el precio de equivocarse no es la molestia: **es que la app apunta
+una ganancia que no tuvo.** Medido en Chromium con un cruce cerrado —entran
+147.000 Bs a 210 y salen todos a 189, o sea 77,78 R$ de ganancia de verdad—:
+
+```
+vuelta a 189  +  ida a 189   →  15,28 USDT    la verdad: 15,28   ✅
+vuelta a 189  +  ida a 210   →  32,26 USDT                       ❌
+vuelta a 189  +  ida a 220   →  40,34 USDT    2,6 veces          ❌
+```
+
+**El margen del cruce se cuenta una vez.** Si la vuelta ya lo apuntó —porque ahí
+se escribió la ida a la que iban a soltarse esos bolívares— la ida no puede volver
+a apuntarlo. Ella escribió **220** en una ida cuyos bolívares habían entrado con
+permuta 188,88: eso es contarlo dos veces, y nada en la pantalla lo decía.
+
+**Y el número sale solo**, con la misma fórmula en los dos sentidos:
+
+```
+permuta = (Bs por USDT)  ÷  (reales por USDT)
+```
+
+En la ida los bolívares salen de sus lotes, así que el Bs/USDT es el ponderado del
+consumo FIFO —el que `getAutoRates` ya calcula y la pantalla ya enseña— y los
+reales se valoran a su tasa de compra. En la vuelta es al revés. Lo que falte de
+lotes cae en `tasaDeReferencia()`, que es la que ya valora ese dinero parado.
+
+- **La comprobación de que no sobra ni falta ganancia:** con la permuta sugerida,
+  el calce da **exactamente lo mismo que "Con USDT (P2P)"** (medido: 0,70 contra
+  0,70). La única diferencia entre los dos caminos tiene que ser la comisión de
+  Binance que el calce no paga; si se separan más, la permuta está inventando.
+- **El campo sale relleno, pero no pisa lo suyo.** `txMetodo("calce")` lo rellena
+  solo si está vacío: puede haber un calce de verdad a otra tasa y decidirlo es
+  suyo.
+- **Y cuando lo tecleado se aparta más de un 2 %, se avisa con los TRES valores**
+  (`_htmlPermutaFuera`): lo que apunta con la suya, lo que apunta con la de los
+  lotes, y de dónde sale la de los lotes. Un aviso que solo dijera "parece mucho"
+  hay que comprobarlo a mano, que es justo lo que esto viene a quitar. **No se
+  corrige solo** — es el mismo criterio del aviso de tasa al revés (ARREGLO 55).
+- **La ganancia de la comparación sale de `cTx()`**, poniendo la permuta y
+  devolviéndola **en un `finally`** (`_prConPermuta`): mirar el resultado no puede
+  ser ya haberlo aplicado. Misma regla que `_simularConFecha`.
+- **El botón "usar" no llama a `R()`** (ARREGLO 32): escribe el campo por su id y
+  llama a `upC`.
+
+**Dónde se prueba cada mitad, porque esta vez se separaron a propósito:** las
+guardias estructurales de `pruebas/prestamos.js` fijan la forma de la cuenta (que
+`cTx` despeje `tc` desde la permuta, que el relleno no pise, que el `finally`
+exista); **el cruce cerrado se mide en Chromium**, con la app entera cargada —
+`cTx()` necesita `getRUTAS` y media docena de constantes más, y una caja rellena a
+medias prueba menos que el navegador.
+
 ### La tasa de referencia sale sola — no la escribas a mano
 
 Antes mandaba lo que ella escribía en el panel 💱, y mandaba para siempre:
