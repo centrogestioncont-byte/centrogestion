@@ -2200,6 +2200,50 @@ ms** sin él, y las 24 pestañas sin un error.
 Comprobado con sus datos del 13/10: con 170.604 Bs (850,36 R$) sale **189 · 209**
 con el colchón al 5%, y bajando a 2.000 Bs vuelve a **185 · 209** con el 7%.
 
+#### Y la vuelta baja sola cuando hay reales parados (ARREGLO 133)
+
+Sus palabras del 13/10: *"de bs a reales que pase, lo mida con esa misma lógica
+pero al contrario"*.
+
+**Al contrario quiere decir esto, y el motivo es SUYO** (ARREGLO 74): su vuelta
+alta existe para cubrirle el P2P que tiene que hacer cuando entra una vuelta
+grande y **no** tiene reales. Con reales en mano ese costo no lo tiene, así que
+puede **BAJAR** la vuelta — pide menos Bs por real, entran más vueltas, salen
+reales y entran bolívares.
+
+```
+                        colchón   publica
+vuelta normal              5%       209
+con reales parados         3%       205
+```
+
+**El umbral NO es el mismo, y por eso se pregunta aparte.** Medido en su
+histórico, los reales en cuentas se mueven mucho:
+
+```
+hoy 3.252 · 08/10 346 · 06/10 92 · 17/09 2.271 · 03/09 199
+```
+
+Con 200 —el de los bolívares— estaría en *"me sobran"* **9 de los últimos 13
+días**, o sea casi siempre, y eso es cambiar el colchón de base en vez de
+reaccionar. **1.000** son unas cinco vueltas de su tamaño medio (193 R$) en mano:
+por debajo de eso todavía puede necesitar el P2P y ese 5% se lo gana.
+
+- **Los reales NO se convierten.** `enCuentas` de BRL ya está en reales; pasarlo
+  por `usdtCuentas` y multiplicar sería dar dos veces la vuelta a un número que ya
+  estaba bien, con un redondeo de regalo. Es la otra mitad de la regla del 132,
+  donde los bolívares **sí** hay que convertir.
+- **Los DOS lados pueden estar activos a la vez** — ella tiene 850 R$ en
+  bolívares y 3.252 en reales. Enseñando solo el primero, la vuelta se movería
+  sin que nada lo diga, que es justo lo que ese bloque existe para evitar: van los
+  dos, una línea cada uno, **en el mismo recuadro**.
+- **Cada lado con SU umbral y SU colchón**, y los cuatro se editan juntos en
+  Configuración.
+
+Medido en Chromium con sus datos del 13/10 (850 R$ en bolívares, 3.252 en
+reales): **189 · 205**, contra los 185 · 209 de antes. Bajando los bolívares a
+2.000 Bs vuelve a **185 · 205** — cada lado se mueve solo por lo suyo.
+
 #### Lo que esto NO contesta, y está dicho
 
 **La competencia.** De sus cuatro referencias, dos son apps y dos son grupos de

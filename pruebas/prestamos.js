@@ -50,7 +50,7 @@ function sacarConstante(nombre) {
   }
   throw new Error("la constante " + nombre + " no termina en ';'");
 }
-const CONSTANTES = ["_APROX_LS", "_COLCHON_DEF", "_SIN_APROX", "_UMBRAL_BS_DEF", "_SIN_BS", "_RUTA_DE", "CG_BASE", "_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO", "_AVISO_UMBRAL", "_MERCADO_MONTO_DEF",
+const CONSTANTES = ["_APROX_LS", "_COLCHON_DEF", "_SIN_APROX", "_UMBRAL_BS_DEF", "_SIN_BS", "_UMBRAL_BRL_DEF", "_SIN_BRL", "_RUTA_DE", "CG_BASE", "_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO", "_AVISO_UMBRAL", "_MERCADO_MONTO_DEF",
                     "_BIN_COLS_C2C", "_BIN_COLS_TX", "MONEDAS_COMPRA", "MONEDAS_VENTA",
                     "MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
                     "_MERGE_OBJETOS", "_MERGE_BLOQUES", "_MERGE_HISTORIAL", "_RATE_LIMITS",
@@ -78,6 +78,8 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "_ultimaOpUSDT", "_origenLado",
                     // ARREGLO 132
                     "_inventarioBs", "_umbralBsReales", "_colchonIdaAhora", "_tasasSinBs",
+                    // ARREGLO 133
+                    "_inventarioBrl", "_umbralBrlReales", "_colchonVueltaAhora", "_tasasSinBrl",
                     "_saldoCtaUsdt", "_otrasCtasUsdt", "_cubrirUsdtParaVenta", "_setAprox", "publicarRecomendadas",
                     "_campoAprox", "_htmlPublicaHoy", "guardarColchones", "_htmlCalceCuerpo", "_botonTasaUsdt",
                     "_calceK", "_calceGan", "_calceVuelta", "_calceIda", "_cg", "_cgSet", "_cgFraccion",
@@ -9820,8 +9822,15 @@ console.log("\nARREGLO 132 · la ida sube sola cuando hay bolívares parados");
   // "850,36 R$" y "200,00 R$" pegados.
   ok((hp.match(/_inventarioBs\(\)/g)||[]).length===1,
      "el inventario se pregunta una sola vez en la tarjeta");
-  ok(/txtSit/.test(hp) && (hp.match(/background:var\(--avi-sup\);border-left/g)||[]).length===1,
-     "y la comparación va DENTRO del recuadro de la situación, no en uno nuevo");
+  // ARREGLO 133: ahora son dos recuadros con la MISMA pinta, pero en if/else —
+  // o el de los inventarios o el del aviso de siempre, nunca los dos. Lo que no
+  // puede volver es que la comparación se dibuje en uno APARTE, encima.
+  ok(/\}else if\(sit\)\{/.test(hp),
+     "el recuadro del aviso es el ELSE del de los inventarios, no otro encima");
+  ok((hp.match(/background:var\(--avi-sup\);border-left/g)||[]).length===2,
+     "y no hay un tercero");
+  ok(hp.indexOf("lineas.join")>0 && hp.indexOf("lineas.join")<hp.indexOf("}else if(sit){"),
+     "la comparación va DENTRO de ese recuadro");
 
   // ── Guardar escribe las dos claves nuevas ───────────────────────────
   const gc=sacarFuncion("guardarColchones");
@@ -9831,6 +9840,87 @@ console.log("\nARREGLO 132 · la ida sube sola cuando hay bolívares parados");
      "y los dos campos existen en la pantalla");
   ok(!/_INV_BS/.test(HTML),
      "el inventario no se guarda en un memo: el número que decide la tasa no puede depender de cuándo se preguntó");
+}
+
+// ══════════════════════════════════════════════════════════════════════
+console.log("\nARREGLO 133 · y la vuelta baja sola cuando hay reales parados");
+{
+  const invR=sacarFuncion("_inventarioBrl");
+  const cva =sacarFuncion("_colchonVueltaAhora");
+  const tr  =sacarFuncion("_tasasRecomendadas");
+  const av  =sacarFuncion("avisoTasa");
+  const sbr =sacarFuncion("_tasasSinBrl");
+
+  ok(/_colchonVueltaAhora\(\)/.test(tr) && !/_colchon\("vuelta"\)/.test(tr),
+     "la vuelta recomendada sale del colchón que manda AHORA");
+  ok(/_inventarioBrl\(\)/.test(cva), "y ese mira los reales en cuentas");
+  ok(/_inventarioBrl\(\)/.test(av),
+     "el aviso lee el MISMO inventario, no una segunda cuenta");
+
+  // Los reales NO se convierten: enCuentas de BRL ya está en reales. Pasarlo
+  // por usdtCuentas sería dar dos veces la vuelta a un número que ya estaba.
+  ok(/enCuentas/.test(invR) && !/usdtCuentas/.test(invR),
+     "los reales se leen ya en reales, sin convertir");
+
+  ok(/finally\s*\{\s*_SIN_BRL=false;\s*\}/.test(sbr),
+     "_tasasSinBrl devuelve la bandera en un finally");
+
+  ok(F._COLCHON_DEF.vueltaBrl===0.03, "el colchón de la vuelta con reales por omisión es 3%");
+  ok(F._UMBRAL_BRL_DEF===1000, "y el umbral, 1.000 reales");
+  S.config={};
+  ok(F._colchon("vueltaBrl")===0.03 && F._umbralBrlReales()===1000,
+     "sin nada escrito, mandan los de por omisión");
+  S.config={colchonVueltaBrl:0.9, umbralBrlReales:-5};
+  ok(F._colchon("vueltaBrl")===0.03 && F._umbralBrlReales()===1000,
+     "y uno fuera de rango se ignora");
+
+  // ── El comportamiento, con sus números ──────────────────────────────
+  const TB133=Date.now();
+  const _poner2=(brl,bs,cfg)=>{
+    S.config=Object.assign({comision_binance:0.007}, cfg||{});
+    S.cuentas=[{id:"pag",nombre:"PAGBANK",moneda:"BRL",saldo:brl,tipo:"banco",activa:true},
+               {id:"bdv",nombre:"BDV",moneda:"VES",saldo:bs,tipo:"banco",activa:true}];
+    S.inventarioUsdt=[
+      {id:TB133-864e5,tipo:"compra",moneda:"BRL",fecha:"10/12",fechaIso:"2026-10-12",
+       usdt:100,tasa:5.035,comision:0,restante:100,cuentaId:"x"},
+      {id:TB133-6e4,tipo:"venta",moneda:"VES",fecha:"10/13",fechaIso:"2026-10-13",
+       usdt:168.81,tasa:1010.14,comision:0,bs:170521,bsRestante:0,cuentaId:"y"}];
+    S.inventarioUsdt_cerrado=[];S.prestamos=[];S.cuentasCobrar=[];S.brl=[];S.vzla=[];S.eeuu=[];
+    S.tasasDia={};S._tasasDiaMeta={};
+  };
+  _poner2(3252, 0, {colchonVuelta:0.05, colchonVueltaBrl:0.03, umbralBrlReales:1000});
+  const w1=F._inventarioBrl();
+  ok(w1 && Math.round(w1.reales)===3252 && w1.pasa===true,
+     "con 3.252 R$ en cuentas pasa el umbral de 1.000", w1 && Math.round(w1.reales));
+  ok(Math.abs(F._colchonVueltaAhora()-0.03)<1e-9, "y manda el colchón con reales (3%)");
+
+  _poner2(346, 0, {colchonVuelta:0.05, colchonVueltaBrl:0.03, umbralBrlReales:1000});
+  ok(F._inventarioBrl().pasa===false, "con 346 R$ no pasa el umbral");
+  ok(Math.abs(F._colchonVueltaAhora()-0.05)<1e-9, "y manda el colchón normal (5%)");
+
+  // Los dos lados a la vez: cada uno con SU umbral y SU colchón.
+  _poner2(3252, 170604, {colchonIda:0.07, colchonIdaBs:0.05, umbralBsReales:200,
+                         colchonVuelta:0.05, colchonVueltaBrl:0.03, umbralBrlReales:1000});
+  ok(Math.abs(F._colchonIdaAhora()-0.05)<1e-9 && Math.abs(F._colchonVueltaAhora()-0.03)<1e-9,
+     "con los dos lados cargados, cada tasa usa su colchón");
+
+  // ── La tarjeta dice los DOS, cada número una vez ────────────────────
+  const hp=sacarFuncion("_htmlPublicaHoy");
+  ok(/_tasasSinBrl\(\)/.test(hp), "la tarjeta compara también la vuelta");
+  ok(/f2\(invR\.reales\)/.test(hp) && /f2\(invR\.umbral\)/.test(hp),
+     "dice cuántos reales hay y cuál es su umbral");
+  ok(/_tasaCorta\(sinBrl\.vuelta\)/.test(hp) && /_tasaCorta\(r\.vuelta\)/.test(hp),
+     "y de cuánto a cuánto baja");
+  ok(/lineas\.join\("<br>"\)/.test(hp),
+     "los dos lados van en el MISMO recuadro, uno por línea");
+  ok((hp.match(/_inventarioBrl\(\)/g)||[]).length===1,
+     "y los reales se preguntan una sola vez");
+
+  const gc=sacarFuncion("guardarColchones");
+  ok(/colchonVueltaBrl\s*=/.test(gc) && /umbralBrlReales\s*=/.test(gc),
+     "Configuración guarda el colchón de la vuelta con reales y su umbral");
+  ok(/inp-colchon-vuelta-brl/.test(HTML) && /inp-umbral-brl/.test(HTML),
+     "y los dos campos existen en la pantalla");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
