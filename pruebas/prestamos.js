@@ -50,7 +50,7 @@ function sacarConstante(nombre) {
   }
   throw new Error("la constante " + nombre + " no termina en ';'");
 }
-const CONSTANTES = ["_APROX_LS", "_COLCHON_DEF", "_SIN_APROX", "_UMBRAL_BS_DEF", "_SIN_BS", "_UMBRAL_BRL_DEF", "_SIN_BRL", "_RUTA_DE", "CG_BASE", "_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO", "_AVISO_UMBRAL", "_MERCADO_MONTO_DEF",
+const CONSTANTES = ["_APROX_LS", "_COLCHON_DEF", "_SIN_APROX", "_UMBRAL_BS_DEF", "_SIN_BS", "_UMBRAL_BRL_DEF", "_SIN_BRL", "_RUTA_DE", "CG_BASE", "_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO", "_AVISO_UMBRAL", "_MERCADO_MONTO_DEF", "_VIZ", "_INM_AVISO_DIAS",
                     "_BIN_COLS_C2C", "_BIN_COLS_TX", "MONEDAS_COMPRA", "MONEDAS_VENTA",
                     "MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
                     "_MERGE_OBJETOS", "_MERGE_BLOQUES", "_MERGE_HISTORIAL", "_RATE_LIMITS",
@@ -87,6 +87,8 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "margenSobreSuelo", "_calcTasas", "_misTasasPublicadas", "_fpTasa",
                     "avisoTasa", "_umbralAviso", "_refSuelo", "_sueloDeFecha", "guardarTasaCalcHoy",
                     "_cgSoltar", "_montoMercado",
+                    "_inmResumen", "_inmCuotasDe", "_inmDe", "_inmDias", "_avisosInmueble",
+                    "_motivoPub",
                     "_apuntarAvisoParaPush", "_htmlAvisosTelefono", "_pushSoportado",
                     "_cgPublicar", "_pieFlyer", "_refrescarTasasTodo",
                     "_origenTasaCotiza", "_rotuloPublicada", "_getTasaClienteBRL",
@@ -9965,6 +9967,126 @@ console.log("\nARREGLO 133 · y la vuelta baja sola cuando hay reales parados");
      "Configuración guarda el colchón de la vuelta con reales y su umbral");
   ok(/inp-colchon-vuelta-brl/.test(HTML) && /inp-umbral-brl/.test(HTML),
      "y los dos campos existen en la pantalla");
+}
+
+// ══════════════════════════════════════════════════════════════════════
+console.log("\nARREGLO 134 · el apartamento y su cronograma");
+{
+  // ── NO va en S.prestamos, y eso es lo primero ──────────────────────
+  // S.prestamos alimenta el limite de credito de SUS clientes, el perfil de
+  // riesgo y la ganancia por prestamos del Cierre. Una deuda suya metida ahi
+  // entraria en las tres cuentas.
+  const res = sinComentarios(sacarFuncion("_inmResumen"));
+  const pag = sinComentarios(sacarFuncion("pagarCuotaInm"));
+  ok(!/S\.prestamos/.test(res) && !/S\.prestamos/.test(pag),
+     "el inmueble no toca S.prestamos");
+  ok(/S\.inmCuotas/.test(sinComentarios(sacarFuncion("_inmCuotasDe"))),
+     "las cuotas viven en su propia lista");
+
+  // ── Las DOS listas se fusionan y viajan ────────────────────────────
+  // Sin esto el remoto las reemplaza enteras y se pierde lo que se marco aqui.
+  ["inmuebles","inmCuotas"].forEach(function(k){
+    ok(new RegExp('"'+k+'"').test(sacarConstante("_MERGE_FIELDS")),
+       k+" esta en _MERGE_FIELDS");
+    ok(new RegExp('"'+k+'"').test(sacarConstante("DATA_KEYS")),
+       k+" esta en DATA_KEYS");
+  });
+  // Y SEPARADAS: con las cuotas dentro del contrato, marcar una en el telefono
+  // y otra en la PC haria que una pisara a la otra, porque lo que viaja es el
+  // registro entero.
+  ok(!/cuotas:\s*\[/.test(sinComentarios(sacarFuncion("saveInmueble"))),
+     "el contrato no guarda sus cuotas dentro");
+
+  // ── El resumen sale de UN sitio ────────────────────────────────────
+  // Lo leen la tarjeta, los avisos del Resumen y el pie de la lista. Calculado
+  // aparte, bastaria un redondeo distinto para que la tarjeta diga una cosa y
+  // el aviso de al lado otra.
+  const avi = sinComentarios(sacarFuncion("_avisosInmueble"));
+  const tar = sinComentarios(sacarFuncion("_inmTarjeta"));
+  ok(/_inmResumen\(/.test(avi) && /_inmResumen\(/.test(tar),
+     "la tarjeta y los avisos leen el MISMO _inmResumen()");
+  ok(!/parseFloat\(c\.monto\)/.test(avi),
+     "y el aviso no vuelve a sumar las cuotas por su cuenta");
+
+  // ── Las tres bolsas NO se mezclan ──────────────────────────────────
+  // propio sale de su cuenta; banco lo paga el banco; condonable se perdona.
+  // Sumarlas diria que debe 354.224 cuando de ella salen 30.614.
+  ok(/out\.banco\+=m/.test(res) && /out\.condonable\+=m/.test(res) && /out\.propio\+=m/.test(res),
+     "el resumen separa lo propio, lo del banco y lo condonable");
+  ok(/if\(c\.banco\)/.test(res) && res.indexOf("if(c.banco)")<res.indexOf("out.propio+=m"),
+     "y la del banco se aparta ANTES de sumar a lo propio");
+
+  // ── Pagar REGISTRA LA OPERACION, no escribe el saldo ───────────────
+  ok(/ajusteCuentaEgreso\(/.test(pag) && /descontarFIFOEgreso\(/.test(pag) && /S\.egresos\.push\(/.test(pag),
+     "pagar crea un egreso, baja la cuenta y baja el lote FIFO");
+  ok(/restaurarFIFOEgreso\(/.test(sinComentarios(sacarFuncion("deshacerCuotaInm"))) &&
+     /_marcarBorradoMerge\("egresos"/.test(sinComentarios(sacarFuncion("deshacerCuotaInm"))),
+     "y deshacer lo devuelve todo, borrando el egreso");
+  // La del banco NO es un pago suyo: crear un egreso ahi seria inventarse una
+  // salida de dinero que nunca ocurrio.
+  ok(/if\(c\.banco\)\{/.test(pag) && pag.indexOf("if(c.banco){")<pag.indexOf("ajusteCuentaEgreso("),
+     "la cuota del banco se resuelve ANTES, sin tocar ninguna cuenta");
+
+  // ── ARREGLO 32: desplegar no repinta ───────────────────────────────
+  const tog = sinComentarios(sacarFuncion("_toggleInmCuotas"));
+  ok(!/\bR\(\)/.test(tog) && /getElementById\("inm-cuotas-"/.test(tog),
+     "desplegar las cuotas no llama a R(): se cambia por su id");
+  // Y el rotulo del boton sale de SU id, no del `event` global: leerlo del
+  // evento funciona hasta que alguien llama a esto desde otro sitio.
+  ok(/getElementById\("inm-btn-"/.test(tog) && !/\bevent\b/.test(tog),
+     "y el rótulo del botón también, sin depender del event global");
+
+  // ── Las fechas de las mensuales usan _sumarMeses ───────────────────
+  // setMonth() convierte el 31/01 + 1 mes en 03/03. Aqui el dia es el 10 y no
+  // muerde, pero una copia de este codigo con otra fecha si.
+  const viz = sinComentarios(sacarFuncion("cargarContratoViz"));
+  ok(/_sumarMeses\(/.test(viz) && !/setMonth\(/.test(viz),
+     "las 24 mensuales salen de _sumarMeses(), nunca de setMonth()");
+
+  // ── Los montos son los del CONTRATO, no los de la propuesta ────────
+  // La hoja "Proposta" lista la mensual en 1.000,00 (el principal sin
+  // intereses) y la clausula 4.2.2 (c.1) en 1.152,44 con Tabla Price. Igual la
+  // anual: 2.136,18 contra 2.455,42. Poner los de la propuesta le diria que
+  // paga 3.977,84 menos de lo que va a pagar.
+  const V = F._VIZ;
+  ok(V && V.mensual && Math.abs(V.mensual.monto-1152.44)<1e-9,
+     "la mensual es la del contrato (1.152,44), no la de la propuesta (1.000)");
+  ok(V && (V.cuotas||[]).some(function(c){return Math.abs(c.monto-2455.42)<1e-9;}),
+     "y la anual es 2.455,42, no 2.136,18");
+  ok(V && V.mensual.n===24, "son 24 mensuales");
+  // El precio y las piezas del contrato, por si alguien los toca sin leerlo.
+  ok(V && Math.abs(V.precio-350246.29)<1e-9, "el precio es el de la cláusula 3.1");
+  const fin = (V.cuotas||[]).find(function(c){return c.banco;});
+  ok(fin && Math.abs(fin.monto-280197.03)<1e-9 && fin.iso==="2026-12-31",
+     "el financiamiento son 280.197,03 el 31/12/2026");
+  const bp = (V.cuotas||[]).find(function(c){return c.condonable;});
+  ok(bp && Math.abs(bp.monto-43413.08)<1e-9,
+     "y la Bom Pagador son 43.413,08, marcada como condonable");
+
+  // ── El resumen, con el contrato de verdad ──────────────────────────
+  S.inmuebles=[{id:"i1",nombre:"Apto",moneda:"BRL",precio:350246.29,tipo:"personal",cuentaId:""}];
+  S.inmCuotas=[];
+  var mete=function(c,i){
+    S.inmCuotas.push({id:"c"+i,inmId:"i1",concepto:c.concepto,iso:c.iso,monto:c.monto,
+      banco:!!c.banco,condonable:!!c.condonable,pagado:!!c.pagado,montoPagado:null});
+  };
+  V.cuotas.forEach(mete);
+  for(var i=0;i<24;i++) mete({concepto:"Mensual "+(i+1),iso:"2027-01-10",monto:V.mensual.monto},100+i);
+  var R1=F._inmResumen(S.inmuebles[0]);
+  ok(R1.nCuotas===28, "28 cuotas en total", R1.nCuotas);
+  ok(Math.abs(R1.propio-30613.98)<0.005,
+     "de ella salen 30.613,98: la señal, las 24 mensuales y la anual", R1.propio);
+  ok(Math.abs(R1.banco-280197.03)<0.005, "el banco pone 280.197,03", R1.banco);
+  ok(Math.abs(R1.condonable-43413.08)<0.005, "y 43.413,08 se perdonan", R1.condonable);
+  ok(Math.abs(R1.propio-R1.falta)<0.005 && R1.pagado===0,
+     "sin nada pagado, falta todo lo propio");
+  // Pagada una, falta baja y pagado sube, y la suma se conserva.
+  S.inmCuotas[0].pagado=true; S.inmCuotas[0].montoPagado=500;
+  var R2=F._inmResumen(S.inmuebles[0]);
+  ok(Math.abs(R2.pagado-500)<0.005 && Math.abs(R2.falta-(R1.propio-500))<0.005,
+     "al pagar la señal, lo pagado sube 500 y lo que falta baja 500");
+  ok(Math.abs((R2.pagado+R2.falta)-R1.propio)<0.005,
+     "y pagado + falta sigue siendo lo propio");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
