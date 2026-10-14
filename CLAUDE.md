@@ -3652,6 +3652,96 @@ día — `histSaldos` se toma a media jornada y no sirve para comparar cierres.
 
 ---
 
+## El apartamento y su cronograma (ARREGLO 134)
+
+Sus palabras del 13/10: *"estoy realizando la compra de un apartamento, quiero
+que me anexes algo para llevar el control de esos gastos"*. De tres maquetas
+eligió la que reutiliza la forma de Préstamos: un contrato con sus cuotas, el
+saldo que baja y el aviso en el Resumen.
+
+**NO VA EN `S.prestamos`, y eso es lo primero.** En papel es un préstamo al
+revés, pero `S.prestamos` alimenta el límite de crédito de SUS clientes, el
+perfil de riesgo y la ganancia por préstamos del Cierre. Su deuda metida ahí
+entraría en las tres cuentas: le subiría el límite a un cliente que no ha pedido
+nada y le apuntaría un interés que nadie le va a pagar. **El parecido está en la
+pantalla, no en los números.**
+
+**Son DOS listas** —`S.inmuebles` y `S.inmCuotas`— las dos en `_MERGE_FIELDS` y
+en `DATA_KEYS`. La fusión decide registro por registro: con las cuotas dentro del
+contrato, marcar una en el teléfono y otra en la PC haría que una pisara a la
+otra, porque lo que viaja es el contrato entero. Es la razón del `_MERGE_BLOQUES`
+del ARREGLO 60 aplicada al revés: aquello había que unirlo porque solo tiene
+sentido junto; esto hay que separarlo porque cada pieza se toca sola.
+
+**El dinero NO vive aquí.** Pagar una cuota crea un EGRESO de los de siempre,
+baja la cuenta y baja el lote FIFO — el mismo camino de `pagarCompromiso()`. Así
+el Diario, el Cierre, la conciliación y el balance se enteran solos, sin tocar ni
+una línea de los cuatro. Aquí vive el **calendario**: qué se debe, cuándo, y si ya
+se pagó. Y se puede deshacer: el egreso se borra y el dinero vuelve a la cuenta y
+al lote.
+
+### Tres bolsas que NO son el mismo dinero
+
+```
+de ella      30.613,98   sale de su cuenta
+del banco   280.197,03   la Caixa se lo paga a la constructora
+condonable   43.413,08   se perdona si paga el financiamiento en su día
+```
+
+Sumarlas diría que debe 354.224 cuando de ella salen 30.614.
+
+- **La del banco no crea egreso al marcarla.** Ese dinero nunca pasa por su
+  cuenta; inventarle una salida sería inventarse un movimiento.
+- **La condonable no suma pero tampoco se esconde.** Si falla la condición la
+  paga entera, y son el 12,4 % del piso. Es la misma regla que el interés
+  pendiente de los préstamos (ARREGLO 71): se dice y no suma.
+- **`_inmResumen()` las separa en un solo recorrido**, y lo leen la tarjeta, los
+  avisos del Resumen y el pie de la lista. Calculado aparte, un redondeo distinto
+  haría que la tarjeta diga una cosa y el aviso de al lado otra.
+
+### Los montos son los del CONTRATO, no los de la propuesta
+
+La hoja *"Proposta de Venda"* lista la mensual en **R$ 1.000,00** —el principal
+sin intereses— y la cláusula 4.2.2 (c.1) la fija en **R$ 1.152,44** con Tabla
+Price al 12,68 % anual. Igual la anual: 2.136,18 contra **2.455,42**. Cargar los
+de la propuesta le diría que paga **3.977,84 menos** de lo que va a pagar.
+
+**Y hay 4 céntimos que no cuadran, a propósito.** La misma cláusula dice las dos
+cosas: que la partida son 27.658,60 y que cada cuota son 1.152,44. Pero
+24 × 1.152,44 = 27.658,56.
+
+```
+suma de las cuotas cargadas    354.224,09
+cláusula 3.1 del mismo papel   354.224,13
+```
+
+Se mete lo que dice **por cuota**, que es lo que el banco va a cobrar cada mes, y
+no un número repartido a mano para cuadrar el total. **Un total que cuadra porque
+alguien repartió el redondeo es peor que uno que no cuadra y dice por qué.**
+
+### Lo demás, en corto
+
+- **Las 24 mensuales salen de `_sumarMeses()`**, nunca de `setMonth()`. Aquí el
+  día es el 10 y no muerde, pero una copia de este código con otra fecha sí.
+- **El contrato del VIZ se carga de un toque** (`_VIZ` + `cargarContratoViz`):
+  28 cuotas a mano son 28 sitios donde equivocarse.
+- **Pagar pregunta si crear el egreso o solo marcar.** Si ella ya apuntó ese pago
+  a mano, crear un segundo bajaría la cuenta dos veces por el mismo dinero.
+- **Desplegar las cuotas no llama a `R()`** (ARREGLO 32), y el rótulo del botón
+  se busca por **su propio id**, no por el `event` global — leerlo del evento
+  funciona hasta que alguien llama a esa función desde otro sitio.
+- **`_simMon()` escribe R$ y Bs, no BRL y VES.** Es el ARREGLO 92 aplicado a su
+  propia pantalla: los códigos son del banco, ella dice R$.
+- **De quién es el inmueble se PREGUNTA**, no se adivina: decide si cada cuota es
+  gasto personal o de la empresa, y eso mueve el capital.
+
+**Lo que NO entró, y es a propósito:** la cuota mensual de la Caixa (R$ 2.100 ×
+420). No empieza hasta 2027 y el monto exacto sale del contrato de financiamiento
+que aún no está firmado. Cuando lo esté, eso es un *compromiso* de los que ya
+existen — no hace falta código.
+
+---
+
 ## El candado de contenido vive en `_headers` (ARREGLO 104)
 
 Es el **cinturón** del ARREGLO 102: aquel cerró los agujeros por los que un
