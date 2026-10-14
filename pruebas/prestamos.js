@@ -50,7 +50,7 @@ function sacarConstante(nombre) {
   }
   throw new Error("la constante " + nombre + " no termina en ';'");
 }
-const CONSTANTES = ["_APROX_LS", "_COLCHON_DEF", "_SIN_APROX", "_UMBRAL_BS_DEF", "_SIN_BS", "_UMBRAL_BRL_DEF", "_SIN_BRL", "_RUTA_DE", "CG_BASE", "_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO", "_AVISO_UMBRAL", "_MERCADO_MONTO_DEF", "_VIZ", "_INM_AVISO_DIAS",
+const CONSTANTES = ["_APROX_LS", "_COLCHON_DEF", "_SIN_APROX", "_UMBRAL_BS_DEF", "_SIN_BS", "_UMBRAL_BRL_DEF", "_SIN_BRL", "_RUTA_DE", "CG_BASE", "_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO", "_AVISO_UMBRAL", "_MERCADO_MONTO_DEF", "_VIZ", "_INM_AVISO_DIAS", "_DIAS_NORMAL_BS",
                     "_BIN_COLS_C2C", "_BIN_COLS_TX", "MONEDAS_COMPRA", "MONEDAS_VENTA",
                     "MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
                     "_MERGE_OBJETOS", "_MERGE_BLOQUES", "_MERGE_HISTORIAL", "_RATE_LIMITS",
@@ -150,6 +150,7 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "_marcarBorradoMerge", "_estaBorradoMerge", "_levantarBorradoMerge",
                     "_unirMarcasBorrado", "_tsMarca", "_revivirLote", "_huecoDeLote",
                     "_origenBsRemesa", "_loteEsDeRemesa", "_autoMetodoTx", "_ponerMetodoTx",
+                    "_faltanBs", "_diaNormalBs", "_umbralFaltanBs", "_p2pBolivaresDelMes",
                     "_repartoFIFO", "esRutaCalce",
                     "sincronizarFIFOconCuentas", "normalizarInventarioFIFO",
                     "_podarBorrados",
@@ -9892,104 +9893,164 @@ console.log("\nARREGLO 132 · la ida sube sola cuando hay bolívares parados");
 }
 
 // ══════════════════════════════════════════════════════════════════════
-console.log("\nARREGLO 133 · y la vuelta baja sola cuando hay reales parados");
+console.log("\nARREGLO 139 · la vuelta baja cuando FALTAN bolivares, no cuando sobran reales");
 {
   const invR=sacarFuncion("_inventarioBrl");
-  const cva =sacarFuncion("_colchonVueltaAhora");
+  const cva =sinComentarios(sacarFuncion("_colchonVueltaAhora"));
   const tr  =sacarFuncion("_tasasRecomendadas");
   const av  =sacarFuncion("avisoTasa");
   const sbr =sacarFuncion("_tasasSinBrl");
+  const dn  =sinComentarios(sacarFuncion("_diaNormalBs"));
 
   ok(/_colchonVueltaAhora\(\)/.test(tr) && !/_colchon\("vuelta"\)/.test(tr),
      "la vuelta recomendada sale del colchón que manda AHORA");
-  ok(/_inventarioBrl\(\)/.test(cva), "y ese mira los reales en cuentas");
-  ok(/_inventarioBrl\(\)/.test(av),
-     "el aviso lee el MISMO inventario, no una segunda cuenta");
-
-  // Los reales NO se convierten: enCuentas de BRL ya está en reales. Pasarlo
-  // por usdtCuentas sería dar dos veces la vuelta a un número que ya estaba.
+  // El motivo es que FALTEN bolivares; los reales son la CONDICION de poder
+  // atender las vueltas que entren. Al reves le daba una razon que no es suya.
+  ok(/_faltanBs\(\)/.test(cva), "el colchón mira si FALTAN bolívares");
+  ok(/_inventarioBrl\(\)/.test(cva), "y que haya reales para atender las vueltas");
+  ok(/_faltanBs\(\)/.test(av), "el aviso lee la MISMA cuenta, no una segunda");
+  // Los reales NO se convierten: enCuentas de BRL ya esta en reales.
   ok(/enCuentas/.test(invR) && !/usdtCuentas/.test(invR),
      "los reales se leen ya en reales, sin convertir");
-
+  // Y los bolivares tampoco: el umbral esta EN bolivares, que es como ella los
+  // mira. usdtCuentas obligaria a una tasa que puede faltar.
+  ok(/enCuentas/.test(sinComentarios(sacarFuncion("_faltanBs"))),
+     "y los bolívares se leen en bolívares, sin depender de ninguna tasa");
   ok(/finally\s*\{\s*_SIN_BRL=false;\s*\}/.test(sbr),
      "_tasasSinBrl devuelve la bandera en un finally");
 
-  ok(F._COLCHON_DEF.vueltaBrl===0.03, "el colchón de la vuelta con reales por omisión es 3%");
-  ok(F._UMBRAL_BRL_DEF===1000, "y el umbral, 1.000 reales");
-  S.config={};
-  ok(F._colchon("vueltaBrl")===0.03 && F._umbralBrlReales()===1000,
-     "sin nada escrito, mandan los de por omisión");
-  S.config={colchonVueltaBrl:0.9, umbralBrlReales:-5};
-  ok(F._colchon("vueltaBrl")===0.03 && F._umbralBrlReales()===1000,
-     "y uno fuera de rango se ignora");
+  // ── El umbral sale de SUS dias, no de un numero fijo ────────────────
+  // Sus palabras: "damelo tu porque eso realmente es relativo, todos los dias
+  // son diferentes". Un numero puesto a ojo hoy estaria viejo en un mes: su
+  // mediana diaria paso de 91.744 (90 dias) a 132.090 (15 dias).
+  ok(/porDia/.test(dn) && /orig!=="BRL"/.test(dn) && /dest!=="VES"/.test(dn),
+     "_diaNormalBs agrupa por día SOLO las idas, que son las que gastan bolívares");
+  ok(!/\/ *n *\)/.test(dn) && /sort/.test(dn),
+     "y usa la MEDIANA, no la media: la media sale inflada por los días de 600.000");
+  ok(F._DIAS_NORMAL_BS===30, "mira los últimos 30 días CON operaciones");
 
-  // ── El comportamiento, con sus números ──────────────────────────────
-  const TB133=Date.now();
-  const _poner2=(brl,bs,cfg)=>{
+  const _dia=(bs)=>({d:"13/10/26",orig:"BRL",dest:"VES",cant:bs,am:1,_uid:"x"+Math.random()});
+  S.brl=[]; S.vzla=[]; S.eeuu=[];
+  ok(F._diaNormalBs()===null, "sin una sola ida no hay día normal, y no se inventa");
+  // Tres dias de 10.000, 20.000 y 90.000: la mediana son 20.000, la media 40.000.
+  S.brl=[Object.assign(_dia(10000),{d:"01/10/26"}),
+         Object.assign(_dia(20000),{d:"02/10/26"}),
+         Object.assign(_dia(90000),{d:"03/10/26"})];
+  ok(F._diaNormalBs().bs===20000,
+     "la mediana de 10.000/20.000/90.000 son 20.000, no los 40.000 de la media", F._diaNormalBs().bs);
+  // Lo del mismo dia se SUMA: es un dia, no dos operaciones.
+  S.brl=[Object.assign(_dia(10000),{d:"01/10/26"}),
+         Object.assign(_dia(10000),{d:"01/10/26"}),
+         Object.assign(_dia(90000),{d:"03/10/26"})];
+  // Quedan DOS dias (20.000 y 90.000) y la mediana de dos es su promedio: 55.000.
+  ok(F._diaNormalBs().bs===55000 && F._diaNormalBs().dias===2,
+     "dos idas del mismo día cuentan como UN día", JSON.stringify(F._diaNormalBs()));
+
+  // El suyo manda; en blanco vuelve al medido, NUNCA a cero.
+  S.config={umbralFaltanBs:77000};
+  ok(F._umbralFaltanBs().bs===77000 && F._umbralFaltanBs().suyo===true,
+     "si escribe un umbral, manda el suyo");
+  S.config={};
+  ok(F._umbralFaltanBs().bs===55000 && F._umbralFaltanBs().suyo===false,
+     "en blanco vuelve al medido");
+  S.config={umbralFaltanBs:0};
+  ok(F._umbralFaltanBs().suyo===false,
+     "y un cero NO se acepta: dejaría la regla muerta sin decirlo");
+
+  // ── El comportamiento, con sus numeros ──────────────────────────────
+  const TB139=Date.now();
+  const _poner3=(brl,bs,cfg,conIdas)=>{
     S.config=Object.assign({comision_binance:0.007}, cfg||{});
     S.cuentas=[{id:"pag",nombre:"PAGBANK",moneda:"BRL",saldo:brl,tipo:"banco",activa:true},
                {id:"bdv",nombre:"BDV",moneda:"VES",saldo:bs,tipo:"banco",activa:true}];
     S.inventarioUsdt=[
-      {id:TB133-864e5,tipo:"compra",moneda:"BRL",fecha:"10/12",fechaIso:"2026-10-12",
+      {id:TB139-864e5,tipo:"compra",moneda:"BRL",fecha:"10/12",fechaIso:"2026-10-12",
        usdt:100,tasa:5.035,comision:0,restante:100,cuentaId:"x"},
-      {id:TB133-6e4,tipo:"venta",moneda:"VES",fecha:"10/13",fechaIso:"2026-10-13",
+      {id:TB139-6e4,tipo:"venta",moneda:"VES",fecha:"10/13",fechaIso:"2026-10-13",
        usdt:168.81,tasa:1010.14,comision:0,bs:170521,bsRestante:0,cuentaId:"y"}];
-    S.inventarioUsdt_cerrado=[];S.prestamos=[];S.cuentasCobrar=[];S.brl=[];S.vzla=[];S.eeuu=[];
+    S.inventarioUsdt_cerrado=[];S.prestamos=[];S.cuentasCobrar=[];S.vzla=[];S.eeuu=[];
+    // Su dia normal: 100.000 Bs (tres dias, el de en medio)
+    S.brl = (conIdas===false) ? [] :
+      [Object.assign(_dia(50000),{d:"01/10/26"}),
+       Object.assign(_dia(100000),{d:"02/10/26"}),
+       Object.assign(_dia(300000),{d:"03/10/26"})];
     S.tasasDia={};S._tasasDiaMeta={};
   };
-  _poner2(3252, 0, {colchonVuelta:0.05, colchonVueltaBrl:0.03, umbralBrlReales:1000});
-  const w1=F._inventarioBrl();
-  ok(w1 && Math.round(w1.reales)===3252 && w1.pasa===true,
-     "con 3.252 R$ en cuentas pasa el umbral de 1.000", w1 && Math.round(w1.reales));
-  ok(Math.abs(F._colchonVueltaAhora()-0.03)<1e-9, "y manda el colchón con reales (3%)");
+  const CFG={colchonIda:0.07, colchonIdaBs:0.05, umbralBsReales:200,
+             colchonVuelta:0.05, colchonVueltaBrl:0.03, umbralBrlReales:1000};
 
-  _poner2(346, 0, {colchonVuelta:0.05, colchonVueltaBrl:0.03, umbralBrlReales:1000});
-  ok(F._inventarioBrl().pasa===false, "con 346 R$ no pasa el umbral");
-  ok(Math.abs(F._colchonVueltaAhora()-0.05)<1e-9, "y manda el colchón normal (5%)");
-
-  // ── ARREGLO 135 · con los dos lados llenos MANDA EL BOLÍVAR ─────────
-  // Lo cazó ella: bajar la vuelta la hace más atractiva para el cliente que
-  // trae bolívares, así que entran MÁS — justo lo contrario de lo que busca el
-  // 132 subiendo la ida. Los dos arreglos se peleaban. Y cuál manda ya estaba
-  // decidido por ella hace tiempo: los reales parados no le perjudican, los
-  // bolívares SÍ, porque se devalúan.
-  _poner2(3252, 170604, {colchonIda:0.07, colchonIdaBs:0.05, umbralBsReales:200,
-                         colchonVuelta:0.05, colchonVueltaBrl:0.03, umbralBrlReales:1000});
-  ok(Math.abs(F._colchonIdaAhora()-0.05)<1e-9,
-     "con los dos lados cargados la ida sí sube");
-  ok(Math.abs(F._colchonVueltaAhora()-0.05)<1e-9,
-     "y la vuelta NO baja: bajarla traería más bolívares");
-  // Sin bolívares encima, el 133 vuelve a funcionar: no se retira, se subordina.
-  _poner2(3252, 0, {colchonIda:0.07, colchonIdaBs:0.05, umbralBsReales:200,
-                    colchonVuelta:0.05, colchonVueltaBrl:0.03, umbralBrlReales:1000});
+  // 1) Le FALTAN bolivares y tiene reales -> baja la vuelta. Es su caso real:
+  //    el 13/10 acabo con 14,58 Bs y 3.118 R$ tras tres idas seguidas.
+  _poner3(3252, 14, CFG);
+  const f1=F._faltanBs();
+  ok(f1 && f1.umbral===100000 && f1.tiene===14 && f1.pasa===true,
+     "con 14 Bs y un día normal de 100.000, le faltan", JSON.stringify(f1));
   ok(Math.abs(F._colchonVueltaAhora()-0.03)<1e-9,
-     "y en cuanto los bolívares bajan del umbral, la vuelta vuelve a bajar");
-  // La comparación "qué saldría sin los bolívares parados" tiene que contestar
-  // el escenario ENTERO: sin bolívares encima, la vuelta sí baja.
-  _poner2(3252, 170604, {colchonIda:0.07, colchonIdaBs:0.05, umbralBsReales:200,
-                         colchonVuelta:0.05, colchonVueltaBrl:0.03, umbralBrlReales:1000});
-  ok(/_SIN_BS/.test(sinComentarios(sacarFuncion("_colchonVueltaAhora"))),
-     "y _colchonVueltaAhora respeta _SIN_BS, para que la comparación sea honesta");
-  ok(/_inventarioBs\(\)/.test(sinComentarios(sacarFuncion("_colchonVueltaAhora"))),
-     "el bolívar se pregunta ANTES que los reales");
+     "y manda el colchón que baja la vuelta (3%)");
 
-  // ── La tarjeta dice los DOS, cada número una vez ────────────────────
+  // 2) Le faltan bolivares pero NO tiene reales -> no baja: no podria
+  //    atender las vueltas que entraran. Esa es la condicion, no el motivo.
+  _poner3(346, 14, CFG);
+  ok(F._faltanBs().pasa===true && F._inventarioBrl().pasa===false,
+     "le faltan bolívares pero no tiene reales");
+  ok(Math.abs(F._colchonVueltaAhora()-0.05)<1e-9,
+     "y entonces la vuelta NO baja: sin reales no puede atender vueltas");
+
+  // 3) NO le faltan bolivares -> no baja, aunque le sobren reales. Esto es lo
+  //    que el 133 hacia mal: bajaba por los reales, con bolivares de sobra.
+  _poner3(3252, 500000, CFG);
+  ok(F._faltanBs().pasa===false, "con 500.000 Bs no le faltan");
+  ok(Math.abs(F._colchonVueltaAhora()-0.05)<1e-9,
+     "y la vuelta NO baja aunque tenga 3.252 R$: ese era el fallo del 133");
+
+  // 4) Sin historico de idas no se decide nada. Un umbral adivinado moveria
+  //    la tasa que publica.
+  _poner3(3252, 14, CFG, false);
+  ok(F._faltanBs()===null, "sin idas registradas no hay día normal");
+  ok(Math.abs(F._colchonVueltaAhora()-0.05)<1e-9, "y manda el colchón de siempre");
+
+  // 5) El 135 ya no hace falta, y eso es lo que simplifica este arreglo: no se
+  //    puede estar lleno y vacio de bolivares a la vez, asi que las dos reglas
+  //    no pueden volver a pelearse. Con los dos lados cargados la ida sube y la
+  //    vuelta se queda quieta, igual que antes, pero por una sola regla.
+  _poner3(3252, 500000, CFG);
+  ok(Math.abs(F._colchonIdaAhora()-0.05)<1e-9, "con bolívares de sobra la ida sube");
+  ok(Math.abs(F._colchonVueltaAhora()-0.05)<1e-9, "y la vuelta no baja");
+  ok(!/_inventarioBs\(\)/.test(cva),
+     "y _colchonVueltaAhora ya no necesita preguntar por bolívares parados: el disparador los excluye");
+  ok(/_SIN_BS/.test(cva),
+     "pero sigue respetando _SIN_BS, para que la comparación conteste el escenario entero");
+
+  // ── La tarjeta dice el motivo DE VERDAD ─────────────────────────────
   const hp=sacarFuncion("_motivoPub");
   ok(/_tasasSinBrl\(\)/.test(hp), "la tarjeta compara también la vuelta");
-  ok(/f2\(invR\.reales\)/.test(hp) && /f2\(invR\.umbral\)/.test(hp),
-     "dice cuántos reales hay y cuál es su umbral");
+  ok(/f0\(fal\.tiene\)/.test(hp) && /f0\(fal\.umbral\)/.test(hp),
+     "y dice los DOS números: lo que tiene y lo que es un día normal suyo");
   ok(/_tasaCorta\(sinBrl\.vuelta\)/.test(hp) && /_tasaCorta\(r\.vuelta\)/.test(hp),
      "y de cuánto a cuánto baja");
+  ok(/_p2pBolivaresDelMes\(\)/.test(hp),
+     "y cuántas veces ha comprado bolívares en Binance: sin ese número hay que creérselo");
+  ok(!/no tienes que hacer el P2P que esa vuelta alta cubre/.test(HTML),
+     "y ya no dice el motivo viejo, que es el P2P que casi no hace (18 contra 2 en octubre)");
   ok(/lineas\.join\("<br>"\)/.test(hp),
      "los dos lados van en el MISMO recuadro, uno por línea");
-  ok((hp.match(/_inventarioBrl\(\)/g)||[]).length===1,
-     "y los reales se preguntan una sola vez");
+  ok((hp.match(/_faltanBs\(\)/g)||[]).length===1,
+     "y la cuenta se pregunta una sola vez");
+
+  // Un lote de venta nacido de una remesa no es una compra en Binance.
+  S.inventarioUsdt=[{id:1,tipo:"venta",moneda:"VES",fechaIso:new Date().toISOString().slice(0,10),bs:1,bsRestante:0},
+                    {id:2,tipo:"venta",moneda:"VES",fechaIso:new Date().toISOString().slice(0,10),bs:1,bsRestante:0,origenRemesa:"r1"}];
+  S.inventarioUsdt_cerrado=[];
+  ok(F._p2pBolivaresDelMes()===1,
+     "las ventas nacidas de una remesa no cuentan como compra en Binance", F._p2pBolivaresDelMes());
 
   const gc=sacarFuncion("guardarColchones");
-  ok(/colchonVueltaBrl\s*=/.test(gc) && /umbralBrlReales\s*=/.test(gc),
-     "Configuración guarda el colchón de la vuelta con reales y su umbral");
-  ok(/inp-colchon-vuelta-brl/.test(HTML) && /inp-umbral-brl/.test(HTML),
-     "y los dos campos existen en la pantalla");
+  ok(/umbralFaltanBs\s*=/.test(gc) && /delete S\.config\.umbralFaltanBs/.test(gc),
+     "Configuración guarda el umbral, y el campo vacío lo BORRA en vez de escribir 0");
+  ok(/inp-colchon-vuelta-brl/.test(HTML) && /inp-umbral-faltan-bs/.test(HTML),
+     "y los campos existen en la pantalla");
+  ok(!/_DIA_NORMAL_MEMO|_FALTAN_BS_MEMO/.test(HTML),
+     "sin memo: el número que decide la tasa no puede depender de cuándo se preguntó");
 }
 
 // ══════════════════════════════════════════════════════════════════════
