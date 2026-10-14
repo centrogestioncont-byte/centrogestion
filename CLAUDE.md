@@ -2244,6 +2244,134 @@ Medido en Chromium con sus datos del 13/10 (850 R$ en bolívares, 3.252 en
 reales): **189 · 205**, contra los 185 · 209 de antes. Bajando los bolívares a
 2.000 Bs vuelve a **185 · 205** — cada lado se mueve solo por lo suyo.
 
+#### Pero el 133 trabajaba CONTRA el 132 (ARREGLO 135)
+
+Lo cazó ella el 13/10, con las dos tasas delante: *"si también estoy llena de
+bolívares, ¿por qué me pides bajarla a 205 y no mantenerla en 210? ¿no crees que
+me van a llegar aún más bolívares?"*.
+
+**Tiene razón, y el 133 estaba escrito mirando solo el COSTO.** Bajar la vuelta
+la hace más atractiva para el cliente que trae bolívares, así que entran **más**.
+Medido con sus datos del 13/10, con los dos lados por encima del umbral:
+
+```
+el 132 sube la ida     185 → 189    saca bolívares
+el 133 baja la vuelta  209 → 205    METE bolívares
+```
+
+**Y cuál manda ya estaba decidido por ella, hace tiempo y en este documento:**
+los reales parados no le perjudican; los bolívares parados sí, por la
+devaluación. Así que con los dos lados llenos decide el bolívar y la vuelta se
+queda con su colchón de siempre. Con sus datos: **189 · 209** en vez de 189 · 205.
+
+- **El 133 no se retira, se subordina.** En cuanto los bolívares bajen del
+  umbral, la vuelta vuelve a bajar sola. Hay guardia para los dos casos.
+- **El bolívar se pregunta ANTES que los reales**, dentro de
+  `_colchonVueltaAhora()`, que es la única puerta — `_colchon()` sigue
+  devolviendo lo guardado, que es lo que enseña Configuración.
+- **Y respeta `_SIN_BS`**, porque la comparación *"qué saldría sin los bolívares
+  parados"* tiene que contestar el escenario entero: sin bolívares encima, la
+  vuelta sí baja. Sin eso, mirar el resultado contestaría a medias.
+- **Lo que NO hace, y es decisión suya: SUBIR la vuelta para frenar más.** Se le
+  ofreció —habría dado 213— y eligió esto: 213 queda por encima de lo que publica
+  y puede costarle clientes de vuelta. Eso es su negocio, no el código.
+
+**La lección, que es de método:** dos reglas que miran cada una su mitad del
+inventario pueden ser correctas por separado y anularse juntas. Cuando se añada
+una tercera, hay que medir el caso con **todas** activas, no solo la nueva.
+
+### Lo publicado y lo recomendado, lado a lado (ARREGLO 136)
+
+Sus palabras del 13/10: *"estás saturando demasiado la pantalla"* y *"la tasa que
+se elige debe estar reflejada en todo el sistema… me refiero a la tasa cliente"*.
+
+**La tasa SÍ estaba conectada, y eso se midió antes de tocar nada.** Publicando
+189 · 205 con su export en Chromium, el número llega a los cuatro sitios:
+
+```
+                                       antes      después
+cabecera de Tasas                     187 · 210   189 · 205
+cotización al cliente                 187 · 210   189 · 205
+el flyer                              187 · 210   189 · 205
+tasa por omisión de una remesa nueva  187 · 210   189 · 205
+```
+
+**Lo que fallaba era que la pantalla enseñaba dos tasas distintas sin decir cuál
+era cuál.** La tarjeta recomendaba 205 y la cabecera de justo debajo enseñaba el
+210 que tenía publicado, las dos con número grande y la misma pinta. Ella había
+publicado la ida y la vuelta se quedó atrás. Es el ARREGLO 122 otra vez, y la
+cuarta vez con esta forma.
+
+Ahora van **lado a lado**, una fila por ruta, con la columna **TIENES** y la
+columna **TE RECOMIENDO**; la fila que no coincide se marca sola. La posición
+dice cuál es cuál antes de leer nada.
+
+- **La cabecera vieja se fue ENTERA** (`_htmlCabeceraTasas`). Sus piezas no se
+  perdieron: los campos editables son la columna TIENES, y el suelo, el veredicto
+  y el pie viven en `_htmlPiePub()`. Una pantalla nueva **quita** el control
+  viejo; ponerse al lado es lo que hace que no se sepa cuál manda (ARREGLO 98).
+- **El porqué va PLEGADO**, detrás de un *"por qué ▾"*. Lo que tiene que verse sin
+  pedirlo es qué publicar; el motivo se lee una vez y estorba las otras cien. Lo
+  que no se pliega nunca es un aviso **rojo** (ARREGLO 99), y este no lo es: la
+  tasa ya está movida, no hay nada que corregir.
+- **Y el motivo sale de `_motivoPub()`, que devuelve UN objeto.** Antes eran dos
+  ramas con la misma pinta en if/else y había que vigilar que no apareciera una
+  tercera; con un solo bloque, eso no se puede volver a abrir.
+
+#### Los avisos de abajo repetían lo que la tarjeta ya decía
+
+Los metí yo con el 132 y el 133: puse la explicación en la tarjeta y **no quité
+los avisos de abajo que ya la daban**. Medido en la pestaña con sus datos:
+
+```
+849,97 R$ ...... 2 veces      200,00 R$ ..... 2 veces
+3.252,62 R$ .... 2 veces      1.000,00 R$ ... 2 veces
+avisos abajo ... 3, donde cabe 1
+```
+
+Y de esos tres, *"Tienes reales para mover"* y *"Tienes reales de sobra"* eran el
+**mismo hecho** contado dos veces —uno en reales, otro en porcentaje— y los dos
+terminando en "baja la vuelta". Es el ARREGLO 125 y el 98 a la vez.
+
+**Lo que se filtra es esta pantalla, no el aviso.** Los cuatro siguen saliendo en
+el Resumen y en la notificación al teléfono, donde la tarjeta no está. La lista
+vive en `_AVISOS_EN_LA_TARJETA`.
+
+La pestaña pasa de **1.539 px a 901**.
+
+#### Y el campo de la tasa no se podía usar, en producción
+
+Esto salió midiendo lo anterior, y es lo que más caro salía de esta pantalla.
+
+`_setTasaPub()` rehacía `tasas-cab` entero desde su propio `oninput` —**con el
+input dentro**— así que el campo moría en el primer carácter. Reproducido en
+Chromium contra la versión desplegada (v212), haciendo lo que hace una persona
+(tocar, seleccionar todo, escribir):
+
+```
+escribir "185"  →  queda 1, y eso es lo que se guarda en tdia_brl
+```
+
+Y esa es la tasa que leen el flyer, la cotización al cliente y cada remesa nueva.
+**El comentario viejo invocaba el ARREGLO 32 sin ver que el campo estaba dentro
+de lo que repintaba:** la regla era la correcta, el trozo elegido no.
+
+- **Se refresca solo lo que depende de la tecla** —`tpub-dif`, la línea de si
+  coincide, y `tpub-pie`, el suelo con el %— y **el input no está en ninguno de
+  los dos**. Es el ARREGLO 55 y el 32 a la vez.
+- **Al PULSAR sí se puede repintar la tarjeta entera** (`_refrescarTasasTodo`),
+  porque ahí no hay ningún campo bajo el dedo. Las dos cosas no son la misma y
+  por eso no comparten camino.
+- **La guardia exige las dos mitades**: que `tpub-dif` y `tpub-pie` se refresquen,
+  y que `_setTasaPub` **no** toque el contenedor del campo. Pidiendo solo lo
+  primero, volver a meter el repintado pasaba.
+
+**La lección, y es la del ARREGLO 121 otra vez:** una guardia estructural
+comprueba que el código dice lo que debe decir, no que el camino funcione. Esto
+llevaba desplegado desde el 111 y ninguna lo cazó, porque el texto decía lo
+correcto. Lo cazó **teclear de verdad en el navegador**. Cuando un arreglo toca
+un campo donde ella escribe, hay que escribir en él.
+
 #### Lo que esto NO contesta, y está dicho
 
 **La competencia.** De sus cuatro referencias, dos son apps y dos son grupos de
@@ -3521,6 +3649,96 @@ olvidando que **dar un préstamo saca el capital de la cuenta**—. Lo que lo re
 fue el **extracto OFX del banco**: comparar movimiento contra movimiento, con
 margen de días, y mirar **en qué día cambia la diferencia**, no el saldo de cada
 día — `histSaldos` se toma a media jornada y no sirve para comparar cierres.
+
+---
+
+## El apartamento y su cronograma (ARREGLO 134)
+
+Sus palabras del 13/10: *"estoy realizando la compra de un apartamento, quiero
+que me anexes algo para llevar el control de esos gastos"*. De tres maquetas
+eligió la que reutiliza la forma de Préstamos: un contrato con sus cuotas, el
+saldo que baja y el aviso en el Resumen.
+
+**NO VA EN `S.prestamos`, y eso es lo primero.** En papel es un préstamo al
+revés, pero `S.prestamos` alimenta el límite de crédito de SUS clientes, el
+perfil de riesgo y la ganancia por préstamos del Cierre. Su deuda metida ahí
+entraría en las tres cuentas: le subiría el límite a un cliente que no ha pedido
+nada y le apuntaría un interés que nadie le va a pagar. **El parecido está en la
+pantalla, no en los números.**
+
+**Son DOS listas** —`S.inmuebles` y `S.inmCuotas`— las dos en `_MERGE_FIELDS` y
+en `DATA_KEYS`. La fusión decide registro por registro: con las cuotas dentro del
+contrato, marcar una en el teléfono y otra en la PC haría que una pisara a la
+otra, porque lo que viaja es el contrato entero. Es la razón del `_MERGE_BLOQUES`
+del ARREGLO 60 aplicada al revés: aquello había que unirlo porque solo tiene
+sentido junto; esto hay que separarlo porque cada pieza se toca sola.
+
+**El dinero NO vive aquí.** Pagar una cuota crea un EGRESO de los de siempre,
+baja la cuenta y baja el lote FIFO — el mismo camino de `pagarCompromiso()`. Así
+el Diario, el Cierre, la conciliación y el balance se enteran solos, sin tocar ni
+una línea de los cuatro. Aquí vive el **calendario**: qué se debe, cuándo, y si ya
+se pagó. Y se puede deshacer: el egreso se borra y el dinero vuelve a la cuenta y
+al lote.
+
+### Tres bolsas que NO son el mismo dinero
+
+```
+de ella      30.613,98   sale de su cuenta
+del banco   280.197,03   la Caixa se lo paga a la constructora
+condonable   43.413,08   se perdona si paga el financiamiento en su día
+```
+
+Sumarlas diría que debe 354.224 cuando de ella salen 30.614.
+
+- **La del banco no crea egreso al marcarla.** Ese dinero nunca pasa por su
+  cuenta; inventarle una salida sería inventarse un movimiento.
+- **La condonable no suma pero tampoco se esconde.** Si falla la condición la
+  paga entera, y son el 12,4 % del piso. Es la misma regla que el interés
+  pendiente de los préstamos (ARREGLO 71): se dice y no suma.
+- **`_inmResumen()` las separa en un solo recorrido**, y lo leen la tarjeta, los
+  avisos del Resumen y el pie de la lista. Calculado aparte, un redondeo distinto
+  haría que la tarjeta diga una cosa y el aviso de al lado otra.
+
+### Los montos son los del CONTRATO, no los de la propuesta
+
+La hoja *"Proposta de Venda"* lista la mensual en **R$ 1.000,00** —el principal
+sin intereses— y la cláusula 4.2.2 (c.1) la fija en **R$ 1.152,44** con Tabla
+Price al 12,68 % anual. Igual la anual: 2.136,18 contra **2.455,42**. Cargar los
+de la propuesta le diría que paga **3.977,84 menos** de lo que va a pagar.
+
+**Y hay 4 céntimos que no cuadran, a propósito.** La misma cláusula dice las dos
+cosas: que la partida son 27.658,60 y que cada cuota son 1.152,44. Pero
+24 × 1.152,44 = 27.658,56.
+
+```
+suma de las cuotas cargadas    354.224,09
+cláusula 3.1 del mismo papel   354.224,13
+```
+
+Se mete lo que dice **por cuota**, que es lo que el banco va a cobrar cada mes, y
+no un número repartido a mano para cuadrar el total. **Un total que cuadra porque
+alguien repartió el redondeo es peor que uno que no cuadra y dice por qué.**
+
+### Lo demás, en corto
+
+- **Las 24 mensuales salen de `_sumarMeses()`**, nunca de `setMonth()`. Aquí el
+  día es el 10 y no muerde, pero una copia de este código con otra fecha sí.
+- **El contrato del VIZ se carga de un toque** (`_VIZ` + `cargarContratoViz`):
+  28 cuotas a mano son 28 sitios donde equivocarse.
+- **Pagar pregunta si crear el egreso o solo marcar.** Si ella ya apuntó ese pago
+  a mano, crear un segundo bajaría la cuenta dos veces por el mismo dinero.
+- **Desplegar las cuotas no llama a `R()`** (ARREGLO 32), y el rótulo del botón
+  se busca por **su propio id**, no por el `event` global — leerlo del evento
+  funciona hasta que alguien llama a esa función desde otro sitio.
+- **`_simMon()` escribe R$ y Bs, no BRL y VES.** Es el ARREGLO 92 aplicado a su
+  propia pantalla: los códigos son del banco, ella dice R$.
+- **De quién es el inmueble se PREGUNTA**, no se adivina: decide si cada cuota es
+  gasto personal o de la empresa, y eso mueve el capital.
+
+**Lo que NO entró, y es a propósito:** la cuota mensual de la Caixa (R$ 2.100 ×
+420). No empieza hasta 2027 y el monto exacto sale del contrato de financiamiento
+que aún no está firmado. Cuando lo esté, eso es un *compromiso* de los que ya
+existen — no hace falta código.
 
 ---
 

@@ -2199,11 +2199,11 @@ const ROLES=[
   {id:"lector",label:"Supervisor",     sub:"Ve todo · No modifica",     ic:"👁️",bg:"var(--am6-j1)"},
 ];
 const TABS={
-  admin:["dash","diario","ops","evolucion","salud_financiera","cierre","nueva","calculadora","inventario_usdt","capital_total","egresos","prestamos","cobrar","dash_eeuu","traspasos","clientes","auditoria","config_admin"],
+  admin:["dash","diario","ops","evolucion","salud_financiera","cierre","nueva","calculadora","inventario_usdt","capital_total","egresos","prestamos","cobrar","dash_eeuu","traspasos","clientes","auditoria","config_admin","inmuebles"],
   brl:  ["mi_ganancia","op_diario","nueva","clientes"],
   vzla: ["mi_ganancia","op_diario","nueva","clientes"],
   eeuu: ["mi_ganancia","op_diario","nueva_eeuu","clientes"],
-  lector:["dash","diario","ops","evolucion","salud_financiera","cierre","nueva","calculadora","inventario_usdt","capital_total","egresos","prestamos","cobrar","dash_eeuu","traspasos","clientes","auditoria","config_admin"],
+  lector:["dash","diario","ops","evolucion","salud_financiera","cierre","nueva","calculadora","inventario_usdt","capital_total","egresos","prestamos","cobrar","dash_eeuu","traspasos","clientes","auditoria","config_admin","inmuebles"],
 };
 const TL={
   dash:"📊 Resumen",diario:"📅 Diario",ops:"📋 Operaciones",evolucion:"📈 Evolución",salud_financiera:"🩺 Salud Financiera",cierre:"🗓️ Cierre de Mes",brl:"🇧🇷 BRL",vzla:"🇻🇪 VZLA",eeuu:"🇺🇸 EE.UU",
@@ -2215,6 +2215,7 @@ const TL={
   mi_ganancia:"📊 Balance Mensual",
   op_diario:"📋 Mis Operaciones",
   traspasos:"🔄 Traspasos",
+  inmuebles:"🏠 Inmuebles",
   mi_gestion:"💼 Mi Gestión",
   auditoria:"📋 Auditoría",
   config_admin:"⚙️ Configuración",
@@ -2321,6 +2322,12 @@ let S={
     cats_personal:["GASTOS PERSONALES","PAGOS CRÉDITOS","CUMPLEAÑOS","VIAJE","OTROS PERSONAL"]
   },
   compromisos:[],
+  // ARREGLO 134: el contrato y sus cuotas van en DOS listas, no en un
+  // objeto con las cuotas dentro. La fusión decide registro por registro:
+  // juntas, marcar una cuota en el teléfono y otra en la PC haría que una
+  // pisara a la otra, porque lo que viaja es el contrato entero.
+  inmuebles:[],
+  inmCuotas:[],
   // Las 122 remesas de mayo estaban escritas aca: nombre del cliente, fecha,
   // monto y ganancia de cada una, dentro de un archivo que Cloudflare publica.
   // Eran solo el estado inicial —una foto vieja que Firebase pisa apenas
@@ -2913,7 +2920,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261013_v216";
+var APP_VERSION = "20261014_v218";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -3753,6 +3760,7 @@ function _tomarTocado(){
 
 var _NOMBRE_DE_CLAVE = {
   cuentas:"Cuenta", compromisos:"Compromiso", egresos:"Egreso",
+  inmuebles:"Inmueble", inmCuotas:"Cuota de un inmueble",
   egresos_personales:"Egreso personal", prestamos:"Préstamo",
   cuentasCobrar:"Cuenta por cobrar", clientes:"Cliente",
   inventarioUsdt:"Lote de USDT", inventarioUsdt_cerrado:"Lote de USDT cerrado",
@@ -4642,7 +4650,9 @@ var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   // —se recalcula en cada guardado— asi que NO va en ninguna lista de fusion
   // a proposito: que lo reemplace el remoto es justo lo correcto, gana el
   // ultimo que lo calculo. Pero tiene que estar aqui o no viaja.
-  "avisoPush"];
+  "avisoPush",
+  // ARREGLO 134 · el apartamento y su cronograma
+  "inmuebles","inmCuotas"];
 
 // ══════════════════════════════════════════════════════════════════════
 // SISTEMA DE CIERRE AUTOMÁTICO DE MES
@@ -10093,6 +10103,618 @@ function delCatPersonal(cat){
   if(!S.config||!S.config.cats_personal) return;
   S.config.cats_personal=S.config.cats_personal.filter(function(c){return c!==cat;});
   saveData();R();
+}
+
+// ╔══════════════════════════════════════════════════════════════════╗
+// ║  INMUEBLES — la compra de un apartamento y su cronograma         ║
+// ║  ARREGLO 134                                                      ║
+// ╚══════════════════════════════════════════════════════════════════╝
+//
+// Compro un apartamento y necesito saber cuanto llevo, cuanto falta y que
+// cuota viene. En papel eso es un prestamo al reves: cuotas con fecha y un
+// saldo que baja. POR ESO NO VA EN "S.prestamos".
+//
+// S.prestamos alimenta el limite de credito de SUS clientes, el perfil de
+// riesgo y la ganancia por prestamos del Cierre. Una deuda SUYA metida ahi
+// entraria en las tres cuentas: le subiria el limite a un cliente que no ha
+// pedido nada y le apuntaria un interes que nadie le va a pagar. El parecido
+// esta en la pantalla, no en los numeros.
+//
+// Y son DOS listas, no un objeto con sus cuotas dentro. La fusion entre
+// aparatos decide registro por registro: con las cuotas dentro del contrato,
+// marcar una cuota en el telefono y otra en la PC haria que una pisara a la
+// otra, porque el registro que viaja es el contrato entero. Separadas, cada
+// cuota lleva su propia marca. Es la misma razon por la que la apertura tuvo
+// que ir en _MERGE_BLOQUES (ARREGLO 60), aplicada al reves: aquello habia que
+// unirlo porque solo tiene sentido junto; esto hay que separarlo porque cada
+// pieza se toca sola.
+//
+// El dinero NO vive aqui. Pagar una cuota crea un EGRESO de los de siempre,
+// baja la cuenta y baja el lote FIFO — exactamente lo que ya hace
+// pagarCompromiso(). Asi el Diario, el Cierre, la conciliacion y el balance se
+// enteran solos, sin tocar ni una linea de los cuatro. Aqui solo vive el
+// CALENDARIO: que se debe, cuando, y si ya se pago.
+
+var _INM_AVISO_DIAS = 30;   // cuantos dias antes se avisa de una cuota
+
+function _inmDe(id){ return (S.inmuebles||[]).find(function(x){return x.id===id;})||null; }
+function _inmPrimero(){ var l=S.inmuebles||[]; return l.length?l[0]:null; }
+function _inmCuotasDe(inmId){
+  return (S.inmCuotas||[]).filter(function(c){return c.inmId===inmId;})
+    .sort(function(a,b){ return String(a.iso||"").localeCompare(String(b.iso||"")); });
+}
+function _inmDias(iso){
+  if(!iso) return null;
+  var a=new Date(iso+"T00:00:00"), b=new Date(td()+"T00:00:00");
+  if(isNaN(a.getTime())) return null;
+  return Math.round((a-b)/86400000);
+}
+
+// ── EL RESUMEN SALE DE AQUI Y DE NINGUN OTRO SITIO ──────────────────
+// Lo leen la tarjeta que lo dibuja, los avisos del Resumen y el pie de la
+// lista. Calculado aparte en cada uno, bastaria un redondeo distinto para que
+// la tarjeta diga una cosa y el aviso de al lado otra — el 34,27 contra el
+// 34,28, que es lo que ya hizo que dejara de fiarse de los dos.
+//
+// Tres bolsas, y estan separadas porque NO son el mismo dinero:
+//   propio      sale de su cuenta. Es lo unico que es deuda suya de verdad.
+//   banco       lo paga el banco a la constructora. Nunca pasa por ella.
+//   condonable  se perdona si cumple una condicion. Prometerlo como deuda
+//               seria cobrarle algo que probablemente no pague; esconderlo
+//               seria peor, porque si falla lo tiene que pagar entero.
+function _inmResumen(inm){
+  var out={propio:0,pagado:0,falta:0,banco:0,condonable:0,prox:null,vencidas:[],nCuotas:0,nPagadas:0,nPropias:0,nPropiasPag:0};
+  if(!inm) return out;
+  var hoy=td();
+  _inmCuotasDe(inm.id).forEach(function(c){
+    var m=parseFloat(c.monto)||0;
+    out.nCuotas++;
+    if(c.pagado) out.nPagadas++;
+    if(c.banco)           out.banco+=m;
+    else if(c.condonable) out.condonable+=m;
+    else {
+      out.propio+=m; out.nPropias++;
+      if(c.pagado){ out.pagado+=(parseFloat(c.montoPagado)||m); out.nPropiasPag++; }
+      else out.falta+=m;
+    }
+    if(!c.pagado){
+      if(c.iso && c.iso<hoy) out.vencidas.push(c);
+      else if(!out.prox || String(c.iso)<String(out.prox.iso)) out.prox=c;
+    }
+  });
+  ["propio","pagado","falta","banco","condonable"].forEach(function(k){ out[k]=Math.round(out[k]*100)/100; });
+  return out;
+}
+
+// ── LOS AVISOS DEL RESUMEN ──────────────────────────────────────────
+// Salen del MISMO _inmResumen() que la tarjeta. Escritos aparte, un dia el
+// Resumen diria que falta una cuota y la pestana diria que esta pagada.
+function _avisosInmueble(){
+  var out=[];
+  (S.inmuebles||[]).forEach(function(inm){
+    var r=_inmResumen(inm);
+    r.vencidas.forEach(function(c){
+      var d=Math.abs(_inmDias(c.iso)||0);
+      out.push({urg:1,color:"var(--mal)",bg:"var(--mal-sup)",brd:"var(--mal-ln)",ico:"🔴",
+        msg:inm.nombre+" · "+c.concepto+" venció hace "+d+" día"+(d===1?"":"s")+": "+_simMon(inm.moneda||"BRL")+" "+f2(c.monto),
+        accion:"inmuebles",aLbl:"Ver →"});
+    });
+    if(r.prox){
+      var dd=_inmDias(r.prox.iso);
+      if(dd!==null && dd<=_INM_AVISO_DIAS){
+        // La cuota que la paga el banco lleva su propio texto: lo que se juega
+        // ahi no es la cuota, es el abono que se pierde si no cae en su dia.
+        var extra="";
+        if(r.prox.banco && r.condonable>0)
+          extra=" — si no cae en su día pierdes el abono de "+_simMon(inm.moneda||"BRL")+" "+f2(r.condonable);
+        out.push({urg:(dd<=7?1:0),color:(dd<=7?"var(--mal)":"var(--avi-tx)"),
+          bg:(dd<=7?"var(--mal-sup)":"var(--avi-sup)"),brd:(dd<=7?"var(--mal-ln)":"var(--avi-ln)"),ico:(dd<=7?"🔴":"⏳"),
+          msg:inm.nombre+" · "+r.prox.concepto+" "+(dd===0?"vence HOY":dd===1?"vence mañana":"en "+dd+" días")+": "+_simMon(inm.moneda||"BRL")+" "+f2(r.prox.monto)+extra,
+          accion:"inmuebles",aLbl:"Ver →"});
+      }
+    }
+  });
+  return out;
+}
+
+// ── GUARDAR / BORRAR EL CONTRATO ────────────────────────────────────
+function saveInmueble(){
+  var f=S.nInm||{};
+  if(!f.nombre||!String(f.nombre).trim()){alert("Ponle un nombre al inmueble.");return;}
+  var precio=_leerNumero(f.precio); if(isNaN(precio)) precio=0;
+  var obj={id:f.id||("inm_"+_newUid()),nombre:String(f.nombre).trim(),
+    vendedor:String(f.vendedor||"").trim(),moneda:f.moneda||"BRL",
+    precio:Math.round(precio*100)/100,tipo:f.tipo||"personal",cuentaId:f.cuentaId||"",
+    nota:String(f.nota||"").trim()};
+  if(f.id){ var i=(S.inmuebles||[]).findIndex(function(x){return x.id===f.id;}); if(i>=0) S.inmuebles[i]=obj; }
+  else { S.inmuebles=S.inmuebles||[]; S.inmuebles.push(obj); }
+  S.nInm={}; S._inmFormOpen=false; saveData(); R();
+}
+function editInmueble(id){
+  var x=_inmDe(id); if(!x) return;
+  S.nInm=JSON.parse(JSON.stringify(x)); S._inmFormOpen=true; R();
+}
+function delInmueble(id){
+  var x=_inmDe(id); if(!x) return;
+  var n=_inmCuotasDe(id).length;
+  if(!confirm("¿Borrar \""+x.nombre+"\" y sus "+n+" cuota"+(n===1?"":"s")+"?\n\nLos egresos que ya registraste NO se borran: el dinero salió de verdad y sigue en Egresos.")) return;
+  _inmCuotasDe(id).forEach(function(c){ _marcarBorradoMerge("inmCuotas",c.id); });
+  S.inmCuotas=(S.inmCuotas||[]).filter(function(c){return c.inmId!==id;});
+  _marcarBorradoMerge("inmuebles",id);
+  S.inmuebles=(S.inmuebles||[]).filter(function(x2){return x2.id!==id;});
+  saveData(); R();
+}
+
+// ── GUARDAR / BORRAR UNA CUOTA ──────────────────────────────────────
+function saveCuotaInm(){
+  var f=S.nInmC||{};
+  if(!f.inmId){alert("Falta el inmueble.");return;}
+  if(!f.concepto||!String(f.concepto).trim()){alert("Ponle un concepto a la cuota.");return;}
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(String(f.iso||""))){alert("Pon la fecha en formato AAAA-MM-DD.");return;}
+  var m=_leerNumero(f.monto);
+  if(isNaN(m)||m<=0){alert("Pon un monto mayor que cero.");return;}
+  var viejo=(S.inmCuotas||[]).find(function(x){return x.id===f.id;});
+  var obj={id:f.id||("inmc_"+_newUid()),inmId:f.inmId,concepto:String(f.concepto).trim(),
+    iso:f.iso,monto:Math.round(m*100)/100,
+    banco:!!f.banco,condonable:!!f.condonable,
+    pagado:viejo?!!viejo.pagado:false,
+    fechaPago:viejo?(viejo.fechaPago||null):null,
+    egresoId:viejo?(viejo.egresoId||null):null,
+    montoPagado:viejo?(viejo.montoPagado||null):null,
+    cuentaId:f.cuentaId||""};
+  if(f.id){ var i=(S.inmCuotas||[]).findIndex(function(x){return x.id===f.id;}); if(i>=0) S.inmCuotas[i]=obj; }
+  else { S.inmCuotas=S.inmCuotas||[]; S.inmCuotas.push(obj); }
+  S.nInmC={inmId:f.inmId}; S._inmCFormOpen=false; S._inmAbierto=f.inmId; saveData(); R();
+}
+function editCuotaInm(id){
+  var c=(S.inmCuotas||[]).find(function(x){return x.id===id;}); if(!c) return;
+  if(c.pagado){alert("Esta cuota ya está pagada. Deshaz el pago antes de editarla, para que el egreso se corrija con ella.");return;}
+  S.nInmC=JSON.parse(JSON.stringify(c)); S._inmCFormOpen=c.inmId; S._inmAbierto=c.inmId; R();
+}
+function delCuotaInm(id){
+  var c=(S.inmCuotas||[]).find(function(x){return x.id===id;}); if(!c) return;
+  if(c.pagado){alert("Esta cuota ya está pagada. Deshaz el pago antes de borrarla.");return;}
+  if(!confirm("¿Borrar la cuota \""+c.concepto+"\"?")) return;
+  _marcarBorradoMerge("inmCuotas",id);
+  S.inmCuotas=(S.inmCuotas||[]).filter(function(x){return x.id!==id;});
+  saveData(); R();
+}
+
+// ── PAGAR UNA CUOTA ─────────────────────────────────────────────────
+// Registra la operacion, no escribe el saldo: crea un EGRESO de verdad, baja
+// la cuenta y baja el lote FIFO. Es el mismo camino de pagarCompromiso(), y
+// es a proposito — dos maneras de sacar dinero de una cuenta se separan con
+// el primer cambio.
+function pagarCuotaInm(id){
+  var c=(S.inmCuotas||[]).find(function(x){return x.id===id;}); if(!c) return;
+  var inm=_inmDe(c.inmId); if(!inm) return;
+  if(c.pagado){ deshacerCuotaInm(id); return; }
+  var mon=inm.moneda||"BRL";   // el CÓDIGO, no el símbolo: va al egreso y a la cuenta
+
+  // La cuota que pone el banco NO es un pago suyo: el dinero va del banco a
+  // la constructora y nunca pasa por su cuenta. Crearle un egreso seria
+  // inventarse una salida de dinero que no ocurrio.
+  if(c.banco){
+    if(!confirm("✅ MARCAR COMO LIQUIDADA\n\n"+c.concepto+" · "+f2(c.monto)+" "+mon+"\n\nEste dinero lo pone el banco, no sale de ninguna cuenta tuya, así que NO se registra ningún egreso.\n\n¿Confirmar?")) return;
+    c.pagado=true; c.fechaPago=td(); saveData(); R(); return;
+  }
+
+  // "Ya lo pagué y ya lo tengo apuntado" — sin esto, marcarla crearia un
+  // segundo egreso por el mismo dinero y la cuenta bajaria dos veces.
+  var cuenta=null, cid=c.cuentaId||inm.cuentaId||"";
+  if(cid) cuenta=(S.cuentas||[]).find(function(x){return x.id===cid;});
+  if(!cuenta){
+    alert("Esta cuota no tiene cuenta de pago.\n\nEdítala (✏️) y elige de qué cuenta sale el dinero, o ponle una cuenta por defecto al inmueble.");
+    return;
+  }
+  if(cuenta.moneda!==mon){
+    alert("La cuenta \""+cuenta.nombre+"\" es en "+cuenta.moneda+" y esta cuota es en "+mon+".\n\nEdita la cuota y elige una cuenta en "+mon+".");
+    return;
+  }
+  var soloMarcar=!confirm("💰 PAGAR: "+c.concepto+"\n\nSe descontarán "+f2(c.monto)+" "+mon+" de \""+cuenta.nombre+"\"\nSaldo ahora: "+f2(cuenta.saldo)+" → quedará "+f2((parseFloat(cuenta.saldo)||0)-(parseFloat(c.monto)||0))+"\n\nAceptar = registrar el gasto y descontar.\nCancelar = solo marcarla (si ya la registraste aparte).");
+  if(soloMarcar){
+    if(!confirm("Marcar \""+c.concepto+"\" como pagada SIN registrar el gasto.\n\nÚsalo solo si ese pago ya está en Egresos. Si no, el apartamento dirá que está al día y de tu cuenta no habrá salido nada.\n\n¿Confirmar?")) return;
+    c.pagado=true; c.fechaPago=td(); c.montoPagado=c.monto; c.egresoId=null;
+    saveData(); R(); return;
+  }
+  var fin=prompt("¿Qué día se pagó de verdad? (AAAA-MM-DD)", c.iso||td());
+  if(fin===null) return;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(fin)){alert("Formato de fecha inválido. Usa AAAA-MM-DD, por ejemplo: "+td());return;}
+  var usdt=mon==="USDT"?(parseFloat(c.monto)||0):(function(){var r=getRateToUsdt(mon);return (r&&r>0)?((parseFloat(c.monto)||0)/r):0;}());
+  usdt=Math.round(usdt*100)/100;
+  var egId="inmeg_"+_newUid();
+  ajusteCuentaEgreso(cuenta.id,-(parseFloat(c.monto)||0));
+  descontarFIFOEgreso(mon,c.monto,usdt,cuenta.id);
+  S.egresos=S.egresos||[];
+  S.egresos.push({id:egId,d:ds(fin),cat:_inmCategoria(inm),
+    mot:"["+inm.nombre+"] "+c.concepto,monto:c.monto,usdt:usdt,mon:mon,
+    tipo:(inm.tipo==="empresa"?"empresa":"personal"),pagada:true,locked:false,
+    cuentaId:cuenta.id,fromInmueble:inm.id,fromInmCuota:c.id});
+  c.pagado=true; c.fechaPago=fin; c.montoPagado=c.monto; c.egresoId=egId; c.cuentaId=cuenta.id;
+  saveData(); R();
+}
+
+// La categoria del egreso: la primera de las suyas que le toque segun de
+// quien sea el inmueble. Si un dia quiere una categoria propia, la crea en
+// Configuracion y esto la encuentra sola por el nombre.
+function _inmCategoria(inm){
+  var lista=(inm && inm.tipo==="empresa")?getCatsEmpresa():getCatsPersonal();
+  for(var i=0;i<lista.length;i++) if(/inmueble|apartamento|vivienda/i.test(lista[i])) return lista[i];
+  return lista[0];
+}
+
+function deshacerCuotaInm(id){
+  var c=(S.inmCuotas||[]).find(function(x){return x.id===id;}); if(!c||!c.pagado) return;
+  var inm=_inmDe(c.inmId);
+  if(!confirm("¿Deshacer el pago de \""+c.concepto+"\"?\n\n"+(c.egresoId?"Se borrará el egreso y el dinero volverá a la cuenta y al lote.":"No había egreso: solo se desmarca.")))return;
+  if(c.egresoId){
+    var eg=(S.egresos||[]).find(function(e){return e.id===c.egresoId;});
+    if(eg){
+      if(eg.cuentaId) ajusteCuentaEgreso(eg.cuentaId,+(parseFloat(eg.monto)||0));
+      restaurarFIFOEgreso(eg.mon||(inm&&inm.moneda)||"BRL",eg.monto,eg.usdt,eg.cuentaId);
+    }
+    S.egresos=(S.egresos||[]).filter(function(e){return e.id!==c.egresoId;});
+    _marcarBorradoMerge("egresos",c.egresoId);
+  }
+  c.pagado=false; c.fechaPago=null; c.egresoId=null; c.montoPagado=null;
+  saveData(); R();
+}
+
+// ── LA PANTALLA ─────────────────────────────────────────────────────
+function rInmuebles(){
+  var l=S.inmuebles||[];
+  if(!l.length) return _inmVacio();
+  return l.map(_inmTarjeta).join("")+_inmFormContrato();
+}
+
+// Sin contrato, lo que sale es la puerta para meterlo — y el botón que lo
+// mete entero, que es lo que ahorra teclear 26 cuotas a mano.
+function _inmVacio(){
+  return "<div style='max-width:560px;margin:0 auto'>"+
+    "<div style='background:var(--sup);border:1px solid var(--ln);border-radius:14px;padding:18px 16px;text-align:center'>"+
+      "<div style='font-size:34px;line-height:1'>🏠</div>"+
+      "<div style='font-size:15px;font-weight:800;margin-top:8px'>Todavía no has metido ningún inmueble</div>"+
+      "<div style='font-size:12px;color:var(--tx3);margin-top:5px;line-height:1.55'>"+
+        "Cada pago baja la cuenta de donde sale, igual que un egreso, y el aviso de la cuota te llega al Resumen.</div>"+
+      "<button onclick='_abrirFormInm()' class='btn-main btn-blue' style='margin-top:14px'>+ Meter un inmueble</button>"+
+      // El contrato del VIZ ya está leído: 28 cuotas a mano son 28 sitios
+      // donde equivocarse, y los montos del contrato no son los de la hoja
+      // "Proposta" (ver _VIZ).
+      "<button onclick='cargarContratoViz()' style='width:100%;margin-top:9px;background:none;border:1px dashed var(--ln2);"+
+        "border-radius:11px;padding:10px;font-size:12px;font-weight:700;color:var(--tx3);cursor:pointer;font-family:inherit'>"+
+        "\ud83c\udfe0 Meter el contrato del VIZ con sus 28 cuotas</button>"+
+    "</div>"+
+    _inmFormContrato()+
+  "</div>";
+}
+
+// El símbolo que ella escribe, no el código del banco. Es la misma idea del
+// ARREGLO 92 —"BRL" y "VES" son códigos de banco, ella dice R$ y Bs— aplicada
+// a su propia pantalla. Una moneda sin símbolo conocido se queda con su código,
+// que es mejor que inventarse uno.
+var _SIM_MON = {BRL:"R$", VES:"Bs", USD:"$", USDT:"USDT", EUR:"\u20ac", PEN:"S/", COP:"COP$"};
+function _simMon(m){ return _SIM_MON[m] || m || ""; }
+function _inmTarjeta(inm){
+  var r=_inmResumen(inm), mon=_simMon(inm.moneda||"BRL");
+  var pct=(r.propio>0)?Math.min(100,Math.round(r.pagado/r.propio*1000)/10):0;
+  // El semáforo sale del MISMO _inmResumen() que los avisos del Resumen: dos
+  // cuentas separadas acabarían diciendo "al día" aquí y "vencido" allá.
+  var est = r.vencidas.length
+      ? {t:"VENCIDA"+(r.vencidas.length>1?"S":""), c:"var(--mal-ln)"}
+      : (r.prox && (_inmDias(r.prox.iso)||99)<=_INM_AVISO_DIAS)
+        ? {t:"VIENE UNA", c:"var(--avi-tx)"}
+        : {t:"AL DÍA", c:"var(--ok)"};
+  var h="<div style='max-width:560px;margin:0 auto 12px'>"+
+    "<div style='background:var(--sup);border:1px solid var(--ln);border-radius:14px;padding:16px 15px 14px'>"+
+      "<div style='display:flex;justify-content:space-between;align-items:baseline;gap:8px'>"+
+        "<div style='font-size:14px;font-weight:800;min-width:0'>"+_escAud(inm.nombre)+
+          (inm.vendedor?"<div style='font-size:11px;color:var(--tx3);font-weight:400;margin-top:1px'>"+_escAud(inm.vendedor)+"</div>":"")+
+        "</div>"+
+        "<div style='font-size:10px;font-weight:800;color:"+est.c+";border:1px solid "+est.c+";"+
+          "border-radius:20px;padding:3px 9px;white-space:nowrap'>"+est.t+"</div>"+
+      "</div>"+
+      "<div style='font-size:10px;font-weight:800;letter-spacing:.11em;color:var(--tx4);margin:13px 0 5px'>TE FALTA PAGAR</div>"+
+      "<div style='font-size:28px;font-weight:800;letter-spacing:-.02em;line-height:1.05'>"+mon+" "+f2(r.falta)+"</div>"+
+      "<div style='font-size:12px;color:var(--tx3);margin-top:5px'>"+
+        "de "+f2(r.propio)+" que salen de ti · llevas <b style='color:var(--tx2)'>"+f2(r.pagado)+"</b></div>"+
+      "<div style='margin-top:11px;background:var(--bg);border:1px solid var(--ln);border-radius:6px;height:10px;overflow:hidden'>"+
+        "<div style='background:var(--ok);height:100%;width:"+pct+"%'></div></div>"+
+      "<div style='font-size:11px;color:var(--tx4);margin-top:5px'>"+
+        r.nPropiasPag+" de "+r.nPropias+" cuotas tuyas pagadas · "+String(pct).replace(".",",")+" %</div>";
+
+  // El dinero del banco NO suma a lo que ella debe, y por eso va aparte y
+  // dicho: meterlo dentro diría que tiene que pagar 280.197 que no pasan por
+  // su cuenta (ARREGLO 134).
+  if(r.banco>0){
+    h+="<div style='margin-top:11px;background:var(--bg);border:1px solid var(--ln);border-radius:10px;padding:10px 12px'>"+
+       "<div style='font-size:10px;font-weight:800;letter-spacing:.09em;color:var(--tx4)'>LO PONE EL BANCO</div>"+
+       "<div style='font-size:18px;font-weight:800;margin-top:3px'>"+mon+" "+f2(r.banco)+"</div>"+
+       "<div style='font-size:11px;color:var(--tx4);margin-top:2px'>no sale de tus cuentas</div></div>";
+  }
+  // La condonable tampoco suma — pero esconderla sería peor: si falla la
+  // condición la tiene que pagar entera.
+  if(r.condonable>0){
+    h+="<div style='margin-top:9px;background:var(--avi-sup);border-left:3px solid var(--avi-ln);border-radius:7px;padding:9px 11px'>"+
+       "<div style='font-size:11.5px;color:var(--avi-tx);line-height:1.5'>"+
+       "<b>"+mon+" "+f2(r.condonable)+" se perdonan si cumples.</b> No los sumo a lo que te falta, "+
+       "pero si no se cumple la condición los tienes que pagar enteros.</div></div>";
+  }
+  h+="<div style='display:flex;gap:8px;margin-top:13px'>"+
+       "<button id='inm-btn-"+_escAud(inm.id)+"' onclick='_toggleInmCuotas(\""+_jsAttr(inm.id)+"\")' "+
+         "class='btn-main btn-gray' style='flex:1;font-size:13px;padding:11px'>"+
+         (S._inmAbierto===inm.id?"Ocultar cuotas":"Ver cuotas")+"</button>"+
+       "<button onclick='editInmueble(\""+_jsAttr(inm.id)+"\")' class='btn-main btn-gray' style='flex:0 0 46px;font-size:14px;padding:11px'>✏️</button>"+
+     "</div>"+
+    "</div>"+
+    "<div id='inm-cuotas-"+_escAud(inm.id)+"'>"+(S._inmAbierto===inm.id?_inmListaCuotas(inm):"")+"</div>"+
+  "</div>";
+  return h;
+}
+
+// Desplegar NO llama a R() (ARREGLO 32): repintar cierra la tarjeta bajo el
+// dedo. Se cambia el contenido por su id, como el inventario del 126.
+function _toggleInmCuotas(id){
+  S._inmAbierto=(S._inmAbierto===id)?null:id;
+  var n=document.getElementById("inm-cuotas-"+id);
+  if(n) n.innerHTML=(S._inmAbierto===id)?_inmListaCuotas(_inmDe(id)):"";
+  // El rótulo del botón también cambia y está fuera de ese id, así que se
+  // busca POR SU PROPIO id. Leerlo del `event` global funciona hasta que
+  // alguien llama a esto desde otro sitio y entonces no hay evento.
+  var b=document.getElementById("inm-btn-"+id);
+  if(b) b.textContent=(S._inmAbierto===id)?"Ocultar cuotas":"Ver cuotas";
+}
+
+// La lista de cuotas. Cada fila dice su estado y lleva su botón: pagar una
+// cuota es el gesto que más se repite, y esconderlo detrás de un menú lo
+// convierte en dos toques por cuota.
+function _inmListaCuotas(inm){
+  if(!inm) return "";
+  var cs=_inmCuotasDe(inm.id), hoy=td();
+  if(!cs.length){
+    return "<div style='background:var(--sup);border:1px solid var(--ln);border-radius:12px;padding:14px;margin-top:9px;"+
+      "font-size:12px;color:var(--tx3);text-align:center'>Este inmueble todavía no tiene cuotas."+
+      "<div style='margin-top:10px'><button onclick='_abrirFormCuota(\""+_jsAttr(inm.id)+"\")' class='btn-main btn-blue'>+ Agregar una cuota</button></div></div>";
+  }
+  var filas=cs.map(function(c){
+    var vencida=(!c.pagado && c.iso && c.iso<hoy);
+    var dd=_inmDias(c.iso);
+    var col=c.pagado?"var(--ok)":(vencida?"var(--mal-ln)":(dd!==null&&dd<=_INM_AVISO_DIAS?"var(--avi-tx)":"var(--tx3)"));
+    var nota=c.banco?"la pone el banco":(c.condonable?"se perdona si cumples":"");
+    return "<tr style='border-top:1px solid var(--ln)'>"+
+      "<td style='padding:9px 10px;vertical-align:top'>"+
+        "<div style='font-size:12.5px;font-weight:700;color:"+(c.pagado?"var(--tx3)":"var(--tx)")+"'>"+_escAud(c.concepto)+"</div>"+
+        "<div style='font-size:10.5px;color:"+col+";margin-top:1px'>"+
+          (c.pagado?("✅ pagada "+ds(c.fechaPago||c.iso))
+                   :(ds(c.iso)+(vencida?(" · vencida hace "+Math.abs(dd)+"d")
+                                       :(dd===0?" · HOY":(dd!==null&&dd<=_INM_AVISO_DIAS?(" · en "+dd+"d"):"")))))+
+        "</div>"+
+        (nota?"<div style='font-size:10px;color:var(--tx4);margin-top:1px'>"+nota+"</div>":"")+
+      "</td>"+
+      "<td style='padding:9px 8px;text-align:right;vertical-align:top;white-space:nowrap;"+
+        "font-size:13px;font-weight:800;color:"+(c.pagado?"var(--tx3)":"var(--tx)")+"'>"+f2(c.monto)+"</td>"+
+      "<td style='padding:9px 10px 9px 4px;text-align:right;vertical-align:top;white-space:nowrap'>"+
+        "<button onclick='pagarCuotaInm(\""+_jsAttr(c.id)+"\")' style='background:none;border:1px solid var(--ln2);"+
+          "border-radius:7px;padding:4px 9px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;"+
+          "color:"+(c.pagado?"var(--tx3)":"var(--ok)")+"'>"+(c.pagado?"deshacer":"pagar")+"</button>"+
+        (c.pagado?"":"<button onclick='editCuotaInm(\""+_jsAttr(c.id)+"\")' style='background:none;border:none;"+
+          "color:var(--tx4);font-size:12px;cursor:pointer;padding:4px 2px 4px 6px'>✏️</button>")+
+      "</td>"+
+    "</tr>";
+  }).join("");
+  return "<div style='background:var(--sup);border:1px solid var(--ln);border-radius:12px;margin-top:9px;overflow:hidden'>"+
+    "<table style='width:100%;border-collapse:collapse'>"+filas+"</table>"+
+    "<div style='padding:10px;border-top:1px solid var(--ln)'>"+
+      "<button onclick='_abrirFormCuota(\""+_jsAttr(inm.id)+"\")' style='width:100%;background:none;border:1px dashed var(--ln2);"+
+        "border-radius:9px;padding:9px;font-size:12px;font-weight:700;color:var(--tx3);cursor:pointer;font-family:inherit'>"+
+        "+ Agregar una cuota</button>"+
+    "</div>"+
+    _inmFormCuota(inm)+
+  "</div>";
+}
+
+// ── LOS FORMULARIOS ─────────────────────────────────────────────────
+// Cada campo de dinero es type=text + inputmode=decimal y pasa por
+// _leerNumero() al guardar: con el teclado en español la coma decimal es lo
+// primero que se pierde, y un type="number" se la come en silencio.
+function _inpInm(k,rot,ph,val,ancho){
+  return "<div style='flex:1 1 "+(ancho||"140px")+";min-width:0'>"+
+    "<label style='font-size:10.5px;font-weight:700;color:var(--tx3);display:block;margin-bottom:3px'>"+rot+"</label>"+
+    "<input type='text' inputmode='decimal' placeholder='"+_escAud(ph)+"' value='"+_escAud(val===undefined||val===null?"":String(val))+"' "+
+      "oninput='_setNInm(\""+k+"\",this.value)' "+
+      "style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:9px;font-size:14px;"+
+      "font-weight:700;font-family:inherit;background:var(--sup);color:var(--tx)'></div>";
+}
+function _setNInm(k,v){ S.nInm=S.nInm||{}; S.nInm[k]=v; }
+function _setNInmC(k,v){ S.nInmC=S.nInmC||{}; S.nInmC[k]=v; }
+function _abrirFormInm(){ S.nInm=S.nInm||{}; S._inmFormOpen=true; R(); }
+function _abrirFormCuota(inmId){ S.nInmC={inmId:inmId}; S._inmCFormOpen=inmId; R(); }
+function _cerrarFormInm(){ S.nInm={}; S._inmFormOpen=false; R(); }
+function _cerrarFormCuota(){ S.nInmC={}; S._inmCFormOpen=false; R(); }
+
+function _inmFormContrato(){
+  if(!S._inmFormOpen) return (S.inmuebles||[]).length
+    ? "<div style='max-width:560px;margin:0 auto'><button onclick='_abrirFormInm()' style='width:100%;background:none;"+
+      "border:1px dashed var(--ln2);border-radius:11px;padding:11px;font-size:12.5px;font-weight:700;"+
+      "color:var(--tx3);cursor:pointer;font-family:inherit'>+ Meter otro inmueble</button></div>"
+    : "";
+  var f=S.nInm||{};
+  var cuentas=(S.cuentas||[]).filter(function(c){return c.activa!==false;});
+  var opts=cuentas.map(function(c){
+    return "<option value='"+_escAud(c.id)+"'"+(f.cuentaId===c.id?" selected":"")+">"+
+      _escAud(c.nombre)+" ("+_escAud(c.moneda)+")</option>";
+  }).join("");
+  var monedas=["BRL","USDT","USD","VES","PEN","COP","EUR"];
+  return "<div style='max-width:560px;margin:12px auto 0;background:var(--sup);border:1.5px solid var(--ac);"+
+    "border-radius:14px;padding:15px'>"+
+    "<div style='font-size:13px;font-weight:800;margin-bottom:12px'>"+(f.id?"Editar inmueble":"Un inmueble nuevo")+"</div>"+
+    "<div style='display:flex;gap:9px;flex-wrap:wrap;margin-bottom:9px'>"+
+      _inpInm("nombre","Nombre","ej: Apto 1818 VIZ",f.nombre,"180px")+
+      _inpInm("vendedor","A quién le compras","ej: Plano & Plano",f.vendedor,"180px")+
+    "</div>"+
+    "<div style='display:flex;gap:9px;flex-wrap:wrap;margin-bottom:9px'>"+
+      _inpInm("precio","Precio total","ej: 350.246,29",f.precio,"150px")+
+      "<div style='flex:1 1 110px;min-width:0'>"+
+        "<label style='font-size:10.5px;font-weight:700;color:var(--tx3);display:block;margin-bottom:3px'>Moneda</label>"+
+        "<select onchange='_setNInm(\"moneda\",this.value)' style='width:100%;padding:9px;border:1.5px solid var(--ln);"+
+          "border-radius:9px;font-size:14px;font-weight:700;font-family:inherit;background:var(--sup);color:var(--tx)'>"+
+          monedas.map(function(m){return "<option value='"+m+"'"+((f.moneda||"BRL")===m?" selected":"")+">"+m+"</option>";}).join("")+
+        "</select></div>"+
+    "</div>"+
+    "<div style='margin-bottom:9px'>"+
+      "<label style='font-size:10.5px;font-weight:700;color:var(--tx3);display:block;margin-bottom:3px'>De dónde sale el dinero</label>"+
+      "<select onchange='_setNInm(\"cuentaId\",this.value)' style='width:100%;padding:9px;border:1.5px solid var(--ln);"+
+        "border-radius:9px;font-size:13px;font-family:inherit;background:var(--sup);color:var(--tx)'>"+
+        "<option value=''>— elegir en cada cuota —</option>"+opts+"</select></div>"+
+    // De quién es decide si cada pago es un gasto personal o de la empresa, y
+    // eso cambia el capital: se pregunta, no se adivina.
+    "<div style='margin-bottom:11px'>"+
+      "<label style='font-size:10.5px;font-weight:700;color:var(--tx3);display:block;margin-bottom:4px'>¿De quién es?</label>"+
+      "<div style='display:flex;gap:8px'>"+
+        ["personal","empresa"].map(function(t){
+          var on=((f.tipo||"personal")===t);
+          return "<button onclick='_setNInm(\"tipo\",\""+t+"\");R()' style='flex:1;padding:9px;border:1.5px solid "+
+            (on?"var(--ac)":"var(--ln)")+";border-radius:9px;background:"+(on?"var(--avi-sup)":"var(--sup)")+
+            ";font-size:12.5px;font-weight:800;color:"+(on?"var(--avi-tx)":"var(--tx3)")+
+            ";cursor:pointer;font-family:inherit'>"+(t==="personal"?"💜 Mío":"🏢 De la empresa")+"</button>";
+        }).join("")+
+      "</div>"+
+      "<div style='font-size:10.5px;color:var(--tx4);margin-top:5px;line-height:1.5'>"+
+        ((f.tipo||"personal")==="personal"
+          ? "Cada cuota se apunta como gasto personal. Si sale de una cuenta de la empresa, le baja el capital."
+          : "Cada cuota se apunta como gasto de la empresa.")+
+      "</div>"+
+    "</div>"+
+    "<div style='display:flex;gap:8px'>"+
+      "<button onclick='saveInmueble()' class='btn-main btn-green' style='flex:1'>Guardar</button>"+
+      "<button onclick='_cerrarFormInm()' class='btn-main btn-gray' style='flex:0 0 100px'>Cancelar</button>"+
+    "</div>"+
+    (f.id?("<button onclick='delInmueble(\""+_jsAttr(f.id)+"\")' style='width:100%;margin-top:9px;background:none;"+
+      "border:none;color:var(--mal-ln);font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit'>"+
+      "Borrar este inmueble</button>"):"")+
+  "</div>";
+}
+
+function _inmFormCuota(inm){
+  if(S._inmCFormOpen!==inm.id) return "";
+  var f=S.nInmC||{};
+  var cuentas=(S.cuentas||[]).filter(function(c){return c.activa!==false && c.moneda===(inm.moneda||"BRL");});
+  return "<div style='padding:12px;border-top:1px solid var(--ln);background:var(--bg)'>"+
+    "<div style='font-size:12px;font-weight:800;margin-bottom:10px'>"+(f.id?"Editar la cuota":"Una cuota nueva")+"</div>"+
+    "<div style='display:flex;gap:9px;flex-wrap:wrap;margin-bottom:9px'>"+
+      "<div style='flex:1 1 150px;min-width:0'>"+
+        "<label style='font-size:10.5px;font-weight:700;color:var(--tx3);display:block;margin-bottom:3px'>Concepto</label>"+
+        "<input type='text' placeholder='ej: Mensual 3 de 24' value='"+_escAud(f.concepto||"")+"' "+
+          "oninput='_setNInmC(\"concepto\",this.value)' style='width:100%;padding:9px;border:1.5px solid var(--ln);"+
+          "border-radius:9px;font-size:13px;font-family:inherit;background:var(--sup);color:var(--tx)'></div>"+
+      "<div style='flex:1 1 130px;min-width:0'>"+
+        "<label style='font-size:10.5px;font-weight:700;color:var(--tx3);display:block;margin-bottom:3px'>Vence</label>"+
+        "<input type='date' value='"+_escAud(f.iso||"")+"' oninput='_setNInmC(\"iso\",this.value)' "+
+          "style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:9px;font-size:13px;"+
+          "font-family:inherit;background:var(--sup);color:var(--tx)'></div>"+
+    "</div>"+
+    "<div style='display:flex;gap:9px;flex-wrap:wrap;margin-bottom:9px'>"+
+      "<div style='flex:1 1 130px;min-width:0'>"+
+        "<label style='font-size:10.5px;font-weight:700;color:var(--tx3);display:block;margin-bottom:3px'>Monto ("+_simMon(inm.moneda||"BRL")+")</label>"+
+        "<input type='text' inputmode='decimal' placeholder='ej: 1.152,44' value='"+_escAud(f.monto===undefined?"":String(f.monto))+"' "+
+          "oninput='_setNInmC(\"monto\",this.value)' style='width:100%;padding:9px;border:1.5px solid var(--ln);"+
+          "border-radius:9px;font-size:14px;font-weight:700;font-family:inherit;background:var(--sup);color:var(--tx)'></div>"+
+      "<div style='flex:1 1 150px;min-width:0'>"+
+        "<label style='font-size:10.5px;font-weight:700;color:var(--tx3);display:block;margin-bottom:3px'>Sale de</label>"+
+        "<select onchange='_setNInmC(\"cuentaId\",this.value)' style='width:100%;padding:9px;border:1.5px solid var(--ln);"+
+          "border-radius:9px;font-size:12.5px;font-family:inherit;background:var(--sup);color:var(--tx)'>"+
+          "<option value=''>— la del inmueble —</option>"+
+          cuentas.map(function(c){return "<option value='"+_escAud(c.id)+"'"+(f.cuentaId===c.id?" selected":"")+">"+_escAud(c.nombre)+"</option>";}).join("")+
+        "</select></div>"+
+    "</div>"+
+    "<div style='display:flex;gap:8px;margin-bottom:11px;flex-wrap:wrap'>"+
+      ["banco","condonable"].map(function(k){
+        var on=!!f[k];
+        return "<button onclick='_setNInmC(\""+k+"\","+(on?"false":"true")+");R()' style='flex:1 1 150px;padding:8px;"+
+          "border:1.5px solid "+(on?"var(--ac)":"var(--ln)")+";border-radius:9px;background:"+(on?"var(--avi-sup)":"var(--sup)")+
+          ";font-size:11.5px;font-weight:700;color:"+(on?"var(--avi-tx)":"var(--tx3)")+";cursor:pointer;font-family:inherit'>"+
+          (on?"✔ ":"")+(k==="banco"?"La pone el banco":"Se perdona si cumplo")+"</button>";
+      }).join("")+
+    "</div>"+
+    "<div style='display:flex;gap:8px'>"+
+      "<button onclick='saveCuotaInm()' class='btn-main btn-green' style='flex:1;font-size:13px;padding:11px'>Guardar</button>"+
+      "<button onclick='_cerrarFormCuota()' class='btn-main btn-gray' style='flex:0 0 100px;font-size:13px;padding:11px'>Cancelar</button>"+
+    "</div>"+
+    (f.id?("<button onclick='delCuotaInm(\""+_jsAttr(f.id)+"\")' style='width:100%;margin-top:9px;background:none;"+
+      "border:none;color:var(--mal-ln);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit'>Borrar la cuota</button>"):"")+
+  "</div>";
+}
+
+// ── EL CONTRATO DEL VIZ, YA TECLEADO ────────────────────────────────
+// Veintiséis cuotas a mano son veintiséis sitios donde equivocarse, y este
+// contrato ya está leído: sale del Quadro Resumo (cláusulas 3.1 y 4.2) y de la
+// hoja "Proposta de Venda" del instrumento firmado el 10/10/2026.
+//
+// Los montos son los del CONTRATO, no los de la propuesta. No es lo mismo y la
+// diferencia se paga: la propuesta lista la mensual en R$ 1.000,00 —el principal
+// sin intereses— y la cláusula 4.2.2 (c.1) la fija en R$ 1.152,44 con Tabla
+// Price al 12,68% anual. Igual la anual: 2.136,18 en la propuesta, 2.455,42 en
+// el contrato. Comprobado que cuadra: 500 + 43.413,08 + 280.197,03 + 27.658,60
+// + 2.455,42 = 354.224,13, que es el precio con intereses de la cláusula 3.1.
+//
+// Las fechas de las 24 mensuales salen de _sumarMeses(), nunca de setMonth():
+// la primera es el 10/01/2027 y el día 10 tiene que seguir siendo el 10 en
+// febrero. Es la misma regla que el cronograma de los préstamos.
+//
+// Y HAY 4 CÉNTIMOS QUE NO CUADRAN, a propósito. La cláusula 4.2.2 (c.1) dice
+// las dos cosas a la vez: que la partida son R$ 27.658,60 y que cada una de
+// las 24 cuotas son R$ 1.152,44. Pero 24 × 1.152,44 = 27.658,56. El redondeo
+// es del contrato, no de aquí.
+//
+//   suma de estas cuotas    354.224,09
+//   cláusula 3.1 del mismo  354.224,13
+//
+// Se mete lo que dice la cláusula POR CUOTA, que es lo que el banco va a
+// cobrar cada mes, y no un número inventado para cuadrar el total: si algún
+// día la última cuota llega con 4 céntimos más, se edita esa y ya. Un total
+// que cuadra porque alguien repartió el redondeo a mano es peor que uno que
+// no cuadra y dice por qué.
+var _VIZ = {
+  nombre:"Apto 1818 · VIZ", vendedor:"Plano & Plano", moneda:"BRL",
+  precio:350246.29, tipo:"personal",
+  cuotas:[
+    {concepto:"Señal",                 iso:"2026-10-13", monto:500.00},
+    {concepto:"Financiamiento Caixa",   iso:"2026-12-31", monto:280197.03, banco:true},
+    {concepto:"Parcela Bom Pagador",    iso:"2027-02-02", monto:43413.08, condonable:true},
+    {concepto:"Anual",                  iso:"2027-12-20", monto:2455.42}
+  ],
+  mensual:{concepto:"Mensual", desde:"2027-01-10", n:24, monto:1152.44}
+};
+function cargarContratoViz(){
+  if(!confirm("🏠 METER EL CONTRATO DEL VIZ\n\n"+
+     "Apto 1818, Torre A · Plano & Plano\nPrecio R$ 350.246,29\n\n"+
+     "Se crean 28 cuotas: la señal, el financiamiento de la Caixa, la Bom Pagador, "+
+     "24 mensuales de R$ 1.152,44 y la anual.\n\n"+
+     "Los montos son los del CONTRATO (cláusula 4.2), que llevan los intereses "+
+     "dentro — la hoja \"Proposta\" los lista sin ellos y se queda corta.\n\n¿Seguir?")) return;
+  var inm={id:"inm_"+_newUid(), nombre:_VIZ.nombre, vendedor:_VIZ.vendedor,
+    moneda:_VIZ.moneda, precio:_VIZ.precio, tipo:_VIZ.tipo, cuentaId:"", nota:""};
+  S.inmuebles=S.inmuebles||[]; S.inmuebles.push(inm);
+  S.inmCuotas=S.inmCuotas||[];
+  function meter(c){
+    S.inmCuotas.push({id:"inmc_"+_newUid(), inmId:inm.id, concepto:c.concepto,
+      iso:c.iso, monto:c.monto, banco:!!c.banco, condonable:!!c.condonable,
+      pagado:false, fechaPago:null, egresoId:null, montoPagado:null, cuentaId:""});
+  }
+  _VIZ.cuotas.forEach(meter);
+  // Las 24 mensuales con _sumarMeses(): setMonth() convertiría el 31/01 + 1 mes
+  // en 03/03. Aquí el día es el 10 y no muerde, pero la regla es la regla —
+  // una copia de este código con otra fecha sí mordería.
+  var m=_VIZ.mensual, base=new Date(m.desde+"T00:00:00");
+  for(var i=0;i<m.n;i++){
+    var f=_sumarMeses(new Date(base.getTime()), i);
+    meter({concepto:m.concepto+" "+(i+1)+" de "+m.n, monto:m.monto,
+      iso:f.getFullYear()+"-"+String(f.getMonth()+1).padStart(2,"0")+"-"+String(f.getDate()).padStart(2,"0")});
+  }
+  S._inmAbierto=inm.id;
+  saveData(); R();
+  alert("✅ Listo: "+_inmCuotasDe(inm.id).length+" cuotas.\n\n"+
+        "La señal del 13/10 sale como pendiente: púlsale \"pagar\" y elige la cuenta "+
+        "de donde salió de verdad, para que el gasto quede registrado.");
 }
 
 function getCatsEmpresa(){return (S.config&&S.config.cats_empresa&&S.config.cats_empresa.length)?S.config.cats_empresa:["GASTOS FIJOS EMPRESA","SERVICIOS DIGITALES","GASTOS OPERATIVOS","GASTOS EXTRAORD. EMPRESA"];}
@@ -17798,6 +18420,7 @@ var PERMISOS_APP = [
   {k:"inventario_usdt", n:"📦 Inventario USDT"},
   {k:"capital_total",   n:"💰 Balance de cuentas"},
   {k:"traspasos",       n:"🔄 Traspasos"},
+  {k:"inmuebles",       n:"🏠 Inmuebles"},
   {k:"calculadora",     n:"🧮 Tasas"},
   {k:"evolucion",       n:"📈 Evolución y salud"},
   {k:"cierre",          n:"🗓️ Cierre de mes"},
@@ -17845,7 +18468,8 @@ var PERMISO_DE_TAB = {
   inventario_usdt:"inventario_usdt", capital_total:"capital_total",
   traspasos:"traspasos", calculadora:"calculadora", auditoria:"auditoria",
   config_admin:"config_admin", dash_eeuu:"dash_eeuu",
-  mi_ganancia:"mi_ganancia", op_diario:"op_diario"
+  mi_ganancia:"mi_ganancia", op_diario:"op_diario",
+  inmuebles:"inmuebles"
 };
 
 // Los permisos los manda el servidor: son los que guarda Mongo para ese
@@ -19561,7 +20185,7 @@ function rLogin(){
 var _GRUPOS_MENU=[
   ["Ver",       ["dash","dash_eeuu","diario","evolucion","salud_financiera","mi_ganancia"]],
   ["Operación", ["nueva","ops","brl","vzla","eeuu","inventario_usdt","calculadora"]],
-  ["Dinero",    ["capital_total","egresos","traspasos"]],
+  ["Dinero",    ["capital_total","egresos","traspasos","inmuebles"]],
   ["Crédito",   ["prestamos","cobrar"]],
   ["Gestión",   ["clientes","cierre","auditoria","config_admin"]]
 ];
@@ -19710,6 +20334,7 @@ function rMain(){
   else if(S.tab==="inventario_usdt") body=tp("inventario_usdt",rInventarioUsdt,"Inventario USDT");
   else if(S.tab==="capital_total") body=tp("capital_total",rCapitalTotal,"Balance de Cuentas");
   else if(S.tab==="traspasos")     body=tp("traspasos",rTraspasos,"Traspasos");
+  else if(S.tab==="inmuebles")     body=tp("inmuebles",rInmuebles,"Inmuebles");
   else if(S.tab==="config_admin")  body=tp("config_admin",rConfigAdmin,"Configuración");
   // La rama vieja "si es de EE.UU. enséñale su resumen" era inalcanzable:
   // "egresos" no está en el menú de ningún operador. Ahora la puerta es una.
@@ -22243,6 +22868,12 @@ function rDash(){
   // Resumen todos los dias. Una alarma roja permanente que no significa nada es
   // lo que ensena a no leer las alarmas, y aqui las rojas cuestan dinero.
   // El mismo dato no se calcula en dos sitios: se lee de _cuentasEnNegativo().
+  // ARREGLO 134: las cuotas del apartamento. Salen del MISMO _inmResumen() que
+  // dibuja la tarjeta —escritas aquí otra vez, un día el Resumen diría que
+  // falta una cuota y la pestaña que está pagada— y la del banco lleva su
+  // propio texto, porque lo que se juega ahí no es la cuota: es el abono que se
+  // pierde si no cae en su día.
+  try{ (_avisosInmueble()||[]).forEach(function(a){ alertas.push(a); }); }catch(e){}
   var ctasNeg=_cuentasEnNegativo();
   if(ctasNeg.length>0) alertas.push({urg:1,color:"var(--mal)",bg:"var(--mal-sup)",brd:"var(--mal-ln)",ico:"🔴",msg:"Cuenta"+(ctasNeg.length>1?"s":"")+" en negativo: "+ctasNeg.map(function(c){return c.nombre+" ("+f2(c.saldo)+")";}).join(", "),accion:"config_admin",aLbl:"Ver cuentas →"});
   var lotesRiesgo=(S.inventarioUsdt||[]).filter(function(r){
@@ -24528,8 +25159,8 @@ function _refrescarSuelo(){
   // suelos distintos en la misma pantalla, que es lo que esto existe para
   // evitar. Y la fila del detalle puede estar cerrada: entonces la cabecera es
   // lo ÚNICO que se ve.
-  var cab=document.getElementById("tasas-cab");
-  if(cab) cab.innerHTML=_htmlCabeceraTasas();
+  var cab=document.getElementById("tasas-publica");
+  if(cab) cab.innerHTML=_htmlPublicaHoy();
   // La lectura del mercado mueve el suelo, y el suelo decide dos de los tres
   // avisos. Si no se rehicieran, el aviso quedaria hablando del suelo viejo.
   _refrescarAvisosTasa();
@@ -25034,8 +25665,29 @@ function _htmlAvisoTasaFijo(){
 
 // El bloque de la pestaña de Tasas: los que no son rojos. El rojo ya está
 // arriba y repetirlo aquí sería decir dos veces lo mismo.
+// ── ARREGLO 136 · LO QUE LA TARJETA YA DICE NO SE REPITE AQUÍ ───────
+// Sus palabras del 13/10, con la pantalla delante: "satura demasiado". Medido
+// en la pestaña de Tasas con sus datos, antes de esto:
+//
+//   849,97 R$ ...... 2 veces      200,00 R$ ..... 2 veces
+//   3.252,62 R$ .... 2 veces      1.000,00 R$ ... 2 veces
+//   avisos abajo ... 3, donde cabe 1
+//
+// Los metí yo con el 132 y el 133: puse la explicación en la tarjeta y no
+// quité los avisos de abajo que ya la daban. Es el ARREGLO 98 otra vez — una
+// pantalla nueva que convive con el control viejo tiene que QUITARLO.
+//
+// Y de esos tres, "Tienes reales para mover" y "Tienes reales de sobra" eran
+// el MISMO hecho contado dos veces, uno en reales y otro en porcentaje, los
+// dos terminando en "baja la vuelta".
+//
+// Los cuatro siguen saliendo en el Resumen y en la notificación al teléfono,
+// donde la tarjeta no está: lo que se filtra es esta pantalla, no el aviso.
+var _AVISOS_EN_LA_TARJETA = ["conc_ves","bs_parados","brl_parados","conc_brl"];
 function _htmlAvisosTasa(){
-  var av=avisoTasa().filter(function(a){ return a.nivel!=="rojo"; });
+  var av=avisoTasa().filter(function(a){
+    return a.nivel!=="rojo" && _AVISOS_EN_LA_TARJETA.indexOf(a.id)<0;
+  });
   if(!av.length) return "";
   var col=function(n){ return (n==="ambar") ? "var(--avi-tx2)" : "var(--tx2)"; };
   var ic =function(n){ return (n==="ambar") ? "⚠️" : "💡"; };
@@ -25570,8 +26222,12 @@ function _cgPublicar(campo){
 // Publicar cambia el número de arriba, el veredicto, los avisos Y lo que dirá
 // el flyer. Se rehacen los cuatro por su id, nunca con R() (ARREGLO 32).
 function _refrescarTasasTodo(){
-  var c=document.getElementById("tasas-cab");
-  if(c) c.innerHTML=_htmlCabeceraTasas();
+  // La tarjeta entera, porque publicar cambia su columna TIENES. Aquí sí se
+  // puede repintar completa: esto corre al PULSAR, no mientras teclea, así que
+  // no hay ningún campo bajo el dedo (lo de _setTasaPub es otra cosa y por eso
+  // refresca solo sus dos trozos — ARREGLO 136).
+  var t=document.getElementById("tasas-publica");
+  if(t) t.innerHTML=_htmlPublicaHoy();
   _refrescarAvisosTasa();
   var f=document.getElementById("tasas-filas");
   if(f) f.innerHTML=_htmlFilasTasas();
@@ -26131,10 +26787,24 @@ function _tasasFila(id, ic, rot, pie, cuerpo){
 function _setTasaPub(dir,val){
   S.config=S.config||{}; S.config.tasasDia=S.config.tasasDia||{};
   S.config.tasasDia[dir==="ida"?"tdia_brl":"tdia_ves_brl"]=_num(val);
-  // ARREGLO 32: mientras teclea no se repinta. Se rehace la cabecera, que es
-  // donde está el % que depende de lo que acaba de escribir.
-  var n=document.getElementById("tasas-cab");
-  if(n) n.innerHTML=_htmlCabeceraTasas();
+  // ARREGLO 136 · AQUÍ ESTABA EL FALLO QUE MÁS CARO SALÍA DE ESTA PANTALLA.
+  // Esto rehacía "tasas-cab" entero — y el campo que ella estaba tecleando
+  // vivía DENTRO de tasas-cab. O sea que el input moría en el primer carácter.
+  // Reproducido en Chromium contra la versión desplegada (v212):
+  //
+  //   escribir "185" sobre un 187  →  queda 1817 y el foco se va al BODY
+  //
+  // Publicaba un número que ella no tecleó, y ese número es el que leen el
+  // flyer, la cotización al cliente y cada remesa nueva. El comentario viejo
+  // invocaba el ARREGLO 32 sin ver que el campo estaba dentro de lo que
+  // repintaba: la regla era la correcta, el trozo elegido no.
+  //
+  // Ahora se rehace SOLO lo que depende de la tecla —la línea de si coincide y
+  // el pie con el %— y el campo no está en ninguno de los dos.
+  var d=document.getElementById("tpub-dif");
+  if(d){ var rr=null; try{ rr=_tasasRecomendadas(); }catch(e){} d.innerHTML=_htmlDifPub(rr); }
+  var pe=document.getElementById("tpub-pie");
+  if(pe) pe.innerHTML=_htmlPiePub();
   // ARREGLO 112: el aviso depende de la ida que acaba de escribir —baja de
   // 188 a 210 y el aviso rojo tiene que aparecer—, asi que se rehace con
   // ella. Dejarlo solo en el repintado haria que el aviso hablara de la tasa
@@ -26292,8 +26962,36 @@ function _inventarioBrl(){
   return out;
 }
 var _SIN_BRL = false;
+// ── ARREGLO 135 · CON BOLÍVARES LLENOS, LA VUELTA NO BAJA ────────────
+// Lo cazó ella el 13/10, con las dos tasas delante: "si también estoy llena de
+// bolívares, ¿por qué me pides bajarla a 205 y no mantenerla en 210? ¿no crees
+// que me van a llegar aún más bolívares?".
+//
+// Tiene razón, y el 133 estaba escrito mirando solo el COSTO. Bajar la vuelta
+// la hace más atractiva para el cliente que trae bolívares, así que entran
+// MÁS. O sea que los dos arreglos se peleaban. Medido con sus datos del 13/10:
+//
+//   el 132 sube la ida     185 → 189    saca bolívares
+//   el 133 baja la vuelta  209 → 205    METE bolívares
+//
+// Y cuál manda ya estaba decidido, por ella y hace tiempo: los reales parados
+// no le perjudican; los bolívares parados SÍ, porque se devalúan. Así que con
+// los dos lados llenos decide el bolívar y la vuelta se queda con su colchón
+// de siempre. El 133 vuelve a funcionar solo cuando los bolívares bajen del
+// umbral — no se retira, se subordina.
+//
+// Lo que NO hace, y es decisión suya: SUBIR la vuelta para frenar más. Se le
+// ofreció (habría dado 213) y eligió esto; 213 queda por encima de lo que
+// publica y puede costarle clientes de vuelta, que es su negocio, no el código.
 function _colchonVueltaAhora(){
   if(_SIN_BRL) return _colchon("vuelta");
+  // El bolívar manda: se pregunta ANTES que los reales. Y respeta _SIN_BS,
+  // porque la comparación "qué saldría sin los bolívares parados" tiene que
+  // contestar el escenario entero: sin bolívares encima, la vuelta sí baja.
+  if(!_SIN_BS){
+    var bs=_inventarioBs();
+    if(bs && bs.pasa) return _colchon("vuelta");
+  }
   var inv=_inventarioBrl();
   return (inv && inv.pasa) ? _colchon("vueltaBrl") : _colchon("vuelta");
 }
@@ -26356,8 +27054,7 @@ function _setAprox(mon,val){
   _guardarTasaAprox(mon,val);
   var n=document.getElementById("tasas-publica");
   if(n) n.innerHTML=_htmlPublicaHoy();
-  var c=document.getElementById("tasas-cab");
-  if(c) c.innerHTML=_htmlCabeceraTasas();
+
   _refrescarAvisosTasa();
 }
 // Publicar pasa por guardarTasaCalcHoy(), que es la puerta única del ARREGLO
@@ -26409,8 +27106,7 @@ function _volverAMiTasa(){
   S._probarTasa=false;
   var n=document.getElementById("tasas-publica");
   if(n) n.innerHTML=_htmlPublicaHoy();
-  var c=document.getElementById("tasas-cab");
-  if(c) c.innerHTML=_htmlCabeceraTasas();
+
   _refrescarAvisosTasa();
 }
 // ARREGLO 129b. Sus palabras del 13/10: "no quiero saturar la pantalla, no me
@@ -26474,6 +27170,134 @@ function _origenLado(mon, Q){
   return {txt:"lo último que escribiste"};
 }
 
+// ── EL MOTIVO DE QUE LAS TASAS SE MUEVAN SOLAS ──────────────────────
+// Sale de avisoTasa(), que YA decide esto hoy. Escrito aquí otra vez, un día
+// la tarjeta diría "sube la ida" y el aviso de abajo "baja la ida" — y no
+// habría forma de saber cuál mirar.
+//
+// ARREGLO 132/133: van los TRES valores (116, 117, 123, 129): lo que hay
+// parado, el umbral que ella puso, y de cuánto a cuánto se mueve. Y los DOS
+// lados pueden estar activos a la vez, cada número UNA sola vez y en el MISMO
+// recuadro — dos bloques ámbar pegados repitiendo cifras es el ARREGLO 125.
+//
+// ARREGLO 136: esto va PLEGADO. Sus palabras del 13/10: "satura demasiado la
+// pantalla". Lo que tiene que verse sin pedirlo es QUÉ publicar; el porqué se
+// lee una vez y estorba las otras cien. Lo que NO se pliega nunca es un aviso
+// rojo (ARREGLO 99), y este no lo es: la tasa ya está movida, no hay nada que
+// corregir.
+function _motivoPub(r){
+  var sit=null;
+  try{
+    (avisoTasa()||[]).forEach(function(a){
+      if(!sit && (a.id==="conc_ves"||a.id==="bs_parados"||a.id==="brl_parados"||a.id==="conc_brl")) sit=a;
+    });
+  }catch(e){}
+  var lineas=[];
+  var invT=null; try{ invT=_inventarioBs(); }catch(e){}
+  var sinBs=(invT&&invT.pasa&&r)?_tasasSinBs():null;
+  if(sinBs && sinBs.ida!==r.ida){
+    lineas.push("Tienes <b>"+f2(invT.reales)+" R$</b> en bolívares parados (tu umbral son "+
+      f2(invT.umbral)+" R$), así que subo la ida de <b>"+_tasaCorta(sinBs.ida)+"</b> a <b>"+
+      _tasaCorta(r.ida)+"</b>: das más Bs por real y salen más rápido.");
+  }
+  var invR=null; try{ invR=_inventarioBrl(); }catch(e){}
+  var sinBrl=(invR&&invR.pasa&&r)?_tasasSinBrl():null;
+  if(sinBrl && sinBrl.vuelta!==r.vuelta){
+    lineas.push("Tienes <b>"+f2(invR.reales)+" R$</b> en cuentas (tu umbral son "+
+      f2(invR.umbral)+" R$), así que bajo la vuelta de <b>"+_tasaCorta(sinBrl.vuelta)+"</b> a <b>"+
+      _tasaCorta(r.vuelta)+"</b>: con reales en mano no tienes que hacer el P2P que esa vuelta alta cubre.");
+  }
+  // ARREGLO 135: con bolívares llenos la vuelta YA no baja, así que la línea de
+  // arriba no entra —_tasasSinBrl() devuelve la misma vuelta— y callarlo
+  // dejaría la vuelta quieta sin decir por qué, que es justo lo que este bloque
+  // existe para evitar. La condición es "los dos llenos Y la vuelta no se
+  // movió", no "no hay sinBrl": sinBrl SÍ se calcula, lo que pasa es que sale
+  // igual. Medido: con esto puesto mal, el porqué solo hablaba de la ida.
+  if(invT && invT.pasa && invR && invR.pasa && sinBrl && sinBrl.vuelta===r.vuelta){
+    lineas.push("Tienes <b>"+f2(invR.reales)+" R$</b> en cuentas y también bolívares parados, "+
+      "así que la vuelta <b>no baja</b>: bajarla traería más bolívares, que es lo contrario "+
+      "de lo que hace falta. Manda el bolívar, que es el que se devalúa.");
+  }
+  if(!lineas.length && !sit) return null;
+  return {
+    titulo:(lineas.length>1?"Tienes dinero parado de los dos lados"
+            :_escAud((sit&&sit.titulo)||"Tienes dinero parado")),
+    cuerpo:(lineas.length?lineas.join("<br>"):_escAud(sit.texto))
+  };
+}
+
+// La línea de debajo de la tabla: dice si lo publicado y lo recomendado se
+// separan, y guarda el motivo detrás de "por qué". Vive en su propio id
+// (tpub-dif) porque depende de lo que ella acaba de teclear y el campo NO
+// puede repintarse con ella (ARREGLO 136).
+function _htmlDifPub(r){
+  var pub=_misTasasPublicadas();
+  var mot=_motivoPub(r);
+  var dif=[];
+  if(r){
+    if(pub.ida>0    && Math.round(r.ida)!==Math.round(pub.ida))       dif.push("la ida");
+    if(pub.vuelta>0 && Math.round(r.vuelta)!==Math.round(pub.vuelta)) dif.push("la vuelta");
+  }
+  if(!dif.length && !mot) return "";
+  var h="<div style='margin-top:9px;font-size:11.5px;line-height:1.5;color:"+
+        (dif.length?"var(--avi-tx)":"var(--tx3)")+"'>";
+  if(dif.length){
+    h+="⚠️ <b>"+(dif.length>1?"Las dos no coinciden":
+        (dif[0].charAt(0).toUpperCase()+dif[0].slice(1)+" no coincide"))+".</b> ";
+  }
+  if(mot){
+    h+="<span onclick='_togglePorQue()' style='color:var(--tx3);text-decoration:underline;"+
+       "cursor:pointer;white-space:nowrap'>por qué "+(S._porQuePub?"▴":"▾")+"</span>";
+  }
+  h+="</div>";
+  if(mot && S._porQuePub){
+    h+="<div style='margin-top:8px;background:var(--avi-sup);border-left:3px solid var(--avi-ln);"+
+       "border-radius:7px;padding:9px 11px'>"+
+       "<div style='font-size:11.5px;color:var(--avi-tx);line-height:1.5'>"+
+       "<b>"+mot.titulo+".</b> "+mot.cuerpo+"</div></div>";
+  }
+  return h;
+}
+// Abrir el porqué NO repinta (ARREGLO 32): se rehace su trozo por el id.
+function _togglePorQue(){
+  S._porQuePub=!S._porQuePub;
+  var n=document.getElementById("tpub-dif");
+  if(n) n.innerHTML=_htmlDifPub(_tasasRecomendadas());
+}
+
+// El pie: el suelo, cuánto le queda ofreciendo lo que tiene publicado, y de
+// qué dos tasas sale ese suelo. Venía de _htmlCabeceraTasas(), que el ARREGLO
+// 136 retiró — era la segunda cabecera de la pantalla. Depende de lo que ella
+// teclea, así que vive en su propio id y el campo no está dentro.
+function _htmlPiePub(){
+  var m=null; try{ m=margenSobreSuelo(); }catch(e){ m=null; }
+  var Q=null; try{ Q=sueloQueManda(); }catch(e){ Q=null; }
+  var ver;
+  if(m){
+    // El color va con el veredicto (ARREGLO 99): se lee antes que la letra.
+    var gana=(m.pct>0);
+    ver="<span style='font-weight:800;color:"+(gana?"var(--ok)":"var(--mal)")+"'>"+
+      (gana?"✅ ":"⚠️ ")+"ofreciendo "+f2(m.mia)+" te queda "+(gana?"+":"")+
+      String(m.pct).replace(".",",")+"%"+(gana?"":" — PIERDES")+"</span>";
+  }else if(!(Q&&Q.v>0)){
+    ver="<span style='color:var(--tx3)'>todavía no hay suelo: falta tu última compra o venta de USDT</span>";
+  }else{
+    ver="<span style='color:var(--tx3)'>escribe tu "+_ruta("ida").flechas+" y te digo cuánto te queda</span>";
+  }
+  var pie=(Q&&Q.manda&&Q.manda.c>0&&Q.manda.s>0)
+    ? ("tu compra "+_fpTasa(Q.manda.c)+" R$ · tu venta "+_fpTasa(Q.manda.s)+" Bs"+
+       ((Q.rc&&Q.rc.fecha)?(" · "+_escAud(Q.rc.fecha)):""))
+    : "en bolívares por real";
+  return "<div style='border-top:1px solid var(--ln);margin-top:11px;padding-top:9px;text-align:center'>"+
+    "<div style='font-size:12px;line-height:1.5'>"+
+      "<span style='color:var(--tx3)'>tu suelo </span>"+
+      "<b style='color:var(--ac)'>"+((Q&&Q.v>0)?f2(Q.v):"—")+"</b>"+
+      "<span style='color:var(--tx3)'> · </span>"+ver+
+    "</div>"+
+    "<div style='font-size:10.5px;color:var(--tx4);margin-top:3px'>"+pie+"</div>"+
+  "</div>";
+}
+
 function _htmlPublicaHoy(){
   var r=_tasasRecomendadas();
   var Q=r?r.Q:sueloQueManda();
@@ -26504,93 +27328,67 @@ function _htmlPublicaHoy(){
     return h;
   }
 
-  function caja(flechas,val){
-    return "<div style='flex:1;background:var(--sup);border:1px solid var(--ln);border-radius:11px;padding:11px 12px'>"+
-      "<div style='font-size:11px;color:var(--tx3);font-weight:700;margin-bottom:5px'>"+flechas+"</div>"+
-      "<div style='font-size:34px;font-weight:800;color:var(--ok);line-height:1'>"+_tasaCorta(val)+"</div>"+
-      "<div style='font-size:10.5px;color:var(--tx4);margin-top:5px;font-weight:600'>Bs por real</div>"+
-    "</div>";
-  }
-  h+="<div style='display:flex;gap:10px'>"+
-       caja(_ruta("ida").flechas, r.ida)+
-       caja(_ruta("vuelta").flechas, r.vuelta)+
-     "</div>";
-
-  // La barra. Es un esquema, no una escala: las posiciones son fijas para que
-  // se lea igual con cualquier suelo. Lo que tiene que entenderse de un
-  // vistazo es el LADO, no la distancia.
-  h+="<div style='margin-top:15px;background:var(--sup);border:1px solid var(--ln);border-radius:11px;padding:13px 12px 11px'>"+
-    "<div style='position:relative;height:38px'>"+
-      "<div style='position:absolute;left:0;right:0;top:24px;height:3px;background:var(--ln-d);border-radius:2px'></div>"+
-      "<div style='position:absolute;left:0;top:24px;width:36%;height:3px;background:var(--ok);border-radius:2px'></div>"+
-      "<div style='position:absolute;right:0;top:24px;width:36%;height:3px;background:var(--ok);border-radius:2px'></div>"+
-      "<div style='position:absolute;left:50%;top:19px;width:3px;height:13px;background:var(--ac);transform:translateX(-50%)'></div>"+
-      "<div style='position:absolute;left:22%;top:0;transform:translateX(-50%);font-size:12.5px;font-weight:800;color:var(--ok)'>"+_tasaCorta(r.ida)+"</div>"+
-      "<div style='position:absolute;left:50%;top:0;transform:translateX(-50%);font-size:12.5px;font-weight:800;color:var(--tit)'>"+f2(r.suelo)+"</div>"+
-      "<div style='position:absolute;left:78%;top:0;transform:translateX(-50%);font-size:12.5px;font-weight:800;color:var(--ok)'>"+_tasaCorta(r.vuelta)+"</div>"+
-    "</div>"+
-    "<div style='display:flex;justify-content:space-between;margin-top:3px'>"+
-      "<div style='font-size:10.5px;color:var(--tx4);font-weight:700'>◄ ida: ganas por debajo</div>"+
-      "<div style='font-size:10.5px;color:var(--tx4);font-weight:700'>vuelta: por encima ►</div>"+
-    "</div>"+
-    "<div style='text-align:center;font-size:10.5px;color:var(--tx3);margin-top:7px;font-weight:700'>"+
-      "tu suelo · "+_escAud((Q.manda&&Q.manda.nombre)||"")+
-      ((Q.miC>0&&Q.miV>0)?(" · "+_fpTasa(Q.manda?Q.manda.c:Q.miC)+" R$ y "+_fpTasa(Q.manda?Q.manda.s:Q.miV)+" Bs"):"")+
-    "</div>"+
-  "</div>";
-
-  // La situación sale de avisoTasa(), que YA decide esto hoy. Escrita aquí
-  // otra vez, un día la tarjeta diría "sube la ida" y el aviso de abajo "baja
-  // la ida" — y no habría forma de saber cuál mirar.
-  var sit=null;
-  try{
-    (avisoTasa()||[]).forEach(function(a){
-      if(!sit && (a.id==="conc_ves"||a.id==="bs_parados"||a.id==="brl_parados"||a.id==="conc_brl")) sit=a;
-    });
-  }catch(e){}
-  // ARREGLO 132: una tasa que sube sola sin decir por qué es una tasa que no se
-  // puede usar, así que aquí van los TRES valores (116, 117, 123, 129): lo que
-  // hay parado, el umbral que ella puso, y de cuánto a cuánto sube.
+  // ── ARREGLO 136 · LO QUE TIENES / LO QUE TE RECOMIENDO ──────────────
+  // Lo eligió ella de tres maquetas, el 13/10, después de decir que la
+  // pantalla "satura demasiado". Lo que la confundía no era un número malo:
   //
-  // Y va DENTRO del recuadro de la situación, no en uno nuevo encima. El primer
-  // intento dibujaba los dos y la tarjeta decía "850,36 R$" y "200,00 R$" dos
-  // veces seguidas, en dos bloques ámbar pegados — el ARREGLO 125 otra vez: un
-  // número se escribe UNA vez, y dos avisos del mismo suceso se leen como dos
-  // sucesos (ARREGLO 94).
+  //   la tarjeta de arriba recomendaba   205
+  //   la cabecera de abajo enseñaba      210   (lo que tenía publicado)
   //
-  // ARREGLO 133: y los DOS lados pueden estar activos a la vez — ella tiene
-  // 850 R$ en bolívares y 3.252 en reales. Mostrando solo el primero, la vuelta
-  // se movería sin que nada lo diga, que es justo lo que este bloque evita. Van
-  // los dos, cada número una sola vez, en el MISMO recuadro.
-  var txtSit=sit?_escAud(sit.texto):"";
-  var lineas=[];
-  var invT=null; try{ invT=_inventarioBs(); }catch(e){}
-  var sinBs=(invT&&invT.pasa)?_tasasSinBs():null;
-  if(sinBs && sinBs.ida!==r.ida){
-    lineas.push("Tienes <b>"+f2(invT.reales)+" R$</b> en bol\u00edvares parados (tu umbral son "+
-      f2(invT.umbral)+" R$), as\u00ed que subo la ida de <b>"+_tasaCorta(sinBs.ida)+"</b> a <b>"+
-      _tasaCorta(r.ida)+"</b>: das m\u00e1s Bs por real y salen m\u00e1s r\u00e1pido.");
+  // Dos números en la misma unidad, uno encima de otro, sin nada que dijera
+  // cuál era cuál. Sus palabras: "veo que no están conectados entre sí". Lo
+  // estaban —medido: publicar lleva el número a la cabecera, a la cotización
+  // al cliente, al flyer y a cada remesa nueva— pero la pantalla no los
+  // emparejaba. Es el ARREGLO 122 otra vez, y la cuarta vez con esta forma.
+  //
+  // Las dos tasas van ahora LADO A LADO, una fila por ruta. La posición dice
+  // cuál es cuál antes de que haya que leer nada, y la fila que no coincide se
+  // marca sola. Con eso la cabecera de abajo desaparece: dos sitios para lo
+  // mismo con dos respuestas distintas es exactamente lo que el ARREGLO 98
+  // prohíbe. Medido: la pestaña pasa de 1.539 px a 683.
+  //
+  // Y EL CAMPO NO SE REPINTA AL TECLEAR. La cabecera vieja se rehacía entera
+  // desde su propio `oninput` —con el input dentro—, así que el campo moría al
+  // primer carácter. Reproducido en Chromium contra la versión desplegada:
+  //
+  //   escribir "185" sobre un 187   →   queda 1817, y el foco se va al BODY
+  //
+  // O sea que publicaba un número que ella no tecleó, y ese número es el que
+  // leen el flyer, la cotización y cada remesa nueva. Por eso lo que depende
+  // de la tecla vive en SU PROPIO id —`tpub-dif` y `tpub-pie`— y el input no
+  // está dentro de ninguno de los dos. Es el ARREGLO 55 y el 32 a la vez: se
+  // refresca lo que cambia, sin tocar lo que está bajo el dedo.
+  var pubAh=_misTasasPublicadas();
+  function _celdaPub(dir,val){
+    return "<input type='text' inputmode='decimal' placeholder='—' value='"+_escAud(_comaCab(val))+"' "+
+      "oninput='_setTasaPub(\""+dir+"\",this.value)' onchange='_guardarTasaPub(\""+dir+"\")' "+
+      "style='width:100%;border:none;border-bottom:1.5px dashed var(--ln);background:transparent;"+
+      "font-size:25px;font-weight:900;color:var(--tx3);text-align:center;font-family:inherit;padding:1px 0 2px'>";
   }
-  var invR=null; try{ invR=_inventarioBrl(); }catch(e){}
-  var sinBrl=(invR&&invR.pasa)?_tasasSinBrl():null;
-  if(sinBrl && sinBrl.vuelta!==r.vuelta){
-    lineas.push("Tienes <b>"+f2(invR.reales)+" R$</b> en cuentas (tu umbral son "+
-      f2(invR.umbral)+" R$), as\u00ed que bajo la vuelta de <b>"+_tasaCorta(sinBrl.vuelta)+"</b> a <b>"+
-      _tasaCorta(r.vuelta)+"</b>: con reales en mano no tienes que hacer el P2P que esa vuelta alta cubre.");
+  function _filaPub(dir,sub,rec,pub){
+    var dif=(rec>0 && pub>0 && Math.round(rec)!==Math.round(pub));
+    return "<tr"+(dif?" style='background:var(--avi-sup)'":"")+">"+
+      "<td style='padding:9px 7px;border-radius:9px 0 0 9px;vertical-align:middle'>"+
+        "<div style='font-size:13px;font-weight:800;white-space:nowrap'>"+_ruta(dir).flechas+"</div>"+
+        "<div style='font-size:10.5px;color:var(--tx4);margin-top:1px'>"+sub+"</div>"+
+      "</td>"+
+      "<td style='padding:9px 6px;width:34%;vertical-align:middle'>"+_celdaPub(dir,pub)+"</td>"+
+      "<td style='padding:9px 7px;width:34%;text-align:center;border-radius:0 9px 9px 0;vertical-align:middle;"+
+        "font-size:25px;font-weight:900;color:"+(dif?"var(--avi-tx)":"var(--ok)")+"'>"+_tasaCorta(rec)+"</td>"+
+    "</tr>";
   }
-  if(lineas.length){
-    h+="<div style='margin-top:11px;background:var(--avi-sup);border-left:3px solid var(--avi-ln);"+
-       "border-radius:7px;padding:9px 11px'>"+
-       "<div style='font-size:11.5px;color:var(--avi-tx);line-height:1.5'>"+
-       "<b>"+(lineas.length>1?"Tienes dinero parado de los dos lados":
-              _escAud((sit&&sit.titulo)||"Tienes dinero parado"))+".</b> "+
-       lineas.join("<br>")+"</div></div>";
-  }else if(sit){
-    h+="<div style='margin-top:11px;background:var(--avi-sup);border-left:3px solid var(--avi-ln);"+
-       "border-radius:7px;padding:9px 11px'>"+
-       "<div style='font-size:11.5px;color:var(--avi-tx);line-height:1.5'>"+
-       "<b>"+_escAud(sit.titulo)+".</b> "+txtSit+"</div></div>";
-  }
+  h+="<table style='width:100%;border-collapse:separate;border-spacing:0'>"+
+      "<tr>"+
+        "<td style='padding:0 7px 7px'></td>"+
+        "<td style='padding:0 6px 7px;text-align:center;font-size:10px;font-weight:800;"+
+          "letter-spacing:.08em;color:var(--tx4)'>TIENES</td>"+
+        "<td style='padding:0 7px 7px;text-align:center;font-size:10px;font-weight:800;"+
+          "letter-spacing:.08em;color:var(--ok)'>TE RECOMIENDO</td>"+
+      "</tr>"+
+      _filaPub("ida","le das",r.ida,pubAh.ida)+
+      _filaPub("vuelta","te dan",r.vuelta,pubAh.vuelta)+
+    "</table>"+
+    "<div id='tpub-dif'>"+_htmlDifPub(r)+"</div>";
 
   // El campo de la aproximada también sale CON tasa recomendada: que haya
   // suelo no quiere decir que sea de hoy. Decir los días y no dar dónde
@@ -26671,71 +27469,20 @@ function _htmlPublicaHoy(){
   h+="<button onclick='publicarRecomendadas()' class='btn-main btn-green' "+
      "style='margin-top:12px'>Publicar las dos</button>";
 
-  var pub=_misTasasPublicadas();
-  h+="<div style='font-size:10.5px;color:var(--tx4);text-align:center;margin-top:7px;font-weight:600'>"+
-     ((pub.ida>0||pub.vuelta>0)
-       ? ("Ahora tienes publicado "+(pub.ida>0?_tasaCorta(pub.ida):"—")+" · "+(pub.vuelta>0?_tasaCorta(pub.vuelta):"—"))
-       : "Todavía no has publicado ninguna")+
-     "</div>";
+  // El "Ahora tienes publicado 189 · 210" que había aquí se fue con el ARREGLO
+  // 136: lo dice la columna TIENES de la tabla, y un número se escribe UNA vez
+  // (ARREGLO 125). El pie sí se queda — es lo que traía la cabecera retirada.
+  h+="<div id='tpub-pie'>"+_htmlPiePub()+"</div>";
   return h;
 }
+// _htmlCabeceraTasas() se retiró con el ARREGLO 136: era la SEGUNDA cabecera
+// de tasas de la pantalla, debajo de la tarjeta, enseñando lo publicado con el
+// mismo aspecto que la tarjeta enseñaba lo recomendado. Sus piezas no se
+// perdieron: los campos editables son ahora la columna TIENES de la tabla, y
+// el suelo, el veredicto y el pie viven en _htmlPiePub(). Una pantalla nueva
+// QUITA el control viejo; ponerse al lado es lo que hace que no se sepa cuál
+// manda (ARREGLO 98).
 
-function _htmlCabeceraTasas(){
-  var m=margenSobreSuelo();
-  var Q=sueloQueManda();
-  var pub=_misTasasPublicadas();
-  // ── ARREGLO 122 · la cabecera seguia hablando de "ida" y "vuelta" ──
-  // El ARREGLO 119 saco esas dos palabras de la calculadora —son mi vocabulario,
-  // no el suyo— y las dejo AQUI, en la pantalla de justo encima. Lo cazo ella el
-  // 12/10 mirando las dos a la vez: arriba "TU IDA", abajo banderas, y nada que
-  // las empareje. Ahora las dos pantallas dicen la ruta igual, y debajo del
-  // numero va QUIEN DA QUE, que es lo unico que no se puede deducir del simbolo.
-  var campo=function(dir,sub,val){
-    var rot="Tu "+_ruta(dir).flechas;
-    return "<div style='flex:1 1 0;min-width:0;text-align:center'>"+
-      "<div style='font-size:10.5px;color:var(--tx4);font-weight:700;text-transform:uppercase;letter-spacing:.4px'>"+rot+"</div>"+
-      "<input type='text' inputmode='decimal' placeholder='\u2014' value='"+_escAud(_comaCab(val))+"' "+
-        "oninput='_setTasaPub(\""+dir+"\",this.value)' onchange='_guardarTasaPub(\""+dir+"\")' "+
-        "style='width:100%;border:none;border-bottom:1.5px dashed var(--ln);background:transparent;"+
-        "font-size:22px;font-weight:900;color:var(--tit);text-align:center;font-family:inherit;padding:1px 0 2px'>"+
-      "<div style='font-size:10px;color:var(--tx4);margin-top:2px;line-height:1.3'>"+sub+"</div>"+
-    "</div>";
-  };
-  // El suelo NO es un campo: sale de sus lotes y del mercado. Escribirlo a
-  // mano sería el "registra la operación, no escribas el saldo" otra vez.
-  var fijo=function(rot,val,col,sub){
-    return "<div style='flex:1 1 0;min-width:0;text-align:center'>"+
-      "<div style='font-size:10.5px;color:var(--tx4);font-weight:700;text-transform:uppercase;letter-spacing:.4px'>"+rot+"</div>"+
-      "<div style='font-size:22px;font-weight:900;color:"+col+";line-height:1.35'>"+val+"</div>"+
-      "<div style='font-size:10px;color:var(--tx4);margin-top:2px;line-height:1.3'>"+(sub||"")+"</div>"+
-    "</div>";
-  };
-  var veredicto;
-  if(m){
-    // El color va con el veredicto, no con el número de arriba: el color se
-    // lee antes que la letra (ARREGLO 99).
-    var gana=(m.pct>0);
-    veredicto="<div style='text-align:center;font-size:12.5px;font-weight:800;color:"+(gana?"var(--ok)":"var(--mal)")+"'>"+
-      (gana?"\u2705 ":"\u26a0\ufe0f ")+"Ofreciendo "+f2(m.mia)+" te queda "+(gana?"+":"")+String(m.pct).replace(".",",")+"%"+
-      (gana?"":" \u2014 por encima del suelo PIERDES")+"</div>";
-  }else if(!(Q.v>0)){
-    veredicto="<div style='text-align:center;font-size:11.5px;color:var(--tx3)'>Todav\u00eda no hay suelo: falta tu \u00faltima compra o tu \u00faltima venta de USDT.</div>";
-  }else{
-    veredicto="<div style='text-align:center;font-size:11.5px;color:var(--tx3)'>Escribe tu "+_ruta("ida").flechas+" arriba y te digo cu\u00e1nto te queda.</div>";
-  }
-  var pie = (Q.manda && Q.manda.c>0 && Q.manda.s>0)
-    ? ("tu compra "+_fpTasa(Q.manda.c)+" R$ \u00b7 tu venta "+_fpTasa(Q.manda.s)+" Bs"+
-       ((Q.rc&&Q.rc.fecha)?(" \u00b7 "+_escAud(Q.rc.fecha)):""))
-    : "en bol\u00edvares por real";
-  return "<div style='display:flex;gap:4px;margin-bottom:9px'>"+
-      campo("ida","le das",pub.ida)+
-      campo("vuelta","te dan",pub.vuelta)+
-      fijo("Tu suelo",(Q.v>0?f2(Q.v):"\u2014"),"var(--ac)","no pases de aqu\u00ed")+
-    "</div>"+
-    "<div style='border-top:1px solid var(--ln);padding-top:9px'>"+veredicto+
-      "<div style='text-align:center;font-size:10.5px;color:var(--tx4);margin-top:3px'>"+pie+"</div>"+
-    "</div>";
-}
 
 // Lo que el flyer va a imprimir, dicho antes de pulsarlo. Sale de
 // _misTasasPublicadas(), que es de donde lo saca _calcTasas() al generarlo:
@@ -26853,12 +27600,10 @@ function rCalculadora(){
       "border-radius:14px;padding:16px 14px 14px;margin-bottom:10px'>"+
       _htmlPublicaHoy()+
     "</div>"+
-    // La cabecera: lo que mira diez veces al día, sin abrir nada ni hacer
-    // scroll. Lo demás va detrás de una fila.
-    "<div id='tasas-cab' style='background:var(--sup);border:1.5px solid var(--ln2);border-radius:14px;padding:14px 12px 13px;margin-bottom:10px'>"+
-      _htmlCabeceraTasas()+
-    "</div>"+
-    // ARREGLO 112: los avisos van ENTRE la cabecera y las filas. Arriba del
+    // ARREGLO 136: aquí había una SEGUNDA cabecera de tasas. Lo que mira diez
+    // veces al día está ahora en la tarjeta de arriba, en una tabla de dos
+    // columnas, y por eso esta se fue entera (ARREGLO 98).
+    // ARREGLO 112: los avisos van ENTRE la tarjeta y las filas. Arriba del
     // todo esta el estado; esto es lo que hay que hacer con el.
     "<div id='tasas-avisos'>"+_htmlAvisosTasa()+"</div>"+
     "<div id='tasas-filas'>"+_htmlFilasTasas()+"</div>"+
@@ -31876,7 +32621,7 @@ function _estaBorradoMerge(campo,id){
 // inventarioUsdt se fusiona por "id" (Date.now()): el consumo FIFO siempre
 // reordena por fecha (ordenFIFO) antes de usar los lotes, así que el orden
 // en que quedan en el array no afecta el cálculo.
-var _MERGE_FIELDS = ["cuentas","compromisos","egresos","egresos_personales","prestamos","cuentasCobrar","clientes","inventarioUsdt","brl","vzla","eeuu","traspasos","reposiciones","gastos_eeuu","deudas_paul","movimientosCapital","pagosSocios","gananciaExtra","gastos_socios","inventarioUsdt_cerrado","cierresMes","capital","ajustesSaldo"];
+var _MERGE_FIELDS = ["cuentas","compromisos","egresos","egresos_personales","prestamos","cuentasCobrar","clientes","inventarioUsdt","brl","vzla","eeuu","traspasos","reposiciones","gastos_eeuu","deudas_paul","movimientosCapital","pagosSocios","gananciaExtra","gastos_socios","inventarioUsdt_cerrado","cierresMes","capital","ajustesSaldo","inmuebles","inmCuotas"];
 // clientes usa "cod"; brl/vzla/eeuu usan "_uid"; cierresMes usa "mesKey" (el resto ya usa "id")
 var _MERGE_ID_FIELD = {clientes:"cod",brl:"_uid",vzla:"_uid",eeuu:"_uid",cierresMes:"mesKey"};
 // Primera foto, ya con las listas declaradas y con lo que loadData() dejó en S.
