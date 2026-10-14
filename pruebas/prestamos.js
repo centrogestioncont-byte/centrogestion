@@ -83,10 +83,10 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "_saldoCtaUsdt", "_otrasCtasUsdt", "_cubrirUsdtParaVenta", "_setAprox", "publicarRecomendadas",
                     "_campoAprox", "_htmlPublicaHoy", "guardarColchones", "_htmlCalceCuerpo", "_botonTasaUsdt",
                     "_calceK", "_calceGan", "_calceVuelta", "_calceIda", "_cg", "_cgSet", "_cgFraccion",
-                    "_htmlPalancaVenta", "_permutaSugerida", "_prConPermuta", "_htmlPermutaFuera", "_usarPermutaSugerida", "txMetodo", "esCalceDirecto", "esRutaCalce", "getAutoRates", "_cgBase", "_cgGanUsdt", "_htmlComparaTasa", "_htmlCabeceraTasas", "_htmlCalceRes", "_htmlCalceCuerpo", "_cgModo", "_cgFuente",
+                    "_htmlPalancaVenta", "_permutaSugerida", "_prConPermuta", "_htmlPermutaFuera", "_usarPermutaSugerida", "txMetodo", "esCalceDirecto", "esRutaCalce", "getAutoRates", "_cgBase", "_cgGanUsdt", "_htmlComparaTasa", "_htmlPiePub", "_htmlDifPub", "_motivoPub", "_htmlCalceRes", "_htmlCalceCuerpo", "_cgModo", "_cgFuente",
                     "margenSobreSuelo", "_calcTasas", "_misTasasPublicadas", "_fpTasa",
                     "avisoTasa", "_umbralAviso", "_refSuelo", "_sueloDeFecha", "guardarTasaCalcHoy",
-                    "_cgSoltar", "_htmlCabeceraTasas", "_montoMercado",
+                    "_cgSoltar", "_montoMercado",
                     "_apuntarAvisoParaPush", "_htmlAvisosTelefono", "_pushSoportado",
                     "_cgPublicar", "_pieFlyer", "_refrescarTasasTodo",
                     "_origenTasaCotiza", "_rotuloPublicada", "_getTasaClienteBRL",
@@ -7866,10 +7866,10 @@ console.log("\n— FASE 2: la cuenta madre —");
   // Lo enseñan la cabecera y la tarjeta del suelo. Calculado dos veces, un
   // dia diferirian en una decima y no habria forma de saber cual mirar: es el
   // 34,27 arriba y 34,28 abajo de Por cobrar.
-  const cab = sacarFuncion("_htmlCabeceraTasas");
+  const cab = sacarFuncion("_htmlPiePub");
   const sue = sacarFuncion("_htmlSuelo");
   ok(/margenSobreSuelo\(\)/.test(cab) && /margenSobreSuelo\(\)/.test(sue),
-     "la cabecera y el detalle leen el % de margenSobreSuelo()");
+     "el pie de la tarjeta y el detalle leen el % de margenSobreSuelo()");
   const ms = sacarFuncion("margenSobreSuelo");
   ok(/\(Q\.v-mia\)\/Q\.v/.test(ms),
      "y la resta vive ahi");
@@ -7894,9 +7894,20 @@ console.log("\n— FASE 2: la cuenta madre —");
   const st = sinComentarios(sacarFuncion("_setTasaPub"));
   ok(/_num\(val\)/.test(st),
      "la tasa pasa por _num(): con el teclado en español 188,5 no se vuelve 1885");
-  ok(!/\bR\(\)/.test(st) && /getElementById\("tasas-cab"\)/.test(st),
-     "teclear refresca la cabecera por su id, no la pantalla");
-  ok(/type='text' inputmode='decimal'/.test(cab) && !/type='number'/.test(cab),
+  ok(!/\bR\(\)/.test(st),
+     "teclear no repinta la pantalla (ARREGLO 32)");
+  // ARREGLO 136: y tampoco repinta el trozo DONDE VIVE EL CAMPO. Esto rehacia
+  // "tasas-cab" entero con el input dentro, asi que el campo moria en el primer
+  // caracter: medido contra la version desplegada, escribir "185" sobre un 187
+  // dejaba 1817 y el foco en el BODY — y ese numero es el que leen el flyer, la
+  // cotizacion y cada remesa nueva. Se refrescan solo las dos piezas que
+  // dependen de la tecla, y el input no esta en ninguna.
+  ok(/getElementById\("tpub-dif"\)/.test(st) && /getElementById\("tpub-pie"\)/.test(st),
+     "teclear refresca la diferencia y el pie por su id");
+  ok(!/getElementById\("tasas-publica"\)/.test(st) && !/getElementById\("tasas-cab"\)/.test(st),
+     "y NO repinta el contenedor del campo, que es lo que lo mataba");
+  const tabla = sacarFuncion("_htmlPublicaHoy");
+  ok(/type='text' inputmode='decimal'/.test(tabla) && !/type='number'/.test(tabla),
      "y los campos son de texto, que es lo que acepta la coma");
   // Una sola puerta para guardar: la que tambien limpia el override del
   // conversor. Dos sitios escribiendo la tasa publicada acabarian divergiendo.
@@ -7907,9 +7918,13 @@ console.log("\n— FASE 2: la cuenta madre —");
   // Anclado en QUIEN dibuja cada uno, no en contar "<input" en el codigo: el
   // campo es una plantilla que se usa dos veces, asi que contarla daba 1 y la
   // guardia fallaba midiendo otra cosa.
-  ok(/campo\("ida"/.test(cab) && /campo\("vuelta"/.test(cab),
+  ok(/_filaPub\("ida"/.test(tabla) && /_filaPub\("vuelta"/.test(tabla),
      "la ida y la vuelta son campos que se escriben");
-  ok(/fijo\("Tu suelo"/.test(cab) && !/campo\("suelo"/.test(cab),
+  // ARREGLO 136: el suelo bajo al pie, pero la regla no cambia — sale de sus
+  // lotes y del mercado, y escribirlo seria "registra la operacion, no
+  // escribas el saldo" otra vez.
+  const pie136 = sacarFuncion("_htmlPiePub");
+  ok(/tu suelo/.test(pie136) && !/_filaPub\("suelo"/.test(tabla) && !/<input/.test(pie136),
      "y el suelo se dibuja, no se escribe");
 
   // ── La lectura del mercado refresca TAMBIEN la cabecera ───────────
@@ -7917,8 +7932,8 @@ console.log("\n— FASE 2: la cuenta madre —");
   // con el viejo: dos suelos distintos en la misma pantalla. Y la fila del
   // detalle puede estar cerrada, con lo que la cabecera es lo unico que se ve.
   const rs = sacarFuncion("_refrescarSuelo");
-  ok(/getElementById\("mercado-suelo"\)/.test(rs) && /getElementById\("tasas-cab"\)/.test(rs),
-     "al llegar la lectura del mercado se refrescan el detalle Y la cabecera");
+  ok(/getElementById\("mercado-suelo"\)/.test(rs) && /getElementById\("tasas-publica"\)/.test(rs),
+     "al llegar la lectura del mercado se refrescan el detalle Y la tarjeta");
 
   // ── Y no se perdio nada por el camino ─────────────────────────────
   const filas = sacarFuncion("_htmlFilasTasas");
@@ -8143,7 +8158,7 @@ console.log("\n— FASE 2: la cuenta madre —");
   // escribe con coma es pedirle que lea en dos idiomas.
   ok(/_escAud\(_coma\(g\[clave\]\)\)/.test(cuerpo) && /_escAud\(_coma\(g\.usdbrl\)\)/.test(cuerpo),
      "los campos de la calculadora se enseñan con coma");
-  ok(/_escAud\(_comaCab\(val\)\)/.test(sacarFuncion("_htmlCabeceraTasas")),
+  ok(/_escAud\(_comaCab\(val\)\)/.test(sacarFuncion("_htmlPublicaHoy")),
      "y los de la cabecera también: son los mismos números");
   // Lo que se guarda NO cambia: con punto, que es lo que lee parseFloat.
   ok(/_num\(val\)/.test(sacarFuncion("_cgSet")),
@@ -8314,7 +8329,7 @@ console.log("\n— FASE 2: la cuenta madre —");
   const todo = sinComentarios(sacarFuncion("_refrescarTasasTodo"));
   ok(!/\bR\(\)/.test(pub) && !/\bR\(\)/.test(todo),
      "y no se repinta la pantalla entera");
-  ["tasas-cab","tasas-filas"].forEach(function(id){
+  ["tasas-publica","tasas-filas"].forEach(function(id){
     ok(new RegExp('getElementById\\("'+id+'"\\)').test(todo),
        "se rehace " + id + " por su id");
   });
@@ -8908,14 +8923,17 @@ console.log("\n— FASE 2: la cuenta madre —");
 // "TU VUELTA" —las dos palabras que el 119 sacó de la calculadora por ser mi
 // vocabulario y no el suyo— así que arriba se leía una cosa y abajo otra.
 {
-  const cab = sinComentarios(sacarFuncion("_htmlCabeceraTasas"));
+  const cab = sinComentarios(sacarFuncion("_htmlPublicaHoy"));
   const res2 = sinComentarios(sacarFuncion("_htmlCalceRes"));
   const cmp = sinComentarios(sacarFuncion("_htmlComparaTasa"));
 
   // 1) La cabecera nombra la RUTA, y por la misma tabla que la calculadora.
   ok(!/"Tu ida"|"Tu vuelta"/.test(cab), "la cabecera ya no dice 'Tu ida' ni 'Tu vuelta'");
   ok(/_ruta\(dir\)\.flechas/.test(cab), "el rótulo sale de _ruta(), la misma tabla del 119");
-  ok(/campo\("ida","le das"/.test(cab) && /campo\("vuelta","te dan"/.test(cab),
+  // ARREGLO 136: y la tabla dice cuál columna es cuál, que es lo que faltaba.
+  ok(/>TIENES</.test(cab) && /TE RECOMIENDO/.test(cab),
+     "la tabla rotula las dos columnas: lo publicado y lo recomendado");
+  ok(/_filaPub\("ida","le das"/.test(cab) && /_filaPub\("vuelta","te dan"/.test(cab),
      "y debajo dice quién da qué, que es lo que el símbolo no dice");
   ok(!/Escribe tu ida arriba/.test(cab), "ni el pie manda a 'escribir tu ida'");
 
@@ -9476,9 +9494,14 @@ console.log("\nARREGLO 128 · la tasa que publica, recomendada sola");
   // ── La situación sale de avisoTasa(), no de una segunda copia ───────
   // Escrita aquí otra vez, un día la tarjeta diría "sube la ida" y el aviso
   // de abajo "baja la ida", y no habría forma de saber cuál mirar.
-  ok(/avisoTasa\(\)/.test(tar),
+  // ARREGLO 136: el motivo se mudó a _motivoPub(), que es lo que la tarjeta
+  // pliega detrás de "por qué". La regla no cambia: sale de avisoTasa() y de
+  // ninguna segunda copia.
+  const mot136 = sacarFuncion("_motivoPub");
+  ok(/avisoTasa\(\)/.test(mot136),
      "la línea de qué hacer sale de avisoTasa()");
-  ok(!/porMoneda/.test(tar) && !/capitalRealTotal/.test(tar),
+  ok(!/porMoneda/.test(mot136) && !/capitalRealTotal/.test(mot136) &&
+     !/porMoneda/.test(tar) && !/capitalRealTotal/.test(tar),
      "y la tarjeta no vuelve a decidir por su cuenta de qué moneda va llena");
 
   // ── Sin suelo no se inventa un número ───────────────────────────────
@@ -9808,29 +9831,30 @@ console.log("\nARREGLO 132 · la ida sube sola cuando hay bolívares parados");
   ok(Math.abs(F._colchonIdaAhora()-0.05)<1e-9,
      "después de mirar 'sin bolívares', sigue mandando el de bolívares");
 
-  // ── La tarjeta dice POR QUÉ, con los tres valores ───────────────────
-  const hp=sacarFuncion("_htmlPublicaHoy");
+  // ── El porqué dice POR QUÉ, con los tres valores ────────────────────
+  // ARREGLO 136: esto vivía dentro de _htmlPublicaHoy y se mudó a _motivoPub(),
+  // que es lo que la tarjeta pliega detrás de "por qué". Lo que fija la guardia
+  // no cambia: los tres valores, por su FUENTE y no por el texto de alrededor
+  // —pidiendo solo la palabra "umbral", quitar f2(invT.reales) pasaba.
+  const hp=sacarFuncion("_motivoPub");
   ok(/_tasasSinBs\(\)/.test(hp), "la tarjeta compara con la de siempre");
-  // Los TRES valores por su FUENTE, no por el texto de alrededor: pidiendo
-  // solo que aparezca la palabra "umbral", quitar f2(invT.reales) pasaba.
   ok(/f2\(invT\.reales\)/.test(hp) && /f2\(invT\.umbral\)/.test(hp),
      "dice cuánto hay parado y cuál es el umbral, con sus dos números");
   ok(/_tasaCorta\(sinBs\.ida\)/.test(hp) && /_tasaCorta\(r\.ida\)/.test(hp),
      "y de cuánto a cuánto sube, con los dos");
-  // ARREGLO 125: un número se escribe UNA vez. El primer intento dibujaba la
-  // comparación en su propio recuadro, encima del aviso, y los dos decían
-  // "850,36 R$" y "200,00 R$" pegados.
+  // ARREGLO 125: un número se escribe UNA vez.
   ok((hp.match(/_inventarioBs\(\)/g)||[]).length===1,
      "el inventario se pregunta una sola vez en la tarjeta");
-  // ARREGLO 133: ahora son dos recuadros con la MISMA pinta, pero en if/else —
-  // o el de los inventarios o el del aviso de siempre, nunca los dos. Lo que no
-  // puede volver es que la comparación se dibuje en uno APARTE, encima.
-  ok(/\}else if\(sit\)\{/.test(hp),
-     "el recuadro del aviso es el ELSE del de los inventarios, no otro encima");
-  ok((hp.match(/background:var\(--avi-sup\);border-left/g)||[]).length===2,
-     "y no hay un tercero");
-  ok(hp.indexOf("lineas.join")>0 && hp.indexOf("lineas.join")<hp.indexOf("}else if(sit){"),
-     "la comparación va DENTRO de ese recuadro");
+  // ARREGLO 136: y ahora NO puede haber dos recuadros, porque _motivoPub
+  // devuelve UN objeto —título y cuerpo— y quien lo dibuja es uno solo. Antes
+  // eran dos ramas con la misma pinta y había que exigir el if/else.
+  ok(/return \{/.test(hp) && /titulo:/.test(hp) && /cuerpo:/.test(hp),
+     "el motivo sale como UN solo bloque, no como dos ramas que se parecen");
+  const dif136=sacarFuncion("_htmlDifPub");
+  ok((dif136.match(/background:var\(--avi-sup\);border-left/g)||[]).length===1,
+     "y se dibuja en un único recuadro");
+  ok(/lineas\.join\("<br>"\)/.test(hp),
+     "la comparación va dentro de ese bloque, una línea por lado");
 
   // ── Guardar escribe las dos claves nuevas ───────────────────────────
   const gc=sacarFuncion("guardarColchones");
@@ -9898,14 +9922,34 @@ console.log("\nARREGLO 133 · y la vuelta baja sola cuando hay reales parados");
   ok(F._inventarioBrl().pasa===false, "con 346 R$ no pasa el umbral");
   ok(Math.abs(F._colchonVueltaAhora()-0.05)<1e-9, "y manda el colchón normal (5%)");
 
-  // Los dos lados a la vez: cada uno con SU umbral y SU colchón.
+  // ── ARREGLO 135 · con los dos lados llenos MANDA EL BOLÍVAR ─────────
+  // Lo cazó ella: bajar la vuelta la hace más atractiva para el cliente que
+  // trae bolívares, así que entran MÁS — justo lo contrario de lo que busca el
+  // 132 subiendo la ida. Los dos arreglos se peleaban. Y cuál manda ya estaba
+  // decidido por ella hace tiempo: los reales parados no le perjudican, los
+  // bolívares SÍ, porque se devalúan.
   _poner2(3252, 170604, {colchonIda:0.07, colchonIdaBs:0.05, umbralBsReales:200,
                          colchonVuelta:0.05, colchonVueltaBrl:0.03, umbralBrlReales:1000});
-  ok(Math.abs(F._colchonIdaAhora()-0.05)<1e-9 && Math.abs(F._colchonVueltaAhora()-0.03)<1e-9,
-     "con los dos lados cargados, cada tasa usa su colchón");
+  ok(Math.abs(F._colchonIdaAhora()-0.05)<1e-9,
+     "con los dos lados cargados la ida sí sube");
+  ok(Math.abs(F._colchonVueltaAhora()-0.05)<1e-9,
+     "y la vuelta NO baja: bajarla traería más bolívares");
+  // Sin bolívares encima, el 133 vuelve a funcionar: no se retira, se subordina.
+  _poner2(3252, 0, {colchonIda:0.07, colchonIdaBs:0.05, umbralBsReales:200,
+                    colchonVuelta:0.05, colchonVueltaBrl:0.03, umbralBrlReales:1000});
+  ok(Math.abs(F._colchonVueltaAhora()-0.03)<1e-9,
+     "y en cuanto los bolívares bajan del umbral, la vuelta vuelve a bajar");
+  // La comparación "qué saldría sin los bolívares parados" tiene que contestar
+  // el escenario ENTERO: sin bolívares encima, la vuelta sí baja.
+  _poner2(3252, 170604, {colchonIda:0.07, colchonIdaBs:0.05, umbralBsReales:200,
+                         colchonVuelta:0.05, colchonVueltaBrl:0.03, umbralBrlReales:1000});
+  ok(/_SIN_BS/.test(sinComentarios(sacarFuncion("_colchonVueltaAhora"))),
+     "y _colchonVueltaAhora respeta _SIN_BS, para que la comparación sea honesta");
+  ok(/_inventarioBs\(\)/.test(sinComentarios(sacarFuncion("_colchonVueltaAhora"))),
+     "el bolívar se pregunta ANTES que los reales");
 
   // ── La tarjeta dice los DOS, cada número una vez ────────────────────
-  const hp=sacarFuncion("_htmlPublicaHoy");
+  const hp=sacarFuncion("_motivoPub");
   ok(/_tasasSinBrl\(\)/.test(hp), "la tarjeta compara también la vuelta");
   ok(/f2\(invR\.reales\)/.test(hp) && /f2\(invR\.umbral\)/.test(hp),
      "dice cuántos reales hay y cuál es su umbral");

@@ -2913,7 +2913,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261013_v216";
+var APP_VERSION = "20261014_v217";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -24528,8 +24528,8 @@ function _refrescarSuelo(){
   // suelos distintos en la misma pantalla, que es lo que esto existe para
   // evitar. Y la fila del detalle puede estar cerrada: entonces la cabecera es
   // lo ÚNICO que se ve.
-  var cab=document.getElementById("tasas-cab");
-  if(cab) cab.innerHTML=_htmlCabeceraTasas();
+  var cab=document.getElementById("tasas-publica");
+  if(cab) cab.innerHTML=_htmlPublicaHoy();
   // La lectura del mercado mueve el suelo, y el suelo decide dos de los tres
   // avisos. Si no se rehicieran, el aviso quedaria hablando del suelo viejo.
   _refrescarAvisosTasa();
@@ -25034,8 +25034,29 @@ function _htmlAvisoTasaFijo(){
 
 // El bloque de la pestaña de Tasas: los que no son rojos. El rojo ya está
 // arriba y repetirlo aquí sería decir dos veces lo mismo.
+// ── ARREGLO 136 · LO QUE LA TARJETA YA DICE NO SE REPITE AQUÍ ───────
+// Sus palabras del 13/10, con la pantalla delante: "satura demasiado". Medido
+// en la pestaña de Tasas con sus datos, antes de esto:
+//
+//   849,97 R$ ...... 2 veces      200,00 R$ ..... 2 veces
+//   3.252,62 R$ .... 2 veces      1.000,00 R$ ... 2 veces
+//   avisos abajo ... 3, donde cabe 1
+//
+// Los metí yo con el 132 y el 133: puse la explicación en la tarjeta y no
+// quité los avisos de abajo que ya la daban. Es el ARREGLO 98 otra vez — una
+// pantalla nueva que convive con el control viejo tiene que QUITARLO.
+//
+// Y de esos tres, "Tienes reales para mover" y "Tienes reales de sobra" eran
+// el MISMO hecho contado dos veces, uno en reales y otro en porcentaje, los
+// dos terminando en "baja la vuelta".
+//
+// Los cuatro siguen saliendo en el Resumen y en la notificación al teléfono,
+// donde la tarjeta no está: lo que se filtra es esta pantalla, no el aviso.
+var _AVISOS_EN_LA_TARJETA = ["conc_ves","bs_parados","brl_parados","conc_brl"];
 function _htmlAvisosTasa(){
-  var av=avisoTasa().filter(function(a){ return a.nivel!=="rojo"; });
+  var av=avisoTasa().filter(function(a){
+    return a.nivel!=="rojo" && _AVISOS_EN_LA_TARJETA.indexOf(a.id)<0;
+  });
   if(!av.length) return "";
   var col=function(n){ return (n==="ambar") ? "var(--avi-tx2)" : "var(--tx2)"; };
   var ic =function(n){ return (n==="ambar") ? "⚠️" : "💡"; };
@@ -25570,8 +25591,12 @@ function _cgPublicar(campo){
 // Publicar cambia el número de arriba, el veredicto, los avisos Y lo que dirá
 // el flyer. Se rehacen los cuatro por su id, nunca con R() (ARREGLO 32).
 function _refrescarTasasTodo(){
-  var c=document.getElementById("tasas-cab");
-  if(c) c.innerHTML=_htmlCabeceraTasas();
+  // La tarjeta entera, porque publicar cambia su columna TIENES. Aquí sí se
+  // puede repintar completa: esto corre al PULSAR, no mientras teclea, así que
+  // no hay ningún campo bajo el dedo (lo de _setTasaPub es otra cosa y por eso
+  // refresca solo sus dos trozos — ARREGLO 136).
+  var t=document.getElementById("tasas-publica");
+  if(t) t.innerHTML=_htmlPublicaHoy();
   _refrescarAvisosTasa();
   var f=document.getElementById("tasas-filas");
   if(f) f.innerHTML=_htmlFilasTasas();
@@ -26131,10 +26156,24 @@ function _tasasFila(id, ic, rot, pie, cuerpo){
 function _setTasaPub(dir,val){
   S.config=S.config||{}; S.config.tasasDia=S.config.tasasDia||{};
   S.config.tasasDia[dir==="ida"?"tdia_brl":"tdia_ves_brl"]=_num(val);
-  // ARREGLO 32: mientras teclea no se repinta. Se rehace la cabecera, que es
-  // donde está el % que depende de lo que acaba de escribir.
-  var n=document.getElementById("tasas-cab");
-  if(n) n.innerHTML=_htmlCabeceraTasas();
+  // ARREGLO 136 · AQUÍ ESTABA EL FALLO QUE MÁS CARO SALÍA DE ESTA PANTALLA.
+  // Esto rehacía "tasas-cab" entero — y el campo que ella estaba tecleando
+  // vivía DENTRO de tasas-cab. O sea que el input moría en el primer carácter.
+  // Reproducido en Chromium contra la versión desplegada (v212):
+  //
+  //   escribir "185" sobre un 187  →  queda 1817 y el foco se va al BODY
+  //
+  // Publicaba un número que ella no tecleó, y ese número es el que leen el
+  // flyer, la cotización al cliente y cada remesa nueva. El comentario viejo
+  // invocaba el ARREGLO 32 sin ver que el campo estaba dentro de lo que
+  // repintaba: la regla era la correcta, el trozo elegido no.
+  //
+  // Ahora se rehace SOLO lo que depende de la tecla —la línea de si coincide y
+  // el pie con el %— y el campo no está en ninguno de los dos.
+  var d=document.getElementById("tpub-dif");
+  if(d){ var rr=null; try{ rr=_tasasRecomendadas(); }catch(e){} d.innerHTML=_htmlDifPub(rr); }
+  var pe=document.getElementById("tpub-pie");
+  if(pe) pe.innerHTML=_htmlPiePub();
   // ARREGLO 112: el aviso depende de la ida que acaba de escribir —baja de
   // 188 a 210 y el aviso rojo tiene que aparecer—, asi que se rehace con
   // ella. Dejarlo solo en el repintado haria que el aviso hablara de la tasa
@@ -26292,8 +26331,36 @@ function _inventarioBrl(){
   return out;
 }
 var _SIN_BRL = false;
+// ── ARREGLO 135 · CON BOLÍVARES LLENOS, LA VUELTA NO BAJA ────────────
+// Lo cazó ella el 13/10, con las dos tasas delante: "si también estoy llena de
+// bolívares, ¿por qué me pides bajarla a 205 y no mantenerla en 210? ¿no crees
+// que me van a llegar aún más bolívares?".
+//
+// Tiene razón, y el 133 estaba escrito mirando solo el COSTO. Bajar la vuelta
+// la hace más atractiva para el cliente que trae bolívares, así que entran
+// MÁS. O sea que los dos arreglos se peleaban. Medido con sus datos del 13/10:
+//
+//   el 132 sube la ida     185 → 189    saca bolívares
+//   el 133 baja la vuelta  209 → 205    METE bolívares
+//
+// Y cuál manda ya estaba decidido, por ella y hace tiempo: los reales parados
+// no le perjudican; los bolívares parados SÍ, porque se devalúan. Así que con
+// los dos lados llenos decide el bolívar y la vuelta se queda con su colchón
+// de siempre. El 133 vuelve a funcionar solo cuando los bolívares bajen del
+// umbral — no se retira, se subordina.
+//
+// Lo que NO hace, y es decisión suya: SUBIR la vuelta para frenar más. Se le
+// ofreció (habría dado 213) y eligió esto; 213 queda por encima de lo que
+// publica y puede costarle clientes de vuelta, que es su negocio, no el código.
 function _colchonVueltaAhora(){
   if(_SIN_BRL) return _colchon("vuelta");
+  // El bolívar manda: se pregunta ANTES que los reales. Y respeta _SIN_BS,
+  // porque la comparación "qué saldría sin los bolívares parados" tiene que
+  // contestar el escenario entero: sin bolívares encima, la vuelta sí baja.
+  if(!_SIN_BS){
+    var bs=_inventarioBs();
+    if(bs && bs.pasa) return _colchon("vuelta");
+  }
   var inv=_inventarioBrl();
   return (inv && inv.pasa) ? _colchon("vueltaBrl") : _colchon("vuelta");
 }
@@ -26356,8 +26423,7 @@ function _setAprox(mon,val){
   _guardarTasaAprox(mon,val);
   var n=document.getElementById("tasas-publica");
   if(n) n.innerHTML=_htmlPublicaHoy();
-  var c=document.getElementById("tasas-cab");
-  if(c) c.innerHTML=_htmlCabeceraTasas();
+
   _refrescarAvisosTasa();
 }
 // Publicar pasa por guardarTasaCalcHoy(), que es la puerta única del ARREGLO
@@ -26409,8 +26475,7 @@ function _volverAMiTasa(){
   S._probarTasa=false;
   var n=document.getElementById("tasas-publica");
   if(n) n.innerHTML=_htmlPublicaHoy();
-  var c=document.getElementById("tasas-cab");
-  if(c) c.innerHTML=_htmlCabeceraTasas();
+
   _refrescarAvisosTasa();
 }
 // ARREGLO 129b. Sus palabras del 13/10: "no quiero saturar la pantalla, no me
@@ -26474,6 +26539,134 @@ function _origenLado(mon, Q){
   return {txt:"lo último que escribiste"};
 }
 
+// ── EL MOTIVO DE QUE LAS TASAS SE MUEVAN SOLAS ──────────────────────
+// Sale de avisoTasa(), que YA decide esto hoy. Escrito aquí otra vez, un día
+// la tarjeta diría "sube la ida" y el aviso de abajo "baja la ida" — y no
+// habría forma de saber cuál mirar.
+//
+// ARREGLO 132/133: van los TRES valores (116, 117, 123, 129): lo que hay
+// parado, el umbral que ella puso, y de cuánto a cuánto se mueve. Y los DOS
+// lados pueden estar activos a la vez, cada número UNA sola vez y en el MISMO
+// recuadro — dos bloques ámbar pegados repitiendo cifras es el ARREGLO 125.
+//
+// ARREGLO 136: esto va PLEGADO. Sus palabras del 13/10: "satura demasiado la
+// pantalla". Lo que tiene que verse sin pedirlo es QUÉ publicar; el porqué se
+// lee una vez y estorba las otras cien. Lo que NO se pliega nunca es un aviso
+// rojo (ARREGLO 99), y este no lo es: la tasa ya está movida, no hay nada que
+// corregir.
+function _motivoPub(r){
+  var sit=null;
+  try{
+    (avisoTasa()||[]).forEach(function(a){
+      if(!sit && (a.id==="conc_ves"||a.id==="bs_parados"||a.id==="brl_parados"||a.id==="conc_brl")) sit=a;
+    });
+  }catch(e){}
+  var lineas=[];
+  var invT=null; try{ invT=_inventarioBs(); }catch(e){}
+  var sinBs=(invT&&invT.pasa&&r)?_tasasSinBs():null;
+  if(sinBs && sinBs.ida!==r.ida){
+    lineas.push("Tienes <b>"+f2(invT.reales)+" R$</b> en bolívares parados (tu umbral son "+
+      f2(invT.umbral)+" R$), así que subo la ida de <b>"+_tasaCorta(sinBs.ida)+"</b> a <b>"+
+      _tasaCorta(r.ida)+"</b>: das más Bs por real y salen más rápido.");
+  }
+  var invR=null; try{ invR=_inventarioBrl(); }catch(e){}
+  var sinBrl=(invR&&invR.pasa&&r)?_tasasSinBrl():null;
+  if(sinBrl && sinBrl.vuelta!==r.vuelta){
+    lineas.push("Tienes <b>"+f2(invR.reales)+" R$</b> en cuentas (tu umbral son "+
+      f2(invR.umbral)+" R$), así que bajo la vuelta de <b>"+_tasaCorta(sinBrl.vuelta)+"</b> a <b>"+
+      _tasaCorta(r.vuelta)+"</b>: con reales en mano no tienes que hacer el P2P que esa vuelta alta cubre.");
+  }
+  // ARREGLO 135: con bolívares llenos la vuelta YA no baja, así que la línea de
+  // arriba no entra —_tasasSinBrl() devuelve la misma vuelta— y callarlo
+  // dejaría la vuelta quieta sin decir por qué, que es justo lo que este bloque
+  // existe para evitar. La condición es "los dos llenos Y la vuelta no se
+  // movió", no "no hay sinBrl": sinBrl SÍ se calcula, lo que pasa es que sale
+  // igual. Medido: con esto puesto mal, el porqué solo hablaba de la ida.
+  if(invT && invT.pasa && invR && invR.pasa && sinBrl && sinBrl.vuelta===r.vuelta){
+    lineas.push("Tienes <b>"+f2(invR.reales)+" R$</b> en cuentas y también bolívares parados, "+
+      "así que la vuelta <b>no baja</b>: bajarla traería más bolívares, que es lo contrario "+
+      "de lo que hace falta. Manda el bolívar, que es el que se devalúa.");
+  }
+  if(!lineas.length && !sit) return null;
+  return {
+    titulo:(lineas.length>1?"Tienes dinero parado de los dos lados"
+            :_escAud((sit&&sit.titulo)||"Tienes dinero parado")),
+    cuerpo:(lineas.length?lineas.join("<br>"):_escAud(sit.texto))
+  };
+}
+
+// La línea de debajo de la tabla: dice si lo publicado y lo recomendado se
+// separan, y guarda el motivo detrás de "por qué". Vive en su propio id
+// (tpub-dif) porque depende de lo que ella acaba de teclear y el campo NO
+// puede repintarse con ella (ARREGLO 136).
+function _htmlDifPub(r){
+  var pub=_misTasasPublicadas();
+  var mot=_motivoPub(r);
+  var dif=[];
+  if(r){
+    if(pub.ida>0    && Math.round(r.ida)!==Math.round(pub.ida))       dif.push("la ida");
+    if(pub.vuelta>0 && Math.round(r.vuelta)!==Math.round(pub.vuelta)) dif.push("la vuelta");
+  }
+  if(!dif.length && !mot) return "";
+  var h="<div style='margin-top:9px;font-size:11.5px;line-height:1.5;color:"+
+        (dif.length?"var(--avi-tx)":"var(--tx3)")+"'>";
+  if(dif.length){
+    h+="⚠️ <b>"+(dif.length>1?"Las dos no coinciden":
+        (dif[0].charAt(0).toUpperCase()+dif[0].slice(1)+" no coincide"))+".</b> ";
+  }
+  if(mot){
+    h+="<span onclick='_togglePorQue()' style='color:var(--tx3);text-decoration:underline;"+
+       "cursor:pointer;white-space:nowrap'>por qué "+(S._porQuePub?"▴":"▾")+"</span>";
+  }
+  h+="</div>";
+  if(mot && S._porQuePub){
+    h+="<div style='margin-top:8px;background:var(--avi-sup);border-left:3px solid var(--avi-ln);"+
+       "border-radius:7px;padding:9px 11px'>"+
+       "<div style='font-size:11.5px;color:var(--avi-tx);line-height:1.5'>"+
+       "<b>"+mot.titulo+".</b> "+mot.cuerpo+"</div></div>";
+  }
+  return h;
+}
+// Abrir el porqué NO repinta (ARREGLO 32): se rehace su trozo por el id.
+function _togglePorQue(){
+  S._porQuePub=!S._porQuePub;
+  var n=document.getElementById("tpub-dif");
+  if(n) n.innerHTML=_htmlDifPub(_tasasRecomendadas());
+}
+
+// El pie: el suelo, cuánto le queda ofreciendo lo que tiene publicado, y de
+// qué dos tasas sale ese suelo. Venía de _htmlCabeceraTasas(), que el ARREGLO
+// 136 retiró — era la segunda cabecera de la pantalla. Depende de lo que ella
+// teclea, así que vive en su propio id y el campo no está dentro.
+function _htmlPiePub(){
+  var m=null; try{ m=margenSobreSuelo(); }catch(e){ m=null; }
+  var Q=null; try{ Q=sueloQueManda(); }catch(e){ Q=null; }
+  var ver;
+  if(m){
+    // El color va con el veredicto (ARREGLO 99): se lee antes que la letra.
+    var gana=(m.pct>0);
+    ver="<span style='font-weight:800;color:"+(gana?"var(--ok)":"var(--mal)")+"'>"+
+      (gana?"✅ ":"⚠️ ")+"ofreciendo "+f2(m.mia)+" te queda "+(gana?"+":"")+
+      String(m.pct).replace(".",",")+"%"+(gana?"":" — PIERDES")+"</span>";
+  }else if(!(Q&&Q.v>0)){
+    ver="<span style='color:var(--tx3)'>todavía no hay suelo: falta tu última compra o venta de USDT</span>";
+  }else{
+    ver="<span style='color:var(--tx3)'>escribe tu "+_ruta("ida").flechas+" y te digo cuánto te queda</span>";
+  }
+  var pie=(Q&&Q.manda&&Q.manda.c>0&&Q.manda.s>0)
+    ? ("tu compra "+_fpTasa(Q.manda.c)+" R$ · tu venta "+_fpTasa(Q.manda.s)+" Bs"+
+       ((Q.rc&&Q.rc.fecha)?(" · "+_escAud(Q.rc.fecha)):""))
+    : "en bolívares por real";
+  return "<div style='border-top:1px solid var(--ln);margin-top:11px;padding-top:9px;text-align:center'>"+
+    "<div style='font-size:12px;line-height:1.5'>"+
+      "<span style='color:var(--tx3)'>tu suelo </span>"+
+      "<b style='color:var(--ac)'>"+((Q&&Q.v>0)?f2(Q.v):"—")+"</b>"+
+      "<span style='color:var(--tx3)'> · </span>"+ver+
+    "</div>"+
+    "<div style='font-size:10.5px;color:var(--tx4);margin-top:3px'>"+pie+"</div>"+
+  "</div>";
+}
+
 function _htmlPublicaHoy(){
   var r=_tasasRecomendadas();
   var Q=r?r.Q:sueloQueManda();
@@ -26504,93 +26697,67 @@ function _htmlPublicaHoy(){
     return h;
   }
 
-  function caja(flechas,val){
-    return "<div style='flex:1;background:var(--sup);border:1px solid var(--ln);border-radius:11px;padding:11px 12px'>"+
-      "<div style='font-size:11px;color:var(--tx3);font-weight:700;margin-bottom:5px'>"+flechas+"</div>"+
-      "<div style='font-size:34px;font-weight:800;color:var(--ok);line-height:1'>"+_tasaCorta(val)+"</div>"+
-      "<div style='font-size:10.5px;color:var(--tx4);margin-top:5px;font-weight:600'>Bs por real</div>"+
-    "</div>";
-  }
-  h+="<div style='display:flex;gap:10px'>"+
-       caja(_ruta("ida").flechas, r.ida)+
-       caja(_ruta("vuelta").flechas, r.vuelta)+
-     "</div>";
-
-  // La barra. Es un esquema, no una escala: las posiciones son fijas para que
-  // se lea igual con cualquier suelo. Lo que tiene que entenderse de un
-  // vistazo es el LADO, no la distancia.
-  h+="<div style='margin-top:15px;background:var(--sup);border:1px solid var(--ln);border-radius:11px;padding:13px 12px 11px'>"+
-    "<div style='position:relative;height:38px'>"+
-      "<div style='position:absolute;left:0;right:0;top:24px;height:3px;background:var(--ln-d);border-radius:2px'></div>"+
-      "<div style='position:absolute;left:0;top:24px;width:36%;height:3px;background:var(--ok);border-radius:2px'></div>"+
-      "<div style='position:absolute;right:0;top:24px;width:36%;height:3px;background:var(--ok);border-radius:2px'></div>"+
-      "<div style='position:absolute;left:50%;top:19px;width:3px;height:13px;background:var(--ac);transform:translateX(-50%)'></div>"+
-      "<div style='position:absolute;left:22%;top:0;transform:translateX(-50%);font-size:12.5px;font-weight:800;color:var(--ok)'>"+_tasaCorta(r.ida)+"</div>"+
-      "<div style='position:absolute;left:50%;top:0;transform:translateX(-50%);font-size:12.5px;font-weight:800;color:var(--tit)'>"+f2(r.suelo)+"</div>"+
-      "<div style='position:absolute;left:78%;top:0;transform:translateX(-50%);font-size:12.5px;font-weight:800;color:var(--ok)'>"+_tasaCorta(r.vuelta)+"</div>"+
-    "</div>"+
-    "<div style='display:flex;justify-content:space-between;margin-top:3px'>"+
-      "<div style='font-size:10.5px;color:var(--tx4);font-weight:700'>◄ ida: ganas por debajo</div>"+
-      "<div style='font-size:10.5px;color:var(--tx4);font-weight:700'>vuelta: por encima ►</div>"+
-    "</div>"+
-    "<div style='text-align:center;font-size:10.5px;color:var(--tx3);margin-top:7px;font-weight:700'>"+
-      "tu suelo · "+_escAud((Q.manda&&Q.manda.nombre)||"")+
-      ((Q.miC>0&&Q.miV>0)?(" · "+_fpTasa(Q.manda?Q.manda.c:Q.miC)+" R$ y "+_fpTasa(Q.manda?Q.manda.s:Q.miV)+" Bs"):"")+
-    "</div>"+
-  "</div>";
-
-  // La situación sale de avisoTasa(), que YA decide esto hoy. Escrita aquí
-  // otra vez, un día la tarjeta diría "sube la ida" y el aviso de abajo "baja
-  // la ida" — y no habría forma de saber cuál mirar.
-  var sit=null;
-  try{
-    (avisoTasa()||[]).forEach(function(a){
-      if(!sit && (a.id==="conc_ves"||a.id==="bs_parados"||a.id==="brl_parados"||a.id==="conc_brl")) sit=a;
-    });
-  }catch(e){}
-  // ARREGLO 132: una tasa que sube sola sin decir por qué es una tasa que no se
-  // puede usar, así que aquí van los TRES valores (116, 117, 123, 129): lo que
-  // hay parado, el umbral que ella puso, y de cuánto a cuánto sube.
+  // ── ARREGLO 136 · LO QUE TIENES / LO QUE TE RECOMIENDO ──────────────
+  // Lo eligió ella de tres maquetas, el 13/10, después de decir que la
+  // pantalla "satura demasiado". Lo que la confundía no era un número malo:
   //
-  // Y va DENTRO del recuadro de la situación, no en uno nuevo encima. El primer
-  // intento dibujaba los dos y la tarjeta decía "850,36 R$" y "200,00 R$" dos
-  // veces seguidas, en dos bloques ámbar pegados — el ARREGLO 125 otra vez: un
-  // número se escribe UNA vez, y dos avisos del mismo suceso se leen como dos
-  // sucesos (ARREGLO 94).
+  //   la tarjeta de arriba recomendaba   205
+  //   la cabecera de abajo enseñaba      210   (lo que tenía publicado)
   //
-  // ARREGLO 133: y los DOS lados pueden estar activos a la vez — ella tiene
-  // 850 R$ en bolívares y 3.252 en reales. Mostrando solo el primero, la vuelta
-  // se movería sin que nada lo diga, que es justo lo que este bloque evita. Van
-  // los dos, cada número una sola vez, en el MISMO recuadro.
-  var txtSit=sit?_escAud(sit.texto):"";
-  var lineas=[];
-  var invT=null; try{ invT=_inventarioBs(); }catch(e){}
-  var sinBs=(invT&&invT.pasa)?_tasasSinBs():null;
-  if(sinBs && sinBs.ida!==r.ida){
-    lineas.push("Tienes <b>"+f2(invT.reales)+" R$</b> en bol\u00edvares parados (tu umbral son "+
-      f2(invT.umbral)+" R$), as\u00ed que subo la ida de <b>"+_tasaCorta(sinBs.ida)+"</b> a <b>"+
-      _tasaCorta(r.ida)+"</b>: das m\u00e1s Bs por real y salen m\u00e1s r\u00e1pido.");
+  // Dos números en la misma unidad, uno encima de otro, sin nada que dijera
+  // cuál era cuál. Sus palabras: "veo que no están conectados entre sí". Lo
+  // estaban —medido: publicar lleva el número a la cabecera, a la cotización
+  // al cliente, al flyer y a cada remesa nueva— pero la pantalla no los
+  // emparejaba. Es el ARREGLO 122 otra vez, y la cuarta vez con esta forma.
+  //
+  // Las dos tasas van ahora LADO A LADO, una fila por ruta. La posición dice
+  // cuál es cuál antes de que haya que leer nada, y la fila que no coincide se
+  // marca sola. Con eso la cabecera de abajo desaparece: dos sitios para lo
+  // mismo con dos respuestas distintas es exactamente lo que el ARREGLO 98
+  // prohíbe. Medido: la pestaña pasa de 1.539 px a 683.
+  //
+  // Y EL CAMPO NO SE REPINTA AL TECLEAR. La cabecera vieja se rehacía entera
+  // desde su propio `oninput` —con el input dentro—, así que el campo moría al
+  // primer carácter. Reproducido en Chromium contra la versión desplegada:
+  //
+  //   escribir "185" sobre un 187   →   queda 1817, y el foco se va al BODY
+  //
+  // O sea que publicaba un número que ella no tecleó, y ese número es el que
+  // leen el flyer, la cotización y cada remesa nueva. Por eso lo que depende
+  // de la tecla vive en SU PROPIO id —`tpub-dif` y `tpub-pie`— y el input no
+  // está dentro de ninguno de los dos. Es el ARREGLO 55 y el 32 a la vez: se
+  // refresca lo que cambia, sin tocar lo que está bajo el dedo.
+  var pubAh=_misTasasPublicadas();
+  function _celdaPub(dir,val){
+    return "<input type='text' inputmode='decimal' placeholder='—' value='"+_escAud(_comaCab(val))+"' "+
+      "oninput='_setTasaPub(\""+dir+"\",this.value)' onchange='_guardarTasaPub(\""+dir+"\")' "+
+      "style='width:100%;border:none;border-bottom:1.5px dashed var(--ln);background:transparent;"+
+      "font-size:25px;font-weight:900;color:var(--tx3);text-align:center;font-family:inherit;padding:1px 0 2px'>";
   }
-  var invR=null; try{ invR=_inventarioBrl(); }catch(e){}
-  var sinBrl=(invR&&invR.pasa)?_tasasSinBrl():null;
-  if(sinBrl && sinBrl.vuelta!==r.vuelta){
-    lineas.push("Tienes <b>"+f2(invR.reales)+" R$</b> en cuentas (tu umbral son "+
-      f2(invR.umbral)+" R$), as\u00ed que bajo la vuelta de <b>"+_tasaCorta(sinBrl.vuelta)+"</b> a <b>"+
-      _tasaCorta(r.vuelta)+"</b>: con reales en mano no tienes que hacer el P2P que esa vuelta alta cubre.");
+  function _filaPub(dir,sub,rec,pub){
+    var dif=(rec>0 && pub>0 && Math.round(rec)!==Math.round(pub));
+    return "<tr"+(dif?" style='background:var(--avi-sup)'":"")+">"+
+      "<td style='padding:9px 7px;border-radius:9px 0 0 9px;vertical-align:middle'>"+
+        "<div style='font-size:13px;font-weight:800;white-space:nowrap'>"+_ruta(dir).flechas+"</div>"+
+        "<div style='font-size:10.5px;color:var(--tx4);margin-top:1px'>"+sub+"</div>"+
+      "</td>"+
+      "<td style='padding:9px 6px;width:34%;vertical-align:middle'>"+_celdaPub(dir,pub)+"</td>"+
+      "<td style='padding:9px 7px;width:34%;text-align:center;border-radius:0 9px 9px 0;vertical-align:middle;"+
+        "font-size:25px;font-weight:900;color:"+(dif?"var(--avi-tx)":"var(--ok)")+"'>"+_tasaCorta(rec)+"</td>"+
+    "</tr>";
   }
-  if(lineas.length){
-    h+="<div style='margin-top:11px;background:var(--avi-sup);border-left:3px solid var(--avi-ln);"+
-       "border-radius:7px;padding:9px 11px'>"+
-       "<div style='font-size:11.5px;color:var(--avi-tx);line-height:1.5'>"+
-       "<b>"+(lineas.length>1?"Tienes dinero parado de los dos lados":
-              _escAud((sit&&sit.titulo)||"Tienes dinero parado"))+".</b> "+
-       lineas.join("<br>")+"</div></div>";
-  }else if(sit){
-    h+="<div style='margin-top:11px;background:var(--avi-sup);border-left:3px solid var(--avi-ln);"+
-       "border-radius:7px;padding:9px 11px'>"+
-       "<div style='font-size:11.5px;color:var(--avi-tx);line-height:1.5'>"+
-       "<b>"+_escAud(sit.titulo)+".</b> "+txtSit+"</div></div>";
-  }
+  h+="<table style='width:100%;border-collapse:separate;border-spacing:0'>"+
+      "<tr>"+
+        "<td style='padding:0 7px 7px'></td>"+
+        "<td style='padding:0 6px 7px;text-align:center;font-size:10px;font-weight:800;"+
+          "letter-spacing:.08em;color:var(--tx4)'>TIENES</td>"+
+        "<td style='padding:0 7px 7px;text-align:center;font-size:10px;font-weight:800;"+
+          "letter-spacing:.08em;color:var(--ok)'>TE RECOMIENDO</td>"+
+      "</tr>"+
+      _filaPub("ida","le das",r.ida,pubAh.ida)+
+      _filaPub("vuelta","te dan",r.vuelta,pubAh.vuelta)+
+    "</table>"+
+    "<div id='tpub-dif'>"+_htmlDifPub(r)+"</div>";
 
   // El campo de la aproximada también sale CON tasa recomendada: que haya
   // suelo no quiere decir que sea de hoy. Decir los días y no dar dónde
@@ -26671,71 +26838,20 @@ function _htmlPublicaHoy(){
   h+="<button onclick='publicarRecomendadas()' class='btn-main btn-green' "+
      "style='margin-top:12px'>Publicar las dos</button>";
 
-  var pub=_misTasasPublicadas();
-  h+="<div style='font-size:10.5px;color:var(--tx4);text-align:center;margin-top:7px;font-weight:600'>"+
-     ((pub.ida>0||pub.vuelta>0)
-       ? ("Ahora tienes publicado "+(pub.ida>0?_tasaCorta(pub.ida):"—")+" · "+(pub.vuelta>0?_tasaCorta(pub.vuelta):"—"))
-       : "Todavía no has publicado ninguna")+
-     "</div>";
+  // El "Ahora tienes publicado 189 · 210" que había aquí se fue con el ARREGLO
+  // 136: lo dice la columna TIENES de la tabla, y un número se escribe UNA vez
+  // (ARREGLO 125). El pie sí se queda — es lo que traía la cabecera retirada.
+  h+="<div id='tpub-pie'>"+_htmlPiePub()+"</div>";
   return h;
 }
+// _htmlCabeceraTasas() se retiró con el ARREGLO 136: era la SEGUNDA cabecera
+// de tasas de la pantalla, debajo de la tarjeta, enseñando lo publicado con el
+// mismo aspecto que la tarjeta enseñaba lo recomendado. Sus piezas no se
+// perdieron: los campos editables son ahora la columna TIENES de la tabla, y
+// el suelo, el veredicto y el pie viven en _htmlPiePub(). Una pantalla nueva
+// QUITA el control viejo; ponerse al lado es lo que hace que no se sepa cuál
+// manda (ARREGLO 98).
 
-function _htmlCabeceraTasas(){
-  var m=margenSobreSuelo();
-  var Q=sueloQueManda();
-  var pub=_misTasasPublicadas();
-  // ── ARREGLO 122 · la cabecera seguia hablando de "ida" y "vuelta" ──
-  // El ARREGLO 119 saco esas dos palabras de la calculadora —son mi vocabulario,
-  // no el suyo— y las dejo AQUI, en la pantalla de justo encima. Lo cazo ella el
-  // 12/10 mirando las dos a la vez: arriba "TU IDA", abajo banderas, y nada que
-  // las empareje. Ahora las dos pantallas dicen la ruta igual, y debajo del
-  // numero va QUIEN DA QUE, que es lo unico que no se puede deducir del simbolo.
-  var campo=function(dir,sub,val){
-    var rot="Tu "+_ruta(dir).flechas;
-    return "<div style='flex:1 1 0;min-width:0;text-align:center'>"+
-      "<div style='font-size:10.5px;color:var(--tx4);font-weight:700;text-transform:uppercase;letter-spacing:.4px'>"+rot+"</div>"+
-      "<input type='text' inputmode='decimal' placeholder='\u2014' value='"+_escAud(_comaCab(val))+"' "+
-        "oninput='_setTasaPub(\""+dir+"\",this.value)' onchange='_guardarTasaPub(\""+dir+"\")' "+
-        "style='width:100%;border:none;border-bottom:1.5px dashed var(--ln);background:transparent;"+
-        "font-size:22px;font-weight:900;color:var(--tit);text-align:center;font-family:inherit;padding:1px 0 2px'>"+
-      "<div style='font-size:10px;color:var(--tx4);margin-top:2px;line-height:1.3'>"+sub+"</div>"+
-    "</div>";
-  };
-  // El suelo NO es un campo: sale de sus lotes y del mercado. Escribirlo a
-  // mano sería el "registra la operación, no escribas el saldo" otra vez.
-  var fijo=function(rot,val,col,sub){
-    return "<div style='flex:1 1 0;min-width:0;text-align:center'>"+
-      "<div style='font-size:10.5px;color:var(--tx4);font-weight:700;text-transform:uppercase;letter-spacing:.4px'>"+rot+"</div>"+
-      "<div style='font-size:22px;font-weight:900;color:"+col+";line-height:1.35'>"+val+"</div>"+
-      "<div style='font-size:10px;color:var(--tx4);margin-top:2px;line-height:1.3'>"+(sub||"")+"</div>"+
-    "</div>";
-  };
-  var veredicto;
-  if(m){
-    // El color va con el veredicto, no con el número de arriba: el color se
-    // lee antes que la letra (ARREGLO 99).
-    var gana=(m.pct>0);
-    veredicto="<div style='text-align:center;font-size:12.5px;font-weight:800;color:"+(gana?"var(--ok)":"var(--mal)")+"'>"+
-      (gana?"\u2705 ":"\u26a0\ufe0f ")+"Ofreciendo "+f2(m.mia)+" te queda "+(gana?"+":"")+String(m.pct).replace(".",",")+"%"+
-      (gana?"":" \u2014 por encima del suelo PIERDES")+"</div>";
-  }else if(!(Q.v>0)){
-    veredicto="<div style='text-align:center;font-size:11.5px;color:var(--tx3)'>Todav\u00eda no hay suelo: falta tu \u00faltima compra o tu \u00faltima venta de USDT.</div>";
-  }else{
-    veredicto="<div style='text-align:center;font-size:11.5px;color:var(--tx3)'>Escribe tu "+_ruta("ida").flechas+" arriba y te digo cu\u00e1nto te queda.</div>";
-  }
-  var pie = (Q.manda && Q.manda.c>0 && Q.manda.s>0)
-    ? ("tu compra "+_fpTasa(Q.manda.c)+" R$ \u00b7 tu venta "+_fpTasa(Q.manda.s)+" Bs"+
-       ((Q.rc&&Q.rc.fecha)?(" \u00b7 "+_escAud(Q.rc.fecha)):""))
-    : "en bol\u00edvares por real";
-  return "<div style='display:flex;gap:4px;margin-bottom:9px'>"+
-      campo("ida","le das",pub.ida)+
-      campo("vuelta","te dan",pub.vuelta)+
-      fijo("Tu suelo",(Q.v>0?f2(Q.v):"\u2014"),"var(--ac)","no pases de aqu\u00ed")+
-    "</div>"+
-    "<div style='border-top:1px solid var(--ln);padding-top:9px'>"+veredicto+
-      "<div style='text-align:center;font-size:10.5px;color:var(--tx4);margin-top:3px'>"+pie+"</div>"+
-    "</div>";
-}
 
 // Lo que el flyer va a imprimir, dicho antes de pulsarlo. Sale de
 // _misTasasPublicadas(), que es de donde lo saca _calcTasas() al generarlo:
@@ -26853,12 +26969,10 @@ function rCalculadora(){
       "border-radius:14px;padding:16px 14px 14px;margin-bottom:10px'>"+
       _htmlPublicaHoy()+
     "</div>"+
-    // La cabecera: lo que mira diez veces al día, sin abrir nada ni hacer
-    // scroll. Lo demás va detrás de una fila.
-    "<div id='tasas-cab' style='background:var(--sup);border:1.5px solid var(--ln2);border-radius:14px;padding:14px 12px 13px;margin-bottom:10px'>"+
-      _htmlCabeceraTasas()+
-    "</div>"+
-    // ARREGLO 112: los avisos van ENTRE la cabecera y las filas. Arriba del
+    // ARREGLO 136: aquí había una SEGUNDA cabecera de tasas. Lo que mira diez
+    // veces al día está ahora en la tarjeta de arriba, en una tabla de dos
+    // columnas, y por eso esta se fue entera (ARREGLO 98).
+    // ARREGLO 112: los avisos van ENTRE la tarjeta y las filas. Arriba del
     // todo esta el estado; esto es lo que hay que hacer con el.
     "<div id='tasas-avisos'>"+_htmlAvisosTasa()+"</div>"+
     "<div id='tasas-filas'>"+_htmlFilasTasas()+"</div>"+
