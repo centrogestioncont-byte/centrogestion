@@ -2952,7 +2952,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261014_v220";
+var APP_VERSION = "20261014_v221";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -13473,6 +13473,14 @@ function guardarColchones(){
   // escala: medido en su histórico, de 92 a 3.252 R$).
   var vb=_leerNumero(document.getElementById("inp-colchon-vuelta-brl").value);
   var ur=_leerNumero(document.getElementById("inp-umbral-brl").value);
+  // ARREGLO 139: el umbral de bolívares, que acepta el VACÍO a propósito —
+  // vacío quiere decir "cálcalo tú", y es lo normal. Un cero guardado no
+  // dispararía nunca y dejaría la regla muerta sin decirlo, así que el campo
+  // vacío borra la clave en vez de escribir 0.
+  var _fb=document.getElementById("inp-umbral-faltan-bs");
+  var _fbTxt=_fb?String(_fb.value||"").trim():"";
+  var ufb=_fbTxt?_leerNumero(_fbTxt):null;
+  if(_fbTxt && (isNaN(ufb)||!(ufb>0))){alert("El umbral de bolívares tiene que ser mayor que cero, o déjalo en blanco para que se calcule solo.");return;}
   if(isNaN(i)||i<0||i>=50){alert("Colchón de la ida inválido. Usa ej: 7 para 7%.");return;}
   if(isNaN(v)||v<0||v>=50){alert("Colchón de la vuelta inválido. Usa ej: 5 para 5%.");return;}
   if(isNaN(ib)||ib<0||ib>=50){alert("Colchón de la ida con bolívares inválido. Usa ej: 5 para 5%.");return;}
@@ -13495,6 +13503,7 @@ function guardarColchones(){
   S.config.umbralBsReales=ub;
   S.config.colchonVueltaBrl=vb/100;
   S.config.umbralBrlReales=ur;
+  if(ufb>0) S.config.umbralFaltanBs=ufb; else delete S.config.umbralFaltanBs;
   saveData();R();
   var r=_tasasRecomendadas();
   alert("✅ Colchones guardados: ida "+f2(i)+"% · vuelta "+f2(v)+"%."+
@@ -14343,11 +14352,13 @@ function rConfigAdmin(){
             return "<div style='font-size:11px;color:"+(q.pasa?"var(--avi-tx)":"var(--tx3)")+";margin-bottom:8px'>"+
               "Ahora mismo tienes <b>"+f2(q.reales)+" R$</b> en bol\u00edvares: "+
               (q.pasa?"la ida est\u00e1 usando el colch\u00f3n con bol\u00edvares.":"manda el colch\u00f3n normal.")+"</div>"; })()+
-          // ARREGLO 133: el espejo. Su umbral es OTRO a propósito — los reales
-          // se mueven en otra escala y con 200 estaría activo casi siempre.
+          // ARREGLO 139: el motivo pasó a ser que FALTEN bolívares; los reales
+          // son la condición de poder atender las vueltas que entren.
           "<div style='font-size:11px;color:var(--tx3);margin:10px 0 8px;padding-top:10px;border-top:1px dashed var(--ln2)'>"+
-            "Y al rev\u00e9s: con <b>reales de sobra</b> en cuentas, la vuelta usa este otro colch\u00f3n, "+
-            "m\u00e1s chico — pides menos Bs por real. Con reales en mano no tienes que hacer el P2P que tu vuelta alta cubre.</div>"+
+            "Y al rev\u00e9s: cuando te <b>falten bol\u00edvares</b>, la vuelta usa este otro colch\u00f3n, "+
+            "m\u00e1s chico — pides menos Bs por real para que entren vueltas, y cada vuelta te trae "+
+            "bol\u00edvares que no tienes que comprar en Binance. Solo si adem\u00e1s tienes reales en "+
+            "cuentas para atenderlas.</div>"+
           "<div style='display:flex;gap:8px;align-items:center;max-width:420px;margin-bottom:6px'>"+
             "<span style='font-size:11px;color:var(--tx2);min-width:116px'>Vuelta con R$ \u00b7 % por encima</span>"+
             "<input type='text' inputmode='decimal' id='inp-colchon-vuelta-brl' value='"+(Math.round(_colchon("vueltaBrl")*1000)/10)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
@@ -14356,11 +14367,31 @@ function rConfigAdmin(){
             "<span style='font-size:11px;color:var(--tx2);min-width:116px'>Umbral \u00b7 R$ en cuentas</span>"+
             "<input type='text' inputmode='decimal' id='inp-umbral-brl' value='"+f0(_umbralBrlReales())+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
           "</div>"+
-          (function(){ var q=null; try{ q=_inventarioBrl(); }catch(e){}
-            if(!q) return "";
-            return "<div style='font-size:11px;color:"+(q.pasa?"var(--avi-tx)":"var(--tx3)")+";margin-bottom:8px'>"+
-              "Ahora mismo tienes <b>"+f2(q.reales)+" R$</b> en cuentas: "+
-              (q.pasa?"la vuelta est\u00e1 usando el colch\u00f3n con reales.":"manda el colch\u00f3n normal.")+"</div>"; })()+
+          // ARREGLO 139: el umbral de bolívares NO es un número fijo. Sus
+          // palabras: "dámelo tú porque eso realmente es relativo, todos los
+          // días son diferentes". Sale de lo que entrega en un día normal suyo
+          // y se mueve con ella; el campo enseña el medido y acepta el suyo.
+          "<div style='display:flex;gap:8px;align-items:center;max-width:420px;margin-bottom:6px'>"+
+            "<span style='font-size:11px;color:var(--tx2);min-width:116px'>Te faltan Bs por debajo de</span>"+
+            "<input type='text' inputmode='decimal' id='inp-umbral-faltan-bs' placeholder='se calcula solo' value='"+
+              (function(){ var u=null; try{ u=_umbralFaltanBs(); }catch(e){} return (u&&u.suyo)?f0(u.bs):""; })()+
+              "' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+          "</div>"+
+          (function(){ var u=null; try{ u=_umbralFaltanBs(); }catch(e){}
+            if(!u) return "";
+            return "<div style='font-size:11px;color:var(--tx3);margin-bottom:8px'>"+
+              (u.suyo
+                ? "Est\u00e1s usando <b>"+f0(u.bs)+" Bs</b>, el que escribiste. D\u00e9jalo en blanco y vuelve al medido."
+                : "Medido de tus \u00faltimos <b>"+u.dias+"</b> d\u00edas con operaciones: un d\u00eda normal tuyo son <b>"+
+                  f0(u.bs)+" Bs</b>. Se mueve solo contigo.")+"</div>"; })()+
+          (function(){ var q=null,fl=null; try{ q=_inventarioBrl(); fl=_faltanBs(); }catch(e){}
+            if(!q||!fl) return "";
+            var act=(fl.pasa&&q.pasa);
+            return "<div style='font-size:11px;color:"+(act?"var(--avi-tx)":"var(--tx3)")+";margin-bottom:8px'>"+
+              "Ahora mismo tienes <b>"+f0(fl.tiene)+" Bs</b> y <b>"+f2(q.reales)+" R$</b>: "+
+              (act?"la vuelta est\u00e1 usando el colch\u00f3n."
+                 :(fl.pasa?"te faltan bol\u00edvares, pero no hay reales suficientes para atender vueltas."
+                          :"no te faltan bol\u00edvares, manda el colch\u00f3n normal."))+"</div>"; })()+
           "<button onclick='guardarColchones()' style='padding:9px 14px;background:var(--ac);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
         "</div>"+
         // ARREGLO 95: lo que cobra PagBank por hacer un Pix con la tarjeta de
@@ -25717,16 +25748,21 @@ function avisoTasa(){
                 "recomiendo sube sola: das más Bs por real y salen más rápido.",
           tab:"calculadora"});
       }
-      // ARREGLO 133: el espejo. Mismo motivo que el de los bolívares, al revés:
-      // con reales en mano no hay que hacer el P2P que la vuelta alta cubre.
+      // ARREGLO 139: el motivo es que FALTEN bolívares, no que sobren reales.
+      // Los reales siguen siendo la condición —en una vuelta ella los entrega—
+      // pero el aviso habla de lo que de verdad le pasa.
       var invBrl=null; try{ invBrl=_inventarioBrl(); }catch(e){ invBrl=null; }
-      if(invBrl && invBrl.pasa){
+      var falBs=null; try{ falBs=_faltanBs(); }catch(e){ falBs=null; }
+      if(falBs && falBs.pasa && invBrl && invBrl.pasa){
+        var vP2P=0; try{ vP2P=_p2pBolivaresDelMes(); }catch(e){}
         av.push({id:"brl_parados", nivel:"info",
-          clave:"brl_parados_"+Math.round(invBrl.reales/500)*500,
-          titulo:"Tienes reales para mover",
-          texto:"Tienes "+f(invBrl.reales)+" R$ en cuentas, por encima de los "+
-                f(invBrl.umbral)+" R$ que pusiste de umbral. Con reales en mano no tienes que "+
-                "hacer el P2P que tu vuelta alta cubre, así que la vuelta que te recomiendo baja sola.",
+          clave:"faltan_bs_"+Math.round(falBs.tiene/10000)*10000,
+          titulo:"Te faltan bolívares",
+          texto:"Tienes "+f(falBs.tiene)+" Bs y un día normal tuyo son "+f(falBs.umbral)+". "+
+                "La vuelta que te recomiendo baja sola: cada vuelta que entre son bolívares que "+
+                "no tienes que ir a comprar"+
+                (vP2P>0?" — llevas "+vP2P+" compra"+(vP2P===1?"":"s")+" en Binance este mes":"")+
+                ". Tienes "+f(invBrl.reales)+" R$ en cuentas para atenderlas.",
           tab:"calculadora"});
       }
       var pBrl=(brl!==null)?(brl/enCta*100):0;
@@ -27104,6 +27140,141 @@ function _umbralBsReales(){
 // Y los reales NO hay que convertirlos: `enCuentas` de BRL ya está en reales.
 // Pasarlo por usdtCuentas y multiplicar sería dar dos veces la vuelta a un
 // número que ya estaba bien, con un redondeo de regalo.
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 139 · LA VUELTA BAJA CUANDO FALTAN BOLÍVARES, NO CUANDO SOBRAN
+//               REALES — Y EL UMBRAL SALE DE SUS PROPIOS DÍAS
+// ══════════════════════════════════════════════════════════════════════
+// Lo cazó ella el 14/10, con la tarjeta delante: "¿es factible hacer mi trabajo
+// así? ¿bajar la tasa cuando recibí anteriormente a otra tasa está bien? ¿no
+// estoy sobrevaluando dos veces los mismos reales?". Y después, el dato que lo
+// decide: "teniendo esa tasa así de alta me llegó esa remesa de 2.500 reales
+// pero no tenía para cubrir esos Bs y tuve que hacer una venta del P2P".
+//
+// EL 133 LE DABA UN MOTIVO QUE NO ES EL SUYO. Decía "con reales en mano no
+// tienes que hacer el P2P que esa vuelta alta cubre" — y ese P2P casi no lo
+// hace. Medido en su export:
+//
+//   salir a Binance a comprar BOLÍVARES (para cubrir IDAS) .... 151 veces
+//   salir a Binance a comprar REALES    (para cubrir VUELTAS) ...55 veces
+//   solo en octubre .......................................... 18 contra 2
+//
+// Su P2P es de las IDAS. Por eso el razonamiento le sonó raro: no encajaba con
+// su operación, y desconfió con razón.
+//
+// LA CONCLUSIÓN NO CAMBIA —bajar la vuelta está bien— PERO EL MOTIVO SÍ, y es
+// más fuerte: las vueltas le TRAEN bolívares, que es lo que le falta. Y por ahí
+// le salen más baratos que en Binance:
+//
+//   una vuelta a 204 ....... 204,00 Bs por cada real que entrega
+//   Binance (su suelo) ..... 198,34 Bs por cada real
+//
+// Así que el disparador correcto es QUEDARSE SIN BOLÍVARES, no que le sobren
+// reales. Hoy las dos cosas coinciden en ella, así que el 133 acertaba por
+// casualidad; el día que tenga reales Y bolívares, le bajaría la vuelta sin
+// motivo.
+//
+// Y LOS REALES NO SE VAN: CAMBIAN DE PAPEL. Bajar la vuelta hace entrar
+// vueltas, y en una vuelta ella ENTREGA reales. Sin reales no puede atenderlas.
+// Dejan de ser el motivo y pasan a ser la condición.
+//
+//   motivo     →  te faltan bolívares
+//   condición  →  y tienes reales para atender las que entren
+//
+// ESO TAMBIÉN SIMPLIFICA EL 135. Aquel impedía bajar la vuelta con los
+// bolívares llenos, porque el 133 la bajaba justo cuando el 132 los estaba
+// sacando. Con el disparador invertido eso no se puede dar: no se puede estar
+// lleno y vacío de bolívares a la vez. Queda una regla donde había dos que se
+// pisaban.
+//
+// ── EL UMBRAL NO ES UN NÚMERO FIJO, Y ESO LO DIJO ELLA ────────────────
+// Se le ofrecieron 30.000 / 60.000 / 100.000 Bs y contestó: "dámelo tú porque
+// eso realmente es relativo, todos los días son diferentes". Tiene razón, y los
+// datos se lo dan: lo que entrega al día no para de crecer.
+//
+//   mediana de Bs que entrega al día, últimos 90 días con ops .... 91.744
+//                                              60 ................ 97.021
+//                                              30 ............... 108.269
+//                                              15 ............... 132.090
+//
+// Un número puesto a ojo hoy estaría viejo en un mes. Así que el umbral ES lo
+// que entrega en un día normal suyo, y se mueve con ella. El criterio, en una
+// frase: si no tengo para cubrir un día normal mío, estoy corta.
+//
+// LA MEDIANA, NO LA MEDIA. La media sale inflada por los días de 600.000 (su
+// media de 30 días son 175.500 contra una mediana de 108.269): mediría el día
+// excepcional, no el típico, y le bajaría la vuelta casi siempre.
+//
+// SIN MEMO, igual que _inventarioBs y por la misma razón (ARREGLO 132): con un
+// memo, el número que decide la tasa que publica dependería de cuándo se
+// preguntó, y eso no se ve desde fuera. Medido en Chromium con sus 962 remesas:
+// el recorrido entero cuesta menos de 1 ms.
+var _DIAS_NORMAL_BS = 30;   // cuántos días CON OPERACIONES entran en la mediana
+// Lo que entrega en un día normal. Escrito UNA vez: lo leen el umbral que
+// decide la tasa y el aviso que lo explica. Calculado aparte, un día la tarjeta
+// bajaría la vuelta mientras el aviso de al lado dice que va sobrada.
+function _diaNormalBs(){
+  var porDia={};
+  ["brl","vzla"].forEach(function(k){
+    (S[k]||[]).forEach(function(r){
+      if(!r || r.orig!=="BRL" || r.dest!=="VES") return;
+      var c=parseFloat(r.cant)||0; if(!(c>0)) return;
+      // La fecha se usa SOLO para agrupar y ordenar, así que basta con que el
+      // orden salga bien: dd/mm/aa a aaaa-mm-dd.
+      var p=String(r.d||"").split("/");
+      if(p.length!==3) return;
+      var iso="20"+p[2]+"-"+p[1]+"-"+p[0];
+      porDia[iso]=(porDia[iso]||0)+c;
+    });
+  });
+  var dias=Object.keys(porDia).sort();
+  if(!dias.length) return null;
+  var ult=dias.slice(-_DIAS_NORMAL_BS).map(function(d){return porDia[d];}).sort(function(a,b){return a-b;});
+  var n=ult.length;
+  var med = (n%2) ? ult[(n-1)/2] : (ult[n/2-1]+ult[n/2])/2;
+  return {bs:Math.round(med), dias:n};
+}
+// El umbral que manda ahora: el suyo si lo escribió, el medido si no. En blanco
+// vuelve al medido, NUNCA a cero — un umbral de cero no dispararía nunca y la
+// regla quedaría muerta sin decirlo. Mismo criterio que los montos del mercado
+// (ARREGLO 75) y que el campo de la tasa aproximada (ARREGLO 129).
+function _umbralFaltanBs(){
+  var v=parseFloat((S.config||{}).umbralFaltanBs);
+  if(v>0 && v<1e9) return {bs:v, suyo:true, dias:0};
+  var d=_diaNormalBs();
+  return d ? {bs:d.bs, suyo:false, dias:d.dias} : null;
+}
+// ¿Le faltan bolívares? Devuelve también los dos números, porque el aviso tiene
+// que poder decirlos sin volver a calcularlos.
+function _faltanBs(){
+  var u=_umbralFaltanBs();
+  if(!u || !(u.bs>0)) return null;          // sin histórico no se decide nada
+  var r=null;
+  try{ r=capitalRealTotal(); }catch(e){ r=null; }
+  var ves=null;
+  // enCuentas va en la moneda NATIVA —bolívares como bolívares—, que es lo que
+  // aquí hace falta: el umbral está en bolívares porque es como ella lo mira.
+  // usdtCuentas sería lo mismo ya convertido, y obligaría a una tasa que puede
+  // faltar (el 132 la necesita porque su umbral está en reales; este no).
+  if(r && r.porMoneda) r.porMoneda.forEach(function(x){ if(x.moneda==="VES") ves=x.enCuentas; });
+  if(ves===null || ves===undefined) return null;
+  var tiene=(ves>0?ves:0);
+  return {tiene:tiene, umbral:u.bs, suyo:u.suyo, dias:u.dias, pasa:(tiene<u.bs)};
+}
+// Cuántas veces ha salido a Binance a comprar BOLÍVARES este mes. Es el número
+// que convierte el aviso en algo comprobable: sin él dice "te faltan" y ella
+// tiene que creerse que eso le cuesta algo. Un lote de venta en VES nacido de
+// una remesa no cuenta —esos bolívares se los pagó un cliente, no Binance—, que
+// es la misma regla del ARREGLO 138.
+function _p2pBolivaresDelMes(){
+  var hoy=new Date(), m=hoy.getMonth()+1, y=hoy.getFullYear();
+  var pre=String(y)+"-"+(m<10?"0":"")+m;
+  var n=0;
+  (S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[]).forEach(function(l){
+    if(!l || l.tipo!=="venta" || l.moneda!=="VES" || l.origenRemesa) return;
+    if(String(l.fechaIso||"").indexOf(pre)===0) n++;
+  });
+  return n;
+}
 function _umbralBrlReales(){
   var v=parseFloat((S.config||{}).umbralBrlReales);
   if(!(v>=0) || v>=1e7) return _UMBRAL_BRL_DEF;
@@ -27140,16 +27311,19 @@ var _SIN_BRL = false;
 // Lo que NO hace, y es decisión suya: SUBIR la vuelta para frenar más. Se le
 // ofreció (habría dado 213) y eligió esto; 213 queda por encima de lo que
 // publica y puede costarle clientes de vuelta, que es su negocio, no el código.
+// ARREGLO 139: el MOTIVO es que falten bolívares; los reales son la CONDICIÓN
+// de poder atender las vueltas que entren. Al revés —como estaba— le daba una
+// razón que no es la suya y acertaba por casualidad.
+//
+// Respeta _SIN_BS porque la comparación "qué saldría sin los bolívares parados"
+// tiene que contestar el escenario entero: con bolívares de sobra la vuelta no
+// baja, y eso también se ve en la comparación.
 function _colchonVueltaAhora(){
   if(_SIN_BRL) return _colchon("vuelta");
-  // El bolívar manda: se pregunta ANTES que los reales. Y respeta _SIN_BS,
-  // porque la comparación "qué saldría sin los bolívares parados" tiene que
-  // contestar el escenario entero: sin bolívares encima, la vuelta sí baja.
-  if(!_SIN_BS){
-    var bs=_inventarioBs();
-    if(bs && bs.pasa) return _colchon("vuelta");
-  }
-  var inv=_inventarioBrl();
+  if(_SIN_BS) return _colchon("vuelta");       // en ese escenario sobran, no faltan
+  var f=_faltanBs();
+  if(!f || !f.pasa) return _colchon("vuelta"); // no faltan: colchón de siempre
+  var inv=_inventarioBrl();                     // ¿y hay reales para atenderlas?
   return (inv && inv.pasa) ? _colchon("vueltaBrl") : _colchon("vuelta");
 }
 function _tasasSinBrl(){
@@ -27357,23 +27531,19 @@ function _motivoPub(r){
       f2(invT.umbral)+" R$), así que subo la ida de <b>"+_tasaCorta(sinBs.ida)+"</b> a <b>"+
       _tasaCorta(r.ida)+"</b>: das más Bs por real y salen más rápido.");
   }
-  var invR=null; try{ invR=_inventarioBrl(); }catch(e){}
-  var sinBrl=(invR&&invR.pasa&&r)?_tasasSinBrl():null;
+  // ARREGLO 139: el motivo de la vuelta es que FALTEN bolívares, y se dice con
+  // los dos números —lo que tiene y lo que es un día normal suyo— para que no
+  // haya que creérselo. El P2P que se ahorra es el de las IDAS, que es el que
+  // de verdad hace: 18 compras de bolívares en octubre contra 2 de reales.
+  var fal=null; try{ fal=_faltanBs(); }catch(e){}
+  var sinBrl=(fal&&fal.pasa&&r)?_tasasSinBrl():null;
   if(sinBrl && sinBrl.vuelta!==r.vuelta){
-    lineas.push("Tienes <b>"+f2(invR.reales)+" R$</b> en cuentas (tu umbral son "+
-      f2(invR.umbral)+" R$), así que bajo la vuelta de <b>"+_tasaCorta(sinBrl.vuelta)+"</b> a <b>"+
-      _tasaCorta(r.vuelta)+"</b>: con reales en mano no tienes que hacer el P2P que esa vuelta alta cubre.");
-  }
-  // ARREGLO 135: con bolívares llenos la vuelta YA no baja, así que la línea de
-  // arriba no entra —_tasasSinBrl() devuelve la misma vuelta— y callarlo
-  // dejaría la vuelta quieta sin decir por qué, que es justo lo que este bloque
-  // existe para evitar. La condición es "los dos llenos Y la vuelta no se
-  // movió", no "no hay sinBrl": sinBrl SÍ se calcula, lo que pasa es que sale
-  // igual. Medido: con esto puesto mal, el porqué solo hablaba de la ida.
-  if(invT && invT.pasa && invR && invR.pasa && sinBrl && sinBrl.vuelta===r.vuelta){
-    lineas.push("Tienes <b>"+f2(invR.reales)+" R$</b> en cuentas y también bolívares parados, "+
-      "así que la vuelta <b>no baja</b>: bajarla traería más bolívares, que es lo contrario "+
-      "de lo que hace falta. Manda el bolívar, que es el que se devalúa.");
+    var veces=0; try{ veces=_p2pBolivaresDelMes(); }catch(e){}
+    lineas.push("Tienes <b>"+f0(fal.tiene)+" Bs</b> y un día normal tuyo son <b>"+
+      f0(fal.umbral)+"</b>"+(fal.suyo?" (lo pusiste tú)":"")+", así que bajo la vuelta de <b>"+
+      _tasaCorta(sinBrl.vuelta)+"</b> a <b>"+_tasaCorta(r.vuelta)+"</b>: cada vuelta que entre "+
+      "son bolívares que no tienes que ir a comprar"+
+      (veces>0?" — llevas <b>"+veces+"</b> compra"+(veces===1?"":"s")+" en Binance este mes":"")+".");
   }
   if(!lineas.length && !sit) return null;
   return {
