@@ -149,6 +149,8 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "_binConfianzaBanco", "_binSinBanco", "_htmlOrdenCopiable", "_htmlSupuesto",
                     "_marcarBorradoMerge", "_estaBorradoMerge", "_levantarBorradoMerge",
                     "_unirMarcasBorrado", "_tsMarca", "_revivirLote", "_huecoDeLote",
+                    "_origenBsRemesa", "_loteEsDeRemesa", "_autoMetodoTx", "_ponerMetodoTx",
+                    "_repartoFIFO", "esRutaCalce",
                     "sincronizarFIFOconCuentas", "normalizarInventarioFIFO",
                     "_podarBorrados",
                     "_trioIU", "_fiatIU", "_usdtIU", "_tasaIU", "_descuadreIU",
@@ -7570,7 +7572,7 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(/\(esRutaCalce\(ruta\)\?/.test(rn), "el selector solo sale en la ruta BRL <-> VES");
   ok(/if\(_rTx\.calce\) tc=parseFloat\(_rTx\.tc\)\|\|0;/.test(rn),
      "el recuadro «am ÷ tc» usa la tasa derivada, no la del inventario");
-  const tm = sinCom(sacarFuncion("txMetodo"));
+  const tm = sinCom(sacarFuncion("_ponerMetodoTx"));
   ok(/S\.tx\.tc_manual=""/.test(tm) && /S\.tx\.permuta=""/.test(tm),
      "cambiar de metodo limpia lo que ya no aplica");
   // Y se dice que ahi no hay comision de Binance: es la diferencia entera
@@ -9002,7 +9004,7 @@ console.log("\n— FASE 2: la cuenta madre —");
 {
   const sug  = sinComentarios(sacarFuncion("_permutaSugerida"));
   const pcp  = sinComentarios(sacarFuncion("_prConPermuta"));
-  const met  = sinComentarios(sacarFuncion("txMetodo"));
+  const met  = sinComentarios(sacarFuncion("_ponerMetodoTx"));
   const fuera= sinComentarios(sacarFuncion("_htmlPermutaFuera"));
   const av   = sinComentarios(sacarFuncion("_htmlAvisoCalce"));
 
@@ -9053,7 +9055,7 @@ console.log("\n— FASE 2: la cuenta madre —");
 // nada: ha cambiado una cosa por otra. Gana al soltar esos bolívares.
 {
   const ct  = sinComentarios(sacarFuncion("cTx"));
-  const met = sinComentarios(sacarFuncion("txMetodo"));
+  const met = sinComentarios(sacarFuncion("_ponerMetodoTx"));
   const rn  = sinComentarios(sacarFuncion("rNueva"));
 
   // 1) La permuta de la vuelta sale de la propia remesa, no de un campo.
@@ -10229,6 +10231,91 @@ console.log("\nARREGLO 137 · la marca se levanta, y el levantamiento viaja");
   }
 
   S.inventarioUsdt=inv; S.inventarioUsdt_cerrado=cer; S._deletedMerge=del;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 138 · el método se marca solo, según de dónde salgan los bolívares
+// ══════════════════════════════════════════════════════════════════════
+console.log("\nARREGLO 138 · el metodo sale del origen de los bolivares");
+{
+  const inv=S.inventarioUsdt, tx=S.tx;
+  // De donde vino un lote lo dice `origenRemesa`, NO la marca `permuta`.
+  // Medido en sus 174 lotes de VES: 24 nacieron de una remesa y solo UNO lleva
+  // `permuta`, asi que mirando la marca se acertaria en 1 de 24.
+  ok(F._loteEsDeRemesa({origenRemesa:"mX"}) === true,
+     "un lote con origenRemesa vino de una remesa");
+  ok(F._loteEsDeRemesa({permuta:true}) === false,
+     "y la marca `permuta` sola NO basta: en sus datos es 1 de los 24");
+  ok(F._loteEsDeRemesa({plataforma:"Binance P2P"}) === false,
+     "un lote de Binance salio de vender USDT");
+  {
+    const dev=sinComentarios(sacarFuncion("_origenBsRemesa"));
+    ok(/_loteEsDeRemesa\(/.test(dev),
+       "y _origenBsRemesa pregunta por ahi, no por `permuta` suelta");
+    ok(!/\.permuta/.test(dev),
+       "y no vuelve a mirar la marca por su cuenta");
+  }
+
+  const L=(id,bs,origen)=>({id:id,tipo:"venta",moneda:"VES",fecha:"10/01",fechaIso:"2026-10-01",
+    usdt:bs/1000,bs:bs,bsRestante:bs,tasa:1000,cuentaDestinoId:"bdv",
+    origenRemesa:origen||"", plataforma:origen?"Remesa":"Binance P2P"});
+
+  // Solo ventas de USDT -> P2P
+  S.inventarioUsdt=[L(1,50000,null)];
+  let o=F._origenBsRemesa("VES",10000,"bdv");
+  ok(o.metodo==="p2p" && !o.mixto, "solo de ventas de USDT -> Con USDT (P2P)");
+  // Solo bolivares que le pagaron -> calce
+  S.inventarioUsdt=[L(2,50000,"mA")];
+  o=F._origenBsRemesa("VES",10000,"bdv");
+  ok(o.metodo==="calce" && !o.mixto, "solo de bolivares que le pagaron -> Calce directo");
+  // Mixto: manda la mayoria, y se dice que es mixto
+  S.inventarioUsdt=[L(3,3000,"mA"), L(4,50000,null)];
+  o=F._origenBsRemesa("VES",10000,"bdv");
+  ok(o.mixto===true, "mixto se reconoce como mixto");
+  ok(Math.round(o.deRemesa)===3000 && Math.round(o.deVenta)===7000,
+     "y se reparte por el ORDEN FIFO, no a ojo", o.deRemesa+" / "+o.deVenta);
+  ok(o.metodo==="p2p", "con 3.000 contra 7.000 manda P2P");
+  S.inventarioUsdt=[L(5,8000,"mA"), L(6,50000,null)];
+  o=F._origenBsRemesa("VES",10000,"bdv");
+  ok(o.metodo==="calce", "con 8.000 contra 2.000 manda el calce");
+  // Sin lote detras NO decide, y cae del lado que no infla la ganancia.
+  S.inventarioUsdt=[L(7,1000,"mA")];
+  o=F._origenBsRemesa("VES",10000,"bdv");
+  ok(o.sinLote>0 && o.metodo==="p2p",
+     "lo que no sale de ningun lote no decide: manda P2P, que es el que SI paga comision");
+
+  // Lo que ella pulsa queda anotado, y desde ahi la app no se lo mueve.
+  {
+    const tm=sinComentarios(sacarFuncion("txMetodo"));
+    ok(/_metodoTocado\s*=\s*true/.test(tm), "pulsar el metodo lo marca como suyo");
+    ok(/_ponerMetodoTx\(/.test(tm), "y usa la MISMA funcion que la app, no una copia");
+    const au=sinComentarios(sacarFuncion("_autoMetodoTx"));
+    ok(/_metodoTocado/.test(au) && /return/.test(au.split("_metodoTocado")[1].slice(0,40)),
+       "y la app se para en seco si lo eligio ella");
+    ok(/_origenBsRemesa\(/.test(au),
+       "la app decide con _origenBsRemesa, la misma que escribe la linea de abajo");
+    ok(/esRutaCalce\(/.test(au),
+       "y solo en las rutas donde el calce existe");
+  }
+  // El bloque que lo explica usa la MISMA funcion. Calculado aparte, un dia la
+  // app marcaria calce con la linea de debajo diciendo venta de USDT.
+  ok(/_origenBsRemesa\(/.test(sinComentarios(sacarFuncion("_htmlDeDondeSalen"))),
+     "la linea de la pantalla sale de _origenBsRemesa, no de una cuenta propia");
+
+  // ── El atributo bien formado. ─────────────────────────────────────────
+  // Esto esta aqui por un error real: al anadir el onchange me comi la comilla
+  // que cerraba el oninput, y el HTML quedo `upC("tx") onchange='...'>` dentro
+  // del mismo atributo. El archivo seguia siendo JavaScript valido, asi que
+  // revisar.py pasaba y las guardias de texto tambien — el monto dejaba de
+  // guardarse y solo se veia TECLEANDO en el navegador.
+  ok(!/upC\(\\"tx\\"\)\s+onchange=/.test(HTML),
+     "ningun oninput se queda sin cerrar antes de su onchange");
+  ok((HTML.match(/upC\(\\"tx\\"\)' onchange='_autoMetodoTx\(\)'/g)||[]).length===2,
+     "el monto y la tasa del dia marcan el metodo al SALIR del campo (ARREGLO 32: en cada tecla mataria el campo)");
+  ok(/S\.tx\.cuentaDest=this\.value;_autoMetodoTx\(\)/.test(HTML),
+     "y cambiar la cuenta de entrega tambien, que cambia de que lotes sale");
+
+  S.inventarioUsdt=inv; S.tx=tx;
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

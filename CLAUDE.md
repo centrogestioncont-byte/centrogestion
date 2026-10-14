@@ -1594,6 +1594,86 @@ tope avisa y no mueve nada, y **el Banco de Venezuela no se movió ni un céntim
 
 ---
 
+### El método de la remesa sale del INVENTARIO, no de su memoria (ARREGLO 138)
+
+Sus palabras del 14/10: *"para seleccionar la ganancia es automático según lo que
+tenga en inventario: si solo tengo por venta y compra de USDT salga por ahí, si
+solo tengo porque me pagaron Bs solo salga eso, y si es mixto según el orden de
+cómo se debe descontar… porque así como está tengo que ir a inventario para ver
+por dónde es que tengo esos Bs"*.
+
+**Y no es comodidad: los dos métodos no son dos formas de contar lo mismo.** El
+calce no paga la comisión de Binance porque no pasa por Binance. Elegirlo cuando
+sí hubo que vender USDT apunta una ganancia que no tuvo.
+
+**De dónde vino un lote lo dice `origenRemesa`, NO la marca `permuta`.** Medido
+en sus 174 lotes de VES, y es lo que salvó este arreglo de nacer torcido:
+
+```
+origenRemesa lleno  →  se los pagaron (una vuelta, o un cruce)    24 lotes
+origenRemesa vacío  →  salieron de vender USDT                   150 lotes
+```
+
+De esos 24, **solo UNO lleva `permuta:true`** —el resto son vueltas normales, con
+plataforma `"Remesa"`— así que mirando la marca se acertaría en 1 de 24. En los
+174 la regla no falla ni una vez.
+
+**Y el caso mixto casi no existe en su operación.** De sus 330 remesas que se
+pueden rastrear por su espejo de lotes:
+
+```
+solo de ventas de USDT ........ 306
+solo de bolívares que le pagaron  24
+MIXTAS ........................   0
+```
+
+Por eso manda la mayoría y se dice, en vez de partir la ganancia por lote: eso
+tocaría `cTx()`, de donde sale todo, y cambiaría los números que ve hoy por un
+caso que nunca le ha pasado.
+
+- **El origen se calcula en UN sitio** (`_origenBsRemesa`, sobre `_repartoFIFO`):
+  lo leen el método que se marca solo **y** la línea que lo explica. Calculado
+  aparte, un día la app marcaría *calce* con la línea de debajo diciendo que
+  salen de una venta de USDT.
+- **Lo que no sale de ningún lote no decide**, y cae del lado de **P2P** — el
+  caso normal (306 de 330) y además el que **sí** paga la comisión. Ante la duda,
+  el que no infla la ganancia.
+- **Si ella pulsa el botón, manda lo suyo y la app no se lo vuelve a mover.**
+  Puede haber un calce de verdad que el inventario no sepa. Misma regla que el
+  campo de la permuta, que se rellena solo pero no pisa lo suyo (ARREGLO 123).
+- **Y se marca al SALIR del campo, no en cada tecla.** Cambiar el método rehace
+  el bloque 3 entero —los campos de la permuta aparecen y desaparecen— y con el
+  dedo dentro de un campo eso lo mata (ARREGLO 32). Mientras teclea no se queda
+  muda: la línea de *"de dónde salen"* se refresca en `upC()` y ya dice qué
+  método va a salir.
+- **La fila dice de dónde vino cada parte.** Antes solo se marcaba el lote con
+  `permuta:true`, o sea 1 de los 24: los otros 23 salían sin distintivo, igual
+  que una venta de USDT — y eso es justo lo que ella tenía que ir a mirar.
+
+Medido en Chromium con su export, los cuatro casos: solo ventas → P2P; todo de
+vueltas → calce, con la permuta rellena sola (200,72); mixto 3.000/6.350 → P2P
+diciendo la proporción; y pulsándolo ella, la app no se lo mueve. 29 pestañas,
+0 errores.
+
+#### Y un error mío que ninguna guardia habría cazado
+
+Al añadir el `onchange` me comí la comilla que cerraba el `oninput`, y el HTML
+quedó así dentro del mismo atributo:
+
+```
+oninput='S.tx.am=_num(this.value);upC("tx") onchange='_autoMetodoTx()'>
+```
+
+El archivo seguía siendo JavaScript válido, así que `revisar.py` pasaba y las
+guardias de texto también. **El monto dejaba de guardarse**: el campo enseñaba
+50 y `S.tx.am` se quedaba vacío. Solo se vio **tecleando en el navegador**. Hay
+guardia para ese patrón exacto y una prueba negativa que lo reinyecta.
+
+Es la lección del ARREGLO 121 y del 136 por tercera vez: **cuando un arreglo toca
+un campo donde ella escribe, hay que escribir en él.**
+
+---
+
 ### La tasa de referencia sale sola — no la escribas a mano
 
 Antes mandaba lo que ella escribía en el panel 💱, y mandaba para siempre:
