@@ -2636,7 +2636,17 @@ function esCalceDirecto(f, ruta){
 // Cambiar de metodo no puede dejar puesto lo del otro: una tasa de compra
 // escrita a mano en P2P no significa nada en calce, y la permuta no significa
 // nada en P2P. Dejarlas se lee como que siguen mandando.
+// ARREGLO 138: lo que PULSA ella. Queda anotado que lo eligió a mano, y desde
+// ese momento la app no se lo vuelve a mover: puede haber un calce de verdad
+// que el inventario no sepa. Es la misma regla que el campo de la permuta, que
+// se rellena solo pero no pisa lo suyo (ARREGLO 123).
 function txMetodo(m){
+  if(S.tx) S.tx._metodoTocado=true;
+  _ponerMetodoTx(m);
+  R();
+}
+// Y lo que pone la app sola. Sin R(): quien llama decide si se puede repintar.
+function _ponerMetodoTx(m){
   S.tx.metodo = (m==="calce") ? "calce" : "p2p";
   if(S.tx.metodo==="calce"){
     S.tx.tc_manual="";
@@ -2654,6 +2664,28 @@ function txMetodo(m){
     }
   }
   else S.tx.permuta="";
+}
+// Marca el método que toca, según de dónde salgan los bolívares.
+//
+// Se llama al SALIR del campo (onchange), nunca en cada tecla: cambiar el
+// método rehace el bloque 3 entero —los campos de la permuta aparecen y
+// desaparecen— y con el dedo dentro de un campo eso lo mata (ARREGLO 32). Al
+// perder el foco ya no hay nada bajo el dedo y se puede repintar.
+//
+// Mientras teclea no se queda muda: la línea de "de dónde salen" se refresca en
+// upC() y ya dice qué método va a salir.
+function _autoMetodoTx(){
+  if(!S.tx || S.tx._metodoTocado) return;
+  var ruta=getRutas().find(function(r){return r.rt===S.tx.rt;})||getRutas()[0];
+  if(!ruta || !esRutaCalce(ruta)) return;
+  var res; try{ res=cTx(); }catch(e){ return; }
+  var cant=parseFloat(res&&res.cant)||0;
+  if(!(cant>0)) return;
+  var org=_origenBsRemesa(ruta.dest||"VES", cant, S.tx.cuentaDest);
+  if(!org) return;
+  var ahora=(S.tx.metodo==="calce")?"calce":"p2p";
+  if(org.metodo===ahora) return;
+  _ponerMetodoTx(org.metodo);
   R();
 }
 // ═══════════════════════════════════════════════════════════════════════
@@ -2920,7 +2952,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261014_v219";
+var APP_VERSION = "20261014_v220";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -18947,9 +18979,13 @@ function _htmlDeDondeSalen(res, ruta){
     var bpr=(esVes&&varias)?_bsPorReal(f.tasa):null;
     // La fila prestada es la que NO tiene lote detrás, y se dice con esas
     // palabras: es la única cuya tasa no sale de una operación suya.
+    // ARREGLO 138: y de DONDE vino. Antes solo se marcaba el lote con
+    // `permuta:true`, que en sus 174 lotes de VES es 1 de los 24 que nacieron
+    // de una remesa: los otros 23 salían sin distintivo, igual que una venta de
+    // USDT. Y eso es justo lo que ella tenía que ir a mirar a Inventario.
     var de=f.prestada ? "<span style='color:var(--mal)'> · sin lote, tasa prestada</span>"
                       : "<span style='color:var(--tx4)'> · "+_escAud((f.lote&&f.lote.fecha)||"")+
-                        ((f.lote&&f.lote.permuta)?" · cruce":"")+"</span>";
+                        " · "+(_loteEsDeRemesa(f.lote)?"te pagaron estos "+uni:"venta de USDT")+"</span>";
     return "<div style='display:flex;justify-content:space-between;gap:8px;padding:3px 0;font-size:11.5px'>"+
       "<span style='color:var(--tx2)'><b>"+f0(f.usa)+"</b> "+uni+de+"</span>"+
       "<span style='color:var(--tx3);white-space:nowrap'>"+f2(f.tasa)+" "+uni+"/USDT"+
@@ -18977,10 +19013,26 @@ function _htmlDeDondeSalen(res, ruta){
     falta="<div style='margin-top:6px;font-size:11.5px;color:var(--mal);font-weight:700'>"+
       "\u26a0\ufe0f Te faltan "+f0(rep.rest)+" "+uni+" y no hay ninguna tasa con la que valorarlos. "+
       "Registra la operación de USDT que los trajo.</div>";
+  // ARREGLO 138: y qué método sale de ahí, en el MISMO recuadro. Dicho en otro
+  // sitio habría dos cajas hablando del mismo dinero — el ARREGLO 125.
+  var org=_origenBsRemesa(dest, cant, S.tx && S.tx.cuentaDest);
+  var met="";
+  if(org && esRutaCalce(ruta)){
+    var esCalce=(org.metodo==="calce");
+    met="<div style='margin-top:6px;padding-top:6px;border-top:1px solid var(--ln);font-size:11.5px;color:var(--tx2)'>"+
+      (org.mixto
+        ? "Salen de los dos sitios: <b>"+f0(org.deRemesa)+"</b> "+uni+" que te pagaron y <b>"+
+          f0(org.deVenta+org.sinLote)+"</b> de ventas de USDT → manda "
+        : "→ ")+
+      "<b style='color:"+(esCalce?"var(--rol-ee)":"var(--ok)")+"'>"+
+        (esCalce?"\ud83e\udd1d Calce directo":"\ud83d\udd01 Con USDT (P2P)")+"</b>"+
+      ((S.tx&&S.tx._metodoTocado)?" <span style='color:var(--tx4)'>· lo elegiste t\u00fa, no se toca</span>":"")+
+    "</div>";
+  }
   return "<div style='background:var(--sup2d);border:1px solid var(--ln);border-radius:9px;padding:9px 12px;margin-bottom:8px'>"+
     "<div style='font-size:10.5px;color:var(--tx4);font-weight:700;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px'>"+
       "De d\u00f3nde salen los "+f0(cant)+" "+uni+"</div>"+
-    rep.filas.map(fila).join("")+ pie + falta +
+    rep.filas.map(fila).join("")+ pie + falta + met +
   "</div>";
 }
 function _htmlAvisoCalce(res, ruta){
@@ -19985,6 +20037,58 @@ function getTasaCompraPonderada(moneda,montoOrigen,cuentaOrigenId){
 // es IDÉNTICA a la de antes, monto a monto.
 //
 // Es de solo lectura: no toca el inventario, solo mira.
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 138 · el método se marca solo, según de dónde salgan los bolívares
+// ══════════════════════════════════════════════════════════════════════
+// Sus palabras del 14/10: "para seleccionar la ganancia es automático según lo
+// que tenga en inventario: si solo tengo por venta y compra de USDT salga por
+// ahí, si solo tengo porque me pagaron Bs solo salga eso, y si es mixto según
+// el orden de cómo se debe descontar... porque así como está tengo que ir a
+// inventario para ver por dónde es que tengo esos Bs".
+//
+// Y no es comodidad: los dos métodos no son dos formas de contar lo mismo. El
+// calce no paga la comisión de Binance porque no pasa por Binance. Elegirlo
+// cuando sí hubo que vender USDT apunta una ganancia que no tuvo.
+//
+// DE DONDE VINO UN LOTE LO DICE `origenRemesa`, NO LA MARCA `permuta`. Medido
+// en sus 174 lotes de VES, que es lo que salvó este arreglo de nacer torcido:
+//
+//   origenRemesa lleno  →  se los pagaron (una vuelta, o un cruce)   24 lotes
+//   origenRemesa vacío  →  salieron de vender USDT                  150 lotes
+//
+// De esos 24, solo UNO lleva `permuta:true` —el resto son vueltas normales, con
+// plataforma "Remesa"— así que mirando la marca se acertaría en 1 de 24. En los
+// 174 la regla no falla ni una vez.
+//
+// Y EL CASO MIXTO CASI NO EXISTE en su operación. De sus 330 remesas que se
+// pueden rastrear: 306 salieron solo de ventas de USDT, 24 solo de bolívares
+// que le pagaron, y CERO de los dos. Por eso manda la mayoría y se dice, en vez
+// de partir la ganancia por lote: eso tocaría cTx(), de donde sale todo, y
+// cambiaría los números que ve hoy por un caso que nunca le ha pasado.
+function _loteEsDeRemesa(l){ return !!(l && l.origenRemesa); }
+// De dónde sale el dinero que se va a entregar, en UN solo recorrido. Lo leen
+// el método que se marca solo y la línea que lo explica: calculado aparte, un
+// día la app marcaría "calce" con la línea de debajo diciendo que salen de una
+// venta de USDT. Es la regla del 34,27 contra el 34,28.
+function _origenBsRemesa(monedaDest, montoBs, cuentaDestinoId){
+  var rep;
+  try{ rep=_repartoFIFO(monedaDest, montoBs, cuentaDestinoId); }catch(e){ return null; }
+  if(!rep || !rep.filas || !rep.filas.length) return null;
+  var deRemesa=0, deVenta=0, sinLote=0;
+  rep.filas.forEach(function(f){
+    var m=parseFloat(f.usa)||0;
+    if(f.prestada||!f.lote) sinLote+=m;
+    else if(_loteEsDeRemesa(f.lote)) deRemesa+=m;
+    else deVenta+=m;
+  });
+  // Sin lote detrás no se sabe de dónde vino, así que no decide: cuenta del
+  // lado de P2P, que es el caso normal (306 de 330) y además el que SÍ paga la
+  // comisión. Ante la duda, el que no infla la ganancia.
+  return {rep:rep, deRemesa:deRemesa, deVenta:deVenta, sinLote:sinLote,
+          total:deRemesa+deVenta+sinLote,
+          metodo:(deRemesa > deVenta+sinLote) ? "calce" : "p2p",
+          mixto:(deRemesa>0.01 && deVenta+sinLote>0.01)};
+}
 function _repartoFIFO(monedaDest, montoBs, cuentaDestinoId){
   normalizarInventarioFIFO();
   var dest=monedaDest||"VES";
@@ -28004,8 +28108,8 @@ function rNueva(){
     "<div class='fl'><label>Nombre del cliente (auto)</label><input id='tx-nm' type='text' placeholder='Se llena al escribir código' value='"+(f.cl||"")+"' oninput='S.tx.cl=this.value' style='background:"+(f.cl?"var(--vd6-a)":"var(--sup)")+";border-color:"+(f.cl?"var(--ok-ln)":"var(--ln)")+"'></div></div>"+
     "<div class='fl' style='max-width:240px'><label>País destino (automático)</label><div style='background:var(--sup2g);border-radius:7px;padding:8px 12px;font-size:13px;font-weight:700'>"+ruta.flag+" "+ruta.pais+"</div></div></div>"+
     "<div class='sec' style='border-left:3px solid var(--info)'><div class='sec-title' style='color:var(--info)'>1️⃣ Monto recibido en "+ruta.orig+" · Tasa del día</div>"+
-    "<div class='f2'><div class='fl'><label>Valor de transacción ("+ruta.orig+")</label><input type='text' inputmode='decimal' placeholder='ej: 50' value='"+(f.am||"")+"' oninput='S.tx.am=_num(this.value);upC(\"tx\")'></div>"+
-    "<div class='fl'><label>"+ruta.lDia+(defTdia&&!f.tdia?" <span style='font-size:11px;color:var(--rol-na);font-weight:600'>← Config: "+defTdia+"</span>":"")+"</label><input type='text' inputmode='decimal' step='0.001' placeholder='"+(defTdia?"Config: "+defTdia:"ej: 629")+"' value='"+tdiaVal+"' oninput='S.tx.tdia=_num(this.value);upC(\"tx\")'></div></div>"+
+    "<div class='f2'><div class='fl'><label>Valor de transacción ("+ruta.orig+")</label><input type='text' inputmode='decimal' placeholder='ej: 50' value='"+(f.am||"")+"' oninput='S.tx.am=_num(this.value);upC(\"tx\")' onchange='_autoMetodoTx()'></div>"+
+    "<div class='fl'><label>"+ruta.lDia+(defTdia&&!f.tdia?" <span style='font-size:11px;color:var(--rol-na);font-weight:600'>← Config: "+defTdia+"</span>":"")+"</label><input type='text' inputmode='decimal' step='0.001' placeholder='"+(defTdia?"Config: "+defTdia:"ej: 629")+"' value='"+tdiaVal+"' oninput='S.tx.tdia=_num(this.value);upC(\"tx\")' onchange='_autoMetodoTx()'></div></div>"+
     "<div id='s1-tx'>"+(ok?"<div class='step-box' style='background:var(--info-sup);border:1px solid var(--az2a33)'><span style='font-size:11px;color:var(--info)'>"+(ruta.orig==="VES"?(f2(am)+" "+ruta.orig+" ÷ "+f2(tdia)):(f2(am)+" "+ruta.orig+" × "+f2(tdia)))+" = </span><span style='font-weight:700;font-size:14px;color:var(--info)'>📦 "+f0(cant)+" "+ruta.dest+" a entregar</span></div>":"")+"</div></div>"+
     // ── Las cuentas van DESPUÉS del monto (sus palabras: "donde me ponga
     // a colocar qué paga cada uno y después que me ponga a seleccionar en
@@ -28056,7 +28160,7 @@ function rNueva(){
                 _escAud(c.nombre)+" ("+f2(s)+" "+destMon+")"+_notaSaldoCuenta(c," \u26a0\ufe0f d\u00e9ficit")+"</option>";
             }).join("");
             html+="<div class='fl'><label>📤 ¿De qué cuenta salen los "+destMon+"? </label>"+
-              "<select onchange='S.tx.cuentaDest=this.value'>"+optsD+"</select>"+
+              "<select onchange='S.tx.cuentaDest=this.value;_autoMetodoTx()'>"+optsD+"</select>"+
               "<div onclick='txEntregasToggle()' style='font-size:11px;color:var(--mo3);cursor:pointer;margin-top:6px;font-weight:600'>➕ Pagué desde varias cuentas</div></div>";
           } else {
             html+="<div class='fl' style='grid-column:1/-1'>"+_txEntregasHTML(cuentasDest,destMon)+"</div>";
