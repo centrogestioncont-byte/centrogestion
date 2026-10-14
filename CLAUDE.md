@@ -1492,6 +1492,108 @@ llegado del otro aparato. **El registro de auditoría vive en su servidor y desd
 el entorno de desarrollo no se alcanza**, así que esa parte se queda sin cerrar.
 
 
+### El borrado devolvía el FIFO y el servidor se lo llevaba (ARREGLO 137)
+
+Lo cazó ella el 13/10: *"acabo de borrar una remesa, se borró, regresó fino a la
+cuenta, mas al FIFO no regresó"*. Y tenía razón entera.
+
+**El ARREGLO 127 hacía bien su parte. Moría en el viaje al servidor**, y eso no
+se ve desde una sola pestaña. Reproducido en Chromium con su export, borrando la
+remesa **#799** (100 R$ → 18.600 Bs), que es la que ella borró:
+
+```
+1 · antes de borrar        lote 06/10 archivado en 0
+2 · recién borrado         lote 06/10 REVIVE con 19,8847   ✅ el borrado funciona
+3 · el servidor contesta   lote 06/10 vuelve a 0            ❌ aquí muere
+4 · dibujas Inventario     sigue en 0
+```
+
+Son **dos mitades, y las dos eran correctas por separado**:
+
+- las marcas de borrado **se unen y nunca se quitan** (ARREGLO 6c: quitarlas
+  revive lo borrado), así que la que `_revivirLote` quitaba aquí volvía del
+  servidor y la poda se llevaba el lote otra vez;
+- la copia archivada seguía en el `inventarioUsdt_cerrado` **del servidor**, que
+  también se une, así que el lote volvía a estar en cero.
+
+De ahí el síntoma exacto: **la cuenta sí volvía y el FIFO no.** La cuenta cambia
+el registro, lleva su `_mod` y no tiene marca; el lote se mueve entre dos listas
+y la marca decide por él.
+
+**Solo pasa cuando el lote que se gastó YA estaba archivado.** Uno vivo no lleva
+marca y sobrevive — medido: 391,88 → 411,76, aguanta la sincronización.
+
+El arreglo **no es dejar de unir** —eso ya costó una vez—: es que la marca pueda
+decir *"esto se levantó, y CUÁNDO"*. Con la hora dentro, la unión decide sola y
+manda lo último que pasó, como en todo lo demás.
+
+- **Una marca se LEVANTA, no se borra** (`_levantarBorradoMerge`, con `revive`).
+  Lo que no está no le gana a nada. `_olvidarBorradoMerge` se retiró; su único
+  llamador —reabrir un mes— tenía el mismo agujero entre dos aparatos.
+- **La unión se queda con la MÁS NUEVA, no con la primera**
+  (`_unirMarcasBorrado`), y está escrita **una vez**: la usan la respuesta de la
+  API y la importación de un archivo, que tenían cada una su copia decidiendo
+  por orden.
+- **Revivir son DOS mitades y faltando cualquiera vuelve el fallo**: levantar la
+  marca del vivo **y** enterrar la copia archivada. Hay una prueba negativa por
+  cada una, porque pidiendo solo la primera la otra se podía quitar.
+- **Y archivar hace el camino de vuelta.** Un lote que revivió lleva su copia
+  archivada enterrada; sin levantar esa marca al archivarlo, no podría volver al
+  archivo nunca más.
+- **Enterrar y levantar dentro del mismo milisegundo deja un EMPATE**, y en un
+  empate no se sabe cuál mandó. Las dos escrituras se fuerzan estrictamente por
+  encima de lo que hubiera. Lo cazaron las pruebas, que corren las dos seguidas.
+- **`_marcarBorradoMerge` reemplaza la entrada del mismo id.** Antes hacía
+  `push` a secas, así que enterrar algo levantado dejaba **dos** entradas y
+  `_estaBorradoMerge` contesta con `some`: mandaba la que no llevaba
+  levantamiento, y el levantamiento no se podía deshacer nunca.
+- **La huella que decide si hay que guardar tiene que VER el levantamiento.**
+  Mirando solo el id, levantar una marca no cambiaba nada y el guardado no
+  salía: el arreglo se quedaba en el aparato.
+
+**La lección, y es la del ARREGLO 121 y la del 91 otra vez:** las guardias
+estructurales del 127 dieron verdes porque el código decía lo que debía decir.
+Lo cazó ejecutar el **ciclo entero** —borrar, guardar, adoptar la respuesta— en
+Chromium. **Cuando un arreglo toca algo que se SINCRONIZA, hay que hacerle dar
+la vuelta al servidor**, no probarlo en una pestaña sola.
+
+#### Y por fin se puede devolver a mano lo que un borrado no devolvió
+
+La tabla 📦 Archivados era de **solo lectura** —ni ✏️ ni 🗑️— así que un lote al
+que le faltaba lo suyo no se podía reparar desde la app. Y el arreglo de arriba
+**no lo repara**: vale de aquí en adelante, y la remesa que sabía cuánto se había
+gastado ya no existe.
+
+Lo que ella tuvo que devolver por su borrado del 13/10:
+
+```
+lote del 06/10 · compra BRL a 5,028    →  19,8847 USDT
+lote del 07/10 · venta  VES a 995,50   →  18.600,00 Bs
+```
+
+- **NO mueve ninguna cuenta, y se dice en la propia pregunta.** El dinero del
+  banco ya volvió al borrar la remesa; lo roto es el inventario, que es de donde
+  salen las tasas que la app sugiere. Tocar la cuenta aquí la subiría dos veces
+  por el mismo dinero. Hay una guardia que lo prohíbe por nombre.
+- **No se puede devolver más de lo que el lote fue.** Inventarle saldo a un lote
+  le cambia la tasa que la app sugiere.
+- **El hueco se calcula en UN sitio** (`_huecoDeLote`): lo leen el botón que se
+  dibuja y la función que devuelve. Calculado aparte, un día el botón saldría
+  sobre un lote que no admite nada.
+- **Y el botón va en la PRIMERA columna, que no es estética.** Esa tabla mide
+  560 px de ancho mínimo y hace scroll horizontal; en su teléfono son 412, así
+  que al final quedaba **fuera de pantalla** y había que arrastrar la tabla para
+  encontrarlo. Medido en Chromium, y es el único camino para reparar un lote:
+  escondido tras un arrastre no existe.
+
+Probado pulsándolo de verdad en Chromium con su export: 361 botones para los 361
+lotes archivados con hueco, el prompt y el confirm con sus tres números, el lote
+pasa a vivo con 19,8847, sale del archivo, las dos marcas quedan al derecho, el
+tope avisa y no mueve nada, y **el Banco de Venezuela no se movió ni un céntimo**.
+29 pestañas, 0 errores.
+
+---
+
 ### La tasa de referencia sale sola — no la escribas a mano
 
 Antes mandaba lo que ella escribía en el panel 💱, y mandaba para siempre:

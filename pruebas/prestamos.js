@@ -147,7 +147,9 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "_binIdentificar", "_binOrdenesC2C", "_binConverts", "_binDias",
                     "_binMonedaConocida", "_binYaRegistrado", "_binCuentaSugerida", "_binMesCerrado",
                     "_binConfianzaBanco", "_binSinBanco", "_htmlOrdenCopiable", "_htmlSupuesto",
-                    "_marcarBorradoMerge", "_estaBorradoMerge", "_olvidarBorradoMerge",
+                    "_marcarBorradoMerge", "_estaBorradoMerge", "_levantarBorradoMerge",
+                    "_unirMarcasBorrado", "_tsMarca", "_revivirLote", "_huecoDeLote",
+                    "sincronizarFIFOconCuentas", "normalizarInventarioFIFO",
                     "_podarBorrados",
                     "_trioIU", "_fiatIU", "_usdtIU", "_tasaIU", "_descuadreIU",
                     "_monIU", "_loteConOrden", "_ultimasIU"];
@@ -4715,8 +4717,8 @@ console.log("\n— Reabrir un mes tiene que sobrevivir a la fusion —");
 // la poda se lo comeria otra vez.
 {
   const ej = sinComentarios(sacarFuncion("ejecutarCierreMes"));
-  ok(/_olvidarBorradoMerge\("cierresMes"/.test(ej),
-     "y al volver a cerrar, la marca se retira");
+  ok(/_levantarBorradoMerge\("cierresMes"/.test(ej),
+     "y al volver a cerrar, la marca se LEVANTA (ARREGLO 137: quitarla a secas la devolvia el servidor)");
 }
 // La aritmetica de las tres piezas, de punta a punta.
 S._deletedMerge = {};
@@ -4731,7 +4733,7 @@ ok(!S.cierresMes.some((c) => c.mesKey === "2026-09"),
    "aunque el servidor lo devuelva, la poda lo saca");
 ok(S.cierresMes.some((c) => c.mesKey === "2026-08"), "sin tocar los demas meses");
 // Y al cerrarlo otra vez, la marca se va y el cierre se queda.
-F._olvidarBorradoMerge("cierresMes", "2026-09");
+F._levantarBorradoMerge("cierresMes", "2026-09");
 S.cierresMes.push({ mesKey: "2026-09" });
 F._podarBorrados();
 ok(S.cierresMes.some((c) => c.mesKey === "2026-09"),
@@ -6585,8 +6587,13 @@ console.log("\n— FASE 2: la cuenta madre —");
      "y se usa en Operaciones y en los dos tipos de egreso");
 
   // Quien borro: un registro borrado ya no esta para llevar su sello.
-  ok(/push\(\{id:id,ts:Date\.now\(\),por:_quienSoy\(\)\}\)/.test(HTML),
+  // ARREGLO 137: el `ts` ya no es Date.now() a secas — se fuerza por encima de
+  // lo que hubiera, para que enterrar y levantar en el mismo milisegundo no
+  // deje un empate. Lo que esta guardia protege sigue siendo el sello.
+  ok(/push\(\{id:id,ts:Math\.max\(Date\.now\(\),previa\+1\),por:_quienSoy\(\)\}\)/.test(HTML),
      "la marca de borrado lleva quien borro");
+  ok(/push\(\{id:id,ts:0,revive:Date\.now\(\),por:_quienSoy\(\)\}\)/.test(HTML),
+     "y el levantamiento tambien, que es un cambio igual de suyo");
 
   // El registro de auditoria lo escribe la app, asi que un sitio que se
   // olvide es un sitio del que no queda rastro. Estos tres no anotaban nada.
@@ -9353,8 +9360,15 @@ console.log("\nARREGLO 127 · al borrar, el dinero vuelve al lote que se gastó"
      "el lote archivado vuelve a la lista viva");
   ok(S.inventarioUsdt[0].bsRestante===10000, "con su dinero", S.inventarioUsdt[0].bsRestante);
   ok(!S.inventarioUsdt[0]._cerrado, "y sin la marca de cerrado");
-  ok(!(S._deletedMerge.inventarioUsdt||[]).some(x=>x.id===11),
-     "y sin la marca de borrado, o el otro aparato lo borra otra vez");
+  // ARREGLO 137: la marca NO desaparece — se LEVANTA. Quitarla a secas es lo
+  // que hacia el 127, y lo que no esta no le gana a la marca que el servidor
+  // todavia tiene: volvia en la respuesta y el lote se moria otra vez.
+  ok(!F._estaBorradoMerge("inventarioUsdt", 11),
+     "y deja de contar como borrado, o el otro aparato lo borra otra vez");
+  ok((S._deletedMerge.inventarioUsdt||[]).some(x=>x.id===11 && x.revive>x.ts),
+     "pero la marca sigue ahi, LEVANTADA: es lo unico que le gana a la del servidor");
+  ok(F._estaBorradoMerge("inventarioUsdt_cerrado", 11),
+     "y la copia archivada queda enterrada, o el servidor la devuelve y el lote vuelve a cero");
 
   // 2) Cada lote recibe LO SUYO, no el primero todo. Es el fallo que se midió
   //    al borrar su #818: los 200.000 se metían enteros en el lote vivo.
@@ -9408,8 +9422,15 @@ console.log("\nARREGLO 127 · al borrar, el dinero vuelve al lote que se gastó"
   ok(/inventarioUsdt_cerrado=\(S\.inventarioUsdt_cerrado\|\|\[\]\)\.filter/.test(rev) &&
      /S\.inventarioUsdt=\(S\.inventarioUsdt\|\|\[\]\)\.concat/.test(rev),
      "_revivirLote lo saca del archivo y lo mete en los vivos");
-  ok(/_deletedMerge\[.inventarioUsdt.\]=m\.filter/.test(rev),
-     "y le quita la marca de borrado");
+  // ARREGLO 137 · las DOS mitades, y faltando cualquiera la cuenta vuelve y
+  // el FIFO no. Exigidas por separado: pidiendo solo una, la otra se podia
+  // quitar y la prueba pasaba.
+  ok(/_levantarBorradoMerge\("inventarioUsdt",/.test(rev),
+     "_revivirLote LEVANTA la marca del vivo (quitarla a secas la devolvia el servidor)");
+  ok(/_marcarBorradoMerge\("inventarioUsdt_cerrado",/.test(rev),
+     "y ENTIERRA la copia archivada, o la del servidor vuelve y lo deja en cero");
+  ok(!/_deletedMerge\[.inventarioUsdt.\]=m\.filter/.test(rev),
+     "y ya no borra la entrada a mano: eso es justo lo que se perdia al sincronizar");
 
 
   // Una sola copia del lado de compras: estaba escrito dos veces.
@@ -10087,6 +10108,127 @@ console.log("\nARREGLO 134 · el apartamento y su cronograma");
      "al pagar la señal, lo pagado sube 500 y lo que falta baja 500");
   ok(Math.abs((R2.pagado+R2.falta)-R1.propio)<0.005,
      "y pagado + falta sigue siendo lo propio");
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 137 · una marca de borrado se puede LEVANTAR, y el levantamiento viaja
+// ══════════════════════════════════════════════════════════════════════
+console.log("\nARREGLO 137 · la marca se levanta, y el levantamiento viaja");
+{
+  const inv=S.inventarioUsdt, cer=S.inventarioUsdt_cerrado, del=S._deletedMerge;
+
+  // ── La aritmetica de la marca ────────────────────────────────────────
+  S._deletedMerge={};
+  F._marcarBorradoMerge("inventarioUsdt", 7);
+  ok(F._estaBorradoMerge("inventarioUsdt", 7), "enterrada: cuenta como borrado");
+  F._levantarBorradoMerge("inventarioUsdt", 7);
+  ok(!F._estaBorradoMerge("inventarioUsdt", 7), "levantada: deja de contar");
+  ok((S._deletedMerge.inventarioUsdt||[]).length===1,
+     "y sigue habiendo UNA entrada, no dos: con dos, `some` encuentra la enterrada y manda ella");
+  F._marcarBorradoMerge("inventarioUsdt", 7);
+  ok(F._estaBorradoMerge("inventarioUsdt", 7), "y se puede volver a enterrar");
+  ok((S._deletedMerge.inventarioUsdt||[]).length===1, "tampoco ahi se duplica");
+
+  // ── La union: manda la MAS NUEVA, no la primera ──────────────────────
+  // Esto es el fallo de verdad. El aparato levanta la marca; el servidor
+  // contesta con la suya todavia enterrada. Si gana la del servidor, el lote
+  // que acaba de revivir se muere en la respuesta del mismo guardado.
+  {
+    const local ={inventarioUsdt:[{id:9,ts:1000,revive:2000}]};
+    const remoto={inventarioUsdt:[{id:9,ts:1000}]};
+    const u=F._unirMarcasBorrado(local,remoto);
+    ok(u.inventarioUsdt.length===1, "una sola entrada por id");
+    ok(u.inventarioUsdt[0].revive===2000,
+       "gana el levantamiento del aparato, no la marca vieja del servidor");
+    // Y al reves: si el servidor trae un entierro MAS NUEVO que mi
+    // levantamiento, manda el servidor. Lo ultimo que paso gana, siempre.
+    const u2=F._unirMarcasBorrado({inventarioUsdt:[{id:9,ts:1000,revive:2000}]},
+                                  {inventarioUsdt:[{id:9,ts:3000}]});
+    ok(u2.inventarioUsdt[0].ts===3000 && !u2.inventarioUsdt[0].revive,
+       "y un entierro mas nuevo le gana al levantamiento viejo");
+  }
+  // Y se escribe UNA vez: los dos sitios que unian marcas la llaman.
+  ok(/_unirMarcasBorrado\(/.test(sinComentarios(HTML.split("_aplicarEstadoDeApi")[1]||"").slice(0,20000)),
+     "la respuesta de la API une con _unirMarcasBorrado");
+  ok((HTML.match(/_unirMarcasBorrado\(/g)||[]).length>=3,
+     "y la importacion de archivo tambien, en vez de su propia copia");
+  // Ninguno de los dos puede volver a deduplicar quedandose con la primera:
+  // asi es como se perdia un levantamiento, decidiendolo el orden.
+  ok(!/var kk=String\(x&&x\.id\); if\(vistos\[kk\]\)return false/.test(HTML),
+     "y ya no queda ningun dedupe que se quede con la primera que encuentra");
+
+  // ── Las DOS mitades de revivir, ejecutadas ───────────────────────────
+  S.inventarioUsdt=[]; S.inventarioUsdt_cerrado=[];
+  const lote={id:21,tipo:"venta",moneda:"VES",fecha:"10/11",fechaIso:"2026-10-11",
+              usdt:10,bs:10000,bsRestante:5000,tasa:1000,_cerrado:true,_fechaCierre:"2026-10-12"};
+  S.inventarioUsdt_cerrado=[lote];
+  S._deletedMerge={inventarioUsdt:[{id:21,ts:Date.now(),por:"x"}]};
+  F._revivirLote(lote);
+  ok(S.inventarioUsdt.length===1 && !S.inventarioUsdt_cerrado.length,
+     "revivir lo pasa del archivo a los vivos");
+  ok(!F._estaBorradoMerge("inventarioUsdt",21),
+     "deja de contar como borrado en los vivos");
+  ok(F._estaBorradoMerge("inventarioUsdt_cerrado",21),
+     "y la copia archivada queda ENTERRADA, o la del servidor lo devuelve a cero");
+  // El camino de vuelta: se gasta del todo y tiene que poder volver al archivo.
+  S.inventarioUsdt[0].bsRestante=0;
+  S.cuentas=S.cuentas||[];
+  F.sincronizarFIFOconCuentas();
+  ok(!S.inventarioUsdt.length && S.inventarioUsdt_cerrado.length===1,
+     "gastado del todo, vuelve al archivo");
+  ok(F._estaBorradoMerge("inventarioUsdt",21) && !F._estaBorradoMerge("inventarioUsdt_cerrado",21),
+     "y las dos marcas se dan la vuelta: sin esto no podria archivarse nunca mas");
+
+  // ── El boton de devolver (B) ─────────────────────────────────────────
+  // La huella que decide si hay que guardar tiene que VER el levantamiento.
+  // Mirando solo el id, levantar una marca no cambiaba nada y el guardado no
+  // salia: el arreglo se quedaba en el aparato.
+  {
+    const hu=sinComentarios(sacarFuncion("_huellaCompleta"));
+    ok(/x&&x\.revive/.test(hu) && /x&&x\.ts/.test(hu),
+       "_huellaCompleta distingue una marca levantada de una enterrada");
+  }
+  ok(F._huecoDeLote({tipo:"venta",bs:10000,bsRestante:2500})===7500,
+     "el hueco de una venta sale de bs - bsRestante");
+  ok(F._huecoDeLote({tipo:"compra",usdt:100,restante:40})===60,
+     "y el de una compra, de usdt - restante");
+  ok(F._huecoDeLote({tipo:"venta",bs:10000,bsRestante:10000})===0,
+     "un lote entero no tiene hueco: su boton no se dibuja");
+  {
+    const dev=sinComentarios(sacarFuncion("devolverLoteArchivado"));
+    ok(/_huecoDeLote\(l\)/.test(dev),
+       "devolver lee el hueco de _huecoDeLote, el mismo que decide si el boton sale");
+    ok(/v>hueco/.test(dev),
+       "y no deja pasar mas de lo que el lote fue: inventarle saldo le cambia la tasa");
+    ok(/_revivirLote\(l\)/.test(dev),
+       "y pasa por _revivirLote, que es quien sabe mover las dos marcas");
+    ok(!/ajusteCuenta|c\.saldo|S\.cuentas\[/.test(dev),
+       "y NO toca ninguna cuenta: el banco ya devolvio ese dinero al borrar la remesa");
+    ok(/permisoEdicion\(\)/.test(dev), "y respeta el permiso de editar");
+    ok(/logAudit\(/.test(dev), "y queda en el registro de auditoria");
+    // El boton sale SOLO si hay donde devolver, y llama a esta funcion.
+    ok(/_huecoDeLote\(r\)>0[\s\S]{0,300}devolverLoteArchivado\(/.test(HTML),
+       "en la tabla de archivados el boton solo se dibuja si el lote tiene hueco");
+  }
+  // La tabla de archivados: tantas <th> como <td> en su fila.
+  {
+    const t=(HTML.match(/📦 LOTES ARCHIVADOS[\s\S]*?<\/thead>/)||[""])[0];
+    const ths=(t.match(/<th /g)||[]).length;
+    const fila=(HTML.match(/var arows=arch\.map\(function\(r\)\{[\s\S]*?\}\)\.join\(""\);/)||[""])[0];
+    const tds=(fila.match(/<td /g)||[]).length;
+    ok(ths===tds && ths===8,
+       "la cabecera de archivados y su fila llevan las mismas columnas", ths+" th / "+tds+" td");
+    // Y el boton va en la PRIMERA columna. Esta tabla mide 560 px de ancho
+    // minimo y hace scroll horizontal; en su telefono son 412, asi que al
+    // final quedaba fuera de pantalla. Medido en Chromium: habia que arrastrar
+    // la tabla para verlo, y es el unico camino para reparar un lote.
+    ok(/^[\s\S]{0,120}devolverLoteArchivado\(/.test(fila.split("<td ").slice(1).join("<td ")),
+       "el boton de devolver va en la primera columna, no detras del scroll");
+    ok(/<thead><tr[^>]*>"\+\s*\n?\s*"<th [^>]*><\/th>/.test(t),
+       "y su cabecera tambien es la primera");
+  }
+
+  S.inventarioUsdt=inv; S.inventarioUsdt_cerrado=cer; S._deletedMerge=del;
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

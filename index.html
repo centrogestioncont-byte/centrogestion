@@ -2920,7 +2920,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261014_v218";
+var APP_VERSION = "20261014_v219";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -3577,15 +3577,11 @@ function _aplicarEstadoDeApi(estado, ts){
     if(k==="_deletedMerge"){
       // Las marcas se suman, nunca se reemplazan: reemplazarlas revive lo
       // borrado. Es el ARREGLO 6c, que ya costó una vez.
-      var mias=S._deletedMerge||{};
-      Object.keys(estado._deletedMerge||{}).forEach(function(c){
-        mias[c]=(mias[c]||[]).concat(estado._deletedMerge[c]||[]);
-        var vistos={};
-        mias[c]=mias[c].filter(function(x){
-          var kk=String(x&&x.id); if(vistos[kk])return false; vistos[kk]=1; return true;
-        });
-      });
-      S._deletedMerge=mias;
+      // ARREGLO 137: por id manda la MAS NUEVA, no la primera. Antes decidia
+      // el orden, asi que una marca levantada aqui la pisaba la enterrada que
+      // el servidor todavia tiene — y el lote que acababa de revivir se moria
+      // en la respuesta del mismo guardado.
+      S._deletedMerge=_unirMarcasBorrado(S._deletedMerge||{}, estado._deletedMerge||{});
       return;
     }
     if(k==="_modCampos"){
@@ -4840,7 +4836,10 @@ function ejecutarCierreMes(mesKey, manual){
   // Si este mes se habia reabierto, su marca de borrado sigue viva 30 dias y
   // la poda volveria a quitarlo en el siguiente guardado. Cerrarlo otra vez es
   // justo lo contrario de borrarlo: la marca se retira.
-  _olvidarBorradoMerge("cierresMes",mesKey);
+  // ARREGLO 137: levantar, no olvidar. Reabrir un mes borraba la marca a
+  // secas, asi que el otro aparato la devolvia y el mes volvia a decir
+  // "Cerrado" en cuanto sincronizara.
+  _levantarBorradoMerge("cierresMes",mesKey);
   S.cierresMes.push(cierre);
   S.cierresMes.sort(function(a,b){return b.mesKey.localeCompare(a.mesKey);});
   S.ultimoMesCerrado = mesKey;
@@ -17584,20 +17583,8 @@ function importData(){
         // archivo reemplazaba _deletedMerge y solo se le agregaban las nuevas.
         // Detectado en pruebas: 3 marcas de "eeuu" desaparecieron tras un import.
         try{
-          var _dmArchivo=S._deletedMerge||{};
-          var _union={};
-          [_dmPrevias,_dmArchivo].forEach(function(src){
-            Object.keys(src||{}).forEach(function(c){
-              _union[c]=(_union[c]||[]).concat(src[c]||[]);
-            });
-          });
-          Object.keys(_union).forEach(function(c){
-            var vistos={};
-            _union[c]=_union[c].filter(function(x){
-              var kk=String(x&&x.id); if(vistos[kk])return false; vistos[kk]=1; return true;
-            });
-          });
-          S._deletedMerge=_union;
+          // ARREGLO 137: la MISMA union que la de la API, escrita una vez.
+          S._deletedMerge=_unirMarcasBorrado(_dmPrevias, S._deletedMerge||{});
         }catch(e){}
         _porBorrar.forEach(function(p){ _marcarBorradoMerge(p[0],p[1]); });
         if(_dkNuevas.length){
@@ -17848,8 +17835,70 @@ function _revivirLote(l){
   delete l._cerrado; delete l._fechaCierre;
   S.inventarioUsdt_cerrado=(S.inventarioUsdt_cerrado||[]).filter(function(x){return x!==l;});
   S.inventarioUsdt=(S.inventarioUsdt||[]).concat([l]);
-  var m=(S._deletedMerge||{})["inventarioUsdt"];
-  if(m) S._deletedMerge["inventarioUsdt"]=m.filter(function(x){return x.id!==l.id;});
+  l._mod=Date.now();
+  // ARREGLO 137: son DOS mitades y ninguna sobra. LEVANTAR la marca del vivo
+  // —quitarla a secas la devolvia el servidor y la poda se llevaba el lote
+  // otra vez— y ENTERRAR la copia archivada, porque la del servidor tambien
+  // se une y volvia a dejar el lote en cero. Faltando cualquiera de las dos,
+  // la cuenta vuelve y el FIFO no, que es el fallo que este arreglo cierra.
+  _levantarBorradoMerge("inventarioUsdt", l.id);
+  _marcarBorradoMerge("inventarioUsdt_cerrado", l.id);
+}
+// ARREGLO 137 · devolver a mano lo que un borrado no pudo devolver.
+//
+// La tabla de archivados era de SOLO LECTURA —ni ✏️ ni 🗑️— asi que un lote al
+// que le faltaba lo suyo no se podia reparar desde la app. Y el arreglo de
+// arriba no lo repara: vale de aqui en adelante, y la remesa que sabia cuanto
+// se habia gastado ya no existe. Sin este boton habria que tocar la base a
+// mano, que es justo lo que no puede pedirsele.
+//
+// NO MUEVE NINGUNA CUENTA, y se dice en la propia pregunta. El dinero del
+// banco ya volvio cuando se borro la remesa; lo que esta roto es el
+// inventario, que es de donde salen las tasas que la app sugiere. Tocar la
+// cuenta aqui la subiria dos veces por el mismo dinero.
+// Lo que a un lote le falta para estar entero. Lo leen el boton que se dibuja
+// y la funcion que devuelve: calculado aparte, un dia el boton saldria sobre
+// un lote que no admite nada, o no saldria sobre uno que si. Es la regla del
+// 34,27 contra el 34,28.
+function _huecoDeLote(l){
+  if(!l) return 0;
+  var esVenta=(l.tipo==="venta");
+  var tope=esVenta?(parseFloat(l.bs)||0):(parseFloat(l.usdt)||0);
+  var ya  =esVenta?(parseFloat(l.bsRestante)||0):(parseFloat(l.restante)||0);
+  return Math.round((tope-ya)*10000)/10000;
+}
+function devolverLoteArchivado(id){
+  if(!permisoEdicion()){ alert("No tienes permiso para editar."); return; }
+  var l=(S.inventarioUsdt_cerrado||[]).filter(function(x){return String(x.id)===String(id);})[0];
+  if(!l) return;
+  var esVenta=(l.tipo==="venta");
+  var uni=esVenta?(l.moneda||"VES"):"USDT";
+  var tope=esVenta?(parseFloat(l.bs)||0):(parseFloat(l.usdt)||0);
+  var ya  =esVenta?(parseFloat(l.bsRestante)||0):(parseFloat(l.restante)||0);
+  // El hueco es el tope, nunca mas: un lote no puede devolver mas de lo que
+  // fue. Inventarle saldo a un lote le cambia la tasa que la app sugiere.
+  var hueco=_huecoDeLote(l);
+  if(!(hueco>0)){ alert("Este lote no tiene dónde devolver: ya está entero."); return; }
+  var txt=prompt("¿Cuánto devolver al lote del "+(l.fecha||"")+"?\n\n"+
+    "El lote fue de "+f2(tope)+" "+uni+" y le quedan "+f2(ya)+".\n"+
+    "Como mucho puedes devolver "+f2(hueco)+" "+uni+".\n\n"+
+    "Esto NO mueve ninguna cuenta: repara el inventario, que es de donde\n"+
+    "salen las tasas que la app te sugiere.", _comaCab(hueco));
+  if(txt===null) return;
+  var v=parseFloat(_num(txt))||0;
+  if(!(v>0)){ alert("Escribe un monto mayor que cero."); return; }
+  if(v>hueco+0.0001){ alert("No puedes devolver más de "+f2(hueco)+" "+uni+": el lote fue de "+f2(tope)+"."); return; }
+  if(!confirm("¿Devolver "+f2(v)+" "+uni+" al lote del "+(l.fecha||"")+"?\n\n"+
+    "El lote vuelve al inventario activo con "+f2(ya+v)+" "+uni+".\nNinguna cuenta se mueve.")) return;
+  // Los mismos decimales con los que se consume (ARREGLO 127): a 4 el USDT y
+  // a 2 los bolivares. Devolviendo con otros, el lote no queda como estaba.
+  if(esVenta) l.bsRestante=Math.round((ya+v)*100)/100;
+  else        l.restante  =Math.round((ya+v)*10000)/10000;
+  _revivirLote(l);
+  logAudit("Devolución a lote archivado",
+    "Lote "+(l.fecha||"")+" · "+(l.tipo||"")+" "+uni+" · devueltos "+f2(v)+" a mano · queda "+f2(ya+v));
+  saveData(); R();
+  alert("✅ Devueltos "+f2(v)+" "+uni+" al lote del "+(l.fecha||"")+".\nVuelve a estar en el inventario activo.");
 }
 // El lote que nombra una línea del espejo. Por id cuando lo hay (ARREGLO 126);
 // lo anterior se casa por fecha y tasa, que no siempre distingue — de los que
@@ -19137,6 +19186,10 @@ function sincronizarFIFOconCuentas(){
         // "desaparecido por accidente" y lo revivía con su valor viejo,
         // justo el problema reportado (el lote "vuelve a aparecer").
         _marcarBorradoMerge("inventarioUsdt", r.id);
+        // ARREGLO 137: y levantar la del archivado. Es el camino de vuelta de
+        // _revivirLote: un lote que revivio lleva su copia archivada enterrada,
+        // y sin levantarla ahora no podria volver nunca al archivo.
+        _levantarBorradoMerge("inventarioUsdt_cerrado", r.id);
       }
     } else {
       activos.push(r);
@@ -28659,6 +28712,18 @@ function rInventarioUsdt(){
       var arows=arch.map(function(r){
         var tipoTxt=r.tipo==="compra"?"⬇️ Compra":"⬆️ Venta";
         return "<tr style='border-bottom:1px solid var(--am5-h)'>"+
+          // ARREGLO 137: el boton va PRIMERO, y no es estetica. Esta tabla mide
+          // 560 px de ancho minimo y hace scroll horizontal; en su telefono son
+          // 412, asi que al final quedaba fuera de pantalla y habia que arrastrar
+          // la tabla para encontrarlo. Es la unica forma de reparar un lote al
+          // que le falta lo suyo: escondido tras un arrastre no existe.
+          // Sale solo si hay hueco donde devolver — un lote entero no dibuja
+          // nada, o la tabla se llena de botones que no hacen nada.
+          "<td style='padding:6px 8px'>"+
+            (_huecoDeLote(r)>0
+              ? "<button type='button' onclick='devolverLoteArchivado(\""+String(r.id)+"\")' title='Devolver al inventario lo que este lote no recuperó' style='background:var(--am5-b);color:var(--avi-tx);border:none;padding:4px 9px;border-radius:6px;font-size:10.5px;font-weight:700;cursor:pointer;white-space:nowrap'>↩️ Devolver</button>"
+              : "")+
+          "</td>"+
           "<td style='padding:6px 8px;font-size:11.5px'>"+(r.fecha||"")+"</td>"+
           "<td style='padding:6px 8px;font-size:11.5px'>"+tipoTxt+"</td>"+
           "<td style='padding:6px 8px;text-align:center;font-size:11.5px'>"+(r.moneda||"")+"</td>"+
@@ -28670,6 +28735,7 @@ function rInventarioUsdt(){
       return "<div style='border:1px solid var(--am5-i);background:var(--am6-g);border-radius:10px;overflow-x:auto;max-height:300px;margin-bottom:12px'>"+
         "<div style='padding:8px 10px;font-size:11.5px;font-weight:700;color:var(--avi-tx);background:var(--am6-h);border-bottom:1px solid var(--am5-b)'>📦 LOTES ARCHIVADOS (llegaron a 0) — "+arch.length+"</div>"+
         "<table style='min-width:560px;width:100%;border-collapse:collapse'><thead><tr style='background:var(--am6-i)'>"+
+        "<th style='padding:6px 8px;font-size:10.5px;color:var(--avi-tx)'></th>"+
         "<th style='padding:6px 8px;text-align:left;font-size:10.5px;color:var(--avi-tx)'>FECHA</th>"+
         "<th style='padding:6px 8px;text-align:left;font-size:10.5px;color:var(--avi-tx)'>TIPO</th>"+
         "<th style='padding:6px 8px;text-align:center;font-size:10.5px;color:var(--avi-tx)'>MONEDA</th>"+
@@ -32516,7 +32582,13 @@ function _huellaCompleta(){
     if(k==="_deletedMerge"){
       try{
         return k+":"+Object.keys(v||{}).sort().map(function(c){
-          return c+"="+(v[c]||[]).map(function(x){return String(x&&x.id);}).sort().join(",");
+          // ARREGLO 137: la huella tiene que ver tambien si la marca esta
+          // LEVANTADA. Mirando solo el id, levantar una no cambiaba nada y el
+          // guardado no salia — un fallo mudo, del tipo que no se ve hasta que
+          // el otro aparato devuelve lo que creias arreglado.
+          return c+"="+(v[c]||[]).map(function(x){
+            return String(x&&x.id)+(((x&&x.revive)||0)>((x&&x.ts)||0)?"^":"");
+          }).sort().join(",");
         }).join(";");
       }catch(e){ return k+":?"; }
     }
@@ -32583,6 +32655,69 @@ function _huellaDatos(){
     }).join("\n");
   }catch(e){ return String(Math.random()); } // ante la duda, considerar que cambio
 }
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 137 · UNA MARCA DE BORRADO SE PUEDE LEVANTAR, Y EL LEVANTAMIENTO
+// VIAJA
+//
+// El ARREGLO 127 hacia bien su parte: al borrar una remesa, el lote que se
+// gasto revive con lo suyo. Pero moria en el viaje al servidor, y eso no se
+// ve desde una sola pestana. Medido con sus datos del 13/10, borrando la
+// remesa #799 (100 R$ -> 18.600 Bs), que es la que ella reporto:
+//
+//   1 · antes de borrar        lote 06/10 archivado en 0
+//   2 · recien borrado         lote 06/10 REVIVE con 19,8847   ✅
+//   3 · el servidor contesta   lote 06/10 vuelve a 0            ❌ aqui muere
+//   4 · dibujas Inventario     sigue en 0
+//
+// La causa son dos mitades, y las dos son correctas por separado:
+//   · las marcas de borrado se UNEN y nunca se quitan (ARREGLO 6c: quitarlas
+//     revive lo borrado), asi que la que _revivirLote quito aqui vuelve del
+//     servidor y la poda se lleva el lote otra vez;
+//   · la copia archivada sigue en inventarioUsdt_cerrado del servidor, que
+//     tambien se une, asi que el lote vuelve a estar en cero.
+//
+// O sea que la cuenta si volvia y el FIFO no — que es justo lo que ella vio.
+// Solo pasa cuando el lote que se gasto YA estaba archivado: uno vivo no
+// lleva marca y sobrevive (medido: 391,88 -> 411,76, aguanta la sincronizacion).
+//
+// El arreglo no es dejar de unir —eso ya costo una vez— sino que la marca
+// pueda decir "esto se levanto, y CUANDO". Con la hora dentro, la union ya
+// puede decidir sola: manda lo mas nuevo, igual que en todo lo demas.
+//
+// Y la leccion, que es la del ARREGLO 121 y la del 91 otra vez: las guardias
+// estructurales del 127 dieron verdes porque el codigo decia lo que debia
+// decir. Lo cazo ejecutar el CICLO ENTERO —borrar, guardar, adoptar la
+// respuesta— en Chromium. Cuando un arreglo toca algo que se SINCRONIZA, hay
+// que hacerle dar la vuelta al servidor.
+// ══════════════════════════════════════════════════════════════════════
+// Una entrada vale lo que diga su momento mas nuevo: enterrada en `ts`,
+// levantada en `revive`.
+function _tsMarca(x){ return Math.max((x&&x.ts)||0, (x&&x.revive)||0); }
+// Une juegos de marcas quedandose, por id, con la MAS NUEVA. Los dos sitios
+// que unian marcas —la respuesta de la API y la importacion de un archivo—
+// se quedaban con la primera que encontraban, asi que decidia el orden y un
+// levantamiento se perdia. Escrito una vez: con dos copias, un dia una
+// preferiria lo nuevo y la otra lo primero.
+function _unirMarcasBorrado(){
+  var acc={};
+  for(var i=0;i<arguments.length;i++){
+    var src=arguments[i]||{};
+    Object.keys(src).forEach(function(c){
+      (src[c]||[]).forEach(function(x){
+        if(!x||x.id===undefined||x.id===null) return;
+        if(!acc[c]) acc[c]={};
+        var k=String(x.id), v=acc[c][k];
+        // Empate: gana la primera, o sea la local. Es el criterio que ya habia.
+        if(!v || _tsMarca(x)>_tsMarca(v)) acc[c][k]=x;
+      });
+    });
+  }
+  var fin={};
+  Object.keys(acc).forEach(function(c){
+    fin[c]=Object.keys(acc[c]).map(function(k){return acc[c][k];});
+  });
+  return fin;
+}
 function _marcarBorradoMerge(campo,id){
   try{
     if(!S._deletedMerge) S._deletedMerge={};
@@ -32591,25 +32726,48 @@ function _marcarBorradoMerge(campo,id){
     // volvía a subir lo borrado porque la marca ya no existía. 30 días cubre
     // cualquier ausencia razonable con 2-3 dispositivos.
     var cutoff=Date.now()-2592000000; // 30 días
-    S._deletedMerge[campo]=S._deletedMerge[campo].filter(function(x){return x.ts>cutoff;});
+    // ARREGLO 137: y fuera la entrada de este MISMO id. Antes se hacia push a
+    // secas, asi que enterrar algo que se habia levantado dejaba DOS entradas
+    // —una con `revive` y otra sin— y `_estaBorradoMerge` contesta con `some`:
+    // mandaba la que no llevaba levantamiento y el levantamiento no se podia
+    // deshacer nunca. El corte de 30 dias mira el momento mas nuevo, no `ts`:
+    // una marca vieja levantada hoy tiene que seguir viva, que es lo unico que
+    // le gana a la que el servidor todavia tiene.
+    var previa=0;
+    S._deletedMerge[campo]=S._deletedMerge[campo].filter(function(x){
+      if(x && x.id===id){ previa=_tsMarca(x); return false; }
+      return _tsMarca(x)>cutoff;
+    });
     // Quién borró. Un registro borrado ya no está para llevar su sello, así
     // que si no va en la marca no queda en ninguna parte.
-    S._deletedMerge[campo].push({id:id,ts:Date.now(),por:_quienSoy()});
+    // Y estrictamente DESPUES de lo que hubiera: enterrar y levantar dentro
+    // del mismo milisegundo deja un empate, y en un empate no se sabe cual
+    // mando. Lo cazaron las pruebas, que corren las dos cosas seguidas.
+    S._deletedMerge[campo].push({id:id,ts:Math.max(Date.now(),previa+1),por:_quienSoy()});
   }catch(e){}
 }
-// Quita la marca de borrado de un registro. Sin esto, volver a crear algo que
-// se borro -cerrar otra vez un mes que se reabrio- se lo comeria la poda en el
-// siguiente guardado, porque la marca dura 30 dias.
-function _olvidarBorradoMerge(campo,id){
+// Levanta la marca: el registro deja de estar borrado, y queda escrito CUANDO.
+// Quitar la entrada a secas no vale —es lo que hacia `_olvidarBorradoMerge`,
+// que esto sustituye—: lo que no esta no le gana a nada, y la marca que el
+// servidor todavia tiene vuelve en la respuesta y lo borra otra vez.
+function _levantarBorradoMerge(campo,id){
   try{
-    if(!S._deletedMerge||!S._deletedMerge[campo]) return;
-    S._deletedMerge[campo]=S._deletedMerge[campo].filter(function(x){ return x.id!==id; });
+    if(!S._deletedMerge) S._deletedMerge={};
+    if(!S._deletedMerge[campo]) S._deletedMerge[campo]=[];
+    var l=S._deletedMerge[campo], e=null;
+    for(var i=0;i<l.length;i++){ if(l[i]&&l[i].id===id){ e=l[i]; break; } }
+    // Estrictamente despues de su entierro, por la misma razon de arriba.
+    if(e){ e.revive=Math.max(Date.now(),(e.ts||0)+1,(e.revive||0)); e.por=_quienSoy(); }
+    else l.push({id:id,ts:0,revive:Date.now(),por:_quienSoy()});
   }catch(e){}
 }
 function _estaBorradoMerge(campo,id){
   try{
     if(!S._deletedMerge||!S._deletedMerge[campo]) return false;
-    return S._deletedMerge[campo].some(function(x){return x.id===id;});
+    return S._deletedMerge[campo].some(function(x){
+      // ARREGLO 137: una marca levantada DESPUES de enterrada ya no borra.
+      return x.id===id && !((x.revive||0)>(x.ts||0));
+    });
   }catch(e){ return false; }
 }
 
