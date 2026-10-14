@@ -2462,6 +2462,93 @@ queda con su colchón de siempre. Con sus datos: **189 · 209** en vez de 189 ·
 inventario pueden ser correctas por separado y anularse juntas. Cuando se añada
 una tercera, hay que medir el caso con **todas** activas, no solo la nueva.
 
+#### Y el 133 le daba un motivo que NO es el suyo (ARREGLO 139)
+
+Lo cazó ella el 14/10, con la tarjeta delante: *"¿es factible hacer mi trabajo
+así? ¿bajar la tasa cuando recibí anteriormente a otra tasa está bien? ¿no estoy
+sobrevaluando dos veces los mismos reales?"*. Y después el dato que lo decide:
+*"teniendo esa tasa así de alta me llegó esa remesa de 2.500 reales pero no tenía
+para cubrir esos Bs y tuve que hacer una venta del P2P"*.
+
+**Primero, su duda contable: NO había doble valoración.** La tasa que publica no
+toca ninguna ganancia, y el costo de sus reales ya está dentro del **suelo**
+(`venta ÷ compra` con sus tasas reales). A 204 gana 2,85 % **por encima de ese
+costo**, no por encima de cero. Eso se le dijo con esas palabras.
+
+**Lo que sí estaba mal era el MOTIVO.** El 133 decía *"con reales en mano no
+tienes que hacer el P2P que esa vuelta alta cubre"* — y ese P2P casi no lo hace:
+
+```
+salir a Binance a comprar BOLÍVARES (para cubrir IDAS) .... 151 veces
+salir a Binance a comprar REALES    (para cubrir VUELTAS) ... 55 veces
+solo en octubre .......................................... 18 contra 2
+```
+
+**Su P2P es de las IDAS.** Por eso el razonamiento le sonó raro: no encajaba con
+su operación, y desconfió con razón.
+
+**La conclusión no cambia, el motivo sí, y es más fuerte:** las vueltas le
+**traen** bolívares, que es lo que le falta, y por ahí le salen más baratos que
+en Binance (204 Bs por real contra los 198,34 de su suelo).
+
+- **El disparador pasa a ser QUEDARSE SIN BOLÍVARES**, no que le sobren reales.
+  Hoy las dos cosas coinciden en ella, así que el 133 acertaba por casualidad; el
+  día que tenga reales **y** bolívares, le bajaría la vuelta sin motivo.
+- **Los reales no se van: cambian de papel.** Bajar la vuelta hace entrar
+  vueltas, y en una vuelta ella **entrega** reales. Sin reales no puede
+  atenderlas. Dejan de ser el motivo y pasan a ser la condición.
+- **Y eso retira el ARREGLO 135.** Aquel existía porque el 133 bajaba la vuelta
+  justo cuando el 132 sacaba bolívares. Con el disparador invertido no se puede
+  dar: no se puede estar lleno y vacío de bolívares a la vez. **Queda una regla
+  donde había dos que se pisaban.**
+
+#### El umbral no es un número fijo, y eso lo dijo ella
+
+Se le ofrecieron 30.000 / 60.000 / 100.000 Bs y contestó: *"dámelo tú porque eso
+realmente es relativo, todos los días son diferentes"*. Tiene razón, y los datos
+se lo dan — lo que entrega al día no para de crecer:
+
+```
+mediana de Bs que entrega al día, últimos 90 días con ops ....  91.744
+                                           60 ...............  97.021
+                                           30 ............... 108.269
+                                           15 ............... 132.090
+```
+
+Un número puesto a ojo hoy estaría viejo en un mes. **El umbral ES lo que entrega
+en un día normal suyo** (`_diaNormalBs`), y se mueve con ella. El criterio, en una
+frase: *si no tengo para cubrir un día normal mío, estoy corta*.
+
+- **La MEDIANA, no la media.** Su media de 30 días son 175.500 contra una mediana
+  de 108.269: la media mide el día excepcional —los de 600.000— y le bajaría la
+  vuelta casi siempre.
+- **Solo las idas.** Son las que gastan bolívares; contar las vueltas mediría otra
+  cosa.
+- **Lo del mismo día se suma**: es un día, no dos operaciones.
+- **Se puede forzar desde Configuración, y el campo VACÍO vale.** Vacío quiere
+  decir *"calcúlalo tú"*, que es lo normal. Un cero guardado no dispararía nunca y
+  dejaría la regla muerta sin decirlo, así que el campo vacío **borra la clave**
+  en vez de escribir 0.
+- **Sin histórico de idas no se decide nada.** Un umbral adivinado movería la tasa
+  que publica.
+- **Los bolívares se leen EN bolívares** (`enCuentas`), no convertidos: el umbral
+  está en bolívares porque es como ella los mira, y `usdtCuentas` obligaría a una
+  tasa que puede faltar. Es la otra mitad de la regla del 132, donde el umbral sí
+  está en reales y por eso sí hay que convertir.
+- **Sin memo**, igual que `_inventarioBs` y por lo mismo (ARREGLO 132). Medido con
+  sus 962 remesas: **0,27 ms** por llamada.
+
+**Y el aviso dice el motivo de verdad, con el número que lo hace comprobable:**
+
+> **Te faltan bolívares.** Tienes **59 Bs** y un día normal tuyo son **108.269**,
+> así que bajo la vuelta de **208** a **204**: cada vuelta que entre son bolívares
+> que no tienes que ir a comprar — llevas **18** compras en Binance este mes.
+
+Medido en Chromium con su export del 13/10: con 58,54 Bs y 3.118,99 R$ recomienda
+**184 · 204**; subiendo los bolívares a 500.000 vuelve a **188 · 208** —la vuelta
+deja de bajar sola—, que es exactamente lo que el 133 hacía mal. 29 pestañas,
+0 errores.
+
 ### Lo publicado y lo recomendado, lado a lado (ARREGLO 136)
 
 Sus palabras del 13/10: *"estás saturando demasiado la pantalla"* y *"la tasa que
