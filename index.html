@@ -2952,7 +2952,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261014_v221";
+var APP_VERSION = "20261014_v222";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -25347,8 +25347,15 @@ function _refrescarSuelo(){
   // suelos distintos en la misma pantalla, que es lo que esto existe para
   // evitar. Y la fila del detalle puede estar cerrada: entonces la cabecera es
   // lo ÚNICO que se ve.
-  var cab=document.getElementById("tasas-publica");
-  if(cab) cab.innerHTML=_htmlPublicaHoy();
+  // ARREGLO 140: esto llega SOLO, con la respuesta del mercado, y la tarjeta
+  // lleva los dos campos de la tasa aproximada dentro. Con uno bajo el dedo se
+  // refresca por trozos; borrarle el campo a media palabra es peor que esperar
+  // a que suelte.
+  if(_tecleandoEnLaTarjeta()){ _refrescarAprox(); }
+  else {
+    var cab=document.getElementById("tasas-publica");
+    if(cab) cab.innerHTML=_htmlPublicaHoy();
+  }
   // La lectura del mercado mueve el suelo, y el suelo decide dos de los tres
   // avisos. Si no se rehicieran, el aviso quedaria hablando del suelo viejo.
   _refrescarAvisosTasa();
@@ -27378,15 +27385,14 @@ function _tasasRecomendadas(){
           ida:Math.round(Q.v*(1-_colchonIdaAhora())),
           vuelta:Math.round(Q.v*(1+_colchonVueltaAhora()))};
 }
-// Lo que escribe aquí NO repinta la pantalla (ARREGLO 32): repintar mata el
-// campo bajo el dedo. Se rehace la tarjeta por su id, que es lo que ya hacen
-// la cabecera y los avisos.
+// Lo que escribe aquí NO repinta la pantalla (ARREGLO 32) NI la tarjeta
+// (ARREGLO 140): rehacer `tasas-publica` mataba el campo en la primera tecla,
+// porque los dos campos de la tasa aproximada están DENTRO de ese contenedor.
+// Medido: escribía "1010" y quedaba "1" — el suelo se iba a 0,20. Se refresca
+// solo lo que depende de la tecla, y en ninguno de esos trozos hay un input.
 function _setAprox(mon,val){
   _guardarTasaAprox(mon,val);
-  var n=document.getElementById("tasas-publica");
-  if(n) n.innerHTML=_htmlPublicaHoy();
-
-  _refrescarAvisosTasa();
+  _refrescarAprox();
 }
 // Publicar pasa por guardarTasaCalcHoy(), que es la puerta única del ARREGLO
 // 117: sella tdia_fecha y limpia el override del conversor. Escribir aquí
@@ -27625,14 +27631,132 @@ function _htmlPiePub(){
   "</div>";
 }
 
-function _htmlPublicaHoy(){
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 140 · los campos de la tasa aproximada se podían escribir
+// ══════════════════════════════════════════════════════════════════════
+// Lo cazó ella el 14/10: "aquí hay un error para escribir corrido, como que
+// se cae cuando borro o quiero escribir". Y era literal: el oninput de esos
+// dos campos (_setAprox) rehacía `tasas-publica` ENTERO, y los campos están
+// dentro de ese contenedor, así que el input moría en la primera tecla.
+// Reproducido en Chromium contra v221, tecleando de verdad:
+//
+//    escribes "5,0508"  ->  queda "5" y el foco se va al BODY
+//    escribes "1010"    ->  queda "1"
+//    borras con backspace -> no borra: vuelve el valor viejo
+//
+// Y lo que queda es lo que se GUARDA, o sea lo que decide el suelo:
+//
+//    bolívares 1010 -> 1    publica 0 · 0      (suelo 0,20)
+//    reales 5,0508  -> 5    publica 186 · 206  en vez de 184 · 204
+//
+// Es el ARREGLO 136 exacto —_setTasaPub con tasas-cab— en otro campo, y por
+// tercera vez: cuando un arreglo toca un campo donde ella escribe, hay que
+// escribir en él. La guardia estructural pasaba porque el texto decía lo
+// correcto ("no repinta la pantalla"): el trozo elegido era el equivocado.
+
+// El estado de la tarjeta en UN sitio: lo leen el dibujado y el refresco al
+// teclear. Calculado aparte en cada uno, el refresco podría pedir un lado que
+// la tarjeta no dibujó, o decir "estás probando" donde arriba dice otra cosa.
+// El ORDEN importa: `falta` se mide ANTES de que probando/usandoOtra fuercen
+// los dos campos, porque "la app no tiene dato de este lado" y "los dos
+// campos salen porque ella los abrió" no son lo mismo.
+function _estadoPub(){
   var r=_tasasRecomendadas();
   var Q=r?r.Q:sueloQueManda();
   var hayMerc=!!(Q&&Q.m&&Q.m.disponible);
-  // Se pide por LADO, no cuando fallan los dos. Sin las dos tasas no hay
-  // suelo, así que media lectura vieja es un suelo viejo igual.
   var pideC=(!hayMerc||!(Q&&Q.mc>0)) && !Q.apxC && (!(Q.miC>0) || (Q.dC!==null&&Q.dC>=1));
   var pideV=(!hayMerc||!(Q&&Q.mv>0)) && !Q.apxV && (!(Q.miV>0) || (Q.dV!==null&&Q.dV>=1));
+  var probando=!!S._probarTasa;
+  var usandoOtra=!!(Q.apxC||Q.apxV);
+  var falta=(pideC||pideV);
+  if(probando||usandoOtra){ pideC=true; pideV=true; }
+  return {r:r, Q:Q, hayMerc:hayMerc, pideC:pideC, pideV:pideV,
+          probando:probando, usandoOtra:usandoOtra, falta:falta};
+}
+// ¿Se separan lo publicado y lo recomendado en esta ruta? Se pregunta en UN
+// sitio: lo leen la fila que se dibuja y el refresco al teclear. Escrito dos
+// veces, un día la fila saldría marcada y el número de al lado con el color
+// de "coinciden" — el 34,27 contra el 34,28 en forma de color.
+function _difPubFila(rec,pub){
+  return !!(rec>0 && pub>0 && Math.round(rec)!==Math.round(pub));
+}
+// Repinta la celda TE RECOMIENDO de una ruta sin tocar el input TIENES que
+// tiene al lado: el número por textContent y los colores por style. Rehacer
+// el <tr> entero con innerHTML se llevaría ese input por delante.
+function _pintarRecPub(dir,rec,pub){
+  var dif=_difPubFila(rec,pub);
+  var td=document.getElementById("tpub-rec-"+dir);
+  if(td){ td.textContent=_tasaCorta(rec); td.style.color=dif?"var(--avi-tx)":"var(--ok)"; }
+  var tr=document.getElementById("tpub-fila-"+dir);
+  if(tr) tr.style.background=dif?"var(--avi-sup)":"";
+}
+// El texto de encima de los campos. Cambia en cuanto ella escribe algo —pasa
+// de "tu última operación tiene N días" a "estás probando"— así que vive en
+// su propio id y se refresca al teclear. El campo NO está dentro.
+function _htmlAproxTexto(e){
+  var Q=e.Q;
+  var dias=Math.max(e.pideC?(Q.dC||0):0, e.pideV?(Q.dV||0):0);
+  return (e.usandoOtra
+    ? "Estás probando con una tasa de USDT que escribiste tú."
+    : (dias>0
+        ? ("Tu última operación de USDT tiene <b>"+f0(dias)+(dias===1?" día":" días")+
+           "</b> y el mercado no contesta. Si sabes a cómo está hoy, escríbelo y el suelo se recalcula.")
+        : "Mueve la tasa del USDT y mira cómo quedan las dos tasas de arriba."));
+}
+// Los TRES valores (ARREGLO 116, 117, 123, 129): a qué recomienda con la
+// suya, a qué recomendaría con la de la app, y el botón de volver. Depende de
+// lo tecleado, así que también va por su id.
+function _htmlAproxTres(e){
+  if(!e.usandoOtra) return "";
+  var r=e.r;
+  var mio=_tasasConLoMio();
+  if(!mio || !r || (mio.ida===r.ida && mio.vuelta===r.vuelta))
+    return "<div style='margin-top:8px'>"+
+      "<span onclick='_volverAMiTasa()' style='font-size:11px;color:var(--avi-tx);"+
+      "font-weight:800;cursor:pointer;text-decoration:underline'>volver a la tasa de la app</span></div>";
+  return "<div style='font-size:11px;color:var(--avi-tx);margin-top:8px;line-height:1.6'>"+
+    "Con esta sale <b>"+_tasaCorta(r.ida)+" · "+_tasaCorta(r.vuelta)+"</b>; "+
+    "con la de la app saldría <b>"+_tasaCorta(mio.ida)+" · "+_tasaCorta(mio.vuelta)+"</b>. "+
+    "<span onclick='_volverAMiTasa()' style='font-weight:800;cursor:pointer;"+
+    "text-decoration:underline'>volver a la suya</span></div>";
+}
+// Todo lo que cambia al escribir una tasa aproximada, y NADA que lleve un
+// campo dentro. Es el ARREGLO 55 y el 32 a la vez: lo que se recalcula al
+// teclear tiene que refrescarse al teclear, pero sin repintar lo que está
+// bajo el dedo.
+function _refrescarAprox(){
+  var e=_estadoPub();
+  var pub=_misTasasPublicadas();
+  if(e.r){
+    _pintarRecPub("ida", e.r.ida, pub.ida);
+    _pintarRecPub("vuelta", e.r.vuelta, pub.vuelta);
+  }
+  var d=document.getElementById("tpub-dif");
+  if(d) d.innerHTML=_htmlDifPub(e.r);
+  var tx=document.getElementById("tpub-apx-txt");
+  if(tx) tx.innerHTML=_htmlAproxTexto(e);
+  var tr=document.getElementById("tpub-apx-tres");
+  if(tr) tr.innerHTML=_htmlAproxTres(e);
+  var pe=document.getElementById("tpub-pie");
+  if(pe) pe.innerHTML=_htmlPiePub();
+  _refrescarAvisosTasa();
+}
+// ¿Hay un campo de la tarjeta bajo el dedo? Mientras lo haya, la tarjeta no
+// se repinta entera: la lectura del mercado llega sola y borrarle el campo a
+// media palabra es peor que esperar a que suelte.
+function _tecleandoEnLaTarjeta(){
+  var a=document.activeElement;
+  if(!a || a.tagName!=="INPUT") return false;
+  var c=document.getElementById("tasas-publica");
+  return !!(c && c.contains(a));
+}
+
+function _htmlPublicaHoy(){
+  // Se pide por LADO, no cuando fallan los dos. Sin las dos tasas no hay
+  // suelo, así que media lectura vieja es un suelo viejo igual. Todo eso lo
+  // decide _estadoPub(), que es lo que también lee el refresco al teclear.
+  var e=_estadoPub();
+  var r=e.r, Q=e.Q, hayMerc=e.hayMerc, pideC=e.pideC, pideV=e.pideV;
   var h="<div style='font-size:10.5px;color:var(--tx4);font-weight:800;text-transform:uppercase;"+
         "letter-spacing:.4px;margin-bottom:11px'>Publica hoy</div>";
 
@@ -27693,14 +27817,17 @@ function _htmlPublicaHoy(){
       "font-size:25px;font-weight:900;color:var(--tx3);text-align:center;font-family:inherit;padding:1px 0 2px'>";
   }
   function _filaPub(dir,sub,rec,pub){
-    var dif=(rec>0 && pub>0 && Math.round(rec)!==Math.round(pub));
-    return "<tr"+(dif?" style='background:var(--avi-sup)'":"")+">"+
+    // Los dos ids son del ARREGLO 140: al escribir una tasa aproximada cambia
+    // la columna TE RECOMIENDO, y se repinta ESA celda —no la fila, que lleva
+    // dentro el input de TIENES.
+    var dif=_difPubFila(rec,pub);
+    return "<tr id='tpub-fila-"+dir+"'"+(dif?" style='background:var(--avi-sup)'":"")+">"+
       "<td style='padding:9px 7px;border-radius:9px 0 0 9px;vertical-align:middle'>"+
         "<div style='font-size:13px;font-weight:800;white-space:nowrap'>"+_ruta(dir).flechas+"</div>"+
         "<div style='font-size:10.5px;color:var(--tx4);margin-top:1px'>"+sub+"</div>"+
       "</td>"+
       "<td style='padding:9px 6px;width:34%;vertical-align:middle'>"+_celdaPub(dir,pub)+"</td>"+
-      "<td style='padding:9px 7px;width:34%;text-align:center;border-radius:0 9px 9px 0;vertical-align:middle;"+
+      "<td id='tpub-rec-"+dir+"' style='padding:9px 7px;width:34%;text-align:center;border-radius:0 9px 9px 0;vertical-align:middle;"+
         "font-size:25px;font-weight:900;color:"+(dif?"var(--avi-tx)":"var(--ok)")+"'>"+_tasaCorta(rec)+"</td>"+
     "</tr>";
   }
@@ -27722,9 +27849,8 @@ function _htmlPublicaHoy(){
   // corregirlo es la mitad del aviso.
   // ARREGLO 129: probando, salen los DOS campos aunque la app no necesite
   // ninguno — para ver si sube o baja hay que poder mover los dos lados.
-  var probando=!!S._probarTasa;
-  var usandoOtra=(Q.apxC||Q.apxV);
-  var falta=(pideC||pideV);       // la app no tiene dato fresco de ese lado
+  var probando=e.probando, usandoOtra=e.usandoOtra;
+  var falta=e.falta;              // la app no tiene dato fresco de ese lado
   // El aviso de que su tasa envejeció sale SIEMPRE; los campos, nunca solos.
   // ARREGLO 130: en vez de UNA frase que habla de "tu última operación" —y que
   // para el lado fijado a mano era falsa— se dice de dónde sale CADA mitad, y
@@ -27746,18 +27872,11 @@ function _htmlPublicaHoy(){
        _botonTasaUsdt("escribir la tasa de hoy", true)+
        "</div>";
   }
-  if(probando||usandoOtra){ pideC=true; pideV=true; }
   if(probando||usandoOtra){
-    var dias=Math.max(pideC?(Q.dC||0):0, pideV?(Q.dV||0):0);
     h+="<div style='margin-top:11px;background:var(--avi-sup2);border:1px solid var(--avi-ln);"+
        "border-radius:9px;padding:10px 11px'>"+
-       "<div style='font-size:11.5px;color:var(--avi-tx);line-height:1.5;margin-bottom:8px'>"+
-       (usandoOtra
-         ? "Estás probando con una tasa de USDT que escribiste tú."
-         : (dias>0
-             ? ("Tu última operación de USDT tiene <b>"+f0(dias)+(dias===1?" día":" días")+
-                "</b> y el mercado no contesta. Si sabes a cómo está hoy, escríbelo y el suelo se recalcula.")
-             : "Mueve la tasa del USDT y mira cómo quedan las dos tasas de arriba."))+
+       "<div id='tpub-apx-txt' style='font-size:11.5px;color:var(--avi-tx);line-height:1.5;margin-bottom:8px'>"+
+       _htmlAproxTexto(e)+
        "</div>"+
        "<div style='display:flex;gap:9px;flex-wrap:wrap'>"+
          (pideC?_campoAprox("BRL","USDT en reales","ej: 5,03",Q.miC):"")+
@@ -27765,23 +27884,9 @@ function _htmlPublicaHoy(){
        "</div>"+
        "<div style='font-size:10.5px;color:var(--tx4);margin-top:7px;line-height:1.5'>"+
        "Vale <b>solo hoy</b> y no cambia tu contabilidad.</div>"+
-       // Los TRES valores, como el override del conversor (ARREGLO 117) y el
-       // aviso de la permuta (123): a qué recomienda ahora, a qué recomendaría
-       // con la tasa de la app, y el botón de volver. Decir solo "estás
-       // probando" obliga a borrarlo para saber de dónde venía.
-       (function(){
-         if(!usandoOtra) return "";
-         var mio=_tasasConLoMio();
-         if(!mio || !r || (mio.ida===r.ida && mio.vuelta===r.vuelta))
-           return "<div style='margin-top:8px'>"+
-             "<span onclick='_volverAMiTasa()' style='font-size:11px;color:var(--avi-tx);"+
-             "font-weight:800;cursor:pointer;text-decoration:underline'>volver a la tasa de la app</span></div>";
-         return "<div style='font-size:11px;color:var(--avi-tx);margin-top:8px;line-height:1.6'>"+
-           "Con esta sale <b>"+_tasaCorta(r.ida)+" · "+_tasaCorta(r.vuelta)+"</b>; "+
-           "con la de la app saldría <b>"+_tasaCorta(mio.ida)+" · "+_tasaCorta(mio.vuelta)+"</b>. "+
-           "<span onclick='_volverAMiTasa()' style='font-weight:800;cursor:pointer;"+
-           "text-decoration:underline'>volver a la suya</span></div>";
-       })()+
+       // Los TRES valores salen de _htmlAproxTres() y viven en su propio id:
+       // cambian con cada tecla y el campo no puede ir dentro (ARREGLO 140).
+       "<div id='tpub-apx-tres'>"+_htmlAproxTres(e)+"</div>"+
        "</div>";
   }
   // Y cuando la app no necesita nada, la puerta para probar es una línea gris.
