@@ -9479,11 +9479,63 @@ console.log("\nARREGLO 128 · la tasa que publica, recomendada sola");
   ok(!/tdia_brl/.test(pub) && !/tdia_ves_brl/.test(pub),
      "y no escribe las claves publicadas a pelo");
 
-  // ── ARREGLO 32: escribir no puede repintar ──────────────────────────
+  // ── ARREGLO 32 + 140: escribir no puede repintar NI la pantalla NI la
+  // tarjeta. Esta guardia decía "se rehace la tarjeta por su id" y pasaba
+  // con el fallo puesto: los dos campos de la tasa aproximada están DENTRO
+  // de `tasas-publica`, así que rehacerla mataba el input en la primera
+  // tecla. Medido en Chromium contra v221: escribía "1010" y quedaba "1",
+  // con el suelo cayendo a 0,20. Es el ARREGLO 136 en otro campo.
   ok(!/\bR\(\)/.test(apx),
      "escribir la tasa aproximada NO llama a R()");
-  ok(/getElementById\(.tasas-publica.\)/.test(apx),
-     "se rehace la tarjeta por su id");
+  ok(!/tasas-publica/.test(apx),
+     "y NO repinta la tarjeta, que lleva el campo dentro (ARREGLO 140)");
+  ok(/_refrescarAprox\(\)/.test(apx),
+     "refresca por la puerta única, _refrescarAprox()");
+
+  // Y esa puerta tiene que cubrir TODO lo que cambia al teclear. Pidiendo
+  // solo que existiera, se podía quedar refrescando la mitad y la tarjeta
+  // diría dos cosas distintas a la vez (ARREGLO 55).
+  const refA = sacarFuncion("_refrescarAprox");
+  ok(!/tasas-publica/.test(refA),
+     "_refrescarAprox no toca el contenedor del campo");
+  ok(!/\bR\(\)/.test(refA),
+     "_refrescarAprox no llama a R()");
+  // Las DOS celdas por nombre: pidiendo solo que `_pintarRecPub` apareciera,
+  // quitar la de la ida pasaba la prueba con la de la vuelta puesta. Lo cazó
+  // la prueba negativa — es el mismo agujero que el rótulo del ARREGLO 129.
+  ok(/_pintarRecPub\("ida"/.test(refA) && /_pintarRecPub\("vuelta"/.test(refA),
+     "_refrescarAprox repinta las DOS celdas TE RECOMIENDO");
+  [["tpub-dif","la línea de si coincide con lo publicado"],
+   ["tpub-apx-txt","el texto de encima de los campos"],
+   ["tpub-apx-tres","los TRES valores"],
+   ["tpub-pie","el pie con el suelo"],
+   ["_refrescarAvisosTasa","los avisos de abajo"]].forEach(function(x){
+    ok(refA.indexOf(x[0])>=0, "_refrescarAprox refresca "+x[1]);
+  });
+  // Los ids tienen que existir donde se dibuja, o el refresco no encuentra
+  // nada y falla en silencio.
+  const pubHoy = sacarFuncion("_htmlPublicaHoy");
+  ["tpub-apx-txt","tpub-apx-tres"].forEach(function(id){
+    ok(pubHoy.indexOf("id='"+id+"'")>=0, "la tarjeta dibuja "+id);
+  });
+  ok(/id='tpub-fila-"\+dir\+"'/.test(pubHoy) && /id='tpub-rec-"\+dir\+"'/.test(pubHoy),
+     "y cada fila lleva su id y el de su celda recomendada");
+  // La celda se repinta por textContent y style, nunca con innerHTML: el
+  // <tr> lleva dentro el input de TIENES y rehacerlo se lo llevaría.
+  const pint = sacarFuncion("_pintarRecPub");
+  ok(/textContent/.test(pint) && !/innerHTML/.test(pint),
+     "_pintarRecPub escribe el número sin rehacer el HTML de la fila");
+  // Y la diferencia se pregunta en UN sitio: si la fila y el refresco la
+  // calcularan aparte, una saldría marcada y la otra con el color de
+  // "coinciden" — el 34,27 contra el 34,28 en forma de color.
+  ok(/_difPubFila\(/.test(pubHoy) && /_difPubFila\(/.test(pint),
+     "la fila y el repintado preguntan la diferencia por _difPubFila");
+
+  // La lectura del mercado llega SOLA y también repinta la tarjeta. Con un
+  // campo bajo el dedo tiene que irse por el refresco parcial.
+  const rs = sacarFuncion("_refrescarSuelo");
+  ok(/_tecleandoEnLaTarjeta\(\)/.test(rs) && /_refrescarAprox\(\)/.test(rs),
+     "_refrescarSuelo no repinta la tarjeta con un campo bajo el dedo");
 
   // ── Los colchones por omisión ───────────────────────────────────────
   // Medidos: 61 operaciones de octubre, margen medio 6,8%. Si alguien los

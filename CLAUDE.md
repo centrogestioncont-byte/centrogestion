@@ -2641,6 +2641,61 @@ llevaba desplegado desde el 111 y ninguna lo cazó, porque el texto decía lo
 correcto. Lo cazó **teclear de verdad en el navegador**. Cuando un arreglo toca
 un campo donde ella escribe, hay que escribir en él.
 
+#### Y el MISMO fallo seguía en los campos de la tasa aproximada (ARREGLO 140)
+
+Lo cazó ella el 14/10: *"aquí hay un error para escribir corrido, como que se cae
+cuando borro o quiero escribir"*. Y era literal, en los dos campos de *"probar
+con otra tasa de USDT"*. Reproducido en Chromium contra v221, tecleando de
+verdad:
+
+```
+escribes "5,0508"   →  queda "5"   y el foco se va al BODY
+escribes "1010"     →  queda "1"
+borras con ⌫        →  no borra: vuelve el valor viejo
+```
+
+**La causa es la del 136, con otro nombre:** el `oninput` (`_setAprox`) rehacía
+`tasas-publica` **entero**, y los dos campos están dentro de ese contenedor.
+
+**Y lo que queda es lo que se GUARDA**, o sea lo que decide el suelo y por tanto
+lo que publica:
+
+```
+bolívares 1010 → se guarda 1        publica 0 · 0      (suelo 0,20)
+reales 5,0508  → se guarda 5        publica 186 · 206  en vez de 184 · 204
+```
+
+- **El refresco cubre TODO lo que depende de la tecla** (`_refrescarAprox`), y
+  nada de eso lleva un campo dentro: las dos celdas **TE RECOMIENDO** —que el
+  136 no tocó porque su campo no las movía—, `tpub-dif`, `tpub-pie`, el texto de
+  encima de los campos y los TRES valores. Refrescar a medias deja la tarjeta
+  diciendo dos cosas a la vez (ARREGLO 55).
+- **La celda recomendada se repinta por `textContent` y `style`, no con
+  `innerHTML` del `<tr>`:** esa fila lleva dentro el input de **TIENES** y
+  rehacerla se lo llevaría por delante. El mismo fallo, una capa más abajo.
+- **La lectura del mercado también repintaba la tarjeta** (`_refrescarSuelo`), y
+  esa llega **sola**. Con un campo bajo el dedo se va por el refresco parcial:
+  borrarle el campo a media palabra es peor que esperar a que suelte.
+- **El estado se calcula en UN sitio** (`_estadoPub`) y la diferencia entre lo
+  publicado y lo recomendado en otro (`_difPubFila`): los leen el dibujado y el
+  refresco. Calculados aparte, el refresco podría pedir un lado que la tarjeta no
+  dibujó, o marcar la fila con el color de *"coinciden"*.
+
+**Y dos agujeros de las guardias, los dos cazados por la prueba negativa:**
+
+- La guardia del 129 decía *"se rehace la tarjeta por su id"* — o sea **exigía el
+  fallo**. Un texto que describe lo que el código hace no dice si lo que hace
+  está bien.
+- Mi guardia nueva pedía que `_pintarRecPub` apareciera, y **quitar la llamada de
+  la ida pasaba** con la de la vuelta puesta. Hay que exigir **las dos por
+  nombre**, igual que el rótulo del ARREGLO 129.
+- Y el ancla del pie en la prueba negativa era **ambigua**: ese mismo par de
+  líneas existe en `_refrescarTasasTodo`, así que medía la función equivocada.
+
+**La lección, y es la cuarta vez:** cuando un arreglo toca un campo donde ella
+escribe, **hay que escribir en él**. Las guardias estructurales dieron verdes
+desde el 129 porque el texto decía lo correcto.
+
 #### Lo que esto NO contesta, y está dicho
 
 **La competencia.** De sus cuatro referencias, dos son apps y dos son grupos de
