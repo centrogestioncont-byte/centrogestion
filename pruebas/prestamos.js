@@ -5769,12 +5769,39 @@ console.log("\n— FASE 2: la cuenta madre —");
   // nuevo aqui:
   //
   //   salto = (bruta − egEmpresa − egPersonal − socios) − intAp − traspPers
-  //           + ajustes + tasas + sinExplicar
-  //   ⇒ salto − enPapel = −traspPers − intAp + ajustes + tasas + sinExplicar
+  //           − sueldoPendiente + ajustes + tasas + sinExplicar
+  //   ⇒ salto − enPapel = −traspPers − intAp − sueldoPendiente
+  //                       + ajustes + tasas + sinExplicar
   //
   // Si alguien quita un termino de un lado sin quitarlo del otro, la tarjeta
   // deja de sumarse a mano — y una tarjeta que no se puede sumar a mano es
   // peor que no dar el desglose (es lo que ya costo el 34,27 contra 34,28).
+  // ── ARREGLO 141 · la guardia que faltaba ────────────────────────────
+  // Las de arriba exigen las filas que HAY. Ninguna cazaba una fila que
+  // FALTARA, y por eso el sueldo estuvo descuadrando la lista sin que nadie lo
+  // viera: el texto decia lo que debia decir.
+  //
+  // Esta compara los dos lados de la identidad: cada termino que
+  // conciliacionCapital() le resta a `deberias` tiene que aparecer en el bloque
+  // de _filas, salvo los cuatro que ya viven dentro de _enPapel. El dia que
+  // alguien añada un termino nuevo, falla hasta que tenga su fila.
+  (function(){
+    const cc = sacarFuncion("conciliacionCapital");
+    const m = cc.match(/var deberias=r2v\(([^;]+)\);/);
+    ok(!!m, "conciliacionCapital sigue teniendo su expresion de 'deberias'");
+    if(!m) return;
+    // los nombres que participan, sin los que ya cuenta _enPapel
+    const dentroDePapel = ["apertura","bruta","egEmpresa","egPersonalEmpresa","socios"];
+    const terminos = (m[1].match(/[A-Za-z_][A-Za-z0-9_.]*/g)||[])
+      .filter(function(t){ return t.indexOf(".")<0 || /^real\./.test(t); })
+      .map(function(t){ return t.replace(/\.total$/,"").replace(/^real\./,""); })
+      .filter(function(t,i,a){ return a.indexOf(t)===i && dentroDePapel.indexOf(t)<0 && t!=="r2v"; });
+    terminos.forEach(function(t){
+      ok(filas.indexOf(t)>=0,
+         "el desglose tiene fila para '"+t+"', que 'deberias' resta (si no, la lista no suma)");
+    });
+  })();
+
   const papel = cap.slice(cap.indexOf("var _enPapel="), cap.indexOf("var _filas=[]"));
   ok(papel.length>20, "el 'ganaste en el papel' sigue en su sitio");
   // Se fija la EXPRESION entera, no los nombres por separado. Buscandolos a
@@ -5789,6 +5816,9 @@ console.log("\n— FASE 2: la cuenta madre —");
   // funcion entera: estos nombres vuelven a salir mas abajo en la tabla del
   // desplegable y buscandolos en toda la funcion pasarian con la fila borrada.
   [["-co.traspPers.total","lo que pasaste a tus cuentas 💜"],
+   // ARREGLO 141: esta fila FALTABA y la lista no sumaba — con su export, por
+   // 91,67 exactos, que es su sueldo sin apartar.
+   ["-co.real.sueldoPendiente","tu sueldo todavia sin apartar"],
    ["co.tasas.total",     "el desfase de las tasas"],
    ["co.ajustes.total",   "los saldos que escribiste a mano"],
    ["-co.intAp.total",    "los intereses que ya iban en la apertura"],
@@ -7376,38 +7406,121 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(/cap\.sueldoPendiente/.test(fa),
      "al fijar la apertura se ve la resta del sueldo");
 
-  // 6. La cifra de las dos cabeceras se escribe UNA vez. Y son DOS llamadas
-  //    mas la definicion: en la conciliacion lo dice la caja, no la linea
-  //    (dos sitios con el mismo dato en la misma tarjeta es el ARREGLO 60).
-  const vecesFrase = (HTML.match(/ya descontado de arriba, falta apartarlo/g) || []).length;
-  ok(vecesFrase === 1, "la cifra se escribe en un solo sitio", "sale " + vecesFrase + " veces");
-  const nLlam = (HTML.match(/_htmlSueldoSinApartar\(/g) || []).length;
-  ok(nLlam === 3, "dos pantallas la leen, y nada mas", "aparece " + nLlam + " veces");
-  //    Cada una anclada a SU marcado: buscarla dentro de rCapitalTotal no
-  //    vale, porque la tarjeta de conciliacion vive en esa misma funcion y
-  //    la guardia pasaba con la linea del Balance borrada.
-  ok(/f2\(totalUsdt\)\+"<\/div>"[\s\S]{0,400}?_htmlSueldoSinApartar\(true,true\)/.test(HTML),
-     "Balance de Cuentas lo dice debajo del total de la empresa, ya descontado");
+  // 6. ARREGLO 141 · el sueldo se escribe UNA vez, y donde se escribe hay un
+  //    BOTON. Sus palabras del 15/10: "quiero que en todos lados el sueldo que
+  //    saca la empresa para mi este con su tarjeta y apartado, y no solo
+  //    letricas escritas".
+  //
+  //    _htmlSueldoSinApartar() se retiro: decia lo mismo que el bloque pero sin
+  //    boton, asi que con los dos puestos la pantalla lo contaba dos veces.
+  ok(!/function _htmlSueldoSinApartar\(/.test(HTML),
+     "la linea vieja sin boton se retiro, no se quedo al lado (ARREGLO 98)");
+  const nBloq = (HTML.match(/_htmlBloqueSueldo\(/g) || []).length;
+  ok(nBloq === 3, "dos pantallas lo leen, y nada mas", "aparece " + nBloq + " veces");
+  //    Cada una anclada a SU marcado: buscarlo dentro de rCapitalTotal no vale,
+  //    porque la tarjeta de conciliacion vive en esa misma funcion y la guardia
+  //    pasaba con el bloque del Balance borrado.
+  //    El ancla es el TITULO de esa cabecera, que existe una sola vez.
+  //    `f2(totalUsdt)+"</div>"` sale tres veces en el archivo, asi que la
+  //    guardia podia medir desde otro trozo — el mismo agujero del ARREGLO 100.
+  ok(/🏢 Total empresa \(USDT equiv\.\)[\s\S]{0,3000}?_htmlBloqueSueldo\(true, totalUsdt\+_sueldoCab\)/.test(HTML),
+     "Balance de Cuentas lo lleva debajo del total de la empresa, ya descontado");
   //    Y ese total TIENE que llevarlo descontado: esa cabecera suma las
-  //    cuentas por su cuenta, no sale de capitalRealTotal(). Con la linea
-  //    puesta sobre un total sin descontar, el numero miente.
+  //    cuentas por su cuenta, no sale de capitalRealTotal(). Con el bloque
+  //    puesto sobre un total sin descontar, el numero miente.
   ok(/totalUsdt=Math\.round\(\(totalUsdt-_sueldoCab\)\*100\)\/100;/.test(sinCom(sacarFuncion("rCapitalTotal"))),
      "y ese total lo lleva descontado de verdad");
   //    En Inventario esas cuatro cifras son saldos en crudo: el sueldo sigue
   //    dentro. Decir alli "ya descontado" seria mentir al lado del numero que
   //    lo desmiente, asi que va con la otra cola.
-  ok(/_htmlSueldoSinApartar\(true,false\)/.test(sinCom(sacarFuncion("rInventarioUsdt"))),
+  ok(/_htmlBloqueSueldo\(false\)/.test(sinCom(sacarFuncion("rInventarioUsdt"))),
      "Inventario USDT lo dice sin prometer que esta descontado");
-  ok(/yaDescontado \? "· ya descontado de arriba, falta apartarlo"/.test(sinCom(sacarFuncion("_htmlSueldoSinApartar"))),
+  const bloq = sinCom(sacarFuncion("_htmlBloqueSueldo"));
+  ok(/yaDescontado \? "tuyo · ya descontado del total de arriba"/.test(bloq),
      "y las dos colas se escriben en el mismo sitio");
+  //    Y contesta su pregunta del 15/10 ("en un lado dice 1.239,98 y en otro
+  //    1.148,31") con el monto EN CUENTAS, que es el que falta por explicar.
+  //    Esa frase vive dentro del bloque, no en una linea aparte encima: con las
+  //    dos puestas el sueldo salia CUATRO veces en la pantalla (ARREGLO 125).
+  ok(/de los \$"\+f2\(enCuentas\)\+" que hay en cuentas/.test(bloq),
+     "y dice de que monto sale, que es lo que ella preguntó");
+  //    El boton y el desplegable, que son lo que lo separa de una "letrica".
+  //    El boton entero, no solo la llamada: cambiando el <button> por un <span>
+  //    la guardia pasaba con el boton convertido en texto — y texto es justo lo
+  //    que ella NO quiere ("no solo letricas escritas").
+  ok(/irAApartarSueldo\(/.test(bloq) && /<button/.test(bloq) && /📤 Apartar<\/button>/.test(bloq),
+     "el bloque lleva el boton de apartar, y es un boton de verdad");
+  ok(/_verDetalleSueldo\(\)/.test(bloq) && /id='sueldo-det'/.test(bloq),
+     "y el detalle plegado, que es la forma que ella eligio (B)");
+  //    Desplegar NO repinta (ARREGLO 32): repintar cierra lo que tenga abierto
+  //    bajo el dedo, y aqui hay un <select> debajo.
+  const vdet = sinCom(sacarFuncion("_verDetalleSueldo"));
+  ok(!/\bR\(\)/.test(vdet) && /getElementById\("sueldo-det"\)/.test(vdet),
+     "abrir el detalle no llama a R()");
+  //    Las dos listas de cuentas salen de la puerta unica: calculadas aparte,
+  //    la tarjeta de Egresos y el bloque ofrecerian cuentas distintas.
+  ["_htmlBloqueSueldo","_htmlDetalleSueldo"].forEach(function(f){
+    const c = sinCom(sacarFuncion(f));
+    ok(!/S\.cuentas\|\|\[\]\)\.filter/.test(c),
+       f+" no se arma su propia lista de cuentas");
+  });
+  //    Y una cuenta en CERO no se ofrece como origen: antes la primera opcion
+  //    era BINANCE JULIO ($0,00) y el boton contestaba "no tiene saldo, elige
+  //    otra" — hacerle perder el viaje con un dato que la app ya tiene.
+  const orig = sinCom(sacarFuncion("_ctasOrigenSueldo"));
+  ok(/>0\.005/.test(orig), "el origen del sueldo deja fuera las cuentas en cero");
+  ok(/\.sort\(/.test(orig), "y van ordenadas por saldo, la de mas dinero primero");
+  ok(/_ctasOrigenSueldo\(\)/.test(sinCom(sacarFuncion("rEgresos"))),
+     "la tarjeta de Egresos lee la misma puerta");
 
-  // 7. Esas dos cabeceras CAMBIAN DE COLOR con el tema. Un color fijo las
-  //    dejo en 1,13 de contraste en Claro (medido sobre los pixeles). Hereda.
-  const hs = sinCom(sacarFuncion("_htmlSueldoSinApartar"));
-  ok(/sobreCabecera \? "color:inherit/.test(hs),
-     "sobre las cabeceras hereda el color, no se lo escribe");
-  ok(/if\(!s \|\| s\.falta<=0\.005\) return "";/.test(hs),
-     "y desaparece sola cuando ya esta apartado");
+  // 6b. ARREGLO 141 · las cuentas en CERO se pliegan. Medido en su export: 15
+  //     de sus 23 cuentas estan en cero, y de las que ve son 9 de 17 — mas de
+  //     media lista. Sus palabras del 15/10: "las cuentas que esten en 0
+  //     deberian de no estar ahi visibles".
+  const vcc = sinCom(sacarFuncion("_verCuentasCero"));
+  ok(!/\bR\(\)/.test(vcc) && /getElementById\("ctas-cero"\)/.test(vcc),
+     "desplegar las cuentas en cero no llama a R() (ARREGLO 32)");
+  const rct = sinCom(sacarFuncion("rCapitalTotal"));
+  ok(/_ctasCero\s*=\s*capOrdenado\.filter\(_ctaSinDinero\)/.test(rct),
+     "la lista se parte por la puerta unica, _ctaSinDinero");
+  ok(/id='ctas-cero'/.test(rct) && /capRowsCero/.test(rct),
+     "y las filas siguen dibujadas, solo plegadas — un cero puede ser el dato");
+  //     Se PLIEGAN, no se borran: una tarjeta en 0 significa que no debes nada
+  //     y MI SUELDO BINANCE en 0 dice que el sueldo no se aparto. Es la misma
+  //     regla que el Cierre de Mes ya aplica.
+  ok(/_filaCuenta\(it,i,_ctasCero\)/.test(rct),
+     "las de cero se dibujan con la MISMA fila, no con una version recortada");
+
+  // 6c. ARREGLO 141 · los porcentajes de la cartera suman 100. Redondeando
+  //     cada uno por su cuenta el resto se pierde (medido: 99%), y una
+  //     distribucion que no llega a 100 se lee como que falta dinero por
+  //     clasificar. El sobrante va al mayor, que es el unico al que un punto
+  //     no le cambia la lectura.
+  const pc = sinCom(sacarFuncion("_pctCartera"));
+  ok(/suma!==100/.test(pc) && /_PCT_CARTERA\[mayor\]\+=\(100-suma\)/.test(pc),
+     "los % de la cartera suman 100: el resto va al mayor");
+  //     Dos llamadas: la barra y la etiqueta. Se cuentan con el "= " delante
+  //     para no contar la definicion, que escrita a secas hacia tres.
+  ok((rct.match(/=\s*_pctCartera\(mon\)/g)||[]).length===2,
+     "y la barra y su rotulo leen el MISMO %, no uno cada uno");
+
+  // 6d. ARREGLO 141 · el aviso del Resumen tenia su propia cuenta y sumaba
+  //     `p.monto`, o sea capital + interes. Medido en su export del 13/10: el
+  //     Resumen decia 1.166,48 y el Balance 1.159,94 — los 6,54 del interes.
+  //     Dos numeros para lo mismo en dos pantallas es el 34,27 contra el 34,28.
+  const avs = sinCom(sacarFuncion("rDash"));
+  ok(/prestUsdtPend=_cr\?\(_cr\.enPrestamos\|\|0\):0/.test(avs),
+     "el aviso de prestamos lee el capital de capitalRealTotal()");
+  ok(/_intPend/.test(avs) && /de interés/.test(avs),
+     "y el interes se nombra aparte, no se cuela dentro (ARREGLO 71)");
+
+  // 7. ARREGLO 141: el bloque ya NO va sobre una cabecera de color —tiene su
+  //    propio fondo, porque lleva un boton y un <select> dentro— asi que lo del
+  //    "hereda el color" dejo de aplicar. Lo que SI sigue mandando es que
+  //    desaparezca solo: un bloque permanente que no dice nada es lo que enseña
+  //    a no mirar la pantalla (ARREGLO 101).
+  ok(/if\(!s \|\| s\.falta<=0\.005\) return "";/.test(bloq),
+     "y desaparece solo cuando ya esta apartado");
 
   // 8. El boton NO mueve dinero: deja el traspaso escrito y lleva al
   //    formulario de siempre (ARREGLO 98: un segundo camino es un segundo
