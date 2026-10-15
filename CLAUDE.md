@@ -3227,6 +3227,219 @@ cuadra**: lo que queda es otra cosa (la tarjeta de crédito sin modelar y lo de
 PagBank sin reparar). Un arreglo que se presenta como "ahora cuadra" cuando en sus
 datos de hoy no cuadra es peor que no arreglarlo.
 
+### Balance de Cuentas: la lista tiene que poder sumarse (ARREGLO 141)
+
+Salió de pedirme ella que evaluara esa pestaña el 15/10. Medido con su export,
+cinco identidades cuadran y **una no**:
+
+```
+la cifra grande = sus cajitas    1.275,99 + 1.159,94 + 198,78 + 7,92 − 91,67 = 2.550,96  ✅
+GANASTE − CRECIÓ = DIFERENCIA    313,90 − 6,17 = 307,73                                   ✅
+Salud de cartera = En cuentas    0,06 + 617,52 + 40,96 + 617,45 = 1.275,99                ✅
+TOTAL EMPRESA = cuentas − sueldo 1.275,99 − 91,67 = 1.184,32                              ✅
+las filas de "de dónde sale"     suman −216,06 donde la diferencia dice −307,73           ❌
+```
+
+**Faltaban 91,67 exactos: su sueldo.** `capitalRealTotal()` lo descuenta desde
+que entró esa regla —y la conciliación lo resta en los **dos** lados, así que el
+*"sin explicar"* nunca estuvo mal por esto— pero el desglose del ARREGLO 100 no
+tenía fila para él. Una lista que no se puede sumar a mano es peor que no dar el
+desglose: es el 34,27 contra el 34,28 otra vez.
+
+**Y la guardia del 100 no lo cazó porque solo exigía las filas que HAY.** La
+nueva compara los dos lados: **cada término que `conciliacionCapital()` le resta
+a `deberias` tiene que aparecer en el bloque de `_filas`**, salvo los que ya
+viven dentro de `_enPapel`. El día que alguien añada otro, falla hasta que tenga
+su fila.
+
+- **Un número se escribe UNA vez** (ARREGLO 125). El primer intento puso la
+  explicación del sueldo en una línea debajo del total **y** en el bloque, y el
+  91,67 salía **cuatro veces** en la pantalla. Dos de ellas son aritmética que
+  no se puede quitar —la cajita que suma el total y la fila que suma la
+  diferencia—; las otras dos estaban pegadas, así que se dicen juntas: la
+  explicación vive donde ya está el botón. Quedan tres.
+- **Los porcentajes de Salud de cartera suman 100.** Redondeando cada uno por su
+  cuenta el resto se pierde (medido: 99 %), y una distribución que no llega a 100
+  se lee como que falta dinero por clasificar. El sobrante va al mayor, que es el
+  único al que un punto no le cambia la lectura, y **se calcula una vez** para la
+  barra y su rótulo.
+- **El aviso de préstamos del Resumen tenía su propia cuenta** y sumaba
+  `p.monto`, o sea capital + interés: decía **1.166,48** donde el Balance dice
+  **1.159,94**. Ahora sale de `capitalRealTotal()` y el interés se nombra aparte
+  (ARREGLO 71: no es suyo hasta cobrarlo).
+
+#### Las cuentas en cero se pliegan, no se borran
+
+Sus palabras del 15/10: *"las cuentas que no tengan nada, que estén en 0,
+deberían de no estar ahí visibles"*. Medido: **15 de sus 23** cuentas están en
+cero, y de las que ve —la lista ya esconde las desactivadas— son **9 de 17**.
+
+Se pliegan detrás de una línea (*"9 cuentas en 0,00 · ninguna tiene dinero —
+ver ▾"*), y eso **no es llevarle la contraria: un cero puede ser el dato**. La
+TARJETA PAGBANK en 0 significa que no debes nada, y MI SUELDO BINANCE en 0 es
+justo lo que dice que el sueldo no se apartó. Un saldo en cero que debería tener
+dinero es lo que ella querría ver — la misma regla que el Cierre de Mes ya
+aplica. Plegado está a un toque; borrado, no está.
+
+- **Desplegar no llama a `R()`** (ARREGLO 32), y las de cero se dibujan con la
+  **misma** función de fila, no con una versión recortada.
+- La cabecera de grupo mira **la lista en la que va la fila**, no `capOrdenado`:
+  partida en dos, las de cero empezarían sin su título.
+
+#### Y el sueldo con su botón, no con letricas (ARREGLO 141)
+
+Sus palabras del 15/10: *"quiero que en todos lados lo que es el sueldo que saca
+la empresa para mí esté con su tarjeta y apartado, y no solo letricas escritas"*.
+
+**Y la tarjeta con el botón YA existía** desde el ARREGLO 105 — enterrada en
+Egresos → sub-pestaña **Personal**, que no es la que abre. En las dos pantallas
+donde ella mira el dinero (Balance de Cuentas e Inventario USDT) solo había una
+frase. O sea: letricas.
+
+De tres maquetas medidas en su teléfono eligió la **B**:
+
+```
+A · una línea                 62 px
+B · línea + "ver detalle ▾"   78 px   ← elegida
+C · la tarjeta entera        303 px   ← se queda en Egresos → Personal
+```
+
+El criterio es suyo y es el de siempre: *"no me gustan las pantallas
+saturadas"*. Lo que se ve sin pedirlo es cuánto falta y el botón; el detalle
+—acumulado, apartado, en qué cuentas 💜— se mira una vez al mes y vive detrás de
+un toque.
+
+- **`_htmlSueldoSinApartar()` se retiró.** Decía lo mismo que el bloque pero sin
+  botón, así que con los dos puestos la pantalla lo contaba dos veces. Una
+  pantalla nueva **quita** el control viejo (ARREGLO 98).
+- **El bloque se escribe UNA vez** y lo leen las dos pantallas. Lo que cambia es
+  la cola: en Balance el total ya lleva el sueldo restado y en Inventario no
+  —esas cifras son saldos en crudo— así que decir *"ya descontado"* allí sería
+  mentir al lado del número que lo desmiente.
+- **Las cuentas de origen salen de `_ctasOrigenSueldo()`**, que las leen el
+  bloque y la tarjeta de Egresos. **Deja fuera las que están en cero y ordena por
+  saldo**: antes la primera opción era BINANCE JULIO ($0,00) y el botón
+  contestaba *"no tiene saldo, elige otra"* — hacerle perder el viaje con un dato
+  que la app ya tiene.
+- **El botón no mueve dinero**: deja el traspaso escrito y lleva a Traspasos.
+  Comprobado pulsándolo en Chromium: ninguna cuenta se movió y no se guardó
+  ningún traspaso hasta confirmarlo.
+- **`_ctaSinDinero()` NO es `_saldoConProblema()`.** Un cero no es un problema,
+  es un dato. Escrito suelto, la guardia del ARREGLO 119 lo confunde con lo otro
+  —y con razón: son dos preguntas distintas sobre el mismo campo.
+
+#### Y el camino se lee sin abrir nada: de qué cuenta sale y a cuál va
+
+Sus palabras del 15/10: *"en apartar mi sueldo debe de salir de una cuenta
+empresa a mi cuenta sueldo"*.
+
+**Y ya salía** —`DOLAR FISICO → MI SUELDO BINANCE`, probado pulsándolo en
+Chromium— pero eso solo se veía abriendo *"ver detalle"*, así que desde fuera no
+había forma de saberlo. De tres maquetas eligió la **3**: el camino escrito
+debajo del monto, y el plegable pasa a ser lo que de verdad es, *"cambiar de
+dónde sale ▾"*. Son 80 px contra los 62 de antes.
+
+- **La cuenta que se NOMBRA es la que el botón va a usar.** Las dos salen de
+  `_ctasOrigenSueldo()[0]`, que es también lo que el `<select>` deja marcado.
+  Escrito aparte, un día la línea diría una cuenta y el dinero saldría de otra —
+  el 34,27 contra el 34,28, pero con dinero moviéndose.
+- **Cambiar la cuenta refresca la línea por su id** (`_pintarRutaSueldo`). Ni
+  `R()` —cerraría el selector bajo el dedo (ARREGLO 32)— ni nada, que dejaría
+  arriba el nombre de la anterior (ARREGLO 55).
+- **El rótulo del plegable se escribe en UN sitio** (`_rotDetalleSueldo`). El
+  dibujado ponía *"cambiar de dónde sale ▾"* y `_verDetalleSueldo()` volvía a
+  escribir *"ver detalle ▾"* al cerrarlo: **el enlace cambiaba de nombre solo.**
+  Ninguna guardia de texto lo habría visto —las dos cadenas eran correctas cada
+  una por su lado— y lo cazó pulsarlo en Chromium. ARREGLO 121 otra vez.
+- **Y su pregunta de los dos números baja al plegable.** La maqueta 3 usa esa
+  línea para el camino, así que *"ya está descontado del total de arriba: en
+  cuentas hay $1.275,99 y la empresa tiene $1.184,32"* vive dentro, donde no
+  cuesta alto. Escrita además fuera, el 91,67 saldría **cuatro** veces en la
+  pantalla (ARREGLO 125), y dos de esas cuatro son aritmética que no se puede
+  quitar: la cajita que suma el total y la fila que suma el salto.
+
+#### Los cuatro recortes, y uno REVIERTE una regla de este documento
+
+Sus palabras del 15/10: *"dalance de cuenta ocupa mucho la pnatalla"*. Medido en
+su teléfono (412 px) con su export, antes y después:
+
+```
+                                       antes    después
+alto de la pestaña                   2.053 px   1.553 px   (2,9 → 2,2 pantallas)
+  el desglose "de dónde sale"          plegado      −127
+  Salud de cartera                     plegado      −219
+  los totales por moneda del final     fusionado    −126
+  el aviso "Solo lectura…"             quitado       −46
+```
+
+**El que revierte una regla es el primero.** Desde el ARREGLO 48/60/94/99/100
+estaba escrito aquí que ese desglose se ve **sin desplegar nada**, *"porque es lo
+que convierte un número en algo que se puede perseguir"*, y había una guardia que
+lo exigía. Lo revierte ella, igual que revirtió la tasa fijada a mano (ARREGLO
+131). **No se borra, y eso es lo que salva la regla vieja:** la cifra de la que
+cuelga dice *"de dónde sale ▾"* y lo abre de un toque. Lo que se escondió alguna
+vez y hubo que sacar a rastras fueron los **avisos**, y esos siguen fuera: esto
+es un desglose, no una alarma. La guardia ahora exige las tres mitades —que las
+filas se dibujen, que la cifra las abra diciéndolo, y que abrirlas no llame a
+`R()`—; faltando cualquiera vuelve el fallo.
+
+- **Salud de cartera se pliega, pero sus avisos no.** La línea cerrada dice
+  *"⚠️ 2 en negativo"* o *"💱 1 sin tasa"*, y solo cuando no hay ninguno de los
+  dos enseña el riesgo global. Mirando una sola de las dos cosas, la otra se
+  queda dentro del plegable sin que nada lo diga — y hay guardia para eso.
+- **Los totales por moneda se fusionan con la distribución.** Decían lo mismo
+  —cuánto tengo en cada moneda— 126 px más abajo y sin el equivalente en USDT,
+  así que para comparar las dos cifras había que subir y bajar. Ahora es una fila
+  por moneda con las dos. Una pantalla nueva **quita** el control viejo (ARREGLO
+  98). Comprobado contra la versión anterior: las cuatro cifras nativas salen
+  **idénticas** (VES 58,54 · USDT 617,45 · BRL 3.118,99 · PEN 140,00), y el orden
+  pasa a ser por lo que pesan en USDT, que es la regla del ARREGLO 87.
+- **El nativo se recorre APARTE de `distMon`.** `distMon` solo suma los saldos
+  **positivos** —es un reparto de riesgo, y un negativo no reparte nada— y el
+  total nativo tiene que llevar lo que de verdad hay. Mezclarlos daría un
+  *"tienes"* que no es el que suman las cuentas de abajo.
+- **El aviso "Solo lectura" se fue.** 46 px permanentes diciendo lo que esta
+  pantalla **no** hace. Un aviso que nunca cambia deja de leerse (ARREGLO 99), y
+  este además no previene ningún error: ninguna fila ofrece crear ni borrar, y lo
+  que sí se puede hacer desde aquí —corregir un saldo— ya tiene su ✏️ en cada
+  fila.
+- **Los cuatro plegables cambian el `display` por su id, ninguno llama a `R()`**
+  (ARREGLO 32), y se pulsaron de verdad en Chromium: abren, cierran, y el rótulo
+  vuelve al que tenía.
+
+Medido después: las cinco identidades de la pestaña siguen cuadrando al céntimo
+—incluida la del desglose, descuadre **0,00**— los porcentajes suman 100, y el
+barrido de las 29 pestañas da **0 errores**. 22 pruebas negativas, 22 cazadas.
+
+#### Y el 💜 TOTAL PERSONAL era invisible en Suave (ARREGLO 142)
+
+La cabecera **🏢 TOTAL EMPRESA** va sobre `--fondo-osc`, que es **siempre
+oscura** elija el tema que elija. El bloque 💜 de al lado estaba pintado con
+nombres del tema (`--az5-g`, `--mo6-c`), y en **Suave** —el que abre— esos dos
+valen el morado oscuro. Medido en Chromium, el mismo contraste en los dos:
+
+```
+            rótulo   número
+suave         1,04     1,04   ← invisible
+claro         6,71     9,11
+papel         6,71     9,11
+```
+
+Por eso desde la PC no se veía nunca: ella abre en Suave, pero con el tema Claro
+puesto el bloque se lee perfectamente. Es **la misma regla por tercera vez** —las
+pantallas de entrada y el flyer— con otra cara: *lo que NO sigue al tema no se
+pinta con nombres del tema*. Ahora son `--per-rot` y `--per-num`, declarados una
+vez en `:root`, que ningún tema vuelve a definir. Quedan en **8,07** y **10,94**,
+mejor que en Claro porque esa cabecera es más oscura que el panel.
+
+Las tres guardias son las mismas que ya protegen `--ent-*` y `--fly-*`: que se
+declaren una sola vez, que ningún bloque de tema los repinte, y que la cabecera
+💜 no use ningún otro nombre.
+
+Medido en Chromium con su export: la pestaña pasa de **199 a 152 líneas** y de
+**17 a 8** filas de cuenta a la vista. 29 pestañas, 0 errores, 11 pruebas
+negativas y las 11 cazadas.
+
 ### El sueldo se calcula pero NO se aparta (medido, pendiente)
 
 Sus palabras: *"la aplicación lo suelta pero no lo separa… no hay un apartado donde
