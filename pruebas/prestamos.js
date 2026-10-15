@@ -3200,8 +3200,12 @@ console.log("\nArreglo 64 · entrar con huella");
   // junta con el socio. Misma razon, tercera vez.
   // Y los --ec-*: el estado de cuenta que ella le manda al cliente por
   // WhatsApp y el cliente imprime. Cuarta vez con la misma forma.
+  // Y los --per-* (ARREGLO 142): la cabecera 🏢 TOTAL EMPRESA de Balance de
+  // Cuentas va sobre --fondo-osc, que es siempre oscura elija el tema que
+  // elija. Darles version oscura es exactamente el fallo que se arreglo —
+  // medido, el numero salia a 1,04 de contraste en Suave. Quinta vez.
   const sinOscuro = [...enClaro].filter(function(k){
-    return !enOsc.has(k) && !/^--(radius|shadow|ent-|fly-|inf-|ec-)/.test(k);
+    return !enOsc.has(k) && !/^--(radius|shadow|ent-|fly-|inf-|ec-|per-)/.test(k);
   });
   ok(sinOscuro.length === 0, "todo color tiene su version oscura",
      sinOscuro.slice(0, 6).join(", "));
@@ -7557,6 +7561,29 @@ console.log("\n— FASE 2: la cuenta madre —");
   //     deja de leerse (ARREGLO 99).
   ok(!/Solo lectura\.<\/b> Para agregar/.test(HTML),
      "el aviso permanente de 'solo lectura' se fue de Balance de Cuentas");
+
+  // 6a-ter. ARREGLO 142 · la cabecera 🏢 TOTAL EMPRESA va sobre --fondo-osc,
+  //     que es SIEMPRE oscura elija el tema que elija. El 💜 TOTAL PERSONAL de
+  //     al lado estaba con nombres del tema y en SUAVE —el que abre— el numero
+  //     salia en #391a5a sobre #1f2833: contraste 1,04, invisible. En Claro y
+  //     en Papel se leia, asi que desde la PC no se veia nunca.
+  //
+  //     Misma regla que las pantallas de entrada y el flyer, tercera vez: lo
+  //     que no sigue al tema no se pinta con nombres del tema. Las tres
+  //     guardias son las mismas que alli.
+  ["--per-rot","--per-num"].forEach(function(n){
+    const def = HTML.split(n+":").length - 1;
+    ok(def === 1, n+" se declara UNA vez, en :root — ningun tema lo repinta",
+       "aparece definido "+def+" veces");
+  });
+  const _bloquesTema = HTML.split(/html\[data-tema="[a-z]+"\]\s*\{/).slice(1).join("\n");
+  ok(!/--per-(rot|num)\s*:/.test(_bloquesTema),
+     "y ningun bloque de tema los vuelve a definir");
+  const _cabPers = (rct0.match(/[^+]*💜 Total personal[\s\S]{0,260}?No cuenta como dinero/) || [""])[0];
+  ok(_cabPers.length > 0, "la cabecera 💜 sigue ahi, y el recorte la encuentra");
+  ok(/var\(--per-rot\)/.test(_cabPers) && /var\(--per-num\)/.test(_cabPers) &&
+     !/--az5-g|--mo6-c/.test(_cabPers),
+     "y la cabecera 💜 usa solo esos dos, ningun nombre del tema");
 
   // 6b. ARREGLO 141 · las cuentas en CERO se pliegan. Medido en su export: 15
   //     de sus 23 cuentas estan en cero, y de las que ve son 9 de 17 — mas de

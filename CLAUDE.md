@@ -3411,6 +3411,31 @@ Medido después: las cinco identidades de la pestaña siguen cuadrando al cénti
 —incluida la del desglose, descuadre **0,00**— los porcentajes suman 100, y el
 barrido de las 29 pestañas da **0 errores**. 22 pruebas negativas, 22 cazadas.
 
+#### Y el 💜 TOTAL PERSONAL era invisible en Suave (ARREGLO 142)
+
+La cabecera **🏢 TOTAL EMPRESA** va sobre `--fondo-osc`, que es **siempre
+oscura** elija el tema que elija. El bloque 💜 de al lado estaba pintado con
+nombres del tema (`--az5-g`, `--mo6-c`), y en **Suave** —el que abre— esos dos
+valen el morado oscuro. Medido en Chromium, el mismo contraste en los dos:
+
+```
+            rótulo   número
+suave         1,04     1,04   ← invisible
+claro         6,71     9,11
+papel         6,71     9,11
+```
+
+Por eso desde la PC no se veía nunca: ella abre en Suave, pero con el tema Claro
+puesto el bloque se lee perfectamente. Es **la misma regla por tercera vez** —las
+pantallas de entrada y el flyer— con otra cara: *lo que NO sigue al tema no se
+pinta con nombres del tema*. Ahora son `--per-rot` y `--per-num`, declarados una
+vez en `:root`, que ningún tema vuelve a definir. Quedan en **8,07** y **10,94**,
+mejor que en Claro porque esa cabecera es más oscura que el panel.
+
+Las tres guardias son las mismas que ya protegen `--ent-*` y `--fly-*`: que se
+declaren una sola vez, que ningún bloque de tema los repinte, y que la cabecera
+💜 no use ningún otro nombre.
+
 Medido en Chromium con su export: la pestaña pasa de **199 a 152 líneas** y de
 **17 a 8** filas de cuenta a la vista. 29 pestañas, 0 errores, 11 pruebas
 negativas y las 11 cazadas.
