@@ -3328,6 +3328,89 @@ un toque.
   es un dato. Escrito suelto, la guardia del ARREGLO 119 lo confunde con lo otro
   —y con razón: son dos preguntas distintas sobre el mismo campo.
 
+#### Y el camino se lee sin abrir nada: de qué cuenta sale y a cuál va
+
+Sus palabras del 15/10: *"en apartar mi sueldo debe de salir de una cuenta
+empresa a mi cuenta sueldo"*.
+
+**Y ya salía** —`DOLAR FISICO → MI SUELDO BINANCE`, probado pulsándolo en
+Chromium— pero eso solo se veía abriendo *"ver detalle"*, así que desde fuera no
+había forma de saberlo. De tres maquetas eligió la **3**: el camino escrito
+debajo del monto, y el plegable pasa a ser lo que de verdad es, *"cambiar de
+dónde sale ▾"*. Son 80 px contra los 62 de antes.
+
+- **La cuenta que se NOMBRA es la que el botón va a usar.** Las dos salen de
+  `_ctasOrigenSueldo()[0]`, que es también lo que el `<select>` deja marcado.
+  Escrito aparte, un día la línea diría una cuenta y el dinero saldría de otra —
+  el 34,27 contra el 34,28, pero con dinero moviéndose.
+- **Cambiar la cuenta refresca la línea por su id** (`_pintarRutaSueldo`). Ni
+  `R()` —cerraría el selector bajo el dedo (ARREGLO 32)— ni nada, que dejaría
+  arriba el nombre de la anterior (ARREGLO 55).
+- **El rótulo del plegable se escribe en UN sitio** (`_rotDetalleSueldo`). El
+  dibujado ponía *"cambiar de dónde sale ▾"* y `_verDetalleSueldo()` volvía a
+  escribir *"ver detalle ▾"* al cerrarlo: **el enlace cambiaba de nombre solo.**
+  Ninguna guardia de texto lo habría visto —las dos cadenas eran correctas cada
+  una por su lado— y lo cazó pulsarlo en Chromium. ARREGLO 121 otra vez.
+- **Y su pregunta de los dos números baja al plegable.** La maqueta 3 usa esa
+  línea para el camino, así que *"ya está descontado del total de arriba: en
+  cuentas hay $1.275,99 y la empresa tiene $1.184,32"* vive dentro, donde no
+  cuesta alto. Escrita además fuera, el 91,67 saldría **cuatro** veces en la
+  pantalla (ARREGLO 125), y dos de esas cuatro son aritmética que no se puede
+  quitar: la cajita que suma el total y la fila que suma el salto.
+
+#### Los cuatro recortes, y uno REVIERTE una regla de este documento
+
+Sus palabras del 15/10: *"dalance de cuenta ocupa mucho la pnatalla"*. Medido en
+su teléfono (412 px) con su export, antes y después:
+
+```
+                                       antes    después
+alto de la pestaña                   2.053 px   1.553 px   (2,9 → 2,2 pantallas)
+  el desglose "de dónde sale"          plegado      −127
+  Salud de cartera                     plegado      −219
+  los totales por moneda del final     fusionado    −126
+  el aviso "Solo lectura…"             quitado       −46
+```
+
+**El que revierte una regla es el primero.** Desde el ARREGLO 48/60/94/99/100
+estaba escrito aquí que ese desglose se ve **sin desplegar nada**, *"porque es lo
+que convierte un número en algo que se puede perseguir"*, y había una guardia que
+lo exigía. Lo revierte ella, igual que revirtió la tasa fijada a mano (ARREGLO
+131). **No se borra, y eso es lo que salva la regla vieja:** la cifra de la que
+cuelga dice *"de dónde sale ▾"* y lo abre de un toque. Lo que se escondió alguna
+vez y hubo que sacar a rastras fueron los **avisos**, y esos siguen fuera: esto
+es un desglose, no una alarma. La guardia ahora exige las tres mitades —que las
+filas se dibujen, que la cifra las abra diciéndolo, y que abrirlas no llame a
+`R()`—; faltando cualquiera vuelve el fallo.
+
+- **Salud de cartera se pliega, pero sus avisos no.** La línea cerrada dice
+  *"⚠️ 2 en negativo"* o *"💱 1 sin tasa"*, y solo cuando no hay ninguno de los
+  dos enseña el riesgo global. Mirando una sola de las dos cosas, la otra se
+  queda dentro del plegable sin que nada lo diga — y hay guardia para eso.
+- **Los totales por moneda se fusionan con la distribución.** Decían lo mismo
+  —cuánto tengo en cada moneda— 126 px más abajo y sin el equivalente en USDT,
+  así que para comparar las dos cifras había que subir y bajar. Ahora es una fila
+  por moneda con las dos. Una pantalla nueva **quita** el control viejo (ARREGLO
+  98). Comprobado contra la versión anterior: las cuatro cifras nativas salen
+  **idénticas** (VES 58,54 · USDT 617,45 · BRL 3.118,99 · PEN 140,00), y el orden
+  pasa a ser por lo que pesan en USDT, que es la regla del ARREGLO 87.
+- **El nativo se recorre APARTE de `distMon`.** `distMon` solo suma los saldos
+  **positivos** —es un reparto de riesgo, y un negativo no reparte nada— y el
+  total nativo tiene que llevar lo que de verdad hay. Mezclarlos daría un
+  *"tienes"* que no es el que suman las cuentas de abajo.
+- **El aviso "Solo lectura" se fue.** 46 px permanentes diciendo lo que esta
+  pantalla **no** hace. Un aviso que nunca cambia deja de leerse (ARREGLO 99), y
+  este además no previene ningún error: ninguna fila ofrece crear ni borrar, y lo
+  que sí se puede hacer desde aquí —corregir un saldo— ya tiene su ✏️ en cada
+  fila.
+- **Los cuatro plegables cambian el `display` por su id, ninguno llama a `R()`**
+  (ARREGLO 32), y se pulsaron de verdad en Chromium: abren, cierran, y el rótulo
+  vuelve al que tenía.
+
+Medido después: las cinco identidades de la pestaña siguen cuadrando al céntimo
+—incluida la del desglose, descuadre **0,00**— los porcentajes suman 100, y el
+barrido de las 29 pestañas da **0 errores**. 22 pruebas negativas, 22 cazadas.
+
 Medido en Chromium con su export: la pestaña pasa de **199 a 152 líneas** y de
 **17 a 8** filas de cuenta a la vista. 29 pestañas, 0 errores, 11 pruebas
 negativas y las 11 cazadas.

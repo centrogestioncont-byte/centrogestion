@@ -5254,16 +5254,29 @@ console.log("\n— FASE 2: la cuenta madre —");
   // lleva los ajustes a mano y el desfase de tasas, que a la tabla vieja le
   // faltaban. La tabla se fue al desplegable porque decia lo mismo dos veces.
   // Se arma antes del return, en resumenSuyo, y se dibuja sin desplegar nada.
-  // ARREGLO 100: el desglose perdio su titulo ("De que viene esa diferencia")
-  // porque la cifra de la que cuelga ya lo dice —"Diferencia · de donde sale ↓"—
-  // y un titulo mas era letra de la que ella pidio quitar. Lo que se exige
-  // sigue siendo lo mismo, y es lo unico que importa: que las filas se dibujen
-  // SIN desplegar nada, y que haya algo que lleve de la cifra a ellas. Esa
-  // lista es lo que convierte un numero en algo que se puede perseguir, y ya
-  // hay cinco arreglos apoyados en que se vea (ARREGLO 48/60/94/99).
-  ok(/resumenSuyo\+/.test(cuerpo) && /_filas\.map\(function/.test(HTML) &&
-     /"de dónde sale ↓"/.test(HTML),
-     "y el desglose tambien: es lo que convierte el numero en algo que perseguir");
+  // ── ARREGLO 141 · esta guardia REVIERTE lo que pedia, y lo revierte ella
+  //
+  // Desde el ARREGLO 48/60/94/99/100 exigia que el desglose se dibujara SIN
+  // desplegar nada, porque "es lo que convierte un numero en algo que se puede
+  // perseguir". Sigue siendo verdad y por eso no se borra; lo que cambia es
+  // donde empieza. Sus palabras del 15/10: "dalance de cuenta ocupa mucho la
+  // pnatalla". Medido, la pestaña eran 2.053 px —2,9 pantallas de su
+  // telefono— y esta lista 246 de ellos.
+  //
+  // Lo que se exige ahora son las tres mitades, y faltando cualquiera vuelve
+  // el fallo que las cinco versiones anteriores evitaban:
+  //   1. las filas siguen dibujandose (no se borraron);
+  //   2. la cifra de la que cuelgan las ABRE, y lo dice;
+  //   3. abrirlas no llama a R() (ARREGLO 32).
+  // Lo que NUNCA se pliega son los avisos, y eso lo fija la guardia de abajo.
+  ok(/resumenSuyo\+/.test(cuerpo) && /_filas\.map\(function/.test(HTML),
+     "el desglose sigue dibujandose: es lo que convierte el numero en algo que perseguir");
+  ok(/id='conc-filas'/.test(HTML) && /_verFilasConc\(\)/.test(HTML) &&
+     /"de dónde sale ▾"/.test(HTML),
+     "y la cifra de la que cuelga lo abre, diciendolo");
+  const vfc = sacarFuncion("_verFilasConc").replace(/\/\/[^\n]*/g, "");
+  ok(!/\bR\(\)/.test(vfc) && /getElementById\("conc-filas"\)/.test(vfc),
+     "abrirlo no llama a R() (ARREGLO 32)");
   // ARREGLO 99: y lo que ella abre a mirar —cuanto tiene hoy— va antes que el
   // veredicto y en grande. El veredicto es la pregunta del contador.
   ok(cuerpo.indexOf("resumenSuyo+") < cuerpo.indexOf("sobra sin explicar"),
@@ -7436,22 +7449,55 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(/_htmlBloqueSueldo\(false\)/.test(sinCom(sacarFuncion("rInventarioUsdt"))),
      "Inventario USDT lo dice sin prometer que esta descontado");
   const bloq = sinCom(sacarFuncion("_htmlBloqueSueldo"));
-  ok(/yaDescontado \? "tuyo · ya descontado del total de arriba"/.test(bloq),
-     "y las dos colas se escriben en el mismo sitio");
-  //    Y contesta su pregunta del 15/10 ("en un lado dice 1.239,98 y en otro
-  //    1.148,31") con el monto EN CUENTAS, que es el que falta por explicar.
-  //    Esa frase vive dentro del bloque, no en una linea aparte encima: con las
-  //    dos puestas el sueldo salia CUATRO veces en la pantalla (ARREGLO 125).
-  ok(/de los \$"\+f2\(enCuentas\)\+" que hay en cuentas/.test(bloq),
+  //    ARREGLO 141 · maqueta 3, la que eligio ella: debajo del monto va el
+  //    CAMINO, "de que cuenta de la empresa sale" → "a que cuenta suya va".
+  //    Sus palabras del 15/10: "en apartar mi sueldo debe de salir de una
+  //    cuenta empresa a mi cuenta sueldo".
+  //
+  //    Y el nombre que se escribe tiene que ser el que el boton va a usar de
+  //    verdad: los dos salen de _ctasOrigenSueldo()[0], que es tambien lo que
+  //    el <select> deja marcado. Escrito aparte, la linea diria una cuenta y
+  //    el dinero saldria de otra.
+  ok(/_rutaSueldoTxt\(ctas\[0\],dest\)/.test(bloq),
+     "el bloque escribe el camino, y con la misma cuenta que usara el boton");
+  const ruta = sinCom(sacarFuncion("_rutaSueldoTxt"));
+  ok(/org\.nombre/.test(ruta) && /dest\.nombre/.test(ruta) && /→/.test(ruta),
+     "y ese camino nombra las dos cuentas");
+  ok(/if\(!org\|\|!dest\)/.test(ruta),
+     "sin origen o sin destino no se inventa un camino");
+  //    Cambiar la cuenta en el desplegable refresca la linea por su id: ni R()
+  //    (ARREGLO 32, cerraria el selector bajo el dedo) ni nada (ARREGLO 55,
+  //    dejaria arriba el nombre de la cuenta anterior).
+  const prs = sinCom(sacarFuncion("_pintarRutaSueldo"));
+  ok(!/\bR\(\)/.test(prs) && /getElementById\("sueldo-ruta"\)/.test(prs) &&
+     /_rutaSueldoTxt\(/.test(prs),
+     "y cambiar la cuenta refresca la linea, por su id y con la misma funcion");
+  ok(/onchange='_pintarRutaSueldo\(\)'/.test(sinCom(sacarFuncion("_htmlDetalleSueldo"))),
+     "el selector avisa al cambiar");
+  //    Y su pregunta del 15/10 ("en un lado dice 1.239,98 y en otro 1.148,31")
+  //    se contesta dentro del plegable, que es donde la maqueta 3 dejo sitio.
+  //    Escrita ADEMAS fuera, el sueldo saldria CUATRO veces en la pantalla
+  //    (ARREGLO 125) y dos de esas cuatro son aritmetica que no se puede
+  //    quitar: la cajita que suma el total y la fila que suma el salto.
+  ok(/Ya está descontado del total de arriba/.test(sinCom(sacarFuncion("_htmlDetalleSueldo"))),
      "y dice de que monto sale, que es lo que ella preguntó");
+  ok(!/que hay en cuentas/.test(bloq),
+     "y no lo repite fuera: un numero se escribe UNA vez (ARREGLO 125)");
   //    El boton y el desplegable, que son lo que lo separa de una "letrica".
   //    El boton entero, no solo la llamada: cambiando el <button> por un <span>
   //    la guardia pasaba con el boton convertido en texto — y texto es justo lo
   //    que ella NO quiere ("no solo letricas escritas").
   ok(/irAApartarSueldo\(/.test(bloq) && /<button/.test(bloq) && /📤 Apartar<\/button>/.test(bloq),
      "el bloque lleva el boton de apartar, y es un boton de verdad");
+  const vdet0 = sacarFuncion("_verDetalleSueldo").replace(/\/\/[^\n]*/g, "");
   ok(/_verDetalleSueldo\(\)/.test(bloq) && /id='sueldo-det'/.test(bloq),
      "y el detalle plegado, que es la forma que ella eligio (B)");
+  //    Y su rotulo se escribe en UN sitio: el dibujado lo ponia como "cambiar
+  //    de donde sale" y el plegado volvia a escribir "ver detalle", asi que el
+  //    enlace cambiaba de nombre al cerrarlo. Lo cazo pulsarlo (ARREGLO 121).
+  ok(/_rotDetalleSueldo\(abierto\)/.test(bloq) &&
+     /_rotDetalleSueldo\(S\._sueldoDet\)/.test(vdet0),
+     "el rotulo del plegable sale del mismo sitio al dibujar y al cerrar");
   //    Desplegar NO repinta (ARREGLO 32): repintar cierra lo que tenga abierto
   //    bajo el dedo, y aqui hay un <select> debajo.
   const vdet = sinCom(sacarFuncion("_verDetalleSueldo"));
@@ -7472,6 +7518,45 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(/\.sort\(/.test(orig), "y van ordenadas por saldo, la de mas dinero primero");
   ok(/_ctasOrigenSueldo\(\)/.test(sinCom(sacarFuncion("rEgresos"))),
      "la tarjeta de Egresos lee la misma puerta");
+
+  const rct0 = sacarFuncion("rCapitalTotal").replace(/\/\/[^\n]*/g, "");
+  // 6a-bis. ARREGLO 141 · los tres recortes de la pestaña. Sus palabras del
+  //     15/10: "dalance de cuenta ocupa mucho la pnatalla". Medido, eran
+  //     2.053 px — 2,9 pantallas de su telefono.
+  //
+  //     Salud de cartera se pliega (264 px). Es un panorama que se mira una
+  //     vez al mes, no un aviso — y por eso lo que NO puede plegarse es lo que
+  //     avisa: una cuenta en negativo o una moneda sin tasa tienen que verse en
+  //     la linea cerrada. Un aviso escondido no es un aviso (ARREGLO 48/60).
+  const vsa = sacarFuncion("_verSalud").replace(/\/\/[^\n]*/g, "");
+  ok(!/\bR\(\)/.test(vsa) && /getElementById\("salud-cuerpo"\)/.test(vsa),
+     "plegar Salud de cartera no llama a R() (ARREGLO 32)");
+  ok(/id='salud-cuerpo'/.test(rct0) && /_verSalud\(\)/.test(rct0),
+     "y el panel se pliega por su id");
+  //     El aviso va en la linea que lo abre, y tiene que mirar las dos cosas:
+  //     con solo una, la otra se queda dentro del plegable sin que nada lo diga.
+  const cab = (rct0.match(/var _avisoSalud[\s\S]{0,700}?;\n/) || [""])[0];
+  ok(/negCuentas\.length/.test(cab) && /sinTasaCount/.test(cab),
+     "y el aviso de cuenta en negativo y el de moneda sin tasa se ven plegado");
+  //     Los totales por moneda vivian en una rejilla al final de la pestaña,
+  //     126 px por debajo de la distribucion que habla de lo mismo. Ahora es
+  //     una fila con las DOS cifras. Una pantalla nueva QUITA la vieja
+  //     (ARREGLO 98): si vuelve, hay dos sitios para la misma pregunta.
+  ok(/var natMon=\{\}/.test(rct0) && /monsCartera\.map\(function/.test(rct0),
+     "los totales nativos por moneda viven dentro de Salud de cartera");
+  ok(!/var totM=\{\}/.test(rct0),
+     "y la rejilla vieja del final no esta al lado (ARREGLO 98)");
+  //     El nativo se recorre aparte de distMon a proposito: distMon solo suma
+  //     los saldos POSITIVOS —es un reparto de riesgo— y el total nativo tiene
+  //     que llevar lo que de verdad hay, negativos incluidos. Mezclarlos daria
+  //     un "tienes" que no es el que suman las cuentas de abajo.
+  ok(/natMon\[c\.moneda\]=\(natMon\[c\.moneda\]\|\|0\)\+\(parseFloat\(c\.saldo\)\|\|0\)/.test(rct0),
+     "y el nativo cuenta tambien los negativos, no solo lo que reparte la barra");
+  //     Y el aviso permanente "Solo lectura" se fue (46 px). No avisaba de
+  //     nada: ninguna fila ofrece crear ni borrar. Un aviso que nunca cambia
+  //     deja de leerse (ARREGLO 99).
+  ok(!/Solo lectura\.<\/b> Para agregar/.test(HTML),
+     "el aviso permanente de 'solo lectura' se fue de Balance de Cuentas");
 
   // 6b. ARREGLO 141 · las cuentas en CERO se pliegan. Medido en su export: 15
   //     de sus 23 cuentas estan en cero, y de las que ve son 9 de 17 — mas de
