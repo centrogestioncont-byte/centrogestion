@@ -2212,11 +2212,11 @@ const ROLES=[
   {id:"lector",label:"Supervisor",     sub:"Ve todo · No modifica",     ic:"👁️",bg:"var(--am6-j1)"},
 ];
 const TABS={
-  admin:["dash","diario","ops","evolucion","salud_financiera","cierre","nueva","calculadora","inventario_usdt","capital_total","egresos","prestamos","cobrar","dash_eeuu","traspasos","clientes","auditoria","config_admin","inmuebles"],
+  admin:["dash","diario","ops","evolucion","salud_financiera","cierre","nueva","calculadora","inventario_usdt","capital_total","egresos","prestamos","cobrar","dash_eeuu","traspasos","clientes","auditoria","config_admin","inmuebles","mercancia"],
   brl:  ["mi_ganancia","op_diario","nueva","clientes"],
   vzla: ["mi_ganancia","op_diario","nueva","clientes"],
   eeuu: ["mi_ganancia","op_diario","nueva_eeuu","clientes"],
-  lector:["dash","diario","ops","evolucion","salud_financiera","cierre","nueva","calculadora","inventario_usdt","capital_total","egresos","prestamos","cobrar","dash_eeuu","traspasos","clientes","auditoria","config_admin","inmuebles"],
+  lector:["dash","diario","ops","evolucion","salud_financiera","cierre","nueva","calculadora","inventario_usdt","capital_total","egresos","prestamos","cobrar","dash_eeuu","traspasos","clientes","auditoria","config_admin","inmuebles","mercancia"],
 };
 const TL={
   dash:"📊 Resumen",diario:"📅 Diario",ops:"📋 Operaciones",evolucion:"📈 Evolución",salud_financiera:"🩺 Salud Financiera",cierre:"🗓️ Cierre de Mes",brl:"🇧🇷 BRL",vzla:"🇻🇪 VZLA",eeuu:"🇺🇸 EE.UU",
@@ -2229,6 +2229,7 @@ const TL={
   op_diario:"📋 Mis Operaciones",
   traspasos:"🔄 Traspasos",
   inmuebles:"🏠 Inmuebles",
+  mercancia:"📦 Mercancía",
   mi_gestion:"💼 Mi Gestión",
   auditoria:"📋 Auditoría",
   config_admin:"⚙️ Configuración",
@@ -2340,6 +2341,16 @@ let S={
   // juntas, marcar una cuota en el teléfono y otra en la PC haría que una
   // pisara a la otra, porque lo que viaja es el contrato entero.
   inmuebles:[],
+  // ARREGLO 143 · mercancia. SON DOS LISTAS, no una, por la misma razon que
+  // el apartamento (ARREGLO 134): la fusion decide registro por registro, asi
+  // que con los gastos dentro del articulo, añadir un flete en el telefono y
+  // vender en la PC haria que uno pisara al otro — lo que viaja es el articulo
+  // entero.
+  //
+  // La VENTA si va dentro del articulo, y eso no es incoherente: una venta es
+  // una sola y siempre se toca junto con el estado del articulo. Es lo
+  // contrario de las cuotas, que se marcan de una en una.
+  articulos:[], artGastos:[],
   inmCuotas:[],
   // Las 122 remesas de mayo estaban escritas aca: nombre del cliente, fecha,
   // monto y ganancia de cada una, dentro de un archivo que Cloudflare publica.
@@ -2437,6 +2448,128 @@ function _fraccionInteresPrestamo(p){
   var interesTotal=Math.max(0,Math.round((montoTotal-capital)*100)/100);
   return interesTotal>0 ? interesTotal/montoTotal : 0;
 }
+// ══════════════════════════════════════════════════════════════════════
+// MERCANCIA · cosas que compra para revender (ARREGLO 143)
+// ══════════════════════════════════════════════════════════════════════
+//
+// Sus palabras del 15/10: "compre unas maquinas con dolares fisicos, son de la
+// empresa pero eso es para vender, entonces quiero llevar el control de eso
+// porque eso es ingreso para la empresa y por supuesto aumenta las ganancias
+// — por lo menos eso lo compre a 200$ y lo voy a vender en 300$".
+//
+// **CON LO QUE HABIA, sus numeros salian mal por los dos lados.** Registrando
+// la compra como egreso y la venta como ganancia extra:
+//
+//     compras a 200  ->  el mes sale en PERDIDA de 200, y el capital no
+//                        cuenta la maquina que tiene en la mano
+//     vendes a 300   ->  el mes gana 300, no 100
+//
+// La ganancia de verdad —100— no aparecia nunca. Sus palabras al aprobarlo:
+// "que no de ganancia o perdidas locas".
+//
+// **COMPRAR NO MUEVE EL CAPITAL, y eso es lo que hace que cuadre.** Salen 200
+// de una cuenta y entra una maquina de 200: el dinero cambia de forma, no se
+// va. Para que la conciliacion no salte, ese egreso tiene que salir de
+// `egEmpresa` —es `_egresosMercanciaDesde()`, el mismo patron del ARREGLO 96—
+// porque si no `deberias` bajaria 200 mientras `tienes` se queda igual.
+//
+// La identidad, que es lo que hay que medir y no deducir:
+//
+//     comprar a 200   tienes  -200 cuenta  +200 mercancia  =  0   deberias 0
+//     vender a 300    tienes  +300 cuenta  -200 mercancia  = +100 deberias +100
+//     vender FIADO    tienes     0 cuenta  -200 mercancia
+//                             +300 por cobrar              = +100 deberias +100
+//
+// Por eso la ganancia entra en `bruta` (via ganBrutaTotal) y el egreso de la
+// compra se excluye SIEMPRE, vendido o no: nunca fue un gasto.
+//
+// **La mercancia se valora a lo que COSTO, no a lo que espera sacar.** Lo que
+// espera ganar se dice y no suma — la misma regla que el interes pendiente de
+// un prestamo (ARREGLO 71). Si valorara a 300 estaria apuntando una ganancia
+// antes de vender nada, que es justo lo que el ARREGLO 124 tuvo que quitar de
+// las vueltas.
+//
+// **Y el USDT se guarda del momento**, como una remesa guarda su `uc`/`uv`:
+// la ganancia de hoy no puede cambiar porque mañana se mueva una tasa.
+
+// Lo que una cosa lleva costado: lo que pago mas todo lo que le metio despues
+// (flete, aduana, reparacion). Se escribe UNA vez y lo leen la lista, el
+// capital, la ganancia y el informe — calculado aparte, un redondeo distinto
+// haria que el capital diga una cosa y la ficha de al lado otra.
+function _costoArticulo(a){
+  if(!a) return 0;
+  var c=parseFloat(a.costoUsdt)||0;
+  (S.artGastos||[]).forEach(function(g){
+    if(String(g.artId)===String(a.id)) c+=parseFloat(g.montoUsdt)||0;
+  });
+  return Math.round(c*10000)/10000;
+}
+// Lo que tiene en la mano, a lo que le costo. Lo leen capitalRealTotal(), la
+// pestaña y el informe del mes.
+function _mercanciaEnMano(){
+  var usdt=0, n=0, lista=[];
+  (S.articulos||[]).forEach(function(a){
+    if(a.estado==="vendido") return;
+    var c=_costoArticulo(a);
+    usdt+=c; n++; lista.push({id:a.id,nombre:a.nombre,costo:c});
+  });
+  return {usdt:Math.round(usdt*100)/100, n:n, lista:lista};
+}
+// La ganancia del mes: venta menos lo que costo. Sale el mes de la VENTA, no
+// el del cobro — con una venta fiada los 300 ya estan en Por cobrar, asi que
+// el capital ya subio y la ganancia tiene que subir con el. Es la misma regla
+// que una remesa pendiente, que apunta su ganancia el dia que se registra.
+// El mes de un registro de mercancia, por su fechaIso. Escrito aparte porque
+// lo leen la ganancia del mes y la pestaña, y porque la trampa es fina: aqui
+// convivian dos formatos y `_mesKeyISO` solo entiende "aaaa-mm-dd" — pasarle
+// la fecha de pantalla ("15/10/26") devuelve cadena vacia y el articulo NO
+// CUENTA EN NINGUN MES, en silencio.
+//
+// Lo cace midiendo: la venta subia el capital 100 y `deberias` no se movia, o
+// sea la app cantando 100 "sin explicar" por una venta perfectamente normal.
+// Las guardias estructurales pasaban — la llamada decia lo que debia decir.
+//
+// Por eso cada registro guarda su `fechaIso` ademas de la de pantalla, como
+// los lotes desde el ARREGLO 51. Si falta, se deduce de la de pantalla en vez
+// de dejarlo fuera: un articulo que no cuenta sin decirlo es peor.
+function _mesDeMercancia(o){
+  if(!o) return "";
+  if(o.fechaIso) return _mesKeyISO(o.fechaIso);
+  var m=getMesAnio(o.fecha||o.d);
+  if(!m||!m.anio) return "";
+  return m.anio+"-"+String(parseInt(m.mes||"0")).padStart(2,"0");
+}
+function gananciaMercanciaDelMes(mesKey){
+  var usdt=0, cant=0, venta=0, costo=0;
+  (S.articulos||[]).forEach(function(a){
+    if(a.estado!=="vendido"||!a.venta) return;
+    if(_mesDeMercancia(a.venta)!==mesKey) return;
+    var v=parseFloat(a.venta.montoUsdt)||0, c=_costoArticulo(a);
+    venta+=v; costo+=c; usdt+=(v-c); cant++;
+  });
+  var r2m=function(x){return Math.round(x*100)/100;};
+  return {usdt:r2m(usdt), cant:cant, venta:r2m(venta), costo:r2m(costo)};
+}
+// Los egresos que NO son gasto: comprar mercancia y lo que se le mete encima.
+// Se identifican por `fromArticulo`, NO por la categoria: la categoria es un
+// nombre que ella puede renombrar en Configuracion, y el dia que lo haga estos
+// egresos volverian a contar como gasto y la conciliacion saltaria entera.
+//
+// El corte de fecha es el MISMO que usa la resta que corrige (ARREGLO 96): con
+// otro corte queda un hueco o se cuenta de mas.
+function _egresosMercanciaDesde(desdeIso){
+  var total=0, n=0, mismoDia=0;
+  if(!desdeIso) return {total:0,n:0,mismoDia:0};
+  (S.egresos||[]).forEach(function(e){
+    if(!e.fromArticulo||!e.pagada) return;
+    var iso=_isoDeDDMMAA(e.d||e.fecha) || String(e.d||e.fecha||"").slice(0,10);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(iso) || iso<desdeIso) return;
+    if(iso>desdeIso){ total+=parseFloat(e.usdt)||0; n++; }
+    else mismoDia+=parseFloat(e.usdt)||0;
+  });
+  return {total:Math.round(total*100)/100, n:n, mismoDia:Math.round(mismoDia*100)/100};
+}
+
 function gananciaPrestamosDelMes(mesKey){
   var monto=0, usdt=0, cant=0;
   (S.prestamos||[]).forEach(function(p){
@@ -2965,7 +3098,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261015_v224";
+var APP_VERSION = "20261015_v225";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -4693,7 +4826,9 @@ var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   // ultimo que lo calculo. Pero tiene que estar aqui o no viaja.
   "avisoPush",
   // ARREGLO 134 · el apartamento y su cronograma
-  "inmuebles","inmCuotas"];
+  "inmuebles","inmCuotas",
+  // ARREGLO 143 · lo que compra para revender
+  "articulos","artGastos"];
 
 // ══════════════════════════════════════════════════════════════════════
 // SISTEMA DE CIERRE AUTOMÁTICO DE MES
@@ -5280,7 +5415,20 @@ function capitalRealTotal(){
   // sale identico antes y despues del traspaso.
   var sueldoPendiente=0;
   try{ sueldoPendiente=(sueldoApartado()||{}).falta||0; }catch(e){ sueldoPendiente=0; }
-  var total=r2v(enCuentas+enReserva+porCobrar+enPrestamos-sueldoPendiente);
+  // ARREGLO 143 · lo que compro para revender y todavia tiene en la mano. Sus
+  // palabras del 15/10: "recuerda eso es de la empresa, no personal".
+  //
+  // Entra por lo que COSTO, no por lo que espera sacar: valorarlo a 300 seria
+  // apuntar la ganancia antes de vender nada (ARREGLO 124). Lo que espera
+  // ganar se dice en la pestaña y no suma, como el interes de un prestamo.
+  //
+  // Y como con el sueldo y con los intereses, NO SE PUEDE SUMAR DE UN LADO
+  // SOLO: el egreso de la compra tiene que salir de `egEmpresa` en la
+  // conciliacion, o `deberias` baja 200 mientras `tienes` se queda igual y se
+  // abre un hueco del tamaño de la compra.
+  var enMercancia=0, nMercancia=0;
+  try{ var _mm=_mercanciaEnMano(); enMercancia=_mm.usdt; nMercancia=_mm.n; }catch(e){ enMercancia=0; }
+  var total=r2v(enCuentas+enReserva+porCobrar+enPrestamos+enMercancia-sueldoPendiente);
   // Las monedas se ordenan por lo que pesan en USDT: la primera fila del
   // informe es donde de verdad esta su dinero, no la que entro antes.
   var lista=Object.keys(porMoneda).map(function(m){
@@ -5295,6 +5443,7 @@ function capitalRealTotal(){
   }).sort(function(a,b){return b.usdt-a.usdt;});
   return {enCuentas:r2v(enCuentas), enReserva:r2v(enReserva), porCobrar:r2v(porCobrar),
           enPrestamos:r2v(enPrestamos), interesPrestamos:r2v(interesPrestamos),
+          enMercancia:r2v(enMercancia), nMercancia:nMercancia,
           enLaCalle:r2v(porCobrar+enPrestamos), total:total, porMoneda:lista,
           sueldoPendiente:r2v(sueldoPendiente),
           sinTasa:sinTasa.filter(function(m,i,a){return a.indexOf(m)===i;})};
@@ -6124,11 +6273,32 @@ function conciliacionCapital(){
   // cuenta. Restarlo aqui tambien lo contaba dos veces.
   var egPersDesdePers=egresosPersonalesDesdeCuentaPersonal(desde);
   var egPersonalEmpresa=r2v(egPersonal-egPersDesdePers.total);
+  // ── ARREGLO 143 · aqui NO se vuelve a restar la compra de mercancia ──
+  //
+  // Comprar mercancia no es un gasto —es dinero que cambia de forma, y el
+  // capital ya la cuenta en `enMercancia`— pero quien lo excluye es
+  // `calcMesCompleto`, UNA vez, y de ahi llega ya descontado por
+  // `_acumuladosMes`. Restarlo otra vez aqui lo descuenta DOS veces.
+  //
+  // Lo cace midiendolo, no leyendolo: el primer intento lo restaba en los dos
+  // sitios y con su export daba
+  //
+  //     comprar a 200   deberias 2.690,29 -> 2.890,29   (+200, deberia ser 0)
+  //
+  // o sea la app diciendo que le FALTAN 200 por el solo hecho de comprar. Las
+  // guardias estructurales pasaban: el texto decia lo que debia decir en los
+  // dos sitios por separado.
+  //
+  // Por eso `_egresosMercanciaDesde()` existe pero NO se llama desde aqui: lo
+  // lee la pestaña, para decir cuanto lleva invertido. Es la misma trampa del
+  // ARREGLO 96 al reves — alli habia que restar en un sitio mas, aqui habia
+  // que no restar dos veces.
+  var egEmpresaSinMerc=r2v(egEmpresa);
   // El sueldo sin apartar se resta en los DOS lados, y el de aqui sale del
   // mismo sitio que el de alla (real.sueldoPendiente). Calcularlo aparte seria
   // la segunda respuesta a la misma pregunta, y con que difieran en un centimo
   // el "sin explicar" se mueve solo.
-  var deberias=r2v(apertura-intAp.total+bruta-egEmpresa-egPersonalEmpresa-socios-traspPers.total-(real.sueldoPendiente||0));
+  var deberias=r2v(apertura-intAp.total+bruta-egEmpresaSinMerc-egPersonalEmpresa-socios-traspPers.total-(real.sueldoPendiente||0));
   var diferencia=r2v(real.total-deberias);
   // De qué está hecha esa diferencia: los ajustes a mano y el desfase de las
   // tasas se explican solos, lo que quede es lo único que hay que perseguir.
@@ -6138,7 +6308,13 @@ function conciliacionCapital(){
   return {
     configurada:true, apertura:r2v(apertura), desde:desde, meses:meses.length,
     baseFaltante:baseFaltante,
-    bruta:r2v(bruta), egEmpresa:r2v(egEmpresa), egPersonal:egPersonalEmpresa,
+    // ARREGLO 143: `egEmpresa` sale ya SIN las compras de mercancia, que es el
+    // mismo numero que entra en `deberias`. Devolviendo el bruto, la tabla de
+    // "deberias tener" del Balance dejaria de sumar su propio total — que es
+    // justo el fallo que el ARREGLO 100 tuvo que arreglar con la fila del
+    // socio en negativo. El dato de las compras va aparte, por si hay que
+    // enseñarlo.
+    bruta:r2v(bruta), egEmpresa:egEmpresaSinMerc, egPersonal:egPersonalEmpresa,
     egPersonalSin:r2v(egPersonalSin), socios:r2v(socios),
     egPersDesdePers:egPersDesdePers,
     deberias:deberias, real:real, diferencia:diferencia,
@@ -10602,6 +10778,446 @@ function deshacerCuotaInm(id){
 }
 
 // ── LA PANTALLA ─────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+// MERCANCIA · la pantalla (ARREGLO 143)
+// ══════════════════════════════════════════════════════════════════════
+
+// Lo que vale en USDT, con la tasa de AHORA. Se guarda en el registro y no se
+// vuelve a calcular: una remesa guarda su `uc`/`uv` por lo mismo. Si se leyera
+// vivo, la ganancia de una venta de hace un mes cambiaria sola cada vez que se
+// mueve una tasa, y ella dejaria de fiarse del numero.
+//
+// Sin tasa devuelve null, no cero: un costo de cero convierte la venta entera
+// en ganancia. Mejor no dejar guardar que guardar un numero inventado.
+function _usdtMerc(monto, mon){
+  var m=parseFloat(monto)||0;
+  if(mon==="USDT"||mon==="USD") return m;
+  var r=getRateToUsdt(mon);
+  if(!r||isNaN(r)||r<=0) return null;
+  return Math.round(m/r*10000)/10000;
+}
+// Las cuentas donde puede estar el dinero de la empresa. Se escribe UNA vez y
+// la leen los TRES formularios (comprar, gastar, cobrar): con una copia por
+// formulario, en dos semanas ofrecen listas distintas.
+//
+// Las 💜 personales quedan fuera: ese dinero ya salio de la empresa (ARREGLO
+// 96) y comprar mercancia con el seria inventarse un movimiento.
+function _ctasMerc(){
+  return (S.cuentas||[]).filter(function(c){ return c.activa!==false && !c.esPersonal; });
+}
+function _optCtasMerc(sel){
+  return _ctasMerc().map(function(c){
+    var sal=parseFloat(c.saldo)||0;
+    var deu=0; try{ deu=_deudaTarjeta(c)||0; }catch(e){ deu=0; }
+    var pie = deu>0 ? " · 💳 debes "+f2(deu) : " · "+f2(sal)+" "+c.moneda;
+    return "<option value='"+_jsAttr(String(c.id))+"'"+(String(sel)===String(c.id)?" selected":"")+">"+
+           _escAud(c.nombre)+pie+"</option>";
+  }).join("");
+}
+function _ctaMerc(id){ return _ctasMerc().filter(function(c){return String(c.id)===String(id);})[0]||null; }
+function _MONS_MERC(){
+  var m={USDT:1,BRL:1,VES:1,USD:1};
+  _ctasMerc().forEach(function(c){ if(c.moneda) m[c.moneda]=1; });
+  return Object.keys(m);
+}
+function _optMonMerc(sel){
+  return _MONS_MERC().map(function(m){
+    return "<option value='"+m+"'"+(sel===m?" selected":"")+">"+m+"</option>";
+  }).join("");
+}
+function _artDe(id){ return (S.articulos||[]).filter(function(a){return String(a.id)===String(id);})[0]||null; }
+function _gastosDe(id){ return (S.artGastos||[]).filter(function(g){return String(g.artId)===String(id);}); }
+function _hoyDMA(){ var d=new Date();
+  return String(d.getDate()).padStart(2,"0")+"/"+String(d.getMonth()+1).padStart(2,"0")+"/"+String(d.getFullYear()).slice(-2); }
+function _hoyISO(){ var d=new Date();
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
+
+// El egreso de comprar o de meterle un gasto. Pasa por el camino de siempre
+// —baja la cuenta y baja el lote FIFO— asi que el Diario, el Balance y la
+// conciliacion se enteran solos. Lo unico suyo es la marca `fromArticulo`, que
+// es la que dice "esto no es un gasto" (ver calcMesCompleto).
+function _egresoMerc(artId, cuenta, monto, mon, usdt, motivo, fecha){
+  var egId="arteg_"+_newUid();
+  ajusteCuentaEgreso(cuenta.id, -(parseFloat(monto)||0));
+  descontarFIFOEgreso(mon, monto, usdt, cuenta.id);
+  S.egresos=S.egresos||[];
+  S.egresos.push({id:egId, d:fecha, cat:"Mercancía", mot:motivo,
+    monto:monto, usdt:usdt, mon:mon, tipo:"empresa", pagada:true, locked:false,
+    cuentaId:cuenta.id, fromArticulo:artId});
+  return egId;
+}
+// Deshacer: el dinero vuelve a la cuenta y al lote, igual que al borrar una
+// remesa (ARREGLO 127). Sin esto, un articulo mal registrado se borra y el
+// dinero no vuelve de ninguna parte.
+function _borrarEgresoMerc(egId){
+  var i=(S.egresos||[]).findIndex(function(e){return String(e.id)===String(egId);});
+  if(i<0) return;
+  var e=S.egresos[i];
+  var c=_ctaMerc(e.cuentaId);
+  if(c) ajusteCuentaEgreso(c.id, +(parseFloat(e.monto)||0));
+  try{ restaurarFIFOEgreso(e.mon, e.monto, e.usdt, e.cuentaId); }catch(err){}
+  _marcarBorradoMerge("egresos", e.id);
+  S.egresos.splice(i,1);
+}
+
+function guardarArticulo(){
+  if(!permisoEdicion()) return;
+  var f=S.nArt||{};
+  var nombre=String(f.nombre||"").trim();
+  if(!nombre){ alert("Ponle un nombre, para saber qué es."); return; }
+  var costo=_num(f.costo); costo=parseFloat(costo)||0;
+  if(costo<=0){ alert("¿Cuánto te costó?"); return; }
+  var mon=f.mon||"USDT";
+  var cuenta=_ctaMerc(f.cuentaId);
+  if(!cuenta){ alert("Elige de qué cuenta salió el dinero."); return; }
+  if(cuenta.moneda!==mon){
+    alert("La cuenta "+cuenta.nombre+" está en "+cuenta.moneda+" y el costo lo pusiste en "+mon+".\n\nElige una cuenta en "+mon+", o cambia la moneda.");
+    return;
+  }
+  var usdt=_usdtMerc(costo, mon);
+  if(usdt===null){
+    alert("No hay tasa para "+mon+", así que no se puede saber qué vale eso en USDT.\n\nRegistra primero una operación de USDT en "+mon+".");
+    return;
+  }
+  var esp=parseFloat(_num(f.precioEsp))||0;
+  var id=Date.now();
+  var fecha=f.fecha||_hoyDMA();
+  var iso=f.fechaIso||_hoyISO();
+  var egId=_egresoMerc(id, cuenta, costo, mon, usdt, "[Mercancía] "+nombre, fecha);
+  S.articulos=S.articulos||[];
+  S.articulos.push({id:id, nombre:nombre, nota:String(f.nota||"").trim(),
+    fecha:fecha, fechaIso:iso, costo:costo, mon:mon, costoUsdt:usdt,
+    cuentaId:cuenta.id, egresoId:egId, estado:"mano",
+    precioEsp:esp, monEsp:f.monEsp||mon});
+  S.nArt={}; S._artForm=false;
+  saveData(); R();
+  alert("✅ Guardado.\n\nSalieron "+f2(costo)+" "+mon+" de "+cuenta.nombre+".\n\nTu capital NO baja: el dinero cambió de forma, ahora es mercancía.");
+}
+
+function agregarGastoArt(id){
+  if(!permisoEdicion()) return;
+  var a=_artDe(id); if(!a) return;
+  var f=S.gArt||{};
+  var concepto=String(f.concepto||"").trim();
+  if(!concepto){ alert("¿De qué es el gasto? (flete, aduana, reparación…)"); return; }
+  var monto=parseFloat(_num(f.monto))||0;
+  if(monto<=0){ alert("¿Cuánto?"); return; }
+  var mon=f.mon||a.mon;
+  var cuenta=_ctaMerc(f.cuentaId);
+  if(!cuenta){ alert("Elige de qué cuenta salió."); return; }
+  if(cuenta.moneda!==mon){ alert("La cuenta está en "+cuenta.moneda+" y el gasto lo pusiste en "+mon+"."); return; }
+  var usdt=_usdtMerc(monto, mon);
+  if(usdt===null){ alert("No hay tasa para "+mon+"."); return; }
+  var fecha=_hoyDMA();
+  var gid=Date.now();
+  var egId=_egresoMerc(a.id, cuenta, monto, mon, usdt, "[Mercancía] "+a.nombre+" · "+concepto, fecha);
+  S.artGastos=S.artGastos||[];
+  S.artGastos.push({id:gid, artId:a.id, fecha:fecha, fechaIso:_hoyISO(),
+    concepto:concepto, monto:monto, mon:mon, montoUsdt:usdt,
+    cuentaId:cuenta.id, egresoId:egId});
+  S.gArt={}; S._artGasto=null;
+  saveData(); R();
+}
+
+function venderArticulo(id){
+  if(!permisoEdicion()) return;
+  var a=_artDe(id); if(!a) return;
+  var f=S.vArt||{};
+  var monto=parseFloat(_num(f.monto))||0;
+  if(monto<=0){ alert("¿En cuánto lo vendiste?"); return; }
+  var mon=f.mon||a.monEsp||a.mon;
+  var usdt=_usdtMerc(monto, mon);
+  if(usdt===null){ alert("No hay tasa para "+mon+", así que no se puede calcular la ganancia."); return; }
+  var cobro=f.cobro||"contado";
+  var venta={fecha:_hoyDMA(), fechaIso:_hoyISO(), monto:monto, mon:mon,
+             montoUsdt:usdt, cobro:cobro, cliente:String(f.cliente||"").trim()};
+  if(cobro==="contado"){
+    var cuenta=_ctaMerc(f.cuentaId);
+    if(!cuenta){ alert("¿A qué cuenta entró el dinero?"); return; }
+    if(cuenta.moneda!==mon){ alert("La cuenta está en "+cuenta.moneda+" y la venta la pusiste en "+mon+"."); return; }
+    // El dinero entra a la cuenta, y NO crea lote: un lote nace solo cuando
+    // ella compra o vende USDT (regla del inventario FIFO). Vender una maquina
+    // no es una operacion de USDT. Si esos bolivares se gastan luego, el FIFO
+    // los valora con tasaDeReferencia() y lo DICE (ARREGLO 125).
+    ajusteCuentaEgreso(cuenta.id, +monto);
+    venta.cuentaId=cuenta.id;
+  } else {
+    if(!venta.cliente){ alert("¿A quién se lo fiaste? Pon su nombre."); return; }
+    // Fiado va a Por cobrar, que es donde ya viven los abonos con su tasa y su
+    // aviso de tasa al reves (ARREGLO 55). Escribir aqui un segundo sitio para
+    // cobrar seria el ARREGLO 98 otra vez.
+    var cid="artc_"+_newUid();
+    S.cuentasCobrar=S.cuentasCobrar||[];
+    S.cuentasCobrar.push({id:cid, cliente:venta.cliente, concepto:"Venta de "+a.nombre,
+      monto:monto, moneda:mon, estado:"pendiente", abonos:[],
+      fecha:venta.fecha, fromArticulo:a.id});
+    venta.cobrarId=cid;
+  }
+  a.venta=venta; a.estado="vendido";
+  S.vArt={}; S._artVenta=null;
+  saveData(); R();
+  var gan=Math.round((usdt-_costoArticulo(a))*100)/100;
+  alert("✅ Vendido.\n\nTe costó $"+f2(_costoArticulo(a))+" y lo vendiste por $"+f2(usdt)+
+        ".\nGanancia: $"+f2(gan)+
+        (cobro==="fiado"?"\n\nLos "+f2(monto)+" "+mon+" quedaron en Por cobrar a nombre de "+venta.cliente+"." : "")+
+        "\n\nLa ganancia cuenta para la utilidad del mes, así que también para tu sueldo.");
+}
+
+function deshacerVentaArt(id){
+  if(!permisoEdicion()) return;
+  var a=_artDe(id); if(!a||!a.venta) return;
+  if(!confirm("¿Deshacer la venta de "+a.nombre+"?\n\nEl dinero vuelve de donde entró y el artículo vuelve a tu inventario.")) return;
+  var v=a.venta;
+  if(v.cobro==="contado"&&v.cuentaId){
+    var c=_ctaMerc(v.cuentaId);
+    if(c) ajusteCuentaEgreso(c.id, -(parseFloat(v.monto)||0));
+  } else if(v.cobrarId){
+    var i=(S.cuentasCobrar||[]).findIndex(function(x){return String(x.id)===String(v.cobrarId);});
+    if(i>=0){
+      var cc=S.cuentasCobrar[i];
+      var abon=(cc.abonos||[]).reduce(function(x,ab){return x+(parseFloat(ab.monto)||0);},0);
+      if(abon>0){ alert("Ese cobro ya tiene "+f2(abon)+" abonado. Deshaz los abonos primero en Por cobrar."); return; }
+      _marcarBorradoMerge("cuentasCobrar", cc.id);
+      S.cuentasCobrar.splice(i,1);
+    }
+  }
+  delete a.venta; a.estado="mano";
+  saveData(); R();
+}
+
+function borrarArticulo(id){
+  if(!permisoEdicion()) return;
+  var a=_artDe(id); if(!a) return;
+  if(a.estado==="vendido"){ alert("Está vendido. Deshaz la venta primero."); return; }
+  var gs=_gastosDe(id);
+  if(!confirm("¿Borrar "+a.nombre+"?\n\nVuelven "+f2(a.costo)+" "+a.mon+" a su cuenta"+
+      (gs.length?" y se deshacen sus "+gs.length+" gasto(s)":"")+".")) return;
+  gs.forEach(function(g){
+    _borrarEgresoMerc(g.egresoId);
+    _marcarBorradoMerge("artGastos", g.id);
+  });
+  S.artGastos=(S.artGastos||[]).filter(function(g){return String(g.artId)!==String(id);});
+  _borrarEgresoMerc(a.egresoId);
+  _marcarBorradoMerge("articulos", a.id);
+  S.articulos=(S.articulos||[]).filter(function(x){return String(x.id)!==String(id);});
+  saveData(); R();
+}
+
+// La pestaña. Abre con lo que ella pregunta —cuanto tengo metido y cuanto
+// llevo ganado— y la lista debajo. El formulario de alta va PLEGADO: sus
+// palabras de siempre, "no me gustan las pantallas saturadas".
+function rMercancia(){
+  var enMano=(S.articulos||[]).filter(function(a){return a.estado!=="vendido";});
+  var vendidos=(S.articulos||[]).filter(function(a){return a.estado==="vendido";});
+  var inv=0, esperado=0, sinEsp=0;
+  enMano.forEach(function(a){
+    inv+=_costoArticulo(a);
+    var e=_usdtMerc(a.precioEsp, a.monEsp||a.mon);
+    if(e===null||!(parseFloat(a.precioEsp)>0)) sinEsp++; else esperado+=e;
+  });
+  var mesAct=getMesKeyActual();
+  var gm=gananciaMercanciaDelMes(mesAct);
+  var abierto=!!S._artForm;
+  var f=S.nArt||{};
+  var cajas=
+    "<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px'>"+
+      "<div style='background:var(--sup2);border-radius:10px;padding:10px 12px'>"+
+        "<div style='font-size:10.5px;color:var(--tx3)'>Tienes invertido</div>"+
+        "<div style='font-size:19px;font-weight:900;color:var(--tx2);margin-top:1px'>$"+f2(inv)+"</div>"+
+        "<div style='font-size:10px;color:var(--tx3);margin-top:1px'>"+enMano.length+" cosa"+(enMano.length===1?"":"s")+" · cuenta como capital</div>"+
+      "</div>"+
+      "<div style='background:var(--sup2);border-radius:10px;padding:10px 12px'>"+
+        "<div style='font-size:10.5px;color:var(--tx3)'>Ganaste este mes</div>"+
+        "<div style='font-size:19px;font-weight:900;color:"+(gm.usdt>0?"var(--ok)":"var(--tx2)")+";margin-top:1px'>"+
+          (gm.usdt<0?"−":"")+"$"+f2(Math.abs(gm.usdt))+"</div>"+
+        "<div style='font-size:10px;color:var(--tx3);margin-top:1px'>"+gm.cant+" venta"+(gm.cant===1?"":"s")+" · ya está en tu utilidad</div>"+
+      "</div>"+
+    "</div>"+
+    // Lo que espera sacar se DICE y no suma, igual que el interes pendiente de
+    // un prestamo (ARREGLO 71). Sumarlo seria apuntar una ganancia antes de
+    // vender nada, que es lo que el ARREGLO 124 tuvo que quitar de las vueltas.
+    ((esperado>0.005||sinEsp>0)
+      ? "<div style='font-size:11px;color:var(--tx3);background:var(--sup2);border-radius:9px;padding:8px 12px;margin-bottom:10px;line-height:1.5'>"+
+        (esperado>0.005
+          ? "Si lo vendes a lo que piensas, sacarías <b style='color:var(--tx2)'>$"+f2(esperado)+"</b> y ganarías <b style='color:var(--tx2)'>$"+f2(Math.round((esperado-inv)*100)/100)+"</b>."
+          : "")+
+        " <span style='color:var(--tx4)'>Eso no está sumado en tu capital: se gana el día que vendas.</span>"+
+        (sinEsp>0?"<br><span style='color:var(--tx4);font-size:10.5px'>"+sinEsp+" sin precio puesto, así que no entra en esa cuenta.</span>":"")+
+      "</div>" : "");
+
+  var form = !abierto
+    ? "<button onclick='S._artForm=true;R()' style='width:100%;padding:11px;border:1px dashed var(--ln2);border-radius:10px;background:var(--sup);color:var(--tx2);font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;margin-bottom:12px'>➕ Agregar algo que compraste para vender</button>"
+    : "<div style='background:var(--sup);border:1.5px solid var(--ln2);border-radius:12px;padding:13px;margin-bottom:12px'>"+
+        "<div style='font-size:12px;font-weight:800;color:var(--tit);margin-bottom:10px'>➕ Algo nuevo</div>"+
+        _campoMerc("¿Qué es?", "<input id='art-nom' value='"+_jsAttr(f.nombre||"")+"' oninput='S.nArt=S.nArt||{};S.nArt.nombre=this.value' placeholder='ej: Máquina de coser' style='"+_estiloMerc()+"'>")+
+        "<div style='display:flex;gap:7px'>"+
+          "<div style='flex:2'>"+_campoMerc("¿Qué te costó?", "<input id='art-cos' inputmode='decimal' value='"+_jsAttr(String(f.costo||""))+"' oninput='S.nArt=S.nArt||{};S.nArt.costo=_num(this.value)' placeholder='200' style='"+_estiloMerc()+"'>")+"</div>"+
+          "<div style='flex:1'>"+_campoMerc("Moneda", "<select onchange='S.nArt=S.nArt||{};S.nArt.mon=this.value;R()' style='"+_estiloMerc()+"'>"+_optMonMerc(f.mon||"USDT")+"</select>")+"</div>"+
+        "</div>"+
+        _campoMerc("¿De qué cuenta salió?", "<select onchange='S.nArt=S.nArt||{};S.nArt.cuentaId=this.value' style='"+_estiloMerc()+"'><option value=''>— elige —</option>"+_optCtasMerc(f.cuentaId)+"</select>")+
+        "<div style='display:flex;gap:7px'>"+
+          "<div style='flex:2'>"+_campoMerc("¿En cuánto piensas venderlo?", "<input inputmode='decimal' value='"+_jsAttr(String(f.precioEsp||""))+"' oninput='S.nArt=S.nArt||{};S.nArt.precioEsp=_num(this.value)' placeholder='300 · opcional' style='"+_estiloMerc()+"'>")+"</div>"+
+          "<div style='flex:1'>"+_campoMerc("Moneda", "<select onchange='S.nArt=S.nArt||{};S.nArt.monEsp=this.value' style='"+_estiloMerc()+"'>"+_optMonMerc(f.monEsp||f.mon||"USDT")+"</select>")+"</div>"+
+        "</div>"+
+        "<div style='display:flex;gap:7px;margin-top:4px'>"+
+          "<button onclick='guardarArticulo()' style='flex:1;padding:11px;border:none;border-radius:9px;background:var(--ac);color:var(--sobre-color);font-size:13px;font-weight:800;cursor:pointer;font-family:inherit'>Guardar</button>"+
+          "<button onclick='S._artForm=false;S.nArt={};R()' style='padding:11px 15px;border:1px solid var(--ln);border-radius:9px;background:var(--sup2);color:var(--tx3);font-size:12.5px;cursor:pointer;font-family:inherit'>Cancelar</button>"+
+        "</div>"+
+      "</div>";
+
+  var lista = enMano.length
+    ? enMano.map(_filaArticulo).join("")
+    : "<div style='text-align:center;padding:26px;color:var(--tx4);font-size:12px'>Nada en inventario todavía.</div>";
+
+  var verVend=!!S._artVendidos;
+  var histo = vendidos.length
+    ? "<div onclick='_verVendidosArt()' style='background:var(--sup);border:1px dashed var(--ln2);border-radius:10px;padding:9px 12px;margin-top:12px;font-size:11.5px;color:var(--tx3);display:flex;justify-content:space-between;align-items:center;gap:10px;cursor:pointer;user-select:none'>"+
+        "<span>"+vendidos.length+" ya vendida"+(vendidos.length===1?"":"s")+"</span>"+
+        "<span id='art-vend-ver' style='font-weight:800;color:var(--tx2);white-space:nowrap'>"+(verVend?"ocultar ▴":"ver ▾")+"</span>"+
+      "</div>"+
+      "<div id='art-vendidos'"+(verVend?"":" style='display:none'")+">"+vendidos.map(_filaArticulo).join("")+"</div>"
+    : "";
+
+  return "<div style='padding:8px'>"+
+    "<div style='background:var(--sup2);border:1px solid var(--ln);border-radius:12px;padding:14px;margin-bottom:12px'>"+
+      "<div style='font-size:13px;font-weight:800;color:var(--tx2);margin-bottom:10px'>📦 Mercancía</div>"+
+      cajas+
+      "<div style='font-size:10.5px;color:var(--tx3);line-height:1.55'>Comprar no baja tu capital: el dinero sale de la cuenta y entra aquí. Lo que ganas se apunta el día que vendes.</div>"+
+    "</div>"+
+    form+
+    "<div style='border:1px solid var(--ln2);border-radius:12px;overflow:hidden'>"+lista+"</div>"+
+    histo+
+  "</div>";
+}
+// El estilo de un campo, en UN sitio: con uno por formulario, en dos semanas
+// hay tres anchos distintos (la regla de .pz-card).
+function _estiloMerc(){ return "width:100%;padding:9px;border:1px solid var(--ln);border-radius:8px;font-size:13px;font-family:inherit;background:var(--sup2);color:var(--tit);box-sizing:border-box"; }
+function _campoMerc(rot, html){
+  return "<div style='margin-bottom:8px'><div style='font-size:10.5px;color:var(--tx3);margin-bottom:3px'>"+rot+"</div>"+html+"</div>";
+}
+// Desplegar NO llama a R() (ARREGLO 32): repintar cierra lo que tenga abierto
+// bajo el dedo. Se cambia el display por su id.
+function _verVendidosArt(){
+  S._artVendidos=!S._artVendidos;
+  var n=document.getElementById("art-vendidos");
+  if(n) n.style.display = S._artVendidos ? "" : "none";
+  var t=document.getElementById("art-vend-ver");
+  if(t) t.textContent = S._artVendidos ? "ocultar ▴" : "ver ▾";
+}
+
+function _filaArticulo(a){
+  var gs=_gastosDe(a.id);
+  var costo=_costoArticulo(a);
+  var vendido=a.estado==="vendido";
+  var gan=vendido ? Math.round(((parseFloat(a.venta.montoUsdt)||0)-costo)*100)/100 : null;
+  var abreVenta=String(S._artVenta||"")===String(a.id);
+  var abreGasto=String(S._artGasto||"")===String(a.id);
+  var v=S.vArt||{}, g=S.gArt||{};
+  var cab =
+    "<div style='display:flex;align-items:flex-start;gap:10px;padding:11px 13px'>"+
+      "<div style='flex:1;min-width:0'>"+
+        "<div style='font-size:13px;font-weight:800;color:var(--tit)'>"+_escAud(a.nombre)+"</div>"+
+        "<div style='font-size:10.5px;color:var(--tx3);margin-top:2px;line-height:1.5'>"+
+          "Te costó <b style='color:var(--tx2)'>"+f2(a.costo)+" "+_escAud(a.mon)+"</b>"+
+          (gs.length?" + "+gs.length+" gasto"+(gs.length===1?"":"s"):"")+
+          " · <b style='color:var(--tx2)'>$"+f2(costo)+"</b> en total"+
+          "<br><span style='color:var(--tx4)'>"+_escAud(a.fecha)+"</span>"+
+          (vendido
+            ? "<br>Vendido el "+_escAud(a.venta.fecha)+" por <b style='color:var(--tx2)'>"+f2(a.venta.monto)+" "+_escAud(a.venta.mon)+"</b>"+
+              (a.venta.cobro==="fiado"?" · <span style='color:var(--avi-tx2)'>fiado a "+_escAud(a.venta.cliente||"")+"</span>":"")
+            : ((parseFloat(a.precioEsp)>0)?"<br>Piensas venderlo en "+f2(a.precioEsp)+" "+_escAud(a.monEsp||a.mon):""))+
+        "</div>"+
+      "</div>"+
+      (vendido
+        ? "<div style='text-align:right;flex:none'>"+
+            "<div style='font-size:10px;color:var(--tx3)'>ganaste</div>"+
+            "<div style='font-size:15px;font-weight:900;color:"+(gan>=0?"var(--ok)":"var(--mal)")+"'>"+(gan<0?"−":"+")+"$"+f2(Math.abs(gan))+"</div>"+
+          "</div>"
+        : "")+
+    "</div>";
+  var botones = "<div style='display:flex;gap:6px;padding:0 13px 11px;flex-wrap:wrap'>"+
+    (vendido
+      ? "<button onclick='deshacerVentaArt("+_jsAttr(String(a.id))+")' style='"+_btnMerc("var(--sup2)","var(--tx3)")+"'>↩️ Deshacer venta</button>"
+      : "<button onclick='_abrirVentaArt("+_jsAttr(String(a.id))+")' style='"+_btnMerc("var(--ac)","var(--sobre-color)")+";font-weight:800'>💵 Vender</button>"+
+        "<button onclick='_abrirGastoArt("+_jsAttr(String(a.id))+")' style='"+_btnMerc("var(--sup2)","var(--tx2)")+"'>➕ Gasto</button>"+
+        "<button onclick='borrarArticulo("+_jsAttr(String(a.id))+")' style='"+_btnMerc("var(--sup2)","var(--mal)")+"'>🗑️</button>")+
+  "</div>";
+  var detGastos = gs.length
+    ? "<div style='padding:0 13px 11px;font-size:10.5px;color:var(--tx3);line-height:1.7'>"+
+        gs.map(function(x){
+          return "<div style='display:flex;justify-content:space-between;gap:10px'>"+
+            "<span>"+_escAud(x.concepto)+" <span style='color:var(--tx4)'>· "+_escAud(x.fecha)+"</span></span>"+
+            "<b style='color:var(--tx2);white-space:nowrap'>"+f2(x.monto)+" "+_escAud(x.mon)+"</b></div>";
+        }).join("")+
+      "</div>" : "";
+  var formVenta = abreVenta
+    ? "<div style='background:var(--sup2);border-top:1px solid var(--ln2);padding:12px 13px'>"+
+        "<div style='font-size:11.5px;font-weight:800;color:var(--tit);margin-bottom:9px'>💵 Vender "+_escAud(a.nombre)+"</div>"+
+        "<div style='display:flex;gap:7px'>"+
+          "<div style='flex:2'>"+_campoMerc("¿En cuánto?", "<input inputmode='decimal' value='"+_jsAttr(String(v.monto||a.precioEsp||""))+"' oninput='S.vArt=S.vArt||{};S.vArt.monto=_num(this.value)' style='"+_estiloMerc()+"'>")+"</div>"+
+          "<div style='flex:1'>"+_campoMerc("Moneda", "<select onchange='S.vArt=S.vArt||{};S.vArt.mon=this.value;R()' style='"+_estiloMerc()+"'>"+_optMonMerc(v.mon||a.monEsp||a.mon)+"</select>")+"</div>"+
+        "</div>"+
+        _campoMerc("¿Te pagan ahora?", "<select onchange='S.vArt=S.vArt||{};S.vArt.cobro=this.value;R()' style='"+_estiloMerc()+"'>"+
+          "<option value='contado'"+((v.cobro||"contado")==="contado"?" selected":"")+">Sí, me pagan ahora</option>"+
+          "<option value='fiado'"+(v.cobro==="fiado"?" selected":"")+">No, se lo fío</option></select>")+
+        ((v.cobro||"contado")==="contado"
+          ? _campoMerc("¿A qué cuenta entra?", "<select onchange='S.vArt=S.vArt||{};S.vArt.cuentaId=this.value' style='"+_estiloMerc()+"'><option value=''>— elige —</option>"+_optCtasMerc(v.cuentaId)+"</select>")
+          : _campoMerc("¿A quién?", "<input value='"+_jsAttr(v.cliente||"")+"' oninput='S.vArt=S.vArt||{};S.vArt.cliente=this.value' placeholder='nombre del cliente' style='"+_estiloMerc()+"'>")+
+            "<div style='font-size:10.5px;color:var(--tx3);margin:-4px 0 8px;line-height:1.5'>Se va a <b>💳 Por cobrar</b>. La ganancia se apunta igual hoy: el dinero ya es tuyo, solo que todavía no lo tienes en la mano.</div>")+
+        "<div style='display:flex;gap:7px'>"+
+          "<button onclick='venderArticulo("+_jsAttr(String(a.id))+")' style='flex:1;padding:10px;border:none;border-radius:9px;background:var(--ac);color:var(--sobre-color);font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit'>Confirmar venta</button>"+
+          "<button onclick='S._artVenta=null;R()' style='padding:10px 14px;border:1px solid var(--ln);border-radius:9px;background:var(--sup);color:var(--tx3);font-size:12px;cursor:pointer;font-family:inherit'>Cancelar</button>"+
+        "</div>"+
+      "</div>" : "";
+  var formGasto = abreGasto
+    ? "<div style='background:var(--sup2);border-top:1px solid var(--ln2);padding:12px 13px'>"+
+        "<div style='font-size:11.5px;font-weight:800;color:var(--tit);margin-bottom:9px'>➕ Un gasto de "+_escAud(a.nombre)+"</div>"+
+        _campoMerc("¿De qué?", "<input value='"+_jsAttr(g.concepto||"")+"' oninput='S.gArt=S.gArt||{};S.gArt.concepto=this.value' placeholder='flete, aduana, reparación…' style='"+_estiloMerc()+"'>")+
+        "<div style='display:flex;gap:7px'>"+
+          "<div style='flex:2'>"+_campoMerc("¿Cuánto?", "<input inputmode='decimal' value='"+_jsAttr(String(g.monto||""))+"' oninput='S.gArt=S.gArt||{};S.gArt.monto=_num(this.value)' style='"+_estiloMerc()+"'>")+"</div>"+
+          "<div style='flex:1'>"+_campoMerc("Moneda", "<select onchange='S.gArt=S.gArt||{};S.gArt.mon=this.value;R()' style='"+_estiloMerc()+"'>"+_optMonMerc(g.mon||a.mon)+"</select>")+"</div>"+
+        "</div>"+
+        _campoMerc("¿De qué cuenta sale?", "<select onchange='S.gArt=S.gArt||{};S.gArt.cuentaId=this.value' style='"+_estiloMerc()+"'><option value=''>— elige —</option>"+_optCtasMerc(g.cuentaId)+"</select>")+
+        "<div style='font-size:10.5px;color:var(--tx3);margin-bottom:8px;line-height:1.5'>Sube lo que te costó esta cosa, así que tu ganancia al venderla ya lo lleva descontado.</div>"+
+        "<div style='display:flex;gap:7px'>"+
+          "<button onclick='agregarGastoArt("+_jsAttr(String(a.id))+")' style='flex:1;padding:10px;border:none;border-radius:9px;background:var(--ac);color:var(--sobre-color);font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit'>Guardar gasto</button>"+
+          "<button onclick='S._artGasto=null;R()' style='padding:10px 14px;border:1px solid var(--ln);border-radius:9px;background:var(--sup);color:var(--tx3);font-size:12px;cursor:pointer;font-family:inherit'>Cancelar</button>"+
+        "</div>"+
+      "</div>" : "";
+  return "<div style='border-bottom:1px solid var(--ln2b)'>"+cab+detGastos+botones+formVenta+formGasto+"</div>";
+}
+// ── Abrir un formulario DEJA PUESTO lo que ese formulario va a enseñar ──
+//
+// Error mio, cazado pulsandolo: el campo "¿en cuánto?" salia relleno con el
+// precio que ella habia puesto al comprar —un `value` en el HTML— pero
+// `S.vArt.monto` solo se escribia en el `oninput`. O sea que si no tocaba el
+// campo, la pantalla decia 300 y al confirmar saltaba "¿En cuánto lo
+// vendiste?" con el 300 delante.
+//
+// Es la familia del ARREGLO 138: el campo enseña un valor y el estado esta
+// vacio. Ninguna guardia de texto lo habria visto —las dos piezas eran
+// correctas por separado— y lo cazo pulsar el boton en Chromium.
+//
+// La regla que sale de aqui: **lo que un formulario ENSEÑA al abrirse tiene
+// que estar guardado al abrirse.** Rellenarlo solo en el `oninput` convierte
+// "no lo tocó" en "está vacío".
+function _abrirVentaArt(id){
+  var a=_artDe(id); if(!a) return;
+  S._artVenta=id; S._artGasto=null;
+  S.vArt={monto:(parseFloat(a.precioEsp)>0?a.precioEsp:""),
+          mon:a.monEsp||a.mon, cobro:"contado", cuentaId:"", cliente:""};
+  R();
+}
+function _abrirGastoArt(id){
+  var a=_artDe(id); if(!a) return;
+  S._artGasto=id; S._artVenta=null;
+  S.gArt={concepto:"", monto:"", mon:a.mon, cuentaId:""};
+  R();
+}
+function _btnMerc(bg,col){
+  return "padding:8px 12px;border:1px solid var(--ln);border-radius:8px;background:"+bg+";color:"+col+";font-size:11.5px;cursor:pointer;font-family:inherit";
+}
+
 function rInmuebles(){
   var l=S.inmuebles||[];
   if(!l.length) return _inmVacio();
@@ -15585,6 +16201,12 @@ function rCapitalTotal(){
     if(R.enPrestamos>0) _cajas.push(_caja("Prestado",   R.enPrestamos));
     if(R.enReserva>0)   _cajas.push(_caja("En reserva", R.enReserva));
     if(R.porCobrar>0)   _cajas.push(_caja("Por cobrar", R.porCobrar));
+    // ARREGLO 143 · lo que tiene comprado para revender. Va con las demas
+    // porque es capital de la empresa igual que lo prestado o lo por cobrar, y
+    // estas cajitas tienen que SUMAR el numero grande de arriba: dejandola
+    // fuera, la lista no se podria sumar a mano (ARREGLO 141).
+    if((R.enMercancia||0)>0.005)
+      _cajas.push(_caja("En mercancía", R.enMercancia, "", R.nMercancia+" cosa"+(R.nMercancia===1?"":"s")+" para vender"));
     // ARREGLO 105: su cuadro, al lado de los demas. Lo pidio asi.
     //
     // Va con el signo MENOS delante porque estas cajas tienen que sumar el
@@ -18875,6 +19497,7 @@ var PERMISOS_APP = [
   {k:"capital_total",   n:"💰 Balance de cuentas"},
   {k:"traspasos",       n:"🔄 Traspasos"},
   {k:"inmuebles",       n:"🏠 Inmuebles"},
+  {k:"mercancia",       n:"📦 Mercancía"},
   {k:"calculadora",     n:"🧮 Tasas"},
   {k:"evolucion",       n:"📈 Evolución y salud"},
   {k:"cierre",          n:"🗓️ Cierre de mes"},
@@ -18923,7 +19546,7 @@ var PERMISO_DE_TAB = {
   traspasos:"traspasos", calculadora:"calculadora", auditoria:"auditoria",
   config_admin:"config_admin", dash_eeuu:"dash_eeuu",
   mi_ganancia:"mi_ganancia", op_diario:"op_diario",
-  inmuebles:"inmuebles"
+  inmuebles:"inmuebles", mercancia:"mercancia"
 };
 
 // Los permisos los manda el servidor: son los que guarda Mongo para ese
@@ -20715,7 +21338,7 @@ function rLogin(){
 var _GRUPOS_MENU=[
   ["Ver",       ["dash","dash_eeuu","diario","evolucion","salud_financiera","mi_ganancia"]],
   ["Operación", ["nueva","ops","brl","vzla","eeuu","inventario_usdt","calculadora"]],
-  ["Dinero",    ["capital_total","egresos","traspasos","inmuebles"]],
+  ["Dinero",    ["capital_total","egresos","traspasos","inmuebles","mercancia"]],
   ["Crédito",   ["prestamos","cobrar"]],
   ["Gestión",   ["clientes","cierre","auditoria","config_admin"]]
 ];
@@ -20865,6 +21488,7 @@ function rMain(){
   else if(S.tab==="capital_total") body=tp("capital_total",rCapitalTotal,"Balance de Cuentas");
   else if(S.tab==="traspasos")     body=tp("traspasos",rTraspasos,"Traspasos");
   else if(S.tab==="inmuebles")     body=tp("inmuebles",rInmuebles,"Inmuebles");
+  else if(S.tab==="mercancia")     body=tp("mercancia",rMercancia,"Mercancía");
   else if(S.tab==="config_admin")  body=tp("config_admin",rConfigAdmin,"Configuración");
   // La rama vieja "si es de EE.UU. enséñale su resumen" era inalcanzable:
   // "egresos" no está en el menú de ningún operador. Ahora la puerta es una.
@@ -20944,7 +21568,17 @@ function calcMesCompleto(mesKey, pctOverrides){
   var ganBrl      = brlM.reduce(function(a,r){return a+(parseFloat(r.pr)||0);},0);
   var ganVzla     = vzlaM.reduce(function(a,r){return a+(parseFloat(r.pr)||0);},0);
   var ganEEBruta  = eeuuM.reduce(function(a,r){return a+(parseFloat(r.pr)||0);},0);
-  var ganBrutaTotal = r2(ganBrl+ganVzla+ganEEBruta+ganPrestamos);
+  // ARREGLO 143 · la ganancia de lo que compro para revender. DECISION SUYA
+  // (15/10): cuenta para la utilidad de la empresa, y por tanto para su
+  // sueldo — "eso es ingreso para la empresa y por supuesto aumenta las
+  // ganancias". Se le ofrecieron las dos formas y eligio esta.
+  //
+  // No es como el interes de un prestamo, que entra en la bruta y NO en
+  // miGanOperaciones: comprar y revender es una operacion de la empresa,
+  // igual que una remesa.
+  var ganMercInfo = gananciaMercanciaDelMes(mesKey);
+  var ganMercancia = ganMercInfo.usdt;
+  var ganBrutaTotal = r2(ganBrl+ganVzla+ganEEBruta+ganPrestamos+ganMercancia);
 
   // ── 2. EE.UU: gastos empresa primero, luego 50/50 (P3) ──
   var gasEEUU = filterByMes(S.gastos_eeuu||[], mesKey)
@@ -20989,10 +21623,25 @@ function calcMesCompleto(mesKey, pctOverrides){
 
   // ── 4. Mi ganancia de operaciones (después de todos los socios) + extras empresa ──
   var miGanNoEEUU     = r2(ganBrl+ganVzla-totalCom);
-  var miGanOperaciones= r2(miGanNoEEUU+miParteEEUU+ganExtraEmp);
+  var miGanOperaciones= r2(miGanNoEEUU+miParteEEUU+ganExtraEmp+ganMercancia);
 
   // ── 5. Egresos empresa ──
-  var egEmpPag  = r2(egM.filter(function(e){return e.tipo==="empresa"&&e.pagada;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0));
+  // ARREGLO 143 · comprar mercancia NO cuenta como gasto del mes, y es lo que
+  // evita lo que ella llamo "ganancias o perdidas locas": con la compra dentro,
+  // el mes que compra una maquina de 200 sale en PERDIDA de 200 y el mes que la
+  // vende gana 300 — y su sueldo, que es el 30% de la utilidad, saltaria igual
+  // de raro. El dinero no se fue: cambio de forma, y el capital ya la cuenta.
+  //
+  // Se reconocen por `fromArticulo`, no por la categoria: la categoria es un
+  // nombre que ella puede renombrar, y el dia que lo hiciera estos egresos
+  // volverian a contar como gasto sin que nada lo dijera.
+  //
+  // Los cierres YA GUARDADOS no cambian: antes de esto no habia mercancia, asi
+  // que su `egEmpPag` viejo y el nuevo son el mismo numero. Por eso esto se
+  // puede tocar aqui y NO en `_acumuladosMes`, que lee del cierre guardado y
+  // se compara contra `aperturaBase` (ARREGLO 96).
+  var egMercMes = r2(egM.filter(function(e){return e.tipo==="empresa"&&e.pagada&&e.fromArticulo;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0));
+  var egEmpPag  = r2(egM.filter(function(e){return e.tipo==="empresa"&&e.pagada&&!e.fromArticulo;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0));
   var egEmpPend = r2(egM.filter(function(e){return e.tipo==="empresa"&&!e.pagada;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0));
 
   // ── 6. Utilidad empresa ──
@@ -21041,6 +21690,13 @@ function calcMesCompleto(mesKey, pctOverrides){
     brlOps:brlM.length,vzlaOps:vzlaM.length,eeuuOps:eeuuM.length,
     ganBrl:r2(ganBrl),ganVzla:r2(ganVzla),ganEEBruta:r2(ganEEBruta),
     ganPrestamos:ganPrestamos,ganPrestamosMonto:r2(ganPrestamosInfo.monto),ganPrestamosCant:ganPrestamosInfo.cant,
+    // ARREGLO 143 · la ganancia de mercancia, con sus dos mitades aparte: el
+    // informe tiene que poder decir "vendiste 300 de algo que te costo 200",
+    // no solo el 100. Y `egMercancia` es lo que SALIO de las cuentas por
+    // comprar, que no es un gasto pero si un movimiento que ella hizo.
+    ganMercancia:ganMercancia,ganMercanciaVenta:ganMercInfo.venta,
+    ganMercanciaCosto:ganMercInfo.costo,ganMercanciaCant:ganMercInfo.cant,
+    egMercancia:egMercMes,
     gasEEUU:r2(gasEEUU),ganEENeta:ganEENeta,
     miParteEEUU:miParteEEUU,
     socioNombreEE:socioNombreEE,socioPorcentajeEE:Math.round(pctEEDec*100),
@@ -21836,12 +22492,17 @@ function generarInformePDF(mesKey){
     // dos (34,27 arriba y 34,28 abajo).
     ap("Qué tiene la empresa hoy", cap?(
       granNum("Capital total de la empresa","$"+f2l(cap.total)+" USDT",
-        "Es todo su dinero: lo que está en las cuentas, lo apartado en reserva, lo que le deben por remesas y lo que tiene prestado.")+
+        "Es todo su dinero: lo que está en las cuentas, lo apartado en reserva, lo que le deben por remesas, lo que tiene prestado y la mercancía que tiene para vender.")+
       tab("<tr><th>De dónde sale</th><th style='text-align:right'>Cuánto</th></tr>",
         [["En las cuentas",cap.enCuentas,"Lo que hay ahora mismo en los bancos y en Binance"],
          ["Apartado en reserva",cap.enReserva,"Cuentas marcadas como reserva: no se usan para operar"],
          ["Por cobrar de remesas",cap.porCobrar,"Remesas ya entregadas que el cliente todavía no pagó"],
-         ["Prestado",cap.enPrestamos,"Capital de préstamos que todavía no le han devuelto"]]
+         ["Prestado",cap.enPrestamos,"Capital de préstamos que todavía no le han devuelto"],
+         // ARREGLO 143 · sus palabras del 15/10: "en el informe mensual debe
+         // reflejar eso que está invertido ahí; recuerda, eso es de la
+         // empresa, no personal". Va aqui y no en una suma aparte, porque
+         // esta tabla tiene que sumar el total de arriba.
+         ["En mercancía",cap.enMercancia||0,"Cosas compradas para revender, a lo que le costaron"]]
           .filter(function(x){return Math.abs(x[1])>0.009;})
           .map(function(x){
             return "<tr><td style='font-size:12px'><b>"+x[0]+"</b><div style='font-size:10px;color:var(--inf-tinta2);font-weight:400'>"+x[2]+"</div></td>"+
@@ -21881,6 +22542,14 @@ function generarInformePDF(mesKey){
       tab("<tr><th>Concepto</th><th style='text-align:right'>Monto</th></tr>",
         "<tr><td style='font-size:12px'>Operaciones realizadas en el mes</td><td style='text-align:right;font-size:12px;font-weight:700;color:var(--inf-azul)'>"+calc.ops+"</td></tr>"+
         row("Ganancia bruta de todas las operaciones",calc.ganBrutaTotal,"var(--inf-tinta)")+
+        // ARREGLO 143: si vendio mercancia este mes, su ganancia sale dicha.
+        // Dentro de la bruta sin nombrarla, el salto no se puede explicar —
+        // que es justo lo que pasaba con el interes de los prestamos antes de
+        // que tuviera su propia fila.
+        ((calc.ganMercancia||0)>0.009||(calc.ganMercanciaCant||0)>0
+          ? "<tr><td style='font-size:12px;padding-left:14px;color:var(--inf-tinta2)'>de eso, mercancía vendida ("+(calc.ganMercanciaCant||0)+"): vendió $"+f2l(calc.ganMercanciaVenta||0)+" de algo que le costó $"+f2l(calc.ganMercanciaCosto||0)+"</td>"+
+            "<td style='text-align:right;font-size:12px;font-weight:700;color:var(--inf-azul)'>$"+f2l(calc.ganMercancia||0)+"</td></tr>"
+          : "")+
         // ARREGLO 57: el desglose tiene que cuadrar. El interes de prestamos
         // entra en ganBrutaTotal pero NO en miGanOperaciones, y sin esta fila
         // el desglose saltaba de 226,89 a 221,50 sin nada que lo explicara.
@@ -33514,7 +34183,7 @@ function _estaBorradoMerge(campo,id){
 // inventarioUsdt se fusiona por "id" (Date.now()): el consumo FIFO siempre
 // reordena por fecha (ordenFIFO) antes de usar los lotes, así que el orden
 // en que quedan en el array no afecta el cálculo.
-var _MERGE_FIELDS = ["cuentas","compromisos","egresos","egresos_personales","prestamos","cuentasCobrar","clientes","inventarioUsdt","brl","vzla","eeuu","traspasos","reposiciones","gastos_eeuu","deudas_paul","movimientosCapital","pagosSocios","gananciaExtra","gastos_socios","inventarioUsdt_cerrado","cierresMes","capital","ajustesSaldo","inmuebles","inmCuotas"];
+var _MERGE_FIELDS = ["cuentas","compromisos","egresos","egresos_personales","prestamos","cuentasCobrar","clientes","inventarioUsdt","brl","vzla","eeuu","traspasos","reposiciones","gastos_eeuu","deudas_paul","movimientosCapital","pagosSocios","gananciaExtra","gastos_socios","inventarioUsdt_cerrado","cierresMes","capital","ajustesSaldo","inmuebles","inmCuotas","articulos","artGastos"];
 // clientes usa "cod"; brl/vzla/eeuu usan "_uid"; cierresMes usa "mesKey" (el resto ya usa "id")
 var _MERGE_ID_FIELD = {clientes:"cod",brl:"_uid",vzla:"_uid",eeuu:"_uid",cierresMes:"mesKey"};
 // Primera foto, ya con las listas declaradas y con lo que loadData() dejó en S.

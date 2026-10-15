@@ -109,6 +109,10 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "conciliacionCapital", "getMesKeyActual", "ajustesDesdeApertura",
                     "_tsDeUid", "_tsDeAjuste", "_deducirHoraApertura", "_isoDeDDMMAA", "_motivoDelAjuste", "_ajusteAEgreso", "_cuentaMadre", "_cuentaOMadre", "_completarDesdeMadre", "toggleCuentaMadre",
                     "traspasosAPersonal", "egresosPersonalesDesdeCuentaPersonal", "efectoTasasDesde", "_isoDeFechaLote",
+                    // ARREGLO 143 - mercancia. conciliacionCapital las llama,
+                    // asi que sin estas la suite entera se cae al cargar.
+                    "_costoArticulo", "_mercanciaEnMano", "gananciaMercanciaDelMes",
+                    "_egresosMercanciaDesde", "_mesDeMercancia",
                     "tasaDeReferencia", "_tasaFijadaAMano", "setTasaDia", "soltarTasaDia",
                     "_isoDeLote", "_fechaLoteIso", "_num", "_horaLote", "_horaAhora", "_horaDe",
                     "_diasDesdeLote", "_fechaLoteLegible", "getLastTasaVenta",
@@ -1241,11 +1245,36 @@ ok(/tipo:"venta", fecha:_fechaLote\(fecha\), fechaIso:_fechaLoteIso\(fecha\), ho
    "crearLoteRecibido las normaliza dentro, para quien la llame manana");
 // ARREGLO 51: y que NINGUN sitio meta un lote sin su año. mm/dd solo no basta:
 // en enero, un lote de diciembre se ordenaba por delante de uno de enero.
-ok((HTML.match(/inventarioUsdt\.push\(/g)||[]).length ===
-   (HTML.match(/fechaIso:/g)||[]).length,
-   "cada sitio que crea un lote le pone tambien el año",
-   (HTML.match(/inventarioUsdt\.push\(/g)||[]).length + " push / " +
-   (HTML.match(/fechaIso:/g)||[]).length + " con año");
+(function(){
+  // ARREGLO 51 · ningun sitio puede meter un lote sin su año: en enero, un
+  // lote de diciembre se ordenaba por delante de uno de enero.
+  //
+  // ARREGLO 143: esto CONTABA `fechaIso:` en todo el archivo contra los
+  // `inventarioUsdt.push(`, asi que cualquier registro nuevo que usara ese
+  // nombre —la mercancia, sin ir mas lejos— descuadraba la cuenta y hacia
+  // fallar una guardia que no tenia nada que ver. CLAUDE.md ya lo documenta
+  // como trampa conocida ("un campo mas con ese nombre rompe la cuenta").
+  //
+  // Ahora se mira CADA push y se exige que el objeto que empuja lleve su
+  // fechaIso. Es lo que se queria comprobar, y ademas es inmune a que otro
+  // registro de la app use el mismo nombre de campo.
+  const pushes=[]; let desde=0;
+  for(;;){
+    const i=HTML.indexOf("inventarioUsdt.push(", desde);
+    if(i<0) break;
+    // La ventana mira a los DOS lados: unos sitios empujan el objeto escrito
+    // ahi mismo (`push({...})`) y otros una variable construida antes
+    // (`push(lote)`, en crearLoteRecibido). Mirando solo hacia adelante, el
+    // segundo salia como si no llevara año y no es verdad.
+    pushes.push(HTML.slice(Math.max(0,i-1100), i+700));
+    desde=i+1;
+  }
+  ok(pushes.length>0, "sigue habiendo sitios que crean lotes, y el recorte los encuentra");
+  const sinAnio = pushes.filter(function(t){ return !/fechaIso\s*:/.test(t); }).length;
+  ok(sinAnio===0,
+     "cada sitio que crea un lote le pone tambien el año",
+     sinAnio+" de "+pushes.length+" lo meten sin fechaIso");
+})();
 ok(/if\(r\.fecha\)\{ var fn=_fechaLote\(r\.fecha\); if\(fn!==r\.fecha\) r\.fecha=fn; \}/.test(HTML),
    "y los lotes ya guardados se corrigen al leer el inventario");
 ok(!/f\.fecha\.slice\(5\)\.replace\("-","\/"\)/.test(HTML),
@@ -5808,7 +5837,16 @@ console.log("\n— FASE 2: la cuenta madre —");
     ok(!!m, "conciliacionCapital sigue teniendo su expresion de 'deberias'");
     if(!m) return;
     // los nombres que participan, sin los que ya cuenta _enPapel
-    const dentroDePapel = ["apertura","bruta","egEmpresa","egPersonalEmpresa","socios"];
+    //
+    // ARREGLO 143: `egEmpresaSinMerc` entra aqui porque ES el `co.egEmpresa`
+    // que lee _enPapel — el return lo devuelve con ese nombre a proposito, para
+    // que la tabla de "deberias tener" sume su propio total (el fallo de la
+    // fila del socio en negativo, ARREGLO 100). Si alguien lo devolviera en
+    // bruto, los dos lados medirian cosas distintas y la lista dejaria de
+    // cuadrar sin que nada lo dijera, asi que se exige por separado.
+    const dentroDePapel = ["apertura","bruta","egEmpresa","egEmpresaSinMerc","egPersonalEmpresa","socios"];
+    ok(/egEmpresa:egEmpresaSinMerc,/.test(cc),
+       "lo que 'deberias' resta es lo mismo que la tabla enseña como egEmpresa");
     const terminos = (m[1].match(/[A-Za-z_][A-Za-z0-9_.]*/g)||[])
       .filter(function(t){ return t.indexOf(".")<0 || /^real\./.test(t); })
       .map(function(t){ return t.replace(/\.total$/,"").replace(/^real\./,""); })
@@ -7394,8 +7432,8 @@ console.log("\n— FASE 2: la cuenta madre —");
 
   // 2. EL CAPITAL YA VA SIN EL SUELDO. Es lo que pidio ella.
   const crt = sinCom(sacarFuncion("capitalRealTotal"));
-  ok(/var total=r2v\(enCuentas\+enReserva\+porCobrar\+enPrestamos-sueldoPendiente\);/.test(crt),
-     "capitalRealTotal descuenta el sueldo del total");
+  ok(/var total=r2v\(enCuentas\+enReserva\+porCobrar\+enPrestamos\+enMercancia-sueldoPendiente\);/.test(crt),
+     "capitalRealTotal descuenta el sueldo y suma la mercancia");
   ok(/sueldoPendiente:r2v\(sueldoPendiente\)/.test(crt),
      "y lo devuelve aparte, para que el otro lado reste EL MISMO numero");
 
@@ -7405,8 +7443,55 @@ console.log("\n— FASE 2: la cuenta madre —");
   //    EXPRESION ENTERA: buscar "sueldoPendiente" suelto pasaria con el
   //    termino multiplicado por cero o renombrado (ARREGLO 100).
   const cc = sinCom(sacarFuncion("conciliacionCapital"));
-  ok(/var deberias=r2v\(apertura-intAp\.total\+bruta-egEmpresa-egPersonalEmpresa-socios-traspPers\.total-\(real\.sueldoPendiente\|\|0\)\);/.test(cc),
+  ok(/var deberias=r2v\(apertura-intAp\.total\+bruta-egEmpresaSinMerc-egPersonalEmpresa-socios-traspPers\.total-\(real\.sueldoPendiente\|\|0\)\);/.test(cc),
      "«deberias tener» resta el MISMO sueldo que «tienes»");
+  // ── ARREGLO 143 · la compra de mercancia se excluye UNA vez ───────────
+  //
+  // Comprar no es un gasto: es dinero que cambia de forma, y el capital ya la
+  // cuenta en `enMercancia`. Pero quien la excluye es `calcMesCompleto`, y de
+  // ahi llega ya descontada por `_acumuladosMes`. Restarla OTRA VEZ aqui la
+  // descuenta dos veces, y con su export eso daba
+  //
+  //     comprar a 200   deberias 2.690,29 -> 2.890,29   (+200, deberia ser 0)
+  //
+  // o sea la app diciendo que le faltan 200 por haber comprado. El primer
+  // intento lo hacia, las guardias pasaban —el texto decia lo correcto en los
+  // dos sitios— y lo cazo medir la identidad en Chromium.
+  //
+  // Asi que aqui se exige lo contrario de lo normal: que NO este.
+  ok(/var egEmpresaSinMerc=r2v\(egEmpresa\);/.test(cc),
+     "la conciliacion NO vuelve a restar la compra de mercancia");
+  ok(!/_egresosMercanciaDesde\(/.test(cc),
+     "y no la llama: ya le llega descontada de calcMesCompleto");
+  //    La exclusion vive en calcMesCompleto, en la linea de egEmpPag, y ahi
+  //    hace las dos cosas que ella pidio: que el mes que compra no salga en
+  //    perdida, y que su sueldo —el 30% de la utilidad— no salte con ella.
+  const _cmc = sinCom(sacarFuncion("calcMesCompleto"));
+  ok(/var egEmpPag\s*=\s*r2\(egM\.filter\(function\(e\)\{return e\.tipo==="empresa"&&e\.pagada&&!e\.fromArticulo;\}\)/.test(_cmc),
+     "y calcMesCompleto deja la compra de mercancia fuera de los gastos del mes");
+  //    Se reconocen por `fromArticulo`, no por la categoria: la categoria es
+  //    un nombre que ella puede renombrar en Configuracion, y ese dia estos
+  //    egresos volverian a contar como gasto sin que nada lo dijera.
+  const _em = sinCom(sacarFuncion("_egresosMercanciaDesde"));
+  ok(/e\.fromArticulo/.test(_em) && !/\.cat\b/.test(_em),
+     "y la marca es el articulo, no el nombre de la categoria");
+  //    DECISION SUYA (15/10): la ganancia cuenta para la utilidad y por tanto
+  //    para su sueldo. "Eso es ingreso para la empresa y por supuesto aumenta
+  //    las ganancias". No es como el interes de un prestamo, que entra en la
+  //    bruta y NO en miGanOperaciones.
+  ok(/var ganBrutaTotal = r2\(ganBrl\+ganVzla\+ganEEBruta\+ganPrestamos\+ganMercancia\);/.test(_cmc),
+     "la ganancia de mercancia entra en la bruta");
+  ok(/var miGanOperaciones= r2\(miGanNoEEUU\+miParteEEUU\+ganExtraEmp\+ganMercancia\);/.test(_cmc),
+     "y en la utilidad, que es de donde sale su sueldo (lo eligio ella)");
+  //    Y el mes sale por fechaIso, no por la fecha de pantalla: _mesKeyISO
+  //    solo entiende "aaaa-mm-dd" y con "15/10/26" devuelve cadena vacia, asi
+  //    que el articulo no contaria en NINGUN mes, en silencio. Medido: la
+  //    venta subia el capital 100 y `deberias` no se movia.
+  const _mdm = sinCom(sacarFuncion("_mesDeMercancia"));
+  ok(/o\.fechaIso/.test(_mdm) && /getMesAnio/.test(_mdm),
+     "el mes de una venta sale de su fechaIso, y si falta se deduce");
+  ok(/_mesDeMercancia\(a\.venta\)/.test(sinCom(sacarFuncion("gananciaMercanciaDelMes"))),
+     "y la ganancia del mes pregunta por ahi, no por _mesKeyISO a secas");
   ok(!/sueldoApartado\(/.test(cc),
      "y no lo vuelve a calcular por su cuenta");
 
@@ -7585,6 +7670,124 @@ console.log("\n— FASE 2: la cuenta madre —");
      !/--az5-g|--mo6-c/.test(_cabPers),
      "y la cabecera 💜 usa solo esos dos, ningun nombre del tema");
 
+
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 143 · MERCANCIA
+// ══════════════════════════════════════════════════════════════════════
+{
+  const sinC = t => t.replace(/\/\/[^\n]*/g, "");
+  // 1 · SON DOS LISTAS, y las dos se fusionan. Con los gastos dentro del
+  //     articulo, añadir un flete en el telefono y vender en la PC haria que
+  //     uno pisara al otro: lo que viaja es el articulo entero (ARREGLO 134).
+  ["articulos","artGastos"].forEach(function(k){
+    ok(F._MERGE_FIELDS.indexOf(k)>=0, k+" se fusiona registro por registro");
+    ok(new RegExp('"'+k+'"').test(HTML.slice(HTML.indexOf("var DATA_KEYS"), HTML.indexOf("var DATA_KEYS")+2200)),
+       "y "+k+" esta en DATA_KEYS, o no viaja al servidor");
+  });
+
+  // 2 · LO QUE COSTO SE CALCULA EN UN SITIO. Lo leen el capital, la ganancia
+  //     del mes y la pantalla: con una copia, el capital diria una cosa y la
+  //     ficha de al lado otra (el 34,27 contra el 34,28).
+  const _cost = sinC(sacarFuncion("_costoArticulo"));
+  ok(/artGastos/.test(_cost) && /costoUsdt/.test(_cost),
+     "lo que costo una cosa lleva dentro sus gastos");
+  ["_mercanciaEnMano","gananciaMercanciaDelMes"].forEach(function(f){
+    ok(/_costoArticulo\(/.test(sinC(sacarFuncion(f))), f+" lee el costo de esa puerta");
+  });
+  ok(/_mercanciaEnMano\(\)/.test(sinC(sacarFuncion("capitalRealTotal"))),
+     "y el capital pregunta por _mercanciaEnMano, no se arma su propia suma");
+
+  // 3 · SE VALORA A LO QUE COSTO, NO A LO QUE ESPERA SACAR. Valorarla al
+  //     precio esperado seria apuntar la ganancia antes de vender nada, que es
+  //     lo que el ARREGLO 124 tuvo que quitar de las vueltas.
+  ok(!/precioEsp/.test(_cost) && !/precioEsp/.test(sinC(sacarFuncion("_mercanciaEnMano"))),
+     "el capital NO cuenta lo que espera sacar, solo lo que le costo");
+
+  // 4 · UNA SOLA LISTA DE CUENTAS para los tres formularios (comprar, gastar,
+  //     cobrar): con una copia por formulario acaban ofreciendo listas
+  //     distintas. Y las 💜 personales quedan fuera — ese dinero ya salio de
+  //     la empresa (ARREGLO 96).
+  const _ct = sinC(sacarFuncion("_ctasMerc"));
+  ok(/!c\.esPersonal/.test(_ct) && /activa!==false/.test(_ct),
+     "el origen del dinero deja fuera las cuentas 💜 y las desactivadas");
+  ["guardarArticulo","agregarGastoArt","venderArticulo"].forEach(function(f){
+    const c = sinC(sacarFuncion(f));
+    ok(!/S\.cuentas\|\|\[\]\)\.filter/.test(c), f+" no se arma su propia lista de cuentas");
+  });
+
+  // 5 · EL DINERO PASA POR EL CAMINO DE SIEMPRE: baja la cuenta y baja el lote
+  //     FIFO. Escrito aparte seria un segundo sitio donde cuadrar las cuentas.
+  const _eg = sinC(sacarFuncion("_egresoMerc"));
+  ok(/ajusteCuentaEgreso\(/.test(_eg) && /descontarFIFOEgreso\(/.test(_eg),
+     "comprar baja la cuenta y el lote por el camino de siempre");
+  ok(/fromArticulo:/.test(_eg),
+     "y el egreso lleva su marca, que es lo que dice que no es un gasto");
+  const _beg = sinC(sacarFuncion("_borrarEgresoMerc"));
+  ok(/restaurarFIFOEgreso\(/.test(_beg) && /ajusteCuentaEgreso\(/.test(_beg),
+     "y al deshacer, el dinero vuelve a la cuenta Y al lote (ARREGLO 127)");
+
+  // 6 · VENDER NO CREA LOTE. Un lote nace solo cuando ella compra o vende
+  //     USDT; vender una maquina no es una operacion de USDT. Si entrara ahi,
+  //     la tasa con la que se valora TODO su dinero saldria de las maquinas.
+  const _vn = sinC(sacarFuncion("venderArticulo"));
+  ok(!/inventarioUsdt/.test(_vn) && !/crearLoteRecibido/.test(_vn),
+     "vender una cosa NO crea un lote de USDT");
+
+  // 7 · FIADO VA A POR COBRAR, que es donde ya viven los abonos con su tasa y
+  //     su aviso de tasa al reves (ARREGLO 55). Un segundo sitio para cobrar
+  //     seria el ARREGLO 98 otra vez.
+  ok(/S\.cuentasCobrar\.push\(\{[\s\S]{0,400}fromArticulo:/.test(_vn),
+     "una venta fiada crea su cargo en Por cobrar");
+  ok(!/abonos\s*:\s*\[\s*\{/.test(_vn),
+     "y no se inventa un camino propio de abonos");
+
+  // 8 · LO QUE UN FORMULARIO ENSEÑA AL ABRIRSE TIENE QUE ESTAR GUARDADO.
+  //     Error mio, cazado pulsandolo: el campo "¿en cuánto?" salia relleno con
+  //     el precio esperado (un `value` del HTML) pero S.vArt.monto solo se
+  //     escribia en el oninput, asi que sin tocarlo la pantalla decia 300 y al
+  //     confirmar saltaba "¿En cuánto lo vendiste?". Es el ARREGLO 138.
+  const _av = sinC(sacarFuncion("_abrirVentaArt"));
+  ok(/S\.vArt=\{monto:/.test(_av) && /precioEsp/.test(_av),
+     "abrir la venta deja puesto el precio que el campo va a enseñar");
+  ok(/_abrirVentaArt\(/.test(sinC(sacarFuncion("_filaArticulo"))) &&
+     /_abrirGastoArt\(/.test(sinC(sacarFuncion("_filaArticulo"))),
+     "y los dos botones pasan por ahi, no por un S.vArt={} suelto");
+
+  // 9 · Desplegar los vendidos NO llama a R() (ARREGLO 32).
+  const _vv = sinC(sacarFuncion("_verVendidosArt"));
+  ok(!/\bR\(\)/.test(_vv) && /getElementById\("art-vendidos"\)/.test(_vv),
+     "desplegar los ya vendidos no repinta la pantalla");
+
+  // 10 · Los campos de dinero no se comen la coma: texto + _num() en la puerta,
+  //      las dos mitades (la regla de siempre).
+  const _pant = sinC(sacarFuncion("rMercancia")) + sinC(sacarFuncion("_filaArticulo"));
+  ok(!/type='number'/.test(_pant) && !/type="number"/.test(_pant),
+     "ningun campo de mercancia es type=number");
+  const nNum = (_pant.match(/_num\(this\.value\)/g)||[]).length;
+  ok(nNum>=4, "y los montos pasan por _num() al escribirse", "solo "+nNum);
+  //      Y el estilo de un campo se escribe en UN sitio: con uno por
+  //      formulario, en dos semanas hay tres anchos distintos.
+  ok(/_estiloMerc\(\)/.test(_pant), "los campos salen del mismo estilo");
+
+  // 11 · Sin tasa no se inventa un costo: un cero convierte la venta entera en
+  //      ganancia. Mejor no dejar guardar que guardar un numero inventado.
+  const _um = sinC(sacarFuncion("_usdtMerc"));
+  ok(/return null/.test(_um), "sin tasa, _usdtMerc devuelve null, no cero");
+  ["guardarArticulo","agregarGastoArt","venderArticulo"].forEach(function(f){
+    ok(/===null/.test(sinC(sacarFuncion(f))), f+" se para si falta la tasa");
+  });
+
+  // 12 · La cajita del Balance tiene que SUMAR el numero grande: dejandola
+  //      fuera, la lista no se podria sumar a mano (ARREGLO 141).
+  ok(/_cajas\.push\(_caja\("En mercancía", R\.enMercancia/.test(rct0),
+     "Balance de Cuentas enseña la mercancia entre las cajitas que suman");
+  // 13 · Y el informe mensual la refleja — se lo pidio ella por su nombre.
+  ok(/\["En mercancía",cap\.enMercancia/.test(HTML),
+     "el Informe Mensual la lleva en el desglose del capital");
+  ok(/ganMercancia/.test(HTML.slice(HTML.indexOf("Ganancia bruta de todas las operaciones"),
+                                    HTML.indexOf("Ganancia bruta de todas las operaciones")+1400)),
+     "y la ganancia del mes sale dicha, no escondida dentro de la bruta");
+}
   // 6b. ARREGLO 141 · las cuentas en CERO se pliegan. Medido en su export: 15
   //     de sus 23 cuentas estan en cero, y de las que ve son 9 de 17 — mas de
   //     media lista. Sus palabras del 15/10: "las cuentas que esten en 0

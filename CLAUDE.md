@@ -4277,6 +4277,161 @@ alguien repartió el redondeo es peor que uno que no cuadra y dice por qué.**
 que aún no está firmado. Cuando lo esté, eso es un *compromiso* de los que ya
 existen — no hace falta código.
 
+
+---
+
+## Mercancía: cosas que compra para revender (ARREGLO 143)
+
+Sus palabras del 15/10: *"compré unas máquinas con dólares físicos, son de la
+empresa pero eso es para vender, entonces quiero llevar el control de eso porque
+eso es ingreso para la empresa y por supuesto aumenta las ganancias — por lo
+menos eso lo compré a 200$ y lo voy a vender en 300$"*.
+
+**Con lo que había, sus números salían mal por los dos lados.** Registrando la
+compra como egreso y la venta como ganancia extra:
+
+```
+compras a 200  →  el mes sale en PÉRDIDA de 200, y el capital no cuenta
+                  la máquina que tiene en la mano
+vendes a 300   →  el mes gana 300, no 100
+```
+
+La ganancia de verdad —100— no aparecía nunca. Al aprobarlo lo dijo así: *"tu
+lógica es correcta, que no dé ganancias o pérdidas locas"*.
+
+### Comprar NO mueve el capital, y eso es lo que hace que cuadre
+
+Salen 200 de una cuenta y entra una máquina de 200: el dinero cambia de forma,
+no se va. La identidad entera, que es lo que hay que **medir** y no deducir:
+
+```
+comprar a 200   tienes  −200 cuenta  +200 mercancía  =    0   deberías    0
+vender a 300    tienes  +300 cuenta  −200 mercancía  = +100   deberías +100
+vender FIADO    tienes     0 cuenta  −200 mercancía
+                        +300 por cobrar              = +100   deberías +100
+```
+
+Medido en Chromium con su export, pulsando los botones de verdad:
+
+```
+                 tienes    sin explicar   mercancía   DOLAR FISICO
+al abrir        2.550,96       913,16          0,00         391,00
+comprada 200    2.550,96       913,16        200,00         191,00
++30 de flete    2.550,96       913,16        230,00         161,00
+vendida a 300   2.620,96       913,16          0,00         461,00
+deshecha        2.550,96       913,16        230,00         161,00
+borrada         2.550,96       913,16          0,00         391,00
+```
+
+**El "sin explicar" de su export no se mueve ni un céntimo en ninguno de los
+seis pasos**, y al borrar todo vuelve exacto. Esa es la prueba que decide si
+este módulo está bien; si alguna vez no sale, está roto.
+
+### Lo que costó la identidad: dos fallos que las guardias no vieron
+
+- **La doble resta.** El primer intento excluía el egreso de la compra en
+  `calcMesCompleto` **y otra vez** en la conciliación. Medido: comprar a 200
+  llevaba `deberias` de 2.690,29 a 2.890,29 — la app diciendo que le faltan 200
+  por el solo hecho de comprar. La exclusión vive en **un** sitio,
+  `calcMesCompleto`, y de ahí llega descontada por `_acumuladosMes`.
+  `_egresosMercanciaDesde()` existe pero **la conciliación no la llama**, y hay
+  guardia que exige justo eso.
+- **La fecha.** `_mesKeyISO` solo entiende `aaaa-mm-dd`; pasarle la de pantalla
+  (`15/10/26`) devuelve cadena vacía, así que la venta **no contaba en ningún
+  mes, en silencio**. Medido: el capital subía 100 y `deberias` no se movía. Por
+  eso cada registro guarda su `fechaIso` y el mes sale de `_mesDeMercancia()`.
+
+Las dos veces las guardias estructurales daban verde —el texto decía lo que
+debía decir en cada sitio por separado— y las dos las cazó **medir la identidad
+con sus datos**. Es la lección del ARREGLO 121, otra vez.
+
+### Decisión suya: la ganancia cuenta para su sueldo
+
+Se le ofrecieron las dos formas y eligió esta:
+
+```
+como una remesa          → cuenta para la utilidad → su sueldo sube 30 de cada 100
+como el interés de un préstamo → solo para la bruta → su sueldo no sube
+```
+
+Comprar y revender es una operación de la empresa, no un cargo financiero. Y va
+con la otra mitad, que es la que evita las *"pérdidas locas"*: **la compra no
+cuenta como gasto del mes**. Con ella dentro, el mes que compra sale en pérdida
+de 200 y el que vende gana 300 — y su sueldo, el 30 % de la utilidad, saltaría
+igual de raro.
+
+**Se reconocen por `fromArticulo`, no por la categoría.** La categoría es un
+nombre que ella puede renombrar en Configuración, y ese día estos egresos
+volverían a contar como gasto sin que nada lo dijera.
+
+### Lo demás, que son reglas ya ganadas aplicadas aquí
+
+- **Son DOS listas** (`S.articulos`, `S.artGastos`), las dos en `_MERGE_FIELDS`
+  y en `DATA_KEYS`. Con los gastos dentro del artículo, añadir un flete en el
+  teléfono y vender en la PC haría que uno pisara al otro (ARREGLO 134). La
+  **venta** sí va dentro del artículo: es una sola y siempre se toca junto con
+  su estado.
+- **El dinero pasa por el camino de siempre.** Comprar crea un egreso normal:
+  baja la cuenta y baja el lote FIFO. Al borrar, vuelve a los dos (ARREGLO 127).
+- **Vender NO crea lote.** Un lote nace solo cuando compra o vende USDT; vender
+  una máquina no lo es. Si entrara ahí, la tasa con la que se valora **todo** su
+  dinero parado saldría de las máquinas. Si luego gasta esos bolívares, el FIFO
+  los valora con `tasaDeReferencia()` y **lo dice** (ARREGLO 125).
+- **Fiado va a Por cobrar**, que es donde ya viven los abonos con su tasa y su
+  aviso de tasa al revés (ARREGLO 55). Un segundo sitio para cobrar sería el
+  ARREGLO 98 otra vez. Y la ganancia se apunta **el día de la venta**, no el del
+  cobro: los 300 ya están en Por cobrar, así que el capital ya subió.
+- **Se valora a lo que COSTÓ, no a lo que espera sacar.** Lo que espera ganar se
+  dice en la pantalla y no suma — la misma regla que el interés pendiente de un
+  préstamo (ARREGLO 71). Valorarla a 300 sería apuntar la ganancia antes de
+  vender nada (ARREGLO 124).
+- **Sin tasa no se inventa un cero**, que convertiría la venta entera en
+  ganancia: no deja guardar y dice qué falta.
+- **Una cuenta 💜 personal no puede ser el origen.** Ese dinero ya salió de la
+  empresa (ARREGLO 96).
+- **El USDT se guarda del momento**, como una remesa guarda su `uc`/`uv`: la
+  ganancia de una venta de hace un mes no puede cambiar sola porque hoy se mueva
+  una tasa.
+- **Y sale donde ella lo pidió:** *"en el informe mensual debe reflejar eso que
+  está invertido ahí"*. Va en el desglose de capital del Informe Mensual y como
+  una cajita más en Balance de Cuentas — ahí **tiene** que estar, porque esas
+  cajitas suman el número grande (ARREGLO 141).
+
+### Un error mío, cazado pulsando el botón
+
+El campo *"¿en cuánto?"* del formulario de venta salía **relleno** con el precio
+que ella había puesto al comprar —un `value` del HTML— pero `S.vArt.monto` solo
+se escribía en el `oninput`. Sin tocar el campo, la pantalla decía **300** y al
+confirmar saltaba *"¿En cuánto lo vendiste?"* con el 300 delante.
+
+**La regla que sale de aquí: lo que un formulario ENSEÑA al abrirse tiene que
+estar guardado al abrirse.** Rellenarlo solo en el `oninput` convierte *"no lo
+tocó"* en *"está vacío"*. Por eso los dos botones pasan por `_abrirVentaArt()` y
+`_abrirGastoArt()`, que dejan puesto lo que el formulario va a dibujar. Es la
+familia del ARREGLO 138, y ninguna guardia de texto lo habría visto.
+
+### Y una guardia vieja que fallaba por un campo que no era suyo
+
+La del ARREGLO 51 contaba `fechaIso:` **en todo el archivo** contra los
+`inventarioUsdt.push(`, así que cualquier registro nuevo con ese nombre de campo
+—la mercancía, sin ir más lejos— descuadraba la cuenta y hacía fallar una
+guardia que no tenía nada que ver. CLAUDE.md ya lo tenía documentado como trampa
+conocida. Ahora mira **cada push** y exige que el objeto que empuja lleve su
+`fechaIso`: es lo que se quería comprobar, y además es inmune al nombre que use
+el resto de la app. La ventana mira a los dos lados, porque unos sitios empujan
+el objeto escrito ahí mismo y `crearLoteRecibido` empuja una variable construida
+antes.
+
+### Lo que NO entró, y es a propósito
+
+- **Cantidad por artículo.** Una cosa, un registro. Con cantidad habría que
+  decidir cómo se parte el costo al vender 3 de 5, y eso es una segunda regla de
+  costeo como la del FIFO. Cuando compre 20 iguales, lo que hace falta es un
+  botón de duplicar, no cambiar el modelo.
+- **Gastos de venta aparte de los de compra.** Para la ganancia da igual —se
+  restan los dos— y lo único que cambiaría es el valor en inventario de algo que
+  ya se vendió.
+
 ---
 
 ## El candado de contenido vive en `_headers` (ARREGLO 104)
