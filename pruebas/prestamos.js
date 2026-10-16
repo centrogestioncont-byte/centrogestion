@@ -11659,5 +11659,37 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
      "y lleva su _mod, o la marca no viaja al otro aparato");
 }
 
+// ════════ ARREGLO 157 · el mismo dinero contado dos veces ════════
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  // Se reconoce por la FORMA —monto, moneda, cuenta y fecha cercana— no por el
+  // texto: ella escribe la descripción y la cambia. Misma regla que el 156.
+  const q = sinC(sacarFuncion("_ganExtraQueSonAporte"));
+  ok(/g\.tipo!=="personal"/.test(q), "sólo mira las ganancias extra PERSONALES");
+  ok(/a\.cuentaId!==g\.cuentaId/.test(q) && /\(a\.mon\|\|""\)!==\(g\.mon\|\|""\)/.test(q) &&
+     /Math\.abs\(\(parseFloat\(a\.monto\)\|\|0\)-m\)>0\.01/.test(q),
+     "empareja por cuenta, moneda y monto, los tres");
+  ok(/8\*86400000/.test(q), "y por fecha cercana, no por el texto");
+  ok(!/desc|nota/.test(q), "no mira la descripción: ella la escribe y la cambia");
+  // Quitar la duplicada NO mueve dinero: el aporte ya dice que está en la cuenta.
+  const qd = sinC(sacarFuncion("quitarGanExtraDuplicada"));
+  ok(/NO mueve ning/.test(qd), "la pregunta dice que no mueve ningún saldo");
+  ok(!/ajusteCuentaEgreso|\.saldo\s*=/.test(qd), "y de verdad no lo mueve");
+  ok(/_marcarBorradoMerge\("gananciaExtra"/.test(qd),
+     "deja la marca de borrado, o el otro aparato la devuelve (ARREGLO 6c)");
+  // Y no se vuelve a crear sin avisar.
+  const sg2 = sinC(sacarFuncion("saveGanExtra"));
+  // Se exige la CONDICION entera, no que el texto aparezca: cambiarla por
+  // "false" deja el texto puesto y el aviso muerto (ARREGLO 140, otra vez).
+  ok(/if\(_ya && !confirm\("[^"]*Ya tienes un APORTE por/.test(sg2) &&
+     /tipo==="personal" && g\.cuentaId/.test(sg2),
+     "saveGanExtra avisa antes de crear una que ya existe como aporte");
+  ok(!/if\(_ya\)\s*\{\s*alert/.test(sg2),
+     "avisa y pregunta: nunca bloquea");
+  const reg2 = sacarFuncion("rEgresos");
+  ok(/_ganExtraQueSonAporte\(\)/.test(reg2) && /quitarGanExtraDuplicada/.test(reg2),
+     "y la pantalla las enseña con su botón");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

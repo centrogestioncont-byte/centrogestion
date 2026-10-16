@@ -5188,6 +5188,38 @@ desmarcar**: medido, desmarcar devuelve los números exactos.
 enseña lo que se guardó, así que marcar algo de julio no mueve su cierre. Era su
 condición.
 
+## El mismo dinero contado dos veces: su sueldo del otro trabajo (ARREGLO 157)
+
+Pasó el 09 y el 10/10 con **470.000 Bs**: lo registró como **aporte** (*"ya está
+en el saldo"*, ARREGLO 147) y **además** como **ganancia extra personal** de
+463,97. Las dos cosas hablan del mismo dinero, y el aporte es el correcto — una
+ganancia extra dice *"esto lo gané"*, y su sueldo de otro trabajo no lo ganó aquí.
+
+**Y no era uno: son tres.** Medido con su export, buscando por la forma:
+
+```
+19/09 · PAGO COMO AGENTE INTERCOM ............  54.493,48 Bs  ←→ aporte del 19/09
+25/09 · PAGO DE AGENTE Y PENSIONES ...........  93.312,23 Bs  ←→ aporte del 25/09
+10/10 · MI SUELDO ............................ 470.000,00 Bs  ←→ aporte del 09/10
+```
+
+**Se reconoce por la FORMA, no por el texto**: mismo monto, misma moneda, misma
+cuenta y menos de ocho días de diferencia. Es la misma regla del ARREGLO 156 —
+la descripción la escribe ella y puede cambiarla.
+
+- **Quitar la duplicada NO mueve ningún saldo**, y se dice en la pregunta: el
+  dinero ya está en la cuenta y ahí se queda. Deja la marca de borrado
+  (ARREGLO 6c) o el otro aparato la devuelve.
+- **Y no se vuelve a crear sin avisar**: `saveGanExtra()` pregunta cuando ya hay
+  un aporte por el mismo monto en la misma cuenta. **Avisa, no bloquea** — puede
+  ser otra cosa distinta que coincida.
+
+**Lo que esto NO mueve, y hay que saberlo:** el capital y la conciliación **no
+cambian**. Medido: quitar la de 463,97 deja `capital 2.711,65` y `te sobran
+6,94` idénticos, porque una ganancia extra **personal** está fuera del capital de
+la empresa (ARREGLO 96). Lo que estaba inflado es su **bolsillo personal**: ese
+dinero aparecía dos veces.
+
 ### Registra la operación — no escribas el saldo
 
 **La regla que más costó el 12/09**, y se rompió tres veces en un día.

@@ -3221,7 +3221,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261016_v238";
+var APP_VERSION = "20261016_v239";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -22532,6 +22532,54 @@ function toggleGanExtra(){
   if(S._showGanExtra) S._nGanExtra={d:td(),desc:"",monto:"",mon:"USD",usdt:"",cuentaId:"",tipo:"empresa",nota:""};
   R();
 }
+// ARREGLO 157 · el mismo dinero contado dos veces: su sueldo del otro trabajo.
+//
+// Pasó el 09 y el 10/10 con 470.000 Bs: lo registró como APORTE ("ya está en el
+// saldo", ARREGLO 147) y además como GANANCIA EXTRA personal de 463,97. Las dos
+// cosas hablan del mismo dinero, y el aporte es la correcta — una ganancia
+// extra dice "esto lo gané", y su sueldo de otro trabajo no lo ganó aquí.
+//
+// Se reconoce por la FORMA, no por el texto: mismo monto, misma moneda, misma
+// cuenta y menos de 8 días de diferencia. El texto no vale aquí por lo mismo
+// que no valía en el ARREGLO 156 — ella escribe la descripción y la cambia.
+//
+// Medido con su export: la ganancia extra de 463,97 NO mueve el capital ni la
+// conciliación (es personal, y una cuenta personal está fuera del capital de la
+// empresa, ARREGLO 96). Lo que infla es su "disponible personal": ese dinero
+// aparece dos veces en su bolsillo.
+function _ganExtraQueSonAporte(){
+  var ap=S.aportes||[], out=[];
+  (S.gananciaExtra||[]).forEach(function(g){
+    if(!g || g.tipo!=="personal" || !g.cuentaId) return;
+    var m=parseFloat(g.monto)||0, iso=_isoDeDDMMAA(g.d)||"";
+    if(!(m>0)) return;
+    var par=ap.find(function(a){
+      if(!a || a.cuentaId!==g.cuentaId) return false;
+      if((a.mon||"")!==(g.mon||"")) return false;
+      if(Math.abs((parseFloat(a.monto)||0)-m)>0.01) return false;
+      var ai=a.fechaIso||_isoDeDDMMAA(a.d)||"";
+      if(!ai||!iso) return true;              // sin fecha fiable, el resto ya coincide
+      return Math.abs(Date.parse(ai)-Date.parse(iso))<=8*86400000;
+    });
+    if(par) out.push({gan:g, ap:par});
+  });
+  return out;
+}
+function quitarGanExtraDuplicada(id){
+  var i=(S.gananciaExtra||[]).findIndex(function(g){ return String(g.id)===String(id); });
+  if(i<0){ alert("No encuentro ese registro."); return; }
+  var g=S.gananciaExtra[i];
+  if(!confirm("Quitar esta ganancia extra:\n\n"+
+      (g.desc||"(sin descripción)")+" · "+f2(g.monto)+" "+(g.mon||"")+"\n\n"+
+      "Ya tienes un APORTE por el mismo dinero, en la misma cuenta. Dejar las dos "+
+      "cosas lo cuenta dos veces en tu bolsillo.\n\n"+
+      "NO mueve ningún saldo: el dinero ya está en la cuenta y ahí se queda.\n\n¿Seguro?")) return;
+  S.gananciaExtra.splice(i,1);
+  _marcarBorradoMerge("gananciaExtra", g.id);
+  logAudit("GANEXTRA_DUPLICADA","quitada · "+f2(g.usdt)+" USDT · ya estaba como aporte");
+  saveData(); R();
+  alert("✅ Quitada. Ningún saldo se tocó.");
+}
 function saveGanExtra(){
   if(!S.gananciaExtra) S.gananciaExtra=[];
   var g=S._nGanExtra||{};
@@ -22541,6 +22589,19 @@ function saveGanExtra(){
   var usdt=parseFloat(g.usdt);
   if(isNaN(usdt)||usdt<=0){var rate=getRateToUsdt(g.mon||"USD");usdt=rate?(Math.round(monto/rate*100)/100):monto;}
   var tipo=g.tipo||"empresa";
+  // ARREGLO 157 · y no se vuelve a crear la duplicada sin avisar. Mismo monto,
+  // misma moneda, misma cuenta y menos de 8 días: es el aporte otra vez.
+  if(tipo==="personal" && g.cuentaId){
+    var _ya=(S.aportes||[]).find(function(a){
+      return a && a.cuentaId===g.cuentaId && (a.mon||"")===(g.mon||"") &&
+             Math.abs((parseFloat(a.monto)||0)-monto)<=0.01;
+    });
+    if(_ya && !confirm("\u26a0\ufe0f Ya tienes un APORTE por "+f2(monto)+" "+(g.mon||"")+
+        " en esa misma cuenta"+(_ya.d?" ("+_ya.d+")":"")+".\n\n"+
+        "Si es el mismo dinero —tu sueldo de otro trabajo, por ejemplo— con el aporte basta: "+
+        "una ganancia extra diría que lo ganaste aquí, y lo contaría dos veces en tu bolsillo.\n\n"+
+        "\u00bfEs otra cosa distinta y la guardo igual?")) return;
+  }
   if(g.cuentaId){
     var cta=(S.cuentas||[]).find(function(c){return c.id===g.cuentaId;});
     if(cta){if(!confirm("Acreditar "+f2(monto)+" "+(g.mon||"USD")+" en \""+cta.nombre+"\" — "+g.desc.trim()+"\n¿Confirmar?"))return;ajusteCuentaEgreso(g.cuentaId,monto);}
@@ -31820,6 +31881,32 @@ function rEgresos(){
         }).join("")+
         "<div style='margin-top:7px;font-size:11px;opacity:.85'>No mueve ning\u00fan saldo: el dinero ya sali\u00f3 "+
         "de la cuenta cuando lo registraste.</div>"+
+      "</div>";
+    })()+
+
+    // ARREGLO 157 · el mismo dinero contado dos veces: un aporte y una ganancia
+    // extra personal por lo mismo. Va aqui arriba por la misma razon que el de
+    // encima: no es de ninguna de las tres pestañas.
+    (function(){
+      var dup=_ganExtraQueSonAporte();
+      if(!dup.length) return "";
+      return "<div style='background:var(--avi-sup);border:1.5px solid var(--avi-ln);border-radius:10px;"+
+        "padding:11px 13px;margin-bottom:12px;font-size:12px;color:var(--avi-tx);line-height:1.6'>"+
+        "\u26a0\ufe0f <b>"+dup.length+" ganancia"+(dup.length===1?"":"s")+" extra que ya tienes como aporte.</b> "+
+        "Es el mismo dinero dos veces: el aporte dice que ya estaba en la cuenta y la ganancia extra "+
+        "dice que lo ganaste. En tu bolsillo personal cuenta doble."+
+        dup.map(function(d){
+          return "<div style='display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:7px'>"+
+            "<span>"+_escAud(d.gan.d||"")+" \u00b7 "+_escAud(d.gan.desc||"(sin descripci\u00f3n)")+
+              " \u00b7 <b>"+f2(parseFloat(d.gan.monto)||0)+" "+_escAud(d.gan.mon||"")+"</b>"+
+              "<div style='font-size:11px;opacity:.85'>aporte del "+_escAud(d.ap.d||"")+" por lo mismo</div></span>"+
+            "<button onclick='quitarGanExtraDuplicada(\""+_jsAttr(String(d.gan.id))+"\")' style='background:var(--rol-ee);"+
+              "color:var(--sobre-color);border:none;padding:5px 9px;border-radius:7px;font-size:11px;"+
+              "font-weight:700;cursor:pointer;white-space:nowrap'>\ud83e\uddf9 Quitar la ganancia extra</button>"+
+          "</div>";
+        }).join("")+
+        "<div style='margin-top:7px;font-size:11px;opacity:.85'>No mueve ning\u00fan saldo: el dinero ya est\u00e1 "+
+        "en la cuenta y ah\u00ed se queda. El aporte es el registro correcto.</div>"+
       "</div>";
     })()+
 
