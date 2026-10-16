@@ -2351,6 +2351,26 @@ let S={
   // una sola y siempre se toca junto con el estado del articulo. Es lo
   // contrario de las cuotas, que se marcan de una en una.
   articulos:[], artGastos:[],
+  // ARREGLO 146 · plata SUYA que entra o sale de una cuenta de la empresa.
+  //
+  // Su sueldo del otro trabajo le entra en bolivares a BANESCO o al B. de
+  // Venezuela, que son cuentas de la EMPRESA, y desde ahi compra USDT y se lo
+  // lleva a su Binance personal. Medido en su export del 15/10, eso dejaba las
+  // dos mitades contadas mal:
+  //
+  //     la entrada  → nadie la registra, el saldo sube solo       → "sobra"
+  //     la salida   → una compra de USDT con destino personal     → "las tasas"
+  //
+  // y 708,44 de los 726,72 que la tarjeta llamaba "tus bolivares valen menos
+  // hoy" eran en realidad eso: cuatro operaciones de su plata personal pasando
+  // por la empresa. Un numero con el rotulo de otro.
+  //
+  // Esto NO es ganancia y por eso no entra en calcMesCompleto: si entrara, le
+  // inflaria la ganancia del mes y con ella su sueldo (el 30% de la utilidad)
+  // por plata que no gano con remesas. Lo que hace es mover `deberias` el mismo
+  // importe que `tienes`, igual que ya hace traspasosAPersonal() por el otro
+  // lado — y por eso la conciliacion no se mueve.
+  aportes:[],
   inmCuotas:[],
   // Las 122 remesas de mayo estaban escritas aca: nombre del cliente, fecha,
   // monto y ganancia de cada una, dentro de un archivo que Cloudflare publica.
@@ -3112,7 +3132,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261016_v227";
+var APP_VERSION = "20261016_v228";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -4364,7 +4384,7 @@ function _htmlAvisoAperturaFuera(){
       "<div style='font-size:11px;color:var(--am3-a);margin-top:3px;line-height:1.55'>"+
         "No la cambiaste en este aparato: llegó así del otro. "+
         "<b>La apertura decide todo el Balance de Cuentas</b>, así que con ella se movió "+
-        "lo que la app te enseña como «sin explicar».</div>"+
+        "lo que la app te enseña como lo que sobra o falta.</div>"+
       lineas+
       "<div style='font-size:10.5px;color:var(--avi-tx3);margin-top:8px;line-height:1.55'>"+
         "Si la que quedó no es la buena, usa los botones de <b>corregir</b> del Balance de "+
@@ -4481,7 +4501,7 @@ function _htmlAvisoPisado(){
        "<div style='font-size:11px;color:var(--am3-a);margin-top:3px;line-height:1.5'>"+
          "El otro dispositivo tenía otra apertura y es la que quedó. "+
          "<b>La apertura decide todos los números del Balance de Cuentas</b>: si se mueve, "+
-         "se mueve también lo que la conciliación te enseña como «sin explicar».</div>";
+         "se mueve también lo que la conciliación te enseña como lo que sobra o falta.</div>";
     ap.filter(function(c){ return !c.interno; }).forEach(function(c){
       h+="<div style='padding:6px 0 0'>"+
          "<div style='font-size:12px;font-weight:700;color:var(--tx)'>"+_escAud(c.etiqueta)+"</div>";
@@ -4842,7 +4862,9 @@ var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   // ARREGLO 134 · el apartamento y su cronograma
   "inmuebles","inmCuotas",
   // ARREGLO 143 · lo que compra para revender
-  "articulos","artGastos"];
+  "articulos","artGastos",
+  // ARREGLO 146 · plata suya que mete o saca de una cuenta de la empresa
+  "aportes"];
 
 // ══════════════════════════════════════════════════════════════════════
 // SISTEMA DE CIERRE AUTOMÁTICO DE MES
@@ -6134,6 +6156,38 @@ function egresosPersonalesDesdeCuentaPersonal(desdeIso){
   return r;
 }
 
+// ── ARREGLO 146 · una compra o venta de USDT que cruza a lo PERSONAL ───────
+//
+// Su sueldo del otro trabajo entra en bolívares a una cuenta de la empresa y
+// de ahí compra USDT que se lleva a su Binance personal. Para la app eso no
+// es una compra más: es dinero cruzando la frontera de la empresa, igual que
+// un traspaso a una cuenta 💜 — solo que escrito en el inventario.
+//
+// Hasta el 146 nadie lo miraba, y la salida acababa entera dentro del "efecto
+// de las tasas". Medido en su export del 15/10: 708,44 de los 726,72 de esa
+// fila eran cuatro operaciones de estas. Un número con el rótulo de otro.
+//
+// Devuelve el lado de la EMPRESA —la cuenta y el monto que de verdad salieron
+// o entraron de ella— y no el lado personal, que es lo que hace que el término
+// valga exactamente lo mismo que valía dentro de efectoTasasDesde(): ahí el
+// lado personal se valoraba en 0 a propósito. Así el término cambia de
+// sumando sin cambiar de valor, y el "sin explicar" no se mueve ni un céntimo.
+//
+// Se escribe UNA vez porque la leen las DOS funciones: la que lo descarta
+// (efectoTasasDesde) y la que lo cuenta (traspasosAPersonal). Con un criterio
+// en cada sitio, el día que uno cambie el importe se contaría dos veces o
+// ninguna, y eso no se ve desde fuera.
+function _cruceUsdtPersonal(l){
+  function esP(id){ var c=(S.cuentas||[]).find(function(x){return x.id===id;}); return c?!!c.esPersonal:false; }
+  var oId,oM,dId,dM;
+  if(l.tipo==="compra"){ oId=l.cuentaOrigenId; oM=parseFloat(l.montOrigen)||0; dId=l.cuentaId;        dM=parseFloat(l.usdt)||0; }
+  else                 { oId=l.cuentaId;       oM=parseFloat(l.usdt)||0;       dId=l.cuentaDestinoId; dM=parseFloat(l.bs)||0;   }
+  var oP=esP(oId), dP=esP(dId);
+  if(oP===dP) return null;                       // ni sale ni entra de lo personal
+  return dP ? {sale:true,  cuentaId:oId, monto:oM}    // salió: lo que dejó la empresa
+            : {sale:false, cuentaId:dId, monto:dM};   // entró: lo que recibió la empresa
+}
+
 function traspasosAPersonal(desdeIso){
   var r={total:0, n:0, mismoDia:0, nMismoDia:0};
   if(!desdeIso) return r;
@@ -6153,6 +6207,71 @@ function traspasosAPersonal(desdeIso){
     var u = dP
       ? enUsdt(t.destino, parseFloat(t.montoDestino!=null?t.montoDestino:t.monto)||0)   // se fue
       : -enUsdt(t.origen, parseFloat(t.monto)||0);                                      // entró
+    if(iso>desdeIso){ r.total+=u; r.n++; } else { r.mismoDia+=u; r.nMismoDia++; }
+  });
+  // ARREGLO 146: y las compras/ventas de USDT que cruzan a una cuenta 💜. Son
+  // traspasos de hecho aunque estén escritos en el inventario, y antes caían
+  // dentro del "efecto de las tasas" — ver _cruceUsdtPersonal.
+  (S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[]).forEach(function(l){
+    if(l.plataforma==="Remesa"||l.origenRemesa) return;
+    var x=_cruceUsdtPersonal(l);
+    if(!x) return;
+    var iso=_isoDeFechaLote(l.fecha);
+    if(!iso || iso<desdeIso) return;
+    var u=enUsdt(x.cuentaId, x.monto);
+    if(!x.sale) u=-u;
+    if(iso>desdeIso){ r.total+=u; r.n++; } else { r.mismoDia+=u; r.nMismoDia++; }
+  });
+  r.total=Math.round(r.total*100)/100;
+  r.mismoDia=Math.round(r.mismoDia*100)/100;
+  return r;
+}
+
+// ── ARREGLO 146 · plata SUYA que entra o sale de una cuenta de la empresa ───
+//
+// Sus palabras del 16/10: "en mi sueldo de mi otro trabajo me pagan en bs, esos
+// bs entran a las cuentas de Venezuela o Banesco pero es plata mía de otra cosa
+// y con eso compro los usdt... NO ES PLATA DE REMESASYA".
+//
+// Tiene razón y no había dónde decirlo. Lo probé con su export, las dos formas
+// que la app ya tenía, y ninguna sirve:
+//
+//     como Ganancia extra PERSONAL  → sube la cuenta y NO sube "deberías"
+//                                     → el sobrante crece lo mismo que metió
+//     como Ganancia extra EMPRESA   → cuadra, pero le cuenta como ganancia del
+//                                     mes y le sube el sueldo un 30% por plata
+//                                     que no ganó con remesas
+//
+// Esto es la tercera: mueve los DOS lados y no toca la ganancia. Es el espejo
+// exacto de traspasosAPersonal() —misma conversión, mismo corte de fecha, mismo
+// trato del mismo día— porque son la misma pregunta por los dos extremos: ahí
+// el dinero suyo sale por un traspaso, aquí entra sin traspaso que lo traiga.
+//
+// La conversión va a la tasa de HOY a propósito, igual que allí: el saldo de la
+// cuenta también se valora a hoy, así que los dos lados se mueven lo mismo y la
+// conciliación no se entera. Con la tasa del día en que entró, cada aporte
+// dejaría un resto que acabaría en el "sin explicar" — justo lo que esto viene
+// a quitar.
+function aportesDesde(desdeIso){
+  var r={total:0, n:0, mismoDia:0, nMismoDia:0};
+  if(!desdeIso) return r;
+  function enUsdt(id, monto){
+    var c=(S.cuentas||[]).find(function(x){return x.id===id;});
+    if(!c) return 0;
+    if(c.moneda==="USDT"||c.moneda==="USD") return monto;
+    var t=getRateToUsdt(c.moneda);
+    return (!t||isNaN(t)||t<=0)?0:monto/t;
+  }
+  (S.aportes||[]).forEach(function(a){
+    var iso=String(a.fechaIso||"").slice(0,10);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(iso) || iso<desdeIso) return;
+    // Una cuenta 💜 personal no cuenta: ese dinero ya está fuera del capital
+    // (ARREGLO 96), así que meterlo o sacarlo de ahí no mueve "lo que tienes" y
+    // moverlo en "deberías" abriría un hueco del tamaño del aporte.
+    var c=(S.cuentas||[]).find(function(x){return x.id===a.cuentaId;});
+    if(!c||c.esPersonal) return;
+    var u=enUsdt(a.cuentaId, parseFloat(a.monto)||0);
+    if(a.dir==="sale") u=-u;
     if(iso>desdeIso){ r.total+=u; r.n++; } else { r.mismoDia+=u; r.nMismoDia++; }
   });
   r.total=Math.round(r.total*100)/100;
@@ -6201,9 +6320,13 @@ function efectoTasasDesde(desdeIso){
       r.n++;
     });
   });
+  // ARREGLO 146: una compra o una venta de USDT con una cuenta 💜 PERSONAL en
+  // un extremo NO es efecto de tasas. Se cuenta en traspasosAPersonal(), que
+  // es de donde sale la fila "pasaste a tus cuentas 💜". Ver _cruceUsdtPersonal.
   (S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[]).forEach(function(l){
     // El lote que nace de una remesa no mueve ninguna cuenta: lo hizo la remesa.
     if(l.plataforma==="Remesa"||l.origenRemesa) return;
+    if(_cruceUsdtPersonal(l)) return;
     var iso=_isoDeFechaLote(l.fecha);
     if(!iso || iso<=desdeIso) return;
     var mueve=0;
@@ -6243,6 +6366,38 @@ function _isoDeFechaLote(f){
   // que pasó de verdad.
   if(_diasEnElFuturo(iso)<-300 && _diasEnElFuturo((a+1)+"-"+mm+"-"+dd)<=30) return (a+1)+"-"+mm+"-"+dd;
   return iso;
+}
+
+// ── ARREGLO 146 · ¿gana o pierde? mes a mes ────────────────────────────────
+//
+// Sale de calcMesCompleto() y de ningún otro sitio: es la MISMA cuenta que ya
+// enseñan el Cierre de Mes y Evolución. Calculada aparte, un día el Balance
+// diría que ganó y el Cierre que perdió, y no habría forma de saber cuál
+// mirar — el 34,27 contra el 34,28 con la pregunta más grande que ella hace.
+//
+// `utilidadEmpresa` es lo que le queda LIMPIO: la bruta menos los gastos de la
+// empresa. Es la cifra que ella pidió ("si realmente estoy ganando"), no la
+// bruta, que no descuenta nada.
+//
+// Un mes sin nada registrado no sale: una barra en cero se lee como un mes
+// malo, y lo que fue es un mes que no existe todavía. Cuesta 2,17 ms por cinco
+// meses (medido con su export), así que va sin memo — igual que _inventarioBs
+// y _diaNormalBs, y por lo mismo (ARREGLO 132).
+function _gananciaMeses(n){
+  var hoy=td(), a=parseInt(hoy.slice(0,4),10), m=parseInt(hoy.slice(5,7),10), out=[];
+  var cortos=["","ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
+  for(var i=0;i<n;i++){
+    var mm=m-i, aa=a;
+    while(mm<1){ mm+=12; aa--; }
+    var mk=aa+"-"+String(mm).padStart(2,"0"), c=null;
+    try{ c=calcMesCompleto(mk); }catch(e){ continue; }
+    if(!c) continue;
+    var bruta=parseFloat(c.ganBrutaTotal)||0, limpio=parseFloat(c.utilidadEmpresa)||0;
+    if(Math.abs(bruta)<0.005 && Math.abs(limpio)<0.005) continue;
+    out.push({mk:mk, corto:cortos[mm], bruta:Math.round(bruta*100)/100,
+              limpio:Math.round(limpio*100)/100, enCurso:(i===0)});
+  }
+  return out.reverse();
 }
 
 function conciliacionCapital(){
@@ -6308,11 +6463,18 @@ function conciliacionCapital(){
   // ARREGLO 96 al reves — alli habia que restar en un sitio mas, aqui habia
   // que no restar dos veces.
   var egEmpresaSinMerc=r2v(egEmpresa);
+  // ARREGLO 146: plata SUYA que metió o sacó de una cuenta de la empresa. Sube
+  // los dos lados a la vez —`tienes` por el saldo de la cuenta, `deberias` por
+  // aquí— así que la conciliación no se entera, que es justo lo que tiene que
+  // pasar: su sueldo del otro trabajo pasando por BANESCO no es ni ganancia ni
+  // fuga. Y NO toca calcMesCompleto, así que no le infla la ganancia del mes
+  // ni el sueldo que sale de ella.
+  var aportes=aportesDesde(desde);
   // El sueldo sin apartar se resta en los DOS lados, y el de aqui sale del
   // mismo sitio que el de alla (real.sueldoPendiente). Calcularlo aparte seria
   // la segunda respuesta a la misma pregunta, y con que difieran en un centimo
   // el "sin explicar" se mueve solo.
-  var deberias=r2v(apertura-intAp.total+bruta-egEmpresaSinMerc-egPersonalEmpresa-socios-traspPers.total-(real.sueldoPendiente||0));
+  var deberias=r2v(apertura-intAp.total+bruta-egEmpresaSinMerc-egPersonalEmpresa-socios-traspPers.total-(real.sueldoPendiente||0)+aportes.total);
   var diferencia=r2v(real.total-deberias);
   // De qué está hecha esa diferencia: los ajustes a mano y el desfase de las
   // tasas se explican solos, lo que quede es lo único que hay que perseguir.
@@ -6332,7 +6494,7 @@ function conciliacionCapital(){
     egPersonalSin:r2v(egPersonalSin), socios:r2v(socios),
     egPersDesdePers:egPersDesdePers,
     deberias:deberias, real:real, diferencia:diferencia,
-    ajustes:ajustes, tasas:tasas, traspPers:traspPers, intAp:intAp, sinExplicar:sinExplicar,
+    ajustes:ajustes, tasas:tasas, traspPers:traspPers, intAp:intAp, aportes:aportes, sinExplicar:sinExplicar,
     // ARREGLO 60: la tarjeta dice contra qué apertura está midiendo. Una
     // apertura sin foto de saldos no permite comparar cuenta por cuenta
     // cuando algo no cuadra, y hasta ahora eso no se veía en ninguna parte.
@@ -16238,12 +16400,19 @@ function rCapitalTotal(){
     if(co.tasas&&Math.abs(co.tasas.total)>0.005)
       _filas.push([co.tasas.total<0?"Tus bolívares valen menos hoy":"Tus saldos valen más hoy",
                    co.tasas.total, "var(--tx4)", ""]);
+    // ARREGLO 146: su plata, la del otro trabajo, entrando o saliendo de una
+    // cuenta de la empresa. Tiene que tener su fila o la lista deja de sumar
+    // el salto — es la guardia que el ARREGLO 141 tuvo que escribir después de
+    // que el sueldo descuadrara esta misma lista por 91,67 exactos.
+    if(co.aportes&&Math.abs(co.aportes.total)>0.005)
+      _filas.push([co.aportes.total>0?"Plata tuya que metiste":"Plata tuya que sacaste",
+                   co.aportes.total, "var(--tx4)", "no es de la empresa"]);
     if(co.ajustes&&Math.abs(co.ajustes.total)>0.005)
       _filas.push(["Saldos que escribiste a mano ("+co.ajustes.n+")", co.ajustes.total, "var(--tx4)", ""]);
     if(co.intAp&&co.intAp.total>0.005)
       _filas.push(["Intereses que ya iban en la apertura", -co.intAp.total, "var(--tx4)", ""]);
     if(Math.abs(sinExp)>0.005)
-      _filas.push([(sano?"Ruido de tasas, dentro del margen":"⚠️ Sin explicar"), sinExp,
+      _filas.push([(sano?"Ruido de tasas, dentro del margen":(sinExp<0?"⚠️ Te falta":"⚠️ Te sobra")), sinExp,
                    sano?"var(--tx4)":col, sano?"":"a perseguir ↓"]);
 
     // Las tres cifras grandes. Es lo que ella abre a mirar, y cabe de un vistazo.
@@ -16290,6 +16459,60 @@ function rCapitalTotal(){
       try{ var a=new Date(co.desde+"T00:00:00"), b=new Date();
            var d=Math.round((b-a)/86400000); return d>0?d:0; }catch(e){ return 0; }
     })();
+    // ── ARREGLO 146 · la pregunta que esta tarjeta no contestaba ──────
+    //
+    // Sus palabras del 16/10, con la pantalla delante: "a fin y al cabo lo que
+    // me interesa saber es si realmente estoy ganando o perdiendo", y antes:
+    // "ni siquiera me ayuda a saber si mi empresa va bien, no es nada claro".
+    //
+    // Tenía razón. La tarjeta abría con el capital y seguía con la diferencia
+    // contra la apertura — las dos preguntas del contador. La suya es anterior
+    // y más simple, y el dato existía desde siempre en calcMesCompleto() sin
+    // que ninguna pantalla lo pusiera donde ella mira. Medido con su export:
+    //
+    //     jun +358 · jul +336 · ago +53 · sep +297 · oct +73 (a mitad de mes)
+    //
+    // o sea que nunca ha perdido un mes, y lo de agosto no fue pérdida: fue
+    // que los gastos se comieron casi todo. Eso es lo que ella no podía ver.
+    //
+    // Va PRIMERO y no se pliega: es lo que abre a mirar. Cuesta 2,17 ms por
+    // los cinco meses (medido), así que no hace falta memo — y el memo en una
+    // cifra que decide cómo ve su negocio es justo lo que el ARREGLO 132 no
+    // quiso: el número dependería de cuándo se preguntó.
+    var _gm=_gananciaMeses(5);
+    var _maxG=1; _gm.forEach(function(x){ if(Math.abs(x.limpio)>_maxG) _maxG=Math.abs(x.limpio); });
+    // Los meses seguidos ganando se cuentan desde el último CERRADO hacia
+    // atrás: el mes en curso va a medias y contarlo diría "0 meses ganando" el
+    // día 1 de cada mes, que es falso y además asusta.
+    var _rachaA=0;
+    for(var _i=_gm.length-1;_i>=0;_i--){ if(_gm[_i].enCurso) continue; if(_gm[_i].limpio>0.005) _rachaA++; else break; }
+    var _ultCerr=null; for(var _j=_gm.length-1;_j>=0;_j--){ if(!_gm[_j].enCurso){_ultCerr=_gm[_j];break;} }
+    var _vered = _gm.length===0 ? {t:"Todavía no hay meses que comparar", c:"var(--tx3)", i:"·"}
+      : (_rachaA>=2 ? {t:_rachaA+" meses seguidos ganando", c:"var(--ok)", i:"✅"}
+      : (_ultCerr&&_ultCerr.limpio>0.005 ? {t:"El último mes cerrado dio ganancia", c:"var(--ok)", i:"✅"}
+      : {t:"El último mes cerrado quedó en pérdida", c:"var(--mal)", i:"⚠️"}));
+    var ganoOPierdo=
+      "<div style='background:var(--sup);border-radius:9px;padding:12px 13px;margin-bottom:9px'>"+
+        "<div style='display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:9px'>"+
+          "<div style='font-size:11px;font-weight:800;color:var(--tx2);text-transform:uppercase;letter-spacing:.3px'>¿Ganas o pierdes?</div>"+
+          "<div style='font-size:11px;font-weight:700;color:"+_vered.c+"'>"+_vered.i+" "+_vered.t+"</div>"+
+        "</div>"+
+        (_gm.length
+          ? _gm.map(function(x){
+              var pos=x.limpio>=0, anch=Math.max(3, Math.round(Math.abs(x.limpio)/_maxG*100));
+              return "<div style='display:flex;align-items:center;gap:7px;margin-bottom:4px'>"+
+                "<span style='width:30px;flex:none;font-size:10.5px;color:var(--tx3);font-weight:700'>"+x.corto+"</span>"+
+                "<span style='flex:1;min-width:0;height:9px;background:var(--sup2);border-radius:5px;overflow:hidden'>"+
+                  "<span style='display:block;height:100%;width:"+anch+"%;background:"+(pos?"var(--ok)":"var(--mal)")+";border-radius:5px'></span></span>"+
+                "<span style='width:58px;flex:none;text-align:right;font-size:11.5px;font-weight:800;color:"+(pos?"var(--ok)":"var(--mal)")+";white-space:nowrap'>"+
+                  (pos?"+":"−")+"$"+f2(Math.abs(x.limpio))+"</span>"+
+                "</div>";
+            }).join("")
+          : "<div style='font-size:11px;color:var(--tx3)'>Registra un mes entero y aquí verás si gana o pierde.</div>")+
+        "<div style='font-size:10px;color:var(--tx4);margin-top:6px;line-height:1.45'>"+
+          "lo que le quedó limpio a la empresa cada mes, después de los gastos"+
+          (_gm.length&&_gm[_gm.length-1].enCurso?" · "+_gm[_gm.length-1].corto+" va a mitad":"")+"</div>"+
+      "</div>";
     var resumenSuyo=
       "<div style='background:var(--sup);border-radius:9px;padding:13px 13px 11px;margin-bottom:9px;font-size:11.5px;line-height:1.75'>"+
         "<div style='font-size:28px;font-weight:900;letter-spacing:-.02em;line-height:1;color:var(--tx2)'>$"+f2(R.total)+"</div>"+
@@ -16334,6 +16557,7 @@ function rCapitalTotal(){
         (Math.abs(co.socios)>0.005?"<div style='display:flex;justify-content:space-between;color:"+(co.socios>0?"var(--mal)":"var(--ok)")+"'><span>"+(co.socios>0?"− Pagos a socios":"+ Cobrado a socios")+"</span><b>"+(co.socios>0?"−":"+")+"$"+f2(Math.abs(co.socios))+"</b></div>":"")+
         ((co.intAp&&co.intAp.total>0.005)?"<div style='display:flex;justify-content:space-between;color:var(--tx4)'><span>− Intereses que iban dentro de la apertura ("+co.intAp.n+")</span><b>−$"+f2(co.intAp.total)+"</b></div>":"")+
         ((co.traspPers&&Math.abs(co.traspPers.total)>0.005)?"<div style='display:flex;justify-content:space-between;color:"+(co.traspPers.total>0?"var(--mal)":"var(--ok)")+"'><span>"+(co.traspPers.total>0?"− Pasado a cuentas personales":"+ Metido desde cuentas personales")+" ("+co.traspPers.n+")</span><b>"+(co.traspPers.total>0?"−":"+")+"$"+f2(Math.abs(co.traspPers.total))+"</b></div>":"")+
+        ((co.aportes&&Math.abs(co.aportes.total)>0.005)?"<div style='display:flex;justify-content:space-between;color:var(--tx4)'><span>"+(co.aportes.total>0?"+ Plata tuya que metiste":"− Plata tuya que sacaste")+" ("+co.aportes.n+")</span><b>"+(co.aportes.total>0?"+":"−")+"$"+f2(Math.abs(co.aportes.total))+"</b></div>":"")+
         "<div style='display:flex;justify-content:space-between;border-top:1px solid var(--ln);margin-top:5px;padding-top:5px;font-size:13px'><b>Deberías tener</b><b>$"+f2(co.deberias)+"</b></div>"+
       "</div>"+
       "<div style='background:var(--sup);border-radius:9px;padding:10px 12px;margin-bottom:8px'>"+lineaReal+"</div>";
@@ -16358,6 +16582,7 @@ function rCapitalTotal(){
           "<div style='font-size:10.5px;color:var(--tx3)'>desde el "+ds(co.desde)+" · apertura $"+f2(co.apertura)+
             ((co.aperturaSaldos&&Object.keys(co.aperturaSaldos).length)?"":" <span style='color:var(--avi-tx2)'>(sin foto de saldos)</span>")+"</div>"+
         "</div>"+
+        ganoOPierdo+
         resumenSuyo+
       "</div>"+
       // ARREGLO 99: el veredicto era un titular de 22px con un párrafo debajo
@@ -16376,9 +16601,16 @@ function rCapitalTotal(){
         "<div style='min-width:0'>"+
           "<div style='font-size:19px;font-weight:900;color:"+col+";line-height:1.15'>"+
             (sano ? "✅ Cuadra" : "$"+f2(Math.abs(sinExp)))+"</div>"+
+          // ARREGLO 146: fuera la palabra "sin explicar". Sus palabras del
+          // 16/10: "si me tienes que decir si sobra o falta, mas no me tienes
+          // que decir sin explicar". Y tenía razón por dos lados: leía los 912
+          // como dinero que le faltaba cuando es lo contrario, y "sin
+          // explicar" es la pregunta del contador, no la suya. El número es el
+          // mismo —el que de verdad no encaja, no la diferencia bruta (ARREGLO
+          // 60)— y lo que cambia es cómo se dice: te sobran, o te faltan.
           "<div style='font-size:11px;color:var(--tx3);margin-top:3px;line-height:1.5'>"+
-            (sano ? (Math.abs(sinExp)<0.005?"nada sin explicar":"lo que no encaja cabe en el ±$"+f2(tol)+" de ruido normal")
-                  : (sinExp<0?"falta por explicar":"sobra sin explicar")+" · el margen normal es ±$"+f2(tol))+
+            (sano ? (Math.abs(sinExp)<0.005?"las cuentas cuadran":"la diferencia cabe en el ±$"+f2(tol)+" de ruido normal")
+                  : (sinExp<0?"te faltan":"te sobran")+" · el margen normal es ±$"+f2(tol))+
           "</div>"+
         "</div>"+
       "</div>"+
@@ -16423,7 +16655,7 @@ function rCapitalTotal(){
       (aj.nSinSaber>0
         ? "<div style='background:var(--sup);border:1px solid var(--am4);border-radius:10px;padding:9px 12px;margin-bottom:8px;font-size:11.5px;color:var(--avi-tx)'>"+
             "⚠️ "+aj.nSinSaber+" ajuste"+(aj.nSinSaber===1?"":"s")+" <b>«no sé por qué»</b>"+
-            " <span style='color:var(--tx4);font-size:10.5px'>· cuenta"+(aj.nSinSaber===1?"":"n")+" dentro del sin explicar</span>"+
+            " <span style='color:var(--tx4);font-size:10.5px'>· cuenta"+(aj.nSinSaber===1?"":"n")+" dentro de lo que sobra</span>"+
           "</div>"
         : "")+
       // ARREGLO 71: cuando cuadra no se dice dos veces. El titular ya lo dice,
@@ -16486,19 +16718,19 @@ function rCapitalTotal(){
           // Va fuera del if de arriba porque puede haber cero ajustes contados
           // y aun así uno sin saber.
           ((aj.nSinSaber>0)
-            ? "<div style='display:flex;justify-content:space-between;color:var(--avi-tx2)'><span>"+aj.nSinSaber+" ajuste"+(aj.nSinSaber===1?"":"s")+" que marcaste <b>«no sé por qué»</b></span><b>va en «sin explicar»</b></div>"
+            ? "<div style='display:flex;justify-content:space-between;color:var(--avi-tx2)'><span>"+aj.nSinSaber+" ajuste"+(aj.nSinSaber===1?"":"s")+" que marcaste <b>«no sé por qué»</b></span><b>cuenta en lo que sobra</b></div>"
             : "")+
           (hayTasas
             ? "<div style='display:flex;justify-content:space-between'><span>De eso, desfase de las tasas del día ("+ta.n+" op.)</span><b>"+(ta.total<0?"−":"+")+"$"+f2(Math.abs(ta.total))+"</b></div>"
             : "")+
-          "<div style='display:flex;justify-content:space-between;border-top:1px solid var(--ln);margin-top:5px;padding-top:5px;font-size:13px;color:"+colSE+"'><b>"+(Math.abs(se)<=tol?"✅ ":"⚠️ ")+"Sin explicar</b><b>"+(se<0?"−":"+")+"$"+f2(Math.abs(se))+"</b></div>"+
+          "<div style='display:flex;justify-content:space-between;border-top:1px solid var(--ln);margin-top:5px;padding-top:5px;font-size:13px;color:"+colSE+"'><b>"+(Math.abs(se)<=tol?"✅ Cuadra":(se<0?"⚠️ Te falta":"⚠️ Te sobra"))+"</b><b>"+(se<0?"−":"+")+"$"+f2(Math.abs(se))+"</b></div>"+
         "</div>";
       })() : "")+
         tablasCuenta+
         "<div style='background:var(--sup);border-radius:9px;padding:11px 12px;margin-top:7px;font-size:11.5px;color:var(--tx3);line-height:1.55'>"+
           (aj.nMismoDia>0?"<div style='color:var(--avi-tx2);margin-bottom:7px'>Hay "+aj.nMismoDia+" ajuste(s) del mismo día que fijaste la apertura, por "+(aj.mismoDia<0?"−":"+")+"$"+f2(Math.abs(aj.mismoDia))+". No se cuentan porque son de antes de que la app guardara la hora, y sin ella no hay forma de saber si fueron antes o después de la foto. Los de ahora en adelante ya se sitúan solos.</div>":"")+
           (hayTasas?"<div style='margin-bottom:7px'>El desfase de las tasas es aritmética, no dinero: compras USDT a una tasa y vendes a otra, pero tus saldos se valoran a la tasa del día. "+(Math.abs(ta.usdt)>0.005?"Compra/venta de USDT "+(ta.usdt<0?"−":"+")+"$"+f2(Math.abs(ta.usdt))+". ":"")+(Math.abs(ta.remesas)>0.005?"Remesas "+(ta.remesas<0?"−":"+")+"$"+f2(Math.abs(ta.remesas))+".":"")+"</div>":"")+
-          "<div style='margin-bottom:7px'>Un ajuste a mano sube o baja lo que tienes sin tocar lo que deberías tener, así que explica parte de la diferencia. <b>Lo que queda sin explicar es lo único que hay que perseguir</b> — volver a fijar la apertura lo esconde, no lo arregla.</div>"+
+          "<div style='margin-bottom:7px'>Un ajuste a mano sube o baja lo que tienes sin tocar lo que deberías tener, así que explica parte de la diferencia. <b>Lo que queda después es lo único que hay que perseguir</b> — volver a fijar la apertura lo esconde, no lo arregla.</div>"+
           "<div style='margin-bottom:7px'>Lo que se pasa a una cuenta 💜 personal sale del capital de la empresa aunque no sea un gasto, por eso baja los dos lados y no aparece como diferencia.</div>"+
           (co.egPersonalSin>0?"<div style='margin-bottom:7px'>Hay $"+f2(co.egPersonalSin)+" de gastos personales sin cuenta asignada. No se restan porque no salieron de ningún saldo registrado — si en realidad sí salieron de una cuenta, edítalos y asígnasela.</div>":"")+
           "<div style='color:var(--tx4)'>Tu sueldo no se resta aquí: la app lo calcula como un % de la utilidad, no registra lo que de verdad sacaste. Lo que sacas se anota como gasto personal con su cuenta.</div>"+
@@ -21878,6 +22110,70 @@ function saveGanExtra(){
   S._showGanExtra=false;S._nGanExtra={d:td(),desc:"",monto:"",mon:"USD",usdt:"",cuentaId:"",tipo:"empresa",nota:""};
   saveData();R();
 }
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 146 · METÍ / SAQUÉ PLATA MÍA
+// ══════════════════════════════════════════════════════════════════════
+//
+// Lo que esto NO es, y es la mitad que importa: no es una ganancia. Su sueldo
+// del otro trabajo entrando a BANESCO no lo ganó la empresa, así que no puede
+// subir la ganancia del mes ni —por el 30% que sale de ella— su sueldo. Por
+// eso no toca calcMesCompleto y vive en su propia lista.
+//
+// Lo que sí hace: sube (o baja) el saldo de la cuenta Y sube (o baja) lo que
+// la empresa "debería tener", el mismo importe. Los dos lados a la vez, que es
+// lo que hace que la conciliación no se mueva. Medido con su export: meter
+// 100.000 Bs y registrarlo deja el número igual, al céntimo.
+function toggleAporte(){
+  S._showAporte=!S._showAporte;
+  // ARREGLO 143: lo que el formulario ENSEÑA al abrirse tiene que estar
+  // guardado al abrirse. Si la dirección solo se escribiera al pulsar el
+  // botón, abrir y guardar sin tocar nada no sabría si entró o salió.
+  if(S._showAporte) S._nAporte=_aporteVacio();
+  R();
+}
+function _aporteVacio(){ return {d:td(), dir:"entra", monto:"", mon:"VES", cuentaId:"", nota:""}; }
+function saveAporte(){
+  if(!S.aportes) S.aportes=[];
+  var a=S._nAporte||{};
+  var monto=_leerNumero(a.monto);
+  if(!(monto>0)){alert("Pon cuánto.");return;}
+  if(!a.cuentaId){alert("Di a qué cuenta entró (o de cuál salió).");return;}
+  var cta=(S.cuentas||[]).find(function(c){return c.id===a.cuentaId;});
+  if(!cta){alert("Esa cuenta ya no existe.");return;}
+  // Una cuenta 💜 personal no vale: ese dinero ya está fuera del capital de la
+  // empresa (ARREGLO 96), así que meterlo o sacarlo de ahí no mueve "lo que
+  // tienes" — y moverlo en "deberías tener" abriría un hueco del tamaño del
+  // aporte. Para mover plata entre tus cuentas y la empresa está Traspasos.
+  if(cta.esPersonal){
+    alert("\""+cta.nombre+"\" es una cuenta tuya 💜, no de la empresa.\n\n"+
+          "Esto es para cuando tu plata entra o sale de una cuenta DE LA EMPRESA. "+
+          "Para mover dinero entre tus cuentas usa Traspasos.");
+    return;
+  }
+  var iso=String(a.d||td()).slice(0,10);
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(iso)){alert("Pon la fecha.");return;}
+  var entra=a.dir!=="sale";
+  if(!confirm((entra?"Metiste ":"Sacaste ")+f2(monto)+" "+cta.moneda+" "+(entra?"en":"de")+" \""+cta.nombre+"\".\n\n"+
+              "Es plata TUYA: no cuenta como ganancia de la empresa. El saldo "+(entra?"sube":"baja")+".\n¿Confirmar?")) return;
+  ajusteCuentaEgreso(a.cuentaId, entra?monto:-monto);
+  S.aportes.push({id:Date.now(), d:ds(iso), fechaIso:iso, dir:entra?"entra":"sale",
+                  monto:monto, mon:cta.moneda, cuentaId:a.cuentaId, nota:(a.nota||"").trim()});
+  logAudit("APORTE", (entra?"Metió ":"Sacó ")+f2(monto)+" "+cta.moneda+" · "+nombreCuentaEg(a.cuentaId));
+  S._showAporte=false; S._nAporte=_aporteVacio();
+  saveData(); R();
+}
+function delAporte(id){
+  var a=(S.aportes||[]).find(function(x){return x.id===id;});
+  if(!a) return;
+  var nom=nombreCuentaEg(a.cuentaId);
+  if(!confirm("Borrar \""+(a.dir==="sale"?"saqué ":"metí ")+f2(a.monto)+" "+a.mon+"\" de "+nom+"?\n\nEl saldo vuelve como estaba.")) return;
+  ajusteCuentaEgreso(a.cuentaId, a.dir==="sale"?a.monto:-a.monto);
+  S.aportes=(S.aportes||[]).filter(function(x){return x.id!==id;});
+  _marcarBorradoMerge("aportes",id);
+  logAudit("APORTE_DEL","Borró: "+(a.dir==="sale"?"saqué ":"metí ")+f2(a.monto)+" "+a.mon);
+  saveData(); R();
+}
+
 function delGanExtra(id){
   var g=(S.gananciaExtra||[]).find(function(x){return x.id===id;});
   if(!g||!confirm("Eliminar '"+g.desc+"' ($"+f2(g.usdt)+" USDT)?"))return;
@@ -29886,9 +30182,79 @@ function rNuevaEE(){
       "<button onclick='toggleGanExtra()' style='width:100%;padding:12px;border:1.5px dashed "+(S._showGanExtra?"var(--gr3-a)":"var(--avi-ln)")+";border-radius:11px;font-size:13px;font-weight:700;cursor:pointer;background:"+(S._showGanExtra?"var(--sup2f)":"var(--avi-sup2)")+";color:"+(S._showGanExtra?"var(--tx3)":"var(--avi-tx)")+";font-family:inherit'>"+(S._showGanExtra?"✕ Cerrar":"💰 Registrar ganancia extra (P2P, trabajo, venta...)")+"</button>"+
       extraForm+
     "</div>";
-    return base+btnToggle;
+    return base+btnToggle+_htmlAporte();
   };
 })();
+
+// ── ARREGLO 146 · el formulario de "metí / saqué plata mía" ────────────────
+//
+// Va aquí, debajo de Ganancia extra, porque es la pregunta de al lado y la
+// confusión entre las dos es cara: Ganancia extra SUMA a la ganancia del mes
+// (y con ella a su sueldo), esto no. El rótulo lo dice con todas las letras
+// en vez de dejarlo a que se deduzca del nombre.
+function _htmlAporte(){
+  var a=S._nAporte||_aporteVacio();
+  var entra=a.dir!=="sale";
+  // Solo cuentas de la EMPRESA: a una 💜 este registro no le haría nada
+  // (saveAporte lo rechaza) y ofrecerla sería hacerle perder el viaje, que es
+  // el mismo criterio de _ctasOrigenSueldo (ARREGLO 141).
+  var ctas=(S.cuentas||[]).filter(function(c){return c.activa!==false && !c.esPersonal;});
+  var mios=(S.aportes||[]).slice().sort(function(x,y){return String(y.fechaIso||"").localeCompare(String(x.fechaIso||""));}).slice(0,6);
+  var form=S._showAporte?
+    "<div style='background:var(--sup);border:1.5px solid var(--ln);border-radius:12px;padding:14px;margin-top:10px'>"+
+      "<div style='font-size:13px;font-weight:800;color:var(--tx2);margin-bottom:4px'>👛 Plata mía, no de la empresa</div>"+
+      "<div style='font-size:11px;color:var(--tx3);line-height:1.5;margin-bottom:12px'>"+
+        "Tu sueldo de otro trabajo, o plata tuya que pasa por una cuenta de la empresa. "+
+        "<b>No cuenta como ganancia</b> — solo mueve el saldo para que las cuentas cuadren.</div>"+
+      "<div id='frm-aporte' style='display:flex;flex-direction:column;gap:9px'>"+
+        "<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px'>"+
+          "<button onclick='S._nAporte=Object.assign(S._nAporte||_aporteVacio(),{dir:\"entra\"});R()' style='padding:12px;border:2px solid "+(entra?"var(--ok)":"var(--ln)")+";border-radius:9px;font-size:13px;font-weight:700;cursor:pointer;background:"+(entra?"var(--vd6-c)":"var(--sup2)")+";color:"+(entra?"var(--ok)":"var(--tx2b)")+";font-family:inherit'>⬇️ Metí plata mía</button>"+
+          "<button onclick='S._nAporte=Object.assign(S._nAporte||_aporteVacio(),{dir:\"sale\"});R()' style='padding:12px;border:2px solid "+(!entra?"var(--avi-tx)":"var(--ln)")+";border-radius:9px;font-size:13px;font-weight:700;cursor:pointer;background:"+(!entra?"var(--avi-sup2)":"var(--sup2)")+";color:"+(!entra?"var(--avi-tx)":"var(--tx2b)")+";font-family:inherit'>⬆️ Saqué plata mía</button>"+
+        "</div>"+
+        "<div><label style='font-size:10px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>Fecha</label>"+
+        "<input type='date' value='"+a.d+"' onchange='S._nAporte=Object.assign(S._nAporte||_aporteVacio(),{d:this.value})' style='width:100%;padding:12px;font-size:16px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'></div>"+
+        "<div><label style='font-size:10px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>"+(entra?"¿A qué cuenta de la empresa entró?":"¿De qué cuenta de la empresa salió?")+"</label>"+
+        "<select id='ap-cta' onchange='S._nAporte=Object.assign(S._nAporte||_aporteVacio(),{cuentaId:this.value});_pintarRotAporte()' style='width:100%;padding:12px;font-size:14px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'>"+
+          "<option value=''>— elige —</option>"+
+          ctas.map(function(c){return "<option value='"+c.id+"'"+(a.cuentaId===c.id?" selected":"")+">"+_escAud(c.nombre)+" ("+c.moneda+")</option>";}).join("")+
+        "</select></div>"+
+        "<div><label id='ap-rot' style='font-size:10px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>"+_rotMontoAporte()+"</label>"+
+        "<input type='text' inputmode='decimal' placeholder='0,00' value='"+(a.monto||"")+"' oninput='S._nAporte=Object.assign(S._nAporte||_aporteVacio(),{monto:_num(this.value)})' style='width:100%;padding:12px;font-size:16px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'></div>"+
+        "<div><label style='font-size:10px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>¿De qué fue? <span style='font-size:10.5px;color:var(--tx4)'>(opcional)</span></label>"+
+        "<input type='text' placeholder='Ej: mi sueldo del otro trabajo' value='"+_escAud(a.nota||"")+"' oninput='S._nAporte=Object.assign(S._nAporte||_aporteVacio(),{nota:this.value})' style='width:100%;padding:12px;font-size:14px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'></div>"+
+      "</div>"+
+      "<button onclick='saveAporte()' style='width:100%;padding:14px;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;background:var(--ok);color:var(--sobre-color);font-family:inherit;margin-top:12px'>👛 Guardar</button>"+
+      (mios.length?"<div style='margin-top:12px;border-top:1px solid var(--ln);padding-top:9px'>"+
+        "<div style='font-size:10px;font-weight:700;color:var(--tx3);margin-bottom:5px'>LO ÚLTIMO</div>"+
+        mios.map(function(x){
+          return "<div style='display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11.5px;color:var(--tx2);padding:3px 0'>"+
+            "<span style='min-width:0'>"+(x.dir==="sale"?"⬆️":"⬇️")+" "+x.d+" · "+_escAud(nombreCuentaEg(x.cuentaId))+
+              (x.nota?" <span style='color:var(--tx4)'>· "+_escAud(x.nota)+"</span>":"")+"</span>"+
+            "<span style='white-space:nowrap'><b>"+(x.dir==="sale"?"−":"+")+f2(x.monto)+" "+_escAud(x.mon)+"</b> "+
+            "<span onclick='delAporte("+x.id+")' style='cursor:pointer;color:var(--mal)'>🗑️</span></span></div>";
+        }).join("")+"</div>":"")+
+    "</div>":"";
+  return "<div style='margin-top:10px'>"+
+    "<button onclick='toggleAporte()' style='width:100%;padding:12px;border:1.5px dashed "+(S._showAporte?"var(--gr3-a)":"var(--ln)")+";border-radius:11px;font-size:13px;font-weight:700;cursor:pointer;background:"+(S._showAporte?"var(--sup2f)":"var(--sup2)")+";color:var(--tx2b);font-family:inherit'>"+
+      (S._showAporte?"✕ Cerrar":"👛 Metí / saqué plata mía (no es ganancia)")+"</button>"+
+    form+"</div>";
+}
+function _monDeCta(id){ var c=(S.cuentas||[]).find(function(x){return x.id===id;}); return c?c.moneda:""; }
+// El rótulo se escribe en UN sitio y lo leen el dibujado y el refresco: escrito
+// dos veces, un día el campo diría una moneda y se guardaría en otra.
+function _rotMontoAporte(){
+  var a=S._nAporte||_aporteVacio(), m=a.cuentaId?_monDeCta(a.cuentaId):"";
+  return "Cuánto"+(m?" (en "+_escAud(m)+")":"");
+}
+// ARREGLO 32: elegir la cuenta NO puede llamar a R(). Repintar rehace el
+// formulario entero y se lleva por delante lo que haya escrito a medias en el
+// campo de al lado — es el mismo fallo que el 136 y el 140 tuvieron que sacar
+// de la tarjeta de tasas, donde el oninput rehacía el contenedor con el input
+// dentro. Aquí solo se refresca el rótulo, que es lo único que depende.
+function _pintarRotAporte(){
+  var el=document.getElementById("ap-rot");
+  if(el) el.textContent=_rotMontoAporte();
+}
 
 function toggleArchivados(){ S._verArchivados=!S._verArchivados; R(); }
 function rInventarioUsdt(){
@@ -34280,7 +34646,7 @@ function _estaBorradoMerge(campo,id){
 // inventarioUsdt se fusiona por "id" (Date.now()): el consumo FIFO siempre
 // reordena por fecha (ordenFIFO) antes de usar los lotes, así que el orden
 // en que quedan en el array no afecta el cálculo.
-var _MERGE_FIELDS = ["cuentas","compromisos","egresos","egresos_personales","prestamos","cuentasCobrar","clientes","inventarioUsdt","brl","vzla","eeuu","traspasos","reposiciones","gastos_eeuu","deudas_paul","movimientosCapital","pagosSocios","gananciaExtra","gastos_socios","inventarioUsdt_cerrado","cierresMes","capital","ajustesSaldo","inmuebles","inmCuotas","articulos","artGastos"];
+var _MERGE_FIELDS = ["cuentas","compromisos","egresos","egresos_personales","prestamos","cuentasCobrar","clientes","inventarioUsdt","brl","vzla","eeuu","traspasos","reposiciones","gastos_eeuu","deudas_paul","movimientosCapital","pagosSocios","gananciaExtra","gastos_socios","inventarioUsdt_cerrado","cierresMes","capital","ajustesSaldo","inmuebles","inmCuotas","articulos","artGastos","aportes"];
 // clientes usa "cod"; brl/vzla/eeuu usan "_uid"; cierresMes usa "mesKey" (el resto ya usa "id")
 var _MERGE_ID_FIELD = {clientes:"cod",brl:"_uid",vzla:"_uid",eeuu:"_uid",cierresMes:"mesKey"};
 // Primera foto, ya con las listas declaradas y con lo que loadData() dejó en S.
