@@ -8954,7 +8954,7 @@ console.log("\n— FASE 2: la cuenta madre —");
   //    tdia_brl/tdia_ves_brl y solo dos pasaban por guardarTasaCalcHoy, que es
   //    quien sella tdia_fecha —de donde sale el aviso "tu suelo se movio un X%
   //    desde que publicaste" (ARREGLO 112)— y limpia el override.
-  ["saveTasasConfig","guardarTasaHoyDirecto"].forEach(function(f){
+  ["saveTasasConfig"].forEach(function(f){
     const c = sinComentarios(sacarFuncion(f));
     ok(/guardarTasaCalcHoy\(/.test(c), f + " publica por la puerta unica");
     ok(!/tasasDia\.tdia_brl\s*=/.test(c) && !/tasasDia\[k\]\s*=\s*[^;]*tdia_brl/.test(c),
@@ -8989,7 +8989,7 @@ console.log("\n— FASE 2: la cuenta madre —");
     ok(new RegExp("<input type='text' inputmode='decimal' id='tasa-"+k+"'").test(HTML),
        "tasa-" + k + " acepta la coma");
   });
-  ["_convDesde","_msjCliente","_copiarMonto","saveTasasConfig","guardarTasaHoyDirecto"].forEach(function(f){
+  ["_convDesde","_msjCliente","_copiarMonto","saveTasasConfig"].forEach(function(f){
     const c = sinComentarios(sacarFuncion(f));
     ok(!/parseFloat\((el|elBrl|elVes|elUsd)\.value\)/.test(c) &&
        !/parseFloat\(\(document\.getElementById\("conv-/.test(c),
@@ -11294,7 +11294,9 @@ console.log("\nARREGLO 150 · la mercancía no baja el neto del mes");
      "deja fuera el egreso de mercancía y conserva el normal");
   ok(F._egOperativos(null).length === 0, "sin lista no revienta");
 
-  // Los SEIS sitios que restan egresos para un neto del mes, CON SU CUENTA.
+  // Los sitios que restan egresos para un neto del mes, CON SU CUENTA. Eran
+  // seis; el Balance Mensual viejo (rBalanceStd) se fue en el ARREGLO 160 por
+  // codigo muerto, asi que esta guardia vigilaba una pantalla que no se dibuja.
   //
   // El primer intento pedía solo que `_egOperativos` apareciera en la función, y
   // cinco de las seis pruebas negativas SE ESCAPARON: cada sitio la llama dos
@@ -11306,7 +11308,6 @@ console.log("\nARREGLO 150 · la mercancía no baja el neto del mes");
   // más, esto falla hasta que alguien actualice el número — que es justo lo que
   // obliga a mirar si la nueva está del lado correcto.
   [["rDash", 2, "el Resumen — el que ella abre"],
-   ["rBalanceStd", 2, "el Balance Mensual"],
    ["reporteJulio", 2, "el reporte de Julio"],
    ["exportarMesExcel", 2, "la hoja de Excel del mes"],
    ["generarInformePDF", 1, "el reparto por categoría del PDF"],
@@ -11753,6 +11754,35 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
   // o sea undefined, o sea 0 SIEMPRE. Las cuatro tasas de la calculadora.
   ok(!/parseFloat\(document\.getElementById\([^)]*\)\|\|\{value:0\}\)\.value/.test(HTML),
      "y nadie vuelve a parsear el ELEMENTO en vez de su valor (daba 0 siempre)");
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// ARREGLO 160 · lo que no se dibuja, no se queda
+//
+// El Balance Mensual viejo (rBalanceStd) y su calculadora de tasa estaban
+// escritos y NADIE los llamaba. Comprobado en Chromium dibujando las 26
+// pestanas con su export: ninguno de los campos calc-tc-* llegaba al DOM.
+// Costaba de verdad: el ARREGLO 159 arreglo ahi un parseFloat de una
+// pantalla que no existe, la guardia del 150 contaba sus llamadas a
+// _egOperativos como si fuera un sexto sitio, y cerrarMes() era un SEGUNDO
+// camino para cerrar un mes (por S.filtroMes en vez de S._cMes) colgando
+// de ella. El peligro no es el peso: es el del ARREGLO 59, que alguien lo
+// lea y crea que es el bueno.
+{
+  const muertas = ["rBalanceStd", "calcTasaUpdate", "calcTasaObjetivoUpdate",
+                   "guardarTasaHoyDirecto", "cerrarMes", "exportMesSel"];
+  muertas.forEach(function(f){
+    ok(!new RegExp("function\\s+" + f + "\\s*\\(").test(HTML),
+       "no vuelve la funcion muerta " + f);
+  });
+  // Y sus campos, que son por donde volveria sin que el nombre lo diga.
+  ["calc-tc-brl","calc-tv-ves","calc-tc-usd","calc-tc-cop",
+   "calc-tasa-objetivo","calc-tasa-resultado"].forEach(function(id){
+    ok(HTML.indexOf("id='" + id + "'") < 0, "ni el campo " + id);
+  });
+  // El que SI se dibuja sigue en su sitio: rBalance() pasa por rBalancePlus().
+  ok(/function rBalance\(\)\{ return rBalancePlus\(\); \}/.test(HTML),
+     "y el Balance que de verdad se dibuja sigue siendo rBalancePlus");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

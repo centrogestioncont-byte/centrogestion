@@ -3221,7 +3221,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261016_v241";
+var APP_VERSION = "20261016_v242";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -5424,22 +5424,11 @@ function reabrirMes(mesKey){
   alert("🔓 "+lbl+" vuelve a estar abierto.");
 }
 
-function cerrarMes(){
-  var meses=getMesesDisponibles();
-  var selMes=S.filtroMes||(meses.length?meses[0].key:"");
-  if(!selMes){alert("Selecciona un mes primero.");return;}
-  var label=getMesLabel(selMes.split("-")[1],selMes.split("-")[0]);
-  var yaExiste=S.cierresMes&&S.cierresMes.some(function(c){return c.mesKey===selMes;});
-  if(yaExiste){
-    if(!confirm("Este mes ya fue cerrado.\n\n¿Deseas descargarlo de nuevo y actualizar el historial?")) return;
-  } else {
-    if(!confirm("Cerrar "+label+"\n\n1️⃣ Se descargará un Excel completo con todas las operaciones.\n2️⃣ El historial del sistema guardará solo el resumen (más liviano).\n\n¿Continuar?")) return;
-  }
-  // 1. Exportar Excel primero
-  try{ exportarMesExcel(selMes); } catch(e){ alert("Error al generar el Excel: "+e.message); return; }
-  // 2. Cerrar (guarda resumen ligero, sin operaciones)
-  ejecutarCierreMes(selMes, true);
-}
+// Aqui vivia cerrarMes(), un SEGUNDO camino para cerrar un mes: tomaba
+// S.filtroMes en vez de S._cMes y llamaba a ejecutarCierreMes por su cuenta.
+// Su unico llamador era el Balance Mensual viejo, que nadie dibujaba. Dos
+// caminos para cerrar un mes, con reglas distintas, es exactamente lo que
+// costo el ARREGLO 91. El que manda es el boton de la pestana Cierre.
 
 // ══════════════════════════════════════════════════════
 // EVOLUCIÓN MENSUAL: saldo mes anterior + ganancia mes actual = esperado
@@ -9087,95 +9076,14 @@ function saveNewCuenta(){
 }
 
 
-// Monthly stats section (used by rBalancePlus)
-function rBalanceStd(){
-  var mesActualKey=getMesKeyActual();
-  var meses=getMesesDisponibles();
-  // Usar _opMesSel para consistencia entre vistas del operador
-  if(!_opMesSel || _opMesSel.length<6) _opMesSel=mesActualKey;
-  var selMes=_opMesSel;
-  var partsA=mesActualKey.split("-");
-  var labelA=getMesLabel(partsA[1],partsA[0]);
-  var parts=selMes?selMes.split("-"):["",""];
-  var brlM=filterByMes(S.brl,selMes);
-  var vzlaM=filterByMes(S.vzla,selMes);
-  var eeuuM=filterByMes(S.eeuu,selMes);
-  var egresosM=filterByMes(S.egresos,selMes);
-  var ganBrl=brlM.reduce(function(a,r){return a+r.pr;},0);
-  var ganVzla=vzlaM.reduce(function(a,r){return a+r.pr;},0);
-  var ganEEUU=eeuuM.reduce(function(a,r){return a+r.pr;},0);
-  var gasGEUU=filterByMes(S.gastos_eeuu||[],selMes).reduce(function(a,g){return a+parseFloat(g.monto||0);},0);
-  var ganNetaEE=ganEEUU-gasGEUU;
-  // ARREGLO 150: la compra de mercancia no baja el neto del mes.
-  var egPag=_egOperativos(egresosM).filter(function(e){return e.pagada;}).reduce(function(a,e){return a+e.usdt;},0);
-  var egPend=_egOperativos(egresosM).filter(function(e){return !e.pagada;}).reduce(function(a,e){return a+e.usdt;},0);
-  var neto=ganBrl+ganVzla+ganNetaEE*0.5-egPag-egPend;
-  var mesOpts=(meses.some(function(m){return m.key===mesActualKey;})?"":
-    "<option value='"+mesActualKey+"'"+(selMes===mesActualKey?" selected":"")+">"+labelA+" ✨ (actual)</option>")+
-    meses.map(function(m){return "<option value='"+m.key+"'"+(selMes===m.key?" selected":"")+">"+getMesLabel(m.mes,m.anio)+(m.key===mesActualKey?" ✨":"")+"</option>";}).join("");
-  // Client summary
-  var clStats={};
-  [].concat(
-    brlM.map(function(r){return{cl:r.cl,op:"🇧🇷",pr:r.pr};}),
-    vzlaM.map(function(r){return{cl:r.cl,op:"🇻🇪",pr:r.pr};}),
-    eeuuM.map(function(r){return{cl:r.cl,op:"🇺🇸",pr:r.pr/2};})
-  ).forEach(function(r){if(!clStats[r.cl])clStats[r.cl]={cl:r.cl,op:r.op,txs:0,gan:0};clStats[r.cl].txs++;clStats[r.cl].gan+=r.pr;});
-  var clArr=Object.values(clStats).sort(function(a,b){return b.gan-a.gan;});
-  var clRows=clArr.slice(0,30).map(function(cl,i){
-    var medal=i===0?"🥇":i===1?"🥈":i===2?"🥉":"";
-    return "<tr><td style='font-weight:700;text-align:center'>"+medal+(i<3?"":"#"+(i+1))+"</td><td>"+cl.op+"</td><td style='font-weight:600'>"+_escAud(cl.cl)+"</td><td style='text-align:center;font-weight:700'>"+cl.txs+"</td><td style='text-align:right;font-weight:700;color:var(--ok)'>$"+f2(cl.gan)+"</td></tr>";
-  }).join("");
+// El Balance Mensual viejo (rBalanceStd) y su calculadora de tasa vivian aqui.
+// Se fueron: NADIE las llamaba. Comprobado en Chromium dibujando las 26
+// pestanas con su export — los campos calc-tc-* no aparecian en ninguna, asi
+// que el arreglo 159 estuvo corrigiendo un parseFloat de una pantalla que no
+// se dibuja. El peligro de dejarlo no era el peso, es el del ARREGLO 59: que
+// alguien lo lea y crea que es el bueno. El Balance que SI se dibuja es
+// rBalancePlus(), y la calculadora que ella usa es la de la pestana Tasas.
 
-  return "<div style='margin-top:16px;display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px'>"+
-    "<div style='display:flex;align-items:center;gap:10px'><div style='font-size:13px;font-weight:700'>📅 Reporte mensual</div>"+
-    "<select onchange='_opMesSel=this.value;R()' style='border-radius:7px;padding:6px 10px;border:1px solid var(--ln);font-size:12px'>"+mesOpts+"</select></div>"+
-    "<div style='display:flex;gap:8px'>"+
-      "<button onclick='exportMesSel()' style='background:var(--ok);color:var(--sobre-color);border:none;padding:8px 14px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer'>📊 Excel</button>"+
-      "<button onclick='cerrarMes()' style='background:var(--fondo-osc);color:var(--sobre-color);border:none;padding:8px 14px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer'>🔒 Cerrar mes</button>"+
-    "</div></div>"+
-    "<div class='mg' style='margin-bottom:12px'>"+
-      "<div class='mc' style='background:var(--ok-sup);border:1px solid var(--vd2a44)'><div class='lbl'>BRL/VZLA</div><div class='val pos'>$"+f2(ganBrl+ganVzla)+"</div></div>"+
-      "<div class='mc' style='background:var(--info-sup);border:1px solid var(--az2a44)'><div class='lbl'>EE.UU neta</div><div class='val' style='color:var(--info)'>$"+f2(ganNetaEE)+"</div></div>"+
-      "<div class='mc' style='background:var(--mal-sup)'><div class='lbl'>Egresos pagados</div><div class='val neg'>$"+f2(egPag)+"</div></div>"+
-      "<div class='mc' style='background:"+(neto>=0?"var(--ok-sup)":"var(--mal-sup)")+";border:2px solid "+(neto>=0?"var(--ok-ln)":"var(--mal)")+"'><div class='lbl'>NETO</div><div class='val "+(neto>=0?"pos":"neg")+"'>$"+f2(neto)+"</div></div>"+
-    "</div>"+
-    (clRows?"<div style='font-size:10px;font-weight:700;color:var(--tx3);text-transform:uppercase;margin-bottom:8px'>👥 Top clientes del mes</div>"+
-    "<div style='border:1px solid var(--ln2);border-radius:10px;overflow-x:auto;margin-bottom:14px'><table style='width:100%;border-collapse:collapse;font-size:11px'>"+
-    "<thead><tr style='background:var(--sup2b)'><th style='padding:7px 8px;text-align:center;border-bottom:1px solid var(--ln2)'>#</th><th style='padding:7px 8px;border-bottom:1px solid var(--ln2)'>OP.</th>"+
-    "<th style='padding:7px 8px;border-bottom:1px solid var(--ln2)'>CLIENTE</th><th style='padding:7px 8px;text-align:center;border-bottom:1px solid var(--ln2)'>TRANSACCIONES</th>"+
-    "<th style='padding:7px 8px;text-align:right;color:var(--ok);border-bottom:1px solid var(--ln2)'>GANANCIA</th></tr></thead>"+
-    "<tbody>"+clRows+"</tbody></table></div>":"")+
-    "<div class='sec' style='border-left:3px solid var(--ac3);margin-bottom:16px'>"+
-      "<div class='sec-title' style='color:var(--ac3)'>📊 CALCULADORA DE TASA PARA PUBLICAR</div>"+
-      "<div style='font-size:11px;color:var(--tx2b);margin-bottom:12px'>Ingresa los precios actuales del USDT y te calcula qué tasa publicar en tu flyer para cada margen de ganancia.</div>"+
-      "<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px'>"+
-        "<div><label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>🇧🇷 Precio USDT en Brasil (BRL × USDT)</label>"+
-        "<input type='text' inputmode='decimal' id='calc-tc-brl' step='0.001' placeholder='ej: 5.04' value='"+(S.calcTasa&&S.calcTasa.tcBrl||"")+"' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;font-weight:700' oninput='calcTasaUpdate()'></div>"+
-        "<div><label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>🇻🇪 Precio USDT en Venezuela (VES × USDT)</label>"+
-        "<input type='text' inputmode='decimal' id='calc-tv-ves' step='1' placeholder='ej: 740' value='"+(S.calcTasa&&S.calcTasa.tvVes||"")+"' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;font-weight:700' oninput='calcTasaUpdate()'></div>"+
-        "<div><label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>🇺🇸 Precio USDT en USD (USD × USDT)</label>"+
-        "<input type='text' inputmode='decimal' id='calc-tc-usd' step='0.001' placeholder='ej: 1.01' value='"+(S.calcTasa&&S.calcTasa.tcUsd||"")+"' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;font-weight:700' oninput='calcTasaUpdate()'></div>"+
-        "<div><label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>🇨🇴 Precio USDT en Colombia (COP × USDT)</label>"+
-        "<input type='text' inputmode='decimal' id='calc-tc-cop' step='1' placeholder='ej: 4200' value='"+(S.calcTasa&&S.calcTasa.tcCop||"")+"' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;font-weight:700' oninput='calcTasaUpdate()'></div>"+
-      "</div>"+
-      "<div id='calc-tasa-resultado'></div>"+
-      "<div style='background:var(--mo6);border:1.5px dashed var(--ac3);border-radius:10px;padding:12px;margin-top:6px'>"+
-        "<label style='font-size:11px;font-weight:700;color:var(--ac3);display:block;margin-bottom:4px'>🎯 O escribe directo la tasa que quieres publicar (BS × BRL) — te digo a qué % de ganancia equivale</label>"+
-        "<input type='text' inputmode='decimal' id='calc-tasa-objetivo' step='0.01' placeholder='ej: 132' value='"+(S.calcTasa&&S.calcTasa.objetivo||"")+"' style='width:100%;padding:9px;border:1.5px solid var(--ac3);border-radius:8px;font-size:14px;font-weight:700;margin-bottom:8px' oninput='calcTasaObjetivoUpdate()'>"+
-        "<div id='calc-tasa-objetivo-resultado'></div>"+
-      "</div>"+
-    "</div>"+
-    "<div style='background:var(--gr6-c);border-radius:10px;padding:14px;border:1px solid var(--ln2)'>"+
-    "<div style='font-size:10px;font-weight:700;color:var(--tx3);text-transform:uppercase;margin-bottom:10px'>⚙️ Gestión de datos</div>"+
-    "<div style='display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--ln2b)'>"+
-      "<div><div style='font-size:12px;font-weight:600'>Exportar respaldo JSON</div></div>"+
-      "<button onclick='exportData()' style='background:var(--fondo-osc);color:var(--sobre-color);border:none;padding:8px 14px;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer'>💾 Exportar</button>"+
-    "</div>"+
-    "<div style='display:flex;align-items:center;justify-content:space-between;padding:10px 0'>"+
-      "<div><div style='font-size:12px;font-weight:600;color:var(--mal)'>Borrar TODOS los datos</div></div>"+
-      "<button onclick='clearAllData()' style='background:var(--mal-sup);color:var(--mal);border:1px solid var(--rj5-a);padding:8px 14px;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer'>🗑️ Borrar todo</button>"+
-    "</div></div>";
-}
 
 function rBalance(){ return rBalancePlus(); }
 
@@ -15983,100 +15891,6 @@ function rConfigAdmin(){
     "</div>";
 }
 
-function calcTasaUpdate(){
-  var tcBrl=_leerNumero((document.getElementById("calc-tc-brl")||{}).value)||0;
-  var tvVes=_leerNumero((document.getElementById("calc-tv-ves")||{}).value)||0;
-  var tcUsd=_leerNumero((document.getElementById("calc-tc-usd")||{}).value)||0;
-  var tcCop=_leerNumero((document.getElementById("calc-tc-cop")||{}).value)||0;
-  // save values
-  if(!S.calcTasa) S.calcTasa={};
-  if(tcBrl) S.calcTasa.tcBrl=tcBrl;
-  if(tvVes) S.calcTasa.tvVes=tvVes;
-  if(tcUsd) S.calcTasa.tcUsd=tcUsd;
-  if(tcCop) S.calcTasa.tcCop=tcCop;
-  var el=document.getElementById("calc-tasa-resultado");
-  if(!el) return;
-  if(!tcBrl||!tvVes){ el.innerHTML="<div style='color:var(--tx4);font-size:12px;padding:10px'>Ingresa precio USDT en BRL y VES para ver los cálculos.</div>"; return; }
-  var margenes=[6,7,8,9,10,12,15];
-  // BRL→VES: tasa_cliente = tcBrl × (1 + %) 
-  // es decir: BRL que paga el cliente por cada USD equivalente en VES
-  // ganancia = tcBrl_cliente / tcBrl_mercado - 1 = margen
-  // tasa_cliente (BS × BRL) = tvVes / tcBrl_cliente
-  var rowsBrlVes=margenes.map(function(m){
-    var tcCliente=tcBrl*(1+m/100);
-    var tasaPublicar=tvVes/tcCliente;
-    return "<tr><td style='padding:7px 10px;font-weight:700;color:var(--ok)'>"+m+"%</td>"+
-      "<td style='padding:7px 10px;font-weight:700;font-size:13px'>"+f2(tasaPublicar)+" BS × BRL</td>"+
-      "<td style='padding:7px 10px;font-size:11px;color:var(--tx3)'>Compras a "+f4(tcBrl)+" / Vendes a "+f4(tcCliente)+" BRL/USDT</td>"+
-      "<td style='padding:7px 10px'><button onclick='guardarTasaHoyDirecto("+tasaPublicar+")' style='background:var(--ok);color:var(--sobre-color);border:none;padding:5px 10px;border-radius:6px;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap'>💾 Usar hoy</button></td></tr>";
-  }).join("");
-  var rowsVzlaBrl=tvVes>0&&tcBrl>0?margenes.map(function(m){
-    var tvClienteVes=tvVes*(1-m/100);
-    var tasaPublicar=tvClienteVes/tcBrl;
-    return "<tr><td style='padding:7px 10px;font-weight:700;color:var(--mal)'>"+m+"%</td>"+
-      "<td style='padding:7px 10px;font-weight:700;font-size:13px'>"+f2(tasaPublicar)+" BS × BRL</td>"+
-      "<td style='padding:7px 10px;font-size:11px;color:var(--tx3)'>Cliente da BS a "+f2(tvClienteVes)+" / recibe BRL a "+f4(tcBrl)+"</td></tr>";
-  }).join(""):null;
-  var rowsUsdVes=tcUsd>0?margenes.map(function(m){
-    var tcClienteUsd=tcUsd*(1+m/100);
-    var tasaPublicar=tvVes/tcClienteUsd;
-    return "<tr><td style='padding:7px 10px;font-weight:700;color:var(--info)'>"+m+"%</td>"+
-      "<td style='padding:7px 10px;font-weight:700;font-size:13px'>"+f2(tasaPublicar)+" BS × USD</td>"+
-      "<td style='padding:7px 10px;font-size:11px;color:var(--tx3)'>Compras a "+f4(tcUsd)+" / Vendes a "+f4(tcClienteUsd)+" USD/USDT</td></tr>";
-  }).join(""):null;
-  var rowsCopVes=tcCop>0?margenes.map(function(m){
-    var tcClienteCop=tcCop*(1+m/100);
-    var tasaPublicar=tvVes/tcClienteCop;
-    return "<tr><td style='padding:7px 10px;font-weight:700;color:var(--avi-tx)'>"+m+"%</td>"+
-      "<td style='padding:7px 10px;font-weight:700;font-size:13px'>"+f2(tasaPublicar)+" BS × COP</td>"+
-      "<td style='padding:7px 10px;font-size:11px;color:var(--tx3)'>COP a "+f0(tcCop)+" / vendes a "+f0(tcClienteCop)+" COP/USDT</td></tr>";
-  }).join(""):null;
-
-  function tabla(title, color, rows, hasAction){
-    return "<div style='margin-bottom:12px'><div style='font-size:11px;font-weight:700;color:"+color+";margin-bottom:6px'>"+title+"</div>"+
-      "<table style='width:100%;border-collapse:collapse;font-size:12px;background:var(--sup);border-radius:8px;overflow:hidden;border:1px solid var(--ln2)'>"+
-      "<thead><tr style='background:var(--sup2b)'><th style='padding:7px 10px;text-align:left;color:var(--tx3);font-size:10px'>GANANCIA %</th><th style='padding:7px 10px;text-align:left;color:var(--tx3);font-size:10px'>TASA A PUBLICAR</th><th style='padding:7px 10px;text-align:left;color:var(--tx3);font-size:10px'>DETALLE</th>"+(hasAction?"<th></th>":"")+"</tr></thead>"+
-      "<tbody>"+rows+"</tbody></table></div>";
-  }
-  el.innerHTML=
-    tabla("🇧🇷→🇻🇪 BRL → Venezuela (BS × 1 BRL)","var(--ok)",rowsBrlVes,true)+
-    (rowsVzlaBrl?tabla("🇻🇪→🇧🇷 Venezuela → BRL (BS × 1 BRL)","var(--mal)",rowsVzlaBrl):"")+
-    (rowsUsdVes?tabla("🇺🇸→🇻🇪 USD → Venezuela (BS × 1 USD)","var(--info)",rowsUsdVes):"")+
-    (rowsCopVes?tabla("🇨🇴→🇻🇪 COP → Venezuela (BS × 1 COP)","var(--avi-tx)",rowsCopVes):"");
-}
-// ── #2: Guarda la tasa BRL→VZLA de HOY directamente, desde donde sea
-// (esta calculadora), sin tener que ir hasta ⚙️ Configuración a pegarla
-// en el campo de "tasa del día". Se aplica al instante a cotizaciones y
-// registros nuevos.
-// ARREGLO 117: pasa por la puerta única, como todo lo que publica la tasa.
-// Antes escribía tdia_brl a pelo: sin sellar la fecha y sin limpiar el
-// override del conversor, así que se podía publicar aquí y seguir cotizando
-// con otra tasa sin que nada lo dijera.
-function guardarTasaHoyDirecto(valor){
-  var v=_leerNumero(valor);
-  if(!(v>0)){alert("Tasa inválida.");return;}
-  guardarTasaCalcHoy("ida", v, true);
-  alert("✅ Tasa de ida actualizada a "+f2(_misTasasPublicadas().ida||v)+" Bs × R$ — ya se aplica al conversor, al flyer y a los registros nuevos.");
-}
-// ── #1: Al revés — escribes la tasa que QUIERES publicar y te dice a
-// qué % de ganancia equivale (en vez de ir probando porcentajes hasta
-// que el resultado te cuadre con el mercado).
-function calcTasaObjetivoUpdate(){
-  var tcBrl=_leerNumero((document.getElementById("calc-tc-brl")||{}).value)||0;
-  var tvVes=_leerNumero((document.getElementById("calc-tv-ves")||{}).value)||0;
-  var objetivo=_leerNumero((document.getElementById("calc-tasa-objetivo")||{}).value)||0;
-  if(!S.calcTasa) S.calcTasa={};
-  if(objetivo) S.calcTasa.objetivo=objetivo;
-  var el=document.getElementById("calc-tasa-objetivo-resultado");
-  if(!el) return;
-  if(!tcBrl||!tvVes||!objetivo){ el.innerHTML="<div style='font-size:11px;color:var(--tx4)'>Completa el precio USDT en BRL y VES arriba, y la tasa que quieres publicar.</div>"; return; }
-  // tasaPublicar = tvVes / tcCliente  →  tcCliente = tvVes / tasaPublicar
-  var tcCliente=tvVes/objetivo;
-  var margen=Math.round(((tcCliente/tcBrl-1)*100)*100)/100;
-  var colorMargen = margen<5?"var(--mal)":margen<10?"var(--rol-na)":"var(--ok)";
-  el.innerHTML="<div style='font-size:13px;font-weight:800;color:"+colorMargen+";margin-bottom:6px'>Eso equivale a "+margen+"% de ganancia"+(margen<5?" — muy bajo, revisa si te conviene":"")+"</div>"+
-    "<button onclick='guardarTasaHoyDirecto("+objetivo+")' style='background:var(--ac3);color:var(--sobre-color);border:none;padding:9px 16px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;width:100%'>💾 Usar "+f2(objetivo)+" como tasa de hoy</button>";
-}
 
 // ── CAPITAL TOTAL — unifica Capital + Balance + Cierre + Reportes socios ─
 
@@ -19046,46 +18860,6 @@ function autoBackup(){
   }catch(e){ console.warn("⚠️ autoBackup error:",e); }
 }
 
-function exportMesSel(){
-  try{
-    var mesKey=(typeof _opMesSel!=="undefined"&&_opMesSel&&_opMesSel.length>=6)?_opMesSel:getMesKeyActual();
-    var p=mesKey.split("-");var label=getMesLabel(p[1],p[0]);
-    var brlM=filterByMes(S.brl,mesKey),vzlaM=filterByMes(S.vzla,mesKey),eeuuM=filterByMes(S.eeuu,mesKey);
-    var gasM=filterByMes(S.gastos_eeuu||[],mesKey);
-    if(!brlM.length&&!vzlaM.length&&!eeuuM.length){alert("No hay operaciones en "+label+".");return;}
-    function n2(v){return (Math.round((parseFloat(v)||0)*100)/100).toFixed(2).replace(".",",");} // formato Excel ES
-    function esc(t){t=String(t==null?"":t);return '"'+t.replace(/"/g,'""')+'"';}
-    var sep=";";var lines=[];
-    lines.push(esc("REPORTE MENSUAL — "+label));
-    lines.push("");
-    lines.push(["Modulo","Fecha","Cliente","Ruta","Monto origen","Moneda","Tasa dia","Entregado (dest)","Tasa compra","Tasa venta","Ganancia USDT"].map(esc).join(sep));
-    function fila(mod,r){
-      lines.push([mod,r.d,r.cl,r.rt||"",n2(r.am),r.orig||"",n2(r.tdia),n2(r.cant),n2(r.tc),n2(r.tv),n2(r.pr)].map(esc).join(sep));
-    }
-    brlM.forEach(function(r){fila("BRL→VZLA",r);});
-    vzlaM.forEach(function(r){fila("VZLA→BRL",r);});
-    eeuuM.forEach(function(r){fila("EE.UU",r);});
-    var ganBrl=brlM.reduce(function(a,r){return a+(r.pr||0);},0);
-    var ganVzla=vzlaM.reduce(function(a,r){return a+(r.pr||0);},0);
-    var ganEE=eeuuM.reduce(function(a,r){return a+(r.pr||0);},0);
-    var gastEE=gasM.reduce(function(a,g){return a+(parseFloat(g.monto)||0);},0);
-    lines.push("");
-    lines.push(["RESUMEN","","","","","","","","","",""].map(esc).join(sep));
-    lines.push(["Ganancia BRL/VZLA","","","","","","","","","",n2(ganBrl+ganVzla)].map(esc).join(sep));
-    lines.push(["Ganancia EE.UU bruta","","","","","","","","","",n2(ganEE)].map(esc).join(sep));
-    lines.push(["Gastos EE.UU","","","","","","","","","",n2(-gastEE)].map(esc).join(sep));
-    lines.push(["EE.UU neta","","","","","","","","","",n2(ganEE-gastEE)].map(esc).join(sep));
-    lines.push(["Julio 50% EE.UU","","","","","","","","","",n2((ganEE-gastEE)*0.5)].map(esc).join(sep));
-    lines.push(["TOTAL Julio (BRL+VZLA+50% EE.UU)","","","","","","","","","",n2(ganBrl+ganVzla+(ganEE-gastEE)*0.5)].map(esc).join(sep));
-    lines.push(["Operaciones del mes","","","","","","","","","",String(brlM.length+vzlaM.length+eeuuM.length)].map(esc).join(sep));
-    var csv="\uFEFF"+lines.join("\r\n"); // BOM para que Excel muestre bien los acentos
-    var blob=new Blob([csv],{type:"text/csv;charset=utf-8"});
-    var a=document.createElement("a");
-    a.href=URL.createObjectURL(blob);
-    a.download="CentroGestion_"+mesKey+".csv";
-    document.body.appendChild(a);a.click();document.body.removeChild(a);
-  }catch(e){alert("Error al exportar: "+e.message);}
-}
 // ── Backup automático al cerrar mes ─────────────────────────────────────────
 // Se descarga solo cuando cierras un mes manualmente. No interrumpe nada.
 function autoBackupJSON(mesLabel){
