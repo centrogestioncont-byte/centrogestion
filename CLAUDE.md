@@ -5579,3 +5579,49 @@ movimiento exacto que hizo sobre cada cuenta. Con eso se reconstruye un día
 entero en vez de teorizar. (Los de antes del ARREGLO 50 no guardan `ts`, pero
 **la hora está en el id**: `_tsDeAjuste()` la saca, y lo mismo vale para el
 `_uid` de cualquier remesa. Ya no hay que teorizar con el orden de un día.)
+
+---
+
+## Lo que no se dibuja, no se queda (ARREGLO 160)
+
+El **Balance Mensual viejo** (`rBalanceStd`) y su **calculadora de tasa** —los
+cuatro campos `calc-tc-*` y el despeje al revés— estaban escritos en el archivo
+y **nadie los llamaba**. Comprobado en Chromium dibujando las 26 pestañas con su
+export: ninguno de esos campos llegaba al DOM, ni una vez.
+
+**El grep no basta para decidirlo, y por poco me engaña al revés:** buscando el
+texto en `document.body.innerHTML` salían en TODAS las pestañas, porque el body
+lleva dentro el `<script>` con el archivo entero. Lo que contesta la pregunta es
+`document.getElementById()`, que mira el DOM de verdad. Es el ARREGLO 84 otra
+vez: medir no vale si mides otra cosa.
+
+**Lo que costaba, que no era el peso:**
+
+- el **ARREGLO 159** arregló ahí un `parseFloat` que daba 0 siempre — en una
+  pantalla que no se dibuja;
+- la guardia del **ARREGLO 150** contaba sus llamadas a `_egOperativos()` como
+  si fuera un sexto sitio, así que **vigilaba una pantalla que no existe** (eran
+  cinco);
+- y de ella colgaba **`cerrarMes()`, un SEGUNDO camino para cerrar un mes**: por
+  `S.filtroMes` en vez de `S._cMes`, con sus propias reglas. Dos caminos para
+  cerrar un mes es exactamente lo que costó el ARREGLO 91.
+
+Es el **ARREGLO 59** otra vez, y con sus mismas palabras: *el peligro no era el
+peso, era que alguien las leyera y creyera que eran las buenas*.
+
+- **Se fueron seis**: `rBalanceStd`, `calcTasaUpdate`, `calcTasaObjetivoUpdate`,
+  `guardarTasaHoyDirecto`, `cerrarMes` y `exportMesSel`. Las dos últimas no eran
+  el encargo: quedaron huérfanas al irse la primera, y dejarlas colgando es
+  justo el estado que este arreglo viene a cerrar.
+- **La guardia mira las funciones Y sus campos.** Por el nombre volvería con
+  otro nombre; por el `id='calc-tc-brl'` no. Y exige que `rBalance()` siga
+  pasando por `rBalancePlus()`, que es el Balance que **sí** se dibuja — borrar
+  el bueno tenía que fallar, y hay una negativa que lo prueba.
+- **Lo que queda es idéntico.** Medido con su export, v241 contra v242: 26
+  pestañas, 0 errores, capital 2.711,65, te sobran 6,94, utilidad 73,17, tasas
+  184 · 205, y el Balance dibuja **exactamente los mismos 14.446 caracteres**.
+
+**Y la calculadora que ella usa no es ésta:** es la de la pestaña 🧮 Tasas, la
+de *"publicar esta"*. Esa acepta la coma desde siempre (`_cgSet` pasa por
+`_num()`) y no se tocó — medido tecleando de verdad, la tasa publicada se queda
+en 184 · 205.
