@@ -11414,6 +11414,17 @@ console.log("\nARREGLO 152 · el método: que se vea, que sume y que no coma el 
   const upc = sinC(sacarFuncion("upC"));
   ok(/met-eleg-/.test(upc) && /_htmlMetodoElegido\(res, ruta\)/.test(upc),
      "y se refresca al teclear: el porqué cambia con el monto (ARREGLO 55)");
+
+  // ── Y la marca de "lo elegiste tú" NO puede pasar a la remesa siguiente ──
+  // Si se quedara pegada, la segunda remesa saldría con el método de la primera
+  // sin que nadie lo vea. Se limpia porque saveTx reemplaza S.tx ENTERO: la
+  // guardia es que ese objeto no vuelva a llevar el método dentro.
+  const sv = sinC(sacarFuncion("saveTx"));
+  const reset = sv.slice(sv.indexOf("S.tx={date:f.date"));
+  ok(reset.indexOf("_metodoTocado") < 0,
+     "el formulario nuevo no hereda la marca de 'lo elegiste tú'");
+  ok(reset.indexOf("metodo:") < 0 && reset.indexOf("permuta:") < 0,
+     "ni el método ni la permuta de la remesa anterior: la app vuelve a elegir sola");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
