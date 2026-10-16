@@ -3221,7 +3221,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261016_v239";
+var APP_VERSION = "20261016_v240";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -4409,6 +4409,55 @@ function _htmlHistorialPisados(){
 // LA REGLA, que es la del ARREGLO 95: en una cuenta de banco el negativo no
 // existe y es un aviso; en una TARJETA el negativo es lo normal —es lo que
 // debe— y lo que avisa es pasarse del límite.
+// ARREGLO 158 · una cuenta de USDT cuyo saldo se escribio a mano deja de
+// seguir al inventario PARA SIEMPRE (`manual_override`), y eso no se veia en
+// ninguna parte. Sus dos cuentas de Binance lo llevan puesto desde hace un mes,
+// y de ahi salio la deriva de 79,70 que no se pudo reconstruir: el saldo no
+// seguia a los movimientos y nada lo decia.
+//
+// Vive aqui y en ningun otro sitio porque lo leen la fila que lo enseña y el
+// boton que lo quita. Calculado aparte, el aviso diria un numero y el boton
+// dejaria otro.
+function _saldoSegunInventario(c){
+  if(!c || c.moneda!=="USDT") return null;
+  var t=0, hay=false;
+  (S.inventarioUsdt||[]).forEach(function(r){
+    if(!r || (r.cuentaId||"")!==c.id) return;
+    hay=true;
+    t += (r.tipo==="compra") ? (parseFloat(r.usdt)||0) : -(parseFloat(r.usdt)||0);
+  });
+  return hay ? Math.round(t*100)/100 : null;
+}
+function _saldoAManoInfo(c){
+  if(!c || !c.manual_override) return null;
+  var seg=_saldoSegunInventario(c);
+  var act=parseFloat(c.saldo)||0;
+  return {actual:Math.round(act*100)/100, segunInv:seg,
+          dif:(seg===null)?null:Math.round((act-seg)*100)/100};
+}
+function volverASeguirInventario(id){
+  var c=(S.cuentas||[]).find(function(x){ return x.id===id; });
+  if(!c){ alert("No encuentro esa cuenta."); return; }
+  var i=_saldoAManoInfo(c);
+  if(!i){ alert("Esa cuenta ya sigue al inventario."); return; }
+  if(i.segunInv===null){
+    if(!confirm("\""+c.nombre+"\" no tiene ni una operación de USDT registrada, así que "+
+        "el inventario no sabe cuánto debería haber.\n\nSi la dejo seguir al inventario, "+
+        "su saldo pasaría a 0,00 en cuanto registres la primera.\n\n¿Seguro?")) return;
+  } else if(!confirm("Que \""+c.nombre+"\" vuelva a seguir al inventario:\n\n"+
+      "ahora dice ....... "+f2(i.actual)+" USDT\n"+
+      "pasaría a ........ "+f2(i.segunInv)+" USDT\n"+
+      "diferencia ....... "+(i.dif>0?"+":"")+f2(i.dif)+"\n\n"+
+      "Ese segundo número son tus compras menos tus ventas de USDT en esta cuenta: "+
+      "NO es lo que deberías tener, es lo que la app escribiría. El cambio se aplica "+
+      "la próxima vez que dibujes Inventario.\n\n"+
+      "Si la diferencia es grande, es que faltan operaciones por registrar.\n\n¿Seguro?")) return;
+  delete c.manual_override;
+  c._mod=Date.now();
+  logAudit("SALDO_SIGUE_INVENTARIO", c.nombre+" · a mano "+f2(i.actual)+
+           " · inventario "+(i.segunInv===null?"(sin datos)":f2(i.segunInv)));
+  saveData(); R();
+}
 function _saldoConProblema(c){
   if(!c) return false;
   if(c.esTarjeta){
@@ -15414,6 +15463,22 @@ function rConfigAdmin(){
               (c.esJuridica?" <span style=\'font-size:10.5px;font-weight:700;background:var(--az6-c);color:var(--az3-d);padding:1px 7px;border-radius:8px;vertical-align:middle\'>🏛️ PJ (CNPJ)</span>":"")+
             "</div>"+
             "<div style=\'font-size:10px;color:var(--tx4);margin-top:2px\'>"+(c.tipo||"")+(c.operador&&c.operador!=="general"?" · "+c.operador:"")+"</div>"+
+            // ARREGLO 158 · si el saldo se escribio a mano, se DICE. Llevaba un
+            // mes sin seguir al inventario y no habia forma de saberlo.
+            (function(){
+              var mo=_saldoAManoInfo(c);
+              if(!mo) return "";
+              return "<div style=\'font-size:10px;color:var(--avi-tx);margin-top:3px;font-weight:700\'>"+
+                "\u270d\ufe0f saldo a mano \u00b7 no sigue al inventario"+
+                // "pasaria a" y no "el inventario dice": este numero es lo que
+                // la app ESCRIBIRIA si la cuenta volviera a seguir al inventario
+                // (compras menos ventas de esa cuenta), no lo que deberia haber.
+                // Dicho de la otra forma se lee como dinero que falta.
+                (mo.segunInv===null ? "" : " \u00b7 si lo siguiera pasar\u00eda a "+f2(mo.segunInv))+
+                " <button onclick=\'volverASeguirInventario(\""+_jsAttr(String(c.id))+"\")\' style=\'background:none;"+
+                "border:1px solid var(--avi-ln);color:var(--avi-tx);border-radius:6px;padding:1px 6px;"+
+                "font-size:10px;font-weight:700;cursor:pointer;margin-left:4px\'>que lo siga</button></div>";
+            })()+
           "</div>"+
           // ARREGLO 95: en una tarjeta la cifra grande NO puede salir como
           // dinero. Sin esto una deuda de 652,68 se pintaba en verde y sin
@@ -16235,6 +16300,19 @@ function rCapitalTotal(){
         "<div style='flex:1;min-width:0'>"+
           "<div style='font-size:12px;font-weight:700;color:var(--tit);overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>"+_escAud(item.nombre)+(item.esPersonal?" <span style='font-size:10.5px;font-weight:700;background:var(--az6);color:var(--mo4);padding:1px 6px;border-radius:7px'>💜</span>":"")+(item.esJuridica?" <span style='font-size:10.5px;font-weight:700;background:var(--az6-c);color:var(--az3-d);padding:1px 6px;border-radius:7px'>🏛️ PJ</span>":"")+"</div>"+
           "<div style='font-size:11.5px;color:var(--tx4)'>"+item.moneda+(fuenteTasa?" · "+fuenteTasa:"")+"</div>"+
+          // ARREGLO 158 · aqui tambien, que es donde ella mira los saldos.
+          // Ponerlo solo en Configuracion seria dejarlo donde no lo ve: el
+          // mismo fallo de buscar una sola copia (101, 119, 150, 153).
+          (function(){
+            var mo=_saldoAManoInfo(item);
+            if(!mo) return "";
+            return "<div style='font-size:10.5px;color:var(--avi-tx);font-weight:700;margin-top:2px'>"+
+              "\u270d\ufe0f a mano \u00b7 no sigue al inventario"+
+              (mo.segunInv===null ? "" : " \u00b7 si lo siguiera pasar\u00eda a "+f2(mo.segunInv))+
+              " <button onclick='volverASeguirInventario(\""+_jsAttr(String(item.id))+"\")' style='background:none;"+
+              "border:1px solid var(--avi-ln);color:var(--avi-tx);border-radius:6px;padding:0 5px;"+
+              "font-size:10px;font-weight:700;cursor:pointer'>que lo siga</button></div>";
+          })()+
         "</div>"+
         "<div style='text-align:right;flex-shrink:0'>"+
           // ARREGLO 119 (y 95 por tercera vez): quitarle el ⚠️ a la tarjeta la

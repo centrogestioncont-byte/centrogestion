@@ -11691,5 +11691,41 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
      "y la pantalla las enseña con su botón");
 }
 
+// ════════ ARREGLO 158 · el saldo escrito a mano se ve ════════
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  // Una cuenta de USDT con el saldo escrito a mano deja de seguir al inventario
+  // PARA SIEMPRE, y eso no se veía en ninguna parte. Sus tres cuentas de Binance
+  // lo llevan puesto, con diferencias de hasta 890 USDT.
+  const si = sinC(sacarFuncion("_saldoSegunInventario"));
+  ok(/c\.moneda!=="USDT"/.test(si), "sólo aplica a cuentas de USDT, que son las que sigue el inventario");
+  ok(/return hay \? /.test(si),
+     "sin ni una operación devuelve null, no 0: un 0 se leería como saldo cero");
+  // Y sólo de las que de verdad lo llevan: sin esto avisaría en TODAS las
+  // cuentas, y un aviso que sale siempre deja de leerse (ARREGLO 99).
+  const sm = sinC(sacarFuncion("_saldoAManoInfo"));
+  ok(/!c\.manual_override\) return null/.test(sm),
+     "sólo avisa de las cuentas que de verdad tienen el saldo escrito a mano");
+  const vs = sinC(sacarFuncion("volverASeguirInventario"));
+  ok(/delete c\.manual_override/.test(vs), "el botón quita la marca");
+  ok(!/c\.saldo\s*=/.test(vs),
+     "y NO toca el saldo: lo cambia el inventario cuando se dibuje, no este botón");
+  ok(/NO es lo que deber/.test(vs),
+     "la pregunta dice que ese número no es lo que debería tener");
+  ok(/c\._mod=Date\.now\(\)/.test(vs), "y lleva su _mod, o no viaja al otro aparato");
+  ok(/i\.segunInv===null/.test(vs),
+     "una cuenta sin operaciones se avisa aparte: pasaría a 0");
+  // En las DOS pantallas donde se ve un saldo: Configuración (donde se edita)
+  // y Balance de Cuentas (donde ella mira). Ponerlo en una sola es el fallo
+  // de buscar una copia y dejarse las otras (101, 119, 150, 153).
+  const cfgA = sacarFuncion("rConfigAdmin"), cap2 = sacarFuncion("rCapitalTotal");
+  ok(/_saldoAManoInfo\(c\)/.test(cfgA) && /no sigue al inventario/.test(cfgA),
+     "Configuración lo dice, con su botón");
+  ok(/_saldoAManoInfo\(item\)/.test(cap2) && /no sigue al inventario/.test(cap2),
+     "y Balance de Cuentas también, que es donde ella mira");
+  ok(/si lo siguiera pasar/.test(cfgA) && /si lo siguiera pasar/.test(cap2),
+     "y lo redactan como lo que es, no como dinero que falta");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
