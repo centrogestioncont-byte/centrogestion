@@ -5096,6 +5096,51 @@ reconoció y cuántas dio de alta. Es ella quien conoce sus datos.
 saldos y lotes FIFO de hoy, así que se quedan —decisión suya— y lo que las
 neutraliza es que un mes cerrado deje de recalcularse.
 
+## Un mes cerrado enseña lo que se guardó (ARREGLO 155)
+
+Sus palabras (16/10): *"lo pasado se queda como está"* y *"un mes cerrado
+muestra siempre lo guardado en su cierre y no se recalcula, para que no cambie
+solo"*.
+
+La app **recalculaba** los meses cerrados, y recalcular hoy sobre datos de hace
+meses da otro número. Medido con su export:
+
+```
+          guardado    recalculado hoy
+mayo        966,19       1.491,52     ← las 137 remesas repetidas de mayo
+junio       322,68         358,07
+julio       139,27         336,26     ← el ajuste de 94,24 creado tras cerrar
+agosto       52,53          52,53     ← estos dos coinciden
+sept.       296,79         296,79
+```
+
+Y de paso **es lo que neutraliza las copias de mayo sin borrar nada**: una
+operación vieja de más ya no puede mover la ganancia de un mes cerrado. Borrarlas
+movería saldos y lotes FIFO de hoy, así que se quedan — decisión suya.
+
+- **Va en la PUERTA, `calcMesCompleto()`, no en cada pantalla.** Hay **18 sitios**
+  que la llaman. Tocarlos uno a uno es el fallo que ya costó cuatro veces
+  (ARREGLOS 101, 119, 150, 153): siempre queda uno fuera.
+- **El propio cierre pide el recálculo** (`calcMesCompleto(mes, null, true)`). Si
+  leyera lo guardado, cerrar escribiría lo que ya había, y al reabrir y volver a
+  cerrar el cierre nuevo saldría del viejo.
+- **El mes en curso se sigue calculando**: octubre no se congela.
+- **Los nombres viejos se LEEN, no se reescriben.** El cierre guarda `egPag`
+  donde hoy se llama `egEmpPag`, y `neto` donde hoy es `utilidadEmpresa`
+  (`_CIERRE_A_CALC`). Los cierres guardados no se tocan.
+- **Y el formato viejo tiene su salida.** El cierre de mayo es anterior a que la
+  app calculara bien: **no guardó `utilidadEmpresa`**, sólo `neto`. Por eso la
+  pantalla enseñaba **0** — no es que guardara cero, es que ese campo no existía.
+- **Sólo se congelan NÚMEROS.** Si en la lista entrara un campo que es una lista
+  —el detalle de ganancias extra— el cierre la sustituiría por la suya, que puede
+  no estar, y la pantalla se quedaría sin detalle sin decirlo.
+
+**Evolución nunca tuvo el problema**: ya leía `cierresMes` directamente. Medido
+antes y después, sale idéntica.
+
+**Y no se avisa de la diferencia en los meses viejos**, a propósito y por
+decisión suya: *"no muestres avisos de diferencias en meses viejos"*.
+
 ### Registra la operación — no escribas el saldo
 
 **La regla que más costó el 12/09**, y se rompió tres veces en un día.

@@ -11577,5 +11577,40 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
      "mira la marca en los dos lados: la puede llevar el de aquí o el de allá");
 }
 
+// ════════ ARREGLO 155 · un mes cerrado no se recalcula ════════
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const cm = sinC(sacarFuncion("calcMesCompleto"));
+  // Va en la PUERTA, no en cada pantalla: hay 18 sitios que la llaman, y
+  // tocarlos uno a uno es el fallo que ya costó cuatro veces (101, 119, 150, 153).
+  ok(/cierreGuardadoDeMes\(mesKey\)/.test(cm) && /_congelarConCierre\(_salida, _cz\)/.test(cm),
+     "calcMesCompleto devuelve lo guardado cuando el mes está cerrado");
+  ok(/if\(!recalcular\)/.test(cm),
+     "y sólo se salta cuando quien llama pide el recálculo a propósito");
+  // El propio cierre TIENE que recalcular: si leyera lo guardado, cerrar
+  // escribiría lo que ya había, y reabrir y volver a cerrar saldría del viejo.
+  const ec = sinC(sacarFuncion("ejecutarCierreMes"));
+  ok(/calcMesCompleto\(mesKey, null, true\)/.test(ec),
+     "el cierre pide el recálculo: si no, se escribiría a sí mismo");
+  // Un cierre del formato viejo (mayo) no guardó "utilidadEmpresa": guardó
+  // "neto". Sin esto la pantalla enseña 0, que es lo que ella veía.
+  const cg = sinC(sacarFuncion("_congelarConCierre"));
+  ok(/g\.utilidadEmpresa===undefined && typeof g\.neto==="number"/.test(cg),
+     "el formato viejo se lee por su campo neto, no se queda en 0");
+  // Sólo se congelan NÚMEROS. Si alguien mete en la lista un campo que es una
+  // lista —el detalle de ganancias extra, por ejemplo— el cierre guardado la
+  // sustituiría por la suya, que puede no estar, y la pantalla se queda sin
+  // detalle sin que nada lo diga.
+  ok(/typeof v!=="number"&&isNaN\(parseFloat\(v\)\)\) return;/.test(cg),
+     "sólo se congela lo que es un número: una lista no reemplaza al detalle");
+  // Y los nombres viejos se LEEN, no se reescriben los cierres guardados.
+  const mapa = sinC(HTML.slice(HTML.indexOf("var _CIERRE_A_CALC"), HTML.indexOf("var _CAMPOS_CONGELADOS")));
+  ok(/egPag:"egEmpPag"/.test(mapa) && /neto:"utilidadEmpresa"/.test(mapa),
+     "los campos viejos (egPag, neto) se traducen al leer");
+  // Ojo: "=[^=]" a propósito — un "===" es comparación, no una escritura.
+  ok(!/cierre\.(egPag|neto)\s*=[^=]/.test(cg) && !/S\.cierresMes\[/.test(cg),
+     "y NO se reescribe el cierre guardado: lo pasado se queda como está");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

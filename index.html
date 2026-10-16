@@ -3207,7 +3207,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261016_v236";
+var APP_VERSION = "20261016_v237";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -5066,8 +5066,11 @@ function ejecutarCierreMes(mesKey, manual){
   });
   saldoCierreUsdtCalc=Math.round(saldoCierreUsdtCalc*100)/100;
 
-  // Calcular con la fórmula única (guarda desglose completo, congelado)
-  var calc = calcMesCompleto(mesKey);
+  // Calcular con la fórmula única (guarda desglose completo, congelado).
+  // ARREGLO 155: y se pide el RECALCULO a propósito. Desde que un mes cerrado
+  // devuelve lo guardado, cerrar leyendo lo guardado sería escribir lo que ya
+  // había; y al reabrir y volver a cerrar, el cierre nuevo saldría del viejo.
+  var calc = calcMesCompleto(mesKey, null, true);
 
   // Calcular saldo acumulado (suma de utilidades netas de todos los meses)
   var cierresAnt = (S.cierresMes||[]).filter(function(c){return c.mesKey!==mesKey;}).sort(function(a,b){return b.mesKey.localeCompare(a.mesKey);});
@@ -22204,7 +22207,68 @@ function rMain(){
 // NO toca FIFO. Lee S.brl, S.vzla, S.eeuu sin modificarlos.
 // pctOverrides = {socioId: porcentaje_0_a_100} para socios con % variable por mes.
 // ══════════════════════════════════════════════════════════════════
-function calcMesCompleto(mesKey, pctOverrides){
+// ARREGLO 155: un mes cerrado enseña LO QUE SE GUARDO al cerrarlo, en todas
+// las pantallas, y deja de recalcularse. Sus palabras (16/10): "lo pasado se
+// queda como está" y "un mes cerrado muestra siempre lo guardado en su cierre
+// y no se recalcula, para que no cambie solo".
+//
+// Hacia falta porque la app recalculaba, y recalcular hoy sobre datos de hace
+// meses da otro numero. Medido con su export:
+//
+//            guardado    recalculado hoy
+//   mayo       966,19       1.491,52     ← las 137 remesas repetidas de mayo
+//   junio      322,68         358,07
+//   julio      139,27         336,26     ← el ajuste de 94,24 creado tras cerrar
+//   agosto      52,53          52,53     ← estos dos coinciden
+//   sept.      296,79         296,79
+//
+// Y de paso es lo que neutraliza las copias de mayo sin borrar nada: una
+// operacion vieja de mas ya no puede mover la ganancia de un mes cerrado.
+//
+// Va AQUI, en la puerta, y no en cada pantalla: hay 18 sitios que llaman a
+// esta funcion. Tocarlos uno a uno es el fallo que ya costo cuatro veces
+// (ARREGLOS 101, 119, 150, 153) — siempre queda uno fuera.
+var _CIERRE_A_CALC={            // el cierre guarda algunos campos con otro nombre
+  egPag:"egEmpPag", egPend:"egEmpPend", neto:"utilidadEmpresa",
+  ganEE:"ganEEBruta", totalOps:"ops"
+};
+// Los campos de DINERO y de CUENTA que el cierre congela. Lo que no este aqui
+// —las listas de detalle, los nombres de socio— se sigue calculando: no es un
+// numero que pueda cambiar sola la ganancia del mes.
+var _CAMPOS_CONGELADOS=[
+  "ganBrutaTotal","miGanOperaciones","utilidadEmpresa","egEmpPag","egEmpPend",
+  "ganBrl","ganVzla","ganEEBruta","ganPrestamos","ganPrestamosMonto","ganPrestamosCant",
+  "ganExtraEmp","ganExtraPer","sueldo","gasEEUU","ganEENeta","miParteEEUU",
+  "socioParte","deudasSocioEE","totalCom","ops","brlOps","vzlaOps","eeuuOps"
+];
+function cierreGuardadoDeMes(mesKey){
+  if(!mesKey) return null;
+  return (S.cierresMes||[]).find(function(c){ return c && c.mesKey===mesKey; }) || null;
+}
+function _congelarConCierre(calc, cierre){
+  var g={};
+  Object.keys(cierre).forEach(function(k){
+    var destino=_CIERRE_A_CALC[k]||k;
+    if(g[destino]===undefined) g[destino]=cierre[k];
+  });
+  _CAMPOS_CONGELADOS.forEach(function(k){
+    var v=g[k];
+    if(v===undefined||v===null) return;
+    if(typeof v!=="number"&&isNaN(parseFloat(v))) return;
+    calc[k]=(typeof v==="number")?v:parseFloat(v);
+  });
+  // Un cierre del formato viejo (mayo) no guardo "utilidadEmpresa" ni
+  // "ganBrutaTotal": guardo "neto". Sin esto la pantalla enseña 0, que es
+  // justo lo que ella veia. No se inventa nada — se lee el campo que SI hay.
+  if(g.utilidadEmpresa===undefined && typeof g.neto==="number") calc.utilidadEmpresa=g.neto;
+  if(g.ganBrutaTotal===undefined && typeof calc.utilidadEmpresa==="number"
+     && (cierre.egPag===0||cierre.egPag===undefined)) calc.ganBrutaTotal=calc.utilidadEmpresa;
+  calc._cerrado=true;
+  calc._cierreFecha=cierre.fechaCierre||"";
+  calc._formatoViejo=(cierre.utilidadEmpresa===undefined);
+  return calc;
+}
+function calcMesCompleto(mesKey, pctOverrides, recalcular){
   if(!S.config) S.config={};
   if(!S.config.socios) S.config.socios=[];
   pctOverrides = pctOverrides || {};
@@ -22344,7 +22408,7 @@ function calcMesCompleto(mesKey, pctOverrides){
   var disponiblePer = r2(saldoPersonalAcumuladoPrevio - egPerPag + repTotal);
   var sueldoAcumulando = sueldo; // se sumará al disponible recién cuando cierres este mes
 
-  return {
+  var _salida={
     ganBrutaTotal:ganBrutaTotal,   // ← número que el usuario acumula (P2)
     ganExtraEmp:ganExtraEmp,       // ganancias extra empresa del mes
     ganExtraPer:ganExtraPer,       // ganancias extra personales del mes
@@ -22373,6 +22437,14 @@ function calcMesCompleto(mesKey, pctOverrides){
     sueldoAcumulando:sueldoAcumulando,saldoPersonalAcumuladoPrevio:saldoPersonalAcumuladoPrevio,
     _diagAcum:{mesEncontrado:cierresAntPer.length?cierresAntPer[0].mesKey:null,sueldoGuardado:cierresAntPer.length?cierresAntPer[0].sueldo:null,campoExistia:cierresAntPer.length?(cierresAntPer[0].saldoPersonalAcumulado!==undefined&&cierresAntPer[0].saldoPersonalAcumulado!==null):null}
   };
+  // ARREGLO 155 · lo ultimo que pasa: si el mes esta cerrado, manda lo que se
+  // guardo. `recalcular` lo pide el propio cierre, que necesita la cuenta de
+  // verdad para poder guardarla.
+  if(!recalcular){
+    var _cz=cierreGuardadoDeMes(mesKey);
+    if(_cz) return _congelarConCierre(_salida, _cz);
+  }
+  return _salida;
 }
 
 // ══════════════════════════════════════════════════════════════════
