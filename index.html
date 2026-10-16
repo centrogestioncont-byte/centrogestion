@@ -3132,7 +3132,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261016_v230";
+var APP_VERSION = "20261016_v231";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -5849,6 +5849,24 @@ function irAApartarSueldo(cuentaOrigenId){
 function interesDentroDeApertura(desdeIso){
   var r={total:0, n:0, sinTasa:false};
   if(!desdeIso) return r;
+  // ARREGLO 149 (16/10/2026) · y la otra mitad de esto, que faltaba.
+  //
+  // Todo lo de arriba vale para una apertura fijada ANTES del 71, que llevaba
+  // el interés dentro. Una fijada DESPUÉS guarda `capitalRealTotal().total`,
+  // que ya NO lo cuenta — lo dice el propio aviso al fijarla. Restárselo igual
+  // abre el mismo hueco permanente, pero al revés: el punto de partida está
+  // bien y la medición lo rebaja.
+  //
+  // Lo vio ella el 16/10, justo después de fijar la apertura para arrancar de
+  // cero: la app decía "te sobran $6,54" con todo cuadrado, y esos 6,54 eran
+  // exactamente el interés pendiente de UN préstamo suyo. Medido con su export:
+  // capital 2.704,71 · deberías 2.698,17 · sin este término, 0,00 clavado.
+  //
+  // Por eso al fijar se marca `aperturaSinInteres`, y la bandera viaja en el
+  // mismo bloque que el monto (_MERGE_BLOQUES): un monto sin su bandera no se
+  // puede interpretar. Las aperturas viejas no la llevan y siguen descontando,
+  // que ahí sí hace falta.
+  if((S.config||{}).aperturaSinInteres) return r;
   (S.prestamos||[]).forEach(function(p){
     var fr=_fraccionInteresPrestamo(p);
     if(fr<=0) return;
@@ -8485,6 +8503,12 @@ function fijarAperturaHoy(){
     (cap.enReserva>0?"En reserva:   $"+f2(cap.enReserva)+"\n":"")+
     (cap.porCobrar>0?"Por cobrar:   $"+f2(cap.porCobrar)+"\n":"")+
     (cap.enPrestamos>0?"En préstamos: $"+f2(cap.enPrestamos)+" (capital)\n":"")+
+    // ARREGLO 149: faltaba desde el 143. El TOTAL si contaba la mercancia, asi
+    // que las filas de arriba no lo sumaban: con sus 210 de las maquinas, a
+    // mano daban 2.494,71 y el TOTAL decia 2.704,71. Un desglose que no se
+    // puede sumar es peor que no darlo — y este sale justo antes de pulsar el
+    // boton que fija el punto de partida de toda la conciliacion.
+    ((cap.enMercancia||0)>0.005?"En mercancía: $"+f2(cap.enMercancia)+" (lo que te costó)\n":"")+
     // ARREGLO 105: el total ya va sin el sueldo, asi que la resta tiene que
     // verse. Sin esta linea los numeros de arriba no suman el de abajo.
     ((cap.sueldoPendiente||0)>0.005?"− Tu sueldo:  $"+f2(cap.sueldoPendiente)+" (tuyo, sin apartar)\n":"")+
@@ -8511,6 +8535,11 @@ function fijarAperturaHoy(){
     // Foto de lo que va del mes en curso: ya esta dentro del dinero
     // contado, asi que no se puede volver a sumar.
     S.config.aperturaBase=_acumuladosMes(getMesKeyActual());
+    // ARREGLO 149: el monto de arriba sale de capitalRealTotal(), que desde el
+    // ARREGLO 71 NO cuenta el interés pendiente. Se deja dicho aquí para que la
+    // conciliación no se lo vuelva a restar; sin esta línea queda un hueco
+    // permanente del tamaño de ese interés.
+    S.config.aperturaSinInteres=true;
     _anotarApertura(_apFoto, _fotoApertura(), "tú · la fijaste");   // ARREGLO 94
     logAudit("APERTURA_CAPITAL","Saldo de apertura fijado en $"+f2(cap.total)+" USDT (cuentas "+f2(cap.enCuentas)+", reserva "+f2(cap.enReserva)+", calle "+f2(cap.enLaCalle)+")");
     saveData();R();
@@ -34205,7 +34234,12 @@ var _MERGE_OBJETOS = ["config","tasasDia","_tasasDiaMeta","tasasCambio","mapaBin
 // Un bloque se resuelve con la marca MAS NUEVA de todas sus claves: o entran
 // todas las del otro aparato, o se quedan todas las de aqui.
 var _MERGE_BLOQUES = {
-  config: [["aperturaUsdt","aperturaFecha","aperturaSaldos","aperturaTs","aperturaBase"]]
+  // ARREGLO 149: "aperturaSinInteres" entra en el MISMO bloque. Dice si el
+  // monto guardado ya viene sin el interés de los préstamos, y sin ella ese
+  // monto no se puede interpretar. Fuera del bloque, la fusión podría dejar el
+  // monto de un aparato con la bandera del otro — y entonces el interés se
+  // descontaría dos veces, o ninguna, que es justo el fallo que arregla.
+  config: [["aperturaUsdt","aperturaFecha","aperturaSaldos","aperturaTs","aperturaBase","aperturaSinInteres"]]
 };
 var _MERGE_HISTORIAL = ["histBalance","histTasas","histSaldos","histComp","histApertura"];
 

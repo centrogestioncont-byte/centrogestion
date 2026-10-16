@@ -3189,6 +3189,55 @@ Con préstamos nuevos cada semana, ese sobrante no paraba de crecer.
 Comprobado: el "sin explicar" de su export no se mueve ni un céntimo (59,28
 antes y después), y prestar con interés ya no lo toca.
 
+#### Pero eso solo vale para una apertura VIEJA (ARREGLO 149)
+
+Lo vio ella el 16/10, minutos después de fijar la apertura para arrancar de cero:
+la app decía **"te sobran $6,54"** con todo lo demás cuadrado.
+
+**Y esos 6,54 eran el interés pendiente de UN préstamo suyo.** El descuento de
+arriba está escrito para una apertura fijada **antes** del 71, que sí llevaba el
+interés dentro. Una fijada **después** guarda `capitalRealTotal().total`, que ya
+no lo cuenta —lo dice el propio aviso al fijarla— así que restárselo abre el
+mismo hueco permanente, **al revés**: el punto de partida está bien y la medición
+lo rebaja. Medido con su export:
+
+```
+                      deberías      te sobran
+sin la bandera        2.698,17         6,54
+con la bandera        2.704,71         0,00
+su apertura vieja del 11/09: intAp 25,20, sin tocar
+```
+
+- **Al fijar se marca `aperturaSinInteres`**, y `interesDentroDeApertura()` sale
+  por ahí **antes** de recorrer los préstamos. Las aperturas viejas no la llevan
+  y siguen descontando, que ahí sí hace falta.
+- **La bandera viaja DENTRO de `_MERGE_BLOQUES`**, con el monto. Fuera, la fusión
+  podría dejar el monto de un aparato con la bandera del otro: el interés se
+  descontaría dos veces o ninguna, que es exactamente el fallo. Es la regla del
+  ARREGLO 60 — un monto sin su bandera no se puede interpretar.
+- **Los dos correctores NO la tocan.** `corregirApertura()` y
+  `corregirFechaApertura()` arreglan la etiqueta, no el dinero medido: si la
+  quitaran, corregir un monto reabriría el hueco sin decir nada. Hay guardia.
+- **Y lo que esto NO repara: una apertura ya fijada no lleva la marca.** Hay que
+  volver a pulsar el botón una vez. Es la regla de siempre.
+
+#### Y al aviso de fijarla le faltaba la mercancía (ARREGLO 149)
+
+Fallo mío del ARREGLO 143. El TOTAL sí contaba la mercancía y las filas de
+arriba no, así que el desglose no se podía sumar a mano:
+
+```
+En cuentas 946,97 + reserva 198,70 + por cobrar 64,52 + préstamos 1.284,52 = 2.494,71
+TOTAL                                                                        2.704,71
+                                                      ← la mercancía, 210,00
+```
+
+Y este aviso sale **justo antes** de pulsar el botón que fija el punto de partida
+de toda la conciliación: ahí un desglose que no cuadra es lo que hace dudar del
+número correcto. La guardia mide sobre el **texto del aviso**, no sobre la
+función entera — `cap.enReserva` sale también en el `logAudit` de abajo, así que
+quitar su fila pasaba.
+
 ### La apertura cambiaba sola, y no quedaba rastro (ARREGLO 94)
 
 Sus palabras: *"en el saldo de apertura días atrás me decía un saldo y ahorita me
