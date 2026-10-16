@@ -3966,12 +3966,28 @@ todavía está a medio teclear devuelve el texto tal cual.
 `pruebas/prestamos.js` recorre las pantallas donde ella teclea dinero y exige
 que no quede ningún `type="number"` y que cada campo pase por `_num()`.
 
-**Quedan 68 sin convertir**, y no por olvido: son los que **otro sitio lee por
-`getElementById(...).value`**. Convertir el campo sin arreglar también su
-lector cambiaría "no acepta la coma" por "acepta la coma y se queda con 5 en
-vez de 5,22" — de un fallo que se ve a uno que no. Están en Configuración, la
-edición en línea de una remesa ya guardada, la calculadora y el conversor BCV.
-Cuando se toquen, hay que cambiar el lector a `_leerNumero()` en la misma pasada.
+**Y los 68 que quedaban ya están** (ARREGLO 159). No se habían hecho porque
+son los que **otro sitio lee por `getElementById(...).value`**, y convertir el
+campo sin arreglar también su lector es *peor* que dejarlo: cambia "no acepta
+la coma" por "acepta la coma y se queda con 5 en vez de 5,22" — de un fallo que
+se ve a uno que no. **Las dos mitades fueron en la misma pasada**: 45 campos a
+`type="text" inputmode="decimal"` y sus 29 lectores a `_leerNumero()`.
+
+Medido tecleando con el teclado español: el **% de su sueldo** con `30,5`
+guardaba **0,3** —perdía el `,5`— y ahora guarda 0,305.
+
+- **La normalización va en la PUERTA del setter**, no en cada llamada:
+  `calcSetExotico`, `txEntregaSet` y `txPagoSet`. Un sitio nuevo que llame queda
+  cubierto solo.
+- **Y sólo los campos de dinero.** En los dos desgloses se normaliza `monto` y
+  **no** `cuentaId`: un id no es un número y `_num()` lo dejaría en otra cosa.
+- **El único `type="number"` que queda es el número de cuotas**, que es un
+  entero con `inputmode="numeric"`: ahí la coma no significa nada.
+
+**Y salió un bug de paso, de los que no se ven.** `calcTasaUpdate()` leía
+`parseFloat(document.getElementById("calc-tc-brl")||{value:0}).value||0` — eso
+parsea **el elemento**, da `NaN`, y `NaN.value` es `undefined`: **las cuatro
+tasas de la calculadora valían 0 siempre**. Hay guardia para que no vuelva.
 
 ### La tasa de un abono se escribe como ella la dice: 1 USDT = 5,30 BRL
 
