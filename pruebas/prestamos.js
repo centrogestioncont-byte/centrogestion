@@ -11173,5 +11173,35 @@ console.log("\nARREGLO 147 · lo que ya entró y salió solo se explica");
      "y el formulario marca con el MISMO criterio: no pueden separarse");
 }
 
+// ── ARREGLO 148 · un aviso de choque no salta por quién tocó qué ──────────
+//
+// Lo vio ella el 16/10 abriendo la pestaña Nueva: "El otro dispositivo también
+// cambió estas 2 cosas" sobre Banco EE.UU y Kraken Fiat, dos cuentas que no
+// habia tocado — y la diferencia estaba solo en `_por` y `_porUlt`, que son
+// quien lo creo y quien lo toco. Los escribe la app sola.
+//
+// Este aviso existe para cuando un dato SUYO se revierte, que es lo que lleva
+// cuatro arreglos costando (6c, 33, 62, 137). Uno que salta por nada es el que
+// hace que el de verdad no se lea: la regla del 99 y del 101.
+console.log("\nARREGLO 148 · el aviso de choque no salta por la autoría");
+{
+  const cec = sacarFuncion("_camposEnConflicto").replace(/\/\*[\s\S]*?\*\//g,"").replace(/\/\/[^\n]*/g,"");
+  ok(/if\(k==="_mod"\|\|k==="n"\|\|k==="_por"\|\|k==="_porUlt"\) return;/.test(cec),
+     "los cuatro campos de control se ignoran al decidir si hubo choque");
+  // Y los DOS nuevos por nombre: pidiendo solo que la linea cambiara, quitar
+  // uno de los dos pasaba con el otro puesto (el agujero del ARREGLO 140).
+  ok(/k==="_por"/.test(cec),  "«_por» por nombre");
+  ok(/k==="_porUlt"/.test(cec), "«_porUlt» por nombre");
+
+  // NO se dejan de sincronizar ni de guardar: solo dejan de DECIDIR. Si el
+  // registro cambio de verdad, el choque sale igual y los enseña dentro.
+  ok(/it\._porUlt=/.test(HTML) && /if\(!it\._por\)/.test(HTML),
+     "se siguen escribiendo: esto no los retira, solo los calla en el choque");
+  // Y la pantalla que reparte las operaciones por quien las registro sigue
+  // leyendo `_por`: es un dato visible, no un campo muerto.
+  ok(/r\._por===f\.por/.test(HTML),
+     "y el filtro «qué registró cada quien» los sigue usando");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

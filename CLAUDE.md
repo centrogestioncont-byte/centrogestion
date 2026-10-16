@@ -269,6 +269,29 @@ devuelve distinto de como se mandó.
   (`_htmlHistorialPisados()`), para cuando diga "esto lo cambié yo y volvió
   atrás".
 
+### Y un aviso de choque no salta por QUIÉN tocó qué (ARREGLO 148)
+
+Lo vio ella el 16/10 abriendo la pestaña Nueva: *"El otro dispositivo también
+cambió estas 2 cosas"* sobre **Banco EE.UU** y **Kraken Fiat**, dos cuentas que
+no había tocado. Al abrirlo, la diferencia estaba solo en `_por` y `_porUlt` —
+quién lo creó y quién lo tocó— y en los dos lados ponía lo mismo.
+
+`_camposEnConflicto` ya ignoraba `_mod` y `n` *"control y numeración, no
+datos"*. `_por` y `_porUlt` son de la misma familia y se quedaron fuera de esa
+lista.
+
+**Y eso cuesta más que la molestia.** Este aviso existe para cuando un dato
+SUYO se revierte, que es lo que lleva cuatro arreglos costando (6c, 33, 62,
+137). Un aviso que salta por nada es el que hace que el de verdad no se lea —
+la misma regla del ARREGLO 99 y del 101.
+
+- **No se borran ni se dejan de sincronizar**: solo dejan de **decidir** si
+  hubo choque. Si además cambió algo de verdad, el choque sale igual y los
+  enseña dentro.
+- **Y siguen siendo un dato visible**: el filtro *"qué registró cada quien"* de
+  Operaciones lee `_por`. Hay guardia para que no se conviertan en un campo
+  muerto.
+
 Cuando el dueño diga que algo "se revirtió solo" o "volvió a aparecer",
 **empieza por aquí**: casi siempre es un dato que llegó sin marca.
 
