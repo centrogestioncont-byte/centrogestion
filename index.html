@@ -2595,7 +2595,21 @@ function gananciaMercanciaDelMes(mesKey){
 // ganancia del mes, porque entro una maquina que vale lo mismo (el capital ya
 // la cuenta). Por eso esto filtra para RESTAR, no para ocultar.
 function _egOperativos(lista){
-  return (lista||[]).filter(function(e){ return !e.fromArticulo; });
+  // ARREGLO 156: fuera tambien los ajustes de saldo. Un egreso que sale de
+  // cuadrar una cuenta no es un gasto del mes: el dinero ya habia salido y
+  // lo unico que se esta haciendo es anotarlo. Contarlo baja la ganancia por
+  // algo que no paso este mes.
+  return (lista||[]).filter(function(e){ return !e.fromArticulo && !e.esAjuste; });
+}
+// Lo mismo por el otro lado: una ganancia extra que sale de un ajuste de saldo
+// no es ganancia. Vive aqui y en ningun otro sitio para que las dos mitades no
+// se separen — es la regla del ARREGLO 150 aplicada a la otra direccion.
+function _ganExtraOperativa(lista){
+  return (lista||[]).filter(function(g){ return !g.esAjuste; });
+}
+function _sumaAjustes(lista){
+  return Math.round((lista||[]).filter(function(x){ return x && x.esAjuste; })
+    .reduce(function(a,x){ return a+(parseFloat(x.usdt)||0); },0)*100)/100;
 }
 
 function _egresosMercanciaDesde(desdeIso){
@@ -3207,7 +3221,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261016_v237";
+var APP_VERSION = "20261016_v238";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -7791,8 +7805,13 @@ function _motivoDelAjuste(c, delta){
 // llegaría aquí buscando subir una cuenta y se iría sin subirla.
 function _ajusteAGanExtra(c, delta){
   var monto=Math.abs(delta);
+  // ARREGLO 156: nace MARCADO como ajuste de saldo. Un ajuste no es una
+  // ganancia del mes — es dinero que ya estaba y no se habia registrado — y
+  // la marca es lo unico que permite distinguirlo despues. Adivinarlo por el
+  // texto de la descripcion es lo que CLAUDE.md ya prohibe para la mercancia:
+  // la descripcion la escribe ella y puede cambiarla.
   S._nGanExtra=Object.assign(S._nGanExtra||{}, {d:td(), desc:"", monto:String(monto),
-    mon:c.moneda, usdt:"", cuentaId:c.id, tipo:"empresa", nota:""});
+    mon:c.moneda, usdt:"", cuentaId:c.id, tipo:"empresa", nota:"", esAjuste:true});
   S._showGanExtra=true;
   S.tab="nueva";
   alert("No le toco el saldo a \""+c.nombre+"\".\n\n"+
@@ -7802,8 +7821,9 @@ function _ajusteAGanExtra(c, delta){
 }
 function _ajusteAEgreso(c, delta){
   var monto=Math.abs(delta);
+  // ARREGLO 156: igual que su espejo de arriba — nace marcado.
   S.nEg=Object.assign(S.nEg||{}, {date:td(), mot:"", monto:String(monto),
-    mon:c.moneda, cuentaId:c.id, pagada:true, fija:false});
+    mon:c.moneda, cuentaId:c.id, pagada:true, fija:false, esAjuste:true});
   S.tab="egresos";
   alert("No le toco el saldo a \""+c.nombre+"\".\n\n"+
         "Te dejo el egreso empezado por "+f2(monto)+" "+c.moneda+" desde esa cuenta. "+
@@ -22281,8 +22301,15 @@ function calcMesCompleto(mesKey, pctOverrides, recalcular){
   var egPerM= filterByMes(S.egresos_personales||[], mesKey);
   var repM  = filterByMes(S.reposiciones||[], mesKey);
   var ganExtraM = filterByMes(S.gananciaExtra||[], mesKey);
-  var ganExtraEmp = r2(ganExtraM.filter(function(g){return g.tipo==="empresa";}).reduce(function(a,g){return a+(parseFloat(g.usdt)||0);},0));
-  var ganExtraPer = r2(ganExtraM.filter(function(g){return g.tipo==="personal";}).reduce(function(a,g){return a+(parseFloat(g.usdt)||0);},0));
+  // ARREGLO 156 · los ajustes de saldo salen de la cuenta de la ganancia y se
+  // dicen aparte. Su decision (16/10): "que no cuenten como ganancia del mes,
+  // pero que se vean aparte". Un ajuste es dinero que ya estaba y no se habia
+  // registrado; contarlo como ganancia del mes infla la utilidad y con ella su
+  // sueldo, que es el 30% de esa utilidad.
+  var ganExtraOp = _ganExtraOperativa(ganExtraM);
+  var ajustesGan = _sumaAjustes(ganExtraM.filter(function(g){return g.tipo==="empresa";}));
+  var ganExtraEmp = r2(ganExtraOp.filter(function(g){return g.tipo==="empresa";}).reduce(function(a,g){return a+(parseFloat(g.usdt)||0);},0));
+  var ganExtraPer = r2(ganExtraOp.filter(function(g){return g.tipo==="personal";}).reduce(function(a,g){return a+(parseFloat(g.usdt)||0);},0));
   // Ganancia por préstamos (interés cobrado este mes) — línea aparte, no
   // se mezcla con la ganancia de remesas.
   var ganPrestamosInfo = gananciaPrestamosDelMes(mesKey);
@@ -22365,7 +22392,11 @@ function calcMesCompleto(mesKey, pctOverrides, recalcular){
   // puede tocar aqui y NO en `_acumuladosMes`, que lee del cierre guardado y
   // se compara contra `aperturaBase` (ARREGLO 96).
   var egMercMes = r2(egM.filter(function(e){return e.tipo==="empresa"&&e.pagada&&e.fromArticulo;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0));
-  var egEmpPag  = r2(egM.filter(function(e){return e.tipo==="empresa"&&e.pagada&&!e.fromArticulo;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0));
+  // ARREGLO 156 · y fuera los ajustes de saldo, por la misma razon que las
+  // ganancias extra de arriba: lo que sale de cuadrar una cuenta no es un
+  // gasto de este mes. Pasa por _egOperativos(), que es la puerta unica.
+  var egEmpPag  = r2(_egOperativos(egM).filter(function(e){return e.tipo==="empresa"&&e.pagada;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0));
+  var ajustesEg = _sumaAjustes(egM.filter(function(e){return e.tipo==="empresa"&&e.pagada;}));
   // ARREGLO 150: los pendientes, por lo mismo. El 143 solo filtro los pagados,
   // asi que una maquina comprada a credito seguia anunciando una perdida que no
   // existe — y `egEmpPend` es lo que sale como "por pagar" en todas partes.
@@ -22410,7 +22441,10 @@ function calcMesCompleto(mesKey, pctOverrides, recalcular){
 
   var _salida={
     ganBrutaTotal:ganBrutaTotal,   // ← número que el usuario acumula (P2)
-    ganExtraEmp:ganExtraEmp,       // ganancias extra empresa del mes
+    ganExtraEmp:ganExtraEmp,       // ganancias extra empresa del mes (sin los ajustes)
+    ajustesGan:ajustesGan,         // ARREGLO 156 · lo que vino de cuadrar un saldo, aparte
+    ajustesEg:ajustesEg,           // y lo mismo por el lado del gasto
+    ajustesNeto:r2(ajustesGan-ajustesEg),
     ganExtraPer:ganExtraPer,       // ganancias extra personales del mes
     ganExtraItems:ganExtraM,       // lista completa para desglose
     ops:brlM.length+vzlaM.length+eeuuM.length,
@@ -22511,9 +22545,11 @@ function saveGanExtra(){
     var cta=(S.cuentas||[]).find(function(c){return c.id===g.cuentaId;});
     if(cta){if(!confirm("Acreditar "+f2(monto)+" "+(g.mon||"USD")+" en \""+cta.nombre+"\" — "+g.desc.trim()+"\n¿Confirmar?"))return;ajusteCuentaEgreso(g.cuentaId,monto);}
   }
-  S.gananciaExtra.push({id:Date.now(),d:ds(g.d),desc:g.desc.trim(),monto:monto,mon:g.mon||"USD",usdt:Math.round(usdt*100)/100,cuentaId:g.cuentaId||"",tipo:tipo,nota:(g.nota||"").trim()});
+  S.gananciaExtra.push({id:Date.now(),d:ds(g.d),desc:g.desc.trim(),monto:monto,mon:g.mon||"USD",usdt:Math.round(usdt*100)/100,cuentaId:g.cuentaId||"",tipo:tipo,nota:(g.nota||"").trim(),esAjuste:g.esAjuste?true:undefined});
   logAudit("GANANCIA_EXTRA","$"+f2(usdt)+" USDT · "+g.desc.trim()+" · "+tipo);
-  S._showGanExtra=false;S._nGanExtra={d:td(),desc:"",monto:"",mon:"USD",usdt:"",cuentaId:"",tipo:"empresa",nota:""};
+  // Sin esto la marca se pegaria a la SIGUIENTE ganancia extra que registre,
+  // que no tiene por que ser un ajuste.
+  S._showGanExtra=false;S._nGanExtra={d:td(),desc:"",monto:"",mon:"USD",usdt:"",cuentaId:"",tipo:"empresa",nota:"",esAjuste:false};
   saveData();R();
 }
 // ══════════════════════════════════════════════════════════════════════
@@ -22621,6 +22657,29 @@ function delAporte(id){
   saveData(); R();
 }
 
+// ARREGLO 156 · marcar a mano lo que ya estaba registrado antes de que la app
+// supiera distinguirlo. De aqui en adelante nace marcado solo (los dos caminos
+// del ARREGLO 145); esto es para lo que ya hay.
+//
+// NO MUEVE NINGUN SALDO, y se dice en la propia pregunta: el dinero ya entro o
+// salio de la cuenta cuando se registro. Tocarlo aqui lo contaria dos veces.
+function marcarComoAjuste(lista, id){
+  var arr=(lista==="egresos")?(S.egresos||[]):(S.gananciaExtra||[]);
+  var r=arr.find(function(x){ return String(x.id)===String(id); });
+  if(!r){ alert("No encuentro ese registro."); return; }
+  var era=!!r.esAjuste;
+  var m=f2(parseFloat(r.usdt)||0);
+  if(!confirm((era?"Quitar la marca de ajuste":"Marcar como ajuste de saldo")+":\n\n"+
+      (r.desc||r.mot||"(sin descripción)")+" · $"+m+" USDT\n\n"+
+      (era ? "Volverá a contar en la ganancia del mes."
+           : "Dejará de contar en la ganancia del mes: un ajuste es dinero que ya estaba "+
+             "y no se había registrado, no algo que ganaste este mes.")+"\n\n"+
+      "No mueve ningún saldo.\n\n¿Seguro?")) return;
+  if(era) delete r.esAjuste; else r.esAjuste=true;
+  r._mod=Date.now();
+  logAudit("MARCA_AJUSTE",(era?"quitada":"puesta")+" · "+lista+" · $"+m+" USDT");
+  saveData(); R();
+}
 function delGanExtra(id){
   var g=(S.gananciaExtra||[]).find(function(x){return x.id===id;});
   if(!g||!confirm("Eliminar '"+g.desc+"' ($"+f2(g.usdt)+" USDT)?"))return;
@@ -24774,6 +24833,7 @@ function rDash(){
   var _cmRes   = calcMesCompleto(selMes);
   var ganExtraEmpM = parseFloat(_cmRes.ganExtraEmp)||0;
   var neto     = parseFloat(_cmRes.utilidadEmpresa)||0;
+  var _ajNeto  = Math.round((parseFloat(_cmRes.ajustesNeto)||0)*100)/100;
   // Comisión bancaria VES absorbida por el operador (pérdida de ganancia)
   var comBancoAbsorbida = [].concat(brlM,vzlaM,eeuuM).reduce(function(a,r){
     return a + (r.comisionBanco && r.comisionBancoVes ? parseFloat(r.comisionBancoVes)||0 : 0);
@@ -25060,7 +25120,13 @@ function rDash(){
       // tarjeta vuelve a ser un número que hay que perseguir (ARREGLO 141).
       _kpi("Neto real", "$"+f2(neto),
            f2(ganTotal)+(ganExtraEmpM?" + "+f2(ganExtraEmpM)+" extra":"")+" − "+f2(egPag)+" de egresos"+
-             (egPend>0?" · $"+f2(egPend)+" por pagar":""),
+             (egPend>0?" · $"+f2(egPend)+" por pagar":"")+
+             // ARREGLO 156 · los ajustes de saldo van en LINEA APARTE, con su
+             // nombre. No suman a la utilidad —no son ganancia de este mes— y
+             // tampoco se esconden: es dinero que apareció al cuadrar una
+             // cuenta y ella tiene que poder verlo. Misma regla que el interés
+             // pendiente de un préstamo (ARREGLO 71).
+             (_ajNeto ? " · ⚖️ ajustes de saldo "+(_ajNeto>0?"+":"")+f2(_ajNeto)+" (aparte)" : ""),
            neto<0 ? "var(--mal)" : "var(--tx)") +
       _kpi("Capital total", "$"+f2(_cap.total),
            _cap.sinTasa.length
@@ -25811,12 +25877,14 @@ function rDiario(){
               "<div style='font-size:13px;font-weight:700;color:var(--avi-tx)'>"+g.desc+"</div>"+
               "<div style='font-size:11.5px;color:var(--tx4)'>"+g.d+(nCta?" · "+nCta:"")+" · "+
                 "<span style='background:"+(g.tipo==="empresa"?"var(--info-sup)":"var(--vd6-c)")+";color:"+(g.tipo==="empresa"?"var(--info)":"var(--ok)")+";padding:1px 6px;border-radius:6px;font-weight:700'>"+g.tipo+"</span>"+
+                (g.esAjuste?" · <span style='color:var(--tx4);font-weight:700'>⚖️ ajuste de saldo · no cuenta como ganancia</span>":"")+
               "</div>"+
             "</div>"+
             "<div style='text-align:right;flex-shrink:0'>"+
               "<div style='font-size:13px;font-weight:800;color:var(--avi-tx)'>+$"+f2(g.usdt)+" USDT</div>"+
               "<div style='font-size:11.5px;color:var(--tx4)'>"+f2(g.monto)+" "+g.mon+"</div>"+
             "</div>"+
+            "<button onclick='marcarComoAjuste(\"gananciaExtra\","+g.id+")' title='"+(g.esAjuste?"Es un ajuste de saldo: no cuenta como ganancia":"Marcar como ajuste de saldo")+"' style='background:none;border:none;cursor:pointer;font-size:13px;flex-shrink:0;opacity:"+(g.esAjuste?"1":".35")+"'>⚖️</button>"+
             "<button onclick='delGanExtra("+g.id+")' style='background:none;border:none;cursor:pointer;color:var(--mal);font-size:13px;flex-shrink:0'>🗑️</button>"+
           "</div>";
         }).join("")+
@@ -31457,10 +31525,13 @@ function rEgresos(){
   var rowsEmp=egEmp.filter(function(e){return e.pagada;}).slice().reverse().map(function(e){
     return "<tr><td>"+e.d+"</td>"+
     "<td><span style='background:var(--az6-j);color:var(--tit);padding:2px 6px;border-radius:5px;font-size:11px;font-weight:700'>"+_escAud(e.cat.replace("GASTOS ","").replace(" EMPRESA",""))+"</span></td>"+
-    "<td style='font-size:12px'>"+_escAud(e.mot)+(e.cuentaId?"<div style='font-size:10.5px;color:var(--tx4)'>🏦 "+_escAud(nombreCuentaEg(e.cuentaId))+"</div>":"")+_htmlQuien(e)+"</td>"+
+    "<td style='font-size:12px'>"+_escAud(e.mot)+(e.cuentaId?"<div style='font-size:10.5px;color:var(--tx4)'>🏦 "+_escAud(nombreCuentaEg(e.cuentaId))+"</div>":"")+
+      (e.esAjuste?"<div style='font-size:10.5px;color:var(--tx4);font-weight:700'>⚖️ ajuste de saldo · no baja la ganancia</div>":"")+_htmlQuien(e)+"</td>"+
     "<td style='text-align:right;font-size:11px'>"+f2(e.monto)+" <span style='color:var(--tx4)'>"+(e.mon||"BRL")+"</span></td>"+
     "<td style='text-align:right;font-weight:700;color:var(--mal)'>$"+f2(e.usdt)+"</td>"+
-    "<td><button class='del-btn' onclick='delEg("+JSON.stringify(e.id)+")'>🗑️</button></td></tr>";
+    "<td style='white-space:nowrap'>"+
+      "<button onclick='marcarComoAjuste(\"egresos\","+JSON.stringify(e.id)+")' title='"+(e.esAjuste?"Es un ajuste de saldo: no baja la ganancia":"Marcar como ajuste de saldo")+"' style='background:none;border:none;cursor:pointer;font-size:13px;opacity:"+(e.esAjuste?"1":".35")+"'>⚖️</button>"+
+      "<button class='del-btn' onclick='delEg("+JSON.stringify(e.id)+")'>🗑️</button></td></tr>";
   }).join("");
 
   // ── Filas personal ──

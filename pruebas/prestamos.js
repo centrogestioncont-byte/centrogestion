@@ -7534,7 +7534,10 @@ console.log("\n— FASE 2: la cuenta madre —");
   //    hace las dos cosas que ella pidio: que el mes que compra no salga en
   //    perdida, y que su sueldo —el 30% de la utilidad— no salte con ella.
   const _cmc = sinCom(sacarFuncion("calcMesCompleto"));
-  ok(/var egEmpPag\s*=\s*r2\(egM\.filter\(function\(e\)\{return e\.tipo==="empresa"&&e\.pagada&&!e\.fromArticulo;\}\)/.test(_cmc),
+  // ARREGLO 156: ahora pasa por _egOperativos(), la puerta unica, que filtra
+  // la mercancia Y los ajustes de saldo. Se exige la puerta, no el filtro
+  // escrito a mano: es mas fuerte, porque cubre lo que se anada despues.
+  ok(/var egEmpPag\s*=\s*r2\(_egOperativos\(egM\)\.filter\(function\(e\)\{return e\.tipo==="empresa"&&e\.pagada;\}\)/.test(_cmc),
      "y calcMesCompleto deja la compra de mercancia fuera de los gastos del mes");
   //    Se reconocen por `fromArticulo`, no por la categoria: la categoria es
   //    un nombre que ella puede renombrar en Configuracion, y ese dia estos
@@ -11316,7 +11319,7 @@ console.log("\nARREGLO 150 · la mercancía no baja el neto del mes");
   // pendientes. El 143 solo filtro los pagados, asi que una maquina comprada a
   // credito seguia anunciando una perdida que no existe.
   const cmc = sacarFuncion("calcMesCompleto");
-  ok(/egEmpPag\s*=\s*r2\([^;]*!e\.fromArticulo/.test(cmc),
+  ok(/egEmpPag\s*=\s*r2\(_egOperativos\(egM\)/.test(cmc),
      "calcMesCompleto deja los pagados de mercancía fuera (ARREGLO 143)");
   ok(/egEmpPend\s*=\s*r2\(_egOperativos\(/.test(cmc),
      "y los pendientes también (ARREGLO 150)");
@@ -11610,6 +11613,50 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
   // Ojo: "=[^=]" a propósito — un "===" es comparación, no una escritura.
   ok(!/cierre\.(egPag|neto)\s*=[^=]/.test(cg) && !/S\.cierresMes\[/.test(cg),
      "y NO se reescribe el cierre guardado: lo pasado se queda como está");
+}
+
+// ════════ ARREGLO 156 · un ajuste de saldo no es ganancia ni gasto ════════
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  // Nace marcado desde los DOS caminos del ARREGLO 145. Adivinarlo por el
+  // texto de la descripción es lo que CLAUDE.md ya prohíbe para la mercancía:
+  // la descripción la escribe ella y puede cambiarla. Medido: de sus seis
+  // ganancias extra de octubre, buscar "AJUSTE" acierta 4 de 5 — se deja
+  // fuera "AUMENTAR SALDO DE CUENTA", que son 5,02.
+  const ag = sinC(sacarFuncion("_ajusteAGanExtra"));
+  const ae = sinC(sacarFuncion("_ajusteAEgreso"));
+  ok(/esAjuste:true/.test(ag), "el camino de la ganancia extra lo marca al nacer");
+  ok(/esAjuste:true/.test(ae), "y el del egreso también");
+  // El guardado lo conserva, y el formulario vuelve a nacer LIMPIO: si no, la
+  // marca se pegaría a la siguiente ganancia extra, que no tiene por qué serlo.
+  const sg = sinC(sacarFuncion("saveGanExtra"));
+  ok(/esAjuste:g\.esAjuste\?true:undefined/.test(sg), "el guardado conserva la marca");
+  ok(/nota:"",esAjuste:false\}/.test(sg), "y el formulario vuelve a nacer limpio");
+  // Las dos puertas, una por lado. Escritas en cada pantalla se separarían.
+  const eo = sinC(sacarFuncion("_egOperativos"));
+  ok(/!e\.fromArticulo && !e\.esAjuste/.test(eo),
+     "_egOperativos deja fuera la mercancía Y los ajustes");
+  const go = sinC(sacarFuncion("_ganExtraOperativa"));
+  ok(/!g\.esAjuste/.test(go), "y _ganExtraOperativa hace lo mismo por el otro lado");
+  const cm2 = sinC(sacarFuncion("calcMesCompleto"));
+  ok(/_ganExtraOperativa\(ganExtraM\)/.test(cm2) && /_egOperativos\(egM\)/.test(cm2),
+     "calcMesCompleto pasa por las dos puertas");
+  // No se esconden: van en línea aparte, con su nombre (misma regla que el
+  // interés pendiente de un préstamo, ARREGLO 71).
+  ok(/ajustesGan:ajustesGan/.test(cm2) && /ajustesNeto:/.test(cm2),
+     "y los devuelve aparte para que la pantalla los diga");
+  const dash2 = sacarFuncion("rDash");
+  ok(/_ajNeto/.test(dash2) && /ajustes de saldo/.test(dash2),
+     "el Resumen los enseña en línea aparte");
+  // Marcar a mano NO mueve dinero, y se dice en la propia pregunta.
+  const mc = sinC(sacarFuncion("marcarComoAjuste"));
+  ok(/No mueve ningún saldo/.test(mc), "la pregunta dice que no mueve ningún saldo");
+  ok(!/ajusteCuentaEgreso|\.saldo\s*=/.test(mc),
+     "y de verdad no lo mueve: el dinero ya entró o salió cuando se registró");
+  ok(/if\(era\) delete r\.esAjuste; else r\.esAjuste=true/.test(mc),
+     "se puede desmarcar, no sólo marcar");
+  ok(/r\._mod=Date\.now\(\)/.test(mc),
+     "y lleva su _mod, o la marca no viaja al otro aparato");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
