@@ -4976,6 +4976,98 @@ y pulsando lo que hay en cada una, con tres formas de payload; el nombre
 botones de cliente se rompió. En la captura de antes el navegador se comía
 `<São Paulo>` como si fuera una etiqueta.
 
+## Una operación no se duplica, y la raíz estaba en la FUSIÓN (ARREGLO 154)
+
+Salió de perseguir las **137 remesas repetidas de mayo** que aparecieron midiendo
+los meses cerrados. Sus palabras: *"lo de las 137 remesas repetidas no puede
+volver a pasar"*.
+
+**No entran por el formulario: entran por la sincronización después de importar.**
+Reproducido en Chromium con su export, con el código real de `importData()`:
+
+```
+A (con sus datos) importa el archivo viejo .... 836 remesas, ninguna de más
+B (app recién puesta) importa el MISMO ........ 836, con 836 _uid NUEVOS
+B sincroniza y el servidor trae las de A ...... 1.672   ← el doble
+```
+
+De los 836 `_uid` que generó B, **cero** coincidían con los de A. Para la fusión
+eran 836 remesas nuevas. Y así tres veces: los prefijos de sus copias lo cantan
+—`mrm7qzhb` = 15/07, `mti2b1jm` = 01/09, `musw37uk` = 03/10—, las tres
+importaciones.
+
+**La importación ya estaba bien**: conserva el `_uid` cuando el archivo lo trae,
+reemplaza la lista en vez de sumarla, y reencuentra por contenido (`_uidEstable`)
+el `_uid` de lo que ya había **aquí**. Lo que no puede es adivinar el `_uid` que
+otro aparato le puso a lo mismo.
+
+**Por eso el arreglo va en `_mergeArrayById`**, que es donde nace el duplicado y
+donde además cubre cualquier otro origen: antes de dar por nueva una remesa cuyo
+`_uid` no conoce, mira si ya hay una local con el mismo contenido.
+
+- **Se empareja por CUPO, no a secas.** Si aquí hay dos iguales y de allá vienen
+  dos, no entra ninguna; si vienen tres, entra una. Sin el cupo se perdería una
+  de las dos de **CARLOS ALFREDO RODRIGUEZ del 17/09** (200 R$ a 172,5, con dos
+  horas de diferencia), que son dos operaciones de verdad.
+- **Lo que ya se reconoce por `_uid` gasta su cupo primero**, o podría además
+  absorber a otro registro distinto y perderlo.
+- **Sólo para las listas que van por `_uid`** (remesas). Capital, egresos y las
+  demás van por `id`, que sí viaja en el archivo: medido, traspasos e inventario
+  no se duplicaron nunca.
+
+### Y derivar el `_uid` del contenido parecía la raíz y es una TRAMPA
+
+Fue el primer intento, y es lo que cualquiera propondría: si los dos aparatos
+derivan el `_uid` del contenido, generan el mismo y la fusión los reconoce.
+**Con sus datos eso borra remesas vivas.**
+
+Sus marcas de borrado antiguas **ya están guardadas con `_uid` derivados** —171
+en total: 56 en `vzla`, 104 en `eeuu`, 11 en `brl`, de la forma
+`s11l523n1xua2gt`—, porque `_asignarUidsFaltantes()` lleva tiempo derivándolos al
+arrancar. Un registro vivo que derive a una clave marcada **se poda solo**:
+
+```
+                              vzla tras un ciclo
+antes del intento                 274   ← duplicado
+derivando el _uid                  85   ← 52 remesas vivas BORRADAS
+emparejando en la fusión          137   ← correcto
+```
+
+Lo cacé porque la prueba de ida y vuelta medía las tres listas y `vzla` bajaba de
+137. Mirando sólo `brl` —que salía perfecto— habría entregado un arreglo que
+borra datos. **Una prueba que mide una sola lista no mide nada.**
+
+### El aviso al guardar AVISA, no bloquea — y eso sale de medir
+
+Fuera de los duplicados de la importación, en cinco meses hay **12 grupos**
+repetidos y la mitad son operaciones **de verdad**:
+
+```
+17/09 · 150 R$ · CARLOS ALFREDO RODRIGUEZ · ×3 · tasas 172 / 173 / 172,5
+17/09 · 200 R$ · CARLOS ALFREDO RODRIGUEZ · ×2 · misma tasa, 2 horas de por medio
+05/08 ·  20 R$ · ROSA HERNANDEZ ·           ×2 · tasas 154 / 152
+31/07 · 100 R$ · EDGAR MONTAÑO ·            ×2 · misma tasa, 4 minutos  ← éste sí
+```
+
+**Bloquear le impediría trabajar.** Se avisa con las que ya existen —su número,
+su hora y su tasa— y decide ella.
+
+- **La tasa decide el TONO, no si avisa.** Misma tasa: *"esto parece la MISMA
+  operación"*. Otra tasa: *"ya hay una parecida"*. En sus datos esa regla acierta
+  en los tres casos reales.
+- **Y enseña las que ya están.** Un *"ya existe una igual"* a secas obliga a irse
+  a Operaciones a buscarla para poder contestar.
+
+### Un archivo sin identificadores se anuncia ANTES
+
+Un export del formato viejo no trae `_uid`, así que la app reconoce cada remesa
+por su contenido. Eso se dice antes de tocar nada, y al terminar se cuenta cuántas
+reconoció y cuántas dio de alta. Es ella quien conoce sus datos.
+
+**Lo que esto NO repara:** las 137 copias de mayo siguen ahí. Borrarlas movería
+saldos y lotes FIFO de hoy, así que se quedan —decisión suya— y lo que las
+neutraliza es que un mes cerrado deje de recalcularse.
+
 ### Registra la operación — no escribas el saldo
 
 **La regla que más costó el 12/09**, y se rompió tres veces en un día.

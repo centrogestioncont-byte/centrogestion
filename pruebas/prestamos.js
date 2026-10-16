@@ -11506,5 +11506,65 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
      "el monto y la tasa del día se seleccionan al entrar, los dos (2)");
 }
 
+// ════════ ARREGLO 154 · que no se dupliquen las operaciones ════════
+{
+  // ── La fusión reconoce por CONTENIDO lo que no reconoce por _uid ────────
+  // Es la raíz: un archivo viejo importado en dos aparatos da dos juegos de
+  // _uid, y sin esto la fusión los suma. Medido: 836 remesas → 1.672.
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const mg = sinC(sacarFuncion("_mergeArrayById"));
+  ok(/idField==="_uid"/.test(mg) && /_uidEstable/.test(mg),
+     "la fusión empareja por contenido las listas que van por _uid");
+  // Y por CUPO, no a secas: dos remesas realmente iguales siguen siendo dos.
+  // Sin el cupo, una de las dos de CARLOS del 17/09 desaparecería.
+  ok(/cupo\[c\]\s*>\s*0/.test(mg) && /cupo\[c\]--/.test(mg),
+     "empareja por cupo: si aquí hay dos iguales y vienen dos, no entra ninguna");
+  // Lo que ya se reconoce por _uid tiene que GASTAR su cupo, o podría absorber
+  // además a otro registro distinto y perderlo.
+  const gastan = mg.indexOf("localIds[ri[idField]]===undefined) return");
+  ok(gastan > 0 && gastan < mg.indexOf("absorbidos++"),
+     "lo emparejado por _uid gasta su cupo ANTES, y no absorbe a nadie más");
+  // Sólo para remesas: capital, egresos y demás van por "id" y no se tocan.
+  ok(/porContenido=null,\s*cupo=null/.test(mg),
+     "las listas que no van por _uid siguen igual que antes");
+
+  // ── El _uid nuevo sigue siendo al AZAR, y eso es a propósito ────────────
+  // Derivarlo del contenido parecía el arreglo de raíz y es una trampa: sus
+  // marcas de borrado antiguas YA están guardadas con _uid derivados (171),
+  // así que un registro vivo que derive a una clave marcada se poda solo.
+  // Medido con su export: vzla pasaba de 137 a 85 en el primer ciclo.
+  const imp = sinC(sacarFuncion("importData"));
+  ok(/else \{ r\._uid=_newUid\(\);/.test(imp),
+     "lo que no se reencuentra recibe un _uid al azar (las marcas viejas son derivadas)");
+  ok(/cola&&cola\.length\)\{ r\._uid=cola\.shift\(\)/.test(imp),
+     "y lo que ya estaba aquí reencuentra SU _uid, que es el mejor");
+
+  // ── Se dice antes y se cuenta después ───────────────────────────────────
+  ok(/no trae identificadores en/.test(imp),
+     "un archivo del formato viejo se anuncia ANTES de importar");
+  ok(/_avisoImportSinUid=\{reencontrados/.test(imp) && /reconoc/.test(imp),
+     "y al terminar dice cuántos reconoció y cuántos dio de alta");
+
+  // ── El aviso de remesa repetida: avisa, no bloquea ──────────────────────
+  const ri = sinC(sacarFuncion("_remesasIguales"));
+  ok(/r\.d!==dia/.test(ri) && /\.cl\|\|""\)\.toUpperCase/.test(ri) &&
+     /parseFloat\(r\.am\)/.test(ri) && /r\.orig\|\|""\)===\(ruta\.orig/.test(ri),
+     "compara fecha, cliente, monto y ruta, las cuatro");
+  // La tasa NO entra en la búsqueda: decide el TONO, no si avisa.
+  ok(!/tdia/.test(ri), "la tasa no decide si avisa — sólo el tono del aviso");
+  const tr = sinC(sacarFuncion("_textoRemesaRepetida"));
+  ok(/mismaTasa/.test(tr) && /MISMA operaci/.test(tr) && /parecida/.test(tr),
+     "con la misma tasa dice que es la misma; con otra, que puede ser otra");
+  // Y enseña las que ya están, con su hora y su tasa: sin eso hay que ir a
+  // buscarlas a Operaciones para poder contestar.
+  ok(/r\.n\|\|"\?"/.test(tr) && /r\.h\?/.test(tr) && /f2\(r\.tdia/.test(tr),
+     "enseña número, hora y tasa de las que ya existen");
+  const sv2 = sinC(sacarFuncion("saveTx"));
+  ok(/_remesasIguales\(f, _rutaChk\)/.test(sv2) && /if\(_ig\.length && !confirm\(/.test(sv2),
+     "saveTx pregunta, y sólo se para si ella dice que no");
+  ok(!/_ig\.length\)\s*\{\s*alert/.test(sv2),
+     "nunca bloquea: con un alert no habría podido registrar las tres de CARLOS");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

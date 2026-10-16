@@ -3207,7 +3207,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261016_v234";
+var APP_VERSION = "20261016_v235";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -9686,10 +9686,53 @@ function _tasaDelDiaFueraDeRango(f, ruta){
   if(td<=pub*10 && td>=pub/10) return null;
   return {tecleada:td, publicada:pub, veces:Math.round((td>pub?td/pub:pub/td)*10)/10};
 }
+// ARREGLO 154: ¿ya hay una remesa igual? Mismo dia, mismo cliente, mismo monto
+// y misma ruta. Devuelve las que encuentre, nunca decide por ella.
+//
+// AVISA, NO BLOQUEA, y eso sale de medir sus datos, no de opinar. Fuera de los
+// duplicados de la importacion, en cinco meses hay doce grupos repetidos y la
+// mitad son operaciones DE VERDAD: CARLOS ALFREDO RODRIGUEZ mando 150 R$ tres
+// veces el 17/09 —a 172, 173 y 172,5— y 200 R$ dos veces con dos horas de por
+// medio. Bloquear eso es impedirle trabajar.
+//
+// La TASA decide el tono: con la misma tasa es casi seguro la misma operacion
+// registrada dos veces; con otra tasa son dos operaciones. En sus datos esa
+// regla acierta en los tres casos reales.
+function _remesasIguales(f, ruta){
+  if(!f || !f.date || !f.cl || !(parseFloat(f.am)>0) || !ruta) return [];
+  var dia=ds(f.date), cl=String(f.cl).toUpperCase().trim(), am=parseFloat(f.am)||0;
+  var lista=(ruta.dest==="VES"&&ruta.orig==="USD") ? (S.eeuu||[])
+          : (ruta.orig==="VES") ? (S.vzla||[]) : (S.brl||[]);
+  return lista.filter(function(r){
+    if(!r || r.d!==dia) return false;
+    if(String(r.cl||"").toUpperCase().trim()!==cl) return false;
+    if(Math.abs((parseFloat(r.am)||0)-am)>0.009) return false;
+    return (r.orig||"")===(ruta.orig||"") && (r.dest||"")===(ruta.dest||"");
+  });
+}
+function _textoRemesaRepetida(iguales, f){
+  var td=parseFloat(f.tdia)||0;
+  var mismaTasa=iguales.some(function(r){ return Math.abs((parseFloat(r.tdia)||0)-td)<0.0001; });
+  var cab=mismaTasa
+    ? "\u26a0\ufe0f Esto parece la MISMA operaci\u00f3n que ya registraste."
+    : "\u2139\ufe0f Ya hay una operaci\u00f3n parecida de este cliente hoy.";
+  var filas=iguales.map(function(r){
+    return "  \u2022 #"+(r.n||"?")+"  "+(r.h?r.h+"  ":"")+f2(r.am)+" \u00b7 tasa "+f2(r.tdia||0);
+  }).join("\n");
+  return cab+"\n\n"+
+    "ya registrada"+(iguales.length>1?"s":"")+":\n"+filas+"\n"+
+    "  \u2022 esta:  "+f2(parseFloat(f.am)||0)+" \u00b7 tasa "+f2(td)+"\n\n"+
+    (mismaTasa
+      ? "Mismo d\u00eda, mismo cliente, mismo monto y la misma tasa."
+      : "Mismo d\u00eda, mismo cliente y mismo monto, pero con otra tasa: puede ser otra operaci\u00f3n.")+
+    "\n\n\u00bfEs otra operaci\u00f3n distinta y la guardo igual?";
+}
 function saveTx(){
   var f=S.tx;
   if(!f.date||!f.cl||!f.am||!f.tdia){alert("Completa: fecha, cliente, monto y tasa del día.");return;}
   var _rutaChk=getRutas().find(function(r){return r.rt===f.rt;});
+  var _ig=_remesasIguales(f, _rutaChk);
+  if(_ig.length && !confirm(_textoRemesaRepetida(_ig, f))) return;
   var _tFuera=_tasaDelDiaFueraDeRango(f, _rutaChk);
   if(_tFuera && !confirm(
       "\u26a0\ufe0f La tasa del d\u00eda que escribiste es "+_tFuera.veces+" veces la que publicas.\n\n"+
@@ -18988,6 +19031,23 @@ function importData(){
       try{
         var obj=JSON.parse(e.target.result);
         var loaded=0;
+        _avisoImportSinUid=null;
+        // ARREGLO 154: un archivo del formato viejo no trae identificadores, y
+        // entonces la app reconoce cada remesa por su contenido. Eso se dice
+        // ANTES, no despues: es lo que decide si dos registros que ella sabe
+        // distintos van a quedar como uno, y es ella quien conoce sus datos.
+        var _sinUid=0, _conUid=0;
+        ["brl","vzla","eeuu"].forEach(function(k){
+          if(!Array.isArray(obj[k])) return;
+          obj[k].forEach(function(r){ if(r&&r._uid) _conUid++; else _sinUid++; });
+        });
+        if(_sinUid){
+          if(!confirm("\ud83d\udcc4 Este archivo no trae identificadores en "+_sinUid+
+                      " operacion(es)"+(_conUid?" (otras "+_conUid+" si los traen)":"")+".\n\n"+
+                      "Voy a reconocer por su contenido \u2014fecha, cliente, monto y tasas\u2014 las que ya tengas, "+
+                      "para no crearlas otra vez. Dos operaciones iguales del mismo dia se siguen contando como dos.\n\n"+
+                      "\u00bfImporto?")) return;
+        }
         // ARREGLO 6a (31/08/2026): antes importar reemplazaba los datos SIN dejar
         // constancia de lo que sacaba. Para el resto del sistema esos registros
         // nunca se habian borrado, asi que cualquier dispositivo que todavia los
@@ -19049,28 +19109,49 @@ function importData(){
           if(obj[k]!==undefined){S[k]=obj[k];loaded+=Array.isArray(obj[k])?obj[k].length:1;}
         });
         // Lo que entra sin _uid tiene que reencontrar el suyo, o el servidor lo
-        // toma por nuevo y queda duplicado. Se busca por contenido entre los
-        // que ya habia; si hay varias copias iguales cada una toma un _uid
-        // distinto, y la que sobra recibe uno nuevo de verdad. Derivar el _uid
-        // del contenido —como se hacia— colapsaba en una sola dos operaciones
-        // realmente iguales, que en remesas son normales.
-        var _uidsPrevios={};
+        // toma por nuevo y queda duplicado. Primero se busca entre los que ya
+        // habia AQUI, por contenido: ese es el mejor, porque es el _uid con el
+        // que el resto de la app ya conoce ese registro.
+        //
+        // Lo que no se reencuentra recibe un _uid NUEVO, y tiene que ser al azar.
+        //
+        // ARREGLO 154: derivarlo del contenido —para que los dos aparatos
+        // generaran el mismo— parecia el arreglo de raiz y es una TRAMPA. Sus
+        // marcas de borrado antiguas ya estan guardadas con _uid derivados
+        // (171: 56 en vzla, 104 en eeuu, 11 en brl, de la forma "s11l523n1xua2gt"),
+        // asi que un registro vivo que derive a una clave marcada se poda solo.
+        // Medido con su export: vzla pasaba de 137 a 85 en el primer ciclo —
+        // 52 remesas vivas borradas por marcas de hace meses.
+        //
+        // El duplicado se resuelve donde de verdad nace: en la FUSION, que
+        // ahora reconoce por contenido lo que no puede reconocer por _uid
+        // (ver _mergeArrayById). Eso vale ademas para los duplicados que ya
+        // existan, vengan de donde vengan.
+        var _uidsPrevios={}, _tomados={}, _derivados=0, _reencontrados=0;
         ["brl","vzla","eeuu"].forEach(function(k){
-          _uidsPrevios[k]={};
+          _uidsPrevios[k]={}; _tomados[k]={};
           (_previo[k]||[]).forEach(function(r){
             if(!r||!r._uid) return;
             var c=_uidEstable(r);
             (_uidsPrevios[k][c]=_uidsPrevios[k][c]||[]).push(r._uid);
           });
+          (S[k]||[]).forEach(function(r){ if(r&&r._uid) _tomados[k][r._uid]=1; });
         });
         ["brl","vzla","eeuu"].forEach(function(k){
           if(!Array.isArray(S[k])) return;
           S[k].forEach(function(r){
             if(!r||r._uid) return;
             var cola=_uidsPrevios[k][_uidEstable(r)];
-            r._uid=(cola&&cola.length)?cola.shift():_newUid();
+            if(cola&&cola.length){ r._uid=cola.shift(); _tomados[k][r._uid]=1; _reencontrados++; }
+            else { r._uid=_newUid(); _tomados[k][r._uid]=1; _derivados++; }
           });
         });
+        // Y se DICE. Un archivo del formato viejo no trae identificadores, asi
+        // que la app tiene que reconocer cada registro por su contenido — y eso
+        // ella tiene que saberlo antes de que pase, no deducirlo despues.
+        if(_reencontrados||_derivados){
+          _avisoImportSinUid={reencontrados:_reencontrados, derivados:_derivados};
+        }
         // Ahora si: sobre el estado ya reemplazado, conservando las marcas que
         // venian dentro del archivo y sumandole las nuevas.
         // ARREGLO 11a (02/09/2026): unir las marcas que YA tenia este dispositivo
@@ -19094,7 +19175,13 @@ function importData(){
         // Y forzar backup inmediato
         if(typeof autoBackup === "function") autoBackup();
         R();
-        alert("✅ "+loaded+" registros importados y enviados al servidor.\nLos demás dispositivos se actualizan en unos segundos.");
+        alert("✅ "+loaded+" registros importados y enviados al servidor."+
+              (_avisoImportSinUid
+                 ? "\n\n\ud83d\udd16 De las operaciones sin identificador, reconoc\u00ed "+
+                   _avisoImportSinUid.reencontrados+" que ya ten\u00edas y di de alta "+
+                   _avisoImportSinUid.derivados+"."
+                 : "")+
+              "\nLos demás dispositivos se actualizan en unos segundos.");
       }catch(ex){alert("Error al importar: "+ex.message);}
     };
     reader.readAsText(file);
@@ -34676,10 +34763,42 @@ function _mergeArrayById(remoteArr, localArr, idField, remoteTs, localTs){
   var merged = localArr.slice();
   var agregados = 0, actualizados = 0;
   var remoteEsMasNuevoGlobal = (typeof remoteTs==="number" && typeof localTs==="number") ? (remoteTs > localTs) : false;
+  // ARREGLO 154: una remesa que llega SIN su _uid conocido todavia puede ser
+  // una que ya esta aqui con otro _uid. Pasa en cuanto un archivo del formato
+  // viejo se importa en dos aparatos: a cada registro se le pone un _uid en
+  // cada sitio, y para la fusion eran dos remesas distintas. Reproducido con su
+  // export: 836 remesas pasaban a 1.672 en un solo ciclo, y de ahi salen las
+  // 137 copias de mayo.
+  //
+  // Se empareja por CONTENIDO y por CUPO, no a secas: si aqui hay dos remesas
+  // iguales y de alla vienen dos, no entra ninguna; si vienen tres, entra una.
+  // Asi dos operaciones realmente iguales —que en remesas son normales— siguen
+  // siendo dos, y no se pierde ninguna por parecerse a otra.
+  var porContenido=null, cupo=null;
+  if(idField==="_uid" && typeof _uidEstable==="function"){
+    porContenido={}; cupo={};
+    localArr.forEach(function(item){
+      if(!item) return;
+      var c=_uidEstable(item);
+      cupo[c]=(cupo[c]||0)+1;
+    });
+    // Lo que ya se reconoce por _uid gasta su cupo: no puede absorber ademas a otro.
+    remoteArr.forEach(function(ri){
+      if(!ri||ri[idField]===undefined) return;
+      if(localIds[ri[idField]]===undefined) return;
+      var c=_uidEstable(ri);
+      if(cupo[c]) cupo[c]--;
+    });
+  }
+  var absorbidos=0;
   remoteArr.forEach(function(remoteItem){
     if(!remoteItem || remoteItem[idField]===undefined || remoteItem[idField]===null) return;
     var idx=localIds[remoteItem[idField]];
     if(idx===undefined){
+      if(cupo){
+        var c=_uidEstable(remoteItem);
+        if(cupo[c]>0){ cupo[c]--; absorbidos++; return; }   // ya esta aqui, con otro _uid
+      }
       merged.push(remoteItem);
       agregados++;
       return;
@@ -34716,6 +34835,7 @@ function _mergeArrayById(remoteArr, localArr, idField, remoteTs, localTs){
          valorLocal:JSON.stringify(localItem), valorRemoto:JSON.stringify(remoteItem)});
     }
   });
+  if(absorbidos>0) console.log("🧩 Fusión: "+absorbidos+" registro(s) reconocido(s) por su contenido (traían otro "+idField+") — no se duplicaron.");
   if(agregados>0) console.log("🔗 Fusión: +"+agregados+" registro(s) recuperado(s) de otro dispositivo ("+idField+")");
   if(actualizados>0) console.log("🔗 Fusión: "+actualizados+" registro(s) actualizado(s) con datos más recientes ("+idField+")");
   return merged;
@@ -35224,6 +35344,7 @@ function _uidEstable(r){
     return "s"+h1.toString(36)+h2.toString(36);
   }catch(e){ return _newUid(); }
 }
+var _avisoImportSinUid=null;   // ARREGLO 154: lo que la importacion tuvo que reconocer por contenido
 function _asignarUidsFaltantes(){
   var puestos=0;
   ["brl","vzla","eeuu"].forEach(function(k){
