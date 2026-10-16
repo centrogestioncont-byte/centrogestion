@@ -4558,6 +4558,66 @@ el resto de la app. La ventana mira a los dos lados, porque unos sitios empujan
 el objeto escrito ahí mismo y `crearLoteRecibido` empuja una variable construida
 antes.
 
+### Pero el 143 se dejó SEIS pantallas (ARREGLO 150)
+
+Sus palabras del 16/10, con la máquina comprada el día antes: *"la compra de la
+mercancía no debe perjudicar la ganancia de lo que lleva el mes porque eso es
+inversión"*.
+
+Tiene razón, y el 143 lo aplicó **solo en `calcMesCompleto`**. Las pantallas que
+suman los egresos por su cuenta se quedaron con la regla vieja — y la que ella
+abre todos los días es una de ellas:
+
+```
+Resumen → NETO REAL              −151,76   ← los 210 de la máquina dentro
+Balance → "¿ganas o pierdes?"     +73,17   ← calcMesCompleto, sin ellos
+```
+
+Dos cuentas del mismo mes, y la que asusta es la que abre primero. Es el 34,27
+contra el 34,28 con el número más grande que mira. **Es la forma del ARREGLO 101
+y del 119 por tercera vez:** una regla nueva no basta con aplicarla donde saltó
+el problema; hay que buscar **todas** las copias de la vieja. Eran seis.
+
+- **`_egOperativos()` es la puerta única**, y la usan el Resumen, el Balance
+  Mensual, el reporte de Julio, la hoja de Excel, el reparto por categoría del
+  PDF y el conteo de gastos del Cierre.
+- **Los PENDIENTES también.** El 143 filtró solo los pagados, así que una máquina
+  comprada a crédito seguía anunciando una pérdida que no existe.
+- **Lo que NO se filtra, a propósito: el reparto POR CUENTA.** Ese dinero sí
+  salió del banco. Lo que no hace es bajar la ganancia, porque entró una máquina
+  que vale lo mismo — el capital ya la cuenta. Hay guardia para que nadie la
+  filtre ahí.
+
+Medido con su export del 16/10, v231 contra v232:
+
+```
+                        v231        v232
+Resumen · NETO REAL   −151,76     +58,24
+Resumen · egresos      399,93     189,93   ← ya es el mismo que el Cierre
+Cierre · utilidad       73,17      73,17   ← idéntico
+Balance · oct          +73,17     +73,17   ← idéntico
+capital              2.704,71   2.704,71
+te sobran                6,54       6,54
+```
+
+#### Y la guardia se escapó cinco veces, citando el arreglo que la avisaba
+
+El primer intento pedía solo que `_egOperativos` **apareciera** en cada función.
+Cada sitio la llama **dos** veces —pagados y pendientes— así que quitando una
+quedaba la otra y la guardia daba verde con el fallo dentro: **5 de las 11
+pruebas negativas se escaparon**.
+
+Es el agujero del ARREGLO 140 —*"hay que exigir las dos por nombre"*— cometido
+otra vez, y en el comentario de la guardia estaba citado. **Ahora se cuentan las
+llamadas** y el número va escrito: si un día hace falta una más, falla hasta que
+alguien mire si la nueva está del lado correcto.
+
+Y una segunda, de la misma familia: la guardia de *"la conciliación no la resta
+otra vez"* se ancló en `sacarFuncion("conciliacionCapital")` **sin quitar los
+comentarios**, y ahí ese nombre sale en un comentario. Medía el comentario, no el
+código (ARREGLO 100). Esa comprobación ya existía bien escrita desde el 143, así
+que el duplicado se retiró.
+
 ### Lo que NO entró, y es a propósito
 
 - **Cantidad por artículo.** Una cosa, un registro. Con cantidad habría que
