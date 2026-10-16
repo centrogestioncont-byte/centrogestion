@@ -10859,5 +10859,59 @@ console.log("\nARREGLO 138 · el metodo sale del origen de los bolivares");
   S.inventarioUsdt=inv; S.tx=tx;
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 144 · 1 USDT vale 1 USDT — y sin operacion no hay comision
+// ══════════════════════════════════════════════════════════════════════
+//
+// Hay rutas donde lo que ENTRA ya es USDT (USDT→BRL, USDT→VES) o donde lo que
+// SALE lo es (BRL→USDT). Un lote de "compra de USDT pagando en USDT" no existe
+// ni va a existir, asi que la tasa venia null y de ahi salian tres fallos a la
+// vez: ganancia 0 si no la escribia a mano, 0,06 USDT de comision inventada si
+// la escribia, y dos lotes en blanco por remesa. Medido con su export sobre
+// 40 USDT → 200 R$: apuntaba 0,1999 donde son 0,2599.
+{
+  const sinC = t => t.replace(/\/\/[^\n]*/g, "");
+  const gar  = sinC(sacarFuncion("getAutoRates"));
+
+  // 1 · LA TASA SALE DE LA PUERTA, no de cada quien. getAutoRates es por donde
+  //     pasan cTx() y saveTx(); escrito en uno solo, el otro seguiria con null
+  //     y saveTx volveria a dejar los lotes en blanco.
+  ok(/origMoneda===\"USDT\"\s*\)\s*\?\s*1\s*:/.test(gar),
+     "getAutoRates da 1 cuando lo que ENTRA ya es USDT");
+  ok(/dest===\"USDT\"\s*\)\s*\?\s*1\s*:/.test(gar),
+     "y 1 cuando lo que SALE es USDT");
+
+  // 2 · Y EL RESCATE DE dest!==\"VES\" NO LO PISA. Ese bloque busca lotes de
+  //     compra del destino cuando no hay de venta; con destino USDT no hay ni
+  //     unos ni otros, asi que dejaria el 1 en null otra vez.
+  ok(/dest!==\"VES\"\s*&&\s*dest!==\"USDT\"/.test(gar),
+     "el rescate de rutas no-estandar deja en paz el 1 del USDT");
+
+  // 3 · SIN OPERACION EN BINANCE NO HAY COMISION DE BINANCE. Va en cTx y no
+  //     solo en la tasa, porque `tcDeLote` mira de DONDE salio el numero, no si
+  //     la operacion existio: escribiendo la tasa a mano —lo que ella ya hizo
+  //     el 29/06— volvia a restarse. Se exigen los DOS lados por nombre: con
+  //     uno solo, quitar el otro pasaba la prueba.
+  const ctx = sinC(sacarFuncion("cTx"));
+  ok(/ruta\.orig===\"USDT\"\)\s*comUc\s*=\s*0/.test(ctx),
+     "cTx no cobra comision de COMPRA cuando lo que entra ya es USDT");
+  ok(/==\"USDT\"\)\s*comUv\s*=\s*0/.test(ctx),
+     "ni comision de VENTA cuando lo que sale es USDT");
+  // Y despues de las dos asignaciones de arriba, para que no las deje sin
+  // efecto una reasignacion posterior.
+  ok(ctx.indexOf("comUc = tcDeLote") < ctx.indexOf('ruta.orig==="USDT"'),
+     "y lo hace DESPUES de la regla general, no antes");
+
+  // 4 · LO YA GUARDADO NO SE MUEVE. La ganancia del mes suma el `pr` que cada
+  //     remesa lleva dentro; si se recalculara, este arreglo cambiaria las
+  //     cifras de meses ya cerrados.
+  const cmc = sinC(sacarFuncion("calcMesCompleto"));
+  ["brlM","vzlaM","eeuuM"].forEach(function(l){
+    ok(new RegExp(l+"\\.reduce\\(function\\(a,r\\)\\{return a\\+\\(parseFloat\\(r\\.pr\\)\\|\\|0\\);\\}").test(cmc),
+       "el cierre suma el pr guardado de "+l+", no lo vuelve a calcular");
+  });
+  ok(!/cTx\(/.test(cmc), "y no llama a cTx: recalcular movería meses ya cerrados");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

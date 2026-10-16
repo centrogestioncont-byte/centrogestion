@@ -1594,6 +1594,70 @@ tope avisa y no mueve nada, y **el Banco de Venezuela no se movió ni un céntim
 
 ---
 
+### 1 USDT vale 1 USDT, y eso no hay que ir a buscarlo (ARREGLO 144)
+
+Salió de una pregunta suya del 15/10: *"recibí 40 USDT y di 200 reales, no sé
+cómo preguntar eso"*. Un cliente le mandó USDT y ella le entregó reales.
+
+**La ruta ya existía** —`USDT ↔ BRL`, en sus rutas extra, usada el 29/06 con
+320 USDT → 1.590 R$— pero las dos tasas de `getAutoRates()` salen de los lotes
+del inventario, y **un lote de "compra de USDT pagando en USDT" no existe ni va
+a existir**: no se compra en Binance lo que el cliente ya mandó. Así que la tasa
+venía `null`, y de ahí salían **tres** fallos a la vez. Medido en Chromium con
+su export sobre 40 USDT → 200 R$:
+
+```
+sin escribir la tasa a mano .... cTx se sale por su return → GANANCIA 0
+escribiéndola (1) .............. apunta 0,1999 donde son 0,2599   −23%
+y en los dos casos ............. saveTx deja DOS lotes en blanco por remesa
+```
+
+El primero es el que más caro sale: la remesa **se guarda con `pr` 0** y nada
+avisa. El segundo es el ARREGLO 42 al revés — `tcDeLote` mira de **dónde salió**
+el número, no si la operación existió, así que escribirla a mano reactivaba una
+comisión de Binance que en esa ruta **nadie pagó**.
+
+**Los tres salen del mismo sitio, así que se arreglan en el mismo sitio.** La
+tasa de USDT contra USDT es **1 por definición**: no es algo que medir ni una
+decisión suya, es la unidad en la que está escrito todo lo demás.
+`tasaDeReferencia()` ya lo decía así desde hacía tiempo (`if(moneda==="USDT")
+return {tasa:1}`); lo que faltaba era decirlo también en `getAutoRates()`, que
+es **la puerta por donde pasan `cTx()` y `saveTx()`**.
+
+- **Va en los DOS lados.** `USDT ↔ BRL` y `USDT ↔ VES` entran en USDT;
+  `BRL ↔ USDT` sale en USDT. Las tres son suyas y están en uso.
+- **Y el rescate de `dest!=="VES"` tiene que dejarlo en paz.** Ese bloque busca
+  lotes de **compra** del destino cuando no hay de venta; con destino USDT no
+  hay ni unos ni otros, así que volvía a dejar la tasa en `null`.
+- **Sin operación en Binance no hay comisión de Binance**, y eso va en `cTx()`,
+  no solo en la tasa: por lo de `tcDeLote`, escribirla a mano la traía de vuelta
+  — y escribirla a mano es justo lo que ella ya hacía. Las dos líneas van
+  **después** de la regla general, o no hacen nada.
+- **Lo ya guardado no se mueve.** La ganancia del mes suma el `pr` que cada
+  remesa lleva dentro; no lo recalcula. Hay guardia para los tres arrays y para
+  que `calcMesCompleto` no llame a `cTx`.
+
+Medido con su export, el ciclo entero por la ruta USDT→BRL:
+
+```
+                        v225                    v226
+la tasa                 hay que escribirla      sale sola (1,00)
+ganancia apuntada       0  ·  ó 0,1999          0,2599
+lotes nuevos            2 en blanco             0
+cuentas                 +40 USDT · −200 R$      igual
+sin explicar (913,16)   no se mueve             no se mueve
+```
+
+**Y 17 casos de las rutas normales salen idénticos** a v225 —BRL↔VZLA, VZLA↔BRL,
+UU.EE↔VZLA, USD↔BRL, PEN, COP, EUR, más las tasas sueltas que usa el resto de la
+app—, que es lo que prueba que esto no toca nada más. 20 pestañas, 0 errores,
+7 pruebas negativas y las 7 cazadas.
+
+**Lo que esto NO arregla, y es correcto que no:** el aviso de *"no hay saldo
+suficiente en el inventario FIFO · faltan 40,00 USDT de compras en USDT"* sigue
+saliendo. En esta ruta es cierto y es normal —esos USDT no vinieron de ninguna
+compra suya— y el aviso no decide nada: se confirma y sigue.
+
 ### El método de la remesa sale del INVENTARIO, no de su memoria (ARREGLO 138)
 
 Sus palabras del 14/10: *"para seleccionar la ganancia es automático según lo que
