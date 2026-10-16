@@ -4719,6 +4719,109 @@ comentarios**, y ahí ese nombre sale en un comentario. Medía el comentario, no
 código (ARREGLO 100). Esa comprobación ya existía bien escrita desde el 143, así
 que el duplicado se retiró.
 
+#### Y el 150 se dejó UNA más: la cabecera (ARREGLO 153)
+
+Lo vio ella el 16/10, el mismo día: arriba ponía **`Real: $-154,54`** y la
+tarjeta del Resumen **`Neto real $58,24`**. Dos números para lo mismo, con
+**212,78** de diferencia. Medido con su export, la diferencia es exacta:
+
+```
+la máquina (mercancía)   210,00   es inversión, no gasto del mes
+un gasto personal          2,78   que ni siquiera es de la empresa
+                         ───────
+                          212,78
+```
+
+La cabecera sumaba **todos** los egresos pagados del mes, sin `_egOperativos()`
+y sin mirar el tipo. **Era la séptima copia, y el 150 buscó seis esa misma
+mañana.** Es la cuarta vez con esta forma (101, 119, 150).
+
+**Y al medirlo salió que el número bueno no era ninguno de los dos.** El Resumen
+tampoco contaba la **ganancia extra de la empresa**:
+
+```
+remesas                      248,17
++ ganancia extra empresa      14,93
+                           ────────
+                             263,10     ← miGanOperaciones
+− egresos operativos        −189,93
+                           ────────
+utilidad del mes              73,17     ← Cierre, Balance y la tarjeta Base
+```
+
+Los **préstamos (14,23)** entran en la bruta y **no** en la utilidad, que es la
+regla que el cierre ya tenía escrita. Así que había **tres números malos y uno
+bueno**, no al revés — y el bueno estaba en la tarjeta que nadie miraba.
+
+- **Nadie la calcula ya por su cuenta.** La cabecera y el Neto real leen
+  `calcMesCompleto()`, que es de donde ya salían el Cierre, el Balance y Base.
+- **Y son DOS números con nombres distintos**, no uno: *"Remesas $248,17 ·
+  Utilidad $73,17"*. *"Ganancia"* y *"Real"* se leían como dos versiones de lo
+  mismo, y de ahí salió la pregunta.
+- **El pie del Neto real se puede sumar a mano** (*"248,17 + 14,93 extra −
+  189,93 de egresos"*). Un número que no dice de dónde sale hay que perseguirlo
+  aparte (ARREGLO 141).
+- **El rótulo de Base mentía sin que el número estuviera mal.** Decía *"ganancia
+  menos lo ya pagado"*, que invita a restar los dos números de al lado —248,17 −
+  189,93 = 58,24— y eso **no** es la utilidad. El número era correcto desde
+  siempre; lo que había que arreglar era la frase.
+- **Y el "Pagado" de Egresos sigue contando la mercancía**, porque ese dinero sí
+  salió del banco (ARREGLO 150). Lo que faltaba era **decirlo**: ahora nombra
+  cuánto de él es mercancía y que no baja la ganancia. Un número correcto al
+  lado de otro correcto, sin nada que los empareje, es lo que hizo todo esto.
+
+#### Un gasto personal guardado en la lista de la empresa (ARREGLO 153)
+
+De los 212,78, el 2,78 era **un registro suyo en el sitio equivocado**: un gasto
+con `tipo:"personal"` dentro de `S.egresos`, que es la lista de la empresa. Los
+personales de verdad viven en `S.egresos_personales`.
+
+**Y no lo veía NADIE**: la pestaña de empresa lo filtra por tipo, la personal no
+lo busca ahí, y el único sitio que lo sumaba era la cabecera, que sumaba todo.
+Medido en todo su export: **uno de 53**, y ninguno en otro mes.
+
+- **El aviso va ARRIBA de las tres pestañas**, porque no es de ninguna — ése es
+  justamente el problema.
+- **Se mueve con un botón, no tocando la base.** Y **no toca ningún saldo**: el
+  dinero ya salió de la cuenta cuando se registró; tocarlo aquí lo bajaría dos
+  veces. Hay guardia por nombre.
+- **Deja la marca de borrado** (ARREGLO 6c) o el otro aparato lo devuelve.
+- **Y se dice lo incómodo ANTES de pulsar: mover el gasto SUBE el "te sobran"**
+  por ese mismo importe, porque hasta ahora ninguna pantalla lo descontaba de
+  *deberías tener*. Medido: de 6,94 a 9,72. No aparece dinero nuevo — aparece un
+  gasto que no se estaba contando. Es la forma de situar los ajustes en el aire
+  (ARREGLO 72).
+
+#### Y una tasa del día imposible ya no se guarda en silencio (ARREGLO 153)
+
+El campo de la tasa viene **relleno** con la de Configuración, así que escribir
+sin borrar deja los dos números pegados. Le pasó el 16/10: tenía 186, escribió
+189 y quedó **186189**. Medido con su export:
+
+```
+entrega      93.094.500 Bs
+ganancia        −90.135,58 USDT
+y la app lo guardaba sin un solo aviso
+```
+
+- **`onfocus='this.select()'` en los dos campos que vienen rellenos** —el monto y
+  la tasa— así escribir reemplaza lo que había. Eso evita *ese* tropiezo.
+- **Pero no el de teclear un cero de más**, así que el freno va también en
+  `saveTx()`: diez veces arriba o abajo de **lo que ella publica**, y pregunta.
+  No corrige nada — es el criterio del aviso de salto de 10× al escribir un saldo.
+- **Se compara contra su tasa publicada, no contra un número escrito en el
+  código**: la suya sube y baja todos los días (ARREGLO 128). **Sin tasa
+  publicada no se frena nada**, que un umbral adivinado pararía una remesa buena.
+- **Y el margen es ancho a propósito.** Estrecho saltaría en una remesa rara de
+  verdad y enseñaría a pulsar "sí" sin leer (ARREGLO 99).
+
+**La lección, y es la quinta vez:** `r2v` no existía en `rEgresos` y lo escribí
+igual. Habría sido un `ReferenceError` en producción, como el `pasada` del
+ARREGLO 121 — y ninguna guardia de texto lo ve, porque el texto decía lo
+correcto. Lo cazó **dibujar la pestaña**.
+
+---
+
 ### Lo que NO entró, y es a propósito
 
 - **Cantidad por artículo.** Una cosa, un registro. Con cantidad habría que

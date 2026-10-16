@@ -60,7 +60,7 @@ const CONSTANTES = ["_APROX_LS", "_COLCHON_DEF", "_SIN_APROX", "_UMBRAL_BS_DEF",
                     "PERMISOS_APP", "PERMISOS_POR_ROL", "PERMISO_DE_TAB",
                     "_CONFIG_PROHIBIDO", "_ETIQUETA_ROL"];
 
-const NECESARIAS = ["_refrescarMetodoTx", "_autoMetodoTxPronto", "_htmlMetodoElegido", "_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
+const NECESARIAS = ["_egresosHuerfanos", "moverEgresoAPersonal", "_tasaDelDiaFueraDeRango", "_refrescarMetodoTx", "_autoMetodoTxPronto", "_htmlMetodoElegido", "_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
                     "congelarMora", "_sumarMeses", "_isoDeFecha", "calcularAmortizacion",
                     "tasaAnualEfectiva", "_periodDaysDe", "perfilRiesgoCliente",
                     "puntoEquilibrio", "tasaSugerida", "_conDiaDelMes",
@@ -11425,6 +11425,85 @@ console.log("\nARREGLO 152 · el método: que se vea, que sume y que no coma el 
      "el formulario nuevo no hereda la marca de 'lo elegiste tú'");
   ok(reset.indexOf("metodo:") < 0 && reset.indexOf("permuta:") < 0,
      "ni el método ni la permuta de la remesa anterior: la app vuelve a elegir sola");
+}
+
+// ── ARREGLO 153 · un solo número para "lo que gané este mes" ─────────────────
+//
+// Lo vio ella el 16/10: la cabecera decía "Real: $-154,54" y la tarjeta del
+// Resumen "Neto real $58,24" — 212,78 de diferencia (los 210 de la máquina más
+// un gasto personal de 2,78). La cabecera era la SÉPTIMA copia de la regla que
+// el ARREGLO 150 había unificado esa misma mañana en seis sitios.
+console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
+{
+  const sinC = (t) => t.replace(/\/\/[^\n]*/g, "");
+
+  // ── La cabecera ya no calcula: lee ──────────────────────────────────────
+  const cab = HTML.slice(HTML.indexOf("var _ganMes=_brlA"), HTML.indexOf("}else{", HTML.indexOf("var _ganMes=_brlA")));
+  const cabSin = sinC(cab);
+  ok(/calcMesCompleto\(_mesAct\)/.test(cabSin),
+     "la cabecera lee calcMesCompleto, no su propia resta");
+  ok(/utilidadEmpresa/.test(cabSin),
+     "y lo que enseña es la utilidad de la empresa");
+  ok(!/filterByMes\(S\.egresos/.test(cabSin),
+     "la cabecera YA NO suma egresos por su cuenta (era la séptima copia)");
+  // Dos números con nombres distintos: "Ganancia" y "Real" se leían como dos
+  // versiones de lo mismo, y de ahí salió la pregunta.
+  ok(/Remesas:/.test(cabSin) && /Utilidad:/.test(cabSin),
+     "y los dos números se llaman por su nombre: Remesas y Utilidad");
+
+  // ── El Neto real del Resumen, lo mismo ──────────────────────────────────
+  const dash = sinC(sacarFuncion("rDash"));
+  ok(/var neto\s*=\s*parseFloat\(_cmRes\.utilidadEmpresa\)/.test(dash),
+     "el Neto real del Resumen sale de calcMesCompleto");
+  ok(!/var neto\s*=\s*ganTotal\s*-\s*egPag/.test(dash),
+     "y ya no se resta a mano, que dejaba fuera la ganancia extra");
+  // El pie tiene que poder sumarse a mano, o vuelve a ser un número que hay
+  // que perseguir (ARREGLO 141).
+  const kpiNeto = dash.slice(dash.indexOf('_kpi("Neto real"'),
+                             dash.indexOf('_kpi("Capital total"'));
+  ok(kpiNeto.length>0 && /ganExtraEmpM/.test(kpiNeto) && /de egresos/.test(kpiNeto),
+     "y el pie dice de qué está hecho, para poder sumarlo a mano");
+
+  // ── La tarjeta Base ya leía bien; lo que mentía era el rótulo ───────────
+  const reg = sinC(sacarFuncion("rEgresos"));
+  ok(/baseNeta\s*=\s*_calcPersonal\.utilidadEmpresa/.test(reg),
+     "la tarjeta Base sigue leyendo calcMesCompleto");
+  ok(!/ganancia menos lo ya pagado/.test(reg),
+     "su rótulo ya no invita a una resta que no es la suya");
+  // Y el Pagado dice cuánto de él es mercancía: ahí SÍ cuenta (salió del
+  // banco), y sin decirlo la cifra de al lado invita a restar mal.
+  ok(/_egMercPag/.test(reg) && /es mercanc/.test(reg),
+     "el Pagado nombra la parte de mercancía, que no baja la ganancia");
+
+  // ── El gasto personal guardado en la lista de la empresa ────────────────
+  const hu = sinC(sacarFuncion("_egresosHuerfanos"));
+  ok(/e\.tipo\s*&&\s*e\.tipo!=="empresa"/.test(hu),
+     "_egresosHuerfanos encuentra los que no son de la empresa");
+  ok(/_egresosHuerfanos\(\)/.test(reg),
+     "y la pestaña Egresos los enseña");
+  const mv = sinC(sacarFuncion("moverEgresoAPersonal"));
+  ok(/S\.egresos_personales/.test(mv) && /splice/.test(mv),
+     "moverEgresoAPersonal lo saca de una lista y lo mete en la otra");
+  ok(/_marcarBorradoMerge\("egresos"/.test(mv),
+     "y deja la marca de borrado, o el otro aparato lo devuelve (ARREGLO 6c)");
+  // No mueve dinero, y se dice en la propia pregunta: el dinero ya salió de la
+  // cuenta cuando se registró. Tocar el saldo aquí lo bajaría dos veces.
+  ok(!/ajusteCuentaEgreso|\.saldo\s*=/.test(mv),
+     "y NO toca ningún saldo: el dinero ya salió cuando se registró");
+
+  // ── Una tasa del día imposible no se guarda en silencio ─────────────────
+  const fr = sinC(sacarFuncion("_tasaDelDiaFueraDeRango"));
+  ok(/_getTasaClienteBRL/.test(fr) && /_getTasaVueltaVESaBRL/.test(fr),
+     "el freno compara contra las DOS tasas que ella publica, cada una la suya");
+  ok(/if\(!\(pub>0\)\) return null/.test(fr),
+     "sin tasa publicada no se frena nada: un umbral adivinado para una remesa buena");
+  const sv = sinC(sacarFuncion("saveTx"));
+  ok(/_tasaDelDiaFueraDeRango\(/.test(sv) && /confirm\(/.test(sv),
+     "saveTx pregunta antes de guardar una tasa diez veces fuera");
+  // Y los dos campos que vienen con un valor puesto se seleccionan al entrar:
+  // escribir detrás es lo que dejó 186189 (186 de Config + 189 tecleado).
+  ok((HTML.match(/onfocus='this\.select\(\)' oninput='S\.tx\.(am|tdia)=/g)||[]).length === 2,
+     "el monto y la tasa del día se seleccionan al entrar, los dos (2)");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

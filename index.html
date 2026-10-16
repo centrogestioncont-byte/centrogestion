@@ -3207,7 +3207,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261016_v233";
+var APP_VERSION = "20261016_v234";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -9654,9 +9654,49 @@ function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaD
   return movimientos;
 }
 
+// ── ARREGLO 153 · una tasa del día imposible no se guarda en silencio ────
+//
+// El campo de la tasa viene RELLENO con la de Configuración, así que escribir
+// sin borrar deja los dos números pegados. Le pasó el 16/10: tenía 186, escribió
+// 189 y quedó 186189. Medido con su export:
+//
+//     entrega      93.094.500 Bs
+//     ganancia        − 90.135,58 USDT
+//     y la app lo guardaba sin un solo aviso
+//
+// El `onfocus='this.select()'` de los campos evita ESE tropiezo —escribir
+// reemplaza lo que había— pero no el de teclear un cero de más, así que el
+// freno va aquí también. Es el mismo criterio del aviso de salto de 10× al
+// escribir un saldo a mano: no corrige nada, pregunta.
+//
+// Se compara contra lo que ELLA publica, no contra un número escrito en el
+// código: su tasa sube y baja todos los días (ARREGLO 128). Sin tasa publicada
+// no se frena nada — un umbral adivinado pararía una remesa buena.
+function _tasaDelDiaFueraDeRango(f, ruta){
+  var td=parseFloat(f && f.tdia)||0;
+  if(!(td>0) || !ruta) return null;
+  var pub=0;
+  try{
+    if(ruta.orig==="BRL" && ruta.dest==="VES")      pub=parseFloat(_getTasaClienteBRL())||0;
+    else if(ruta.orig==="VES" && ruta.dest==="BRL") pub=parseFloat(_getTasaVueltaVESaBRL())||0;
+  }catch(e){ return null; }
+  if(!(pub>0)) return null;
+  // Diez veces arriba o abajo. Un margen estrecho saltaría en una remesa rara
+  // de verdad y enseñaría a pulsar "sí" sin leer (ARREGLO 99).
+  if(td<=pub*10 && td>=pub/10) return null;
+  return {tecleada:td, publicada:pub, veces:Math.round((td>pub?td/pub:pub/td)*10)/10};
+}
 function saveTx(){
   var f=S.tx;
   if(!f.date||!f.cl||!f.am||!f.tdia){alert("Completa: fecha, cliente, monto y tasa del día.");return;}
+  var _rutaChk=getRutas().find(function(r){return r.rt===f.rt;});
+  var _tFuera=_tasaDelDiaFueraDeRango(f, _rutaChk);
+  if(_tFuera && !confirm(
+      "\u26a0\ufe0f La tasa del d\u00eda que escribiste es "+_tFuera.veces+" veces la que publicas.\n\n"+
+      "escribiste  "+f2(_tFuera.tecleada)+"\n"+
+      "publicas    "+f2(_tFuera.publicada)+"\n\n"+
+      "Si el campo ven\u00eda con un n\u00famero puesto y escribiste detr\u00e1s, quedaron los dos "+
+      "pegados. Revisa el campo antes de guardar.\n\n\u00bfGuardar de todas formas?")) return;
   if(!confirmarFechaFutura(f.date,"Esta remesa")) return;
   // ⚠️ Aviso si el mes ya fue cerrado (no bloquea — permite registrar olvidados)
   var _txMesKey=f.date.substring(0,7);
@@ -21962,9 +22002,30 @@ function rMain(){
     var _gastEEA=filterByMes(S.gastos_eeuu||[],_mesAct).reduce(function(a,g){return a+(parseFloat(g.monto)||0);},0);
     var _netaEEA=(_eeuuA-_gastEEA)*0.5;
     var _ganMes=_brlA+_vzlaA+_netaEEA;
-    var _egPagA=filterByMes(S.egresos||[],_mesAct).filter(function(e){return e.pagada;}).reduce(function(a,e){return a+(e.usdt||0);},0);
-    var _realA=_ganMes-_egPagA;
-    sub="Ganancia: <b>$"+f2(_ganMes)+" USDT</b> &nbsp;|&nbsp; 💵 Real: <b>$"+f2(_realA)+"</b>";
+    // ── ARREGLO 153 · la cabecera tenía su PROPIA cuenta ───────────────
+    //
+    // Lo vio ella el 16/10: aquí arriba ponía "Real: $-154,54" y la tarjeta del
+    // Resumen "Neto real $58,24" — 212,78 de diferencia entre las dos. La causa:
+    // esta línea sumaba TODOS los egresos pagados del mes, sin pasar por
+    // _egOperativos() y sin mirar si eran de la empresa. Medido con su export:
+    //
+    //     la máquina (mercancía)   210,00   es inversión, no gasto del mes
+    //     un gasto personal           2,78   que ni siquiera es de la empresa
+    //                               ───────
+    //                                212,78   la diferencia, al céntimo
+    //
+    // Era la SÉPTIMA copia de la regla vieja: el ARREGLO 150 las buscó esa misma
+    // mañana y encontró seis. Ahora nadie la calcula por su cuenta: sale de
+    // calcMesCompleto(), la misma función que el Cierre, el Balance y la tarjeta
+    // Base de Egresos.
+    //
+    // Y son DOS números con nombres distintos, no uno. "Ganancia" y "Real" se
+    // leían como dos versiones de lo mismo. La utilidad lleva dentro la ganancia
+    // extra de la empresa y le resta los egresos operativos: NO es la resta de
+    // los dos números de al lado, y por eso tiene su propio nombre.
+    var _cmA=calcMesCompleto(_mesAct);
+    var _utilA=parseFloat(_cmA.utilidadEmpresa)||0;
+    sub="Remesas: <b>$"+f2(_ganMes)+" USDT</b> &nbsp;|&nbsp; 💵 Utilidad: <b>$"+f2(_utilA)+"</b>";
   }else{
     // Operators: show only their own gain for current month, NO financial totals
     var mesActual=new Date();
@@ -24547,7 +24608,13 @@ function rDash(){
   // del neto del mes y esta pantalla contradice al Balance y al Cierre.
   var egPag    = _egOperativos(egEmpM).filter(function(e){ return e.pagada; }).reduce(function(a,e){ return a+(e.usdt||0); }, 0);
   var egPend   = _egOperativos(egEmpM).filter(function(e){ return !e.pagada; }).reduce(function(a,e){ return a+(e.usdt||0); }, 0);
-  var neto     = ganTotal - egPag;
+  // ARREGLO 153: el neto sale de calcMesCompleto, igual que la cabecera, la
+  // tarjeta Base y el Cierre. Restándolo aquí a mano se quedaba fuera la
+  // ganancia extra de la empresa —con su export, 14,93— así que esta tarjeta
+  // decía 58,24 donde el Cierre decía 73,17, y las dos se llamaban "el neto".
+  var _cmRes   = calcMesCompleto(selMes);
+  var ganExtraEmpM = parseFloat(_cmRes.ganExtraEmp)||0;
+  var neto     = parseFloat(_cmRes.utilidadEmpresa)||0;
   // Comisión bancaria VES absorbida por el operador (pérdida de ganancia)
   var comBancoAbsorbida = [].concat(brlM,vzlaM,eeuuM).reduce(function(a,r){
     return a + (r.comisionBanco && r.comisionBancoVes ? parseFloat(r.comisionBancoVes)||0 : 0);
@@ -24830,8 +24897,11 @@ function rDash(){
       _kpi("Ganancia del mes", "$"+f2(ganTotal),
            _nOps ? _nOps+" operacion"+(_nOps>1?"es":"")+" · $"+f2(Math.round(ganTotal/_nOps*100)/100)+" cada una"
                  : "sin operaciones este mes") +
+      // El pie tiene que poder sumarse a mano con el número de al lado, o la
+      // tarjeta vuelve a ser un número que hay que perseguir (ARREGLO 141).
       _kpi("Neto real", "$"+f2(neto),
-           "ya descontados $"+f2(egPag)+" de egresos"+(egPend>0?" · $"+f2(egPend)+" por pagar":""),
+           f2(ganTotal)+(ganExtraEmpM?" + "+f2(ganExtraEmpM)+" extra":"")+" − "+f2(egPag)+" de egresos"+
+             (egPend>0?" · $"+f2(egPend)+" por pagar":""),
            neto<0 ? "var(--mal)" : "var(--tx)") +
       _kpi("Capital total", "$"+f2(_cap.total),
            _cap.sinTasa.length
@@ -30032,8 +30102,8 @@ function rNueva(){
     "<div class='fl'><label>Nombre del cliente (auto)</label><input id='tx-nm' type='text' placeholder='Se llena al escribir código' value='"+(f.cl||"")+"' oninput='S.tx.cl=this.value' style='background:"+(f.cl?"var(--vd6-a)":"var(--sup)")+";border-color:"+(f.cl?"var(--ok-ln)":"var(--ln)")+"'></div></div>"+
     "<div class='fl' style='max-width:240px'><label>País destino (automático)</label><div style='background:var(--sup2g);border-radius:7px;padding:8px 12px;font-size:13px;font-weight:700'>"+ruta.flag+" "+ruta.pais+"</div></div></div>"+
     "<div class='sec' style='border-left:3px solid var(--info)'><div class='sec-title' style='color:var(--info)'>1️⃣ Monto recibido en "+ruta.orig+" · Tasa del día</div>"+
-    "<div class='f2'><div class='fl'><label>Valor de transacción ("+ruta.orig+")</label><input type='text' inputmode='decimal' placeholder='ej: 50' value='"+(f.am||"")+"' oninput='S.tx.am=_num(this.value);upC(\"tx\");_autoMetodoTxPronto()' onchange='_autoMetodoTx()'></div>"+
-    "<div class='fl'><label>"+ruta.lDia+(defTdia&&!f.tdia?" <span style='font-size:11px;color:var(--rol-na);font-weight:600'>← Config: "+defTdia+"</span>":"")+"</label><input type='text' inputmode='decimal' step='0.001' placeholder='"+(defTdia?"Config: "+defTdia:"ej: 629")+"' value='"+tdiaVal+"' oninput='S.tx.tdia=_num(this.value);upC(\"tx\");_autoMetodoTxPronto()' onchange='_autoMetodoTx()'></div></div>"+
+    "<div class='f2'><div class='fl'><label>Valor de transacción ("+ruta.orig+")</label><input type='text' inputmode='decimal' placeholder='ej: 50' value='"+(f.am||"")+"' onfocus='this.select()' oninput='S.tx.am=_num(this.value);upC(\"tx\");_autoMetodoTxPronto()' onchange='_autoMetodoTx()'></div>"+
+    "<div class='fl'><label>"+ruta.lDia+(defTdia&&!f.tdia?" <span style='font-size:11px;color:var(--rol-na);font-weight:600'>← Config: "+defTdia+"</span>":"")+"</label><input type='text' inputmode='decimal' step='0.001' placeholder='"+(defTdia?"Config: "+defTdia:"ej: 629")+"' value='"+tdiaVal+"' onfocus='this.select()' oninput='S.tx.tdia=_num(this.value);upC(\"tx\");_autoMetodoTxPronto()' onchange='_autoMetodoTx()'></div></div>"+
     "<div id='s1-tx'>"+(ok?"<div class='step-box' style='background:var(--info-sup);border:1px solid var(--az2a33)'><span style='font-size:11px;color:var(--info)'>"+(ruta.orig==="VES"?(f2(am)+" "+ruta.orig+" ÷ "+f2(tdia)):(f2(am)+" "+ruta.orig+" × "+f2(tdia)))+" = </span><span style='font-weight:700;font-size:14px;color:var(--info)'>📦 "+f0(cant)+" "+ruta.dest+" a entregar</span></div>":"")+"</div></div>"+
     // ── Las cuentas van DESPUÉS del monto (sus palabras: "donde me ponga
     // a colocar qué paga cada uno y después que me ponga a seleccionar en
@@ -31087,6 +31157,51 @@ function rClientes(){
   return panelHtml+statsHtml+searchHtml+chipsHtml+listHtml;
 }
 
+// ── ARREGLO 153 · un gasto personal guardado en la lista de la EMPRESA ───
+//
+// Lo cazó ella el 16/10 persiguiendo los 212,78 de la cabecera: había un gasto
+// de 2,78 ("PAGOS CRÉDITOS") con tipo "personal" dentro de S.egresos, que es la
+// lista de la empresa. Sus personales de verdad viven en S.egresos_personales.
+//
+// Y lo peor es que NO LO VE NADIE: la pestaña de empresa lo filtra por tipo, la
+// personal no lo busca ahí, y el único sitio que lo sumaba era la cabecera, que
+// sumaba todo. Un registro que no sale en ninguna pantalla es dinero que no se
+// puede perseguir — la misma razón por la que los ajustes sin situar se ven sin
+// desplegar nada (ARREGLO 99).
+//
+// Medido en todo su export: UNO, de 53 egresos, y ninguno en otro mes.
+function _egresosHuerfanos(){
+  return (S.egresos||[]).filter(function(e){ return e.tipo && e.tipo!=="empresa"; });
+}
+// Se mueve con un botón, no tocando la base a mano. No cambia ningún saldo: el
+// dinero ya salió de su cuenta cuando se registró; lo que estaba mal era la
+// lista en la que vivía. Se dice en la propia pregunta, porque un botón que
+// mueve un gasto se lee como un botón que mueve dinero.
+function moverEgresoAPersonal(id){
+  var i=(S.egresos||[]).findIndex(function(e){ return String(e.id)===String(id); });
+  if(i<0){ alert("No encuentro ese gasto."); return; }
+  var e=S.egresos[i];
+  // Y se dice lo incómodo ANTES de pulsar: la conciliación se mueve. Hasta
+  // ahora este gasto no lo contaba NADIE —ni la lista de empresa, que lo filtra
+  // por tipo, ni la personal, que no lo busca ahí— así que "deberías tener"
+  // estaba sin descontarlo. Al moverlo sí se descuenta y el "te sobran" sube
+  // por ese mismo importe. No aparece dinero: aparece un gasto que no se contaba.
+  // Es la misma forma que situar los ajustes en el aire (ARREGLO 72).
+  var _m=f2(parseFloat(e.usdt)||0);
+  if(!confirm("Mover a Gastos personales:\n\n"+(e.categoria||e.cat||"(sin categor\u00eda)")+
+      " · $"+_m+"\n\nNo mueve ning\u00fan saldo: el dinero ya sali\u00f3 de la cuenta cuando lo "+
+      "registraste. Lo que cambia es la lista donde est\u00e1 guardado, para que se vea en la "+
+      "pesta\u00f1a Personal y deje de contarse donde no toca.\n\nOjo: hasta ahora este gasto no "+
+      "lo contaba ninguna pantalla, as\u00ed que al moverlo el \"te sobran\" de la conciliaci\u00f3n "+
+      "sube $"+_m+". No aparece dinero nuevo: aparece un gasto que no se estaba contando.")) return;
+  S.egresos.splice(i,1);
+  _marcarBorradoMerge("egresos", e.id);     // o el otro aparato lo devuelve
+  S.egresos_personales=S.egresos_personales||[];
+  S.egresos_personales.push(e);
+  logAudit("EGRESO_MOVIDO","Gasto "+(e.categoria||e.cat||"")+" · $"+f2(parseFloat(e.usdt)||0)+" → personales");
+  saveData(); R();
+  alert("\u2705 Movido a Gastos personales. Ning\u00fan saldo se toc\u00f3.");
+}
 function rEgresos(){
   var f=S.nEg;
   var mesKey=getMesKeyActual();
@@ -31239,17 +31354,33 @@ function rEgresos(){
   // 9px; ahora el numero manda y el rotulo acompaña. Y cada una dice de que
   // esta hecha, que es lo que antes obligaba a contar a mano.
   var _nPag=egEmp.filter(function(e){return e.pagada;}).length;
+  // Lo que de ese "Pagado" es compra de mercancía: salió del banco pero no es
+  // un gasto del mes (ARREGLO 143/150). Sale de la misma lista que se suma.
+  var _egMercPag=Math.round(egEmp.filter(function(e){return e.pagada&&e.fromArticulo;})
+                        .reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0)*100)/100;
   var tabEmpresa=
     "<div class='pz-rejilla'>"+
       "<div class='pz-card'><div class='pz-rot'>💸 Pagado</div>"+
         "<div class='pz-num' style='color:var(--mal)'>$"+f2(egEmpPag)+"</div>"+
-        "<div class='pz-pie'>"+_nPag+" gasto"+(_nPag===1?"":"s")+" este mes</div></div>"+
+        // ARREGLO 153: aquí la mercancía SÍ cuenta —ese dinero salió del banco de
+        // verdad— y por eso este número es mayor que el que resta la utilidad. Sin
+        // decirlo, la cifra de al lado (Base) invita a restar 248,17 − 399,93 y a
+        // creer que el mes va en pérdida. La parte de mercancía se nombra aparte.
+        "<div class='pz-pie'>"+_nPag+" gasto"+(_nPag===1?"":"s")+" este mes"+
+          (_egMercPag>0?" · <b>$"+f2(_egMercPag)+"</b> es mercancía, no baja la ganancia":"")+
+        "</div></div>"+
       "<div class='pz-card'><div class='pz-rot'>⚠️ Pendiente</div>"+
         "<div class='pz-num' style='color:var(--am2-h)'>$"+f2(pendEmpresaCombinado)+"</div>"+
         "<div class='pz-pie'>"+(pendEmpresaCombinado>0?"todavía sin pagar":"nada por pagar")+"</div></div>"+
       "<div class='pz-card'><div class='pz-rot'>📊 Base</div>"+
         "<div class='pz-num' style='color:"+(baseNeta<0?"var(--mal)":"var(--ok)")+"'>$"+f2(baseNeta)+"</div>"+
-        "<div class='pz-pie'>"+(baseNeta<0?"los egresos se comieron la ganancia":"ganancia menos lo ya pagado")+"</div></div>"+
+        "<div class='pz-pie'>"+(baseNeta<0?"los egresos se comieron la ganancia"
+          // ARREGLO 153: decía "ganancia menos lo ya pagado", y eso invita a
+          // restar los dos números que ella tiene delante —248,17 − 189,93— que
+          // da 58,24 y NO es esto. La utilidad lleva dentro la ganancia extra de
+          // la empresa y deja fuera los préstamos. El rótulo tiene que decir de
+          // qué está hecho el número, no una cuenta que no es la suya.
+          : "remesas + ganancia extra − gastos · lo mismo que el Cierre")+"</div></div>"+
     "</div>"+
     (catEmpSort.length?
       "<div style='font-size:10.5px;font-weight:700;color:var(--tx3);text-transform:uppercase;margin-bottom:10px'>📊 Distribución empresa</div>"+
@@ -31435,6 +31566,32 @@ function rEgresos(){
     "<label style='display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer'><input type='checkbox' "+(f.pagada?"checked":"")+" onchange='S.nEg.pagada=this.checked'> ✅ Ya pagado</label></div>"+
     (f.fija?"<div class='fl' style='margin-bottom:12px'><label>📅 Día de pago (1-28)</label><input type='text' inputmode='decimal' min='1' max='28' value='"+(f.diaPago||"")+"' oninput='S.nEg.diaPago=_num(this.value)'></div>":"")+
     "<button onclick='saveEg()' style='width:100%;padding:13px;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;background:"+(esPersonal?"var(--rol-ee)":"var(--tit)")+";color:var(--sobre-color)'>💾 Guardar "+(esPersonal?"gasto personal":"egreso empresa")+"</button></div>"+
+
+    // ARREGLO 153: los gastos personales guardados en la lista de la empresa.
+    // Va ARRIBA de las pestañas a propósito: no es de ninguna de las tres —ese
+    // es justamente el problema— y dentro de una no lo vería quien abre la otra.
+    (function(){
+      var hu=_egresosHuerfanos();
+      if(!hu.length) return "";
+      return "<div style='background:var(--avi-sup);border:1.5px solid var(--avi-ln);border-radius:10px;"+
+        "padding:11px 13px;margin-bottom:12px;font-size:12px;color:var(--avi-tx);line-height:1.6'>"+
+        "\u26a0\ufe0f <b>"+hu.length+" gasto"+(hu.length===1?"":"s")+" personal"+(hu.length===1?"":"es")+
+        " guardado"+(hu.length===1?"":"s")+" en la lista de la empresa.</b> "+
+        "No sale"+(hu.length===1?"":"n")+" en ninguna de las pesta\u00f1as de abajo, as\u00ed que no hay forma de verlo"+
+        (hu.length===1?"":"s")+" desde aqu\u00ed."+
+        hu.map(function(e){
+          return "<div style='display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:7px'>"+
+            "<span>"+_escAud(e.d||e.fecha||"")+" · "+_escAud(e.categoria||e.cat||"(sin categor\u00eda)")+
+              " · <b>$"+f2(parseFloat(e.usdt)||0)+"</b></span>"+
+            "<button onclick='moverEgresoAPersonal(\""+_jsAttr(String(e.id))+"\")' style='background:var(--rol-ee);"+
+              "color:var(--sobre-color);border:none;padding:5px 9px;border-radius:7px;font-size:11px;"+
+              "font-weight:700;cursor:pointer;white-space:nowrap'>\ud83d\udc64 Mover a personales</button>"+
+          "</div>";
+        }).join("")+
+        "<div style='margin-top:7px;font-size:11px;opacity:.85'>No mueve ning\u00fan saldo: el dinero ya sali\u00f3 "+
+        "de la cuenta cuando lo registraste.</div>"+
+      "</div>";
+    })()+
 
     // ══ PESTAÑAS ══
     "<div style='display:flex;background:var(--sup);border-bottom:2px solid var(--ln2b);margin-bottom:0'>"+
