@@ -11727,5 +11727,33 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
      "y lo redactan como lo que es, no como dinero que falta");
 }
 
+// ════════ ARREGLO 159 · ni un campo de dinero se come la coma ════════
+{
+  // El ARREGLO 52 dejó 68 sin convertir "y no por olvido": eran los que otro
+  // sitio lee por getElementById(...).value, y convertir el campo sin arreglar
+  // también su lector es PEOR que dejarlo — cambia "no acepta la coma" por
+  // "acepta la coma y se queda con 5 en vez de 5,22", de un fallo que se ve a
+  // uno que no. Las dos mitades van juntas o no van.
+  const soloNum = (HTML.match(/<input[^>]*type=['"]number['"][^>]*>/g) || []);
+  ok(soloNum.length === 1 && /inputmode=['"]numeric['"]/.test(soloNum[0]),
+     "sólo queda un type=number, y es el de un ENTERO (número de cuotas), no dinero");
+  // Y ningún lector se la come: ni por id ni por una variable del elemento.
+  ok(!/parseFloat\(\(?document\.getElementById\([^)]*\)(?:\|\|\{\})?\)?\.value\)/.test(HTML),
+     "ningún campo se lee con parseFloat por su id: pasan por _leerNumero()");
+  ok(!/parseFloat\([a-zA-Z_$][a-zA-Z0-9_$]*\.value\)/.test(HTML),
+     "ni por una variable del elemento");
+  // La normalización va en la PUERTA del setter, no en cada llamada: un sitio
+  // nuevo que llame queda cubierto solo.
+  ok(/function calcSetExotico\(campo,val\)\{ S\.calc\[campo\]=_num\(val\)/.test(HTML),
+     "calcSetExotico normaliza en la puerta");
+  ok(/S\.tx\.entregas\[i\]\[campo\]=\(campo==="monto"\)\?_num\(val\):val/.test(HTML) &&
+     /S\.tx\.pagos\[i\]\[campo\]=\(campo==="monto"\)\?_num\(val\):val/.test(HTML),
+     "los dos desgloses normalizan el monto, y sólo el monto (cuentaId no es un número)");
+  // El bug que salió al convertir: parseFloat(ELEMENTO).value es NaN.value,
+  // o sea undefined, o sea 0 SIEMPRE. Las cuatro tasas de la calculadora.
+  ok(!/parseFloat\(document\.getElementById\([^)]*\)\|\|\{value:0\}\)\.value/.test(HTML),
+     "y nadie vuelve a parsear el ELEMENTO en vez de su valor (daba 0 siempre)");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
