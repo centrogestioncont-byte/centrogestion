@@ -3207,7 +3207,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261016_v235";
+var APP_VERSION = "20261016_v236";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -19143,7 +19143,7 @@ function importData(){
             if(!r||r._uid) return;
             var cola=_uidsPrevios[k][_uidEstable(r)];
             if(cola&&cola.length){ r._uid=cola.shift(); _tomados[k][r._uid]=1; _reencontrados++; }
-            else { r._uid=_newUid(); _tomados[k][r._uid]=1; _derivados++; }
+            else { r._uid=_newUid(); _tomados[k][r._uid]=1; r._uidImp=1; _derivados++; }
           });
         });
         // Y se DICE. Un archivo del formato viejo no trae identificadores, asi
@@ -34774,13 +34774,14 @@ function _mergeArrayById(remoteArr, localArr, idField, remoteTs, localTs){
   // iguales y de alla vienen dos, no entra ninguna; si vienen tres, entra una.
   // Asi dos operaciones realmente iguales —que en remesas son normales— siguen
   // siendo dos, y no se pierde ninguna por parecerse a otra.
-  var porContenido=null, cupo=null;
+  var porContenido=null, cupo=null, impor=null;
   if(idField==="_uid" && typeof _uidEstable==="function"){
-    porContenido={}; cupo={};
+    porContenido={}; cupo={}; impor={};
     localArr.forEach(function(item){
       if(!item) return;
       var c=_uidEstable(item);
       cupo[c]=(cupo[c]||0)+1;
+      if(item._uidImp) impor[c]=1;
     });
     // Lo que ya se reconoce por _uid gasta su cupo: no puede absorber ademas a otro.
     remoteArr.forEach(function(ri){
@@ -34797,7 +34798,15 @@ function _mergeArrayById(remoteArr, localArr, idField, remoteTs, localTs){
     if(idx===undefined){
       if(cupo){
         var c=_uidEstable(remoteItem);
-        if(cupo[c]>0){ cupo[c]--; absorbidos++; return; }   // ya esta aqui, con otro _uid
+        // ARREGLO 154b: y SOLO si uno de los dos lleva la marca que pone la
+        // importacion. Sin esto se perdia una remesa de VERDAD: ella registra
+        // en el telefono y su esposo registra otra igual en la PC —mismo dia,
+        // cliente, monto y tasa— y antes de sincronizar son dos operaciones
+        // distintas que la fusion daba por una. Reproducido: quedaba 1 de 2.
+        // Una remesa tecleada en el formulario nunca lleva la marca, asi que
+        // dos reales nunca se emparejan; el duplicado de un archivo importado
+        // si, que es justo para lo que esto existe.
+        if(cupo[c]>0 && (remoteItem._uidImp||impor[c])){ cupo[c]--; absorbidos++; return; }
       }
       merged.push(remoteItem);
       agregados++;

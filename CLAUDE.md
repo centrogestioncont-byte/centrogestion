@@ -5037,6 +5037,34 @@ Lo cacé porque la prueba de ida y vuelta medía las tres listas y `vzla` bajaba
 137. Mirando sólo `brl` —que salía perfecto— habría entregado un arreglo que
 borra datos. **Una prueba que mide una sola lista no mide nada.**
 
+### Y sólo empareja lo que vino de un ARCHIVO (ARREGLO 154b)
+
+El emparejamiento por contenido, tal cual, **perdía una remesa de verdad**. El
+caso lo señaló la extensión y encaja con cómo trabajan: ella registra en el
+teléfono y Julio registra otra en la PC —mismo día, cliente, monto, ruta y tasa—
+y **antes de sincronizar son dos operaciones distintas**. Reproducido:
+
+```
+A registra la suya ....... A tiene 1
+B registra la suya ....... B tiene 1
+tras sincronizar ......... 1   ← una se perdió
+```
+
+La prueba de CARLOS no lo cubría: esas siete ya estaban en los dos lados, así
+que se emparejaban por `_uid` y no llegaban al contenido.
+
+**El arreglo no es una heurística de tiempo.** La importación **marca**
+(`_uidImp`) los registros a los que le pone un `_uid` nuevo, y la fusión sólo
+empareja por contenido cuando uno de los dos lleva esa marca. Una remesa
+tecleada en el formulario no la lleva nunca, así que dos reales no se emparejan
+jamás; el duplicado de un archivo importado sí, que es para lo que existe.
+
+Se mira **en los dos lados**: la marca la puede llevar el que llega o el que ya
+está aquí, según cuál de los dos aparatos importó.
+
+**Y la lección: una prueba que sólo usa datos que ya existen en los dos lados no
+prueba la fusión.** Lo que hay que probar es lo que nace distinto en cada sitio.
+
 ### El aviso al guardar AVISA, no bloquea — y eso sale de medir
 
 Fuera de los duplicados de la importación, en cinco meses hay **12 grupos**
