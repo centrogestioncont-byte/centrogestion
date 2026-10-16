@@ -195,6 +195,28 @@ Lo que sí tienes que respetar:
   `DATA_KEYS`**. Si no está en ninguna, el remoto lo reemplaza entero y se
   pierde lo que hiciste aquí. `pruebas/prestamos.js` recorre `_MERGE_FIELDS`
   entero: si agregas uno y no queda cubierto, la prueba falla.
+- **Y HAY DOS `DATA_KEYS`: la de aquí y la del SERVIDOR** (`main.py` de
+  `centrogestion-api`). Esta prueba no ve aquella, así que una clave que se
+  añada aquí y se olvide allí **viaja al servidor y el servidor la tira, con
+  un 200 y sin un solo error**. Ha pasado dos veces:
+
+  ```
+  08/10   histApertura · histComp · mapaBinance
+  16/10   inmuebles · inmCuotas · articulos · artGastos · aportes
+  ```
+
+  La segunda eran **módulos enteros** —el apartamento, la mercancía y los
+  aportes— y vivían solo dentro del navegador de su PC: ni en Mongo, ni en la
+  copia automática. Se vio porque la PC tenía su máquina de 210 y el teléfono
+  no, y Actualizar no la traía nunca.
+
+  **Son CUATRO listas allí, no una** (ARREGLO 151): `DATA_KEYS` para que se
+  guarde, `MERGE_FIELDS` para que se una en vez de reemplazarse, `PODA_CATS`
+  para que las marcas de borrado se apliquen en las dos puntas, y
+  `MERGE_BLOQUES` para las claves de `config` que viajan juntas. Desde el 151
+  `pruebas/claves.py` del servidor **descarga esta app y compara las listas**,
+  que es lo único que lo caza — pero solo cuando hay red, así que al añadir
+  una clave aquí hay que ir allí igual.
 - **No todos usan `id`.** `clientes` usa `cod`, `brl`/`vzla`/`eeuu` usan
   `_uid`, `cierresMes` usa `mesKey`. Está en `_MERGE_ID_FIELD`.
 - **Sin foto previa se anota, no se marca.** Marcar en el primer guardado
@@ -4557,6 +4579,66 @@ conocida. Ahora mira **cada push** y exige que el objeto que empuja lleve su
 el resto de la app. La ventana mira a los dos lados, porque unos sitios empujan
 el objeto escrito ahí mismo y `crearLoteRecibido` empuja una variable construida
 antes.
+
+### Pero el 143 se dejó SEIS pantallas (ARREGLO 150)
+
+Sus palabras del 16/10, con la máquina comprada el día antes: *"la compra de la
+mercancía no debe perjudicar la ganancia de lo que lleva el mes porque eso es
+inversión"*.
+
+Tiene razón, y el 143 lo aplicó **solo en `calcMesCompleto`**. Las pantallas que
+suman los egresos por su cuenta se quedaron con la regla vieja — y la que ella
+abre todos los días es una de ellas:
+
+```
+Resumen → NETO REAL              −151,76   ← los 210 de la máquina dentro
+Balance → "¿ganas o pierdes?"     +73,17   ← calcMesCompleto, sin ellos
+```
+
+Dos cuentas del mismo mes, y la que asusta es la que abre primero. Es el 34,27
+contra el 34,28 con el número más grande que mira. **Es la forma del ARREGLO 101
+y del 119 por tercera vez:** una regla nueva no basta con aplicarla donde saltó
+el problema; hay que buscar **todas** las copias de la vieja. Eran seis.
+
+- **`_egOperativos()` es la puerta única**, y la usan el Resumen, el Balance
+  Mensual, el reporte de Julio, la hoja de Excel, el reparto por categoría del
+  PDF y el conteo de gastos del Cierre.
+- **Los PENDIENTES también.** El 143 filtró solo los pagados, así que una máquina
+  comprada a crédito seguía anunciando una pérdida que no existe.
+- **Lo que NO se filtra, a propósito: el reparto POR CUENTA.** Ese dinero sí
+  salió del banco. Lo que no hace es bajar la ganancia, porque entró una máquina
+  que vale lo mismo — el capital ya la cuenta. Hay guardia para que nadie la
+  filtre ahí.
+
+Medido con su export del 16/10, v231 contra v232:
+
+```
+                        v231        v232
+Resumen · NETO REAL   −151,76     +58,24
+Resumen · egresos      399,93     189,93   ← ya es el mismo que el Cierre
+Cierre · utilidad       73,17      73,17   ← idéntico
+Balance · oct          +73,17     +73,17   ← idéntico
+capital              2.704,71   2.704,71
+te sobran                6,54       6,54
+```
+
+#### Y la guardia se escapó cinco veces, citando el arreglo que la avisaba
+
+El primer intento pedía solo que `_egOperativos` **apareciera** en cada función.
+Cada sitio la llama **dos** veces —pagados y pendientes— así que quitando una
+quedaba la otra y la guardia daba verde con el fallo dentro: **5 de las 11
+pruebas negativas se escaparon**.
+
+Es el agujero del ARREGLO 140 —*"hay que exigir las dos por nombre"*— cometido
+otra vez, y en el comentario de la guardia estaba citado. **Ahora se cuentan las
+llamadas** y el número va escrito: si un día hace falta una más, falla hasta que
+alguien mire si la nueva está del lado correcto.
+
+Y una segunda, de la misma familia: la guardia de *"la conciliación no la resta
+otra vez"* se ancló en `sacarFuncion("conciliacionCapital")` **sin quitar los
+comentarios**, y ahí ese nombre sale en un comentario. Medía el comentario, no el
+código (ARREGLO 100). Esa comprobación ya existía bien escrita desde el 143, así
+que el duplicado se retiró.
 
 ### Lo que NO entró, y es a propósito
 
