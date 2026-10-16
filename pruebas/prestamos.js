@@ -107,7 +107,7 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "capitalRealTotal", "_fraccionInteresPrestamo", "interesDentroDeApertura",
                     "_mesesDesde", "_acumuladosMes",
                     "conciliacionCapital", "getMesKeyActual", "ajustesDesdeApertura",
-                    "_tsDeUid", "_tsDeAjuste", "_deducirHoraApertura", "_isoDeDDMMAA", "_motivoDelAjuste", "_ajusteAEgreso", "_cuentaMadre", "_cuentaOMadre", "_completarDesdeMadre", "toggleCuentaMadre",
+                    "_tsDeUid", "_tsDeAjuste", "_deducirHoraApertura", "_isoDeDDMMAA", "_motivoDelAjuste", "_ajusteAEgreso", "_ajusteAGanExtra", "_cuentaMadre", "_cuentaOMadre", "_completarDesdeMadre", "toggleCuentaMadre",
                     "traspasosAPersonal", "egresosPersonalesDesdeCuentaPersonal", "efectoTasasDesde", "_isoDeFechaLote",
                     // ARREGLO 143 - mercancia. conciliacionCapital las llama,
                     // asi que sin estas la suite entera se cae al cargar.
@@ -5037,6 +5037,46 @@ console.log("\n— ARREGLO 68: por que no cuadraba —");
   ok(!/c\.saldo\s*=/.test(e), "el egreso no toca el saldo por su cuenta");
   ok(/S\.tab\s*=\s*"egresos"/.test(e) && /monto:String\(monto\)/.test(e),
      "y deja el formulario empezado con el monto, para que no sea mas trabajo");
+
+  // ── ARREGLO 145 · la opcion 2 va con el SIGNO ────────────────────────
+  // Subir un saldo por dinero que entro de verdad no tenia camino: el unico
+  // motivo que hablaba de dinero movido creaba un EGRESO, o sea lo contrario.
+  // Medido en v226: con el saldo subiendo 150, elegir la 2 dejaba un egreso de
+  // 150 preparado — guardarlo habria dejado la cuenta 300 por debajo. Y el
+  // camino que le quedaba, "3 · no se por que", le movia el sin explicar 29,70.
+  ok(/var entra\s*=\s*delta\s*>\s*0/.test(m),
+     "la opcion 2 mira el SIGNO del ajuste, no una sola cosa siempre");
+  // Las DOS por nombre: pidiendo una sola, quitar la otra pasaba (ARREGLO 140).
+  ok(/entra\s*\)\s*_ajusteAGanExtra\(/.test(m),
+     "si el dinero ENTRA lleva a la ganancia extra");
+  ok(/else\s+_ajusteAEgreso\(/.test(m),
+     "y si SALE sigue llevando al egreso");
+  // Y el TEXTO cambia con el signo, no solo a donde lleva: una opcion que
+  // dice "salio dinero" sobre un saldo que sube es la que la mandaba a crear
+  // un egreso creyendo que registraba un ingreso.
+  ok(/2  Entró dinero de verdad/.test(m) && /2  El banco me cobró algo/.test(m),
+     "el texto de la opcion 2 cambia con el signo, no solo a donde lleva");
+  ok(m.indexOf("var entra") < m.indexOf("Entró dinero de verdad"),
+     "y el signo se decide ANTES de escribir la pregunta");
+
+  const g = sinComentarios(sacarFuncion("_ajusteAGanExtra"));
+  ok(!/c\.saldo\s*=/.test(g), "la ganancia extra no toca el saldo por su cuenta");
+  ok(/S\.tab\s*=\s*"nueva"/.test(g) && /monto:String\(monto\)/.test(g),
+     "deja el formulario empezado con el monto, igual que el egreso");
+  ok(/S\._showGanExtra\s*=\s*true/.test(g),
+     "y lo ABRE: ese bloque nace cerrado, asi que sin esto no se ve");
+  // El campo de la cuenta es OPCIONAL en ese formulario, y sin el
+  // saveGanExtra() apunta la ganancia y NO sube ningun saldo — que es
+  // justo lo que esta persona vino a hacer.
+  ok(/cuentaId:c\.id/.test(g),
+     "y deja puesta la cuenta, o la ganancia se guarda sin subir ningun saldo");
+  // Las dos mitades: que la llamada exista Y que cuelgue de haber encontrado
+  // la cuenta. Pidiendo solo la llamada, cambiar `if(cta)` por `if(false)`
+  // pasaba la prueba con el saldo ya sin subir.
+  const sg = sinComentarios(sacarFuncion("saveGanExtra"));
+  ok(/if\(cta\)\{/.test(sg) &&
+     sg.indexOf("ajusteCuentaEgreso(g.cuentaId,monto)") > sg.indexOf("if(cta){"),
+     "guardarla con cuenta es lo que sube el saldo");
 }
 // Y se engancha: sin esto la pregunta no la ve nadie.
 {
