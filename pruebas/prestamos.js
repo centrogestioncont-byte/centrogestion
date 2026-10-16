@@ -60,7 +60,7 @@ const CONSTANTES = ["_APROX_LS", "_COLCHON_DEF", "_SIN_APROX", "_UMBRAL_BS_DEF",
                     "PERMISOS_APP", "PERMISOS_POR_ROL", "PERMISO_DE_TAB",
                     "_CONFIG_PROHIBIDO", "_ETIQUETA_ROL"];
 
-const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
+const NECESARIAS = ["_refrescarMetodoTx", "_autoMetodoTxPronto", "_htmlMetodoElegido", "_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
                     "congelarMora", "_sumarMeses", "_isoDeFecha", "calcularAmortizacion",
                     "tasaAnualEfectiva", "_periodDaysDe", "perfilRiesgoCliente",
                     "puntoEquilibrio", "tasaSugerida", "_conDiaDelMes",
@@ -10918,8 +10918,14 @@ console.log("\nARREGLO 138 · el metodo sale del origen de los bolivares");
   // guardarse y solo se veia TECLEANDO en el navegador.
   ok(!/upC\(\\"tx\\"\)\s+onchange=/.test(HTML),
      "ningun oninput se queda sin cerrar antes de su onchange");
-  ok((HTML.match(/upC\(\\"tx\\"\)' onchange='_autoMetodoTx\(\)'/g)||[]).length===2,
-     "el monto y la tasa del dia marcan el metodo al SALIR del campo (ARREGLO 32: en cada tecla mataria el campo)");
+  // ARREGLO 152: el onchange se queda —es la red por si no hay teclado— pero ya
+  // no es el unico momento. Desde que el bloque 3 vive en su propio contenedor,
+  // repintarlo NO mata el campo del monto, que esta fuera: asi que el metodo se
+  // decide tambien mientras teclea, y cuando ella baja el dedo al boton de
+  // guardar el bloque ya no cambia de alto. La razon vieja ("en cada tecla
+  // mataria el campo") dejo de ser cierta con el contenedor.
+  ok((HTML.match(/upC\(\\"tx\\"\);_autoMetodoTxPronto\(\)' onchange='_autoMetodoTx\(\)'/g)||[]).length===2,
+     "el monto y la tasa del dia marcan el metodo al teclear Y al salir del campo");
   ok(/S\.tx\.cuentaDest=this\.value;_autoMetodoTx\(\)/.test(HTML),
      "y cambiar la cuenta de entrega tambien, que cambia de que lotes sale");
 
@@ -11325,6 +11331,100 @@ console.log("\nARREGLO 150 · la mercancía no baja el neto del mes");
   // (La doble resta en la conciliación ya la fija la guardia del ARREGLO 143,
   // con `sinCom`: aquí el mismo nombre sale en un COMENTARIO de esa función y
   // un ancla sin limpiar mide el comentario, no el código — ARREGLO 100.)
+}
+
+// ── ARREGLO 152 · el método se ve, el rótulo no miente y el clic no se pierde ─
+//
+// Las tres salen de lo mismo que ella dijo el 16/10: "el sistema como que no
+// detecta si es por P2P o si es por transacción directa". Detectar, detectaba
+// (ARREGLO 138). Lo que fallaba era que no se veía, que la línea que lo contaba
+// sumaba mal, y que al cambiar solo se comía el primer toque a Guardar.
+console.log("\nARREGLO 152 · el método: que se vea, que sume y que no coma el clic");
+{
+  const sinC = (t) => t.replace(/\/\/[^\n]*/g, "");
+
+  // ── C · el clic que se perdía ───────────────────────────────────────────
+  // El orden del navegador es mousedown → blur (aquí salta el change) → mouseup
+  // → click. Un R() en ese change borra el botón entre medias y el click no
+  // llega nunca. Son TRES mitades y faltando cualquiera vuelve el fallo: el
+  // bloque 3 en su propio contenedor, el repintado parcial, y la bandera del
+  // gesto. Pidiendo solo una, quitar las otras dos pasaba.
+  const auto = sinC(sacarFuncion("_autoMetodoTx"));
+  ok(!/\bR\(\)/.test(auto),
+     "_autoMetodoTx NO llama a R(): eso borraba el botón de guardar bajo el dedo");
+  ok(/_refrescarMetodoTx\(\)/.test(auto),
+     "_autoMetodoTx refresca solo el bloque 3 (_refrescarMetodoTx)");
+  ok(/_txTocandoGuardar/.test(auto),
+     "y con un dedo ya puesto en Guardar no dibuja nada: aplica el método y calla");
+  const refr = sinC(sacarFuncion("_refrescarMetodoTx"));
+  ok(/getElementById\("sec3-tx"\)/.test(refr),
+     "_refrescarMetodoTx va por el id del bloque 3, no por la pantalla entera");
+  ok(/rNueva\(\)/.test(refr),
+     "y el HTML sale de rNueva(), la misma función que lo dibuja (un solo sitio)");
+  ok(/upC\("tx"\)/.test(refr),
+     "y lo de fuera del bloque 3 se refresca por sus ids");
+  // El contenedor tiene que existir en el dibujado, y el botón de guardar tiene
+  // que quedar FUERA de él: dentro, volvería a desaparecer bajo el dedo.
+  const rn = sinC(sacarFuncion("rNueva"));
+  const iSec = rn.indexOf("<div id='sec3-tx'>");
+  // desde iSec: ese mismo cierre existe antes en otra parte de rNueva, y con un
+  // indexOf desde el principio se medía el trozo equivocado (ARREGLO 125, el
+  // ancla ambigua que convierte una prueba en nada).
+  const iCie = rn.indexOf('"</div></div>"+', iSec);
+  const iBtn = rn.indexOf("onclick='saveTx()'");
+  ok(iSec >= 0, "rNueva dibuja el contenedor sec3-tx");
+  ok(iCie > iSec, "y lo cierra");
+  ok(iBtn > iCie, "el botón de guardar queda FUERA del bloque que se repinta");
+  ok(/onpointerdown='_txTocaGuardar\(\)'/.test(rn),
+     "el botón de guardar avisa del gesto en el pointerdown, antes del blur");
+  // Y el método se decide mientras teclea, para que el bloque 3 no cambie de
+  // alto justo cuando ella baja el dedo al botón.
+  ok((rn.match(/_autoMetodoTxPronto\(\)/g) || []).length === 2,
+     "el monto y la tasa del día llaman a _autoMetodoTxPronto al teclear (2)");
+  ok(/setTimeout\(/.test(sinC(sacarFuncion("_autoMetodoTxPronto"))),
+     "_autoMetodoTxPronto espera un respiro: en cada tecla serían seis repintados");
+
+  // ── A · el rótulo que llamaba "ventas de USDT" a lo que no lo era ───────
+  // Con sus lotes del 16/10 decía 73.500 de ventas donde las ventas son 34.228.
+  // Los tres montos se nombran por separado, y el de "sin registrar" tiene que
+  // estar: es el que avisa de que falta registrar una operación de USDT.
+  const dd = sinC(sacarFuncion("_htmlDeDondeSalen"));
+  ok(!/de ventas de USDT.{0,40}\+f0\(org\.deVenta\s*\+\s*org\.sinLote\)/.test(dd) &&
+     !/f0\(org\.deVenta\s*\+\s*org\.sinLote\)/.test(dd),
+     "el recuadro ya NO suma lo que no tiene lote dentro de las ventas de USDT");
+  ok(/org\.deRemesa>0\.01/.test(dd) && /org\.deVenta>0\.01/.test(dd) && /org\.sinLote>0\.01/.test(dd),
+     "y nombra los tres orígenes por separado");
+  ok(/sin registrar/.test(dd),
+     "el que no sale de ningún lote se llama 'sin registrar', no 'venta de USDT'");
+
+  // ── B · quién eligió el método, junto a los botones ─────────────────────
+  const me = sinC(sacarFuncion("_htmlMetodoElegido"));
+  ok(/_origenBsRemesa\(/.test(me),
+     "el porqué sale de _origenBsRemesa, la misma cuenta que decide el método");
+  ok(/_metodoTocado/.test(me),
+     "y si lo pulsó ella lo dice: la app no se lo vuelve a mover (ARREGLO 138)");
+  ok(/org\.sinLote>org\.deVenta/.test(me),
+     "nombra al que de verdad decidió: con bolívares sin lote no dice 'ventas de USDT'");
+  ok(!/f0\(|f2\(/.test(me),
+     "sin cifras: las cifras viven una sola vez, en el recuadro de abajo (ARREGLO 125)");
+  ok(/var vacio="<div id='met-eleg-tx'><\/div>"/.test(me),
+     "el contenedor existe siempre, aunque esté vacío: si no, upC no tiene dónde escribir");
+  ok(/_htmlMetodoElegido\(_rTx, ruta\)/.test(rn),
+     "rNueva lo dibuja debajo de los dos botones");
+  const upc = sinC(sacarFuncion("upC"));
+  ok(/met-eleg-/.test(upc) && /_htmlMetodoElegido\(res, ruta\)/.test(upc),
+     "y se refresca al teclear: el porqué cambia con el monto (ARREGLO 55)");
+
+  // ── Y la marca de "lo elegiste tú" NO puede pasar a la remesa siguiente ──
+  // Si se quedara pegada, la segunda remesa saldría con el método de la primera
+  // sin que nadie lo vea. Se limpia porque saveTx reemplaza S.tx ENTERO: la
+  // guardia es que ese objeto no vuelva a llevar el método dentro.
+  const sv = sinC(sacarFuncion("saveTx"));
+  const reset = sv.slice(sv.indexOf("S.tx={date:f.date"));
+  ok(reset.indexOf("_metodoTocado") < 0,
+     "el formulario nuevo no hereda la marca de 'lo elegiste tú'");
+  ok(reset.indexOf("metodo:") < 0 && reset.indexOf("permuta:") < 0,
+     "ni el método ni la permuta de la remesa anterior: la app vuelve a elegir sola");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

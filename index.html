@@ -2873,7 +2873,61 @@ function _autoMetodoTx(){
   var ahora=(S.tx.metodo==="calce")?"calce":"p2p";
   if(org.metodo===ahora) return;
   _ponerMetodoTx(org.metodo);
-  R();
+  // Si el dedo ya está sobre Guardar, el método se aplica y NO se dibuja nada:
+  // el guardado que viene a continuación lee S.tx y sale correcto, y la pantalla
+  // la rehace el propio guardado. Repintar aquí mueve el botón bajo el dedo.
+  if(window._txTocandoGuardar) return;
+  _refrescarMetodoTx();
+}
+// El change de un campo salta cuando ella toca otra cosa, y esa otra cosa suele
+// ser el botón de guardar. Esto dice "hay un gesto en curso sobre el botón", y
+// se pone en el pointerdown, que ocurre ANTES del blur. Se suelta sola: si el
+// guardado no llega a ocurrir (una validación que falla), no puede quedarse
+// puesta y dejar el método sin dibujar para siempre.
+// Al teclear, con un respiro: así el método ya está puesto ANTES de que ella
+// baje a tocar Guardar, y el bloque 3 no cambia de alto en ese momento. En cada
+// tecla sería rehacer el bloque seis veces para escribir "147000".
+var _tAutoMet=null;
+function _autoMetodoTxPronto(){
+  if(_tAutoMet) clearTimeout(_tAutoMet);
+  _tAutoMet=setTimeout(function(){ _tAutoMet=null; _autoMetodoTx(); }, 450);
+}
+function _txTocaGuardar(){
+  window._txTocandoGuardar=true;
+  setTimeout(function(){ window._txTocandoGuardar=false; }, 1200);
+}
+// ── ARREGLO 152 · el primer toque a Guardar se perdía ──────────────────
+//
+// Esto se llamaba con R(), que rehace la pantalla ENTERA. Y el momento en que
+// se llama es el peor posible: el change de un campo salta cuando ella toca
+// otra cosa, y esa otra cosa suele ser el botón de guardar. El orden del
+// navegador es mousedown → blur (aquí salta el change) → mouseup → click, así
+// que el R() borraba el botón ENTRE el mousedown y el mouseup y el click no
+// llegaba a dispararse nunca. Medido en Chromium con touch, con unos lotes
+// donde el método sí cambia:
+//
+//     primer toque a Guardar ...  cambia a calce y NO guarda
+//     segundo toque ............  guarda
+//
+// Desde fuera es "el botón no hace nada la primera vez", y enseña a tocar dos
+// veces —que es justo lo que no se puede enseñar en un botón que mueve dinero.
+//
+// Lo que cambia con el método vive TODO dentro del bloque 3 (los dos botones,
+// la cabecera, el campo de la permuta, los campos de tasa) y de lo que upC()
+// ya refresca por su id. El botón de guardar está fuera de los dos, así que
+// rehaciendo solo eso sobrevive al gesto.
+//
+// Y el HTML sale de rNueva(), la MISMA función que lo dibuja: escrito aparte,
+// un día el bloque repintado diría algo distinto del bloque dibujado.
+function _refrescarMetodoTx(){
+  var cont=document.getElementById("sec3-tx");
+  if(!cont){ R(); return; }
+  var tmp=document.createElement("div");
+  tmp.innerHTML=rNueva();
+  var nue=tmp.querySelector("#sec3-tx");
+  if(!nue){ R(); return; }   // la pantalla ya no es esta: que mande R()
+  cont.innerHTML=nue.innerHTML;
+  upC("tx");                  // y lo de fuera del bloque 3, por sus ids
 }
 // ═══════════════════════════════════════════════════════════════════════
 // ARREGLO 123 · la permuta sale de los LOTES, no de su memoria
@@ -3153,7 +3207,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261016_v232";
+var APP_VERSION = "20261016_v233";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -20327,6 +20381,45 @@ function _bsPorReal(tasaVesUsdt){
 // Y avisa cuando NO alcanza. Registrar una entrega sin lotes que la cubran deja
 // la ganancia calculada contra una tasa prestada, y eso hay que verlo antes de
 // guardar, no después.
+// ── ARREGLO 152 · quién eligió el método, al lado de los botones ──────
+//
+// Sus palabras del 16/10: "el sistema como que no detecta si es por P2P o si es
+// por transacción directa". La app SÍ lo detecta desde el ARREGLO 138 —medido
+// en Chromium: con lotes de vuelta marca sola 🤝 Calce directo y rellena la
+// permuta— pero lo Único que lo decía era una línea al FINAL del recuadro de
+// abajo, debajo de cuatro filas y de un aviso rojo. Y cuando lo que elige es
+// P2P —que con sus lotes de hoy es siempre, porque 21.000 Bs de vueltas no le
+// ganan a 34.228 de ventas— no se mueve nada en pantalla, porque P2P ya estaba
+// marcado por omisión. Desde fuera eso es idéntico a que la app no haga nada.
+//
+// Va junto a los botones, que es donde ella mira el método, y SIN cifras: las
+// cifras viven una sola vez, en el recuadro de abajo (ARREGLO 125).
+function _htmlMetodoElegido(res, ruta){
+  // El contenedor existe SIEMPRE, aunque esté vacío: si no se dibujara al
+  // abrir, upC() no tendría dónde escribirlo al teclear el primer monto.
+  var vacio="<div id='met-eleg-tx'></div>";
+  if(!res || !ruta || !esRutaCalce(ruta)) return vacio;
+  var cant=parseFloat(res.cant)||0;
+  if(!(cant>0)) return vacio;
+  var org=_origenBsRemesa(ruta.dest||"VES", cant, S.tx && S.tx.cuentaDest);
+  if(!org) return vacio;
+  var uni=((ruta.dest||"VES")==="VES")?"bolívares":ruta.dest;
+  // Lo que ella pulsa manda y la app no se lo vuelve a mover (ARREGLO 138). Y
+  // se dice, porque si no, parece que la app dejó de decidir.
+  if(S.tx && S.tx._metodoTocado)
+    return "<div id='met-eleg-tx' style='font-size:11px;color:var(--tx3);margin:-4px 0 10px;line-height:1.5'>"+
+      "✍️ <b>Lo elegiste tú</b> · la app no te lo cambia.</div>";
+  // El porqué tiene que nombrar al que de verdad decidió. Diciendo siempre
+  // "salen de ventas de USDT" se mentiría en el caso en que lo que inclina la
+  // balanza es el dinero sin registrar, que no es una venta de nada.
+  var pq = (org.metodo==="calce")
+    ? "la mayor parte de esos "+uni+" te los pagaron a ti, así que no hay comisión de Binance que descontar"
+    : (org.sinLote>org.deVenta
+        ? "hay "+uni+" que no salen de ningún lote y, ante la duda, no se da por calce"
+        : "la mayor parte de esos "+uni+" sale de ventas de USDT, que sí pagan comisión");
+  return "<div id='met-eleg-tx' style='font-size:11px;color:var(--tx3);margin:-4px 0 10px;line-height:1.5'>"+
+    "✅ <b>Lo eligió la app</b>: "+pq+". <span style='color:var(--tx4)'>Cámbialo si sabes que fue otra cosa.</span></div>";
+}
 function _htmlDeDondeSalen(res, ruta){
   if(!res || !ruta) return "";
   var dest=ruta.dest||"VES";
@@ -20385,19 +20478,30 @@ function _htmlDeDondeSalen(res, ruta){
       "Registra la operación de USDT que los trajo.</div>";
   // ARREGLO 138: y qué método sale de ahí, en el MISMO recuadro. Dicho en otro
   // sitio habría dos cajas hablando del mismo dinero — el ARREGLO 125.
+  // ARREGLO 152 · esta línea llamaba "ventas de USDT" a lo que no lo era. Con
+  // sus lotes del 16/10 decía "73.500 de ventas de USDT" cuando las ventas son
+  // 34.228: los otros 39.272 no salen de ningún lote. Lo cazó ella sumando las
+  // filas de arriba, que es exactamente para lo que están.
+  //
+  // La DECISIÓN no cambia —lo que no se sabe de dónde vino sigue contando del
+  // lado de P2P, que es el que sí paga comisión: ante la duda, el que no infla
+  // la ganancia— y por eso se queda en _origenBsRemesa. Lo que cambia es que
+  // aquí cada monto se llama por su nombre. Un número con el rótulo de otro es
+  // el error más repetido de esta app, y el que enseña a no fiarse del resto.
+  //
+  // Y el VEREDICTO ya no se escribe aquí: vive arriba, junto a los dos botones
+  // (_htmlMetodoElegido). Dicho en los dos sitios sería el ARREGLO 125 otra vez.
   var org=_origenBsRemesa(dest, cant, S.tx && S.tx.cuentaDest);
   var met="";
   if(org && esRutaCalce(ruta)){
-    var esCalce=(org.metodo==="calce");
-    met="<div style='margin-top:6px;padding-top:6px;border-top:1px solid var(--ln);font-size:11.5px;color:var(--tx2)'>"+
-      (org.mixto
-        ? "Salen de los dos sitios: <b>"+f0(org.deRemesa)+"</b> "+uni+" que te pagaron y <b>"+
-          f0(org.deVenta+org.sinLote)+"</b> de ventas de USDT → manda "
-        : "→ ")+
-      "<b style='color:"+(esCalce?"var(--rol-ee)":"var(--ok)")+"'>"+
-        (esCalce?"\ud83e\udd1d Calce directo":"\ud83d\udd01 Con USDT (P2P)")+"</b>"+
-      ((S.tx&&S.tx._metodoTocado)?" <span style='color:var(--tx4)'>· lo elegiste t\u00fa, no se toca</span>":"")+
-    "</div>";
+    var tro=[];
+    if(org.deRemesa>0.01) tro.push("<b>"+f0(org.deRemesa)+"</b> "+uni+" que te pagaron");
+    if(org.deVenta>0.01)  tro.push("<b>"+f0(org.deVenta)+"</b> de ventas de USDT");
+    if(org.sinLote>0.01)  tro.push("<b style='color:var(--mal)'>"+f0(org.sinLote)+"</b> sin registrar");
+    // Con un solo origen no hay nada que desglosar: la fila de arriba ya lo dice.
+    if(tro.length>1)
+      met="<div style='margin-top:6px;padding-top:6px;border-top:1px solid var(--ln);font-size:11.5px;color:var(--tx2)'>"+
+        "En total: "+tro.join(" · ")+"</div>";
   }
   return "<div style='background:var(--sup2d);border:1px solid var(--ln);border-radius:9px;padding:9px 12px;margin-bottom:8px'>"+
     "<div style='font-size:10.5px;color:var(--tx4);font-weight:700;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px'>"+
@@ -20516,6 +20620,11 @@ function upC(key){
   // ARREGLO 125: el reparto del FIFO cambia con el monto, así que se rehace aquí.
   var fi=document.getElementById("fifo-"+key);
   if(fi) fi.innerHTML=_htmlDeDondeSalen(res, ruta);
+  // ARREGLO 152: el porqué del método cambia con el monto aunque el método no
+  // cambie —de "sale de ventas de USDT" a "hay bolívares sin registrar"— así
+  // que se refresca con lo demás. No lleva ningún campo dentro (ARREGLO 32).
+  var me=document.getElementById("met-eleg-"+key);
+  if(me && key==="tx") me.outerHTML=_htmlMetodoElegido(res, ruta);
 }
 
 // ── INVENTORY HELPERS ────────────────────────────────
@@ -29923,8 +30032,8 @@ function rNueva(){
     "<div class='fl'><label>Nombre del cliente (auto)</label><input id='tx-nm' type='text' placeholder='Se llena al escribir código' value='"+(f.cl||"")+"' oninput='S.tx.cl=this.value' style='background:"+(f.cl?"var(--vd6-a)":"var(--sup)")+";border-color:"+(f.cl?"var(--ok-ln)":"var(--ln)")+"'></div></div>"+
     "<div class='fl' style='max-width:240px'><label>País destino (automático)</label><div style='background:var(--sup2g);border-radius:7px;padding:8px 12px;font-size:13px;font-weight:700'>"+ruta.flag+" "+ruta.pais+"</div></div></div>"+
     "<div class='sec' style='border-left:3px solid var(--info)'><div class='sec-title' style='color:var(--info)'>1️⃣ Monto recibido en "+ruta.orig+" · Tasa del día</div>"+
-    "<div class='f2'><div class='fl'><label>Valor de transacción ("+ruta.orig+")</label><input type='text' inputmode='decimal' placeholder='ej: 50' value='"+(f.am||"")+"' oninput='S.tx.am=_num(this.value);upC(\"tx\")' onchange='_autoMetodoTx()'></div>"+
-    "<div class='fl'><label>"+ruta.lDia+(defTdia&&!f.tdia?" <span style='font-size:11px;color:var(--rol-na);font-weight:600'>← Config: "+defTdia+"</span>":"")+"</label><input type='text' inputmode='decimal' step='0.001' placeholder='"+(defTdia?"Config: "+defTdia:"ej: 629")+"' value='"+tdiaVal+"' oninput='S.tx.tdia=_num(this.value);upC(\"tx\")' onchange='_autoMetodoTx()'></div></div>"+
+    "<div class='f2'><div class='fl'><label>Valor de transacción ("+ruta.orig+")</label><input type='text' inputmode='decimal' placeholder='ej: 50' value='"+(f.am||"")+"' oninput='S.tx.am=_num(this.value);upC(\"tx\");_autoMetodoTxPronto()' onchange='_autoMetodoTx()'></div>"+
+    "<div class='fl'><label>"+ruta.lDia+(defTdia&&!f.tdia?" <span style='font-size:11px;color:var(--rol-na);font-weight:600'>← Config: "+defTdia+"</span>":"")+"</label><input type='text' inputmode='decimal' step='0.001' placeholder='"+(defTdia?"Config: "+defTdia:"ej: 629")+"' value='"+tdiaVal+"' oninput='S.tx.tdia=_num(this.value);upC(\"tx\");_autoMetodoTxPronto()' onchange='_autoMetodoTx()'></div></div>"+
     "<div id='s1-tx'>"+(ok?"<div class='step-box' style='background:var(--info-sup);border:1px solid var(--az2a33)'><span style='font-size:11px;color:var(--info)'>"+(ruta.orig==="VES"?(f2(am)+" "+ruta.orig+" ÷ "+f2(tdia)):(f2(am)+" "+ruta.orig+" × "+f2(tdia)))+" = </span><span style='font-weight:700;font-size:14px;color:var(--info)'>📦 "+f0(cant)+" "+ruta.dest+" a entregar</span></div>":"")+"</div></div>"+
     // ── Las cuentas van DESPUÉS del monto (sus palabras: "donde me ponga
     // a colocar qué paga cada uno y después que me ponga a seleccionar en
@@ -30005,6 +30114,12 @@ function rNueva(){
       }
       return html;
     })()+
+    // ARREGLO 152 · el bloque 3 entero va dentro de su propio contenedor.
+    // Lo que depende del método —los dos botones, el campo de la permuta, la
+    // cabecera— vive aquí dentro, y el botón de guardar vive FUERA. Así
+    // _refrescarMetodoTx() rehace esto sin llevarse por delante el botón que
+    // ella acaba de tocar (ARREGLO 32, otra vez).
+    "<div id='sec3-tx'>"+
     "<div class='sec' style='border-left:3px solid var(--ok);background:"+((hasInv||_rTx.calce)?"var(--vd6-k)":"var(--sup)")+"'><div class='sec-title' style='color:var(--ok)'>3️⃣ "+(_rTx.calce?"Permuta":"Tasas USDT")+
     (_rTx.calce?"<span style='background:var(--mo6-b);color:var(--rol-ee);font-size:11px;padding:2px 8px;border-radius:10px;margin-left:8px;font-weight:600'>🤝 Sin USDT</span>"
      :hasInv?"<span style='background:var(--ok-sup);color:var(--ok);font-size:11px;padding:2px 8px;border-radius:10px;margin-left:8px;font-weight:600'>✅ Auto desde inventario</span>":"<span style='background:var(--mal-sup);color:var(--mal);font-size:11px;padding:2px 8px;border-radius:10px;margin-left:8px'>Sin inventario</span>")+
@@ -30016,7 +30131,9 @@ function rNueva(){
       "<div style='display:flex;background:var(--sup2f);border-radius:9px;padding:3px;gap:3px;margin-bottom:10px'>"+
         "<button type='button' onclick='txMetodo(\"p2p\")' style='flex:1;padding:8px;border:none;border-radius:7px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;background:"+(_rTx.calce?"transparent":"var(--ok)")+";color:"+(_rTx.calce?"var(--tx3)":"var(--sobre-color)")+"'>🔁 Con USDT (P2P)</button>"+
         "<button type='button' onclick='txMetodo(\"calce\")' style='flex:1;padding:8px;border:none;border-radius:7px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;background:"+(_rTx.calce?"var(--rol-ee)":"transparent")+";color:"+(_rTx.calce?"var(--sobre-color)":"var(--tx3)")+"'>🤝 Calce directo</button>"+
-      "</div>"
+      "</div>"+
+      // ARREGLO 152: y quién lo eligió, debajo de los dos botones.
+      _htmlMetodoElegido(_rTx, ruta)
     :"")+
     (_rTx.calce?
       // La permuta va SIEMPRE en bolivares por real, la misma unidad que sus
@@ -30073,7 +30190,7 @@ function rNueva(){
       "<div id='s2-tx' class='step-box' style='background:var(--ok-sup);border:1px solid var(--vd2a33)'><span style='font-size:11px;color:var(--ok)'>"+f2(am)+" ÷ "+f4(tc)+" = </span><span style='font-weight:700;font-size:13px;color:var(--ok)'>+"+f2(uc)+" USDT</span></div>"+
       "<div id='s3-tx' class='step-box' style='background:var(--mal-sup);border:1px solid var(--rj3a33)'><span style='font-size:11px;color:var(--mal)'>"+f0(cant)+" "+ruta.dest+" ÷ "+f2(tv)+" = </span><span style='font-weight:700;font-size:13px;color:var(--mal)'>−"+f2(uv)+" USDT</span></div>"+
     "</div>":"<div id='s2-tx'></div><div id='s3-tx'></div>")+
-    "</div>"+
+    "</div></div>"+   // cierra el sec del bloque 3 y su contenedor sec3-tx
     // ARREGLO 125: de dónde salen los bolívares. Con su id, para que upC() lo
     // refresque al teclear — si no, se queda del último repintado y enseña un
     // reparto que ya no es el del monto que hay escrito (ARREGLO 55).
@@ -30109,7 +30226,7 @@ function rNueva(){
     "</select>"+
     (_cvTx>0?"<div style='margin-top:8px;font-size:11px;color:var(--rj3)'>📌 Comisión: "+f2(_cvTx)+" Bs — la asumes tú, se descuenta de tu ganancia.</div>":"")+
     "</div>":"")+
-    "<button class='btn-main btn-green' onclick='saveTx()'>💾 Guardar y bloquear</button></div>";
+    "<button class='btn-main btn-green' onpointerdown='_txTocaGuardar()' onclick='saveTx()'>💾 Guardar y bloquear</button></div>";
 }
 
 function rNuevaEE(){
