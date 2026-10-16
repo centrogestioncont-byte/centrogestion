@@ -110,6 +110,7 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "_tsDeUid", "_tsDeAjuste", "_deducirHoraApertura", "_isoDeDDMMAA", "_motivoDelAjuste", "_ajusteAEgreso", "_ajusteAGanExtra", "_cuentaMadre", "_cuentaOMadre", "_completarDesdeMadre", "toggleCuentaMadre",
                     "traspasosAPersonal", "egresosPersonalesDesdeCuentaPersonal", "efectoTasasDesde", "_isoDeFechaLote",
                     "aportesDesde", "_cruceUsdtPersonal", "_gananciaMeses", "_aporteVacio",
+                    "_aporteSubeSaldo",
                     // ARREGLO 143 - mercancia. conciliacionCapital las llama,
                     // asi que sin estas la suite entera se cae al cargar.
                     "_costoArticulo", "_mercanciaEnMano", "gananciaMercanciaDelMes",
@@ -11045,7 +11046,11 @@ console.log("\nARREGLO 146 · plata suya que entra y sale de la empresa");
   // 6 · GUARDAR MUEVE EL SALDO, Y BORRAR LO DEVUELVE. Sin la segunda mitad, un
   //     aporte mal metido no se puede deshacer y hay que escribir el saldo a
   //     mano — justo lo que ella pidio no tener que hacer nunca mas.
-  ok(/ajusteCuentaEgreso\(a\.cuentaId,\s*entra\?monto:-monto\)/.test(sa),
+  // ARREGLO 147: la forma cambio al entrar el tercer estado («ya», que no
+  // toca el saldo). Lo que se exige sigue siendo lo mismo: que cuando SI
+  // toca, suba al entrar y baje al salir. El `if(sube)` lo fija la guardia
+  // del 147; aqui se fija el signo, que es lo que esta prueba cuida.
+  ok(/ajusteCuentaEgreso\(a\.cuentaId,\s*dir==="sale"\?-monto:monto\)/.test(sa),
      "guardar sube el saldo si entro y lo baja si salio");
   const da = sinC(sacarFuncion("delAporte"));
   ok(/ajusteCuentaEgreso\(a\.cuentaId,\s*a\.dir==="sale"\?a\.monto:-a\.monto\)/.test(da),
@@ -11094,6 +11099,78 @@ console.log("\nARREGLO 146 · plata suya que entra y sale de la empresa");
   // el dia 1 de cada mes diria "0 meses ganando", que es falso y asusta.
   ok(/if\(_gm\[_i\]\.enCurso\)\s*continue;/.test(HTML),
      "y el mes en curso no cuenta para la racha, aunque si se dibuje");
+}
+
+// ── ARREGLO 147 · lo que YA entró y salió se explica, no se vuelve a sumar ─
+//
+// El 146 dio por hecho que un aporte es dinero entrando AHORA. Lo cazó ella el
+// 16/10 con su primera entrada de verdad: los 470.000 Bs del 09/10 entraron a
+// BANESCO y salieron ese mismo día, asi que el saldo correcto es 43,96 — y el
+// aporte lo dejó en 470.043,96. Medido con su export:
+//
+//     aporte que SUBE el saldo  ->  lo que sobra NO baja: 912,17
+//     aporte que solo EXPLICA   ->  baja a 446,59 (y a 203,73 con las cuatro)
+console.log("\nARREGLO 147 · lo que ya entró y salió solo se explica");
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+
+  // 1 · LA REGLA VIVE EN UN SITIO, y la leen el guardado y el borrado.
+  //     Escrita en cada uno, un dia guardar subiria un saldo que borrar no
+  //     devolveria — y eso deja una cuenta inflada sin que nada lo diga.
+  ok((sinC(HTML).match(/function _aporteSubeSaldo\(/g) || []).length === 1,
+     "la regla de si mueve el saldo se escribe UNA vez");
+  ok(F._aporteSubeSaldo("entra") === true && F._aporteSubeSaldo("sale") === true &&
+     F._aporteSubeSaldo("ya") === false,
+     "y solo «ya» deja el saldo quieto");
+  const sa = sinC(sacarFuncion("saveAporte"));
+  const da = sinC(sacarFuncion("delAporte"));
+  ok(/var sube\s*=\s*_aporteSubeSaldo\(dir\);/.test(sa),
+     "guardar la lee");
+  ok(/var sube=_aporteSubeSaldo\(a\.dir\);/.test(da),
+     "y borrar la lee tambien, no su propio criterio");
+
+  // 2 · Y LA RESPETAN LAS DOS. Es la mitad que no se puede dejar a medias:
+  //     guardando sin tocar el saldo y borrando tocandolo, borrar le quita a
+  //     la cuenta un dinero que ese registro nunca le puso.
+  ok(/if\(sube\)\s*ajusteCuentaEgreso\(a\.cuentaId,\s*dir==="sale"\?-monto:monto\);/.test(sa),
+     "guardar solo mueve el saldo cuando toca");
+  ok(/if\(sube\)\s*ajusteCuentaEgreso\(a\.cuentaId,\s*a\.dir==="sale"\?a\.monto:-a\.monto\);/.test(da),
+     "y borrar devuelve SOLO lo que se movio");
+
+  // 3 · PARA LA CONCILIACION, «ya» CUENTA IGUAL QUE «entra». Lo unico que
+  //     cambia es el saldo: el dinero entro de verdad, y es lo que explica el
+  //     hueco que dejo la salida ya registrada.
+  const ad = sinC(sacarFuncion("aportesDesde"));
+  ok(/if\(a\.dir==="sale"\)\s*u=-u;/.test(ad) && !/dir==="ya"/.test(ad),
+     "aportesDesde solo resta los «sale»: «ya» suma como una entrada");
+
+  // 4 · EL AVISO DICE QUE PASA CON EL SALDO. Es lo unico que distingue los
+  //     tres, y es justo lo que se equivoco la primera vez que lo uso: un
+  //     "metiste 470.000" sobre una cuenta de 44 se lee igual de bien que el
+  //     correcto si no se nombra el saldo.
+  ok(/El saldo pasa de "\+f2\(saldoAhora\)\+" a "\+f2\(saldoLuego\)/.test(sa),
+     "el aviso de los que mueven dice de cuanto a cuanto");
+  ok(/El saldo NO se toca: se queda en "\+f2\(saldoAhora\)/.test(sa),
+     "y el de «ya» dice que no lo toca, con la cifra");
+  ok(/saldoLuego=sube \? \(dir==="sale" \? saldoAhora-monto : saldoAhora\+monto\) : saldoAhora/.test(sa),
+     "y ese «a cuanto» sale de la misma regla, no de una cuenta aparte");
+
+  // 5 · LOS TRES BOTONES ESTAN, y el de «ya» dice que no toca el saldo. Sin
+  //     esa linea debajo es una opcion mas cuyo efecto hay que adivinar.
+  ok(/dir:\\"ya\\"/.test(HTML) && /📌 Ya está en el saldo/.test(HTML),
+     "el tercer boton se dibuja");
+  ok(/entró y ya salió · el saldo no se toca/.test(HTML),
+     "y dice debajo lo que le hace al saldo");
+  ok(/\["entra","⬇️ Metí plata mía","el saldo sube"/.test(HTML) &&
+     /\["sale","⬆️ Saqué plata mía","el saldo baja"/.test(HTML),
+     "y los otros dos tambien, desde una sola lista");
+
+  // 6 · LO QUE SE GUARDA ES LO QUE ESTA MARCADO. Con un `dir` que no sea uno
+  //     de los tres, caer en "entra" subiria un saldo que ella no pidio mover.
+  ok(/var dir = \(a\.dir==="sale"\|\|a\.dir==="ya"\) \? a\.dir : "entra";/.test(sa),
+     "guardar normaliza el dir a uno de los tres");
+  ok(/var dir=\(a\.dir==="sale"\|\|a\.dir==="ya"\)\?a\.dir:"entra";/.test(sinC(sacarFuncion("_htmlAporte"))),
+     "y el formulario marca con el MISMO criterio: no pueden separarse");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

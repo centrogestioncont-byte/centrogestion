@@ -4806,6 +4806,74 @@ Medido con su export, el ciclo entero: meter 100.000 Bs sube BANESCO de 43,96 a
 exacto. Y con las cuatro entradas suyas registradas, **el misterio baja de 912 a
 204**.
 
+#### Pero el 146 dio por hecho que el dinero entra HOY (ARREGLO 147)
+
+Lo cazó ella el 16/10, metiendo su primera entrada de verdad con el botón
+recién desplegado. Los 470.000 Bs del 09/10 **entraron a BANESCO y salieron ese
+mismo día** —con ellos compró USDT que se fue a su Binance personal— así que el
+saldo correcto es **43,96**. El aporte lo dejó en **470.043,96**.
+
+Y el sobrante no bajó ni un céntimo, que es lo que lo delató:
+
+```
+aporte que SUBE el saldo   tienes +465 y deberias +465, se cancelan   912,17
+aporte que solo EXPLICA    tienes igual, deberias +465                446,59
+```
+
+**Las dos cuentas son correctas y cada una vale para su caso.** Lo que faltaba
+era poder decir cuál. Por eso hay un tercer estado:
+
+```
+⬇️ Metí plata mía        el saldo sube      ← entra hoy
+⬆️ Saqué plata mía       el saldo baja
+📌 Ya está en el saldo   no lo toca         ← entró y ya salió
+```
+
+**Y mi error de método fue el de siempre con otra cara:** medí *"baja de 912 a
+204"* metiendo los cuatro registros en la lista **sin tocar los saldos**. Esa
+simulación representaba un mundo donde el dinero está en las cuentas; en el suyo
+entró y salió. La medición no estaba mal — estaba midiendo **otro caso** del que
+luego di instrucciones. Es la cara B del ARREGLO 84: *medir no vale si mides otra
+cosa*, y aquí lo otro era el estado de partida.
+
+- **La regla vive en UN sitio** (`_aporteSubeSaldo`) y la leen el guardado y el
+  borrado. Escrita en cada uno, un día guardar subiría un saldo que borrar no
+  devolvería — y eso deja una cuenta inflada sin que nada lo diga. Es lo que ya
+  obligó a `_restaurarVentasFIFO` (ARREGLO 97).
+- **Para la conciliación, `ya` cuenta igual que `entra`.** El dinero entró de
+  verdad: es lo que explica el hueco que dejó la salida ya registrada. Lo único
+  que cambia es que no se vuelve a sumar al saldo.
+- **El aviso dice qué pasa CON EL SALDO**, con las dos cifras (*"pasa de 43,96 a
+  470.043,96"* o *"NO se toca: se queda en 43,96"*). Es lo único que distingue
+  los tres, y es justo lo que no se vio la primera vez: un *"Metiste 470.000"*
+  sobre una cuenta que tiene 44 se lee igual de bien que el correcto.
+- **Y el "a cuánto queda" sale de la misma regla**, no de una cuenta aparte.
+- **Los tres botones se dibujan desde una sola lista** y cada uno dice debajo
+  qué le hace al saldo. El de `ya` va en su propia fila y a lo ancho: con sus 112
+  ajustes de saldo, es el que más va a usar al ponerse al día.
+- **Un `dir` desconocido se normaliza a `entra`** en el guardado **y con el mismo
+  criterio en el formulario**: si se separaran, lo marcado y lo guardado podrían
+  no ser lo mismo.
+
+Medido en Chromium con su export, pulsando el botón y tecleando de verdad:
+
+```
+                              sobra     BANESCO
+1 · hoy                       912,17      43,96
+2 · ⬇️ Metí (lo de ayer)      912,17  470.043,96   ← inflado
+3 · 📌 Ya está en el saldo    446,59      43,96
+4 · borrarlo                  912,17      43,96   ← vuelve exacto
+5 · LAS CUATRO con 📌         203,73      43,96   ← y BVJ y SAIPA intactas
+```
+
+**203,73**, que es 912,17 − 708,44 al céntimo: justo las cuatro operaciones que
+el 146 sacó del "efecto de las tasas". Las dos mitades cierran.
+
+**Lo que esto enseña para la próxima, y vale más que el arreglo:** *"regístralo"*
+no es una sola cosa. Un dinero que **entra hoy** y uno que **entró y ya salió**
+necesitan apuntes distintos, y la app tiene que preguntar cuál es — no darlo por
+hecho. El 146 lo dio por hecho y salió inflando una cuenta.
+
 #### Y la tarjeta ahora abre contestando "¿gano o pierdo?"
 
 Era la pregunta que esta tarjeta no contestaba, y el dato existía desde siempre
