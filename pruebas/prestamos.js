@@ -11564,6 +11564,17 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
      "saveTx pregunta, y sólo se para si ella dice que no");
   ok(!/_ig\.length\)\s*\{\s*alert/.test(sv2),
      "nunca bloquea: con un alert no habría podido registrar las tres de CARLOS");
+
+  // ── ARREGLO 154b · y sólo empareja lo que vino de un archivo ────────────
+  // Sin esto se perdía una remesa de VERDAD: ella registra en el teléfono y
+  // su esposo registra otra igual en la PC, y antes de sincronizar son dos.
+  // Reproducido: quedaba 1 de 2.
+  ok(/r\._uidImp=1/.test(imp),
+     "la importación marca los registros a los que le pone un _uid nuevo");
+  ok(/remoteItem\._uidImp\|\|impor\[c\]/.test(mg),
+     "y la fusión sólo empareja por contenido si uno de los dos lleva esa marca");
+  ok(/if\(item\._uidImp\) impor\[c\]=1/.test(mg),
+     "mira la marca en los dos lados: la puede llevar el de aquí o el de allá");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
