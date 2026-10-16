@@ -2926,6 +2926,20 @@ function cTx(){
   // isVzla=false → dest=VES (BRL↔VZLA): uc usa BRL, uv usa VES
   var comUc = tcDeLote ? 0 : (isVzla ? comVes : comOtr);
   var comUv = tvDeLote ? 0 : (isVzla ? comOtr : comVes);
+  // ARREGLO 144 · sin operación en Binance no hay comisión de Binance.
+  //
+  // Esa comisión está ahí porque para conseguir el dinero hay que COMPRAR USDT
+  // y para entregarlo hay que VENDERLO. Cuando lo que entra ya es USDT —el
+  // cliente te lo mandó— no hay compra, y cuando lo que sale es USDT no hay
+  // venta. Restarla igual es apuntar un costo que nadie pagó.
+  //
+  // Va aquí y no sólo en la tasa porque `tcDeLote` mira de DÓNDE salió el
+  // número, no si la operación existió: escribiendo la tasa a mano (que es lo
+  // que había que hacer antes de este arreglo, y lo que ella ya hizo el 29/06)
+  // volvía a restarse. Medido con 40 USDT → 200 R$: apuntaba 0,1999 donde son
+  // 0,26.
+  if(ruta.orig==="USDT") comUc = 0;
+  if((ruta.dest||"VES")==="USDT") comUv = 0;
   // ARREGLO 106 · calce directo. Sin USDT en medio no hay comision de Binance
   // que descontar, y la tasa de compra sale de la permuta.
   //
@@ -3098,7 +3112,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261015_v225";
+var APP_VERSION = "20261016_v226";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -20959,15 +20973,44 @@ function editRestanteInv(id){
   document.getElementById("editRestanteSave").onclick=guardar;
   inp.onkeydown=function(e){ if(e.key==="Enter") guardar(); if(e.key==="Escape") cerrar(); };
 }
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 144 · 1 USDT vale 1 USDT, y eso no hay que ir a buscarlo
+// ══════════════════════════════════════════════════════════════════════
+//
+// Hay rutas donde lo que ENTRA ya es USDT (USDT ↔ BRL, USDT ↔ VES) o donde lo
+// que SALE es USDT. Las dos tasas de aquí salen de los lotes del inventario, y
+// un lote de "compra de USDT pagando en USDT" no existe ni va a existir: no se
+// compra en Binance lo que el cliente ya te mandó. Así que la tasa venía null,
+// y de ahí salían TRES cosas, las tres medidas con su export el 15/10 sobre una
+// remesa de 40 USDT → 200 R$:
+//
+//   1 · sin tasa, cTx() se sale por su return y apunta GANANCIA 0. Había que
+//       escribir "1" a mano en el campo de la tasa de compra, y olvidarlo no
+//       avisa de nada: la remesa se guarda con pr 0.
+//   2 · escrita a mano, tcDeLote queda en false y se le resta la comisión de
+//       Binance (ARREGLO 42), que en esta ruta nadie pagó. Medido: apuntaba
+//       0,1999 donde la ganancia es 0,26 — un 23% por debajo, siempre a la baja.
+//   3 · saveTx ve hasRates:false y deja DOS lotes en blanco cada vez, uno de
+//       ellos "compra de USDT en USDT", que no se puede rellenar nunca.
+//
+// Las tres salen del mismo sitio, así que se arreglan en el mismo sitio: la
+// tasa de USDT contra USDT es 1 por definición. No es una tasa que haya que
+// medir ni una decisión suya — es la unidad en la que está escrito todo lo
+// demás. tasaDeReferencia() ya lo dice así desde hace tiempo ("if(moneda===
+// \"USDT\") return {tasa:1}"); lo que faltaba era decirlo también aquí, que es
+// la puerta por donde pasan cTx() y saveTx().
+//
+// Lo ya guardado no se mueve: la ganancia del mes suma el `pr` que lleva cada
+// remesa dentro, no lo recalcula.
 function getAutoRates(origMoneda,destMoneda,montoOrigen,montoBs,cuentaOrigenId,cuentaDestinoId){
   var mO=parseFloat(montoOrigen)||0, mB=parseFloat(montoBs)||0;
-  var tc=mO>0?getTasaCompraPonderada(origMoneda,mO,cuentaOrigenId):getLastTasaCompra(origMoneda,cuentaOrigenId);
+  var tc=(origMoneda==="USDT")?1:(mO>0?getTasaCompraPonderada(origMoneda,mO,cuentaOrigenId):getLastTasaCompra(origMoneda,cuentaOrigenId));
   var dest=destMoneda||"VES";
-  var tv=mB>0?getTasaVentaPonderada(dest,mB,cuentaDestinoId):getLastTasaVenta(dest,cuentaDestinoId);
+  var tv=(dest==="USDT")?1:(mB>0?getTasaVentaPonderada(dest,mB,cuentaDestinoId):getLastTasaVenta(dest,cuentaDestinoId));
   // Fix rutas no-estándar (ej: VES→BRL, VES→PEN):
   // Si destMoneda no es VES y no hay lotes de VENTA para esa moneda,
   // getLastTasaVenta cae en VES (error). Usar en su lugar lotes de COMPRA del destino.
-  if(dest!=="VES"){
+  if(dest!=="VES" && dest!=="USDT"){
     var hayLotesVentaDest=(S.inventarioUsdt||[]).some(function(r){
       return r.tipo==="venta"&&r.moneda===dest&&(parseFloat(r.tasa)||0)>0;
     });
