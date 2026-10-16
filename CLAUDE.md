@@ -5141,6 +5141,53 @@ antes y después, sale idéntica.
 **Y no se avisa de la diferencia en los meses viejos**, a propósito y por
 decisión suya: *"no muestres avisos de diferencias en meses viejos"*.
 
+## Un ajuste de saldo no es ganancia ni gasto (ARREGLO 156)
+
+Su decisión (16/10): *"que no cuenten como ganancia del mes, pero que se vean
+aparte"*. Un ajuste es **dinero que ya estaba y no se había registrado**;
+contarlo como ganancia del mes infla la utilidad y con ella su sueldo, que es el
+30 % de esa utilidad.
+
+**La marca es estructural, no se adivina por el texto.** Los dos caminos del
+ARREGLO 145 —`_ajusteAGanExtra()` y `_ajusteAEgreso()`— nacen con `esAjuste`
+puesto. Buscar "AJUSTE" en la descripción **no sirve**, y está medido: de sus
+seis ganancias extra de octubre, el texto acierta 4 de 5 — deja fuera
+*"AUMENTAR SALDO DE CUENTA"*, que son **5,02**. Es la misma regla que ya obliga
+a reconocer la mercancía por `fromArticulo` y no por la categoría: la
+descripción la escribe ella y puede cambiarla.
+
+**Dos puertas, una por lado**, y las dos en un solo sitio: `_egOperativos()` y
+`_ganExtraOperativa()`. Escritas en cada pantalla se separarían con el primer
+cambio — el fallo de los ARREGLOS 101, 119, 150 y 153.
+
+**Y se dicen, no se esconden.** Van en línea aparte en el Resumen, con su
+nombre, como el interés pendiente de un préstamo (ARREGLO 71). Medido con su
+export, marcando los cinco de octubre:
+
+```
+                    antes      después
+utilidad del mes    73,17        64,09
+ganancia extra      14,93         1,84   ← lo que queda son los euros
+egresos            189,93       185,92
+ajustes de saldo        —    +13,09 / −4,01  =  +9,08 aparte
+```
+
+**Lo que cuesta, y hay que decírselo:** el *"te sobran"* de la conciliación
+**sube**, de 6,94 a 16,02. No aparece dinero — lo que pasa es que ese dinero
+deja de tener una operación que lo explique, que es exactamente lo que es. Un
+ajuste de saldo **es** dinero sin explicar; el ARREGLO 145 le dio un sitio donde
+anotarlo, y esto deja de contarlo como si lo hubiera ganado.
+
+**Marcar a mano no mueve ningún saldo**, y se dice en la propia pregunta: el
+dinero ya entró o salió cuando se registró. Hay guardia por nombre. Y **se puede
+desmarcar**: medido, desmarcar devuelve los números exactos.
+
+**La marca lleva su `_mod`**, o no viaja al otro aparato.
+
+**Los de meses cerrados no se tocan** — desde el ARREGLO 155 un mes cerrado
+enseña lo que se guardó, así que marcar algo de julio no mueve su cierre. Era su
+condición.
+
 ### Registra la operación — no escribas el saldo
 
 **La regla que más costó el 12/09**, y se rompió tres veces en un día.
