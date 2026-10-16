@@ -1780,6 +1780,85 @@ guardia para ese patrón exacto y una prueba negativa que lo reinyecta.
 
 Es la lección del ARREGLO 121 y del 136 por tercera vez: **cuando un arreglo toca
 un campo donde ella escribe, hay que escribir en él.**
+#### Detectaba, pero no se veía — y se comía el primer toque (ARREGLO 152)
+
+Sus palabras del 16/10: *"he estado por registrar remesas y no hay una
+diferencia, el sistema como que no detecta que el lote es el que voy a descontar
+y no detecta si es por P2P o si es por transacción directa"*.
+
+**Detectar, detectaba.** Medido en Chromium con su export: forzando lotes de
+vuelta, la app marca sola 🤝 Calce directo y rellena la permuta en 204,03. Lo que
+fallaba eran tres cosas, y las tres se juntan para que desde fuera parezca que la
+app no hace nada.
+
+**1 · Con sus lotes no puede salir calce, y eso no es un fallo.** El FIFO gasta
+primero las ventas de USDT, y el lote de vueltas no le llega:
+
+```
+10/14    950 Bs   venta de USDT
+10/14 33.278 Bs   venta de USDT
+10/15 21.000 Bs   TE PAGARON        ← 21.000 nunca le gana a 34.228
+```
+
+Así que siempre sale **P2P**, que además es lo que ya estaba marcado por omisión.
+La app decide en cada remesa y decide bien; lo que pasa es que decide lo mismo
+que había, y **nada en la pantalla decía que había decidido**.
+
+**2 · El rótulo llamaba "ventas de USDT" a lo que no lo era.** Lo cazó ella
+sumando las filas, que es exactamente para lo que están:
+
+```
+la línea decía ...  21.000 que te pagaron y 73.500 de ventas de USDT
+las filas dicen ..  34.228 de ventas · 39.272 sin lote
+```
+
+La **decisión** no cambia —lo que no se sabe de dónde vino sigue contando del lado
+de P2P, que es el que sí paga comisión: ante la duda, el que no infla la
+ganancia— y por eso se queda en `_origenBsRemesa`. Lo que cambia es que cada monto
+se llama por su nombre: *"En total: 21.000 Bs que te pagaron · 34.228 de ventas de
+USDT · 39.272 sin registrar"*. **Un número con el rótulo de otro es lo que enseña
+a no fiarse del resto de la pantalla.**
+
+**3 · Y el primer toque a 💾 Guardar se perdía.** El `change` de un campo salta
+cuando ella toca otra cosa, y esa otra cosa suele ser el botón de guardar. El
+orden del navegador es `mousedown → blur → mouseup → click`, así que el `R()` que
+había ahí borraba el botón **entre el mousedown y el mouseup** y el click no
+llegaba a dispararse. Medido en Chromium con touch:
+
+```
+                      antes (v232)        ahora (v233)
+primer toque     cambia a calce, NO guarda    GUARDA
+segundo toque           guarda            (ya no hay botón)
+```
+
+Desde fuera eso es *"el botón no hace nada la primera vez"*, y **enseña a tocar
+dos veces un botón que mueve dinero**.
+
+Lo que lo sostiene, y son tres mitades —faltando cualquiera vuelve el fallo:
+
+- **El bloque 3️⃣ vive en su propio contenedor** (`sec3-tx`), y el botón de guardar
+  vive FUERA. Así se puede rehacer lo que cambia con el método sin llevarse por
+  delante el botón.
+- **El HTML de ese bloque sale de `rNueva()`**, la misma función que lo dibuja.
+  Escrito aparte, un día el bloque repintado diría algo distinto del dibujado.
+- **Y una bandera del gesto** (`_txTocaGuardar`, en el `pointerdown`, que ocurre
+  antes del blur): con el dedo ya puesto en Guardar, el método se aplica y **no se
+  dibuja nada**. Repintar ahí cambia el alto del bloque y **mueve el botón bajo el
+  dedo** — eso fue lo que falló en el primer intento, con el contenedor ya hecho.
+
+**Y el método se decide al TECLEAR, no al salir del campo.** Esto **revierte** la
+regla que dejó escrita el ARREGLO 138 (*"en cada tecla mataría el campo"*): era
+cierta cuando esto llamaba a `R()`, y dejó de serlo con el contenedor, porque el
+campo del monto está **fuera** de lo que se repinta. Con un respiro de 450 ms, el
+método ya está puesto antes de que ella baje el dedo al botón, y el bloque no
+cambia de alto en ese momento. Medido: a los 700 ms de teclear "500", el botón se
+marca solo, la permuta se rellena, **y el foco sigue dentro del campo con su 500**.
+
+**Lo que esto NO arregla, y es lo que más le cambia los números:** de los 94.500 Bs
+que entrega con 500 R$ a 189, **39.272 no salen de ningún lote**. La app los valora
+con la tasa del último lote conocido porque no tiene otra, así que la ganancia de
+esa remesa sale de una tasa prestada. **Arreglar el rótulo hace que ese hueco se
+vea; cerrarlo es registrar las ventas de USDT que faltan.**
 
 ---
 
