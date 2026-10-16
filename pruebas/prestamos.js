@@ -110,7 +110,7 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "_tsDeUid", "_tsDeAjuste", "_deducirHoraApertura", "_isoDeDDMMAA", "_motivoDelAjuste", "_ajusteAEgreso", "_ajusteAGanExtra", "_cuentaMadre", "_cuentaOMadre", "_completarDesdeMadre", "toggleCuentaMadre",
                     "traspasosAPersonal", "egresosPersonalesDesdeCuentaPersonal", "efectoTasasDesde", "_isoDeFechaLote",
                     "aportesDesde", "_cruceUsdtPersonal", "_gananciaMeses", "_aporteVacio",
-                    "_aporteSubeSaldo",
+                    "_aporteSubeSaldo", "_egOperativos",
                     // ARREGLO 143 - mercancia. conciliacionCapital las llama,
                     // asi que sin estas la suite entera se cae al cargar.
                     "_costoArticulo", "_mercanciaEnMano", "gananciaMercanciaDelMes",
@@ -11260,6 +11260,71 @@ console.log("\nARREGLO 149 · el interés de la apertura");
     ok(new RegExp("cap\\."+f[0]).test(msg) && msg.indexOf(f[1])>=0,
        "el aviso lista «"+f[1]+"»");
   });
+}
+
+// ── ARREGLO 150 · la compra de mercancía no es un gasto del mes, EN TODAS ─────
+// El ARREGLO 143 lo aplico solo en calcMesCompleto. Las pantallas que suman los
+// egresos por su cuenta se quedaron con la regla vieja, y la que ella abre
+// todos los dias era una de ellas: con su maquina de 210, el Resumen decia
+// NETO REAL −151,76 mientras el Balance decia +73,17 el mismo mes.
+//
+// Es la forma del ARREGLO 101 y del 119: una regla nueva no basta con aplicarla
+// donde salto el problema — hay que buscar TODAS las copias de la vieja.
+console.log("\nARREGLO 150 · la mercancía no baja el neto del mes");
+{
+  // Sin quitar comentarios, una guardia mide lo que dice un comentario y no lo
+  // que hace el código (ARREGLO 100).
+  const sinC = t => t.replace(/\/\/[^\n]*/g, "");
+  ok(typeof F._egOperativos === "function", "existe la puerta única _egOperativos");
+  // Filtra por la MARCA, no por la categoría: la categoría es un nombre que ella
+  // puede renombrar en Configuración (ARREGLO 143).
+  const eo = sacarFuncion("_egOperativos");
+  ok(/fromArticulo/.test(eo) && !/categoria|\.cat\b/.test(eo),
+     "filtra por «fromArticulo», no por la categoría");
+  ok(F._egOperativos([{usdt:1},{usdt:2,fromArticulo:9}]).length === 1,
+     "deja fuera el egreso de mercancía y conserva el normal");
+  ok(F._egOperativos(null).length === 0, "sin lista no revienta");
+
+  // Los SEIS sitios que restan egresos para un neto del mes, CON SU CUENTA.
+  //
+  // El primer intento pedía solo que `_egOperativos` apareciera en la función, y
+  // cinco de las seis pruebas negativas SE ESCAPARON: cada sitio la llama dos
+  // veces (pagados y pendientes), así que quitando una quedaba la otra y la
+  // guardia daba verde con el fallo dentro. Es el agujero del ARREGLO 140
+  // —"hay que exigir las dos por nombre"— cometido otra vez, citándolo.
+  //
+  // Por eso se cuenta. Si un día una de estas funciones necesita una llamada
+  // más, esto falla hasta que alguien actualice el número — que es justo lo que
+  // obliga a mirar si la nueva está del lado correcto.
+  [["rDash", 2, "el Resumen — el que ella abre"],
+   ["rBalanceStd", 2, "el Balance Mensual"],
+   ["reporteJulio", 2, "el reporte de Julio"],
+   ["exportarMesExcel", 2, "la hoja de Excel del mes"],
+   ["generarInformePDF", 1, "el reparto por categoría del PDF"],
+   ["rInformeCierre", 2, "el conteo de gastos del Cierre"]].forEach(function(f){
+    const n = (sinC(sacarFuncion(f[0])).match(/_egOperativos\(/g)||[]).length;
+    ok(n === f[1], f[2]+" pasa por _egOperativos ("+n+" de "+f[1]+")");
+  });
+
+  // Y calcMesCompleto, que es de donde salio la regla: los pagados Y los
+  // pendientes. El 143 solo filtro los pagados, asi que una maquina comprada a
+  // credito seguia anunciando una perdida que no existe.
+  const cmc = sacarFuncion("calcMesCompleto");
+  ok(/egEmpPag\s*=\s*r2\([^;]*!e\.fromArticulo/.test(cmc),
+     "calcMesCompleto deja los pagados de mercancía fuera (ARREGLO 143)");
+  ok(/egEmpPend\s*=\s*r2\(_egOperativos\(/.test(cmc),
+     "y los pendientes también (ARREGLO 150)");
+
+  // ── Lo que NO se filtra, a propósito ──────────────────────────────────────
+  // Ese dinero SÍ salió del banco: lo que no hace es bajar la ganancia, porque
+  // entró una máquina que vale lo mismo. Filtrarlo aquí descuadraría la cuenta
+  // contra sus propios movimientos.
+  const ric = sacarFuncion("rInformeCierre");
+  ok(/egEmpM\.filter\(function\(e\)\{return e\.pagada&&e\.cuentaId;\}\)/.test(ric),
+     "el reparto POR CUENTA sigue contando la mercancía: ese dinero sí salió");
+  // (La doble resta en la conciliación ya la fija la guardia del ARREGLO 143,
+  // con `sinCom`: aquí el mismo nombre sale en un COMENTARIO de esa función y
+  // un ancla sin limpiar mide el comentario, no el código — ARREGLO 100.)
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

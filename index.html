@@ -2577,6 +2577,27 @@ function gananciaMercanciaDelMes(mesKey){
 //
 // El corte de fecha es el MISMO que usa la resta que corrige (ARREGLO 96): con
 // otro corte queda un hueco o se cuenta de mas.
+// ── ARREGLO 150 (16/10/2026) · la compra de mercancia no es un gasto del mes ─
+//
+// El ARREGLO 143 lo dejo escrito y lo aplico SOLO en `calcMesCompleto`. Las
+// pantallas que suman los egresos por su cuenta se quedaron con la regla vieja,
+// y la que ella abre todos los dias es una de ellas. Lo vio el 16/10 con la
+// maquina de 210 comprada el dia antes:
+//
+//   Resumen → NETO REAL          −151,76   (los 210 dentro)
+//   Balance → "¿ganas o pierdes?"  +73,17   (calcMesCompleto, sin ellos)
+//
+// Dos cuentas del mismo mes, y la que asusta es la que abre primero. Es el
+// 34,27 contra el 34,28 con el numero mas grande que mira.
+//
+// Lo que NO se filtra, a proposito: la lista de egresos, el reparto POR CUENTA
+// y los movimientos. Ese dinero SI salio del banco — lo que no hace es bajar la
+// ganancia del mes, porque entro una maquina que vale lo mismo (el capital ya
+// la cuenta). Por eso esto filtra para RESTAR, no para ocultar.
+function _egOperativos(lista){
+  return (lista||[]).filter(function(e){ return !e.fromArticulo; });
+}
+
 function _egresosMercanciaDesde(desdeIso){
   var total=0, n=0, mismoDia=0;
   if(!desdeIso) return {total:0,n:0,mismoDia:0};
@@ -3132,7 +3153,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261016_v231";
+var APP_VERSION = "20261016_v232";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -5116,8 +5137,9 @@ function exportarMesExcel(mesKey){
   var ganBrl =brlM.reduce(function(a,r){return a+(r.pr||0);},0);
   var ganVzla=vzlaM.reduce(function(a,r){return a+(r.pr||0);},0);
   var ganEE  =eeuuM.reduce(function(a,r){return a+(r.pr||0);},0);
-  var egPag  =egM.filter(function(e){return e.pagada;}).reduce(function(a,e){return a+(e.usdt||0);},0);
-  var egPend =egM.filter(function(e){return !e.pagada;}).reduce(function(a,e){return a+(e.usdt||0);},0);
+  // ARREGLO 150: la compra de mercancia no baja el neto de la hoja.
+  var egPag  =_egOperativos(egM).filter(function(e){return e.pagada;}).reduce(function(a,e){return a+(e.usdt||0);},0);
+  var egPend =_egOperativos(egM).filter(function(e){return !e.pagada;}).reduce(function(a,e){return a+(e.usdt||0);},0);
   var totalOps=brlM.length+vzlaM.length+eeuuM.length;
   var netoJulio=ganBrl+ganVzla+ganEE*0.5-egPag;
 
@@ -8958,8 +8980,9 @@ function rBalanceStd(){
   var ganEEUU=eeuuM.reduce(function(a,r){return a+r.pr;},0);
   var gasGEUU=filterByMes(S.gastos_eeuu||[],selMes).reduce(function(a,g){return a+parseFloat(g.monto||0);},0);
   var ganNetaEE=ganEEUU-gasGEUU;
-  var egPag=egresosM.filter(function(e){return e.pagada;}).reduce(function(a,e){return a+e.usdt;},0);
-  var egPend=egresosM.filter(function(e){return !e.pagada;}).reduce(function(a,e){return a+e.usdt;},0);
+  // ARREGLO 150: la compra de mercancia no baja el neto del mes.
+  var egPag=_egOperativos(egresosM).filter(function(e){return e.pagada;}).reduce(function(a,e){return a+e.usdt;},0);
+  var egPend=_egOperativos(egresosM).filter(function(e){return !e.pagada;}).reduce(function(a,e){return a+e.usdt;},0);
   var neto=ganBrl+ganVzla+ganNetaEE*0.5-egPag-egPend;
   var mesOpts=(meses.some(function(m){return m.key===mesActualKey;})?"":
     "<option value='"+mesActualKey+"'"+(selMes===mesActualKey?" selected":"")+">"+labelA+" ✨ (actual)</option>")+
@@ -17326,8 +17349,9 @@ function reporteJulio(mesKey){
 
   // Egresos propios de Julio (alquiler, servicios, otros - NO los de EE.UU)
   var egM = filterByMes(S.egresos||[], mesKey);
-  var egPag  = egM.filter(function(e){return e.pagada;}).reduce(function(a,e){return a+(e.usdt||0);},0);
-  var egPend = egM.filter(function(e){return !e.pagada;}).reduce(function(a,e){return a+(e.usdt||0);},0);
+  // ARREGLO 150: la compra de mercancia no baja el neto que ve Julio.
+  var egPag  = _egOperativos(egM).filter(function(e){return e.pagada;}).reduce(function(a,e){return a+(e.usdt||0);},0);
+  var egPend = _egOperativos(egM).filter(function(e){return !e.pagada;}).reduce(function(a,e){return a+(e.usdt||0);},0);
 
   // Por cobrar BRL y VZLA del mes
   var porCobrarBrl = (S.cuentasCobrar||[]).filter(function(p){
@@ -22021,7 +22045,10 @@ function calcMesCompleto(mesKey, pctOverrides){
   // se compara contra `aperturaBase` (ARREGLO 96).
   var egMercMes = r2(egM.filter(function(e){return e.tipo==="empresa"&&e.pagada&&e.fromArticulo;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0));
   var egEmpPag  = r2(egM.filter(function(e){return e.tipo==="empresa"&&e.pagada&&!e.fromArticulo;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0));
-  var egEmpPend = r2(egM.filter(function(e){return e.tipo==="empresa"&&!e.pagada;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0));
+  // ARREGLO 150: los pendientes, por lo mismo. El 143 solo filtro los pagados,
+  // asi que una maquina comprada a credito seguia anunciando una perdida que no
+  // existe — y `egEmpPend` es lo que sale como "por pagar" en todas partes.
+  var egEmpPend = r2(_egOperativos(egM).filter(function(e){return e.tipo==="empresa"&&!e.pagada;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0));
 
   // ── 6. Utilidad empresa ──
   var utilidadEmpresa = r2(miGanOperaciones - egEmpPag);
@@ -23264,8 +23291,11 @@ function generarInformePDF(mesKey){
     // ── 8 · EGRESOS DE LA EMPRESA ─────────────────────────────────────
     ap("Egresos de la empresa · en qué se fue",
       (function(){
+        // ARREGLO 150: el % de cada categoria se mide contra `calc.egEmpPag`,
+        // que ya viene sin mercancia. Sin filtrar aqui, la suma de las barras
+        // pasa del 100% y la lista no cuadra con su propio total.
         var catEmp={};
-        egEmpM.filter(function(e){return e.pagada;}).forEach(function(e){
+        _egOperativos(egEmpM).filter(function(e){return e.pagada;}).forEach(function(e){
           var c=e.categoria||e.cat||"General"; catEmp[c]=(catEmp[c]||0)+(parseFloat(e.usdt)||0);
         });
         var barras=Object.keys(catEmp).sort(function(a,b){return catEmp[b]-catEmp[a];}).map(function(c){
@@ -24177,8 +24207,11 @@ function rInformeCierre(){
 
   // ── EGRESOS ────────────────────────────────────────────────────
   function secEgresos(){
-    var pagados=egEmpM.filter(function(e){return e.pagada;});
-    var pendientes=egEmpM.filter(function(e){return !e.pagada;});
+    // ARREGLO 150: el conteo acompaña a `calc.egEmpPag`, que ya viene sin
+    // mercancia. Contando de mas, la tarjeta diria "4 gastos" sobre un total
+    // que solo suma 3.
+    var pagados=_egOperativos(egEmpM).filter(function(e){return e.pagada;});
+    var pendientes=_egOperativos(egEmpM).filter(function(e){return !e.pagada;});
     var porCat={};pagados.forEach(function(e){var c=e.categoria||e.cat||"General";if(!porCat[c])porCat[c]=0;porCat[c]+=(parseFloat(e.usdt)||0);});
     return "<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px'>"+
       card("#c0392b","#fff","✅ Pagados","$"+f2(calc.egEmpPag)+" USDT",pagados.length+" gastos")+
@@ -24401,8 +24434,10 @@ function rDash(){
   var ganTotal = ganBrl + ganVzla + ganJulio;
   // Solo empresa: excluir personales del resumen dashboard
   var egEmpM=egM.filter(function(e){return e.tipo==="empresa";});
-  var egPag    = egEmpM.filter(function(e){ return e.pagada; }).reduce(function(a,e){ return a+(e.usdt||0); }, 0);
-  var egPend   = egEmpM.filter(function(e){ return !e.pagada; }).reduce(function(a,e){ return a+(e.usdt||0); }, 0);
+  // ARREGLO 150: por `_egOperativos`, o la compra de mercancia vuelve a restar
+  // del neto del mes y esta pantalla contradice al Balance y al Cierre.
+  var egPag    = _egOperativos(egEmpM).filter(function(e){ return e.pagada; }).reduce(function(a,e){ return a+(e.usdt||0); }, 0);
+  var egPend   = _egOperativos(egEmpM).filter(function(e){ return !e.pagada; }).reduce(function(a,e){ return a+(e.usdt||0); }, 0);
   var neto     = ganTotal - egPag;
   // Comisión bancaria VES absorbida por el operador (pérdida de ganancia)
   var comBancoAbsorbida = [].concat(brlM,vzlaM,eeuuM).reduce(function(a,r){
