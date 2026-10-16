@@ -11203,5 +11203,64 @@ console.log("\nARREGLO 148 · el aviso de choque no salta por la autoría");
      "y el filtro «qué registró cada quien» los sigue usando");
 }
 
+// ── ARREGLO 149 · el interés no se descuenta de una apertura que no lo lleva ──
+// El ARREGLO 71 quito el interes pendiente del capital y, para que el punto de
+// partida no quedara torcido, lo descuenta tambien de la apertura. Eso vale
+// para una apertura fijada ANTES del 71. Una fijada DESPUES guarda
+// capitalRealTotal().total, que ya no lo cuenta, asi que restarselo abre el
+// mismo hueco permanente al reves.
+//
+// Lo vio ella el 16/10 nada mas fijar la apertura para arrancar de cero: la app
+// decia "te sobran $6,54" con todo cuadrado, y esos 6,54 eran clavados el
+// interes pendiente de UN prestamo suyo. Medido con su export: capital
+// 2.704,71 · deberias 2.698,17 · sin ese termino, 0,00.
+console.log("\nARREGLO 149 · el interés de la apertura");
+{
+  const ida = sacarFuncion("interesDentroDeApertura");
+  ok(/\(S\.config\|\|\{\}\)\.aperturaSinInteres\)\s*return r;/.test(ida),
+     "una apertura marcada «ya viene sin interés» no descuenta nada");
+  // La salida va ANTES del recorrido: puesta despues, el total ya estaria sumado.
+  ok(ida.indexOf("aperturaSinInteres") < ida.indexOf("S.prestamos"),
+     "y sale antes de recorrer los préstamos, no después");
+
+  // Quien la pone. Sin esta linea el arreglo no llega nunca.
+  const fah = sacarFuncion("fijarAperturaHoy");
+  ok(/S\.config\.aperturaSinInteres=true;/.test(fah),
+     "fijar la apertura deja dicho que el monto ya viene sin el interés");
+
+  // Y los correctores NO la tocan: corrigen la etiqueta, no el dinero medido.
+  // Si la quitaran, corregir un monto reabriria el hueco sin decir nada.
+  ok(!/aperturaSinInteres/.test(sacarFuncion("corregirApertura")),
+     "corregir el monto no toca la bandera");
+  ok(!/aperturaSinInteres/.test(sacarFuncion("corregirFechaApertura")),
+     "corregir la fecha tampoco");
+
+  // Viaja DENTRO del bloque de la apertura. Fuera, la fusion podria dejar el
+  // monto de un aparato con la bandera del otro: el interes se descontaria dos
+  // veces o ninguna, que es justo el fallo.
+  const bloque = (F._MERGE_BLOQUES.config||[])[0]||[];
+  ok(bloque.indexOf("aperturaSinInteres") >= 0,
+     "«aperturaSinInteres» viaja en el mismo bloque que el monto");
+  ok(bloque.indexOf("aperturaUsdt") >= 0 && bloque.length === 6,
+     "y el bloque sigue siendo uno solo, con las seis claves");
+
+  // ── La fila que faltaba desde el 143 ───────────────────────────────────────
+  // El TOTAL del aviso si contaba la mercancia y las filas de arriba no: con
+  // sus 210 de las maquinas sumaban 2.494,71 contra un TOTAL de 2.704,71. Y
+  // este aviso sale justo antes de fijar el punto de partida de todo.
+  // Se mide SOBRE EL TEXTO DEL AVISO, no sobre la función entera: `cap.enReserva`
+  // sale también en el logAudit de más abajo, así que quitar su fila pasaba.
+  const msg = fah.slice(fah.indexOf("var msg="), fah.indexOf("if(!confirm(msg))"));
+  ok(msg.length > 200, "el texto del aviso se localiza");
+  // Las seis filas por nombre: pidiendo solo que apareciera la nueva, quitar
+  // cualquiera de las otras pasaba (el agujero del ARREGLO 140).
+  [["enCuentas","En cuentas"],["enReserva","En reserva"],["porCobrar","Por cobrar"],
+   ["enPrestamos","En préstamos"],["enMercancia","En mercancía"],
+   ["sueldoPendiente","Tu sueldo"]].forEach(function(f){
+    ok(new RegExp("cap\\."+f[0]).test(msg) && msg.indexOf(f[1])>=0,
+       "el aviso lista «"+f[1]+"»");
+  });
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
