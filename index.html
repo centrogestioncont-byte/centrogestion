@@ -3112,7 +3112,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261016_v226";
+var APP_VERSION = "20261016_v227";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -7436,15 +7436,46 @@ function updateCuentaSaldo(id, val){
 // Devuelve el motivo elegido, o null si no hay que guardar ajuste ninguno.
 // Va con prompt y no con una pantalla propia a propósito: esto se usa desde el
 // teléfono, en medio de otra cosa, y el resto de la app confirma así.
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 145 · la opción 2 solo servía para el dinero que SALE
+// ══════════════════════════════════════════════════════════════════════
+//
+// Su pregunta del 16/10: "¿cómo puedo aumentar el saldo de una cuenta pero que
+// se guarde correctamente?".
+//
+// Para BAJAR un saldo porque salió dinero de verdad, la opción 2 ya hacía lo
+// correcto: no toca el saldo y deja el EGRESO empezado, que es lo que baja la
+// cuenta y baja también "deberías tener", así que la conciliación no salta.
+//
+// Para SUBIRLO no había nada. De los cuatro motivos, el único que hablaba de
+// dinero que se movió de verdad era ese, y crea un egreso — o sea lo contrario.
+// Así que subir un saldo por dinero que entró de verdad acababa en "3 · No sé
+// por qué", que lo manda entero al "sin explicar" de la conciliación. Dinero
+// que ella sabe perfectamente de dónde salió, contado como una fuga.
+//
+// Y peor: elegir la 2 con el saldo SUBIENDO creaba un egreso por |delta|, que
+// baja la cuenta justo al revés de lo que acababa de decir.
+//
+// Por eso la opción 2 pasa a ser la del SIGNO: sale dinero → egreso; entra →
+// ganancia extra, que es el camino que ya existe para el P2P, un trabajo o algo
+// que vendió (sube la cuenta y cuenta como ganancia del mes). Una sola opción
+// en pantalla, siempre la que corresponde, y ninguna que haga lo contrario de
+// lo que dice.
 function _motivoDelAjuste(c, delta){
+  var entra = delta > 0;
   var q=prompt(
     "¿Por qué no cuadraba \""+c.nombre+"\"?\n\n"+
     "1  Me equivoqué al teclear el saldo\n"+
     "     La app tenía mal el número. El dinero nunca se movió,\n"+
     "     así que NO cuenta como diferencia.\n\n"+
-    "2  El banco me cobró algo, o salió dinero de verdad\n"+
-    "     Eso es un EGRESO. Te llevo a registrarlo: así baja la\n"+
-    "     cuenta y baja también lo que deberías tener.\n\n"+
+    (entra
+      ? "2  Entró dinero de verdad\n"+
+        "     Un P2P, un trabajo, algo que vendiste. Te llevo a\n"+
+        "     registrarlo como ganancia extra: así sube la cuenta\n"+
+        "     y cuenta como ganancia del mes.\n\n"
+      : "2  El banco me cobró algo, o salió dinero de verdad\n"+
+        "     Eso es un EGRESO. Te llevo a registrarlo: así baja la\n"+
+        "     cuenta y baja también lo que deberías tener.\n\n")+
     "3  No sé por qué\n"+
     "     Queda como diferencia sin explicar en la conciliación.\n\n"+
     "4  La app me movió el saldo por error\n"+
@@ -7453,7 +7484,7 @@ function _motivoDelAjuste(c, delta){
     "Escribe 1, 2, 3 o 4:", "");
   if(q===null) return null;
   q=String(q).trim();
-  if(q==="2"){ _ajusteAEgreso(c, delta); return null; }
+  if(q==="2"){ if(entra) _ajusteAGanExtra(c, delta); else _ajusteAEgreso(c, delta); return null; }
   var m=_MOTIVOS_AJUSTE[q];
   if(!m){
     alert("No entendí \""+q+"\".\n\n\""+c.nombre+"\" se queda como estaba. "+
@@ -7466,6 +7497,29 @@ function _motivoDelAjuste(c, delta){
 // sabe. Registrarlo ahí es lo que hace que la conciliación no salte, y además
 // el gasto aparece en el cierre del mes y en la hoja del contador, que es donde
 // tiene que estar. Escribir el saldo no habría hecho ninguna de las dos cosas.
+// ARREGLO 145 · el espejo del de arriba, para el dinero que ENTRA.
+//
+// Mismo criterio y por las mismas razones: el saldo NO se toca, se deja el
+// formulario listo con lo que ya se sabe. Registrarlo ahí es lo que hace que
+// la conciliación no salte —el ingreso sube los DOS lados— y además entra en
+// la ganancia del mes y en el cierre, que es donde tiene que estar. Escribir
+// el saldo a secas no habría hecho ninguna de las dos cosas: lo habría dejado
+// como una diferencia sin explicar.
+//
+// La cuenta va puesta a propósito. En el formulario ese campo es OPCIONAL, y
+// sin él saveGanExtra() apunta la ganancia y NO sube ningún saldo — o sea que
+// llegaría aquí buscando subir una cuenta y se iría sin subirla.
+function _ajusteAGanExtra(c, delta){
+  var monto=Math.abs(delta);
+  S._nGanExtra=Object.assign(S._nGanExtra||{}, {d:td(), desc:"", monto:String(monto),
+    mon:c.moneda, usdt:"", cuentaId:c.id, tipo:"empresa", nota:""});
+  S._showGanExtra=true;
+  S.tab="nueva";
+  alert("No le toco el saldo a \""+c.nombre+"\".\n\n"+
+        "Te dejo la ganancia extra empezada por "+f2(monto)+" "+c.moneda+" en esa cuenta. "+
+        "Ponle de qué fue y guárdala: el saldo sube solo.");
+  R();
+}
 function _ajusteAEgreso(c, delta){
   var monto=Math.abs(delta);
   S.nEg=Object.assign(S.nEg||{}, {date:td(), mot:"", monto:String(monto),
