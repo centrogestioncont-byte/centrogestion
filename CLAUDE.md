@@ -1780,6 +1780,85 @@ guardia para ese patrón exacto y una prueba negativa que lo reinyecta.
 
 Es la lección del ARREGLO 121 y del 136 por tercera vez: **cuando un arreglo toca
 un campo donde ella escribe, hay que escribir en él.**
+#### Detectaba, pero no se veía — y se comía el primer toque (ARREGLO 152)
+
+Sus palabras del 16/10: *"he estado por registrar remesas y no hay una
+diferencia, el sistema como que no detecta que el lote es el que voy a descontar
+y no detecta si es por P2P o si es por transacción directa"*.
+
+**Detectar, detectaba.** Medido en Chromium con su export: forzando lotes de
+vuelta, la app marca sola 🤝 Calce directo y rellena la permuta en 204,03. Lo que
+fallaba eran tres cosas, y las tres se juntan para que desde fuera parezca que la
+app no hace nada.
+
+**1 · Con sus lotes no puede salir calce, y eso no es un fallo.** El FIFO gasta
+primero las ventas de USDT, y el lote de vueltas no le llega:
+
+```
+10/14    950 Bs   venta de USDT
+10/14 33.278 Bs   venta de USDT
+10/15 21.000 Bs   TE PAGARON        ← 21.000 nunca le gana a 34.228
+```
+
+Así que siempre sale **P2P**, que además es lo que ya estaba marcado por omisión.
+La app decide en cada remesa y decide bien; lo que pasa es que decide lo mismo
+que había, y **nada en la pantalla decía que había decidido**.
+
+**2 · El rótulo llamaba "ventas de USDT" a lo que no lo era.** Lo cazó ella
+sumando las filas, que es exactamente para lo que están:
+
+```
+la línea decía ...  21.000 que te pagaron y 73.500 de ventas de USDT
+las filas dicen ..  34.228 de ventas · 39.272 sin lote
+```
+
+La **decisión** no cambia —lo que no se sabe de dónde vino sigue contando del lado
+de P2P, que es el que sí paga comisión: ante la duda, el que no infla la
+ganancia— y por eso se queda en `_origenBsRemesa`. Lo que cambia es que cada monto
+se llama por su nombre: *"En total: 21.000 Bs que te pagaron · 34.228 de ventas de
+USDT · 39.272 sin registrar"*. **Un número con el rótulo de otro es lo que enseña
+a no fiarse del resto de la pantalla.**
+
+**3 · Y el primer toque a 💾 Guardar se perdía.** El `change` de un campo salta
+cuando ella toca otra cosa, y esa otra cosa suele ser el botón de guardar. El
+orden del navegador es `mousedown → blur → mouseup → click`, así que el `R()` que
+había ahí borraba el botón **entre el mousedown y el mouseup** y el click no
+llegaba a dispararse. Medido en Chromium con touch:
+
+```
+                      antes (v232)        ahora (v233)
+primer toque     cambia a calce, NO guarda    GUARDA
+segundo toque           guarda            (ya no hay botón)
+```
+
+Desde fuera eso es *"el botón no hace nada la primera vez"*, y **enseña a tocar
+dos veces un botón que mueve dinero**.
+
+Lo que lo sostiene, y son tres mitades —faltando cualquiera vuelve el fallo:
+
+- **El bloque 3️⃣ vive en su propio contenedor** (`sec3-tx`), y el botón de guardar
+  vive FUERA. Así se puede rehacer lo que cambia con el método sin llevarse por
+  delante el botón.
+- **El HTML de ese bloque sale de `rNueva()`**, la misma función que lo dibuja.
+  Escrito aparte, un día el bloque repintado diría algo distinto del dibujado.
+- **Y una bandera del gesto** (`_txTocaGuardar`, en el `pointerdown`, que ocurre
+  antes del blur): con el dedo ya puesto en Guardar, el método se aplica y **no se
+  dibuja nada**. Repintar ahí cambia el alto del bloque y **mueve el botón bajo el
+  dedo** — eso fue lo que falló en el primer intento, con el contenedor ya hecho.
+
+**Y el método se decide al TECLEAR, no al salir del campo.** Esto **revierte** la
+regla que dejó escrita el ARREGLO 138 (*"en cada tecla mataría el campo"*): era
+cierta cuando esto llamaba a `R()`, y dejó de serlo con el contenedor, porque el
+campo del monto está **fuera** de lo que se repinta. Con un respiro de 450 ms, el
+método ya está puesto antes de que ella baje el dedo al botón, y el bloque no
+cambia de alto en ese momento. Medido: a los 700 ms de teclear "500", el botón se
+marca solo, la permuta se rellena, **y el foco sigue dentro del campo con su 500**.
+
+**Lo que esto NO arregla, y es lo que más le cambia los números:** de los 94.500 Bs
+que entrega con 500 R$ a 189, **39.272 no salen de ningún lote**. La app los valora
+con la tasa del último lote conocido porque no tiene otra, así que la ganancia de
+esa remesa sale de una tasa prestada. **Arreglar el rótulo hace que ese hueco se
+vea; cerrarlo es registrar las ventas de USDT que faltan.**
 
 ---
 
@@ -3887,12 +3966,28 @@ todavía está a medio teclear devuelve el texto tal cual.
 `pruebas/prestamos.js` recorre las pantallas donde ella teclea dinero y exige
 que no quede ningún `type="number"` y que cada campo pase por `_num()`.
 
-**Quedan 68 sin convertir**, y no por olvido: son los que **otro sitio lee por
-`getElementById(...).value`**. Convertir el campo sin arreglar también su
-lector cambiaría "no acepta la coma" por "acepta la coma y se queda con 5 en
-vez de 5,22" — de un fallo que se ve a uno que no. Están en Configuración, la
-edición en línea de una remesa ya guardada, la calculadora y el conversor BCV.
-Cuando se toquen, hay que cambiar el lector a `_leerNumero()` en la misma pasada.
+**Y los 68 que quedaban ya están** (ARREGLO 159). No se habían hecho porque
+son los que **otro sitio lee por `getElementById(...).value`**, y convertir el
+campo sin arreglar también su lector es *peor* que dejarlo: cambia "no acepta
+la coma" por "acepta la coma y se queda con 5 en vez de 5,22" — de un fallo que
+se ve a uno que no. **Las dos mitades fueron en la misma pasada**: 45 campos a
+`type="text" inputmode="decimal"` y sus 29 lectores a `_leerNumero()`.
+
+Medido tecleando con el teclado español: el **% de su sueldo** con `30,5`
+guardaba **0,3** —perdía el `,5`— y ahora guarda 0,305.
+
+- **La normalización va en la PUERTA del setter**, no en cada llamada:
+  `calcSetExotico`, `txEntregaSet` y `txPagoSet`. Un sitio nuevo que llame queda
+  cubierto solo.
+- **Y sólo los campos de dinero.** En los dos desgloses se normaliza `monto` y
+  **no** `cuentaId`: un id no es un número y `_num()` lo dejaría en otra cosa.
+- **El único `type="number"` que queda es el número de cuotas**, que es un
+  entero con `inputmode="numeric"`: ahí la coma no significa nada.
+
+**Y salió un bug de paso, de los que no se ven.** `calcTasaUpdate()` leía
+`parseFloat(document.getElementById("calc-tc-brl")||{value:0}).value||0` — eso
+parsea **el elemento**, da `NaN`, y `NaN.value` es `undefined`: **las cuatro
+tasas de la calculadora valían 0 siempre**. Hay guardia para que no vuelva.
 
 ### La tasa de un abono se escribe como ella la dice: 1 USDT = 5,30 BRL
 
@@ -4640,6 +4735,109 @@ comentarios**, y ahí ese nombre sale en un comentario. Medía el comentario, no
 código (ARREGLO 100). Esa comprobación ya existía bien escrita desde el 143, así
 que el duplicado se retiró.
 
+#### Y el 150 se dejó UNA más: la cabecera (ARREGLO 153)
+
+Lo vio ella el 16/10, el mismo día: arriba ponía **`Real: $-154,54`** y la
+tarjeta del Resumen **`Neto real $58,24`**. Dos números para lo mismo, con
+**212,78** de diferencia. Medido con su export, la diferencia es exacta:
+
+```
+la máquina (mercancía)   210,00   es inversión, no gasto del mes
+un gasto personal          2,78   que ni siquiera es de la empresa
+                         ───────
+                          212,78
+```
+
+La cabecera sumaba **todos** los egresos pagados del mes, sin `_egOperativos()`
+y sin mirar el tipo. **Era la séptima copia, y el 150 buscó seis esa misma
+mañana.** Es la cuarta vez con esta forma (101, 119, 150).
+
+**Y al medirlo salió que el número bueno no era ninguno de los dos.** El Resumen
+tampoco contaba la **ganancia extra de la empresa**:
+
+```
+remesas                      248,17
++ ganancia extra empresa      14,93
+                           ────────
+                             263,10     ← miGanOperaciones
+− egresos operativos        −189,93
+                           ────────
+utilidad del mes              73,17     ← Cierre, Balance y la tarjeta Base
+```
+
+Los **préstamos (14,23)** entran en la bruta y **no** en la utilidad, que es la
+regla que el cierre ya tenía escrita. Así que había **tres números malos y uno
+bueno**, no al revés — y el bueno estaba en la tarjeta que nadie miraba.
+
+- **Nadie la calcula ya por su cuenta.** La cabecera y el Neto real leen
+  `calcMesCompleto()`, que es de donde ya salían el Cierre, el Balance y Base.
+- **Y son DOS números con nombres distintos**, no uno: *"Remesas $248,17 ·
+  Utilidad $73,17"*. *"Ganancia"* y *"Real"* se leían como dos versiones de lo
+  mismo, y de ahí salió la pregunta.
+- **El pie del Neto real se puede sumar a mano** (*"248,17 + 14,93 extra −
+  189,93 de egresos"*). Un número que no dice de dónde sale hay que perseguirlo
+  aparte (ARREGLO 141).
+- **El rótulo de Base mentía sin que el número estuviera mal.** Decía *"ganancia
+  menos lo ya pagado"*, que invita a restar los dos números de al lado —248,17 −
+  189,93 = 58,24— y eso **no** es la utilidad. El número era correcto desde
+  siempre; lo que había que arreglar era la frase.
+- **Y el "Pagado" de Egresos sigue contando la mercancía**, porque ese dinero sí
+  salió del banco (ARREGLO 150). Lo que faltaba era **decirlo**: ahora nombra
+  cuánto de él es mercancía y que no baja la ganancia. Un número correcto al
+  lado de otro correcto, sin nada que los empareje, es lo que hizo todo esto.
+
+#### Un gasto personal guardado en la lista de la empresa (ARREGLO 153)
+
+De los 212,78, el 2,78 era **un registro suyo en el sitio equivocado**: un gasto
+con `tipo:"personal"` dentro de `S.egresos`, que es la lista de la empresa. Los
+personales de verdad viven en `S.egresos_personales`.
+
+**Y no lo veía NADIE**: la pestaña de empresa lo filtra por tipo, la personal no
+lo busca ahí, y el único sitio que lo sumaba era la cabecera, que sumaba todo.
+Medido en todo su export: **uno de 53**, y ninguno en otro mes.
+
+- **El aviso va ARRIBA de las tres pestañas**, porque no es de ninguna — ése es
+  justamente el problema.
+- **Se mueve con un botón, no tocando la base.** Y **no toca ningún saldo**: el
+  dinero ya salió de la cuenta cuando se registró; tocarlo aquí lo bajaría dos
+  veces. Hay guardia por nombre.
+- **Deja la marca de borrado** (ARREGLO 6c) o el otro aparato lo devuelve.
+- **Y se dice lo incómodo ANTES de pulsar: mover el gasto SUBE el "te sobran"**
+  por ese mismo importe, porque hasta ahora ninguna pantalla lo descontaba de
+  *deberías tener*. Medido: de 6,94 a 9,72. No aparece dinero nuevo — aparece un
+  gasto que no se estaba contando. Es la forma de situar los ajustes en el aire
+  (ARREGLO 72).
+
+#### Y una tasa del día imposible ya no se guarda en silencio (ARREGLO 153)
+
+El campo de la tasa viene **relleno** con la de Configuración, así que escribir
+sin borrar deja los dos números pegados. Le pasó el 16/10: tenía 186, escribió
+189 y quedó **186189**. Medido con su export:
+
+```
+entrega      93.094.500 Bs
+ganancia        −90.135,58 USDT
+y la app lo guardaba sin un solo aviso
+```
+
+- **`onfocus='this.select()'` en los dos campos que vienen rellenos** —el monto y
+  la tasa— así escribir reemplaza lo que había. Eso evita *ese* tropiezo.
+- **Pero no el de teclear un cero de más**, así que el freno va también en
+  `saveTx()`: diez veces arriba o abajo de **lo que ella publica**, y pregunta.
+  No corrige nada — es el criterio del aviso de salto de 10× al escribir un saldo.
+- **Se compara contra su tasa publicada, no contra un número escrito en el
+  código**: la suya sube y baja todos los días (ARREGLO 128). **Sin tasa
+  publicada no se frena nada**, que un umbral adivinado pararía una remesa buena.
+- **Y el margen es ancho a propósito.** Estrecho saltaría en una remesa rara de
+  verdad y enseñaría a pulsar "sí" sin leer (ARREGLO 99).
+
+**La lección, y es la quinta vez:** `r2v` no existía en `rEgresos` y lo escribí
+igual. Habría sido un `ReferenceError` en producción, como el `pasada` del
+ARREGLO 121 — y ninguna guardia de texto lo ve, porque el texto decía lo
+correcto. Lo cazó **dibujar la pestaña**.
+
+---
+
 ### Lo que NO entró, y es a propósito
 
 - **Cantidad por artículo.** Una cosa, un registro. Con cantidad habría que
@@ -4793,6 +4991,280 @@ y pulsando lo que hay en cada una, con tres formas de payload; el nombre
 `Café & Cía "Ltda" <São> 'Paulo'` se lee **tal cual** y ninguno de los 270
 botones de cliente se rompió. En la captura de antes el navegador se comía
 `<São Paulo>` como si fuera una etiqueta.
+
+## Una operación no se duplica, y la raíz estaba en la FUSIÓN (ARREGLO 154)
+
+Salió de perseguir las **137 remesas repetidas de mayo** que aparecieron midiendo
+los meses cerrados. Sus palabras: *"lo de las 137 remesas repetidas no puede
+volver a pasar"*.
+
+**No entran por el formulario: entran por la sincronización después de importar.**
+Reproducido en Chromium con su export, con el código real de `importData()`:
+
+```
+A (con sus datos) importa el archivo viejo .... 836 remesas, ninguna de más
+B (app recién puesta) importa el MISMO ........ 836, con 836 _uid NUEVOS
+B sincroniza y el servidor trae las de A ...... 1.672   ← el doble
+```
+
+De los 836 `_uid` que generó B, **cero** coincidían con los de A. Para la fusión
+eran 836 remesas nuevas. Y así tres veces: los prefijos de sus copias lo cantan
+—`mrm7qzhb` = 15/07, `mti2b1jm` = 01/09, `musw37uk` = 03/10—, las tres
+importaciones.
+
+**La importación ya estaba bien**: conserva el `_uid` cuando el archivo lo trae,
+reemplaza la lista en vez de sumarla, y reencuentra por contenido (`_uidEstable`)
+el `_uid` de lo que ya había **aquí**. Lo que no puede es adivinar el `_uid` que
+otro aparato le puso a lo mismo.
+
+**Por eso el arreglo va en `_mergeArrayById`**, que es donde nace el duplicado y
+donde además cubre cualquier otro origen: antes de dar por nueva una remesa cuyo
+`_uid` no conoce, mira si ya hay una local con el mismo contenido.
+
+- **Se empareja por CUPO, no a secas.** Si aquí hay dos iguales y de allá vienen
+  dos, no entra ninguna; si vienen tres, entra una. Sin el cupo se perdería una
+  de las dos de **CARLOS ALFREDO RODRIGUEZ del 17/09** (200 R$ a 172,5, con dos
+  horas de diferencia), que son dos operaciones de verdad.
+- **Lo que ya se reconoce por `_uid` gasta su cupo primero**, o podría además
+  absorber a otro registro distinto y perderlo.
+- **Sólo para las listas que van por `_uid`** (remesas). Capital, egresos y las
+  demás van por `id`, que sí viaja en el archivo: medido, traspasos e inventario
+  no se duplicaron nunca.
+
+### Y derivar el `_uid` del contenido parecía la raíz y es una TRAMPA
+
+Fue el primer intento, y es lo que cualquiera propondría: si los dos aparatos
+derivan el `_uid` del contenido, generan el mismo y la fusión los reconoce.
+**Con sus datos eso borra remesas vivas.**
+
+Sus marcas de borrado antiguas **ya están guardadas con `_uid` derivados** —171
+en total: 56 en `vzla`, 104 en `eeuu`, 11 en `brl`, de la forma
+`s11l523n1xua2gt`—, porque `_asignarUidsFaltantes()` lleva tiempo derivándolos al
+arrancar. Un registro vivo que derive a una clave marcada **se poda solo**:
+
+```
+                              vzla tras un ciclo
+antes del intento                 274   ← duplicado
+derivando el _uid                  85   ← 52 remesas vivas BORRADAS
+emparejando en la fusión          137   ← correcto
+```
+
+Lo cacé porque la prueba de ida y vuelta medía las tres listas y `vzla` bajaba de
+137. Mirando sólo `brl` —que salía perfecto— habría entregado un arreglo que
+borra datos. **Una prueba que mide una sola lista no mide nada.**
+
+### Y sólo empareja lo que vino de un ARCHIVO (ARREGLO 154b)
+
+El emparejamiento por contenido, tal cual, **perdía una remesa de verdad**. El
+caso lo señaló la extensión y encaja con cómo trabajan: ella registra en el
+teléfono y Julio registra otra en la PC —mismo día, cliente, monto, ruta y tasa—
+y **antes de sincronizar son dos operaciones distintas**. Reproducido:
+
+```
+A registra la suya ....... A tiene 1
+B registra la suya ....... B tiene 1
+tras sincronizar ......... 1   ← una se perdió
+```
+
+La prueba de CARLOS no lo cubría: esas siete ya estaban en los dos lados, así
+que se emparejaban por `_uid` y no llegaban al contenido.
+
+**El arreglo no es una heurística de tiempo.** La importación **marca**
+(`_uidImp`) los registros a los que le pone un `_uid` nuevo, y la fusión sólo
+empareja por contenido cuando uno de los dos lleva esa marca. Una remesa
+tecleada en el formulario no la lleva nunca, así que dos reales no se emparejan
+jamás; el duplicado de un archivo importado sí, que es para lo que existe.
+
+Se mira **en los dos lados**: la marca la puede llevar el que llega o el que ya
+está aquí, según cuál de los dos aparatos importó.
+
+**Y la lección: una prueba que sólo usa datos que ya existen en los dos lados no
+prueba la fusión.** Lo que hay que probar es lo que nace distinto en cada sitio.
+
+### El aviso al guardar AVISA, no bloquea — y eso sale de medir
+
+Fuera de los duplicados de la importación, en cinco meses hay **12 grupos**
+repetidos y la mitad son operaciones **de verdad**:
+
+```
+17/09 · 150 R$ · CARLOS ALFREDO RODRIGUEZ · ×3 · tasas 172 / 173 / 172,5
+17/09 · 200 R$ · CARLOS ALFREDO RODRIGUEZ · ×2 · misma tasa, 2 horas de por medio
+05/08 ·  20 R$ · ROSA HERNANDEZ ·           ×2 · tasas 154 / 152
+31/07 · 100 R$ · EDGAR MONTAÑO ·            ×2 · misma tasa, 4 minutos  ← éste sí
+```
+
+**Bloquear le impediría trabajar.** Se avisa con las que ya existen —su número,
+su hora y su tasa— y decide ella.
+
+- **La tasa decide el TONO, no si avisa.** Misma tasa: *"esto parece la MISMA
+  operación"*. Otra tasa: *"ya hay una parecida"*. En sus datos esa regla acierta
+  en los tres casos reales.
+- **Y enseña las que ya están.** Un *"ya existe una igual"* a secas obliga a irse
+  a Operaciones a buscarla para poder contestar.
+
+### Un archivo sin identificadores se anuncia ANTES
+
+Un export del formato viejo no trae `_uid`, así que la app reconoce cada remesa
+por su contenido. Eso se dice antes de tocar nada, y al terminar se cuenta cuántas
+reconoció y cuántas dio de alta. Es ella quien conoce sus datos.
+
+**Lo que esto NO repara:** las 137 copias de mayo siguen ahí. Borrarlas movería
+saldos y lotes FIFO de hoy, así que se quedan —decisión suya— y lo que las
+neutraliza es que un mes cerrado deje de recalcularse.
+
+## Un mes cerrado enseña lo que se guardó (ARREGLO 155)
+
+Sus palabras (16/10): *"lo pasado se queda como está"* y *"un mes cerrado
+muestra siempre lo guardado en su cierre y no se recalcula, para que no cambie
+solo"*.
+
+La app **recalculaba** los meses cerrados, y recalcular hoy sobre datos de hace
+meses da otro número. Medido con su export:
+
+```
+          guardado    recalculado hoy
+mayo        966,19       1.491,52     ← las 137 remesas repetidas de mayo
+junio       322,68         358,07
+julio       139,27         336,26     ← el ajuste de 94,24 creado tras cerrar
+agosto       52,53          52,53     ← estos dos coinciden
+sept.       296,79         296,79
+```
+
+Y de paso **es lo que neutraliza las copias de mayo sin borrar nada**: una
+operación vieja de más ya no puede mover la ganancia de un mes cerrado. Borrarlas
+movería saldos y lotes FIFO de hoy, así que se quedan — decisión suya.
+
+- **Va en la PUERTA, `calcMesCompleto()`, no en cada pantalla.** Hay **18 sitios**
+  que la llaman. Tocarlos uno a uno es el fallo que ya costó cuatro veces
+  (ARREGLOS 101, 119, 150, 153): siempre queda uno fuera.
+- **El propio cierre pide el recálculo** (`calcMesCompleto(mes, null, true)`). Si
+  leyera lo guardado, cerrar escribiría lo que ya había, y al reabrir y volver a
+  cerrar el cierre nuevo saldría del viejo.
+- **El mes en curso se sigue calculando**: octubre no se congela.
+- **Los nombres viejos se LEEN, no se reescriben.** El cierre guarda `egPag`
+  donde hoy se llama `egEmpPag`, y `neto` donde hoy es `utilidadEmpresa`
+  (`_CIERRE_A_CALC`). Los cierres guardados no se tocan.
+- **Y el formato viejo tiene su salida.** El cierre de mayo es anterior a que la
+  app calculara bien: **no guardó `utilidadEmpresa`**, sólo `neto`. Por eso la
+  pantalla enseñaba **0** — no es que guardara cero, es que ese campo no existía.
+- **Sólo se congelan NÚMEROS.** Si en la lista entrara un campo que es una lista
+  —el detalle de ganancias extra— el cierre la sustituiría por la suya, que puede
+  no estar, y la pantalla se quedaría sin detalle sin decirlo.
+
+**Evolución nunca tuvo el problema**: ya leía `cierresMes` directamente. Medido
+antes y después, sale idéntica.
+
+**Y no se avisa de la diferencia en los meses viejos**, a propósito y por
+decisión suya: *"no muestres avisos de diferencias en meses viejos"*.
+
+## Un ajuste de saldo no es ganancia ni gasto (ARREGLO 156)
+
+Su decisión (16/10): *"que no cuenten como ganancia del mes, pero que se vean
+aparte"*. Un ajuste es **dinero que ya estaba y no se había registrado**;
+contarlo como ganancia del mes infla la utilidad y con ella su sueldo, que es el
+30 % de esa utilidad.
+
+**La marca es estructural, no se adivina por el texto.** Los dos caminos del
+ARREGLO 145 —`_ajusteAGanExtra()` y `_ajusteAEgreso()`— nacen con `esAjuste`
+puesto. Buscar "AJUSTE" en la descripción **no sirve**, y está medido: de sus
+seis ganancias extra de octubre, el texto acierta 4 de 5 — deja fuera
+*"AUMENTAR SALDO DE CUENTA"*, que son **5,02**. Es la misma regla que ya obliga
+a reconocer la mercancía por `fromArticulo` y no por la categoría: la
+descripción la escribe ella y puede cambiarla.
+
+**Dos puertas, una por lado**, y las dos en un solo sitio: `_egOperativos()` y
+`_ganExtraOperativa()`. Escritas en cada pantalla se separarían con el primer
+cambio — el fallo de los ARREGLOS 101, 119, 150 y 153.
+
+**Y se dicen, no se esconden.** Van en línea aparte en el Resumen, con su
+nombre, como el interés pendiente de un préstamo (ARREGLO 71). Medido con su
+export, marcando los cinco de octubre:
+
+```
+                    antes      después
+utilidad del mes    73,17        64,09
+ganancia extra      14,93         1,84   ← lo que queda son los euros
+egresos            189,93       185,92
+ajustes de saldo        —    +13,09 / −4,01  =  +9,08 aparte
+```
+
+**Lo que cuesta, y hay que decírselo:** el *"te sobran"* de la conciliación
+**sube**, de 6,94 a 16,02. No aparece dinero — lo que pasa es que ese dinero
+deja de tener una operación que lo explique, que es exactamente lo que es. Un
+ajuste de saldo **es** dinero sin explicar; el ARREGLO 145 le dio un sitio donde
+anotarlo, y esto deja de contarlo como si lo hubiera ganado.
+
+**Marcar a mano no mueve ningún saldo**, y se dice en la propia pregunta: el
+dinero ya entró o salió cuando se registró. Hay guardia por nombre. Y **se puede
+desmarcar**: medido, desmarcar devuelve los números exactos.
+
+**La marca lleva su `_mod`**, o no viaja al otro aparato.
+
+**Los de meses cerrados no se tocan** — desde el ARREGLO 155 un mes cerrado
+enseña lo que se guardó, así que marcar algo de julio no mueve su cierre. Era su
+condición.
+
+## El mismo dinero contado dos veces: su sueldo del otro trabajo (ARREGLO 157)
+
+Pasó el 09 y el 10/10 con **470.000 Bs**: lo registró como **aporte** (*"ya está
+en el saldo"*, ARREGLO 147) y **además** como **ganancia extra personal** de
+463,97. Las dos cosas hablan del mismo dinero, y el aporte es el correcto — una
+ganancia extra dice *"esto lo gané"*, y su sueldo de otro trabajo no lo ganó aquí.
+
+**Y no era uno: son tres.** Medido con su export, buscando por la forma:
+
+```
+19/09 · PAGO COMO AGENTE INTERCOM ............  54.493,48 Bs  ←→ aporte del 19/09
+25/09 · PAGO DE AGENTE Y PENSIONES ...........  93.312,23 Bs  ←→ aporte del 25/09
+10/10 · MI SUELDO ............................ 470.000,00 Bs  ←→ aporte del 09/10
+```
+
+**Se reconoce por la FORMA, no por el texto**: mismo monto, misma moneda, misma
+cuenta y menos de ocho días de diferencia. Es la misma regla del ARREGLO 156 —
+la descripción la escribe ella y puede cambiarla.
+
+- **Quitar la duplicada NO mueve ningún saldo**, y se dice en la pregunta: el
+  dinero ya está en la cuenta y ahí se queda. Deja la marca de borrado
+  (ARREGLO 6c) o el otro aparato la devuelve.
+- **Y no se vuelve a crear sin avisar**: `saveGanExtra()` pregunta cuando ya hay
+  un aporte por el mismo monto en la misma cuenta. **Avisa, no bloquea** — puede
+  ser otra cosa distinta que coincida.
+
+**Lo que esto NO mueve, y hay que saberlo:** el capital y la conciliación **no
+cambian**. Medido: quitar la de 463,97 deja `capital 2.711,65` y `te sobran
+6,94` idénticos, porque una ganancia extra **personal** está fuera del capital de
+la empresa (ARREGLO 96). Lo que estaba inflado es su **bolsillo personal**: ese
+dinero aparecía dos veces.
+
+## Un saldo escrito a mano deja de seguir al inventario, y eso se ve (ARREGLO 158)
+
+Escribir a mano el saldo de una cuenta **en USDT** le pone `manual_override`, y
+desde ese momento `sincronizarFIFOconCuentas()` **no la vuelve a tocar nunca**.
+Es correcto —lo escrito a mano manda— pero **no se veía en ninguna parte**, y de
+ahí salió la deriva de 79,70 que el ARREGLO 130 no pudo reconstruir: el saldo
+dejó de seguir a los movimientos y nada lo dijo.
+
+Medido en su export, y **son tres, no dos**:
+
+```
+BINANCE JULIO ....... dice     0,00   ·  si lo siguiera pasaría a  −142,85
+MI SUELDO BINANCE ... dice    91,67   ·  si lo siguiera pasaría a   473,56
+BINANCE SAIPA ....... dice     0,01   ·  si lo siguiera pasaría a   890,78
+```
+
+- **Se dice en las DOS pantallas** donde se ve un saldo: Configuración (donde se
+  edita) y Balance de Cuentas (donde ella mira). Ponerlo en una sola es el fallo
+  de buscar una copia y dejarse las otras (ARREGLOS 101, 119, 150, 153).
+- **"Si lo siguiera pasaría a", no "el inventario dice".** Ese número son sus
+  compras menos sus ventas de USDT en esa cuenta: es lo que la app **escribiría**,
+  no lo que debería haber. Dicho de la otra forma se lee como dinero que falta, y
+  con 890,78 en SAIPA eso es un susto por nada.
+- **El botón quita la marca y NO toca el saldo.** Lo cambia el inventario la
+  próxima vez que se dibuje, que es quien manda a partir de entonces.
+- **Una cuenta sin ni una operación devuelve `null`, no 0.** Un 0 ahí se leería
+  como "el inventario dice que tienes cero", cuando lo que pasa es que no sabe.
+- **Y sólo avisa de las que de verdad lo llevan.** Sin esa comprobación saldría
+  en todas las cuentas, y un aviso que sale siempre deja de leerse (ARREGLO 99).
 
 ### Registra la operación — no escribas el saldo
 
@@ -5107,3 +5579,49 @@ movimiento exacto que hizo sobre cada cuenta. Con eso se reconstruye un día
 entero en vez de teorizar. (Los de antes del ARREGLO 50 no guardan `ts`, pero
 **la hora está en el id**: `_tsDeAjuste()` la saca, y lo mismo vale para el
 `_uid` de cualquier remesa. Ya no hay que teorizar con el orden de un día.)
+
+---
+
+## Lo que no se dibuja, no se queda (ARREGLO 160)
+
+El **Balance Mensual viejo** (`rBalanceStd`) y su **calculadora de tasa** —los
+cuatro campos `calc-tc-*` y el despeje al revés— estaban escritos en el archivo
+y **nadie los llamaba**. Comprobado en Chromium dibujando las 26 pestañas con su
+export: ninguno de esos campos llegaba al DOM, ni una vez.
+
+**El grep no basta para decidirlo, y por poco me engaña al revés:** buscando el
+texto en `document.body.innerHTML` salían en TODAS las pestañas, porque el body
+lleva dentro el `<script>` con el archivo entero. Lo que contesta la pregunta es
+`document.getElementById()`, que mira el DOM de verdad. Es el ARREGLO 84 otra
+vez: medir no vale si mides otra cosa.
+
+**Lo que costaba, que no era el peso:**
+
+- el **ARREGLO 159** arregló ahí un `parseFloat` que daba 0 siempre — en una
+  pantalla que no se dibuja;
+- la guardia del **ARREGLO 150** contaba sus llamadas a `_egOperativos()` como
+  si fuera un sexto sitio, así que **vigilaba una pantalla que no existe** (eran
+  cinco);
+- y de ella colgaba **`cerrarMes()`, un SEGUNDO camino para cerrar un mes**: por
+  `S.filtroMes` en vez de `S._cMes`, con sus propias reglas. Dos caminos para
+  cerrar un mes es exactamente lo que costó el ARREGLO 91.
+
+Es el **ARREGLO 59** otra vez, y con sus mismas palabras: *el peligro no era el
+peso, era que alguien las leyera y creyera que eran las buenas*.
+
+- **Se fueron seis**: `rBalanceStd`, `calcTasaUpdate`, `calcTasaObjetivoUpdate`,
+  `guardarTasaHoyDirecto`, `cerrarMes` y `exportMesSel`. Las dos últimas no eran
+  el encargo: quedaron huérfanas al irse la primera, y dejarlas colgando es
+  justo el estado que este arreglo viene a cerrar.
+- **La guardia mira las funciones Y sus campos.** Por el nombre volvería con
+  otro nombre; por el `id='calc-tc-brl'` no. Y exige que `rBalance()` siga
+  pasando por `rBalancePlus()`, que es el Balance que **sí** se dibuja — borrar
+  el bueno tenía que fallar, y hay una negativa que lo prueba.
+- **Lo que queda es idéntico.** Medido con su export, v241 contra v242: 26
+  pestañas, 0 errores, capital 2.711,65, te sobran 6,94, utilidad 73,17, tasas
+  184 · 205, y el Balance dibuja **exactamente los mismos 14.446 caracteres**.
+
+**Y la calculadora que ella usa no es ésta:** es la de la pestaña 🧮 Tasas, la
+de *"publicar esta"*. Esa acepta la coma desde siempre (`_cgSet` pasa por
+`_num()`) y no se tocó — medido tecleando de verdad, la tasa publicada se queda
+en 184 · 205.

@@ -2595,7 +2595,21 @@ function gananciaMercanciaDelMes(mesKey){
 // ganancia del mes, porque entro una maquina que vale lo mismo (el capital ya
 // la cuenta). Por eso esto filtra para RESTAR, no para ocultar.
 function _egOperativos(lista){
-  return (lista||[]).filter(function(e){ return !e.fromArticulo; });
+  // ARREGLO 156: fuera tambien los ajustes de saldo. Un egreso que sale de
+  // cuadrar una cuenta no es un gasto del mes: el dinero ya habia salido y
+  // lo unico que se esta haciendo es anotarlo. Contarlo baja la ganancia por
+  // algo que no paso este mes.
+  return (lista||[]).filter(function(e){ return !e.fromArticulo && !e.esAjuste; });
+}
+// Lo mismo por el otro lado: una ganancia extra que sale de un ajuste de saldo
+// no es ganancia. Vive aqui y en ningun otro sitio para que las dos mitades no
+// se separen — es la regla del ARREGLO 150 aplicada a la otra direccion.
+function _ganExtraOperativa(lista){
+  return (lista||[]).filter(function(g){ return !g.esAjuste; });
+}
+function _sumaAjustes(lista){
+  return Math.round((lista||[]).filter(function(x){ return x && x.esAjuste; })
+    .reduce(function(a,x){ return a+(parseFloat(x.usdt)||0); },0)*100)/100;
 }
 
 function _egresosMercanciaDesde(desdeIso){
@@ -2873,7 +2887,61 @@ function _autoMetodoTx(){
   var ahora=(S.tx.metodo==="calce")?"calce":"p2p";
   if(org.metodo===ahora) return;
   _ponerMetodoTx(org.metodo);
-  R();
+  // Si el dedo ya está sobre Guardar, el método se aplica y NO se dibuja nada:
+  // el guardado que viene a continuación lee S.tx y sale correcto, y la pantalla
+  // la rehace el propio guardado. Repintar aquí mueve el botón bajo el dedo.
+  if(window._txTocandoGuardar) return;
+  _refrescarMetodoTx();
+}
+// El change de un campo salta cuando ella toca otra cosa, y esa otra cosa suele
+// ser el botón de guardar. Esto dice "hay un gesto en curso sobre el botón", y
+// se pone en el pointerdown, que ocurre ANTES del blur. Se suelta sola: si el
+// guardado no llega a ocurrir (una validación que falla), no puede quedarse
+// puesta y dejar el método sin dibujar para siempre.
+// Al teclear, con un respiro: así el método ya está puesto ANTES de que ella
+// baje a tocar Guardar, y el bloque 3 no cambia de alto en ese momento. En cada
+// tecla sería rehacer el bloque seis veces para escribir "147000".
+var _tAutoMet=null;
+function _autoMetodoTxPronto(){
+  if(_tAutoMet) clearTimeout(_tAutoMet);
+  _tAutoMet=setTimeout(function(){ _tAutoMet=null; _autoMetodoTx(); }, 450);
+}
+function _txTocaGuardar(){
+  window._txTocandoGuardar=true;
+  setTimeout(function(){ window._txTocandoGuardar=false; }, 1200);
+}
+// ── ARREGLO 152 · el primer toque a Guardar se perdía ──────────────────
+//
+// Esto se llamaba con R(), que rehace la pantalla ENTERA. Y el momento en que
+// se llama es el peor posible: el change de un campo salta cuando ella toca
+// otra cosa, y esa otra cosa suele ser el botón de guardar. El orden del
+// navegador es mousedown → blur (aquí salta el change) → mouseup → click, así
+// que el R() borraba el botón ENTRE el mousedown y el mouseup y el click no
+// llegaba a dispararse nunca. Medido en Chromium con touch, con unos lotes
+// donde el método sí cambia:
+//
+//     primer toque a Guardar ...  cambia a calce y NO guarda
+//     segundo toque ............  guarda
+//
+// Desde fuera es "el botón no hace nada la primera vez", y enseña a tocar dos
+// veces —que es justo lo que no se puede enseñar en un botón que mueve dinero.
+//
+// Lo que cambia con el método vive TODO dentro del bloque 3 (los dos botones,
+// la cabecera, el campo de la permuta, los campos de tasa) y de lo que upC()
+// ya refresca por su id. El botón de guardar está fuera de los dos, así que
+// rehaciendo solo eso sobrevive al gesto.
+//
+// Y el HTML sale de rNueva(), la MISMA función que lo dibuja: escrito aparte,
+// un día el bloque repintado diría algo distinto del bloque dibujado.
+function _refrescarMetodoTx(){
+  var cont=document.getElementById("sec3-tx");
+  if(!cont){ R(); return; }
+  var tmp=document.createElement("div");
+  tmp.innerHTML=rNueva();
+  var nue=tmp.querySelector("#sec3-tx");
+  if(!nue){ R(); return; }   // la pantalla ya no es esta: que mande R()
+  cont.innerHTML=nue.innerHTML;
+  upC("tx");                  // y lo de fuera del bloque 3, por sus ids
 }
 // ═══════════════════════════════════════════════════════════════════════
 // ARREGLO 123 · la permuta sale de los LOTES, no de su memoria
@@ -3153,7 +3221,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261016_v232";
+var APP_VERSION = "20261016_v242";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -4341,6 +4409,55 @@ function _htmlHistorialPisados(){
 // LA REGLA, que es la del ARREGLO 95: en una cuenta de banco el negativo no
 // existe y es un aviso; en una TARJETA el negativo es lo normal —es lo que
 // debe— y lo que avisa es pasarse del límite.
+// ARREGLO 158 · una cuenta de USDT cuyo saldo se escribio a mano deja de
+// seguir al inventario PARA SIEMPRE (`manual_override`), y eso no se veia en
+// ninguna parte. Sus dos cuentas de Binance lo llevan puesto desde hace un mes,
+// y de ahi salio la deriva de 79,70 que no se pudo reconstruir: el saldo no
+// seguia a los movimientos y nada lo decia.
+//
+// Vive aqui y en ningun otro sitio porque lo leen la fila que lo enseña y el
+// boton que lo quita. Calculado aparte, el aviso diria un numero y el boton
+// dejaria otro.
+function _saldoSegunInventario(c){
+  if(!c || c.moneda!=="USDT") return null;
+  var t=0, hay=false;
+  (S.inventarioUsdt||[]).forEach(function(r){
+    if(!r || (r.cuentaId||"")!==c.id) return;
+    hay=true;
+    t += (r.tipo==="compra") ? (parseFloat(r.usdt)||0) : -(parseFloat(r.usdt)||0);
+  });
+  return hay ? Math.round(t*100)/100 : null;
+}
+function _saldoAManoInfo(c){
+  if(!c || !c.manual_override) return null;
+  var seg=_saldoSegunInventario(c);
+  var act=parseFloat(c.saldo)||0;
+  return {actual:Math.round(act*100)/100, segunInv:seg,
+          dif:(seg===null)?null:Math.round((act-seg)*100)/100};
+}
+function volverASeguirInventario(id){
+  var c=(S.cuentas||[]).find(function(x){ return x.id===id; });
+  if(!c){ alert("No encuentro esa cuenta."); return; }
+  var i=_saldoAManoInfo(c);
+  if(!i){ alert("Esa cuenta ya sigue al inventario."); return; }
+  if(i.segunInv===null){
+    if(!confirm("\""+c.nombre+"\" no tiene ni una operación de USDT registrada, así que "+
+        "el inventario no sabe cuánto debería haber.\n\nSi la dejo seguir al inventario, "+
+        "su saldo pasaría a 0,00 en cuanto registres la primera.\n\n¿Seguro?")) return;
+  } else if(!confirm("Que \""+c.nombre+"\" vuelva a seguir al inventario:\n\n"+
+      "ahora dice ....... "+f2(i.actual)+" USDT\n"+
+      "pasaría a ........ "+f2(i.segunInv)+" USDT\n"+
+      "diferencia ....... "+(i.dif>0?"+":"")+f2(i.dif)+"\n\n"+
+      "Ese segundo número son tus compras menos tus ventas de USDT en esta cuenta: "+
+      "NO es lo que deberías tener, es lo que la app escribiría. El cambio se aplica "+
+      "la próxima vez que dibujes Inventario.\n\n"+
+      "Si la diferencia es grande, es que faltan operaciones por registrar.\n\n¿Seguro?")) return;
+  delete c.manual_override;
+  c._mod=Date.now();
+  logAudit("SALDO_SIGUE_INVENTARIO", c.nombre+" · a mano "+f2(i.actual)+
+           " · inventario "+(i.segunInv===null?"(sin datos)":f2(i.segunInv)));
+  saveData(); R();
+}
 function _saldoConProblema(c){
   if(!c) return false;
   if(c.esTarjeta){
@@ -5012,8 +5129,11 @@ function ejecutarCierreMes(mesKey, manual){
   });
   saldoCierreUsdtCalc=Math.round(saldoCierreUsdtCalc*100)/100;
 
-  // Calcular con la fórmula única (guarda desglose completo, congelado)
-  var calc = calcMesCompleto(mesKey);
+  // Calcular con la fórmula única (guarda desglose completo, congelado).
+  // ARREGLO 155: y se pide el RECALCULO a propósito. Desde que un mes cerrado
+  // devuelve lo guardado, cerrar leyendo lo guardado sería escribir lo que ya
+  // había; y al reabrir y volver a cerrar, el cierre nuevo saldría del viejo.
+  var calc = calcMesCompleto(mesKey, null, true);
 
   // Calcular saldo acumulado (suma de utilidades netas de todos los meses)
   var cierresAnt = (S.cierresMes||[]).filter(function(c){return c.mesKey!==mesKey;}).sort(function(a,b){return b.mesKey.localeCompare(a.mesKey);});
@@ -5304,22 +5424,11 @@ function reabrirMes(mesKey){
   alert("🔓 "+lbl+" vuelve a estar abierto.");
 }
 
-function cerrarMes(){
-  var meses=getMesesDisponibles();
-  var selMes=S.filtroMes||(meses.length?meses[0].key:"");
-  if(!selMes){alert("Selecciona un mes primero.");return;}
-  var label=getMesLabel(selMes.split("-")[1],selMes.split("-")[0]);
-  var yaExiste=S.cierresMes&&S.cierresMes.some(function(c){return c.mesKey===selMes;});
-  if(yaExiste){
-    if(!confirm("Este mes ya fue cerrado.\n\n¿Deseas descargarlo de nuevo y actualizar el historial?")) return;
-  } else {
-    if(!confirm("Cerrar "+label+"\n\n1️⃣ Se descargará un Excel completo con todas las operaciones.\n2️⃣ El historial del sistema guardará solo el resumen (más liviano).\n\n¿Continuar?")) return;
-  }
-  // 1. Exportar Excel primero
-  try{ exportarMesExcel(selMes); } catch(e){ alert("Error al generar el Excel: "+e.message); return; }
-  // 2. Cerrar (guarda resumen ligero, sin operaciones)
-  ejecutarCierreMes(selMes, true);
-}
+// Aqui vivia cerrarMes(), un SEGUNDO camino para cerrar un mes: tomaba
+// S.filtroMes en vez de S._cMes y llamaba a ejecutarCierreMes por su cuenta.
+// Su unico llamador era el Balance Mensual viejo, que nadie dibujaba. Dos
+// caminos para cerrar un mes, con reglas distintas, es exactamente lo que
+// costo el ARREGLO 91. El que manda es el boton de la pestana Cierre.
 
 // ══════════════════════════════════════════════════════
 // EVOLUCIÓN MENSUAL: saldo mes anterior + ganancia mes actual = esperado
@@ -7119,12 +7228,12 @@ function rOpDiario(){
     // Route
     row+="<td><span class='bd' style='background:var(--sup2g);color:var(--tx);font-size:10px'>"+_escAud(r.rt)+"</span></td>";
     // Amount
-    if(isEd) row+="<td><input id='edit-am' type='number' value='"+r.am+"' style='width:70px;font-size:11px;padding:3px 5px;border:1px solid var(--ok-ln);border-radius:5px;text-align:right'></td>";
+    if(isEd) row+="<td><input id='edit-am' type='text' inputmode='decimal' value='"+r.am+"' style='width:70px;font-size:11px;padding:3px 5px;border:1px solid var(--ok-ln);border-radius:5px;text-align:right'></td>";
     else row+="<td style='text-align:right;font-weight:700'>"+f2(r.am)+"</td>";
     // Currency
     row+="<td style='text-align:center'><span class='bd' style='background:var(--sup2g);color:var(--tx);font-size:10px'>"+r.orig+"</span></td>";
     // Daily rate
-    if(isEd) row+="<td><input id='edit-tdia' type='number' step='0.001' value='"+r.tdia+"' style='width:65px;font-size:11px;padding:3px 5px;border:1px solid var(--ok-ln);border-radius:5px;text-align:right'></td>";
+    if(isEd) row+="<td><input id='edit-tdia' type='text' inputmode='decimal' step='0.001' value='"+r.tdia+"' style='width:65px;font-size:11px;padding:3px 5px;border:1px solid var(--ok-ln);border-radius:5px;text-align:right'></td>";
     else row+="<td style='text-align:right'>"+f2(r.tdia)+"</td>";
     // Gain + lock + actions
     row+="<td style='text-align:right;font-weight:700;color:var(--ok)'>$"+f2(prShow)+"</td>";
@@ -7734,8 +7843,13 @@ function _motivoDelAjuste(c, delta){
 // llegaría aquí buscando subir una cuenta y se iría sin subirla.
 function _ajusteAGanExtra(c, delta){
   var monto=Math.abs(delta);
+  // ARREGLO 156: nace MARCADO como ajuste de saldo. Un ajuste no es una
+  // ganancia del mes — es dinero que ya estaba y no se habia registrado — y
+  // la marca es lo unico que permite distinguirlo despues. Adivinarlo por el
+  // texto de la descripcion es lo que CLAUDE.md ya prohibe para la mercancia:
+  // la descripcion la escribe ella y puede cambiarla.
   S._nGanExtra=Object.assign(S._nGanExtra||{}, {d:td(), desc:"", monto:String(monto),
-    mon:c.moneda, usdt:"", cuentaId:c.id, tipo:"empresa", nota:""});
+    mon:c.moneda, usdt:"", cuentaId:c.id, tipo:"empresa", nota:"", esAjuste:true});
   S._showGanExtra=true;
   S.tab="nueva";
   alert("No le toco el saldo a \""+c.nombre+"\".\n\n"+
@@ -7745,8 +7859,9 @@ function _ajusteAGanExtra(c, delta){
 }
 function _ajusteAEgreso(c, delta){
   var monto=Math.abs(delta);
+  // ARREGLO 156: igual que su espejo de arriba — nace marcado.
   S.nEg=Object.assign(S.nEg||{}, {date:td(), mot:"", monto:String(monto),
-    mon:c.moneda, cuentaId:c.id, pagada:true, fija:false});
+    mon:c.moneda, cuentaId:c.id, pagada:true, fija:false, esAjuste:true});
   S.tab="egresos";
   alert("No le toco el saldo a \""+c.nombre+"\".\n\n"+
         "Te dejo el egreso empezado por "+f2(monto)+" "+c.moneda+" desde esa cuenta. "+
@@ -8406,7 +8521,7 @@ function eliminarCuentaConfig(btn){
 
 function guardarConfigAlertas(){
   var dias=parseInt(document.getElementById("inp-dias-alerta").value)||5;
-  var minU=parseFloat(document.getElementById("inp-min-usdt").value)||0;
+  var minU=_leerNumero(document.getElementById("inp-min-usdt").value)||0;
   autorizarYHacer(function(){
     if(!S.config) S.config={};
     S.config.diasAlertaCobro=dias;
@@ -8420,8 +8535,8 @@ function guardarConfigAlertas(){
 
 function guardarConfigMora(){
   var activa=!!document.getElementById("inp-mora-activa").checked;
-  var multa=parseFloat(document.getElementById("inp-mora-multa").value);
-  var juros=parseFloat(document.getElementById("inp-mora-juros").value);
+  var multa=_leerNumero(document.getElementById("inp-mora-multa").value);
+  var juros=_leerNumero(document.getElementById("inp-mora-juros").value);
   var gracia=parseInt(document.getElementById("inp-mora-gracia").value);
   if(isNaN(multa)||multa<0){alert("Multa inválida.");return;}
   if(isNaN(juros)||juros<0){alert("Juros de mora inválidos.");return;}
@@ -8441,7 +8556,7 @@ function guardarConfigMora(){
 }
 
 function guardarCostoOportunidad(){
-  var v=parseFloat(document.getElementById("inp-costo-oport").value);
+  var v=_leerNumero(document.getElementById("inp-costo-oport").value);
   if(isNaN(v)||v<0){alert("Valor inválido.");return;}
   autorizarYHacer(function(){
     if(!S.config) S.config={};
@@ -8794,9 +8909,9 @@ function situarAjustesEnElAire(){
 }
 
 function guardarCostoOperativo(){
-  var min=parseFloat(document.getElementById("inp-minutos-prestamo").value);
-  var hora=parseFloat(document.getElementById("inp-valor-hora").value);
-  var com=parseFloat(document.getElementById("inp-comision-prestamo").value);
+  var min=_leerNumero(document.getElementById("inp-minutos-prestamo").value);
+  var hora=_leerNumero(document.getElementById("inp-valor-hora").value);
+  var com=_leerNumero(document.getElementById("inp-comision-prestamo").value);
   if(isNaN(min)||min<0){alert("Los minutos no son válidos.");return;}
   if(isNaN(hora)||hora<0) hora=0;
   if(isNaN(com)||com<0) com=0;
@@ -8815,7 +8930,7 @@ function guardarCostoOperativo(){
 }
 
 function guardarLimiteClienteNuevo(){
-  var v=parseFloat(document.getElementById("inp-limite-nuevo").value);
+  var v=_leerNumero(document.getElementById("inp-limite-nuevo").value);
   if(isNaN(v)||v<0){alert("Valor inválido.");return;}
   autorizarYHacer(function(){
     if(!S.config) S.config={};
@@ -8829,7 +8944,7 @@ function guardarLimiteClienteNuevo(){
 function guardarComisionVES(){
   var inp=document.getElementById("inp-com-ves");
   if(!inp) return;
-  var v=parseFloat(inp.value);
+  var v=_leerNumero(inp.value);
   if(isNaN(v)||v<0){alert("Valor inválido.");return;}
   autorizarYHacer(function(){
     if(!S.config) S.config={};
@@ -8843,7 +8958,7 @@ function guardarComisionVES(){
 function guardarComision(){
   var inp=document.getElementById("inp-com-usdt");
   if(!inp) return;
-  var v=parseFloat(inp.value);
+  var v=_leerNumero(inp.value);
   if(!v||v<0){alert("Valor inválido.");return;}
   autorizarYHacer(function(){if(!S.config)S.config={};logAudit("CONFIG_COMISION","Cambió comisión USDT a "+v);S.config.comision_usdt=v;saveData();R();alert("✅ Comisión: "+v+" USDT");});
 }
@@ -8961,95 +9076,14 @@ function saveNewCuenta(){
 }
 
 
-// Monthly stats section (used by rBalancePlus)
-function rBalanceStd(){
-  var mesActualKey=getMesKeyActual();
-  var meses=getMesesDisponibles();
-  // Usar _opMesSel para consistencia entre vistas del operador
-  if(!_opMesSel || _opMesSel.length<6) _opMesSel=mesActualKey;
-  var selMes=_opMesSel;
-  var partsA=mesActualKey.split("-");
-  var labelA=getMesLabel(partsA[1],partsA[0]);
-  var parts=selMes?selMes.split("-"):["",""];
-  var brlM=filterByMes(S.brl,selMes);
-  var vzlaM=filterByMes(S.vzla,selMes);
-  var eeuuM=filterByMes(S.eeuu,selMes);
-  var egresosM=filterByMes(S.egresos,selMes);
-  var ganBrl=brlM.reduce(function(a,r){return a+r.pr;},0);
-  var ganVzla=vzlaM.reduce(function(a,r){return a+r.pr;},0);
-  var ganEEUU=eeuuM.reduce(function(a,r){return a+r.pr;},0);
-  var gasGEUU=filterByMes(S.gastos_eeuu||[],selMes).reduce(function(a,g){return a+parseFloat(g.monto||0);},0);
-  var ganNetaEE=ganEEUU-gasGEUU;
-  // ARREGLO 150: la compra de mercancia no baja el neto del mes.
-  var egPag=_egOperativos(egresosM).filter(function(e){return e.pagada;}).reduce(function(a,e){return a+e.usdt;},0);
-  var egPend=_egOperativos(egresosM).filter(function(e){return !e.pagada;}).reduce(function(a,e){return a+e.usdt;},0);
-  var neto=ganBrl+ganVzla+ganNetaEE*0.5-egPag-egPend;
-  var mesOpts=(meses.some(function(m){return m.key===mesActualKey;})?"":
-    "<option value='"+mesActualKey+"'"+(selMes===mesActualKey?" selected":"")+">"+labelA+" ✨ (actual)</option>")+
-    meses.map(function(m){return "<option value='"+m.key+"'"+(selMes===m.key?" selected":"")+">"+getMesLabel(m.mes,m.anio)+(m.key===mesActualKey?" ✨":"")+"</option>";}).join("");
-  // Client summary
-  var clStats={};
-  [].concat(
-    brlM.map(function(r){return{cl:r.cl,op:"🇧🇷",pr:r.pr};}),
-    vzlaM.map(function(r){return{cl:r.cl,op:"🇻🇪",pr:r.pr};}),
-    eeuuM.map(function(r){return{cl:r.cl,op:"🇺🇸",pr:r.pr/2};})
-  ).forEach(function(r){if(!clStats[r.cl])clStats[r.cl]={cl:r.cl,op:r.op,txs:0,gan:0};clStats[r.cl].txs++;clStats[r.cl].gan+=r.pr;});
-  var clArr=Object.values(clStats).sort(function(a,b){return b.gan-a.gan;});
-  var clRows=clArr.slice(0,30).map(function(cl,i){
-    var medal=i===0?"🥇":i===1?"🥈":i===2?"🥉":"";
-    return "<tr><td style='font-weight:700;text-align:center'>"+medal+(i<3?"":"#"+(i+1))+"</td><td>"+cl.op+"</td><td style='font-weight:600'>"+_escAud(cl.cl)+"</td><td style='text-align:center;font-weight:700'>"+cl.txs+"</td><td style='text-align:right;font-weight:700;color:var(--ok)'>$"+f2(cl.gan)+"</td></tr>";
-  }).join("");
+// El Balance Mensual viejo (rBalanceStd) y su calculadora de tasa vivian aqui.
+// Se fueron: NADIE las llamaba. Comprobado en Chromium dibujando las 26
+// pestanas con su export — los campos calc-tc-* no aparecian en ninguna, asi
+// que el arreglo 159 estuvo corrigiendo un parseFloat de una pantalla que no
+// se dibuja. El peligro de dejarlo no era el peso, es el del ARREGLO 59: que
+// alguien lo lea y crea que es el bueno. El Balance que SI se dibuja es
+// rBalancePlus(), y la calculadora que ella usa es la de la pestana Tasas.
 
-  return "<div style='margin-top:16px;display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px'>"+
-    "<div style='display:flex;align-items:center;gap:10px'><div style='font-size:13px;font-weight:700'>📅 Reporte mensual</div>"+
-    "<select onchange='_opMesSel=this.value;R()' style='border-radius:7px;padding:6px 10px;border:1px solid var(--ln);font-size:12px'>"+mesOpts+"</select></div>"+
-    "<div style='display:flex;gap:8px'>"+
-      "<button onclick='exportMesSel()' style='background:var(--ok);color:var(--sobre-color);border:none;padding:8px 14px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer'>📊 Excel</button>"+
-      "<button onclick='cerrarMes()' style='background:var(--fondo-osc);color:var(--sobre-color);border:none;padding:8px 14px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer'>🔒 Cerrar mes</button>"+
-    "</div></div>"+
-    "<div class='mg' style='margin-bottom:12px'>"+
-      "<div class='mc' style='background:var(--ok-sup);border:1px solid var(--vd2a44)'><div class='lbl'>BRL/VZLA</div><div class='val pos'>$"+f2(ganBrl+ganVzla)+"</div></div>"+
-      "<div class='mc' style='background:var(--info-sup);border:1px solid var(--az2a44)'><div class='lbl'>EE.UU neta</div><div class='val' style='color:var(--info)'>$"+f2(ganNetaEE)+"</div></div>"+
-      "<div class='mc' style='background:var(--mal-sup)'><div class='lbl'>Egresos pagados</div><div class='val neg'>$"+f2(egPag)+"</div></div>"+
-      "<div class='mc' style='background:"+(neto>=0?"var(--ok-sup)":"var(--mal-sup)")+";border:2px solid "+(neto>=0?"var(--ok-ln)":"var(--mal)")+"'><div class='lbl'>NETO</div><div class='val "+(neto>=0?"pos":"neg")+"'>$"+f2(neto)+"</div></div>"+
-    "</div>"+
-    (clRows?"<div style='font-size:10px;font-weight:700;color:var(--tx3);text-transform:uppercase;margin-bottom:8px'>👥 Top clientes del mes</div>"+
-    "<div style='border:1px solid var(--ln2);border-radius:10px;overflow-x:auto;margin-bottom:14px'><table style='width:100%;border-collapse:collapse;font-size:11px'>"+
-    "<thead><tr style='background:var(--sup2b)'><th style='padding:7px 8px;text-align:center;border-bottom:1px solid var(--ln2)'>#</th><th style='padding:7px 8px;border-bottom:1px solid var(--ln2)'>OP.</th>"+
-    "<th style='padding:7px 8px;border-bottom:1px solid var(--ln2)'>CLIENTE</th><th style='padding:7px 8px;text-align:center;border-bottom:1px solid var(--ln2)'>TRANSACCIONES</th>"+
-    "<th style='padding:7px 8px;text-align:right;color:var(--ok);border-bottom:1px solid var(--ln2)'>GANANCIA</th></tr></thead>"+
-    "<tbody>"+clRows+"</tbody></table></div>":"")+
-    "<div class='sec' style='border-left:3px solid var(--ac3);margin-bottom:16px'>"+
-      "<div class='sec-title' style='color:var(--ac3)'>📊 CALCULADORA DE TASA PARA PUBLICAR</div>"+
-      "<div style='font-size:11px;color:var(--tx2b);margin-bottom:12px'>Ingresa los precios actuales del USDT y te calcula qué tasa publicar en tu flyer para cada margen de ganancia.</div>"+
-      "<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px'>"+
-        "<div><label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>🇧🇷 Precio USDT en Brasil (BRL × USDT)</label>"+
-        "<input type='number' id='calc-tc-brl' step='0.001' placeholder='ej: 5.04' value='"+(S.calcTasa&&S.calcTasa.tcBrl||"")+"' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;font-weight:700' oninput='calcTasaUpdate()'></div>"+
-        "<div><label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>🇻🇪 Precio USDT en Venezuela (VES × USDT)</label>"+
-        "<input type='number' id='calc-tv-ves' step='1' placeholder='ej: 740' value='"+(S.calcTasa&&S.calcTasa.tvVes||"")+"' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;font-weight:700' oninput='calcTasaUpdate()'></div>"+
-        "<div><label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>🇺🇸 Precio USDT en USD (USD × USDT)</label>"+
-        "<input type='number' id='calc-tc-usd' step='0.001' placeholder='ej: 1.01' value='"+(S.calcTasa&&S.calcTasa.tcUsd||"")+"' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;font-weight:700' oninput='calcTasaUpdate()'></div>"+
-        "<div><label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>🇨🇴 Precio USDT en Colombia (COP × USDT)</label>"+
-        "<input type='number' id='calc-tc-cop' step='1' placeholder='ej: 4200' value='"+(S.calcTasa&&S.calcTasa.tcCop||"")+"' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;font-weight:700' oninput='calcTasaUpdate()'></div>"+
-      "</div>"+
-      "<div id='calc-tasa-resultado'></div>"+
-      "<div style='background:var(--mo6);border:1.5px dashed var(--ac3);border-radius:10px;padding:12px;margin-top:6px'>"+
-        "<label style='font-size:11px;font-weight:700;color:var(--ac3);display:block;margin-bottom:4px'>🎯 O escribe directo la tasa que quieres publicar (BS × BRL) — te digo a qué % de ganancia equivale</label>"+
-        "<input type='number' id='calc-tasa-objetivo' step='0.01' placeholder='ej: 132' value='"+(S.calcTasa&&S.calcTasa.objetivo||"")+"' style='width:100%;padding:9px;border:1.5px solid var(--ac3);border-radius:8px;font-size:14px;font-weight:700;margin-bottom:8px' oninput='calcTasaObjetivoUpdate()'>"+
-        "<div id='calc-tasa-objetivo-resultado'></div>"+
-      "</div>"+
-    "</div>"+
-    "<div style='background:var(--gr6-c);border-radius:10px;padding:14px;border:1px solid var(--ln2)'>"+
-    "<div style='font-size:10px;font-weight:700;color:var(--tx3);text-transform:uppercase;margin-bottom:10px'>⚙️ Gestión de datos</div>"+
-    "<div style='display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--ln2b)'>"+
-      "<div><div style='font-size:12px;font-weight:600'>Exportar respaldo JSON</div></div>"+
-      "<button onclick='exportData()' style='background:var(--fondo-osc);color:var(--sobre-color);border:none;padding:8px 14px;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer'>💾 Exportar</button>"+
-    "</div>"+
-    "<div style='display:flex;align-items:center;justify-content:space-between;padding:10px 0'>"+
-      "<div><div style='font-size:12px;font-weight:600;color:var(--mal)'>Borrar TODOS los datos</div></div>"+
-      "<button onclick='clearAllData()' style='background:var(--mal-sup);color:var(--mal);border:1px solid var(--rj5-a);padding:8px 14px;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer'>🗑️ Borrar todo</button>"+
-    "</div></div>";
-}
 
 function rBalance(){ return rBalancePlus(); }
 
@@ -9071,7 +9105,7 @@ function saveEditRow(){
   if(idx===-1){S.editRow=null;R();return;}
   var row=arr[idx];
   ["d","id","cl"].forEach(function(f){var el=document.getElementById("edit-"+f);if(el)row[f]=el.value;});
-  ["am","tdia","tc","tv"].forEach(function(f){var el=document.getElementById("edit-"+f);if(el)row[f]=parseFloat(el.value)||row[f];});
+  ["am","tdia","tc","tv"].forEach(function(f){var el=document.getElementById("edit-"+f);if(el)row[f]=_leerNumero(el.value)||row[f];});
   var com=COM();
   var am=parseFloat(row.am)||0,tdia=parseFloat(row.tdia)||0,tc=parseFloat(row.tc)||1,tv=parseFloat(row.tv)||1;
   row.cant=(type==="vzla")?(tdia>0?Math.round(r4(am/tdia)):0):Math.floor(r4(am*tdia));
@@ -9237,7 +9271,7 @@ function txPagosToggle(){
 function txPagoSet(i,campo,val){
   S.tx.pagos=S.tx.pagos||[];
   if(!S.tx.pagos[i]) S.tx.pagos[i]={cuentaId:"",monto:""};
-  S.tx.pagos[i][campo]=val;
+  S.tx.pagos[i][campo]=(campo==="monto")?_num(val):val;
   // La primera cuenta de verdad manda: es la que elige la tasa del lote y la
   // que queda como cuentaBanco de la remesa, igual que cuando hay una sola.
   var prim=(S.tx.pagos||[]).find(function(p){return p.cuentaId&&p.cuentaId!==PAGO_DEBE;});
@@ -9337,7 +9371,7 @@ function txEntregasToggle(){
 function txEntregaSet(i,campo,val){
   S.tx.entregas=S.tx.entregas||[];
   if(!S.tx.entregas[i]) S.tx.entregas[i]={cuentaId:"",monto:"",com:""};
-  S.tx.entregas[i][campo]=val;
+  S.tx.entregas[i][campo]=(campo==="monto")?_num(val):val;
   // La primera cuenta de verdad manda: es la que queda guardada en la remesa
   // como cuentaDest, igual que cuando hay una sola. El Balance por cuenta, los
   // filtros y el cierre siguen leyendo ese campo y no se enteran del desglose.
@@ -9600,9 +9634,92 @@ function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaD
   return movimientos;
 }
 
+// ── ARREGLO 153 · una tasa del día imposible no se guarda en silencio ────
+//
+// El campo de la tasa viene RELLENO con la de Configuración, así que escribir
+// sin borrar deja los dos números pegados. Le pasó el 16/10: tenía 186, escribió
+// 189 y quedó 186189. Medido con su export:
+//
+//     entrega      93.094.500 Bs
+//     ganancia        − 90.135,58 USDT
+//     y la app lo guardaba sin un solo aviso
+//
+// El `onfocus='this.select()'` de los campos evita ESE tropiezo —escribir
+// reemplaza lo que había— pero no el de teclear un cero de más, así que el
+// freno va aquí también. Es el mismo criterio del aviso de salto de 10× al
+// escribir un saldo a mano: no corrige nada, pregunta.
+//
+// Se compara contra lo que ELLA publica, no contra un número escrito en el
+// código: su tasa sube y baja todos los días (ARREGLO 128). Sin tasa publicada
+// no se frena nada — un umbral adivinado pararía una remesa buena.
+function _tasaDelDiaFueraDeRango(f, ruta){
+  var td=parseFloat(f && f.tdia)||0;
+  if(!(td>0) || !ruta) return null;
+  var pub=0;
+  try{
+    if(ruta.orig==="BRL" && ruta.dest==="VES")      pub=parseFloat(_getTasaClienteBRL())||0;
+    else if(ruta.orig==="VES" && ruta.dest==="BRL") pub=parseFloat(_getTasaVueltaVESaBRL())||0;
+  }catch(e){ return null; }
+  if(!(pub>0)) return null;
+  // Diez veces arriba o abajo. Un margen estrecho saltaría en una remesa rara
+  // de verdad y enseñaría a pulsar "sí" sin leer (ARREGLO 99).
+  if(td<=pub*10 && td>=pub/10) return null;
+  return {tecleada:td, publicada:pub, veces:Math.round((td>pub?td/pub:pub/td)*10)/10};
+}
+// ARREGLO 154: ¿ya hay una remesa igual? Mismo dia, mismo cliente, mismo monto
+// y misma ruta. Devuelve las que encuentre, nunca decide por ella.
+//
+// AVISA, NO BLOQUEA, y eso sale de medir sus datos, no de opinar. Fuera de los
+// duplicados de la importacion, en cinco meses hay doce grupos repetidos y la
+// mitad son operaciones DE VERDAD: CARLOS ALFREDO RODRIGUEZ mando 150 R$ tres
+// veces el 17/09 —a 172, 173 y 172,5— y 200 R$ dos veces con dos horas de por
+// medio. Bloquear eso es impedirle trabajar.
+//
+// La TASA decide el tono: con la misma tasa es casi seguro la misma operacion
+// registrada dos veces; con otra tasa son dos operaciones. En sus datos esa
+// regla acierta en los tres casos reales.
+function _remesasIguales(f, ruta){
+  if(!f || !f.date || !f.cl || !(parseFloat(f.am)>0) || !ruta) return [];
+  var dia=ds(f.date), cl=String(f.cl).toUpperCase().trim(), am=parseFloat(f.am)||0;
+  var lista=(ruta.dest==="VES"&&ruta.orig==="USD") ? (S.eeuu||[])
+          : (ruta.orig==="VES") ? (S.vzla||[]) : (S.brl||[]);
+  return lista.filter(function(r){
+    if(!r || r.d!==dia) return false;
+    if(String(r.cl||"").toUpperCase().trim()!==cl) return false;
+    if(Math.abs((parseFloat(r.am)||0)-am)>0.009) return false;
+    return (r.orig||"")===(ruta.orig||"") && (r.dest||"")===(ruta.dest||"");
+  });
+}
+function _textoRemesaRepetida(iguales, f){
+  var td=parseFloat(f.tdia)||0;
+  var mismaTasa=iguales.some(function(r){ return Math.abs((parseFloat(r.tdia)||0)-td)<0.0001; });
+  var cab=mismaTasa
+    ? "\u26a0\ufe0f Esto parece la MISMA operaci\u00f3n que ya registraste."
+    : "\u2139\ufe0f Ya hay una operaci\u00f3n parecida de este cliente hoy.";
+  var filas=iguales.map(function(r){
+    return "  \u2022 #"+(r.n||"?")+"  "+(r.h?r.h+"  ":"")+f2(r.am)+" \u00b7 tasa "+f2(r.tdia||0);
+  }).join("\n");
+  return cab+"\n\n"+
+    "ya registrada"+(iguales.length>1?"s":"")+":\n"+filas+"\n"+
+    "  \u2022 esta:  "+f2(parseFloat(f.am)||0)+" \u00b7 tasa "+f2(td)+"\n\n"+
+    (mismaTasa
+      ? "Mismo d\u00eda, mismo cliente, mismo monto y la misma tasa."
+      : "Mismo d\u00eda, mismo cliente y mismo monto, pero con otra tasa: puede ser otra operaci\u00f3n.")+
+    "\n\n\u00bfEs otra operaci\u00f3n distinta y la guardo igual?";
+}
 function saveTx(){
   var f=S.tx;
   if(!f.date||!f.cl||!f.am||!f.tdia){alert("Completa: fecha, cliente, monto y tasa del día.");return;}
+  var _rutaChk=getRutas().find(function(r){return r.rt===f.rt;});
+  var _ig=_remesasIguales(f, _rutaChk);
+  if(_ig.length && !confirm(_textoRemesaRepetida(_ig, f))) return;
+  var _tFuera=_tasaDelDiaFueraDeRango(f, _rutaChk);
+  if(_tFuera && !confirm(
+      "\u26a0\ufe0f La tasa del d\u00eda que escribiste es "+_tFuera.veces+" veces la que publicas.\n\n"+
+      "escribiste  "+f2(_tFuera.tecleada)+"\n"+
+      "publicas    "+f2(_tFuera.publicada)+"\n\n"+
+      "Si el campo ven\u00eda con un n\u00famero puesto y escribiste detr\u00e1s, quedaron los dos "+
+      "pegados. Revisa el campo antes de guardar.\n\n\u00bfGuardar de todas formas?")) return;
   if(!confirmarFechaFutura(f.date,"Esta remesa")) return;
   // ⚠️ Aviso si el mes ya fue cerrado (no bloquea — permite registrar olvidados)
   var _txMesKey=f.date.substring(0,7);
@@ -14319,7 +14436,7 @@ function abrirFlujo(tipo, monto, moneda, gananciaUsdt){
     html += "<div style='margin-bottom:10px;padding:10px;background:var(--sup2b);border-radius:8px;border-left:3px solid var(--ac2)'>"+
       "<div style='font-size:11px;font-weight:700;margin-bottom:6px'>Paso "+p.paso+": "+p.label+"</div>"+
       "<div style='display:flex;gap:8px;align-items:center'>"+
-        "<input type='number' step='0.01' placeholder='0.00' id='flujo-val-"+i+"' style='flex:1;padding:8px;border:1px solid var(--ln);border-radius:6px;font-size:13px;font-weight:700'>"+
+        "<input type='text' inputmode='decimal' step='0.01' placeholder='0.00' id='flujo-val-"+i+"' style='flex:1;padding:8px;border:1px solid var(--ln);border-radius:6px;font-size:13px;font-weight:700'>"+
         "<span style='font-size:12px;font-weight:700;color:var(--tx2);min-width:40px'>"+p.moneda+"</span>"+
       "</div></div>";
   });
@@ -14542,7 +14659,7 @@ function eliminarRutaExtra(idx){
 }
 
 function guardarPctSueldo(){
-  var v=parseFloat(document.getElementById('inp-pct-sueldo').value);
+  var v=_leerNumero(document.getElementById('inp-pct-sueldo').value);
   if(isNaN(v)||v<0||v>100){alert("Valor inválido. Ej: 40 para 40%");return;}
   autorizarYHacer(function(){
     if(!S.config)S.config={};
@@ -15254,6 +15371,22 @@ function rConfigAdmin(){
               (c.esJuridica?" <span style=\'font-size:10.5px;font-weight:700;background:var(--az6-c);color:var(--az3-d);padding:1px 7px;border-radius:8px;vertical-align:middle\'>🏛️ PJ (CNPJ)</span>":"")+
             "</div>"+
             "<div style=\'font-size:10px;color:var(--tx4);margin-top:2px\'>"+(c.tipo||"")+(c.operador&&c.operador!=="general"?" · "+c.operador:"")+"</div>"+
+            // ARREGLO 158 · si el saldo se escribio a mano, se DICE. Llevaba un
+            // mes sin seguir al inventario y no habia forma de saberlo.
+            (function(){
+              var mo=_saldoAManoInfo(c);
+              if(!mo) return "";
+              return "<div style=\'font-size:10px;color:var(--avi-tx);margin-top:3px;font-weight:700\'>"+
+                "\u270d\ufe0f saldo a mano \u00b7 no sigue al inventario"+
+                // "pasaria a" y no "el inventario dice": este numero es lo que
+                // la app ESCRIBIRIA si la cuenta volviera a seguir al inventario
+                // (compras menos ventas de esa cuenta), no lo que deberia haber.
+                // Dicho de la otra forma se lee como dinero que falta.
+                (mo.segunInv===null ? "" : " \u00b7 si lo siguiera pasar\u00eda a "+f2(mo.segunInv))+
+                " <button onclick=\'volverASeguirInventario(\""+_jsAttr(String(c.id))+"\")\' style=\'background:none;"+
+                "border:1px solid var(--avi-ln);color:var(--avi-tx);border-radius:6px;padding:1px 6px;"+
+                "font-size:10px;font-weight:700;cursor:pointer;margin-left:4px\'>que lo siga</button></div>";
+            })()+
           "</div>"+
           // ARREGLO 95: en una tarjeta la cifra grande NO puede salir como
           // dinero. Sin esto una deuda de 652,68 se pintaba en verde y sin
@@ -15408,7 +15541,7 @@ function rConfigAdmin(){
           "<div style='font-size:12px;font-weight:700;color:var(--tx2);margin-bottom:4px'>⚙️ Comisión USDT — lado BRL/USD/PEN</div>"+
           "<div style='font-size:11px;color:var(--tx3);margin-bottom:6px'>Al comprar USDT con reales, dólares o soles.</div>"+
           "<div style='display:flex;gap:8px;align-items:center;max-width:300px'>"+
-            "<input type='number' id='inp-com-usdt' step='0.001' value='"+com+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+            "<input type='text' inputmode='decimal' id='inp-com-usdt' step='0.001' value='"+com+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
             "<button onclick='guardarComision()' style='padding:9px 14px;background:var(--ok);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
           "</div>"+
         "</div>"+
@@ -15424,7 +15557,7 @@ function rConfigAdmin(){
             "<button onclick='document.getElementById(\"inp-com-ves\").value=0.06;guardarComisionVES()' style='padding:7px 12px;background:var(--am6-d);color:var(--avi-tx);border:1.5px solid var(--ac);border-radius:8px;font-size:12px;font-weight:700;cursor:pointer'>↩️ Restaurar 0.06</button>"+
           "</div>"+
           "<div style='display:flex;gap:8px;align-items:center;max-width:300px'>"+
-            "<input type='number' id='inp-com-ves' step='0.001' value='"+comVesActual+"' style='flex:1;padding:9px;border:1.5px solid "+(comVesActual===0?"var(--vd3-a)":"var(--ac)")+";border-radius:8px;font-size:14px'>"+
+            "<input type='text' inputmode='decimal' id='inp-com-ves' step='0.001' value='"+comVesActual+"' style='flex:1;padding:9px;border:1.5px solid "+(comVesActual===0?"var(--vd3-a)":"var(--ac)")+";border-radius:8px;font-size:14px'>"+
             "<button onclick='guardarComisionVES()' style='padding:9px 14px;background:"+(comVesActual===0?"var(--ok)":"var(--ac)")+";color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
           "</div>"+
         "</div>"+
@@ -15545,14 +15678,14 @@ function rConfigAdmin(){
             "<div>"+
               "<label style='font-size:10px;font-weight:700;color:var(--tx2);text-transform:uppercase;display:block;margin-bottom:4px'>⏰ Cobro vencido después de</label>"+
               "<div style='display:flex;gap:6px;align-items:center'>"+
-                "<input type='number' id='inp-dias-alerta' min='1' max='90' value='"+(((S.config||{}).diasAlertaCobro!==undefined)?S.config.diasAlertaCobro:5)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+                "<input type='text' inputmode='decimal' id='inp-dias-alerta' min='1' max='90' value='"+(((S.config||{}).diasAlertaCobro!==undefined)?S.config.diasAlertaCobro:5)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
                 "<span style='font-size:12px;color:var(--tx2);white-space:nowrap'>días</span>"+
               "</div>"+
             "</div>"+
             "<div>"+
               "<label style='font-size:10px;font-weight:700;color:var(--tx2);text-transform:uppercase;display:block;margin-bottom:4px'>📦 Alerta si USDT disponible baja de</label>"+
               "<div style='display:flex;gap:6px;align-items:center'>"+
-                "<input type='number' id='inp-min-usdt' min='0' step='10' value='"+(((S.config||{}).minUsdt)||0)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+                "<input type='text' inputmode='decimal' id='inp-min-usdt' min='0' step='10' value='"+(((S.config||{}).minUsdt)||0)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
                 "<span style='font-size:12px;color:var(--tx2);white-space:nowrap'>USDT</span>"+
               "</div>"+
               "<div style='font-size:10px;color:var(--tx4);margin-top:3px'>Pon 0 para desactivar</div>"+
@@ -15570,7 +15703,7 @@ function rConfigAdmin(){
             "<div>"+
               "<label style='font-size:10px;font-weight:700;color:var(--tx2);text-transform:uppercase;display:block;margin-bottom:4px'>Multa única</label>"+
               "<div style='display:flex;gap:5px;align-items:center'>"+
-                "<input type='number' id='inp-mora-multa' min='0' max='20' step='0.5' value='"+(((S.config||{}).moraMultaPct!==undefined)?S.config.moraMultaPct:2)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+                "<input type='text' inputmode='decimal' id='inp-mora-multa' min='0' max='20' step='0.5' value='"+(((S.config||{}).moraMultaPct!==undefined)?S.config.moraMultaPct:2)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
                 "<span style='font-size:12px;color:var(--tx2)'>%</span>"+
               "</div>"+
               "<div style='font-size:10.5px;color:var(--tx4);margin-top:3px'>Sobre lo vencido, una sola vez</div>"+
@@ -15578,7 +15711,7 @@ function rConfigAdmin(){
             "<div>"+
               "<label style='font-size:10px;font-weight:700;color:var(--tx2);text-transform:uppercase;display:block;margin-bottom:4px'>Juros de mora</label>"+
               "<div style='display:flex;gap:5px;align-items:center'>"+
-                "<input type='number' id='inp-mora-juros' min='0' max='30' step='0.5' value='"+(((S.config||{}).moraJurosPctMes!==undefined)?S.config.moraJurosPctMes:1)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+                "<input type='text' inputmode='decimal' id='inp-mora-juros' min='0' max='30' step='0.5' value='"+(((S.config||{}).moraJurosPctMes!==undefined)?S.config.moraJurosPctMes:1)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
                 "<span style='font-size:12px;color:var(--tx2);white-space:nowrap'>%/mes</span>"+
               "</div>"+
               "<div style='font-size:10.5px;color:var(--tx4);margin-top:3px'>Prorrateado por día</div>"+
@@ -15586,7 +15719,7 @@ function rConfigAdmin(){
             "<div>"+
               "<label style='font-size:10px;font-weight:700;color:var(--tx2);text-transform:uppercase;display:block;margin-bottom:4px'>Días de gracia</label>"+
               "<div style='display:flex;gap:5px;align-items:center'>"+
-                "<input type='number' id='inp-mora-gracia' min='0' max='30' step='1' value='"+(((S.config||{}).moraDiasGracia!==undefined)?S.config.moraDiasGracia:3)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+                "<input type='text' inputmode='decimal' id='inp-mora-gracia' min='0' max='30' step='1' value='"+(((S.config||{}).moraDiasGracia!==undefined)?S.config.moraDiasGracia:3)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
                 "<span style='font-size:12px;color:var(--tx2)'>días</span>"+
               "</div>"+
               "<div style='font-size:10.5px;color:var(--tx4);margin-top:3px'>Antes no se cobra nada</div>"+
@@ -15598,7 +15731,7 @@ function rConfigAdmin(){
           "<div style='font-size:12px;font-weight:700;color:var(--tx2);margin-bottom:6px'>🎯 Sugerencia de tasa de préstamo</div>"+
           "<div style='font-size:11px;color:var(--tx3);margin-bottom:10px'>Cuánto te rinde al mes ese mismo dinero cuando NO está prestado (moviendo remesas). Es el suelo del cálculo: si un préstamo rinde menos que esto, te conviene no prestarlo. El % de impago no se configura — la app lo mide de tus propios préstamos.</div>"+
           "<div style='display:flex;gap:8px;align-items:center;max-width:340px'>"+
-            "<input type='number' id='inp-costo-oport' min='0' max='50' step='0.5' value='"+(((S.config||{}).costoOportunidadMes!==undefined)?S.config.costoOportunidadMes:3)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+            "<input type='text' inputmode='decimal' id='inp-costo-oport' min='0' max='50' step='0.5' value='"+(((S.config||{}).costoOportunidadMes!==undefined)?S.config.costoOportunidadMes:3)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
             "<span style='font-size:12px;color:var(--tx2);white-space:nowrap'>% al mes</span>"+
             "<button onclick='guardarCostoOportunidad()' style='padding:9px 14px;background:var(--ok-osc);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
           "</div>"+
@@ -15608,17 +15741,17 @@ function rConfigAdmin(){
             "<div style='display:grid;grid-template-columns:repeat(3,1fr);gap:10px'>"+
               "<div>"+
                 "<label style='font-size:10px;font-weight:700;color:var(--tx2);text-transform:uppercase;display:block;margin-bottom:4px'>Minutos por préstamo</label>"+
-                "<input type='number' id='inp-minutos-prestamo' min='0' step='5' value='"+(((S.config||{}).minutosPorPrestamo!==undefined)?S.config.minutosPorPrestamo:30)+"' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+                "<input type='text' inputmode='decimal' id='inp-minutos-prestamo' min='0' step='5' value='"+(((S.config||{}).minutosPorPrestamo!==undefined)?S.config.minutosPorPrestamo:30)+"' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
                 "<div style='font-size:10.5px;color:var(--tx4);margin-top:3px'>De principio a fin, sumando todo</div>"+
               "</div>"+
               "<div>"+
                 "<label style='font-size:10px;font-weight:700;color:var(--tx2);text-transform:uppercase;display:block;margin-bottom:4px'>Vale tu hora (USDT)</label>"+
-                "<input type='number' id='inp-valor-hora' min='0' step='0.5' placeholder='ej: 5' value='"+(((S.config||{}).valorHoraUsdt!==undefined)?S.config.valorHoraUsdt:"")+"' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+                "<input type='text' inputmode='decimal' id='inp-valor-hora' min='0' step='0.5' placeholder='ej: 5' value='"+(((S.config||{}).valorHoraUsdt!==undefined)?S.config.valorHoraUsdt:"")+"' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
                 "<div style='font-size:10.5px;color:var(--tx4);margin-top:3px'>$800 al mes ÷ 160 h = $5</div>"+
               "</div>"+
               "<div>"+
                 "<label style='font-size:10px;font-weight:700;color:var(--tx2);text-transform:uppercase;display:block;margin-bottom:4px'>Comisiones (USDT)</label>"+
-                "<input type='number' id='inp-comision-prestamo' min='0' step='0.1' value='"+(((S.config||{}).comisionPorPrestamoUsdt!==undefined)?S.config.comisionPorPrestamoUsdt:0)+"' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+                "<input type='text' inputmode='decimal' id='inp-comision-prestamo' min='0' step='0.1' value='"+(((S.config||{}).comisionPorPrestamoUsdt!==undefined)?S.config.comisionPorPrestamoUsdt:0)+"' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
                 "<div style='font-size:10.5px;color:var(--tx4);margin-top:3px'>Transferencias. Con PIX suele ser 0</div>"+
               "</div>"+
             "</div>"+
@@ -15632,7 +15765,7 @@ function rConfigAdmin(){
           "</div>"+
           "<div style='font-size:11px;color:var(--tx3);margin:12px 0 6px'>Cuánto es lo máximo que le prestas a alguien que nunca te ha devuelto nada. A partir de ahí, el límite de cada cliente lo calcula la app con lo que ya demostró que puede pagar.</div>"+
           "<div style='display:flex;gap:8px;align-items:center;max-width:340px'>"+
-            "<input type='number' id='inp-limite-nuevo' min='0' step='10' value='"+(((S.config||{}).limiteClienteNuevoUsdt!==undefined)?S.config.limiteClienteNuevoUsdt:100)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+            "<input type='text' inputmode='decimal' id='inp-limite-nuevo' min='0' step='10' value='"+(((S.config||{}).limiteClienteNuevoUsdt!==undefined)?S.config.limiteClienteNuevoUsdt:100)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
             "<span style='font-size:12px;color:var(--tx2);white-space:nowrap'>USDT a cliente nuevo</span>"+
             "<button onclick='guardarLimiteClienteNuevo()' style='padding:9px 14px;background:var(--ok-osc);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
           "</div>"+
@@ -15646,7 +15779,7 @@ function rConfigAdmin(){
           "<div style='font-size:12px;font-weight:700;color:var(--tx2);margin-bottom:8px'>💼 % de sueldo mensual (sobre ganancia neta Julio)</div>"+
           "<div style='font-size:11px;color:var(--tx3);margin-bottom:6px'>Base = Ganancia BRL + VZLA + 50% EE.UU − egresos empresa pagados. Tu sueldo = Base × %. El resto es utilidad empresa.</div>"+
           "<div style='display:flex;gap:8px;align-items:center;max-width:300px'>"+
-            "<input type='number' id='inp-pct-sueldo' step='1' min='0' max='100' placeholder='ej: 5' value='"+(((S.config||{}).pct_sueldo!==undefined)?((S.config.pct_sueldo)*100).toFixed(0):"5")+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+            "<input type='text' inputmode='decimal' id='inp-pct-sueldo' step='1' min='0' max='100' placeholder='ej: 5' value='"+(((S.config||{}).pct_sueldo!==undefined)?((S.config.pct_sueldo)*100).toFixed(0):"5")+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
             "<span style='font-size:14px;color:var(--tx2);font-weight:700'>%</span>"+
             "<button onclick='guardarPctSueldo()' style='padding:9px 14px;background:var(--rol-ee);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
           "</div>"+
@@ -15758,100 +15891,6 @@ function rConfigAdmin(){
     "</div>";
 }
 
-function calcTasaUpdate(){
-  var tcBrl=parseFloat(document.getElementById("calc-tc-brl")||{value:0}).value||0;
-  var tvVes=parseFloat(document.getElementById("calc-tv-ves")||{value:0}).value||0;
-  var tcUsd=parseFloat(document.getElementById("calc-tc-usd")||{value:0}).value||0;
-  var tcCop=parseFloat(document.getElementById("calc-tc-cop")||{value:0}).value||0;
-  // save values
-  if(!S.calcTasa) S.calcTasa={};
-  if(tcBrl) S.calcTasa.tcBrl=tcBrl;
-  if(tvVes) S.calcTasa.tvVes=tvVes;
-  if(tcUsd) S.calcTasa.tcUsd=tcUsd;
-  if(tcCop) S.calcTasa.tcCop=tcCop;
-  var el=document.getElementById("calc-tasa-resultado");
-  if(!el) return;
-  if(!tcBrl||!tvVes){ el.innerHTML="<div style='color:var(--tx4);font-size:12px;padding:10px'>Ingresa precio USDT en BRL y VES para ver los cálculos.</div>"; return; }
-  var margenes=[6,7,8,9,10,12,15];
-  // BRL→VES: tasa_cliente = tcBrl × (1 + %) 
-  // es decir: BRL que paga el cliente por cada USD equivalente en VES
-  // ganancia = tcBrl_cliente / tcBrl_mercado - 1 = margen
-  // tasa_cliente (BS × BRL) = tvVes / tcBrl_cliente
-  var rowsBrlVes=margenes.map(function(m){
-    var tcCliente=tcBrl*(1+m/100);
-    var tasaPublicar=tvVes/tcCliente;
-    return "<tr><td style='padding:7px 10px;font-weight:700;color:var(--ok)'>"+m+"%</td>"+
-      "<td style='padding:7px 10px;font-weight:700;font-size:13px'>"+f2(tasaPublicar)+" BS × BRL</td>"+
-      "<td style='padding:7px 10px;font-size:11px;color:var(--tx3)'>Compras a "+f4(tcBrl)+" / Vendes a "+f4(tcCliente)+" BRL/USDT</td>"+
-      "<td style='padding:7px 10px'><button onclick='guardarTasaHoyDirecto("+tasaPublicar+")' style='background:var(--ok);color:var(--sobre-color);border:none;padding:5px 10px;border-radius:6px;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap'>💾 Usar hoy</button></td></tr>";
-  }).join("");
-  var rowsVzlaBrl=tvVes>0&&tcBrl>0?margenes.map(function(m){
-    var tvClienteVes=tvVes*(1-m/100);
-    var tasaPublicar=tvClienteVes/tcBrl;
-    return "<tr><td style='padding:7px 10px;font-weight:700;color:var(--mal)'>"+m+"%</td>"+
-      "<td style='padding:7px 10px;font-weight:700;font-size:13px'>"+f2(tasaPublicar)+" BS × BRL</td>"+
-      "<td style='padding:7px 10px;font-size:11px;color:var(--tx3)'>Cliente da BS a "+f2(tvClienteVes)+" / recibe BRL a "+f4(tcBrl)+"</td></tr>";
-  }).join(""):null;
-  var rowsUsdVes=tcUsd>0?margenes.map(function(m){
-    var tcClienteUsd=tcUsd*(1+m/100);
-    var tasaPublicar=tvVes/tcClienteUsd;
-    return "<tr><td style='padding:7px 10px;font-weight:700;color:var(--info)'>"+m+"%</td>"+
-      "<td style='padding:7px 10px;font-weight:700;font-size:13px'>"+f2(tasaPublicar)+" BS × USD</td>"+
-      "<td style='padding:7px 10px;font-size:11px;color:var(--tx3)'>Compras a "+f4(tcUsd)+" / Vendes a "+f4(tcClienteUsd)+" USD/USDT</td></tr>";
-  }).join(""):null;
-  var rowsCopVes=tcCop>0?margenes.map(function(m){
-    var tcClienteCop=tcCop*(1+m/100);
-    var tasaPublicar=tvVes/tcClienteCop;
-    return "<tr><td style='padding:7px 10px;font-weight:700;color:var(--avi-tx)'>"+m+"%</td>"+
-      "<td style='padding:7px 10px;font-weight:700;font-size:13px'>"+f2(tasaPublicar)+" BS × COP</td>"+
-      "<td style='padding:7px 10px;font-size:11px;color:var(--tx3)'>COP a "+f0(tcCop)+" / vendes a "+f0(tcClienteCop)+" COP/USDT</td></tr>";
-  }).join(""):null;
-
-  function tabla(title, color, rows, hasAction){
-    return "<div style='margin-bottom:12px'><div style='font-size:11px;font-weight:700;color:"+color+";margin-bottom:6px'>"+title+"</div>"+
-      "<table style='width:100%;border-collapse:collapse;font-size:12px;background:var(--sup);border-radius:8px;overflow:hidden;border:1px solid var(--ln2)'>"+
-      "<thead><tr style='background:var(--sup2b)'><th style='padding:7px 10px;text-align:left;color:var(--tx3);font-size:10px'>GANANCIA %</th><th style='padding:7px 10px;text-align:left;color:var(--tx3);font-size:10px'>TASA A PUBLICAR</th><th style='padding:7px 10px;text-align:left;color:var(--tx3);font-size:10px'>DETALLE</th>"+(hasAction?"<th></th>":"")+"</tr></thead>"+
-      "<tbody>"+rows+"</tbody></table></div>";
-  }
-  el.innerHTML=
-    tabla("🇧🇷→🇻🇪 BRL → Venezuela (BS × 1 BRL)","var(--ok)",rowsBrlVes,true)+
-    (rowsVzlaBrl?tabla("🇻🇪→🇧🇷 Venezuela → BRL (BS × 1 BRL)","var(--mal)",rowsVzlaBrl):"")+
-    (rowsUsdVes?tabla("🇺🇸→🇻🇪 USD → Venezuela (BS × 1 USD)","var(--info)",rowsUsdVes):"")+
-    (rowsCopVes?tabla("🇨🇴→🇻🇪 COP → Venezuela (BS × 1 COP)","var(--avi-tx)",rowsCopVes):"");
-}
-// ── #2: Guarda la tasa BRL→VZLA de HOY directamente, desde donde sea
-// (esta calculadora), sin tener que ir hasta ⚙️ Configuración a pegarla
-// en el campo de "tasa del día". Se aplica al instante a cotizaciones y
-// registros nuevos.
-// ARREGLO 117: pasa por la puerta única, como todo lo que publica la tasa.
-// Antes escribía tdia_brl a pelo: sin sellar la fecha y sin limpiar el
-// override del conversor, así que se podía publicar aquí y seguir cotizando
-// con otra tasa sin que nada lo dijera.
-function guardarTasaHoyDirecto(valor){
-  var v=_leerNumero(valor);
-  if(!(v>0)){alert("Tasa inválida.");return;}
-  guardarTasaCalcHoy("ida", v, true);
-  alert("✅ Tasa de ida actualizada a "+f2(_misTasasPublicadas().ida||v)+" Bs × R$ — ya se aplica al conversor, al flyer y a los registros nuevos.");
-}
-// ── #1: Al revés — escribes la tasa que QUIERES publicar y te dice a
-// qué % de ganancia equivale (en vez de ir probando porcentajes hasta
-// que el resultado te cuadre con el mercado).
-function calcTasaObjetivoUpdate(){
-  var tcBrl=parseFloat((document.getElementById("calc-tc-brl")||{}).value)||0;
-  var tvVes=parseFloat((document.getElementById("calc-tv-ves")||{}).value)||0;
-  var objetivo=parseFloat((document.getElementById("calc-tasa-objetivo")||{}).value)||0;
-  if(!S.calcTasa) S.calcTasa={};
-  if(objetivo) S.calcTasa.objetivo=objetivo;
-  var el=document.getElementById("calc-tasa-objetivo-resultado");
-  if(!el) return;
-  if(!tcBrl||!tvVes||!objetivo){ el.innerHTML="<div style='font-size:11px;color:var(--tx4)'>Completa el precio USDT en BRL y VES arriba, y la tasa que quieres publicar.</div>"; return; }
-  // tasaPublicar = tvVes / tcCliente  →  tcCliente = tvVes / tasaPublicar
-  var tcCliente=tvVes/objetivo;
-  var margen=Math.round(((tcCliente/tcBrl-1)*100)*100)/100;
-  var colorMargen = margen<5?"var(--mal)":margen<10?"var(--rol-na)":"var(--ok)";
-  el.innerHTML="<div style='font-size:13px;font-weight:800;color:"+colorMargen+";margin-bottom:6px'>Eso equivale a "+margen+"% de ganancia"+(margen<5?" — muy bajo, revisa si te conviene":"")+"</div>"+
-    "<button onclick='guardarTasaHoyDirecto("+objetivo+")' style='background:var(--ac3);color:var(--sobre-color);border:none;padding:9px 16px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;width:100%'>💾 Usar "+f2(objetivo)+" como tasa de hoy</button>";
-}
 
 // ── CAPITAL TOTAL — unifica Capital + Balance + Cierre + Reportes socios ─
 
@@ -16075,6 +16114,19 @@ function rCapitalTotal(){
         "<div style='flex:1;min-width:0'>"+
           "<div style='font-size:12px;font-weight:700;color:var(--tit);overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>"+_escAud(item.nombre)+(item.esPersonal?" <span style='font-size:10.5px;font-weight:700;background:var(--az6);color:var(--mo4);padding:1px 6px;border-radius:7px'>💜</span>":"")+(item.esJuridica?" <span style='font-size:10.5px;font-weight:700;background:var(--az6-c);color:var(--az3-d);padding:1px 6px;border-radius:7px'>🏛️ PJ</span>":"")+"</div>"+
           "<div style='font-size:11.5px;color:var(--tx4)'>"+item.moneda+(fuenteTasa?" · "+fuenteTasa:"")+"</div>"+
+          // ARREGLO 158 · aqui tambien, que es donde ella mira los saldos.
+          // Ponerlo solo en Configuracion seria dejarlo donde no lo ve: el
+          // mismo fallo de buscar una sola copia (101, 119, 150, 153).
+          (function(){
+            var mo=_saldoAManoInfo(item);
+            if(!mo) return "";
+            return "<div style='font-size:10.5px;color:var(--avi-tx);font-weight:700;margin-top:2px'>"+
+              "\u270d\ufe0f a mano \u00b7 no sigue al inventario"+
+              (mo.segunInv===null ? "" : " \u00b7 si lo siguiera pasar\u00eda a "+f2(mo.segunInv))+
+              " <button onclick='volverASeguirInventario(\""+_jsAttr(String(item.id))+"\")' style='background:none;"+
+              "border:1px solid var(--avi-ln);color:var(--avi-tx);border-radius:6px;padding:0 5px;"+
+              "font-size:10px;font-weight:700;cursor:pointer'>que lo siga</button></div>";
+          })()+
         "</div>"+
         "<div style='text-align:right;flex-shrink:0'>"+
           // ARREGLO 119 (y 95 por tercera vez): quitarle el ⚠️ a la tarjeta la
@@ -16102,7 +16154,7 @@ function rCapitalTotal(){
     var expandPanel = isEditOpen
       ? "<div style='background:var(--az6-k);border-top:1.5px solid var(--az5-f);padding:11px 14px;display:flex;align-items:center;gap:10px'>"+
           "<div style='font-size:11px;color:var(--tit);font-weight:700;white-space:nowrap'>"+item.moneda+" por 1 USDT</div>"+
-          "<input type='number' step='0.001' "+
+          "<input type='text' inputmode='decimal' step='0.001' "+
             "placeholder='"+({USD:"ej: 1.00",BRL:"ej: 5.30",PEN:"ej: 3.80",VES:"ej: 780",EUR:"ej: 0.93",COP:"ej: 4100"}[item.moneda]||"tasa")+"' "+
             "value='"+(tasaManual||"")+"' "+
             "id='tasa_inp_"+item.moneda+"' "+
@@ -18549,7 +18601,7 @@ function rTabSocios(socios, gsMes, mesKey){
     "<div><label style='font-size:10px;color:var(--tx2b);font-weight:600'>Fecha</label>"+
     "<input type='date' value='"+(f.fecha||td())+"' onchange='S._nGastoSocio=Object.assign(S._nGastoSocio||{},{fecha:dsFecha(this.value)})' style='width:100%;padding:8px;border:1px solid var(--ln);border-radius:8px;font-size:13px;margin-top:3px;box-sizing:border-box'></div>"+
     "<div><label style='font-size:10px;color:var(--tx2b);font-weight:600'>Monto USD</label>"+
-    "<input type='text' inputmode='decimal' placeholder='0.00' value='"+(f.monto||"")+"' oninput='S._nGastoSocio=Object.assign(S._nGastoSocio||{},{monto:_num(this.value),usdt:this.value})' style='width:100%;padding:8px;border:1px solid var(--ln);border-radius:8px;font-size:13px;margin-top:3px;box-sizing:border-box'></div>"+
+    "<input type='text' inputmode='decimal' placeholder='0.00' value='"+(f.monto||"")+"' oninput='S._nGastoSocio=Object.assign(S._nGastoSocio||{},{monto:_num(this.value),usdt:_num(this.value)})' style='width:100%;padding:8px;border:1px solid var(--ln);border-radius:8px;font-size:13px;margin-top:3px;box-sizing:border-box'></div>"+
     "<div><label style='font-size:10px;color:var(--tx2b);font-weight:600'>≈ USDT</label>"+
     "<input type='text' inputmode='decimal' placeholder='auto' value='"+(f.usdt||"")+"' oninput='S._nGastoSocio=Object.assign(S._nGastoSocio||{},{usdt:_num(this.value)})' style='width:100%;padding:8px;border:1px solid var(--ln);border-radius:8px;font-size:13px;margin-top:3px;box-sizing:border-box'></div>"+
     "</div>"+
@@ -18808,46 +18860,6 @@ function autoBackup(){
   }catch(e){ console.warn("⚠️ autoBackup error:",e); }
 }
 
-function exportMesSel(){
-  try{
-    var mesKey=(typeof _opMesSel!=="undefined"&&_opMesSel&&_opMesSel.length>=6)?_opMesSel:getMesKeyActual();
-    var p=mesKey.split("-");var label=getMesLabel(p[1],p[0]);
-    var brlM=filterByMes(S.brl,mesKey),vzlaM=filterByMes(S.vzla,mesKey),eeuuM=filterByMes(S.eeuu,mesKey);
-    var gasM=filterByMes(S.gastos_eeuu||[],mesKey);
-    if(!brlM.length&&!vzlaM.length&&!eeuuM.length){alert("No hay operaciones en "+label+".");return;}
-    function n2(v){return (Math.round((parseFloat(v)||0)*100)/100).toFixed(2).replace(".",",");} // formato Excel ES
-    function esc(t){t=String(t==null?"":t);return '"'+t.replace(/"/g,'""')+'"';}
-    var sep=";";var lines=[];
-    lines.push(esc("REPORTE MENSUAL — "+label));
-    lines.push("");
-    lines.push(["Modulo","Fecha","Cliente","Ruta","Monto origen","Moneda","Tasa dia","Entregado (dest)","Tasa compra","Tasa venta","Ganancia USDT"].map(esc).join(sep));
-    function fila(mod,r){
-      lines.push([mod,r.d,r.cl,r.rt||"",n2(r.am),r.orig||"",n2(r.tdia),n2(r.cant),n2(r.tc),n2(r.tv),n2(r.pr)].map(esc).join(sep));
-    }
-    brlM.forEach(function(r){fila("BRL→VZLA",r);});
-    vzlaM.forEach(function(r){fila("VZLA→BRL",r);});
-    eeuuM.forEach(function(r){fila("EE.UU",r);});
-    var ganBrl=brlM.reduce(function(a,r){return a+(r.pr||0);},0);
-    var ganVzla=vzlaM.reduce(function(a,r){return a+(r.pr||0);},0);
-    var ganEE=eeuuM.reduce(function(a,r){return a+(r.pr||0);},0);
-    var gastEE=gasM.reduce(function(a,g){return a+(parseFloat(g.monto)||0);},0);
-    lines.push("");
-    lines.push(["RESUMEN","","","","","","","","","",""].map(esc).join(sep));
-    lines.push(["Ganancia BRL/VZLA","","","","","","","","","",n2(ganBrl+ganVzla)].map(esc).join(sep));
-    lines.push(["Ganancia EE.UU bruta","","","","","","","","","",n2(ganEE)].map(esc).join(sep));
-    lines.push(["Gastos EE.UU","","","","","","","","","",n2(-gastEE)].map(esc).join(sep));
-    lines.push(["EE.UU neta","","","","","","","","","",n2(ganEE-gastEE)].map(esc).join(sep));
-    lines.push(["Julio 50% EE.UU","","","","","","","","","",n2((ganEE-gastEE)*0.5)].map(esc).join(sep));
-    lines.push(["TOTAL Julio (BRL+VZLA+50% EE.UU)","","","","","","","","","",n2(ganBrl+ganVzla+(ganEE-gastEE)*0.5)].map(esc).join(sep));
-    lines.push(["Operaciones del mes","","","","","","","","","",String(brlM.length+vzlaM.length+eeuuM.length)].map(esc).join(sep));
-    var csv="\uFEFF"+lines.join("\r\n"); // BOM para que Excel muestre bien los acentos
-    var blob=new Blob([csv],{type:"text/csv;charset=utf-8"});
-    var a=document.createElement("a");
-    a.href=URL.createObjectURL(blob);
-    a.download="CentroGestion_"+mesKey+".csv";
-    document.body.appendChild(a);a.click();document.body.removeChild(a);
-  }catch(e){alert("Error al exportar: "+e.message);}
-}
 // ── Backup automático al cerrar mes ─────────────────────────────────────────
 // Se descarga solo cuando cierras un mes manualmente. No interrumpe nada.
 function autoBackupJSON(mesLabel){
@@ -18894,6 +18906,23 @@ function importData(){
       try{
         var obj=JSON.parse(e.target.result);
         var loaded=0;
+        _avisoImportSinUid=null;
+        // ARREGLO 154: un archivo del formato viejo no trae identificadores, y
+        // entonces la app reconoce cada remesa por su contenido. Eso se dice
+        // ANTES, no despues: es lo que decide si dos registros que ella sabe
+        // distintos van a quedar como uno, y es ella quien conoce sus datos.
+        var _sinUid=0, _conUid=0;
+        ["brl","vzla","eeuu"].forEach(function(k){
+          if(!Array.isArray(obj[k])) return;
+          obj[k].forEach(function(r){ if(r&&r._uid) _conUid++; else _sinUid++; });
+        });
+        if(_sinUid){
+          if(!confirm("\ud83d\udcc4 Este archivo no trae identificadores en "+_sinUid+
+                      " operacion(es)"+(_conUid?" (otras "+_conUid+" si los traen)":"")+".\n\n"+
+                      "Voy a reconocer por su contenido \u2014fecha, cliente, monto y tasas\u2014 las que ya tengas, "+
+                      "para no crearlas otra vez. Dos operaciones iguales del mismo dia se siguen contando como dos.\n\n"+
+                      "\u00bfImporto?")) return;
+        }
         // ARREGLO 6a (31/08/2026): antes importar reemplazaba los datos SIN dejar
         // constancia de lo que sacaba. Para el resto del sistema esos registros
         // nunca se habian borrado, asi que cualquier dispositivo que todavia los
@@ -18955,28 +18984,49 @@ function importData(){
           if(obj[k]!==undefined){S[k]=obj[k];loaded+=Array.isArray(obj[k])?obj[k].length:1;}
         });
         // Lo que entra sin _uid tiene que reencontrar el suyo, o el servidor lo
-        // toma por nuevo y queda duplicado. Se busca por contenido entre los
-        // que ya habia; si hay varias copias iguales cada una toma un _uid
-        // distinto, y la que sobra recibe uno nuevo de verdad. Derivar el _uid
-        // del contenido —como se hacia— colapsaba en una sola dos operaciones
-        // realmente iguales, que en remesas son normales.
-        var _uidsPrevios={};
+        // toma por nuevo y queda duplicado. Primero se busca entre los que ya
+        // habia AQUI, por contenido: ese es el mejor, porque es el _uid con el
+        // que el resto de la app ya conoce ese registro.
+        //
+        // Lo que no se reencuentra recibe un _uid NUEVO, y tiene que ser al azar.
+        //
+        // ARREGLO 154: derivarlo del contenido —para que los dos aparatos
+        // generaran el mismo— parecia el arreglo de raiz y es una TRAMPA. Sus
+        // marcas de borrado antiguas ya estan guardadas con _uid derivados
+        // (171: 56 en vzla, 104 en eeuu, 11 en brl, de la forma "s11l523n1xua2gt"),
+        // asi que un registro vivo que derive a una clave marcada se poda solo.
+        // Medido con su export: vzla pasaba de 137 a 85 en el primer ciclo —
+        // 52 remesas vivas borradas por marcas de hace meses.
+        //
+        // El duplicado se resuelve donde de verdad nace: en la FUSION, que
+        // ahora reconoce por contenido lo que no puede reconocer por _uid
+        // (ver _mergeArrayById). Eso vale ademas para los duplicados que ya
+        // existan, vengan de donde vengan.
+        var _uidsPrevios={}, _tomados={}, _derivados=0, _reencontrados=0;
         ["brl","vzla","eeuu"].forEach(function(k){
-          _uidsPrevios[k]={};
+          _uidsPrevios[k]={}; _tomados[k]={};
           (_previo[k]||[]).forEach(function(r){
             if(!r||!r._uid) return;
             var c=_uidEstable(r);
             (_uidsPrevios[k][c]=_uidsPrevios[k][c]||[]).push(r._uid);
           });
+          (S[k]||[]).forEach(function(r){ if(r&&r._uid) _tomados[k][r._uid]=1; });
         });
         ["brl","vzla","eeuu"].forEach(function(k){
           if(!Array.isArray(S[k])) return;
           S[k].forEach(function(r){
             if(!r||r._uid) return;
             var cola=_uidsPrevios[k][_uidEstable(r)];
-            r._uid=(cola&&cola.length)?cola.shift():_newUid();
+            if(cola&&cola.length){ r._uid=cola.shift(); _tomados[k][r._uid]=1; _reencontrados++; }
+            else { r._uid=_newUid(); _tomados[k][r._uid]=1; r._uidImp=1; _derivados++; }
           });
         });
+        // Y se DICE. Un archivo del formato viejo no trae identificadores, asi
+        // que la app tiene que reconocer cada registro por su contenido — y eso
+        // ella tiene que saberlo antes de que pase, no deducirlo despues.
+        if(_reencontrados||_derivados){
+          _avisoImportSinUid={reencontrados:_reencontrados, derivados:_derivados};
+        }
         // Ahora si: sobre el estado ya reemplazado, conservando las marcas que
         // venian dentro del archivo y sumandole las nuevas.
         // ARREGLO 11a (02/09/2026): unir las marcas que YA tenia este dispositivo
@@ -19000,7 +19050,13 @@ function importData(){
         // Y forzar backup inmediato
         if(typeof autoBackup === "function") autoBackup();
         R();
-        alert("✅ "+loaded+" registros importados y enviados al servidor.\nLos demás dispositivos se actualizan en unos segundos.");
+        alert("✅ "+loaded+" registros importados y enviados al servidor."+
+              (_avisoImportSinUid
+                 ? "\n\n\ud83d\udd16 De las operaciones sin identificador, reconoc\u00ed "+
+                   _avisoImportSinUid.reencontrados+" que ya ten\u00edas y di de alta "+
+                   _avisoImportSinUid.derivados+"."
+                 : "")+
+              "\nLos demás dispositivos se actualizan en unos segundos.");
       }catch(ex){alert("Error al importar: "+ex.message);}
     };
     reader.readAsText(file);
@@ -20327,6 +20383,45 @@ function _bsPorReal(tasaVesUsdt){
 // Y avisa cuando NO alcanza. Registrar una entrega sin lotes que la cubran deja
 // la ganancia calculada contra una tasa prestada, y eso hay que verlo antes de
 // guardar, no después.
+// ── ARREGLO 152 · quién eligió el método, al lado de los botones ──────
+//
+// Sus palabras del 16/10: "el sistema como que no detecta si es por P2P o si es
+// por transacción directa". La app SÍ lo detecta desde el ARREGLO 138 —medido
+// en Chromium: con lotes de vuelta marca sola 🤝 Calce directo y rellena la
+// permuta— pero lo Único que lo decía era una línea al FINAL del recuadro de
+// abajo, debajo de cuatro filas y de un aviso rojo. Y cuando lo que elige es
+// P2P —que con sus lotes de hoy es siempre, porque 21.000 Bs de vueltas no le
+// ganan a 34.228 de ventas— no se mueve nada en pantalla, porque P2P ya estaba
+// marcado por omisión. Desde fuera eso es idéntico a que la app no haga nada.
+//
+// Va junto a los botones, que es donde ella mira el método, y SIN cifras: las
+// cifras viven una sola vez, en el recuadro de abajo (ARREGLO 125).
+function _htmlMetodoElegido(res, ruta){
+  // El contenedor existe SIEMPRE, aunque esté vacío: si no se dibujara al
+  // abrir, upC() no tendría dónde escribirlo al teclear el primer monto.
+  var vacio="<div id='met-eleg-tx'></div>";
+  if(!res || !ruta || !esRutaCalce(ruta)) return vacio;
+  var cant=parseFloat(res.cant)||0;
+  if(!(cant>0)) return vacio;
+  var org=_origenBsRemesa(ruta.dest||"VES", cant, S.tx && S.tx.cuentaDest);
+  if(!org) return vacio;
+  var uni=((ruta.dest||"VES")==="VES")?"bolívares":ruta.dest;
+  // Lo que ella pulsa manda y la app no se lo vuelve a mover (ARREGLO 138). Y
+  // se dice, porque si no, parece que la app dejó de decidir.
+  if(S.tx && S.tx._metodoTocado)
+    return "<div id='met-eleg-tx' style='font-size:11px;color:var(--tx3);margin:-4px 0 10px;line-height:1.5'>"+
+      "✍️ <b>Lo elegiste tú</b> · la app no te lo cambia.</div>";
+  // El porqué tiene que nombrar al que de verdad decidió. Diciendo siempre
+  // "salen de ventas de USDT" se mentiría en el caso en que lo que inclina la
+  // balanza es el dinero sin registrar, que no es una venta de nada.
+  var pq = (org.metodo==="calce")
+    ? "la mayor parte de esos "+uni+" te los pagaron a ti, así que no hay comisión de Binance que descontar"
+    : (org.sinLote>org.deVenta
+        ? "hay "+uni+" que no salen de ningún lote y, ante la duda, no se da por calce"
+        : "la mayor parte de esos "+uni+" sale de ventas de USDT, que sí pagan comisión");
+  return "<div id='met-eleg-tx' style='font-size:11px;color:var(--tx3);margin:-4px 0 10px;line-height:1.5'>"+
+    "✅ <b>Lo eligió la app</b>: "+pq+". <span style='color:var(--tx4)'>Cámbialo si sabes que fue otra cosa.</span></div>";
+}
 function _htmlDeDondeSalen(res, ruta){
   if(!res || !ruta) return "";
   var dest=ruta.dest||"VES";
@@ -20385,19 +20480,30 @@ function _htmlDeDondeSalen(res, ruta){
       "Registra la operación de USDT que los trajo.</div>";
   // ARREGLO 138: y qué método sale de ahí, en el MISMO recuadro. Dicho en otro
   // sitio habría dos cajas hablando del mismo dinero — el ARREGLO 125.
+  // ARREGLO 152 · esta línea llamaba "ventas de USDT" a lo que no lo era. Con
+  // sus lotes del 16/10 decía "73.500 de ventas de USDT" cuando las ventas son
+  // 34.228: los otros 39.272 no salen de ningún lote. Lo cazó ella sumando las
+  // filas de arriba, que es exactamente para lo que están.
+  //
+  // La DECISIÓN no cambia —lo que no se sabe de dónde vino sigue contando del
+  // lado de P2P, que es el que sí paga comisión: ante la duda, el que no infla
+  // la ganancia— y por eso se queda en _origenBsRemesa. Lo que cambia es que
+  // aquí cada monto se llama por su nombre. Un número con el rótulo de otro es
+  // el error más repetido de esta app, y el que enseña a no fiarse del resto.
+  //
+  // Y el VEREDICTO ya no se escribe aquí: vive arriba, junto a los dos botones
+  // (_htmlMetodoElegido). Dicho en los dos sitios sería el ARREGLO 125 otra vez.
   var org=_origenBsRemesa(dest, cant, S.tx && S.tx.cuentaDest);
   var met="";
   if(org && esRutaCalce(ruta)){
-    var esCalce=(org.metodo==="calce");
-    met="<div style='margin-top:6px;padding-top:6px;border-top:1px solid var(--ln);font-size:11.5px;color:var(--tx2)'>"+
-      (org.mixto
-        ? "Salen de los dos sitios: <b>"+f0(org.deRemesa)+"</b> "+uni+" que te pagaron y <b>"+
-          f0(org.deVenta+org.sinLote)+"</b> de ventas de USDT → manda "
-        : "→ ")+
-      "<b style='color:"+(esCalce?"var(--rol-ee)":"var(--ok)")+"'>"+
-        (esCalce?"\ud83e\udd1d Calce directo":"\ud83d\udd01 Con USDT (P2P)")+"</b>"+
-      ((S.tx&&S.tx._metodoTocado)?" <span style='color:var(--tx4)'>· lo elegiste t\u00fa, no se toca</span>":"")+
-    "</div>";
+    var tro=[];
+    if(org.deRemesa>0.01) tro.push("<b>"+f0(org.deRemesa)+"</b> "+uni+" que te pagaron");
+    if(org.deVenta>0.01)  tro.push("<b>"+f0(org.deVenta)+"</b> de ventas de USDT");
+    if(org.sinLote>0.01)  tro.push("<b style='color:var(--mal)'>"+f0(org.sinLote)+"</b> sin registrar");
+    // Con un solo origen no hay nada que desglosar: la fila de arriba ya lo dice.
+    if(tro.length>1)
+      met="<div style='margin-top:6px;padding-top:6px;border-top:1px solid var(--ln);font-size:11.5px;color:var(--tx2)'>"+
+        "En total: "+tro.join(" · ")+"</div>";
   }
   return "<div style='background:var(--sup2d);border:1px solid var(--ln);border-radius:9px;padding:9px 12px;margin-bottom:8px'>"+
     "<div style='font-size:10.5px;color:var(--tx4);font-weight:700;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px'>"+
@@ -20516,6 +20622,11 @@ function upC(key){
   // ARREGLO 125: el reparto del FIFO cambia con el monto, así que se rehace aquí.
   var fi=document.getElementById("fifo-"+key);
   if(fi) fi.innerHTML=_htmlDeDondeSalen(res, ruta);
+  // ARREGLO 152: el porqué del método cambia con el monto aunque el método no
+  // cambie —de "sale de ventas de USDT" a "hay bolívares sin registrar"— así
+  // que se refresca con lo demás. No lleva ningún campo dentro (ARREGLO 32).
+  var me=document.getElementById("met-eleg-"+key);
+  if(me && key==="tx") me.outerHTML=_htmlMetodoElegido(res, ruta);
 }
 
 // ── INVENTORY HELPERS ────────────────────────────────
@@ -21309,7 +21420,7 @@ function editRestanteInv(id){
     "<div style='background:var(--sup);border-radius:16px;padding:20px;max-width:360px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,.3)'>"+
       "<div style='font-size:15px;font-weight:800;color:var(--tit);margin-bottom:4px'>✏️ Editar restante</div>"+
       "<div style='font-size:12px;color:var(--tx3);margin-bottom:14px'>"+label+" (máx "+(esCompra?f4(max):f2(max))+" "+unidad+")</div>"+
-      "<input id='editRestanteInput' type='number' step='0.0001' value='"+actual+"' style='width:100%;padding:11px;font-size:16px;font-weight:700;border:1.5px solid var(--ln);border-radius:9px;box-sizing:border-box;margin-bottom:14px' autofocus>"+
+      "<input id='editRestanteInput' type='text' inputmode='decimal' step='0.0001' value='"+actual+"' style='width:100%;padding:11px;font-size:16px;font-weight:700;border:1.5px solid var(--ln);border-radius:9px;box-sizing:border-box;margin-bottom:14px' autofocus>"+
       "<div style='display:flex;gap:8px'>"+
         "<button id='editRestanteCancel' style='flex:1;padding:11px;border:1.5px solid var(--ln);border-radius:9px;background:var(--sup);color:var(--tx2);font-weight:700;font-size:13px;cursor:pointer;font-family:inherit'>Cancelar</button>"+
         "<button id='editRestanteSave' style='flex:1;padding:11px;border:none;border-radius:9px;background:var(--fondo-osc);color:var(--sobre-color);font-weight:700;font-size:13px;cursor:pointer;font-family:inherit'>Guardar</button>"+
@@ -21322,7 +21433,7 @@ function editRestanteInv(id){
   document.getElementById("editRestanteCancel").onclick=cerrar;
   div.onclick=function(e){ if(e.target===div) cerrar(); };
   function guardar(){
-    var v=parseFloat(inp.value);
+    var v=_leerNumero(inp.value);
     if(isNaN(v)||v<0){ alert("Valor no válido."); return; }
     if(esCompra) r.restante=Math.round(v*10000)/10000;
     else r.bsRestante=Math.round(v*100)/100;
@@ -21853,9 +21964,30 @@ function rMain(){
     var _gastEEA=filterByMes(S.gastos_eeuu||[],_mesAct).reduce(function(a,g){return a+(parseFloat(g.monto)||0);},0);
     var _netaEEA=(_eeuuA-_gastEEA)*0.5;
     var _ganMes=_brlA+_vzlaA+_netaEEA;
-    var _egPagA=filterByMes(S.egresos||[],_mesAct).filter(function(e){return e.pagada;}).reduce(function(a,e){return a+(e.usdt||0);},0);
-    var _realA=_ganMes-_egPagA;
-    sub="Ganancia: <b>$"+f2(_ganMes)+" USDT</b> &nbsp;|&nbsp; 💵 Real: <b>$"+f2(_realA)+"</b>";
+    // ── ARREGLO 153 · la cabecera tenía su PROPIA cuenta ───────────────
+    //
+    // Lo vio ella el 16/10: aquí arriba ponía "Real: $-154,54" y la tarjeta del
+    // Resumen "Neto real $58,24" — 212,78 de diferencia entre las dos. La causa:
+    // esta línea sumaba TODOS los egresos pagados del mes, sin pasar por
+    // _egOperativos() y sin mirar si eran de la empresa. Medido con su export:
+    //
+    //     la máquina (mercancía)   210,00   es inversión, no gasto del mes
+    //     un gasto personal           2,78   que ni siquiera es de la empresa
+    //                               ───────
+    //                                212,78   la diferencia, al céntimo
+    //
+    // Era la SÉPTIMA copia de la regla vieja: el ARREGLO 150 las buscó esa misma
+    // mañana y encontró seis. Ahora nadie la calcula por su cuenta: sale de
+    // calcMesCompleto(), la misma función que el Cierre, el Balance y la tarjeta
+    // Base de Egresos.
+    //
+    // Y son DOS números con nombres distintos, no uno. "Ganancia" y "Real" se
+    // leían como dos versiones de lo mismo. La utilidad lleva dentro la ganancia
+    // extra de la empresa y le resta los egresos operativos: NO es la resta de
+    // los dos números de al lado, y por eso tiene su propio nombre.
+    var _cmA=calcMesCompleto(_mesAct);
+    var _utilA=parseFloat(_cmA.utilidadEmpresa)||0;
+    sub="Remesas: <b>$"+f2(_ganMes)+" USDT</b> &nbsp;|&nbsp; 💵 Utilidad: <b>$"+f2(_utilA)+"</b>";
   }else{
     // Operators: show only their own gain for current month, NO financial totals
     var mesActual=new Date();
@@ -21947,7 +22079,68 @@ function rMain(){
 // NO toca FIFO. Lee S.brl, S.vzla, S.eeuu sin modificarlos.
 // pctOverrides = {socioId: porcentaje_0_a_100} para socios con % variable por mes.
 // ══════════════════════════════════════════════════════════════════
-function calcMesCompleto(mesKey, pctOverrides){
+// ARREGLO 155: un mes cerrado enseña LO QUE SE GUARDO al cerrarlo, en todas
+// las pantallas, y deja de recalcularse. Sus palabras (16/10): "lo pasado se
+// queda como está" y "un mes cerrado muestra siempre lo guardado en su cierre
+// y no se recalcula, para que no cambie solo".
+//
+// Hacia falta porque la app recalculaba, y recalcular hoy sobre datos de hace
+// meses da otro numero. Medido con su export:
+//
+//            guardado    recalculado hoy
+//   mayo       966,19       1.491,52     ← las 137 remesas repetidas de mayo
+//   junio      322,68         358,07
+//   julio      139,27         336,26     ← el ajuste de 94,24 creado tras cerrar
+//   agosto      52,53          52,53     ← estos dos coinciden
+//   sept.      296,79         296,79
+//
+// Y de paso es lo que neutraliza las copias de mayo sin borrar nada: una
+// operacion vieja de mas ya no puede mover la ganancia de un mes cerrado.
+//
+// Va AQUI, en la puerta, y no en cada pantalla: hay 18 sitios que llaman a
+// esta funcion. Tocarlos uno a uno es el fallo que ya costo cuatro veces
+// (ARREGLOS 101, 119, 150, 153) — siempre queda uno fuera.
+var _CIERRE_A_CALC={            // el cierre guarda algunos campos con otro nombre
+  egPag:"egEmpPag", egPend:"egEmpPend", neto:"utilidadEmpresa",
+  ganEE:"ganEEBruta", totalOps:"ops"
+};
+// Los campos de DINERO y de CUENTA que el cierre congela. Lo que no este aqui
+// —las listas de detalle, los nombres de socio— se sigue calculando: no es un
+// numero que pueda cambiar sola la ganancia del mes.
+var _CAMPOS_CONGELADOS=[
+  "ganBrutaTotal","miGanOperaciones","utilidadEmpresa","egEmpPag","egEmpPend",
+  "ganBrl","ganVzla","ganEEBruta","ganPrestamos","ganPrestamosMonto","ganPrestamosCant",
+  "ganExtraEmp","ganExtraPer","sueldo","gasEEUU","ganEENeta","miParteEEUU",
+  "socioParte","deudasSocioEE","totalCom","ops","brlOps","vzlaOps","eeuuOps"
+];
+function cierreGuardadoDeMes(mesKey){
+  if(!mesKey) return null;
+  return (S.cierresMes||[]).find(function(c){ return c && c.mesKey===mesKey; }) || null;
+}
+function _congelarConCierre(calc, cierre){
+  var g={};
+  Object.keys(cierre).forEach(function(k){
+    var destino=_CIERRE_A_CALC[k]||k;
+    if(g[destino]===undefined) g[destino]=cierre[k];
+  });
+  _CAMPOS_CONGELADOS.forEach(function(k){
+    var v=g[k];
+    if(v===undefined||v===null) return;
+    if(typeof v!=="number"&&isNaN(parseFloat(v))) return;
+    calc[k]=(typeof v==="number")?v:parseFloat(v);
+  });
+  // Un cierre del formato viejo (mayo) no guardo "utilidadEmpresa" ni
+  // "ganBrutaTotal": guardo "neto". Sin esto la pantalla enseña 0, que es
+  // justo lo que ella veia. No se inventa nada — se lee el campo que SI hay.
+  if(g.utilidadEmpresa===undefined && typeof g.neto==="number") calc.utilidadEmpresa=g.neto;
+  if(g.ganBrutaTotal===undefined && typeof calc.utilidadEmpresa==="number"
+     && (cierre.egPag===0||cierre.egPag===undefined)) calc.ganBrutaTotal=calc.utilidadEmpresa;
+  calc._cerrado=true;
+  calc._cierreFecha=cierre.fechaCierre||"";
+  calc._formatoViejo=(cierre.utilidadEmpresa===undefined);
+  return calc;
+}
+function calcMesCompleto(mesKey, pctOverrides, recalcular){
   if(!S.config) S.config={};
   if(!S.config.socios) S.config.socios=[];
   pctOverrides = pctOverrides || {};
@@ -21960,8 +22153,15 @@ function calcMesCompleto(mesKey, pctOverrides){
   var egPerM= filterByMes(S.egresos_personales||[], mesKey);
   var repM  = filterByMes(S.reposiciones||[], mesKey);
   var ganExtraM = filterByMes(S.gananciaExtra||[], mesKey);
-  var ganExtraEmp = r2(ganExtraM.filter(function(g){return g.tipo==="empresa";}).reduce(function(a,g){return a+(parseFloat(g.usdt)||0);},0));
-  var ganExtraPer = r2(ganExtraM.filter(function(g){return g.tipo==="personal";}).reduce(function(a,g){return a+(parseFloat(g.usdt)||0);},0));
+  // ARREGLO 156 · los ajustes de saldo salen de la cuenta de la ganancia y se
+  // dicen aparte. Su decision (16/10): "que no cuenten como ganancia del mes,
+  // pero que se vean aparte". Un ajuste es dinero que ya estaba y no se habia
+  // registrado; contarlo como ganancia del mes infla la utilidad y con ella su
+  // sueldo, que es el 30% de esa utilidad.
+  var ganExtraOp = _ganExtraOperativa(ganExtraM);
+  var ajustesGan = _sumaAjustes(ganExtraM.filter(function(g){return g.tipo==="empresa";}));
+  var ganExtraEmp = r2(ganExtraOp.filter(function(g){return g.tipo==="empresa";}).reduce(function(a,g){return a+(parseFloat(g.usdt)||0);},0));
+  var ganExtraPer = r2(ganExtraOp.filter(function(g){return g.tipo==="personal";}).reduce(function(a,g){return a+(parseFloat(g.usdt)||0);},0));
   // Ganancia por préstamos (interés cobrado este mes) — línea aparte, no
   // se mezcla con la ganancia de remesas.
   var ganPrestamosInfo = gananciaPrestamosDelMes(mesKey);
@@ -22044,7 +22244,11 @@ function calcMesCompleto(mesKey, pctOverrides){
   // puede tocar aqui y NO en `_acumuladosMes`, que lee del cierre guardado y
   // se compara contra `aperturaBase` (ARREGLO 96).
   var egMercMes = r2(egM.filter(function(e){return e.tipo==="empresa"&&e.pagada&&e.fromArticulo;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0));
-  var egEmpPag  = r2(egM.filter(function(e){return e.tipo==="empresa"&&e.pagada&&!e.fromArticulo;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0));
+  // ARREGLO 156 · y fuera los ajustes de saldo, por la misma razon que las
+  // ganancias extra de arriba: lo que sale de cuadrar una cuenta no es un
+  // gasto de este mes. Pasa por _egOperativos(), que es la puerta unica.
+  var egEmpPag  = r2(_egOperativos(egM).filter(function(e){return e.tipo==="empresa"&&e.pagada;}).reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0));
+  var ajustesEg = _sumaAjustes(egM.filter(function(e){return e.tipo==="empresa"&&e.pagada;}));
   // ARREGLO 150: los pendientes, por lo mismo. El 143 solo filtro los pagados,
   // asi que una maquina comprada a credito seguia anunciando una perdida que no
   // existe — y `egEmpPend` es lo que sale como "por pagar" en todas partes.
@@ -22087,9 +22291,12 @@ function calcMesCompleto(mesKey, pctOverrides){
   var disponiblePer = r2(saldoPersonalAcumuladoPrevio - egPerPag + repTotal);
   var sueldoAcumulando = sueldo; // se sumará al disponible recién cuando cierres este mes
 
-  return {
+  var _salida={
     ganBrutaTotal:ganBrutaTotal,   // ← número que el usuario acumula (P2)
-    ganExtraEmp:ganExtraEmp,       // ganancias extra empresa del mes
+    ganExtraEmp:ganExtraEmp,       // ganancias extra empresa del mes (sin los ajustes)
+    ajustesGan:ajustesGan,         // ARREGLO 156 · lo que vino de cuadrar un saldo, aparte
+    ajustesEg:ajustesEg,           // y lo mismo por el lado del gasto
+    ajustesNeto:r2(ajustesGan-ajustesEg),
     ganExtraPer:ganExtraPer,       // ganancias extra personales del mes
     ganExtraItems:ganExtraM,       // lista completa para desglose
     ops:brlM.length+vzlaM.length+eeuuM.length,
@@ -22116,6 +22323,14 @@ function calcMesCompleto(mesKey, pctOverrides){
     sueldoAcumulando:sueldoAcumulando,saldoPersonalAcumuladoPrevio:saldoPersonalAcumuladoPrevio,
     _diagAcum:{mesEncontrado:cierresAntPer.length?cierresAntPer[0].mesKey:null,sueldoGuardado:cierresAntPer.length?cierresAntPer[0].sueldo:null,campoExistia:cierresAntPer.length?(cierresAntPer[0].saldoPersonalAcumulado!==undefined&&cierresAntPer[0].saldoPersonalAcumulado!==null):null}
   };
+  // ARREGLO 155 · lo ultimo que pasa: si el mes esta cerrado, manda lo que se
+  // guardo. `recalcular` lo pide el propio cierre, que necesita la cuenta de
+  // verdad para poder guardarla.
+  if(!recalcular){
+    var _cz=cierreGuardadoDeMes(mesKey);
+    if(_cz) return _congelarConCierre(_salida, _cz);
+  }
+  return _salida;
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -22169,6 +22384,54 @@ function toggleGanExtra(){
   if(S._showGanExtra) S._nGanExtra={d:td(),desc:"",monto:"",mon:"USD",usdt:"",cuentaId:"",tipo:"empresa",nota:""};
   R();
 }
+// ARREGLO 157 · el mismo dinero contado dos veces: su sueldo del otro trabajo.
+//
+// Pasó el 09 y el 10/10 con 470.000 Bs: lo registró como APORTE ("ya está en el
+// saldo", ARREGLO 147) y además como GANANCIA EXTRA personal de 463,97. Las dos
+// cosas hablan del mismo dinero, y el aporte es la correcta — una ganancia
+// extra dice "esto lo gané", y su sueldo de otro trabajo no lo ganó aquí.
+//
+// Se reconoce por la FORMA, no por el texto: mismo monto, misma moneda, misma
+// cuenta y menos de 8 días de diferencia. El texto no vale aquí por lo mismo
+// que no valía en el ARREGLO 156 — ella escribe la descripción y la cambia.
+//
+// Medido con su export: la ganancia extra de 463,97 NO mueve el capital ni la
+// conciliación (es personal, y una cuenta personal está fuera del capital de la
+// empresa, ARREGLO 96). Lo que infla es su "disponible personal": ese dinero
+// aparece dos veces en su bolsillo.
+function _ganExtraQueSonAporte(){
+  var ap=S.aportes||[], out=[];
+  (S.gananciaExtra||[]).forEach(function(g){
+    if(!g || g.tipo!=="personal" || !g.cuentaId) return;
+    var m=parseFloat(g.monto)||0, iso=_isoDeDDMMAA(g.d)||"";
+    if(!(m>0)) return;
+    var par=ap.find(function(a){
+      if(!a || a.cuentaId!==g.cuentaId) return false;
+      if((a.mon||"")!==(g.mon||"")) return false;
+      if(Math.abs((parseFloat(a.monto)||0)-m)>0.01) return false;
+      var ai=a.fechaIso||_isoDeDDMMAA(a.d)||"";
+      if(!ai||!iso) return true;              // sin fecha fiable, el resto ya coincide
+      return Math.abs(Date.parse(ai)-Date.parse(iso))<=8*86400000;
+    });
+    if(par) out.push({gan:g, ap:par});
+  });
+  return out;
+}
+function quitarGanExtraDuplicada(id){
+  var i=(S.gananciaExtra||[]).findIndex(function(g){ return String(g.id)===String(id); });
+  if(i<0){ alert("No encuentro ese registro."); return; }
+  var g=S.gananciaExtra[i];
+  if(!confirm("Quitar esta ganancia extra:\n\n"+
+      (g.desc||"(sin descripción)")+" · "+f2(g.monto)+" "+(g.mon||"")+"\n\n"+
+      "Ya tienes un APORTE por el mismo dinero, en la misma cuenta. Dejar las dos "+
+      "cosas lo cuenta dos veces en tu bolsillo.\n\n"+
+      "NO mueve ningún saldo: el dinero ya está en la cuenta y ahí se queda.\n\n¿Seguro?")) return;
+  S.gananciaExtra.splice(i,1);
+  _marcarBorradoMerge("gananciaExtra", g.id);
+  logAudit("GANEXTRA_DUPLICADA","quitada · "+f2(g.usdt)+" USDT · ya estaba como aporte");
+  saveData(); R();
+  alert("✅ Quitada. Ningún saldo se tocó.");
+}
 function saveGanExtra(){
   if(!S.gananciaExtra) S.gananciaExtra=[];
   var g=S._nGanExtra||{};
@@ -22178,13 +22441,28 @@ function saveGanExtra(){
   var usdt=parseFloat(g.usdt);
   if(isNaN(usdt)||usdt<=0){var rate=getRateToUsdt(g.mon||"USD");usdt=rate?(Math.round(monto/rate*100)/100):monto;}
   var tipo=g.tipo||"empresa";
+  // ARREGLO 157 · y no se vuelve a crear la duplicada sin avisar. Mismo monto,
+  // misma moneda, misma cuenta y menos de 8 días: es el aporte otra vez.
+  if(tipo==="personal" && g.cuentaId){
+    var _ya=(S.aportes||[]).find(function(a){
+      return a && a.cuentaId===g.cuentaId && (a.mon||"")===(g.mon||"") &&
+             Math.abs((parseFloat(a.monto)||0)-monto)<=0.01;
+    });
+    if(_ya && !confirm("\u26a0\ufe0f Ya tienes un APORTE por "+f2(monto)+" "+(g.mon||"")+
+        " en esa misma cuenta"+(_ya.d?" ("+_ya.d+")":"")+".\n\n"+
+        "Si es el mismo dinero —tu sueldo de otro trabajo, por ejemplo— con el aporte basta: "+
+        "una ganancia extra diría que lo ganaste aquí, y lo contaría dos veces en tu bolsillo.\n\n"+
+        "\u00bfEs otra cosa distinta y la guardo igual?")) return;
+  }
   if(g.cuentaId){
     var cta=(S.cuentas||[]).find(function(c){return c.id===g.cuentaId;});
     if(cta){if(!confirm("Acreditar "+f2(monto)+" "+(g.mon||"USD")+" en \""+cta.nombre+"\" — "+g.desc.trim()+"\n¿Confirmar?"))return;ajusteCuentaEgreso(g.cuentaId,monto);}
   }
-  S.gananciaExtra.push({id:Date.now(),d:ds(g.d),desc:g.desc.trim(),monto:monto,mon:g.mon||"USD",usdt:Math.round(usdt*100)/100,cuentaId:g.cuentaId||"",tipo:tipo,nota:(g.nota||"").trim()});
+  S.gananciaExtra.push({id:Date.now(),d:ds(g.d),desc:g.desc.trim(),monto:monto,mon:g.mon||"USD",usdt:Math.round(usdt*100)/100,cuentaId:g.cuentaId||"",tipo:tipo,nota:(g.nota||"").trim(),esAjuste:g.esAjuste?true:undefined});
   logAudit("GANANCIA_EXTRA","$"+f2(usdt)+" USDT · "+g.desc.trim()+" · "+tipo);
-  S._showGanExtra=false;S._nGanExtra={d:td(),desc:"",monto:"",mon:"USD",usdt:"",cuentaId:"",tipo:"empresa",nota:""};
+  // Sin esto la marca se pegaria a la SIGUIENTE ganancia extra que registre,
+  // que no tiene por que ser un ajuste.
+  S._showGanExtra=false;S._nGanExtra={d:td(),desc:"",monto:"",mon:"USD",usdt:"",cuentaId:"",tipo:"empresa",nota:"",esAjuste:false};
   saveData();R();
 }
 // ══════════════════════════════════════════════════════════════════════
@@ -22292,6 +22570,29 @@ function delAporte(id){
   saveData(); R();
 }
 
+// ARREGLO 156 · marcar a mano lo que ya estaba registrado antes de que la app
+// supiera distinguirlo. De aqui en adelante nace marcado solo (los dos caminos
+// del ARREGLO 145); esto es para lo que ya hay.
+//
+// NO MUEVE NINGUN SALDO, y se dice en la propia pregunta: el dinero ya entro o
+// salio de la cuenta cuando se registro. Tocarlo aqui lo contaria dos veces.
+function marcarComoAjuste(lista, id){
+  var arr=(lista==="egresos")?(S.egresos||[]):(S.gananciaExtra||[]);
+  var r=arr.find(function(x){ return String(x.id)===String(id); });
+  if(!r){ alert("No encuentro ese registro."); return; }
+  var era=!!r.esAjuste;
+  var m=f2(parseFloat(r.usdt)||0);
+  if(!confirm((era?"Quitar la marca de ajuste":"Marcar como ajuste de saldo")+":\n\n"+
+      (r.desc||r.mot||"(sin descripción)")+" · $"+m+" USDT\n\n"+
+      (era ? "Volverá a contar en la ganancia del mes."
+           : "Dejará de contar en la ganancia del mes: un ajuste es dinero que ya estaba "+
+             "y no se había registrado, no algo que ganaste este mes.")+"\n\n"+
+      "No mueve ningún saldo.\n\n¿Seguro?")) return;
+  if(era) delete r.esAjuste; else r.esAjuste=true;
+  r._mod=Date.now();
+  logAudit("MARCA_AJUSTE",(era?"quitada":"puesta")+" · "+lista+" · $"+m+" USDT");
+  saveData(); R();
+}
 function delGanExtra(id){
   var g=(S.gananciaExtra||[]).find(function(x){return x.id===id;});
   if(!g||!confirm("Eliminar '"+g.desc+"' ($"+f2(g.usdt)+" USDT)?"))return;
@@ -24141,7 +24442,7 @@ function rInformeCierre(){
               "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:3px'>Descripción</label>"+
               "<input type='text' placeholder='ej: Alquiler cuenta' value='"+(ng.desc||"")+"' oninput='S._nGastoSocio=Object.assign(S._nGastoSocio||{},{desc:this.value})' style='width:100%;padding:9px;font-size:14px;border:1.5px solid #ddd;border-radius:8px;font-family:inherit;box-sizing:border-box'></div>"+
               "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:3px'>Monto USDT</label>"+
-              "<input type='number' placeholder='0.00' value='"+(ng.usdt||"")+"' oninput='S._nGastoSocio=Object.assign(S._nGastoSocio||{},{usdt:parseFloat(this.value)||0,monto:parseFloat(this.value)||0})' style='width:100%;padding:9px;font-size:14px;border:1.5px solid #ddd;border-radius:8px;font-family:inherit;box-sizing:border-box'></div>"+
+              "<input type='text' inputmode='decimal' placeholder='0.00' value='"+(ng.usdt||"")+"' oninput='S._nGastoSocio=Object.assign(S._nGastoSocio||{},{usdt:_leerNumero(this.value)||0,monto:_leerNumero(this.value)||0})' style='width:100%;padding:9px;font-size:14px;border:1.5px solid #ddd;border-radius:8px;font-family:inherit;box-sizing:border-box'></div>"+
             "</div>"+
             "<div style='margin-bottom:8px'><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:3px'>Fecha</label>"+
             "<input type='text' placeholder='DD/MM/YYYY' value='"+(ng.fecha||td())+"' oninput='S._nGastoSocio=Object.assign(S._nGastoSocio||{},{fecha:this.value})' style='width:100%;padding:9px;font-size:14px;border:1.5px solid #ddd;border-radius:8px;font-family:inherit;box-sizing:border-box'></div>"+
@@ -24167,7 +24468,7 @@ function rInformeCierre(){
         (isPaying?"<div style='background:#F0FFF6;border:1px solid #a0e8c0;border-radius:10px;padding:12px;margin-top:10px'>"+
           "<div style='display:flex;flex-direction:column;gap:8px;margin-bottom:10px'>"+
             "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Monto a pagar (USDT)</label>"+
-            "<input type='number' placeholder='"+f2(Math.max(0,final-totalPagado))+"' value='"+(np.monto||"")+"' oninput='S._nPagoSocio=Object.assign(S._nPagoSocio||{},{monto:this.value})' style='width:100%;padding:11px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
+            "<input type='text' inputmode='decimal' placeholder='"+f2(Math.max(0,final-totalPagado))+"' value='"+(np.monto||"")+"' oninput='S._nPagoSocio=Object.assign(S._nPagoSocio||{},{monto:_num(this.value)})' style='width:100%;padding:11px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
             "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>¿Este pago es por qué mes?</label>"+
             "<select onchange='S._nPagoSocio=Object.assign(S._nPagoSocio||{},{mesKeyPara:this.value})' style='width:100%;padding:11px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
               getMesesDisponibles().map(function(m){return "<option value='"+m.key+"'"+((np.mesKeyPara||getMesKeyActual())===m.key?" selected":"")+">"+getMesLabel(m.mes,m.anio)+"</option>";}).join("")+
@@ -24438,7 +24739,14 @@ function rDash(){
   // del neto del mes y esta pantalla contradice al Balance y al Cierre.
   var egPag    = _egOperativos(egEmpM).filter(function(e){ return e.pagada; }).reduce(function(a,e){ return a+(e.usdt||0); }, 0);
   var egPend   = _egOperativos(egEmpM).filter(function(e){ return !e.pagada; }).reduce(function(a,e){ return a+(e.usdt||0); }, 0);
-  var neto     = ganTotal - egPag;
+  // ARREGLO 153: el neto sale de calcMesCompleto, igual que la cabecera, la
+  // tarjeta Base y el Cierre. Restándolo aquí a mano se quedaba fuera la
+  // ganancia extra de la empresa —con su export, 14,93— así que esta tarjeta
+  // decía 58,24 donde el Cierre decía 73,17, y las dos se llamaban "el neto".
+  var _cmRes   = calcMesCompleto(selMes);
+  var ganExtraEmpM = parseFloat(_cmRes.ganExtraEmp)||0;
+  var neto     = parseFloat(_cmRes.utilidadEmpresa)||0;
+  var _ajNeto  = Math.round((parseFloat(_cmRes.ajustesNeto)||0)*100)/100;
   // Comisión bancaria VES absorbida por el operador (pérdida de ganancia)
   var comBancoAbsorbida = [].concat(brlM,vzlaM,eeuuM).reduce(function(a,r){
     return a + (r.comisionBanco && r.comisionBancoVes ? parseFloat(r.comisionBancoVes)||0 : 0);
@@ -24721,8 +25029,17 @@ function rDash(){
       _kpi("Ganancia del mes", "$"+f2(ganTotal),
            _nOps ? _nOps+" operacion"+(_nOps>1?"es":"")+" · $"+f2(Math.round(ganTotal/_nOps*100)/100)+" cada una"
                  : "sin operaciones este mes") +
+      // El pie tiene que poder sumarse a mano con el número de al lado, o la
+      // tarjeta vuelve a ser un número que hay que perseguir (ARREGLO 141).
       _kpi("Neto real", "$"+f2(neto),
-           "ya descontados $"+f2(egPag)+" de egresos"+(egPend>0?" · $"+f2(egPend)+" por pagar":""),
+           f2(ganTotal)+(ganExtraEmpM?" + "+f2(ganExtraEmpM)+" extra":"")+" − "+f2(egPag)+" de egresos"+
+             (egPend>0?" · $"+f2(egPend)+" por pagar":"")+
+             // ARREGLO 156 · los ajustes de saldo van en LINEA APARTE, con su
+             // nombre. No suman a la utilidad —no son ganancia de este mes— y
+             // tampoco se esconden: es dinero que apareció al cuadrar una
+             // cuenta y ella tiene que poder verlo. Misma regla que el interés
+             // pendiente de un préstamo (ARREGLO 71).
+             (_ajNeto ? " · ⚖️ ajustes de saldo "+(_ajNeto>0?"+":"")+f2(_ajNeto)+" (aparte)" : ""),
            neto<0 ? "var(--mal)" : "var(--tx)") +
       _kpi("Capital total", "$"+f2(_cap.total),
            _cap.sinTasa.length
@@ -24978,7 +25295,7 @@ function rDashEE(){
         "<div style='display:grid;grid-template-columns:2fr 2fr 1fr auto;gap:8px;align-items:end'>"+
           "<div><div style='font-size:10.5px;opacity:.7;margin-bottom:3px'>MOTIVO</div><select id='ge-m' style='border-radius:6px;padding:6px 8px;font-size:11px;border:none;background:rgba(255,255,255,.15);color:var(--sobre-color);width:100%'>"+mOpts+"</select></div>"+
           "<div><div style='font-size:10.5px;opacity:.7;margin-bottom:3px'>NOTA</div><input id='ge-n' type='text' placeholder='ej: Cuenta Paul' style='border-radius:6px;padding:6px 8px;font-size:11px;border:none;background:rgba(255,255,255,.15);color:var(--sobre-color);width:100%;outline:none'></div>"+
-          "<div><div style='font-size:10.5px;opacity:.7;margin-bottom:3px'>USDT</div><input id='ge-v' type='number' step='0.01' placeholder='0.00' style='border-radius:6px;padding:6px 8px;font-size:11px;border:none;background:rgba(255,255,255,.15);color:var(--sobre-color);width:100%;outline:none'></div>"+
+          "<div><div style='font-size:10.5px;opacity:.7;margin-bottom:3px'>USDT</div><input id='ge-v' type='text' inputmode='decimal' step='0.01' placeholder='0.00' style='border-radius:6px;padding:6px 8px;font-size:11px;border:none;background:rgba(255,255,255,.15);color:var(--sobre-color);width:100%;outline:none'></div>"+
           "<button onclick='saveGE()' style='background:var(--vd3-b);border:none;color:var(--sobre-color);padding:8px 14px;border-radius:7px;font-weight:700;cursor:pointer;font-size:12px;white-space:nowrap'>💾</button>"+
         "</div>"
         :"<div style='font-size:11px;opacity:.6;text-align:center;padding:6px'>Solo el administrador puede registrar gastos</div>")+
@@ -25056,7 +25373,7 @@ function rDashEE(){
       "<div style='font-size:10px;font-weight:700;opacity:.7;text-transform:uppercase;margin-bottom:8px'>➕ Registrar deuda/adelanto</div>"+
       "<div style='display:grid;grid-template-columns:2fr 1fr auto;gap:8px;align-items:end'>"+
         "<div><div style='font-size:10.5px;opacity:.7;margin-bottom:3px'>DESCRIPCIÓN</div><input id='deuda-desc' type='text' placeholder='ej: Adelanto de $110 USD' style='border-radius:6px;padding:6px 8px;font-size:11px;border:none;background:rgba(255,255,255,.15);color:var(--sobre-color);width:100%;outline:none'></div>"+
-        "<div><div style='font-size:10.5px;opacity:.7;margin-bottom:3px'>MONTO USDT</div><input id='deuda-monto' type='number' step='0.01' placeholder='0.00' style='border-radius:6px;padding:6px 8px;font-size:11px;border:none;background:rgba(255,255,255,.15);color:var(--sobre-color);width:100%;outline:none'></div>"+
+        "<div><div style='font-size:10.5px;opacity:.7;margin-bottom:3px'>MONTO USDT</div><input id='deuda-monto' type='text' inputmode='decimal' step='0.01' placeholder='0.00' style='border-radius:6px;padding:6px 8px;font-size:11px;border:none;background:rgba(255,255,255,.15);color:var(--sobre-color);width:100%;outline:none'></div>"+
         "<button onclick='saveDeudaPaul()' style='background:var(--mal);border:none;color:var(--sobre-color);padding:8px 14px;border-radius:7px;font-weight:700;cursor:pointer;font-size:12px;white-space:nowrap'>🔐 Registrar</button>"+
       "</div>"+
     "</div>":"<div style='margin-top:10px;font-size:11px;opacity:.6;text-align:center;padding:6px;border-top:1px solid rgba(255,255,255,.15)'>Vista de solo lectura</div>")+
@@ -25473,12 +25790,14 @@ function rDiario(){
               "<div style='font-size:13px;font-weight:700;color:var(--avi-tx)'>"+g.desc+"</div>"+
               "<div style='font-size:11.5px;color:var(--tx4)'>"+g.d+(nCta?" · "+nCta:"")+" · "+
                 "<span style='background:"+(g.tipo==="empresa"?"var(--info-sup)":"var(--vd6-c)")+";color:"+(g.tipo==="empresa"?"var(--info)":"var(--ok)")+";padding:1px 6px;border-radius:6px;font-weight:700'>"+g.tipo+"</span>"+
+                (g.esAjuste?" · <span style='color:var(--tx4);font-weight:700'>⚖️ ajuste de saldo · no cuenta como ganancia</span>":"")+
               "</div>"+
             "</div>"+
             "<div style='text-align:right;flex-shrink:0'>"+
               "<div style='font-size:13px;font-weight:800;color:var(--avi-tx)'>+$"+f2(g.usdt)+" USDT</div>"+
               "<div style='font-size:11.5px;color:var(--tx4)'>"+f2(g.monto)+" "+g.mon+"</div>"+
             "</div>"+
+            "<button onclick='marcarComoAjuste(\"gananciaExtra\","+g.id+")' title='"+(g.esAjuste?"Es un ajuste de saldo: no cuenta como ganancia":"Marcar como ajuste de saldo")+"' style='background:none;border:none;cursor:pointer;font-size:13px;flex-shrink:0;opacity:"+(g.esAjuste?"1":".35")+"'>⚖️</button>"+
             "<button onclick='delGanExtra("+g.id+")' style='background:none;border:none;cursor:pointer;color:var(--mal);font-size:13px;flex-shrink:0'>🗑️</button>"+
           "</div>";
         }).join("")+
@@ -25583,8 +25902,8 @@ function rTbl(data,type){
       (isEd?"<td><input id='edit-id' value='"+t.id+"' style='width:45px;font-size:11px;padding:3px 5px;border:1px solid var(--ok-ln);border-radius:5px'></td>":"<td style='font-weight:700'>"+t.id+"</td>")+
       (isEd?"<td><input id='edit-cl' value='"+t.cl+"' style='min-width:130px;font-size:11px;padding:3px 5px;border:1px solid var(--ok-ln);border-radius:5px'></td>":"<td style='min-width:140px;text-align:left;font-weight:600'>"+t.cl+"</td>")+
       "<td><span class='bd' style='background:"+rtBg+";color:"+rtCol+"'>"+t.rt+"</span></td>"+
-      (isEd?"<td><input id='edit-am' type='number' value='"+t.am+"' style='width:70px;font-size:11px;padding:3px 5px;border:1px solid var(--ok-ln);border-radius:5px;text-align:right'></td>":"<td style='text-align:right;font-weight:700'>"+f2(t.am)+"</td>")+
-      (isEd?"<td><input id='edit-tdia' type='number' step='0.001' value='"+t.tdia+"' style='width:70px;font-size:11px;padding:3px 5px;border:1px solid var(--ok-ln);border-radius:5px;text-align:right'></td>":"<td style='text-align:right;color:var(--tx3)'>"+f2(t.tdia)+"</td>")+
+      (isEd?"<td><input id='edit-am' type='text' inputmode='decimal' value='"+t.am+"' style='width:70px;font-size:11px;padding:3px 5px;border:1px solid var(--ok-ln);border-radius:5px;text-align:right'></td>":"<td style='text-align:right;font-weight:700'>"+f2(t.am)+"</td>")+
+      (isEd?"<td><input id='edit-tdia' type='text' inputmode='decimal' step='0.001' value='"+t.tdia+"' style='width:70px;font-size:11px;padding:3px 5px;border:1px solid var(--ok-ln);border-radius:5px;text-align:right'></td>":"<td style='text-align:right;color:var(--tx3)'>"+f2(t.tdia)+"</td>")+
       "<td style='text-align:right;font-weight:700'>"+f2(t.cant)+"</td>"+
       "<td style='text-align:right;color:var(--tx2)'>"+(t.tc?f4(t.tc):"—")+"</td>"+
       "<td style='text-align:right;font-weight:700;color:var(--ok)'>"+(t.uc&&t.uc>0?f4(t.uc):"<span style='color:var(--tx4b)'>0,00</span>")+"</td>"+
@@ -25993,11 +26312,11 @@ function rTblUnificada(){
       "<td style='"+tdc+";font-size:11.5px;color:var(--tx4)'>"+(r.id||r.n||"")+"</td>"+
       "<td style='"+td+";font-size:13px;font-weight:700;color:var(--tit)'>"+_escAud(r.cl)+_htmlQuien(r)+"</td>"+
       "<td style='"+tdc+"'>"+rtBadge+"</td>"+
-      (isEd?"<td style='"+tdr+"'><input id='edit-am' type='number' value='"+r.am+"' style='"+edInStyle+"'></td>":"<td style='"+tdr+";font-size:13px;font-weight:700'>"+f2n(r.am)+" <span style='font-size:10.5px;color:var(--tx3)'>"+r.orig+"</span></td>")+
+      (isEd?"<td style='"+tdr+"'><input id='edit-am' type='text' inputmode='decimal' value='"+r.am+"' style='"+edInStyle+"'></td>":"<td style='"+tdr+";font-size:13px;font-weight:700'>"+f2n(r.am)+" <span style='font-size:10.5px;color:var(--tx3)'>"+r.orig+"</span></td>")+
       "<td style='"+tdr+";font-size:13px;font-weight:700'>"+f2n(r.cant)+" <span style='font-size:10.5px;color:var(--tx3)'>"+r.dest+"</span></td>"+
-      (isEd?"<td style='"+tdr+"'><input id='edit-tc' type='number' step='0.0001' value='"+r.tc+"' style='"+edInStyle+"'></td>":"<td style='"+tdr+";font-size:12.5px;color:var(--ok-ln)'>"+f2n(r.tc)+"</td>")+
-      (isEd?"<td style='"+tdr+"'><input id='edit-tv' type='number' step='0.001' value='"+r.tv+"' style='"+edInStyle+"'></td>":"<td style='"+tdr+";font-size:12.5px;color:var(--am2-e)'>"+f2n(r.tv)+"</td>")+
-      (isEd?"<td style='"+tdr+"'><input id='edit-tdia' type='number' step='0.001' value='"+r.tdia+"' style='"+edInStyle+"'></td>":"<td style='"+tdr+";font-size:12.5px;color:var(--tx2)'>"+f2n(r.tdia)+"</td>")+
+      (isEd?"<td style='"+tdr+"'><input id='edit-tc' type='text' inputmode='decimal' step='0.0001' value='"+r.tc+"' style='"+edInStyle+"'></td>":"<td style='"+tdr+";font-size:12.5px;color:var(--ok-ln)'>"+f2n(r.tc)+"</td>")+
+      (isEd?"<td style='"+tdr+"'><input id='edit-tv' type='text' inputmode='decimal' step='0.001' value='"+r.tv+"' style='"+edInStyle+"'></td>":"<td style='"+tdr+";font-size:12.5px;color:var(--am2-e)'>"+f2n(r.tv)+"</td>")+
+      (isEd?"<td style='"+tdr+"'><input id='edit-tdia' type='text' inputmode='decimal' step='0.001' value='"+r.tdia+"' style='"+edInStyle+"'></td>":"<td style='"+tdr+";font-size:12.5px;color:var(--tx2)'>"+f2n(r.tdia)+"</td>")+
       "<td style='"+tdr+";font-size:12.5px;color:var(--az3-g)'>"+f2n(r.uc)+"</td>"+
       "<td style='"+tdr+";font-size:12.5px;color:var(--mo3-b)'>"+f2n(r.uv)+"</td>"+
       "<td style='"+tdc+";font-size:11.5px'>"+bancoOrigen+"</td>"+
@@ -26069,13 +26388,13 @@ function rTblEE(){
     return "<tr style='background:"+(isEd?"var(--az6-a)":"")+"'>"+
     (isEd?"<td><input id='edit-d' value='"+dFmt(t.d)+"' style='width:50px;font-size:10px;padding:2px 4px;border:1px solid var(--info);border-radius:4px'></td>":"<td style='white-space:nowrap;padding:4px 6px'>"+dFmt(t.d)+"</td>")+
     (isEd?"<td><input id='edit-cl' value='"+_escAud(t.cl)+"' style='min-width:110px;font-size:10px;padding:2px 4px;border:1px solid var(--info);border-radius:4px'></td>":"<td style='text-align:left;font-weight:600'>"+_escAud(t.cl)+"</td>")+
-    (isEd?"<td><input id='edit-am' type='number' value='"+t.am+"' style='width:60px;font-size:10px;padding:2px 4px;border:1px solid var(--info);border-radius:4px;text-align:right'></td>":"<td style='text-align:right;font-weight:700;padding:4px 6px'>"+f2(t.am)+"</td>")+
-    (isEd?"<td><input id='edit-tdia' type='number' step='0.001' value='"+t.tdia+"' style='width:55px;font-size:10px;padding:2px 4px;border:1px solid var(--info);border-radius:4px;text-align:right'></td>":"<td style='text-align:right;padding:4px 6px'>"+f2(t.tdia)+"</td>")+
+    (isEd?"<td><input id='edit-am' type='text' inputmode='decimal' value='"+t.am+"' style='width:60px;font-size:10px;padding:2px 4px;border:1px solid var(--info);border-radius:4px;text-align:right'></td>":"<td style='text-align:right;font-weight:700;padding:4px 6px'>"+f2(t.am)+"</td>")+
+    (isEd?"<td><input id='edit-tdia' type='text' inputmode='decimal' step='0.001' value='"+t.tdia+"' style='width:55px;font-size:10px;padding:2px 4px;border:1px solid var(--info);border-radius:4px;text-align:right'></td>":"<td style='text-align:right;padding:4px 6px'>"+f2(t.tdia)+"</td>")+
     "<td style='text-align:right;font-weight:700;padding:4px 6px'>"+f0(t.cant)+"</td>"+
-    (isEd?"<td><input id='edit-tc' type='number' step='0.0001' value='"+t.tc+"' style='width:55px;font-size:10px;padding:2px 4px;border:1px solid var(--info);border-radius:4px;text-align:right'></td>":"<td style='text-align:right;padding:4px 6px'>"+f4(t.tc)+"</td>")+
+    (isEd?"<td><input id='edit-tc' type='text' inputmode='decimal' step='0.0001' value='"+t.tc+"' style='width:55px;font-size:10px;padding:2px 4px;border:1px solid var(--info);border-radius:4px;text-align:right'></td>":"<td style='text-align:right;padding:4px 6px'>"+f4(t.tc)+"</td>")+
     "<td style='text-align:right;color:var(--ok);font-weight:700;padding:4px 6px'>"+f2(t.uc)+"</td>"+
     "<td style='text-align:right;color:var(--mal);font-weight:700;padding:4px 6px'>"+f2(t.uv)+"</td>"+
-    (isEd?"<td><input id='edit-tv' type='number' step='0.001' value='"+t.tv+"' style='width:60px;font-size:10px;padding:2px 4px;border:1px solid var(--info);border-radius:4px;text-align:right'></td>":"<td style='text-align:right;padding:4px 6px'>"+f4(t.tv)+"</td>")+
+    (isEd?"<td><input id='edit-tv' type='text' inputmode='decimal' step='0.001' value='"+t.tv+"' style='width:60px;font-size:10px;padding:2px 4px;border:1px solid var(--info);border-radius:4px;text-align:right'></td>":"<td style='text-align:right;padding:4px 6px'>"+f4(t.tv)+"</td>")+
     "<td style='text-align:right;font-weight:700;padding:4px 6px'>"+f0(t.total)+"</td>"+
     "<td class='gc' style='padding:4px 6px'>$"+f2(t.pr)+"</td>"+
     "<td style='text-align:right;font-size:11px;color:var(--mal);font-weight:700;padding:4px 6px'>"+(t.comisionBancoVes&&t.comisionBancoVes>0?"−"+f2(t.comisionBancoVes)+" Bs"+(t.tv>0?" <span style='font-size:10px;opacity:.8'>≈ −$"+f2(Math.round(t.comisionBancoVes/t.tv*100)/100)+" USDT</span>":""):"")+"</td>"+
@@ -26138,7 +26457,7 @@ function guardarTasaCalcHoy(dir,valor,silencioso){
   saveData();
   if(!silencioso) alert("✅ Guardada: "+(dir==="ida"?"1 R$ = "+v+" Bs (ida)":v+" Bs = 1 R$ (vuelta)")+" — ya se usa en el Conversor rápido y en cotizaciones/registros nuevos.");
 }
-function calcSetExotico(campo,val){ S.calc[campo]=val; calcUpdateExotico(); }
+function calcSetExotico(campo,val){ S.calc[campo]=_num(val); calcUpdateExotico(); }
 function calcSetExOrig(val){
   if(S.calc.exDest===val){
     var opts=(MONEDAS_VENTA||[]).filter(function(m){return m.id!==val;});
@@ -26167,7 +26486,7 @@ function calcObjetivoExotico(val){
   R();
 }
 function calcSetMargenExoticoLibre(val){
-  S.calc.exMargen=val;
+  S.calc.exMargen=_num(val);
   // Actualizar resultado sin re-renderizar (para no perder el foco)
   calcUpdateExotico();
   // También actualizar los indicadores pequeños bajo las tasas
@@ -26330,7 +26649,7 @@ function _rConversorBCV(){
     _htmlTasaCotiza("vuelta", vta)+
     "<div style='display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap'>"+
       "<span style='font-size:11px;color:var(--tx2b)'>🇺🇸 1 USD (BCV) =</span>"+
-      "<input id='bcv-rate-input' type='number' step='0.01' value='"+(bcv||"")+"' placeholder='tasa BCV' oninput='S._bcvRate=parseFloat(this.value)||null;_reconvertirBCV()' style='width:90px;padding:6px 8px;font-size:13px;font-weight:800;border:1px solid var(--ln);border-radius:7px;text-align:right'>"+
+      "<input id='bcv-rate-input' type='text' inputmode='decimal' step='0.01' value='"+(bcv||"")+"' placeholder='tasa BCV' oninput='S._bcvRate=_leerNumero(this.value)||null;_reconvertirBCV()' style='width:90px;padding:6px 8px;font-size:13px;font-weight:800;border:1px solid var(--ln);border-radius:7px;text-align:right'>"+
       "<span style='font-size:11px;color:var(--tx2b)'>VES</span>"+
       "<button type='button' onclick='_fetchTasaBCV()' id='btn-bcv-refresh' style='background:var(--info-sup2);border:1px solid var(--az3a44);color:var(--az3-d);padding:5px 9px;border-radius:8px;font-size:10.5px;font-weight:700;cursor:pointer;margin-left:auto'>🔄 Traer</button>"+
     "</div>"+
@@ -29503,9 +29822,9 @@ function _htmlRutasExoticas(){
 "<div style='display:flex;gap:10px;margin-bottom:12px;align-items:center'>"+
 "<div style='font-size:11px;color:var(--ink3);font-weight:700;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap'>% Binance:</div>"+
 "<div style='flex:1'><label style='font-size:10.5px;color:var(--ink3);font-weight:700;text-transform:uppercase;letter-spacing:.3px;display:block;margin-bottom:2px'>Compra</label>"+
-"<input type='number' inputmode='decimal' step='0.0001' value='"+(c.exComCompra||"0.0006")+"' oninput='S.calc.exComCompra=this.value;calcUpdateExotico()' style='width:100%;padding:6px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:12px;background:var(--sup2)'></div>"+
+"<input type='text' inputmode='decimal' step='0.0001' value='"+(c.exComCompra||"0.0006")+"' oninput='S.calc.exComCompra=_num(this.value);calcUpdateExotico()' style='width:100%;padding:6px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:12px;background:var(--sup2)'></div>"+
 "<div style='flex:1'><label style='font-size:10.5px;color:var(--ink3);font-weight:700;text-transform:uppercase;letter-spacing:.3px;display:block;margin-bottom:2px'>Venta</label>"+
-"<input type='number' inputmode='decimal' step='0.0001' value='"+(c.exComVenta||"0.0007")+"' oninput='S.calc.exComVenta=this.value;calcUpdateExotico()' style='width:100%;padding:6px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:12px;background:var(--sup2)'></div>"+
+"<input type='text' inputmode='decimal' step='0.0001' value='"+(c.exComVenta||"0.0007")+"' oninput='S.calc.exComVenta=_num(this.value);calcUpdateExotico()' style='width:100%;padding:6px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:12px;background:var(--sup2)'></div>"+
 "</div>"+
 
     // Selector origen → destino
@@ -29528,21 +29847,21 @@ function _htmlRutasExoticas(){
     "<div class='sec'>"+
       "<div style='font-size:13px;font-weight:800;color:var(--ink);margin-bottom:12px'>📊 Tasas Binance del momento</div>"+
       "<div class='fl'><label>Compro USDT con "+moSelOrig.flag+" "+selOrig+" ("+(moSelOrig.hint||selOrig)+" por USDT)</label>"+
-        "<input type='number' inputmode='decimal' step='any' placeholder='"+moSelOrig.hint+"' value='"+(c.exTcCompra||"")+"' oninput='calcSetExotico(\"exTcCompra\",this.value)'>"+(tEx.ok&&tEx.simMonto?"<div style='font-size:11px;color:var(--vd2-d);margin-top:3px;padding-left:2px'>↳ comprando "+((tEx.simMonto/parseFloat(c.exTcCompra)*(1-tEx.comOrig)).toFixed(4))+" USDT</div>":"")+
+        "<input type='text' inputmode='decimal' step='any' placeholder='"+moSelOrig.hint+"' value='"+(c.exTcCompra||"")+"' oninput='calcSetExotico(\"exTcCompra\",this.value)'>"+(tEx.ok&&tEx.simMonto?"<div style='font-size:11px;color:var(--vd2-d);margin-top:3px;padding-left:2px'>↳ comprando "+((tEx.simMonto/parseFloat(c.exTcCompra)*(1-tEx.comOrig)).toFixed(4))+" USDT</div>":"")+
         "</div>"+
       "<div class='fl'><label>Vendo USDT en "+moSelDest.flag+" "+selDest+" ("+selDest+" por USDT)</label>"+
-        "<input type='number' inputmode='decimal' step='any' placeholder='ej: ...' value='"+(c.exTvVenta||"")+"' oninput='calcSetExotico(\"exTvVenta\",this.value)'>"+(tEx.ok&&tEx.simMonto?"<div style='font-size:11px;color:var(--mal);margin-top:3px;padding-left:2px'>↳ vendiendo "+(((tEx.simMonto*tEx.cliente)/parseFloat(c.exTvVenta)/(1-tEx.comDest)).toFixed(4))+" USDT</div>":"")+
+        "<input type='text' inputmode='decimal' step='any' placeholder='ej: ...' value='"+(c.exTvVenta||"")+"' oninput='calcSetExotico(\"exTvVenta\",this.value)'>"+(tEx.ok&&tEx.simMonto?"<div style='font-size:11px;color:var(--mal);margin-top:3px;padding-left:2px'>↳ vendiendo "+(((tEx.simMonto*tEx.cliente)/parseFloat(c.exTvVenta)/(1-tEx.comDest)).toFixed(4))+" USDT</div>":"")+
         "</div>"+
       "<label style='font-size:11px;color:var(--ink2);font-weight:700;text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:6px'>Mi ganancia</label>"+
       "<div style='display:flex;gap:8px;margin-bottom:12px'>"+mbtnEx("8",c.exMargen)+mbtnEx("9",c.exMargen)+mbtnEx("10",c.exMargen)+
-        "<input type='number' inputmode='decimal' step='any' placeholder='otro' value='"+(c.exMargen||"")+"' oninput='calcSetMargenExoticoLibre(this.value)' style='flex:1;text-align:center'></div>"+
+        "<input type='text' inputmode='decimal' step='any' placeholder='otro' value='"+(c.exMargen||"")+"' oninput='calcSetMargenExoticoLibre(this.value)' style='flex:1;text-align:center'></div>"+
       "<div style='background:var(--mo6);border:1.5px dashed var(--ac3);border-radius:10px;padding:10px 12px;margin-bottom:12px'>"+
         "<label style='font-size:11px;font-weight:700;color:var(--ac3);display:block;margin-bottom:4px'>🎯 O escribe la tasa que quieres ofrecer ("+selDest+" por 1 "+selOrig+") — calcula el % solo</label>"+
         (!(c.exTcCompra&&c.exTvVenta)?"<div style='font-size:11px;color:var(--mal);font-weight:700;margin-bottom:6px'>⚠️ Primero llena las dos tasas de Binance arriba — sin esas dos no hay con qué calcular el %</div>":"")+
-        "<input type='number' inputmode='decimal' step='any' placeholder='ej: 0.0025' value='"+(c.objetivoExotico||"")+"' oninput='S.calc.objetivoExotico=this.value' onblur='calcObjetivoExotico(this.value)' style='width:100%;padding:9px;border:1.5px solid var(--ac3);border-radius:8px;font-size:14px;font-weight:700'>"+
+        "<input type='text' inputmode='decimal' step='any' placeholder='ej: 0.0025' value='"+(c.objetivoExotico||"")+"' oninput='S.calc.objetivoExotico=_num(this.value)' onblur='calcObjetivoExotico(this.value)' style='width:100%;padding:9px;border:1.5px solid var(--ac3);border-radius:8px;font-size:14px;font-weight:700'>"+
       "</div>"+
       "<div class='fl'><label>💡 Simular: cliente envía ("+selOrig+")</label>"+
-        "<input type='number' inputmode='decimal' step='any' placeholder='ej: 500' value='"+(c.exSim||"")+"' oninput='calcSetExotico(\"exSim\",this.value)'></div>"+
+        "<input type='text' inputmode='decimal' step='any' placeholder='ej: 500' value='"+(c.exSim||"")+"' oninput='calcSetExotico(\"exSim\",this.value)'></div>"+
       "<div id='calc-res-exotico' style='background:var(--brandSoft);border-radius:12px;padding:13px 16px'>"+
         "<div style='font-size:12px;color:var(--ink3);text-align:center;padding:8px'>Ingresa ambas tasas de Binance para ver el resultado ↑</div>"+
       "</div>"+
@@ -29923,8 +30242,8 @@ function rNueva(){
     "<div class='fl'><label>Nombre del cliente (auto)</label><input id='tx-nm' type='text' placeholder='Se llena al escribir código' value='"+(f.cl||"")+"' oninput='S.tx.cl=this.value' style='background:"+(f.cl?"var(--vd6-a)":"var(--sup)")+";border-color:"+(f.cl?"var(--ok-ln)":"var(--ln)")+"'></div></div>"+
     "<div class='fl' style='max-width:240px'><label>País destino (automático)</label><div style='background:var(--sup2g);border-radius:7px;padding:8px 12px;font-size:13px;font-weight:700'>"+ruta.flag+" "+ruta.pais+"</div></div></div>"+
     "<div class='sec' style='border-left:3px solid var(--info)'><div class='sec-title' style='color:var(--info)'>1️⃣ Monto recibido en "+ruta.orig+" · Tasa del día</div>"+
-    "<div class='f2'><div class='fl'><label>Valor de transacción ("+ruta.orig+")</label><input type='text' inputmode='decimal' placeholder='ej: 50' value='"+(f.am||"")+"' oninput='S.tx.am=_num(this.value);upC(\"tx\")' onchange='_autoMetodoTx()'></div>"+
-    "<div class='fl'><label>"+ruta.lDia+(defTdia&&!f.tdia?" <span style='font-size:11px;color:var(--rol-na);font-weight:600'>← Config: "+defTdia+"</span>":"")+"</label><input type='text' inputmode='decimal' step='0.001' placeholder='"+(defTdia?"Config: "+defTdia:"ej: 629")+"' value='"+tdiaVal+"' oninput='S.tx.tdia=_num(this.value);upC(\"tx\")' onchange='_autoMetodoTx()'></div></div>"+
+    "<div class='f2'><div class='fl'><label>Valor de transacción ("+ruta.orig+")</label><input type='text' inputmode='decimal' placeholder='ej: 50' value='"+(f.am||"")+"' onfocus='this.select()' oninput='S.tx.am=_num(this.value);upC(\"tx\");_autoMetodoTxPronto()' onchange='_autoMetodoTx()'></div>"+
+    "<div class='fl'><label>"+ruta.lDia+(defTdia&&!f.tdia?" <span style='font-size:11px;color:var(--rol-na);font-weight:600'>← Config: "+defTdia+"</span>":"")+"</label><input type='text' inputmode='decimal' step='0.001' placeholder='"+(defTdia?"Config: "+defTdia:"ej: 629")+"' value='"+tdiaVal+"' onfocus='this.select()' oninput='S.tx.tdia=_num(this.value);upC(\"tx\");_autoMetodoTxPronto()' onchange='_autoMetodoTx()'></div></div>"+
     "<div id='s1-tx'>"+(ok?"<div class='step-box' style='background:var(--info-sup);border:1px solid var(--az2a33)'><span style='font-size:11px;color:var(--info)'>"+(ruta.orig==="VES"?(f2(am)+" "+ruta.orig+" ÷ "+f2(tdia)):(f2(am)+" "+ruta.orig+" × "+f2(tdia)))+" = </span><span style='font-weight:700;font-size:14px;color:var(--info)'>📦 "+f0(cant)+" "+ruta.dest+" a entregar</span></div>":"")+"</div></div>"+
     // ── Las cuentas van DESPUÉS del monto (sus palabras: "donde me ponga
     // a colocar qué paga cada uno y después que me ponga a seleccionar en
@@ -30005,6 +30324,12 @@ function rNueva(){
       }
       return html;
     })()+
+    // ARREGLO 152 · el bloque 3 entero va dentro de su propio contenedor.
+    // Lo que depende del método —los dos botones, el campo de la permuta, la
+    // cabecera— vive aquí dentro, y el botón de guardar vive FUERA. Así
+    // _refrescarMetodoTx() rehace esto sin llevarse por delante el botón que
+    // ella acaba de tocar (ARREGLO 32, otra vez).
+    "<div id='sec3-tx'>"+
     "<div class='sec' style='border-left:3px solid var(--ok);background:"+((hasInv||_rTx.calce)?"var(--vd6-k)":"var(--sup)")+"'><div class='sec-title' style='color:var(--ok)'>3️⃣ "+(_rTx.calce?"Permuta":"Tasas USDT")+
     (_rTx.calce?"<span style='background:var(--mo6-b);color:var(--rol-ee);font-size:11px;padding:2px 8px;border-radius:10px;margin-left:8px;font-weight:600'>🤝 Sin USDT</span>"
      :hasInv?"<span style='background:var(--ok-sup);color:var(--ok);font-size:11px;padding:2px 8px;border-radius:10px;margin-left:8px;font-weight:600'>✅ Auto desde inventario</span>":"<span style='background:var(--mal-sup);color:var(--mal);font-size:11px;padding:2px 8px;border-radius:10px;margin-left:8px'>Sin inventario</span>")+
@@ -30016,7 +30341,9 @@ function rNueva(){
       "<div style='display:flex;background:var(--sup2f);border-radius:9px;padding:3px;gap:3px;margin-bottom:10px'>"+
         "<button type='button' onclick='txMetodo(\"p2p\")' style='flex:1;padding:8px;border:none;border-radius:7px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;background:"+(_rTx.calce?"transparent":"var(--ok)")+";color:"+(_rTx.calce?"var(--tx3)":"var(--sobre-color)")+"'>🔁 Con USDT (P2P)</button>"+
         "<button type='button' onclick='txMetodo(\"calce\")' style='flex:1;padding:8px;border:none;border-radius:7px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;background:"+(_rTx.calce?"var(--rol-ee)":"transparent")+";color:"+(_rTx.calce?"var(--sobre-color)":"var(--tx3)")+"'>🤝 Calce directo</button>"+
-      "</div>"
+      "</div>"+
+      // ARREGLO 152: y quién lo eligió, debajo de los dos botones.
+      _htmlMetodoElegido(_rTx, ruta)
     :"")+
     (_rTx.calce?
       // La permuta va SIEMPRE en bolivares por real, la misma unidad que sus
@@ -30073,7 +30400,7 @@ function rNueva(){
       "<div id='s2-tx' class='step-box' style='background:var(--ok-sup);border:1px solid var(--vd2a33)'><span style='font-size:11px;color:var(--ok)'>"+f2(am)+" ÷ "+f4(tc)+" = </span><span style='font-weight:700;font-size:13px;color:var(--ok)'>+"+f2(uc)+" USDT</span></div>"+
       "<div id='s3-tx' class='step-box' style='background:var(--mal-sup);border:1px solid var(--rj3a33)'><span style='font-size:11px;color:var(--mal)'>"+f0(cant)+" "+ruta.dest+" ÷ "+f2(tv)+" = </span><span style='font-weight:700;font-size:13px;color:var(--mal)'>−"+f2(uv)+" USDT</span></div>"+
     "</div>":"<div id='s2-tx'></div><div id='s3-tx'></div>")+
-    "</div>"+
+    "</div></div>"+   // cierra el sec del bloque 3 y su contenedor sec3-tx
     // ARREGLO 125: de dónde salen los bolívares. Con su id, para que upC() lo
     // refresque al teclear — si no, se queda del último repintado y enseña un
     // reparto que ya no es el del monto que hay escrito (ARREGLO 55).
@@ -30109,7 +30436,7 @@ function rNueva(){
     "</select>"+
     (_cvTx>0?"<div style='margin-top:8px;font-size:11px;color:var(--rj3)'>📌 Comisión: "+f2(_cvTx)+" Bs — la asumes tú, se descuenta de tu ganancia.</div>":"")+
     "</div>":"")+
-    "<button class='btn-main btn-green' onclick='saveTx()'>💾 Guardar y bloquear</button></div>";
+    "<button class='btn-main btn-green' onpointerdown='_txTocaGuardar()' onclick='saveTx()'>💾 Guardar y bloquear</button></div>";
 }
 
 function rNuevaEE(){
@@ -30970,6 +31297,51 @@ function rClientes(){
   return panelHtml+statsHtml+searchHtml+chipsHtml+listHtml;
 }
 
+// ── ARREGLO 153 · un gasto personal guardado en la lista de la EMPRESA ───
+//
+// Lo cazó ella el 16/10 persiguiendo los 212,78 de la cabecera: había un gasto
+// de 2,78 ("PAGOS CRÉDITOS") con tipo "personal" dentro de S.egresos, que es la
+// lista de la empresa. Sus personales de verdad viven en S.egresos_personales.
+//
+// Y lo peor es que NO LO VE NADIE: la pestaña de empresa lo filtra por tipo, la
+// personal no lo busca ahí, y el único sitio que lo sumaba era la cabecera, que
+// sumaba todo. Un registro que no sale en ninguna pantalla es dinero que no se
+// puede perseguir — la misma razón por la que los ajustes sin situar se ven sin
+// desplegar nada (ARREGLO 99).
+//
+// Medido en todo su export: UNO, de 53 egresos, y ninguno en otro mes.
+function _egresosHuerfanos(){
+  return (S.egresos||[]).filter(function(e){ return e.tipo && e.tipo!=="empresa"; });
+}
+// Se mueve con un botón, no tocando la base a mano. No cambia ningún saldo: el
+// dinero ya salió de su cuenta cuando se registró; lo que estaba mal era la
+// lista en la que vivía. Se dice en la propia pregunta, porque un botón que
+// mueve un gasto se lee como un botón que mueve dinero.
+function moverEgresoAPersonal(id){
+  var i=(S.egresos||[]).findIndex(function(e){ return String(e.id)===String(id); });
+  if(i<0){ alert("No encuentro ese gasto."); return; }
+  var e=S.egresos[i];
+  // Y se dice lo incómodo ANTES de pulsar: la conciliación se mueve. Hasta
+  // ahora este gasto no lo contaba NADIE —ni la lista de empresa, que lo filtra
+  // por tipo, ni la personal, que no lo busca ahí— así que "deberías tener"
+  // estaba sin descontarlo. Al moverlo sí se descuenta y el "te sobran" sube
+  // por ese mismo importe. No aparece dinero: aparece un gasto que no se contaba.
+  // Es la misma forma que situar los ajustes en el aire (ARREGLO 72).
+  var _m=f2(parseFloat(e.usdt)||0);
+  if(!confirm("Mover a Gastos personales:\n\n"+(e.categoria||e.cat||"(sin categor\u00eda)")+
+      " · $"+_m+"\n\nNo mueve ning\u00fan saldo: el dinero ya sali\u00f3 de la cuenta cuando lo "+
+      "registraste. Lo que cambia es la lista donde est\u00e1 guardado, para que se vea en la "+
+      "pesta\u00f1a Personal y deje de contarse donde no toca.\n\nOjo: hasta ahora este gasto no "+
+      "lo contaba ninguna pantalla, as\u00ed que al moverlo el \"te sobran\" de la conciliaci\u00f3n "+
+      "sube $"+_m+". No aparece dinero nuevo: aparece un gasto que no se estaba contando.")) return;
+  S.egresos.splice(i,1);
+  _marcarBorradoMerge("egresos", e.id);     // o el otro aparato lo devuelve
+  S.egresos_personales=S.egresos_personales||[];
+  S.egresos_personales.push(e);
+  logAudit("EGRESO_MOVIDO","Gasto "+(e.categoria||e.cat||"")+" · $"+f2(parseFloat(e.usdt)||0)+" → personales");
+  saveData(); R();
+  alert("\u2705 Movido a Gastos personales. Ning\u00fan saldo se toc\u00f3.");
+}
 function rEgresos(){
   var f=S.nEg;
   var mesKey=getMesKeyActual();
@@ -31066,10 +31438,13 @@ function rEgresos(){
   var rowsEmp=egEmp.filter(function(e){return e.pagada;}).slice().reverse().map(function(e){
     return "<tr><td>"+e.d+"</td>"+
     "<td><span style='background:var(--az6-j);color:var(--tit);padding:2px 6px;border-radius:5px;font-size:11px;font-weight:700'>"+_escAud(e.cat.replace("GASTOS ","").replace(" EMPRESA",""))+"</span></td>"+
-    "<td style='font-size:12px'>"+_escAud(e.mot)+(e.cuentaId?"<div style='font-size:10.5px;color:var(--tx4)'>🏦 "+_escAud(nombreCuentaEg(e.cuentaId))+"</div>":"")+_htmlQuien(e)+"</td>"+
+    "<td style='font-size:12px'>"+_escAud(e.mot)+(e.cuentaId?"<div style='font-size:10.5px;color:var(--tx4)'>🏦 "+_escAud(nombreCuentaEg(e.cuentaId))+"</div>":"")+
+      (e.esAjuste?"<div style='font-size:10.5px;color:var(--tx4);font-weight:700'>⚖️ ajuste de saldo · no baja la ganancia</div>":"")+_htmlQuien(e)+"</td>"+
     "<td style='text-align:right;font-size:11px'>"+f2(e.monto)+" <span style='color:var(--tx4)'>"+(e.mon||"BRL")+"</span></td>"+
     "<td style='text-align:right;font-weight:700;color:var(--mal)'>$"+f2(e.usdt)+"</td>"+
-    "<td><button class='del-btn' onclick='delEg("+JSON.stringify(e.id)+")'>🗑️</button></td></tr>";
+    "<td style='white-space:nowrap'>"+
+      "<button onclick='marcarComoAjuste(\"egresos\","+JSON.stringify(e.id)+")' title='"+(e.esAjuste?"Es un ajuste de saldo: no baja la ganancia":"Marcar como ajuste de saldo")+"' style='background:none;border:none;cursor:pointer;font-size:13px;opacity:"+(e.esAjuste?"1":".35")+"'>⚖️</button>"+
+      "<button class='del-btn' onclick='delEg("+JSON.stringify(e.id)+")'>🗑️</button></td></tr>";
   }).join("");
 
   // ── Filas personal ──
@@ -31122,17 +31497,33 @@ function rEgresos(){
   // 9px; ahora el numero manda y el rotulo acompaña. Y cada una dice de que
   // esta hecha, que es lo que antes obligaba a contar a mano.
   var _nPag=egEmp.filter(function(e){return e.pagada;}).length;
+  // Lo que de ese "Pagado" es compra de mercancía: salió del banco pero no es
+  // un gasto del mes (ARREGLO 143/150). Sale de la misma lista que se suma.
+  var _egMercPag=Math.round(egEmp.filter(function(e){return e.pagada&&e.fromArticulo;})
+                        .reduce(function(a,e){return a+(parseFloat(e.usdt)||0);},0)*100)/100;
   var tabEmpresa=
     "<div class='pz-rejilla'>"+
       "<div class='pz-card'><div class='pz-rot'>💸 Pagado</div>"+
         "<div class='pz-num' style='color:var(--mal)'>$"+f2(egEmpPag)+"</div>"+
-        "<div class='pz-pie'>"+_nPag+" gasto"+(_nPag===1?"":"s")+" este mes</div></div>"+
+        // ARREGLO 153: aquí la mercancía SÍ cuenta —ese dinero salió del banco de
+        // verdad— y por eso este número es mayor que el que resta la utilidad. Sin
+        // decirlo, la cifra de al lado (Base) invita a restar 248,17 − 399,93 y a
+        // creer que el mes va en pérdida. La parte de mercancía se nombra aparte.
+        "<div class='pz-pie'>"+_nPag+" gasto"+(_nPag===1?"":"s")+" este mes"+
+          (_egMercPag>0?" · <b>$"+f2(_egMercPag)+"</b> es mercancía, no baja la ganancia":"")+
+        "</div></div>"+
       "<div class='pz-card'><div class='pz-rot'>⚠️ Pendiente</div>"+
         "<div class='pz-num' style='color:var(--am2-h)'>$"+f2(pendEmpresaCombinado)+"</div>"+
         "<div class='pz-pie'>"+(pendEmpresaCombinado>0?"todavía sin pagar":"nada por pagar")+"</div></div>"+
       "<div class='pz-card'><div class='pz-rot'>📊 Base</div>"+
         "<div class='pz-num' style='color:"+(baseNeta<0?"var(--mal)":"var(--ok)")+"'>$"+f2(baseNeta)+"</div>"+
-        "<div class='pz-pie'>"+(baseNeta<0?"los egresos se comieron la ganancia":"ganancia menos lo ya pagado")+"</div></div>"+
+        "<div class='pz-pie'>"+(baseNeta<0?"los egresos se comieron la ganancia"
+          // ARREGLO 153: decía "ganancia menos lo ya pagado", y eso invita a
+          // restar los dos números que ella tiene delante —248,17 − 189,93— que
+          // da 58,24 y NO es esto. La utilidad lleva dentro la ganancia extra de
+          // la empresa y deja fuera los préstamos. El rótulo tiene que decir de
+          // qué está hecho el número, no una cuenta que no es la suya.
+          : "remesas + ganancia extra − gastos · lo mismo que el Cierre")+"</div></div>"+
     "</div>"+
     (catEmpSort.length?
       "<div style='font-size:10.5px;font-weight:700;color:var(--tx3);text-transform:uppercase;margin-bottom:10px'>📊 Distribución empresa</div>"+
@@ -31318,6 +31709,58 @@ function rEgresos(){
     "<label style='display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer'><input type='checkbox' "+(f.pagada?"checked":"")+" onchange='S.nEg.pagada=this.checked'> ✅ Ya pagado</label></div>"+
     (f.fija?"<div class='fl' style='margin-bottom:12px'><label>📅 Día de pago (1-28)</label><input type='text' inputmode='decimal' min='1' max='28' value='"+(f.diaPago||"")+"' oninput='S.nEg.diaPago=_num(this.value)'></div>":"")+
     "<button onclick='saveEg()' style='width:100%;padding:13px;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;background:"+(esPersonal?"var(--rol-ee)":"var(--tit)")+";color:var(--sobre-color)'>💾 Guardar "+(esPersonal?"gasto personal":"egreso empresa")+"</button></div>"+
+
+    // ARREGLO 153: los gastos personales guardados en la lista de la empresa.
+    // Va ARRIBA de las pestañas a propósito: no es de ninguna de las tres —ese
+    // es justamente el problema— y dentro de una no lo vería quien abre la otra.
+    (function(){
+      var hu=_egresosHuerfanos();
+      if(!hu.length) return "";
+      return "<div style='background:var(--avi-sup);border:1.5px solid var(--avi-ln);border-radius:10px;"+
+        "padding:11px 13px;margin-bottom:12px;font-size:12px;color:var(--avi-tx);line-height:1.6'>"+
+        "\u26a0\ufe0f <b>"+hu.length+" gasto"+(hu.length===1?"":"s")+" personal"+(hu.length===1?"":"es")+
+        " guardado"+(hu.length===1?"":"s")+" en la lista de la empresa.</b> "+
+        "No sale"+(hu.length===1?"":"n")+" en ninguna de las pesta\u00f1as de abajo, as\u00ed que no hay forma de verlo"+
+        (hu.length===1?"":"s")+" desde aqu\u00ed."+
+        hu.map(function(e){
+          return "<div style='display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:7px'>"+
+            "<span>"+_escAud(e.d||e.fecha||"")+" · "+_escAud(e.categoria||e.cat||"(sin categor\u00eda)")+
+              " · <b>$"+f2(parseFloat(e.usdt)||0)+"</b></span>"+
+            "<button onclick='moverEgresoAPersonal(\""+_jsAttr(String(e.id))+"\")' style='background:var(--rol-ee);"+
+              "color:var(--sobre-color);border:none;padding:5px 9px;border-radius:7px;font-size:11px;"+
+              "font-weight:700;cursor:pointer;white-space:nowrap'>\ud83d\udc64 Mover a personales</button>"+
+          "</div>";
+        }).join("")+
+        "<div style='margin-top:7px;font-size:11px;opacity:.85'>No mueve ning\u00fan saldo: el dinero ya sali\u00f3 "+
+        "de la cuenta cuando lo registraste.</div>"+
+      "</div>";
+    })()+
+
+    // ARREGLO 157 · el mismo dinero contado dos veces: un aporte y una ganancia
+    // extra personal por lo mismo. Va aqui arriba por la misma razon que el de
+    // encima: no es de ninguna de las tres pestañas.
+    (function(){
+      var dup=_ganExtraQueSonAporte();
+      if(!dup.length) return "";
+      return "<div style='background:var(--avi-sup);border:1.5px solid var(--avi-ln);border-radius:10px;"+
+        "padding:11px 13px;margin-bottom:12px;font-size:12px;color:var(--avi-tx);line-height:1.6'>"+
+        "\u26a0\ufe0f <b>"+dup.length+" ganancia"+(dup.length===1?"":"s")+" extra que ya tienes como aporte.</b> "+
+        "Es el mismo dinero dos veces: el aporte dice que ya estaba en la cuenta y la ganancia extra "+
+        "dice que lo ganaste. En tu bolsillo personal cuenta doble."+
+        dup.map(function(d){
+          return "<div style='display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:7px'>"+
+            "<span>"+_escAud(d.gan.d||"")+" \u00b7 "+_escAud(d.gan.desc||"(sin descripci\u00f3n)")+
+              " \u00b7 <b>"+f2(parseFloat(d.gan.monto)||0)+" "+_escAud(d.gan.mon||"")+"</b>"+
+              "<div style='font-size:11px;opacity:.85'>aporte del "+_escAud(d.ap.d||"")+" por lo mismo</div></span>"+
+            "<button onclick='quitarGanExtraDuplicada(\""+_jsAttr(String(d.gan.id))+"\")' style='background:var(--rol-ee);"+
+              "color:var(--sobre-color);border:none;padding:5px 9px;border-radius:7px;font-size:11px;"+
+              "font-weight:700;cursor:pointer;white-space:nowrap'>\ud83e\uddf9 Quitar la ganancia extra</button>"+
+          "</div>";
+        }).join("")+
+        "<div style='margin-top:7px;font-size:11px;opacity:.85'>No mueve ning\u00fan saldo: el dinero ya est\u00e1 "+
+        "en la cuenta y ah\u00ed se queda. El aporte es el registro correcto.</div>"+
+      "</div>";
+    })()+
 
     // ══ PESTAÑAS ══
     "<div style='display:flex;background:var(--sup);border-bottom:2px solid var(--ln2b);margin-bottom:0'>"+
@@ -34402,10 +34845,51 @@ function _mergeArrayById(remoteArr, localArr, idField, remoteTs, localTs){
   var merged = localArr.slice();
   var agregados = 0, actualizados = 0;
   var remoteEsMasNuevoGlobal = (typeof remoteTs==="number" && typeof localTs==="number") ? (remoteTs > localTs) : false;
+  // ARREGLO 154: una remesa que llega SIN su _uid conocido todavia puede ser
+  // una que ya esta aqui con otro _uid. Pasa en cuanto un archivo del formato
+  // viejo se importa en dos aparatos: a cada registro se le pone un _uid en
+  // cada sitio, y para la fusion eran dos remesas distintas. Reproducido con su
+  // export: 836 remesas pasaban a 1.672 en un solo ciclo, y de ahi salen las
+  // 137 copias de mayo.
+  //
+  // Se empareja por CONTENIDO y por CUPO, no a secas: si aqui hay dos remesas
+  // iguales y de alla vienen dos, no entra ninguna; si vienen tres, entra una.
+  // Asi dos operaciones realmente iguales —que en remesas son normales— siguen
+  // siendo dos, y no se pierde ninguna por parecerse a otra.
+  var porContenido=null, cupo=null, impor=null;
+  if(idField==="_uid" && typeof _uidEstable==="function"){
+    porContenido={}; cupo={}; impor={};
+    localArr.forEach(function(item){
+      if(!item) return;
+      var c=_uidEstable(item);
+      cupo[c]=(cupo[c]||0)+1;
+      if(item._uidImp) impor[c]=1;
+    });
+    // Lo que ya se reconoce por _uid gasta su cupo: no puede absorber ademas a otro.
+    remoteArr.forEach(function(ri){
+      if(!ri||ri[idField]===undefined) return;
+      if(localIds[ri[idField]]===undefined) return;
+      var c=_uidEstable(ri);
+      if(cupo[c]) cupo[c]--;
+    });
+  }
+  var absorbidos=0;
   remoteArr.forEach(function(remoteItem){
     if(!remoteItem || remoteItem[idField]===undefined || remoteItem[idField]===null) return;
     var idx=localIds[remoteItem[idField]];
     if(idx===undefined){
+      if(cupo){
+        var c=_uidEstable(remoteItem);
+        // ARREGLO 154b: y SOLO si uno de los dos lleva la marca que pone la
+        // importacion. Sin esto se perdia una remesa de VERDAD: ella registra
+        // en el telefono y su esposo registra otra igual en la PC —mismo dia,
+        // cliente, monto y tasa— y antes de sincronizar son dos operaciones
+        // distintas que la fusion daba por una. Reproducido: quedaba 1 de 2.
+        // Una remesa tecleada en el formulario nunca lleva la marca, asi que
+        // dos reales nunca se emparejan; el duplicado de un archivo importado
+        // si, que es justo para lo que esto existe.
+        if(cupo[c]>0 && (remoteItem._uidImp||impor[c])){ cupo[c]--; absorbidos++; return; }
+      }
       merged.push(remoteItem);
       agregados++;
       return;
@@ -34442,6 +34926,7 @@ function _mergeArrayById(remoteArr, localArr, idField, remoteTs, localTs){
          valorLocal:JSON.stringify(localItem), valorRemoto:JSON.stringify(remoteItem)});
     }
   });
+  if(absorbidos>0) console.log("🧩 Fusión: "+absorbidos+" registro(s) reconocido(s) por su contenido (traían otro "+idField+") — no se duplicaron.");
   if(agregados>0) console.log("🔗 Fusión: +"+agregados+" registro(s) recuperado(s) de otro dispositivo ("+idField+")");
   if(actualizados>0) console.log("🔗 Fusión: "+actualizados+" registro(s) actualizado(s) con datos más recientes ("+idField+")");
   return merged;
@@ -34950,6 +35435,7 @@ function _uidEstable(r){
     return "s"+h1.toString(36)+h2.toString(36);
   }catch(e){ return _newUid(); }
 }
+var _avisoImportSinUid=null;   // ARREGLO 154: lo que la importacion tuvo que reconocer por contenido
 function _asignarUidsFaltantes(){
   var puestos=0;
   ["brl","vzla","eeuu"].forEach(function(k){

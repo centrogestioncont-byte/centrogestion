@@ -60,7 +60,7 @@ const CONSTANTES = ["_APROX_LS", "_COLCHON_DEF", "_SIN_APROX", "_UMBRAL_BS_DEF",
                     "PERMISOS_APP", "PERMISOS_POR_ROL", "PERMISO_DE_TAB",
                     "_CONFIG_PROHIBIDO", "_ETIQUETA_ROL"];
 
-const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
+const NECESARIAS = ["_egresosHuerfanos", "moverEgresoAPersonal", "_tasaDelDiaFueraDeRango", "_refrescarMetodoTx", "_autoMetodoTxPronto", "_htmlMetodoElegido", "_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", "detalleMora", "moraPendiente",
                     "congelarMora", "_sumarMeses", "_isoDeFecha", "calcularAmortizacion",
                     "tasaAnualEfectiva", "_periodDaysDe", "perfilRiesgoCliente",
                     "puntoEquilibrio", "tasaSugerida", "_conDiaDelMes",
@@ -7534,7 +7534,10 @@ console.log("\n— FASE 2: la cuenta madre —");
   //    hace las dos cosas que ella pidio: que el mes que compra no salga en
   //    perdida, y que su sueldo —el 30% de la utilidad— no salte con ella.
   const _cmc = sinCom(sacarFuncion("calcMesCompleto"));
-  ok(/var egEmpPag\s*=\s*r2\(egM\.filter\(function\(e\)\{return e\.tipo==="empresa"&&e\.pagada&&!e\.fromArticulo;\}\)/.test(_cmc),
+  // ARREGLO 156: ahora pasa por _egOperativos(), la puerta unica, que filtra
+  // la mercancia Y los ajustes de saldo. Se exige la puerta, no el filtro
+  // escrito a mano: es mas fuerte, porque cubre lo que se anada despues.
+  ok(/var egEmpPag\s*=\s*r2\(_egOperativos\(egM\)\.filter\(function\(e\)\{return e\.tipo==="empresa"&&e\.pagada;\}\)/.test(_cmc),
      "y calcMesCompleto deja la compra de mercancia fuera de los gastos del mes");
   //    Se reconocen por `fromArticulo`, no por la categoria: la categoria es
   //    un nombre que ella puede renombrar en Configuracion, y ese dia estos
@@ -8951,7 +8954,7 @@ console.log("\n— FASE 2: la cuenta madre —");
   //    tdia_brl/tdia_ves_brl y solo dos pasaban por guardarTasaCalcHoy, que es
   //    quien sella tdia_fecha —de donde sale el aviso "tu suelo se movio un X%
   //    desde que publicaste" (ARREGLO 112)— y limpia el override.
-  ["saveTasasConfig","guardarTasaHoyDirecto"].forEach(function(f){
+  ["saveTasasConfig"].forEach(function(f){
     const c = sinComentarios(sacarFuncion(f));
     ok(/guardarTasaCalcHoy\(/.test(c), f + " publica por la puerta unica");
     ok(!/tasasDia\.tdia_brl\s*=/.test(c) && !/tasasDia\[k\]\s*=\s*[^;]*tdia_brl/.test(c),
@@ -8986,7 +8989,7 @@ console.log("\n— FASE 2: la cuenta madre —");
     ok(new RegExp("<input type='text' inputmode='decimal' id='tasa-"+k+"'").test(HTML),
        "tasa-" + k + " acepta la coma");
   });
-  ["_convDesde","_msjCliente","_copiarMonto","saveTasasConfig","guardarTasaHoyDirecto"].forEach(function(f){
+  ["_convDesde","_msjCliente","_copiarMonto","saveTasasConfig"].forEach(function(f){
     const c = sinComentarios(sacarFuncion(f));
     ok(!/parseFloat\((el|elBrl|elVes|elUsd)\.value\)/.test(c) &&
        !/parseFloat\(\(document\.getElementById\("conv-/.test(c),
@@ -10918,8 +10921,14 @@ console.log("\nARREGLO 138 · el metodo sale del origen de los bolivares");
   // guardarse y solo se veia TECLEANDO en el navegador.
   ok(!/upC\(\\"tx\\"\)\s+onchange=/.test(HTML),
      "ningun oninput se queda sin cerrar antes de su onchange");
-  ok((HTML.match(/upC\(\\"tx\\"\)' onchange='_autoMetodoTx\(\)'/g)||[]).length===2,
-     "el monto y la tasa del dia marcan el metodo al SALIR del campo (ARREGLO 32: en cada tecla mataria el campo)");
+  // ARREGLO 152: el onchange se queda —es la red por si no hay teclado— pero ya
+  // no es el unico momento. Desde que el bloque 3 vive en su propio contenedor,
+  // repintarlo NO mata el campo del monto, que esta fuera: asi que el metodo se
+  // decide tambien mientras teclea, y cuando ella baja el dedo al boton de
+  // guardar el bloque ya no cambia de alto. La razon vieja ("en cada tecla
+  // mataria el campo") dejo de ser cierta con el contenedor.
+  ok((HTML.match(/upC\(\\"tx\\"\);_autoMetodoTxPronto\(\)' onchange='_autoMetodoTx\(\)'/g)||[]).length===2,
+     "el monto y la tasa del dia marcan el metodo al teclear Y al salir del campo");
   ok(/S\.tx\.cuentaDest=this\.value;_autoMetodoTx\(\)/.test(HTML),
      "y cambiar la cuenta de entrega tambien, que cambia de que lotes sale");
 
@@ -11285,7 +11294,9 @@ console.log("\nARREGLO 150 · la mercancía no baja el neto del mes");
      "deja fuera el egreso de mercancía y conserva el normal");
   ok(F._egOperativos(null).length === 0, "sin lista no revienta");
 
-  // Los SEIS sitios que restan egresos para un neto del mes, CON SU CUENTA.
+  // Los sitios que restan egresos para un neto del mes, CON SU CUENTA. Eran
+  // seis; el Balance Mensual viejo (rBalanceStd) se fue en el ARREGLO 160 por
+  // codigo muerto, asi que esta guardia vigilaba una pantalla que no se dibuja.
   //
   // El primer intento pedía solo que `_egOperativos` apareciera en la función, y
   // cinco de las seis pruebas negativas SE ESCAPARON: cada sitio la llama dos
@@ -11297,7 +11308,6 @@ console.log("\nARREGLO 150 · la mercancía no baja el neto del mes");
   // más, esto falla hasta que alguien actualice el número — que es justo lo que
   // obliga a mirar si la nueva está del lado correcto.
   [["rDash", 2, "el Resumen — el que ella abre"],
-   ["rBalanceStd", 2, "el Balance Mensual"],
    ["reporteJulio", 2, "el reporte de Julio"],
    ["exportarMesExcel", 2, "la hoja de Excel del mes"],
    ["generarInformePDF", 1, "el reparto por categoría del PDF"],
@@ -11310,7 +11320,7 @@ console.log("\nARREGLO 150 · la mercancía no baja el neto del mes");
   // pendientes. El 143 solo filtro los pagados, asi que una maquina comprada a
   // credito seguia anunciando una perdida que no existe.
   const cmc = sacarFuncion("calcMesCompleto");
-  ok(/egEmpPag\s*=\s*r2\([^;]*!e\.fromArticulo/.test(cmc),
+  ok(/egEmpPag\s*=\s*r2\(_egOperativos\(egM\)/.test(cmc),
      "calcMesCompleto deja los pagados de mercancía fuera (ARREGLO 143)");
   ok(/egEmpPend\s*=\s*r2\(_egOperativos\(/.test(cmc),
      "y los pendientes también (ARREGLO 150)");
@@ -11325,6 +11335,454 @@ console.log("\nARREGLO 150 · la mercancía no baja el neto del mes");
   // (La doble resta en la conciliación ya la fija la guardia del ARREGLO 143,
   // con `sinCom`: aquí el mismo nombre sale en un COMENTARIO de esa función y
   // un ancla sin limpiar mide el comentario, no el código — ARREGLO 100.)
+}
+
+// ── ARREGLO 152 · el método se ve, el rótulo no miente y el clic no se pierde ─
+//
+// Las tres salen de lo mismo que ella dijo el 16/10: "el sistema como que no
+// detecta si es por P2P o si es por transacción directa". Detectar, detectaba
+// (ARREGLO 138). Lo que fallaba era que no se veía, que la línea que lo contaba
+// sumaba mal, y que al cambiar solo se comía el primer toque a Guardar.
+console.log("\nARREGLO 152 · el método: que se vea, que sume y que no coma el clic");
+{
+  const sinC = (t) => t.replace(/\/\/[^\n]*/g, "");
+
+  // ── C · el clic que se perdía ───────────────────────────────────────────
+  // El orden del navegador es mousedown → blur (aquí salta el change) → mouseup
+  // → click. Un R() en ese change borra el botón entre medias y el click no
+  // llega nunca. Son TRES mitades y faltando cualquiera vuelve el fallo: el
+  // bloque 3 en su propio contenedor, el repintado parcial, y la bandera del
+  // gesto. Pidiendo solo una, quitar las otras dos pasaba.
+  const auto = sinC(sacarFuncion("_autoMetodoTx"));
+  ok(!/\bR\(\)/.test(auto),
+     "_autoMetodoTx NO llama a R(): eso borraba el botón de guardar bajo el dedo");
+  ok(/_refrescarMetodoTx\(\)/.test(auto),
+     "_autoMetodoTx refresca solo el bloque 3 (_refrescarMetodoTx)");
+  ok(/_txTocandoGuardar/.test(auto),
+     "y con un dedo ya puesto en Guardar no dibuja nada: aplica el método y calla");
+  const refr = sinC(sacarFuncion("_refrescarMetodoTx"));
+  ok(/getElementById\("sec3-tx"\)/.test(refr),
+     "_refrescarMetodoTx va por el id del bloque 3, no por la pantalla entera");
+  ok(/rNueva\(\)/.test(refr),
+     "y el HTML sale de rNueva(), la misma función que lo dibuja (un solo sitio)");
+  ok(/upC\("tx"\)/.test(refr),
+     "y lo de fuera del bloque 3 se refresca por sus ids");
+  // El contenedor tiene que existir en el dibujado, y el botón de guardar tiene
+  // que quedar FUERA de él: dentro, volvería a desaparecer bajo el dedo.
+  const rn = sinC(sacarFuncion("rNueva"));
+  const iSec = rn.indexOf("<div id='sec3-tx'>");
+  // desde iSec: ese mismo cierre existe antes en otra parte de rNueva, y con un
+  // indexOf desde el principio se medía el trozo equivocado (ARREGLO 125, el
+  // ancla ambigua que convierte una prueba en nada).
+  const iCie = rn.indexOf('"</div></div>"+', iSec);
+  const iBtn = rn.indexOf("onclick='saveTx()'");
+  ok(iSec >= 0, "rNueva dibuja el contenedor sec3-tx");
+  ok(iCie > iSec, "y lo cierra");
+  ok(iBtn > iCie, "el botón de guardar queda FUERA del bloque que se repinta");
+  ok(/onpointerdown='_txTocaGuardar\(\)'/.test(rn),
+     "el botón de guardar avisa del gesto en el pointerdown, antes del blur");
+  // Y el método se decide mientras teclea, para que el bloque 3 no cambie de
+  // alto justo cuando ella baja el dedo al botón.
+  ok((rn.match(/_autoMetodoTxPronto\(\)/g) || []).length === 2,
+     "el monto y la tasa del día llaman a _autoMetodoTxPronto al teclear (2)");
+  ok(/setTimeout\(/.test(sinC(sacarFuncion("_autoMetodoTxPronto"))),
+     "_autoMetodoTxPronto espera un respiro: en cada tecla serían seis repintados");
+
+  // ── A · el rótulo que llamaba "ventas de USDT" a lo que no lo era ───────
+  // Con sus lotes del 16/10 decía 73.500 de ventas donde las ventas son 34.228.
+  // Los tres montos se nombran por separado, y el de "sin registrar" tiene que
+  // estar: es el que avisa de que falta registrar una operación de USDT.
+  const dd = sinC(sacarFuncion("_htmlDeDondeSalen"));
+  ok(!/de ventas de USDT.{0,40}\+f0\(org\.deVenta\s*\+\s*org\.sinLote\)/.test(dd) &&
+     !/f0\(org\.deVenta\s*\+\s*org\.sinLote\)/.test(dd),
+     "el recuadro ya NO suma lo que no tiene lote dentro de las ventas de USDT");
+  ok(/org\.deRemesa>0\.01/.test(dd) && /org\.deVenta>0\.01/.test(dd) && /org\.sinLote>0\.01/.test(dd),
+     "y nombra los tres orígenes por separado");
+  ok(/sin registrar/.test(dd),
+     "el que no sale de ningún lote se llama 'sin registrar', no 'venta de USDT'");
+
+  // ── B · quién eligió el método, junto a los botones ─────────────────────
+  const me = sinC(sacarFuncion("_htmlMetodoElegido"));
+  ok(/_origenBsRemesa\(/.test(me),
+     "el porqué sale de _origenBsRemesa, la misma cuenta que decide el método");
+  ok(/_metodoTocado/.test(me),
+     "y si lo pulsó ella lo dice: la app no se lo vuelve a mover (ARREGLO 138)");
+  ok(/org\.sinLote>org\.deVenta/.test(me),
+     "nombra al que de verdad decidió: con bolívares sin lote no dice 'ventas de USDT'");
+  ok(!/f0\(|f2\(/.test(me),
+     "sin cifras: las cifras viven una sola vez, en el recuadro de abajo (ARREGLO 125)");
+  ok(/var vacio="<div id='met-eleg-tx'><\/div>"/.test(me),
+     "el contenedor existe siempre, aunque esté vacío: si no, upC no tiene dónde escribir");
+  ok(/_htmlMetodoElegido\(_rTx, ruta\)/.test(rn),
+     "rNueva lo dibuja debajo de los dos botones");
+  const upc = sinC(sacarFuncion("upC"));
+  ok(/met-eleg-/.test(upc) && /_htmlMetodoElegido\(res, ruta\)/.test(upc),
+     "y se refresca al teclear: el porqué cambia con el monto (ARREGLO 55)");
+
+  // ── Y la marca de "lo elegiste tú" NO puede pasar a la remesa siguiente ──
+  // Si se quedara pegada, la segunda remesa saldría con el método de la primera
+  // sin que nadie lo vea. Se limpia porque saveTx reemplaza S.tx ENTERO: la
+  // guardia es que ese objeto no vuelva a llevar el método dentro.
+  const sv = sinC(sacarFuncion("saveTx"));
+  const reset = sv.slice(sv.indexOf("S.tx={date:f.date"));
+  ok(reset.indexOf("_metodoTocado") < 0,
+     "el formulario nuevo no hereda la marca de 'lo elegiste tú'");
+  ok(reset.indexOf("metodo:") < 0 && reset.indexOf("permuta:") < 0,
+     "ni el método ni la permuta de la remesa anterior: la app vuelve a elegir sola");
+}
+
+// ── ARREGLO 153 · un solo número para "lo que gané este mes" ─────────────────
+//
+// Lo vio ella el 16/10: la cabecera decía "Real: $-154,54" y la tarjeta del
+// Resumen "Neto real $58,24" — 212,78 de diferencia (los 210 de la máquina más
+// un gasto personal de 2,78). La cabecera era la SÉPTIMA copia de la regla que
+// el ARREGLO 150 había unificado esa misma mañana en seis sitios.
+console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
+{
+  const sinC = (t) => t.replace(/\/\/[^\n]*/g, "");
+
+  // ── La cabecera ya no calcula: lee ──────────────────────────────────────
+  const cab = HTML.slice(HTML.indexOf("var _ganMes=_brlA"), HTML.indexOf("}else{", HTML.indexOf("var _ganMes=_brlA")));
+  const cabSin = sinC(cab);
+  ok(/calcMesCompleto\(_mesAct\)/.test(cabSin),
+     "la cabecera lee calcMesCompleto, no su propia resta");
+  ok(/utilidadEmpresa/.test(cabSin),
+     "y lo que enseña es la utilidad de la empresa");
+  ok(!/filterByMes\(S\.egresos/.test(cabSin),
+     "la cabecera YA NO suma egresos por su cuenta (era la séptima copia)");
+  // Dos números con nombres distintos: "Ganancia" y "Real" se leían como dos
+  // versiones de lo mismo, y de ahí salió la pregunta.
+  ok(/Remesas:/.test(cabSin) && /Utilidad:/.test(cabSin),
+     "y los dos números se llaman por su nombre: Remesas y Utilidad");
+
+  // ── El Neto real del Resumen, lo mismo ──────────────────────────────────
+  const dash = sinC(sacarFuncion("rDash"));
+  ok(/var neto\s*=\s*parseFloat\(_cmRes\.utilidadEmpresa\)/.test(dash),
+     "el Neto real del Resumen sale de calcMesCompleto");
+  ok(!/var neto\s*=\s*ganTotal\s*-\s*egPag/.test(dash),
+     "y ya no se resta a mano, que dejaba fuera la ganancia extra");
+  // El pie tiene que poder sumarse a mano, o vuelve a ser un número que hay
+  // que perseguir (ARREGLO 141).
+  const kpiNeto = dash.slice(dash.indexOf('_kpi("Neto real"'),
+                             dash.indexOf('_kpi("Capital total"'));
+  ok(kpiNeto.length>0 && /ganExtraEmpM/.test(kpiNeto) && /de egresos/.test(kpiNeto),
+     "y el pie dice de qué está hecho, para poder sumarlo a mano");
+
+  // ── La tarjeta Base ya leía bien; lo que mentía era el rótulo ───────────
+  const reg = sinC(sacarFuncion("rEgresos"));
+  ok(/baseNeta\s*=\s*_calcPersonal\.utilidadEmpresa/.test(reg),
+     "la tarjeta Base sigue leyendo calcMesCompleto");
+  ok(!/ganancia menos lo ya pagado/.test(reg),
+     "su rótulo ya no invita a una resta que no es la suya");
+  // Y el Pagado dice cuánto de él es mercancía: ahí SÍ cuenta (salió del
+  // banco), y sin decirlo la cifra de al lado invita a restar mal.
+  ok(/_egMercPag/.test(reg) && /es mercanc/.test(reg),
+     "el Pagado nombra la parte de mercancía, que no baja la ganancia");
+
+  // ── El gasto personal guardado en la lista de la empresa ────────────────
+  const hu = sinC(sacarFuncion("_egresosHuerfanos"));
+  ok(/e\.tipo\s*&&\s*e\.tipo!=="empresa"/.test(hu),
+     "_egresosHuerfanos encuentra los que no son de la empresa");
+  ok(/_egresosHuerfanos\(\)/.test(reg),
+     "y la pestaña Egresos los enseña");
+  const mv = sinC(sacarFuncion("moverEgresoAPersonal"));
+  ok(/S\.egresos_personales/.test(mv) && /splice/.test(mv),
+     "moverEgresoAPersonal lo saca de una lista y lo mete en la otra");
+  ok(/_marcarBorradoMerge\("egresos"/.test(mv),
+     "y deja la marca de borrado, o el otro aparato lo devuelve (ARREGLO 6c)");
+  // No mueve dinero, y se dice en la propia pregunta: el dinero ya salió de la
+  // cuenta cuando se registró. Tocar el saldo aquí lo bajaría dos veces.
+  ok(!/ajusteCuentaEgreso|\.saldo\s*=/.test(mv),
+     "y NO toca ningún saldo: el dinero ya salió cuando se registró");
+
+  // ── Una tasa del día imposible no se guarda en silencio ─────────────────
+  const fr = sinC(sacarFuncion("_tasaDelDiaFueraDeRango"));
+  ok(/_getTasaClienteBRL/.test(fr) && /_getTasaVueltaVESaBRL/.test(fr),
+     "el freno compara contra las DOS tasas que ella publica, cada una la suya");
+  ok(/if\(!\(pub>0\)\) return null/.test(fr),
+     "sin tasa publicada no se frena nada: un umbral adivinado para una remesa buena");
+  const sv = sinC(sacarFuncion("saveTx"));
+  ok(/_tasaDelDiaFueraDeRango\(/.test(sv) && /confirm\(/.test(sv),
+     "saveTx pregunta antes de guardar una tasa diez veces fuera");
+  // Y los dos campos que vienen con un valor puesto se seleccionan al entrar:
+  // escribir detrás es lo que dejó 186189 (186 de Config + 189 tecleado).
+  ok((HTML.match(/onfocus='this\.select\(\)' oninput='S\.tx\.(am|tdia)=/g)||[]).length === 2,
+     "el monto y la tasa del día se seleccionan al entrar, los dos (2)");
+}
+
+// ════════ ARREGLO 154 · que no se dupliquen las operaciones ════════
+{
+  // ── La fusión reconoce por CONTENIDO lo que no reconoce por _uid ────────
+  // Es la raíz: un archivo viejo importado en dos aparatos da dos juegos de
+  // _uid, y sin esto la fusión los suma. Medido: 836 remesas → 1.672.
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const mg = sinC(sacarFuncion("_mergeArrayById"));
+  ok(/idField==="_uid"/.test(mg) && /_uidEstable/.test(mg),
+     "la fusión empareja por contenido las listas que van por _uid");
+  // Y por CUPO, no a secas: dos remesas realmente iguales siguen siendo dos.
+  // Sin el cupo, una de las dos de CARLOS del 17/09 desaparecería.
+  ok(/cupo\[c\]\s*>\s*0/.test(mg) && /cupo\[c\]--/.test(mg),
+     "empareja por cupo: si aquí hay dos iguales y vienen dos, no entra ninguna");
+  // Lo que ya se reconoce por _uid tiene que GASTAR su cupo, o podría absorber
+  // además a otro registro distinto y perderlo.
+  const gastan = mg.indexOf("localIds[ri[idField]]===undefined) return");
+  ok(gastan > 0 && gastan < mg.indexOf("absorbidos++"),
+     "lo emparejado por _uid gasta su cupo ANTES, y no absorbe a nadie más");
+  // Sólo para remesas: capital, egresos y demás van por "id" y no se tocan.
+  ok(/porContenido=null,\s*cupo=null/.test(mg),
+     "las listas que no van por _uid siguen igual que antes");
+
+  // ── El _uid nuevo sigue siendo al AZAR, y eso es a propósito ────────────
+  // Derivarlo del contenido parecía el arreglo de raíz y es una trampa: sus
+  // marcas de borrado antiguas YA están guardadas con _uid derivados (171),
+  // así que un registro vivo que derive a una clave marcada se poda solo.
+  // Medido con su export: vzla pasaba de 137 a 85 en el primer ciclo.
+  const imp = sinC(sacarFuncion("importData"));
+  ok(/else \{ r\._uid=_newUid\(\);/.test(imp),
+     "lo que no se reencuentra recibe un _uid al azar (las marcas viejas son derivadas)");
+  ok(/cola&&cola\.length\)\{ r\._uid=cola\.shift\(\)/.test(imp),
+     "y lo que ya estaba aquí reencuentra SU _uid, que es el mejor");
+
+  // ── Se dice antes y se cuenta después ───────────────────────────────────
+  ok(/no trae identificadores en/.test(imp),
+     "un archivo del formato viejo se anuncia ANTES de importar");
+  ok(/_avisoImportSinUid=\{reencontrados/.test(imp) && /reconoc/.test(imp),
+     "y al terminar dice cuántos reconoció y cuántos dio de alta");
+
+  // ── El aviso de remesa repetida: avisa, no bloquea ──────────────────────
+  const ri = sinC(sacarFuncion("_remesasIguales"));
+  ok(/r\.d!==dia/.test(ri) && /\.cl\|\|""\)\.toUpperCase/.test(ri) &&
+     /parseFloat\(r\.am\)/.test(ri) && /r\.orig\|\|""\)===\(ruta\.orig/.test(ri),
+     "compara fecha, cliente, monto y ruta, las cuatro");
+  // La tasa NO entra en la búsqueda: decide el TONO, no si avisa.
+  ok(!/tdia/.test(ri), "la tasa no decide si avisa — sólo el tono del aviso");
+  const tr = sinC(sacarFuncion("_textoRemesaRepetida"));
+  ok(/mismaTasa/.test(tr) && /MISMA operaci/.test(tr) && /parecida/.test(tr),
+     "con la misma tasa dice que es la misma; con otra, que puede ser otra");
+  // Y enseña las que ya están, con su hora y su tasa: sin eso hay que ir a
+  // buscarlas a Operaciones para poder contestar.
+  ok(/r\.n\|\|"\?"/.test(tr) && /r\.h\?/.test(tr) && /f2\(r\.tdia/.test(tr),
+     "enseña número, hora y tasa de las que ya existen");
+  const sv2 = sinC(sacarFuncion("saveTx"));
+  ok(/_remesasIguales\(f, _rutaChk\)/.test(sv2) && /if\(_ig\.length && !confirm\(/.test(sv2),
+     "saveTx pregunta, y sólo se para si ella dice que no");
+  ok(!/_ig\.length\)\s*\{\s*alert/.test(sv2),
+     "nunca bloquea: con un alert no habría podido registrar las tres de CARLOS");
+
+  // ── ARREGLO 154b · y sólo empareja lo que vino de un archivo ────────────
+  // Sin esto se perdía una remesa de VERDAD: ella registra en el teléfono y
+  // su esposo registra otra igual en la PC, y antes de sincronizar son dos.
+  // Reproducido: quedaba 1 de 2.
+  ok(/r\._uidImp=1/.test(imp),
+     "la importación marca los registros a los que le pone un _uid nuevo");
+  ok(/remoteItem\._uidImp\|\|impor\[c\]/.test(mg),
+     "y la fusión sólo empareja por contenido si uno de los dos lleva esa marca");
+  ok(/if\(item\._uidImp\) impor\[c\]=1/.test(mg),
+     "mira la marca en los dos lados: la puede llevar el de aquí o el de allá");
+}
+
+// ════════ ARREGLO 155 · un mes cerrado no se recalcula ════════
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const cm = sinC(sacarFuncion("calcMesCompleto"));
+  // Va en la PUERTA, no en cada pantalla: hay 18 sitios que la llaman, y
+  // tocarlos uno a uno es el fallo que ya costó cuatro veces (101, 119, 150, 153).
+  ok(/cierreGuardadoDeMes\(mesKey\)/.test(cm) && /_congelarConCierre\(_salida, _cz\)/.test(cm),
+     "calcMesCompleto devuelve lo guardado cuando el mes está cerrado");
+  ok(/if\(!recalcular\)/.test(cm),
+     "y sólo se salta cuando quien llama pide el recálculo a propósito");
+  // El propio cierre TIENE que recalcular: si leyera lo guardado, cerrar
+  // escribiría lo que ya había, y reabrir y volver a cerrar saldría del viejo.
+  const ec = sinC(sacarFuncion("ejecutarCierreMes"));
+  ok(/calcMesCompleto\(mesKey, null, true\)/.test(ec),
+     "el cierre pide el recálculo: si no, se escribiría a sí mismo");
+  // Un cierre del formato viejo (mayo) no guardó "utilidadEmpresa": guardó
+  // "neto". Sin esto la pantalla enseña 0, que es lo que ella veía.
+  const cg = sinC(sacarFuncion("_congelarConCierre"));
+  ok(/g\.utilidadEmpresa===undefined && typeof g\.neto==="number"/.test(cg),
+     "el formato viejo se lee por su campo neto, no se queda en 0");
+  // Sólo se congelan NÚMEROS. Si alguien mete en la lista un campo que es una
+  // lista —el detalle de ganancias extra, por ejemplo— el cierre guardado la
+  // sustituiría por la suya, que puede no estar, y la pantalla se queda sin
+  // detalle sin que nada lo diga.
+  ok(/typeof v!=="number"&&isNaN\(parseFloat\(v\)\)\) return;/.test(cg),
+     "sólo se congela lo que es un número: una lista no reemplaza al detalle");
+  // Y los nombres viejos se LEEN, no se reescriben los cierres guardados.
+  const mapa = sinC(HTML.slice(HTML.indexOf("var _CIERRE_A_CALC"), HTML.indexOf("var _CAMPOS_CONGELADOS")));
+  ok(/egPag:"egEmpPag"/.test(mapa) && /neto:"utilidadEmpresa"/.test(mapa),
+     "los campos viejos (egPag, neto) se traducen al leer");
+  // Ojo: "=[^=]" a propósito — un "===" es comparación, no una escritura.
+  ok(!/cierre\.(egPag|neto)\s*=[^=]/.test(cg) && !/S\.cierresMes\[/.test(cg),
+     "y NO se reescribe el cierre guardado: lo pasado se queda como está");
+}
+
+// ════════ ARREGLO 156 · un ajuste de saldo no es ganancia ni gasto ════════
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  // Nace marcado desde los DOS caminos del ARREGLO 145. Adivinarlo por el
+  // texto de la descripción es lo que CLAUDE.md ya prohíbe para la mercancía:
+  // la descripción la escribe ella y puede cambiarla. Medido: de sus seis
+  // ganancias extra de octubre, buscar "AJUSTE" acierta 4 de 5 — se deja
+  // fuera "AUMENTAR SALDO DE CUENTA", que son 5,02.
+  const ag = sinC(sacarFuncion("_ajusteAGanExtra"));
+  const ae = sinC(sacarFuncion("_ajusteAEgreso"));
+  ok(/esAjuste:true/.test(ag), "el camino de la ganancia extra lo marca al nacer");
+  ok(/esAjuste:true/.test(ae), "y el del egreso también");
+  // El guardado lo conserva, y el formulario vuelve a nacer LIMPIO: si no, la
+  // marca se pegaría a la siguiente ganancia extra, que no tiene por qué serlo.
+  const sg = sinC(sacarFuncion("saveGanExtra"));
+  ok(/esAjuste:g\.esAjuste\?true:undefined/.test(sg), "el guardado conserva la marca");
+  ok(/nota:"",esAjuste:false\}/.test(sg), "y el formulario vuelve a nacer limpio");
+  // Las dos puertas, una por lado. Escritas en cada pantalla se separarían.
+  const eo = sinC(sacarFuncion("_egOperativos"));
+  ok(/!e\.fromArticulo && !e\.esAjuste/.test(eo),
+     "_egOperativos deja fuera la mercancía Y los ajustes");
+  const go = sinC(sacarFuncion("_ganExtraOperativa"));
+  ok(/!g\.esAjuste/.test(go), "y _ganExtraOperativa hace lo mismo por el otro lado");
+  const cm2 = sinC(sacarFuncion("calcMesCompleto"));
+  ok(/_ganExtraOperativa\(ganExtraM\)/.test(cm2) && /_egOperativos\(egM\)/.test(cm2),
+     "calcMesCompleto pasa por las dos puertas");
+  // No se esconden: van en línea aparte, con su nombre (misma regla que el
+  // interés pendiente de un préstamo, ARREGLO 71).
+  ok(/ajustesGan:ajustesGan/.test(cm2) && /ajustesNeto:/.test(cm2),
+     "y los devuelve aparte para que la pantalla los diga");
+  const dash2 = sacarFuncion("rDash");
+  ok(/_ajNeto/.test(dash2) && /ajustes de saldo/.test(dash2),
+     "el Resumen los enseña en línea aparte");
+  // Marcar a mano NO mueve dinero, y se dice en la propia pregunta.
+  const mc = sinC(sacarFuncion("marcarComoAjuste"));
+  ok(/No mueve ningún saldo/.test(mc), "la pregunta dice que no mueve ningún saldo");
+  ok(!/ajusteCuentaEgreso|\.saldo\s*=/.test(mc),
+     "y de verdad no lo mueve: el dinero ya entró o salió cuando se registró");
+  ok(/if\(era\) delete r\.esAjuste; else r\.esAjuste=true/.test(mc),
+     "se puede desmarcar, no sólo marcar");
+  ok(/r\._mod=Date\.now\(\)/.test(mc),
+     "y lleva su _mod, o la marca no viaja al otro aparato");
+}
+
+// ════════ ARREGLO 157 · el mismo dinero contado dos veces ════════
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  // Se reconoce por la FORMA —monto, moneda, cuenta y fecha cercana— no por el
+  // texto: ella escribe la descripción y la cambia. Misma regla que el 156.
+  const q = sinC(sacarFuncion("_ganExtraQueSonAporte"));
+  ok(/g\.tipo!=="personal"/.test(q), "sólo mira las ganancias extra PERSONALES");
+  ok(/a\.cuentaId!==g\.cuentaId/.test(q) && /\(a\.mon\|\|""\)!==\(g\.mon\|\|""\)/.test(q) &&
+     /Math\.abs\(\(parseFloat\(a\.monto\)\|\|0\)-m\)>0\.01/.test(q),
+     "empareja por cuenta, moneda y monto, los tres");
+  ok(/8\*86400000/.test(q), "y por fecha cercana, no por el texto");
+  ok(!/desc|nota/.test(q), "no mira la descripción: ella la escribe y la cambia");
+  // Quitar la duplicada NO mueve dinero: el aporte ya dice que está en la cuenta.
+  const qd = sinC(sacarFuncion("quitarGanExtraDuplicada"));
+  ok(/NO mueve ning/.test(qd), "la pregunta dice que no mueve ningún saldo");
+  ok(!/ajusteCuentaEgreso|\.saldo\s*=/.test(qd), "y de verdad no lo mueve");
+  ok(/_marcarBorradoMerge\("gananciaExtra"/.test(qd),
+     "deja la marca de borrado, o el otro aparato la devuelve (ARREGLO 6c)");
+  // Y no se vuelve a crear sin avisar.
+  const sg2 = sinC(sacarFuncion("saveGanExtra"));
+  // Se exige la CONDICION entera, no que el texto aparezca: cambiarla por
+  // "false" deja el texto puesto y el aviso muerto (ARREGLO 140, otra vez).
+  ok(/if\(_ya && !confirm\("[^"]*Ya tienes un APORTE por/.test(sg2) &&
+     /tipo==="personal" && g\.cuentaId/.test(sg2),
+     "saveGanExtra avisa antes de crear una que ya existe como aporte");
+  ok(!/if\(_ya\)\s*\{\s*alert/.test(sg2),
+     "avisa y pregunta: nunca bloquea");
+  const reg2 = sacarFuncion("rEgresos");
+  ok(/_ganExtraQueSonAporte\(\)/.test(reg2) && /quitarGanExtraDuplicada/.test(reg2),
+     "y la pantalla las enseña con su botón");
+}
+
+// ════════ ARREGLO 158 · el saldo escrito a mano se ve ════════
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  // Una cuenta de USDT con el saldo escrito a mano deja de seguir al inventario
+  // PARA SIEMPRE, y eso no se veía en ninguna parte. Sus tres cuentas de Binance
+  // lo llevan puesto, con diferencias de hasta 890 USDT.
+  const si = sinC(sacarFuncion("_saldoSegunInventario"));
+  ok(/c\.moneda!=="USDT"/.test(si), "sólo aplica a cuentas de USDT, que son las que sigue el inventario");
+  ok(/return hay \? /.test(si),
+     "sin ni una operación devuelve null, no 0: un 0 se leería como saldo cero");
+  // Y sólo de las que de verdad lo llevan: sin esto avisaría en TODAS las
+  // cuentas, y un aviso que sale siempre deja de leerse (ARREGLO 99).
+  const sm = sinC(sacarFuncion("_saldoAManoInfo"));
+  ok(/!c\.manual_override\) return null/.test(sm),
+     "sólo avisa de las cuentas que de verdad tienen el saldo escrito a mano");
+  const vs = sinC(sacarFuncion("volverASeguirInventario"));
+  ok(/delete c\.manual_override/.test(vs), "el botón quita la marca");
+  ok(!/c\.saldo\s*=/.test(vs),
+     "y NO toca el saldo: lo cambia el inventario cuando se dibuje, no este botón");
+  ok(/NO es lo que deber/.test(vs),
+     "la pregunta dice que ese número no es lo que debería tener");
+  ok(/c\._mod=Date\.now\(\)/.test(vs), "y lleva su _mod, o no viaja al otro aparato");
+  ok(/i\.segunInv===null/.test(vs),
+     "una cuenta sin operaciones se avisa aparte: pasaría a 0");
+  // En las DOS pantallas donde se ve un saldo: Configuración (donde se edita)
+  // y Balance de Cuentas (donde ella mira). Ponerlo en una sola es el fallo
+  // de buscar una copia y dejarse las otras (101, 119, 150, 153).
+  const cfgA = sacarFuncion("rConfigAdmin"), cap2 = sacarFuncion("rCapitalTotal");
+  ok(/_saldoAManoInfo\(c\)/.test(cfgA) && /no sigue al inventario/.test(cfgA),
+     "Configuración lo dice, con su botón");
+  ok(/_saldoAManoInfo\(item\)/.test(cap2) && /no sigue al inventario/.test(cap2),
+     "y Balance de Cuentas también, que es donde ella mira");
+  ok(/si lo siguiera pasar/.test(cfgA) && /si lo siguiera pasar/.test(cap2),
+     "y lo redactan como lo que es, no como dinero que falta");
+}
+
+// ════════ ARREGLO 159 · ni un campo de dinero se come la coma ════════
+{
+  // El ARREGLO 52 dejó 68 sin convertir "y no por olvido": eran los que otro
+  // sitio lee por getElementById(...).value, y convertir el campo sin arreglar
+  // también su lector es PEOR que dejarlo — cambia "no acepta la coma" por
+  // "acepta la coma y se queda con 5 en vez de 5,22", de un fallo que se ve a
+  // uno que no. Las dos mitades van juntas o no van.
+  const soloNum = (HTML.match(/<input[^>]*type=['"]number['"][^>]*>/g) || []);
+  ok(soloNum.length === 1 && /inputmode=['"]numeric['"]/.test(soloNum[0]),
+     "sólo queda un type=number, y es el de un ENTERO (número de cuotas), no dinero");
+  // Y ningún lector se la come: ni por id ni por una variable del elemento.
+  ok(!/parseFloat\(\(?document\.getElementById\([^)]*\)(?:\|\|\{\})?\)?\.value\)/.test(HTML),
+     "ningún campo se lee con parseFloat por su id: pasan por _leerNumero()");
+  ok(!/parseFloat\([a-zA-Z_$][a-zA-Z0-9_$]*\.value\)/.test(HTML),
+     "ni por una variable del elemento");
+  // La normalización va en la PUERTA del setter, no en cada llamada: un sitio
+  // nuevo que llame queda cubierto solo.
+  ok(/function calcSetExotico\(campo,val\)\{ S\.calc\[campo\]=_num\(val\)/.test(HTML),
+     "calcSetExotico normaliza en la puerta");
+  ok(/S\.tx\.entregas\[i\]\[campo\]=\(campo==="monto"\)\?_num\(val\):val/.test(HTML) &&
+     /S\.tx\.pagos\[i\]\[campo\]=\(campo==="monto"\)\?_num\(val\):val/.test(HTML),
+     "los dos desgloses normalizan el monto, y sólo el monto (cuentaId no es un número)");
+  // El bug que salió al convertir: parseFloat(ELEMENTO).value es NaN.value,
+  // o sea undefined, o sea 0 SIEMPRE. Las cuatro tasas de la calculadora.
+  ok(!/parseFloat\(document\.getElementById\([^)]*\)\|\|\{value:0\}\)\.value/.test(HTML),
+     "y nadie vuelve a parsear el ELEMENTO en vez de su valor (daba 0 siempre)");
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// ARREGLO 160 · lo que no se dibuja, no se queda
+//
+// El Balance Mensual viejo (rBalanceStd) y su calculadora de tasa estaban
+// escritos y NADIE los llamaba. Comprobado en Chromium dibujando las 26
+// pestanas con su export: ninguno de los campos calc-tc-* llegaba al DOM.
+// Costaba de verdad: el ARREGLO 159 arreglo ahi un parseFloat de una
+// pantalla que no existe, la guardia del 150 contaba sus llamadas a
+// _egOperativos como si fuera un sexto sitio, y cerrarMes() era un SEGUNDO
+// camino para cerrar un mes (por S.filtroMes en vez de S._cMes) colgando
+// de ella. El peligro no es el peso: es el del ARREGLO 59, que alguien lo
+// lea y crea que es el bueno.
+{
+  const muertas = ["rBalanceStd", "calcTasaUpdate", "calcTasaObjetivoUpdate",
+                   "guardarTasaHoyDirecto", "cerrarMes", "exportMesSel"];
+  muertas.forEach(function(f){
+    ok(!new RegExp("function\\s+" + f + "\\s*\\(").test(HTML),
+       "no vuelve la funcion muerta " + f);
+  });
+  // Y sus campos, que son por donde volveria sin que el nombre lo diga.
+  ["calc-tc-brl","calc-tv-ves","calc-tc-usd","calc-tc-cop",
+   "calc-tasa-objetivo","calc-tasa-resultado"].forEach(function(id){
+    ok(HTML.indexOf("id='" + id + "'") < 0, "ni el campo " + id);
+  });
+  // El que SI se dibuja sigue en su sitio: rBalance() pasa por rBalancePlus().
+  ok(/function rBalance\(\)\{ return rBalancePlus\(\); \}/.test(HTML),
+     "y el Balance que de verdad se dibuja sigue siendo rBalancePlus");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
