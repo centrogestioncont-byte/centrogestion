@@ -4662,6 +4662,66 @@ Venezuela en 198,89 cuando debía quedar en 198.619,90 — el `parseFloat` part�
 el número en el primer punto. De 106 ajustes manuales guardados, **27 dejaron
 una cuenta en 0**.
 
+#### Y para SUBIR un saldo no había camino (ARREGLO 145)
+
+Su pregunta del 16/10: *"¿cómo puedo aumentar el saldo de una cuenta pero que se
+guarde correctamente?"*.
+
+Para **bajarlo** la app ya lo hacía bien: el motivo 2 del prompt —*"el banco me
+cobró algo, o salió dinero de verdad"*— no toca el saldo y deja el **egreso**
+empezado, que es lo que baja las dos caras de la cuenta.
+
+Para **subirlo** no había nada. De los cuatro motivos, el único que hablaba de
+dinero movido de verdad era ese, **y crea un egreso — lo contrario**. Medido en
+v226 con su export, subiendo 150 R$ en PAGBANK:
+
+```
+elige «2»                 →  te deja un EGRESO de 150 listo en Egresos
+                             guardarlo habría dejado la cuenta 300 por debajo
+elige «3 · no sé por qué» →  +29,70 al "sin explicar" de la conciliación
+```
+
+Así que el único camino practicable mandaba al *sin explicar* un dinero que ella
+sabe perfectamente de dónde salió — y ese número es el que existe para perseguir
+lo que NO se sabe.
+
+**La opción 2 pasa a ser la del SIGNO**, y el texto cambia con ella:
+
+```
+el saldo BAJA  →  "El banco me cobró algo, o salió dinero"  →  Egreso
+el saldo SUBE  →  "Entró dinero de verdad"                  →  Ganancia extra
+```
+
+No es una pantalla nueva: **Ganancia extra ya existía** en la pestaña Nueva (P2P,
+un trabajo, algo que vendió). Lo que faltaba era que el ajuste de saldo supiera
+llegar hasta ahí.
+
+- **`_ajusteAGanExtra()` es el espejo exacto de `_ajusteAEgreso()`**: no toca el
+  saldo, deja el formulario empezado y lo dice. Registrarlo ahí es lo que sube
+  **los dos lados** de la conciliación —medido: el *sin explicar* no se mueve ni
+  un céntimo— y además entra en la ganancia del mes y en el cierre.
+- **La cuenta va puesta.** En ese formulario el campo es **opcional**, y sin él
+  `saveGanExtra()` apunta la ganancia y **no sube ningún saldo** — o sea que
+  llegaría buscando subir una cuenta y se iría sin subirla. Hay guardia, y una
+  prueba negativa que vacía ese campo.
+- **Y hay que ABRIR el bloque** (`_showGanExtra=true`): nace cerrado, así que
+  mandarla a la pestaña sin eso la deja mirando una pantalla donde no hay nada.
+- **Una opción sola en pantalla, siempre la que toca.** Mostrar las dos sería
+  pedirle que elija entre "entró" y "salió" cuando el signo del ajuste ya lo
+  dice: el mismo criterio del ARREGLO 98 —quitar el control que sobra— aplicado
+  a un prompt.
+
+Medido pulsándolo en Chromium con su export, los dos sentidos: subiendo 150 abre
+Nueva con la ganancia de 150 BRL en PAGBANK y el saldo intacto; al guardarla el
+saldo sube **+150** y el *sin explicar* se queda en **913,16**. Bajando 150 sale
+**idéntico a v226** — egreso, pestaña Egresos, saldo intacto. Los motivos 1, 3 y
+4 sin cambios, cancelar no toca nada, 20 pestañas y 0 errores.
+
+**Lo que sigue sin tener camino, y es correcto:** subir un saldo porque el dinero
+vino de una **remesa**, un **traspaso**, una **venta de USDT** o el **cobro de un
+préstamo**. Esos tienen su propia pantalla y es ahí donde hay que registrarlos —
+pasarlos por Ganancia extra los contaría dos veces.
+
 ### Cómo se mueve su dinero — el sesgo del negocio
 
 - **Vende más USDT por bolívares de lo que compra USDT con reales.**
