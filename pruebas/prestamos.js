@@ -109,6 +109,7 @@ const NECESARIAS = ["_quienSoy", "r4", "f2", "td", "ds", "cfgMora", "_diasIso", 
                     "conciliacionCapital", "getMesKeyActual", "ajustesDesdeApertura",
                     "_tsDeUid", "_tsDeAjuste", "_deducirHoraApertura", "_isoDeDDMMAA", "_motivoDelAjuste", "_ajusteAEgreso", "_ajusteAGanExtra", "_cuentaMadre", "_cuentaOMadre", "_completarDesdeMadre", "toggleCuentaMadre",
                     "traspasosAPersonal", "egresosPersonalesDesdeCuentaPersonal", "efectoTasasDesde", "_isoDeFechaLote",
+                    "aportesDesde", "_cruceUsdtPersonal", "_gananciaMeses", "_aporteVacio",
                     // ARREGLO 143 - mercancia. conciliacionCapital las llama,
                     // asi que sin estas la suite entera se cae al cargar.
                     "_costoArticulo", "_mercanciaEnMano", "gananciaMercanciaDelMes",
@@ -2055,8 +2056,14 @@ ok(/Vuelve a fijar la apertura/.test(_blq),
 // ARREGLO 99: el veredicto bajo de titular de 22px a semaforo de una linea.
 // Lo que se prueba sigue siendo lo mismo: que se ve sin desplegar nada, y que
 // dice en PALABRAS si falta o sobra — un numero sin rotulo se lee al reves.
-ok(/"✅ Cuadra"/.test(_blq) && /falta por explicar/.test(_blq) && /sobra sin explicar/.test(_blq),
+// ARREGLO 146: la palabra "sin explicar" se fue, por peticion suya — leia los
+// 912 como dinero que le faltaba cuando es lo contrario. Lo que se exige sigue
+// siendo lo mismo: que el veredicto se vea sin desplegar nada y que diga en
+// PALABRAS de que lado esta.
+ok(/"✅ Cuadra"/.test(_blq) && /"te faltan"/.test(_blq) && /"te sobran"/.test(_blq),
    "el veredicto tambien se ve siempre: es la respuesta a la pregunta");
+ok(!/sin explicar/.test(_blq.replace(/\/\/[^\n]*/g, "")),
+   "y ya no dice «sin explicar», que es la palabra que la hacia leerlo al reves");
 
 
 // ── ARREGLO 49: la tasa sale sola de la ultima operacion ─────────────────
@@ -2673,8 +2680,12 @@ ok(/Math\.abs\(dif\)<0\.005 \? " · clavado"/.test(HTML),
   // aparece tambien en los comentarios y el primero que salia era uno de esos.
   // El numero grande y la palabra que dice si falta o sobra tienen que ir
   // pegados: un "$215,47" suelto no dice de que lado esta.
-  const i = HTML.indexOf('"$"+f2(Math.abs(sinExp))');
-  const j = HTML.indexOf('sobra sin explicar', i);
+  // ARREGLO 146: se mide sin comentarios. Con ellos dentro, un comentario
+  // nuevo entre el numero y su palabra hacia fallar la distancia sin que
+  // nada se hubiera separado en la pantalla.
+  const _sinC = HTML.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/[^\n]*$/gm, "");
+  const i = _sinC.indexOf('"$"+f2(Math.abs(sinExp))');
+  const j = _sinC.indexOf('"te sobran"', i);
   ok(i > -1 && j > i && j - i < 400,
      "el numero grande lleva pegada la palabra que dice de que lado esta");
   ok(/el margen normal es ±\$/.test(HTML) && /de ruido normal/.test(HTML),
@@ -5352,8 +5363,14 @@ console.log("\n— FASE 2: la cuenta madre —");
      "abrirlo no llama a R() (ARREGLO 32)");
   // ARREGLO 99: y lo que ella abre a mirar —cuanto tiene hoy— va antes que el
   // veredicto y en grande. El veredicto es la pregunta del contador.
-  ok(cuerpo.indexOf("resumenSuyo+") < cuerpo.indexOf("sobra sin explicar"),
+  ok(cuerpo.indexOf("resumenSuyo+") < cuerpo.indexOf('"te sobran"'),
      "y va ANTES del veredicto: lo suyo primero");
+  // ARREGLO 146: y la respuesta a "¿gano o pierdo?" va antes que todo lo
+  // demas. Sus palabras: "a fin y al cabo lo que me interesa saber es si
+  // realmente estoy ganando o perdiendo". Las otras dos son del contador.
+  ok(cuerpo.indexOf("ganoOPierdo+") > -1 &&
+     cuerpo.indexOf("ganoOPierdo+") < cuerpo.indexOf("resumenSuyo+"),
+     "y «¿ganas o pierdes?» va la PRIMERA de todas");
   ok(!/De qué está hecha la diferencia/.test(cuerpo),
      "y no se dice dos veces: la tabla vieja ya no se dibuja sin desplegar");
   // El interes por cobrar se ve, pero dicho: no es suyo todavia.
@@ -6465,13 +6482,22 @@ console.log("\n— FASE 2: la cuenta madre —");
   // nombreCuentaEg() devuelve el nombre crudo a proposito —lo usa tambien el
   // registro de auditoria, que se escapa al DIBUJARLO, no al escribirlo— asi
   // que cada sitio que lo pinta tiene que envolverlo el.
-  const todas   = (H.match(/nombreCuentaEg\(/g) || []).length;
-  const envueltas = (H.match(/_escAud\(nombreCuentaEg\(/g) || []).length;
-  // 1 es la definicion de la funcion y 1 el logAudit, que va crudo a proposito:
-  // la auditoria se escapa al DIBUJARLA, no al escribirla.
-  ok(todas - envueltas <= 2,
-     "el nombre de cuenta se escapa en cada sitio que lo dibuja (" +
-     (todas - envueltas) + " crudos de " + todas + ")");
+  // ARREGLO 146: antes se CONTABAN los crudos y se admitian dos (la definicion
+  // y el logAudit). Esa cuenta es fragil: un alert() nuevo —que va crudo a
+  // proposito, porque ahi "&amp;" se veria tal cual— hacia fallar la guardia
+  // sin que nada estuviera mal. Ahora se mide lo que de verdad importa, igual
+  // que las de arriba: que ninguno acabe dentro de HTML sin envolver.
+  {
+    const crudoEnHtml = /(?<!_escAud\()nombreCuentaEg\([^)]*\)\s*\+\s*"[^"]*[<>]/g;
+    const malos = H.match(crudoEnHtml) || [];
+    ok(malos.length === 0,
+       "el nombre de cuenta se escapa en cada sitio que lo DIBUJA (" +
+       malos.length + " crudos dentro de HTML)");
+    // Y que siga habiendo sitios que lo envuelven: con la llamada borrada de
+    // todas partes, la de arriba pasaria sin probar nada.
+    ok((H.match(/_escAud\(nombreCuentaEg\(/g) || []).length >= 8,
+       "y los que lo dibujan siguen ahi, envueltos");
+  }
 }
 
 // ── ARREGLO 103: el respaldo se hace solo, y se VE ─────────────────────────
@@ -7483,8 +7509,8 @@ console.log("\n— FASE 2: la cuenta madre —");
   //    EXPRESION ENTERA: buscar "sueldoPendiente" suelto pasaria con el
   //    termino multiplicado por cero o renombrado (ARREGLO 100).
   const cc = sinCom(sacarFuncion("conciliacionCapital"));
-  ok(/var deberias=r2v\(apertura-intAp\.total\+bruta-egEmpresaSinMerc-egPersonalEmpresa-socios-traspPers\.total-\(real\.sueldoPendiente\|\|0\)\);/.test(cc),
-     "«deberias tener» resta el MISMO sueldo que «tienes»");
+  ok(/var deberias=r2v\(apertura-intAp\.total\+bruta-egEmpresaSinMerc-egPersonalEmpresa-socios-traspPers\.total-\(real\.sueldoPendiente\|\|0\)\+aportes\.total\);/.test(cc),
+     "«deberias tener» resta el MISMO sueldo que «tienes», y suma lo que ella metio");
   // ── ARREGLO 143 · la compra de mercancia se excluye UNA vez ───────────
   //
   // Comprar no es un gasto: es dinero que cambia de forma, y el capital ya la
@@ -10951,6 +10977,123 @@ console.log("\nARREGLO 138 · el metodo sale del origen de los bolivares");
        "el cierre suma el pr guardado de "+l+", no lo vuelve a calcular");
   });
   ok(!/cTx\(/.test(cmc), "y no llama a cTx: recalcular movería meses ya cerrados");
+}
+
+// ── ARREGLO 146 · plata SUYA que pasa por una cuenta de la empresa ────────
+//
+// Su sueldo del otro trabajo entra en bolivares a BANESCO o al B. de Venezuela
+// —cuentas de la EMPRESA— y de ahi compra USDT que se lleva a su Binance
+// personal. Medido en su export del 15/10, eso dejaba 708,44 de los 726,72 de
+// la fila "tus bolivares valen menos hoy" contados como efecto de tasas.
+console.log("\nARREGLO 146 · plata suya que entra y sale de la empresa");
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+
+  // 1 · EL CRUCE SE DECIDE EN UN SOLO SITIO. Lo leen las DOS funciones: la que
+  //     lo descarta (efectoTasasDesde) y la que lo cuenta (traspasosAPersonal).
+  //     Con un criterio en cada sitio, el dia que uno cambie el importe se
+  //     contaria dos veces o ninguna, y eso no se ve desde fuera.
+  const et = sinC(sacarFuncion("efectoTasasDesde"));
+  const tp = sinC(sacarFuncion("traspasosAPersonal"));
+  ok(/if\(_cruceUsdtPersonal\(l\)\)\s*return;/.test(et),
+     "efectoTasasDesde DESCARTA la compra/venta que cruza a una cuenta 💜");
+  ok(/_cruceUsdtPersonal\(l\)/.test(tp) && /inventarioUsdt/.test(tp),
+     "y traspasosAPersonal la CUENTA: el termino cambia de sumando, no de valor");
+  ok((sinC(HTML).match(/function _cruceUsdtPersonal\(/g) || []).length === 1,
+     "y el criterio se escribe UNA vez");
+
+  // 2 · Y DEVUELVE EL LADO DE LA EMPRESA, no el personal. Es lo que hace que
+  //     el termino valga exactamente lo mismo que valia dentro de
+  //     efectoTasasDesde(), donde el lado personal se valoraba en 0: asi el
+  //     "sin explicar" no se mueve ni un centimo. Devolviendo el lado 💜, con
+  //     su export el numero saltaria 7,98 de golpe.
+  const cup = sinC(sacarFuncion("_cruceUsdtPersonal"));
+  ok(/if\(oP===dP\)\s*return null;/.test(cup),
+     "si los dos lados son del mismo mundo, no hay cruce");
+  ok(/dP\s*\?\s*\{sale:true,\s*cuentaId:oId,\s*monto:oM\}/.test(cup) &&
+     /\{sale:false,\s*cuentaId:dId,\s*monto:dM\}/.test(cup),
+     "y lo que devuelve es el lado de la EMPRESA, no el personal");
+
+  // 3 · UN APORTE MUEVE LOS DOS LADOS. Es lo unico que impide que registrar su
+  //     sueldo del otro trabajo abra un hueco del tamaño del aporte.
+  const cc = sinC(sacarFuncion("conciliacionCapital"));
+  ok(/var aportes=aportesDesde\(desde\);/.test(cc),
+     "la conciliacion pregunta por lo que ella metio");
+  ok(/\+aportes\.total\);/.test(cc),
+     "y lo suma a «deberias tener», el mismo importe que subio el saldo");
+  ok(/aportes:aportes,/.test(cc), "y lo devuelve, para que la tarjeta tenga su fila");
+
+  // 4 · UNA CUENTA 💜 NO VALE NI AQUI NI ALLA. Ese dinero ya esta fuera del
+  //     capital (ARREGLO 96): meterlo o sacarlo de ahi no mueve "lo que
+  //     tienes", asi que moverlo en "deberias" abriria el hueco.
+  const ad = sinC(sacarFuncion("aportesDesde"));
+  ok(/if\(!c\|\|c\.esPersonal\)\s*return;/.test(ad),
+     "aportesDesde ignora los aportes a una cuenta 💜");
+  const sa = sinC(sacarFuncion("saveAporte"));
+  ok(/if\(cta\.esPersonal\)\{/.test(sa) && sa.indexOf("cta.esPersonal") < sa.indexOf("ajusteCuentaEgreso"),
+     "y guardar lo rechaza ANTES de tocar ningun saldo");
+
+  // 5 · Y NO ES GANANCIA. Si entrara en calcMesCompleto le inflaria la
+  //     ganancia del mes y con ella su sueldo (el 30% de la utilidad) por
+  //     plata que no gano con remesas. Es la mitad que da sentido a todo esto.
+  const cmc2 = sinC(sacarFuncion("calcMesCompleto"));
+  ok(!/aportes/.test(cmc2),
+     "el cierre del mes NO mira los aportes: no son ganancia de la empresa");
+  ok(!/S\.aportes/.test(sinC(sacarFuncion("capitalRealTotal"))),
+     "ni el capital los cuenta aparte: ya estan dentro del saldo de la cuenta");
+
+  // 6 · GUARDAR MUEVE EL SALDO, Y BORRAR LO DEVUELVE. Sin la segunda mitad, un
+  //     aporte mal metido no se puede deshacer y hay que escribir el saldo a
+  //     mano — justo lo que ella pidio no tener que hacer nunca mas.
+  ok(/ajusteCuentaEgreso\(a\.cuentaId,\s*entra\?monto:-monto\)/.test(sa),
+     "guardar sube el saldo si entro y lo baja si salio");
+  const da = sinC(sacarFuncion("delAporte"));
+  ok(/ajusteCuentaEgreso\(a\.cuentaId,\s*a\.dir==="sale"\?a\.monto:-a\.monto\)/.test(da),
+     "y borrar lo devuelve exacto, al reves");
+  ok(/_marcarBorradoMerge\("aportes",id\)/.test(da),
+     "y deja la marca, o el otro aparato lo revive al sincronizar");
+
+  // 7 · VIAJA ENTRE APARATOS. Sin las dos listas, lo que registre en el
+  //     telefono lo pisa la PC (o no sale nunca de este aparato).
+  ok(/_MERGE_FIELDS = \[[^\]]*"aportes"/.test(HTML), "aportes va en _MERGE_FIELDS");
+  ok(/DATA_KEYS = \[[\s\S]{0,2000}?"aportes"/.test(HTML), "y en DATA_KEYS");
+
+  // 8 · LA FILA TIENE QUE ESTAR. La guardia del ARREGLO 141 ya exige que cada
+  //     termino de `deberias` tenga la suya; esta fija ademas el texto, porque
+  //     una fila que no dice que NO es de la empresa se lee como ganancia.
+  // Se exige la CONDICION y el push juntos: pidiendo solo el push, cambiar el
+  // `if` por un `false` dejaba la fila escrita y sin dibujar nunca — y la
+  // lista volvia a no sumar sin que nada lo dijera. Lo cazo la prueba
+  // negativa, no la guardia; es la misma familia del ancla ambigua.
+  ok(/if\(co\.aportes&&Math\.abs\(co\.aportes\.total\)>0\.005\)\s*\n?\s*_filas\.push\(\[co\.aportes\.total>0\?"Plata tuya que metiste":"Plata tuya que sacaste"/.test(HTML),
+     "el desglose tiene su fila, y dice de quien es esa plata");
+
+  // 10 · ELEGIR LA CUENTA NO PUEDE REPINTAR (ARREGLO 32). R() rehace el
+  //      formulario entero con el campo del monto dentro, asi que lo que ella
+  //      lleve escrito a medias se pierde. Es el mismo fallo que el 136 y el
+  //      140 tuvieron que sacar de la tarjeta de tasas, una capa mas abajo.
+  ok(/id='ap-cta'[^>]*onchange='[^']*_pintarRotAporte\(\)'/.test(HTML),
+     "elegir la cuenta refresca el rotulo por su id, no con R()");
+  ok(!/id='ap-cta'[^>]*onchange='[^']*\bR\(\)/.test(HTML),
+     "y no llama a R(): se llevaria por delante el monto a medio teclear");
+  // Y el rotulo se escribe en UN sitio, que leen el dibujado y el refresco.
+  ok((sinC(HTML).match(/function _rotMontoAporte\(/g) || []).length === 1 &&
+     /_pintarRotAporte[\s\S]{0,200}_rotMontoAporte\(\)/.test(sinC(HTML)) &&
+     /id='ap-rot'[^>]*>"\+_rotMontoAporte\(\)/.test(HTML),
+     "y el rotulo sale de un solo sitio: el campo no puede decir una moneda y guardarse en otra");
+
+  // 9 · ¿GANAS O PIERDES? Sale de calcMesCompleto y de ningun otro sitio: es la
+  //     MISMA cuenta que el Cierre y Evolucion. Calculada aparte, un dia el
+  //     Balance diria que gano y el Cierre que perdio.
+  const gm = sinC(sacarFuncion("_gananciaMeses"));
+  ok(/calcMesCompleto\(mk\)/.test(gm) && /c\.utilidadEmpresa/.test(gm),
+     "la racha sale de calcMesCompleto, no de una cuenta nueva");
+  ok(/if\(Math\.abs\(bruta\)<0\.005\s*&&\s*Math\.abs\(limpio\)<0\.005\)\s*continue;/.test(gm),
+     "un mes sin nada registrado no dibuja una barra en cero: no es un mes malo");
+  // La racha cuenta desde el ultimo mes CERRADO: contando el que va a medias,
+  // el dia 1 de cada mes diria "0 meses ganando", que es falso y asusta.
+  ok(/if\(_gm\[_i\]\.enCurso\)\s*continue;/.test(HTML),
+     "y el mes en curso no cuenta para la racha, aunque si se dibuje");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

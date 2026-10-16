@@ -4722,6 +4722,140 @@ vino de una **remesa**, un **traspaso**, una **venta de USDT** o el **cobro de u
 préstamo**. Esos tienen su propia pantalla y es ahí donde hay que registrarlos —
 pasarlos por Ganancia extra los contaría dos veces.
 
+### Su plata no es la de la empresa, aunque pase por la misma cuenta (ARREGLO 146)
+
+Sus palabras del 16/10: *"en mi sueldo de mi otro trabajo me pagan en bs, esos bs
+entran a las cuentas de Venezuela o Banesco pero es plata mía de otra cosa y con
+eso compro los usdt, entra a binance julio y de ahí paso a mi binance personal.
+NO ES PLATA DE REMESASYA SAIPHA"*.
+
+Y detrás, lo que de verdad pedía: *"no me enredes más con todos esos números
+porque a fin y al cabo lo que me interesa saber es si realmente estoy ganando o
+perdiendo"*.
+
+**Las dos mitades se contaban mal, y cada una por su lado parecía correcta.**
+Medido en su export del 15/10:
+
+```
+la ENTRADA  →  nadie la registra, el saldo sube solo      →  "sobra"
+la SALIDA   →  una compra de USDT con destino personal    →  "las tasas"
+```
+
+De ahí que la fila *"tus bolívares valen menos hoy"* dijera **−726,72** cuando la
+devaluación de verdad son **−18,28**: los otros **708,44** eran **cuatro
+operaciones** de su sueldo del otro trabajo cruzando la empresa. Un número con el
+rótulo de otro, que es el fallo más repetido de esta app.
+
+#### Una compra de USDT que acaba en una cuenta 💜 es un traspaso, no una tasa
+
+`_cruceUsdtPersonal()` lo decide **en un solo sitio**, y lo leen las DOS
+funciones: la que lo descarta (`efectoTasasDesde`) y la que lo cuenta
+(`traspasosAPersonal`). Con un criterio en cada sitio, el día que uno cambie el
+importe se contaría dos veces o ninguna, y eso no se ve desde fuera.
+
+- **Devuelve el lado de la EMPRESA, no el personal**, y eso no es un detalle: es
+  lo que hace que el término valga **exactamente lo mismo** que valía dentro de
+  `efectoTasasDesde()`, donde el lado personal se valoraba en 0 a propósito. Así
+  el término cambia de sumando sin cambiar de valor. Comprobado: **el número no
+  se mueve ni un céntimo** (912,17 antes y después); lo que cambia es *qué* dice
+  la app que pasó con ese dinero.
+
+```
+                        v227        v228
+"tus bolívares valen"  −726,72     −18,28   ← la devaluación de verdad
+"pasaste a tus 💜"      143,19     851,63   ← ahí estaba
+lo que sobra            912,17     912,17   ← idéntico
+```
+
+#### Y la entrada necesitaba un concepto que no existía
+
+Se probaron las dos formas que la app ya tenía, con su export, y **ninguna sirve**:
+
+```
+Ganancia extra PERSONAL  →  sube la cuenta y NO sube "deberías"
+                            el sobrante crece lo mismo que metió
+Ganancia extra EMPRESA   →  cuadra, pero cuenta como ganancia del mes
+                            y le sube el sueldo un 30% por plata que no ganó
+```
+
+Por eso `S.aportes`, con sus dos botones (*metí* / *saqué plata mía*). Mueve el
+saldo **y** mueve `deberias` el mismo importe, así que la conciliación no se
+entera — que es justo lo que tiene que pasar.
+
+- **NO entra en `calcMesCompleto`**, y ésa es la mitad que da sentido a todo:
+  si entrara, su sueldo del otro trabajo le inflaría la ganancia del mes y con
+  ella el 30% que sale de la utilidad. Hay guardia para los dos lados.
+- **Una cuenta 💜 no vale**, ni al medir ni al guardar. Ese dinero ya está fuera
+  del capital (ARREGLO 96): meterlo o sacarlo de ahí no mueve *lo que tienes*, y
+  moverlo en *deberías* abriría un hueco del tamaño del aporte. Guardar lo
+  rechaza **antes** de tocar ningún saldo.
+- **Borrar devuelve el saldo exacto** y deja la marca de borrado. Sin eso, un
+  aporte mal metido habría que repararlo escribiendo el saldo a mano — justo lo
+  que ella pidió no tener que hacer nunca más.
+- **Elegir la cuenta NO llama a `R()`** (ARREGLO 32). Repintar rehace el
+  formulario con el campo del monto dentro: es el mismo fallo del 136 y el 140,
+  una capa más abajo. Se refresca el rótulo por su id, y el rótulo se escribe en
+  **un** sitio (`_rotMontoAporte`) para que el campo no pueda decir una moneda y
+  guardarse en otra. Probado **tecleando de verdad** en Chromium.
+- **La fila del desglose va con su condición en la guardia.** Pidiendo solo el
+  `push`, cambiar el `if` por un `false` dejaba la fila escrita y sin dibujar
+  nunca, y la lista volvía a no sumar. Lo cazó la prueba negativa, no la guardia.
+
+Medido con su export, el ciclo entero: meter 100.000 Bs sube BANESCO de 43,96 a
+100.043,96 y **lo que sobra no se mueve** (912,17); borrarlo devuelve el saldo
+exacto. Y con las cuatro entradas suyas registradas, **el misterio baja de 912 a
+204**.
+
+#### Y la tarjeta ahora abre contestando "¿gano o pierdo?"
+
+Era la pregunta que esta tarjeta no contestaba, y el dato existía desde siempre
+en `calcMesCompleto()` sin que ninguna pantalla lo pusiera donde ella mira:
+
+```
+¿GANAS O PIERDES?          ✅ 4 meses seguidos ganando
+jun  ▇▇▇▇▇▇▇▇▇▇▇▇  +$358,07
+jul  ▇▇▇▇▇▇▇▇▇▇▇   +$336,26
+ago  ▇▇             +$52,53
+sep  ▇▇▇▇▇▇▇▇▇▇    +$296,79
+oct  ▇▇▇            +$73,17   ← va a mitad
+```
+
+- **Sale de `calcMesCompleto()` y de ningún otro sitio**: es la MISMA cuenta que
+  el Cierre y Evolución. Calculada aparte, un día el Balance diría que ganó y el
+  Cierre que perdió, y no habría forma de saber cuál mirar — el 34,27 contra el
+  34,28 con la pregunta más grande que ella hace.
+- **Es la `utilidadEmpresa`, no la bruta**: lo que le queda LIMPIO después de los
+  gastos, que es lo que preguntó.
+- **El mes en curso se dibuja pero no cuenta para la racha.** Contándolo, el día
+  1 de cada mes diría *"0 meses ganando"*, que es falso y además asusta.
+- **Un mes sin nada registrado no sale**: una barra en cero se lee como un mes
+  malo, y lo que fue es un mes que todavía no existe.
+- **Sin memo.** Cuesta 2,17 ms por los cinco meses (medido), y un memo en la
+  cifra que decide cómo ve su negocio haría que dependiera de *cuándo* se
+  preguntó (ARREGLO 132).
+
+**Cuesta 177 px** en una pestaña de la que ya se quejó (1.691 → 1.868). No es un
+fallo que arreglar: es lo que se compra al contestar su pregunta primero.
+
+#### Y fuera la palabra "sin explicar"
+
+Sus palabras: *"si me tienes que decir si sobra o falta, mas no me tienes que
+decir sin explicar"*. Y tenía razón por dos lados: leía los 912 como dinero que
+le faltaba **cuando es lo contrario**, y *"sin explicar"* es la pregunta del
+contador, no la suya.
+
+**El número es el mismo** —el que de verdad no encaja, no la diferencia bruta
+(ARREGLO 60)— y lo que cambia es cómo se dice: **te sobran**, o **te faltan**.
+Hay guardia para que no vuelva.
+
+#### Lo que esto NO repara, y hay que decírselo
+
+Las cuatro entradas suyas de septiembre y octubre **ya ocurrieron y no están
+registradas**. El arreglo vale de aquí en adelante; esas hay que meterlas una
+vez con el botón nuevo. Y el resto —los ~204 que quedarían— sigue sin explicar,
+con sus **112 ajustes de saldo** (109 sin motivo guardado) como sospecha
+principal.
+
 ### Cómo se mueve su dinero — el sesgo del negocio
 
 - **Vende más USDT por bolívares de lo que compra USDT con reales.**
