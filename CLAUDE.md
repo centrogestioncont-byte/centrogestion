@@ -5220,6 +5220,36 @@ cambian**. Medido: quitar la de 463,97 deja `capital 2.711,65` y `te sobran
 la empresa (ARREGLO 96). Lo que estaba inflado es su **bolsillo personal**: ese
 dinero aparecía dos veces.
 
+## Un saldo escrito a mano deja de seguir al inventario, y eso se ve (ARREGLO 158)
+
+Escribir a mano el saldo de una cuenta **en USDT** le pone `manual_override`, y
+desde ese momento `sincronizarFIFOconCuentas()` **no la vuelve a tocar nunca**.
+Es correcto —lo escrito a mano manda— pero **no se veía en ninguna parte**, y de
+ahí salió la deriva de 79,70 que el ARREGLO 130 no pudo reconstruir: el saldo
+dejó de seguir a los movimientos y nada lo dijo.
+
+Medido en su export, y **son tres, no dos**:
+
+```
+BINANCE JULIO ....... dice     0,00   ·  si lo siguiera pasaría a  −142,85
+MI SUELDO BINANCE ... dice    91,67   ·  si lo siguiera pasaría a   473,56
+BINANCE SAIPA ....... dice     0,01   ·  si lo siguiera pasaría a   890,78
+```
+
+- **Se dice en las DOS pantallas** donde se ve un saldo: Configuración (donde se
+  edita) y Balance de Cuentas (donde ella mira). Ponerlo en una sola es el fallo
+  de buscar una copia y dejarse las otras (ARREGLOS 101, 119, 150, 153).
+- **"Si lo siguiera pasaría a", no "el inventario dice".** Ese número son sus
+  compras menos sus ventas de USDT en esa cuenta: es lo que la app **escribiría**,
+  no lo que debería haber. Dicho de la otra forma se lee como dinero que falta, y
+  con 890,78 en SAIPA eso es un susto por nada.
+- **El botón quita la marca y NO toca el saldo.** Lo cambia el inventario la
+  próxima vez que se dibuje, que es quien manda a partir de entonces.
+- **Una cuenta sin ni una operación devuelve `null`, no 0.** Un 0 ahí se leería
+  como "el inventario dice que tienes cero", cuando lo que pasa es que no sabe.
+- **Y sólo avisa de las que de verdad lo llevan.** Sin esa comprobación saldría
+  en todas las cuentas, y un aviso que sale siempre deja de leerse (ARREGLO 99).
+
 ### Registra la operación — no escribas el saldo
 
 **La regla que más costó el 12/09**, y se rompió tres veces en un día.
