@@ -3221,7 +3221,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261017_v247";
+var APP_VERSION = "20261017_v248-TEST";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -15987,6 +15987,9 @@ function rConfigAdmin(){
     "<div id='cfg-tema'>"+_cfgAcc("tema","🎨","Colores de la app",
       temaActual()+" · solo en este aparato",
       "var(--mo3-s1)",_htmlTema(),false)+"</div>"+
+    _cfgAcc("menu_oculto","🧭","Pestañas del menú",
+      (function(){ var n=_tabsOcultasDelMenu().length; return n?(n+" "+(n===1?"escondida":"escondidas")+" en este aparato"):"se ven todas"; })(),
+      "var(--az3-c)",_htmlMenuOculto(),false)+
     _cfgAcc("huella","👆","Entrar con huella",
       (_huellaDeEstaPersona()?"encendida en este aparato":(_huellaDisponible()?"apagada":"no disponible aquí")),
       "var(--ok)",_htmlHuella(),false)+
@@ -22262,6 +22265,84 @@ var _GRUPOS_MENU=[
   ["Crédito",   ["prestamos","cobrar"]],
   ["Gestión",   ["clientes","cierre","auditoria","config_admin"]]
 ];
+
+// ── ARREGLO 166 · pestañas que no se enseñan en el menú ─────────────────────
+//
+// Ella, el 17/10: "📊 Resumen EE.UU: no la uso". Y el encargo entero fue
+// "solo ocultar el botón del menú — NO borrar datos de eeuu, socios ni el
+// código del resumen, y que se pueda volver a mostrar fácil".
+//
+// QUITARLA DE _GRUPOS_MENU NO LA OCULTA, y esa es la trampa de este arreglo.
+// Ese array decide el ORDEN, no quién sale: lo que no está en ningún grupo
+// cae en "Más" al final — que es a propósito, para que una pestaña nueva que
+// se olvide de apuntarse ahí se siga alcanzando. Sacarla de "Ver" la habría
+// movido a "Más", no quitada.
+//
+// Así que el freno va en la lista que leen los DOS menús, en un solo sitio.
+// Escrito una vez por menú se separarían con el primer cambio: es el fallo
+// que ya costó los ARREGLOS 101, 119, 150 y 153 — una regla copiada en varios
+// sitios siempre deja uno fuera.
+//
+// Oculta el BOTÓN, no la pantalla: st("dash_eeuu") la sigue dibujando, su
+// permiso sigue existiendo y no se borra ni un dato. Para volver a enseñarla
+// hay un interruptor en Configuración → "Pestañas del menú".
+var _TABS_FUERA_DEL_MENU=["dash_eeuu"];
+// El interruptor es de ESTE APARATO, como el tema y como que los avisos estén
+// plegados: vive en localStorage y NO entra en lo que se sincroniza. Meterlo
+// ahí obligaría a añadir la clave también en las CUATRO listas del servidor
+// (main.py), y una clave que se añade aquí y se olvida allí viaja y el
+// servidor la tira con un 200 y sin un solo error — ha pasado dos veces. Para
+// una preferencia de menú no vale ese riesgo, y además tiene sentido por
+// aparato: puede querer verla en la PC y no en el teléfono.
+var _MENU_LS="cg_menu_";
+function _tabEnseñadaAMano(t){
+  try{ return localStorage.getItem(_MENU_LS+t)==="1"; }catch(e){ return false; }
+}
+// La lista de lo que está oculto AHORA sale de aquí y de ningún otro sitio:
+// la leen los dos menús y la tarjeta de Configuración que los enciende. En
+// dos sitios, un día el menú escondería una que la tarjeta dice enseñar.
+function _tabsOcultasDelMenu(){
+  return _TABS_FUERA_DEL_MENU.filter(function(t){ return !_tabEnseñadaAMano(t); });
+}
+// La lista del menú. NO se filtra la lista con la que se decide si la pestaña
+// en la que está sigue valiendo (_primeraPestaña, más abajo): si se filtrara,
+// st("dash_eeuu") la abriría y el propio dibujado la echaría de vuelta al
+// Resumen. Ocultar el botón no puede ser cerrar la pantalla.
+function _tabsDelMenu(ts){
+  var fuera=_tabsOcultasDelMenu();
+  if(!fuera.length) return ts;
+  return ts.filter(function(t){ return fuera.indexOf(t)<0; });
+}
+// Encender o apagar una desde Configuración. Aquí SÍ se repinta la app entera:
+// lo que cambia es el menú, que está fuera de esta tarjeta, y no hay ningún
+// campo de escribir bajo el dedo (ARREGLO 32 es para eso, no para un botón).
+function _toggleTabMenu(t){
+  if(_TABS_FUERA_DEL_MENU.indexOf(t)<0) return;
+  try{
+    if(_tabEnseñadaAMano(t)) localStorage.removeItem(_MENU_LS+t);
+    else localStorage.setItem(_MENU_LS+t,"1");
+  }catch(e){}
+  R();
+}
+function _htmlMenuOculto(){
+  var out="<div style='font-size:11px;color:var(--tx2);margin-bottom:11px;line-height:1.6'>"+
+    "Es de <b>este aparato</b>, como los colores: no se copia al otro.<br>"+
+    "Esconder una pestaña <b>no borra nada</b> — ni sus datos ni sus pantallas. "+
+    "Solo deja de salir el botón en el menú.</div>";
+  _TABS_FUERA_DEL_MENU.forEach(function(t){
+    var ve=_tabEnseñadaAMano(t);
+    out+="<div style='display:flex;align-items:center;justify-content:space-between;gap:10px;"+
+      "background:var(--gr6-c);border:1px solid var(--ln2);border-radius:12px;padding:11px 13px;margin-bottom:8px'>"+
+      "<div><div style='font-size:13px;font-weight:800'>"+_escAud(TL[t]||t)+"</div>"+
+      "<div style='font-size:10.5px;color:var(--tx3);margin-top:2px'>"+(ve?"se ve en el menú":"escondida")+"</div></div>"+
+      "<button onclick='_toggleTabMenu(\""+_jsAttr(t)+"\")' style='flex:0 0 auto;background:"+
+      (ve?"var(--ok)":"var(--gr6-d)")+";color:"+(ve?"var(--sobre-color)":"var(--tx2)")+
+      ";border:none;border-radius:10px;padding:8px 14px;font-size:12px;font-weight:800;cursor:pointer'>"+
+      (ve?"Esconder":"Enseñarla")+"</button>"+
+    "</div>";
+  });
+  return out;
+}
 // Cuál es el primer botón del menú. Sale de _GRUPOS_MENU, que es el único
 // sitio donde vive el orden, y respeta su regla: una pestaña que no esté en
 // ningún grupo cae al final, pero se sigue alcanzando.
@@ -22452,7 +22533,7 @@ function rMain(){
       "<div style='font-size:11px;opacity:.85'>"+sub+"</div></div></div>"+
     "<div style='display:flex;align-items:center;gap:8px'>"+"<div style='display:flex;align-items:center;gap:6px'>"+"<div id='fb-dot' title='"+(_hayConexionReal?"Conectado con el servidor":"Sin conexión con el servidor")+"' style='width:9px;height:9px;border-radius:50%;background:"+(_hayConexionReal?"var(--ok-cl)":"var(--rj4)")+";border:1.5px solid rgba(255,255,255,.5)'></div>"+(S.role==="admin"?"<button onclick='st(\"config_admin\")' title='Configuración Admin' style='background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);color:var(--sobre-color);padding:5px 9px;border-radius:7px;font-size:13px;cursor:pointer'>⚙️</button>":"")+"<button onclick='salir()' style='background:rgba(255,255,255,.2);border:none;color:var(--sobre-color);padding:6px 13px;border-radius:8px;font-weight:600;cursor:pointer'>Salir</button>"+"</div>"+"</div>"+
   "</div><div class='cuerpo'>"+
-    "<nav class='lateral'>"+_htmlLateral(ts)+"</nav>"+
+    "<nav class='lateral'>"+_htmlLateral(_tabsDelMenu(ts))+"</nav>"+
   "<div class='panel' style='flex:1;min-width:0;min-height:0;overflow:hidden;display:flex;flex-direction:column;-webkit-overflow-scrolling:touch'>"+
     // ARREGLO 62: el aviso de choque va aquí arriba, fuera del área que hace
     // scroll, para que se vea esté ella en la pantalla que esté. Un aviso al
@@ -22473,7 +22554,7 @@ function rMain(){
     "<div class='navmenu-scrim' onclick='document.getElementById(\"navMenuWrap\").classList.remove(\"show\")'></div>"+
     "<div class='navmenu'>"+
       "<div class='navmenu-head'>Ir a…<button class='navmenu-close' onclick='document.getElementById(\"navMenuWrap\").classList.remove(\"show\")'>✕</button></div>"+
-      "<div class='navmenu-list'>"+_htmlMenuTel(ts)+"</div>"+
+      "<div class='navmenu-list'>"+_htmlMenuTel(_tabsDelMenu(ts))+"</div>"+
     "</div>"+
   "</div>"+
   "</div>";
