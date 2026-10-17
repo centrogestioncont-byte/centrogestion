@@ -6365,3 +6365,125 @@ de debajo se refresca sin repintar la tarjeta (ARREGLO 32 + 55).
 pantalla una vez al arrancar, y si justo entonces hay un campo con el dedo dentro,
 se lo lleva. No se repite y no se tocó aquí; si alguna vez estorba, lo que le
 falta es pasar por `_repintarTrasSincronizar()` como el sondeo del 165.
+
+---
+
+## Toda ida deja su lote, y la venta de USDT gasta la compra (ARREGLO 170)
+
+Sus palabras del 17/10, un día después del 167: *"el selector «los convierto /
+se quedan» no me sirve, porque al registrar la ida no sé si esos reales van a
+ir a USDT. Eso depende del movimiento del día"*.
+
+Tenía razón, y el fallo del 167 era de diseño: **pedía en el peor momento un
+dato que sólo se sabe después**. La respuesta salía a ojo y de ella dependía si
+la remesa dejaba lote. Ahora no se pregunta: **toda ida BRL→VZLA deja su lote**,
+y lo que pase luego decide solo — si compra USDT con esos reales la compra gasta
+el lote, si paga una vuelta la vuelta lo gasta y marca calce.
+
+El selector se fue **entero** (ARREGLO 98: una pantalla nueva quita el control
+viejo). Lo que **no** se fue es la marca `entraQueda` guardada en cada remesa:
+el borrado decide con ella si devuelve lotes de compra, y las remesas anteriores
+al 170 no la llevan **y sí los gastaron**, así que deducirla de la ruta les
+devolvería lo que nunca gastaron. Hay prueba negativa.
+
+### Y eso dejaba el tc clavado, que es la mitad que costó
+
+Hasta aquí **nadie** descontaba los lotes de compra salvo la ida. Al dejar de
+gastarlos se habrían quedado llenos para siempre y `getTasaCompraPonderada`
+habría valorado cada ida con la compra más vieja, para siempre. Medido:
+
+```
+                        hoy      sin que la ida gaste    tasaDeReferencia
+ida antes de comprar   5,0508         5,0508                  5,0529
+tras comprar a 5,30    5,0510         5,0508                  5,3000
+tras comprar a 5,60    5,0529         5,0508  ← clavado       5,6000
+```
+
+Y no es sólo la ida: `getLastTasaCompra` alimenta otros seis sitios. **Y clavado
+INFLA la ganancia**, porque dice que los reales que entran valen más USDT de los
+que valen — justo lo que la regla de siempre prohíbe.
+
+**Lo que faltaba no era un parche en la ida: era que vender USDT gaste el USDT
+que se compró.** Compra a X y vende a Y; esa venta es la que lo gasta, y no lo
+descontaba nadie. Con ella los lotes se vacían solos y el tc sigue a sus compras.
+
+- **Gasta lotes de TODAS las monedas** (el comodín `"*"` en las funciones de
+  siempre, no un recorrido nuevo: ARREGLO 97). El USDT de Binance es un solo
+  saldo y una venta no sabe si lo que vende se compró con reales o con
+  bolívares. Medido en su export: 18.308 USDT comprados con reales, 9.817 con
+  bolívares, y 32.560 vendidos. Restringirlo a reales inventaría una distinción
+  que el dinero no tiene y vaciaría sus lotes 1,8 veces más rápido de lo real.
+- **Sin filtrar por cuenta**: la cuenta del lote de compra es la que **pagó**
+  (reales o bolívares), no la cuenta de USDT desde la que sale la venta.
+- **Lo que no alcanza no se inventa.** Vendió 4.198 USDT más de los que compró
+  —clientes que pagan en USDT, aportes— y esa parte simplemente no encuentra
+  lote.
+- **Y el espejo va ANTES de consumir** (ARREGLO 161), se guarda en el lote de la
+  venta, y borrar la venta lo devuelve por id a cuatro decimales (127) reviviendo
+  el lote archivado si hacía falta (137).
+
+**Su condición: la venta no cambia.** Ni su ganancia —una venta no apunta `pr`—
+ni la tasa del lote que crea. Medido sobre una semana suya: **17 lotes de venta,
+0 campos distintos**.
+
+### Medido con una semana real suya (09→15/10, 55 movimientos)
+
+```
+                                  HOY      PROPUESTA
+ganancia de las idas            95,68          96,90    (+1,22, +1,3%)
+lotes de compra vivos        1.482,39       1.442,60    ← se gastan, no se acumulan
+capital                      2.656,10       2.656,10
+te sobran                      −21,54         −21,54
+```
+
+El `tc` de cada ida se mueve entre **−0,0181 y +0,0202** R$/USDT — el 0,4% — y
+**sigue moviéndose con sus compras y ventas**, que era lo que había que salvar.
+
+### El botón de apertura de los lotes de reales
+
+Lo de arriba vale de aquí en adelante. Los reales que YA tiene entraron por
+remesas que no dejaron lote, así que una vuelta que los gaste seguiría diciendo
+"tasa prestada". Esto los abre, **una vez y con su OK**, como el botón del 164.
+
+- **Qué cuentas**: las de reales de la empresa. Fuera las personales (ese dinero
+  ya salió, ARREGLO 96), la tarjeta (su saldo es deuda, 95) y **la RESERVA**, que
+  son los R$ 1.004 que respaldan la tarjeta — lo pidió ella por su nombre. Con
+  sus datos salen **PAGBANK EMPRESA 1.476,81 + EFECTIVO EMPRESA 60,00 =
+  1.536,81 R$**.
+- **A qué tasa y por qué**: a `tasaDeReferencia("BRL")`, que es con la que la app
+  ya valora todos sus reales parados. Así el lote nace valiendo exactamente lo
+  que el capital ya dice que valen. Con cualquier otra, el lote diría una cosa y
+  el capital otra.
+- **Y la otra mitad, que costó medirla**: el lote lleva `_aperturaBRL` y con esa
+  marca queda **fuera de los tres sitios que ya apartan lo que no es una
+  operación suya** y de `tasaDeReferencia()`. Sin eso la conciliación lo lee como
+  una venta de 304 USDT que nunca ocurrió — medido: **el "te sobran" se iba de
+  6,94 a −297,20 con sólo abrir los lotes** — y la tasa de referencia saldría de
+  un lote nacido de ella misma. Es la misma razón por la que el lote de un calce
+  lleva `permuta`.
+- **No toca el saldo de ninguna cuenta**, y se dice en la propia pregunta. Se
+  deshace entera por su hora, dejando marca de borrado (6c).
+
+### El ciclo entero, con su export
+
+```
+                          lotes R$   compra USDT   PAGBANK   capital   te sobran
+0 · al abrir                  0,00      1.168,05  1.476,81  2.711,65       6,94
+1 · abiertos los lotes    1.536,81      1.168,05  1.476,81  2.711,65       6,94
+2 · ida (deja lote sola)  2.036,81      1.168,05  1.976,81  2.715,74       6,95
+3 · venta de USDT         2.036,81      1.068,05  1.976,81  2.712,89       3,73
+4 · venta borrada         2.036,81      1.168,05  1.976,81  2.715,74       6,95
+5 · apertura deshecha       500,00      1.168,05  1.976,81  2.715,74       6,95
+```
+
+26 pestañas, 0 errores, 17 pruebas negativas y las 17 cazadas.
+
+### Un error de método, por si vuelve
+
+El primer intento midió el efecto **reconstruyendo su historial en Python**, y
+ese replay no reproducía ni el `tc` que ella tiene guardado: **36% dentro del
+0,5%**, con errores de hasta el 47%. Daba +16% de ganancia, que era mentira. Se
+tiró entero y se midió registrando remesas de verdad con `saveTx()` y `saveIU()`
+sobre su export — el número bueno es +1,3%. **Una caja rellena a medias prueba
+menos que el navegador** (ARREGLO 123), y antes de creerse un replay hay que
+exigirle que reproduzca lo que ya está guardado.
