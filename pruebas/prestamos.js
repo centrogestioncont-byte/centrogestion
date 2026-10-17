@@ -11923,5 +11923,101 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
      "y lo marcado se filtra antes de fusionar la respuesta del servidor");
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// ARREGLO 164 · cuadrar los lotes de Bs con las cuentas
+//
+// La regla la dio ella y es POR CUENTA: si los lotes vivos de una cuenta
+// pasan de su saldo, se cierra la diferencia empezando por los MAS VIEJOS; si
+// la cuenta esta en cero o en negativo, sus lotes quedan en 0. Medido en su
+// export del 16/10: 44.712,63 Bs en dos cuentas (BdV 44.472,64 · PROVINCIAL
+// 239,99). Por cuenta y no en total, porque BANESCO tiene los lotes 43,96 por
+// DEBAJO de su saldo y sumando todo junto tapaba parte de lo que sobra.
+{
+  const sinC = t => t.replace(/\/\/[^\n]*/g, "");
+  const der = sinC(sacarFuncion("_derivaLotesVES"));
+  const apl = sinC(sacarFuncion("aplicarCorreccionLotesVES"));
+  const des = sinC(sacarFuncion("deshacerCorreccionLotesVES"));
+  const htm = sinC(sacarFuncion("_htmlDerivaVES"));
+  const ult = sinC(sacarFuncion("_ultimaCorreccionVES"));
+
+  // 1. El conjunto de lotes es EXACTAMENTE el que recorre el FIFO. Medido de
+  //    otra forma se cerraria lo que el FIFO no gasta.
+  ok(/l\.tipo!=="venta"\|\|l\.moneda!=="VES"/.test(der),
+     "mira los mismos lotes que el FIFO: venta, en VES");
+  ok(/cuentaDestinoId/.test(der),
+     "y los agrupa por la cuenta que de verdad los paga (cuentaDestinoId)");
+  ok(/\.sort\(ordenFIFO\)/.test(der),
+     "del mas viejo al mas nuevo, con el mismo orden que el FIFO");
+
+  // 2. Un saldo negativo o en cero deja los lotes en 0 — su regla. Sin el
+  //    Math.max un saldo de -500 pediria cerrar mas de lo que hay.
+  ok(/Math\.max\(0,\s*saldo\)/.test(der),
+     "un saldo negativo o en cero deja los lotes en 0");
+
+  // 3. Lo que sobra se calcula en UN sitio y lo leen la vista previa y el
+  //    boton que lo aplica — el 34,27 contra el 34,28, con los lotes de los
+  //    que salen sus tasas.
+  ok(/_derivaLotesVES\(\)/.test(apl) && /_derivaLotesVES\(\)/.test(htm),
+     "la vista previa y el aplicar leen la MISMA cuenta");
+  ok(!/bsRestante\s*-/.test(htm) && !/sobra\s*=/.test(htm),
+     "y la vista previa no se calcula la suya por su cuenta");
+
+  // 4. Mirar no puede gastar: _derivaLotesVES es de SOLO LECTURA.
+  ok(!/\.bsRestante\s*=/.test(der) && !/consumirInventarioFIFO|_marcarBorradoMerge/.test(der),
+     "mirar de donde sobra no toca ningun lote");
+
+  // 5. NO toca saldos de cuentas. Es lo que ella puso por delante: el dinero
+  //    del banco esta bien, lo que esta roto es el inventario.
+  [["aplicar",apl],["deshacer",des]].forEach(function(par){
+    ok(!/\.saldo\s*=/.test(par[1]) && !/ajusteCuentaEgreso|adjId/.test(par[1]),
+       par[0]+" no mueve el saldo de ninguna cuenta");
+    ok(!/cierresMes/.test(par[1]),
+       par[0]+" no toca la ganancia de ningun mes cerrado");
+  });
+
+  // 6. El registro: fecha, quien y lo que tenia antes. Sin el "antes" no hay
+  //    vuelta atras, que es la mitad que ella pidio.
+  ok(/_ajVES=\{ts:ts,\s*por:por,\s*antes:t\.antes\}/.test(apl),
+     "cada lote tocado guarda cuando, quien y cuanto tenia antes");
+  ok(/_quienSoy\(\)/.test(apl), "y quien sale de _quienSoy()");
+  ok(/logAudit\(/.test(apl) && /logAudit\(/.test(des),
+     "las dos acciones quedan en la auditoria");
+
+  // 7. Deshacer devuelve el "antes" y SACA DEL ARCHIVO lo que revivio. Son
+  //    dos mitades: sin _revivirLote el lote vuelve a tener saldo pero se
+  //    queda escondido, donde el FIFO no lo gasta nunca (ARREGLO 137).
+  ok(/bsRestante=Math\.round\(\(parseFloat\(l\._ajVES\.antes\)/.test(des),
+     "deshacer devuelve exactamente lo que el lote tenia");
+  ok(/_revivirLote\(l\)/.test(des),
+     "y saca del archivo el lote que la correccion dejo en cero");
+  ok(/delete l\._ajVES/.test(des),
+     "y borra la marca, o la correccion no se podria repetir");
+
+  // 8. La ultima correccion se agrupa por su hora, y mira TAMBIEN el archivo:
+  //    un lote que quedo en cero esta ahi, no en la lista viva.
+  ok(/inventarioUsdt_cerrado/.test(ult),
+     "lo que hay que deshacer se busca tambien entre los archivados");
+
+  // 9. El boton de julio SE FUE. Dejaba todos los lotes de venta en VES en 0
+  //    salvo uno de 50.000 que ya no existe, y su bandera no se guarda, asi
+  //    que volvia a salir en cada arranque: medido, hoy se llevaba los
+  //    339.137,88 Bs de sus 6 lotes vivos. Una pantalla nueva QUITA la vieja
+  //    (ARREGLO 98).
+  ok(!/function _correccionLotesVES30Jul/.test(HTML),
+     "el boton de julio, que hoy vaciaba todos los lotes, ya no existe");
+  ok(!/_correccionLotesVES30Jul\(\)/.test(HTML),
+     "y no queda ni su llamada");
+
+  // 10. Desplegar la vista previa no repinta la pestaña (ARREGLO 32), y el
+  //     rotulo se escribe en UN sitio o el enlace cambia de nombre solo
+  //     (ARREGLO 141).
+  const ver = sinC(sacarFuncion("_verDerivaVES"));
+  ok(!/\bR\(\)/.test(ver), "desplegar la vista previa no llama a R()");
+  ok(/getElementById\("deriva-ves"\)/.test(ver),
+     "se cambia el display por su id");
+  ok(/_rotDerivaVES\(\)/.test(ver) && /_rotDerivaVES\(\)/.test(HTML),
+     "y el rotulo sale de un solo sitio, al dibujar y al cerrar");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
