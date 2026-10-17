@@ -2834,6 +2834,47 @@ function esRutaCalce(ruta){
 function esCalceDirecto(f, ruta){
   return !!(f && f.metodo==="calce" && esRutaCalce(ruta));
 }
+// ── ARREGLO 167 · lo que ENTRA, ¿se convierte o se queda? ───────────────────
+//
+// Sus palabras del 17/10, registrando una VZLA→BRL de 2.143 R$: "la app no
+// sabe de dónde salen esos reales. Salen de las remesas BRL → VZLA que me
+// pagaron estos días".
+//
+// Tenía razón: un lote de reales sólo nacía en CALCE (ARREGLO 106), porque la
+// regla vieja decía que los reales que entran SIEMPRE se convierten en USDT.
+// Eso ya no es su operación: muchas veces se quedan en la cuenta y son los que
+// pagan la vuelta.
+//
+// ESTA ES UNA SOLA BANDERA, Y ESO ES LO QUE IMPIDE EL DOBLE CONTEO. Lo dijo
+// ella: "o la remesa crea el lote de reales y NO consume compra (los reales se
+// quedaron), o consume compra y no crea lote (los convertí)". Con dos banderas
+// se podrían dar las dos cosas a la vez y esos reales estarían contados dos
+// veces — como convertidos a USDT y como disponibles en la cuenta.
+//
+// Y NO se adivina: lo dice ella, con un selector. Es el ARREGLO 162 otra vez,
+// donde la primera propuesta fue deducirlo del inventario y la tumbó con el
+// argumento correcto. Aquí la app tampoco puede saberlo: en el momento de
+// registrar la ida, la compra de USDT todavía no existe.
+//
+// Por omisión se convierten, que es lo de siempre y lo que no mueve ni un
+// número de los que ya tiene.
+function _entradaSeQueda(f, ruta){
+  if(esCalceDirecto(f, ruta)) return true;          // en calce no se convierte, por definición
+  return !!(f && f.entraQueda && _puedeQuedarse(ruta));
+}
+// Sólo donde la pregunta significa algo: lo que entra son REALES y lo que sale
+// son bolívares. En una vuelta lo que entra ya crea su lote desde siempre, y
+// una pregunta que sale donde no decide nada deja de leerse (ARREGLO 99).
+function _puedeQuedarse(ruta){
+  return !!(ruta && ruta.orig==="BRL" && (ruta.dest||"VES")==="VES");
+}
+// La misma pregunta, del lado de una remesa YA guardada: lo lee el borrado
+// para saber si tiene lotes de compra que devolver. Escrita aparte del de
+// arriba, un día guardar y borrar no harían lo mismo y la cuenta quedaría
+// inflada sin decirlo (es lo que ya obligó a _restaurarVentasFIFO, ARREGLO 97).
+function _remesaEntradaQueda(r){
+  return !!(r && (r.metodo==="calce" || r.entraQueda));
+}
 // Cambiar de metodo no puede dejar puesto lo del otro: una tasa de compra
 // escrita a mano en P2P no significa nada en calce, y la permuta no significa
 // nada en P2P. Dejarlas se lee como que siguen mandando.
@@ -7426,11 +7467,16 @@ function rTraspasos(){
 // para saber QUÉ lotes, y consumirInventarioFIFO para aplicarlo— porque dos
 // maneras de consumir el FIFO se separan con el primer cambio (ARREGLO 97).
 // El simulador va ANTES: después vería los lotes ya consumidos.
-function consumirLotesVES(cuentaId, monto){
+// ARREGLO 167: la misma función para los dos lados. Antes sólo sabía de
+// bolívares, así que la compra de USDT pagada en REALES no gastaba nada y el
+// lote seguía diciendo que esos reales estaban ahí. Escribir una segunda
+// copia para BRL es lo que ya costó cuatro veces (ARREGLOS 101, 119, 150, 153).
+function consumirLotesMon(mon, cuentaId, monto){
   var m=parseFloat(monto)||0;
   if(!(m>0.01)) return null;
-  var sim=simularConsumoFIFO(null,0,"VES",m,null,cuentaId||null);
-  consumirInventarioFIFO(null,0,"VES",m,null,cuentaId||null);
+  var _mon=mon||"VES";
+  var sim=simularConsumoFIFO(null,0,_mon,m,null,cuentaId||null);
+  consumirInventarioFIFO(null,0,_mon,m,null,cuentaId||null);
   var usado=(sim.ventas||[]).reduce(function(s,v){return s+(parseFloat(v.bs)||0);},0);
   usado=Math.round(usado*100)/100;
   // Lo que no sale de ningún lote NO se inventa: se dice. Es el mismo criterio
@@ -7442,11 +7488,11 @@ function consumirLotesVES(cuentaId, monto){
 // levantando su marca de borrado (ARREGLO 137). Escrita una vez: si el
 // guardado y el borrado tuvieran cada uno la suya, un día devolverían
 // cantidades distintas y la cuenta se quedaría inflada sin decirlo.
-function devolverLotesVES(reg, monto){
+function devolverLotesMon(reg, mon, monto){
   if(!reg) return;
   var m=parseFloat(monto)||0;
   if(!(m>0.01)) return;
-  _restaurarVentasFIFO(reg, "VES", m);
+  _restaurarVentasFIFO(reg, mon||"VES", m);
 }
 function saveTraspaso(){
   var f=S.nTraspaso;
@@ -7475,8 +7521,11 @@ function saveTraspaso(){
   // ARREGLO 161: estos bolívares salen del banco, así que salen del lote. Lo
   // consumido se guarda DENTRO del traspaso, como ya hace una remesa, para que
   // al borrarlo vuelva al lote que de verdad se gastó y no a otro.
-  if(cO.moneda==="VES"){
-    var _cl=consumirLotesVES(cO.id, monto);
+  // ARREGLO 167: y lo mismo si sale de una cuenta en reales. Un traspaso que
+  // saca reales de la cuenta los saca de verdad; sin esto el lote seguiría
+  // diciendo que están ahí, y de esos lotes salen las tasas que la app sugiere.
+  if(cO.moneda==="VES" || cO.moneda==="BRL"){
+    var _cl=consumirLotesMon(cO.moneda, cO.id, monto);
     if(_cl){
       _tr._lotesConsumidos={ventas:_cl.ventas};
       if(_cl.sinLote>0.01) _tr._bsSinLote=_cl.sinLote;
@@ -7577,8 +7626,9 @@ function tasaDeReferencia(moneda){
     for(var i=0;i<(arr||[]).length;i++){
       var l=arr[i];
       if(l.moneda!==moneda || !((parseFloat(l.usdt)||0)>0)) continue;
-      // ARREGLO 106: un lote de permuta no es una operacion de USDT.
-      if(l.permuta) continue;
+      // ARREGLO 106 y 167: un lote que no salió de Binance no es una
+      // operación de USDT, y la puerta es una sola.
+      if(!_loteEsOpUSDT(l)) continue;
       var f=_isoDeLote(l), id=parseFloat(l.id)||0;
       if(!u || f>uF || (f===uF && id>=uId)){ u=l; uF=f; uId=id; }
     }
@@ -9513,7 +9563,7 @@ function _entregasParaFIFO(entregas, cuentaDest, cant){
 }
 // El USDT se consume UNA vez: depende de la cuenta de ENTRADA, no de por dónde
 // se pagó. Partirlo por fila lo consumiría tantas veces como cuentas haya.
-function consumirFIFORemesa(monOrig, uc, monDest, cant, ctaOrig, ctaDest, entregas, calce){
+function consumirFIFORemesa(monOrig, uc, monDest, cant, ctaOrig, ctaDest, entregas, seQueda){
   // ARREGLO 106: en calce directo no se compro USDT, asi que no hay lote de
   // compra que gastar. La moneda que ENTRA crea su lote (crearLoteRecibido)
   // en vez de consumir uno. Consumirlo igual se comeria lotes de compra que
@@ -9522,13 +9572,17 @@ function consumirFIFORemesa(monOrig, uc, monDest, cant, ctaOrig, ctaDest, entreg
   //
   // El lado que SALE no cambia: esos bolivares (o reales) si estaban, y si
   // tienen su lote con su costo.
-  if(!calce) consumirInventarioFIFO(monOrig, uc, monDest, 0, ctaOrig, ctaDest);
+  // ARREGLO 167: y lo mismo cuando los reales se quedan en la cuenta. Es la
+  // MISMA bandera que decide si nace el lote, así que las dos cosas no se
+  // pueden dar a la vez: o se convirtió (consume compra) o se quedó (crea
+  // lote). Con una bandera por sitio, ese dinero se contaría dos veces.
+  if(!seQueda) consumirInventarioFIFO(monOrig, uc, monDest, 0, ctaOrig, ctaDest);
   _entregasParaFIFO(entregas, ctaDest, cant).forEach(function(p){
     consumirInventarioFIFO(monOrig, 0, monDest, p.monto, ctaOrig, p.cuentaId);
   });
 }
-function simularFIFORemesa(monOrig, uc, monDest, cant, ctaOrig, ctaDest, entregas, calce){
-  var r=calce?{compras:[]}:simularConsumoFIFO(monOrig, uc, monDest, 0, ctaOrig, ctaDest);
+function simularFIFORemesa(monOrig, uc, monDest, cant, ctaOrig, ctaDest, entregas, seQueda){
+  var r=seQueda?{compras:[]}:simularConsumoFIFO(monOrig, uc, monDest, 0, ctaOrig, ctaDest);
   var out={compras:r.compras||[], ventas:[]};
   _entregasParaFIFO(entregas, ctaDest, cant).forEach(function(p){
     var s=simularConsumoFIFO(monOrig, 0, monDest, p.monto, ctaOrig, p.cuentaId);
@@ -9835,6 +9889,9 @@ function saveTx(){
 
   var ruta=getRutas().find(function(r){return r.rt===f.rt;})||getRutas()[0];
   var _calceTx=esCalceDirecto(f, ruta);
+  // ARREGLO 167: el calce es un caso de "lo que entra se queda"; el otro lo
+  // marca ella en el selector de la ida. De aquí para abajo manda ésta.
+  var _quedaTx=_entradaSeQueda(f, ruta);
   // ARREGLO 44: con varias formas de pago, la PRIMERA cuenta de verdad manda:
   // es la que decide de qué lote sale la tasa y la que queda guardada en la
   // remesa como cuentaBanco. Se fija aquí y no solo en la pantalla, para que no
@@ -9993,11 +10050,11 @@ function saveTx(){
   //    del día, después las remesas—, así que una remesa que no encuentra lote
   //    casi siempre significa que falta registrar una compra o una venta.
   var _simPrev=simularFIFORemesa(ruta.orig,res.uc,ruta.dest==="VES"?"VES":ruta.dest,
-                                 res.cant,f.cuentaBanco,f.cuentaDest,_entregas,_calceTx);
+                                 res.cant,f.cuentaBanco,f.cuentaDest,_entregas,_quedaTx);
   var _sum=function(a,k){return a.reduce(function(t,x){return t+(parseFloat(x[k])||0);},0);};
   // En calce no se consume ese lado, asi que "falta todo" seria el aviso de
   // siempre en todas las remesas — y un aviso que sale siempre deja de leerse.
-  var _faltaU=_calceTx?0:Math.round(((parseFloat(res.uc)||0)-_sum(_simPrev.compras,"usdt"))*10000)/10000;
+  var _faltaU=_quedaTx?0:Math.round(((parseFloat(res.uc)||0)-_sum(_simPrev.compras,"usdt"))*10000)/10000;
   var _faltaB=Math.round(((parseFloat(res.cant)||0)-_sum(_simPrev.ventas,"bs"))*100)/100;
   if(_faltaU>0.0001 || _faltaB>0.01){
     var _av="⚠️ No hay saldo suficiente en el inventario FIFO:\n\n";
@@ -10015,16 +10072,20 @@ function saveTx(){
   // ARREGLO 106: el metodo viaja CON la remesa. El borrado decide con el si
   // devuelve lotes de compra o no, y deducirlo despues seria imposible.
   if(_calceTx){ nuevaRemesa.metodo="calce"; nuevaRemesa.permuta=parseFloat(f.permuta)||0; }
+  // ARREGLO 167: y esto también viaja con ella. El borrado decide con esta
+  // marca si devuelve lotes de compra, y deducirlo después sería imposible:
+  // el lote que creó ya no estaría para contarlo.
+  if(_quedaTx && !_calceTx) nuevaRemesa.entraQueda=true;
   if(_pagos) nuevaRemesa.pagos=_pagos;   // el desglose, para verlo y para revertirlo
   if(_entregas) nuevaRemesa.entregas=_entregas;   // ARREGLO 97: de qué cuentas salió
   arr.push(nuevaRemesa);
   arr.sort(function(a,b){var da=a.d.split("/"),db=b.d.split("/");return (parseInt(da[1])*100+parseInt(da[0]))-(parseInt(db[1])*100+parseInt(db[0]))||a.n-b.n;});
   registrarMovimientoCapital({fecha:ds(f.date),rutaOrig:ruta.orig,rutaDest:ruta.dest,amOrigen:res.am,amDestino:res.cant,concepto:f.cl+" · "+f.rt,remesaId:nn});
   // Capturar desglose de lotes ANTES de consumir (solo lectura)
-  var _lotesSnap = simularFIFORemesa(ruta.orig, res.uc, ruta.dest==="VES"?"VES":ruta.dest, res.cant, f.cuentaBanco, f.cuentaDest, _entregas, _calceTx);
+  var _lotesSnap = simularFIFORemesa(ruta.orig, res.uc, ruta.dest==="VES"?"VES":ruta.dest, res.cant, f.cuentaBanco, f.cuentaDest, _entregas, _quedaTx);
   if(_lotesSnap.compras.length||_lotesSnap.ventas.length) nuevaRemesa._lotesConsumidos=_lotesSnap;
   // Consumir inventario FIFO (más viejo primero): USDT comprados y bolívares de ventas
-  consumirFIFORemesa(ruta.orig,res.uc,ruta.dest==="VES"?"VES":ruta.dest,res.cant,f.cuentaBanco,f.cuentaDest,_entregas,_calceTx);
+  consumirFIFORemesa(ruta.orig,res.uc,ruta.dest==="VES"?"VES":ruta.dest,res.cant,f.cuentaBanco,f.cuentaDest,_entregas,_quedaTx);
   // Los BOLÍVARES que entran y se quedan en la cuenta crean su propio lote, con
   // lo que la app dijo que valen (ver crearLoteRecibido). Solo bolívares: los
   // reales que entran se convierten en USDT y esa compra se registra aparte.
@@ -10032,8 +10093,9 @@ function saveTx(){
   // día que se cobre, igual que el saldo de la cuenta.
   // ARREGLO 106: en calce tambien nace el lote cuando lo que entra son REALES
   // —no se convierten en USDT, se quedan— y es el que pagara la vuelta.
-  if((ruta.orig==="VES" || _calceTx) && !f.pendiente){
-    crearLoteRecibido(ruta.orig, res.am, res.uc, f.cuentaBanco||"", ds(f.date), nuevaRemesa._uid, f.hora, _calceTx);
+  // ARREGLO 167: y también cuando ella marcó que esos reales se quedan.
+  if((ruta.orig==="VES" || _quedaTx) && !f.pendiente){
+    crearLoteRecibido(ruta.orig, res.am, res.uc, f.cuentaBanco||"", ds(f.date), nuevaRemesa._uid, f.hora, _quedaTx, _calceTx);
   }
   // ARREGLO 44: la parte que el cliente queda debiendo. Va a Cuentas por Cobrar
   // porque es de la misma naturaleza que una remesa pendiente — dinero de una
@@ -10061,6 +10123,7 @@ function saveTx(){
       cuentaDest:f.cuentaDest||"",
       usdtValor:Math.round((res.uc*(res.am>0?_debe/res.am:0))*10000)/10000,
       metodo:_calceTx?"calce":"",   // ARREGLO 106: para que el lote nazca al cobrar
+      entraQueda:(_quedaTx&&!_calceTx)||undefined,  // ARREGLO 167, por lo mismo
       parcial:true                    // no es la remesa entera, solo lo que le fio
     });
   }
@@ -10088,7 +10151,8 @@ function saveTx(){
       // es "uc", no "uv"). Se guarda aquí para que el lote que nazca al cobrar
       // lleve el valor del día en que se pactó, no el del día del pago.
       usdtValor:res.uc,
-      metodo:_calceTx?"calce":""   // ARREGLO 106: para que el lote nazca al cobrar
+      metodo:_calceTx?"calce":"",   // ARREGLO 106: para que el lote nazca al cobrar
+      entraQueda:(_quedaTx&&!_calceTx)||undefined   // ARREGLO 167, por lo mismo
     });
   }
   // Actualizar saldos y guardar movimientos exactos en la remesa para reversion precisa
@@ -10152,7 +10216,7 @@ function saveTx(){
     // y el consumo de lote no entra en el pr de esta remesa. Hay prueba de que
     // la ganancia sale idéntica antes y después de este arreglo.
     if(cDstB){
-      var _clc=consumirLotesVES(cDstB.id, comVes);
+      var _clc=consumirLotesMon("VES", cDstB.id, comVes);
       if(_clc && _clc.ventas.length){
         nuevaRemesa._lotesConsumidos=nuevaRemesa._lotesConsumidos||{compras:[],ventas:[]};
         nuevaRemesa._lotesConsumidos.ventas=(nuevaRemesa._lotesConsumidos.ventas||[]).concat(_clc.ventas);
@@ -10176,6 +10240,10 @@ function saveTx(){
     cuentaDest:"",
     pagosMulti:false,
     entregasMulti:false,
+    // ARREGLO 167: la siguiente remesa vuelve a lo de siempre. Dejarlo puesto
+    // haría que una ida marcada "se quedan" contagiara a la de después sin que
+    // nada lo diga — y esa decide si nace un lote o se gasta uno de compra.
+    entraQueda:false,
     entregas:[],
     pagos:[],
     pais:f.pais,
@@ -14495,8 +14563,27 @@ function saveIU(){
     var _loteCompra=S.inventarioUsdt[S.inventarioUsdt.length-1];
     _loteCompra.origenBs=(f.moneda==="VES")?((f.origenBs==="personal")?"personal":"empresa"):"";
     if(f.moneda==="VES" && _loteCompra.origenBs==="empresa"){
-      var _clb=consumirLotesVES(f.cuentaOrigenId, mo);
+      var _clb=consumirLotesMon("VES", f.cuentaOrigenId, mo);
       if(_clb && _clb.ventas.length) _loteCompra._lotesConsumidos={ventas:_clb.ventas};
+    }
+    // ── ARREGLO 167 · y comprar USDT con REALES gasta el lote de reales ──
+    //
+    // Es la otra mitad del selector de la ida, y sin ella "se quedan en la
+    // cuenta" sería un callejón: el lote nacería y no lo gastaría nadie, así
+    // que el inventario de reales crecería solo. Sus palabras: "si marco que
+    // se quedan y días después compro USDT con esos reales, la compra tiene
+    // que consumir ese lote".
+    //
+    // Aquí NO se pregunta de dónde salen, a diferencia de los bolívares: los
+    // aportes suyos del ARREGLO 146 entran en bolívares (su sueldo del otro
+    // trabajo), no en reales. Si algún día mete reales propios, esto es lo
+    // primero que hay que volver a mirar.
+    //
+    // Si no hay lote detrás no pasa nada: consumirLotesMon devuelve lo que no
+    // encontró y no se inventa ninguno.
+    if(f.moneda==="BRL"){
+      var _clr=consumirLotesMon("BRL", f.cuentaOrigenId, mo);
+      if(_clr && _clr.ventas.length) _loteCompra._lotesConsumidos={ventas:_clr.ventas};
     }
     // USDT sube en la cuenta destino (Binance) — se acredita el neto real
     if(cuentaAfectada){
@@ -19235,6 +19322,13 @@ function reqDel(arr,id,field){
   var fn=function(){
     // ── Revertir saldos según el tipo de array ──────────────────────
     if(arr==="brl"||arr==="vzla"||arr==="eeuu"){
+      // ARREGLO 167: el lote que dejó esta remesa se va con ella —ese dinero
+      // deja de existir— pero si otra operación YA se lo gastó, eso no se
+      // puede deshacer limpiamente: la compra o la vuelta que lo consumió
+      // seguiría ahí, apuntando a un lote que ya no está. No se impide (la
+      // remesa puede estar mal registrada y hay que poder borrarla), se DICE,
+      // con los números delante, que es la regla de toda la app.
+      if(!_avisarLoteGastado(item)) return;
       revertirSaldosRemesa(arr, item);
       // Quitar también la copia en tiempo real (live_ops) para que no
       // reaparezca en otro dispositivo que esté escuchando ese canal.
@@ -19538,7 +19632,11 @@ function _loteDelEspejo(v, tipo, moneda){
   return cand[0]||null;
 }
 function _restaurarComprasFIFO(r, monOrig, uc){
-  if(!(uc>0) || r.metodo==="calce") return;
+  // ARREGLO 167: y tampoco devuelve cuando la entrada se quedó en la cuenta.
+  // Esa remesa no consumió ningún lote de compra, así que devolverle "uc" a
+  // los de otra operación les regala saldo que nunca gastaron — y de ahí salen
+  // las tasas que la app sugiere. Es el ARREGLO 106 con la regla ampliada.
+  if(!(uc>0) || _remesaEntradaQueda(r)) return;
   var resto=uc;
   ((r._lotesConsumidos||{}).compras||[]).forEach(function(v){
     if(resto<=0.0001) return;
@@ -19693,7 +19791,7 @@ function revertirSaldosInventario(r){
     // vuelve. Una compra marcada "personal" no consumió nada, así que aquí
     // tampoco devuelve nada — devolverle saldo a un lote que no gastó le
     // regala bolívares, y de esos lotes salen las tasas que la app sugiere.
-    if((r.moneda||"")==="VES" && r._lotesConsumidos) devolverLotesVES(r, mo);
+    if(r._lotesConsumidos) devolverLotesMon(r, r.moneda||"VES", mo);
   } else {
     // Venta: USDT había bajado → devolver; VES había subido → restar
     adjId(r.cuentaId, +usdt);            // USDT devuelve
@@ -19724,7 +19822,7 @@ function revertirSaldosTraspaso(t){
   adjId(t.cuentaOrigen||t.origen, +monto);
   adjId(t.cuentaDestino||t.destino, -montoDest);
   // Y lo que este traspaso se llevó del inventario, vuelve a su lote.
-  if((t.moneda||"")==="VES") devolverLotesVES(t, monto);
+  devolverLotesMon(t, t.moneda||"VES", monto);
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -20634,9 +20732,11 @@ function _htmlDeDondeSalen(res, ruta){
     // `permuta:true`, que en sus 174 lotes de VES es 1 de los 24 que nacieron
     // de una remesa: los otros 23 salían sin distintivo, igual que una venta de
     // USDT. Y eso es justo lo que ella tenía que ir a mirar a Inventario.
+    // ARREGLO 167: y CUÁL remesa los dejó. "te pagaron estos R$" no dice cuál
+    // de las de esa semana, que es justo lo que ella mira para reconocerlos.
     var de=f.prestada ? "<span style='color:var(--mal)'> · sin lote, tasa prestada</span>"
                       : "<span style='color:var(--tx4)'> · "+_escAud((f.lote&&f.lote.fecha)||"")+
-                        " · "+(_loteEsDeRemesa(f.lote)?"te pagaron estos "+uni:"venta de USDT")+"</span>";
+                        " · "+(_loteEsDeRemesa(f.lote)?("te pagaron estos "+uni+_deQuienLote(f.lote)):"venta de USDT")+"</span>";
     return "<div style='display:flex;justify-content:space-between;gap:8px;padding:3px 0;font-size:11.5px'>"+
       "<span style='color:var(--tx2)'><b>"+f0(f.usa)+"</b> "+uni+de+"</span>"+
       "<span style='color:var(--tx3);white-space:nowrap'>"+f2(f.tasa)+" "+uni+"/USDT"+
@@ -21414,7 +21514,7 @@ function toggleLotes(n,tipo){
 //
 // El lote va marcado como "Remesa" para que se distinga de una compra o venta de
 // USDT de verdad: el inventario es de USDT, y esto no lo es.
-function crearLoteRecibido(moneda, monto, usdtValor, cuentaDestinoId, fecha, refUid, hora, calce){
+function crearLoteRecibido(moneda, monto, usdtValor, cuentaDestinoId, fecha, refUid, hora, seQueda, calce){
   // SOLO bolívares. El inventario es de compra y venta de USDT; lo único que se
   // acordó meter aquí que no lo sea son los bolívares que entran por una remesa
   // y se quedan parados en la cuenta, para saber a qué valor se gastan después.
@@ -21429,7 +21529,11 @@ function crearLoteRecibido(moneda, monto, usdtValor, cuentaDestinoId, fecha, ref
   // sentido contrario. Ahi el lote es real y hace falta: sin el, esos reales
   // se gastarian despues sin saber a que valor entraron. Fuera del calce la
   // regla de arriba sigue intacta.
-  if(moneda!=="VES" && !(calce && moneda==="BRL")) return null;
+  // ARREGLO 167: la condición ya no es "es calce", es "ese dinero se queda".
+  // El calce es un caso de eso —ahí no se convierte por definición— y el otro
+  // lo dice ella con el selector de la ida. Las dos entran por aquí, así que
+  // no hay dos reglas que se puedan separar.
+  if(moneda!=="VES" && !(seQueda && moneda==="BRL")) return null;
   var m = Math.round((parseFloat(monto)||0)*100)/100;
   if(m<=0) return null;
   // Sin cuenta no se puede emparejar: el consumo FIFO filtra por cuentaDestinoId
@@ -21479,23 +21583,79 @@ function _loteAlCobrar(c, montoEntrado, cuentaDestinoId){
   // en calce puede ser en reales. Reproducido antes de arreglarlo: se cobraban
   // los 1.000 R$ y el lote no nacia, asi que esos reales se gastaban despues
   // sin saber a que valor habian entrado.
-  if(c.moneda!=="VES" && c.metodo!=="calce") return null;   // si no, solo los bolívares (ver crearLoteRecibido)
+  // ARREGLO 167: lo mismo para la ida cuyos reales se quedan. Sin esto, una
+  // remesa marcada "se quedan" y fiada no dejaría lote nunca: ni al guardarse
+  // (el dinero no entró) ni al cobrarse (esta puerta lo rechazaba).
+  var _queda=(c.metodo==="calce" || c.entraQueda);
+  if(c.moneda!=="VES" && !_queda) return null;   // si no, solo los bolívares (ver crearLoteRecibido)
   var total=parseFloat(c.monto)||0;
   var valor=parseFloat(c.usdtValor)||0;
   if(valor<=0) return null;          // cobro viejo, sin valor guardado
   var parte=total>0 ? (montoEntrado/total) : 1;
   // El cobro entra HOY, así que su hora es la de ahora: _horaDe("") la pone.
   return crearLoteRecibido(c.moneda, montoEntrado, valor*parte,
-                           cuentaDestinoId, td(), c.refUid||"", "", c.metodo==="calce");
+                           cuentaDestinoId, td(), c.refUid||"", "", _queda, c.metodo==="calce");
+}
+// ¿Queda algo por gastar del lote que dejó esta remesa? Lo leen el aviso de
+// borrado y nadie más. Devuelve null si no dejó lote, que es el caso normal.
+function _loteDeRemesaGastado(refUid){
+  if(!refUid) return null;
+  var l=(S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[])
+        .find(function(r){return r.origenRemesa===refUid;});
+  if(!l) return null;
+  var cap=parseFloat(l.bs)||0, act=parseFloat(l.bsRestante)||0;
+  var gastado=Math.round((cap-act)*100)/100;
+  return (gastado>0.01) ? {lote:l, cap:cap, gastado:gastado, queda:Math.round(act*100)/100} : null;
+}
+// true = sigue adelante. Se pregunta SOLO cuando hay algo que decir: un aviso
+// que sale siempre deja de leerse (ARREGLO 99).
+function _avisarLoteGastado(item){
+  var g=_loteDeRemesaGastado(item&&item._uid);
+  if(!g) return true;
+  var mon=g.lote.moneda||"";
+  return confirm("⚠️ El dinero que entró por esta remesa YA SE GASTÓ en parte.\n\n"+
+    "Dejó un lote de "+f2(g.cap)+" "+mon+" y ya se usaron "+f2(g.gastado)+" "+mon+
+    " (quedan "+f2(g.queda)+").\n\n"+
+    "Al borrarla ese lote se va entero, así que la operación que se lo gastó "+
+    "quedará apuntando a un lote que ya no existe. Eso NO se arregla solo: "+
+    "hay que revisar el inventario después.\n\n¿Borrarla igual?");
 }
 // Quita el lote que creó una remesa. Se usa al borrarla y al pasarla a
 // pendiente: en los dos casos ese dinero no entró, así que su lote no existe.
 function quitarLoteDeRemesa(refUid){
   if(!refUid) return 0;
-  var inv=S.inventarioUsdt||[];
-  var antes=inv.length;
-  S.inventarioUsdt=inv.filter(function(r){return r.origenRemesa!==refUid;});
-  return antes-S.inventarioUsdt.length;
+  // ── ARREGLO 167 · y la marca de borrado, o el servidor lo devuelve ───────
+  //
+  // Esto filtraba el array y ya está. Reproducido en Chromium con su export,
+  // el ciclo entero (borrar → guardar → adoptar la respuesta):
+  //
+  //     recién borrado .........  el lote se va        ✅
+  //     contesta el servidor ...  REVIVE               ❌
+  //
+  // Y revive SIN la remesa que lo creó, que sí deja marca desde el ARREGLO
+  // 163: queda un lote de reales huérfano, y de esos lotes salen las tasas
+  // que la app sugiere. Es el ARREGLO 137 y el 163 por tercera vez, con otro
+  // nombre — cuando un arreglo toca algo que se sincroniza, hay que hacerle
+  // dar la vuelta al servidor.
+  //
+  // Ya estaba así en producción (v242 en adelante) para los lotes de calce;
+  // lo que hace el 167 es que pase a menudo en vez de casi nunca.
+  //
+  // Se miran las DOS listas: un lote que se gastó del todo está archivado en
+  // inventarioUsdt_cerrado, y filtrando sólo los vivos se quedaría allí para
+  // siempre (ARREGLO 127).
+  var n=0;
+  ["inventarioUsdt","inventarioUsdt_cerrado"].forEach(function(cat){
+    var arr=S[cat]||[];
+    var quedan=arr.filter(function(r){
+      if(r.origenRemesa!==refUid) return true;
+      _marcarBorradoMerge(cat, r.id);
+      n++;
+      return false;
+    });
+    S[cat]=quedan;
+  });
+  return n;
 }
 
 // Ajuste manual del restante de un lote (ej: bolívares ya gastados antes de esta versión)
@@ -21985,6 +22145,60 @@ function getTasaCompraPonderada(moneda,montoOrigen,cuentaOrigenId){
 // de partir la ganancia por lote: eso tocaría cTx(), de donde sale todo, y
 // cambiaría los números que ve hoy por un caso que nunca le ha pasado.
 function _loteEsDeRemesa(l){ return !!(l && l.origenRemesa); }
+// ── ARREGLO 167 · de QUÉ remesa salió ese lote ──────────────────────────────
+//
+// Sus palabras del 17/10: "que en De dónde salen de la VZLA→BRL se vea el lote
+// con fecha y cliente de la remesa que lo dejó".
+//
+// Va por ÍNDICE y se arma UNA vez, no se busca por lote. Con sus ~960 remesas
+// y los lotes de una pantalla, preguntarlo lote por lote son decenas de miles
+// de comparaciones en cada repintado — el mismo coste que ya hubo que quitar
+// de getRateToUsdt() (280 ms por dibujo) y que obligó al índice del ARREGLO
+// 126. El índice se tira cuando cambia el número de remesas, que es lo único
+// que puede añadir un origen nuevo.
+var _IDX_REM=null, _IDX_REM_N=-1;
+function _indiceRemesas(){
+  var n=(S.brl||[]).length+(S.vzla||[]).length+(S.eeuu||[]).length;
+  if(_IDX_REM && _IDX_REM_N===n) return _IDX_REM;
+  var m={};
+  [S.brl,S.vzla,S.eeuu].forEach(function(arr){
+    (arr||[]).forEach(function(r){ if(r&&r._uid) m[r._uid]=r; });
+  });
+  _IDX_REM=m; _IDX_REM_N=n;
+  return m;
+}
+// Sin remesa detrás no se escribe nada: un "· —" al final de la fila es ruido,
+// y además pasa de verdad (la remesa se borró y el lote quedó vivo).
+function _deQuienLote(l){
+  if(!l || !l.origenRemesa) return "";
+  var r=_indiceRemesas()[l.origenRemesa];
+  if(!r) return "";
+  var cl=String(r.cl||"").trim();
+  return " · #"+(r.n||"")+(cl?" "+_escAud(cl.length>22?cl.slice(0,22)+"…":cl):"");
+}
+// ── ARREGLO 167 · qué lote puede ser "la última operación de USDT" ──────────
+//
+// tasaDeReferencia() toma la última operación de esa moneda, y de ahí sale el
+// valor de TODO el dinero parado y el suelo con el que ella publica. Así que
+// aquí sólo entra lo que de verdad pasó por Binance.
+//
+// Un lote de PERMUTA ya estaba fuera (ARREGLO 106): su tasa sale de un cruce
+// BRL/VES, no de una compra ni de una venta.
+//
+// Y ahora también el lote de REALES que deja una ida. Su tasa es derivada
+// —am/uc, o sea lo que la app dijo que valían esos reales— y en BRL eso
+// compite con las COMPRAS, que son la referencia de verdad de esa moneda:
+// un lote de venta en reales con tasa ~5,1 pasa los límites y le ganaría a la
+// compra más reciente sólo por ser más nuevo. Entonces la tasa que valora su
+// capital en reales saldría de las remesas en vez de Binance.
+//
+// En VES NO cambia nada, a propósito: allí el lote de venta ES la
+// contrapartida natural (vende USDT por bolívares) y lleva tiempo contando.
+function _loteEsOpUSDT(l){
+  if(!l || l.permuta) return false;
+  if(l.moneda==="BRL" && l.tipo==="venta" && _loteEsDeRemesa(l)) return false;
+  return true;
+}
 // De dónde sale el dinero que se va a entregar, en UN solo recorrido. Lo leen
 // el método que se marca solo y la línea que lo explica: calculado aparte, un
 // día la app marcaría "calce" con la línea de debajo diciendo que salen de una
@@ -22366,6 +22580,57 @@ function _chapaTab(t){
     if(p>0) return " <span style='background:var(--am3);color:var(--sobre-color);font-size:10px;font-weight:800;padding:1px 6px;border-radius:10px;margin-left:4px'>"+p+"</span>";
   }
   return "";
+}
+// ── ARREGLO 167 · el selector de la ida ────────────────────────────────────
+//
+// Dos botones y una línea que dice qué hace cada uno. Por omisión "los
+// convierto", que es lo de siempre y lo que no mueve ni un número.
+//
+// Sale SOLO donde decide algo (_puedeQuedarse) y NO en calce: ahí los reales
+// se quedan por definición y una pregunta cuya respuesta ya está decidida
+// enseña a no leer las preguntas (ARREGLO 99).
+function _htmlEntraQueda(ruta){
+  if(!_puedeQuedarse(ruta)) return "";
+  if(esCalceDirecto(S.tx, ruta)) return "";
+  // El contenedor lleva el id y el contenido va aparte: al pulsar se rehace
+  // SOLO lo de dentro. Rehaciendo el contenedor desde él mismo se anidaría uno
+  // nuevo en cada toque.
+  return "<div class='fl' id='tx-queda-cont' style='grid-column:1/-1'>"+
+    _htmlEntraQuedaIn()+"</div>";
+}
+function _htmlEntraQuedaIn(){
+  var q=!!(S.tx&&S.tx.entraQueda);
+  function bot(val,txt,col){
+    var on=(val===q);
+    return "<button type='button' onclick='_setEntraQueda("+(val?"true":"false")+")' "+
+      "style='flex:1;padding:8px;border:none;border-radius:7px;font-size:12px;font-weight:700;"+
+      "cursor:pointer;font-family:inherit;background:"+(on?col:"transparent")+
+      ";color:"+(on?"var(--sobre-color)":"var(--tx3)")+"'>"+txt+"</button>";
+  }
+  return "<label>💱 Estos reales…</label>"+
+    "<div style='display:flex;background:var(--sup2f);border-radius:9px;padding:3px;gap:3px'>"+
+      bot(false,"🔁 los convierto a USDT","var(--ok)")+
+      bot(true,"🏦 se quedan en la cuenta","var(--rol-ee)")+
+    "</div>"+
+    "<div style='font-size:10.5px;color:var(--tx3);margin-top:5px;line-height:1.5'>"+
+      _pieEntraQueda(q)+"</div>";
+}
+// El texto sale de UN sitio y lo leen el dibujado y el refresco: escrito dos
+// veces, un día el botón diría una cosa y la línea de debajo otra.
+function _pieEntraQueda(q){
+  return q
+    ? "Nace un lote de reales en esa cuenta y <b>no</b> se gasta ningún lote de compra. "+
+      "Lo verás en Inventario, y la próxima 🇻🇪→🇧🇷 podrá salir de ahí."
+    : "Lo de siempre: gastan tu lote de compra de USDT y no dejan lote de reales.";
+}
+// No llama a R(): repintar rehace el formulario con el campo del monto dentro
+// y lo mata bajo el dedo (ARREGLO 32, y el 146 por este mismo camino). Se
+// refresca lo que depende del toque —los dos botones y su línea— por su id.
+function _setEntraQueda(v){
+  if(!S.tx) return;
+  S.tx.entraQueda=!!v;
+  var c=document.getElementById("tx-queda-cont");
+  if(c) c.innerHTML=_htmlEntraQuedaIn();
 }
 function _htmlLateral(ts){
   var puestas={}, out="";
@@ -30771,6 +31036,10 @@ function rNueva(){
             html+="<div class='fl' style='grid-column:1/-1'>"+_txPagosHTML(cuentasOrig,origMon)+"</div>";
           }
         }
+        // ARREGLO 167: y qué va a pasar con ese dinero. Va JUNTO a la cuenta
+        // donde entra, que es donde ella está mirando cuando lo decide — no en
+        // el bloque 3, que es el de la ganancia.
+        html+=_htmlEntraQueda(ruta);
         if(destMon!=="USDT"&&cuentasDest.length){
           // ARREGLO 97: una entrega grande no siempre cabe en un solo banco.
           // Apagado, esto es exactamente lo de siempre: una sola cuenta.

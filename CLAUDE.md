@@ -6031,3 +6031,137 @@ negativas cazadas.
 cierra solo"* escrita mientras se mide otra cosa es un fallo encontrado. Rodearlo
 para poder seguir midiendo —aquí, parando los temporizadores— lo deja escrito y
 sin arreglar.
+
+---
+
+## Los reales que se quedan dejan su lote (ARREGLO 167)
+
+Sus palabras del 17/10, registrando una VZLA→BRL de 2.143 R$ desde PAGBANK:
+*"la app no sabe de dónde salen esos reales. Salen de las remesas BRL → VZLA
+que me pagaron estos días"*. La pantalla decía *"2.143 BRL no salen de ningún
+lote · sin lote, tasa prestada"*.
+
+**La regla vieja era de otra época.** `crearLoteRecibido` sólo admitía reales
+en CALCE (ARREGLO 106), porque desde el 12/09 estaba escrito que los reales que
+entran **siempre** se convierten en USDT. Ya no: muchas veces se quedan en la
+cuenta y son los que pagan la vuelta.
+
+### El doble conteo, que lo vio ella antes de que se escribiera una línea
+
+*"Si además se crea el lote de reales, esos reales quedan contados dos veces:
+como convertidos a USDT y como disponibles en la cuenta. Hay que definir una
+sola regla."* Exacto, y la regla **ya existía** sin nombre: `consumirFIFORemesa`
+tenía `if(!calce)` para el lote de compra y `crearLoteRecibido` sólo creaba el
+lote `if(calce)`. La misma bandera, así que nunca podían darse las dos.
+
+Lo que cambia es **qué** pregunta esa bandera: antes *"¿es calce?"*, ahora
+*"¿esto se queda?"* (`_entradaSeQueda`). El calce es un caso de eso.
+
+```
+se convierte  →  consume lote de compra  ·  NO deja lote de reales   ← por omisión
+se queda      →  deja lote de reales     ·  NO consume lote de compra
+```
+
+### Y NO se adivina: lo dice ella
+
+Es el ARREGLO 162 otra vez. La app no puede saberlo al registrar la ida —la
+compra de USDT todavía no existe— así que hay un selector al lado de la cuenta
+de entrada, con *"los convierto a USDT"* marcado.
+
+**Se midió antes de elegir esto**, sobre sus 131 remesas VZLA→BRL, simulando
+que todas las idas dejaran lote y gastando los reales por donde se gastan de
+verdad (89.044 R$ en compras de USDT, 13.968 en egresos):
+
+```
+                      pr hoy    pr con lotes    diferencia
+las 131 juntas        543,68       581,32        +37,64  (+6,92%)
+por remesa                       mediana +0,20 · 99 de 131 bajo ±0,50
+reales sin lote detrás   100%          10%
+```
+
+**El +6,92% es el tope**, con todas marcadas. Con el selector sólo se mueven
+las que ella marque, y una ida sin marcar sale **idéntica** a v247 — medido.
+
+**El primer intento de esa medición dio +16% y era mentira**: acumulaba 773
+lotes desde mayo sin gastarlos nunca, así que cada vuelta comía del lote más
+viejo y `tv` subía sola. El ARREGLO 84 otra vez — *medir no vale si mides otra
+cosa*. Lo cazó que el salto de tasa (+3,6%) no cuadraba con el sesgo medido del
+lote (+0,21%).
+
+### Lo que no hay que deshacer
+
+- **El lote de reales queda FUERA de `tasaDeReferencia()`** (`_loteEsOpUSDT`,
+  la puerta única donde ya vivía la permuta). Su tasa es derivada —`am/uc`, lo
+  que la app dijo que valían— y en BRL competiría con las **compras**, que son
+  la referencia de verdad de esa moneda: un lote de venta a ~5,1 pasa los
+  límites y le ganaría a la compra más reciente sólo por ser más nuevo. Medido:
+  con el lote dentro, `refBRL` no se mueve de 5,0327. **En VES no cambia nada,
+  a propósito.**
+- **La marca viaja CON la remesa** (`entraQueda`), como el método del 106. El
+  borrado decide con ella si devuelve lotes de compra, y deducirlo después sería
+  imposible: el lote que creó ya no estaría para contarlo.
+- **La otra mitad, sin la cual "se quedan" es un callejón:** comprar USDT
+  pagando en reales **gasta** ese lote, y un traspaso desde una cuenta en reales
+  también. `consumirLotesVES` pasó a `consumirLotesMon(mon,…)` — una segunda
+  copia para BRL es el fallo de los ARREGLOS 101, 119, 150 y 153.
+  Aquí **no se pregunta de dónde salen**, a diferencia de los bolívares: los
+  aportes suyos del 146 entran en bolívares, no en reales. Si algún día mete
+  reales propios, esto es lo primero que hay que volver a mirar.
+- **Al borrar la ida, si su lote YA se gastó se avisa con los números** —no se
+  impide: la remesa puede estar mal y hay que poder borrarla. Lo que no se puede
+  es hacerlo en silencio, porque la operación que se lo gastó queda apuntando a
+  un lote que ya no existe y eso no se arregla solo.
+- **La fila de "de dónde salen" dice de QUÉ remesa vino**
+  (*"· 10/17 · te pagaron estos BRL · #824 CLIENTE PRUEBA"*), por **índice** y
+  una sola vez por dibujo: lote por lote son decenas de miles de comparaciones
+  (ARREGLO 126).
+- **El selector no llama a `R()`** (ARREGLO 32): el campo del monto está dentro
+  de lo que se repintaría. Probado tecleando de verdad — tras pulsarlo, el campo
+  sigue con su 500 y el foco dentro.
+
+### Y un fallo que ya estaba en producción desde siempre
+
+`quitarLoteDeRemesa()` filtraba el array **sin dejar marca de borrado**, así que
+el servidor devolvía el lote — y lo devolvía **sin la remesa que lo creó**, que
+sí deja marca desde el ARREGLO 163. Un lote de reales huérfano, y de esos lotes
+salen las tasas que la app sugiere. Reproducido el ciclo entero en Chromium:
+
+```
+                        v247 (producción, calce)   v248
+recién borrado                el lote se va       el lote se va
+contesta el servidor            REVIVE            no revive
+segunda vuelta                  REVIVE            no revive
+```
+
+Ahora marca por id y mira **las dos listas**: un lote gastado del todo está
+archivado, y filtrando sólo los vivos se quedaría allí para siempre (127).
+
+**La lección, y es la tercera vez con esta forma:** el 161 se midió en una
+pestaña y lo cazó ella; el 163 lo cerró en `reqDel`; y aquí estaba el mismo
+agujero en otra función que borra registros. Cuando un arreglo toca algo que se
+sincroniza, hay que hacerle dar la vuelta al servidor.
+
+### Medido con su export, el ciclo que pidió ella
+
+```
+                           lotes BRL   PAGBANK    capital   te sobran   refBRL
+0 · al abrir                  467,00      0,00   2.534,90      917,71   5,0327
+1 · ida «se quedan»           967,00    500,00   2.522,85      917,71   5,0327
+2 · vuelta (lo consume)       767,00    300,00   2.540,55      917,70   5,0327
+3 · compra USDT con reales    467,00      0,00   2.527,13      902,05   5,0847
+4 · borrada la ida            467,00   −500,00   2.522,35      902,05   5,0847
+```
+
+La vuelta marca **calce sola** (`deRemesa 200 · deVenta 0 · sinLote 0`) y la
+fila nombra la ida. La compra gasta los 300 que quedaban, exactos. Y el saldo
+−500 del paso 4 es correcto y es el aviso de cuenta en negativo haciendo su
+trabajo: se borró la entrada y se dejaron las dos salidas vivas.
+
+Una ida **sin marcar** sale idéntica en v247 y v248 —`pr` 5,7989, `uc` 99,3502,
+`tc` 5,0327, `tv` 1.010,1408, cero lotes creados, las compras devueltas
+igual—, que es lo que prueba que esto no toca lo que ya tiene. 26 pestañas,
+0 errores, 22 pruebas negativas y las 22 cazadas.
+
+**Lo que esto NO repara:** las remesas ya registradas no llevan la marca, así
+que sus reales siguen sin lote. Vale de aquí en adelante.
+
