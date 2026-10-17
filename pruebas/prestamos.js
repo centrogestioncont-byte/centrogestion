@@ -107,7 +107,7 @@ const NECESARIAS = ["_egresosHuerfanos", "moverEgresoAPersonal", "_tasaDelDiaFue
                     "capitalRealTotal", "_fraccionInteresPrestamo", "interesDentroDeApertura",
                     "_mesesDesde", "_acumuladosMes",
                     "conciliacionCapital", "getMesKeyActual", "ajustesDesdeApertura",
-                    "_tsDeUid", "_tsDeAjuste", "_deducirHoraApertura", "_isoDeDDMMAA", "_motivoDelAjuste", "_ajusteAEgreso", "_ajusteAGanExtra", "_cuentaMadre", "_cuentaOMadre", "_completarDesdeMadre", "toggleCuentaMadre",
+                    "_tsDeUid", "_tsDeAjuste", "_deducirHoraApertura", "_isoDeDDMMAA", "_motivoDelAjuste", "_ajusteAEgreso", "_ajusteAGanExtra", "_cuentaMadre", "_lotesDeCuenta", "_completarDesdeMadre", "toggleCuentaMadre",
                     "traspasosAPersonal", "egresosPersonalesDesdeCuentaPersonal", "efectoTasasDesde", "_isoDeFechaLote",
                     "aportesDesde", "_cruceUsdtPersonal", "_gananciaMeses", "_aporteVacio",
                     "_aporteSubeSaldo", "_egOperativos",
@@ -124,6 +124,8 @@ const NECESARIAS = ["_egresosHuerfanos", "moverEgresoAPersonal", "_tasaDelDiaFue
                     "_mergeObjetoPorClave", "_unirHistorial", "_unirMarcasCampos",
                     "_huellaCompleta", "_conteoRapido",
                     "crearLoteRecibido", "quitarLoteDeRemesa", "_loteAlCobrar",
+                    "_loteEsOpUSDT", "_loteEsDeRemesa", "_entradaSeQueda", "_puedeQuedarse",
+                    "_remesaEntradaQueda", "esRutaCalce", "esCalceDirecto",
                     "ordenFIFO", "normalizarInventarioFIFO", "simularConsumoFIFO", "_tasaEfectivaLote",
                     "_repartoFIFO", "getTasaVentaPonderada", "_bsPorReal", "_htmlDeDondeSalen",
                     "_claveLoteVieja", "_indiceLotesComidos", "_comieronEsteLote", "_filaComieron", "toggleComieron",
@@ -1143,14 +1145,35 @@ ok(F.crearLoteRecibido("USD", 100, 100, "zelle", "12/09", "x") === null,
    "ninguna otra moneda tampoco");
 ok(F.crearLoteRecibido("VES", 20010, 21.3563, "bdv", "12/09", "x") !== null,
    "los bolivares si, que es lo unico que se acordo");
-// ARREGLO 106: y los reales SOLO con el metodo de calce, nunca sin el.
+// ARREGLO 106 + 167: los reales crean lote cuando SE QUEDAN — en calce por
+// definicion, y fuera del calce cuando ella lo marca en el selector de la ida.
+// Sin esa bandera, la regla del 12/09 sigue intacta.
 S.inventarioUsdt = [];
-var _lcCalce = F.crearLoteRecibido("BRL", 1000, 193.5958, "pagbank", "12/09", "c1", "", true);
+var _lcCalce = F.crearLoteRecibido("BRL", 1000, 193.5958, "pagbank", "12/09", "c1", "", true, true);
 ok(_lcCalce !== null, "en calce directo los reales SI crean lote");
 ok(_lcCalce && _lcCalce.permuta === true && _lcCalce.plataforma === "Permuta",
    "marcado como permuta, para que no lo mire la tasa de referencia");
-ok(F.crearLoteRecibido("USD", 100, 100, "zelle", "12/09", "c2", "", true) === null,
-   "y ni en calce se abre a otra moneda");
+// ARREGLO 167: el mismo lote SIN calce, que es el caso nuevo. No lleva la
+// marca de permuta —no lo es— y por eso hace falta la otra puerta,
+// _loteEsOpUSDT, para que la tasa de referencia tampoco lo mire.
+S.inventarioUsdt = [];
+var _lcQueda = F.crearLoteRecibido("BRL", 1000, 193.5958, "pagbank", "12/09", "q1", "", true, false);
+ok(_lcQueda !== null, "y los reales que SE QUEDAN tambien, sin ser calce");
+ok(_lcQueda && !_lcQueda.permuta && _lcQueda.plataforma === "Remesa",
+   "ese no es permuta: es una remesa que dejo reales");
+ok(_lcQueda && _lcQueda.origenRemesa === "q1",
+   "y lleva de que remesa vino, que es lo que lo distingue de una venta");
+ok(F._loteEsOpUSDT(_lcQueda) === false,
+   "y la tasa de referencia no lo mira: su tasa es derivada, no de Binance");
+ok(F._loteEsOpUSDT({moneda:"BRL", tipo:"venta"}) === true,
+   "pero una venta de USDT por reales SI es una operacion suya");
+ok(F._loteEsOpUSDT({moneda:"VES", tipo:"venta", origenRemesa:"x"}) === true,
+   "y en VES no cambia nada, a proposito");
+S.inventarioUsdt = [];
+ok(F.crearLoteRecibido("BRL", 1000, 193.5958, "pagbank", "12/09", "n1", "", false, false) === null,
+   "sin la bandera, un lote de reales sigue siendo una venta que nunca ocurrio");
+ok(F.crearLoteRecibido("USD", 100, 100, "zelle", "12/09", "c2", "", true, true) === null,
+   "y ni quedandose se abre a otra moneda");
 S.inventarioUsdt = [];
 ok(F._loteAlCobrar({ monto:500, moneda:"BRL", usdtValor:98, refUid:"z" }, 500, "pagbank") === null,
    "y al cobrar un pendiente en reales, tampoco");
@@ -1160,12 +1183,12 @@ S.inventarioUsdt = [];
 // reales que entran tampoco se convierten en USDT (ARREGLO 106). Fuera del
 // calce la regla del 12/09 sigue intacta: un lote de reales de una remesa
 // normal es una venta que nunca ocurrio.
-ok(/if\(\(ruta\.orig==="VES" \|\| _calceTx\) && !f\.pendiente\)/.test(HTML),
-   "saveTx crea el lote con bolivares, o con reales si es calce directo");
-ok(/crearLoteRecibido\(ruta\.orig, res\.am, res\.uc, f\.cuentaBanco\|\|"", ds\(f\.date\), nuevaRemesa\._uid, f\.hora, _calceTx\)/.test(HTML),
-   "y le pasa el metodo, que es lo unico que abre la puerta a los reales");
-// La puerta se abre SOLO para BRL en calce: ni USD ni ninguna otra.
-ok(/if\(moneda!=="VES" && !\(calce && moneda==="BRL"\)\) return null;/.test(HTML),
+ok(/if\(\(ruta\.orig==="VES" \|\| _quedaTx\) && !f\.pendiente\)/.test(HTML),
+   "saveTx crea el lote con bolivares, o con reales si se quedan");
+ok(/crearLoteRecibido\(ruta\.orig, res\.am, res\.uc, f\.cuentaBanco\|\|"", ds\(f\.date\), nuevaRemesa\._uid, f\.hora, _quedaTx, _calceTx\)/.test(HTML),
+   "y le pasa la bandera, que es lo unico que abre la puerta a los reales");
+// La puerta se abre SOLO para BRL: ni USD ni ninguna otra.
+ok(/if\(moneda!=="VES" && !\(seQueda && moneda==="BRL"\)\) return null;/.test(HTML),
    "crearLoteRecibido sigue cerrado a todo lo demas");
 
 // ── La fecha del lote, y con ella el orden FIFO ─────────────────────────────
@@ -4011,8 +4034,13 @@ console.log("\nArreglo 64 · entrar con huella");
   // leyera los tabs del rol, el menu volveria a enseñar pestañas que contestan
   // "Sin acceso" al tocarlas, que es el error de la FASE B.
   const main = sinComentarios(sacarFuncion("rMain"));
-  ok(/_htmlLateral\(ts\)/.test(main) && /_htmlMenuTel\(ts\)/.test(main),
+  // (ARREGLO 166: ahora pasan por _tabsDelMenu, que quita las escondidas. Lo
+  // que esta guardia defiende sigue siendo lo mismo: que lo que entra sea "ts"
+  // —la lista ya filtrada por permisos— y nunca TABS[S.role].)
+  ok(/_htmlLateral\(_tabsDelMenu\(ts\)\)/.test(main) && /_htmlMenuTel\(_tabsDelMenu\(ts\)\)/.test(main),
      "los dos menus salen de la lista ya filtrada por permisos");
+  ok(!/_htmlLateral\(TABS|_htmlMenuTel\(TABS/.test(main),
+     "y nunca de TABS[S.role], que volveria a enseñar pestañas sin acceso");
   ok(!/_htmlLateral\(TABS/.test(main) && !/_htmlMenuTel\(TABS/.test(main),
      "y no de los tabs del rol");
 
@@ -5136,22 +5164,61 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(F._cuentaMadre("VES").id === "cMadre", "encuentra la madre de su moneda");
   ok(F._cuentaMadre("BRL") === null, "y no se inventa una donde no la hay");
   ok(F._cuentaMadre("") === null, "sin moneda, nada");
+  // ── ARREGLO 168 · primero los lotes de la cuenta que paga ─────────────
   // Un lote de la madre lo puede gastar cualquier banco: ahi esta el dinero
   // cuyo banco no se sabe. Sin esto se quedaria muerto y ensuciando las tasas.
-  ok(F._cuentaOMadre("cMadre", "cBdv", "VES"), "un lote de la madre lo gasta Banco de Venezuela");
-  ok(F._cuentaOMadre("cMadre", "cBan", "VES"), "y tambien Banesco: el banco no se sabia");
-  ok(F._cuentaOMadre("cBdv", "cBdv", "VES"), "y lo suyo lo sigue gastando cada uno");
-  ok(!F._cuentaOMadre("cBdv", "cBan", "VES"), "pero un lote de OTRO banco no: eso no cambia");
-  ok(F._cuentaOMadre("cBdv", "", "VES"), "sin cuenta se mira todo, como siempre");
-  ok(!F._cuentaOMadre("cMadre", "cBrl", "BRL"), "y la madre de VES no vale para reales");
+  // Pero DETRAS de los suyos, o el lote de la propia cuenta no se gasta nunca
+  // mientras la madre tenga algo mas viejo — y asi los puntos 2 y 3 del
+  // ARREGLO 167 no se podian ni probar.
+  const L = (cta, pool) => F._lotesDeCuenta(
+    [{ id: 1, cuentaDestinoId: "cMadre" }, { id: 2, cuentaDestinoId: "cBdv" },
+     { id: 3, cuentaDestinoId: "cBan" }],
+    cta, "VES", "cuentaDestinoId", pool).map(r => r.id);
+  ok(JSON.stringify(L("cBdv", true)) === "[2,1]",
+     "lo suyo primero y la madre detras (" + JSON.stringify(L("cBdv", true)) + ")");
+  ok(JSON.stringify(L("cBan", true)) === "[3,1]",
+     "y cada banco con el suyo, no con el del otro");
+  ok(JSON.stringify(L("cMadre", true)) === "[1]",
+     "la madre no se duplica cuando paga ella misma");
+  ok(JSON.stringify(L("", true)) === "[1,2,3]", "sin cuenta se mira todo, como siempre");
+  // El respaldo al pool es de cada sitio y no se reparte: la pantalla y los
+  // egresos caen a el cuando la cuenta no tiene nada; el CONSUMO no, o un pago
+  // se comeria los lotes de otro banco.
+  ok(JSON.stringify(L("cNueva", true)) === "[1]",
+     "una cuenta nueva gasta de la madre, que para eso esta");
+  S.cuentas = S.cuentas.filter(c => c.id !== "cMadre");
+  ok(JSON.stringify(L("cBdv", true)) === "[2]",
+     "y sin madre marcada es el filtro estricto de siempre");
+  ok(JSON.stringify(L("cNueva", true)) === "[1,2,3]",
+     "sin lotes propios ni madre, la pantalla cae al pool general");
+  ok(JSON.stringify(L("cNueva", false)) === "[]",
+     "pero el consumo no: ahi no se gasta nada, o un pago se comeria lo de otro banco");
+  montar();
 }
-// Los seis sitios que deciden que lote se consume o se devuelve tienen que
-// mirarla. Si uno se queda fuera, ese dinero se vuelve inalcanzable por ahi.
+// Los nueve sitios que deciden que lote se consume, se enseña o se devuelve
+// pasan por la misma puerta. Escrita a mano en cada uno, uno se queda fuera —
+// es el fallo de los ARREGLOS 101, 119, 150 y 153.
 {
-  const sitios = (sinComentarios(HTML).match(/_cuentaOMadre\(/g) || []).length;
-  ok(sitios >= 7, "todos los filtros de lote miran la madre (" + sitios + " usos)");
-  ok(!/filter\(function\(r\)\{return r\.cuentaDestinoId===cuentaId;\}\)/.test(sinComentarios(HTML)),
-     "no queda ningun filtro que la deje fuera");
+  const sinC = sinComentarios(HTML);
+  const sitios = (sinC.match(/_lotesDeCuenta\(/g) || []).length;
+  ok(sitios === 10, "los nueve filtros de lote pasan por la puerta unica + su definicion (" + sitios + ")");
+  ok(!/_cuentaOMadre/.test(sinC),
+     "y el filtro viejo, que mezclaba el orden, ya no existe");
+  // Lo que se ENSEÑA y lo que se DESCUENTA tienen que mirar la misma lista.
+  // Filtrando estricto aqui, los lotes de la madre quedaban fuera del descuento
+  // y se inflaban solos: medido, 129.243,72 Bs sin bajar de ningun lote.
+  [["_repartoFIFO", true], ["consumirInventarioFIFO", false],
+   ["simularConsumoFIFO", false], ["descontarFIFOEgreso", true],
+   ["restaurarFIFOEgreso", true], ["_restaurarVentasFIFO", true],
+   ["getLastTasaVenta", false]].forEach(([fn, pool]) => {
+    const t = sinComentarios(sacarFuncion(fn));
+    const re = new RegExp("_lotesDeCuenta\\([^;]*," + (pool ? "true" : "false") + "\\)");
+    ok(re.test(t), fn + " reparte por la puerta, con su respaldo de siempre");
+    ok(!/cuentaDestinoId===cuenta/.test(t), fn + " no se escribe su propio filtro");
+  });
+  // Las COMPRAS siguen estrictas, a proposito: esto va del dinero que SALE.
+  ok(/r\.cuentaOrigenId===cuentaOrigenId/.test(sinComentarios(sacarFuncion("consumirInventarioFIFO"))),
+     "las compras siguen estrictas por cuenta, que es lo de siempre");
 }
 // El banco gasta LO SUYO primero; la madre solo completa lo que falte. Asi sus
 // saldos de hoy se gastan solos y no hay que migrar nada.
@@ -7990,27 +8057,33 @@ console.log("\n— FASE 2: la cuenta madre —");
   // 3. El FIFO: lo que ENTRA no consume. Es lo que impide comerse lotes de
   //    compra de USDT que esta operacion nunca uso — y de esos lotes salen
   //    las tasas que la app sugiere (el fallo del 12/09, por el otro lado).
-  ok(/if\(!calce\) consumirInventarioFIFO\(monOrig, uc, monDest, 0, ctaOrig, ctaDest\);/.test(HTML),
+  // ARREGLO 167: la bandera pasa a ser "la entrada se queda", que incluye el
+  // calce y el caso que ella marca. Lo que se exige es lo mismo.
+  ok(/if\(!seQueda\) consumirInventarioFIFO\(monOrig, uc, monDest, 0, ctaOrig, ctaDest\);/.test(HTML),
      "en calce no se consume el lado de la moneda que entra");
-  ok(/var r=calce\?\{compras:\[\]\}:simularConsumoFIFO\(/.test(HTML),
+  ok(/var r=seQueda\?\{compras:\[\]\}:simularConsumoFIFO\(/.test(HTML),
      "y el simulador dice lo mismo que el consumo");
   // El lado que SALE se consume siempre, calce o no.
   const cf = sinCom(sacarFuncion("consumirFIFORemesa"));
   ok(/_entregasParaFIFO\(entregas, ctaDest, cant\)\.forEach/.test(cf) &&
-     !/if\(!calce\)[\s\S]*_entregasParaFIFO/.test(cf.replace(/if\(!calce\) consumirInventarioFIFO[^\n]*\n/,"")),
+     !/if\(!seQueda\)[\s\S]*_entregasParaFIFO/.test(cf.replace(/if\(!seQueda\) consumirInventarioFIFO[^\n]*\n/,"")),
      "lo que sale si consume, siempre");
 
   // 4. El lote de entrada: solo BRL y solo en calce, y marcado.
-  ok(/if\(moneda!=="VES" && !\(calce && moneda==="BRL"\)\) return null;/.test(HTML),
-     "crearLoteRecibido abre la puerta solo a los reales en calce");
+  ok(/if\(moneda!=="VES" && !\(seQueda && moneda==="BRL"\)\) return null;/.test(HTML),
+     "crearLoteRecibido abre la puerta solo a los reales que se quedan");
   ok(/lote\.permuta=true;\s*\n\s*lote\.plataforma="Permuta";/.test(HTML),
      "y lo marca, para que no lo miren las tasas");
 
   // 5. LO MAS IMPORTANTE: ese lote no puede alimentar la tasa con la que se
   //    valora TODO el dinero parado. Su tasa sale de un cruce BRL/VES, no de
   //    Binance.
-  ok(/if\(l\.permuta\) continue;/.test(sinCom(sacarFuncion("tasaDeReferencia"))),
+  // ARREGLO 167: la puerta pasa a ser _loteEsOpUSDT, que sigue dejando fuera
+  // la permuta Y ademas el lote de reales de una remesa.
+  ok(/if\(!_loteEsOpUSDT\(l\)\) continue;/.test(sinCom(sacarFuncion("tasaDeReferencia"))),
      "tasaDeReferencia no mira los lotes de permuta");
+  ok(/l\.permuta/.test(sinCom(sacarFuncion("_loteEsOpUSDT"))),
+     "y esa puerta sigue dejando la permuta fuera");
 
   // 6. Al borrar no se devuelve lo que nunca se consumio. Eran DOS caminos
   //    (con _mov y sin el) y cada uno llevaba su copia del chequeo; desde el
@@ -8021,9 +8094,13 @@ console.log("\n— FASE 2: la cuenta madre —");
   const rc = sinCom(sacarFuncion("_restaurarComprasFIFO"));
   ok((rv.match(/_restaurarComprasFIFO\(/g) || []).length === 2,
      "los dos caminos del borrado pasan por la misma funcion de compras");
-  ok(/r\.metodo==="calce"/.test(rc), "que es donde vive el chequeo del calce");
-  ok(/if\(!\(uc>0\) \|\| r\.metodo==="calce"\) return;/.test(rc),
+  ok(/_remesaEntradaQueda\(r\)/.test(rc), "que es donde vive el chequeo");
+  ok(/if\(!\(uc>0\) \|\| _remesaEntradaQueda\(r\)\) return;/.test(rc),
      "y corta antes de devolver nada");
+  // Y esa pregunta cubre los DOS casos: el calce y la marca del selector.
+  const rq = sinCom(sacarFuncion("_remesaEntradaQueda"));
+  ok(/r\.metodo==="calce"/.test(rq) && /r\.entraQueda/.test(rq),
+     "y mira el calce Y la marca de la ida, no una sola");
   ok(!/if\(uc>0\)\s*\{/.test(rv) && !/comprasTodas/.test(rv),
      "y no queda ninguna copia suelta sin guardia");
 
@@ -8032,14 +8109,14 @@ console.log("\n— FASE 2: la cuenta madre —");
   const sv = sinCom(sacarFuncion("saveTx"));
   ok(/if\(!rates\.hasRates && !_calceTx\)\{/.test(sv),
      "en calce no nacen los dos lotes en blanco de «Operación»");
-  ok(/var _faltaU=_calceTx\?0:/.test(sv),
+  ok(/var _faltaU=_quedaTx\?0:/.test(sv),
      "ni salta el aviso de «falta saldo FIFO» por el lado que no consume");
   ok(/nuevaRemesa\.metodo="calce"; nuevaRemesa\.permuta=parseFloat\(f\.permuta\)\|\|0;/.test(sv),
      "el metodo y la permuta se guardan en la remesa");
-  const nPasa = (sv.match(/_entregas,_calceTx\)|_entregas, _calceTx\)/g) || []).length;
+  const nPasa = (sv.match(/_entregas,_quedaTx\)|_entregas, _quedaTx\)/g) || []).length;
   ok(nPasa === 3, "y se pasa a la simulacion, al consumo y a la foto de lotes",
      "sale " + nPasa + " de 3");
-  ok(/crearLoteRecibido\(ruta\.orig, res\.am, res\.uc, f\.cuentaBanco\|\|"", ds\(f\.date\), nuevaRemesa\._uid, f\.hora, _calceTx\)/.test(sv),
+  ok(/crearLoteRecibido\(ruta\.orig, res\.am, res\.uc, f\.cuentaBanco\|\|"", ds\(f\.date\), nuevaRemesa\._uid, f\.hora, _quedaTx, _calceTx\)/.test(sv),
      "y al lote de entrada tambien");
 
   // 8. PENDIENTE. En calce la remesa tampoco crea lote al guardarse —el
@@ -8048,10 +8125,12 @@ console.log("\n— FASE 2: la cuenta madre —");
   //    lote no nacia, asi que esos reales se gastaban despues sin saber a que
   //    valor habian entrado.
   const lc = sinCom(sacarFuncion("_loteAlCobrar"));
-  ok(/if\(c\.moneda!=="VES" && c\.metodo!=="calce"\) return null;/.test(lc),
+  ok(/if\(c\.moneda!=="VES" && !_queda\) return null;/.test(lc),
      "al cobrar un pendiente de calce, los reales SI llevan lote");
-  ok(/c\.refUid\|\|"", "", c\.metodo==="calce"\)/.test(lc),
-     "y se le pasa el metodo a crearLoteRecibido");
+  ok(/var _queda=\(c\.metodo==="calce" \|\| c\.entraQueda\);/.test(lc),
+     "y la pregunta cubre tambien la ida marcada «se quedan» (ARREGLO 167)");
+  ok(/c\.refUid\|\|"", "", _queda, c\.metodo==="calce"\)/.test(lc),
+     "y se le pasa a crearLoteRecibido");
   // Los TRES sitios que crean la cuenta por cobrar tienen que guardarlo: uno
   // que se olvide deja ese cobro sin lote y no hay forma de saberlo despues.
   const nMet = (HTML.match(/metodo:_calceTx\?"calce":""|metodo:r\.metodo\|\|""/g) || []).length;
@@ -11796,22 +11875,22 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
 // los TRASPASOS desde una cuenta VES y la COMISION del banco.
 {
   const sinC = t => t.replace(/\/\/[^\n]*/g, "");
-  const cl = sinC(sacarFuncion("consumirLotesVES"));
+  const cl = sinC(sacarFuncion("consumirLotesMon"));
   // El simulador va ANTES de aplicar: despues veria los lotes ya consumidos y
   // el espejo diria que no se gasto nada.
   const iSim = cl.indexOf("simularConsumoFIFO("), iAp = cl.indexOf("consumirInventarioFIFO(");
   ok(iSim >= 0 && iAp >= 0 && iSim < iAp,
-     "consumirLotesVES simula ANTES de aplicar, y aplica con la funcion de siempre");
+     "consumirLotesMon simula ANTES de aplicar, y aplica con la funcion de siempre");
   ok(/sinLote:/.test(cl),
      "y dice que parte no salio de ningun lote, en vez de inventarla (ARREGLO 125)");
   // La devolucion es la MISMA de las remesas: por id, reviviendo el lote.
-  const dv = sinC(sacarFuncion("devolverLotesVES"));
+  const dv = sinC(sacarFuncion("devolverLotesMon"));
   ok(/_restaurarVentasFIFO\(/.test(dv),
-     "devolverLotesVES pasa por _restaurarVentasFIFO, no por una copia suya");
+     "devolverLotesMon pasa por _restaurarVentasFIFO, no por una copia suya");
 
   // Un traspaso desde VES consume, y guarda lo consumido DENTRO del traspaso.
   const st = sinC(sacarFuncion("saveTraspaso"));
-  ok(/cO\.moneda==="VES"/.test(st) && /consumirLotesVES\(cO\.id, monto\)/.test(st),
+  ok(/cO\.moneda==="VES" \|\| cO\.moneda==="BRL"/.test(st) && /consumirLotesMon\(cO\.moneda, cO\.id, monto\)/.test(st),
      "un traspaso desde cuenta VES descuenta su lote");
   ok(/_tr\._lotesConsumidos=\{ventas:_cl\.ventas\}/.test(st),
      "y guarda el espejo, para que al borrarlo vuelva al lote que se gasto");
@@ -11822,12 +11901,12 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
      "al revertir, el destino recibe montoDestino (con cambio de moneda no es monto)");
   ok(/adjId\(t\.cuentaDestino\|\|t\.destino, -montoDest\)/.test(rt),
      "y se le resta ESE, no el de origen — reproducido: 20.000 Bs dejaban -19.980 USDT");
-  ok(/devolverLotesVES\(t, monto\)/.test(rt),
+  ok(/devolverLotesMon\(t, t\.moneda\|\|"VES", monto\)/.test(rt),
      "y el lote vuelve con el borrado");
 
   // La comision del banco: consume lote y NO toca la ganancia.
   const tx = sinC(sacarFuncion("saveTx"));
-  ok(/consumirLotesVES\(cDstB\.id, comVes\)/.test(tx),
+  ok(/consumirLotesMon\("VES", cDstB\.id, comVes\)/.test(tx),
      "la comision del banco descuenta lote (ARREGLO 161 revierte la regla vieja)");
   ok(/nuevaRemesa\.pr=Math\.round\(\(nuevaRemesa\.pr-comUsdt\)\*10000\)\/10000/.test(tx),
      "y la ganancia sigue restandola UNA vez, en USDT, como siempre");
@@ -11855,7 +11934,7 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
      "el lote guarda de quien eran los bolivares");
   ok(/if\(f\.moneda==="VES" && _loteCompra\.origenBs==="empresa"\)/.test(iu),
      "y solo consume lotes cuando son de la EMPRESA");
-  ok(/consumirLotesVES\(f\.cuentaOrigenId, mo\)/.test(iu),
+  ok(/consumirLotesMon\("VES", f\.cuentaOrigenId, mo\)/.test(iu),
      "por la puerta unica, no con un recorrido propio");
   // Por omision, empresa: en el estado inicial y al limpiar el formulario.
   ok((HTML.match(/origenBs:"empresa"/g)||[]).length === 2,
@@ -11868,7 +11947,7 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
      "y pregunta de donde salen, con esas palabras");
   // Al borrar: devuelve solo si de verdad consumio.
   const rv = sinC(sacarFuncion("revertirSaldosInventario"));
-  ok(/\(r\.moneda\|\|""\)==="VES" && r\._lotesConsumidos/.test(rv) && /devolverLotesVES\(r, mo\)/.test(rv),
+  ok(/r\._lotesConsumidos\) devolverLotesMon\(r, r\.moneda\|\|"VES", mo\)/.test(rv),
      "al borrar la compra el lote vuelve — y solo si esa compra lo gasto");
 }
 
@@ -12075,6 +12154,228 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
   ok(/S\._verDeriva=/.test(ver), "y abrirlo o cerrarlo lo apunta en S");
   ok(/S\._verDeriva\?" ▴":" ▾"/.test(rot),
      "la flecha sale de lo mismo, o el boton diria 'abrir' con el panel abierto");
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// ARREGLO 166 · ocultar una pestaña del menu sin tocar nada mas
+//
+// Ella el 17/10: "Resumen EE.UU: no la uso. Solo ocultar el boton del menu
+// (las dos apariciones), NO borrar datos de eeuu, socios ni el codigo del
+// resumen, y que se pueda volver a mostrar facil".
+//
+// La trampa: quitarla de _GRUPOS_MENU NO la oculta. Ese array decide el
+// ORDEN, y lo que no esta en ningun grupo cae en "Mas" al final — la regla
+// que impide que una pestaña nueva se pierda. El freno va en la lista que
+// leen los DOS menus, en un solo sitio (ARREGLOS 101, 119, 150, 153).
+{
+  const sinC = t => t.replace(/\/\/[^\n]*/g, "");
+  const main = sinC(sacarFuncion("rMain"));
+  const fil  = sinC(sacarFuncion("_tabsDelMenu"));
+  const oc   = sinC(sacarFuncion("_tabsOcultasDelMenu"));
+  const tog  = sinC(sacarFuncion("_toggleTabMenu"));
+
+  // 1. Los DOS menus pasan por el filtro. Exigidos por nombre y CONTADOS: con
+  //    solo pedir que _tabsDelMenu aparezca, quitarlo de uno de los dos
+  //    pasaba con el otro puesto (ARREGLO 140).
+  ok(/_htmlLateral\(_tabsDelMenu\(ts\)\)/.test(main),
+     "la barra lateral dibuja la lista ya filtrada");
+  ok(/_htmlMenuTel\(_tabsDelMenu\(ts\)\)/.test(main),
+     "y el menu del telefono tambien");
+  const usos = (main.match(/_tabsDelMenu\(/g) || []).length;
+  ok(usos === 2, "y son exactamente los dos menus, ni uno mas (hay " + usos + ")");
+
+  // 2. La pestaña escondida NO se cae tambien de "Mas": el filtro quita el
+  //    nombre de la lista entera, no lo mueve de grupo.
+  ok(/fuera\.indexOf\(t\)<0/.test(fil),
+     "lo escondido sale de la lista, no se reordena a 'Mas'");
+
+  // 3. Y NO se filtra la lista con la que se decide si la pestaña en la que
+  //    esta sigue valiendo. Filtrada ahi, st("dash_eeuu") la abriria y el
+  //    propio dibujado la echaria de vuelta al Resumen: ocultar el boton no
+  //    puede ser cerrar la pantalla.
+  ok(/ts\.indexOf\(S\.tab\)<0\)\s*S\.tab=_primeraPestaña\(ts\)/.test(main),
+     "la pestaña actual se comprueba contra la lista SIN filtrar");
+
+  // 4. La lista de lo oculto sale de UN sitio: la leen los menus y la tarjeta
+  //    de Configuracion. En dos, un dia el menu esconderia una que la tarjeta
+  //    dice enseñar (el 34,27 contra el 34,28).
+  ok(/_tabsOcultasDelMenu\(\)/.test(fil), "el filtro lee la lista unica");
+  ok(/_tabsOcultasDelMenu\(\)/.test(HTML.replace(sacarFuncion("_tabsOcultasDelMenu"), "")),
+     "y la tarjeta de Configuracion lee la misma");
+
+  // 5. El interruptor vive en localStorage, NO en lo que se sincroniza. Una
+  //    clave nueva obligaria a tocar tambien las cuatro listas del servidor
+  //    (main.py) y una que se añada aqui y se olvide alli viaja y el servidor
+  //    la tira con un 200 y sin un solo error — ha pasado dos veces.
+  ok(/localStorage/.test(sinC(sacarFuncion("_tabEnseñadaAMano"))),
+     "la preferencia es del aparato, en localStorage");
+  ["DATA_KEYS", "_MERGE_FIELDS", "_MERGE_OBJETOS", "_MERGE_HISTORIAL"].forEach(function (lista) {
+    const txt = sacarConstante(lista);
+    ok(!/_TABS_FUERA_DEL_MENU|cg_menu_/.test(txt),
+       "no entra en " + lista + ": no se sincroniza");
+  });
+
+  // 6. Esconder no borra: la pestaña sigue teniendo su pantalla, su entrada
+  //    en PERMISO_DE_TAB y su sitio en _GRUPOS_MENU. Era el encargo entero.
+  ok(/S\.tab==="dash_eeuu"/.test(HTML), "st('dash_eeuu') sigue dibujando su pantalla");
+  ok(/dash_eeuu:"dash_eeuu"/.test(HTML), "y conserva su permiso");
+  ok(/"dash","dash_eeuu"/.test(HTML), "y su sitio en _GRUPOS_MENU, para cuando vuelva");
+
+  // 7. Solo se puede encender o apagar lo que esta en la lista del codigo: un
+  //    id cualquiera guardado en localStorage no puede esconder una pestaña.
+  ok(/_TABS_FUERA_DEL_MENU\.indexOf\(t\)<0\)\s*return/.test(tog),
+     "el interruptor solo vale para las pestañas de la lista");
+
+  // 8. La tarjeta recorre la lista del codigo, no una copia escrita a mano.
+  //    Con su propia copia, añadir una pestaña a _TABS_FUERA_DEL_MENU la
+  //    escondería sin darle dónde volver a encenderla.
+  const card = sinC(sacarFuncion("_htmlMenuOculto"));
+  ok(/_TABS_FUERA_DEL_MENU\.forEach/.test(card),
+     "la tarjeta recorre _TABS_FUERA_DEL_MENU, no una copia suya");
+  ok(!/"dash_eeuu"/.test(card),
+     "y no lleva ningun nombre de pestaña escrito dentro");
+
+  // 9. Lo que la tarjeta escribe en el HTML va escapado (ARREGLO 102).
+  ok(/_escAud\(TL\[t\]/.test(card),
+     "el nombre de la pestaña se escapa al dibujarlo");
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// ARREGLO 167 · los reales que se quedan dejan su lote
+//
+// Sus palabras del 17/10, registrando una VZLA->BRL de 2.143 R$: "la app no
+// sabe de donde salen esos reales. Salen de las remesas BRL -> VZLA que me
+// pagaron estos dias". Y la condicion que puso ella sobre el doble conteo:
+// "o la remesa crea el lote de reales y NO consume compra, o consume compra y
+// no crea lote".
+{
+  const sinC = t => t.replace(/\/\/[^\n]*/g, "");
+  const sq   = sinC(sacarFuncion("_entradaSeQueda"));
+  const pq   = sinC(sacarFuncion("_puedeQuedarse"));
+  const sv   = sinC(sacarFuncion("saveTx"));
+  const iu   = sinC(sacarFuncion("saveIU"));
+  const st   = sinC(sacarFuncion("saveTraspaso"));
+
+  // 1. UNA bandera decide las dos cosas. Es lo unico que impide el doble
+  //    conteo: con una por sitio se podrian dar las dos a la vez y esos
+  //    reales estarian contados como convertidos Y como disponibles.
+  ok(/esCalceDirecto\(f, ruta\)/.test(sq) && /f\.entraQueda/.test(sq),
+     "la bandera cubre el calce y la marca de la ida");
+  ok(/_puedeQuedarse\(ruta\)/.test(sq),
+     "y solo donde la pregunta decide algo");
+  ok(/var _quedaTx=_entradaSeQueda\(f, ruta\);/.test(sv),
+     "saveTx la calcula una vez y de ahi cuelga todo");
+  // Contadas por nombre: con solo pedir que _quedaTx aparezca, volver a poner
+  // _calceTx en uno de los sitios pasaba con los otros puestos (ARREGLO 140).
+  // Son DIEZ: la declaracion, el aviso de FIFO, la simulacion previa, la foto
+  // de lotes, el consumo, el if del lote de entrada, su llamada, la marca de
+  // la remesa y los dos cobros pendientes. Escrito el numero: si un dia hace
+  // falta uno mas, falla hasta que alguien mire si el nuevo esta del lado
+  // correcto (ARREGLO 150).
+  const nQ = (sv.match(/_quedaTx/g) || []).length;
+  ok(nQ === 10, "y se usa en los diez sitios que deciden lote y consumo",
+     "sale " + nQ + " de 10");
+
+  // 2. La pregunta sale solo en la ida de reales. En una vuelta lo que entra
+  //    ya crea lote desde siempre, y una pregunta que no decide nada deja de
+  //    leerse (ARREGLO 99).
+  ok(/ruta\.orig==="BRL"/.test(pq) && /\(ruta\.dest\|\|"VES"\)==="VES"/.test(pq),
+     "solo cuando entran reales y salen bolivares");
+  ok(F._puedeQuedarse({orig:"BRL",dest:"VES"}) === true, "la ida, si");
+  ok(F._puedeQuedarse({orig:"VES",dest:"BRL"}) === false, "la vuelta, no");
+  ok(F._puedeQuedarse({orig:"USD",dest:"VES"}) === false, "EE.UU tampoco");
+  ok(F._puedeQuedarse({orig:"BRL",dest:"COP"}) === false, "ni Colombia");
+  // Y en calce no se pregunta: ahi ya esta decidido.
+  ok(/esCalceDirecto\(S\.tx, ruta\)/.test(sinC(sacarFuncion("_htmlEntraQueda"))),
+     "en calce el selector no se dibuja");
+
+  // 3. La marca viaja CON la remesa. El borrado decide con ella si devuelve
+  //    lotes de compra, y deducirlo despues seria imposible: el lote que creo
+  //    ya no estaria para contarlo.
+  ok(/nuevaRemesa\.entraQueda=true;/.test(sv),
+     "la marca se guarda en la remesa");
+  ok(F._remesaEntradaQueda({metodo:"calce"}) === true, "el calce cuenta");
+  ok(F._remesaEntradaQueda({entraQueda:true}) === true, "y la marca tambien");
+  ok(F._remesaEntradaQueda({}) === false, "y una remesa normal no");
+
+  // 4. La otra mitad, sin la cual "se quedan" es un callejon: la compra de
+  //    USDT pagada en REALES gasta ese lote. Sus palabras: "si marco que se
+  //    quedan y dias despues compro USDT con esos reales, la compra tiene que
+  //    consumir ese lote".
+  ok(/if\(f\.moneda==="BRL"\)\{/.test(iu) &&
+     /consumirLotesMon\("BRL", f\.cuentaOrigenId, mo\)/.test(iu),
+     "comprar USDT con reales gasta el lote de reales");
+  ok(/_loteCompra\._lotesConsumidos=\{ventas:_clr\.ventas\}/.test(iu),
+     "y se apunta QUE lote gasto, para devolverlo por id al borrar");
+  // Y el traspaso que saca reales de la cuenta, igual.
+  ok(/cO\.moneda==="VES" \|\| cO\.moneda==="BRL"/.test(st),
+     "un traspaso desde una cuenta en reales tambien lo gasta");
+
+  // 5. Al borrar, el lote se va con la remesa — pero si otra operacion ya se
+  //    lo gasto, eso no se deshace limpiamente y se DICE con los numeros.
+  const av = sinC(sacarFuncion("_avisarLoteGastado"));
+  const lg = sinC(sacarFuncion("_loteDeRemesaGastado"));
+  ok(/confirm\(/.test(av), "si el lote ya se gasto, se pregunta antes de borrar");
+  ok(/if\(!g\) return true;/.test(av),
+     "y no se pregunta cuando no hay nada que decir (ARREGLO 99)");
+  ok(/inventarioUsdt_cerrado/.test(lg),
+     "mira tambien los archivados, o un lote vaciado no contaria");
+  ok(/if\(!_avisarLoteGastado\(item\)\) return;/.test(sinC(sacarFuncion("reqDel"))),
+     "y el borrado se para si ella dice que no");
+
+  // 5b. Y el borrado del lote deja MARCA, o el servidor lo devuelve. Medido en
+  //     Chromium el ciclo entero (borrar -> guardar -> adoptar la respuesta):
+  //     sin marca el lote revive, y revive SIN la remesa que lo creo, que si
+  //     deja marca desde el ARREGLO 163. Ya pasaba en produccion con los lotes
+  //     de calce; el 167 lo vuelve frecuente.
+  const ql = sinC(sacarFuncion("quitarLoteDeRemesa"));
+  ok(/_marcarBorradoMerge\(cat, r\.id\)/.test(ql),
+     "quitar el lote de una remesa deja su marca de borrado");
+  // Las DOS listas: uno gastado del todo esta archivado, y filtrando solo los
+  // vivos se quedaria alli para siempre (ARREGLO 127).
+  ok(/\["inventarioUsdt","inventarioUsdt_cerrado"\]/.test(ql),
+     "y mira tambien los archivados");
+  ["inventarioUsdt","inventarioUsdt_cerrado"].forEach(function(cat){
+    ok(sacarConstante("_PODA_CATS").indexOf('"'+cat+'"') >= 0,
+       "la poda mira "+cat+", o la marca no serviria de nada");
+  });
+
+  // 6. Ese lote NO puede alimentar la tasa con la que se valora todo el
+  //    dinero parado: su tasa es derivada (am/uc), no de Binance.
+  const op = sinC(sacarFuncion("_loteEsOpUSDT"));
+  ok(/moneda==="BRL" && l\.tipo==="venta" && _loteEsDeRemesa\(l\)/.test(op),
+     "el lote de reales de una remesa no es una operacion de USDT");
+  ok(!/moneda==="VES"/.test(op),
+     "y en VES no cambia nada, a proposito");
+
+  // 7. La fila dice de QUE remesa salio, por indice y una sola vez: lote por
+  //    lote son decenas de miles de comparaciones por dibujo (ARREGLO 126).
+  const dq = sinC(sacarFuncion("_deQuienLote"));
+  const ir = sinC(sacarFuncion("_indiceRemesas"));
+  ok(/_indiceRemesas\(\)\[l\.origenRemesa\]/.test(dq),
+     "la remesa se busca por indice, no recorriendo");
+  ok(/_IDX_REM_N===n/.test(ir), "y el indice se reusa entre dibujos");
+  ok(/if\(!r\) return "";/.test(dq),
+     "sin remesa detras no escribe nada: pasa cuando se borro");
+  ok(/_escAud\(/.test(dq), "y el nombre del cliente va escapado (ARREGLO 102)");
+  ok(/_deQuienLote\(f\.lote\)/.test(sinC(sacarFuncion("_htmlDeDondeSalen"))),
+     "y la fila de «de donde salen» lo usa");
+
+  // 8. El formulario vuelve a lo de siempre tras guardar: dejarlo puesto
+  //    contagiaria a la remesa siguiente sin que nada lo diga.
+  ok(/entraQueda:false,/.test(sv), "la siguiente remesa nace sin la marca");
+  // Y el selector no repinta la pantalla: el campo del monto esta dentro
+  // (ARREGLO 32, y el 146 por este mismo camino).
+  const se = sinC(sacarFuncion("_setEntraQueda"));
+  ok(!/\bR\(\)/.test(se), "marcarlo no llama a R()");
+  ok(/getElementById\("tx-queda-cont"\)/.test(se) && /_htmlEntraQuedaIn\(\)/.test(se),
+     "se refresca por su id, con el MISMO html que lo dibuja");
+  ok(/id='tx-queda-cont'/.test(sinC(sacarFuncion("_htmlEntraQueda"))),
+     "y ese id existe de verdad");
+  // El pie sale de un sitio: escrito dos veces, el boton diria una cosa y la
+  // linea de debajo otra.
+  ok((HTML.match(/_pieEntraQueda\(/g) || []).length === 2,
+     "el texto del pie se escribe una vez y se lee una vez");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

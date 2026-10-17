@@ -907,6 +907,48 @@ contestan "Sin acceso" al tocarlas, que es el error que arregló la FASE B.
 El corte de la barra lateral son **900px**. Por debajo queda todo exactamente
 como estaba: el teléfono no cambió.
 
+### Y esconder una pestaña NO es sacarla de `_GRUPOS_MENU` (ARREGLO 166)
+
+Sus palabras del 17/10: *"quitar del menú la pestaña 📊 Resumen EE.UU: no la uso.
+Solo ocultar el botón del menú… NO borrar datos de eeuu, socios ni el código del
+resumen. Que se pueda volver a mostrar fácil"*.
+
+**La trampa es la regla de justo arriba.** `_GRUPOS_MENU` decide el **orden**, no
+quién sale: lo que no está en ningún grupo **cae en "Más" al final**, y eso es a
+propósito, para que una pestaña nueva que se olvide de apuntarse se siga
+alcanzando. Sacar `dash_eeuu` de "Ver" la habría **movido**, no quitado.
+
+Así que el freno va en la lista que leen los **dos** menús —`_tabsDelMenu(ts)`,
+un solo sitio—, y la lista de lo escondido sale de `_tabsOcultasDelMenu()`, que
+leen el filtro **y** la tarjeta de Configuración. Escrito una vez por menú se
+separarían con el primer cambio: es el fallo de los ARREGLOS 101, 119, 150 y 153.
+
+- **Esconde el BOTÓN, no la pantalla.** `st("dash_eeuu")` la sigue dibujando,
+  conserva su permiso y su sitio en `_GRUPOS_MENU`, y no se borra ni un dato de
+  `eeuu` ni de socios.
+- **Y por eso NO se filtra la lista con la que se decide si la pestaña en la que
+  está sigue valiendo.** Filtrada ahí, `st("dash_eeuu")` la abriría y el propio
+  dibujado la echaría de vuelta al Resumen: ocultar un botón no puede ser cerrar
+  una pantalla. Hay prueba negativa para ese caso exacto.
+- **El interruptor vive en `localStorage`, como el tema**, y **no** se
+  sincroniza. Una clave nueva obligaría a tocar también las **cuatro listas del
+  servidor** (`main.py`), y una que se añada aquí y se olvide allí viaja y el
+  servidor la tira con un 200 y sin un solo error — ha pasado dos veces. Para una
+  preferencia de menú no vale ese riesgo, y además tiene sentido por aparato:
+  puede querer verla en la PC y no en el teléfono.
+- **La tarjeta recorre `_TABS_FUERA_DEL_MENU`, no una copia escrita a mano.** Con
+  su propia lista, añadir una pestaña ahí la escondería sin darle dónde volver a
+  encenderla. Y el interruptor sólo admite lo que está en esa lista: un id
+  cualquiera guardado en `localStorage` no puede esconder una pestaña.
+- **Aquí sí se llama a `R()` al pulsar** (ARREGLO 32 es para un campo bajo el
+  dedo): lo que cambia es el menú, que está fuera de esa tarjeta.
+
+Medido en Chromium con su export, a 412 y 1280 px: el botón desaparece de los
+**dos** menús y **no reaparece en "Más"** (el grupo ni se dibuja), `st("dash_eeuu")`
+sigue pintando la pantalla **idéntica** a v247, el interruptor la devuelve y la
+vuelve a esconder, y las 26 pestañas dibujan con 0 errores. 11 pruebas negativas
+y las 11 cazadas.
+
 ---
 
 ## El tema es de cada APARATO, y no lo decide el sistema operativo
@@ -5989,3 +6031,238 @@ negativas cazadas.
 cierra solo"* escrita mientras se mide otra cosa es un fallo encontrado. Rodearlo
 para poder seguir midiendo —aquí, parando los temporizadores— lo deja escrito y
 sin arreglar.
+
+---
+
+## Los reales que se quedan dejan su lote (ARREGLO 167)
+
+Sus palabras del 17/10, registrando una VZLA→BRL de 2.143 R$ desde PAGBANK:
+*"la app no sabe de dónde salen esos reales. Salen de las remesas BRL → VZLA
+que me pagaron estos días"*. La pantalla decía *"2.143 BRL no salen de ningún
+lote · sin lote, tasa prestada"*.
+
+**La regla vieja era de otra época.** `crearLoteRecibido` sólo admitía reales
+en CALCE (ARREGLO 106), porque desde el 12/09 estaba escrito que los reales que
+entran **siempre** se convierten en USDT. Ya no: muchas veces se quedan en la
+cuenta y son los que pagan la vuelta.
+
+### El doble conteo, que lo vio ella antes de que se escribiera una línea
+
+*"Si además se crea el lote de reales, esos reales quedan contados dos veces:
+como convertidos a USDT y como disponibles en la cuenta. Hay que definir una
+sola regla."* Exacto, y la regla **ya existía** sin nombre: `consumirFIFORemesa`
+tenía `if(!calce)` para el lote de compra y `crearLoteRecibido` sólo creaba el
+lote `if(calce)`. La misma bandera, así que nunca podían darse las dos.
+
+Lo que cambia es **qué** pregunta esa bandera: antes *"¿es calce?"*, ahora
+*"¿esto se queda?"* (`_entradaSeQueda`). El calce es un caso de eso.
+
+```
+se convierte  →  consume lote de compra  ·  NO deja lote de reales   ← por omisión
+se queda      →  deja lote de reales     ·  NO consume lote de compra
+```
+
+### Y NO se adivina: lo dice ella
+
+Es el ARREGLO 162 otra vez. La app no puede saberlo al registrar la ida —la
+compra de USDT todavía no existe— así que hay un selector al lado de la cuenta
+de entrada, con *"los convierto a USDT"* marcado.
+
+**Se midió antes de elegir esto**, sobre sus 131 remesas VZLA→BRL, simulando
+que todas las idas dejaran lote y gastando los reales por donde se gastan de
+verdad (89.044 R$ en compras de USDT, 13.968 en egresos):
+
+```
+                      pr hoy    pr con lotes    diferencia
+las 131 juntas        543,68       581,32        +37,64  (+6,92%)
+por remesa                       mediana +0,20 · 99 de 131 bajo ±0,50
+reales sin lote detrás   100%          10%
+```
+
+**El +6,92% es el tope**, con todas marcadas. Con el selector sólo se mueven
+las que ella marque, y una ida sin marcar sale **idéntica** a v247 — medido.
+
+**El primer intento de esa medición dio +16% y era mentira**: acumulaba 773
+lotes desde mayo sin gastarlos nunca, así que cada vuelta comía del lote más
+viejo y `tv` subía sola. El ARREGLO 84 otra vez — *medir no vale si mides otra
+cosa*. Lo cazó que el salto de tasa (+3,6%) no cuadraba con el sesgo medido del
+lote (+0,21%).
+
+### Lo que no hay que deshacer
+
+- **El lote de reales queda FUERA de `tasaDeReferencia()`** (`_loteEsOpUSDT`,
+  la puerta única donde ya vivía la permuta). Su tasa es derivada —`am/uc`, lo
+  que la app dijo que valían— y en BRL competiría con las **compras**, que son
+  la referencia de verdad de esa moneda: un lote de venta a ~5,1 pasa los
+  límites y le ganaría a la compra más reciente sólo por ser más nuevo. Medido:
+  con el lote dentro, `refBRL` no se mueve de 5,0327. **En VES no cambia nada,
+  a propósito.**
+- **La marca viaja CON la remesa** (`entraQueda`), como el método del 106. El
+  borrado decide con ella si devuelve lotes de compra, y deducirlo después sería
+  imposible: el lote que creó ya no estaría para contarlo.
+- **La otra mitad, sin la cual "se quedan" es un callejón:** comprar USDT
+  pagando en reales **gasta** ese lote, y un traspaso desde una cuenta en reales
+  también. `consumirLotesVES` pasó a `consumirLotesMon(mon,…)` — una segunda
+  copia para BRL es el fallo de los ARREGLOS 101, 119, 150 y 153.
+  Aquí **no se pregunta de dónde salen**, a diferencia de los bolívares: los
+  aportes suyos del 146 entran en bolívares, no en reales. Si algún día mete
+  reales propios, esto es lo primero que hay que volver a mirar.
+- **Al borrar la ida, si su lote YA se gastó se avisa con los números** —no se
+  impide: la remesa puede estar mal y hay que poder borrarla. Lo que no se puede
+  es hacerlo en silencio, porque la operación que se lo gastó queda apuntando a
+  un lote que ya no existe y eso no se arregla solo.
+- **La fila de "de dónde salen" dice de QUÉ remesa vino**
+  (*"· 10/17 · te pagaron estos BRL · #824 CLIENTE PRUEBA"*), por **índice** y
+  una sola vez por dibujo: lote por lote son decenas de miles de comparaciones
+  (ARREGLO 126).
+- **El selector no llama a `R()`** (ARREGLO 32): el campo del monto está dentro
+  de lo que se repintaría. Probado tecleando de verdad — tras pulsarlo, el campo
+  sigue con su 500 y el foco dentro.
+
+### Y un fallo que ya estaba en producción desde siempre
+
+`quitarLoteDeRemesa()` filtraba el array **sin dejar marca de borrado**, así que
+el servidor devolvía el lote — y lo devolvía **sin la remesa que lo creó**, que
+sí deja marca desde el ARREGLO 163. Un lote de reales huérfano, y de esos lotes
+salen las tasas que la app sugiere. Reproducido el ciclo entero en Chromium:
+
+```
+                        v247 (producción, calce)   v248
+recién borrado                el lote se va       el lote se va
+contesta el servidor            REVIVE            no revive
+segunda vuelta                  REVIVE            no revive
+```
+
+Ahora marca por id y mira **las dos listas**: un lote gastado del todo está
+archivado, y filtrando sólo los vivos se quedaría allí para siempre (127).
+
+**La lección, y es la tercera vez con esta forma:** el 161 se midió en una
+pestaña y lo cazó ella; el 163 lo cerró en `reqDel`; y aquí estaba el mismo
+agujero en otra función que borra registros. Cuando un arreglo toca algo que se
+sincroniza, hay que hacerle dar la vuelta al servidor.
+
+### Medido con su export, el ciclo que pidió ella
+
+```
+                           lotes BRL   PAGBANK    capital   te sobran   refBRL
+0 · al abrir                  467,00      0,00   2.534,90      917,71   5,0327
+1 · ida «se quedan»           967,00    500,00   2.522,85      917,71   5,0327
+2 · vuelta (lo consume)       767,00    300,00   2.540,55      917,70   5,0327
+3 · compra USDT con reales    467,00      0,00   2.527,13      902,05   5,0847
+4 · borrada la ida            467,00   −500,00   2.522,35      902,05   5,0847
+```
+
+La vuelta marca **calce sola** (`deRemesa 200 · deVenta 0 · sinLote 0`) y la
+fila nombra la ida. La compra gasta los 300 que quedaban, exactos. Y el saldo
+−500 del paso 4 es correcto y es el aviso de cuenta en negativo haciendo su
+trabajo: se borró la entrada y se dejaron las dos salidas vivas.
+
+Una ida **sin marcar** sale idéntica en v247 y v248 —`pr` 5,7989, `uc` 99,3502,
+`tc` 5,0327, `tv` 1.010,1408, cero lotes creados, las compras devueltas
+igual—, que es lo que prueba que esto no toca lo que ya tiene. 26 pestañas,
+0 errores, 22 pruebas negativas y las 22 cazadas.
+
+**Lo que esto NO repara:** las remesas ya registradas no llevan la marca, así
+que sus reales siguen sin lote. Vale de aquí en adelante.
+
+
+---
+
+## Primero los lotes de la cuenta que paga (ARREGLO 168)
+
+Sus palabras del 17/10, probando el 167 en `test`: *"los puntos 2 y 3 no se
+pueden probar: `_repartoFIFO` junta los lotes de la cuenta de pago con los de la
+cuenta madre y ordena todo por antigüedad. Así, al pagar desde PAGBANK se gastan
+primero los 5 lotes de septiembre de REALES-OPERACIONES USDT (2.281,83 R$) y el
+lote de la ida «se quedan» nunca se usa."*
+
+Tenía razón, y al medirlo salió **un segundo fallo más caro que el que señaló**.
+
+### Lo que la pantalla enseñaba y lo que de verdad se descontaba no coincidían
+
+`_repartoFIFO` metía la madre; `consumirInventarioFIFO` y `simularConsumoFIFO`
+—los que de verdad bajan el lote— filtraban **estricto por cuenta**. Reproducido
+en Chromium con su export y una madre marcada, pagando desde BANESCO:
+
+```
+            lo que la pantalla reparte   lo que se descuenta   sin bajar de ningún lote
+ 50.000 Bs           50.000,00               50.000,00                    0
+150.000 Bs          150.000,00              120.756,28               29.243,72
+250.000 Bs          250.000,00              120.756,28              129.243,72
+400.000 Bs          338.187,89              120.756,28              217.431,61
+```
+
+Y con la cuenta sin lotes propios, el pago entero: la pantalla lo cargaba a la
+madre y **no bajaba nada**. Eso es la deriva que cerraron el 161 y el 164,
+reabierta por otra puerta — y de esos lotes salen las tasas que la app sugiere.
+
+### La regla, en un solo sitio
+
+`_lotesDeCuenta(ordenados, cuentaId, moneda, campo, conPool)`: **los de la
+cuenta que paga primero, en orden FIFO, y la madre sólo si eso no alcanza.** La
+leen los **nueve** sitios que deciden qué lote se enseña, se consume o se
+devuelve. `_cuentaOMadre` se retiró: escrita a mano en nueve sitios, uno se
+queda fuera — es el fallo de los ARREGLOS 101, 119, 150 y 153.
+
+Y es la misma regla que el lado de los **saldos** ya tenía desde la FASE 2
+(`_completarDesdeMadre`: *"si al banco le alcanza, la madre no se toca"*). Lo
+que faltaba era aplicarla a los **lotes**.
+
+- **`conPool` mantiene el respaldo que cada sitio ya tenía, no lo reparte.** La
+  pantalla y los egresos caen al pool general cuando la cuenta no tiene ni lo
+  suyo ni madre; el **consumo no**, y eso no se puede cambiar: con el pool
+  puesto ahí, un pago desde una cuenta sin lotes se comería los de otro banco.
+  Hay prueba negativa para ese caso exacto.
+- **Las COMPRAS siguen estrictas por cuenta, a propósito.** Esto va del dinero
+  que SALE —los lotes de venta—. Meter la madre ahí sería una regla nueva que
+  ella no pidió, y cambiaría la valoración de las remesas. Hay guardia.
+- **Descontar y devolver tienen que ver el MISMO conjunto.** Si uno mira la
+  madre y el otro no, se devuelve a lotes que esa cuenta nunca gastó.
+
+### Qué le cambia a los bolívares: hoy, nada
+
+Es lo que pidió comprobar antes de tocarlo. Medido con su export del 16/10,
+v249 contra v250, **108 casos de reparto en todas sus cuentas de VES y BRL**:
+
+```
+casos distintos          0
+tasa de referencia VES   996,1754   igual
+tasa de referencia BRL     5,0529   igual
+capital                 2.711,65    igual
+te sobran                   6,94    igual
+utilidad de octubre        73,17    igual
+publica                186 · 206    igual
+```
+
+**Y la razón es que hoy no tiene ninguna cuenta madre marcada en VES** (ni en
+ninguna moneda, en producción). Sin madre, `_lotesDeCuenta` es el filtro
+estricto de siempre. La que hay es la de reales que creó en `test`.
+
+**El día que marque una madre en VES sí cambia**, y conviene saberlo: medido
+marcando BANCO DE VENEZUELA como madre, cambian **9 de 27** casos —los que no
+agotan los lotes— y el mayor es una ida de 150.000 Bs desde BANESCO:
+
+```
+                tasa        USDT
+antes       1.001,8264    149,7265
+ahora         996,0898    150,5888
+```
+
+La dirección no es sistemática: depende de si el lote propio es más caro o más
+barato que el de la madre. Lo que sí es sistemático es que **sale de la cuenta
+que de verdad pagó**, que es lo que el FIFO tiene que contar.
+
+### Medido con su caso de `test`
+
+Madre de reales con sus 5 lotes de septiembre y el lote de 500 que dejó una ida
+«se quedan» en PAGBANK, pagando 200 R$ desde PAGBANK:
+
+```
+                        v249                              v250
+la pantalla      REALES-OPERACIONES USDT @5,02      PAGBANK @5,0327
+el descuento     el lote de PAGBANK (otro)          el lote de PAGBANK
+el método        P2P                                🤝 calce
+cuenta sin lotes propios: sin descontar  200,00 R$            0,00
+```
+
+26 pestañas, 0 errores, 12 pruebas negativas y las 12 cazadas.
