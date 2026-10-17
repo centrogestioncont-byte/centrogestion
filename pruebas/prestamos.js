@@ -6323,9 +6323,11 @@ console.log("\n— FASE 2: la cuenta madre —");
      "hay un boton para encenderlo, al lado de la cuenta de entrega");
   ok(/entregasMulti:false/.test(H),
      "y arranca apagado: son casos esporadicos, no puede estorbar siempre");
-  // La reversion vive en un solo sitio, no en dos copias.
+  // La reversion vive en un solo sitio, no en dos copias. Desde el ARREGLO 161
+  // los dos caminos le pasan _bsADevolver(r, cant) —lo entregado mas la
+  // comision, que ahora tambien consume lote— en vez de cant a secas.
   ok((HTML.match(/function _restaurarVentasFIFO\(/g) || []).length === 1 &&
-     (HTML.match(/_restaurarVentasFIFO\(r, monDest, cant\);/g) || []).length === 2,
+     (HTML.match(/_restaurarVentasFIFO\(r, monDest, _bsADevolver\(r, cant\)\);/g) || []).length === 2,
      "la devolucion de los lotes esta escrita una vez y la usan los dos caminos del borrado");
 }
 
@@ -11783,6 +11785,59 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
   // El que SI se dibuja sigue en su sitio: rBalance() pasa por rBalancePlus().
   ok(/function rBalance\(\)\{ return rBalancePlus\(\); \}/.test(HTML),
      "y el Balance que de verdad se dibuja sigue siendo rBalancePlus");
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// ARREGLO 161 · toda salida de Bs descuenta su lote
+//
+// Medido en su export del 16/10: los lotes de VES tenian 44.668,68 Bs MAS que
+// las cuentas. De las cuatro puertas que se sospechaban, los egresos y las
+// remesas YA descontaban (descontarFIFOEgreso, consumirFIFORemesa); faltaban
+// los TRASPASOS desde una cuenta VES y la COMISION del banco.
+{
+  const sinC = t => t.replace(/\/\/[^\n]*/g, "");
+  const cl = sinC(sacarFuncion("consumirLotesVES"));
+  // El simulador va ANTES de aplicar: despues veria los lotes ya consumidos y
+  // el espejo diria que no se gasto nada.
+  const iSim = cl.indexOf("simularConsumoFIFO("), iAp = cl.indexOf("consumirInventarioFIFO(");
+  ok(iSim >= 0 && iAp >= 0 && iSim < iAp,
+     "consumirLotesVES simula ANTES de aplicar, y aplica con la funcion de siempre");
+  ok(/sinLote:/.test(cl),
+     "y dice que parte no salio de ningun lote, en vez de inventarla (ARREGLO 125)");
+  // La devolucion es la MISMA de las remesas: por id, reviviendo el lote.
+  const dv = sinC(sacarFuncion("devolverLotesVES"));
+  ok(/_restaurarVentasFIFO\(/.test(dv),
+     "devolverLotesVES pasa por _restaurarVentasFIFO, no por una copia suya");
+
+  // Un traspaso desde VES consume, y guarda lo consumido DENTRO del traspaso.
+  const st = sinC(sacarFuncion("saveTraspaso"));
+  ok(/cO\.moneda==="VES"/.test(st) && /consumirLotesVES\(cO\.id, monto\)/.test(st),
+     "un traspaso desde cuenta VES descuenta su lote");
+  ok(/_tr\._lotesConsumidos=\{ventas:_cl\.ventas\}/.test(st),
+     "y guarda el espejo, para que al borrarlo vuelva al lote que se gasto");
+
+  // El reverso: al destino entro montoDestino, no monto.
+  const rt = sinC(sacarFuncion("revertirSaldosTraspaso"));
+  ok(/montoDest=\(t\.montoDestino!==undefined/.test(rt),
+     "al revertir, el destino recibe montoDestino (con cambio de moneda no es monto)");
+  ok(/adjId\(t\.cuentaDestino\|\|t\.destino, -montoDest\)/.test(rt),
+     "y se le resta ESE, no el de origen — reproducido: 20.000 Bs dejaban -19.980 USDT");
+  ok(/devolverLotesVES\(t, monto\)/.test(rt),
+     "y el lote vuelve con el borrado");
+
+  // La comision del banco: consume lote y NO toca la ganancia.
+  const tx = sinC(sacarFuncion("saveTx"));
+  ok(/consumirLotesVES\(cDstB\.id, comVes\)/.test(tx),
+     "la comision del banco descuenta lote (ARREGLO 161 revierte la regla vieja)");
+  ok(/nuevaRemesa\.pr=Math\.round\(\(nuevaRemesa\.pr-comUsdt\)\*10000\)\/10000/.test(tx),
+     "y la ganancia sigue restandola UNA vez, en USDT, como siempre");
+  // Lo que se devuelve al borrar se calcula en UN sitio y lo usan los DOS caminos.
+  const bd = sinC(sacarFuncion("_bsADevolver"));
+  ok(/comisionBancoVes/.test(bd), "_bsADevolver suma la comision a lo que hay que devolver");
+  const rev = sinC(sacarFuncion("revertirSaldosRemesa"));
+  const nBs = (rev.match(/_restaurarVentasFIFO\(r, monDest, _bsADevolver\(r, cant\)\)/g)||[]).length;
+  ok(nBs === 2,
+     "y los DOS caminos del borrado lo usan ("+nBs+" de 2) — con _mov y sin _mov");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

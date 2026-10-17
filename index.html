@@ -3221,7 +3221,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261016_v242";
+var APP_VERSION = "20261016_v243-TEST";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -7356,6 +7356,48 @@ function rTraspasos(){
     :"");
 }
 
+// ══ ARREGLO 161 · toda salida de Bs descuenta su lote ═════════════════════
+//
+// Lo vio ella el 16/10: los lotes de VES tenían 44.668,68 Bs MÁS que las
+// cuentas. Medido en su export, y la causa no era una sino varias puertas, de
+// las que sólo una faltaba de verdad:
+//
+//   egresos (empresa, personales, compromisos, inmuebles, mercancía,
+//     préstamos dados) ...... YA descontaban, por descontarFIFOEgreso()
+//   remesas BRL→VZLA ........ YA descontaban
+//   TRASPASOS desde cuenta VES ... NO  ← esto
+//   la comisión del banco ........ NO  ← y esto, ver abajo
+//
+// Un traspaso baja el saldo de la cuenta y el lote se quedaba entero, así que
+// el inventario afirmaba tener bolívares que ya no estaban en ningún banco. Y
+// de los lotes salen las tasas que la app sugiere: no es cosmético.
+//
+// Va por la MISMA pareja de funciones que ya usan las remesas —el simulador
+// para saber QUÉ lotes, y consumirInventarioFIFO para aplicarlo— porque dos
+// maneras de consumir el FIFO se separan con el primer cambio (ARREGLO 97).
+// El simulador va ANTES: después vería los lotes ya consumidos.
+function consumirLotesVES(cuentaId, monto){
+  var m=parseFloat(monto)||0;
+  if(!(m>0.01)) return null;
+  var sim=simularConsumoFIFO(null,0,"VES",m,null,cuentaId||null);
+  consumirInventarioFIFO(null,0,"VES",m,null,cuentaId||null);
+  var usado=(sim.ventas||[]).reduce(function(s,v){return s+(parseFloat(v.bs)||0);},0);
+  usado=Math.round(usado*100)/100;
+  // Lo que no sale de ningún lote NO se inventa: se dice. Es el mismo criterio
+  // que el bloque "DE DÓNDE SALEN LOS X BS" de una remesa (ARREGLO 125).
+  return {ventas:sim.ventas||[], usado:usado, sinLote:Math.round((m-usado)*100)/100};
+}
+// Y la vuelta es la de siempre: _restaurarVentasFIFO devuelve al lote que de
+// verdad se gastó, por su id, reviviéndolo si estaba archivado (ARREGLO 127) y
+// levantando su marca de borrado (ARREGLO 137). Escrita una vez: si el
+// guardado y el borrado tuvieran cada uno la suya, un día devolverían
+// cantidades distintas y la cuenta se quedaría inflada sin decirlo.
+function devolverLotesVES(reg, monto){
+  if(!reg) return;
+  var m=parseFloat(monto)||0;
+  if(!(m>0.01)) return;
+  _restaurarVentasFIFO(reg, "VES", m);
+}
 function saveTraspaso(){
   var f=S.nTraspaso;
   if(!f.fecha||!f.cuentaOrigen||!f.cuentaDestino||!f.monto){alert("Completa todos los campos.");return;}
@@ -7379,7 +7421,18 @@ function saveTraspaso(){
   // Execute transfer
   cO.saldo=Math.round((cO.saldo-monto)*10000)/10000;
   cD.saldo=Math.round((cD.saldo+montoDest)*10000)/10000;
-  S.traspasos.push({id:Date.now(),fecha:f.fecha,origen:f.cuentaOrigen,destino:f.cuentaDestino,moneda:cO.moneda,monto:monto,monedaDestino:cD.moneda,montoDestino:montoDest,nota:f.nota||"",locked:true});
+  var _tr={id:Date.now(),fecha:f.fecha,origen:f.cuentaOrigen,destino:f.cuentaDestino,moneda:cO.moneda,monto:monto,monedaDestino:cD.moneda,montoDestino:montoDest,nota:f.nota||"",locked:true};
+  // ARREGLO 161: estos bolívares salen del banco, así que salen del lote. Lo
+  // consumido se guarda DENTRO del traspaso, como ya hace una remesa, para que
+  // al borrarlo vuelva al lote que de verdad se gastó y no a otro.
+  if(cO.moneda==="VES"){
+    var _cl=consumirLotesVES(cO.id, monto);
+    if(_cl){
+      _tr._lotesConsumidos={ventas:_cl.ventas};
+      if(_cl.sinLote>0.01) _tr._bsSinLote=_cl.sinLote;
+    }
+  }
+  S.traspasos.push(_tr);
   S.nTraspaso={fecha:f.fecha,cuentaOrigen:"",cuentaDestino:"",monto:"",montoDestino:"",nota:""};
   // Esta tampoco anotaba nada, y mover dinero entre cuentas es justo de lo
   // que ella querría saber quién lo hizo.
@@ -10034,6 +10087,26 @@ function saveTx(){
       // Registrar en _mov para poder revertir
       nuevaRemesa._mov=nuevaRemesa._mov||[];
       nuevaRemesa._mov.push({cuentaId:cDstB.id,delta:-comVes});
+    }
+    // ARREGLO 161: y del LOTE. Hasta aquí la comisión bajaba la cuenta y no el
+    // inventario, así que el lote seguía diciendo tener unos bolívares que el
+    // banco ya se había llevado — 5.112 Bs sólo en octubre, creciendo solos.
+    //
+    // Esto REVIERTE lo que este documento decía ("la comisión baja la cuenta
+    // pero no el lote; es correcto, no lo arregles"), y lo revierte ella.
+    // Aquello miraba qué se le entregó al CLIENTE; esto mira qué salió del
+    // BANCO, que es lo que el lote tiene que reflejar para que las tasas que
+    // la app sugiere salgan de bolívares que existen.
+    //
+    // NO toca la ganancia: esa ya resta la comisión en USDT dos líneas abajo,
+    // y el consumo de lote no entra en el pr de esta remesa. Hay prueba de que
+    // la ganancia sale idéntica antes y después de este arreglo.
+    if(cDstB){
+      var _clc=consumirLotesVES(cDstB.id, comVes);
+      if(_clc && _clc.ventas.length){
+        nuevaRemesa._lotesConsumidos=nuevaRemesa._lotesConsumidos||{compras:[],ventas:[]};
+        nuevaRemesa._lotesConsumidos.ventas=(nuevaRemesa._lotesConsumidos.ventas||[]).concat(_clc.ventas);
+      }
     }
     // Restar de la ganancia (convirtiendo Bs a USDT con tasa de venta)
     var comUsdt=res.tv>0?Math.round(comVes/res.tv*10000)/10000:0;
@@ -19402,6 +19475,15 @@ function _restaurarComprasFIFO(r, monOrig, uc){
     if(dev>0){ compras[i].restante=Math.round((act+dev)*10000)/10000; compras[i]._mod=Date.now(); resto-=dev; }
   }
 }
+// Lo que una remesa se llevó de los lotes de Bs es lo entregado MÁS la
+// comisión del banco, que desde el ARREGLO 161 también consume lote. Se
+// calcula aquí y lo leen los DOS caminos del borrado: con una copia en cada
+// uno, un día devolverían cantidades distintas y el lote quedaría corto.
+function _bsADevolver(r, cant){
+  var c=parseFloat(cant)||0;
+  if((r||{}).comisionBancoVes) c+=parseFloat(r.comisionBancoVes)||0;
+  return Math.round(c*100)/100;
+}
 function _restaurarVentasFIFO(r, monDest, cant){
   if(!(cant>0)) return;
   var resto=cant;
@@ -19460,7 +19542,7 @@ function revertirSaldosRemesa(tipo, r){
     // de entrada que SI creo ya se fue arriba con quitarLoteDeRemesa().
     _restaurarComprasFIFO(r, monOrig, uc);
     // Restaurar BS/BRL al lote de venta — cada parte a los lotes de SU cuenta
-    _restaurarVentasFIFO(r, monDest, cant);
+    _restaurarVentasFIFO(r, monDest, _bsADevolver(r, cant));
     return;
   }
 
@@ -19500,7 +19582,7 @@ function revertirSaldosRemesa(tipo, r){
   var uc=parseFloat(r.uc)||0;
   // ARREGLO 106, el mismo caso por el camino sin _mov.
   _restaurarComprasFIFO(r, monOrig, uc);
-  _restaurarVentasFIFO(r, monDest, cant);
+  _restaurarVentasFIFO(r, monDest, _bsADevolver(r, cant));
 }
 
 // Revierte saldos cuando se elimina un movimiento de inventario USDT
@@ -19531,6 +19613,15 @@ function revertirSaldosInventario(r){
 // Revierte saldos cuando se elimina un traspaso
 function revertirSaldosTraspaso(t){
   var monto=parseFloat(t.monto)||0;
+  // ARREGLO 161: al destino entró montoDestino, no monto. Con cambio de moneda
+  // no son el mismo número y devolver "monto" destroza la cuenta de llegada.
+  // Reproducido en Chromium con sus datos, un traspaso de 20.000 Bs → 20 USDT:
+  //   al crearlo    BINANCE JULIO  +20 USDT
+  //   al borrarlo   BINANCE JULIO  -19.980 USDT
+  // Los traspasos viejos sin montoDestino siguen cayendo en monto, que para
+  // ellos es lo correcto: se hicieron sin cambio de moneda.
+  var montoDest=(t.montoDestino!==undefined&&t.montoDestino!==null&&t.montoDestino!=="")
+    ? (parseFloat(t.montoDestino)||0) : monto;
   function adjId(id, delta){
     if(!id||!delta) return;
     var c=(S.cuentas||[]).find(function(x){return x.id===id;});
@@ -19538,7 +19629,9 @@ function revertirSaldosTraspaso(t){
   }
   // Traspaso había restado de origen y sumado a destino → invertir
   adjId(t.cuentaOrigen||t.origen, +monto);
-  adjId(t.cuentaDestino||t.destino, -monto);
+  adjId(t.cuentaDestino||t.destino, -montoDest);
+  // Y lo que este traspaso se llevó del inventario, vuelve a su lote.
+  if((t.moneda||"")==="VES") devolverLotesVES(t, monto);
 }
 
 // ══════════════════════════════════════════════════════════════════════

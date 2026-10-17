@@ -1083,10 +1083,18 @@ registrar la remesa y no es una casilla de sí/no.
 **El mínimo de 14 es el que se cuela.** El 0,3% no llega a 14 Bs hasta los
 4.667, así que toda remesa por debajo se queda corta si no se aplica.
 
-Y ojo: **la comisión baja la cuenta pero no el lote.** Es correcto — el lote
-lleva los bolívares que se le entregaron al cliente, y la comisión es un cobro
-aparte del banco. Por eso la cuenta va siempre un poco por debajo del FIFO,
-justo lo que se llevó el banco. No lo "arregles".
+**Y la comisión BAJA EL LOTE, desde el ARREGLO 161.** Aquí decía lo contrario
+—*"es correcto que no lo baje… no lo arregles"*— y **lo revirtió ella** el
+16/10. Aquella regla miraba qué se le entregó al **cliente**; lo que el lote
+tiene que reflejar es qué salió del **banco**, y la comisión salió. Dejándola
+fuera, el lote afirmaba tener bolívares que el banco ya se había llevado:
+5.112 Bs sólo en octubre, creciendo solos, y de esos lotes salen las tasas que
+la app sugiere.
+
+**No toca la ganancia, y eso se midió antes de aceptarlo:** la comisión ya se
+resta una vez en USDT dentro de la remesa, y consumir lote no entra en ese
+cálculo. Medido con una remesa de 100 R$ a 184 con pago móvil — **1,5171 USDT
+antes y después**, y el lote baja 18.400 + 55,2 = 18.455,2.
 
 ### Y cuando la entrega sale de DOS bancos, son dos comisiones (ARREGLO 97)
 
@@ -5625,3 +5633,90 @@ peso, era que alguien las leyera y creyera que eran las buenas*.
 de *"publicar esta"*. Esa acepta la coma desde siempre (`_cgSet` pasa por
 `_num()`) y no se tocó — medido tecleando de verdad, la tasa publicada se queda
 en 184 · 205.
+
+---
+
+## Toda salida de Bs descuenta su lote (ARREGLO 161)
+
+Lo vio ella el 16/10: los lotes de VES decían tener **44.668,68 Bs más** que las
+cuentas (medido en su export; ella contaba ~45.022 con lo de después).
+
+**De las cuatro puertas que se sospechaban, dos ya estaban cerradas**, y eso hay
+que medirlo antes de tocar nada — si se añade consumo donde ya lo hay, se
+descuenta dos veces:
+
+```
+egresos (empresa, personales, compromisos, cuotas del piso,
+  mercancía, préstamos dados) ...... YA, por descontarFIFOEgreso()  · 8 llamadas
+remesas BRL→VZLA ..................  YA, por consumirFIFORemesa()
+TRASPASOS desde una cuenta VES ....  NO   ← esto
+la COMISIÓN del banco .............  NO   ← y esto (ver arriba)
+compras de USDT pagadas con Bs ....  NO   ← pendiente, a propósito
+```
+
+Su ejemplo del egreso del 06/10 (3.925,12 Bs) **sí descontaba**: ese camino
+llevaba tiempo bien.
+
+### Por qué las compras de USDT con Bs quedan fuera por ahora
+
+Suman 782.084 Bs en octubre y aun así **no generan deriva**, y la razón es la
+que decide el diseño:
+
+```
+09/10  ENTRA aporte      470.000 Bs a BANESCO   ← su sueldo: no crea lote
+09/10  SALE  compra USDT 470.000 Bs de BANESCO  ← no consume lote
+```
+
+**Esos bolívares nunca estuvieron en un lote.** Hacerlas consumir "de la
+empresa" por omisión se habría comido 470.000 Bs de lotes que no les
+corresponden — el mismo error al revés, con los lotes por debajo de las
+cuentas y las tasas sugeridas torcidas. Cuando entre, la regla será *consumir
+sólo hasta donde haya lote en esa cuenta y decir qué parte no salió de
+ninguno*, que es lo que ya hace el bloque "DE DÓNDE SALEN LOS X BS".
+
+### Lo que entró
+
+- **`consumirLotesVES()` pasa por las funciones de siempre**: el simulador para
+  saber *qué* lotes, y `consumirInventarioFIFO()` para aplicarlo. Dos maneras de
+  consumir el FIFO se separan con el primer cambio (ARREGLO 97). **El simulador
+  va ANTES**: después vería los lotes ya consumidos y el espejo saldría vacío.
+- **Lo consumido se guarda DENTRO del registro** (`_lotesConsumidos`), como ya
+  hace una remesa, y la vuelta es `_restaurarVentasFIFO()` — por id, reviviendo
+  el lote archivado (ARREGLO 127) y levantando su marca (ARREGLO 137).
+- **Lo que se devuelve se calcula en UN sitio** (`_bsADevolver`): lo entregado
+  más la comisión. Lo leen los **dos** caminos del borrado, con `_mov` y sin él.
+
+### Y de paso, un fallo peor en la misma función
+
+Borrar un traspaso **con cambio de moneda** le restaba al destino el monto de
+**origen**. Reproducido en Chromium con sus datos:
+
+```
+traspaso 20.000 Bs → 20 USDT
+  al crearlo    BINANCE JULIO   +20 USDT
+  al borrarlo   BINANCE JULIO   −19.980 USDT   ← la cuenta destrozada
+```
+
+`revertirSaldosTraspaso` usaba `monto` para los dos lados. Los traspasos viejos
+sin `montoDestino` siguen cayendo en `monto`, que para ellos es correcto: se
+hicieron sin cambio de moneda. **Si alguna vez se borró un traspaso con cambio
+de moneda, esa cuenta quedó mal** — y es una sospecha medida, no una causa
+probada, de las derivas de Binance que el ARREGLO 130 no pudo reconstruir.
+
+### Medido, v242 contra v243
+
+```
+                            v242              v243-TEST
+traspaso 20.000 Bs      lote intacto      lote −20.000
+borrarlo                −19.980 USDT      saldo y lote EXACTOS
+egreso de 5.000 Bs      lote −5.000       lote −5.000   ← no se descuenta dos veces
+remesa con comisión     lote −18.400      lote −18.455,2
+  su ganancia            1,5171 USDT       1,5171 USDT  ← idéntica
+capital · te sobran     2.711,65 · 6,94   2.711,65 · 6,94
+```
+
+26 pestañas, 0 errores, 9 pruebas negativas y las 9 cazadas.
+
+**Lo que esto NO repara:** los 44.668 Bs que ya están de más en los lotes. Eso
+vale de aquí en adelante; lo viejo se cierra **una sola vez y con su OK**, nunca
+con un arreglo automático.
