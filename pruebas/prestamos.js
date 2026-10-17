@@ -6323,9 +6323,11 @@ console.log("\n— FASE 2: la cuenta madre —");
      "hay un boton para encenderlo, al lado de la cuenta de entrega");
   ok(/entregasMulti:false/.test(H),
      "y arranca apagado: son casos esporadicos, no puede estorbar siempre");
-  // La reversion vive en un solo sitio, no en dos copias.
+  // La reversion vive en un solo sitio, no en dos copias. Desde el ARREGLO 161
+  // los dos caminos le pasan _bsADevolver(r, cant) —lo entregado mas la
+  // comision, que ahora tambien consume lote— en vez de cant a secas.
   ok((HTML.match(/function _restaurarVentasFIFO\(/g) || []).length === 1 &&
-     (HTML.match(/_restaurarVentasFIFO\(r, monDest, cant\);/g) || []).length === 2,
+     (HTML.match(/_restaurarVentasFIFO\(r, monDest, _bsADevolver\(r, cant\)\);/g) || []).length === 2,
      "la devolucion de los lotes esta escrita una vez y la usan los dos caminos del borrado");
 }
 
@@ -11783,6 +11785,142 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
   // El que SI se dibuja sigue en su sitio: rBalance() pasa por rBalancePlus().
   ok(/function rBalance\(\)\{ return rBalancePlus\(\); \}/.test(HTML),
      "y el Balance que de verdad se dibuja sigue siendo rBalancePlus");
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// ARREGLO 161 · toda salida de Bs descuenta su lote
+//
+// Medido en su export del 16/10: los lotes de VES tenian 44.668,68 Bs MAS que
+// las cuentas. De las cuatro puertas que se sospechaban, los egresos y las
+// remesas YA descontaban (descontarFIFOEgreso, consumirFIFORemesa); faltaban
+// los TRASPASOS desde una cuenta VES y la COMISION del banco.
+{
+  const sinC = t => t.replace(/\/\/[^\n]*/g, "");
+  const cl = sinC(sacarFuncion("consumirLotesVES"));
+  // El simulador va ANTES de aplicar: despues veria los lotes ya consumidos y
+  // el espejo diria que no se gasto nada.
+  const iSim = cl.indexOf("simularConsumoFIFO("), iAp = cl.indexOf("consumirInventarioFIFO(");
+  ok(iSim >= 0 && iAp >= 0 && iSim < iAp,
+     "consumirLotesVES simula ANTES de aplicar, y aplica con la funcion de siempre");
+  ok(/sinLote:/.test(cl),
+     "y dice que parte no salio de ningun lote, en vez de inventarla (ARREGLO 125)");
+  // La devolucion es la MISMA de las remesas: por id, reviviendo el lote.
+  const dv = sinC(sacarFuncion("devolverLotesVES"));
+  ok(/_restaurarVentasFIFO\(/.test(dv),
+     "devolverLotesVES pasa por _restaurarVentasFIFO, no por una copia suya");
+
+  // Un traspaso desde VES consume, y guarda lo consumido DENTRO del traspaso.
+  const st = sinC(sacarFuncion("saveTraspaso"));
+  ok(/cO\.moneda==="VES"/.test(st) && /consumirLotesVES\(cO\.id, monto\)/.test(st),
+     "un traspaso desde cuenta VES descuenta su lote");
+  ok(/_tr\._lotesConsumidos=\{ventas:_cl\.ventas\}/.test(st),
+     "y guarda el espejo, para que al borrarlo vuelva al lote que se gasto");
+
+  // El reverso: al destino entro montoDestino, no monto.
+  const rt = sinC(sacarFuncion("revertirSaldosTraspaso"));
+  ok(/montoDest=\(t\.montoDestino!==undefined/.test(rt),
+     "al revertir, el destino recibe montoDestino (con cambio de moneda no es monto)");
+  ok(/adjId\(t\.cuentaDestino\|\|t\.destino, -montoDest\)/.test(rt),
+     "y se le resta ESE, no el de origen — reproducido: 20.000 Bs dejaban -19.980 USDT");
+  ok(/devolverLotesVES\(t, monto\)/.test(rt),
+     "y el lote vuelve con el borrado");
+
+  // La comision del banco: consume lote y NO toca la ganancia.
+  const tx = sinC(sacarFuncion("saveTx"));
+  ok(/consumirLotesVES\(cDstB\.id, comVes\)/.test(tx),
+     "la comision del banco descuenta lote (ARREGLO 161 revierte la regla vieja)");
+  ok(/nuevaRemesa\.pr=Math\.round\(\(nuevaRemesa\.pr-comUsdt\)\*10000\)\/10000/.test(tx),
+     "y la ganancia sigue restandola UNA vez, en USDT, como siempre");
+  // Lo que se devuelve al borrar se calcula en UN sitio y lo usan los DOS caminos.
+  const bd = sinC(sacarFuncion("_bsADevolver"));
+  ok(/comisionBancoVes/.test(bd), "_bsADevolver suma la comision a lo que hay que devolver");
+  const rev = sinC(sacarFuncion("revertirSaldosRemesa"));
+  const nBs = (rev.match(/_restaurarVentasFIFO\(r, monDest, _bsADevolver\(r, cant\)\)/g)||[]).length;
+  ok(nBs === 2,
+     "y los DOS caminos del borrado lo usan ("+nBs+" de 2) — con _mov y sin _mov");
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// ARREGLO 162 · comprar USDT con bolivares: se PREGUNTA de quien son
+//
+// La primera propuesta fue "consumir solo hasta donde haya lote", y la tumbo
+// ella con el argumento correcto: EL LOTE NO SABE DE QUIEN ES EL DINERO. Si en
+// esa cuenta hay lotes de la empresa, su sueldo se los come igual. Medido en su
+// export: de los 782.084 Bs que salieron asi en octubre, 470.000 eran su sueldo
+// de otro trabajo, que entro como aporte y nunca estuvo en un lote.
+{
+  const sinC = t => t.replace(/\/\/[^\n]*/g, "");
+  const iu = sinC(sacarFuncion("saveIU"));
+  ok(/_loteCompra\.origenBs=\(f\.moneda==="VES"\)/.test(iu),
+     "el lote guarda de quien eran los bolivares");
+  ok(/if\(f\.moneda==="VES" && _loteCompra\.origenBs==="empresa"\)/.test(iu),
+     "y solo consume lotes cuando son de la EMPRESA");
+  ok(/consumirLotesVES\(f\.cuentaOrigenId, mo\)/.test(iu),
+     "por la puerta unica, no con un recorrido propio");
+  // Por omision, empresa: en el estado inicial y al limpiar el formulario.
+  ok((HTML.match(/origenBs:"empresa"/g)||[]).length === 2,
+     "por omision es empresa, al arrancar y al limpiar el formulario");
+  // El selector se dibuja, y SOLO pagando en bolivares.
+  ok(/f\.tipo==="compra"&&f\.moneda==="VES"/.test(HTML) &&
+     /S\.nIU\.origenBs=this\.value/.test(HTML),
+     "el selector sale al pagar en Bs y escribe en S.nIU.origenBs");
+  ok(/De d\\u00f3nde salen estos Bs/.test(HTML),
+     "y pregunta de donde salen, con esas palabras");
+  // Al borrar: devuelve solo si de verdad consumio.
+  const rv = sinC(sacarFuncion("revertirSaldosInventario"));
+  ok(/\(r\.moneda\|\|""\)==="VES" && r\._lotesConsumidos/.test(rv) && /devolverLotesVES\(r, mo\)/.test(rv),
+     "al borrar la compra el lote vuelve — y solo si esa compra lo gasto");
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// ARREGLO 163 · borrar un traspaso tiene que dejar marca, o el servidor lo
+// resucita
+//
+// Lo cazo ella en pruebas borrando un traspaso de 20.000 Bs: el saldo y el
+// lote volvian bien y el registro REAPARECIA segundos despues, cuando el
+// servidor lo devolvia — y volvia sin su _lotesConsumidos, o sea sin el
+// descuento, asi que el lote quedaba 20.000 Bs por encima de la cuenta. La
+// deriva que el ARREGLO 161 cerro, reabierta por la sincronizacion.
+//
+// La causa: reqDel anotaba la marca mirando una LISTA ESCRITA A MANO de siete
+// nombres, y "traspasos" no estaba — aunque si esta en _MERGE_FIELDS y en
+// _PODA_CATS. Anadir un octavo nombre es lo que ya fallo cuatro veces
+// (ARREGLOS 101, 119, 150, 153). La pregunta es "esta lista se fusiona?", y
+// eso lo contesta _MERGE_FIELDS.
+{
+  const sinC = t => t.replace(/\/\/[^\n]*/g, "");
+  const rq = sinC(sacarFuncion("reqDel"));
+
+  // 1. La decision sale de _MERGE_FIELDS, no de una lista propia.
+  ok(/_MERGE_FIELDS\.indexOf\(arr\)!==-1/.test(rq),
+     "reqDel decide la marca por _MERGE_FIELDS, no por una lista escrita a mano");
+  ok(!/\["cuentas","compromisos","egresos"/.test(rq),
+     "y la lista vieja de siete nombres ya no esta");
+
+  // 2. El id con el que se marca es el que usa la fusion de ESA lista.
+  ok(/var _idF=_MERGE_ID_FIELD\[arr\]\|\|"id"/.test(rq) &&
+     /_marcarBorradoMerge\(arr, \(item&&item\[_idF\]!==undefined\)\?item\[_idF\]:id\)/.test(rq),
+     "y marca con el id de fusion de esa lista (_MERGE_ID_FIELD), no con el que llega");
+
+  // 3. Las remesas siguen marcandose por _uid, y ANTES de la regla general:
+  //    su _MERGE_ID_FIELD es "_uid" pero a reqDel le llega "n".
+  const iUid = rq.indexOf('_marcarBorradoMerge(arr,item._uid||id)');
+  const iGen = rq.indexOf('_marcarBorradoMerge(arr, (item&&item[_idF]');
+  ok(iUid !== -1 && iGen !== -1 && iUid < iGen,
+     "las remesas se marcan por _uid y esa rama va PRIMERO");
+
+  // 4. Las dos mitades sin las que la marca no sirve de nada: que la lista se
+  //    fusione y que la poda la mire. Faltando cualquiera vuelve el fallo.
+  ok(/var _MERGE_FIELDS = \[[^\]]*"traspasos"/.test(HTML),
+     "traspasos se fusiona entre aparatos (_MERGE_FIELDS)");
+  ok(/var _PODA_CATS=\[[\s\S]{0,600}?"traspasos"/.test(HTML),
+     "y la poda lo mira (_PODA_CATS)");
+
+  // 5. La respuesta del servidor filtra lo marcado ANTES de fusionar. Sin eso
+  //    la marca se anota y el registro entra igual.
+  const ap = sinC(sacarFuncion("_aplicarEstadoDeApi"));
+  ok(/_estaBorradoMerge\(k,it\[idF\]\)/.test(ap),
+     "y lo marcado se filtra antes de fusionar la respuesta del servidor");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

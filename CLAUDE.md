@@ -1083,10 +1083,18 @@ registrar la remesa y no es una casilla de sí/no.
 **El mínimo de 14 es el que se cuela.** El 0,3% no llega a 14 Bs hasta los
 4.667, así que toda remesa por debajo se queda corta si no se aplica.
 
-Y ojo: **la comisión baja la cuenta pero no el lote.** Es correcto — el lote
-lleva los bolívares que se le entregaron al cliente, y la comisión es un cobro
-aparte del banco. Por eso la cuenta va siempre un poco por debajo del FIFO,
-justo lo que se llevó el banco. No lo "arregles".
+**Y la comisión BAJA EL LOTE, desde el ARREGLO 161.** Aquí decía lo contrario
+—*"es correcto que no lo baje… no lo arregles"*— y **lo revirtió ella** el
+16/10. Aquella regla miraba qué se le entregó al **cliente**; lo que el lote
+tiene que reflejar es qué salió del **banco**, y la comisión salió. Dejándola
+fuera, el lote afirmaba tener bolívares que el banco ya se había llevado:
+5.112 Bs sólo en octubre, creciendo solos, y de esos lotes salen las tasas que
+la app sugiere.
+
+**No toca la ganancia, y eso se midió antes de aceptarlo:** la comisión ya se
+resta una vez en USDT dentro de la remesa, y consumir lote no entra en ese
+cálculo. Medido con una remesa de 100 R$ a 184 con pago móvil — **1,5171 USDT
+antes y después**, y el lote baja 18.400 + 55,2 = 18.455,2.
 
 ### Y cuando la entrega sale de DOS bancos, son dos comisiones (ARREGLO 97)
 
@@ -5625,3 +5633,182 @@ peso, era que alguien las leyera y creyera que eran las buenas*.
 de *"publicar esta"*. Esa acepta la coma desde siempre (`_cgSet` pasa por
 `_num()`) y no se tocó — medido tecleando de verdad, la tasa publicada se queda
 en 184 · 205.
+
+---
+
+## Toda salida de Bs descuenta su lote (ARREGLO 161)
+
+Lo vio ella el 16/10: los lotes de VES decían tener **44.668,68 Bs más** que las
+cuentas (medido en su export; ella contaba ~45.022 con lo de después).
+
+**De las cuatro puertas que se sospechaban, dos ya estaban cerradas**, y eso hay
+que medirlo antes de tocar nada — si se añade consumo donde ya lo hay, se
+descuenta dos veces:
+
+```
+egresos (empresa, personales, compromisos, cuotas del piso,
+  mercancía, préstamos dados) ...... YA, por descontarFIFOEgreso()  · 8 llamadas
+remesas BRL→VZLA ..................  YA, por consumirFIFORemesa()
+TRASPASOS desde una cuenta VES ....  NO   ← esto
+la COMISIÓN del banco .............  NO   ← y esto (ver arriba)
+compras de USDT pagadas con Bs ....  NO   ← pendiente, a propósito
+```
+
+Su ejemplo del egreso del 06/10 (3.925,12 Bs) **sí descontaba**: ese camino
+llevaba tiempo bien.
+
+### Y comprar USDT con Bs se PREGUNTA (ARREGLO 162)
+
+Suman 782.084 Bs en octubre y aun así **no generan deriva**, y la razón es la
+que decide el diseño:
+
+```
+09/10  ENTRA aporte      470.000 Bs a BANESCO   ← su sueldo: no crea lote
+09/10  SALE  compra USDT 470.000 Bs de BANESCO  ← no consume lote
+```
+
+**Esos bolívares nunca estuvieron en un lote.** Hacerlas consumir "de la
+empresa" por omisión se habría comido 470.000 Bs de lotes que no les
+corresponden — el mismo error al revés, con los lotes por debajo de las
+cuentas y las tasas sugeridas torcidas. **La primera propuesta fue "consumir sólo hasta donde haya lote", y la tumbó
+ella con el argumento correcto: el lote NO SABE DE QUIÉN ES EL DINERO.** Si en
+esa cuenta hay lotes de la empresa, su sueldo se los come igual. Sólo ella sabe
+de dónde salió ese dinero, así que **lo dice ella**, con un selector al
+registrar la compra:
+
+```
+¿De dónde salen estos Bs?
+  De la empresa · gasta inventario          ← por omisión
+  Aporte o dinero personal · no gasta
+```
+
+- **Sólo sale pagando en bolívares.** Con reales no hay lote de Bs que gastar, y
+  una pregunta que siempre está deja de leerse (ARREGLO 99).
+- **La marca viaja con el lote** (`origenBs`), así que el borrado sabe si tiene
+  algo que devolver. Devolverle saldo a un lote que esa compra nunca gastó le
+  regala bolívares, y de ahí salen las tasas que la app sugiere.
+- **Por omisión, empresa**, que es lo que ella pidió: el caso normal.
+
+Medido con su export, una compra de 5.000 Bs desde el Banco de Venezuela:
+
+```
+                  marcada PERSONAL     marcada EMPRESA
+el lote                   0                −5.000
+el saldo             −5.000               −5.000
+al borrarla      saldo y lote EXACTOS, en los dos casos
+```
+
+### Lo que entró
+
+- **`consumirLotesVES()` pasa por las funciones de siempre**: el simulador para
+  saber *qué* lotes, y `consumirInventarioFIFO()` para aplicarlo. Dos maneras de
+  consumir el FIFO se separan con el primer cambio (ARREGLO 97). **El simulador
+  va ANTES**: después vería los lotes ya consumidos y el espejo saldría vacío.
+- **Lo consumido se guarda DENTRO del registro** (`_lotesConsumidos`), como ya
+  hace una remesa, y la vuelta es `_restaurarVentasFIFO()` — por id, reviviendo
+  el lote archivado (ARREGLO 127) y levantando su marca (ARREGLO 137).
+- **Lo que se devuelve se calcula en UN sitio** (`_bsADevolver`): lo entregado
+  más la comisión. Lo leen los **dos** caminos del borrado, con `_mov` y sin él.
+
+### Y de paso, un fallo peor en la misma función
+
+Borrar un traspaso **con cambio de moneda** le restaba al destino el monto de
+**origen**. Reproducido en Chromium con sus datos:
+
+```
+traspaso 20.000 Bs → 20 USDT
+  al crearlo    BINANCE JULIO   +20 USDT
+  al borrarlo   BINANCE JULIO   −19.980 USDT   ← la cuenta destrozada
+```
+
+`revertirSaldosTraspaso` usaba `monto` para los dos lados. Los traspasos viejos
+sin `montoDestino` siguen cayendo en `monto`, que para ellos es correcto: se
+hicieron sin cambio de moneda. **Si alguna vez se borró un traspaso con cambio
+de moneda, esa cuenta quedó mal** — y es una sospecha medida, no una causa
+probada, de las derivas de Binance que el ARREGLO 130 no pudo reconstruir.
+
+### Medido, v242 contra v243
+
+```
+                            v242              v243-TEST
+traspaso 20.000 Bs      lote intacto      lote −20.000
+borrarlo                −19.980 USDT      saldo y lote EXACTOS
+egreso de 5.000 Bs      lote −5.000       lote −5.000   ← no se descuenta dos veces
+remesa con comisión     lote −18.400      lote −18.455,2
+  su ganancia            1,5171 USDT       1,5171 USDT  ← idéntica
+capital · te sobran     2.711,65 · 6,94   2.711,65 · 6,94
+```
+
+26 pestañas, 0 errores, 9 pruebas negativas y las 9 cazadas.
+
+**Lo que esto NO repara:** los 44.668 Bs que ya están de más en los lotes. Eso
+vale de aquí en adelante; lo viejo se cierra **una sola vez y con su OK**, nunca
+con un arreglo automático.
+
+---
+
+## Un borrado sin marca lo resucita el servidor (ARREGLO 163)
+
+Lo cazó ella probando el 161 en `test`: borró el traspaso de 20.000 Bs, el saldo
+y el lote volvieron bien, y **el registro reapareció segundos después** — y
+volvió **sin su `_lotesConsumidos`**, o sea sin el descuento, así que el lote
+quedaba otra vez 20.000 Bs por encima de la cuenta. **La deriva que el 161 vino
+a cerrar, reabierta por la sincronización.**
+
+Es el ARREGLO 137 otra vez: *cuando un arreglo toca algo que se sincroniza, hay
+que hacerle dar la vuelta al servidor.* El 161 se midió en una pestaña sola.
+
+**Y estaba igual en producción (v242) desde siempre**, no lo trajo el 161: lo
+que hizo el 161 fue darle consecuencias — antes resucitaba un traspaso que no
+tocaba lotes; ahora resucita uno que sí.
+
+### Las tres mitades, y sólo faltaba una
+
+```
+_MERGE_FIELDS   ¿esta lista se fusiona?        traspasos SÍ estaba
+_PODA_CATS      ¿la poda mira esa marca?       traspasos SÍ estaba
+reqDel          ¿se crea la marca al borrar?   traspasos NO estaba   ← esto
+```
+
+O sea: la lista se fusionaba y la poda la habría mirado, pero **la marca no se
+creaba nunca**, así que no había nada que podar.
+
+**Y no se arregla añadiendo un octavo nombre a la lista.** `reqDel` decidía
+mirando **una lista escrita a mano de siete nombres**, que es exactamente lo que
+ya falló cuatro veces (ARREGLOS 101, 119, 150, 153): una regla copiada en varios
+sitios y uno que se queda fuera. La pregunta es *"¿esta lista se fusiona?"*, y
+eso lo contesta `_MERGE_FIELDS`, que es donde ya vive. Así una lista nueva queda
+cubierta sola.
+
+- **El id con el que se marca sale de `_MERGE_ID_FIELD`**, no del que llega a
+  `reqDel`. No todas usan `id`: `clientes` usa `cod` y `cierresMes` usa `mesKey`.
+- **Y la rama de las remesas va PRIMERO.** Su `_MERGE_ID_FIELD` es `_uid` pero a
+  `reqDel` le llega la `n`, que es numeración y se renumera. Detrás de la regla
+  general se marcarían por `n` y la marca no valdría para nada. Hay guardia para
+  el orden, porque las dos ramas por separado parecen correctas.
+
+### Medido con su export, el ciclo entero
+
+Borrar → guardar → el servidor devuelve su bloque (con el traspaso dentro) →
+adoptar la respuesta. No en una pestaña: el ciclo.
+
+```
+                        v242 (producción)      v245-TEST
+1 creado                lote 217.431,60        lote 197.431,60
+2 borrado               marca: NO              marca: SÍ
+3 contesta el servidor  REVIVE                 no revive
+4 segunda vuelta        REVIVE                 no revive
+```
+
+Y el caso duro —un traspaso que vacía un lote **entero**, que es donde murió el
+ARREGLO 127 y lo rescató el 137— también pasa: el lote de 33.278 Bs se archiva
+con su marca, al borrar el traspaso revive con sus 33.278 exactos, sale del
+archivo, la marca se levanta, **y todo eso sobrevive a la respuesta del
+servidor**.
+
+Las remesas se siguen marcando por `_uid`. 26 pestañas, 0 errores, 7 pruebas
+negativas y las 7 cazadas.
+
+**Lo que esto NO repara:** un traspaso que ella haya borrado antes de esto y que
+el servidor devolviera sigue ahí. Si aparece uno repetido, hay que borrarlo otra
+vez —ahora sí se queda— y revisar si su lote quedó alto.
