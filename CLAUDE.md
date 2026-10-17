@@ -6487,3 +6487,60 @@ tiró entero y se midió registrando remesas de verdad con `saveTx()` y `saveIU(
 sobre su export — el número bueno es +1,3%. **Una caja rellena a medias prueba
 menos que el navegador** (ARREGLO 123), y antes de creerse un replay hay que
 exigirle que reproduzca lo que ya está guardado.
+
+---
+
+## Elegir la cuenta tiene que refrescar lo que depende de ella (ARREGLO 171)
+
+Lo cazó ella probando el 170 en `test`: *"la ida guarda otra cifra que la que
+muestra. El formulario mostraba TC 5,1425 y ganancia 1,56. Lo guardado quedó con
+tc 5,1653 y ganancia 1,47."*
+
+**Y el `tc` DEPENDE de la cuenta de entrada**, que es lo que no era obvio:
+`getTasaCompraPonderada` filtra los lotes de compra por `cuentaOrigenId`. Así que
+elegir el banco cambia la tasa y con ella la ganancia. Los dos selectores que
+escriben una cuenta —el de entrada y el del aliado— eran `onchange='S.tx.cuentaX
+=this.value'` **y nada más**: la pantalla se quedaba con los números de antes y
+`saveTx` guardaba otros.
+
+Reproducido en Chromium con la forma de los datos de pruebas (dos compras de
+reales en cuentas distintas, 5,1425 y 5,1653), tecleando y eligiendo de verdad:
+
+```
+                            v252                      v253
+tecleo el monto         5,1424 · +0,72            5,1424 · +0,72
+elijo la cuenta         5,1424 · +0,72   ❌       5,1653 · +0,64   ✅
+guardado                5,1653 ·  0,64            5,1653 ·  0,64
+```
+
+Es el ARREGLO 55/120 otra vez: **lo que se recalcula al elegir tiene que
+refrescarse al elegir.**
+
+- **Va por `upC`, no por `R()`** (ARREGLO 32): repintar `rNueva` cerraría el
+  selector bajo el dedo, y en el teléfono eso mata la lista a medio elegir.
+  `upC` sólo rehace `tcv-tx`, `cp-tx` y los tres pasos, y el selector no está en
+  ninguno de los tres.
+- **El del ALIADO tenía el mismo agujero por el otro lado**: de esa cuenta sale
+  el `tv`, y debajo va un *"Saldrán X USDT"* que se quedaba del dibujado
+  anterior. Lleva su id y lo refresca `upC`, **desde el mismo `res`** que la
+  ganancia — calculado aparte se separarían con el primer redondeo.
+- **El de la ENTREGA ya estaba cubierto** por `_autoMetodoTx()`, así que son
+  tres selectores y los tres refrescan. La guardia los **cuenta**: si mañana se
+  añade un cuarto, falla hasta que alguien mire de qué lado está (ARREGLO 140).
+
+**Por qué no se veía en producción, y por qué sí en pruebas:** sus compras de
+reales no llevan `cuentaOrigenId`, así que el filtro no encuentra nada y cae al
+pool general — todas las cuentas dan la misma tasa (5,0508 en las ocho, medido).
+En la base de pruebas hay 11 compras repartidas entre cuentas y a tasas de 5,09
+a 5,80, y ahí divergen. **El fallo estaba en producción desde siempre**; lo que
+hacía falta para verlo eran compras con cuenta.
+
+**Y un error de medición mío, que es el ARREGLO 84 otra vez.** El primer intento
+de reproducirlo dio "no se reproduce" y di por descartada la causa correcta:
+había puesto la cuenta del lote de compra en `cuentaId` cuando el filtro mira
+`cuentaOrigenId`, así que medí un lote que ese filtro nunca iba a ver. *Medir no
+vale si mides otra cosa* — y aquí lo otro era el nombre de un campo.
+
+**Lo que esto NO repara:** las remesas ya guardadas llevan el `tc` de su cuenta,
+que es el correcto. Lo que fallaba era lo que la pantalla enseñaba **antes** de
+guardar, así que no hay nada que rehacer en los datos.
