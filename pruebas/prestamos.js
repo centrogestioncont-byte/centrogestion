@@ -12378,5 +12378,60 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
      "el texto del pie se escribe una vez y se lee una vez");
 }
 
+
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 171 · elegir la cuenta tiene que refrescar lo que depende de ella
+//
+// El `tc` de una remesa sale de getTasaCompraPonderada, que FILTRA los lotes
+// de compra por `cuentaOrigenId`. O sea que la cuenta de entrada mueve la
+// tasa y con ella la ganancia. Los dos selectores la escribian y no
+// refrescaban nada, asi que la pantalla se quedaba con los numeros de antes
+// y saveTx guardaba otros. Medido con la forma de sus datos de pruebas:
+//
+//     tecleo el monto            pantalla 5,1424 · +0,72   = cTx()
+//     elijo la cuenta de entrada pantalla 5,1424 · +0,72   ≠ cTx() 5,1653 · 0,64
+//     guardado                                               5,1653 · 0,64
+//
+// Es el ARREGLO 55/120 otra vez: lo que se recalcula al elegir tiene que
+// refrescarse al elegir. Y va por upC, no por R(): repintar cerraria el
+// selector bajo el dedo (ARREGLO 32).
+{
+  const _sc = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  // Dentro de rNueva el HTML va en cadenas, asi que las comillas de los
+  // atributos llegan escapadas (`upC(\"tx\")`). Se normalizan para poder
+  // anclar la guardia a lo que el navegador va a ver de verdad.
+  const NU = _sc(sacarFuncion("rNueva")).replace(/\\"/g, '"');
+
+  // 1. Los DOS selectores, por nombre. Pidiendo solo que `upC` aparezca en
+  //    rNueva, quitarlo de uno pasaba con el otro puesto (ARREGLO 140).
+  ok(/S\.tx\.cuentaBanco=this\.value;upC\("tx"\)/.test(NU),
+     "la cuenta de ENTRADA refresca al elegirla: de ella sale el tc");
+  ok(/S\.tx\.cuentaDest=this\.value;upC\("tx"\)/.test(NU),
+     "y la del ALIADO tambien: de ella sale el tv");
+
+  // 2. Y CONTADOS: son tres selectores que escriben una cuenta en S.tx y los
+  //    tres tienen que refrescar — el de la entrega ya lo hacia por
+  //    _autoMetodoTx. Si manana se anade otro, esto falla hasta que alguien
+  //    mire de que lado esta.
+  const selCta = NU.match(/onchange='S\.tx\.cuenta(Banco|Dest)=this\.value[^']*'/g) || [];
+  ok(selCta.length === 3,
+     "son 3 selectores de cuenta en rNueva (hay " + selCta.length + ")");
+  ok(selCta.every(t => /upC\("tx"\)|_autoMetodoTx\(\)/.test(t)),
+     "y los 3 refrescan: ninguno escribe la cuenta y deja la pantalla vieja");
+
+  // 3. NO con R(). Repintar rNueva se lleva el selector bajo el dedo y, en el
+  //    telefono, cierra la lista a medio elegir.
+  ok(!/S\.tx\.cuenta(Banco|Dest)=this\.value;R\(\)/.test(NU),
+     "ninguno llama a R(): eso cerraria el selector bajo el dedo (ARREGLO 32)");
+
+  // 4. La linea del aliado sale del MISMO res que el resto, dentro de upC.
+  //    Calculada aparte volveria a separarse con el primer redondeo.
+  const UP = _sc(sacarFuncion("upC"));
+  ok(/uvsal-tx/.test(UP), "la linea del aliado se refresca en upC");
+  ok(/parseFloat\(res\.uv\)/.test(UP),
+     "y sale del mismo res que la ganancia, no de una cuenta aparte");
+  ok(/id='uvsal-tx'/.test(NU), "la linea lleva su id para poder refrescarla");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
