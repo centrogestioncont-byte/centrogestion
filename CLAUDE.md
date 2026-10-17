@@ -5744,3 +5744,71 @@ capital · te sobran     2.711,65 · 6,94   2.711,65 · 6,94
 **Lo que esto NO repara:** los 44.668 Bs que ya están de más en los lotes. Eso
 vale de aquí en adelante; lo viejo se cierra **una sola vez y con su OK**, nunca
 con un arreglo automático.
+
+---
+
+## Un borrado sin marca lo resucita el servidor (ARREGLO 163)
+
+Lo cazó ella probando el 161 en `test`: borró el traspaso de 20.000 Bs, el saldo
+y el lote volvieron bien, y **el registro reapareció segundos después** — y
+volvió **sin su `_lotesConsumidos`**, o sea sin el descuento, así que el lote
+quedaba otra vez 20.000 Bs por encima de la cuenta. **La deriva que el 161 vino
+a cerrar, reabierta por la sincronización.**
+
+Es el ARREGLO 137 otra vez: *cuando un arreglo toca algo que se sincroniza, hay
+que hacerle dar la vuelta al servidor.* El 161 se midió en una pestaña sola.
+
+**Y estaba igual en producción (v242) desde siempre**, no lo trajo el 161: lo
+que hizo el 161 fue darle consecuencias — antes resucitaba un traspaso que no
+tocaba lotes; ahora resucita uno que sí.
+
+### Las tres mitades, y sólo faltaba una
+
+```
+_MERGE_FIELDS   ¿esta lista se fusiona?        traspasos SÍ estaba
+_PODA_CATS      ¿la poda mira esa marca?       traspasos SÍ estaba
+reqDel          ¿se crea la marca al borrar?   traspasos NO estaba   ← esto
+```
+
+O sea: la lista se fusionaba y la poda la habría mirado, pero **la marca no se
+creaba nunca**, así que no había nada que podar.
+
+**Y no se arregla añadiendo un octavo nombre a la lista.** `reqDel` decidía
+mirando **una lista escrita a mano de siete nombres**, que es exactamente lo que
+ya falló cuatro veces (ARREGLOS 101, 119, 150, 153): una regla copiada en varios
+sitios y uno que se queda fuera. La pregunta es *"¿esta lista se fusiona?"*, y
+eso lo contesta `_MERGE_FIELDS`, que es donde ya vive. Así una lista nueva queda
+cubierta sola.
+
+- **El id con el que se marca sale de `_MERGE_ID_FIELD`**, no del que llega a
+  `reqDel`. No todas usan `id`: `clientes` usa `cod` y `cierresMes` usa `mesKey`.
+- **Y la rama de las remesas va PRIMERO.** Su `_MERGE_ID_FIELD` es `_uid` pero a
+  `reqDel` le llega la `n`, que es numeración y se renumera. Detrás de la regla
+  general se marcarían por `n` y la marca no valdría para nada. Hay guardia para
+  el orden, porque las dos ramas por separado parecen correctas.
+
+### Medido con su export, el ciclo entero
+
+Borrar → guardar → el servidor devuelve su bloque (con el traspaso dentro) →
+adoptar la respuesta. No en una pestaña: el ciclo.
+
+```
+                        v242 (producción)      v245-TEST
+1 creado                lote 217.431,60        lote 197.431,60
+2 borrado               marca: NO              marca: SÍ
+3 contesta el servidor  REVIVE                 no revive
+4 segunda vuelta        REVIVE                 no revive
+```
+
+Y el caso duro —un traspaso que vacía un lote **entero**, que es donde murió el
+ARREGLO 127 y lo rescató el 137— también pasa: el lote de 33.278 Bs se archiva
+con su marca, al borrar el traspaso revive con sus 33.278 exactos, sale del
+archivo, la marca se levanta, **y todo eso sobrevive a la respuesta del
+servidor**.
+
+Las remesas se siguen marcando por `_uid`. 26 pestañas, 0 errores, 7 pruebas
+negativas y las 7 cazadas.
+
+**Lo que esto NO repara:** un traspaso que ella haya borrado antes de esto y que
+el servidor devolviera sigue ahí. Si aparece uno repetido, hay que borrarlo otra
+vez —ahora sí se queda— y revisar si su lote quedó alto.

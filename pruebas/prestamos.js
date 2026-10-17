@@ -11872,5 +11872,56 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
      "al borrar la compra el lote vuelve — y solo si esa compra lo gasto");
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// ARREGLO 163 · borrar un traspaso tiene que dejar marca, o el servidor lo
+// resucita
+//
+// Lo cazo ella en pruebas borrando un traspaso de 20.000 Bs: el saldo y el
+// lote volvian bien y el registro REAPARECIA segundos despues, cuando el
+// servidor lo devolvia — y volvia sin su _lotesConsumidos, o sea sin el
+// descuento, asi que el lote quedaba 20.000 Bs por encima de la cuenta. La
+// deriva que el ARREGLO 161 cerro, reabierta por la sincronizacion.
+//
+// La causa: reqDel anotaba la marca mirando una LISTA ESCRITA A MANO de siete
+// nombres, y "traspasos" no estaba — aunque si esta en _MERGE_FIELDS y en
+// _PODA_CATS. Anadir un octavo nombre es lo que ya fallo cuatro veces
+// (ARREGLOS 101, 119, 150, 153). La pregunta es "esta lista se fusiona?", y
+// eso lo contesta _MERGE_FIELDS.
+{
+  const sinC = t => t.replace(/\/\/[^\n]*/g, "");
+  const rq = sinC(sacarFuncion("reqDel"));
+
+  // 1. La decision sale de _MERGE_FIELDS, no de una lista propia.
+  ok(/_MERGE_FIELDS\.indexOf\(arr\)!==-1/.test(rq),
+     "reqDel decide la marca por _MERGE_FIELDS, no por una lista escrita a mano");
+  ok(!/\["cuentas","compromisos","egresos"/.test(rq),
+     "y la lista vieja de siete nombres ya no esta");
+
+  // 2. El id con el que se marca es el que usa la fusion de ESA lista.
+  ok(/var _idF=_MERGE_ID_FIELD\[arr\]\|\|"id"/.test(rq) &&
+     /_marcarBorradoMerge\(arr, \(item&&item\[_idF\]!==undefined\)\?item\[_idF\]:id\)/.test(rq),
+     "y marca con el id de fusion de esa lista (_MERGE_ID_FIELD), no con el que llega");
+
+  // 3. Las remesas siguen marcandose por _uid, y ANTES de la regla general:
+  //    su _MERGE_ID_FIELD es "_uid" pero a reqDel le llega "n".
+  const iUid = rq.indexOf('_marcarBorradoMerge(arr,item._uid||id)');
+  const iGen = rq.indexOf('_marcarBorradoMerge(arr, (item&&item[_idF]');
+  ok(iUid !== -1 && iGen !== -1 && iUid < iGen,
+     "las remesas se marcan por _uid y esa rama va PRIMERO");
+
+  // 4. Las dos mitades sin las que la marca no sirve de nada: que la lista se
+  //    fusione y que la poda la mire. Faltando cualquiera vuelve el fallo.
+  ok(/var _MERGE_FIELDS = \[[^\]]*"traspasos"/.test(HTML),
+     "traspasos se fusiona entre aparatos (_MERGE_FIELDS)");
+  ok(/var _PODA_CATS=\[[\s\S]{0,600}?"traspasos"/.test(HTML),
+     "y la poda lo mira (_PODA_CATS)");
+
+  // 5. La respuesta del servidor filtra lo marcado ANTES de fusionar. Sin eso
+  //    la marca se anota y el registro entra igual.
+  const ap = sinC(sacarFuncion("_aplicarEstadoDeApi"));
+  ok(/_estaBorradoMerge\(k,it\[idF\]\)/.test(ap),
+     "y lo marcado se filtra antes de fusionar la respuesta del servidor");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

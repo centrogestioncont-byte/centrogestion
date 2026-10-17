@@ -3221,7 +3221,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261017_v244-TEST";
+var APP_VERSION = "20261017_v245-TEST";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -19308,12 +19308,30 @@ function reqDel(arr,id,field){
     }
     logAudit("BORRAR_"+arr.toUpperCase(),"Borró ID:"+id+(item?" · "+item.d+" · $"+(item.pr||item.usdt||item.monto||"?"):" "));
     // Si este campo se fusiona entre dispositivos (_MERGE_FIELDS), anotar el
-    // borrado para que la fusión no lo revida — ver _marcarBorradoMerge().
-    if(["cuentas","compromisos","egresos","egresos_personales","prestamos","cuentasCobrar","inventarioUsdt"].indexOf(arr)!==-1){
-      _marcarBorradoMerge(arr,id);
-    } else if(arr==="brl"||arr==="vzla"||arr==="eeuu"){
+    // borrado para que la fusión no lo reviva — ver _marcarBorradoMerge().
+    //
+    // ARREGLO 163 (17/10/2026): aquí había una LISTA ESCRITA A MANO de siete
+    // nombres, y "traspasos" no estaba — aunque sí está en _MERGE_FIELDS y en
+    // _PODA_CATS. O sea: la lista se fusiona y la poda la miraría, pero la
+    // marca no se creaba nunca, así que no había nada que podar. Lo cazó ella
+    // en pruebas borrando un traspaso de 20.000 Bs: el saldo y el lote volvían
+    // bien y el registro REAPARECÍA segundos después, cuando el servidor lo
+    // devolvía — y volvía sin su _lotesConsumidos, o sea sin el descuento, así
+    // que el lote se quedaba 20.000 Bs por encima de la cuenta. Es la misma
+    // deriva que el ARREGLO 161 vino a cerrar, reabierta por la sincronización.
+    // Esto estaba igual en producción (v242) desde siempre.
+    //
+    // Y no se arregla añadiendo un octavo nombre a la lista: eso es lo que ya
+    // falló cuatro veces (ARREGLOS 101, 119, 150, 153 — una regla copiada en
+    // varios sitios y uno que se queda fuera). La pregunta es "¿esta lista se
+    // fusiona?", y eso lo contesta _MERGE_FIELDS, que es donde ya vive. Así
+    // una lista nueva queda cubierta sola.
+    if(arr==="brl"||arr==="vzla"||arr==="eeuu"){
       // Estas usan "_uid" como identificador de fusión, no el "n"/"id" que llega aquí
       _marcarBorradoMerge(arr,item._uid||id);
+    } else if(_MERGE_FIELDS.indexOf(arr)!==-1){
+      var _idF=_MERGE_ID_FIELD[arr]||"id";
+      _marcarBorradoMerge(arr, (item&&item[_idF]!==undefined)?item[_idF]:id);
     }
     S[arr]=S[arr].filter(function(x){return x[field||"id"]!==id;});
     saveData();R();
