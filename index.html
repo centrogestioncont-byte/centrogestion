@@ -3221,7 +3221,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261017_v246-TEST";
+var APP_VERSION = "20261017_v247";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -3942,6 +3942,56 @@ function _aplicarEstadoDeApi(estado, ts){
 }
 
 // Trae el bloque completo del servidor.
+// ── ARREGLO 165 · el sondeo no puede repintar con el dedo puesto ───────
+//
+// Lo cazo ella el 17/10 probando el 164: "el primer clic en Deshacer no hizo
+// nada; al segundo funciono". El sondeo mira el servidor cada 8 s y, cuando
+// trae algo, llama a R() — que rehace la pestaña ENTERA. Si eso cae entre el
+// mousedown y el mouseup, el navegador no dispara el click: el boton que
+// recibio el mousedown ya no existe. Reproducido en Chromium: el lote se
+// queda sin deshacer y la pantalla no dice nada.
+//
+// ES EL ARREGLO 152, en otro sitio y con otro disparador. Alli el repintado
+// lo lanzaba el propio onchange del campo; aqui lo lanza el reloj, asi que
+// puede caer encima de CUALQUIER boton de la app, no solo de este panel. Por
+// eso el freno va en la puerta por la que entra ese repintado y no en el
+// panel: "enseña a tocar dos veces un boton que mueve dinero".
+//
+// NO se pierde el repintado, se APLAZA. Saltarselo dejaria la pantalla sin
+// lo que el otro aparato acaba de registrar y sin decirlo, que es peor. Y se
+// aplaza hasta DESPUES del click, no hasta el pointerup: el click se dispara
+// despues del pointerup, asi que repintar ahi se lleva el boton igual.
+var _DEDO_ABAJO=false, _REPINTE_PENDIENTE=false, _DEDO_SUELTA=0;
+
+function _repintarTrasSincronizar(){
+  if(_DEDO_ABAJO){ _REPINTE_PENDIENTE=true; return; }
+  try{ if(typeof R==="function") R(); }catch(e){}
+}
+function _dedoAbajo(){
+  _DEDO_ABAJO=true;
+  // Red de seguridad: si el pointerup no llega nunca —un pointercancel que
+  // se pierde, el dedo que sale de la pantalla— el repintado se quedaria
+  // aplazado para siempre y la app dejaria de sincronizar en silencio.
+  clearTimeout(_DEDO_SUELTA);
+  _DEDO_SUELTA=setTimeout(_dedoArriba, 3000);
+}
+function _dedoArriba(){
+  if(!_DEDO_ABAJO) return;
+  _DEDO_ABAJO=false;
+  clearTimeout(_DEDO_SUELTA);
+  if(!_REPINTE_PENDIENTE) return;
+  setTimeout(function(){
+    if(_DEDO_ABAJO) return;          // ya empezo otro gesto: que acabe
+    _REPINTE_PENDIENTE=false;
+    try{ if(typeof R==="function") R(); }catch(e){}
+  }, 250);
+}
+try{
+  document.addEventListener("pointerdown", _dedoAbajo, true);
+  document.addEventListener("pointerup", _dedoArriba, true);
+  document.addEventListener("pointercancel", _dedoArriba, true);
+}catch(e){}
+
 function cargarEstadoDeApi(opciones){
   if(!FUENTE_API && !(opciones && opciones.forzar)) return Promise.resolve(false);
   if(!apiSesionActiva() || _API_BLOQUEADA || !_API_ENTRO_POR_API) return Promise.resolve(false);
@@ -3952,7 +4002,7 @@ function cargarEstadoDeApi(opciones){
       var aplicado=_aplicarEstadoDeApi(d.estado, d._ts);
       if(aplicado){
         console.log("📥 Estado cargado desde la API · _ts:", d._ts);
-        try{ if(typeof R==="function") R(); }catch(e){}
+        _repintarTrasSincronizar();
       }
       return aplicado;
     });
@@ -21678,7 +21728,12 @@ function deshacerCorreccionLotesVES(){
 function _htmlDerivaVES(){
   var d=_derivaLotesVES(), u=_ultimaCorreccionVES();
   if(!(d.total>0.01) && !u) return "";
-  var h="<div id='deriva-ves' style='display:none;border:1px solid var(--ln);border-radius:10px;padding:12px;margin-bottom:10px;background:var(--sup)'>";
+  // ARREGLO 165: el abierto/cerrado vive en S, NO solo en el DOM. El sondeo
+  // repinta la pestaña cada vez que el servidor trae algo (cada 8 s), y con
+  // el estado solo en el DOM el panel se cerraba solo bajo el dedo. Es lo
+  // mismo que ya hace S._verArchivados, que por eso nunca tuvo el problema.
+  var h="<div id='deriva-ves' style='display:"+(S._verDeriva?"block":"none")+
+        ";border:1px solid var(--ln);border-radius:10px;padding:12px;margin-bottom:10px;background:var(--sup)'>";
   if(d.total>0.01){
     h+="<div style='font-size:12px;color:var(--tx2);margin-bottom:9px;line-height:1.5'>"+
        "Los lotes dicen tener <b>"+f2(d.total)+" Bs</b> más que las cuentas. "+
@@ -21737,18 +21792,21 @@ function _htmlDerivaVES(){
 function _verDerivaVES(){
   var d=document.getElementById("deriva-ves");
   if(!d) return;
-  var ab=(d.style.display==="none");
-  d.style.display=ab?"block":"none";
+  S._verDeriva=(d.style.display==="none");
+  d.style.display=S._verDeriva?"block":"none";
   var b=document.getElementById("deriva-ves-btn");
-  if(b) b.textContent=ab?"🛠️ Cuadrar lotes con las cuentas ▴":_rotDerivaVES();
+  if(b) b.textContent=_rotDerivaVES();
 }
 // El rotulo se escribe en UN sitio. El dibujado y el de cerrar lo leen de
 // aqui: escritos aparte, el enlace cambia de nombre solo al cerrarlo, que ya
 // paso con el del sueldo (ARREGLO 141) y no lo ve ninguna guardia de texto.
 function _rotDerivaVES(){
   var d=_derivaLotesVES();
-  return d.total>0.01 ? "🛠️ Cuadrar lotes con las cuentas ▾"
-                      : "🛠️ Lotes y cuentas ▾";
+  // La flecha sale de S, igual que el panel: escrita aparte, tras un
+  // repintado del sondeo el boton decia "abrir" con el panel abierto.
+  var fl=S._verDeriva?" ▴":" ▾";
+  return (d.total>0.01 ? "🛠️ Cuadrar lotes con las cuentas"
+                       : "🛠️ Lotes y cuentas")+fl;
 }
 function editRestanteInv(id){
   var r=(S.inventarioUsdt||[]).find(function(x){return x.id===id;});

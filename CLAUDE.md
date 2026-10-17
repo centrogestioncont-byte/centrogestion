@@ -5925,3 +5925,67 @@ pestañas, 0 errores, 12 pruebas negativas y las 12 cazadas.
 mirado. Lo mismo con las dos comprobaciones de "no hay deriva": subí el saldo de
 una sola cuenta y PROVINCIAL seguía con sus 239,99, así que medían otra cosa.
 Las tres veces, el ARREGLO 84: *medir no vale si mides otra cosa.*
+
+---
+
+## El sondeo no puede repintar con el dedo puesto (ARREGLO 165)
+
+Lo cazó ella el 17/10 probando el 164: *"el primer clic en Deshacer no hizo
+nada; al segundo funcionó"*.
+
+**Y yo lo había visto.** Haciendo las capturas del 164 anoté que *"el panel se
+cierra solo porque un temporizador repinta"*, lo rodeé parando los
+temporizadores para la foto, y seguí. Era el fallo, no una molestia de la
+captura.
+
+**Son DOS cosas, y las dos se reprodujeron en Chromium contra v246:**
+
+```
+(1) el panel se cerraba en cada repintado    su abierto vivía solo en el DOM
+(2) el clic se perdía                        repintar entre mousedown y mouseup
+```
+
+El sondeo mira el servidor cada 8 s y, cuando trae algo, llama a `R()`, que
+rehace la pestaña entera. Si eso cae entre el `mousedown` y el `mouseup`, **el
+navegador no dispara el `click`**: el botón que recibió el `mousedown` ya no
+existe. Medido: el lote se queda sin deshacer y nada lo dice.
+
+**Es el ARREGLO 152 con otro disparador.** Allí el repintado lo lanzaba el
+`onchange` del propio campo; aquí lo lanza el reloj, así que puede caer encima
+de **cualquier** botón de la app, no sólo de este panel. Por eso el freno va en
+la puerta por la que entra ese repintado —`cargarEstadoDeApi`— y no en el panel.
+
+- **No se salta, se APLAZA.** Saltárselo dejaría la pantalla sin lo que el otro
+  aparato acaba de registrar, y sin decirlo. `_repintarTrasSincronizar()` anota
+  que hay uno pendiente y lo suelta al levantar el dedo.
+- **Y se suelta DESPUÉS del click, no en el `pointerup`.** El click se dispara
+  después del pointerup, así que repintar ahí se lleva el botón igual. Hay
+  prueba negativa para ese caso exacto.
+- **Un `pointerup` que no llega no puede dejar la app sin sincronizar.** Si el
+  dedo sale de la pantalla y el `pointercancel` se pierde, la bandera se queda
+  puesta y el sondeo dejaría de repintar **en silencio**. Red de seguridad a los
+  3 s.
+- **Los tres gestos van por nombre** —`pointerdown`, `pointerup`,
+  `pointercancel`— y contados en la guardia (ARREGLO 140).
+
+**Y el panel recuerda en `S` si está abierto**, como ya hacía `S._verArchivados`
+—que por eso nunca tuvo el problema—. La flecha ▾/▴ sale de lo mismo: escrita
+aparte, tras un repintado el botón decía *"abrir"* con el panel abierto.
+
+### Medido con su export, el mismo caso
+
+```
+                                      v246 (la que probó)   v247
+el panel tras un repintado            se cierra             sigue abierto
+el botón seguía en el DOM             NO                    sí
+los lotes tras el clic                172.958,96  ❌         217.431,60  ✅
+el repintado aplazado llegó después   —                     sí
+```
+
+El ciclo entero del 164 sale idéntico, 26 pestañas sin errores, y 9 pruebas
+negativas cazadas.
+
+**La lección, y es de método más que de código:** una anotación de *"esto se
+cierra solo"* escrita mientras se mide otra cosa es un fallo encontrado. Rodearlo
+para poder seguir midiendo —aquí, parando los temporizadores— lo deja escrito y
+sin arreglar.
