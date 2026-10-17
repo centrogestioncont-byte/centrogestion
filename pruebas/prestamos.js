@@ -107,7 +107,7 @@ const NECESARIAS = ["_egresosHuerfanos", "moverEgresoAPersonal", "_tasaDelDiaFue
                     "capitalRealTotal", "_fraccionInteresPrestamo", "interesDentroDeApertura",
                     "_mesesDesde", "_acumuladosMes",
                     "conciliacionCapital", "getMesKeyActual", "ajustesDesdeApertura",
-                    "_tsDeUid", "_tsDeAjuste", "_deducirHoraApertura", "_isoDeDDMMAA", "_motivoDelAjuste", "_ajusteAEgreso", "_ajusteAGanExtra", "_cuentaMadre", "_cuentaOMadre", "_completarDesdeMadre", "toggleCuentaMadre",
+                    "_tsDeUid", "_tsDeAjuste", "_deducirHoraApertura", "_isoDeDDMMAA", "_motivoDelAjuste", "_ajusteAEgreso", "_ajusteAGanExtra", "_cuentaMadre", "_lotesDeCuenta", "_completarDesdeMadre", "toggleCuentaMadre",
                     "traspasosAPersonal", "egresosPersonalesDesdeCuentaPersonal", "efectoTasasDesde", "_isoDeFechaLote",
                     "aportesDesde", "_cruceUsdtPersonal", "_gananciaMeses", "_aporteVacio",
                     "_aporteSubeSaldo", "_egOperativos",
@@ -5164,22 +5164,61 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(F._cuentaMadre("VES").id === "cMadre", "encuentra la madre de su moneda");
   ok(F._cuentaMadre("BRL") === null, "y no se inventa una donde no la hay");
   ok(F._cuentaMadre("") === null, "sin moneda, nada");
+  // ── ARREGLO 168 · primero los lotes de la cuenta que paga ─────────────
   // Un lote de la madre lo puede gastar cualquier banco: ahi esta el dinero
   // cuyo banco no se sabe. Sin esto se quedaria muerto y ensuciando las tasas.
-  ok(F._cuentaOMadre("cMadre", "cBdv", "VES"), "un lote de la madre lo gasta Banco de Venezuela");
-  ok(F._cuentaOMadre("cMadre", "cBan", "VES"), "y tambien Banesco: el banco no se sabia");
-  ok(F._cuentaOMadre("cBdv", "cBdv", "VES"), "y lo suyo lo sigue gastando cada uno");
-  ok(!F._cuentaOMadre("cBdv", "cBan", "VES"), "pero un lote de OTRO banco no: eso no cambia");
-  ok(F._cuentaOMadre("cBdv", "", "VES"), "sin cuenta se mira todo, como siempre");
-  ok(!F._cuentaOMadre("cMadre", "cBrl", "BRL"), "y la madre de VES no vale para reales");
+  // Pero DETRAS de los suyos, o el lote de la propia cuenta no se gasta nunca
+  // mientras la madre tenga algo mas viejo — y asi los puntos 2 y 3 del
+  // ARREGLO 167 no se podian ni probar.
+  const L = (cta, pool) => F._lotesDeCuenta(
+    [{ id: 1, cuentaDestinoId: "cMadre" }, { id: 2, cuentaDestinoId: "cBdv" },
+     { id: 3, cuentaDestinoId: "cBan" }],
+    cta, "VES", "cuentaDestinoId", pool).map(r => r.id);
+  ok(JSON.stringify(L("cBdv", true)) === "[2,1]",
+     "lo suyo primero y la madre detras (" + JSON.stringify(L("cBdv", true)) + ")");
+  ok(JSON.stringify(L("cBan", true)) === "[3,1]",
+     "y cada banco con el suyo, no con el del otro");
+  ok(JSON.stringify(L("cMadre", true)) === "[1]",
+     "la madre no se duplica cuando paga ella misma");
+  ok(JSON.stringify(L("", true)) === "[1,2,3]", "sin cuenta se mira todo, como siempre");
+  // El respaldo al pool es de cada sitio y no se reparte: la pantalla y los
+  // egresos caen a el cuando la cuenta no tiene nada; el CONSUMO no, o un pago
+  // se comeria los lotes de otro banco.
+  ok(JSON.stringify(L("cNueva", true)) === "[1]",
+     "una cuenta nueva gasta de la madre, que para eso esta");
+  S.cuentas = S.cuentas.filter(c => c.id !== "cMadre");
+  ok(JSON.stringify(L("cBdv", true)) === "[2]",
+     "y sin madre marcada es el filtro estricto de siempre");
+  ok(JSON.stringify(L("cNueva", true)) === "[1,2,3]",
+     "sin lotes propios ni madre, la pantalla cae al pool general");
+  ok(JSON.stringify(L("cNueva", false)) === "[]",
+     "pero el consumo no: ahi no se gasta nada, o un pago se comeria lo de otro banco");
+  montar();
 }
-// Los seis sitios que deciden que lote se consume o se devuelve tienen que
-// mirarla. Si uno se queda fuera, ese dinero se vuelve inalcanzable por ahi.
+// Los nueve sitios que deciden que lote se consume, se enseña o se devuelve
+// pasan por la misma puerta. Escrita a mano en cada uno, uno se queda fuera —
+// es el fallo de los ARREGLOS 101, 119, 150 y 153.
 {
-  const sitios = (sinComentarios(HTML).match(/_cuentaOMadre\(/g) || []).length;
-  ok(sitios >= 7, "todos los filtros de lote miran la madre (" + sitios + " usos)");
-  ok(!/filter\(function\(r\)\{return r\.cuentaDestinoId===cuentaId;\}\)/.test(sinComentarios(HTML)),
-     "no queda ningun filtro que la deje fuera");
+  const sinC = sinComentarios(HTML);
+  const sitios = (sinC.match(/_lotesDeCuenta\(/g) || []).length;
+  ok(sitios === 10, "los nueve filtros de lote pasan por la puerta unica + su definicion (" + sitios + ")");
+  ok(!/_cuentaOMadre/.test(sinC),
+     "y el filtro viejo, que mezclaba el orden, ya no existe");
+  // Lo que se ENSEÑA y lo que se DESCUENTA tienen que mirar la misma lista.
+  // Filtrando estricto aqui, los lotes de la madre quedaban fuera del descuento
+  // y se inflaban solos: medido, 129.243,72 Bs sin bajar de ningun lote.
+  [["_repartoFIFO", true], ["consumirInventarioFIFO", false],
+   ["simularConsumoFIFO", false], ["descontarFIFOEgreso", true],
+   ["restaurarFIFOEgreso", true], ["_restaurarVentasFIFO", true],
+   ["getLastTasaVenta", false]].forEach(([fn, pool]) => {
+    const t = sinComentarios(sacarFuncion(fn));
+    const re = new RegExp("_lotesDeCuenta\\([^;]*," + (pool ? "true" : "false") + "\\)");
+    ok(re.test(t), fn + " reparte por la puerta, con su respaldo de siempre");
+    ok(!/cuentaDestinoId===cuenta/.test(t), fn + " no se escribe su propio filtro");
+  });
+  // Las COMPRAS siguen estrictas, a proposito: esto va del dinero que SALE.
+  ok(/r\.cuentaOrigenId===cuentaOrigenId/.test(sinComentarios(sacarFuncion("consumirInventarioFIFO"))),
+     "las compras siguen estrictas por cuenta, que es lo de siempre");
 }
 // El banco gasta LO SUYO primero; la madre solo completa lo que falte. Asi sus
 // saldos de hoy se gastan solos y no hay que migrar nada.

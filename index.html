@@ -3262,7 +3262,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261017_v249-TEST";
+var APP_VERSION = "20261018_v250-TEST";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -8096,15 +8096,50 @@ function toggleCuentaMadre(cid){
   logAudit("CUENTA_MADRE",c.nombre+" → esMadre="+c.esMadre);
   saveData();R();
 }
+// ── ARREGLO 168 · primero los lotes de la cuenta que paga ───────────────
+//
 // Un lote que esta en la cuenta madre lo puede consumir CUALQUIER banco: ahi
 // estan justo los bolivares cuyo banco no se sabe. Sin esto un lote de la madre
 // no lo tocaria ninguna remesa —el FIFO filtra por cuenta— y se quedaria ahi
 // para siempre, ensuciando las tasas que la app sugiere.
-function _cuentaOMadre(destinoDelLote, cuentaId, moneda){
-  if(!cuentaId) return true;
-  if(destinoDelLote===cuentaId) return true;
-  var m=_cuentaMadre(moneda);
-  return !!(m && destinoDelLote===m.id);
+//
+// Pero mezclarlos y ordenarlo todo por antiguedad tiene dos precios, y los dos
+// se midieron con su export antes de tocar nada:
+//
+//  1. El lote de la propia cuenta no se gasta NUNCA mientras la madre tenga
+//     algo mas viejo. Lo vio ella en pruebas: pagando 200 R$ desde PAGBANK, la
+//     pantalla cargaba el pago al lote del 09/12 de REALES-OPERACIONES USDT
+//     —la madre— y el lote de 500 que acababa de dejar una ida en PAGBANK se
+//     quedaba intacto. Asi no se puede ni probar de donde salen los reales.
+//
+//  2. Y la pantalla decia una cosa y el descuento hacia otra. _repartoFIFO
+//     metia la madre; consumirInventarioFIFO y simularConsumoFIFO filtraban
+//     ESTRICTO por cuenta. Medido con una madre marcada: la pantalla repartia
+//     250.000 Bs entre 4 lotes de dos cuentas y el descuento bajaba 120.756,28
+//     de uno solo — 129.243,72 Bs que no bajaban de ningun lote. Y con la
+//     cuenta sin lotes propios, los 200 R$ enteros sin descontar. Esa es la
+//     misma deriva que cerraron los ARREGLOS 161 y 164, reabierta por la madre.
+//
+// La regla la dio ella: "que primero se gasten los lotes de la cuenta desde
+// donde pago, en orden FIFO, y que la cuenta madre se use solo si eso no
+// alcanza". Y se decide AQUI, en un solo sitio, para que lo que se enseña y lo
+// que se descuenta no se puedan separar — ocho sitios con la regla escrita a
+// mano es el fallo de los ARREGLOS 101, 119, 150 y 153.
+//
+// conPool mantiene el respaldo que cada sitio ya tenia, no lo reparte: la
+// pantalla y los egresos caen al pool general cuando la cuenta no tiene nada
+// (cuenta nueva), y el consumo NO —ahi, sin lotes propios ni de la madre, no se
+// gasta nada, que es lo que impide que un pago se coma los lotes de otro banco.
+function _lotesDeCuenta(ordenados, cuentaId, moneda, campo, conPool){
+  if(!cuentaId) return ordenados;
+  var propios=ordenados.filter(function(r){ return r[campo]===cuentaId; });
+  var md=_cuentaMadre(moneda);
+  var deMadre=(md && md.id!==cuentaId)
+    ? ordenados.filter(function(r){ return r[campo]===md.id; })
+    : [];
+  var l=propios.concat(deMadre);
+  if(!l.length && conPool) return ordenados;
+  return l;
 }
 
 // ── ARREGLO 95 · la tarjeta de crédito es una cuenta, y su saldo es DEUDA ───
@@ -12323,23 +12358,22 @@ function generarFijasMes(){
 // ╚══════════════════════════════════════════════════════════════╝
 function descontarFIFOEgreso(mon,monto,usdt,cuentaId){
   // Descuenta del lote FIFO correspondiente según la moneda — si se indica
-  // cuenta, SOLO de los lotes de esa cuenta (mismo criterio ya aprobado
-  // para remesas: nunca mezclar bancos). Si la cuenta no tiene lotes
-  // propios, sigue con el pool general de esa moneda (comportamiento igual
-  // al de siempre, para no romper egresos ya existentes sin esta info).
+  // cuenta, primero los lotes de ESA cuenta y despues los de la madre
+  // (ARREGLO 168; nunca los de otro banco). Si no tiene ni unos ni otros,
+  // sigue con el pool general de esa moneda (comportamiento igual al de
+  // siempre, para no romper egresos ya existentes sin esta info).
   normalizarInventarioFIFO();
   var m=parseFloat(monto)||0;
   if(mon==="VES"){
     var vsTodas=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda==="VES";}).sort(ordenFIFO);
-    // FASE 2: los de la cuenta madre entran siempre — ahi esta el dinero cuyo
-    // banco no se sabe, y si no se pudiera gastar se quedaria muerto.
-    var vs=cuentaId?vsTodas.filter(function(r){return _cuentaOMadre(r.cuentaDestinoId,cuentaId,"VES");}):vsTodas;
-    if(cuentaId&&!vs.length) vs=vsTodas;
+    // FASE 2: los de la cuenta madre entran, pero DETRAS de los propios
+    // (ARREGLO 168) — ahi esta el dinero cuyo banco no se sabe, y si no se
+    // pudiera gastar se quedaria muerto.
+    var vs=_lotesDeCuenta(vsTodas,cuentaId,"VES","cuentaDestinoId",true);
     for(var i=0;i<vs.length&&m>0.01;i++){var d=parseFloat(vs[i].bsRestante)||0;if(d<=0)continue;var u=Math.min(d,m);vs[i].bsRestante=Math.round((d-u)*100)/100;vs[i]._mod=Date.now();m-=u;}
   } else if(mon==="BRL"){
     var vbTodas=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda==="BRL";}).sort(ordenFIFO);
-    var vb=cuentaId?vbTodas.filter(function(r){return _cuentaOMadre(r.cuentaDestinoId,cuentaId,"BRL");}):vbTodas;
-    if(cuentaId&&!vb.length) vb=vbTodas;
+    var vb=_lotesDeCuenta(vbTodas,cuentaId,"BRL","cuentaDestinoId",true);
     for(var j=0;j<vb.length&&m>0.01;j++){var db=parseFloat(vb[j].bsRestante)||0;if(db<=0)continue;var ub=Math.min(db,m);vb[j].bsRestante=Math.round((db-ub)*100)/100;vb[j]._mod=Date.now();m-=ub;}
   } else if(mon==="USDT"){
     var vuTodas=S.inventarioUsdt.filter(function(r){return r.tipo==="compra";}).sort(ordenFIFO);
@@ -12362,13 +12396,11 @@ function restaurarFIFOEgreso(mon,monto,usdt,cuentaId){
   var m=parseFloat(monto)||0;
   if(mon==="VES"){
     var vsTodas=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda==="VES";}).sort(function(a,b){return(b.id||0)-(a.id||0);});
-    var vs=cuentaId?vsTodas.filter(function(r){return _cuentaOMadre(r.cuentaDestinoId,cuentaId,"VES");}):vsTodas;
-    if(cuentaId&&!vs.length) vs=vsTodas;
+    var vs=_lotesDeCuenta(vsTodas,cuentaId,"VES","cuentaDestinoId",true);
     for(var i=0;i<vs.length&&m>0.01;i++){var cap=parseFloat(vs[i].bs)||0;var act=parseFloat(vs[i].bsRestante)||0;var dev=Math.min(m,cap-act);if(dev>0){vs[i].bsRestante=Math.round((act+dev)*100)/100;vs[i]._mod=Date.now();m-=dev;}}
   } else if(mon==="BRL"){
     var vbTodas=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda==="BRL";}).sort(function(a,b){return(b.id||0)-(a.id||0);});
-    var vb=cuentaId?vbTodas.filter(function(r){return _cuentaOMadre(r.cuentaDestinoId,cuentaId,"BRL");}):vbTodas;
-    if(cuentaId&&!vb.length) vb=vbTodas;
+    var vb=_lotesDeCuenta(vbTodas,cuentaId,"BRL","cuentaDestinoId",true);
     for(var j=0;j<vb.length&&m>0.01;j++){var capB=parseFloat(vb[j].bs)||0;var actB=parseFloat(vb[j].bsRestante)||0;var devB=Math.min(m,capB-actB);if(devB>0){vb[j].bsRestante=Math.round((actB+devB)*100)/100;vb[j]._mod=Date.now();m-=devB;}}
   } else if(mon==="USDT"){
     var vuTodas=S.inventarioUsdt.filter(function(r){return r.tipo==="compra";}).sort(function(a,b){return(b.id||0)-(a.id||0);});
@@ -19689,8 +19721,7 @@ function _restaurarVentasFIFO(r, monDest, cant){
   }).sort(function(a,b){return(b.id||0)-(a.id||0);});
   partes.forEach(function(pt){
     if(!(pt.monto>0)||resto<=0.001) return;
-    var ventas=pt.cuentaId?ventasTodas.filter(function(l){return _cuentaOMadre(l.cuentaDestinoId,pt.cuentaId,monDest);}):ventasTodas;
-    if(pt.cuentaId&&!ventas.length) ventas=ventasTodas;   // esa cuenta nunca tuvo lotes propios
+    var ventas=_lotesDeCuenta(ventasTodas,pt.cuentaId,monDest,"cuentaDestinoId",true);
     var dePate=Math.min(pt.monto, resto);
     for(var j=0;j<ventas.length&&dePate>0.001;j++){
       var cap=parseFloat(ventas[j].bs)||0;
@@ -21228,7 +21259,7 @@ function getLastTasaVenta(monedaDest,cuentaDestinoId){
   var dest=monedaDest||"VES";
   var arr=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda===dest;}).sort(ordenFIFO);
   if(cuentaDestinoId){
-    var propias=arr.filter(function(r){return _cuentaOMadre(r.cuentaDestinoId,cuentaDestinoId,dest);});
+    var propias=_lotesDeCuenta(arr,cuentaDestinoId,dest,"cuentaDestinoId",false);
     if(propias.length){
       for(var p=0;p<propias.length;p++){ if((parseFloat(propias[p].bsRestante)||0)>0.01) return _tasaEfectivaLote(propias[p]); }
       return _tasaEfectivaLote(propias[propias.length-1]); // esta cuenta ya consumió lo suyo → su propia última tasa
@@ -21297,8 +21328,9 @@ function consumirInventarioFIFO(monedaOrig, usdtUsados, monedaDest, bsEntregados
   var u=parseFloat(usdtUsados)||0;
   if(u>0){
     var comprasTodas=S.inventarioUsdt.filter(function(r){return r.tipo==="compra"&&r.moneda===monedaOrig;}).sort(ordenFIFO);
-    // Si se indica cuenta, consumir SOLO los lotes de esa cuenta — nunca los de otra
-    // (igual que crearLoteRecibido: sin mezclar cuentas, aunque quede sin consumir).
+    // Las COMPRAS siguen estrictas por cuenta, a proposito: el ARREGLO 168 va
+    // del dinero que SALE (los lotes de venta). Aqui no hay madre que mirar —
+    // igual que crearLoteRecibido: sin mezclar cuentas, aunque quede sin consumir.
     var compras=cuentaOrigenId?comprasTodas.filter(function(r){return r.cuentaOrigenId===cuentaOrigenId;}):comprasTodas;
     for(var i=0;i<compras.length&&u>0.0001;i++){
       var disp=parseFloat(compras[i].restante)||0;
@@ -21312,7 +21344,10 @@ function consumirInventarioFIFO(monedaOrig, usdtUsados, monedaDest, bsEntregados
   var b=parseFloat(bsEntregados)||0;
   if(b>0){
     var ventasTodas=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda===(monedaDest||"VES");}).sort(ordenFIFO);
-    var ventas=cuentaDestId?ventasTodas.filter(function(r){return r.cuentaDestinoId===cuentaDestId;}):ventasTodas;
+    // ARREGLO 168: la MISMA lista que enseña _repartoFIFO. Filtrando estricto,
+    // los lotes de la cuenta madre quedaban fuera del descuento y se inflaban
+    // solos — la deriva que cerraron el 161 y el 164, por otra puerta.
+    var ventas=_lotesDeCuenta(ventasTodas,cuentaDestId,(monedaDest||"VES"),"cuentaDestinoId",false);
     for(var k=0;k<ventas.length&&b>0.01;k++){
       var dispB=parseFloat(ventas[k].bsRestante)||0;
       if(dispB<=0) continue;
@@ -21347,7 +21382,7 @@ function simularConsumoFIFO(monedaOrig, usdtUsados, monedaDest, bsEntregados, cu
   var b=parseFloat(bsEntregados)||0;
   if(b>0.01){
     var ventasTodas=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda===(monedaDest||"VES");}).sort(ordenFIFO);
-    var ventas=cuentaDestId?ventasTodas.filter(function(r){return r.cuentaDestinoId===cuentaDestId;}):ventasTodas;
+    var ventas=_lotesDeCuenta(ventasTodas,cuentaDestId,(monedaDest||"VES"),"cuentaDestinoId",false);
     for(var k=0;k<ventas.length&&b>0.01;k++){
       var dispB=parseFloat(ventas[k].bsRestante)||0;
       if(dispB<=0) continue;
@@ -22227,8 +22262,7 @@ function _repartoFIFO(monedaDest, montoBs, cuentaDestinoId){
   var dest=monedaDest||"VES";
   var m=parseFloat(montoBs)||0;
   var lotesTodos=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda===dest&&(parseFloat(r.tasa)||0)>0;}).sort(ordenFIFO);
-  var lotes=cuentaDestinoId?lotesTodos.filter(function(r){return _cuentaOMadre(r.cuentaDestinoId,cuentaDestinoId,dest);}):lotesTodos;
-  if(!lotes.length) lotes=lotesTodos; // cuenta nueva sin lotes propios → usar el pool general, igual que getLastTasaVenta
+  var lotes=_lotesDeCuenta(lotesTodos,cuentaDestinoId,dest,"cuentaDestinoId",true); // sin lotes propios ni de la madre → el pool general, igual que getLastTasaVenta
   if(!lotes.length) return {filas:[], usdt:0, rest:m, lotes:lotes};
   var rest=m,usdt=0,filas=[];
   for(var i=0;i<lotes.length&&rest>0.01;i++){
