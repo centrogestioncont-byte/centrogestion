@@ -12019,5 +12019,63 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
      "y el rotulo sale de un solo sitio, al dibujar y al cerrar");
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// ARREGLO 165 · el sondeo no repinta con el dedo puesto
+//
+// Lo cazo ella el 17/10 probando el 164: "el primer clic en Deshacer no hizo
+// nada; al segundo funciono". El sondeo mira el servidor cada 8 s y, cuando
+// trae algo, llama a R(), que rehace la pestaña entera. Si eso cae entre el
+// mousedown y el mouseup, el navegador no dispara el click. Reproducido en
+// Chromium contra v246: el lote se queda sin deshacer y nada lo dice.
+// Es el ARREGLO 152 con otro disparador — alli el repintado lo lanzaba el
+// onchange del campo; aqui lo lanza el reloj, asi que cae sobre CUALQUIER
+// boton de la app.
+{
+  const sinC = t => t.replace(/\/\/[^\n]*/g, "");
+  const car = sinC(sacarFuncion("cargarEstadoDeApi"));
+  const rep = sinC(sacarFuncion("_repintarTrasSincronizar"));
+  const ab  = sinC(sacarFuncion("_dedoAbajo"));
+  const ar  = sinC(sacarFuncion("_dedoArriba"));
+
+  // 1. El repintado del sondeo pasa por la puerta, no por un R() suelto.
+  ok(/_repintarTrasSincronizar\(\)/.test(car) && !/\bR\(\)/.test(car),
+     "el repintado del sondeo pasa por _repintarTrasSincronizar, no por un R() suelto");
+
+  // 2. Con el dedo puesto se APLAZA, no se salta: saltarselo dejaria la
+  //    pantalla sin lo que el otro aparato acaba de registrar, sin decirlo.
+  ok(/if\(_DEDO_ABAJO\)\{\s*_REPINTE_PENDIENTE=true;\s*return;/.test(rep),
+     "con el dedo puesto el repintado se aplaza, no se pierde");
+  ok(/_REPINTE_PENDIENTE=false/.test(ar) && /R\(\)/.test(ar),
+     "y llega en cuanto se levanta el dedo");
+
+  // 3. Despues del CLICK, no en el pointerup: el click se dispara despues,
+  //    asi que repintar ahi se lleva el boton igual.
+  ok(/setTimeout\(function\(\)\{[\s\S]*?R\(\)[\s\S]*?\},\s*\d+\)/.test(ar),
+     "el repintado aplazado espera a que el click se haya disparado");
+
+  // 4. Si el pointerup no llega nunca, el repintado no puede quedarse
+  //    aplazado para siempre: la app dejaria de sincronizar en silencio.
+  ok(/setTimeout\(_dedoArriba,\s*\d+\)/.test(ab),
+     "un pointerup que no llega no deja la app sin sincronizar");
+
+  // 5. Los tres gestos, por nombre: sin pointercancel un dedo que sale de la
+  //    pantalla deja la bandera puesta (ARREGLO 140 — exigirlos contados).
+  ["pointerdown","pointerup","pointercancel"].forEach(function(ev){
+    ok(new RegExp('addEventListener\\("'+ev+'"').test(HTML),
+       "se escucha "+ev);
+  });
+
+  // 6. Y el panel del 164 recuerda si esta abierto EN S, no solo en el DOM:
+  //    con el estado solo en el DOM el repintado lo cerraba bajo el dedo.
+  const htm = sinC(sacarFuncion("_htmlDerivaVES"));
+  const ver = sinC(sacarFuncion("_verDerivaVES"));
+  const rot = sinC(sacarFuncion("_rotDerivaVES"));
+  ok(/S\._verDeriva\?"block":"none"/.test(htm),
+     "el panel se dibuja abierto si lo estaba");
+  ok(/S\._verDeriva=/.test(ver), "y abrirlo o cerrarlo lo apunta en S");
+  ok(/S\._verDeriva\?" ▴":" ▾"/.test(rot),
+     "la flecha sale de lo mismo, o el boton diria 'abrir' con el panel abierto");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
