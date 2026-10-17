@@ -6165,3 +6165,104 @@ igual—, que es lo que prueba que esto no toca lo que ya tiene. 26 pestañas,
 **Lo que esto NO repara:** las remesas ya registradas no llevan la marca, así
 que sus reales siguen sin lote. Vale de aquí en adelante.
 
+
+---
+
+## Primero los lotes de la cuenta que paga (ARREGLO 168)
+
+Sus palabras del 17/10, probando el 167 en `test`: *"los puntos 2 y 3 no se
+pueden probar: `_repartoFIFO` junta los lotes de la cuenta de pago con los de la
+cuenta madre y ordena todo por antigüedad. Así, al pagar desde PAGBANK se gastan
+primero los 5 lotes de septiembre de REALES-OPERACIONES USDT (2.281,83 R$) y el
+lote de la ida «se quedan» nunca se usa."*
+
+Tenía razón, y al medirlo salió **un segundo fallo más caro que el que señaló**.
+
+### Lo que la pantalla enseñaba y lo que de verdad se descontaba no coincidían
+
+`_repartoFIFO` metía la madre; `consumirInventarioFIFO` y `simularConsumoFIFO`
+—los que de verdad bajan el lote— filtraban **estricto por cuenta**. Reproducido
+en Chromium con su export y una madre marcada, pagando desde BANESCO:
+
+```
+            lo que la pantalla reparte   lo que se descuenta   sin bajar de ningún lote
+ 50.000 Bs           50.000,00               50.000,00                    0
+150.000 Bs          150.000,00              120.756,28               29.243,72
+250.000 Bs          250.000,00              120.756,28              129.243,72
+400.000 Bs          338.187,89              120.756,28              217.431,61
+```
+
+Y con la cuenta sin lotes propios, el pago entero: la pantalla lo cargaba a la
+madre y **no bajaba nada**. Eso es la deriva que cerraron el 161 y el 164,
+reabierta por otra puerta — y de esos lotes salen las tasas que la app sugiere.
+
+### La regla, en un solo sitio
+
+`_lotesDeCuenta(ordenados, cuentaId, moneda, campo, conPool)`: **los de la
+cuenta que paga primero, en orden FIFO, y la madre sólo si eso no alcanza.** La
+leen los **nueve** sitios que deciden qué lote se enseña, se consume o se
+devuelve. `_cuentaOMadre` se retiró: escrita a mano en nueve sitios, uno se
+queda fuera — es el fallo de los ARREGLOS 101, 119, 150 y 153.
+
+Y es la misma regla que el lado de los **saldos** ya tenía desde la FASE 2
+(`_completarDesdeMadre`: *"si al banco le alcanza, la madre no se toca"*). Lo
+que faltaba era aplicarla a los **lotes**.
+
+- **`conPool` mantiene el respaldo que cada sitio ya tenía, no lo reparte.** La
+  pantalla y los egresos caen al pool general cuando la cuenta no tiene ni lo
+  suyo ni madre; el **consumo no**, y eso no se puede cambiar: con el pool
+  puesto ahí, un pago desde una cuenta sin lotes se comería los de otro banco.
+  Hay prueba negativa para ese caso exacto.
+- **Las COMPRAS siguen estrictas por cuenta, a propósito.** Esto va del dinero
+  que SALE —los lotes de venta—. Meter la madre ahí sería una regla nueva que
+  ella no pidió, y cambiaría la valoración de las remesas. Hay guardia.
+- **Descontar y devolver tienen que ver el MISMO conjunto.** Si uno mira la
+  madre y el otro no, se devuelve a lotes que esa cuenta nunca gastó.
+
+### Qué le cambia a los bolívares: hoy, nada
+
+Es lo que pidió comprobar antes de tocarlo. Medido con su export del 16/10,
+v249 contra v250, **108 casos de reparto en todas sus cuentas de VES y BRL**:
+
+```
+casos distintos          0
+tasa de referencia VES   996,1754   igual
+tasa de referencia BRL     5,0529   igual
+capital                 2.711,65    igual
+te sobran                   6,94    igual
+utilidad de octubre        73,17    igual
+publica                186 · 206    igual
+```
+
+**Y la razón es que hoy no tiene ninguna cuenta madre marcada en VES** (ni en
+ninguna moneda, en producción). Sin madre, `_lotesDeCuenta` es el filtro
+estricto de siempre. La que hay es la de reales que creó en `test`.
+
+**El día que marque una madre en VES sí cambia**, y conviene saberlo: medido
+marcando BANCO DE VENEZUELA como madre, cambian **9 de 27** casos —los que no
+agotan los lotes— y el mayor es una ida de 150.000 Bs desde BANESCO:
+
+```
+                tasa        USDT
+antes       1.001,8264    149,7265
+ahora         996,0898    150,5888
+```
+
+La dirección no es sistemática: depende de si el lote propio es más caro o más
+barato que el de la madre. Lo que sí es sistemático es que **sale de la cuenta
+que de verdad pagó**, que es lo que el FIFO tiene que contar.
+
+### Medido con su caso de `test`
+
+Madre de reales con sus 5 lotes de septiembre y el lote de 500 que dejó una ida
+«se quedan» en PAGBANK, pagando 200 R$ desde PAGBANK:
+
+```
+                        v249                              v250
+la pantalla      REALES-OPERACIONES USDT @5,02      PAGBANK @5,0327
+el descuento     el lote de PAGBANK (otro)          el lote de PAGBANK
+el método        P2P                                🤝 calce
+cuenta sin lotes propios: sin descontar  200,00 R$            0,00
+```
+
+26 pestañas, 0 errores, 12 pruebas negativas y las 12 cazadas.
