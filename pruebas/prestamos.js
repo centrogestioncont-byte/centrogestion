@@ -4011,8 +4011,13 @@ console.log("\nArreglo 64 · entrar con huella");
   // leyera los tabs del rol, el menu volveria a enseñar pestañas que contestan
   // "Sin acceso" al tocarlas, que es el error de la FASE B.
   const main = sinComentarios(sacarFuncion("rMain"));
-  ok(/_htmlLateral\(ts\)/.test(main) && /_htmlMenuTel\(ts\)/.test(main),
+  // (ARREGLO 166: ahora pasan por _tabsDelMenu, que quita las escondidas. Lo
+  // que esta guardia defiende sigue siendo lo mismo: que lo que entra sea "ts"
+  // —la lista ya filtrada por permisos— y nunca TABS[S.role].)
+  ok(/_htmlLateral\(_tabsDelMenu\(ts\)\)/.test(main) && /_htmlMenuTel\(_tabsDelMenu\(ts\)\)/.test(main),
      "los dos menus salen de la lista ya filtrada por permisos");
+  ok(!/_htmlLateral\(TABS|_htmlMenuTel\(TABS/.test(main),
+     "y nunca de TABS[S.role], que volveria a enseñar pestañas sin acceso");
   ok(!/_htmlLateral\(TABS/.test(main) && !/_htmlMenuTel\(TABS/.test(main),
      "y no de los tabs del rol");
 
@@ -12075,6 +12080,90 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
   ok(/S\._verDeriva=/.test(ver), "y abrirlo o cerrarlo lo apunta en S");
   ok(/S\._verDeriva\?" ▴":" ▾"/.test(rot),
      "la flecha sale de lo mismo, o el boton diria 'abrir' con el panel abierto");
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// ARREGLO 166 · ocultar una pestaña del menu sin tocar nada mas
+//
+// Ella el 17/10: "Resumen EE.UU: no la uso. Solo ocultar el boton del menu
+// (las dos apariciones), NO borrar datos de eeuu, socios ni el codigo del
+// resumen, y que se pueda volver a mostrar facil".
+//
+// La trampa: quitarla de _GRUPOS_MENU NO la oculta. Ese array decide el
+// ORDEN, y lo que no esta en ningun grupo cae en "Mas" al final — la regla
+// que impide que una pestaña nueva se pierda. El freno va en la lista que
+// leen los DOS menus, en un solo sitio (ARREGLOS 101, 119, 150, 153).
+{
+  const sinC = t => t.replace(/\/\/[^\n]*/g, "");
+  const main = sinC(sacarFuncion("rMain"));
+  const fil  = sinC(sacarFuncion("_tabsDelMenu"));
+  const oc   = sinC(sacarFuncion("_tabsOcultasDelMenu"));
+  const tog  = sinC(sacarFuncion("_toggleTabMenu"));
+
+  // 1. Los DOS menus pasan por el filtro. Exigidos por nombre y CONTADOS: con
+  //    solo pedir que _tabsDelMenu aparezca, quitarlo de uno de los dos
+  //    pasaba con el otro puesto (ARREGLO 140).
+  ok(/_htmlLateral\(_tabsDelMenu\(ts\)\)/.test(main),
+     "la barra lateral dibuja la lista ya filtrada");
+  ok(/_htmlMenuTel\(_tabsDelMenu\(ts\)\)/.test(main),
+     "y el menu del telefono tambien");
+  const usos = (main.match(/_tabsDelMenu\(/g) || []).length;
+  ok(usos === 2, "y son exactamente los dos menus, ni uno mas (hay " + usos + ")");
+
+  // 2. La pestaña escondida NO se cae tambien de "Mas": el filtro quita el
+  //    nombre de la lista entera, no lo mueve de grupo.
+  ok(/fuera\.indexOf\(t\)<0/.test(fil),
+     "lo escondido sale de la lista, no se reordena a 'Mas'");
+
+  // 3. Y NO se filtra la lista con la que se decide si la pestaña en la que
+  //    esta sigue valiendo. Filtrada ahi, st("dash_eeuu") la abriria y el
+  //    propio dibujado la echaria de vuelta al Resumen: ocultar el boton no
+  //    puede ser cerrar la pantalla.
+  ok(/ts\.indexOf\(S\.tab\)<0\)\s*S\.tab=_primeraPestaña\(ts\)/.test(main),
+     "la pestaña actual se comprueba contra la lista SIN filtrar");
+
+  // 4. La lista de lo oculto sale de UN sitio: la leen los menus y la tarjeta
+  //    de Configuracion. En dos, un dia el menu esconderia una que la tarjeta
+  //    dice enseñar (el 34,27 contra el 34,28).
+  ok(/_tabsOcultasDelMenu\(\)/.test(fil), "el filtro lee la lista unica");
+  ok(/_tabsOcultasDelMenu\(\)/.test(HTML.replace(sacarFuncion("_tabsOcultasDelMenu"), "")),
+     "y la tarjeta de Configuracion lee la misma");
+
+  // 5. El interruptor vive en localStorage, NO en lo que se sincroniza. Una
+  //    clave nueva obligaria a tocar tambien las cuatro listas del servidor
+  //    (main.py) y una que se añada aqui y se olvide alli viaja y el servidor
+  //    la tira con un 200 y sin un solo error — ha pasado dos veces.
+  ok(/localStorage/.test(sinC(sacarFuncion("_tabEnseñadaAMano"))),
+     "la preferencia es del aparato, en localStorage");
+  ["DATA_KEYS", "_MERGE_FIELDS", "_MERGE_OBJETOS", "_MERGE_HISTORIAL"].forEach(function (lista) {
+    const txt = sacarConstante(lista);
+    ok(!/_TABS_FUERA_DEL_MENU|cg_menu_/.test(txt),
+       "no entra en " + lista + ": no se sincroniza");
+  });
+
+  // 6. Esconder no borra: la pestaña sigue teniendo su pantalla, su entrada
+  //    en PERMISO_DE_TAB y su sitio en _GRUPOS_MENU. Era el encargo entero.
+  ok(/S\.tab==="dash_eeuu"/.test(HTML), "st('dash_eeuu') sigue dibujando su pantalla");
+  ok(/dash_eeuu:"dash_eeuu"/.test(HTML), "y conserva su permiso");
+  ok(/"dash","dash_eeuu"/.test(HTML), "y su sitio en _GRUPOS_MENU, para cuando vuelva");
+
+  // 7. Solo se puede encender o apagar lo que esta en la lista del codigo: un
+  //    id cualquiera guardado en localStorage no puede esconder una pestaña.
+  ok(/_TABS_FUERA_DEL_MENU\.indexOf\(t\)<0\)\s*return/.test(tog),
+     "el interruptor solo vale para las pestañas de la lista");
+
+  // 8. La tarjeta recorre la lista del codigo, no una copia escrita a mano.
+  //    Con su propia copia, añadir una pestaña a _TABS_FUERA_DEL_MENU la
+  //    escondería sin darle dónde volver a encenderla.
+  const card = sinC(sacarFuncion("_htmlMenuOculto"));
+  ok(/_TABS_FUERA_DEL_MENU\.forEach/.test(card),
+     "la tarjeta recorre _TABS_FUERA_DEL_MENU, no una copia suya");
+  ok(!/"dash_eeuu"/.test(card),
+     "y no lleva ningun nombre de pestaña escrito dentro");
+
+  // 9. Lo que la tarjeta escribe en el HTML va escapado (ARREGLO 102).
+  ok(/_escAud\(TL\[t\]/.test(card),
+     "el nombre de la pestaña se escapa al dibujarlo");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

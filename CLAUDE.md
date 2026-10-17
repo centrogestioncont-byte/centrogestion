@@ -907,6 +907,48 @@ contestan "Sin acceso" al tocarlas, que es el error que arregló la FASE B.
 El corte de la barra lateral son **900px**. Por debajo queda todo exactamente
 como estaba: el teléfono no cambió.
 
+### Y esconder una pestaña NO es sacarla de `_GRUPOS_MENU` (ARREGLO 166)
+
+Sus palabras del 17/10: *"quitar del menú la pestaña 📊 Resumen EE.UU: no la uso.
+Solo ocultar el botón del menú… NO borrar datos de eeuu, socios ni el código del
+resumen. Que se pueda volver a mostrar fácil"*.
+
+**La trampa es la regla de justo arriba.** `_GRUPOS_MENU` decide el **orden**, no
+quién sale: lo que no está en ningún grupo **cae en "Más" al final**, y eso es a
+propósito, para que una pestaña nueva que se olvide de apuntarse se siga
+alcanzando. Sacar `dash_eeuu` de "Ver" la habría **movido**, no quitado.
+
+Así que el freno va en la lista que leen los **dos** menús —`_tabsDelMenu(ts)`,
+un solo sitio—, y la lista de lo escondido sale de `_tabsOcultasDelMenu()`, que
+leen el filtro **y** la tarjeta de Configuración. Escrito una vez por menú se
+separarían con el primer cambio: es el fallo de los ARREGLOS 101, 119, 150 y 153.
+
+- **Esconde el BOTÓN, no la pantalla.** `st("dash_eeuu")` la sigue dibujando,
+  conserva su permiso y su sitio en `_GRUPOS_MENU`, y no se borra ni un dato de
+  `eeuu` ni de socios.
+- **Y por eso NO se filtra la lista con la que se decide si la pestaña en la que
+  está sigue valiendo.** Filtrada ahí, `st("dash_eeuu")` la abriría y el propio
+  dibujado la echaría de vuelta al Resumen: ocultar un botón no puede ser cerrar
+  una pantalla. Hay prueba negativa para ese caso exacto.
+- **El interruptor vive en `localStorage`, como el tema**, y **no** se
+  sincroniza. Una clave nueva obligaría a tocar también las **cuatro listas del
+  servidor** (`main.py`), y una que se añada aquí y se olvide allí viaja y el
+  servidor la tira con un 200 y sin un solo error — ha pasado dos veces. Para una
+  preferencia de menú no vale ese riesgo, y además tiene sentido por aparato:
+  puede querer verla en la PC y no en el teléfono.
+- **La tarjeta recorre `_TABS_FUERA_DEL_MENU`, no una copia escrita a mano.** Con
+  su propia lista, añadir una pestaña ahí la escondería sin darle dónde volver a
+  encenderla. Y el interruptor sólo admite lo que está en esa lista: un id
+  cualquiera guardado en `localStorage` no puede esconder una pestaña.
+- **Aquí sí se llama a `R()` al pulsar** (ARREGLO 32 es para un campo bajo el
+  dedo): lo que cambia es el menú, que está fuera de esa tarjeta.
+
+Medido en Chromium con su export, a 412 y 1280 px: el botón desaparece de los
+**dos** menús y **no reaparece en "Más"** (el grupo ni se dibuja), `st("dash_eeuu")`
+sigue pintando la pantalla **idéntica** a v247, el interruptor la devuelve y la
+vuelve a esconder, y las 26 pestañas dibujan con 0 errores. 11 pruebas negativas
+y las 11 cazadas.
+
 ---
 
 ## El tema es de cada APARATO, y no lo decide el sistema operativo
