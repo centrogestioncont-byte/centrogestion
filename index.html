@@ -2429,7 +2429,7 @@ let S={
   opMesSel:"",
   nCl:{cod:"",n:"",tel:"",pais:"VENEZUELA",ruta:"BRL ↔ VZLA",nota:""},
   nGE:{motivo:"Alquiler de cuenta",monto:"",nota:""},
-  nIU:{fecha:"",tipo:"compra",moneda:"BRL",monedaVenta:"VES",montOrigen:"",usdt:"",tasa:"",plataforma:"",comision:0.06,cuentaId:"",cuentaOrigenId:"",cuentaDestinoId:"",bsRecibidos:"",ordenId:""},
+  nIU:{fecha:"",tipo:"compra",moneda:"BRL",monedaVenta:"VES",montOrigen:"",usdt:"",tasa:"",plataforma:"",comision:0.06,cuentaId:"",cuentaOrigenId:"",cuentaDestinoId:"",bsRecibidos:"",ordenId:"",origenBs:"empresa"},
   movimientosCapital:[
     // Auto-generated when operaciones are saved
     // {id, fecha, tipo:"entrada"|"salida", moneda, monto, concepto, remesaId, cuenta}
@@ -3221,7 +3221,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261016_v243-TEST";
+var APP_VERSION = "20261017_v244-TEST";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -14431,6 +14431,23 @@ function saveIU(){
       plataforma:f.plataforma||"",ordenId:ordenId,cuentaId:cuentaAfectada,
       cuentaOrigenId:f.cuentaOrigenId||"",  // cuenta que pagó (BRL/USD)
       restante:usdtNeto,locked:false,_mod:Date.now()});
+    // ── ARREGLO 162 · comprar USDT con BOLÍVARES también gasta inventario ──
+    //
+    // Pero no siempre, y por eso se PREGUNTA en vez de deducirlo. Medido en su
+    // export: de los 782.084 Bs que salieron así en octubre, 470.000 eran su
+    // sueldo de otro trabajo —entraron como aporte, nunca estuvieron en un
+    // lote— y los lotes de esa cuenta eran de la empresa.
+    //
+    // La primera propuesta fue "consumir sólo hasta donde haya lote", y la
+    // tumbó ella con el argumento correcto: EL LOTE NO SABE DE QUIÉN ES EL
+    // DINERO. Si en esa cuenta hay lotes de la empresa, su sueldo se los come
+    // igual. Sólo ella sabe de dónde salió ese dinero, así que lo dice ella.
+    var _loteCompra=S.inventarioUsdt[S.inventarioUsdt.length-1];
+    _loteCompra.origenBs=(f.moneda==="VES")?((f.origenBs==="personal")?"personal":"empresa"):"";
+    if(f.moneda==="VES" && _loteCompra.origenBs==="empresa"){
+      var _clb=consumirLotesVES(f.cuentaOrigenId, mo);
+      if(_clb && _clb.ventas.length) _loteCompra._lotesConsumidos={ventas:_clb.ventas};
+    }
     // USDT sube en la cuenta destino (Binance) — se acredita el neto real
     if(cuentaAfectada){
       var cObj=(S.cuentas||[]).find(function(c){return c.id===cuentaAfectada;});
@@ -14463,7 +14480,7 @@ function saveIU(){
       if(cDest) cDest.saldo=Math.round(((parseFloat(cDest.saldo)||0)+bsFinal)*100)/100;
     }
   }
-  S.nIU={fecha:f.fecha,tipo:f.tipo,moneda:f.moneda||"BRL",monedaVenta:f.monedaVenta||"VES",montOrigen:"",usdt:"",tasa:"",plataforma:f.plataforma||"",comision:COM(),cuentaId:"",bsRecibidos:"",cuentaOrigenId:"",cuentaDestinoId:"",ordenId:""};
+  S.nIU={fecha:f.fecha,tipo:f.tipo,moneda:f.moneda||"BRL",monedaVenta:f.monedaVenta||"VES",montOrigen:"",usdt:"",tasa:"",plataforma:f.plataforma||"",comision:COM(),cuentaId:"",bsRecibidos:"",cuentaOrigenId:"",cuentaDestinoId:"",ordenId:"",origenBs:"empresa"};
   _olvidarAutoIU();   // el formulario se vacia: lo que la app habia calculado ya no vale
   // NO llamar sincronizarSaldosUsdt() aqui: los ajustes puntuales ya son correctos
   logAudit("INVENTARIO USDT",(f.tipo==="venta"?"Venta":"Compra")+" "+f2(usdt)+" USDT a "+f2n(tasa,4)+" "+(f.moneda||""));
@@ -19601,6 +19618,11 @@ function revertirSaldosInventario(r){
     // Compra: USDT había subido → restar; BRL/USD había bajado → devolver
     adjId(r.cuentaId, -usdt);            // USDT baja
     adjId(r.cuentaOrigenId, +mo);        // BRL/USD devuelve
+    // ARREGLO 162: y si pagó con bolívares de la empresa, el lote que gastó
+    // vuelve. Una compra marcada "personal" no consumió nada, así que aquí
+    // tampoco devuelve nada — devolverle saldo a un lote que no gastó le
+    // regala bolívares, y de esos lotes salen las tasas que la app sugiere.
+    if((r.moneda||"")==="VES" && r._lotesConsumidos) devolverLotesVES(r, mo);
   } else {
     // Venta: USDT había bajado → devolver; VES había subido → restar
     adjId(r.cuentaId, +usdt);            // USDT devuelve
@@ -31050,6 +31072,21 @@ function rInventarioUsdt(){
       (f.tipo==="compra"
         ?"<div class='fl'><label>Moneda de origen</label><select onchange='S.nIU.moneda=this.value;R()'>"+monOpts+"</select></div>"
         :"<div class='fl'><label>Moneda que recibes</label><select onchange='S.nIU.monedaVenta=this.value;R()'>"+mVentaOpts+"</select></div>")+
+      // ARREGLO 162: comprando con BOLÍVARES hay que decir de quién son. Sólo
+      // sale en ese caso: con reales no hay lote de Bs que gastar y una
+      // pregunta que siempre está deja de leerse (ARREGLO 99).
+      ((f.tipo==="compra"&&f.moneda==="VES")
+        ?"<div class='fl'><label>\u00bfDe d\u00f3nde salen estos Bs?</label>"+
+          "<select onchange='S.nIU.origenBs=this.value;_refrescarIU()'>"+
+            "<option value='empresa'"+((f.origenBs!=="personal")?" selected":"")+">De la empresa \u00b7 gasta inventario</option>"+
+            "<option value='personal'"+((f.origenBs==="personal")?" selected":"")+">Aporte o dinero personal \u00b7 no gasta</option>"+
+          "</select>"+
+          "<div style='font-size:10.5px;color:var(--tx4);margin-top:2px;line-height:1.35'>"+
+            ((f.origenBs==="personal")
+              ? "Estos bol\u00edvares no salieron de una venta de USDT tuya, as\u00ed que no hay lote que descontar."
+              : "Se descuentan del inventario FIFO de esa cuenta, como cualquier salida de Bs.")+
+          "</div></div>"
+        :"")+
       "<div class='fl'><label>Plataforma</label><input type='text' placeholder='ej: Binance P2P' value='"+(f.plataforma||"")+"' oninput='S.nIU.plataforma=this.value'></div>"+
       "<div class='fl'><label>Order ID Binance <span style='font-size:10.5px;color:var(--tx4);font-weight:400'>(N.º de orden)</span></label>"+
       "<input type='text' placeholder='229060089...' value='"+(f.ordenId||"")+"' oninput='S.nIU.ordenId=this.value;_refrescarIU()' style='font-size:11px'>"+
