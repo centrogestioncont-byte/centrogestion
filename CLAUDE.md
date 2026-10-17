@@ -5812,3 +5812,180 @@ negativas y las 7 cazadas.
 **Lo que esto NO repara:** un traspaso que ella haya borrado antes de esto y que
 el servidor devolviera sigue ahí. Si aparece uno repetido, hay que borrarlo otra
 vez —ahora sí se queda— y revisar si su lote quedó alto.
+
+---
+
+## Cuadrar los lotes de Bs con las cuentas (ARREGLO 164)
+
+El ARREGLO 161 cerró las dos puertas por donde se seguía abriendo la deriva
+—los traspasos y la comisión del banco no descontaban— pero eso vale **de aquí
+en adelante**. Lo viejo sigue ahí, y de esos lotes salen las tasas que la app
+sugiere. Esto lo cierra, **una vez y con su OK**.
+
+**La regla la dio ella, y es POR CUENTA:**
+
+```
+si los lotes vivos de una cuenta pasan de su saldo, se cierra la diferencia
+empezando por los lotes MÁS VIEJOS; si la cuenta está en cero o en
+negativo, sus lotes quedan en 0
+```
+
+**Y eso cambia el número.** Sumando todo junto salían 44.668,68 Bs; cuenta por
+cuenta son **44.712,63**:
+
+```
+BANCO DE VENEZUELA   saldo 172.958,96   lotes 217.431,60   sobran 44.472,64
+PROVINCIAL           saldo     710,01   lotes     950,00   sobran    239,99
+BANESCO              saldo 120.800,24   lotes 120.756,28   ← 43,96 POR DEBAJO
+```
+
+Los 43,96 de BANESCO tapaban parte de lo que sobra en otra. **El FIFO gasta los
+lotes de la cuenta que de verdad paga** (`cuentaDestinoId`), así que un hueco en
+una no compensa un exceso en otra.
+
+- **Lo que sobra se calcula en UN sitio** (`_derivaLotesVES`), y lo leen la
+  vista previa que ella mira **y** el botón que lo aplica. Calculado aparte,
+  bastaría un redondeo distinto para cerrar un número que no es el que está
+  leyendo — el 34,27 contra el 34,28, pero moviendo los lotes de los que salen
+  sus tasas.
+- **El conjunto de lotes es EXACTAMENTE el que recorre `simularConsumoFIFO`**:
+  venta, en VES, de esa cuenta, en orden `ordenFIFO`. Medido de otra forma se
+  cerraría lo que el FIFO no gasta, o se dejaría abierto lo que sí.
+- **Mirar no gasta.** `_derivaLotesVES` no escribe en ningún lote; hay guardia y
+  prueba negativa dedicadas.
+- **NO toca el saldo de ninguna cuenta ni ningún mes cerrado**, y se dice en la
+  propia pregunta. El dinero del banco está bien; lo roto es el inventario.
+- **Un lote sin cuenta, o pegado a una cuenta que ya no existe o que no está en
+  VES, no se toca.** No hay contra qué medirlo, y cerrar por un saldo que no
+  existe es inventarse la regla para un caso que ella no nombró. Sale en la
+  vista previa dicho con su nombre: visible, no silencioso. En su export hay uno
+  así, con 0,00 Bs.
+
+### El registro va DENTRO del lote, y no por comodidad
+
+Una lista nueva que sincronizar tendría que entrar **también en las cuatro
+listas del servidor** (`main.py`), y desde el entorno no se alcanza: una clave
+que se añada aquí y se olvide allí viaja y el servidor la tira con un 200 y sin
+un solo error. Ha pasado dos veces.
+
+Así que lo que se le quitó a cada lote vive en su `_ajVES` —`{ts, por, antes}`—
+igual que una remesa guarda su `_lotesConsumidos`: viaja con el lote, se une
+como el lote y se archiva con el lote. **Lo que agrupa una corrección es su
+hora**, y por ahí se deshace entera.
+
+- **Deshacer son DOS mitades.** Devolver el `antes` **y** sacar del archivo el
+  lote que la corrección dejó en cero (`_revivirLote`, ARREGLO 137): sin eso el
+  lote recupera su saldo y se queda escondido, donde el FIFO no lo gasta nunca.
+- **Y las dos tienen que sobrevivir al servidor.** Medido el ciclo entero
+  —aplicar, guardar, adoptar la respuesta, deshacer, adoptar otra vez—: la
+  deriva se queda en 0 tras el servidor y al deshacer los lotes vuelven exactos.
+
+### Y el botón de julio se fue, que era una trampa
+
+En ese mismo sitio había un `🛠️ Corregir lotes VES (una vez)` del 30/jul con los
+números escritos a mano: dejaba **todos** los lotes de venta en VES en 0 salvo
+uno de 50.000 exactos **que ya no existe**. Su bandera (`_correccion30jul`) no
+se guarda ni se sincroniza, así que volvía a salir en cada arranque y en cada
+aparato. Medido con su export del 16/10: **pulsarlo hoy se llevaba los
+339.137,88 Bs de sus 6 lotes vivos.**
+
+Una pantalla nueva **quita** el control viejo, no se pone al lado (ARREGLO 98).
+
+### La vista previa, y por qué no es una tabla
+
+El primer intento era una tabla de cuatro columnas con `min-width:430px`. En su
+teléfono son 412, así que **"LOTES DESPUÉS" —justo la columna que ella pidió
+ver— quedaba fuera** y había que arrastrar. Es el ARREGLO 137 otra vez: lo que
+queda tras un arrastre no existe. Ahora es una fila por cuenta. Medido a 390,
+412, 768 y 1280 px: **0 elementos fuera de pantalla**, sin scroll horizontal.
+
+**El botón sólo sale cuando hay algo que hacer** —deriva que cerrar o una
+corrección que deshacer—. Uno que está siempre y casi nunca significa nada deja
+de leerse (ARREGLO 99). Y desplegar no llama a `R()` (ARREGLO 32).
+
+### Medido con su export, el ciclo entero
+
+```
+                      antes      aplicar    el servidor    deshacer   +servidor
+lotes BdV        217.431,60   172.958,96    172.958,96   217.431,60  217.431,60
+lotes PROVINCIAL     950,00       710,01        710,01       950,00      950,00
+lotes BANESCO    120.756,28   120.756,28    120.756,28   120.756,28  120.756,28
+saldos de las 3     sin tocar    sin tocar     sin tocar    sin tocar   sin tocar
+capital              2.711,65     2.711,65      2.711,65     2.711,65    2.711,65
+te sobran                6,94         6,94          6,94         6,94        6,94
+utilidad de octubre     73,17        73,17         73,17        73,17       73,17
+```
+
+Casos de borde: saldo **−500** → los lotes quedan en 0 y el saldo no se toca;
+saldo **0** → igual; lotes **por debajo** del saldo → no se toca nada. 26
+pestañas, 0 errores, 12 pruebas negativas y las 12 cazadas.
+
+**Y un fallo de método, por si vuelve:** el primer barrido de pestañas dejó
+`R()` puesto en vacío, así que **no dibujaba nada** y daba 0 errores sin haber
+mirado. Lo mismo con las dos comprobaciones de "no hay deriva": subí el saldo de
+una sola cuenta y PROVINCIAL seguía con sus 239,99, así que medían otra cosa.
+Las tres veces, el ARREGLO 84: *medir no vale si mides otra cosa.*
+
+---
+
+## El sondeo no puede repintar con el dedo puesto (ARREGLO 165)
+
+Lo cazó ella el 17/10 probando el 164: *"el primer clic en Deshacer no hizo
+nada; al segundo funcionó"*.
+
+**Y yo lo había visto.** Haciendo las capturas del 164 anoté que *"el panel se
+cierra solo porque un temporizador repinta"*, lo rodeé parando los
+temporizadores para la foto, y seguí. Era el fallo, no una molestia de la
+captura.
+
+**Son DOS cosas, y las dos se reprodujeron en Chromium contra v246:**
+
+```
+(1) el panel se cerraba en cada repintado    su abierto vivía solo en el DOM
+(2) el clic se perdía                        repintar entre mousedown y mouseup
+```
+
+El sondeo mira el servidor cada 8 s y, cuando trae algo, llama a `R()`, que
+rehace la pestaña entera. Si eso cae entre el `mousedown` y el `mouseup`, **el
+navegador no dispara el `click`**: el botón que recibió el `mousedown` ya no
+existe. Medido: el lote se queda sin deshacer y nada lo dice.
+
+**Es el ARREGLO 152 con otro disparador.** Allí el repintado lo lanzaba el
+`onchange` del propio campo; aquí lo lanza el reloj, así que puede caer encima
+de **cualquier** botón de la app, no sólo de este panel. Por eso el freno va en
+la puerta por la que entra ese repintado —`cargarEstadoDeApi`— y no en el panel.
+
+- **No se salta, se APLAZA.** Saltárselo dejaría la pantalla sin lo que el otro
+  aparato acaba de registrar, y sin decirlo. `_repintarTrasSincronizar()` anota
+  que hay uno pendiente y lo suelta al levantar el dedo.
+- **Y se suelta DESPUÉS del click, no en el `pointerup`.** El click se dispara
+  después del pointerup, así que repintar ahí se lleva el botón igual. Hay
+  prueba negativa para ese caso exacto.
+- **Un `pointerup` que no llega no puede dejar la app sin sincronizar.** Si el
+  dedo sale de la pantalla y el `pointercancel` se pierde, la bandera se queda
+  puesta y el sondeo dejaría de repintar **en silencio**. Red de seguridad a los
+  3 s.
+- **Los tres gestos van por nombre** —`pointerdown`, `pointerup`,
+  `pointercancel`— y contados en la guardia (ARREGLO 140).
+
+**Y el panel recuerda en `S` si está abierto**, como ya hacía `S._verArchivados`
+—que por eso nunca tuvo el problema—. La flecha ▾/▴ sale de lo mismo: escrita
+aparte, tras un repintado el botón decía *"abrir"* con el panel abierto.
+
+### Medido con su export, el mismo caso
+
+```
+                                      v246 (la que probó)   v247
+el panel tras un repintado            se cierra             sigue abierto
+el botón seguía en el DOM             NO                    sí
+los lotes tras el clic                172.958,96  ❌         217.431,60  ✅
+el repintado aplazado llegó después   —                     sí
+```
+
+El ciclo entero del 164 sale idéntico, 26 pestañas sin errores, y 9 pruebas
+negativas cazadas.
+
+**La lección, y es de método más que de código:** una anotación de *"esto se
+cierra solo"* escrita mientras se mide otra cosa es un fallo encontrado. Rodearlo
+para poder seguir midiendo —aquí, parando los temporizadores— lo deja escrito y
+sin arreglar.

@@ -3221,7 +3221,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261017_v245";
+var APP_VERSION = "20261017_v247";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -3942,6 +3942,56 @@ function _aplicarEstadoDeApi(estado, ts){
 }
 
 // Trae el bloque completo del servidor.
+// ── ARREGLO 165 · el sondeo no puede repintar con el dedo puesto ───────
+//
+// Lo cazo ella el 17/10 probando el 164: "el primer clic en Deshacer no hizo
+// nada; al segundo funciono". El sondeo mira el servidor cada 8 s y, cuando
+// trae algo, llama a R() — que rehace la pestaña ENTERA. Si eso cae entre el
+// mousedown y el mouseup, el navegador no dispara el click: el boton que
+// recibio el mousedown ya no existe. Reproducido en Chromium: el lote se
+// queda sin deshacer y la pantalla no dice nada.
+//
+// ES EL ARREGLO 152, en otro sitio y con otro disparador. Alli el repintado
+// lo lanzaba el propio onchange del campo; aqui lo lanza el reloj, asi que
+// puede caer encima de CUALQUIER boton de la app, no solo de este panel. Por
+// eso el freno va en la puerta por la que entra ese repintado y no en el
+// panel: "enseña a tocar dos veces un boton que mueve dinero".
+//
+// NO se pierde el repintado, se APLAZA. Saltarselo dejaria la pantalla sin
+// lo que el otro aparato acaba de registrar y sin decirlo, que es peor. Y se
+// aplaza hasta DESPUES del click, no hasta el pointerup: el click se dispara
+// despues del pointerup, asi que repintar ahi se lleva el boton igual.
+var _DEDO_ABAJO=false, _REPINTE_PENDIENTE=false, _DEDO_SUELTA=0;
+
+function _repintarTrasSincronizar(){
+  if(_DEDO_ABAJO){ _REPINTE_PENDIENTE=true; return; }
+  try{ if(typeof R==="function") R(); }catch(e){}
+}
+function _dedoAbajo(){
+  _DEDO_ABAJO=true;
+  // Red de seguridad: si el pointerup no llega nunca —un pointercancel que
+  // se pierde, el dedo que sale de la pantalla— el repintado se quedaria
+  // aplazado para siempre y la app dejaria de sincronizar en silencio.
+  clearTimeout(_DEDO_SUELTA);
+  _DEDO_SUELTA=setTimeout(_dedoArriba, 3000);
+}
+function _dedoArriba(){
+  if(!_DEDO_ABAJO) return;
+  _DEDO_ABAJO=false;
+  clearTimeout(_DEDO_SUELTA);
+  if(!_REPINTE_PENDIENTE) return;
+  setTimeout(function(){
+    if(_DEDO_ABAJO) return;          // ya empezo otro gesto: que acabe
+    _REPINTE_PENDIENTE=false;
+    try{ if(typeof R==="function") R(); }catch(e){}
+  }, 250);
+}
+try{
+  document.addEventListener("pointerdown", _dedoAbajo, true);
+  document.addEventListener("pointerup", _dedoArriba, true);
+  document.addEventListener("pointercancel", _dedoArriba, true);
+}catch(e){}
+
 function cargarEstadoDeApi(opciones){
   if(!FUENTE_API && !(opciones && opciones.forzar)) return Promise.resolve(false);
   if(!apiSesionActiva() || _API_BLOQUEADA || !_API_ENTRO_POR_API) return Promise.resolve(false);
@@ -3952,7 +4002,7 @@ function cargarEstadoDeApi(opciones){
       var aplicado=_aplicarEstadoDeApi(d.estado, d._ts);
       if(aplicado){
         console.log("📥 Estado cargado desde la API · _ts:", d._ts);
-        try{ if(typeof R==="function") R(); }catch(e){}
+        _repintarTrasSincronizar();
       }
       return aplicado;
     });
@@ -21509,31 +21559,254 @@ function editarSaldoCuentaEnConfig(cid){
   alert("✅ Saldo de \""+c.nombre+"\" actualizado a "+c.saldo+" "+c.moneda+".");
 }
 
-// ── Corrección puntual de una sola vez (30/jul) ──────────────────────────
-// Deja todos los lotes de VENTA en VES en 0, EXCEPTO el que originalmente
-// era de 50.000 (se identifica por su monto original 'bs', no por el
-// restante, que ya se estuvo editando de un lado a otro) — a ese le deja
-// 25.864 exacto. Todo en UN SOLO guardado, para no repetir la carrera de
-// guardados rápidos seguidos que causaba que un lote "reviviera" al editar
-// el siguiente. Después de usarse una vez, el botón desaparece solo.
-function _correccionLotesVES30Jul(){
-  var lotes=(S.inventarioUsdt||[]).filter(function(r){return r.tipo==="venta"&&r.moneda==="VES";});
-  if(!lotes.length){alert("No hay lotes de venta en VES.");return;}
-  var elDe50000=lotes.find(function(r){return Math.abs((parseFloat(r.bs)||0)-50000)<0.01;});
-  var resumen=lotes.map(function(r){
-    var esElDe50000=(elDe50000&&r===elDe50000);
-    var nuevo=esElDe50000?25864:0;
-    return (esElDe50000?"★ ":"• ")+"Lote de "+f2(r.bs)+" (restante actual "+f2(r.bsRestante)+") → quedará en "+f2(nuevo);
-  }).join("\n");
-  if(!confirm("🛠️ CORRECCIÓN DE UNA SOLA VEZ\n\nSe van a ajustar "+lotes.length+" lote(s) de venta en VES así:\n\n"+resumen+"\n\n¿Confirmar? Esto no se puede deshacer con un clic."))return;
-  lotes.forEach(function(r){
-    var esElDe50000=(elDe50000&&r===elDe50000);
-    r.bsRestante=esElDe50000?25864:0;
-    r._mod=Date.now();
+// ── ARREGLO 164 · cuadrar los lotes de Bs con las cuentas ───────────────
+//
+// Lo vio ella el 16/10: los lotes de VES decian tener mas bolivares que las
+// cuentas. El ARREGLO 161 cerro por donde se seguia abriendo —los traspasos y
+// la comision del banco no descontaban— pero eso vale de aqui en adelante: lo
+// viejo sigue ahi, y de esos lotes salen las tasas que la app sugiere.
+//
+// AQUI ESTABA EL BOTON DE JULIO, Y SE FUE. Era una correccion con los numeros
+// escritos a mano: dejaba TODOS los lotes de venta en VES en 0 salvo uno de
+// 50.000 exactos, que ya no existe. Su bandera (_correccion30jul) no se
+// sincroniza ni se guarda, asi que volvia a salir en cada arranque y en cada
+// aparato. Medido en su export del 16/10: pulsarlo hoy se llevaba por delante
+// los 339.137,88 Bs de sus 6 lotes vivos. Una pantalla nueva QUITA el control
+// viejo, no se pone al lado (ARREGLO 98) — y este ademas era una trampa.
+//
+// LA REGLA LA DIO ELLA, y es POR CUENTA:
+//
+//   si los lotes vivos de una cuenta pasan de su saldo, se cierra la
+//   diferencia empezando por los lotes MAS VIEJOS; si la cuenta esta en
+//   cero o en negativo, sus lotes quedan en 0.
+//
+// Por cuenta y no en total, y eso cambia el numero: sumando todo junto salian
+// 44.668,68 Bs porque BANESCO tiene los lotes 43,96 POR DEBAJO de su saldo y
+// tapaba parte de lo que sobra en otra. Cuenta por cuenta son 44.712,63, y es
+// lo correcto: el FIFO gasta los lotes de la cuenta que de verdad paga
+// (cuentaDestinoId), asi que un hueco en una no compensa un exceso en otra.
+//
+// Y la cuenta de lo que sobra se escribe UNA vez, aqui: la leen la vista
+// previa que ella mira y el boton que lo aplica. Calculada aparte, bastaria un
+// redondeo distinto para cerrar un numero que no es el que esta leyendo — el
+// 34,27 contra el 34,28, pero moviendo los lotes de los que salen sus tasas.
+function _derivaLotesVES(){
+  normalizarInventarioFIFO();
+  // El conjunto es EXACTAMENTE el que recorre simularConsumoFIFO: venta, en
+  // VES y de esa cuenta. Medido de otra forma se cerraria lo que el FIFO no
+  // gasta, o se dejaria abierto lo que si.
+  var porCta={};
+  (S.inventarioUsdt||[]).forEach(function(l){
+    if(!l||l.tipo!=="venta"||l.moneda!=="VES") return;
+    var k=String(l.cuentaDestinoId||"");
+    (porCta[k]=porCta[k]||[]).push(l);
   });
-  S._correccion30jul=true; // el botón desaparece — corrección de una sola vez
-  saveData();R();
-  alert("✅ Listo. Los lotes quedaron ajustados en un solo guardado.");
+  var filas=[];
+  Object.keys(porCta).forEach(function(k){
+    var lotes=porCta[k].slice().sort(ordenFIFO);   // del mas viejo al mas nuevo
+    var vivos=0; lotes.forEach(function(l){ vivos+=parseFloat(l.bsRestante)||0; });
+    vivos=Math.round(vivos*100)/100;
+    var c=k?(S.cuentas||[]).find(function(x){return String(x.id)===k;}):null;
+    // Un lote sin cuenta, o pegado a una cuenta que ya no existe o que no esta
+    // en VES, NO SE TOCA: no hay contra que medirlo. Comparar sus bolivares
+    // con el saldo de una cuenta en otra moneda daria un numero creible y
+    // falso, y cerrar por un saldo que no existe es inventarse la regla para
+    // un caso que ella no nombro. Sale en la vista previa dicho con su nombre,
+    // que es lo que lo hace visible en vez de silencioso. En su export del
+    // 16/10 hay uno asi y tiene 0,00 Bs.
+    var medible=!!(c && c.moneda==="VES");
+    var saldo=medible?Math.round((parseFloat(c.saldo)||0)*100)/100:null;
+    // Un saldo negativo o en cero deja los lotes en 0 — su regla. Por eso el
+    // Math.max(0,...): contra un saldo de -500 habria que cerrar MAS de lo que
+    // hay en los lotes, y un lote no puede bajar de cero.
+    var sobra=medible?Math.round((vivos-Math.max(0,saldo))*100)/100:0;
+    if(sobra<0) sobra=0;
+    var toca=[], falta=sobra;
+    for(var i=0;i<lotes.length&&falta>0.01;i++){
+      var hay=Math.round((parseFloat(lotes[i].bsRestante)||0)*100)/100;
+      if(hay<=0) continue;
+      var quita=Math.round(Math.min(hay,falta)*100)/100;
+      toca.push({lote:lotes[i], antes:hay, quita:quita,
+                 despues:Math.round((hay-quita)*100)/100});
+      falta=Math.round((falta-quita)*100)/100;
+    }
+    filas.push({id:k, cuenta:(c?c.nombre:(k?"Cuenta que ya no existe":"Lotes sin cuenta")),
+                medible:medible, moneda:(c?c.moneda:null),
+                saldo:saldo, vivos:vivos, sobra:sobra,
+                despues:Math.round((vivos-sobra)*100)/100,
+                nLotes:lotes.length, toca:toca});
+  });
+  filas.sort(function(a,b){ return b.sobra-a.sobra; });
+  var total=0; filas.forEach(function(f){ total+=f.sobra; });
+  return {filas:filas, total:Math.round(total*100)/100};
+}
+
+// La ultima correccion, para poder deshacerla. No hace falta una lista nueva
+// que sincronizar —y hay una razon fuerte: una clave nueva tiene que entrar
+// TAMBIEN en las cuatro listas del servidor (main.py), y desde aqui no se
+// alcanza; una que se añada aqui y se olvide alli viaja y el servidor la tira
+// con un 200 y sin un solo error (ha pasado dos veces). Lo que se le quito a
+// cada lote vive DENTRO del lote, en _ajVES, igual que una remesa guarda su
+// _lotesConsumidos: viaja con el lote, se une como el lote, y se archiva con
+// el lote. Lo que agrupa una correccion es su hora.
+function _ultimaCorreccionVES(){
+  var marcados=(S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[])
+    .filter(function(l){ return l && l._ajVES && l._ajVES.ts; });
+  if(!marcados.length) return null;
+  var ts=0; marcados.forEach(function(l){ if(l._ajVES.ts>ts) ts=l._ajVES.ts; });
+  var lotes=marcados.filter(function(l){ return l._ajVES.ts===ts; });
+  var bs=0;
+  lotes.forEach(function(l){
+    bs+=(parseFloat(l._ajVES.antes)||0)-(parseFloat(l.bsRestante)||0);
+  });
+  return {ts:ts, por:(lotes[0]._ajVES.por||""), lotes:lotes,
+          bs:Math.round(bs*100)/100};
+}
+
+function aplicarCorreccionLotesVES(){
+  if(!permisoEdicion()){ alert("No tienes permiso para editar."); return; }
+  var d=_derivaLotesVES();
+  if(!(d.total>0.01)){
+    alert("No hay nada que cerrar: en ninguna cuenta los lotes pasan del saldo.");
+    return;
+  }
+  var resumen=d.filas.filter(function(f){return f.sobra>0.01;}).map(function(f){
+    return "• "+f.cuenta+"\n"+
+           "   saldo "+f2(f.saldo)+" · lotes "+f2(f.vivos)+" → "+f2(f.despues)+
+           "  ("+f.toca.length+" lote"+(f.toca.length===1?"":"s")+")";
+  }).join("\n");
+  if(!confirm(
+    "🛠️ CUADRAR LOS LOTES CON LAS CUENTAS\n\n"+resumen+"\n\n"+
+    "Se cierran en total "+f2(d.total)+" Bs, empezando por los lotes más viejos.\n\n"+
+    "NO se mueve el saldo de ninguna cuenta, ni la ganancia de ningún mes\n"+
+    "cerrado. Queda registrado y se puede deshacer desde el mismo sitio.\n\n"+
+    "¿Aplicar?")) return;
+  var ts=Date.now(), por=_quienSoy(), n=0;
+  d.filas.forEach(function(f){
+    f.toca.forEach(function(t){
+      // Lo que tenia antes, quien lo hizo y cuando. Sin el "antes" no hay
+      // vuelta atras, que es justo lo que ella pidio.
+      t.lote._ajVES={ts:ts, por:por, antes:t.antes};
+      t.lote.bsRestante=t.despues;
+      n++;
+    });
+  });
+  // El _mod no se pone a mano: saveData() compara contra la foto del guardado
+  // anterior y marca solo lo que cambio de verdad. Marcar aqui es el camino
+  // que ya fallo cuatro veces.
+  logAudit("CUADRAR_LOTES_VES","Cerró "+f2(d.total)+" Bs de más en "+n+" lote(s) de VES");
+  saveData(); R();
+  alert("✅ Cerrados "+f2(d.total)+" Bs en "+n+" lote(s).\n\n"+
+        "Ninguna cuenta se movió. Se puede deshacer desde Inventario USDT.");
+}
+
+function deshacerCorreccionLotesVES(){
+  if(!permisoEdicion()){ alert("No tienes permiso para editar."); return; }
+  var u=_ultimaCorreccionVES();
+  if(!u){ alert("No hay ninguna corrección que deshacer."); return; }
+  if(!confirm("↩️ DESHACER LA CORRECCIÓN\n\n"+
+    "Se devuelven "+f2(u.bs)+" Bs a "+u.lotes.length+" lote(s), tal como estaban.\n\n"+
+    "Tampoco esto mueve ninguna cuenta.\n\n¿Deshacer?")) return;
+  u.lotes.forEach(function(l){
+    l.bsRestante=Math.round((parseFloat(l._ajVES.antes)||0)*100)/100;
+    delete l._ajVES;
+    // Un lote que la correccion dejo en cero se archivo al dibujar Inventario.
+    // Devolverle su saldo sin sacarlo del archivo lo deja escondido: ahi el
+    // FIFO no lo gasta nunca. _revivirLote hace las DOS mitades del ARREGLO
+    // 137 —levantar la marca del vivo y enterrar la copia archivada— o el
+    // servidor se lo lleva otra vez en la siguiente sincronizacion.
+    if(l._cerrado && (parseFloat(l.bsRestante)||0)>0.001) _revivirLote(l);
+  });
+  logAudit("DESHACER_LOTES_VES","Devolvió "+f2(u.bs)+" Bs a "+u.lotes.length+" lote(s) de VES");
+  saveData(); R();
+  alert("↩️ Devueltos "+f2(u.bs)+" Bs. Ninguna cuenta se movió.");
+}
+
+// La vista previa. Se dibuja SIEMPRE antes de poder aplicar nada: el boton de
+// Aplicar vive dentro de ella, no fuera, porque lo que ella pidio es ver qué
+// lotes toca antes de tocarlos.
+function _htmlDerivaVES(){
+  var d=_derivaLotesVES(), u=_ultimaCorreccionVES();
+  if(!(d.total>0.01) && !u) return "";
+  // ARREGLO 165: el abierto/cerrado vive en S, NO solo en el DOM. El sondeo
+  // repinta la pestaña cada vez que el servidor trae algo (cada 8 s), y con
+  // el estado solo en el DOM el panel se cerraba solo bajo el dedo. Es lo
+  // mismo que ya hace S._verArchivados, que por eso nunca tuvo el problema.
+  var h="<div id='deriva-ves' style='display:"+(S._verDeriva?"block":"none")+
+        ";border:1px solid var(--ln);border-radius:10px;padding:12px;margin-bottom:10px;background:var(--sup)'>";
+  if(d.total>0.01){
+    h+="<div style='font-size:12px;color:var(--tx2);margin-bottom:9px;line-height:1.5'>"+
+       "Los lotes dicen tener <b>"+f2(d.total)+" Bs</b> más que las cuentas. "+
+       "Se cierra la diferencia <b>cuenta por cuenta</b>, empezando por los lotes más viejos. "+
+       "No se mueve ningún saldo.</div>";
+    // Una FILA POR CUENTA, no una tabla ancha. El primer intento era una
+    // tabla de cuatro columnas con min-width 430: en su teléfono son 412, así
+    // que "LOTES DESPUÉS" —justo la columna que ella pidió ver— quedaba fuera
+    // y había que arrastrar. Es el ARREGLO 137: lo que queda tras un arrastre
+    // no existe. Medido a 390, 412, 768 y 1280 px: no se sale nada.
+    d.filas.forEach(function(f){
+      var toca=f.sobra>0.01;
+      h+="<div style='border-top:1px solid var(--am5-h);padding:8px 0'>"+
+         "<div style='font-size:12px;font-weight:700;color:var(--tx2);margin-bottom:3px'>"+
+           _escAud(f.cuenta)+"</div>"+
+         "<div style='font-size:11.5px;color:var(--tx3);line-height:1.6'>"+
+           "saldo <b style='color:var(--tx2)'>"+(f.medible?f2(f.saldo):"—")+"</b>"+
+           " · lotes "+f2(f.vivos)+" → <b style='color:"+(toca?"var(--avi-tx)":"var(--tx2)")+"'>"+
+           f2(f.despues)+"</b></div>";
+      if(!f.medible){
+        h+="<div style='font-size:11px;color:var(--tx3);margin-top:3px'>"+
+           "No se tocan: no hay contra qué medirlos"+
+           (f.moneda?" — esa cuenta está en "+_escAud(f.moneda):"")+".</div>";
+      } else if(!toca){
+        h+="<div style='font-size:11px;color:var(--tx3);margin-top:3px'>"+
+           "Nada que cerrar: los lotes no pasan del saldo.</div>";
+      } else {
+        h+="<div style='font-size:11px;color:var(--tx3);margin-top:4px;padding-left:10px'>"+
+           f.toca.map(function(t){
+             return "lote "+_escAud(t.lote.fecha||"")+" · "+f2(t.antes)+" → "+f2(t.despues)+
+                    " <span style='color:var(--avi-tx)'>(−"+f2(t.quita)+")</span>";
+           }).join("<br>")+"</div>";
+      }
+      h+="</div>";
+    });
+    h+="<button type='button' onclick='aplicarCorreccionLotesVES()' style='margin-top:10px;width:100%;background:var(--fondo-osc);color:var(--sobre-color);border:none;padding:10px;border-radius:9px;font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit'>"+
+       "🛠️ Aplicar — cerrar "+f2(d.total)+" Bs</button>";
+  } else {
+    h+="<div style='font-size:12px;color:var(--tx2);margin-bottom:9px'>"+
+       "Los lotes cuadran con las cuentas: no hay nada que cerrar.</div>";
+  }
+  if(u){
+    var fe=new Date(u.ts);
+    h+="<div style='margin-top:10px;padding-top:9px;border-top:1px solid var(--ln);font-size:11.5px;color:var(--tx3)'>"+
+       "Última corrección: <b>"+("0"+fe.getDate()).slice(-2)+"/"+("0"+(fe.getMonth()+1)).slice(-2)+"/"+
+       String(fe.getFullYear()).slice(-2)+" "+("0"+fe.getHours()).slice(-2)+":"+("0"+fe.getMinutes()).slice(-2)+
+       "</b> · "+f2(u.bs)+" Bs en "+u.lotes.length+" lote(s)"+
+       (u.por?" · por "+_escAud(u.por):"")+
+       " <button type='button' onclick='deshacerCorreccionLotesVES()' style='margin-left:6px;background:var(--am5-b);color:var(--avi-tx);border:none;padding:4px 9px;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit'>↩️ Deshacer</button></div>";
+  }
+  return h+"</div>";
+}
+
+// Abrir la vista previa NO llama a R() (ARREGLO 32): repintar la pestaña
+// cierra lo que tenga abierto bajo el dedo. Se cambia el display por su id.
+function _verDerivaVES(){
+  var d=document.getElementById("deriva-ves");
+  if(!d) return;
+  S._verDeriva=(d.style.display==="none");
+  d.style.display=S._verDeriva?"block":"none";
+  var b=document.getElementById("deriva-ves-btn");
+  if(b) b.textContent=_rotDerivaVES();
+}
+// El rotulo se escribe en UN sitio. El dibujado y el de cerrar lo leen de
+// aqui: escritos aparte, el enlace cambia de nombre solo al cerrarlo, que ya
+// paso con el del sueldo (ARREGLO 141) y no lo ve ninguna guardia de texto.
+function _rotDerivaVES(){
+  var d=_derivaLotesVES();
+  // La flecha sale de S, igual que el panel: escrita aparte, tras un
+  // repintado del sondeo el boton decia "abrir" con el panel abierto.
+  var fl=S._verDeriva?" ▴":" ▾";
+  return (d.total>0.01 ? "🛠️ Cuadrar lotes con las cuentas"
+                       : "🛠️ Lotes y cuentas")+fl;
 }
 function editRestanteInv(id){
   var r=(S.inventarioUsdt||[]).find(function(x){return x.id===id;});
@@ -31181,9 +31454,14 @@ function rInventarioUsdt(){
     "<div style='display:flex;gap:8px'>"+
     "<button type='button' onclick='toggleArchivados()' style='background:"+(S._verArchivados?"var(--am1-a)":"var(--am5-b)")+";color:"+(S._verArchivados?"var(--sobre-color)":"var(--avi-tx)")+";border:none;padding:6px 12px;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer'>📦 Archivados ("+((S.inventarioUsdt_cerrado||[]).length)+")</button>"+
     "<button type='button' onclick='cerrarLotesViejos()' style='background:var(--am2-b);color:var(--sobre-color);border:none;padding:6px 12px;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer'>🧹 Cerrar lotes viejos</button>"+
-    (!S._correccion30jul?"<button type='button' onclick='_correccionLotesVES30Jul()' style='background:var(--mal);color:var(--sobre-color);border:none;padding:6px 12px;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer'>🛠️ Corregir lotes VES (una vez)</button>":"")+
+    // ARREGLO 164: el boton solo sale cuando hay algo que hacer —deriva que
+    // cerrar o una correccion que deshacer—. Uno que esta siempre y casi
+    // nunca significa nada deja de leerse (ARREGLO 99).
+    ((_derivaLotesVES().total>0.01||_ultimaCorreccionVES())?
+      "<button type='button' id='deriva-ves-btn' onclick='_verDerivaVES()' style='background:var(--am5-b);color:var(--avi-tx);border:none;padding:6px 12px;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer'>"+_rotDerivaVES()+"</button>":"")+
     "</div>"+
     "</div>"+
+    _htmlDerivaVES()+
     (function(){
       if(!S._verArchivados) return "";
       var arch=(S.inventarioUsdt_cerrado||[]).slice().sort(function(a,b){return (b.id||0)-(a.id||0);});
