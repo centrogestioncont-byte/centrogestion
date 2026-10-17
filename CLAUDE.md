@@ -5657,7 +5657,7 @@ compras de USDT pagadas con Bs ....  NO   ← pendiente, a propósito
 Su ejemplo del egreso del 06/10 (3.925,12 Bs) **sí descontaba**: ese camino
 llevaba tiempo bien.
 
-### Por qué las compras de USDT con Bs quedan fuera por ahora
+### Y comprar USDT con Bs se PREGUNTA (ARREGLO 162)
 
 Suman 782.084 Bs en octubre y aun así **no generan deriva**, y la razón es la
 que decide el diseño:
@@ -5670,9 +5670,33 @@ que decide el diseño:
 **Esos bolívares nunca estuvieron en un lote.** Hacerlas consumir "de la
 empresa" por omisión se habría comido 470.000 Bs de lotes que no les
 corresponden — el mismo error al revés, con los lotes por debajo de las
-cuentas y las tasas sugeridas torcidas. Cuando entre, la regla será *consumir
-sólo hasta donde haya lote en esa cuenta y decir qué parte no salió de
-ninguno*, que es lo que ya hace el bloque "DE DÓNDE SALEN LOS X BS".
+cuentas y las tasas sugeridas torcidas. **La primera propuesta fue "consumir sólo hasta donde haya lote", y la tumbó
+ella con el argumento correcto: el lote NO SABE DE QUIÉN ES EL DINERO.** Si en
+esa cuenta hay lotes de la empresa, su sueldo se los come igual. Sólo ella sabe
+de dónde salió ese dinero, así que **lo dice ella**, con un selector al
+registrar la compra:
+
+```
+¿De dónde salen estos Bs?
+  De la empresa · gasta inventario          ← por omisión
+  Aporte o dinero personal · no gasta
+```
+
+- **Sólo sale pagando en bolívares.** Con reales no hay lote de Bs que gastar, y
+  una pregunta que siempre está deja de leerse (ARREGLO 99).
+- **La marca viaja con el lote** (`origenBs`), así que el borrado sabe si tiene
+  algo que devolver. Devolverle saldo a un lote que esa compra nunca gastó le
+  regala bolívares, y de ahí salen las tasas que la app sugiere.
+- **Por omisión, empresa**, que es lo que ella pidió: el caso normal.
+
+Medido con su export, una compra de 5.000 Bs desde el Banco de Venezuela:
+
+```
+                  marcada PERSONAL     marcada EMPRESA
+el lote                   0                −5.000
+el saldo             −5.000               −5.000
+al borrarla      saldo y lote EXACTOS, en los dos casos
+```
 
 ### Lo que entró
 

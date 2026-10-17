@@ -11840,5 +11840,37 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
      "y los DOS caminos del borrado lo usan ("+nBs+" de 2) — con _mov y sin _mov");
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// ARREGLO 162 · comprar USDT con bolivares: se PREGUNTA de quien son
+//
+// La primera propuesta fue "consumir solo hasta donde haya lote", y la tumbo
+// ella con el argumento correcto: EL LOTE NO SABE DE QUIEN ES EL DINERO. Si en
+// esa cuenta hay lotes de la empresa, su sueldo se los come igual. Medido en su
+// export: de los 782.084 Bs que salieron asi en octubre, 470.000 eran su sueldo
+// de otro trabajo, que entro como aporte y nunca estuvo en un lote.
+{
+  const sinC = t => t.replace(/\/\/[^\n]*/g, "");
+  const iu = sinC(sacarFuncion("saveIU"));
+  ok(/_loteCompra\.origenBs=\(f\.moneda==="VES"\)/.test(iu),
+     "el lote guarda de quien eran los bolivares");
+  ok(/if\(f\.moneda==="VES" && _loteCompra\.origenBs==="empresa"\)/.test(iu),
+     "y solo consume lotes cuando son de la EMPRESA");
+  ok(/consumirLotesVES\(f\.cuentaOrigenId, mo\)/.test(iu),
+     "por la puerta unica, no con un recorrido propio");
+  // Por omision, empresa: en el estado inicial y al limpiar el formulario.
+  ok((HTML.match(/origenBs:"empresa"/g)||[]).length === 2,
+     "por omision es empresa, al arrancar y al limpiar el formulario");
+  // El selector se dibuja, y SOLO pagando en bolivares.
+  ok(/f\.tipo==="compra"&&f\.moneda==="VES"/.test(HTML) &&
+     /S\.nIU\.origenBs=this\.value/.test(HTML),
+     "el selector sale al pagar en Bs y escribe en S.nIU.origenBs");
+  ok(/De d\\u00f3nde salen estos Bs/.test(HTML),
+     "y pregunta de donde salen, con esas palabras");
+  // Al borrar: devuelve solo si de verdad consumio.
+  const rv = sinC(sacarFuncion("revertirSaldosInventario"));
+  ok(/\(r\.moneda\|\|""\)==="VES" && r\._lotesConsumidos/.test(rv) && /devolverLotesVES\(r, mo\)/.test(rv),
+     "al borrar la compra el lote vuelve — y solo si esa compra lo gasto");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
