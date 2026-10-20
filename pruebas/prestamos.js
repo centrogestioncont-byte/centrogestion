@@ -4885,7 +4885,19 @@ console.log("\n— FASE 1: la hora de la operacion —");
 // _fechaLote: si alguien anade un sitio y se olvida, ese lote queda sin fechar
 // para siempre y no hay forma de recuperarlo.
 {
-  const pushes = HTML.match(/inventarioUsdt\.push\(\{[^}]*/g) || [];
+  // ARREGLO 170: esto buscaba `push({`, asi que un sitio que construye el lote
+  // en una variable y empuja la variable se le escapaba — y al hacerlo el lote
+  // de una VENTA, la cuenta bajo a 7 y la guardia fallo sin que faltara ninguna
+  // hora. Es la trampa que la guardia de fechaIso ya habia resuelto: se mira
+  // CADA push, con la ventana a los DOS lados.
+  const pushes=[]; { let desde=0;
+    for(;;){
+      const i=HTML.indexOf("inventarioUsdt.push(", desde);
+      if(i<0) break;
+      pushes.push(HTML.slice(Math.max(0,i-1100), i+700));
+      desde=i+1;
+    }
+  }
   ok(pushes.length >= 8, "se encontraron los sitios donde nacen lotes (" + pushes.length + ")");
   const sinHora = pushes.filter((x) => !/\bhora:/.test(x));
   ok(sinHora.length === 0, "todos los lotes nuevos nacen con hora" +
@@ -12259,10 +12271,13 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
   // 1. UNA bandera decide las dos cosas. Es lo unico que impide el doble
   //    conteo: con una por sitio se podrian dar las dos a la vez y esos
   //    reales estarian contados como convertidos Y como disponibles.
-  ok(/esCalceDirecto\(f, ruta\)/.test(sq) && /f\.entraQueda/.test(sq),
-     "la bandera cubre el calce y la marca de la ida");
-  ok(/_puedeQuedarse\(ruta\)/.test(sq),
-     "y solo donde la pregunta decide algo");
+  // ARREGLO 170: ya no hay marca del formulario que mirar. Toda ida que puede
+  // dejar lote lo deja, y el calce sigue contando por definicion.
+  ok(/esCalceDirecto\(f, ruta\)/.test(sq), "el calce cuenta");
+  ok(/return _puedeQuedarse\(ruta\);/.test(sq),
+     "y TODA ida BRL->VZLA deja su lote, sin preguntar");
+  ok(!/f\.entraQueda/.test(sq),
+     "sin leer ninguna marca del formulario: el selector se fue");
   ok(/var _quedaTx=_entradaSeQueda\(f, ruta\);/.test(sv),
      "saveTx la calcula una vez y de ahi cuelga todo");
   // Contadas por nombre: con solo pedir que _quedaTx aparezca, volver a poner
@@ -12285,15 +12300,26 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
   ok(F._puedeQuedarse({orig:"VES",dest:"BRL"}) === false, "la vuelta, no");
   ok(F._puedeQuedarse({orig:"USD",dest:"VES"}) === false, "EE.UU tampoco");
   ok(F._puedeQuedarse({orig:"BRL",dest:"COP"}) === false, "ni Colombia");
-  // Y en calce no se pregunta: ahi ya esta decidido.
-  ok(/esCalceDirecto\(S\.tx, ruta\)/.test(sinC(sacarFuncion("_htmlEntraQueda"))),
-     "en calce el selector no se dibuja");
+  // Y el selector se fue ENTERO: una pantalla nueva quita el control viejo,
+  // no se pone al lado (ARREGLO 98). Dejarlo dibujado sin efecto seria peor
+  // que quitarlo: ella elegiria algo que ya no decide nada.
+  ["_htmlEntraQueda","_htmlEntraQuedaIn","_pieEntraQueda","_setEntraQueda"].forEach(function(fn){
+    ok(!new RegExp("function "+fn+"\\(").test(HTML), "ya no existe "+fn);
+  });
+  ok(!/tx-queda-cont/.test(HTML), "ni su hueco en la pantalla");
 
   // 3. La marca viaja CON la remesa. El borrado decide con ella si devuelve
   //    lotes de compra, y deducirlo despues seria imposible: el lote que creo
   //    ya no estaria para contarlo.
   ok(/nuevaRemesa\.entraQueda=true;/.test(sv),
      "la marca se guarda en la remesa");
+  // Y el borrado la lee de la REMESA, no de la ruta: las remesas de antes del
+  // 170 no la llevan y si gastaron lotes de compra, asi que deducirla de la
+  // ruta les devolveria lo que nunca gastaron.
+  ok(/r\.entraQueda/.test(sinC(sacarFuncion("_remesaEntradaQueda"))),
+     "y el borrado decide con la marca guardada, no con la ruta de hoy");
+  ok(F._remesaEntradaQueda({orig:"BRL",dest:"VES"}) === false,
+     "una ida vieja sin marca NO cuenta como que dejo lote");
   ok(F._remesaEntradaQueda({metodo:"calce"}) === true, "el calce cuenta");
   ok(F._remesaEntradaQueda({entraQueda:true}) === true, "y la marca tambien");
   ok(F._remesaEntradaQueda({}) === false, "y una remesa normal no");
@@ -12361,21 +12387,8 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
   ok(/_deQuienLote\(f\.lote\)/.test(sinC(sacarFuncion("_htmlDeDondeSalen"))),
      "y la fila de «de donde salen» lo usa");
 
-  // 8. El formulario vuelve a lo de siempre tras guardar: dejarlo puesto
-  //    contagiaria a la remesa siguiente sin que nada lo diga.
-  ok(/entraQueda:false,/.test(sv), "la siguiente remesa nace sin la marca");
-  // Y el selector no repinta la pantalla: el campo del monto esta dentro
-  // (ARREGLO 32, y el 146 por este mismo camino).
-  const se = sinC(sacarFuncion("_setEntraQueda"));
-  ok(!/\bR\(\)/.test(se), "marcarlo no llama a R()");
-  ok(/getElementById\("tx-queda-cont"\)/.test(se) && /_htmlEntraQuedaIn\(\)/.test(se),
-     "se refresca por su id, con el MISMO html que lo dibuja");
-  ok(/id='tx-queda-cont'/.test(sinC(sacarFuncion("_htmlEntraQueda"))),
-     "y ese id existe de verdad");
-  // El pie sale de un sitio: escrito dos veces, el boton diria una cosa y la
-  // linea de debajo otra.
-  ok((HTML.match(/_pieEntraQueda\(/g) || []).length === 2,
-     "el texto del pie se escribe una vez y se lee una vez");
+  // 8. El formulario ya no nace con ninguna marca que poner o quitar.
+  ok(!/entraQueda:false,/.test(sv), "el formulario ya no lleva la marca");
 }
 
 // ════ ARREGLO 169 · la cerradura cuenta el TIEMPO, no las recargas ════
@@ -12525,6 +12538,112 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
   ok(/parseFloat\(res\.uv\)/.test(UP),
      "y sale del mismo res que la ganancia, no de una cuenta aparte");
   ok(/id='uvsal-tx'/.test(NU), "la linea lleva su id para poder refrescarla");
+}
+
+// ════ ARREGLO 170 · toda ida deja lote, y la venta gasta la compra ════
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const HS = sinC(HTML);
+
+  // 1. LA VENTA DE USDT GASTA EL USDT QUE COMPRÓ. Sin esto, al dejar las idas
+  //    de gastarlos, NADIE vaciaba los lotes de compra y el tc se clavaba en
+  //    la compra mas vieja — y clavado ahi INFLA la ganancia. Medido: con
+  //    compras a 5,30 y 5,60 el tc se quedaba en 5,0508 para siempre.
+  const iu = sinC(sacarFuncion("saveIU"));
+  ok(/simularConsumoFIFO\("\*", usdt, null, 0, null, null\)/.test(iu),
+     "la venta mira que lotes de compra va a gastar");
+  ok(/consumirInventarioFIFO\("\*", usdt, null, 0, null, null\)/.test(iu),
+     "y los gasta");
+  ok(iu.indexOf('simularConsumoFIFO("*"') < iu.indexOf('consumirInventarioFIFO("*"'),
+     "el espejo va ANTES de consumir, o saldria vacio (ARREGLO 161)");
+  ok(/_loteVenta\._lotesConsumidos=\{compras:_simC\.compras\}/.test(iu),
+     "y queda escrito en el lote, que es por donde se devuelve al borrar");
+
+  // 2. DE TODAS LAS MONEDAS. El USDT de Binance es un solo saldo: una venta no
+  //    sabe si lo que vende se compro con reales o con bolivares. Medido en su
+  //    export: compro 18.308 con reales y 9.817 con bolivares, y vendio 32.560.
+  const ci = sinC(sacarFuncion("consumirInventarioFIFO"));
+  const si = sinC(sacarFuncion("simularConsumoFIFO"));
+  [["consumirInventarioFIFO",ci],["simularConsumoFIFO",si]].forEach(function(par){
+    ok(/monedaOrig==="\*" \|\| r\.moneda===monedaOrig/.test(par[1]),
+       par[0]+' entiende "*" como todas las monedas');
+  });
+  // Y sin filtrar por cuenta: la cuenta del lote de compra es la que PAGO
+  // (reales o bolivares), no la de USDT de la que sale la venta.
+  ok(/consumirInventarioFIFO\("\*", usdt, null, 0, null, null\)/.test(iu),
+     "la venta no filtra por cuenta: esa cuenta es la que pago, no la que vende");
+
+  // 3. SU CONDICION: la venta no cambia ni su ganancia ni la tasa del lote que
+  //    crea. Lo unico que se mueve es el `restante` de los lotes de compra.
+  //    Medido con una semana suya: 17 lotes de venta, 0 campos distintos.
+  const trozoVenta = iu.slice(iu.indexOf("var _loteVenta="), iu.indexOf("consumirInventarioFIFO(\"*\""));
+  ok(/tasa:tasa/.test(trozoVenta) && /usdt:usdt/.test(trozoVenta) && /neto:neto/.test(trozoVenta),
+     "el lote de la venta nace con SUS numeros, no con los del consumo");
+
+  // 4. Borrar la venta devuelve lo que gasto, por id y a cuatro decimales.
+  const dv = sinC(sacarFuncion("_devolverComprasDeVenta"));
+  ok(/_loteDelEspejo\(v,"compra",null\)/.test(dv), "se devuelve al lote que de verdad se gasto");
+  ok(/Math\.min\(parseFloat\(v\.usdt\)\|\|0, cap-act\)/.test(dv),
+     "y nunca mas de lo que el lote fue");
+  ok(/10000\)\/10000/.test(dv), "a los mismos cuatro decimales con que se gasta (ARREGLO 127)");
+  ok(/_revivirLote\(l\)/.test(dv), "y un lote archivado vuelve a la lista viva (ARREGLO 137)");
+  ok(/_devolverComprasDeVenta\(r\)/.test(sinC(sacarFuncion("revertirSaldosInventario"))),
+     "y el borrado de una venta lo llama");
+
+  // 5. TODA ida deja lote: no queda ninguna marca del formulario que mirar.
+  ok(/return _puedeQuedarse\(ruta\);/.test(sinC(sacarFuncion("_entradaSeQueda"))),
+     "toda ida BRL->VZLA deja su lote");
+
+  // ── El boton de apertura ────────────────────────────────────────────
+  // 6. Mirar no abre nada: la vista previa y el boton leen el MISMO sitio, o
+  //    abriria un numero distinto del que ella esta leyendo.
+  const rs = sinC(sacarFuncion("_realesSinLote"));
+  // El filas.push de su propio array no cuenta: lo que no puede es escribir en
+  // el inventario ni en una cuenta.
+  ok(!/S\.inventarioUsdt\.push|bsRestante\s*=|\.saldo\s*=|_mod\s*=/.test(rs),
+     "_realesSinLote no escribe nada: mirar no abre lotes");
+  ok((HS.match(/_realesSinLote\(\)/g) || []).length === 4,
+     "y lo leen la vista previa, el boton de la pantalla y el que aplica (4 usos)");
+
+  // 7. QUE CUENTAS. Las de la empresa en reales: fuera las personales, la
+  //    tarjeta (su saldo es deuda) y la reserva, que respalda la tarjeta.
+  ok(/c\.activa===false\|\|c\.esPersonal\|\|c\.esReserva\|\|c\.esTarjeta/.test(rs),
+     "deja fuera las personales, la reserva y la tarjeta");
+  ok(/c\.moneda!=="BRL"/.test(rs), "y solo mira cuentas en reales");
+
+  // 8. A QUE TASA. A la que ya valora sus reales, o el lote diria una cosa y
+  //    el capital otra.
+  ok(/tasaDeReferencia\("BRL"\)/.test(rs), "el hueco se valora a la tasa de referencia");
+  const ab = sinC(sacarFuncion("abrirLotesBRL"));
+  ok(/d\.tasa>0/.test(ab), "sin esa tasa no se abre nada: un lote con tasa inventada envenena las que sugiere");
+  ok(/tasa:d\.tasa/.test(ab), "y el lote nace con ella");
+
+  // 9. NO toca ningun saldo, y se dice en la propia pregunta.
+  ok(!/\.saldo\s*=/.test(ab), "abrir los lotes no mueve el saldo de ninguna cuenta");
+  ok(/NO mueve el saldo/.test(sacarFuncion("abrirLotesBRL")),
+     "y la pregunta lo dice antes de pulsar");
+  // Anclada a la forma que de verdad frena —`if(!confirm(`— y no a que la
+  // palabra aparezca: `if(false && confirm(...))` dejaba el texto puesto y la
+  // guardia pasaba con el boton aplicando sin preguntar (ARREGLO 140).
+  ok(/if\(!confirm\(/.test(ab), "nunca se aplica solo: sin su OK no sigue");
+
+  // 10. Y la marca lo aparta de donde no es una operacion suya. Faltando
+  //     cualquiera de los tres, la conciliacion lee una venta que no existio:
+  //     medido, el "te sobran" se iba de 6,94 a -297,20.
+  ok((HS.match(/l\._aperturaBRL/g) || []).length >= 4,
+     "la marca se mira en los tres sitios que apartan lo que no es suyo, y en la tasa");
+  ok(/_aperturaBRL/.test(sinC(sacarFuncion("_loteEsOpUSDT"))),
+     "tasaDeReferencia no sale de un lote nacido de ella misma");
+  ok(/_aperturaBRL/.test(sinC(sacarFuncion("efectoTasasDesde"))),
+     "y la conciliacion no lo cuenta como una venta de USDT");
+
+  // 11. Se deshace entera, por su hora, y deja la marca de borrado o el otro
+  //     aparato la devuelve (ARREGLO 6c).
+  const db = sinC(sacarFuncion("deshacerAperturaBRL"));
+  ok(/_aperturaBRL\.ts===ts/.test(db), "se deshace por la hora, que es lo que agrupa la apertura");
+  ok(/_marcarBorradoMerge\("inventarioUsdt", l\.id\)/.test(db),
+     "deja la marca de borrado, o el servidor devuelve los lotes");
+  ok(!/\.saldo\s*=/.test(db), "y tampoco toca ningun saldo");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

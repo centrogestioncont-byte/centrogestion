@@ -2858,9 +2858,16 @@ function esCalceDirecto(f, ruta){
 //
 // Por omisión se convierten, que es lo de siempre y lo que no mueve ni un
 // número de los que ya tiene.
+// ARREGLO 170: ya no se pregunta. Sus palabras del 17/10: "el selector no me
+// sirve, porque al registrar la ida no sé si esos reales van a ir a USDT. Eso
+// depende del movimiento del día". Tenía razón: la app pedía en el peor
+// momento un dato que sólo se sabe después, así que la respuesta salía a ojo —
+// y de ese dato dependía si la remesa dejaba lote. Ahora TODA ida deja su lote
+// y lo que pase después decide solo: si compra USDT con esos reales, la compra
+// gasta el lote; si paga una vuelta, la vuelta lo gasta y marca calce.
 function _entradaSeQueda(f, ruta){
   if(esCalceDirecto(f, ruta)) return true;          // en calce no se convierte, por definición
-  return !!(f && f.entraQueda && _puedeQuedarse(ruta));
+  return _puedeQuedarse(ruta);
 }
 // Sólo donde la pregunta significa algo: lo que entra son REALES y lo que sale
 // son bolívares. En una vuelta lo que entra ya crea su lote desde siempre, y
@@ -3262,7 +3269,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261018_v252";
+var APP_VERSION = "20261018_v253";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -6476,7 +6483,7 @@ function traspasosAPersonal(desdeIso){
   // traspasos de hecho aunque estén escritos en el inventario, y antes caían
   // dentro del "efecto de las tasas" — ver _cruceUsdtPersonal.
   (S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[]).forEach(function(l){
-    if(l.plataforma==="Remesa"||l.origenRemesa) return;
+    if(l.plataforma==="Remesa"||l.origenRemesa||l._aperturaBRL) return;
     var x=_cruceUsdtPersonal(l);
     if(!x) return;
     var iso=_isoDeFechaLote(l.fecha);
@@ -6591,7 +6598,7 @@ function efectoTasasDesde(desdeIso){
   // es de donde sale la fila "pasaste a tus cuentas 💜". Ver _cruceUsdtPersonal.
   (S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[]).forEach(function(l){
     // El lote que nace de una remesa no mueve ninguna cuenta: lo hizo la remesa.
-    if(l.plataforma==="Remesa"||l.origenRemesa) return;
+    if(l.plataforma==="Remesa"||l.origenRemesa||l._aperturaBRL) return;
     if(_cruceUsdtPersonal(l)) return;
     var iso=_isoDeFechaLote(l.fecha);
     if(!iso || iso<=desdeIso) return;
@@ -10283,7 +10290,6 @@ function saveTx(){
     // ARREGLO 167: la siguiente remesa vuelve a lo de siempre. Dejarlo puesto
     // haría que una ida marcada "se quedan" contagiara a la de después sin que
     // nada lo diga — y esa decide si nace un lote o se gasta uno de compra.
-    entraQueda:false,
     entregas:[],
     pagos:[],
     pais:f.pais,
@@ -14636,13 +14642,36 @@ function saveIU(){
     var neto = usdt - com;
     var bs = neto * tasa;
     var bsFinal = (f.bsRecibidos && parseFloat(f.bsRecibidos)>0) ? parseFloat(f.bsRecibidos) : bs;
-    S.inventarioUsdt.push({id:Date.now(),tipo:"venta",fecha:fecha,fechaIso:fechaIso,hora:hora,moneda:f.monedaVenta||"VES",
+    var _loteVenta={id:Date.now(),tipo:"venta",fecha:fecha,fechaIso:fechaIso,hora:hora,moneda:f.monedaVenta||"VES",
       montOrigen:0,usdt:usdt,neto:neto,tasa:tasa,comision:com,
       bs:Math.round(bsFinal*1000)/1000,
       bsRestante:Math.round(bsFinal*1000)/1000,
       plataforma:f.plataforma||"",ordenId:ordenId,cuentaId:cuentaAfectada,
       cuentaDestinoId:f.cuentaDestinoId||"",  // cuenta que recibe VES/BRL
-      restante:0,locked:false,_mod:Date.now()});
+      restante:0,locked:false,_mod:Date.now()};
+    S.inventarioUsdt.push(_loteVenta);
+    // ── ARREGLO 170 · vender USDT gasta el USDT que compró ──────────────
+    //
+    // Hasta aquí NADIE descontaba los lotes de compra salvo la ida, así que al
+    // dejar de gastarlos (porque ahora toda ida deja su lote) se habrían
+    // quedado llenos para siempre y el tc se clavaría en la compra más vieja.
+    // Medido: comprando a 5,30 y a 5,60, el tc se quedaba en 5,0508 y no se
+    // movía nunca — y clavado ahí INFLA la ganancia, porque dice que los
+    // reales que entran valen más USDT de los que valen.
+    //
+    // Lo que faltaba no era un parche en la ida: era esto. Compra USDT a X y
+    // lo vende a Y; esa venta es la que gasta el USDT comprado. Con ella los
+    // lotes se vacían solos y el tc sigue a sus compras de verdad.
+    //
+    // NO toca la ganancia de esta venta ni la tasa del lote que acaba de
+    // nacer: lo único que se mueve es el `restante` de los lotes de compra,
+    // que es lo que leen las idas que vengan después. Hay guardia por nombre.
+    //
+    // El simulador va ANTES de consumir: después vería los lotes ya gastados
+    // y el espejo saldría vacío (ARREGLO 161).
+    var _simC=simularConsumoFIFO("*", usdt, null, 0, null, null);
+    consumirInventarioFIFO("*", usdt, null, 0, null, null);
+    if(_simC && _simC.compras.length) _loteVenta._lotesConsumidos={compras:_simC.compras};
     // USDT baja de Binance
     if(cuentaAfectada){
       var cObjV=(S.cuentas||[]).find(function(c){return c.id===cuentaAfectada;});
@@ -19810,6 +19839,22 @@ function revertirSaldosRemesa(tipo, r){
 }
 
 // Revierte saldos cuando se elimina un movimiento de inventario USDT
+// Devuelve a sus lotes de compra lo que una venta de USDT gastó. Va por el
+// espejo que la venta guardó (_lotesConsumidos.compras), igual que
+// _restaurarComprasFIFO hace con una remesa: por id cuando lo hay, y nunca
+// más de lo que el lote fue. A CUATRO decimales, los mismos con los que
+// consumirInventarioFIFO descuenta, o borrar y volver a registrar la misma
+// venta no dejaría el lote como estaba (ARREGLO 127).
+function _devolverComprasDeVenta(r){
+  var espejo=((r&&r._lotesConsumidos)||{}).compras||[];
+  if(!espejo.length) return;
+  espejo.forEach(function(v){
+    var l=_loteDelEspejo(v,"compra",null); if(!l) return;
+    var cap=parseFloat(l.usdt)||0, act=parseFloat(l.restante)||0;
+    var dev=Math.min(parseFloat(v.usdt)||0, cap-act);
+    if(dev>0){ l.restante=Math.round((act+dev)*10000)/10000; l._mod=Date.now(); _revivirLote(l); }
+  });
+}
 function revertirSaldosInventario(r){
   var usdt=parseFloat(r.usdt)||0;
   var mo=parseFloat(r.montOrigen)||0;
@@ -19834,6 +19879,10 @@ function revertirSaldosInventario(r){
     // Venta: USDT había bajado → devolver; VES había subido → restar
     adjId(r.cuentaId, +usdt);            // USDT devuelve
     adjId(r.cuentaDestinoId, -bs);       // VES baja
+    // ARREGLO 170: y los lotes de compra que esta venta gastó vuelven, por su
+    // id. Sin esto, borrar una venta dejaría los lotes gastados para siempre y
+    // el tc de las idas siguientes saldría de una compra que sí tiene saldo.
+    _devolverComprasDeVenta(r);
   }
   // NO llamar sincronizarSaldosUsdt() aqui: revertirSaldosInventario ya ajusta
   // puntualmente +usdt/-bs, y sincronizarSaldosUsdt pisaria esos valores correctos
@@ -21488,7 +21537,13 @@ function consumirInventarioFIFO(monedaOrig, usdtUsados, monedaDest, bsEntregados
   normalizarInventarioFIFO();
   var u=parseFloat(usdtUsados)||0;
   if(u>0){
-    var comprasTodas=S.inventarioUsdt.filter(function(r){return r.tipo==="compra"&&r.moneda===monedaOrig;}).sort(ordenFIFO);
+    // ARREGLO 170: "*" es TODAS las monedas. Una venta de USDT no sabe con qué
+    // se compró lo que vende —en Binance es un solo saldo— así que gasta del
+    // lote más viejo sea de reales, de bolívares o de soles. Restringirlo a una
+    // moneda inventaría una distinción que el dinero no tiene.
+    var comprasTodas=S.inventarioUsdt.filter(function(r){
+      return r.tipo==="compra" && (monedaOrig==="*" || r.moneda===monedaOrig);
+    }).sort(ordenFIFO);
     // Las COMPRAS siguen estrictas por cuenta, a proposito: el ARREGLO 168 va
     // del dinero que SALE (los lotes de venta). Aqui no hay madre que mirar —
     // igual que crearLoteRecibido: sin mezclar cuentas, aunque quede sin consumir.
@@ -21530,7 +21585,9 @@ function simularConsumoFIFO(monedaOrig, usdtUsados, monedaDest, bsEntregados, cu
   var resCompras=[], resVentas=[];
   var u=parseFloat(usdtUsados)||0;
   if(u>0.0001){
-    var comprasTodas=S.inventarioUsdt.filter(function(r){return r.tipo==="compra"&&r.moneda===monedaOrig;}).sort(ordenFIFO);
+    var comprasTodas=S.inventarioUsdt.filter(function(r){
+      return r.tipo==="compra" && (monedaOrig==="*" || r.moneda===monedaOrig);
+    }).sort(ordenFIFO);
     var compras=cuentaOrigenId?comprasTodas.filter(function(r){return r.cuentaOrigenId===cuentaOrigenId;}):comprasTodas;
     for(var i=0;i<compras.length&&u>0.0001;i++){
       var disp=parseFloat(compras[i].restante)||0;
@@ -21949,6 +22006,122 @@ function editarSaldoCuentaEnConfig(cid){
 // previa que ella mira y el boton que lo aplica. Calculada aparte, bastaria un
 // redondeo distinto para cerrar un numero que no es el que esta leyendo — el
 // 34,27 contra el 34,28, pero moviendo los lotes de los que salen sus tasas.
+// ── ARREGLO 170 · la apertura de los lotes de reales ───────────────────
+//
+// Desde el 170 toda ida deja su lote, pero eso vale de aqui en adelante: los
+// reales que YA tiene en las cuentas entraron por remesas que no dejaron
+// ninguno, asi que una vuelta que los gaste sigue diciendo "sin lote, tasa
+// prestada" hasta que los lotes nuevos los tapen. Esto los abre, UNA vez.
+//
+// A QUE TASA Y POR QUE: a tasaDeReferencia("BRL"), que es la misma con la que
+// la app ya valora todos sus reales parados (capitalRealTotal y la
+// conciliacion pasan por ahi). Asi el lote nace valiendo exactamente lo que el
+// capital ya dice que valen esos reales. Con cualquier otra tasa el lote diria
+// una cosa y el capital otra — el 34,27 contra el 34,28, sobre el dinero parado.
+//
+// Y para que de verdad no mueva nada hace falta la otra mitad, que costo
+// medirla: el lote lleva la marca `_aperturaBRL` y con ella queda FUERA de los
+// TRES sitios que ya apartan lo que no es una operacion suya (efectoTasasDesde,
+// el cruce a cuentas personales y el detalle del mes) y de tasaDeReferencia().
+// Sin eso la conciliacion lo lee como una venta de 304 USDT que nunca ocurrio
+// —medido: el "te sobran" se iba de 6,94 a -297,20 con solo abrir los lotes— y
+// la tasa de referencia saldria de un lote nacido de ella misma. Es la misma
+// razon por la que el lote de un calce lleva `permuta`.
+//
+// QUE CUENTAS: las de reales de la EMPRESA. Quedan fuera las personales (ese
+// dinero ya salio de la empresa, ARREGLO 96), la tarjeta (su saldo es deuda,
+// ARREGLO 95) y la RESERVA, que son los R$ 1.004 que respaldan la tarjeta y
+// no son dinero con el que opere — lo pidio ella por su nombre.
+//
+// SOLO LECTURA: mirar no abre nada. Lo leen la vista previa que ella mira y
+// el boton que lo aplica, para que no pueda abrir un numero distinto del que
+// esta leyendo.
+function _realesSinLote(){
+  normalizarInventarioFIFO();
+  var ref=tasaDeReferencia("BRL");
+  var tasa=(ref&&parseFloat(ref.tasa))||0;
+  var filas=[], total=0;
+  (S.cuentas||[]).forEach(function(c){
+    if(!c||c.moneda!=="BRL") return;
+    if(c.activa===false||c.esPersonal||c.esReserva||c.esTarjeta) return;
+    var saldo=parseFloat(c.saldo)||0;
+    if(!(saldo>0.01)) return;
+    var enLotes=(S.inventarioUsdt||[]).filter(function(l){
+      return l.tipo==="venta"&&l.moneda==="BRL"&&l.cuentaDestinoId===c.id;
+    }).reduce(function(a,l){return a+(parseFloat(l.bsRestante)||0);},0);
+    var hueco=Math.round((saldo-enLotes)*100)/100;
+    if(hueco<=0.01) return;
+    filas.push({cuentaId:c.id,nombre:c.nombre,saldo:saldo,
+                enLotes:Math.round(enLotes*100)/100,hueco:hueco});
+    total+=hueco;
+  });
+  return {filas:filas, total:Math.round(total*100)/100, tasa:tasa};
+}
+// La marca que agrupa una apertura es su HORA, igual que la del ARREGLO 164:
+// por ahi se deshace entera.
+// Abrirlos. NO toca el saldo de ninguna cuenta —el dinero del banco esta
+// bien; lo que falta es el lote— y se dice en la propia pregunta, igual que
+// en el ARREGLO 164. Nunca se aplica solo.
+function abrirLotesBRL(){
+  var d=_realesSinLote();
+  if(!(d.total>0.01)){ alert("No hay reales sin lote que abrir."); return; }
+  if(!(d.tasa>0)){
+    alert("Falta la tasa de referencia de los reales.\n\n"+
+          "Sale de tu última compra o venta de USDT en reales. Registra esa "+
+          "operación y vuelve: sin ella el lote nacería con una tasa inventada.");
+    return;
+  }
+  var det=d.filas.map(function(f){
+    return "· "+f.nombre+": "+f2(f.hueco)+" R$";
+  }).join("\n");
+  if(!confirm("Abrir el lote de los reales que ya tienes en las cuentas.\n\n"+det+
+    "\n\nTOTAL "+f2(d.total)+" R$ a "+f2n(d.tasa,4)+" R$/USDT, que es la tasa con la "+
+    "que la app ya los valora.\n\nNO mueve el saldo de ninguna cuenta: sólo crea el "+
+    "lote que les falta, para que una vuelta deje de decir «tasa prestada».\n\n¿Confirmar?")) return;
+  var ts=Date.now();
+  d.filas.forEach(function(f,i){
+    var lote={id:ts+i, tipo:"venta", fecha:_fechaLote(td()), fechaIso:_fechaLoteIso(td()),
+      hora:_horaDe(""), moneda:"BRL", montOrigen:0,
+      usdt:Math.round((f.hueco/d.tasa)*10000)/10000,
+      neto:Math.round((f.hueco/d.tasa)*10000)/10000,
+      tasa:d.tasa, comision:0,
+      bs:Math.round(f.hueco*1000)/1000, bsRestante:Math.round(f.hueco*1000)/1000,
+      plataforma:"Apertura", ordenId:"", cuentaId:"", cuentaDestinoId:f.cuentaId,
+      restante:0, locked:false, _aperturaBRL:{ts:ts}, _mod:ts};
+    S.inventarioUsdt.push(lote);
+  });
+  logAudit("APERTURA_LOTES_BRL","Abrió "+f2(d.total)+" R$ en lotes a "+f2n(d.tasa,4));
+  alert("Listo: "+d.filas.length+" lote"+(d.filas.length===1?"":"s")+" por "+f2(d.total)+" R$.\n\n"+
+        "Ninguna cuenta se movió.");
+  saveData(); R();
+}
+// Y se deshace entera, por su hora. Los lotes que ya se gastaron en parte se
+// van igual: lo que se abrió no existía, así que lo que se gastó de ahí
+// tampoco puede quedarse.
+function deshacerAperturaBRL(){
+  var ts=_ultimaAperturaBRL();
+  if(!ts) return;
+  var mios=(S.inventarioUsdt||[]).filter(function(l){return l&&l._aperturaBRL&&l._aperturaBRL.ts===ts;});
+  if(!mios.length) return;
+  var tot=mios.reduce(function(a,l){return a+(parseFloat(l.bs)||0);},0);
+  var gastado=mios.reduce(function(a,l){return a+((parseFloat(l.bs)||0)-(parseFloat(l.bsRestante)||0));},0);
+  if(!confirm("Deshacer la apertura de "+f2(tot)+" R$ en "+mios.length+" lote"+(mios.length===1?"":"s")+"."+
+    (gastado>0.01?("\n\n⚠️ Ya se gastaron "+f2(gastado)+" R$ de esos lotes. Las operaciones que "+
+      "los usaron se quedan como están, pero el lote del que salieron desaparece."):"")+
+    "\n\nNo mueve el saldo de ninguna cuenta.\n\n¿Confirmar?")) return;
+  mios.forEach(function(l){ _marcarBorradoMerge("inventarioUsdt", l.id); });
+  var ids=mios.map(function(l){return l.id;});
+  S.inventarioUsdt=S.inventarioUsdt.filter(function(l){return ids.indexOf(l.id)<0;});
+  logAudit("APERTURA_LOTES_BRL_DESHECHA","Deshizo la apertura de "+f2(tot)+" R$");
+  saveData(); R();
+}
+function _ultimaAperturaBRL(){
+  var t=0;
+  (S.inventarioUsdt||[]).forEach(function(l){
+    if(l&&l._aperturaBRL&&l._aperturaBRL.ts>t) t=l._aperturaBRL.ts;
+  });
+  return t||null;
+}
 function _derivaLotesVES(){
   normalizarInventarioFIFO();
   // El conjunto es EXACTAMENTE el que recorre simularConsumoFIFO: venta, en
@@ -22084,6 +22257,49 @@ function deshacerCorreccionLotesVES(){
 // La vista previa. Se dibuja SIEMPRE antes de poder aplicar nada: el boton de
 // Aplicar vive dentro de ella, no fuera, porque lo que ella pidio es ver qué
 // lotes toca antes de tocarlos.
+function _verAperturaBRL(){
+  S._verApBRL=!S._verApBRL;
+  var el=document.getElementById("apertura-brl");
+  if(el) el.style.display=S._verApBRL?"block":"none";
+  var b=document.getElementById("apertura-brl-btn");
+  if(b) b.textContent=_rotAperturaBRL();
+}
+function _rotAperturaBRL(){ return S._verApBRL?"▴ Lotes de reales":"🏦 Abrir lotes de reales"; }
+// Una fila por cuenta, no una tabla: a 412 px una tabla de cuatro columnas deja
+// fuera justo la que ella quiere ver (ARREGLO 164).
+function _htmlAperturaBRL(){
+  var d=_realesSinLote(), u=_ultimaAperturaBRL();
+  if(!(d.total>0.01) && !u) return "";
+  var h="<div id='apertura-brl' style='display:"+(S._verApBRL?"block":"none")+
+        ";border:1px solid var(--ln);border-radius:10px;padding:12px;margin-bottom:10px;background:var(--sup)'>";
+  if(d.total>0.01){
+    h+="<div style='font-size:12px;color:var(--tx2);margin-bottom:9px;line-height:1.5'>"+
+       "Estos reales ya están en tus cuentas pero entraron antes de que las idas dejaran "+
+       "lote, así que el FIFO no los ve y una 🇻🇪→🇧🇷 que los gaste dice «tasa prestada». "+
+       "Abrirlos les pone el lote que les falta.<br>"+
+       "<b>No mueve el saldo de ninguna cuenta.</b></div>";
+    d.filas.forEach(function(f){
+      h+="<div style='display:flex;justify-content:space-between;gap:8px;font-size:12px;"+
+         "padding:7px 0;border-top:1px solid var(--ln2)'>"+
+         "<span style='color:var(--tx2)'>"+_escAud(f.nombre)+"</span>"+
+         "<span style='font-weight:700;font-variant-numeric:tabular-nums'>"+f2(f.hueco)+" R$</span></div>";
+    });
+    h+="<div style='font-size:11px;color:var(--tx3);margin:9px 0 10px;line-height:1.5'>"+
+       "TOTAL <b>"+f2(d.total)+" R$</b> a <b>"+f2n(d.tasa,4)+"</b> R$/USDT — la misma tasa con la "+
+       "que la app ya valora tus reales, así que el capital no se mueve.</div>"+
+       "<button type='button' onclick='abrirLotesBRL()' style='background:var(--ac2);color:var(--sobre-color);"+
+       "border:none;padding:9px 14px;border-radius:8px;font-size:12px;font-weight:800;cursor:pointer;"+
+       "font-family:inherit'>🏦 Abrir los lotes</button>";
+  }
+  if(u){
+    h+="<div style='font-size:11px;color:var(--tx3);margin-top:10px;padding-top:10px;"+
+       "border-top:1px solid var(--ln2)'>Ya abriste lotes de reales una vez."+
+       "<br><button type='button' onclick='deshacerAperturaBRL()' style='margin-top:7px;background:none;"+
+       "border:1px solid var(--ln);color:var(--tx2);padding:7px 12px;border-radius:8px;font-size:11px;"+
+       "font-weight:700;cursor:pointer;font-family:inherit'>Deshacerla</button></div>";
+  }
+  return h+"</div>";
+}
 function _htmlDerivaVES(){
   var d=_derivaLotesVES(), u=_ultimaCorreccionVES();
   if(!(d.total>0.01) && !u) return "";
@@ -22392,6 +22608,10 @@ function _deQuienLote(l){
 // contrapartida natural (vende USDT por bolívares) y lleva tiempo contando.
 function _loteEsOpUSDT(l){
   if(!l || l.permuta) return false;
+  // ARREGLO 170: el lote de apertura nace valiendo tasaDeReferencia("BRL"), asi
+  // que dejarlo entrar aqui seria que esa tasa saliera de si misma y se quedara
+  // clavada en el dia que se abrio.
+  if(l._aperturaBRL) return false;
   if(l.moneda==="BRL" && l.tipo==="venta" && _loteEsDeRemesa(l)) return false;
   return true;
 }
@@ -22776,57 +22996,12 @@ function _chapaTab(t){
   }
   return "";
 }
-// ── ARREGLO 167 · el selector de la ida ────────────────────────────────────
-//
-// Dos botones y una línea que dice qué hace cada uno. Por omisión "los
-// convierto", que es lo de siempre y lo que no mueve ni un número.
-//
-// Sale SOLO donde decide algo (_puedeQuedarse) y NO en calce: ahí los reales
-// se quedan por definición y una pregunta cuya respuesta ya está decidida
-// enseña a no leer las preguntas (ARREGLO 99).
-function _htmlEntraQueda(ruta){
-  if(!_puedeQuedarse(ruta)) return "";
-  if(esCalceDirecto(S.tx, ruta)) return "";
-  // El contenedor lleva el id y el contenido va aparte: al pulsar se rehace
-  // SOLO lo de dentro. Rehaciendo el contenedor desde él mismo se anidaría uno
-  // nuevo en cada toque.
-  return "<div class='fl' id='tx-queda-cont' style='grid-column:1/-1'>"+
-    _htmlEntraQuedaIn()+"</div>";
-}
-function _htmlEntraQuedaIn(){
-  var q=!!(S.tx&&S.tx.entraQueda);
-  function bot(val,txt,col){
-    var on=(val===q);
-    return "<button type='button' onclick='_setEntraQueda("+(val?"true":"false")+")' "+
-      "style='flex:1;padding:8px;border:none;border-radius:7px;font-size:12px;font-weight:700;"+
-      "cursor:pointer;font-family:inherit;background:"+(on?col:"transparent")+
-      ";color:"+(on?"var(--sobre-color)":"var(--tx3)")+"'>"+txt+"</button>";
-  }
-  return "<label>💱 Estos reales…</label>"+
-    "<div style='display:flex;background:var(--sup2f);border-radius:9px;padding:3px;gap:3px'>"+
-      bot(false,"🔁 los convierto a USDT","var(--ok)")+
-      bot(true,"🏦 se quedan en la cuenta","var(--rol-ee)")+
-    "</div>"+
-    "<div style='font-size:10.5px;color:var(--tx3);margin-top:5px;line-height:1.5'>"+
-      _pieEntraQueda(q)+"</div>";
-}
-// El texto sale de UN sitio y lo leen el dibujado y el refresco: escrito dos
-// veces, un día el botón diría una cosa y la línea de debajo otra.
-function _pieEntraQueda(q){
-  return q
-    ? "Nace un lote de reales en esa cuenta y <b>no</b> se gasta ningún lote de compra. "+
-      "Lo verás en Inventario, y la próxima 🇻🇪→🇧🇷 podrá salir de ahí."
-    : "Lo de siempre: gastan tu lote de compra de USDT y no dejan lote de reales.";
-}
-// No llama a R(): repintar rehace el formulario con el campo del monto dentro
-// y lo mata bajo el dedo (ARREGLO 32, y el 146 por este mismo camino). Se
-// refresca lo que depende del toque —los dos botones y su línea— por su id.
-function _setEntraQueda(v){
-  if(!S.tx) return;
-  S.tx.entraQueda=!!v;
-  var c=document.getElementById("tx-queda-cont");
-  if(c) c.innerHTML=_htmlEntraQuedaIn();
-}
+// ARREGLO 170: aquí vivía el selector "los convierto / se quedan" del 167.
+// Se fue entero —una pantalla nueva quita el control viejo, no se pone al
+// lado (ARREGLO 98)— porque ahora TODA ida BRL→VZLA deja su lote y no hay
+// nada que preguntar. Lo decide lo que ella haga después, que es cuando se
+// sabe: si compra USDT con esos reales, la compra gasta el lote; si paga una
+// vuelta, la vuelta lo gasta.
 function _htmlLateral(ts){
   var puestas={}, out="";
   _GRUPOS_MENU.forEach(function(g){
@@ -31241,10 +31416,6 @@ function rNueva(){
             html+="<div class='fl' style='grid-column:1/-1'>"+_txPagosHTML(cuentasOrig,origMon)+"</div>";
           }
         }
-        // ARREGLO 167: y qué va a pasar con ese dinero. Va JUNTO a la cuenta
-        // donde entra, que es donde ella está mirando cuando lo decide — no en
-        // el bloque 3, que es el de la ganancia.
-        html+=_htmlEntraQueda(ruta);
         if(destMon!=="USDT"&&cuentasDest.length){
           // ARREGLO 97: una entrega grande no siempre cabe en un solo banco.
           // Apagado, esto es exactamente lo de siempre: una sola cuenta.
@@ -32019,9 +32190,14 @@ function rInventarioUsdt(){
     // nunca significa nada deja de leerse (ARREGLO 99).
     ((_derivaLotesVES().total>0.01||_ultimaCorreccionVES())?
       "<button type='button' id='deriva-ves-btn' onclick='_verDerivaVES()' style='background:var(--am5-b);color:var(--avi-tx);border:none;padding:6px 12px;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer'>"+_rotDerivaVES()+"</button>":"")+
+    // ARREGLO 170: y el de los reales, con la misma regla — sale solo cuando
+    // hay algo que abrir o una apertura que deshacer.
+    ((_realesSinLote().total>0.01||_ultimaAperturaBRL())?
+      "<button type='button' id='apertura-brl-btn' onclick='_verAperturaBRL()' style='background:var(--ok-sup);color:var(--ok-tx);border:none;padding:6px 12px;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer'>"+_rotAperturaBRL()+"</button>":"")+
     "</div>"+
     "</div>"+
     _htmlDerivaVES()+
+    _htmlAperturaBRL()+
     (function(){
       if(!S._verArchivados) return "";
       var arch=(S.inventarioUsdt_cerrado||[]).slice().sort(function(a,b){return (b.id||0)-(a.id||0);});
@@ -35253,7 +35429,7 @@ function detalleMes(mesKey){
   });
   (S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[]).forEach(function(l){
     if(_isoDeLote(l).slice(0,7)!==mk) return;
-    if(l.plataforma==="Remesa"||l.origenRemesa) return;   // no es una operación suya: la creó una remesa
+    if(l.plataforma==="Remesa"||l.origenRemesa||l._aperturaBRL) return;   // no es una operación suya: la creó una remesa
     d.usdt.push({fecha:_fechaLoteLegible(l.fecha), tipo:l.tipo, moneda:l.moneda||"",
       montOrigen:parseFloat(l.montOrigen)||0, usdt:parseFloat(l.usdt)||0, bs:parseFloat(l.bs)||0,
       tasa:_tasaEfectivaLote(l)||0, cuenta:nom(l.tipo==="compra"?l.cuentaOrigenId:l.cuentaId)});
