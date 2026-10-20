@@ -12378,6 +12378,100 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
      "el texto del pie se escribe una vez y se lee una vez");
 }
 
+// ════ ARREGLO 169 · la cerradura cuenta el TIEMPO, no las recargas ════
+//
+// Sus palabras: "la app vuelve a la pantalla de bloqueo cada vez que recargo
+// la pagina... que se bloquee sola solo despues de un tiempo sin actividad".
+// Y sus dos condiciones: que el tiempo cuente con la app en segundo plano, y
+// que no cambie quien esta dentro.
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const HS = sinC(HTML);
+
+  // 1. El arranque ya no para SIEMPRE: solo si de verdad paso el tiempo. Sin
+  //    esto vuelve el fallo entero — la huella en cada recarga.
+  const rest = sinC(sacarFuncion("_apiRestaurarSesion"));
+  ok(/_huellaDeEstaPersona\(\)\s*&&\s*_huellaDisponible\(\)\s*&&\s*_inactivaVencida\(\)/.test(rest),
+     "el arranque mira el tiempo sin usarla, no solo que haya huella");
+
+  // 2. Lo que decide es el tiempo, y el 0 sigue queriendo decir "siempre",
+  //    que es como se vuelve al comportamiento de antes del 169.
+  const inv = sinC(sacarFuncion("_inactivaVencida"));
+  ok(/min\s*<=\s*0\)\s*return true/.test(inv), "con 0 la pide siempre, como antes");
+  ok(/min\s*\*\s*60000/.test(inv), "y los minutos se cuentan en minutos");
+  ok(/if\(!u\) return true/.test(inv), "sin hora anotada se pide: no se da por recien usada");
+
+  // 3. La cuenta la lleva la memoria Y el disco: si dependiera solo de lo
+  //    escrito, el respiro de 30 s podria dejar la ventana vencida con el
+  //    dedo encima de un boton, y bloquear ahi se come el click (ARREGLO 165).
+  const uu = sinC(sacarFuncion("_ultimoUso"));
+  ok(/Math\.max\(_usoMem/.test(uu), "la hora sale de la memoria y del disco, la mas nueva");
+
+  // 4. PUERTA UNICA. La hora se anota donde se entra, y solo ahi: restaurar,
+  //    el correo y la clave, y desbloquear con la huella pasan todos por
+  //    _loginApiAplicar. Escrita en cada camino, uno se queda fuera y esa
+  //    sesion nace vencida — el fallo de los ARREGLOS 101, 119, 150 y 153.
+  ok(/_marcarUso\(true\);/.test(sinC(sacarFuncion("_loginApiAplicar"))),
+     "entrar anota la hora, en la puerta unica");
+  // Cinco: su definicion, la puerta de entrada, el toque, la tecla y el
+  // ocultarse. Si hace falta una sexta, que falle hasta que alguien mire si
+  // esa nueva esta del lado correcto (ARREGLO 150).
+  const nMarca = (HS.match(/_marcarUso\(/g) || []).length;
+  ok(nMarca === 5, "y _marcarUso se escribe en cinco sitios contados (" + nMarca + ")");
+
+  // 5. Los CUATRO disparadores por nombre, contados (ARREGLO 140). El de
+  //    volver a la pestaña es el unico que caza los 20 minutos en segundo
+  //    plano: ahi el reloj del navegador esta congelado.
+  ["pointerdown","keydown","visibilitychange","pageshow"].forEach(function(ev){
+    ok(new RegExp('addEventListener\\("'+ev+'"').test(HS), "se escucha " + ev);
+  });
+  ok(/document\.hidden\)\s*_marcarUso\(true\);[\s\S]{0,80}else _bloquearPorInactividad\(\);/.test(HS),
+     "al ocultarse anota que dejo de usarla, y al volver comprueba");
+  ok(/setInterval\(function\(\)\{ try\{ _bloquearPorInactividad\(\); \}catch\(e\)\{\} \}, _USO_REVISA_MS\)/.test(HS),
+     "y con la app delante la cierra el reloj");
+
+  // 6. SU CONDICION 2: no cambia quien esta dentro. Bloquear cierra la sesion
+  //    de ESTA pantalla y deja el testigo de la API, que es lo unico que
+  //    permite que desbloquear vuelva a la MISMA persona.
+  const bl = sinC(sacarFuncion("_bloquearPorInactividad"));
+  ok(/S\.role=null; _borrarSesion\(\);/.test(bl), "bloquear cierra la sesion de pantalla");
+  ok(!/_apiBorrarSesionLocal|_apiSalir|removeItem\(_API_SESION_KEY/.test(bl),
+     "y NO toca el testigo de la API: desbloquear vuelve a la misma persona");
+  ok(/_apiSesionGuardada\(\)/.test(sinC(sacarFuncion("pedirHuella"))),
+     "y desbloquear lee la sesion guardada, no una cualquiera");
+
+  // 7. LA REGLA DEL ARREGLO 64: esto nunca deja a nadie fuera. Sin huella de
+  //    esa persona no se bloquea — forzar la clave ahi dejaria a Julio fuera
+  //    de la PC.
+  ok(/_huellaDeEstaPersona\(\) \|\| !_huellaDisponible\(\)\) return;/.test(bl),
+     "sin huella de esa persona no se bloquea nada");
+  ok(/_minBloqueo\(\)<=0\) return;/.test(bl), "y con 0 manda el arranque, no el reloj");
+
+  // 8. Repintar con el dedo encima se come el click (ARREGLO 165).
+  ok(/_repintarTrasSincronizar\(\)/.test(bl) && !/\bR\(\)/.test(bl),
+     "bloquear no repinta con el dedo sobre un boton");
+
+  // 9. El campo de los minutos: no llama a R() —esta dentro de lo que se
+  //    repintaria (ARREGLO 32)— y refresca su linea por id (ARREGLO 55).
+  const sm = sinC(sacarFuncion("_setMinBloqueo"));
+  ok(!/\bR\(\)/.test(sm), "cambiar los minutos no repinta la tarjeta");
+  ok(/getElementById\("huella-min-txt"\)/.test(sm) && /_textoMinBloqueo\(\)/.test(sm),
+     "y la linea de debajo se refresca por su id");
+  ok(/id='huella-min-txt'/.test(sinC(sacarFuncion("_htmlHuella"))), "ese id existe de verdad");
+  // Y viene relleno, asi que escribir sin borrar pegaria los dos numeros:
+  // tecleando 30 sobre el 15 quedaba 3015 (ARREGLO 153, medido aqui tecleando).
+  ok(/onfocus='this\.select\(\)' oninput='_setMinBloqueo/.test(sinC(sacarFuncion("_htmlHuella"))),
+     "y al entrar al campo se selecciona lo que hay, o los numeros se pegan");
+  ok(/removeItem\(_USO_MIN_KEY\)/.test(sm),
+     "el campo vacio vuelve al de siempre, no guarda un 0 que pediria la huella en cada recarga");
+
+  // 10. Y no se sincroniza: una clave nueva obliga a tocar las CUATRO listas
+  //     del servidor, y una que se olvide alli viaja y el servidor la tira
+  //     con un 200 y sin un solo error. Ha pasado dos veces.
+  ["cg_ultimoUso","cg_minBloqueo"].forEach(function(k){
+    ok(F.DATA_KEYS.indexOf(k) === -1, k + " no viaja al servidor");
+  });
+}
 
 // ══════════════════════════════════════════════════════════════════════
 // ARREGLO 171 · elegir la cuenta tiene que refrescar lo que depende de ella

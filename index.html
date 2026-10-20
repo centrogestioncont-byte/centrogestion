@@ -3262,7 +3262,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261018_v251";
+var APP_VERSION = "20261018_v252";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -3470,6 +3470,11 @@ function _loginApiAplicar(u,conAviso){
   S.tblMes=getMesKeyActual();
   S.loginErr="";
   _API_ENTRO_POR_API=true;
+  // ARREGLO 169: la cuenta arranca aqui, que es la unica puerta por la que se
+  // entra —restaurar la sesion, el correo y la clave, y desbloquear con la
+  // huella pasan todos por aqui—. Anotarlo en cada camino dejaria uno fuera y
+  // esa sesion naceria vencida: pediria la huella en el acto.
+  _marcarUso(true);
   _guardarSesion();
   // Recien ahora hay sesion, asi que recien ahora /fb/token va a entregar
 
@@ -3533,7 +3538,7 @@ function _apiRestaurarSesion(){
   // hay — hasta ahora la app se abria y ya estabas dentro.
   // La verificacion contra el servidor de mas abajo sigue corriendo igual: el
   // bloqueo es de esta pantalla, no de la sesion.
-  if(!vencida && _huellaDeEstaPersona() && _huellaDisponible()){
+  if(!vencida && _huellaDeEstaPersona() && _huellaDisponible() && _inactivaVencida()){
     S._bloqueoHuella=true;
     try{ R(); }catch(e){}
     return false;
@@ -16110,7 +16115,9 @@ function rConfigAdmin(){
       (function(){ var n=_tabsOcultasDelMenu().length; return n?(n+" "+(n===1?"escondida":"escondidas")+" en este aparato"):"se ven todas"; })(),
       "var(--az3-c)",_htmlMenuOculto(),false)+
     _cfgAcc("huella","👆","Entrar con huella",
-      (_huellaDeEstaPersona()?"encendida en este aparato":(_huellaDisponible()?"apagada":"no disponible aquí")),
+      (_huellaDeEstaPersona()
+        ? (_minBloqueo()>0 ? ("encendida · a los "+_minBloqueo()+" min sin usarla") : "encendida · cada vez que abras")
+        : (_huellaDisponible()?"apagada":"no disponible aquí")),
       "var(--ok)",_htmlHuella(),false)+
     _cfgAcc("comparacion_api","⚖️","Comparación con la API","control de la migración","var(--am3-j1)",rComparacionApi(),false)+
     _cfgAcc("pisados","🔀","Cambios que chocaron entre dispositivos",
@@ -19915,6 +19922,129 @@ function _huellaDisponible(){
   }catch(e){ return false; }
 }
 
+// ── ARREGLO 169 · la cerradura cuenta el TIEMPO, no las recargas ─────────
+//
+// Sus palabras del 17/10: "la app vuelve a la pantalla de bloqueo cada vez
+// que recargo la pagina. No quiero eso. Que la sesion siga abierta al
+// recargar, y que se bloquee sola solo despues de un tiempo sin actividad".
+//
+// Y estaba mal medido: _apiRestaurarSesion() paraba en la pantalla de
+// desbloqueo CADA VEZ que arrancaba la app, sin mirar cuanto tiempo habia
+// pasado. Recargar tarda un segundo y pedia la huella igual. Una cerradura
+// que estorba en el caso normal es la que termina apagada, y entonces no
+// cierra nada — la misma regla del ARREGLO 99 aplicada a un candado.
+//
+// SU CONDICION 1: el tiempo cuenta igual con la pestaña oculta o la app en
+// segundo plano. Por eso lo que se mide es el ULTIMO USO y no un temporizador
+// a secas: un `setInterval` en una pestaña de fondo lo congela el navegador,
+// asi que dejar el telefono veinte minutos con la app minimizada no lo
+// despertaria nunca. Lo que lo caza es la comprobacion al VOLVER
+// (`visibilitychange` y `pageshow`), que compara contra la hora anotada.
+// Sin eso, el bloqueo se saltaria con solo no cerrar la app.
+//
+// SU CONDICION 2: no cambia quien esta dentro. Esto no toca el testigo de la
+// API —solo la sesion de esta pantalla— y desbloquear vuelve a
+// `_apiSesionGuardada()`, o sea a quien entro en ESTE aparato. Si en la PC
+// entro Julio, a su sesion ni se le mira la huella: `_huellaDeEstaPersona()`
+// compara la credencial guardada contra el correo de esa sesion, asi que con
+// la huella de ella registrada devuelve null y la sesion de el se restaura
+// sola, igual que hasta ahora.
+//
+// Y LA REGLA DEL ARREGLO 64 SIGUE EN PIE: esto nunca puede dejar a nadie
+// fuera de su contabilidad. Sin huella registrada para esa persona no se
+// bloquea nada. Forzar ahi la clave seria una cerradura nueva que ella no
+// pidio, y en la PC dejaria a Julio fuera.
+//
+// Vive en localStorage y NO se sincroniza, como el tema y las pestañas
+// escondidas del 166: una clave nueva que viaje obliga a tocar tambien las
+// cuatro listas del servidor (main.py), y una que se añada aqui y se olvide
+// alli viaja y el servidor la tira con un 200 y sin un solo error —ha pasado
+// dos veces—. Ademas es del aparato: el telefono y la PC no tienen por que
+// bloquearse a la vez.
+var _USO_KEY         = "cg_ultimoUso";    // hora del ultimo uso en ESTE aparato
+var _USO_MIN_KEY     = "cg_minBloqueo";   // minutos sin usarla antes de pedirla
+var _USO_MIN_OMISION = 15;
+var _USO_REVISA_MS   = 30000;
+var _usoMem = 0;       // la cuenta la lleva la memoria, no el disco (ver abajo)
+var _usoEscrito = 0;
+
+function _minBloqueo(){
+  try{
+    var v=localStorage.getItem(_USO_MIN_KEY);
+    if(v===null || v==="") return _USO_MIN_OMISION;
+    var n=parseInt(v,10);
+    return (isFinite(n) && n>=0) ? n : _USO_MIN_OMISION;
+  }catch(e){ return _USO_MIN_OMISION; }
+}
+// El campo VACIO vale: quiere decir "el de siempre", no cero. Guardar un 0 ahi
+// sin querer dejaria la app pidiendo la huella en cada recarga, que es justo
+// lo que este arreglo viene a quitar. Mismo criterio que `_diaNormalBs`.
+function _setMinBloqueo(v){
+  var n=parseInt(v,10);
+  try{
+    if(!isFinite(n) || n<0) localStorage.removeItem(_USO_MIN_KEY);
+    else localStorage.setItem(_USO_MIN_KEY, String(n));
+  }catch(e){}
+  var el=document.getElementById("huella-min-txt");
+  if(el) el.textContent=_textoMinBloqueo();
+}
+function _textoMinBloqueo(){
+  var m=_minBloqueo();
+  return m>0 ? ("Ahora: te la pide tras "+m+" minuto"+(m===1?"":"s")+" sin usarla.")
+             : "Ahora: te la pide cada vez que abras la app.";
+}
+
+function _ultimoUso(){
+  var g=0;
+  try{ g=parseInt(localStorage.getItem(_USO_KEY),10)||0; }catch(e){ g=0; }
+  return Math.max(_usoMem, g);
+}
+// La escritura va a disco como mucho cada 30 s, pero la hora en memoria se
+// mueve en CADA toque. Si la cuenta dependiera solo de lo escrito, un guardado
+// que se saltó por el respiro podria dejar la ventana vencida con el dedo
+// encima de un boton, y bloquear ahi se come el click (ARREGLO 165).
+function _marcarUso(forzar){
+  var ahora=Date.now();
+  _usoMem=ahora;
+  if(!forzar && (ahora-_usoEscrito) < _USO_REVISA_MS) return;
+  _usoEscrito=ahora;
+  try{ localStorage.setItem(_USO_KEY, String(ahora)); }catch(e){}
+}
+function _inactivaVencida(){
+  var min=_minBloqueo();
+  if(min<=0) return true;      // 0 = pedirla siempre, como antes del 169
+  var u=_ultimoUso();
+  if(!u) return true;          // nunca se anoto: la primera vez se pide
+  return (Date.now()-u) > min*60000;
+}
+
+// Bloquear ESTANDO DENTRO. Lo unico que se cierra es la sesion de esta
+// pantalla: el testigo de la API se queda, que es lo que permite que
+// `pedirHuella()` vuelva a la MISMA persona y no a otra.
+function _bloquearPorInactividad(){
+  if(S._bloqueoHuella || !S.role) return;
+  if(_minBloqueo()<=0) return;   // con 0 manda el arranque, no el reloj
+  if(!_huellaDeEstaPersona() || !_huellaDisponible()) return;
+  if(!_inactivaVencida()) return;
+  S.role=null; _borrarSesion();
+  S._bloqueoHuella=true; S.huellaErr="";
+  _repintarTrasSincronizar();    // ARREGLO 165: no con el dedo sobre un boton
+}
+// Los CUATRO disparadores, y cada uno cubre un hueco de los otros: el toque y
+// la tecla anotan que la esta usando; el reloj la cierra con la app delante y
+// quieta; y volver a la pestaña es el unico que caza los veinte minutos en
+// segundo plano, porque ahi el reloj esta congelado.
+try{
+  document.addEventListener("pointerdown", function(){ _marcarUso(); }, true);
+  document.addEventListener("keydown",     function(){ _marcarUso(); }, true);
+  document.addEventListener("visibilitychange", function(){
+    if(document.hidden) _marcarUso(true);   // anotar cuando DEJO de usarla
+    else _bloquearPorInactividad();
+  });
+  window.addEventListener("pageshow", function(){ _bloquearPorInactividad(); });
+  setInterval(function(){ try{ _bloquearPorInactividad(); }catch(e){} }, _USO_REVISA_MS);
+}catch(e){}
+
 function _b64urlABytes(s){
   s=String(s).replace(/-/g,"+").replace(/_/g,"/");
   while(s.length%4) s+="=";
@@ -20174,7 +20304,7 @@ function _htmlHuella(){
   var d=_huellaDeEstaPersona();
   var otra=(!d && _huellaGuardada());   // hay una, pero de otra persona
   var cab="<div style='font-size:11px;color:var(--tx2b);margin-bottom:11px;line-height:1.6'>"+
-    "Si la enciendes, al abrir la app en <b>este aparato</b> te pedirá la huella antes de entrar. "+
+    "Si la enciendes, te pedirá la huella en <b>este aparato</b> cuando lleves un rato sin usarla. "+
     "Hoy entra sola, sin preguntar nada.<br><br>"+
     "<b>Es una cerradura, no una clave nueva.</b> Abre la sesión que ya está guardada aquí; tu correo y tu clave siguen siendo la forma de entrar en un aparato nuevo. "+
     "Y si la huella falla o la cancelas, siempre puedes entrar con la clave.</div>";
@@ -20183,8 +20313,30 @@ function _htmlHuella(){
       "Este navegador no puede usarla. Hace falta que la página vaya por <b>https</b> y que el aparato tenga lector de huella o reconocimiento facial.</div>";
   }
   if(d){
+    // ARREGLO 169: el cuanto, al lado del boton que la enciende. Cambiarlo NO
+    // llama a R() —el campo esta dentro de lo que se repintaria (ARREGLO 32)—
+    // asi que la linea de debajo se refresca por su id (ARREGLO 55: lo que
+    // depende de la tecla tiene que moverse con la tecla).
     return cab+"<div style='background:var(--ok-sup);border:1.5px solid var(--vd4-a);border-radius:9px;padding:11px 12px;margin-bottom:10px;font-size:12px;color:var(--ok-tx);font-weight:700'>"+
       "✅ Encendida en este aparato</div>"+
+      "<div style='background:var(--sup2h);border:1px solid var(--ln2);border-radius:9px;padding:11px 12px;margin-bottom:10px'>"+
+        "<div style='font-size:12px;color:var(--tx2b);line-height:1.6'>Pedirla tras "+
+          // type TEXT, no number: la guardia del ARREGLO 159 exige que en todo
+          // el archivo quede UN solo type=number —el de las cuotas— y ese tope
+          // es lo que impide que vuelva a colarse un campo de dinero que se
+          // coma la coma. Aqui no hace falta: lo valida _setMinBloqueo().
+          "<input type='text' inputmode='numeric' value='"+_minBloqueo()+"' "+
+            // ARREGLO 153: el campo viene RELLENO, asi que escribir sin borrar
+            // deja los dos numeros pegados — tecleando "30" sobre el 15 quedaba
+            // 3015. Con el select al entrar, escribir reemplaza lo que habia.
+            "onfocus='this.select()' oninput='_setMinBloqueo(this.value)' "+
+            "style='width:62px;padding:5px 7px;font-size:14px;text-align:center;border:1.5px solid var(--ln);border-radius:7px;font-family:inherit;margin:0 4px'>"+
+          " minutos sin usarla.</div>"+
+        "<div id='huella-min-txt' style='font-size:11px;color:var(--tx3);margin-top:7px;font-weight:700'>"+_escAud(_textoMinBloqueo())+"</div>"+
+        "<div style='font-size:11px;color:var(--tx3);margin-top:7px;line-height:1.6'>"+
+          "Recargar la página ya no te la pide: lo que cuenta es el tiempo sin usarla, "+
+          "y cuenta igual con la app en segundo plano. Con <b>0</b> te la pide cada vez que abras.</div>"+
+      "</div>"+
       "<button type='button' onclick='quitarHuella()' style='padding:9px 14px;border:1px solid var(--rj5-b);background:var(--mal-sup);color:var(--rj2-a);border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>Quitar la huella de este aparato</button>";
   }
   return cab+

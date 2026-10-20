@@ -6267,6 +6267,104 @@ cuenta sin lotes propios: sin descontar  200,00 R$            0,00
 
 26 pestañas, 0 errores, 12 pruebas negativas y las 12 cazadas.
 
+---
+
+## La cerradura cuenta el TIEMPO, no las recargas (ARREGLO 169)
+
+Sus palabras del 17/10: *"la app vuelve a la pantalla de bloqueo cada vez que
+recargo la página. No quiero eso. Que la sesión siga abierta al recargar, y que
+se bloquee sola solo después de un tiempo sin actividad"*.
+
+Y estaba mal medido: `_apiRestaurarSesion()` paraba en la pantalla de desbloqueo
+**cada vez que arrancaba la app**, sin mirar cuánto tiempo había pasado. Recargar
+tarda un segundo y pedía la huella igual. **Una cerradura que estorba en el caso
+normal es la que termina apagada**, y entonces no cierra nada — la regla del
+ARREGLO 99 aplicada a un candado.
+
+Ahora lo que se mide es el tiempo **sin usarla**, con **15 minutos** por omisión,
+editables en Configuración → Entrar con huella.
+
+### Sus dos condiciones, y cómo se cumplen
+
+**1 · El tiempo cuenta con la app en segundo plano.** Por eso lo que se guarda es
+la **hora del último uso** y no un temporizador a secas: un `setInterval` en una
+pestaña de fondo lo congela el navegador, así que veinte minutos con la app
+minimizada no lo despertarían nunca. Lo que lo caza es la comprobación **al
+volver** (`visibilitychange` y `pageshow`), que compara contra esa hora. Sin eso
+el bloqueo se saltaría con sólo no cerrar la app.
+
+**2 · No cambia quién está dentro.** Bloquear **no toca el testigo de la API**:
+sólo cierra la sesión de esta pantalla (`S.role=null; _borrarSesion()`), y
+desbloquear vuelve a `_apiSesionGuardada()` — quien entró en ESTE aparato. Si en
+la PC entró Julio, a su sesión ni se le mira la huella: `_huellaDeEstaPersona()`
+compara la credencial guardada contra el correo de esa sesión, así que con la
+huella de ella registrada devuelve `null` y la sesión de él se restaura sola.
+Medido: con el reloj vencido y la huella de ella puesta, entra **Julio**.
+
+### Lo que no hay que deshacer
+
+- **Sin huella de esa persona NO se bloquea nada**, y es la regla del ARREGLO 64:
+  esto nunca puede dejar a nadie fuera de su contabilidad. Forzar ahí la clave
+  sería una cerradura nueva que ella no pidió, y en la PC dejaría a Julio fuera.
+- **Con 0 vuelve a lo de antes**: la pide cada vez que abra. Es la vuelta atrás, y
+  por eso el campo **vacío** vale 15 y no 0 — guardar un 0 sin querer reabriría el
+  fallo entero. Mismo criterio que `_diaNormalBs`.
+- **La cuenta la lleva la memoria Y el disco** (`Math.max`). La escritura va a
+  disco como mucho cada 30 s; si dependiera sólo de lo escrito, ese respiro podría
+  dejar la ventana vencida con el dedo encima de un botón, y bloquear ahí se come
+  el click (ARREGLO 165). Por lo mismo, bloquear pasa por
+  `_repintarTrasSincronizar()` y no por `R()`.
+- **La hora se anota en UNA puerta**, `_loginApiAplicar()` — por ahí pasan
+  restaurar la sesión, entrar con correo y clave, y desbloquear con la huella.
+  Escrita en cada camino uno se quedaría fuera y esa sesión nacería vencida:
+  pediría la huella en el acto. La guardia cuenta los cinco sitios.
+- **Y no se sincroniza.** Como el tema y las pestañas del 166: una clave nueva
+  obliga a tocar también las **cuatro listas del servidor**, y una que se olvide
+  allí viaja y el servidor la tira con un 200 y sin un solo error — ha pasado dos
+  veces. Además es del aparato: el teléfono y la PC no tienen por qué bloquearse
+  a la vez.
+
+### Lo que le cuesta, y está dicho
+
+**La cerradura queda más floja que antes.** Hasta ahora, cualquiera que cogiera el
+teléfono y recargara se topaba con la huella; con 15 minutos, dentro de esa
+ventana entra. Es su decisión y es razonable —el bloqueo en cada recarga es lo que
+hace que se apague— pero no es gratis.
+
+### Medido en Chromium con el autenticador virtual
+
+WebAuthn no existe en `file://`, así que se sirve desde `http://localhost` y el
+lector lo hace `WebAuthn.addVirtualAuthenticator` por CDP (igual que el 64):
+
+```
+1 recarga inmediata                 no pide        entra Ella
+2 abrir tras 20 min                  PIDE
+3 dentro, 20 min en segundo plano    no pedía  →    PIDE al volver
+4 otro usuario en la PC              no pide        entra JULIO
+5 con 0, al abrir                    PIDE
+6 tras desbloquear                   no pide        vuelve Ella
+7 sin huella, 10 horas               no pide        entra Ella
+```
+
+26 pestañas, 0 errores, y capital, *te sobran*, utilidad y tasas idénticos a v250.
+14 pruebas negativas y las 14 cazadas.
+
+#### Y el campo pegaba los números, como el de la tasa (ARREGLO 153)
+
+Lo cazó **teclear en él**, que es la quinta vez con esta forma. El campo viene
+relleno con los minutos de ahora, así que escribir sin borrar deja los dos
+números juntos: tecleando `30` sobre el `15` quedaba **3015**. La app ya tenía la
+respuesta desde el 153 — `onfocus='this.select()'` — y es la misma línea.
+
+Medido tecleando de verdad: `30` queda **30**, borrarlo entero vuelve a **15** (no
+a 0), un `0` escrito a propósito sí vale, el foco no se sale del campo y la línea
+de debajo se refresca sin repintar la tarjeta (ARREGLO 32 + 55).
+
+**Y de paso salió algo que NO es de este arreglo, por si molesta algún día:** el
+`setTimeout` de 2 s del ARREGLO 89 (`_revisarMesSinCerrar(); R();`) repinta la
+pantalla una vez al arrancar, y si justo entonces hay un campo con el dedo dentro,
+se lo lleva. No se repite y no se tocó aquí; si alguna vez estorba, lo que le
+falta es pasar por `_repintarTrasSincronizar()` como el sondeo del 165.
 
 ---
 
