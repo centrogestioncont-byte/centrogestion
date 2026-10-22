@@ -3269,7 +3269,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261020_v254-TEST";
+var APP_VERSION = "20261022_v255-TEST";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -25016,6 +25016,7 @@ function rInformeCierre(){
   "<div style='display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px'>"+
     "<select onchange='S._cMes=this.value;S._cSec=\"resumen\";R()' style='flex:1;min-width:160px;padding:10px 12px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-weight:700;font-family:inherit;cursor:pointer'>"+mesOpts+"</select>"+
     "<button onclick='generarInformePDF(S._cMes)' style='padding:10px 14px;background:#FFA31C;color:#fff;border:none;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>📄 PDF</button>"+
+    "<button onclick='generarCSVMayor(S._cMes)' style='padding:10px 14px;background:#1a7a3a;color:#fff;border:none;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit' title='CSV estilo mayor para tu contador (asientos débito/crédito)'>📊 CSV mayor</button>"+
     // Este boton llamaba directo a ejecutarCierreMes() SIN preguntar nada. Un
     // toque de mas -esta pegado al de PDF- y el mes quedaba cerrado. Asi se le
     // cerro septiembre teniendolo en curso, y encima no habia forma de
@@ -25149,7 +25150,10 @@ function rInformeCierre(){
       "<div style='padding:9px 12px;font-size:10.5px;color:#9a8a5c;background:#FFFBEA;border-top:1px solid #f5f5f5'>🔒 Tu sueldo de este mes (<b>$"+f2(calc.sueldoAcumulando)+"</b>, "+calc.pctSueldo+"% de la utilidad) todavía se está acumulando — no es gastable hasta que cierres el mes. Si NO lo retiras, se suma a lo que ya tienes acumulado.</div>"+
       "<div style='padding:9px 12px;font-size:11px;color:#0a3d7c;background:#F0F4FF;border-top:1px solid #f5f5f5'>📈 Si cerraras el mes hoy sin retirar nada, para el próximo mes tendrías acumulado: <b>$"+f2(calc.disponiblePer+calc.sueldoAcumulando)+"</b> ("+f2(calc.disponiblePer)+" de ahora + "+f2(calc.sueldoAcumulando)+" del sueldo)</div>"+
     "</div>"+
-    (calc.egEmpPend>0?"<div style='background:#FFF8DC;border:1px solid #F5C518;border-radius:10px;padding:10px 12px;font-size:12px;color:#7a5c00'><b>⚠️ Hay $"+f2(calc.egEmpPend)+" USDT en egresos de empresa sin pagar.</b></div>":"");
+    (calc.egEmpPend>0?"<div style='background:#FFF8DC;border:1px solid #F5C518;border-radius:10px;padding:10px 12px;font-size:12px;color:#7a5c00'><b>⚠️ Hay $"+f2(calc.egEmpPend)+" USDT en egresos de empresa sin pagar.</b></div>":"")+
+    // ARREGLO 173 · formato contable, plegable: nace cerrado para no saturar
+    // la pantalla. Lee de calcMesCompleto como todo lo demas de aqui.
+    _htmlEstadoResultados(mesKey);
   }
 
   // ── OPERACIONES ────────────────────────────────────────────────
@@ -35545,6 +35549,224 @@ function resumenContador(mesKey){
   r.egresosRealesTotal=Math.round(r.egresosRealesTotal*100)/100;
   r.resultadoReales=Math.round((r.ganReales-r.egresosRealesTotal)*100)/100;
   return r;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ARREGLO 173 · formato contable: estado de resultados y mayor
+//
+// Sus palabras del 22/10: "dale con todo, ojo no me redundes informacion en
+// mi app". Lo que falta en terminos contables formales son dos cosas, y las
+// dos salen de numeros que YA existen — no se calcula nada nuevo:
+//
+//   1. Estado de resultados en el orden clasico (ingresos, costos, egresos
+//      operativos, utilidad operativa, financieros, utilidad del mes).
+//   2. CSV de asientos para que su contador lo cargue en su software.
+//
+// Nada vive aparte: el estado de resultados es un plegable DENTRO del
+// Cierre, y el CSV es un boton al lado del PDF que ya esta. El Resumen y el
+// Balance que ella mira todos los dias NO cambian — es la regla del ARREGLO
+// 141/125/99: lo nuevo va plegado y no satura la pantalla.
+//
+// Los numeros salen de calcMesCompleto. Repetirlos aqui seria el 34,27
+// contra el 34,28 (ARREGLO 100/141).
+// ══════════════════════════════════════════════════════════════════
+function _estadoResultados(mesKey){
+  var c=calcMesCompleto(mesKey);
+  var ingRemesas=r2((c.ganBrl||0)+(c.ganVzla||0)+(c.ganEEBruta||0));
+  var ingMerc=c.ganMercancia||0;
+  var ingExtra=c.ganExtraEmp||0;
+  var ingAjustes=c.ajustesGan||0;
+  var egAjustes=c.ajustesEg||0;
+  var ingOp=r2(ingRemesas+ingMerc+ingExtra+ingAjustes);
+  var egOp=r2((c.egEmpPag||0)+egAjustes);
+  var utilOp=r2(ingOp-egOp);
+  var ingFin=c.ganPrestamos||0;
+  var utilMes=r2(utilOp+ingFin);
+  return {ingRemesas:ingRemesas,ingMerc:ingMerc,ingExtra:ingExtra,ingAjustes:ingAjustes,
+    ingOp:ingOp,egOp:egOp,egAjustes:egAjustes,utilOp:utilOp,ingFin:ingFin,utilMes:utilMes,
+    utilidadEmpresa:c.utilidadEmpresa};
+}
+
+function _htmlEstadoResultados(mesKey){
+  var e=_estadoResultados(mesKey);
+  // Variables CSS, no colores a mano: la guardia estructural lo exige
+  // (FASE 2 · "ningun color escrito a mano fuera del informe"). Y asi los
+  // tres temas lo pintan bien, no solo Suave.
+  var row=function(lbl,val,bold,col){
+    var cl=col||"var(--tit)";
+    return "<div style='display:flex;justify-content:space-between;padding:7px 12px;"+
+      (bold?"font-weight:800;background:var(--sup2d);border-top:1.5px solid var(--tit);":"border-bottom:1px solid var(--sup2f);")+
+      "font-size:12px'><span style='color:"+(bold?"var(--tit)":"var(--ink2)")+"'>"+lbl+"</span>"+
+      "<span style='color:"+cl+";font-weight:"+(bold?800:700)+"'>$"+f2(val)+"</span></div>";
+  };
+  var abierto=!!S._verEdoResult;
+  // Se refresca por su id para que abrir/cerrar NO llame a R() — repintar
+  // la pestania mataria otros plegables bajo el dedo (ARREGLO 32).
+  return "<div style='margin-top:12px;background:var(--card);border:1px solid var(--sup3);border-radius:11px;overflow:hidden'>"+
+    "<div onclick='S._verEdoResult=!S._verEdoResult;var b=document.getElementById(\"edo-res-body\");b.style.display=S._verEdoResult?\"block\":\"none\";this.querySelector(\".er-fl\").textContent=S._verEdoResult?\"▴\":\"▾\"' style='padding:11px 13px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:var(--sup2c)'>"+
+      "<span style='font-size:12px;font-weight:800;color:var(--tit)'>📑 Estado de resultados (formato contable)</span>"+
+      "<span class='er-fl' style='color:var(--ink2);font-size:14px'>"+(abierto?"▴":"▾")+"</span>"+
+    "</div>"+
+    "<div id='edo-res-body' style='display:"+(abierto?"block":"none")+"'>"+
+      (e.ingRemesas?row("Ingresos por remesas",e.ingRemesas):"")+
+      (e.ingMerc?row("Ingresos por mercancía",e.ingMerc):"")+
+      (e.ingExtra?row("Otros ingresos operativos",e.ingExtra):"")+
+      (e.ingAjustes?row("Ajustes de saldo que entran",e.ingAjustes):"")+
+      row("= Ingresos operativos",e.ingOp,true)+
+      row("− Egresos operativos",-e.egOp)+
+      row("= Utilidad operativa",e.utilOp,true,e.utilOp<0?"var(--neg)":"var(--tit)")+
+      (e.ingFin?row("+ Ingresos financieros (intereses de préstamos)",e.ingFin):"")+
+      row("= Utilidad del mes",e.utilMes,true,e.utilMes<0?"var(--neg)":"var(--pos)")+
+      "<div style='padding:7px 13px;font-size:10px;color:var(--ink2);font-style:italic;background:var(--sup2f)'>Sale de calcMesCompleto, no se calcula nada aparte. Coincide con la utilidad del Cierre: $"+f2(e.utilidadEmpresa)+"</div>"+
+    "</div>"+
+  "</div>";
+}
+
+// ── CSV MAYOR ─────────────────────────────────────────────────────
+// Cada operacion da dos lineas que balancean en la MISMA moneda (debito a
+// una cuenta, credito a otra). El contador consolida con SU plan de
+// cuentas; nosotros no le imponemos uno — el nombre que empieza por "@"
+// es una cuenta contable sugerida que el puede renombrar.
+//
+// usdt_equiv va con la tasa de HOY porque es para consolidar; el nativo
+// manda. No es un numero contable: es un ayudante para el que no quiere
+// montar un plan multi-moneda.
+function _asientosDelMes(mesKey){
+  var A=[], ctas={};
+  (S.cuentas||[]).forEach(function(c){ctas[c.id]=c;});
+  function nom(id){var c=ctas[id];return c?c.nombre:"(sin cuenta)";}
+  function mon(id){var c=ctas[id];return c?c.moneda:"";}
+  function usdtEq(m,mo){if(!m)return 0;if(mo==="USDT"||mo==="USD")return r2(m);var t=getRateToUsdt(mo);return (t&&t>0)?Math.round((m/t)*100)/100:0;}
+  function add(f,ref,cat,ctaId,descr,deb,cre,monOv){
+    var m=monOv||mon(ctaId);
+    A.push({fecha:f,ref:ref,cat:cat,
+      cuenta:(ctaId.charAt(0)==="@"?ctaId.slice(1):nom(ctaId)),
+      descr:descr||"",
+      deb:r2(deb||0),cre:r2(cre||0),mon:m,usdt:usdtEq(deb||cre||0,m)});
+  }
+  function iso(f){return _isoDeDDMMAA(f)||f||"";}
+
+  [].concat(S.brl||[],S.vzla||[],S.eeuu||[]).forEach(function(x){
+    if(_mesDeFecha(x.d)!==mesKey) return;
+    var f=iso(x.d), r="R"+(x.n||x._uid||""), d=(x.cliente||"")+(x.ruta?" ["+x.ruta+"]":"");
+    var am=parseFloat(x.am)||0, cant=parseFloat(x.cant)||0;
+    if(x.cuentaBanco&&am>0){
+      add(f,r,"REMESA",x.cuentaBanco,d+" (entra)",am,0);
+      add(f,r,"REMESA","@Ingresos remesas",d,0,am,mon(x.cuentaBanco));
+    }
+    if(x.cuentaDest&&cant>0){
+      add(f,r,"REMESA","@Costo remesas",d+" (entrega)",cant,0,mon(x.cuentaDest));
+      add(f,r,"REMESA",x.cuentaDest,d,0,cant);
+    }
+  });
+
+  [].concat(S.inventarioUsdt||[],S.inventarioUsdt_cerrado||[]).forEach(function(l){
+    if(_isoDeLote(l).slice(0,7)!==mesKey) return;
+    if(l._aperturaBRL||l.permuta) return;
+    var f=_isoDeLote(l), r="U"+l.id;
+    var u=parseFloat(l.usdt)||0, b=parseFloat(l.bs||l.montOrigen)||0;
+    if(l.tipo==="compra"&&l.cuentaOrigenId&&l.cuentaDestinoId){
+      add(f,r,"COMPRA_USDT",l.cuentaDestinoId,"Compra "+u+" USDT",u,0,"USDT");
+      add(f,r,"COMPRA_USDT",l.cuentaOrigenId,"Compra USDT",0,b);
+    }else if(l.tipo==="venta"&&l.cuentaId&&l.cuentaDestinoId){
+      add(f,r,"VENTA_USDT",l.cuentaDestinoId,"Venta USDT por "+b,b,0);
+      add(f,r,"VENTA_USDT",l.cuentaId,"Venta "+u+" USDT",0,u,"USDT");
+    }
+  });
+
+  [].concat(S.egresos||[],S.egresos_personales||[]).forEach(function(e){
+    if(!e.pagada||_mesDeFecha(e.fp||e.d)!==mesKey||!e.cuentaId) return;
+    var f=iso(e.fp||e.d), r="E"+(e.id||""), m=parseFloat(e.monto)||0;
+    var cat=e.tipo==="personal"?"EGRESO_PERSONAL":"EGRESO_EMPRESA";
+    var ctaCat=e.tipo==="personal"?"@Retiros del dueño":("@Gastos operativos"+(e.categoria?" · "+e.categoria:""));
+    add(f,r,cat,ctaCat,e.motivo||"",m,0,mon(e.cuentaId));
+    add(f,r,cat,e.cuentaId,e.motivo||"",0,m);
+  });
+
+  (S.traspasos||[]).forEach(function(t){
+    if(String(t.fecha||"").slice(0,7)!==mesKey||!t.origenId||!t.destinoId) return;
+    var r="T"+(t.id||""), mO=parseFloat(t.monto)||0, mD=parseFloat(t.montoDestino||t.monto)||0;
+    add(t.fecha,r,"TRASPASO",t.destinoId,"Desde "+nom(t.origenId),mD,0);
+    add(t.fecha,r,"TRASPASO",t.origenId,"A "+nom(t.destinoId),0,mO);
+  });
+
+  (S.prestamos||[]).forEach(function(p){
+    if(_mesDeFecha(p.d)===mesKey&&p.cuentaId){
+      var f=iso(p.d), r="P"+(p.id||""), cap=parseFloat(p.capital||p.monto)||0;
+      add(f,r,"PRESTAMO_DADO","@Préstamos por cobrar",p.cliente||"",cap,0,mon(p.cuentaId));
+      add(f,r,"PRESTAMO_DADO",p.cuentaId,p.cliente||"",0,cap);
+    }
+    (p.abonos||[]).forEach(function(ab,i){
+      if(_mesDeFecha(ab.fecha)!==mesKey||!ab.cuentaId) return;
+      var f=iso(ab.fecha), r="P"+(p.id||"")+"-"+i, m=parseFloat(ab.monto)||0;
+      add(f,r,"COBRO_PRESTAMO",ab.cuentaId,"Cobro de "+(p.cliente||""),m,0);
+      add(f,r,"COBRO_PRESTAMO","@Préstamos por cobrar",p.cliente||"",0,m,mon(ab.cuentaId));
+    });
+  });
+
+  (S.articulos||[]).forEach(function(a){
+    if(a.cuentaId&&_mesDeFecha(a.fecha)===mesKey){
+      var f=iso(a.fecha), r="M"+(a.id||""), c=parseFloat(a.costo)||0;
+      add(f,r,"MERCANCIA_COMPRA","@Inventario mercancía",a.descripcion||"",c,0,mon(a.cuentaId));
+      add(f,r,"MERCANCIA_COMPRA",a.cuentaId,a.descripcion||"",0,c);
+    }
+    if(a.vendido&&a.ventaFecha&&a.ventaCuentaId&&_mesDeFecha(a.ventaFecha)===mesKey){
+      var fv=iso(a.ventaFecha), rv="M"+(a.id||"")+"V";
+      var pv=parseFloat(a.ventaMonto)||0, cs=parseFloat(a.costo)||0;
+      add(fv,rv,"MERCANCIA_VENTA",a.ventaCuentaId,"Venta "+(a.descripcion||""),pv,0);
+      add(fv,rv,"MERCANCIA_VENTA","@Inventario mercancía",a.descripcion||"",0,cs,mon(a.ventaCuentaId));
+      if(pv-cs!==0) add(fv,rv,"MERCANCIA_VENTA","@Ingresos mercancía",a.descripcion||"",0,r2(pv-cs),mon(a.ventaCuentaId));
+    }
+  });
+
+  (S.aportes||[]).forEach(function(ap){
+    if(_mesDeFecha(ap.fecha)!==mesKey||!ap.cuentaId) return;
+    var f=iso(ap.fecha), r="A"+(ap.id||""), m=parseFloat(ap.monto)||0;
+    if(ap.dir==="entra"){
+      add(f,r,"APORTE",ap.cuentaId,"Aporte propio",m,0);
+      add(f,r,"APORTE","@Aportes del dueño","Aporte propio",0,m,mon(ap.cuentaId));
+    }else if(ap.dir==="sale"){
+      add(f,r,"APORTE","@Retiros del dueño","Retiro propio",m,0,mon(ap.cuentaId));
+      add(f,r,"APORTE",ap.cuentaId,"Retiro propio",0,m);
+    } // "ya": informativo, no mueve saldo
+  });
+
+  (S.gananciaExtra||[]).forEach(function(g){
+    if(_mesDeFecha(g.fecha)!==mesKey||!g.cuentaId) return;
+    var f=iso(g.fecha), r="G"+(g.id||""), m=parseFloat(g.monto)||0;
+    var ctaCat=g.tipo==="personal"?"@Otros ingresos personales":"@Otros ingresos empresa";
+    add(f,r,"GANANCIA_EXTRA",g.cuentaId,g.descripcion||"",m,0);
+    add(f,r,"GANANCIA_EXTRA",ctaCat,g.descripcion||"",0,m,mon(g.cuentaId));
+  });
+
+  (S.pagosSocios||[]).forEach(function(p){
+    if(_mesDeFecha(p.fecha)!==mesKey||!p.cuentaId) return;
+    var f=iso(p.fecha), r="S"+(p.id||""), m=parseFloat(p.monto)||0;
+    add(f,r,"PAGO_SOCIO","@Pagos a socios",p.socio||"",m,0,mon(p.cuentaId));
+    add(f,r,"PAGO_SOCIO",p.cuentaId,p.socio||"",0,m);
+  });
+
+  A.sort(function(a,b){return a.fecha===b.fecha?(a.ref<b.ref?-1:1):(a.fecha<b.fecha?-1:1);});
+  return A;
+}
+
+function generarCSVMayor(mesKey){
+  var mk=mesKey||getMesKeyActual();
+  var A=_asientosDelMes(mk);
+  if(!A.length){ alert("No hay movimientos en el mes."); return; }
+  function esc(s){s=String(s==null?"":s);return (s.indexOf(";")>-1||s.indexOf("\n")>-1||s.indexOf("\"")>-1)?"\""+s.replace(/"/g,'""')+"\"":s;}
+  var lineas=["fecha;ref;categoria;cuenta;descripcion;debito;credito;moneda;usdt_equiv"];
+  A.forEach(function(a){
+    lineas.push([a.fecha,a.ref,a.cat,esc(a.cuenta),esc(a.descr),
+      (a.deb?f2(a.deb):""),(a.cre?f2(a.cre):""),a.mon,(a.usdt?f2(a.usdt):"")].join(";"));
+  });
+  var csv=lineas.join("\n");
+  var blob=new Blob(["﻿"+csv],{type:"text/csv;charset=utf-8;"});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement("a");
+  a.href=url; a.download="mayor_"+mk+".csv";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function getMesLabel(mes,anio){
