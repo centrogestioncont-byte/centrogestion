@@ -3269,7 +3269,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261022_v255-TEST";
+var APP_VERSION = "20261022_v256-TEST";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -14961,6 +14961,25 @@ function guardarPctSueldo(){
     saveData();R();alert("✅ % sueldo guardado: "+v+"%");
   });
 }
+
+// ARREGLO 173 · Retencion fiscal estimada: regimen (texto libre) y % (0..100).
+// Vacio o invalido LIMPIA la clave para que el estado de resultados no muestre
+// una fila con un numero vacio — misma regla que _diaNormalBs (ARREGLO 139).
+function guardarRetencionConfig(){
+  var r=(document.getElementById('inp-reten-reg').value||"").trim();
+  var p=_leerNumero(document.getElementById('inp-reten-pct').value);
+  if(!S.config) S.config={};
+  if(!r&&(isNaN(p)||p<=0)){
+    delete S.config.retencion_regimen; delete S.config.retencion_pct;
+    saveData(); R(); alert("Retención borrada (vacía).");
+    return;
+  }
+  if(isNaN(p)||p<0||p>100){ alert("% inválido. Ej: 6 para 6%."); return; }
+  S.config.retencion_regimen=r;
+  S.config.retencion_pct=Math.round(p*10000)/1000000;
+  saveData(); R();
+  alert("✅ Retención guardada: "+(r||"(sin régimen)")+" · "+p+"%");
+}
 function addCatEmpresa(){
   var v=(document.getElementById('inp-cat-emp').value||"").trim().toUpperCase();
   if(!v) return;
@@ -16075,6 +16094,21 @@ function rConfigAdmin(){
             "<input type='text' inputmode='decimal' id='inp-pct-sueldo' step='1' min='0' max='100' placeholder='ej: 5' value='"+(((S.config||{}).pct_sueldo!==undefined)?((S.config.pct_sueldo)*100).toFixed(0):"5")+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
             "<span style='font-size:14px;color:var(--tx2);font-weight:700'>%</span>"+
             "<button onclick='guardarPctSueldo()' style='padding:9px 14px;background:var(--rol-ee);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
+          "</div>"+
+        "</div>"+
+        // ARREGLO 173 · Retencion fiscal estimada. Es OPCIONAL (vacio no sale
+        // en ninguna parte): tu contador decide el regimen y el %, y si lo
+        // dejas aqui, la fila aparece debajo del Estado de resultados como
+        // info de cuanto apartar. No descuenta la utilidad y no mueve
+        // calcMesCompleto, igual que el interes devengado.
+        "<div style='margin-top:14px;padding-top:14px;border-top:1px solid var(--ln2)'>"+
+          "<div style='font-size:12px;font-weight:700;color:var(--tx2);margin-bottom:8px'>🧾 Retención fiscal estimada (opcional)</div>"+
+          "<div style='font-size:11px;color:var(--tx3);margin-bottom:8px'>Si tu contador te dice un % para apartar sobre ingresos reales, ponlo aquí. Vacío = no sale. No descuenta nada: es informativo.</div>"+
+          "<div style='display:flex;gap:8px;align-items:center;max-width:420px;flex-wrap:wrap'>"+
+            "<input type='text' id='inp-reten-reg' placeholder='Régimen (ej: Simples Nacional)' value='"+_escAud(((S.config||{}).retencion_regimen)||"")+"' style='flex:1;min-width:160px;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:13px'>"+
+            "<input type='text' inputmode='decimal' id='inp-reten-pct' placeholder='%' value='"+(((S.config||{}).retencion_pct!==undefined&&(S.config||{}).retencion_pct!==null)?f2((S.config.retencion_pct)*100):"")+"' style='width:70px;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:13px'>"+
+            "<span style='font-size:14px;color:var(--tx2);font-weight:700'>%</span>"+
+            "<button onclick='guardarRetencionConfig()' style='padding:9px 14px;background:var(--rol-ee);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
           "</div>"+
         "</div>"+
       "</div>";
@@ -20291,6 +20325,52 @@ function ponerTema(t){
   _pintarTema();
   var c=document.getElementById("tema-botones");
   if(c) c.innerHTML=_htmlBotonesTema();
+  // ARREGLO 174: el boton de la topbar lleva un icono que depende del tema
+  // CORRIENDO (sol si estas en suave para pasar a claro, luna al reves). Si
+  // no se refresca aqui, cambiar el tema desde Configuracion deja el icono
+  // viejo arriba, y la pantalla de arriba dice una cosa y abajo otra —
+  // regla del 34,27 vs 34,28.
+  var ic=document.getElementById("tema-icono-top");
+  if(ic) ic.textContent=(temaActual()==="suave"?"☀️":"🌙");
+}
+
+// ARREGLO 174 · Boton de tema de la topbar: alterna claro <-> suave.
+// Papel se mantiene en Configuracion para quien lo elija a proposito.
+function _alternarTema(){
+  var a=temaActual();
+  ponerTema(a==="claro"?"suave":"claro");
+}
+
+// ARREGLO 174 · Panel "⋯ Mas" de la topbar: esconde Exportar, Importar,
+// Restaurar, Ver servidor y Borrar — los que ella llama "delicados". Al
+// pulsar fuera se cierra solo. Sin esto el panel se queda abierto bloqueando
+// la pantalla, y pulsar el mismo boton otra vez para cerrarlo pierde el
+// patron familiar de los popovers.
+function _toggleMasAdm(ev){
+  var p=document.getElementById("mas-adm"); if(!p) return;
+  var abierto=(p.style.display!=="none");
+  p.style.display=abierto?"none":"flex";
+  if(ev&&ev.stopPropagation) ev.stopPropagation();
+  if(!abierto){
+    setTimeout(function(){ document.addEventListener("click", _cerrarMasAdm, true); }, 0);
+  }
+}
+function _cerrarMasAdm(e){
+  var p=document.getElementById("mas-adm");
+  var b=document.getElementById("btn-mas-adm");
+  if(!p||p.style.display==="none"){ document.removeEventListener("click", _cerrarMasAdm, true); return; }
+  // Dentro del panel: deja pulsar el boton que elija. Si es el propio ⋯,
+  // _toggleMasAdm ya lo cierra; no cerrar aqui dos veces o se abriria
+  // justo despues.
+  if(b&&b.contains(e.target)) return;
+  if(p.contains(e.target)){
+    // Un boton de los de dentro: se cierra el panel al soltar.
+    p.style.display="none";
+    document.removeEventListener("click", _cerrarMasAdm, true);
+    return;
+  }
+  p.style.display="none";
+  document.removeEventListener("click", _cerrarMasAdm, true);
 }
 function _htmlTema(){
   return "<div style='font-size:11px;color:var(--tx2);margin-bottom:11px;line-height:1.6'>"+
@@ -22821,13 +22901,38 @@ function R(){
       var _bt="background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.16);color:var(--sobre-color);padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer";
       var _btSi="background:rgba(255,255,255,.15);border:1px solid rgba(160,215,175,.50);color:var(--sobre-color);padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer;font-weight:700";
       var _btNo="background:rgba(255,255,255,.05);border:1px solid rgba(232,130,130,.55);color:#F0BDBD;padding:5px 10px;border-radius:7px;font-size:11px;cursor:pointer";
-      d.innerHTML='<button onclick="exportData()" style="'+_bt+'">💾 Exportar</button>'+
-        '<button onclick="importData()" style="'+_bt+'">📂 Importar</button>'+
+      // ARREGLO 174 · Dos piezas de interfaz pedidas por ella el 22/10:
+      //
+      //  1. Un boton de TEMA siempre visible arriba — "como una lunita".
+      //     Alterna Claro <-> Suave sin tocar la pantalla de Configuracion,
+      //     donde siguen los tres temas. Papel se queda alli para el que lo
+      //     elija a proposito; aqui se alterna lo mas comun.
+      //
+      //  2. Un boton "⋯ Mas" que ESCONDE los botones que ella no quiere
+      //     tener al alcance de un dedazo accidental: Exportar, Importar,
+      //     Restaurar, Ver servidor y la papelera. Sus palabras: "a veces
+      //     por error, cuando la aplicacion se me mueve, le doy restaurar o
+      //     le doy exportar, le doy importar, le doy guardar". Guardar y
+      //     Actualizar SE QUEDAN visibles — es lo que usa cada dia.
+      //
+      // El tema NO llama a R() porque los colores van por nombre y el
+      // navegador los cambia solo (ARREGLO 32). El panel desplegable
+      // tampoco: cambia el display por id.
+      var ic=(temaActual()==="suave"?"☀️":"🌙");
+      d.innerHTML=
+        '<button onclick="_alternarTema()" id="btn-tema-top" style="'+_bt+'" title="Cambiar tema (Claro / Suave)"><span id="tema-icono-top">'+ic+'</span></button>'+
         '<button onclick="guardarEnServidorYa()" id="btn-guardar-ya" style="'+_btSi+'" title="Guardar en el servidor ahora (el auto-sync corre cada 8s)">📤 Guardar</button>'+
-        '<button onclick="fbForceLoad()" style="'+_bt+';font-weight:700;margin-left:4px" title="Traer los datos más recientes del servidor ahora">📥 Actualizar</button>'+
-        '<button onclick="restoreFromBackup()" style="'+_btNo+'" title="Descargar el respaldo completo de la base">🔒 Restaurar</button>'+
-        '<button onclick="verQueHayEnServidor()" style="'+_bt+';font-weight:700" title="Ver qué hay guardado en el servidor ahora mismo, SIN aplicarlo todavía">🔍 Ver servidor</button>'+
-        '<button onclick="clearAllData()" style="'+_btNo+'" title="Borrar todo (pide sesión de administrador)">🗑️</button>';
+        '<button onclick="fbForceLoad()" style="'+_bt+';font-weight:700" title="Traer los datos más recientes del servidor ahora">📥 Actualizar</button>'+
+        '<div style="position:relative;display:inline-block">'+
+          '<button id="btn-mas-adm" onclick="_toggleMasAdm()" style="'+_bt+'" title="Botones delicados: Exportar, Importar, Restaurar, Ver servidor, Borrar">⋯ Más ▾</button>'+
+          '<div id="mas-adm" style="display:none;position:absolute;top:calc(100% + 6px);right:0;background:var(--fondo-osc3);border:1px solid var(--brand);border-radius:9px;padding:7px;flex-direction:column;gap:5px;z-index:1000;min-width:170px;box-shadow:0 6px 20px rgba(0,0,0,.35)">'+
+            '<button onclick="exportData()" style="'+_bt+';text-align:left">💾 Exportar</button>'+
+            '<button onclick="importData()" style="'+_bt+';text-align:left">📂 Importar</button>'+
+            '<button onclick="verQueHayEnServidor()" style="'+_bt+';text-align:left;font-weight:700" title="Ver qué hay guardado en el servidor SIN aplicarlo">🔍 Ver servidor</button>'+
+            '<button onclick="restoreFromBackup()" style="'+_btNo+';text-align:left" title="Descargar respaldo completo">🔒 Restaurar</button>'+
+            '<button onclick="clearAllData()" style="'+_btNo+';text-align:left" title="Borrar todo (pide sesión de admin)">🗑️ Borrar todo</button>'+
+          '</div>'+
+        '</div>';
       tb.appendChild(d);
     },50);
   }
@@ -25153,7 +25258,11 @@ function rInformeCierre(){
     (calc.egEmpPend>0?"<div style='background:#FFF8DC;border:1px solid #F5C518;border-radius:10px;padding:10px 12px;font-size:12px;color:#7a5c00'><b>⚠️ Hay $"+f2(calc.egEmpPend)+" USDT en egresos de empresa sin pagar.</b></div>":"")+
     // ARREGLO 173 · formato contable, plegable: nace cerrado para no saturar
     // la pantalla. Lee de calcMesCompleto como todo lo demas de aqui.
-    _htmlEstadoResultados(mesKey);
+    _htmlEstadoResultados(mesKey)+
+    // Y debajo el flujo de efectivo, otro plegable. En el mismo sitio porque
+    // los dos sirven al contador y son del mismo tipo (reordenan lo que ya
+    // esta, no inventan numeros).
+    _htmlFlujoEfectivo(mesKey);
   }
 
   // ── OPERACIONES ────────────────────────────────────────────────
@@ -35615,8 +35724,29 @@ function _htmlEstadoResultados(mesKey){
       row("= Ingresos operativos",e.ingOp,true)+
       row("− Egresos operativos",-e.egOp)+
       row("= Utilidad operativa",e.utilOp,true,e.utilOp<0?"var(--neg)":"var(--tit)")+
-      (e.ingFin?row("+ Ingresos financieros (intereses de préstamos)",e.ingFin):"")+
+      (e.ingFin?row("+ Ingresos financieros (intereses cobrados)",e.ingFin):"")+
+      // Devengado del mes: lo que los prestamos activos GANARON este mes
+      // aunque no se haya cobrado. Informativo, no suma — la utilidad del
+      // Cierre sigue siendo lo cobrado. Es un aviso al contador por si lleva
+      // libro por devengado.
+      (function(){ var dev=_interesesDevengadosMes(mesKey);
+        return dev.total>0 ? "<div style='padding:5px 12px 7px 24px;font-size:11px;color:var(--ink2);font-style:italic;border-bottom:1px solid var(--sup2f)'>— Devengado del mes (aún no cobrado): $"+f2(dev.total)+"</div>" : "";})()+
       row("= Utilidad del mes",e.utilMes,true,e.utilMes<0?"var(--neg)":"var(--pos)")+
+      // ARREGLO 173 · Retencion fiscal estimada SI esta configurada. No
+      // descuenta la utilidad (es informativo para que ella sepa cuanto
+      // apartar). Vacio o 0 no sale.
+      (function(){
+        var reg=(S.config||{}).retencion_regimen||"";
+        var pct=parseFloat((S.config||{}).retencion_pct);
+        if(!(pct>0)) return "";
+        // Base: ingresos reales (lo que gano en operaciones de empresa, sin
+        // los extras personales y sin los intereses). Es lo que el contador
+        // suele usar para calcular retencion operativa.
+        var baseIng=e.ingRemesas+e.ingMerc;
+        var apart=r2(baseIng*pct);
+        var pctLbl=f2(pct*100);
+        return "<div style='padding:7px 13px;font-size:11px;color:var(--ink2);background:var(--sup2f);border-top:1px solid var(--sup3)'>🧾 <b>Para apartar</b> ("+(_escAud(reg)||"retención")+", "+pctLbl+"% sobre ingresos reales): <b style='color:var(--tit)'>$"+f2(apart)+"</b> <span style='font-style:italic'>· no descuenta la utilidad, es un recordatorio</span></div>";
+      })()+
       "<div style='padding:7px 13px;font-size:10px;color:var(--ink2);font-style:italic;background:var(--sup2f)'>Sale de calcMesCompleto, no se calcula nada aparte. Coincide con la utilidad del Cierre: $"+f2(e.utilidadEmpresa)+"</div>"+
     "</div>"+
   "</div>";
@@ -35631,6 +35761,108 @@ function _htmlEstadoResultados(mesKey){
 // usdt_equiv va con la tasa de HOY porque es para consolidar; el nativo
 // manda. No es un numero contable: es un ayudante para el que no quiere
 // montar un plan multi-moneda.
+// ── FLUJO DE EFECTIVO (ARREGLO 173) ────────────────────────────────
+// Sale de los mismos asientos que el CSV: para cada linea con cuenta real
+// (banco, no @cuenta_contable), se suma su debito/credito en USDT. La
+// categorizacion es la clasica contable:
+//   OPERACIONES    remesas, egresos operativos, ventas de USDT, ganancias
+//                  extra, mercancia
+//   INVERSION      prestamos dados y cobrados (cambio de forma del capital)
+//   FINANCIAMIENTO aportes, retiros, pagos a socios, egresos personales
+//
+// Los TRASPASOS entre cuentas no se cuentan: entra en una y sale de otra
+// por el mismo importe, el flujo total no se mueve.
+//
+// En USDT porque es la unica forma de comparar entre monedas. El nativo
+// esta en el CSV, no aqui.
+function _flujoEfectivo(mesKey){
+  var A=_asientosDelMes(mesKey);
+  var CAT_OP=["REMESA","COMPRA_USDT","VENTA_USDT","EGRESO_EMPRESA","GANANCIA_EXTRA","MERCANCIA_VENTA"];
+  var CAT_INV=["PRESTAMO_DADO","COBRO_PRESTAMO","MERCANCIA_COMPRA"];
+  var CAT_FIN=["APORTE","EGRESO_PERSONAL","PAGO_SOCIO"];
+  var op=0, inv=0, fin=0;
+  A.forEach(function(a){
+    // Solo cuentas reales (los "@contables" son cuentas de resultado o de
+    // activo que no mueven la caja).
+    var es=false;
+    var ctas=S.cuentas||[];
+    for(var i=0;i<ctas.length;i++) if(ctas[i].nombre===a.cuenta){es=true;break;}
+    if(!es) return;
+    var neto=a.deb-a.cre;
+    // En USDT para poder sumar. Si no hay tasa cae en 0 — la fila que lo lleve
+    // se avisa con "parcial" pero el total sale sin esa parte, no se inventa.
+    var usdt=neto>=0?a.usdt:-a.usdt;
+    if(!usdt) return;
+    if(CAT_OP.indexOf(a.cat)>=0) op+=usdt;
+    else if(CAT_INV.indexOf(a.cat)>=0) inv+=usdt;
+    else if(CAT_FIN.indexOf(a.cat)>=0) fin+=usdt;
+    // TRASPASO: se ignora a proposito (balancea solo)
+  });
+  return {operaciones:r2(op), inversion:r2(inv), financiamiento:r2(fin), cambio:r2(op+inv+fin)};
+}
+
+function _htmlFlujoEfectivo(mesKey){
+  var f=_flujoEfectivo(mesKey);
+  var row=function(lbl,val,bold){
+    var cl=val<0?"var(--neg)":"var(--pos)";
+    return "<div style='display:flex;justify-content:space-between;padding:7px 12px;"+
+      (bold?"font-weight:800;background:var(--sup2d);border-top:1.5px solid var(--tit);":"border-bottom:1px solid var(--sup2f);")+
+      "font-size:12px'><span style='color:"+(bold?"var(--tit)":"var(--ink2)")+"'>"+lbl+"</span>"+
+      "<span style='color:"+(bold?cl:"var(--tit)")+";font-weight:"+(bold?800:700)+"'>"+(val<0?"−":"")+"$"+f2(Math.abs(val))+"</span></div>";
+  };
+  var abierto=!!S._verFlujoEf;
+  return "<div style='margin-top:10px;background:var(--card);border:1px solid var(--sup3);border-radius:11px;overflow:hidden'>"+
+    "<div onclick='S._verFlujoEf=!S._verFlujoEf;var b=document.getElementById(\"flujo-ef-body\");b.style.display=S._verFlujoEf?\"block\":\"none\";this.querySelector(\".fl-fl\").textContent=S._verFlujoEf?\"▴\":\"▾\"' style='padding:11px 13px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:var(--sup2c)'>"+
+      "<span style='font-size:12px;font-weight:800;color:var(--tit)'>💧 Flujo de efectivo (formato contable)</span>"+
+      "<span class='fl-fl' style='color:var(--ink2);font-size:14px'>"+(abierto?"▴":"▾")+"</span>"+
+    "</div>"+
+    "<div id='flujo-ef-body' style='display:"+(abierto?"block":"none")+"'>"+
+      row("Operaciones (remesas, USDT, egresos)",f.operaciones)+
+      row("Inversión (préstamos, mercancía)",f.inversion)+
+      row("Financiamiento (aportes, socios, personal)",f.financiamiento)+
+      row("= Cambio neto en caja",f.cambio,true)+
+      "<div style='padding:7px 13px;font-size:10px;color:var(--ink2);font-style:italic;background:var(--sup2f)'>Equivale en USDT a la tasa de hoy. Los traspasos entre cuentas no cuentan: balancean solos.</div>"+
+    "</div>"+
+  "</div>";
+}
+
+// ── INTERESES DEVENGADOS DEL MES (ARREGLO 173) ─────────────────────
+// Lo que un prestamo GANA cada mes, aunque todavia no se haya cobrado. En
+// contabilidad formal esto va al resultado del mes aunque la caja no se
+// mueva (devengado). Hoy la app apunta el interes al cobrar; aqui se
+// enseña aparte, SIN CAMBIAR nada de los numeros del Cierre — es
+// informativo y va al lado de "intereses cobrados".
+//
+// Distribucion LINEAL del interes total entre los meses del plazo. Es lo
+// mas simple y vale para la escala suya (prestamos de pocos meses). Un
+// modelo de amortizacion francesa seria mas correcto financieramente, pero
+// aqui el interes es fijo y el plazo corto: la diferencia no es material.
+function _interesesDevengadosMes(mesKey){
+  var tot=0, det=[];
+  (S.prestamos||[]).forEach(function(p){
+    var monto=parseFloat(p.monto)||0;
+    var cap=parseFloat(p.capital!==undefined?p.capital:p.monto)||0;
+    var interes=Math.max(0,monto-cap);
+    if(interes<=0) return;
+    var ini=_isoDeDDMMAA(p.d); if(!ini) return;
+    var n=Math.max(1,parseInt(p.numCuotas)||1);
+    var frec=p.frecuencia||"mensual";
+    var fechas=cronogramaCuotas(ini,n,frec,p.diasExtra,p.diaPago,p.fechaVence);
+    if(!fechas||!fechas.length) return;
+    var intPorCuota=interes/n;
+    var devengado=0;
+    fechas.forEach(function(f){
+      var mk=f.getFullYear()+"-"+String(f.getMonth()+1).padStart(2,"0");
+      if(mk===mesKey) devengado+=intPorCuota;
+    });
+    if(devengado>0){
+      tot+=devengado;
+      det.push({cliente:p.cliente||"", monto:r2(devengado), moneda:p.moneda||"USDT"});
+    }
+  });
+  return {total:r2(tot), detalle:det};
+}
+
 function _asientosDelMes(mesKey){
   var A=[], ctas={};
   (S.cuentas||[]).forEach(function(c){ctas[c.id]=c;});
