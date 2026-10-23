@@ -3269,7 +3269,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261023_v262";
+var APP_VERSION = "20261023_v263";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -24096,6 +24096,235 @@ function exportarReporteContadorCSV(mesKey, idioma){
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+
+// \u2500\u2500\u2500 ARREGLO 181 \u00B7 texto bonito y PDF para el contador \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// Sus palabras: "Ese formato no se puede abrir en tel\u00E9fono" (sobre el
+// CSV). Un .csv en Android abre como texto feo y el contador que lo
+// recibe por WhatsApp lo ve mal. Dos salidas nuevas, pensadas para el
+// movil, con la lista del ARREGLO 180:
+//
+//   \uD83D\uDCE4 Compartir \u2014 abre WhatsApp/Email con el texto formateado dentro
+//      del mensaje. El contador lo lee en el chat, sin bajar archivo.
+//   \uD83D\uDCC4 PDF \u2014 un papel A4 con el reporte. Se mira en el visor del
+//      telefono y se puede imprimir.
+//
+// El CSV queda detras ("M\u00E1s opciones \u25BE") por si algun contador lo
+// quiere para Excel. Mismo _reporteContadorFiltrado alimenta a los
+// tres \u2014 un numero, un sitio.
+function _textoContadorFiltrado(mesKey, idioma){
+  idioma = (idioma==="pt") ? "pt" : "es";
+  var partsK = mesKey.split("-");
+  var es = idioma!=="pt";
+  var _mesesPT = ["","Janeiro","Fevereiro","Mar\u00E7o","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
+  var mesLabel = es
+    ? getMesLabel(partsK[1],partsK[0])
+    : (_mesesPT[parseInt(partsK[1],10)]+" "+partsK[0]);
+  var T = es ? {
+    titulo:"\uD83D\uDCC4 Informe para el contador",
+    empresa:"\uD83C\uDFE2 Empresa", cnpj:"CNPJ",
+    cuentas:"Cuentas",
+    natureza:"\uD83D\uDCC2 Naturaleza del ingreso",
+    cnae:"CNAE principal",
+    servicios:"\uD83D\uDCBC Servicios prestados",
+    receitaBruta:"\uD83D\uDCB0 Receita bruta (lo que entr\u00F3)",
+    ganhoServicios:"\u2728 Ganancia de esos servicios",
+    egresosTit:"\uD83D\uDCC9 Egresos por categor\u00EDa",
+    totalEgresos:"Total egresos",
+    resultado:"\u2705 Resultado del mes",
+    natValor:NATUREZA_RECEITA_ES,
+    cnaeValor:CNAE_PRINCIPAL+" \u2014 "+CNAE_DESCRIPCION_ES,
+    sinCuentas:"\u26A0\uFE0F No hay cuentas marcadas como declarables. Marca al menos una en Configuraci\u00F3n \u2192 cuentas (bot\u00F3n \uD83E\uDDFE)."
+  } : {
+    titulo:"\uD83D\uDCC4 Relat\u00F3rio para o contador",
+    empresa:"\uD83C\uDFE2 Empresa", cnpj:"CNPJ",
+    cuentas:"Contas",
+    natureza:"\uD83D\uDCC2 Natureza da receita",
+    cnae:"CNAE principal",
+    servicios:"\uD83D\uDCBC Servi\u00E7os prestados",
+    receitaBruta:"\uD83D\uDCB0 Receita bruta (o que entrou)",
+    ganhoServicios:"\u2728 Ganho desses servi\u00E7os",
+    egresosTit:"\uD83D\uDCC9 Despesas por categoria",
+    totalEgresos:"Total despesas",
+    resultado:"\u2705 Resultado do m\u00EAs",
+    natValor:NATUREZA_RECEITA_PT,
+    cnaeValor:CNAE_PRINCIPAL+" \u2014 "+CNAE_DESCRIPCION_PT,
+    sinCuentas:"\u26A0\uFE0F N\u00E3o h\u00E1 contas marcadas como declar\u00E1veis. Marque pelo menos uma em Configura\u00E7\u00E3o \u2192 contas (bot\u00E3o \uD83E\uDDFE)."
+  };
+
+  function fmtBRL(v){ return (parseFloat(v)||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}); }
+
+  var cuentasDecl = _cuentasDeclarablesPGDAS();
+  var L = [];
+  L.push(T.titulo);
+  L.push(mesLabel);
+  L.push("");
+  L.push(T.empresa+": "+EMPRESA_RAZON);
+  L.push(T.cnpj+": "+EMPRESA_CNPJ);
+  L.push(T.natureza+":");
+  L.push("  "+T.natValor);
+  L.push(T.cnae+": "+T.cnaeValor);
+  L.push(T.cuentas+": "+(cuentasDecl.length ? cuentasDecl.map(function(c){return c.nombre;}).join(" / ") : "\u2014"));
+  L.push("");
+
+  if(!cuentasDecl.length){
+    L.push(T.sinCuentas);
+    return L.join("\n");
+  }
+
+  var cuentasIdsDecl = {}; cuentasDecl.forEach(function(c){ cuentasIdsDecl[c.id]=true; });
+  var totalEntradas = 0;
+  [].concat(S.brl||[], S.vzla||[], S.eeuu||[]).forEach(function(r){
+    if(_mesDeFecha(r.d)!==mesKey) return;
+    if(r.orig!=="BRL") return;
+    if(!cuentasIdsDecl[r.cuentaBanco]) return;
+    totalEntradas += (parseFloat(r.am)||0);
+  });
+
+  var ing = _ingresoDeclarablePGDAS(mesKey);
+  var nServicios = ing.nRemesasBR + ing.nRemesasVZ + ing.nRemesasEE;
+  var ganhoServicios = ing.total;
+
+  var porCat = {};
+  var totalEgresos = 0;
+  (S.egresos||[]).forEach(function(e){
+    if(e.pagada===false) return;
+    if(!cuentasIdsDecl[e.cuentaId]) return;
+    var fe = e.fp || e.fecha || e.d;
+    if(_mesDeFecha(fe)!==mesKey) return;
+    var m = parseFloat(e.monto)||0;
+    if(m===0) return;
+    var cat = (e.cat||"OTROS").toString();
+    porCat[cat] = (porCat[cat]||0) + m;
+    totalEgresos += m;
+  });
+
+  L.push(T.servicios+": "+nServicios);
+  L.push(T.receitaBruta+": "+fmtBRL(totalEntradas));
+  L.push(T.ganhoServicios+": "+fmtBRL(ganhoServicios));
+  L.push("");
+  L.push(T.egresosTit+":");
+  var cats = Object.keys(porCat).sort(function(a,b){return porCat[b]-porCat[a];});
+  if(cats.length){
+    cats.forEach(function(cat){ L.push("  \u2022 "+cat+": "+fmtBRL(porCat[cat])); });
+    L.push("  "+T.totalEgresos+": "+fmtBRL(totalEgresos));
+  } else {
+    L.push("  \u2014");
+  }
+  L.push("");
+  L.push(T.resultado+": "+fmtBRL(ganhoServicios - totalEgresos));
+
+  return L.join("\n");
+}
+
+// \uD83D\uDCE4 Compartir el reporte como TEXTO. En movil abre la hoja de
+// compartir (WhatsApp, email\u2026) con el texto dentro. En desktop sin
+// navigator.share, cae a copiar al portapapeles y avisa.
+function compartirReporteContador(mesKey, idioma){
+  idioma = (idioma==="pt") ? "pt" : "es";
+  var texto = _textoContadorFiltrado(mesKey, idioma);
+  var titulo = idioma==="pt" ? "Relat\u00F3rio para o contador" : "Informe para el contador";
+  // Si hay share nativo, usarlo (es lo que resuelve el problema del
+  // telefono \u2014 WhatsApp y Email aparecen en la hoja).
+  if(navigator && navigator.share){
+    navigator.share({title:titulo, text:texto})
+      .catch(function(err){
+        // AbortError = ella cancelo a proposito. No es un fallo.
+        if(err && err.name==="AbortError") return;
+        _copiarAlPortapapeles(texto, idioma==="pt"
+          ? "\uD83D\uDCCB Texto copiado \u2014 pegue no WhatsApp ou email"
+          : "\uD83D\uDCCB Texto copiado \u2014 p\u00E9galo en WhatsApp o email");
+      });
+    return;
+  }
+  _copiarAlPortapapeles(texto, idioma==="pt"
+    ? "\uD83D\uDCCB Texto copiado \u2014 pegue no WhatsApp ou email"
+    : "\uD83D\uDCCB Texto copiado \u2014 p\u00E9galo en WhatsApp o email");
+}
+
+function _copiarAlPortapapeles(texto, aviso){
+  function luegoDe(ok){
+    alert(ok ? aviso : (texto));
+  }
+  try{
+    if(navigator && navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(texto).then(function(){luegoDe(true);}, function(){luegoDe(false);});
+      return;
+    }
+  }catch(e){}
+  // Fallback con textarea.
+  try{
+    var ta = document.createElement("textarea");
+    ta.value = texto; ta.style.position="fixed"; ta.style.opacity="0";
+    document.body.appendChild(ta); ta.select();
+    var ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    luegoDe(ok);
+  }catch(e){ luegoDe(false); }
+}
+
+// \uD83D\uDCC4 PDF A4 con el reporte. Usa html2pdf igual que el informe del
+// cierre. Un papel que se abre en el movil y se puede imprimir o
+// mandar como adjunto.
+function descargarPDFContador(mesKey, idioma){
+  idioma = (idioma==="pt") ? "pt" : "es";
+  var texto = _textoContadorFiltrado(mesKey, idioma);
+  var titulo = idioma==="pt" ? "Relat\u00F3rio para o contador" : "Informe para el contador";
+  // Hoja HTML temporal: colores fijos (como el flyer, ARREGLO 85) para
+  // que lo que sale fuera no dependa del tema del aparato.
+  var cont = document.createElement("div");
+  cont.id = "pdfContadorTemp";
+  cont.style.cssText = "position:fixed;left:-9999px;top:0;width:768px;background:#fff;color:#1a3558;padding:40px;font-family:system-ui,-apple-system,'Segoe UI',Arial,sans-serif;line-height:1.5";
+  // Primera linea = titulo del archivo (icono + "Informe para\u2026"), se
+  // ense\u00F1a grande; el resto como <pre> con fuente proporcional ancha.
+  var lineas = texto.split("\n");
+  var html = "<div style='font-size:22px;font-weight:800;margin-bottom:4px;color:#0f6e3a'>"+_escAud(lineas[0])+"</div>";
+  html += "<div style='font-size:14px;color:#9aa3b5;margin-bottom:18px'>"+_escAud(lineas[1]||"")+"</div>";
+  html += "<pre style='font-size:13px;line-height:1.6;white-space:pre-wrap;margin:0;font-family:inherit'>"+_escAud(lineas.slice(2).join("\n"))+"</pre>";
+  cont.innerHTML = html;
+  document.body.appendChild(cont);
+
+  _cargarHtml2PdfSiHaceFalta(function(){
+    var opciones = {
+      margin:[8,8,8,8],
+      filename:"contador_"+idioma+"_"+mesKey+".pdf",
+      image:{type:"png"},
+      html2canvas:{scale:2, useCORS:true, backgroundColor:"#ffffff", windowWidth:768},
+      jsPDF:{unit:"mm", format:"a4", orientation:"portrait"}
+    };
+    html2pdf().set(opciones).from(cont).toPdf().output("blob").then(function(blob){
+      document.body.removeChild(cont);
+      var archivo = new File([blob], opciones.filename, {type:"application/pdf"});
+      if(navigator.canShare && navigator.canShare({files:[archivo]})){
+        navigator.share({files:[archivo], title:titulo})
+          .catch(function(err){
+            if(err && err.name==="AbortError") return;
+            _descargarBlob(blob, opciones.filename);
+          });
+      } else {
+        _descargarBlob(blob, opciones.filename);
+      }
+    }).catch(function(e){
+      if(cont.parentNode) document.body.removeChild(cont);
+      alert("No se pudo generar el PDF: "+(e&&e.message?e.message:e));
+    });
+  });
+}
+
+function _descargarBlob(blob, nombre){
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a"); a.href=url; a.download=nombre;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){URL.revokeObjectURL(url);}, 2000);
+}
+
+function _cargarHtml2PdfSiHaceFalta(cb){
+  if(typeof html2pdf!=="undefined"){ cb(); return; }
+  var s=document.createElement("script");
+  s.src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
+  s.onload=cb;
+  s.onerror=function(){ alert("No se pudo cargar la librer\u00EDa del PDF."); };
+  document.head.appendChild(s);
+}
 // ── ARREGLO 90 ─ LA GEOMETRIA DE LA HOJA, EN UN SOLO SITIO ────────────────
 // La hoja mide 768 px (ARREGLO 83) y en el PDF ocupa 194 x 281 mm, que es un
 // A4 menos 8 mm de margen por lado. De ahi sale cuanto mide una hoja en
@@ -25871,14 +26100,24 @@ function rInformeCierre(){
           "<span style='font-size:19px;font-weight:900;color:"+(rc.resultadoReales>=0?"#4ade80":"#ff9a9a")+"'>"+brl(rc.resultadoReales)+"</span>"+
         "</div>"+
         (rc.sinTasa>0?"<div style='background:#FFF8DC;border:1px solid #F5C518;border-radius:8px;padding:8px 12px;margin-top:10px;font-size:10.5px;color:#7a5c00'>⚠️ "+rc.sinTasa+" operación(es) sin tasa guardada: su ganancia no está convertida a reales.</div>":"")+
-        // ARREGLO 180 · dos botones de descarga, ella elige el idioma.
-        // El CSV filtrado por cuentas declarables (ARREGLO 179): solo lo
-        // de la cuenta juridica, sin salidas, sin detalle operacion por
-        // operacion, con nombres fiscales del CNAE/Anexo III.
-        "<div style='display:flex;gap:8px;margin-top:14px;flex-wrap:wrap'>"+
-          "<button onclick='exportarReporteContadorCSV(\""+mesKey+"\",\"es\")' style='flex:1;min-width:160px;padding:13px;background:#0f6e3a;color:#fff;border:none;border-radius:12px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px rgba(15,110,58,.25)'>⬇️ CSV (español)</button>"+
-          "<button onclick='exportarReporteContadorCSV(\""+mesKey+"\",\"pt\")' style='flex:1;min-width:160px;padding:13px;background:#0f6e3a;color:#fff;border:none;border-radius:12px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px rgba(15,110,58,.25)'>⬇️ CSV (português)</button>"+
+        // ARREGLO 181 · compartir texto y PDF. El CSV abre feo en movil
+        // (lo cazo ella) asi que las dos salidas principales son texto
+        // que se puede pegar directo en WhatsApp y PDF A4 para los que
+        // quieran papel o archivo. El CSV baja a "Mas opciones" por si
+        // algun contador lo quiere para Excel.
+        "<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px'>"+
+          "<button onclick='compartirReporteContador(\""+mesKey+"\",\"es\")' style='padding:12px;background:#0f6e3a;color:#fff;border:none;border-radius:12px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px rgba(15,110,58,.25)'>📤 Compartir (ES)</button>"+
+          "<button onclick='compartirReporteContador(\""+mesKey+"\",\"pt\")' style='padding:12px;background:#0f6e3a;color:#fff;border:none;border-radius:12px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px rgba(15,110,58,.25)'>📤 Compartilhar (PT)</button>"+
+          "<button onclick='descargarPDFContador(\""+mesKey+"\",\"es\")' style='padding:12px;background:#1a3558;color:#fff;border:none;border-radius:12px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px rgba(26,53,88,.25)'>📄 PDF (ES)</button>"+
+          "<button onclick='descargarPDFContador(\""+mesKey+"\",\"pt\")' style='padding:12px;background:#1a3558;color:#fff;border:none;border-radius:12px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px rgba(26,53,88,.25)'>📄 PDF (PT)</button>"+
         "</div>"+
+        "<details style='margin-top:10px'>"+
+          "<summary style='cursor:pointer;font-size:11.5px;color:#6a7489;padding:6px 0'>⋯ Más opciones (CSV para Excel)</summary>"+
+          "<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px'>"+
+            "<button onclick='exportarReporteContadorCSV(\""+mesKey+"\",\"es\")' style='padding:10px;background:#eef3ff;color:#1a3558;border:1px solid #d1dcf0;border-radius:10px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit'>CSV (ES)</button>"+
+            "<button onclick='exportarReporteContadorCSV(\""+mesKey+"\",\"pt\")' style='padding:10px;background:#eef3ff;color:#1a3558;border:1px solid #d1dcf0;border-radius:10px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit'>CSV (PT)</button>"+
+          "</div>"+
+        "</details>"+
       "</div>";
     })()+
     // ARREGLO 59: este pie repetia el "lucro liquido" de la tasa unica, que ya

@@ -4205,7 +4205,8 @@ console.log("\nArreglo 64 · entrar con huella");
 {
   const bloques = [];
   const est = /style=(['"])([\s\S]*?)\1/g;
-  const prot = ["generarInformePDF", "rInformeCierre"].map(function(f){
+  // ARREGLO 181 · descargarPDFContador tambien es un papel que sale fuera.
+  const prot = ["generarInformePDF", "rInformeCierre", "descargarPDFContador"].map(function(f){
     const i = HTML.indexOf("function " + f + "(");
     const j = i < 0 ? -1 : HTML.indexOf("\n}\n", i);
     return i < 0 ? null : [i, j > 0 ? j + 3 : HTML.length];
@@ -12764,6 +12765,53 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
   //    (lista editable) con botón de toggle.
   ok((HS.match(/🧾 PGDAS/g)||[]).length>=4,
      "insignia 🧾 PGDAS presente en al menos 4 sitios (Balance, Config, 2 del informe)");
+}
+
+// ARREGLO 181 · texto bonito y PDF para el contador en el movil.
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const HS = sinC(HTML);
+  // 1. Las tres salidas (texto, PDF, CSV) salen del MISMO sitio
+  //    (_textoContadorFiltrado / _reporteContadorFiltrado) para que un
+  //    cambio en una no desalinee a las otras.
+  const txt = sinC(sacarFuncion("_textoContadorFiltrado"));
+  ok(/_cuentasDeclarablesPGDAS\(\)/.test(txt),
+     "_textoContadorFiltrado lee cuentas declarables (ARREGLO 179)");
+  ok(/_ingresoDeclarablePGDAS\(mesKey\)/.test(txt),
+     "y la ganancia sale de _ingresoDeclarablePGDAS (misma que PGDAS-D)");
+
+  // 2. Compartir usa navigator.share primero y cae al portapapeles si no
+  //    hay. Es lo que resuelve el fallo del CSV en el movil.
+  const comp = sinC(sacarFuncion("compartirReporteContador"));
+  ok(/navigator\.share/.test(comp), "compartir usa navigator.share");
+  ok(/_copiarAlPortapapeles/.test(comp),
+     "y cae al portapapeles si no hay share nativo");
+  ok(/err\.name==="AbortError"/.test(comp),
+     "AbortError (ella cancela) NO es un fallo");
+
+  // 3. PDF: usa html2pdf, A4, y comparte el blob si el navegador deja.
+  const pdf = sinC(sacarFuncion("descargarPDFContador"));
+  ok(/html2pdf\(\)/.test(pdf), "PDF usa html2pdf");
+  ok(/format:"a4"/.test(pdf), "formato A4");
+  ok(/navigator\.canShare/.test(pdf),
+     "y comparte el blob del PDF cuando el movil lo permite");
+  ok(/_descargarBlob/.test(pdf),
+     "si no, cae a descarga");
+
+  // 4. Botones en la pestana contador: 2 compartir + 2 PDF + 2 CSV
+  //    (en Más opciones). Idiomas ES y PT en todos.
+  ok(/compartirReporteContador\([^)]*,\s*\\?"es\\?"\)/.test(HS),
+     "boton compartir ES");
+  ok(/compartirReporteContador\([^)]*,\s*\\?"pt\\?"\)/.test(HS),
+     "boton compartir PT");
+  ok(/descargarPDFContador\([^)]*,\s*\\?"es\\?"\)/.test(HS),
+     "boton PDF ES");
+  ok(/descargarPDFContador\([^)]*,\s*\\?"pt\\?"\)/.test(HS),
+     "boton PDF PT");
+
+  // 5. El CSV baja a <details> para no sobrecargar la pantalla.
+  ok(/<details[\s\S]{0,300}exportarReporteContadorCSV/.test(HS),
+     "los CSV estan dentro de un <details> (Mas opciones)");
 }
 
 // ARREGLO 180 · CSV del contador filtrado y en dos idiomas.
