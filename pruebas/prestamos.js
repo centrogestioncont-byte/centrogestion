@@ -12681,16 +12681,55 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
   ok(/ro<=am/.test(gum), "y el rojo tiene que ser mayor que el amarillo");
 
   // 4. El aviso va arriba del panel, no dentro del scroll (ARREGLO 62).
-  //    Y despues del de mes sin cerrar, antes del de tasa fija.
+  //    Despues del de mes sin cerrar (y del 178 que entro en medio).
   const rapp = HS;
-  ok(/_htmlAvisoMesSinCerrar\(\)\+\s*\n?\s*_htmlAvisoRBT12\(\)\+/.test(rapp),
-     "va en rApp arriba del panel, pegado al de mes sin cerrar");
+  ok(/_htmlAvisoRBT12\(\)/.test(rapp) && /_htmlAvisoTasaFijo/.test(rapp),
+     "_htmlAvisoRBT12 va enchufado en rApp antes del de tasa fija");
 
   // 5. La proyeccion usa la MEDIANA de los 3 meses anteriores, no la media
   //    (ARREGLO 139 — un mes raro grande no adelanta el cruce).
   const proy = sinC(sacarFuncion("_proyMesCruceRBT12"));
   ok(/vals\.sort/.test(proy) && /vals\[1\]/.test(proy),
      "la proyeccion toma la mediana de los 3 meses anteriores");
+}
+
+// ARREGLO 178 · aviso de PGDAS atrasado arriba del panel.
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const HS = sinC(HTML);
+  // 1. Lee de _estadoPGDAS, no reinventa el calendario. Un segundo criterio
+  //    aqui se separaria del semaforo de dentro de la pestana (ARREGLO
+  //    101/119/150/153/177 por 6ta vez).
+  const atr = sinC(sacarFuncion("_mesesPGDASAtrasados"));
+  ok(/_estadoPGDAS\(mk\)/.test(atr) && /"atrasada"/.test(atr),
+     "_mesesPGDASAtrasados lee _estadoPGDAS, no mira el calendario aparte");
+  // 2. Mas viejo primero: lleva mas multa acumulada y es el que hay que
+  //    presentar antes.
+  ok(/out\.sort\(\)/.test(atr), "y los ordena del mas viejo al mas nuevo");
+  // 3. Tope de 24 meses hacia atras — mas alla no se declara por el portal
+  //    normal, dejar el aviso para siempre seria ruido permanente (ARREGLO 99).
+  ok(/i<=24/.test(atr), "con tope de 24 meses hacia atras");
+  // 3b. Y solo meses CON receita > 0. Avisar sem movimento de meses en los
+  //     que la app ni existia es ruido: en el smoke sin filtro salian 24
+  //     avisos hasta Oct/2024.
+  ok(/_ingresoDeclarablePGDAS\(mk\)\.total<=0/.test(atr),
+     "y solo los meses con receita > 0 (sin esto hay 24 avisos falsos)");
+
+  // 4. El aviso sale solo cuando hay alguno. Vacio devuelve "".
+  const avp = sinC(sacarFuncion("_htmlAvisoPGDASAtrasado"));
+  ok(/if\(!atr\.length\)\s*return\s*""/.test(avp),
+     "sin atrasadas el aviso devuelve '' y no gasta espacio");
+  // 5. El boton selecciona el mes atrasado Y la seccion pgdas (ARREGLO 91:
+  //    un aviso que apunta a un sitio no puede dejarte en otro).
+  ok(/S\._cMes=.{0,3}\+\s*masViejo/.test(avp),
+     "el boton SELECCIONA el mes atrasado");
+  ok(/S\._cSec=.{0,3}pgdas/.test(avp),
+     "y la seccion PGDAS-D");
+
+  // 6. Va en rApp arriba del panel, pegado al de mes sin cerrar y antes
+  //    del de RBT12. Fuera del scroll (ARREGLO 62).
+  ok(/_htmlAvisoMesSinCerrar\(\)\+\s*\n?\s*_htmlAvisoPGDASAtrasado\(\)\+\s*\n?\s*_htmlAvisoRBT12\(\)\+/.test(HS),
+     "va en rApp arriba del panel entre mes sin cerrar y RBT12");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
