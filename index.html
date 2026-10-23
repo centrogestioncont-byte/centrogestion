@@ -3269,7 +3269,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261023_v259";
+var APP_VERSION = "20261023_v260";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -23326,6 +23326,7 @@ function rMain(){
     _htmlAvisoAperturaFuera()+  // ARREGLO 94
     _htmlAvisoSaldoNegativo()+  // ARREGLO 95
     _htmlAvisoMesSinCerrar()+   // ARREGLO 89
+    _htmlAvisoPGDASAtrasado()+  // ARREGLO 178
     _htmlAvisoRBT12()+          // ARREGLO 177
     _htmlAvisoTasaFijo()+       // ARREGLO 112
     "<div class='navbar3'>"+
@@ -36136,6 +36137,65 @@ function _estadoPGDAS(mesKey){
   var p=mesKey.split("-"), y=parseInt(p[0]), m=parseInt(p[1]);
   var lim=new Date(y, m, 20, 23, 59, 59);  // mes siguiente, dia 20
   return hoy>lim ? "atrasada" : "al_dia";
+}
+
+// ─── ARREGLO 178 · aviso arriba del panel para competencias atrasadas ──
+// El semaforo de dentro de PGDAS-D ya decia "atrasada" desde el 175, pero
+// solo si ella abria esa pestaña. Pasar el 20 sin saberlo es dejarla con
+// multa (R$ 50 minimo + 0,33%/dia). Esto saca el aviso al mismo sitio
+// donde ya viven los de mes sin cerrar y RBT12 (arriba del panel, fuera
+// del scroll, ARREGLO 62).
+//
+// Dos cosas que no son obvias:
+//   1 · Un mes SIN movimiento tambien hay que declarar (sem movimento).
+//       El estado "atrasada" ya lo cubre: _estadoPGDAS no mira la receita,
+//       mira el calendario y si no esta en pgdasHistorial.
+//   2 · Si hay varios atrasados, se señala el MAS VIEJO primero — es el
+//       que lleva mas multa acumulada y el primero que hay que presentar.
+function _mesesPGDASAtrasados(){
+  var out=[];
+  var hoy=new Date();
+  var y=hoy.getFullYear(), m=hoy.getMonth()+1;
+  // Hasta 24 meses hacia atras. Mas alla ya no se puede declarar en el
+  // portal normal (hay que ir a procedimiento especial) y seguir
+  // enseñandolo seria ruido permanente.
+  // Y SOLO los meses con receita > 0 — avisar sem movimento de meses
+  // en que la app ni existia es ruido (ARREGLO 99). Tecnicamente un
+  // CNPJ en Simples debe declarar sem movimento cada mes, pero la app
+  // no sabe desde que mes esta operando: lo decide la primera operacion
+  // Brasil que ella haya registrado. Las sem movimento viejas las
+  // declara ella desde dentro de PGDAS-D del mes.
+  for(var i=1;i<=24;i++){
+    var mm=m-i, yy=y;
+    while(mm<=0){ mm+=12; yy--; }
+    var mk=yy+"-"+String(mm).padStart(2,"0");
+    if(_estadoPGDAS(mk)!=="atrasada") continue;
+    if(_ingresoDeclarablePGDAS(mk).total<=0) continue;
+    out.push(mk);
+  }
+  // Mas viejo primero.
+  out.sort();
+  return out;
+}
+
+function _htmlAvisoPGDASAtrasado(){
+  var atr=_mesesPGDASAtrasados();
+  if(!atr.length) return "";
+  var masViejo=atr[0];
+  var p=masViejo.split("-");
+  var etq=getMesLabel(p[1],p[0]);
+  var cuenta=atr.length>1 ? " (y "+(atr.length-1)+" más)" : "";
+  var pLim=masViejo.split("-"), yL=parseInt(pLim[0]), mL=parseInt(pLim[1]);
+  var limDate=new Date(yL, mL, 20);
+  var limStr=String(limDate.getDate()).padStart(2,"0")+"/"+String(limDate.getMonth()+1).padStart(2,"0")+"/"+limDate.getFullYear();
+  return "<div style='background:var(--neg);color:var(--sobre-color);padding:10px 14px;"+
+    "display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-bottom:2px solid var(--sup3)'>"+
+    "<div style='flex:1;min-width:200px;font-size:12.5px;line-height:1.5'>"+
+      "<b>🔴 PGDAS-D de "+etq+" atrasada"+cuenta+".</b> Venció el "+limStr+". Preséntala en el portal y márcala como declarada aquí."+
+    "</div>"+
+    "<button onclick='S._cMes=\""+masViejo+"\";S._cSec=\"pgdas\";st(\"cierre\")' style='background:var(--sobre-color);color:var(--tit);border:none;"+
+      "padding:7px 13px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer'>Ir a "+etq+"</button>"+
+  "</div>";
 }
 
 // Copy to clipboard con feedback visual. navigator.clipboard puede fallar
