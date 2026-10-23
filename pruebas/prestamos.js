@@ -12693,6 +12693,79 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
      "la proyeccion toma la mediana de los 3 meses anteriores");
 }
 
+// ARREGLO 179 · cuentas declarables en PGDAS-D.
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const HS = sinC(HTML);
+
+  // 1. La regla de "quien declara" vive en UN sitio. Dos criterios aqui se
+  //    separarian — es el fallo de los ARREGLOS 101, 119, 150, 153, 177, 178
+  //    por septima vez.
+  const dec = sinC(sacarFuncion("_cuentaDeclara"));
+  ok(/c\.moneda==="BRL"/.test(dec), "_cuentaDeclara exige moneda BRL");
+  ok(/!c\.esPersonal/.test(dec),    "y no personal");
+  ok(/c\.declaraPGDAS===true/.test(dec), "y declaraPGDAS === true (no truthy — una cadena vacia pasaria truthy false pero una no vacia pasaria)");
+
+  // 2. _ingresoDeclarablePGDAS lee la marca por cuenta en los TRES origenes.
+  const ing = sinC(sacarFuncion("_ingresoDeclarablePGDAS"));
+  // Remesas: cuentaBRL deriva de cuentaBanco (orig=BRL) o cuentaDest
+  // (dest=BRL). Sin esto una remesa BR→VZ que entre a NUBANK personal
+  // contaria igual, por el solo hecho de ser BRL en origen.
+  ok(/x\.orig==="BRL"\s*\?\s*x\.cuentaBanco/.test(ing),
+     "en remesas la cuenta BRL se saca del movimiento (cuentaBanco si orig=BRL)");
+  ok(/x\.dest==="BRL"\s*\?\s*x\.cuentaDest/.test(ing),
+     "y cuentaDest si dest=BRL");
+  ok(/if\(!declara\(cuentaBRL\)\)/.test(ing),
+     "la decision de sumar pasa por declara(cuentaBRL)");
+  // Mercancia y ganExtra tambien filtran por la cuenta declarable.
+  ok((ing.match(/if\(!declara\(/g)||[]).length>=3,
+     "declara() filtra en los tres origenes (remesas, mercancia, ganExtra)");
+
+  // 3. Las excluidas se contabilizan APARTE, con nombre, para enseñarse en
+  //    el desglose. Esto convierte un dato que faltaba (que se dejo fuera)
+  //    en un dato que se dice.
+  ok(/sumExcluido/.test(ing), "lo que queda fuera se agrupa en excluidas");
+  ok(/r\.excluidas/.test(ing) && /r\.excluidas\.cuentas/.test(ing),
+     "y se devuelve con desglose por cuenta");
+
+  // 4. Migracion. Idempotente: una vez marcada una, no vuelve a actuar.
+  //    Y SOLO si existe exactamente una PAGBANK CNPJ no personal. Varias
+  //    o ninguna → no toca nada (marcar al azar seria peor).
+  const mig = sinC(sacarFuncion("_migrarCuentasPGDAS"));
+  ok(/yaMarcada/.test(mig) && /c\.declaraPGDAS===true/.test(mig),
+     "la migracion se salta si ya hay una marcada (idempotente)");
+  ok(/toUpperCase\(\)\.indexOf\("PAGBANK"\)>=0/.test(mig),
+     "busca por nombre que contenga PAGBANK (y en mayusculas)");
+  ok(/c\.esJuridica===true/.test(mig),
+     "y exige esJuridica (una PAGBANK personal futura no entra)");
+  ok(/pagbanks\.length!==1/.test(mig),
+     "si no hay exactamente una, no se toca nada");
+
+  // 5. R() la llama al primer dibujado con datos. Con un flag en la propia
+  //    funcion para que no corra mas que una vez por sesion.
+  const rApp = sinC(sacarFuncion("R"));
+  ok(/R\._pgdasMigrado/.test(rApp),
+     "R() tiene flag para no reintentar la migracion en cada dibujo");
+  ok(/_migrarCuentasPGDAS\(\)/.test(rApp),
+     "y la llama");
+
+  // 6. saveNewCuenta y el toggle respetan la regla BRL+no personal.
+  const sv = sinC(sacarFuncion("saveNewCuenta"));
+  ok(/puedeDeclarar/.test(sv) && /f\.moneda==="BRL"/.test(sv) && /!f\.esPersonal/.test(sv),
+     "saveNewCuenta solo guarda declaraPGDAS=true si la cuenta es elegible");
+  const tg = sinC(sacarFuncion("toggleCuentaPGDAS"));
+  ok(/c\.moneda!=="BRL"/.test(tg) && /c\.esPersonal/.test(tg),
+     "toggleCuentaPGDAS desmarca si deja de ser elegible");
+  ok(/c\._mod=Date\.now/.test(tg),
+     "y marca _mod para que la sincronizacion lo vea (ARREGLO 137 por su familia)");
+
+  // 7. La insignia aparece en Balance (rBalancePlus) y en el informe de
+  //    Cierre (dos sitios: cuentas BRL y flujo de caja). Y en Configuracion
+  //    (lista editable) con botón de toggle.
+  ok((HS.match(/🧾 PGDAS/g)||[]).length>=4,
+     "insignia 🧾 PGDAS presente en al menos 4 sitios (Balance, Config, 2 del informe)");
+}
+
 // ARREGLO 178 · aviso de PGDAS atrasado arriba del panel.
 {
   const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
