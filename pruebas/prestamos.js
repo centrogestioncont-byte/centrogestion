@@ -12766,6 +12766,64 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
      "insignia 🧾 PGDAS presente en al menos 4 sitios (Balance, Config, 2 del informe)");
 }
 
+// ARREGLO 180 · CSV del contador filtrado y en dos idiomas.
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const HS = sinC(HTML);
+  const rep = sinC(sacarFuncion("_reporteContadorFiltrado"));
+
+  // 1. Lee las cuentas DECLARABLES (ARREGLO 179), no todas las BRL.
+  ok(/_cuentasDeclarablesPGDAS\(\)/.test(rep),
+     "lee las cuentas declarables, no todas las BRL");
+
+  // 2. Receita bruta = solo lo que ENTRO en reales a cuenta declarable
+  //    (orig=BRL + cuentaBanco en declarables). Sin esto se contarian
+  //    las vueltas VZ→BR, que son SALIDAS de la cuenta en reales.
+  ok(/r\.orig!=="BRL"/.test(rep),
+     "receita bruta: solo remesas con orig=BRL");
+  ok(/cuentasIdsDecl\[r\.cuentaBanco\]/.test(rep),
+     "y entrando a una cuenta declarable");
+
+  // 3. Ganho dos servicos lee de _ingresoDeclarablePGDAS, no recalcula.
+  //    Calculado aparte se separaria de la pestana 🧾 PGDAS-D.
+  ok(/_ingresoDeclarablePGDAS\(mesKey\)/.test(rep),
+     "ganho dos servicios sale de _ingresoDeclarablePGDAS (misma cifra que PGDAS-D)");
+
+  // 4. Egresos: solo los pagados desde cuenta declarable, agrupados.
+  ok(/cuentasIdsDecl\[e\.cuentaId\]/.test(rep),
+     "egresos filtra por cuenta declarable");
+  ok(/porCat\[cat\]/.test(rep),
+     "y agrupa por categoria (sin detalle operacion por operacion)");
+
+  // 5. Dos idiomas, textos en el objeto T segun idioma.
+  ok(/idioma!=="pt"/.test(rep),
+     "idioma es 'pt' o lo que sea distinto (es por omision)");
+  ok(/Receita bruta/.test(rep) && /Natureza da receita/.test(rep),
+     "textos PT (Natureza da receita)");
+  ok(/Naturaleza del ingreso/.test(rep),
+     "y textos ES (Naturaleza del ingreso)");
+  ok(/CNAE_PRINCIPAL/.test(rep) && /Anexo III/.test(HS),
+     "CNAE principal (en la funcion) y Anexo III (en las constantes NATUREZA_RECEITA)");
+
+  // 6. NO lleva detalle operacion por operacion (ella: "sin operacion,
+  //    puedes decir tantos servicios"). Esto se mide pidiendo que la
+  //    funcion NO itere para escribir una linea por cada remesa:
+  //    .forEach existe (lo usa para SUMAR), pero no debe empujar al
+  //    array `lineas` dentro de un .forEach de remesas.
+  const detalleRemesa = /lineas\.push\([^)]*\)\s*;?\s*}\)\s*;.*(S\.brl|S\.vzla|S\.eeuu)/s.test(rep);
+  ok(!detalleRemesa, "no escribe una linea por remesa (sin detalle)");
+
+  // 7. Dos botones en la pestana contador, ES y PT.
+  ok(/exportarReporteContadorCSV\([^)]*,\s*\\?"es\\?"\)/.test(HS),
+     "boton ES en la pestana contador");
+  ok(/exportarReporteContadorCSV\([^)]*,\s*\\?"pt\\?"\)/.test(HS),
+     "boton PT en la pestana contador");
+
+  // 8. Sin cuentas declarables → el CSV lo dice y no inventa un numero.
+  ok(/sinCuentas/.test(rep) && /return lineas\.join/.test(rep),
+     "sin cuentas declarables: devuelve el aviso y sale (no suma)");
+}
+
 // ARREGLO 178 · aviso de PGDAS atrasado arriba del panel.
 {
   const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
