@@ -3269,7 +3269,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261023_v261";
+var APP_VERSION = "20261023_v262";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -23945,20 +23945,154 @@ function delGanExtra(id){
 
 // Exporta el reporte del contador (3 líneas, en reales) a un CSV simple,
 // listo para enviar por correo o WhatsApp.
-function exportarReporteContadorCSV(mesKey){
-  var rep=S._reporteContadorActual;
-  if(!rep){alert("Abre primero la pestaña 'Contador' en Cierre Mensual para generar el reporte.");return;}
+// ─── ARREGLO 180 · CSV del contador, filtrado y en dos idiomas ──────
+// Sus palabras: "el contador solo necesita saber la cantidad que entro
+// y salio de la cuenta juridica, gasto de empresa y la ganancia que me
+// dejo cada operacion... sin operacion, puedes decir tantos servicios
+// pero no des detalle de operaciones... quita lo que salio, solo lo que
+// entro y la ganancia de esos ejercicios con un nombre que coincida con
+// mis codigos del CNPJ... en español y portugues, yo elijo en que idioma".
+//
+// El CSV viejo (que llamaba a S._reporteContadorActual) metia TODAS las
+// cuentas BRL (PAGBANK, EFECTIVO, PAGBANK RESERVA, TARJETA) con sus
+// entradas Y salidas, Y flujo neto, Y detalle operacion por operacion.
+// Ella no quiere nada de eso: solo lo declarable (ARREGLO 179), solo
+// entradas y ganancia, servicios como cantidad agregada, egresos por
+// categoria, en el idioma que elija cada vez.
+var CNAE_PRINCIPAL = "63.19-4-00";
+var CNAE_DESCRIPCION_PT = "Portais, provedores de conteúdo e outros serviços de informação na internet";
+var CNAE_DESCRIPCION_ES = "Portales, proveedores de contenido y otros servicios de información en internet";
+var NATUREZA_RECEITA_PT = "Receita de prestação de serviços de qualquer natureza — Anexo III";
+var NATUREZA_RECEITA_ES = "Ingreso por prestación de servicios de cualquier naturaleza — Anexo III";
+
+function _reporteContadorFiltrado(mesKey, idioma){
   var partsK=mesKey.split("-");
-  var mesLabel=getMesLabel(partsK[1],partsK[0]);
-  // ARREGLO 57: el informe salia en portugues ("Relatório Financeiro",
-  // "Saídas", "Fluxo líquido") dentro de una app que esta toda en español.
-  var lineas=["Informe financiero · "+mesLabel];
-  Object.keys(rep).forEach(function(k){ lineas.push(k+";"+rep[k]); });
-  var csv=lineas.join("\n");
+  var es = idioma!=="pt";
+  // getMesLabel solo da el nombre en español. En portugues traducimos.
+  var _mesesPT = ["","Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
+  var mesLabel = es
+    ? getMesLabel(partsK[1],partsK[0])
+    : (_mesesPT[parseInt(partsK[1],10)]+" "+partsK[0]);
+  var T = es ? {
+    titulo:"Informe para el contador",
+    empresa:"Empresa", cnpj:"CNPJ", mes:"Mes",
+    cuentas:"Cuentas incluidas",
+    natureza:"Naturaleza del ingreso",
+    cnae:"CNAE principal",
+    servicios:"Servicios prestados",
+    receitaBruta:"Receita bruta (lo que entró)",
+    ganhoServicios:"Ganancia de esos servicios",
+    egresosTit:"Egresos por categoría",
+    totalEgresos:"Total egresos",
+    resultado:"Resultado del mes",
+    natValor:NATUREZA_RECEITA_ES,
+    cnaeValor:CNAE_PRINCIPAL+" — "+CNAE_DESCRIPCION_ES,
+    sinCuentas:"⚠️ No hay cuentas marcadas como declarables. Marca al menos una en Configuración."
+  } : {
+    titulo:"Relatório para o contador",
+    empresa:"Empresa", cnpj:"CNPJ", mes:"Mês",
+    cuentas:"Contas incluídas",
+    natureza:"Natureza da receita",
+    cnae:"CNAE principal",
+    servicios:"Serviços prestados",
+    receitaBruta:"Receita bruta (o que entrou)",
+    ganhoServicios:"Ganho desses serviços",
+    egresosTit:"Despesas por categoria",
+    totalEgresos:"Total despesas",
+    resultado:"Resultado do mês",
+    natValor:NATUREZA_RECEITA_PT,
+    cnaeValor:CNAE_PRINCIPAL+" — "+CNAE_DESCRIPCION_PT,
+    sinCuentas:"⚠️ Não há contas marcadas como declaráveis. Marque pelo menos uma em Configuração."
+  };
+
+  function fmtBRL(v){ return (parseFloat(v)||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}); }
+
+  var cuentasDecl = _cuentasDeclarablesPGDAS();
+  var lineas = [];
+  lineas.push(T.titulo+" · "+mesLabel);
+  lineas.push("");
+  lineas.push(T.empresa+";"+EMPRESA_RAZON);
+  lineas.push(T.cnpj+";"+EMPRESA_CNPJ);
+  lineas.push(T.mes+";"+mesLabel);
+  lineas.push(T.natureza+";"+T.natValor);
+  lineas.push(T.cnae+";"+T.cnaeValor);
+  lineas.push(T.cuentas+";"+(cuentasDecl.length ? cuentasDecl.map(function(c){return c.nombre;}).join(" / ") : "—"));
+  lineas.push("");
+
+  if(!cuentasDecl.length){
+    lineas.push(T.sinCuentas);
+    return lineas.join("\n");
+  }
+
+  // Receita bruta = lo que ENTRO en reales por servicio a una cuenta
+  // declarable. Es decir: remesa que paga el cliente en BRL (orig=BRL)
+  // a una cuenta marcada. Esto es exactamente la "receita de prestacao
+  // de servicos" fiscal — un ingreso en R$ a la cuenta juridica.
+  //
+  // Lo que SALE de la cuenta (vueltas VZ→BR, entrega de reales) NO es
+  // una entrada, asi que no se cuenta. Y una remesa donde el cliente
+  // paga en VES/USD a VZ pero entrega BR no entra como "receita bruta"
+  // porque el dinero no entro a la cuenta en reales: la ganancia de
+  // esos servicios sigue contandose aparte, abajo, en ing.total.
+  var cuentasIdsDecl = {}; cuentasDecl.forEach(function(c){ cuentasIdsDecl[c.id]=true; });
+  var totalEntradas = 0;
+  [].concat(S.brl||[], S.vzla||[], S.eeuu||[]).forEach(function(r){
+    if(_mesDeFecha(r.d)!==mesKey) return;
+    if(r.orig!=="BRL") return;                 // solo lo que entra EN REALES
+    if(!cuentasIdsDecl[r.cuentaBanco]) return; // y a una cuenta declarable
+    totalEntradas += (parseFloat(r.am)||0);
+  });
+
+  // Ganho dos servicos = margen (pr x tasa) de las operaciones que
+  // pasaron por cuentas declarables (ARREGLO 179).
+  var ing = _ingresoDeclarablePGDAS(mesKey);
+  var nServicios = ing.nRemesasBR + ing.nRemesasVZ + ing.nRemesasEE;
+  var ganhoServicios = ing.total;
+
+  // Egresos: solo los pagados DESDE una cuenta declarable, agrupados
+  // por categoria. Un egreso de otra cuenta de empresa no entra aqui —
+  // no sale de la cuenta juridica, no es para este contador. El campo
+  // de "pagado" en S.egresos es `pagada` (no `pagado`) y la fecha es
+  // `fp` cuando se pagó, `d` cuando se registró; igual que _flujoCuentaMes.
+  var porCat = {};
+  var totalEgresos = 0;
+  (S.egresos||[]).forEach(function(e){
+    if(e.pagada===false) return;
+    if(!cuentasIdsDecl[e.cuentaId]) return;
+    var fe = e.fp || e.fecha || e.d;
+    if(_mesDeFecha(fe)!==mesKey) return;
+    var m = parseFloat(e.monto)||0;
+    if(m===0) return;
+    var cat = (e.cat||"OTROS").toString();
+    porCat[cat] = (porCat[cat]||0) + m;
+    totalEgresos += m;
+  });
+
+  lineas.push(T.servicios+";"+nServicios);
+  lineas.push(T.receitaBruta+";"+fmtBRL(totalEntradas));
+  lineas.push(T.ganhoServicios+";"+fmtBRL(ganhoServicios));
+  lineas.push("");
+  lineas.push(T.egresosTit);
+  Object.keys(porCat).sort(function(a,b){return porCat[b]-porCat[a];}).forEach(function(cat){
+    lineas.push("  "+cat+";"+fmtBRL(porCat[cat]));
+  });
+  lineas.push(T.totalEgresos+";"+fmtBRL(totalEgresos));
+  lineas.push("");
+  // Resultado = ganho - egresos (sobre la ganancia, no sobre las
+  // entradas: "lo que entro" es bruto de operacion e incluye capital
+  // que luego sale como vuelta).
+  lineas.push(T.resultado+";"+fmtBRL(ganhoServicios - totalEgresos));
+
+  return lineas.join("\n");
+}
+
+function exportarReporteContadorCSV(mesKey, idioma){
+  idioma = (idioma==="pt") ? "pt" : "es";
+  var csv = _reporteContadorFiltrado(mesKey, idioma);
   var blob=new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8;"});
   var url=URL.createObjectURL(blob);
   var a=document.createElement("a");
-  a.href=url; a.download="informe_contador_"+mesKey+".csv";
+  a.href=url; a.download="contador_"+idioma+"_"+mesKey+".csv";
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
@@ -25737,7 +25871,14 @@ function rInformeCierre(){
           "<span style='font-size:19px;font-weight:900;color:"+(rc.resultadoReales>=0?"#4ade80":"#ff9a9a")+"'>"+brl(rc.resultadoReales)+"</span>"+
         "</div>"+
         (rc.sinTasa>0?"<div style='background:#FFF8DC;border:1px solid #F5C518;border-radius:8px;padding:8px 12px;margin-top:10px;font-size:10.5px;color:#7a5c00'>⚠️ "+rc.sinTasa+" operación(es) sin tasa guardada: su ganancia no está convertida a reales.</div>":"")+
-        "<button onclick='exportarReporteContadorCSV(\""+mesKey+"\")' style='width:100%;margin-top:14px;padding:13px;background:#0f6e3a;color:#fff;border:none;border-radius:12px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px rgba(15,110,58,.25)'>⬇️ Descargar CSV para el contador</button>"+
+        // ARREGLO 180 · dos botones de descarga, ella elige el idioma.
+        // El CSV filtrado por cuentas declarables (ARREGLO 179): solo lo
+        // de la cuenta juridica, sin salidas, sin detalle operacion por
+        // operacion, con nombres fiscales del CNAE/Anexo III.
+        "<div style='display:flex;gap:8px;margin-top:14px;flex-wrap:wrap'>"+
+          "<button onclick='exportarReporteContadorCSV(\""+mesKey+"\",\"es\")' style='flex:1;min-width:160px;padding:13px;background:#0f6e3a;color:#fff;border:none;border-radius:12px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px rgba(15,110,58,.25)'>⬇️ CSV (español)</button>"+
+          "<button onclick='exportarReporteContadorCSV(\""+mesKey+"\",\"pt\")' style='flex:1;min-width:160px;padding:13px;background:#0f6e3a;color:#fff;border:none;border-radius:12px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px rgba(15,110,58,.25)'>⬇️ CSV (português)</button>"+
+        "</div>"+
       "</div>";
     })()+
     // ARREGLO 59: este pie repetia el "lucro liquido" de la tasa unica, que ya
