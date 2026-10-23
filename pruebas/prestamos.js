@@ -12646,5 +12646,52 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
   ok(!/\.saldo\s*=/.test(db), "y tampoco toca ningun saldo");
 }
 
+// ARREGLO 177 · aviso de RBT12 cerca del tope del 6%.
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const HS = sinC(HTML);
+  // 1. El RBT12 vivo INCLUYE el mes en curso. Si se midiera igual que
+  //    _rbt12PGDAS (que lo excluye a proposito), el aviso saltaria tarde.
+  const rv = sinC(sacarFuncion("_rbt12Vivo"));
+  ok(/for\(var i=0;i<12;i\+\+\)/.test(rv),
+     "_rbt12Vivo recorre los 12 meses incluido el actual (desde i=0)");
+  ok(/_ingresoDeclarablePGDAS\(mk\)\.total/.test(rv),
+     "y mezcla pgdasHistorial con el calculo cuando no esta declarado");
+
+  // 2. Un solo sitio decide el nivel, y el aviso lee de ahi. Calculado
+  //    aparte, el aviso podria decir una cosa y la barra otra.
+  const er = sinC(sacarFuncion("_estadoRBT12"));
+  ok(/_rbt12Vivo\(\)/.test(er), "_estadoRBT12 lee el RBT12 vivo");
+  ok(/_rbt12UmbralAmarillo\(\)/.test(er) && /_rbt12UmbralRojo\(\)/.test(er),
+     "y los dos umbrales (amarillo y rojo)");
+  ok(/RBT12_TOPE_LEGAL\*0\.90/.test(er),
+     "el nivel 'legal' salta al 90% del tope legal de ME (R$ 4,8M)");
+  const av = sinC(sacarFuncion("_htmlAvisoRBT12"));
+  ok(/_estadoRBT12\(\)/.test(av), "el aviso lee _estadoRBT12 (no recalcula)");
+  ok(/if\(e\.nivel==="ok"\)\s*return\s*""/.test(av),
+     "en 'ok' el aviso devuelve '' y no gasta espacio");
+
+  // 3. Umbral vacio = por omision 80%/95% del tope. Un 0 guardado no vale,
+  //    o dejaria el aviso apagado sin decirlo.
+  const gum = sinC(sacarFuncion("guardarUmbralRBT12"));
+  ok(/am<=0\)\s*delete S\.config\.rbt12_amarillo/.test(gum),
+     "amarillo vacio/0 borra la clave");
+  ok(/ro<=0\)\s*delete S\.config\.rbt12_rojo/.test(gum),
+     "rojo vacio/0 borra la clave");
+  ok(/ro<=am/.test(gum), "y el rojo tiene que ser mayor que el amarillo");
+
+  // 4. El aviso va arriba del panel, no dentro del scroll (ARREGLO 62).
+  //    Y despues del de mes sin cerrar, antes del de tasa fija.
+  const rapp = HS;
+  ok(/_htmlAvisoMesSinCerrar\(\)\+\s*\n?\s*_htmlAvisoRBT12\(\)\+/.test(rapp),
+     "va en rApp arriba del panel, pegado al de mes sin cerrar");
+
+  // 5. La proyeccion usa la MEDIANA de los 3 meses anteriores, no la media
+  //    (ARREGLO 139 — un mes raro grande no adelanta el cruce).
+  const proy = sinC(sacarFuncion("_proyMesCruceRBT12"));
+  ok(/vals\.sort/.test(proy) && /vals\[1\]/.test(proy),
+     "la proyeccion toma la mediana de los 3 meses anteriores");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
