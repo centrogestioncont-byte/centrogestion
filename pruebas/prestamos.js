@@ -50,7 +50,7 @@ function sacarConstante(nombre) {
   }
   throw new Error("la constante " + nombre + " no termina en ';'");
 }
-const CONSTANTES = ["_APROX_LS", "_COLCHON_DEF", "_SIN_APROX", "_UMBRAL_BS_DEF", "_SIN_BS", "_UMBRAL_BRL_DEF", "_SIN_BRL", "_RUTA_DE", "CG_BASE", "_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO", "_AVISO_UMBRAL", "_MERCADO_MONTO_DEF", "_VIZ", "_INM_AVISO_DIAS", "_DIAS_NORMAL_BS",
+const CONSTANTES = ["_APROX_LS", "_COLCHON_DEF", "_SIN_APROX", "_UMBRAL_BS_DEF", "_SIN_BS", "_UMBRAL_BRL_DEF", "_SIN_BRL", "_RUTA_DE", "CG_BASE", "_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO", "_AVISO_UMBRAL", "_MERCADO_MONTO_DEF", "_VIZ", "_INM_AVISO_DIAS", "_DIAS_NORMAL_BS", "_TASA_OP_FRESCA_MS",
                     "_BIN_COLS_C2C", "_BIN_COLS_TX", "MONEDAS_COMPRA", "MONEDAS_VENTA",
                     "MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
                     "_MERGE_OBJETOS", "_MERGE_BLOQUES", "_MERGE_HISTORIAL", "_RATE_LIMITS",
@@ -116,6 +116,7 @@ const NECESARIAS = ["_egresosHuerfanos", "moverEgresoAPersonal", "_tasaDelDiaFue
                     "_costoArticulo", "_mercanciaEnMano", "gananciaMercanciaDelMes",
                     "_egresosMercanciaDesde", "_mesDeMercancia",
                     "tasaDeReferencia", "_tasaFijadaAMano", "setTasaDia", "soltarTasaDia",
+                    "_tasaMercadoDe", "_tsDeIsoDia",
                     "_isoDeLote", "_fechaLoteIso", "_num", "_horaLote", "_horaAhora", "_horaDe",
                     "_diasDesdeLote", "_fechaLoteLegible", "getLastTasaVenta",
                     "montoAUsdt", "montoConMoneda", "_unicos",
@@ -12765,6 +12766,43 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
   //    (lista editable) con botón de toggle.
   ok((HS.match(/🧾 PGDAS/g)||[]).length>=4,
      "insignia 🧾 PGDAS presente en al menos 4 sitios (Balance, Config, 2 del informe)");
+}
+
+// ARREGLO 182 · caducidad de 24 h sobre la ultima operacion de USDT.
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const HS = sinC(HTML);
+  const tdr = sinC(sacarFuncion("tasaDeReferencia"));
+
+  // 1. El umbral es 24 horas, no cualquier cosa.
+  ok(/24\s*\*\s*60\s*\*\s*60\s*\*\s*1000/.test(sinC(HTML.match(/_TASA_OP_FRESCA_MS[\s\S]{0,120}/)[0])),
+     "umbral 24 horas por sus palabras ('el mercado es muy volatil')");
+
+  // 2. tasaDeReferencia mide la edad y, si pasa el umbral, pide mercado.
+  ok(/edad\s*>\s*_TASA_OP_FRESCA_MS/.test(tdr),
+     "compara la edad de la operacion con 24 h");
+  ok(/_tasaMercadoDe\(moneda\)/.test(tdr),
+     "pasado el umbral, lee del mercado antes que de la operacion vieja");
+  ok(/origen:"mercado"/.test(tdr),
+     "cuando usa el mercado, lo dice en origen");
+
+  // 3. Si no hay mercado disponible, cae a la vieja CON marca para que la
+  //    pantalla pueda avisar. Nunca "sin tasa" si tenemos algo.
+  ok(/vieja:true/.test(tdr),
+     "sin mercado: la vieja sigue valiendo pero marcada como vieja");
+
+  // 4. Sin operaciones, el mercado tambien se prueba antes de lo escrito a ojo.
+  ok(/_tasaMercadoDe\([\s\S]{0,20}\)\s*;?\s*if\s*\(\s*tMsin\s*>\s*0\s*\)/.test(tdr),
+     "sin operaciones, se prueba el mercado antes de lo escrito a ojo");
+
+  // 5. _tasaMercadoDe lee del cache del servidor en memoria (_MERCADO).
+  const tmd = sinC(sacarFuncion("_tasaMercadoDe"));
+  ok(/_MERCADO\s*&&\s*_MERCADO\.datos/.test(tmd),
+     "_tasaMercadoDe lee del cache _MERCADO.datos (no hace peticion nueva)");
+  ok(/compraBRL/.test(tmd) && /ventaVES/.test(tmd),
+     "mira compraBRL para reales y ventaVES para bolivares");
+  ok(/_RATE_LIMITS\[moneda\]/.test(tmd),
+     "y respeta los limites de rango (una tasa loca del mercado no entra)");
 }
 
 // ARREGLO 181 · texto bonito y PDF para el contador en el movil.

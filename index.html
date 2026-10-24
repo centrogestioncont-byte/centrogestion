@@ -3269,7 +3269,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261023_v263";
+var APP_VERSION = "20261024_v264";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -7623,6 +7623,30 @@ function _tasaFijadaAMano(moneda){
   if(t<=_tsUltimaOpUSDT(moneda)) return null;
   return v;
 }
+// ARREGLO 182 · caducidad de 24 h sobre la ultima operacion de USDT.
+// Sus palabras del 24/10: "cuando pase más de 24 horas una tasa anterior
+// me agarre una tasa referencial del mercado por medio de API, el mercado
+// es muy volátil". Si la operacion ya es vieja (> 24 h), su costo real
+// de HOY probablemente es otro, asi que pedimos al mercado y usamos lo
+// que trae; si no trae, caemos a la operacion vieja con una marca para
+// que la pantalla lo diga.
+var _TASA_OP_FRESCA_MS = 24 * 60 * 60 * 1000;
+
+// Lee la tasa del mercado para una moneda, del cache en memoria del
+// servidor (_MERCADO). No bloquea: si no esta disponible, devuelve 0 y
+// quien llama cae al fallback.
+function _tasaMercadoDe(moneda){
+  var d = (_MERCADO && _MERCADO.datos) || null;
+  if(!d || !d.disponible) return 0;
+  var campo = moneda==="BRL" ? d.compraBRL : moneda==="VES" ? d.ventaVES : null;
+  if(!campo) return 0;
+  var t = parseFloat(campo.tasa);
+  if(!(t>0)) return 0;
+  var lim = _RATE_LIMITS[moneda];
+  if(lim && (t<lim[0] || t>lim[1])) return 0;
+  return t;
+}
+
 function tasaDeReferencia(moneda){
   if(moneda==="USDT") return {tasa:1, origen:"usdt"};
   var fija=_tasaFijadaAMano(moneda);
@@ -7651,18 +7675,52 @@ function tasaDeReferencia(moneda){
   if(u){
     var t=_tasaEfectivaLote(u);
     var lim=_RATE_LIMITS[moneda];
-    if(t>0 && !(lim&&(t<lim[0]||t>lim[1])))
+    var dentro = (t>0 && !(lim&&(t<lim[0]||t>lim[1])));
+    if(dentro){
+      // ARREGLO 182 · caducidad. Si la operacion tiene mas de 24 h, se
+      // intenta primero el mercado. El id del lote es Date.now() (o algo
+      // comparable), asi que la hora exacta sale de ahi. Si no hay id
+      // utilizable, la fecha ISO vale como aproximacion al dia.
+      var horaOp = uId || _tsDeIsoDia(uF);
+      var edad = horaOp ? (Date.now() - horaOp) : 0;
+      if(edad > _TASA_OP_FRESCA_MS){
+        var tM = _tasaMercadoDe(moneda);
+        if(tM > 0){
+          return {tasa:tM, origen:"mercado", meta:{}, edadOp:edad};
+        }
+        // No hay mercado: cae a la vieja con una marca para que la
+        // pantalla pueda decir "estoy usando una operacion vieja".
+        return {tasa:t, origen:"auto", fecha:u.fecha, iso:uF, tipo:u.tipo, meta:{}, vieja:true, edadOp:edad};
+      }
       // Se llama `iso` a proposito, con el nombre largo reservado a los
       // lotes: pruebas/prestamos.js cuenta ese nombre largo una vez por cada
       // sitio que mete un lote, para que no vuelva a colarse uno sin año
       // (ARREGLO 51). Un campo mas con ese nombre, aunque no sea un lote,
       // rompe esa cuenta. Y esto no es un lote: es la tasa que salio de uno.
       return {tasa:t, origen:"auto", fecha:u.fecha, iso:uF, tipo:u.tipo, meta:{}};
+    }
   }
-  // Sin operaciones en esa moneda: lo último que escribió, aunque no lo fijara.
+  // ARREGLO 182 · sin operaciones: tambien se prueba el mercado antes
+  // de caer a lo escrito a ojo. Es el mismo criterio del ARREGLO 128.
+  var tMsin = _tasaMercadoDe(moneda);
+  if(tMsin > 0) return {tasa:tMsin, origen:"mercado", meta:{}};
+  // Sin operaciones y sin mercado: lo último que escribió, aunque no lo fijara.
   var v=parseFloat((S.tasasDia||{})[moneda]);
   if(v>0) return {tasa:v, origen:"escrita", meta:(S._tasasDiaMeta||{})[moneda]||{}};
   return {tasa:null, origen:"ninguna"};
+}
+
+// La hora de un lote cuando el id no es un Date.now() usable: aproxima al
+// dia a partir del ISO (aaaa-mm-dd). Para la regla de 24 h vale: lo que
+// importa es si cruzamos el umbral, no la hora exacta.
+function _tsDeIsoDia(iso){
+  if(!iso || typeof iso!=="string") return 0;
+  var m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(!m) return 0;
+  // Al final del dia local, para no considerar "vieja" una operacion que
+  // es de hoy pero cuyo iso es aaaa-mm-dd a las 00:00.
+  var d = new Date(parseInt(m[1],10), parseInt(m[2],10)-1, parseInt(m[3],10), 23, 59, 59);
+  return d.getTime();
 }
 
 function getRateToUsdt(moneda){
