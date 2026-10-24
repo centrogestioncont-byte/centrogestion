@@ -12768,6 +12768,41 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
      "insignia 🧾 PGDAS presente en al menos 4 sitios (Balance, Config, 2 del informe)");
 }
 
+// ARREGLO 183 · margen P2P BRL sobre el spot.
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const HS = sinC(HTML);
+
+  // 1. El margen por omision es 1% (lo medido entre CoinGecko y Binance BR).
+  ok(/MARGEN_P2P_BRL_DEFECTO\s*=\s*0\.01/.test(HS),
+     "por omision 1 % (CoinGecko -> Binance BR, medido 24/10)");
+
+  // 2. _tasaMercadoDe distingue SPOT de P2P: aplica margen solo al spot.
+  const tmd = sinC(sacarFuncion("_tasaMercadoDe"));
+  ok(/moneda\s*===\s*"BRL"\s*&&\s*!!campo\.fuente\s*&&\s*!campo\.anuncios/.test(tmd),
+     "detecta spot por 'fuente' SIN 'anuncios' (P2P los lleva, spot no)");
+  ok(/_margenP2P_BRL\(\)/.test(tmd),
+     "y aplica el margen configurable (no un numero magico)");
+
+  // 3. VES NO se mete en los limites viejos (que son 50-5000, obsoletos).
+  ok(/if\(moneda\s*===\s*"BRL"\)/.test(tmd),
+     "los _RATE_LIMITS se verifican SOLO para BRL (VES tiene limites viejos)");
+
+  // 4. _margenP2P_BRL es seguro: valores invalidos vuelven a lo por omision.
+  const mp = sinC(sacarFuncion("_margenP2P_BRL"));
+  ok(/v>1/.test(mp) || /v\s*>\s*1/.test(mp),
+     "margen > 100% se descarta (es dedazo, no una decision)");
+  ok(/MARGEN_P2P_BRL_DEFECTO/.test(mp),
+     "sin valor valido, vuelve al defecto");
+
+  // 5. El guardado permite vaciar para volver al defecto.
+  const gm = sinC(sacarFuncion("guardarMargenP2PBRL"));
+  ok(/delete\s+S\.config\.margenP2P_BRL/.test(gm),
+     "vaciar el campo borra la clave y vuelve a 1% por omision");
+  ok(/v\s*\/\s*100/.test(gm),
+     "el campo se escribe en % (1 para 1%) y se guarda como fraccion (0.01)");
+}
+
 // ARREGLO 182 · caducidad de 24 h sobre la ultima operacion de USDT.
 {
   const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
