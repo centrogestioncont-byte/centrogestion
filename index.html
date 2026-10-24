@@ -3269,7 +3269,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261024_v264";
+var APP_VERSION = "20261024_v265";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -7632,6 +7632,31 @@ function _tasaFijadaAMano(moneda){
 // que la pantalla lo diga.
 var _TASA_OP_FRESCA_MS = 24 * 60 * 60 * 1000;
 
+// ARREGLO 183 · margen P2P BRL. Cuando la lectura de BRL viene del SPOT
+// (CoinGecko o Mercado Bitcoin), el precio es ~1% MAS BAJO que el P2P
+// de Binance Brasil, donde ella de verdad opera. Medido el 24/10/26:
+//   CoinGecko:        4,97 R$/USDT
+//   Binance P2P BR:   5,02 R$/USDT (SAIPHA, Deise_PRO)
+// Diferencia: ~1%, consistente dia a dia.
+//
+// Pasa porque su servidor esta en Railway EE.UU. y Binance BR lo bloquea
+// por pais (ARREGLO 75), asi que no se puede pedir el P2P brasileno
+// directamente. Como arreglo mientras no se migre la region de Railway,
+// la app aplica un margen configurable sobre el spot para aproximar al
+// precio real del P2P. El P2P (si llega) NO lleva margen: ya es el real.
+//
+// Diferencia con los lotes: esto afecta SOLO a la lectura externa del
+// mercado. La operacion propia (lote de compra/venta en Inventario USDT)
+// manda igual que antes.
+var MARGEN_P2P_BRL_DEFECTO = 0.01;
+
+function _margenP2P_BRL(){
+  var v = parseFloat(((S.config||{}).margenP2P_BRL));
+  if(!isFinite(v) || v<0) return MARGEN_P2P_BRL_DEFECTO;
+  if(v>1) return MARGEN_P2P_BRL_DEFECTO;  // > 100% es dedazo, no tiene sentido
+  return v;
+}
+
 // Lee la tasa del mercado para una moneda, del cache en memoria del
 // servidor (_MERCADO). No bloquea: si no esta disponible, devuelve 0 y
 // quien llama cae al fallback.
@@ -7642,8 +7667,21 @@ function _tasaMercadoDe(moneda){
   if(!campo) return 0;
   var t = parseFloat(campo.tasa);
   if(!(t>0)) return 0;
-  var lim = _RATE_LIMITS[moneda];
-  if(lim && (t<lim[0] || t>lim[1])) return 0;
+  // ARREGLO 183 · aplica el margen SOLO cuando la lectura es spot. El P2P
+  // tiene 'anuncios' en la respuesta (lo pone _leer_mercado del servidor);
+  // el spot no, tiene 'fuente' (CoinGecko, Mercado Bitcoin, Binance spot).
+  // Si llega del P2P brasilero (algun dia que Railway se mueva de region),
+  // ya es el precio real y no se le aplica margen.
+  var esSpot = (moneda === "BRL" && !!campo.fuente && !campo.anuncios);
+  if(esSpot) t = t * (1 + _margenP2P_BRL());
+  // _RATE_LIMITS se aplica solo a BRL. VES tiene limites viejos que no se
+  // pueden mantener al dia (hoy el bolivar esta en 1M+ Bs/USDT), asi que
+  // confiamos en la respuesta del servidor. BRL si tiene limites estables
+  // (3-8 R$ cubre todo el rango razonable de los ultimos anios).
+  if(moneda === "BRL"){
+    var lim = _RATE_LIMITS[moneda];
+    if(lim && (t<lim[0] || t>lim[1])) return 0;
+  }
   return t;
 }
 
@@ -29078,7 +29116,36 @@ function _htmlMontosMercado(){
       campo("VES","🇻🇪 Cuánto vendes de una vez","en bolívares · por omisión 112.000")+
     "</div>"+
     "<div id='mercado-monto-pie' style='font-size:10.5px;color:var(--tx4);line-height:1.5'>"+
-      _htmlMontoMercadoPie()+"</div>";
+      _htmlMontoMercadoPie()+"</div>"+
+    // ARREGLO 183 · Margen P2P BRL. CoinGecko da el precio spot internacional
+    // de USDT/BRL, que está ~1% por debajo de Binance P2P Brasil (donde ella
+    // opera). Mientras Railway no se mueva de EE.UU., esto compensa.
+    "<div style='margin-top:16px;padding-top:14px;border-top:1px solid var(--ln2)'>"+
+      "<div style='font-size:11.5px;font-weight:700;color:var(--tx2);margin-bottom:4px'>⚖️ Margen P2P BRL (sobre el spot)</div>"+
+      "<div style='font-size:10.5px;color:var(--tx4);line-height:1.5;margin-bottom:8px'>"+
+        "Cuando la app lee los reales de CoinGecko (porque Binance BR bloquea el servidor), suma este % para acercarse al precio real de Binance P2P Brasil. Hoy la diferencia es <b>~1 %</b>. Si cambia, ajústalo aquí.</div>"+
+      "<div style='display:flex;gap:8px;align-items:center;max-width:260px'>"+
+        "<input type='text' inputmode='decimal' id='inp-margen-p2p-brl' placeholder='"+f2(MARGEN_P2P_BRL_DEFECTO*100)+"' value='"+(((S.config||{}).margenP2P_BRL!==undefined)?f2(parseFloat(S.config.margenP2P_BRL)*100):"")+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;font-family:inherit'>"+
+        "<span style='font-size:14px;color:var(--tx2);font-weight:700'>%</span>"+
+        "<button onclick='guardarMargenP2PBRL()' style='padding:9px 14px;background:var(--rol-ee);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
+      "</div>"+
+      "<div style='font-size:10px;color:var(--tx4);margin-top:5px'>Por omisión "+f2(MARGEN_P2P_BRL_DEFECTO*100)+" %. Vacío vuelve a lo por omisión.</div>"+
+    "</div>";
+}
+
+function guardarMargenP2PBRL(){
+  var v = _leerNumero(document.getElementById('inp-margen-p2p-brl').value);
+  if(!S.config) S.config={};
+  if(isNaN(v) || v<0){
+    delete S.config.margenP2P_BRL;
+    saveData(); R();
+    alert("Margen P2P BRL vuelto a lo por omisión ("+f2(MARGEN_P2P_BRL_DEFECTO*100)+" %).");
+    return;
+  }
+  if(v>100){ alert("Un margen de más del 100% no tiene sentido."); return; }
+  S.config.margenP2P_BRL = v/100;
+  saveData(); R();
+  alert("✅ Margen P2P BRL guardado: "+f2(v)+" %. Pulsa Actualizar para recalcular el suelo.");
 }
 
 // ── ARREGLO 110 · el suelo que MANDA, calculado en UN solo sitio ──
