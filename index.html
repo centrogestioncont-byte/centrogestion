@@ -3269,7 +3269,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261024_v265";
+var APP_VERSION = "20261025_v266";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -8327,7 +8327,36 @@ function editarLimiteTarjeta(cid){
   if(isNaN(lim)||lim<0){ alert("Límite inválido."); return; }
   c.limiteTarjeta=lim; c._mod=Date.now();
   logAudit("CUENTA_TARJETA_LIMITE",c.nombre+" → límite "+f2(lim));
+  // ARREGLO 184 · aprovechar que ya tenemos el flujo del limite para pedir
+  // tambien el dia del mes en que vence la factura. Es necesario para avisar
+  // antes del vencimiento. En blanco = no avisa (la tarjeta no tiene fecha
+  // conocida). Un numero 1-28 (max 28 para no entrar en meses sin dia 29-31).
+  var pdef = c.diaVencimientoFatura || _diaVencimientoFaturaPorOmision(c);
+  var dv = prompt("Día del mes en que vence la factura (1-31). En meses sin ese día (ej. 31 en febrero) la app usa el último del mes. Deja vacío si no lo sabes:", pdef||"");
+  if(dv!==null){
+    var dvs = String(dv).trim();
+    if(dvs===""){
+      delete c.diaVencimientoFatura;
+    } else {
+      var n = parseInt(dvs,10);
+      if(isNaN(n) || n<1 || n>31){
+        alert("Día inválido. Tiene que ser un número entre 1 y 31.");
+      } else {
+        c.diaVencimientoFatura = n;
+      }
+    }
+    c._mod=Date.now();
+  }
   saveData();R();
+}
+// ARREGLO 184 · si el nombre contiene "PAGBANK", su factura vence el día
+// 15 (medido en el extracto del 24/10/26). Es solo una sugerencia para el
+// prompt — ella puede cambiarlo. Para otras tarjetas no se sugiere nada.
+function _diaVencimientoFaturaPorOmision(c){
+  if(!c||!c.esTarjeta) return "";
+  var n = (c.nombre||"").toUpperCase();
+  if(n.indexOf("PAGBANK")>=0) return 15;
+  return "";
 }
 // Lo que se debe en una tarjeta es el saldo en negativo, leído al derecho.
 // Un saldo POSITIVO en una tarjeta es que pagó de más, y eso no es deuda.
@@ -23491,6 +23520,7 @@ function rMain(){
     _htmlAvisoSaldoNegativo()+  // ARREGLO 95
     _htmlAvisoMesSinCerrar()+   // ARREGLO 89
     _htmlAvisoPGDASAtrasado()+  // ARREGLO 178
+    _htmlAvisoFaturaTarjeta()+  // ARREGLO 184
     _htmlAvisoRBT12()+          // ARREGLO 177
     _htmlAvisoTasaFijo()+       // ARREGLO 112
     "<div class='navbar3'>"+
@@ -36873,6 +36903,135 @@ function _htmlAvisoPGDASAtrasado(){
     "<button onclick='S._cMes=\""+masViejo+"\";S._cSec=\"pgdas\";st(\"cierre\")' style='background:var(--sobre-color);color:var(--tit);border:none;"+
       "padding:7px 13px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer'>Ir a "+etq+"</button>"+
   "</div>";
+}
+
+// ─── ARREGLO 184 · aviso de factura de tarjeta por pagar ─────────────
+// Sus palabras del 25/10: "sí, agrégale el aviso". Se registro una factura
+// de la TARJETA PAGBANK por R$ 230,58 que vence el 15/11 (debito automatico
+// activo); el ARREGLO 95 creo el modelo donde una compra con la tarjeta sube
+// la deuda y al pagar la factura es un traspaso PAGBANK -> TARJETA. Antes la
+// app no avisaba de nada: habia que acordarse del dia para que el debito
+// automatico no fallara por falta de saldo en PAGBANK.
+//
+// Umbrales confirmados por ella: avisar AMBAR 7 dias antes, ROJO si ya
+// vencio. Vale para todas las tarjetas (empresa o personal). Si una cuenta
+// de tarjeta no tiene diaVencimientoFatura puesto, no se avisa — ella lo
+// edita desde el boton 💳 en Configuracion -> cuentas.
+var FATURA_AMBAR_DIAS = 7;
+
+function _proxVencimientoFatura(c){
+  var dia = parseInt(c && c.diaVencimientoFatura, 10);
+  if(isNaN(dia) || dia<1 || dia>31) return null;
+  var hoy = new Date();
+  var y = hoy.getFullYear(), m = hoy.getMonth();
+  // Si el mes no tiene ese dia (febrero no tiene 30 o 31), se usa el ultimo
+  // dia del mes — new Date(y, m, 32) se desborda y queda en m+1/1, asi que
+  // calculamos el ultimo dia explicitamente con new Date(y, m+1, 0).
+  function fechaFactura(yy, mm, d){
+    var ultimo = new Date(yy, mm+1, 0).getDate();
+    return new Date(yy, mm, Math.min(d, ultimo), 23, 59, 59);
+  }
+  var prop = fechaFactura(y, m, dia);
+  // Si el dia ya pasó este mes, el proximo vencimiento es el mes siguiente.
+  // Pero NO queremos que la factura "pendiente de este mes" se vea como del
+  // mes siguiente apenas pase el dia: si ha pasado 1-7 dias desde el dia del
+  // vencimiento, la contamos como "vencida este mes", no "proxima en 23
+  // dias". Solo cuando han pasado > FATURA_AMBAR_DIAS la movemos al mes
+  // siguiente, para no tener dos avisos a la vez (vencida vieja + proxima).
+  var hoyMs = hoy.getTime();
+  if((hoyMs - prop.getTime())/(24*60*60*1000) > FATURA_AMBAR_DIAS){
+    prop = fechaFactura(y, m+1, dia);
+  }
+  return prop;
+}
+
+function _diasHastaVencimientoFatura(c){
+  var p = _proxVencimientoFatura(c);
+  if(!p) return null;
+  var hoy = new Date();
+  // Diferencia en dias ENTEROS, redondeando al dia natural: hoy 00:00 - vto
+  // 00:00. Asi "vence hoy" sale 0 y "vencio ayer" sale -1.
+  var h0 = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate()).getTime();
+  var v0 = new Date(p.getFullYear(), p.getMonth(), p.getDate()).getTime();
+  return Math.round((v0 - h0)/(24*60*60*1000));
+}
+
+// Devuelve las tarjetas con deuda > 0 clasificadas por urgencia. Lo usan el
+// aviso y las guardias. No incluye las que no tienen dia de vencimiento
+// puesto (no sabemos cuando vencen).
+function _tarjetasPorPagar(){
+  var out = {ambar:[], rojo:[]};
+  (S.cuentas||[]).forEach(function(c){
+    if(!c.esTarjeta || c.activa===false) return;
+    if(_deudaTarjeta(c) <= 0) return;
+    var d = _diasHastaVencimientoFatura(c);
+    if(d===null) return;  // sin dia conocido
+    if(d < 0) out.rojo.push({cuenta:c, dias:d});
+    else if(d <= FATURA_AMBAR_DIAS) out.ambar.push({cuenta:c, dias:d});
+  });
+  return out;
+}
+
+function _htmlAvisoFaturaTarjeta(){
+  var g = _tarjetasPorPagar();
+  if(!g.rojo.length && !g.ambar.length) return "";
+  // Rojo manda sobre ambar: si hay vencidas, el aviso es rojo y se señalan
+  // esas; las ambar se cuentan en el "(y N más)" para que no pierda la vista.
+  var urgente = g.rojo.length ? g.rojo[0] : g.ambar[0];
+  var otras = (g.rojo.length + g.ambar.length) - 1;
+  var hayRojo = g.rojo.length > 0;
+  var c = urgente.cuenta;
+  var d = urgente.dias;
+  var deuda = _deudaTarjeta(c);
+  var fondo = hayRojo ? "var(--neg)" : "var(--am3)";
+  var txt;
+  if(hayRojo){
+    txt = "<b>🔴 Factura de "+_escAud(c.nombre)+" vencida"+(d<-1?" hace "+Math.abs(d)+" días":d===-1?" ayer":" hoy")+".</b> Debes "+c.moneda+" "+f2(deuda)+". Págala para evitar intereses y bloqueo.";
+  } else if(d===0){
+    txt = "<b>🟡 Factura de "+_escAud(c.nombre)+" vence HOY.</b> Debes "+c.moneda+" "+f2(deuda)+".";
+  } else if(d===1){
+    txt = "<b>🟡 Factura de "+_escAud(c.nombre)+" vence mañana.</b> Debes "+c.moneda+" "+f2(deuda)+".";
+  } else {
+    txt = "<b>🟡 Factura de "+_escAud(c.nombre)+" vence en "+d+" días.</b> Debes "+c.moneda+" "+f2(deuda)+".";
+  }
+  if(otras>0) txt += " (y "+otras+" tarjeta"+(otras>1?"s":"")+" más)";
+  return "<div style='background:"+fondo+";color:var(--sobre-color);padding:10px 14px;"+
+    "display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-bottom:2px solid var(--sup3)'>"+
+    "<div style='flex:1;min-width:200px;font-size:12.5px;line-height:1.5'>"+txt+"</div>"+
+    "<button onclick='_pagarFaturaTarjeta(\""+c.id+"\")' style='background:var(--sobre-color);color:var(--tit);border:none;"+
+      "padding:7px 13px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer'>Pagar fatura</button>"+
+  "</div>";
+}
+
+// Lleva a Traspasos con el traspaso ya empezado: desde una cuenta en la
+// misma moneda que la tarjeta hacia la tarjeta, por el monto exacto de la
+// deuda. Ella pulsa Guardar y la deuda baja. Si no hay cuenta en la misma
+// moneda (ej. una tarjeta en BRL sin cuentas BRL activas), se avisa.
+function _pagarFaturaTarjeta(cid){
+  var c = (S.cuentas||[]).find(function(x){return x.id===cid;});
+  if(!c || !c.esTarjeta) return;
+  var deuda = _deudaTarjeta(c);
+  if(deuda <= 0){ alert("Esa tarjeta no tiene deuda que pagar."); return; }
+  // Elige la cuenta de salida: la primera cuenta de empresa (no personal, no
+  // tarjeta, no esta misma) en la misma moneda, con mas saldo. Que ella la
+  // cambie si quiere, pero mandarla a Traspasos vacio seria pedirle que
+  // elija de cero.
+  var origen = (S.cuentas||[]).filter(function(x){
+    return x.id!==c.id && x.activa!==false && !x.esPersonal && !x.esTarjeta
+        && x.moneda===c.moneda;
+  }).sort(function(a,b){return (parseFloat(b.saldo)||0) - (parseFloat(a.saldo)||0);})[0];
+  if(!origen){
+    alert("No hay cuentas de empresa en "+c.moneda+" para pagar la factura. Añade una o cambia la cuenta origen.");
+    return;
+  }
+  S.nTraspaso = S.nTraspaso || {};
+  S.nTraspaso.cuentaOrig = origen.id;
+  S.nTraspaso.cuentaDest = c.id;
+  S.nTraspaso.monto = deuda;
+  // td() devuelve aaaa-mm-dd, que es lo que el input type=date pide.
+  S.nTraspaso.fecha = td();
+  S.nTraspaso.nota = "Pago fatura "+c.nombre;
+  st("traspasos");
 }
 
 // Copy to clipboard con feedback visual. navigator.clipboard puede fallar
