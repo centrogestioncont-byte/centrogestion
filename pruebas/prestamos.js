@@ -2869,13 +2869,13 @@ ok(F._htmlAvisoPisado() === "", "y sin choques no ocupa ni un pixel");
   // (ARREGLO 112)—, todos fuera de la zona que hace scroll. El margen es un
   // presupuesto: admite que entre otro aviso, pero no que la lista crezca
   // sin control ni que alguno se caiga dentro del scroll.
-  ok(/_htmlAvisoPisado\(\)\+[\s\S]{0,260}?"<div class='navbar3'>"/.test(HTML.replace(/\/\/[^\n]*\n/g, "\n")),
+  ok(/_htmlAvisoPisado\(\)\+[\s\S]{0,320}?"<div class='navbar3'>"/.test(HTML.replace(/\/\/[^\n]*\n/g, "\n")),
    "el aviso va arriba del panel, fuera del scroll");
-  ok(/_htmlAvisoMesSinCerrar\(\)\+[\s\S]{0,260}?"<div class='navbar3'>"/.test(HTML.replace(/\/\/[^\n]*\n/g, "\n")),
+  ok(/_htmlAvisoMesSinCerrar\(\)\+[\s\S]{0,320}?"<div class='navbar3'>"/.test(HTML.replace(/\/\/[^\n]*\n/g, "\n")),
      "y el aviso del mes sin cerrar, tambien");
   // ARREGLO 112: y el de la tasa por debajo del suelo, que es el unico de los
   // nuevos que cuesta dinero en CADA remesa que registre.
-  ok(/_htmlAvisoTasaFijo\(\)\+[\s\S]{0,260}?"<div class='navbar3'>"/.test(HTML.replace(/\/\/[^\n]*\n/g, "\n")),
+  ok(/_htmlAvisoTasaFijo\(\)\+[\s\S]{0,320}?"<div class='navbar3'>"/.test(HTML.replace(/\/\/[^\n]*\n/g, "\n")),
      "y el de la tasa bajo el suelo, tambien");
 
   // ── ARREGLO 89: cerrar un mes es decision suya, no del reloj ──────
@@ -12768,6 +12768,62 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
      "insignia 🧾 PGDAS presente en al menos 4 sitios (Balance, Config, 2 del informe)");
 }
 
+// ARREGLO 184 · aviso de factura de tarjeta por pagar.
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const HS = sinC(HTML);
+
+  // 1. Umbral 7 dias por su decision.
+  ok(/FATURA_AMBAR_DIAS\s*=\s*7/.test(HS),
+     "umbral ambar 7 dias (su decision del 25/10)");
+
+  // 2. _proxVencimientoFatura exige diaVencimientoFatura 1-31.
+  const pv = sinC(sacarFuncion("_proxVencimientoFatura"));
+  ok(/dia<1\s*\|\|\s*dia>31/.test(pv),
+     "exige dia entre 1 y 31");
+  ok(/Math\.min\(d,\s*ultimo\)/.test(pv),
+     "en meses sin dia 29/30/31 usa el ultimo dia del mes");
+
+  // 3. Si el vencimiento ya paso HOY, lo deja en este mes hasta 7 dias
+  //    despues; luego lo mueve al mes siguiente (no se duplican avisos).
+  ok(/FATURA_AMBAR_DIAS/.test(pv),
+     "pasado el margen ambar, el vencimiento salta al mes siguiente");
+
+  // 4. _tarjetasPorPagar clasifica. Las que no tienen diaVencimientoFatura
+  //    no se avisan (no sabemos cuando vencen).
+  const tpp = sinC(sacarFuncion("_tarjetasPorPagar"));
+  ok(/_deudaTarjeta\(c\)\s*<=\s*0/.test(tpp),
+     "sin deuda no entra en el aviso");
+  ok(/d===null/.test(tpp),
+     "sin dia conocido no se avisa (no sabemos cuando vence)");
+  ok(/d\s*<\s*0/.test(tpp) && /d\s*<=\s*FATURA_AMBAR_DIAS/.test(tpp),
+     "clasifica: vencida -> rojo, hasta 7 dias -> ambar");
+
+  // 5. El aviso prioriza rojo sobre ambar.
+  const av = sinC(sacarFuncion("_htmlAvisoFaturaTarjeta"));
+  ok(/g\.rojo\.length\s*\?\s*g\.rojo\[0\]\s*:\s*g\.ambar\[0\]/.test(av),
+     "si hay rojo, señala el rojo; si no, el ambar");
+
+  // 6. El boton va a Traspasos con PAGBANK -> TARJETA pre-cargado por la
+  //    deuda exacta. Elige cuenta de salida que no sea personal ni tarjeta.
+  const pf = sinC(sacarFuncion("_pagarFaturaTarjeta"));
+  ok(/!x\.esPersonal\s*&&\s*!x\.esTarjeta/.test(pf),
+     "la cuenta de salida no es personal ni otra tarjeta");
+  ok(/x\.moneda===c\.moneda/.test(pf),
+     "y es de la misma moneda que la tarjeta");
+  ok(/S\.nTraspaso\.monto\s*=\s*deuda/.test(pf),
+     "el monto es la deuda exacta");
+
+  // 7. Enchufado arriba del panel, entre PGDAS y RBT12.
+  ok(/_htmlAvisoPGDASAtrasado\(\)\+[\s\S]{0,80}_htmlAvisoFaturaTarjeta\(\)/.test(HS),
+     "_htmlAvisoFaturaTarjeta va arriba del panel, despues de PGDAS atrasada");
+
+  // 8. _diaVencimientoFaturaPorOmision sugiere 15 para PAGBANK.
+  const dvp = sinC(sacarFuncion("_diaVencimientoFaturaPorOmision"));
+  ok(/PAGBANK/.test(dvp) && /15/.test(dvp),
+     "PAGBANK sugiere 15 (medido en el extracto del 24/10)");
+}
+
 // ARREGLO 183 · margen P2P BRL sobre el spot.
 {
   const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
@@ -12979,8 +13035,10 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
      "y la seccion PGDAS-D");
 
   // 6. Va en rApp arriba del panel, pegado al de mes sin cerrar y antes
-  //    del de RBT12. Fuera del scroll (ARREGLO 62).
-  ok(/_htmlAvisoMesSinCerrar\(\)\+\s*\n?\s*_htmlAvisoPGDASAtrasado\(\)\+\s*\n?\s*_htmlAvisoRBT12\(\)\+/.test(HS),
+  //    del de RBT12. Fuera del scroll (ARREGLO 62). ARREGLO 184 metio
+  //    _htmlAvisoFaturaTarjeta entre PGDAS y RBT12.
+  ok(/_htmlAvisoMesSinCerrar\(\)\+\s*\n?\s*_htmlAvisoPGDASAtrasado\(\)\+/.test(HS)
+     && /_htmlAvisoRBT12\(\)/.test(HS),
      "va en rApp arriba del panel entre mes sin cerrar y RBT12");
 }
 
