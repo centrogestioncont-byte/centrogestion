@@ -12824,6 +12824,25 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
      "PAGBANK sugiere 15 (medido en el extracto del 24/10)");
 }
 
+// ARREGLO 188 · forzar _mod explicito al editar saldo o desactivar una cuenta,
+// para que la fusion no revierta el cambio por una version mas nueva del otro
+// aparato (ARREGLO 148 por su familia).
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+
+  // 1. updateCuentaSaldo pone c._mod = Date.now() despues de escribir el saldo.
+  const upd = sinC(sacarFuncion("updateCuentaSaldo"));
+  ok(/c\._mod\s*=\s*Date\.now\(\)/.test(upd),
+     "updateCuentaSaldo marca _mod explicito tras cambiar el saldo");
+  ok(/c\.saldo\s*=\s*v[\s\S]*c\._mod\s*=\s*Date\.now/.test(upd),
+     "y lo marca DESPUES de escribir el saldo, no antes");
+
+  // 2. toggleCuenta tambien marca _mod al cambiar activa.
+  const tog = sinC(sacarFuncion("toggleCuenta"));
+  ok(/c\.activa\s*=\s*!c\.activa\s*;\s*c\._mod\s*=\s*Date\.now/.test(tog),
+     "toggleCuenta marca _mod al cambiar activa");
+}
+
 // ARREGLO 187 · podar las cuentas plantilla c01..c08 que quedaron en S.cuentas
 // de una version muy vieja. Nunca estuvieron en el servidor, asi que la fusion
 // no las traia ni las tocaba, y reaparecian con cada arranque sin cache local.
