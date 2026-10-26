@@ -3276,7 +3276,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261026_v271";
+var APP_VERSION = "20261026_v272";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -36717,17 +36717,33 @@ function _ingresoDeclarablePGDAS(mesKey){
     r.excluidas.cuentas[cuentaId].nOps++;
   }
 
-  // Remesas con reales. Para elegir si entra miramos la cuenta BRL del
-  // movimiento: si orig=BRL es cuentaBanco, si dest=BRL es cuentaDest.
-  // En rutas donde las dos puntas son BRL (hoy no las tiene), basta con
-  // que CUALQUIERA este marcada.
+  // Remesas con reales. SOLO las de IDA (orig=BRL): son servicio prestado,
+  // ganancia del margen entre lo que recibe el cliente y lo que entrega.
+  //
+  // ARREGLO 190: antes incluia tambien las vueltas (orig=VES/USD, dest=BRL).
+  // Como ella dijo el 26/10: "no se supone que la vuelta de ganancia es cero,
+  // porque es una compra de delivery - yo estoy comprando mi mercancia". Es
+  // la regla del ARREGLO 124 (en la vuelta no se gana, se COMPRA bolivares
+  // con reales) aplicada al fisco: una vuelta es DESPESA, no receita.
+  //
+  // Desde el ARREGLO 124 las vueltas nuevas salen con pr=0 y el filtro
+  // `pr===0` las descartaba. Pero las vueltas registradas ANTES del 124
+  // quedaron con pr>0 en los datos y seguian contandose: en octubre eran
+  // 12 vueltas por R$ 377,06, lo que inflo la Receita Bruta declarable
+  // de R$ 1.642 a R$ 2.020 (y el DAS 6% de 98 a 121 - unos R$ 23 de mas).
+  //
+  // Filtrar por orig==="BRL" lo cierra para los datos viejos y los nuevos.
+  // Y mantengo el filtro pr===0 abajo porque hay idas con pr=0 (una
+  // operacion neutra o cancelada no es receita).
   [].concat(S.brl||[],S.vzla||[],S.eeuu||[]).forEach(function(x){
     if(_mesDeFecha(x.d)!==mesKey) return;
-    if(x.orig!=="BRL" && x.dest!=="BRL") return;
+    if(x.orig!=="BRL") return;  // ARREGLO 190: solo ida (BR -> VZ/USD/etc.)
     var pr=parseFloat(x.pr)||0;
     if(pr===0) return;
-    var cuentaBRL = x.orig==="BRL" ? x.cuentaBanco
-                  : x.dest==="BRL" ? x.cuentaDest : null;
+    // Con el filtro de arriba (orig==="BRL") la cuenta de los reales entrantes
+    // es siempre cuentaBanco. ANTES este campo elegia entre cuentaBanco (ida)
+    // o cuentaDest (vuelta); ahora las vueltas no entran.
+    var cuentaBRL = x.cuentaBanco;
     // Reales valorados a la tasa de la propia remesa.
     var tasa=tasaR$(x);
     var reaisAprox = tasa>0 ? Math.round(pr*tasa*100)/100 : 0;
@@ -36737,9 +36753,7 @@ function _ingresoDeclarablePGDAS(mesKey){
       if(esBRLempresa(cuentaBRL)) sumExcluido(cuentaBRL, reaisAprox);
       return;
     }
-    if(x.orig==="BRL") r.nRemesasBR++;
-    else if(x.orig==="VES") r.nRemesasVZ++;
-    else if(x.orig==="USD") r.nRemesasEE++;
+    r.nRemesasBR++;  // ARREGLO 190: solo entran idas (orig=BRL)
     sumR("remesa", cuentaBRL, (x.cliente||"")+" · "+(x.orig||"?")+"→"+(x.dest||"?"), pr, tasa, x.n||x._uid);
   });
 
@@ -37329,7 +37343,10 @@ function _htmlPGDAS(mesKey, mesLabel){
         ? "<div style='margin-top:10px;padding:9px 11px;background:var(--sup2c);border-radius:8px;font-size:11px;color:var(--ink2)'>🟦 <b>Sem Movimento.</b> En el portal elige "+"«"+"Declarar sem movimento"+"»"+" y transmite — no hay DAS que pagar.</div>"
         : "<div style='margin-top:12px'>"+
             "<div style='font-size:11px;font-weight:700;color:var(--ink2);margin-bottom:6px;text-transform:uppercase;letter-spacing:.3px'>De dónde sale</div>"+
-            (ing.remesas?    "<div style='display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--sup2f);font-size:12px'><span>Remesas con BRL ("+(ing.nRemesasBR+ing.nRemesasVZ+ing.nRemesasEE)+" ops · BR→VZ "+ing.nRemesasBR+" · VZ→BR "+ing.nRemesasVZ+" · EE→BR "+ing.nRemesasEE+")</span><b>R$ "+f2(ing.remesas)+"</b></div>":"")+
+            // ARREGLO 190: solo entran las IDAS (BR -> VZ/USD/etc.) — las
+            // vueltas son despesa, no receita. El desglose "VZ→BR / EE→BR"
+            // se retiro: siempre serian 0 y confundia.
+            (ing.remesas?    "<div style='display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--sup2f);font-size:12px'><span>Remesas con BRL · "+ing.nRemesasBR+" ida"+(ing.nRemesasBR===1?"":"s")+" BR→VZ/USD</span><b>R$ "+f2(ing.remesas)+"</b></div>":"")+
             (ing.mercancia?  "<div style='display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--sup2f);font-size:12px'><span>Mercancía vendida en reales</span><b>R$ "+f2(ing.mercancia)+"</b></div>":"")+
             (ing.ganExtra?   "<div style='display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--sup2f);font-size:12px'><span>Otras ganancias en cuenta BRL</span><b>R$ "+f2(ing.ganExtra)+"</b></div>":"")+
             // ARREGLO 179 · desglose por cuenta declarable. Para que ella
