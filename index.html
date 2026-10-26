@@ -7664,6 +7664,29 @@ function _margenP2P_BRL(){
   return v;
 }
 
+// ARREGLO 186 · margen USD/BRL. Cuando el servidor cae a AwesomeAPI (USD/BRL)
+// porque las tres fuentes de USDT fallaron, el precio es ~1% MAS ALTO que el
+// P2P brasileno de USDT. Medido el 26/10/26:
+//   AwesomeAPI (USD): 5,42 R$/USD
+//   Binance P2P BR:   5,366 R$/USDT (SAIPHA, Deise_PRO)
+// Diferencia: ~1%, al reves que CoinGecko. Lo decidio ella 26/10: "dale B",
+// margen -1% para bajar la tasa a lo que de verdad hay en el P2P.
+//
+// Por que el margen va al reves: USD/BRL mide a cuanto un banco COMPRA
+// dolares, con su propio margen bancario incluido. El USDT P2P es libre y
+// casi siempre va por debajo de ese precio bancario.
+//
+// La decision se toma por el campo 'tipo' que marca el servidor (usdt | usd),
+// no por adivinar la fuente desde la app. El servidor lo sabe mejor.
+var MARGEN_USD_BRL_DEFECTO = 0.01;
+
+function _margenUSD_BRL(){
+  var v = parseFloat(((S.config||{}).margenUSD_BRL));
+  if(!isFinite(v) || v<0) return MARGEN_USD_BRL_DEFECTO;
+  if(v>1) return MARGEN_USD_BRL_DEFECTO;
+  return v;
+}
+
 // Lee la tasa del mercado para una moneda, del cache en memoria del
 // servidor (_MERCADO). No bloquea: si no esta disponible, devuelve 0 y
 // quien llama cae al fallback.
@@ -7674,13 +7697,23 @@ function _tasaMercadoDe(moneda){
   if(!campo) return 0;
   var t = parseFloat(campo.tasa);
   if(!(t>0)) return 0;
-  // ARREGLO 183 · aplica el margen SOLO cuando la lectura es spot. El P2P
-  // tiene 'anuncios' en la respuesta (lo pone _leer_mercado del servidor);
-  // el spot no, tiene 'fuente' (CoinGecko, Mercado Bitcoin, Binance spot).
-  // Si llega del P2P brasilero (algun dia que Railway se mueva de region),
-  // ya es el precio real y no se le aplica margen.
-  var esSpot = (moneda === "BRL" && !!campo.fuente && !campo.anuncios);
-  if(esSpot) t = t * (1 + _margenP2P_BRL());
+  // ARREGLO 186 · el servidor marca 'tipo' en cada lectura:
+  //   usdt -> una de las tres fuentes de USDT contesto (Binance BR, CoinGecko,
+  //           Mercado Bitcoin). Sube 1% para aproximar al P2P brasilero
+  //           (CoinGecko va 1% debajo del P2P: ARREGLO 183).
+  //   usd  -> cayo a AwesomeAPI (USD/BRL) porque las tres USDT fallaron.
+  //           Baja 1% porque USD/BRL va 1% ARRIBA del P2P hoy (ARREGLO 186).
+  // El P2P brasilero de USDT (si algun dia Railway se mueve de region) no
+  // tiene 'tipo' en la respuesta pero si 'anuncios': se le reconoce ahi y
+  // no se le aplica margen. Lo que tiene fuente y no tiene tipo es anterior
+  // al ARREGLO 186 (produccion antes de que se migre el server) y se trata
+  // como USDT, el comportamiento viejo.
+  if(moneda === "BRL"){
+    var tipo = campo.tipo;
+    if(!tipo && campo.fuente && !campo.anuncios) tipo = "usdt";  // compat.
+    if(tipo === "usdt")      t = t * (1 + _margenP2P_BRL());
+    else if(tipo === "usd")  t = t * (1 - _margenUSD_BRL());
+  }
   // _RATE_LIMITS se aplica solo a BRL. VES tiene limites viejos que no se
   // pueden mantener al dia (hoy el bolivar esta en 1M+ Bs/USDT), asi que
   // confiamos en la respuesta del servidor. BRL si tiene limites estables
@@ -29192,7 +29225,37 @@ function _htmlMontosMercado(){
         "<button onclick='guardarMargenP2PBRL()' style='padding:9px 14px;background:var(--rol-ee);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
       "</div>"+
       "<div style='font-size:10px;color:var(--tx4);margin-top:5px'>Por omisión "+f2(MARGEN_P2P_BRL_DEFECTO*100)+" %. Vacío vuelve a lo por omisión.</div>"+
+    "</div>"+
+    // ARREGLO 186 · Margen USD/BRL (red de respaldo). Si las tres fuentes
+    // de USDT caen (Binance BR, CoinGecko, Mercado Bitcoin), el servidor
+    // cae a AwesomeAPI (USD/BRL). USD va 1% por encima del P2P de USDT,
+    // asi que aqui el margen RESTA en lugar de sumar.
+    "<div style='margin-top:14px;padding-top:14px;border-top:1px solid var(--ln2)'>"+
+      "<div style='font-size:11.5px;font-weight:700;color:var(--tx2);margin-bottom:4px'>⚖️ Margen USD/BRL (sobre AwesomeAPI)</div>"+
+      "<div style='font-size:10.5px;color:var(--tx4);line-height:1.5;margin-bottom:8px'>"+
+        "Si las tres fuentes de USDT caen, el servidor usa AwesomeAPI (USD/BRL). Como USD va <b>por encima</b> del P2P de USDT, este % se <b>resta</b>. Hoy la diferencia es <b>~1 %</b>.</div>"+
+      "<div style='display:flex;gap:8px;align-items:center;max-width:260px'>"+
+        "<input type='text' inputmode='decimal' id='inp-margen-usd-brl' placeholder='"+f2(MARGEN_USD_BRL_DEFECTO*100)+"' value='"+(((S.config||{}).margenUSD_BRL!==undefined)?f2(parseFloat(S.config.margenUSD_BRL)*100):"")+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;font-family:inherit'>"+
+        "<span style='font-size:14px;color:var(--tx2);font-weight:700'>%</span>"+
+        "<button onclick='guardarMargenUSDBRL()' style='padding:9px 14px;background:var(--rol-ee);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
+      "</div>"+
+      "<div style='font-size:10px;color:var(--tx4);margin-top:5px'>Por omisión "+f2(MARGEN_USD_BRL_DEFECTO*100)+" %. Vacío vuelve a lo por omisión.</div>"+
     "</div>";
+}
+
+function guardarMargenUSDBRL(){
+  var v = _leerNumero(document.getElementById('inp-margen-usd-brl').value);
+  if(!S.config) S.config={};
+  if(isNaN(v) || v<0){
+    delete S.config.margenUSD_BRL;
+    saveData(); R();
+    alert("Margen USD/BRL vuelto a lo por omisión ("+f2(MARGEN_USD_BRL_DEFECTO*100)+" %).");
+    return;
+  }
+  if(v>100){ alert("Un margen de más del 100% no tiene sentido."); return; }
+  S.config.margenUSD_BRL = v/100;
+  saveData(); R();
+  alert("✅ Margen USD/BRL guardado: "+f2(v)+" %. Pulsa Actualizar para recalcular el suelo.");
 }
 
 function guardarMargenP2PBRL(){
@@ -30168,6 +30231,16 @@ function _cg(){
   var pub=_misTasasPublicadas();
   if(!g.idaTocada)    g.ida    = (pub.ida   !==null) ? String(pub.ida)    : "";
   if(!g.vueltaTocada) g.vuelta = (pub.vuelta!==null) ? String(pub.vuelta) : "";
+  // ARREGLO 186 · El USD/BRL sigue la MISMA regla: mientras ella no lo toque,
+  // sigue a la tasa de referencia (la que valora todo su dinero). Si lo
+  // escribe queda marcado como suyo y la pantalla ensena el aviso con el
+  // boton de volver. Sus palabras del 26/10: "aqui deberia de agarrar una
+  // misma tasa de referencia no estar escribiendo tasas manuales".
+  if(!g.usdbrlTocada){
+    var rcAhora=(typeof tasaDeReferencia==="function")?tasaDeReferencia("BRL"):null;
+    g.usdbrl = (rcAhora && rcAhora.tasa>0)
+      ? String(Math.round(rcAhora.tasa*10000)/10000) : "";
+  }
   return g;
 }
 // Volver a la tasa que tiene publicada: deja de ser suya y vuelve a seguirla.
@@ -30224,6 +30297,8 @@ function _cgSet(campo,val){
   g[campo]=_num(val);
   // ARREGLO 113: escribirla la hace suya y deja de seguir a la publicada.
   if(campo==="ida"||campo==="vuelta") g[campo+"Tocada"]=true;
+  // ARREGLO 186: el USD/BRL sigue la misma regla.
+  if(campo==="usdbrl") g.usdbrlTocada=true;
   var n=document.getElementById("cg-res");
   if(n) n.innerHTML=_htmlCalceRes();
 }
@@ -30663,15 +30738,21 @@ function _htmlCalceCuerpo(){
   // aquí ponía "Cuánto gano con esta tasa" y justo debajo "Cuánto ganas con
   // esta tasa" — dos renglones casi iguales antes de llegar a lo que importa.
   return "<div style='display:flex;justify-content:flex-end;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:9px'>"+
-      // El USD/BRL va arriba y se puede cambiar, pero NO empieza en 5,00: la
-      // app ya sabe a cuanto compra sus reales y ese es el numero con el que
-      // valora todo su dinero. Un 5,00 de ejemplo convertiria mal la meta.
+      // ARREGLO 186 · El USD/BRL SIGUE la tasa de referencia mientras ella no
+      // lo toque. Antes se auto-rellenaba al abrir y ahi se quedaba congelado:
+      // sus palabras del 26/10 "aqui deberia de agarrar una misma tasa de
+      // referencia no estar escribiendo tasas manuales". Si lo escribe, queda
+      // marcado como suyo y sale un boton ↻ para volver a la de la app, igual
+      // que la ida y la vuelta (ARREGLO 113).
       "<div style='display:flex;align-items:baseline;gap:5px'>"+
         "<span style='font-size:10.5px;color:var(--tx4);font-weight:700'>USD/BRL</span>"+
         "<input type='text' inputmode='decimal' value='"+_escAud(_coma(g.usdbrl))+"' "+
           "oninput='_cgSet(\"usdbrl\",this.value)' "+
-          "style='width:62px;padding:4px 6px;border:1.5px solid var(--ln);border-radius:7px;font-size:12px;"+
+          "style='width:62px;padding:4px 6px;border:1.5px solid "+(g.usdbrlTocada?"var(--ac)":"var(--ln)")+";border-radius:7px;font-size:12px;"+
           "font-weight:800;text-align:center;font-family:inherit;background:var(--sup);color:var(--tit)'>"+
+        (g.usdbrlTocada
+          ? "<button onclick='_cgSoltar(\"usdbrl\")' title='Volver a la tasa de la app' style='padding:3px 7px;background:var(--am6-d);color:var(--avi-tx);border:1.5px solid var(--ac);border-radius:6px;cursor:pointer;font-size:11px;font-weight:700'>↻</button>"
+          : "")+
       "</div>"+
     "</div>"+
     "<div style='font-size:10.5px;color:var(--tx4);font-weight:700;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px'>Qué quieres calcular</div>"+
