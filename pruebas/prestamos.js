@@ -12695,6 +12695,52 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
      "la proyeccion toma la mediana de los 3 meses anteriores");
 }
 
+// ARREGLO 191 · NFS-e mensal consolidada. Dos botones de copiar (valor y
+// descripcion) en la seccion PGDAS-D del Cierre Mensual. Decision suya 26/10
+// tras confirmar con el contador que su prefeitura permite A1 (1 nota mensual
+// con "consumidor final / tomador no identificado").
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const HS = sinC(HTML);
+
+  // 1. Default: la descripcion menciona CNAE 63.19 y Anexo III por su CNAE
+  //    de SAIPHA ME. Si cambia de CNAE habra que tocar esto.
+  ok(/NFSE_DESC_DEFECTO\s*=/.test(HS),
+     "existe la plantilla por omision NFSE_DESC_DEFECTO");
+  ok(/CNAE 63\.19/.test(HS),
+     "el default menciona CNAE 63.19 (SAIPHA ME, servicios de internet)");
+
+  // 2. _nfseDescripcion sustituye {competencia}, {mes}, {ano}.
+  const nd = sinC(sacarFuncion("_nfseDescripcion"));
+  ok(/replace\(\s*\/\\\{competencia\\\}\/g/.test(nd),
+     "sustituye {competencia}");
+  ok(/replace\(\s*\/\\\{mes\\\}\/g/.test(nd),
+     "y {mes}");
+  ok(/replace\(\s*\/\\\{ano\\\}\/g/.test(nd),
+     "y {ano}");
+  ok(/S\.config\|\|\{\}\)\.nfseDescripcion/.test(nd),
+     "lee la plantilla desde S.config.nfseDescripcion (editable)");
+
+  // 3. _htmlPGDAS tiene el card NFS-e con DOS botones de copiar separados:
+  //    uno para el valor y otro para la descripcion. El contador y la
+  //    prefeitura tienen campos distintos; copiar todo junto no sirve.
+  const hp = sinC(sacarFuncion("_htmlPGDAS"));
+  ok(/NFS-e mensal consolidada/.test(hp),
+     "el bloque NFS-e aparece en la seccion PGDAS-D");
+  ok(/_nfseDescripcion\s*\(/.test(hp),
+     "y la descripcion sale de _nfseDescripcion(mesKey, mesLabel)");
+  ok(/Copiar valor/.test(hp) && /Copiar texto/.test(hp),
+     "dos botones separados: Copiar valor y Copiar texto");
+
+  // 4. guardarNFSeDescripcion escribe en S.config.nfseDescripcion. Vacio
+  //    vuelve a lo por omision (borra la clave).
+  const gnfse = sinC(sacarFuncion("guardarNFSeDescripcion"));
+  ok(/S\.config\.nfseDescripcion\s*=\s*v/.test(gnfse),
+     "guarda en S.config.nfseDescripcion");
+  ok(/delete\s+S\.config\.nfseDescripcion/.test(gnfse),
+     "vacio borra la clave y vuelve a lo por omision");
+}
+
 // ARREGLO 190 · solo las idas (orig=BRL) entran al PGDAS. Las vueltas son
 // despesa, no receita (ARREGLO 124 "en la vuelta no se gana, se compra").
 // Sin esto, las vueltas antiguas con pr>0 (anteriores al 124) inflaban la

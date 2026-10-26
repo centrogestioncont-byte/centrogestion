@@ -3276,7 +3276,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261026_v272";
+var APP_VERSION = "20261026_v273";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -15315,6 +15315,26 @@ function guardarComisionBanco(){
 }
 // ARREGLO 185 · Frase destacada del flyer. Vive en S.config.mensajeFlyer,
 // que viaja en el bloque de estado (DATA_KEYS). Vacio -> no se dibuja.
+// ARREGLO 191 · Guarda la plantilla de la descripcion de la NFS-e mensal.
+// Vive en S.config.nfseDescripcion. Vacio -> vuelve a lo por omision.
+function guardarNFSeDescripcion(){
+  var el=document.getElementById("inp-nfse-desc");
+  if(!el) return;
+  var v=(el.value||"").trim();
+  if(v.length>300){alert("La descripción es muy larga (máx 300).");return;}
+  if(!S.config) S.config={};
+  if(!v){
+    delete S.config.nfseDescripcion;
+    saveData();R();
+    alert("✅ Descripción NFS-e vuelta a lo por omisión.");
+    return;
+  }
+  S.config.nfseDescripcion=v;
+  logAudit("CONFIG_NFSE_DESC","Plantilla NFS-e: "+v.slice(0,80));
+  saveData();R();
+  alert("✅ Plantilla NFS-e guardada.");
+}
+
 function guardarMensajeFlyer(){
   var el=document.getElementById("inp-mensaje-flyer");
   if(!el) return;
@@ -16163,6 +16183,18 @@ function rConfigAdmin(){
             "<input type='text' id='inp-mensaje-flyer' maxlength='60' value=\""+_escAud(_fraseFlyer())+"\" placeholder='💥 Sin comisiones ocultas' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
             "<button onclick='guardarMensajeFlyer()' style='padding:9px 14px;background:var(--ac);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
           "</div>"+
+        "</div>"+
+        // ARREGLO 191 · Plantilla de la descripcion de la NFS-e mensal. Lo que
+        // ella pega en el portal de la prefeitura al emitir la nota.
+        // Placeholders: {competencia}, {mes}, {ano}.
+        "<div style='margin-top:14px;padding-top:14px;border-top:1px solid var(--ln2)'>"+
+          "<div style='font-size:12px;font-weight:700;color:var(--tx2);margin-bottom:8px'>📄 NFS-e mensal · plantilla de descrição</div>"+
+          "<div style='font-size:11px;color:var(--tx3);margin-bottom:8px'>Lo que la app te deja listo para copiar y pegar en el campo <b>Descrição do serviço</b> del portal da prefeitura. Puedes usar <code>{competencia}</code> (ej. Outubro/2026), <code>{mes}</code> y <code>{ano}</code>; la app los sustituye por el mes que estés declarando.</div>"+
+          "<div style='display:flex;gap:8px;align-items:flex-start;max-width:600px'>"+
+            "<textarea id='inp-nfse-desc' rows='2' maxlength='300' placeholder=\""+_escAud(NFSE_DESC_DEFECTO)+"\" style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:13px;font-family:inherit;resize:vertical;line-height:1.4'>"+_escAud(((S.config||{}).nfseDescripcion||NFSE_DESC_DEFECTO))+"</textarea>"+
+            "<button onclick='guardarNFSeDescripcion()' style='padding:9px 14px;background:var(--ac);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
+          "</div>"+
+          "<div style='font-size:10px;color:var(--tx4);margin-top:5px'>Vacío vuelve a lo por omisión.</div>"+
         "</div>"+
         // ARREGLO 128: los dos colchones con que se calcula la tasa que la
         // pestaña de Tasas recomienda cada mañana. Van aquí y no en la propia
@@ -37257,6 +37289,24 @@ function _pgdasDeshacer(mesKey){
   saveData(); R();
 }
 
+// ARREGLO 191 · Plantilla de la descripcion de la NFS-e mensal consolidada.
+// Editable en Configuracion para que el contador pueda ajustar el texto. Los
+// placeholders {mes}, {ano} y {competencia} se sustituyen por el mes actual.
+// Default elegido para su CNAE 63.19-4/00, Anexo III, SAIPHA ME.
+var NFSE_DESC_DEFECTO = "Prestação de serviços de informação pela internet - "+
+  "CNAE 63.19-4/00 - competência {competencia}";
+
+function _nfseDescripcion(mesKey, mesLabel){
+  var plantilla = ((S.config||{}).nfseDescripcion || NFSE_DESC_DEFECTO).trim();
+  // {competencia} = "Outubro/2026", {mes} = "10", {ano} = "2026".
+  var p = (mesKey||"").split("-");
+  var ano = p[0]||"", mesN = p[1]||"";
+  return plantilla
+    .replace(/\{competencia\}/g, mesLabel || (mesN+"/"+ano))
+    .replace(/\{mes\}/g, mesN)
+    .replace(/\{ano\}/g, ano);
+}
+
 function _htmlPGDAS(mesKey, mesLabel){
   var ing=_ingresoDeclarablePGDAS(mesKey);
   var rbt12=_rbt12PGDAS(mesKey);
@@ -37400,6 +37450,40 @@ function _htmlPGDAS(mesKey, mesLabel){
           "<span style='font-size:18px;font-weight:800;color:var(--pos)'>R$ "+f2(das)+"</span>"+
         "</div>"+
         "<div style='margin-top:8px;font-size:10.5px;color:var(--ink2);font-style:italic'>Estimado. El DAS oficial lo calcula el portal con los últimos ajustes de la Receita.</div>"+
+      "</div>";
+
+      // ARREGLO 191 · Card NFS-e Mensal consolidada. Su contador confirmo el
+      // 26/10 que su prefeitura permite 1 nota mensual con "consumidor final /
+      // tomador no identificado" sobre la Receita Bruta del mes. Dos botones
+      // copiar: valor y descripcion, para pegar en los campos del portal de la
+      // prefeitura (y el mismo valor sirve para el PGDAS-D).
+      //
+      // Lo mas simple: NO abre modal ni pantalla intermedia. Dos lineas, dos
+      // botones. La descripcion es editable en Configuracion (una vez al año)
+      // porque algunos contadores quieren texto distinto.
+      var _nfseDesc = _nfseDescripcion(mesKey, mesLabel);
+      html+="<div style='background:var(--card);border:2px solid var(--pos);border-radius:11px;padding:14px;margin-bottom:12px'>"+
+        "<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:6px'>"+
+          "<div style='font-size:11px;font-weight:700;color:var(--pos);text-transform:uppercase;letter-spacing:.3px'>📄 NFS-e mensal consolidada</div>"+
+          "<div style='font-size:10px;color:var(--ink2);font-style:italic'>una sola nota al mes · tomador: consumidor final</div>"+
+        "</div>"+
+        // Valor consolidado
+        "<div style='display:flex;justify-content:space-between;align-items:center;background:var(--sup2d);padding:10px 12px;border-radius:8px;margin-bottom:8px;gap:10px;flex-wrap:wrap'>"+
+          "<div>"+
+            "<div style='font-size:10px;color:var(--ink2);margin-bottom:2px'>Valor da nota (R$)</div>"+
+            "<div style='font-size:18px;font-weight:800;color:var(--tit)'>R$ "+f2(ing.total)+"</div>"+
+          "</div>"+
+          "<button onclick='_copiarPGDAS("+JSON.stringify(f2(ing.total).replace(",","."))+", this)' style='padding:9px 14px;background:var(--pos);color:var(--sobre-color);border:none;border-radius:8px;font-size:12px;font-weight:800;cursor:pointer'>📋 Copiar valor</button>"+
+        "</div>"+
+        // Descripcion pre-rellenada
+        "<div style='background:var(--sup2d);padding:10px 12px;border-radius:8px;gap:10px'>"+
+          "<div style='display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;flex-wrap:wrap;gap:6px'>"+
+            "<div style='font-size:10px;color:var(--ink2)'>Descrição do serviço</div>"+
+            "<button onclick='_copiarPGDAS("+JSON.stringify(_nfseDesc)+", this)' style='padding:7px 12px;background:var(--sup2c);color:var(--tit);border:1px solid var(--sup3);border-radius:7px;font-size:11.5px;font-weight:700;cursor:pointer'>📋 Copiar texto</button>"+
+          "</div>"+
+          "<div style='font-size:12px;color:var(--tit);line-height:1.5;padding:6px 0;font-style:italic'>&ldquo;"+_escAud(_nfseDesc)+"&rdquo;</div>"+
+          "<div style='font-size:10px;color:var(--ink2);margin-top:4px'>Para cambiar el texto: Configuración → NFS-e → Plantilla de descripción.</div>"+
+        "</div>"+
       "</div>";
     }
 
