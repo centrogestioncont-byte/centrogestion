@@ -12695,6 +12695,30 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
      "la proyeccion toma la mediana de los 3 meses anteriores");
 }
 
+// ARREGLO 190 · solo las idas (orig=BRL) entran al PGDAS. Las vueltas son
+// despesa, no receita (ARREGLO 124 "en la vuelta no se gana, se compra").
+// Sin esto, las vueltas antiguas con pr>0 (anteriores al 124) inflaban la
+// Receita Bruta: octubre pasaba de R$ 1.642 a R$ 2.020, DAS +R$ 23.
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const ip = sinC(sacarFuncion("_ingresoDeclarablePGDAS"));
+
+  // 1. El filtro de ida es por orig==="BRL" (no por "orig o dest").
+  ok(/if\s*\(\s*x\.orig\s*!==\s*"BRL"\s*\)\s*return/.test(ip),
+     "ARREGLO 190: filtra orig === 'BRL' (idas)");
+  ok(!/x\.orig\s*!==\s*"BRL"\s*&&\s*x\.dest\s*!==\s*"BRL"/.test(ip),
+     "y YA NO acepta vueltas (orig=VES/USD con dest=BRL)");
+
+  // 2. cuentaBRL ahora es siempre cuentaBanco (no cuentaDest).
+  ok(/var cuentaBRL\s*=\s*x\.cuentaBanco/.test(ip),
+     "cuentaBRL = x.cuentaBanco (siempre, ya no hay rama cuentaDest)");
+
+  // 3. Mercancia y ganancia extra siguen entrando - solo las vueltas de
+  //    remesas se descartaron.
+  ok(/S\.articulos/.test(ip) && /S\.gananciaExtra/.test(ip),
+     "mercancia y ganancia extra siguen contando");
+}
+
 // ARREGLO 179 · cuentas declarables en PGDAS-D.
 {
   const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
@@ -12710,13 +12734,12 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
 
   // 2. _ingresoDeclarablePGDAS lee la marca por cuenta en los TRES origenes.
   const ing = sinC(sacarFuncion("_ingresoDeclarablePGDAS"));
-  // Remesas: cuentaBRL deriva de cuentaBanco (orig=BRL) o cuentaDest
-  // (dest=BRL). Sin esto una remesa BR→VZ que entre a NUBANK personal
-  // contaria igual, por el solo hecho de ser BRL en origen.
-  ok(/x\.orig==="BRL"\s*\?\s*x\.cuentaBanco/.test(ing),
-     "en remesas la cuenta BRL se saca del movimiento (cuentaBanco si orig=BRL)");
-  ok(/x\.dest==="BRL"\s*\?\s*x\.cuentaDest/.test(ing),
-     "y cuentaDest si dest=BRL");
+  // Remesas: cuentaBRL es cuentaBanco (siempre, desde ARREGLO 190: solo
+  // idas orig=BRL entran al PGDAS). Antes se elegia entre cuentaBanco
+  // (si orig=BRL) o cuentaDest (si dest=BRL), para incluir vueltas - pero
+  // las vueltas son despesa, no receita.
+  ok(/var cuentaBRL\s*=\s*x\.cuentaBanco/.test(ing),
+     "cuentaBRL = x.cuentaBanco (ARREGLO 190)");
   ok(/if\(!declara\(cuentaBRL\)\)/.test(ing),
      "la decision de sumar pasa por declara(cuentaBRL)");
   // Mercancia y ganExtra tambien filtran por la cuenta declarable.
