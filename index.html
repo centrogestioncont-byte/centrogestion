@@ -3276,7 +3276,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261026_v270";
+var APP_VERSION = "20261026_v271";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -4545,29 +4545,15 @@ function _saldoAManoInfo(c){
   return {actual:Math.round(act*100)/100, segunInv:seg,
           dif:(seg===null)?null:Math.round((act-seg)*100)/100};
 }
-function volverASeguirInventario(id){
-  var c=(S.cuentas||[]).find(function(x){ return x.id===id; });
-  if(!c){ alert("No encuentro esa cuenta."); return; }
-  var i=_saldoAManoInfo(c);
-  if(!i){ alert("Esa cuenta ya sigue al inventario."); return; }
-  if(i.segunInv===null){
-    if(!confirm("\""+c.nombre+"\" no tiene ni una operación de USDT registrada, así que "+
-        "el inventario no sabe cuánto debería haber.\n\nSi la dejo seguir al inventario, "+
-        "su saldo pasaría a 0,00 en cuanto registres la primera.\n\n¿Seguro?")) return;
-  } else if(!confirm("Que \""+c.nombre+"\" vuelva a seguir al inventario:\n\n"+
-      "ahora dice ....... "+f2(i.actual)+" USDT\n"+
-      "pasaría a ........ "+f2(i.segunInv)+" USDT\n"+
-      "diferencia ....... "+(i.dif>0?"+":"")+f2(i.dif)+"\n\n"+
-      "Ese segundo número son tus compras menos tus ventas de USDT en esta cuenta: "+
-      "NO es lo que deberías tener, es lo que la app escribiría. El cambio se aplica "+
-      "la próxima vez que dibujes Inventario.\n\n"+
-      "Si la diferencia es grande, es que faltan operaciones por registrar.\n\n¿Seguro?")) return;
-  delete c.manual_override;
-  c._mod=Date.now();
-  logAudit("SALDO_SIGUE_INVENTARIO", c.nombre+" · a mano "+f2(i.actual)+
-           " · inventario "+(i.segunInv===null?"(sin datos)":f2(i.segunInv)));
-  saveData(); R();
-}
+// ARREGLO 189 · volverASeguirInventario se retiro. Su botón "que lo siga" en
+// Configuracion y en Inventario USDT era peligroso: calculaba el saldo como
+// compras-ventas de esa cuenta, pero cuando las ventas vienen con
+// cuentaOrigenId null (su caso de octubre), ese numero es irreal y pulsarlo
+// destrozaba un saldo que ella acababa de acomodar. Sus palabras del 26/10:
+// "deberia de quitar eso porque en cualquier momento me puedo equivocar y
+// puedo darle ese botón y se me dañan los saldos". Para quitar un override,
+// escribe el saldo real a mano (updateCuentaSaldo); con v270 (ARREGLO 188)
+// el cambio marca _mod y la fusion no lo revierte.
 function _saldoConProblema(c){
   if(!c) return false;
   if(c.esTarjeta){
@@ -15952,10 +15938,15 @@ function rConfigAdmin(){
                 // la app ESCRIBIRIA si la cuenta volviera a seguir al inventario
                 // (compras menos ventas de esa cuenta), no lo que deberia haber.
                 // Dicho de la otra forma se lee como dinero que falta.
+                // ARREGLO 189 \u00b7 se quito el boton "que lo siga". Lo pidio ella
+                // el 26/10: "deberia de quitar eso porque en cualquier momento
+                // me puedo equivocar y puedo darle ese bot\u00f3n y se me da\u00f1an los
+                // saldos". El numero que calculaba (compras - ventas de esa
+                // cuenta) no es fiable cuando las ventas se registran con
+                // cuentaOrigenId null, como paso en octubre. Para quitar un
+                // override, lo correcto es escribir el saldo real a mano.
                 (mo.segunInv===null ? "" : " \u00b7 si lo siguiera pasar\u00eda a "+f2(mo.segunInv))+
-                " <button onclick=\'volverASeguirInventario(\""+_jsAttr(String(c.id))+"\")\' style=\'background:none;"+
-                "border:1px solid var(--avi-ln);color:var(--avi-tx);border-radius:6px;padding:1px 6px;"+
-                "font-size:10px;font-weight:700;cursor:pointer;margin-left:4px\'>que lo siga</button></div>";
+                "</div>";
             })()+
           "</div>"+
           // ARREGLO 95: en una tarjeta la cifra grande NO puede salir como
@@ -16757,12 +16748,11 @@ function rCapitalTotal(){
           (function(){
             var mo=_saldoAManoInfo(item);
             if(!mo) return "";
+            // ARREGLO 189 \u00b7 boton quitado - ver el comentario en el otro sitio.
             return "<div style='font-size:10.5px;color:var(--avi-tx);font-weight:700;margin-top:2px'>"+
               "\u270d\ufe0f a mano \u00b7 no sigue al inventario"+
               (mo.segunInv===null ? "" : " \u00b7 si lo siguiera pasar\u00eda a "+f2(mo.segunInv))+
-              " <button onclick='volverASeguirInventario(\""+_jsAttr(String(item.id))+"\")' style='background:none;"+
-              "border:1px solid var(--avi-ln);color:var(--avi-tx);border-radius:6px;padding:0 5px;"+
-              "font-size:10px;font-weight:700;cursor:pointer'>que lo siga</button></div>";
+              "</div>";
           })()+
         "</div>"+
         "<div style='text-align:right;flex-shrink:0'>"+
