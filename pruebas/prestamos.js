@@ -12825,22 +12825,16 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
 }
 
 // ARREGLO 185 · frase destacada del flyer ("Sin comisiones ocultas").
-// Lo que diferencia a Jhoselin de Retorna, que cobra 10% oculto. Vacia -> no
-// se dibuja (no deja hueco). Editable en Configuracion.
 {
   const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
   const HS = sinC(HTML);
 
-  // 1. La frase sale de UN sitio (_fraseFlyer). Lo leen las dos funciones
-  //    que la dibujan y el input de Configuracion. Calculada aparte, un dia
-  //    el flyer y la config dirian cosas distintas.
   const ff = sinC(sacarFuncion("_fraseFlyer"));
   ok(/S\.config\.mensajeFlyer/.test(ff),
      "_fraseFlyer lee S.config.mensajeFlyer");
   ok(/Sin comisiones ocultas/.test(ff),
      "default: 'Sin comisiones ocultas' (su decision 26/10)");
 
-  // 2. Vacio -> no se dibuja (no deja hueco en el flyer).
   const hff = sinC(sacarFuncion("_htmlFraseFlyer"));
   ok(/if\s*\(!t\)\s*return\s*""/.test(hff),
      "flyer: vacio no dibuja nada");
@@ -12848,18 +12842,11 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
   ok(/if\s*\(!t\)\s*return\s*""/.test(hmff),
      "mini flyer: vacio no dibuja nada");
 
-  // 3. Se escapa para que un texto con <, >, " no rompa el html del flyer.
   ok(/_escAud\(t\)/.test(hff) && /_escAud\(t\)/.test(hmff),
      "la frase se escapa antes de meterse en innerHTML");
-
-  // 4. Las dos funciones de dibujo (grande y mini) usan _fraseFlyer, no una
-  //    copia local del default. Lo que arreglo guardar un sitio lo arregla
-  //    en los dos.
   ok(/_fraseFlyer\(\)/.test(hff) && /_fraseFlyer\(\)/.test(hmff),
      "las dos leen de _fraseFlyer, no copian el default");
 
-  // 5. Y aparecen dentro del generador de cada flyer (si no, el arreglo se
-  //    queda escrito y no sale en pantalla).
   const gf = sinC(sacarFuncion("generarFlyer"));
   ok(/_htmlFraseFlyer\(\)/.test(gf),
      "generarFlyer la pinta");
@@ -12867,8 +12854,6 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
   ok(/_htmlFraseMiniFlyer\(\)/.test(gm),
      "generarMiniFlyer la pinta");
 
-  // 6. El guardado pone la frase en S.config.mensajeFlyer, con tope de 60.
-  //    Mas largo rompe la caja del flyer.
   const gmf = sinC(sacarFuncion("guardarMensajeFlyer"));
   ok(/S\.config\.mensajeFlyer\s*=/.test(gmf),
      "guardarMensajeFlyer escribe en S.config.mensajeFlyer");
@@ -12876,11 +12861,45 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
      "tope de 60 caracteres");
   ok(/saveData\(\)/.test(gmf),
      "guarda y sincroniza");
+}
 
-  // 7. mensajeFlyer viaja en S.config, que ya esta en DATA_KEYS por su
-  //    familia; no hace falta anadir una clave nueva (y evita el fallo del
-  //    08/10: una clave que se olvida en el servidor viaja y la tira con
-  //    un 200 y sin un solo error).
+// ARREGLO 186 · margen por tipo (usdt +1 % / usd -1 %) y USD/BRL de la
+// calculadora de Ganancia sigue a la tasa de referencia.
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const HS = sinC(HTML);
+
+  ok(/MARGEN_P2P_BRL_DEFECTO\s*=\s*0\.01/.test(HS),
+     "margen P2P BRL defecto 1% (ARREGLO 183)");
+  ok(/MARGEN_USD_BRL_DEFECTO\s*=\s*0\.01/.test(HS),
+     "margen USD/BRL defecto 1% (ARREGLO 186, decision 'dale B')");
+
+  const tm = sinC(sacarFuncion("_tasaMercadoDe"));
+  ok(/campo\.tipo/.test(tm),
+     "lee campo.tipo del servidor");
+  ok(/tipo\s*===?\s*"usdt"\s*\)?\s*t\s*=\s*t\s*\*\s*\(\s*1\s*\+\s*_margenP2P_BRL/.test(tm),
+     "tipo usdt -> suma margen P2P BRL");
+  ok(/tipo\s*===?\s*"usd"\s*\)?\s*\s*t\s*=\s*t\s*\*\s*\(\s*1\s*-\s*_margenUSD_BRL/.test(tm),
+     "tipo usd -> RESTA margen USD/BRL (USD va por encima del P2P)");
+
+  ok(/tipo\s*&&\s*campo\.fuente\s*&&\s*!campo\.anuncios/.test(tm),
+     "sin tipo pero con fuente spot -> compat con server viejo (como usdt)");
+
+  const fnCg = sinC(sacarFuncion("_cg"));
+  ok(/!g\.usdbrlTocada/.test(fnCg),
+     "_cg refresca usdbrl mientras no este tocado");
+  ok(/tasaDeReferencia\(\s*"BRL"\s*\)/.test(fnCg),
+     "y el valor sale de tasaDeReferencia('BRL') - la MISMA del resto de la app");
+
+  const fnSet = sinC(sacarFuncion("_cgSet"));
+  ok(/campo\s*===?\s*"usdbrl"\s*\)?\s*g\.usdbrlTocada\s*=\s*true/.test(fnSet),
+     "_cgSet marca usdbrl como tocado al escribir");
+
+  const fnG = sinC(sacarFuncion("guardarMargenUSDBRL"));
+  ok(/S\.config\.margenUSD_BRL\s*=\s*v\s*\/\s*100/.test(fnG),
+     "guardarMargenUSDBRL escribe en S.config.margenUSD_BRL");
+  ok(/delete\s+S\.config\.margenUSD_BRL/.test(fnG),
+     "vacio vuelve a lo por omision (borra la clave)");
 }
 
 // ARREGLO 183 · margen P2P BRL sobre el spot.
@@ -12892,10 +12911,12 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
   ok(/MARGEN_P2P_BRL_DEFECTO\s*=\s*0\.01/.test(HS),
      "por omision 1 % (CoinGecko -> Binance BR, medido 24/10)");
 
-  // 2. _tasaMercadoDe distingue SPOT de P2P: aplica margen solo al spot.
+  // 2. _tasaMercadoDe aplica margen P2P BRL cuando el server marca tipo "usdt"
+  //    (ARREGLO 186) o cuando no marca tipo pero tiene fuente spot - compat
+  //    con server anterior al 186. P2P con anuncios no lleva margen.
   const tmd = sinC(sacarFuncion("_tasaMercadoDe"));
-  ok(/moneda\s*===\s*"BRL"\s*&&\s*!!campo\.fuente\s*&&\s*!campo\.anuncios/.test(tmd),
-     "detecta spot por 'fuente' SIN 'anuncios' (P2P los lleva, spot no)");
+  ok(/campo\.fuente\s*&&\s*!campo\.anuncios\)\s*tipo\s*=\s*"usdt"/.test(tmd),
+     "compat con server viejo: spot sin tipo se trata como usdt");
   ok(/_margenP2P_BRL\(\)/.test(tmd),
      "y aplica el margen configurable (no un numero magico)");
 
