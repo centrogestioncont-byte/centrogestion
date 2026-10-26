@@ -11802,21 +11802,21 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
   const sm = sinC(sacarFuncion("_saldoAManoInfo"));
   ok(/!c\.manual_override\) return null/.test(sm),
      "sólo avisa de las cuentas que de verdad tienen el saldo escrito a mano");
-  const vs = sinC(sacarFuncion("volverASeguirInventario"));
-  ok(/delete c\.manual_override/.test(vs), "el botón quita la marca");
-  ok(!/c\.saldo\s*=/.test(vs),
-     "y NO toca el saldo: lo cambia el inventario cuando se dibuje, no este botón");
-  ok(/NO es lo que deber/.test(vs),
-     "la pregunta dice que ese número no es lo que debería tener");
-  ok(/c\._mod=Date\.now\(\)/.test(vs), "y lleva su _mod, o no viaja al otro aparato");
-  ok(/i\.segunInv===null/.test(vs),
-     "una cuenta sin operaciones se avisa aparte: pasaría a 0");
-  // En las DOS pantallas donde se ve un saldo: Configuración (donde se edita)
-  // y Balance de Cuentas (donde ella mira). Ponerlo en una sola es el fallo
-  // de buscar una copia y dejarse las otras (101, 119, 150, 153).
+  // ARREGLO 189 · El boton "que lo siga" se quito, pedido suyo del 26/10:
+  // "deberia de quitar eso porque en cualquier momento me puedo equivocar y
+  // puedo darle ese boton y se me dañan los saldos". El numero que calculaba
+  // (compras-ventas de esa cuenta) no es fiable cuando las ventas vienen con
+  // cuentaOrigenId null (su caso de octubre). Para quitar un override se
+  // escribe el saldo real a mano. El aviso "a mano · no sigue al inventario"
+  // se queda, pero sin boton al lado.
+  // Sin comentarios: en el codigo real la funcion no existe. En un comentario
+  // sigue mencionada a proposito, para que el proximo que mire sepa que se
+  // retiro y por que.
+  ok(!/\bvolverASeguirInventario\b/.test(sinC(HTML)),
+     "ARREGLO 189: la funcion volverASeguirInventario esta retirada del codigo");
   const cfgA = sacarFuncion("rConfigAdmin"), cap2 = sacarFuncion("rCapitalTotal");
   ok(/_saldoAManoInfo\(c\)/.test(cfgA) && /no sigue al inventario/.test(cfgA),
-     "Configuración lo dice, con su botón");
+     "Configuración sigue diciendo el aviso");
   ok(/_saldoAManoInfo\(item\)/.test(cap2) && /no sigue al inventario/.test(cap2),
      "y Balance de Cuentas también, que es donde ella mira");
   ok(/si lo siguiera pasar/.test(cfgA) && /si lo siguiera pasar/.test(cap2),
