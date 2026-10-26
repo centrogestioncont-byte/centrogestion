@@ -12824,6 +12824,56 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
      "PAGBANK sugiere 15 (medido en el extracto del 24/10)");
 }
 
+// ARREGLO 186 · margen por tipo (usdt +1 % / usd -1 %) y USD/BRL de la
+// calculadora de Ganancia sigue a la tasa de referencia.
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const HS = sinC(HTML);
+
+  // 1. Hay DOS margenes: el +1% para fuentes USDT (ARREGLO 183) y el -1%
+  //    para AwesomeAPI (USD/BRL). Decision suya 26/10 "dale B".
+  ok(/MARGEN_P2P_BRL_DEFECTO\s*=\s*0\.01/.test(HS),
+     "margen P2P BRL defecto 1% (ARREGLO 183)");
+  ok(/MARGEN_USD_BRL_DEFECTO\s*=\s*0\.01/.test(HS),
+     "margen USD/BRL defecto 1% (ARREGLO 186, decision 'dale B')");
+
+  // 2. _tasaMercadoDe decide por el campo 'tipo' que marca el servidor,
+  //    no adivinando desde el app. El servidor lo sabe mejor.
+  const tm = sinC(sacarFuncion("_tasaMercadoDe"));
+  ok(/campo\.tipo/.test(tm),
+     "lee campo.tipo del servidor");
+  ok(/tipo\s*===?\s*"usdt"\s*\)?\s*t\s*=\s*t\s*\*\s*\(\s*1\s*\+\s*_margenP2P_BRL/.test(tm),
+     "tipo usdt -> suma margen P2P BRL");
+  ok(/tipo\s*===?\s*"usd"\s*\)?\s*\s*t\s*=\s*t\s*\*\s*\(\s*1\s*-\s*_margenUSD_BRL/.test(tm),
+     "tipo usd -> RESTA margen USD/BRL (USD va por encima del P2P)");
+
+  // 3. Compatibilidad con el servidor viejo (anterior a ARREGLO 186): si no
+  //    hay tipo pero si fuente y no anuncios -> tratar como USDT.
+  ok(/tipo\s*&&\s*campo\.fuente\s*&&\s*!campo\.anuncios/.test(tm),
+     "sin tipo pero con fuente spot -> compat con server viejo (como usdt)");
+
+  // 4. El USD/BRL de la calculadora de Ganancia sigue la tasa de referencia
+  //    mientras ella no lo toque. Si lo toca, queda marcado como suyo.
+  const fnCg = sinC(sacarFuncion("_cg"));
+  ok(/!g\.usdbrlTocada/.test(fnCg),
+     "_cg refresca usdbrl mientras no este tocado");
+  ok(/tasaDeReferencia\(\s*"BRL"\s*\)/.test(fnCg),
+     "y el valor sale de tasaDeReferencia('BRL') - la MISMA del resto de la app");
+
+  // 5. _cgSet marca como tocado cuando ella escribe.
+  const fnSet = sinC(sacarFuncion("_cgSet"));
+  ok(/campo\s*===?\s*"usdbrl"\s*\)?\s*g\.usdbrlTocada\s*=\s*true/.test(fnSet),
+     "_cgSet marca usdbrl como tocado al escribir");
+
+  // 6. El boton de margen USD/BRL guarda en S.config.margenUSD_BRL (viaja
+  //    con el bloque de estado, no necesita clave nueva en el servidor).
+  const fnG = sinC(sacarFuncion("guardarMargenUSDBRL"));
+  ok(/S\.config\.margenUSD_BRL\s*=\s*v\s*\/\s*100/.test(fnG),
+     "guardarMargenUSDBRL escribe en S.config.margenUSD_BRL");
+  ok(/delete\s+S\.config\.margenUSD_BRL/.test(fnG),
+     "vacio vuelve a lo por omision (borra la clave)");
+}
+
 // ARREGLO 183 · margen P2P BRL sobre el spot.
 {
   const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
@@ -12833,10 +12883,12 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
   ok(/MARGEN_P2P_BRL_DEFECTO\s*=\s*0\.01/.test(HS),
      "por omision 1 % (CoinGecko -> Binance BR, medido 24/10)");
 
-  // 2. _tasaMercadoDe distingue SPOT de P2P: aplica margen solo al spot.
+  // 2. _tasaMercadoDe aplica margen P2P BRL cuando el server marca tipo "usdt"
+  //    (ARREGLO 186) o cuando no marca tipo pero tiene fuente spot - compat
+  //    con server anterior al 186. P2P con anuncios no lleva margen.
   const tmd = sinC(sacarFuncion("_tasaMercadoDe"));
-  ok(/moneda\s*===\s*"BRL"\s*&&\s*!!campo\.fuente\s*&&\s*!campo\.anuncios/.test(tmd),
-     "detecta spot por 'fuente' SIN 'anuncios' (P2P los lleva, spot no)");
+  ok(/campo\.fuente\s*&&\s*!campo\.anuncios\)\s*tipo\s*=\s*"usdt"/.test(tmd),
+     "compat con server viejo: spot sin tipo se trata como usdt");
   ok(/_margenP2P_BRL\(\)/.test(tmd),
      "y aplica el margen configurable (no un numero magico)");
 
