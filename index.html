@@ -2393,16 +2393,23 @@ let S={
   // ══════════════════════════════════════════════════
   // DYNAMIC MULTI-CURRENCY ARCHITECTURE
   // ══════════════════════════════════════════════════
-  cuentas:[
-    {id:"c01",nombre:"Banco EE.UU",tipo:"fiat",moneda:"USD",institucion:"Banco USA",saldo:0,operador:"julio",activa:true},
-    {id:"c02",nombre:"Kraken Fiat",tipo:"fiat",moneda:"USD",institucion:"Kraken",saldo:0,operador:"julio",activa:true},
-    {id:"c03",nombre:"Nubank",tipo:"fiat",moneda:"BRL",institucion:"Nubank Brasil",saldo:0,operador:"general",activa:true},
-    {id:"c04",nombre:"Inter",tipo:"fiat",moneda:"BRL",institucion:"Banco Inter",saldo:0,operador:"general",activa:true},
-    {id:"c05",nombre:"Banesco VE",tipo:"fiat",moneda:"VES",institucion:"Banesco",saldo:0,operador:"general",activa:true},
-    {id:"c06",nombre:"Binance JHOSELIN",tipo:"crypto",moneda:"USDT",institucion:"Binance",saldo:0,operador:"jhoselin",activa:true},
-    {id:"c07",nombre:"Binance Julio",tipo:"crypto",moneda:"USDT",institucion:"Binance",saldo:0,operador:"julio",activa:true},
-    {id:"c08",nombre:"True Wallet",tipo:"crypto",moneda:"USDT",institucion:"TrueWallet",saldo:0,operador:"general",activa:true},
-  ],
+  // ARREGLO 187: ANTES aqui habia 8 cuentas plantilla (c01..c08: Banco EE.UU,
+  // Kraken Fiat, Nubank, Inter, Banesco VE, Binance JHOSELIN, Binance Julio,
+  // True Wallet). Vista en el reporte del 26/10: aparecian en Inventario USDT
+  // con saldo 0,00 como "activas" aunque ella NUNCA las uso: sus cuentas
+  // reales tienen otros ids (c178xxx del _CUENTAS_CONOCIDAS_RECUPERACION) y
+  // nombres parecidos pero distintos (BINANCE JULIO en mayusculas, no
+  // "Binance Julio"). Las plantillas quedaron de una version muy vieja de
+  // la app, cuando este archivo contenia datos semilla. Hoy una cuenta nueva
+  // se crea desde Configuracion y la app no las necesita.
+  //
+  // Al arrancar sin datos locales, S.cuentas quedaba inicializado con esas 8
+  // plantillas. Fetch del servidor traia las REALES de ella, pero la fusion
+  // por id (c01..c08 no estan en el servidor) las dejaba intactas, asi que
+  // reaparecian cada vez que ella abria en un navegador nuevo o despues de
+  // limpiar el cache. _marcarBorradoMerge("cuentas", c01..c08) en el
+  // bootstrap las poda y escribe en _deletedMerge que no vuelvan por fusion.
+  cuentas:[],
   tasasCambio:{
     "BRL":5.0,"VES":650.0,"USD":1.01,"COP":4100,"PEN":3.7,"EUR":0.92,"TTD":6.8
   },
@@ -3269,7 +3276,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261026_v268";
+var APP_VERSION = "20261026_v269";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -38751,6 +38758,33 @@ function _asignarUidsFaltantes(){
   });
 }
 _asignarUidsFaltantes();
+
+// ARREGLO 187 · podar las 8 cuentas plantilla (c01..c08) que quedaron de una
+// version muy vieja de la app. Para ella se mezclaban con las REALES (c178xxx)
+// y aparecian en Inventario USDT como "activas" aunque nunca las uso: no
+// estaban en el servidor, asi que la fusion no las traia ni las tocaba.
+// Solo las plantillas del default, nunca una cuenta que ella haya creado -
+// esas tienen ids del formato "c<Date.now()>" (13 digitos) o del formato
+// "c178xxxxxxxxxxx" (c1780535378520, 14 digitos) del _CUENTAS_CONOCIDAS.
+// Las plantillas son exactamente c01..c08 (2 caracteres). _marcarBorradoMerge
+// escribe en _deletedMerge para que ni la fusion con el servidor las revive.
+(function _podarCuentasFantasma(){
+  if(!Array.isArray(S.cuentas)) return;
+  var FANTASMA = {"c01":1,"c02":1,"c03":1,"c04":1,"c05":1,"c06":1,"c07":1,"c08":1};
+  var antes = S.cuentas.length;
+  var quitadas = [];
+  S.cuentas = S.cuentas.filter(function(c){
+    if(c && FANTASMA[c.id]){ quitadas.push(c.id+" "+(c.nombre||"")); return false; }
+    return true;
+  });
+  if(quitadas.length){
+    quitadas.forEach(function(q){
+      try{ _marcarBorradoMerge("cuentas", q.split(" ")[0]); }catch(e){}
+    });
+    console.log("🧹 ARREGLO 187 · podadas "+quitadas.length+" cuenta(s) plantilla fantasma: "+quitadas.join(", "));
+  }
+})();
+
 _syncCapitalWithCuentas();
 
 // 2. Merge ONLY clients from base data (non-destructive, no ops)
