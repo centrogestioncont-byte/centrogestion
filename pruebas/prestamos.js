@@ -12824,6 +12824,40 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
      "PAGBANK sugiere 15 (medido en el extracto del 24/10)");
 }
 
+// ARREGLO 187 · podar las cuentas plantilla c01..c08 que quedaron en S.cuentas
+// de una version muy vieja. Nunca estuvieron en el servidor, asi que la fusion
+// no las traia ni las tocaba, y reaparecian con cada arranque sin cache local.
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const HS = sinC(HTML);
+
+  // 1. El default S.cuentas:[] ya NO lleva c01..c08. Son dos definiciones y la
+  //    segunda sobrescribe la primera, asi que la segunda debe ser vacia.
+  //    Cuento las dos: la primera (vacia) y la segunda (tambien vacia).
+  const defs = HS.match(/cuentas:\s*\[\s*\]/g) || [];
+  ok(defs.length >= 2,
+     "las dos definiciones de 'cuentas:' en let S={} son vacias (fantasmas fuera del default)");
+
+  // 2. Y el default YA NO deja ninguna de las 8 plantillas (ni Binance JHOSELIN
+  //    con minuscula ni True Wallet). Si vuelven, el bug vuelve.
+  ok(!/cuentas:\s*\[\s*\{[^]*?"c01"[^]*?Banco EE\.UU/.test(HS),
+     "no vuelve el default con c01 Banco EE.UU");
+  ok(!/cuentas:\s*\[\s*\{[^]*?"c06"[^]*?Binance JHOSELIN/.test(HS),
+     "no vuelve el default con c06 Binance JHOSELIN");
+  ok(!/cuentas:\s*\[\s*\{[^]*?"c08"[^]*?True Wallet/.test(HS),
+     "no vuelve el default con c08 True Wallet");
+
+  // 3. La IIFE de poda recorre S.cuentas y filtra las ids c01..c08. Vive al
+  //    lado de _asignarUidsFaltantes() para correr una vez al arrancar.
+  ok(/_podarCuentasFantasma/.test(HS),
+     "existe la IIFE _podarCuentasFantasma");
+  const poda = HS.match(/function\s+_podarCuentasFantasma\s*\(\)\s*\{[\s\S]*?\}\s*\)\s*\(\)/);
+  ok(poda && /"c01":1,"c02":1,"c03":1,"c04":1,"c05":1,"c06":1,"c07":1,"c08":1/.test(poda[0]),
+     "la lista FANTASMA cubre c01..c08 exactas");
+  ok(poda && /_marcarBorradoMerge\("cuentas"/.test(poda[0]),
+     "y las marca como borradas para que la fusion no las revive (ARREGLO 6c/137)");
+}
+
 // ARREGLO 185 · frase destacada del flyer ("Sin comisiones ocultas").
 // Lo que diferencia a Jhoselin de Retorna, que cobra 10% oculto. Vacia -> no
 // se dibuja (no deja hueco). Editable en Configuracion.
