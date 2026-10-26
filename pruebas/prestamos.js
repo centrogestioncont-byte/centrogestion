@@ -12824,6 +12824,65 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
      "PAGBANK sugiere 15 (medido en el extracto del 24/10)");
 }
 
+// ARREGLO 185 · frase destacada del flyer ("Sin comisiones ocultas").
+// Lo que diferencia a Jhoselin de Retorna, que cobra 10% oculto. Vacia -> no
+// se dibuja (no deja hueco). Editable en Configuracion.
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const HS = sinC(HTML);
+
+  // 1. La frase sale de UN sitio (_fraseFlyer). Lo leen las dos funciones
+  //    que la dibujan y el input de Configuracion. Calculada aparte, un dia
+  //    el flyer y la config dirian cosas distintas.
+  const ff = sinC(sacarFuncion("_fraseFlyer"));
+  ok(/S\.config\.mensajeFlyer/.test(ff),
+     "_fraseFlyer lee S.config.mensajeFlyer");
+  ok(/Sin comisiones ocultas/.test(ff),
+     "default: 'Sin comisiones ocultas' (su decision 26/10)");
+
+  // 2. Vacio -> no se dibuja (no deja hueco en el flyer).
+  const hff = sinC(sacarFuncion("_htmlFraseFlyer"));
+  ok(/if\s*\(!t\)\s*return\s*""/.test(hff),
+     "flyer: vacio no dibuja nada");
+  const hmff = sinC(sacarFuncion("_htmlFraseMiniFlyer"));
+  ok(/if\s*\(!t\)\s*return\s*""/.test(hmff),
+     "mini flyer: vacio no dibuja nada");
+
+  // 3. Se escapa para que un texto con <, >, " no rompa el html del flyer.
+  ok(/_escAud\(t\)/.test(hff) && /_escAud\(t\)/.test(hmff),
+     "la frase se escapa antes de meterse en innerHTML");
+
+  // 4. Las dos funciones de dibujo (grande y mini) usan _fraseFlyer, no una
+  //    copia local del default. Lo que arreglo guardar un sitio lo arregla
+  //    en los dos.
+  ok(/_fraseFlyer\(\)/.test(hff) && /_fraseFlyer\(\)/.test(hmff),
+     "las dos leen de _fraseFlyer, no copian el default");
+
+  // 5. Y aparecen dentro del generador de cada flyer (si no, el arreglo se
+  //    queda escrito y no sale en pantalla).
+  const gf = sinC(sacarFuncion("generarFlyer"));
+  ok(/_htmlFraseFlyer\(\)/.test(gf),
+     "generarFlyer la pinta");
+  const gm = sinC(sacarFuncion("generarMiniFlyer"));
+  ok(/_htmlFraseMiniFlyer\(\)/.test(gm),
+     "generarMiniFlyer la pinta");
+
+  // 6. El guardado pone la frase en S.config.mensajeFlyer, con tope de 60.
+  //    Mas largo rompe la caja del flyer.
+  const gmf = sinC(sacarFuncion("guardarMensajeFlyer"));
+  ok(/S\.config\.mensajeFlyer\s*=/.test(gmf),
+     "guardarMensajeFlyer escribe en S.config.mensajeFlyer");
+  ok(/length\s*>\s*60/.test(gmf),
+     "tope de 60 caracteres");
+  ok(/saveData\(\)/.test(gmf),
+     "guarda y sincroniza");
+
+  // 7. mensajeFlyer viaja en S.config, que ya esta en DATA_KEYS por su
+  //    familia; no hace falta anadir una clave nueva (y evita el fallo del
+  //    08/10: una clave que se olvida en el servidor viaja y la tira con
+  //    un 200 y sin un solo error).
+}
+
 // ARREGLO 183 · margen P2P BRL sobre el spot.
 {
   const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");

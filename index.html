@@ -3269,7 +3269,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261025_v266";
+var APP_VERSION = "20261026_v267";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -15275,6 +15275,19 @@ function guardarComisionBanco(){
   saveData();R();
   alert("✅ Comisiones del banco VE guardadas:\n\nPago móvil: "+(v*100).toFixed(2)+"% (mínimo "+f2(mn)+" Bs)\nTransferencia: "+f2(tr)+" Bs");
 }
+// ARREGLO 185 · Frase destacada del flyer. Vive en S.config.mensajeFlyer,
+// que viaja en el bloque de estado (DATA_KEYS). Vacio -> no se dibuja.
+function guardarMensajeFlyer(){
+  var el=document.getElementById("inp-mensaje-flyer");
+  if(!el) return;
+  var v=(el.value||"").trim();
+  if(v.length>60){alert("La frase es muy larga (máx 60).");return;}
+  if(!S.config) S.config={};
+  S.config.mensajeFlyer=v;
+  logAudit("CONFIG_FLYER_FRASE","Frase destacada del flyer: "+(v||"(vacía)"));
+  saveData();R();
+  alert(v?("✅ Frase guardada:\n\n"+v):"✅ Frase borrada. El flyer sale sin frase destacada.");
+}
 function editComision(){
   var actual=COM();
   var nueva=prompt("Comision USDT por operacion (Actual: "+actual+") - ej: 0.06",""+actual);
@@ -16095,6 +16108,18 @@ function rConfigAdmin(){
             "<input type='text' inputmode='decimal' id='inp-com-banco-transf' value='"+(((S.config||{}).comision_banco_transferencia!==undefined)?S.config.comision_banco_transferencia:54)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
           "</div>"+
           "<button onclick='guardarComisionBanco()' style='padding:9px 14px;background:var(--mal);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
+        "</div>"+
+        // ARREGLO 185 · Frase destacada del flyer. Lo que diferencia a Jhoselin
+        // de Retorna (que cobra 10% de comision oculta) es que ella no cobra
+        // ninguna. Esta frase aparece en el flyer y mini flyer.
+        // Vacio -> no se dibuja (no deja hueco). Default: "💥 Sin comisiones ocultas".
+        "<div style='margin-top:14px;padding-top:14px;border-top:1px solid var(--ln2)'>"+
+          "<div style='font-size:12px;font-weight:700;color:var(--tx2);margin-bottom:8px'>📢 Frase destacada del flyer</div>"+
+          "<div style='font-size:11px;color:var(--tx3);margin-bottom:8px'>Aparece debajo de las tasas en el flyer y en el mini flyer. Déjala vacía si no quieres ninguna.</div>"+
+          "<div style='display:flex;gap:8px;align-items:center;max-width:500px'>"+
+            "<input type='text' id='inp-mensaje-flyer' maxlength='60' value=\""+_escAud(_fraseFlyer())+"\" placeholder='💥 Sin comisiones ocultas' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+            "<button onclick='guardarMensajeFlyer()' style='padding:9px 14px;background:var(--ac);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
+          "</div>"+
         "</div>"+
         // ARREGLO 128: los dos colchones con que se calcula la tasa que la
         // pestaña de Tasas recomienda cada mañana. Van aquí y no en la propia
@@ -31805,6 +31830,32 @@ function _flyerFechaHora(){
   return { fecha:dd+"/"+mm+"/"+yy, hora:h12+":"+m+" "+ampm };
 }
 
+// ARREGLO 185 · Frase destacada del flyer. Editable en Configuracion.
+// Vacio -> no se dibuja (no deja hueco). Escapada para que un texto suyo
+// con <, > o " no rompa el html del flyer (el flyer vive dentro de innerHTML).
+function _fraseFlyer(){
+  var t=(S.config && typeof S.config.mensajeFlyer!=="undefined")
+    ? S.config.mensajeFlyer
+    : "💥 Sin comisiones ocultas";
+  return (t==null?"":String(t)).trim();
+}
+function _htmlFraseFlyer(){
+  var t=_fraseFlyer();
+  if(!t) return "";
+  return "<div style='text-align:center;margin-top:14px;padding:14px 18px;"+
+    "background:rgba(255,138,0,.12);border:1.5px solid rgba(255,138,0,.35);"+
+    "border-radius:16px;font-size:28px;font-weight:900;color:var(--fly-naranja);"+
+    "letter-spacing:.3px;line-height:1.2'>"+_escAud(t)+"</div>";
+}
+function _htmlFraseMiniFlyer(){
+  var t=_fraseFlyer();
+  if(!t) return "";
+  return "<div style='text-align:center;margin-top:18px;padding:12px 16px;"+
+    "background:rgba(255,138,0,.12);border:1.5px solid rgba(255,138,0,.35);"+
+    "border-radius:14px;font-size:22px;font-weight:900;color:var(--fly-naranja);"+
+    "letter-spacing:.3px;line-height:1.2'>"+_escAud(t)+"</div>";
+}
+
 // Genera el flyer en un canvas y lo descarga como imagen PNG
 // Dibuja la insignia "R" de RemesasYA en el canvas (vectorial, sale nítida).
 // cx,cy = esquina superior izquierda del área; s = tamaño (alto≈ancho); col = color.
@@ -31913,6 +31964,9 @@ function generarMiniFlyer(){
       "</div>"+
     "</div>"+
 
+    // ARREGLO 185 · frase destacada ("sin comisiones ocultas", etc.)
+    _htmlFraseMiniFlyer()+
+
     // BOTTOM
     "<div style='display:flex;justify-content:space-between;align-items:center;margin-top:36px'>"+
       "<div style='display:flex;align-items:center;gap:12px'>"+
@@ -31981,6 +32035,9 @@ function generarFlyer(){
       "</div>"+
       // tarjetas con línea de acento abajo
       "<div style='display:flex;gap:20px;width:100%'>"+tIda+tVuelta+"</div>"+
+      // ARREGLO 185 · frase destacada (p. ej. "💥 Sin comisiones ocultas").
+      // Editable en Configuracion. Vacio -> no se dibuja (no deja hueco).
+      _htmlFraseFlyer()+
       // fecha y hora
       "<div style='display:flex;gap:60px;align-items:center'>"+
         "<div style='display:flex;align-items:center;gap:12px'><span style='font-size:40px'>📅</span><span style='font-size:35px;font-weight:600;color:var(--fly-sobre)'>"+fh.fecha+"</span></div>"+
