@@ -13244,5 +13244,24 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
      "va en rApp arriba del panel entre mes sin cerrar y RBT12");
 }
 
+// ARREGLO 192 · egreso personal creado "pagado" descuenta el FIFO
+console.log("\nARREGLO 192 · saveEgPersonal baja el lote, no solo la cuenta");
+{
+  // Lo cazo ella el 27/10: pago 4.335,63 Bs desde Banco de Venezuela como
+  // egreso personal creado ya pagado. El saldo bajo bien; el lote NO.
+  // pagarEgPersonal() si lo hacia; saveEgPersonal() se olvido.
+  // De los lotes salen las tasas que la app sugiere, asi que no es cosmetico.
+  const seg = sinComentarios(sacarFuncion("saveEgPersonal"));
+  ok(/if\(e\.pagada&&e\.cuentaId\)\{[\s\S]*?ajusteCuentaEgreso\(/.test(seg)
+     && /if\(e\.pagada&&e\.cuentaId\)\{[\s\S]*?descontarFIFOEgreso\(/.test(seg),
+     "crearlo pagado baja la cuenta Y descuenta el FIFO");
+  // Y en el MISMO orden que pagarEgPersonal: primero la cuenta, luego el FIFO.
+  // Al reves no rompe nada hoy, pero las dos funciones hacen lo mismo y una
+  // regla copiada en dos sitios se separa con el primer cambio (ARREGLOS 101,
+  // 119, 150, 153).
+  ok(seg.indexOf("ajusteCuentaEgreso(") < seg.indexOf("descontarFIFOEgreso("),
+     "en el mismo orden que pagarEgPersonal: cuenta primero, FIFO despues");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
