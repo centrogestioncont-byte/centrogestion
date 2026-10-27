@@ -50,7 +50,7 @@ function sacarConstante(nombre) {
   }
   throw new Error("la constante " + nombre + " no termina en ';'");
 }
-const CONSTANTES = ["_APROX_LS", "_COLCHON_DEF", "_SIN_APROX", "_UMBRAL_BS_DEF", "_SIN_BS", "_UMBRAL_BRL_DEF", "_SIN_BRL", "_RUTA_DE", "CG_BASE", "_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO", "_AVISO_UMBRAL", "_MERCADO_MONTO_DEF", "_VIZ", "_INM_AVISO_DIAS", "_DIAS_NORMAL_BS",
+const CONSTANTES = ["_APROX_LS", "_COLCHON_DEF", "_SIN_APROX", "_UMBRAL_BS_DEF", "_SIN_BS", "_UMBRAL_BRL_DEF", "_SIN_BRL", "_RUTA_DE", "CG_BASE", "_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO", "_AVISO_UMBRAL", "_MERCADO_MONTO_DEF", "_VIZ", "_INM_AVISO_DIAS", "_DIAS_NORMAL_BS", "_TASA_OP_FRESCA_MS",
                     "_BIN_COLS_C2C", "_BIN_COLS_TX", "MONEDAS_COMPRA", "MONEDAS_VENTA",
                     "MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
                     "_MERGE_OBJETOS", "_MERGE_BLOQUES", "_MERGE_HISTORIAL", "_RATE_LIMITS",
@@ -116,6 +116,7 @@ const NECESARIAS = ["_egresosHuerfanos", "moverEgresoAPersonal", "_tasaDelDiaFue
                     "_costoArticulo", "_mercanciaEnMano", "gananciaMercanciaDelMes",
                     "_egresosMercanciaDesde", "_mesDeMercancia",
                     "tasaDeReferencia", "_tasaFijadaAMano", "setTasaDia", "soltarTasaDia",
+                    "_tasaMercadoDe", "_tsDeIsoDia",
                     "_isoDeLote", "_fechaLoteIso", "_num", "_horaLote", "_horaAhora", "_horaDe",
                     "_diasDesdeLote", "_fechaLoteLegible", "getLastTasaVenta",
                     "montoAUsdt", "montoConMoneda", "_unicos",
@@ -2868,13 +2869,13 @@ ok(F._htmlAvisoPisado() === "", "y sin choques no ocupa ni un pixel");
   // (ARREGLO 112)—, todos fuera de la zona que hace scroll. El margen es un
   // presupuesto: admite que entre otro aviso, pero no que la lista crezca
   // sin control ni que alguno se caiga dentro del scroll.
-  ok(/_htmlAvisoPisado\(\)\+[\s\S]{0,260}?"<div class='navbar3'>"/.test(HTML.replace(/\/\/[^\n]*\n/g, "\n")),
+  ok(/_htmlAvisoPisado\(\)\+[\s\S]{0,320}?"<div class='navbar3'>"/.test(HTML.replace(/\/\/[^\n]*\n/g, "\n")),
    "el aviso va arriba del panel, fuera del scroll");
-  ok(/_htmlAvisoMesSinCerrar\(\)\+[\s\S]{0,260}?"<div class='navbar3'>"/.test(HTML.replace(/\/\/[^\n]*\n/g, "\n")),
+  ok(/_htmlAvisoMesSinCerrar\(\)\+[\s\S]{0,320}?"<div class='navbar3'>"/.test(HTML.replace(/\/\/[^\n]*\n/g, "\n")),
      "y el aviso del mes sin cerrar, tambien");
   // ARREGLO 112: y el de la tasa por debajo del suelo, que es el unico de los
   // nuevos que cuesta dinero en CADA remesa que registre.
-  ok(/_htmlAvisoTasaFijo\(\)\+[\s\S]{0,260}?"<div class='navbar3'>"/.test(HTML.replace(/\/\/[^\n]*\n/g, "\n")),
+  ok(/_htmlAvisoTasaFijo\(\)\+[\s\S]{0,320}?"<div class='navbar3'>"/.test(HTML.replace(/\/\/[^\n]*\n/g, "\n")),
      "y el de la tasa bajo el suelo, tambien");
 
   // ── ARREGLO 89: cerrar un mes es decision suya, no del reloj ──────
@@ -4205,7 +4206,8 @@ console.log("\nArreglo 64 · entrar con huella");
 {
   const bloques = [];
   const est = /style=(['"])([\s\S]*?)\1/g;
-  const prot = ["generarInformePDF", "rInformeCierre"].map(function(f){
+  // ARREGLO 181 · descargarPDFContador tambien es un papel que sale fuera.
+  const prot = ["generarInformePDF", "rInformeCierre", "descargarPDFContador"].map(function(f){
     const i = HTML.indexOf("function " + f + "(");
     const j = i < 0 ? -1 : HTML.indexOf("\n}\n", i);
     return i < 0 ? null : [i, j > 0 ? j + 3 : HTML.length];
@@ -11800,21 +11802,21 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
   const sm = sinC(sacarFuncion("_saldoAManoInfo"));
   ok(/!c\.manual_override\) return null/.test(sm),
      "sólo avisa de las cuentas que de verdad tienen el saldo escrito a mano");
-  const vs = sinC(sacarFuncion("volverASeguirInventario"));
-  ok(/delete c\.manual_override/.test(vs), "el botón quita la marca");
-  ok(!/c\.saldo\s*=/.test(vs),
-     "y NO toca el saldo: lo cambia el inventario cuando se dibuje, no este botón");
-  ok(/NO es lo que deber/.test(vs),
-     "la pregunta dice que ese número no es lo que debería tener");
-  ok(/c\._mod=Date\.now\(\)/.test(vs), "y lleva su _mod, o no viaja al otro aparato");
-  ok(/i\.segunInv===null/.test(vs),
-     "una cuenta sin operaciones se avisa aparte: pasaría a 0");
-  // En las DOS pantallas donde se ve un saldo: Configuración (donde se edita)
-  // y Balance de Cuentas (donde ella mira). Ponerlo en una sola es el fallo
-  // de buscar una copia y dejarse las otras (101, 119, 150, 153).
+  // ARREGLO 189 · El boton "que lo siga" se quito, pedido suyo del 26/10:
+  // "deberia de quitar eso porque en cualquier momento me puedo equivocar y
+  // puedo darle ese boton y se me dañan los saldos". El numero que calculaba
+  // (compras-ventas de esa cuenta) no es fiable cuando las ventas vienen con
+  // cuentaOrigenId null (su caso de octubre). Para quitar un override se
+  // escribe el saldo real a mano. El aviso "a mano · no sigue al inventario"
+  // se queda, pero sin boton al lado.
+  // Sin comentarios: en el codigo real la funcion no existe. En un comentario
+  // sigue mencionada a proposito, para que el proximo que mire sepa que se
+  // retiro y por que.
+  ok(!/\bvolverASeguirInventario\b/.test(sinC(HTML)),
+     "ARREGLO 189: la funcion volverASeguirInventario esta retirada del codigo");
   const cfgA = sacarFuncion("rConfigAdmin"), cap2 = sacarFuncion("rCapitalTotal");
   ok(/_saldoAManoInfo\(c\)/.test(cfgA) && /no sigue al inventario/.test(cfgA),
-     "Configuración lo dice, con su botón");
+     "Configuración sigue diciendo el aviso");
   ok(/_saldoAManoInfo\(item\)/.test(cap2) && /no sigue al inventario/.test(cap2),
      "y Balance de Cuentas también, que es donde ella mira");
   ok(/si lo siguiera pasar/.test(cfgA) && /si lo siguiera pasar/.test(cap2),
@@ -12486,6 +12488,60 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
   });
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 171 · elegir la cuenta tiene que refrescar lo que depende de ella
+//
+// El `tc` de una remesa sale de getTasaCompraPonderada, que FILTRA los lotes
+// de compra por `cuentaOrigenId`. O sea que la cuenta de entrada mueve la
+// tasa y con ella la ganancia. Los dos selectores la escribian y no
+// refrescaban nada, asi que la pantalla se quedaba con los numeros de antes
+// y saveTx guardaba otros. Medido con la forma de sus datos de pruebas:
+//
+//     tecleo el monto            pantalla 5,1424 · +0,72   = cTx()
+//     elijo la cuenta de entrada pantalla 5,1424 · +0,72   ≠ cTx() 5,1653 · 0,64
+//     guardado                                               5,1653 · 0,64
+//
+// Es el ARREGLO 55/120 otra vez: lo que se recalcula al elegir tiene que
+// refrescarse al elegir. Y va por upC, no por R(): repintar cerraria el
+// selector bajo el dedo (ARREGLO 32).
+{
+  const _sc = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  // Dentro de rNueva el HTML va en cadenas, asi que las comillas de los
+  // atributos llegan escapadas (`upC(\"tx\")`). Se normalizan para poder
+  // anclar la guardia a lo que el navegador va a ver de verdad.
+  const NU = _sc(sacarFuncion("rNueva")).replace(/\\"/g, '"');
+
+  // 1. Los DOS selectores, por nombre. Pidiendo solo que `upC` aparezca en
+  //    rNueva, quitarlo de uno pasaba con el otro puesto (ARREGLO 140).
+  ok(/S\.tx\.cuentaBanco=this\.value;upC\("tx"\)/.test(NU),
+     "la cuenta de ENTRADA refresca al elegirla: de ella sale el tc");
+  ok(/S\.tx\.cuentaDest=this\.value;upC\("tx"\)/.test(NU),
+     "y la del ALIADO tambien: de ella sale el tv");
+
+  // 2. Y CONTADOS: son tres selectores que escriben una cuenta en S.tx y los
+  //    tres tienen que refrescar — el de la entrega ya lo hacia por
+  //    _autoMetodoTx. Si manana se anade otro, esto falla hasta que alguien
+  //    mire de que lado esta.
+  const selCta = NU.match(/onchange='S\.tx\.cuenta(Banco|Dest)=this\.value[^']*'/g) || [];
+  ok(selCta.length === 3,
+     "son 3 selectores de cuenta en rNueva (hay " + selCta.length + ")");
+  ok(selCta.every(t => /upC\("tx"\)|_autoMetodoTx\(\)/.test(t)),
+     "y los 3 refrescan: ninguno escribe la cuenta y deja la pantalla vieja");
+
+  // 3. NO con R(). Repintar rNueva se lleva el selector bajo el dedo y, en el
+  //    telefono, cierra la lista a medio elegir.
+  ok(!/S\.tx\.cuenta(Banco|Dest)=this\.value;R\(\)/.test(NU),
+     "ninguno llama a R(): eso cerraria el selector bajo el dedo (ARREGLO 32)");
+
+  // 4. La linea del aliado sale del MISMO res que el resto, dentro de upC.
+  //    Calculada aparte volveria a separarse con el primer redondeo.
+  const UP = _sc(sacarFuncion("upC"));
+  ok(/uvsal-tx/.test(UP), "la linea del aliado se refresca en upC");
+  ok(/parseFloat\(res\.uv\)/.test(UP),
+     "y sale del mismo res que la ganancia, no de una cuenta aparte");
+  ok(/id='uvsal-tx'/.test(NU), "la linea lleva su id para poder refrescarla");
+}
+
 // ════ ARREGLO 170 · toda ida deja lote, y la venta gasta la compra ════
 {
   const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
@@ -12592,59 +12648,619 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
   ok(!/\.saldo\s*=/.test(db), "y tampoco toca ningun saldo");
 }
 
-
-// ══════════════════════════════════════════════════════════════════════
-// ARREGLO 171 · elegir la cuenta tiene que refrescar lo que depende de ella
-//
-// El `tc` de una remesa sale de getTasaCompraPonderada, que FILTRA los lotes
-// de compra por `cuentaOrigenId`. O sea que la cuenta de entrada mueve la
-// tasa y con ella la ganancia. Los dos selectores la escribian y no
-// refrescaban nada, asi que la pantalla se quedaba con los numeros de antes
-// y saveTx guardaba otros. Medido con la forma de sus datos de pruebas:
-//
-//     tecleo el monto            pantalla 5,1424 · +0,72   = cTx()
-//     elijo la cuenta de entrada pantalla 5,1424 · +0,72   ≠ cTx() 5,1653 · 0,64
-//     guardado                                               5,1653 · 0,64
-//
-// Es el ARREGLO 55/120 otra vez: lo que se recalcula al elegir tiene que
-// refrescarse al elegir. Y va por upC, no por R(): repintar cerraria el
-// selector bajo el dedo (ARREGLO 32).
+// ARREGLO 177 · aviso de RBT12 cerca del tope del 6%.
 {
-  const _sc = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
-  // Dentro de rNueva el HTML va en cadenas, asi que las comillas de los
-  // atributos llegan escapadas (`upC(\"tx\")`). Se normalizan para poder
-  // anclar la guardia a lo que el navegador va a ver de verdad.
-  const NU = _sc(sacarFuncion("rNueva")).replace(/\\"/g, '"');
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const HS = sinC(HTML);
+  // 1. El RBT12 vivo INCLUYE el mes en curso. Si se midiera igual que
+  //    _rbt12PGDAS (que lo excluye a proposito), el aviso saltaria tarde.
+  const rv = sinC(sacarFuncion("_rbt12Vivo"));
+  ok(/for\(var i=0;i<12;i\+\+\)/.test(rv),
+     "_rbt12Vivo recorre los 12 meses incluido el actual (desde i=0)");
+  ok(/_ingresoDeclarablePGDAS\(mk\)\.total/.test(rv),
+     "y mezcla pgdasHistorial con el calculo cuando no esta declarado");
 
-  // 1. Los DOS selectores, por nombre. Pidiendo solo que `upC` aparezca en
-  //    rNueva, quitarlo de uno pasaba con el otro puesto (ARREGLO 140).
-  ok(/S\.tx\.cuentaBanco=this\.value;upC\("tx"\)/.test(NU),
-     "la cuenta de ENTRADA refresca al elegirla: de ella sale el tc");
-  ok(/S\.tx\.cuentaDest=this\.value;upC\("tx"\)/.test(NU),
-     "y la del ALIADO tambien: de ella sale el tv");
+  // 2. Un solo sitio decide el nivel, y el aviso lee de ahi. Calculado
+  //    aparte, el aviso podria decir una cosa y la barra otra.
+  const er = sinC(sacarFuncion("_estadoRBT12"));
+  ok(/_rbt12Vivo\(\)/.test(er), "_estadoRBT12 lee el RBT12 vivo");
+  ok(/_rbt12UmbralAmarillo\(\)/.test(er) && /_rbt12UmbralRojo\(\)/.test(er),
+     "y los dos umbrales (amarillo y rojo)");
+  ok(/RBT12_TOPE_LEGAL\*0\.90/.test(er),
+     "el nivel 'legal' salta al 90% del tope legal de ME (R$ 4,8M)");
+  const av = sinC(sacarFuncion("_htmlAvisoRBT12"));
+  ok(/_estadoRBT12\(\)/.test(av), "el aviso lee _estadoRBT12 (no recalcula)");
+  ok(/if\(e\.nivel==="ok"\)\s*return\s*""/.test(av),
+     "en 'ok' el aviso devuelve '' y no gasta espacio");
 
-  // 2. Y CONTADOS: son tres selectores que escriben una cuenta en S.tx y los
-  //    tres tienen que refrescar — el de la entrega ya lo hacia por
-  //    _autoMetodoTx. Si manana se anade otro, esto falla hasta que alguien
-  //    mire de que lado esta.
-  const selCta = NU.match(/onchange='S\.tx\.cuenta(Banco|Dest)=this\.value[^']*'/g) || [];
-  ok(selCta.length === 3,
-     "son 3 selectores de cuenta en rNueva (hay " + selCta.length + ")");
-  ok(selCta.every(t => /upC\("tx"\)|_autoMetodoTx\(\)/.test(t)),
-     "y los 3 refrescan: ninguno escribe la cuenta y deja la pantalla vieja");
+  // 3. Umbral vacio = por omision 80%/95% del tope. Un 0 guardado no vale,
+  //    o dejaria el aviso apagado sin decirlo.
+  const gum = sinC(sacarFuncion("guardarUmbralRBT12"));
+  ok(/am<=0\)\s*delete S\.config\.rbt12_amarillo/.test(gum),
+     "amarillo vacio/0 borra la clave");
+  ok(/ro<=0\)\s*delete S\.config\.rbt12_rojo/.test(gum),
+     "rojo vacio/0 borra la clave");
+  ok(/ro<=am/.test(gum), "y el rojo tiene que ser mayor que el amarillo");
 
-  // 3. NO con R(). Repintar rNueva se lleva el selector bajo el dedo y, en el
-  //    telefono, cierra la lista a medio elegir.
-  ok(!/S\.tx\.cuenta(Banco|Dest)=this\.value;R\(\)/.test(NU),
-     "ninguno llama a R(): eso cerraria el selector bajo el dedo (ARREGLO 32)");
+  // 4. El aviso va arriba del panel, no dentro del scroll (ARREGLO 62).
+  //    Despues del de mes sin cerrar (y del 178 que entro en medio).
+  const rapp = HS;
+  ok(/_htmlAvisoRBT12\(\)/.test(rapp) && /_htmlAvisoTasaFijo/.test(rapp),
+     "_htmlAvisoRBT12 va enchufado en rApp antes del de tasa fija");
 
-  // 4. La linea del aliado sale del MISMO res que el resto, dentro de upC.
-  //    Calculada aparte volveria a separarse con el primer redondeo.
-  const UP = _sc(sacarFuncion("upC"));
-  ok(/uvsal-tx/.test(UP), "la linea del aliado se refresca en upC");
-  ok(/parseFloat\(res\.uv\)/.test(UP),
-     "y sale del mismo res que la ganancia, no de una cuenta aparte");
-  ok(/id='uvsal-tx'/.test(NU), "la linea lleva su id para poder refrescarla");
+  // 5. La proyeccion usa la MEDIANA de los 3 meses anteriores, no la media
+  //    (ARREGLO 139 — un mes raro grande no adelanta el cruce).
+  const proy = sinC(sacarFuncion("_proyMesCruceRBT12"));
+  ok(/vals\.sort/.test(proy) && /vals\[1\]/.test(proy),
+     "la proyeccion toma la mediana de los 3 meses anteriores");
+}
+
+// ARREGLO 191 · NFS-e mensal consolidada. Dos botones de copiar (valor y
+// descripcion) en la seccion PGDAS-D del Cierre Mensual. Decision suya 26/10
+// tras confirmar con el contador que su prefeitura permite A1 (1 nota mensual
+// con "consumidor final / tomador no identificado").
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const HS = sinC(HTML);
+
+  // 1. Default: la descripcion menciona CNAE 63.19 y Anexo III por su CNAE
+  //    de SAIPHA ME. Si cambia de CNAE habra que tocar esto.
+  ok(/NFSE_DESC_DEFECTO\s*=/.test(HS),
+     "existe la plantilla por omision NFSE_DESC_DEFECTO");
+  ok(/CNAE 63\.19/.test(HS),
+     "el default menciona CNAE 63.19 (SAIPHA ME, servicios de internet)");
+
+  // 2. _nfseDescripcion sustituye {competencia}, {mes}, {ano}.
+  const nd = sinC(sacarFuncion("_nfseDescripcion"));
+  ok(/replace\(\s*\/\\\{competencia\\\}\/g/.test(nd),
+     "sustituye {competencia}");
+  ok(/replace\(\s*\/\\\{mes\\\}\/g/.test(nd),
+     "y {mes}");
+  ok(/replace\(\s*\/\\\{ano\\\}\/g/.test(nd),
+     "y {ano}");
+  ok(/S\.config\|\|\{\}\)\.nfseDescripcion/.test(nd),
+     "lee la plantilla desde S.config.nfseDescripcion (editable)");
+
+  // 3. _htmlPGDAS tiene el card NFS-e con DOS botones de copiar separados:
+  //    uno para el valor y otro para la descripcion. El contador y la
+  //    prefeitura tienen campos distintos; copiar todo junto no sirve.
+  const hp = sinC(sacarFuncion("_htmlPGDAS"));
+  ok(/NFS-e mensal consolidada/.test(hp),
+     "el bloque NFS-e aparece en la seccion PGDAS-D");
+  ok(/_nfseDescripcion\s*\(/.test(hp),
+     "y la descripcion sale de _nfseDescripcion(mesKey, mesLabel)");
+  ok(/Copiar valor/.test(hp) && /Copiar texto/.test(hp),
+     "dos botones separados: Copiar valor y Copiar texto");
+
+  // 4. guardarNFSeDescripcion escribe en S.config.nfseDescripcion. Vacio
+  //    vuelve a lo por omision (borra la clave).
+  const gnfse = sinC(sacarFuncion("guardarNFSeDescripcion"));
+  ok(/S\.config\.nfseDescripcion\s*=\s*v/.test(gnfse),
+     "guarda en S.config.nfseDescripcion");
+  ok(/delete\s+S\.config\.nfseDescripcion/.test(gnfse),
+     "vacio borra la clave y vuelve a lo por omision");
+}
+
+// ARREGLO 190 · solo las idas (orig=BRL) entran al PGDAS. Las vueltas son
+// despesa, no receita (ARREGLO 124 "en la vuelta no se gana, se compra").
+// Sin esto, las vueltas antiguas con pr>0 (anteriores al 124) inflaban la
+// Receita Bruta: octubre pasaba de R$ 1.642 a R$ 2.020, DAS +R$ 23.
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const ip = sinC(sacarFuncion("_ingresoDeclarablePGDAS"));
+
+  // 1. El filtro de ida es por orig==="BRL" (no por "orig o dest").
+  ok(/if\s*\(\s*x\.orig\s*!==\s*"BRL"\s*\)\s*return/.test(ip),
+     "ARREGLO 190: filtra orig === 'BRL' (idas)");
+  ok(!/x\.orig\s*!==\s*"BRL"\s*&&\s*x\.dest\s*!==\s*"BRL"/.test(ip),
+     "y YA NO acepta vueltas (orig=VES/USD con dest=BRL)");
+
+  // 2. cuentaBRL ahora es siempre cuentaBanco (no cuentaDest).
+  ok(/var cuentaBRL\s*=\s*x\.cuentaBanco/.test(ip),
+     "cuentaBRL = x.cuentaBanco (siempre, ya no hay rama cuentaDest)");
+
+  // 3. Mercancia y ganancia extra siguen entrando - solo las vueltas de
+  //    remesas se descartaron.
+  ok(/S\.articulos/.test(ip) && /S\.gananciaExtra/.test(ip),
+     "mercancia y ganancia extra siguen contando");
+}
+
+// ARREGLO 179 · cuentas declarables en PGDAS-D.
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const HS = sinC(HTML);
+
+  // 1. La regla de "quien declara" vive en UN sitio. Dos criterios aqui se
+  //    separarian — es el fallo de los ARREGLOS 101, 119, 150, 153, 177, 178
+  //    por septima vez.
+  const dec = sinC(sacarFuncion("_cuentaDeclara"));
+  ok(/c\.moneda==="BRL"/.test(dec), "_cuentaDeclara exige moneda BRL");
+  ok(/!c\.esPersonal/.test(dec),    "y no personal");
+  ok(/c\.declaraPGDAS===true/.test(dec), "y declaraPGDAS === true (no truthy — una cadena vacia pasaria truthy false pero una no vacia pasaria)");
+
+  // 2. _ingresoDeclarablePGDAS lee la marca por cuenta en los TRES origenes.
+  const ing = sinC(sacarFuncion("_ingresoDeclarablePGDAS"));
+  // Remesas: cuentaBRL es cuentaBanco (siempre, desde ARREGLO 190: solo
+  // idas orig=BRL entran al PGDAS). Antes se elegia entre cuentaBanco
+  // (si orig=BRL) o cuentaDest (si dest=BRL), para incluir vueltas - pero
+  // las vueltas son despesa, no receita.
+  ok(/var cuentaBRL\s*=\s*x\.cuentaBanco/.test(ing),
+     "cuentaBRL = x.cuentaBanco (ARREGLO 190)");
+  ok(/if\(!declara\(cuentaBRL\)\)/.test(ing),
+     "la decision de sumar pasa por declara(cuentaBRL)");
+  // Mercancia y ganExtra tambien filtran por la cuenta declarable.
+  ok((ing.match(/if\(!declara\(/g)||[]).length>=3,
+     "declara() filtra en los tres origenes (remesas, mercancia, ganExtra)");
+
+  // 3. Las excluidas se contabilizan APARTE, con nombre, para enseñarse en
+  //    el desglose. Esto convierte un dato que faltaba (que se dejo fuera)
+  //    en un dato que se dice.
+  ok(/sumExcluido/.test(ing), "lo que queda fuera se agrupa en excluidas");
+  ok(/r\.excluidas/.test(ing) && /r\.excluidas\.cuentas/.test(ing),
+     "y se devuelve con desglose por cuenta");
+
+  // 4. Migracion. Idempotente: una vez marcada una, no vuelve a actuar.
+  //    Y SOLO si existe exactamente una PAGBANK CNPJ no personal. Varias
+  //    o ninguna → no toca nada (marcar al azar seria peor).
+  const mig = sinC(sacarFuncion("_migrarCuentasPGDAS"));
+  ok(/yaMarcada/.test(mig) && /c\.declaraPGDAS===true/.test(mig),
+     "la migracion se salta si ya hay una marcada (idempotente)");
+  ok(/toUpperCase\(\)\.indexOf\("PAGBANK"\)>=0/.test(mig),
+     "busca por nombre que contenga PAGBANK (y en mayusculas)");
+  ok(/c\.esJuridica===true/.test(mig),
+     "y exige esJuridica (una PAGBANK personal futura no entra)");
+  ok(/pagbanks\.length!==1/.test(mig),
+     "si no hay exactamente una, no se toca nada");
+
+  // 5. R() la llama al primer dibujado con datos. Con un flag en la propia
+  //    funcion para que no corra mas que una vez por sesion.
+  const rApp = sinC(sacarFuncion("R"));
+  ok(/R\._pgdasMigrado/.test(rApp),
+     "R() tiene flag para no reintentar la migracion en cada dibujo");
+  ok(/_migrarCuentasPGDAS\(\)/.test(rApp),
+     "y la llama");
+
+  // 6. saveNewCuenta y el toggle respetan la regla BRL+no personal.
+  const sv = sinC(sacarFuncion("saveNewCuenta"));
+  ok(/puedeDeclarar/.test(sv) && /f\.moneda==="BRL"/.test(sv) && /!f\.esPersonal/.test(sv),
+     "saveNewCuenta solo guarda declaraPGDAS=true si la cuenta es elegible");
+  const tg = sinC(sacarFuncion("toggleCuentaPGDAS"));
+  ok(/c\.moneda!=="BRL"/.test(tg) && /c\.esPersonal/.test(tg),
+     "toggleCuentaPGDAS desmarca si deja de ser elegible");
+  ok(/c\._mod=Date\.now/.test(tg),
+     "y marca _mod para que la sincronizacion lo vea (ARREGLO 137 por su familia)");
+
+  // 7. La insignia aparece en Balance (rBalancePlus) y en el informe de
+  //    Cierre (dos sitios: cuentas BRL y flujo de caja). Y en Configuracion
+  //    (lista editable) con botón de toggle.
+  ok((HS.match(/🧾 PGDAS/g)||[]).length>=4,
+     "insignia 🧾 PGDAS presente en al menos 4 sitios (Balance, Config, 2 del informe)");
+}
+
+// ARREGLO 184 · aviso de factura de tarjeta por pagar.
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const HS = sinC(HTML);
+
+  // 1. Umbral 7 dias por su decision.
+  ok(/FATURA_AMBAR_DIAS\s*=\s*7/.test(HS),
+     "umbral ambar 7 dias (su decision del 25/10)");
+
+  // 2. _proxVencimientoFatura exige diaVencimientoFatura 1-31.
+  const pv = sinC(sacarFuncion("_proxVencimientoFatura"));
+  ok(/dia<1\s*\|\|\s*dia>31/.test(pv),
+     "exige dia entre 1 y 31");
+  ok(/Math\.min\(d,\s*ultimo\)/.test(pv),
+     "en meses sin dia 29/30/31 usa el ultimo dia del mes");
+
+  // 3. Si el vencimiento ya paso HOY, lo deja en este mes hasta 7 dias
+  //    despues; luego lo mueve al mes siguiente (no se duplican avisos).
+  ok(/FATURA_AMBAR_DIAS/.test(pv),
+     "pasado el margen ambar, el vencimiento salta al mes siguiente");
+
+  // 4. _tarjetasPorPagar clasifica. Las que no tienen diaVencimientoFatura
+  //    no se avisan (no sabemos cuando vencen).
+  const tpp = sinC(sacarFuncion("_tarjetasPorPagar"));
+  ok(/_deudaTarjeta\(c\)\s*<=\s*0/.test(tpp),
+     "sin deuda no entra en el aviso");
+  ok(/d===null/.test(tpp),
+     "sin dia conocido no se avisa (no sabemos cuando vence)");
+  ok(/d\s*<\s*0/.test(tpp) && /d\s*<=\s*FATURA_AMBAR_DIAS/.test(tpp),
+     "clasifica: vencida -> rojo, hasta 7 dias -> ambar");
+
+  // 5. El aviso prioriza rojo sobre ambar.
+  const av = sinC(sacarFuncion("_htmlAvisoFaturaTarjeta"));
+  ok(/g\.rojo\.length\s*\?\s*g\.rojo\[0\]\s*:\s*g\.ambar\[0\]/.test(av),
+     "si hay rojo, señala el rojo; si no, el ambar");
+
+  // 6. El boton va a Traspasos con PAGBANK -> TARJETA pre-cargado por la
+  //    deuda exacta. Elige cuenta de salida que no sea personal ni tarjeta.
+  const pf = sinC(sacarFuncion("_pagarFaturaTarjeta"));
+  ok(/!x\.esPersonal\s*&&\s*!x\.esTarjeta/.test(pf),
+     "la cuenta de salida no es personal ni otra tarjeta");
+  ok(/x\.moneda===c\.moneda/.test(pf),
+     "y es de la misma moneda que la tarjeta");
+  ok(/S\.nTraspaso\.monto\s*=\s*deuda/.test(pf),
+     "el monto es la deuda exacta");
+
+  // 7. Enchufado arriba del panel, entre PGDAS y RBT12.
+  ok(/_htmlAvisoPGDASAtrasado\(\)\+[\s\S]{0,80}_htmlAvisoFaturaTarjeta\(\)/.test(HS),
+     "_htmlAvisoFaturaTarjeta va arriba del panel, despues de PGDAS atrasada");
+
+  // 8. _diaVencimientoFaturaPorOmision sugiere 15 para PAGBANK.
+  const dvp = sinC(sacarFuncion("_diaVencimientoFaturaPorOmision"));
+  ok(/PAGBANK/.test(dvp) && /15/.test(dvp),
+     "PAGBANK sugiere 15 (medido en el extracto del 24/10)");
+}
+
+// ARREGLO 188 · forzar _mod explicito al editar saldo o desactivar una cuenta,
+// para que la fusion no revierta el cambio por una version mas nueva del otro
+// aparato (ARREGLO 148 por su familia).
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+
+  // 1. updateCuentaSaldo pone c._mod = Date.now() despues de escribir el saldo.
+  const upd = sinC(sacarFuncion("updateCuentaSaldo"));
+  ok(/c\._mod\s*=\s*Date\.now\(\)/.test(upd),
+     "updateCuentaSaldo marca _mod explicito tras cambiar el saldo");
+  ok(/c\.saldo\s*=\s*v[\s\S]*c\._mod\s*=\s*Date\.now/.test(upd),
+     "y lo marca DESPUES de escribir el saldo, no antes");
+
+  // 2. toggleCuenta tambien marca _mod al cambiar activa.
+  const tog = sinC(sacarFuncion("toggleCuenta"));
+  ok(/c\.activa\s*=\s*!c\.activa\s*;\s*c\._mod\s*=\s*Date\.now/.test(tog),
+     "toggleCuenta marca _mod al cambiar activa");
+}
+
+// ARREGLO 187 · podar las cuentas plantilla c01..c08 que quedaron en S.cuentas
+// de una version muy vieja. Nunca estuvieron en el servidor, asi que la fusion
+// no las traia ni las tocaba, y reaparecian con cada arranque sin cache local.
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const HS = sinC(HTML);
+
+  // 1. El default S.cuentas:[] ya NO lleva c01..c08. Son dos definiciones y la
+  //    segunda sobrescribe la primera, asi que la segunda debe ser vacia.
+  //    Cuento las dos: la primera (vacia) y la segunda (tambien vacia).
+  const defs = HS.match(/cuentas:\s*\[\s*\]/g) || [];
+  ok(defs.length >= 2,
+     "las dos definiciones de 'cuentas:' en let S={} son vacias (fantasmas fuera del default)");
+
+  // 2. Y el default YA NO deja ninguna de las 8 plantillas (ni Binance JHOSELIN
+  //    con minuscula ni True Wallet). Si vuelven, el bug vuelve.
+  ok(!/cuentas:\s*\[\s*\{[^]*?"c01"[^]*?Banco EE\.UU/.test(HS),
+     "no vuelve el default con c01 Banco EE.UU");
+  ok(!/cuentas:\s*\[\s*\{[^]*?"c06"[^]*?Binance JHOSELIN/.test(HS),
+     "no vuelve el default con c06 Binance JHOSELIN");
+  ok(!/cuentas:\s*\[\s*\{[^]*?"c08"[^]*?True Wallet/.test(HS),
+     "no vuelve el default con c08 True Wallet");
+
+  // 3. La IIFE de poda recorre S.cuentas y filtra las ids c01..c08. Vive al
+  //    lado de _asignarUidsFaltantes() para correr una vez al arrancar.
+  ok(/_podarCuentasFantasma/.test(HS),
+     "existe la IIFE _podarCuentasFantasma");
+  const poda = HS.match(/function\s+_podarCuentasFantasma\s*\(\)\s*\{[\s\S]*?\}\s*\)\s*\(\)/);
+  ok(poda && /"c01":1,"c02":1,"c03":1,"c04":1,"c05":1,"c06":1,"c07":1,"c08":1/.test(poda[0]),
+     "la lista FANTASMA cubre c01..c08 exactas");
+  ok(poda && /_marcarBorradoMerge\("cuentas"/.test(poda[0]),
+     "y las marca como borradas para que la fusion no las revive (ARREGLO 6c/137)");
+}
+
+// ARREGLO 185 · frase destacada del flyer ("Sin comisiones ocultas").
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const HS = sinC(HTML);
+
+  const ff = sinC(sacarFuncion("_fraseFlyer"));
+  ok(/S\.config\.mensajeFlyer/.test(ff),
+     "_fraseFlyer lee S.config.mensajeFlyer");
+  ok(/Sin comisiones ocultas/.test(ff),
+     "default: 'Sin comisiones ocultas' (su decision 26/10)");
+
+  const hff = sinC(sacarFuncion("_htmlFraseFlyer"));
+  ok(/if\s*\(!t\)\s*return\s*""/.test(hff),
+     "flyer: vacio no dibuja nada");
+  const hmff = sinC(sacarFuncion("_htmlFraseMiniFlyer"));
+  ok(/if\s*\(!t\)\s*return\s*""/.test(hmff),
+     "mini flyer: vacio no dibuja nada");
+
+  ok(/_escAud\(t\)/.test(hff) && /_escAud\(t\)/.test(hmff),
+     "la frase se escapa antes de meterse en innerHTML");
+  ok(/_fraseFlyer\(\)/.test(hff) && /_fraseFlyer\(\)/.test(hmff),
+     "las dos leen de _fraseFlyer, no copian el default");
+
+  const gf = sinC(sacarFuncion("generarFlyer"));
+  ok(/_htmlFraseFlyer\(\)/.test(gf),
+     "generarFlyer la pinta");
+  const gm = sinC(sacarFuncion("generarMiniFlyer"));
+  ok(/_htmlFraseMiniFlyer\(\)/.test(gm),
+     "generarMiniFlyer la pinta");
+
+  const gmf = sinC(sacarFuncion("guardarMensajeFlyer"));
+  ok(/S\.config\.mensajeFlyer\s*=/.test(gmf),
+     "guardarMensajeFlyer escribe en S.config.mensajeFlyer");
+  ok(/length\s*>\s*60/.test(gmf),
+     "tope de 60 caracteres");
+  ok(/saveData\(\)/.test(gmf),
+     "guarda y sincroniza");
+}
+
+// ARREGLO 186 · margen por tipo (usdt +1 % / usd -1 %) y USD/BRL de la
+// calculadora de Ganancia sigue a la tasa de referencia.
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const HS = sinC(HTML);
+
+  ok(/MARGEN_P2P_BRL_DEFECTO\s*=\s*0\.01/.test(HS),
+     "margen P2P BRL defecto 1% (ARREGLO 183)");
+  ok(/MARGEN_USD_BRL_DEFECTO\s*=\s*0\.01/.test(HS),
+     "margen USD/BRL defecto 1% (ARREGLO 186, decision 'dale B')");
+
+  const tm = sinC(sacarFuncion("_tasaMercadoDe"));
+  ok(/campo\.tipo/.test(tm),
+     "lee campo.tipo del servidor");
+  ok(/tipo\s*===?\s*"usdt"\s*\)?\s*t\s*=\s*t\s*\*\s*\(\s*1\s*\+\s*_margenP2P_BRL/.test(tm),
+     "tipo usdt -> suma margen P2P BRL");
+  ok(/tipo\s*===?\s*"usd"\s*\)?\s*\s*t\s*=\s*t\s*\*\s*\(\s*1\s*-\s*_margenUSD_BRL/.test(tm),
+     "tipo usd -> RESTA margen USD/BRL (USD va por encima del P2P)");
+
+  ok(/tipo\s*&&\s*campo\.fuente\s*&&\s*!campo\.anuncios/.test(tm),
+     "sin tipo pero con fuente spot -> compat con server viejo (como usdt)");
+
+  const fnCg = sinC(sacarFuncion("_cg"));
+  ok(/!g\.usdbrlTocada/.test(fnCg),
+     "_cg refresca usdbrl mientras no este tocado");
+  ok(/tasaDeReferencia\(\s*"BRL"\s*\)/.test(fnCg),
+     "y el valor sale de tasaDeReferencia('BRL') - la MISMA del resto de la app");
+
+  const fnSet = sinC(sacarFuncion("_cgSet"));
+  ok(/campo\s*===?\s*"usdbrl"\s*\)?\s*g\.usdbrlTocada\s*=\s*true/.test(fnSet),
+     "_cgSet marca usdbrl como tocado al escribir");
+
+  const fnG = sinC(sacarFuncion("guardarMargenUSDBRL"));
+  ok(/S\.config\.margenUSD_BRL\s*=\s*v\s*\/\s*100/.test(fnG),
+     "guardarMargenUSDBRL escribe en S.config.margenUSD_BRL");
+  ok(/delete\s+S\.config\.margenUSD_BRL/.test(fnG),
+     "vacio vuelve a lo por omision (borra la clave)");
+}
+
+// ARREGLO 183 · margen P2P BRL sobre el spot.
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const HS = sinC(HTML);
+
+  // 1. El margen por omision es 1% (lo medido entre CoinGecko y Binance BR).
+  ok(/MARGEN_P2P_BRL_DEFECTO\s*=\s*0\.01/.test(HS),
+     "por omision 1 % (CoinGecko -> Binance BR, medido 24/10)");
+
+  // 2. _tasaMercadoDe aplica margen P2P BRL cuando el server marca tipo "usdt"
+  //    (ARREGLO 186) o cuando no marca tipo pero tiene fuente spot - compat
+  //    con server anterior al 186. P2P con anuncios no lleva margen.
+  const tmd = sinC(sacarFuncion("_tasaMercadoDe"));
+  ok(/campo\.fuente\s*&&\s*!campo\.anuncios\)\s*tipo\s*=\s*"usdt"/.test(tmd),
+     "compat con server viejo: spot sin tipo se trata como usdt");
+  ok(/_margenP2P_BRL\(\)/.test(tmd),
+     "y aplica el margen configurable (no un numero magico)");
+
+  // 3. VES NO se mete en los limites viejos (que son 50-5000, obsoletos).
+  ok(/if\(moneda\s*===\s*"BRL"\)/.test(tmd),
+     "los _RATE_LIMITS se verifican SOLO para BRL (VES tiene limites viejos)");
+
+  // 4. _margenP2P_BRL es seguro: valores invalidos vuelven a lo por omision.
+  const mp = sinC(sacarFuncion("_margenP2P_BRL"));
+  ok(/v>1/.test(mp) || /v\s*>\s*1/.test(mp),
+     "margen > 100% se descarta (es dedazo, no una decision)");
+  ok(/MARGEN_P2P_BRL_DEFECTO/.test(mp),
+     "sin valor valido, vuelve al defecto");
+
+  // 5. El guardado permite vaciar para volver al defecto.
+  const gm = sinC(sacarFuncion("guardarMargenP2PBRL"));
+  ok(/delete\s+S\.config\.margenP2P_BRL/.test(gm),
+     "vaciar el campo borra la clave y vuelve a 1% por omision");
+  ok(/v\s*\/\s*100/.test(gm),
+     "el campo se escribe en % (1 para 1%) y se guarda como fraccion (0.01)");
+}
+
+// ARREGLO 182 · caducidad de 24 h sobre la ultima operacion de USDT.
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const HS = sinC(HTML);
+  const tdr = sinC(sacarFuncion("tasaDeReferencia"));
+
+  // 1. El umbral es 24 horas, no cualquier cosa.
+  ok(/24\s*\*\s*60\s*\*\s*60\s*\*\s*1000/.test(sinC(HTML.match(/_TASA_OP_FRESCA_MS[\s\S]{0,120}/)[0])),
+     "umbral 24 horas por sus palabras ('el mercado es muy volatil')");
+
+  // 2. tasaDeReferencia mide la edad y, si pasa el umbral, pide mercado.
+  ok(/edad\s*>\s*_TASA_OP_FRESCA_MS/.test(tdr),
+     "compara la edad de la operacion con 24 h");
+  ok(/_tasaMercadoDe\(moneda\)/.test(tdr),
+     "pasado el umbral, lee del mercado antes que de la operacion vieja");
+  ok(/origen:"mercado"/.test(tdr),
+     "cuando usa el mercado, lo dice en origen");
+
+  // 3. Si no hay mercado disponible, cae a la vieja CON marca para que la
+  //    pantalla pueda avisar. Nunca "sin tasa" si tenemos algo.
+  ok(/vieja:true/.test(tdr),
+     "sin mercado: la vieja sigue valiendo pero marcada como vieja");
+
+  // 4. Sin operaciones, el mercado tambien se prueba antes de lo escrito a ojo.
+  ok(/_tasaMercadoDe\([\s\S]{0,20}\)\s*;?\s*if\s*\(\s*tMsin\s*>\s*0\s*\)/.test(tdr),
+     "sin operaciones, se prueba el mercado antes de lo escrito a ojo");
+
+  // 5. _tasaMercadoDe lee del cache del servidor en memoria (_MERCADO).
+  const tmd = sinC(sacarFuncion("_tasaMercadoDe"));
+  ok(/_MERCADO\s*&&\s*_MERCADO\.datos/.test(tmd),
+     "_tasaMercadoDe lee del cache _MERCADO.datos (no hace peticion nueva)");
+  ok(/compraBRL/.test(tmd) && /ventaVES/.test(tmd),
+     "mira compraBRL para reales y ventaVES para bolivares");
+  ok(/_RATE_LIMITS\[moneda\]/.test(tmd),
+     "y respeta los limites de rango (una tasa loca del mercado no entra)");
+}
+
+// ARREGLO 181 · texto bonito y PDF para el contador en el movil.
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const HS = sinC(HTML);
+  // 1. Las tres salidas (texto, PDF, CSV) salen del MISMO sitio
+  //    (_textoContadorFiltrado / _reporteContadorFiltrado) para que un
+  //    cambio en una no desalinee a las otras.
+  const txt = sinC(sacarFuncion("_textoContadorFiltrado"));
+  ok(/_cuentasDeclarablesPGDAS\(\)/.test(txt),
+     "_textoContadorFiltrado lee cuentas declarables (ARREGLO 179)");
+  ok(/_ingresoDeclarablePGDAS\(mesKey\)/.test(txt),
+     "y la ganancia sale de _ingresoDeclarablePGDAS (misma que PGDAS-D)");
+
+  // 2. Compartir usa navigator.share primero y cae al portapapeles si no
+  //    hay. Es lo que resuelve el fallo del CSV en el movil.
+  const comp = sinC(sacarFuncion("compartirReporteContador"));
+  ok(/navigator\.share/.test(comp), "compartir usa navigator.share");
+  ok(/_copiarAlPortapapeles/.test(comp),
+     "y cae al portapapeles si no hay share nativo");
+  ok(/err\.name==="AbortError"/.test(comp),
+     "AbortError (ella cancela) NO es un fallo");
+
+  // 3. PDF: usa html2pdf, A4, y comparte el blob si el navegador deja.
+  const pdf = sinC(sacarFuncion("descargarPDFContador"));
+  ok(/html2pdf\(\)/.test(pdf), "PDF usa html2pdf");
+  ok(/format:"a4"/.test(pdf), "formato A4");
+  ok(/navigator\.canShare/.test(pdf),
+     "y comparte el blob del PDF cuando el movil lo permite");
+  ok(/_descargarBlob/.test(pdf),
+     "si no, cae a descarga");
+
+  // 4. Botones en la pestana contador: 2 compartir + 2 PDF + 2 CSV
+  //    (en Más opciones). Idiomas ES y PT en todos.
+  ok(/compartirReporteContador\([^)]*,\s*\\?"es\\?"\)/.test(HS),
+     "boton compartir ES");
+  ok(/compartirReporteContador\([^)]*,\s*\\?"pt\\?"\)/.test(HS),
+     "boton compartir PT");
+  ok(/descargarPDFContador\([^)]*,\s*\\?"es\\?"\)/.test(HS),
+     "boton PDF ES");
+  ok(/descargarPDFContador\([^)]*,\s*\\?"pt\\?"\)/.test(HS),
+     "boton PDF PT");
+
+  // 5. El CSV baja a <details> para no sobrecargar la pantalla.
+  ok(/<details[\s\S]{0,300}exportarReporteContadorCSV/.test(HS),
+     "los CSV estan dentro de un <details> (Mas opciones)");
+}
+
+// ARREGLO 180 · CSV del contador filtrado y en dos idiomas.
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const HS = sinC(HTML);
+  const rep = sinC(sacarFuncion("_reporteContadorFiltrado"));
+
+  // 1. Lee las cuentas DECLARABLES (ARREGLO 179), no todas las BRL.
+  ok(/_cuentasDeclarablesPGDAS\(\)/.test(rep),
+     "lee las cuentas declarables, no todas las BRL");
+
+  // 2. Receita bruta = solo lo que ENTRO en reales a cuenta declarable
+  //    (orig=BRL + cuentaBanco en declarables). Sin esto se contarian
+  //    las vueltas VZ→BR, que son SALIDAS de la cuenta en reales.
+  ok(/r\.orig!=="BRL"/.test(rep),
+     "receita bruta: solo remesas con orig=BRL");
+  ok(/cuentasIdsDecl\[r\.cuentaBanco\]/.test(rep),
+     "y entrando a una cuenta declarable");
+
+  // 3. Ganho dos servicos lee de _ingresoDeclarablePGDAS, no recalcula.
+  //    Calculado aparte se separaria de la pestana 🧾 PGDAS-D.
+  ok(/_ingresoDeclarablePGDAS\(mesKey\)/.test(rep),
+     "ganho dos servicios sale de _ingresoDeclarablePGDAS (misma cifra que PGDAS-D)");
+
+  // 4. Egresos: solo los pagados desde cuenta declarable, agrupados.
+  ok(/cuentasIdsDecl\[e\.cuentaId\]/.test(rep),
+     "egresos filtra por cuenta declarable");
+  ok(/porCat\[cat\]/.test(rep),
+     "y agrupa por categoria (sin detalle operacion por operacion)");
+
+  // 5. Dos idiomas, textos en el objeto T segun idioma.
+  ok(/idioma!=="pt"/.test(rep),
+     "idioma es 'pt' o lo que sea distinto (es por omision)");
+  ok(/Receita bruta/.test(rep) && /Natureza da receita/.test(rep),
+     "textos PT (Natureza da receita)");
+  ok(/Naturaleza del ingreso/.test(rep),
+     "y textos ES (Naturaleza del ingreso)");
+  ok(/CNAE_PRINCIPAL/.test(rep) && /Anexo III/.test(HS),
+     "CNAE principal (en la funcion) y Anexo III (en las constantes NATUREZA_RECEITA)");
+
+  // 6. NO lleva detalle operacion por operacion (ella: "sin operacion,
+  //    puedes decir tantos servicios"). Esto se mide pidiendo que la
+  //    funcion NO itere para escribir una linea por cada remesa:
+  //    .forEach existe (lo usa para SUMAR), pero no debe empujar al
+  //    array `lineas` dentro de un .forEach de remesas.
+  const detalleRemesa = /lineas\.push\([^)]*\)\s*;?\s*}\)\s*;.*(S\.brl|S\.vzla|S\.eeuu)/s.test(rep);
+  ok(!detalleRemesa, "no escribe una linea por remesa (sin detalle)");
+
+  // 7. Dos botones en la pestana contador, ES y PT.
+  ok(/exportarReporteContadorCSV\([^)]*,\s*\\?"es\\?"\)/.test(HS),
+     "boton ES en la pestana contador");
+  ok(/exportarReporteContadorCSV\([^)]*,\s*\\?"pt\\?"\)/.test(HS),
+     "boton PT en la pestana contador");
+
+  // 8. Sin cuentas declarables → el CSV lo dice y no inventa un numero.
+  ok(/sinCuentas/.test(rep) && /return lineas\.join/.test(rep),
+     "sin cuentas declarables: devuelve el aviso y sale (no suma)");
+}
+
+// ARREGLO 178 · aviso de PGDAS atrasado arriba del panel.
+{
+  const sinC = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const HS = sinC(HTML);
+  // 1. Lee de _estadoPGDAS, no reinventa el calendario. Un segundo criterio
+  //    aqui se separaria del semaforo de dentro de la pestana (ARREGLO
+  //    101/119/150/153/177 por 6ta vez).
+  const atr = sinC(sacarFuncion("_mesesPGDASAtrasados"));
+  ok(/_estadoPGDAS\(mk\)/.test(atr) && /"atrasada"/.test(atr),
+     "_mesesPGDASAtrasados lee _estadoPGDAS, no mira el calendario aparte");
+  // 2. Mas viejo primero: lleva mas multa acumulada y es el que hay que
+  //    presentar antes.
+  ok(/out\.sort\(\)/.test(atr), "y los ordena del mas viejo al mas nuevo");
+  // 3. Tope de 24 meses hacia atras — mas alla no se declara por el portal
+  //    normal, dejar el aviso para siempre seria ruido permanente (ARREGLO 99).
+  ok(/i<=24/.test(atr), "con tope de 24 meses hacia atras");
+  // 3b. Y solo meses CON receita > 0. Avisar sem movimento de meses en los
+  //     que la app ni existia es ruido: en el smoke sin filtro salian 24
+  //     avisos hasta Oct/2024.
+  ok(/_ingresoDeclarablePGDAS\(mk\)\.total<=0/.test(atr),
+     "y solo los meses con receita > 0 (sin esto hay 24 avisos falsos)");
+
+  // 4. El aviso sale solo cuando hay alguno. Vacio devuelve "".
+  const avp = sinC(sacarFuncion("_htmlAvisoPGDASAtrasado"));
+  ok(/if\(!atr\.length\)\s*return\s*""/.test(avp),
+     "sin atrasadas el aviso devuelve '' y no gasta espacio");
+  // 5. El boton selecciona el mes atrasado Y la seccion pgdas (ARREGLO 91:
+  //    un aviso que apunta a un sitio no puede dejarte en otro).
+  ok(/S\._cMes=.{0,3}\+\s*masViejo/.test(avp),
+     "el boton SELECCIONA el mes atrasado");
+  ok(/S\._cSec=.{0,3}pgdas/.test(avp),
+     "y la seccion PGDAS-D");
+
+  // 6. Va en rApp arriba del panel, pegado al de mes sin cerrar y antes
+  //    del de RBT12. Fuera del scroll (ARREGLO 62). ARREGLO 184 metio
+  //    _htmlAvisoFaturaTarjeta entre PGDAS y RBT12.
+  ok(/_htmlAvisoMesSinCerrar\(\)\+\s*\n?\s*_htmlAvisoPGDASAtrasado\(\)\+/.test(HS)
+     && /_htmlAvisoRBT12\(\)/.test(HS),
+     "va en rApp arriba del panel entre mes sin cerrar y RBT12");
+}
+
+// ARREGLO 192 · egreso personal creado "pagado" descuenta el FIFO
+console.log("\nARREGLO 192 · saveEgPersonal baja el lote, no solo la cuenta");
+{
+  // Lo cazo ella el 27/10: pago 4.335,63 Bs desde Banco de Venezuela como
+  // egreso personal creado ya pagado. El saldo bajo bien; el lote NO.
+  // pagarEgPersonal() si lo hacia; saveEgPersonal() se olvido.
+  // De los lotes salen las tasas que la app sugiere, asi que no es cosmetico.
+  const seg = sinComentarios(sacarFuncion("saveEgPersonal"));
+  ok(/if\(e\.pagada&&e\.cuentaId\)\{[\s\S]*?ajusteCuentaEgreso\(/.test(seg)
+     && /if\(e\.pagada&&e\.cuentaId\)\{[\s\S]*?descontarFIFOEgreso\(/.test(seg),
+     "crearlo pagado baja la cuenta Y descuenta el FIFO");
+  // Y en el MISMO orden que pagarEgPersonal: primero la cuenta, luego el FIFO.
+  // Al reves no rompe nada hoy, pero las dos funciones hacen lo mismo y una
+  // regla copiada en dos sitios se separa con el primer cambio (ARREGLOS 101,
+  // 119, 150, 153).
+  ok(seg.indexOf("ajusteCuentaEgreso(") < seg.indexOf("descontarFIFOEgreso("),
+     "en el mismo orden que pagarEgPersonal: cuenta primero, FIFO despues");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
