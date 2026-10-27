@@ -2393,16 +2393,23 @@ let S={
   // ══════════════════════════════════════════════════
   // DYNAMIC MULTI-CURRENCY ARCHITECTURE
   // ══════════════════════════════════════════════════
-  cuentas:[
-    {id:"c01",nombre:"Banco EE.UU",tipo:"fiat",moneda:"USD",institucion:"Banco USA",saldo:0,operador:"julio",activa:true},
-    {id:"c02",nombre:"Kraken Fiat",tipo:"fiat",moneda:"USD",institucion:"Kraken",saldo:0,operador:"julio",activa:true},
-    {id:"c03",nombre:"Nubank",tipo:"fiat",moneda:"BRL",institucion:"Nubank Brasil",saldo:0,operador:"general",activa:true},
-    {id:"c04",nombre:"Inter",tipo:"fiat",moneda:"BRL",institucion:"Banco Inter",saldo:0,operador:"general",activa:true},
-    {id:"c05",nombre:"Banesco VE",tipo:"fiat",moneda:"VES",institucion:"Banesco",saldo:0,operador:"general",activa:true},
-    {id:"c06",nombre:"Binance JHOSELIN",tipo:"crypto",moneda:"USDT",institucion:"Binance",saldo:0,operador:"jhoselin",activa:true},
-    {id:"c07",nombre:"Binance Julio",tipo:"crypto",moneda:"USDT",institucion:"Binance",saldo:0,operador:"julio",activa:true},
-    {id:"c08",nombre:"True Wallet",tipo:"crypto",moneda:"USDT",institucion:"TrueWallet",saldo:0,operador:"general",activa:true},
-  ],
+  // ARREGLO 187: ANTES aqui habia 8 cuentas plantilla (c01..c08: Banco EE.UU,
+  // Kraken Fiat, Nubank, Inter, Banesco VE, Binance JHOSELIN, Binance Julio,
+  // True Wallet). Vista en el reporte del 26/10: aparecian en Inventario USDT
+  // con saldo 0,00 como "activas" aunque ella NUNCA las uso: sus cuentas
+  // reales tienen otros ids (c178xxx del _CUENTAS_CONOCIDAS_RECUPERACION) y
+  // nombres parecidos pero distintos (BINANCE JULIO en mayusculas, no
+  // "Binance Julio"). Las plantillas quedaron de una version muy vieja de
+  // la app, cuando este archivo contenia datos semilla. Hoy una cuenta nueva
+  // se crea desde Configuracion y la app no las necesita.
+  //
+  // Al arrancar sin datos locales, S.cuentas quedaba inicializado con esas 8
+  // plantillas. Fetch del servidor traia las REALES de ella, pero la fusion
+  // por id (c01..c08 no estan en el servidor) las dejaba intactas, asi que
+  // reaparecian cada vez que ella abria en un navegador nuevo o despues de
+  // limpiar el cache. _marcarBorradoMerge("cuentas", c01..c08) en el
+  // bootstrap las poda y escribe en _deletedMerge que no vuelvan por fusion.
+  cuentas:[],
   tasasCambio:{
     "BRL":5.0,"VES":650.0,"USD":1.01,"COP":4100,"PEN":3.7,"EUR":0.92,"TTD":6.8
   },
@@ -3269,7 +3276,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261023_v257-TEST";
+var APP_VERSION = "20261027_v274";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -4538,29 +4545,15 @@ function _saldoAManoInfo(c){
   return {actual:Math.round(act*100)/100, segunInv:seg,
           dif:(seg===null)?null:Math.round((act-seg)*100)/100};
 }
-function volverASeguirInventario(id){
-  var c=(S.cuentas||[]).find(function(x){ return x.id===id; });
-  if(!c){ alert("No encuentro esa cuenta."); return; }
-  var i=_saldoAManoInfo(c);
-  if(!i){ alert("Esa cuenta ya sigue al inventario."); return; }
-  if(i.segunInv===null){
-    if(!confirm("\""+c.nombre+"\" no tiene ni una operación de USDT registrada, así que "+
-        "el inventario no sabe cuánto debería haber.\n\nSi la dejo seguir al inventario, "+
-        "su saldo pasaría a 0,00 en cuanto registres la primera.\n\n¿Seguro?")) return;
-  } else if(!confirm("Que \""+c.nombre+"\" vuelva a seguir al inventario:\n\n"+
-      "ahora dice ....... "+f2(i.actual)+" USDT\n"+
-      "pasaría a ........ "+f2(i.segunInv)+" USDT\n"+
-      "diferencia ....... "+(i.dif>0?"+":"")+f2(i.dif)+"\n\n"+
-      "Ese segundo número son tus compras menos tus ventas de USDT en esta cuenta: "+
-      "NO es lo que deberías tener, es lo que la app escribiría. El cambio se aplica "+
-      "la próxima vez que dibujes Inventario.\n\n"+
-      "Si la diferencia es grande, es que faltan operaciones por registrar.\n\n¿Seguro?")) return;
-  delete c.manual_override;
-  c._mod=Date.now();
-  logAudit("SALDO_SIGUE_INVENTARIO", c.nombre+" · a mano "+f2(i.actual)+
-           " · inventario "+(i.segunInv===null?"(sin datos)":f2(i.segunInv)));
-  saveData(); R();
-}
+// ARREGLO 189 · volverASeguirInventario se retiro. Su botón "que lo siga" en
+// Configuracion y en Inventario USDT era peligroso: calculaba el saldo como
+// compras-ventas de esa cuenta, pero cuando las ventas vienen con
+// cuentaOrigenId null (su caso de octubre), ese numero es irreal y pulsarlo
+// destrozaba un saldo que ella acababa de acomodar. Sus palabras del 26/10:
+// "deberia de quitar eso porque en cualquier momento me puedo equivocar y
+// puedo darle ese botón y se me dañan los saldos". Para quitar un override,
+// escribe el saldo real a mano (updateCuentaSaldo); con v270 (ARREGLO 188)
+// el cambio marca _mod y la fusion no lo revierte.
 function _saldoConProblema(c){
   if(!c) return false;
   if(c.esTarjeta){
@@ -7623,6 +7616,101 @@ function _tasaFijadaAMano(moneda){
   if(t<=_tsUltimaOpUSDT(moneda)) return null;
   return v;
 }
+// ARREGLO 182 · caducidad de 24 h sobre la ultima operacion de USDT.
+// Sus palabras del 24/10: "cuando pase más de 24 horas una tasa anterior
+// me agarre una tasa referencial del mercado por medio de API, el mercado
+// es muy volátil". Si la operacion ya es vieja (> 24 h), su costo real
+// de HOY probablemente es otro, asi que pedimos al mercado y usamos lo
+// que trae; si no trae, caemos a la operacion vieja con una marca para
+// que la pantalla lo diga.
+var _TASA_OP_FRESCA_MS = 24 * 60 * 60 * 1000;
+
+// ARREGLO 183 · margen P2P BRL. Cuando la lectura de BRL viene del SPOT
+// (CoinGecko o Mercado Bitcoin), el precio es ~1% MAS BAJO que el P2P
+// de Binance Brasil, donde ella de verdad opera. Medido el 24/10/26:
+//   CoinGecko:        4,97 R$/USDT
+//   Binance P2P BR:   5,02 R$/USDT (SAIPHA, Deise_PRO)
+// Diferencia: ~1%, consistente dia a dia.
+//
+// Pasa porque su servidor esta en Railway EE.UU. y Binance BR lo bloquea
+// por pais (ARREGLO 75), asi que no se puede pedir el P2P brasileno
+// directamente. Como arreglo mientras no se migre la region de Railway,
+// la app aplica un margen configurable sobre el spot para aproximar al
+// precio real del P2P. El P2P (si llega) NO lleva margen: ya es el real.
+//
+// Diferencia con los lotes: esto afecta SOLO a la lectura externa del
+// mercado. La operacion propia (lote de compra/venta en Inventario USDT)
+// manda igual que antes.
+var MARGEN_P2P_BRL_DEFECTO = 0.01;
+
+function _margenP2P_BRL(){
+  var v = parseFloat(((S.config||{}).margenP2P_BRL));
+  if(!isFinite(v) || v<0) return MARGEN_P2P_BRL_DEFECTO;
+  if(v>1) return MARGEN_P2P_BRL_DEFECTO;  // > 100% es dedazo, no tiene sentido
+  return v;
+}
+
+// ARREGLO 186 · margen USD/BRL. Cuando el servidor cae a AwesomeAPI (USD/BRL)
+// porque las tres fuentes de USDT fallaron, el precio es ~1% MAS ALTO que el
+// P2P brasileno de USDT. Medido el 26/10/26:
+//   AwesomeAPI (USD): 5,42 R$/USD
+//   Binance P2P BR:   5,366 R$/USDT (SAIPHA, Deise_PRO)
+// Diferencia: ~1%, al reves que CoinGecko. Lo decidio ella 26/10: "dale B",
+// margen -1% para bajar la tasa a lo que de verdad hay en el P2P.
+//
+// Por que el margen va al reves: USD/BRL mide a cuanto un banco COMPRA
+// dolares, con su propio margen bancario incluido. El USDT P2P es libre y
+// casi siempre va por debajo de ese precio bancario.
+//
+// La decision se toma por el campo 'tipo' que marca el servidor (usdt | usd),
+// no por adivinar la fuente desde la app. El servidor lo sabe mejor.
+var MARGEN_USD_BRL_DEFECTO = 0.01;
+
+function _margenUSD_BRL(){
+  var v = parseFloat(((S.config||{}).margenUSD_BRL));
+  if(!isFinite(v) || v<0) return MARGEN_USD_BRL_DEFECTO;
+  if(v>1) return MARGEN_USD_BRL_DEFECTO;
+  return v;
+}
+
+// Lee la tasa del mercado para una moneda, del cache en memoria del
+// servidor (_MERCADO). No bloquea: si no esta disponible, devuelve 0 y
+// quien llama cae al fallback.
+function _tasaMercadoDe(moneda){
+  var d = (_MERCADO && _MERCADO.datos) || null;
+  if(!d || !d.disponible) return 0;
+  var campo = moneda==="BRL" ? d.compraBRL : moneda==="VES" ? d.ventaVES : null;
+  if(!campo) return 0;
+  var t = parseFloat(campo.tasa);
+  if(!(t>0)) return 0;
+  // ARREGLO 186 · el servidor marca 'tipo' en cada lectura:
+  //   usdt -> una de las tres fuentes de USDT contesto (Binance BR, CoinGecko,
+  //           Mercado Bitcoin). Sube 1% para aproximar al P2P brasilero
+  //           (CoinGecko va 1% debajo del P2P: ARREGLO 183).
+  //   usd  -> cayo a AwesomeAPI (USD/BRL) porque las tres USDT fallaron.
+  //           Baja 1% porque USD/BRL va 1% ARRIBA del P2P hoy (ARREGLO 186).
+  // El P2P brasilero de USDT (si algun dia Railway se mueve de region) no
+  // tiene 'tipo' en la respuesta pero si 'anuncios': se le reconoce ahi y
+  // no se le aplica margen. Lo que tiene fuente y no tiene tipo es anterior
+  // al ARREGLO 186 (produccion antes de que se migre el server) y se trata
+  // como USDT, el comportamiento viejo.
+  if(moneda === "BRL"){
+    var tipo = campo.tipo;
+    if(!tipo && campo.fuente && !campo.anuncios) tipo = "usdt";  // compat.
+    if(tipo === "usdt")      t = t * (1 + _margenP2P_BRL());
+    else if(tipo === "usd")  t = t * (1 - _margenUSD_BRL());
+  }
+  // _RATE_LIMITS se aplica solo a BRL. VES tiene limites viejos que no se
+  // pueden mantener al dia (hoy el bolivar esta en 1M+ Bs/USDT), asi que
+  // confiamos en la respuesta del servidor. BRL si tiene limites estables
+  // (3-8 R$ cubre todo el rango razonable de los ultimos anios).
+  if(moneda === "BRL"){
+    var lim = _RATE_LIMITS[moneda];
+    if(lim && (t<lim[0] || t>lim[1])) return 0;
+  }
+  return t;
+}
+
 function tasaDeReferencia(moneda){
   if(moneda==="USDT") return {tasa:1, origen:"usdt"};
   var fija=_tasaFijadaAMano(moneda);
@@ -7651,18 +7739,52 @@ function tasaDeReferencia(moneda){
   if(u){
     var t=_tasaEfectivaLote(u);
     var lim=_RATE_LIMITS[moneda];
-    if(t>0 && !(lim&&(t<lim[0]||t>lim[1])))
+    var dentro = (t>0 && !(lim&&(t<lim[0]||t>lim[1])));
+    if(dentro){
+      // ARREGLO 182 · caducidad. Si la operacion tiene mas de 24 h, se
+      // intenta primero el mercado. El id del lote es Date.now() (o algo
+      // comparable), asi que la hora exacta sale de ahi. Si no hay id
+      // utilizable, la fecha ISO vale como aproximacion al dia.
+      var horaOp = uId || _tsDeIsoDia(uF);
+      var edad = horaOp ? (Date.now() - horaOp) : 0;
+      if(edad > _TASA_OP_FRESCA_MS){
+        var tM = _tasaMercadoDe(moneda);
+        if(tM > 0){
+          return {tasa:tM, origen:"mercado", meta:{}, edadOp:edad};
+        }
+        // No hay mercado: cae a la vieja con una marca para que la
+        // pantalla pueda decir "estoy usando una operacion vieja".
+        return {tasa:t, origen:"auto", fecha:u.fecha, iso:uF, tipo:u.tipo, meta:{}, vieja:true, edadOp:edad};
+      }
       // Se llama `iso` a proposito, con el nombre largo reservado a los
       // lotes: pruebas/prestamos.js cuenta ese nombre largo una vez por cada
       // sitio que mete un lote, para que no vuelva a colarse uno sin año
       // (ARREGLO 51). Un campo mas con ese nombre, aunque no sea un lote,
       // rompe esa cuenta. Y esto no es un lote: es la tasa que salio de uno.
       return {tasa:t, origen:"auto", fecha:u.fecha, iso:uF, tipo:u.tipo, meta:{}};
+    }
   }
-  // Sin operaciones en esa moneda: lo último que escribió, aunque no lo fijara.
+  // ARREGLO 182 · sin operaciones: tambien se prueba el mercado antes
+  // de caer a lo escrito a ojo. Es el mismo criterio del ARREGLO 128.
+  var tMsin = _tasaMercadoDe(moneda);
+  if(tMsin > 0) return {tasa:tMsin, origen:"mercado", meta:{}};
+  // Sin operaciones y sin mercado: lo último que escribió, aunque no lo fijara.
   var v=parseFloat((S.tasasDia||{})[moneda]);
   if(v>0) return {tasa:v, origen:"escrita", meta:(S._tasasDiaMeta||{})[moneda]||{}};
   return {tasa:null, origen:"ninguna"};
+}
+
+// La hora de un lote cuando el id no es un Date.now() usable: aproxima al
+// dia a partir del ISO (aaaa-mm-dd). Para la regla de 24 h vale: lo que
+// importa es si cruzamos el umbral, no la hora exacta.
+function _tsDeIsoDia(iso){
+  if(!iso || typeof iso!=="string") return 0;
+  var m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(!m) return 0;
+  // Al final del dia local, para no considerar "vieja" una operacion que
+  // es de hoy pero cuyo iso es aaaa-mm-dd a las 00:00.
+  var d = new Date(parseInt(m[1],10), parseInt(m[2],10)-1, parseInt(m[3],10), 23, 59, 59);
+  return d.getTime();
 }
 
 function getRateToUsdt(moneda){
@@ -7894,6 +8016,19 @@ function rBalancePlus(){
     "<input type='checkbox' "+(nc.esJuridica?"checked":"")+" onchange='S.nCap.esJuridica=this.checked'>"+
     "<span style='font-size:12px'><b>🏛️ Es una cuenta jurídica (CNPJ)</b> — cuenta a nombre de la empresa registrada, no a tu nombre personal. Solo es una etiqueta para identificarla; sigue contando como cuenta de empresa en todos los totales.</span>"+
   "</label>"+
+  // ARREGLO 179 · Marcar como declarable en PGDAS-D. Solo tiene sentido
+  // para BRL de empresa. Fuera de ahi el check sale deshabilitado para
+  // decir por que — ocultarlo seria olvidar la regla.
+  (function(){
+    var puede=(nc.moneda==="BRL" && !nc.esPersonal);
+    var checked=puede && !!nc.declaraPGDAS;
+    var razon = !nc.moneda || nc.moneda!=="BRL" ? "solo cuentas en reales (BRL)"
+              : nc.esPersonal ? "una cuenta personal no declara en PGDAS-D" : "";
+    return "<label style='display:flex;align-items:center;gap:8px;margin-bottom:12px;padding:9px 12px;background:var(--sup2c);border-radius:9px;cursor:"+(puede?"pointer":"not-allowed")+";opacity:"+(puede?1:.55)+"'>"+
+      "<input type='checkbox' "+(checked?"checked":"")+" "+(puede?"":"disabled")+" onchange='S.nCap.declaraPGDAS=this.checked'>"+
+      "<span style='font-size:12px'><b>🧾 Declarar en PGDAS-D</b> — las operaciones que entran o salen por esta cuenta cuentan como receita bruta del CNPJ. "+(razon?"<span style=\"color:var(--tx3)\">("+razon+")</span>":"Marca solo las cuentas que de verdad declaras.")+"</span>"+
+    "</label>";
+  })()+
   "<button class='btn-main btn-blue' onclick='saveNewCuenta()'>💾 Agregar cuenta</button>"+
   "<button onclick='recuperarCuentasConocidas()' style='width:100%;margin-top:10px;padding:11px;border:1.5px dashed var(--mal);border-radius:9px;background:var(--rj6-a);color:var(--mal);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>🆘 Recuperar cuentas conocidas (por el incidente de sincronización)</button>"+
   "</div>"
@@ -7928,6 +8063,14 @@ function updateCuentaSaldo(id, val){
   }
   c.saldo=v;
   if(c.moneda==="USDT") c.manual_override=true;
+  // ARREGLO 188: forzar _mod ahora, para que la fusion no revierta el saldo
+  // escrito a mano. _marcarCambiados() lo pone solo cuando hay foto previa y
+  // el campo cambia; pero una edicion de saldo tiene que GANAR siempre contra
+  // una version del otro aparato (ARREGLO 148 por su familia).
+  // Reproducido en el export de ella del 26/10: SAIPA bajo de 97,34 (apertura
+  // 20/10) a 65,41 porque el otro aparato tenia _mod mas nuevo con el saldo
+  // viejo. Esto es parte de los $79,22 "sin explicar" que reporto.
+  c._mod=Date.now();
   (S.capital||[]).forEach(function(cap,i){if(cap.cuentaId===id){S.capital[i].saldo=v;}});
   saveData();R();
 }
@@ -8218,7 +8361,36 @@ function editarLimiteTarjeta(cid){
   if(isNaN(lim)||lim<0){ alert("Límite inválido."); return; }
   c.limiteTarjeta=lim; c._mod=Date.now();
   logAudit("CUENTA_TARJETA_LIMITE",c.nombre+" → límite "+f2(lim));
+  // ARREGLO 184 · aprovechar que ya tenemos el flujo del limite para pedir
+  // tambien el dia del mes en que vence la factura. Es necesario para avisar
+  // antes del vencimiento. En blanco = no avisa (la tarjeta no tiene fecha
+  // conocida). Un numero 1-28 (max 28 para no entrar en meses sin dia 29-31).
+  var pdef = c.diaVencimientoFatura || _diaVencimientoFaturaPorOmision(c);
+  var dv = prompt("Día del mes en que vence la factura (1-31). En meses sin ese día (ej. 31 en febrero) la app usa el último del mes. Deja vacío si no lo sabes:", pdef||"");
+  if(dv!==null){
+    var dvs = String(dv).trim();
+    if(dvs===""){
+      delete c.diaVencimientoFatura;
+    } else {
+      var n = parseInt(dvs,10);
+      if(isNaN(n) || n<1 || n>31){
+        alert("Día inválido. Tiene que ser un número entre 1 y 31.");
+      } else {
+        c.diaVencimientoFatura = n;
+      }
+    }
+    c._mod=Date.now();
+  }
   saveData();R();
+}
+// ARREGLO 184 · si el nombre contiene "PAGBANK", su factura vence el día
+// 15 (medido en el extracto del 24/10/26). Es solo una sugerencia para el
+// prompt — ella puede cambiarlo. Para otras tarjetas no se sugiere nada.
+function _diaVencimientoFaturaPorOmision(c){
+  if(!c||!c.esTarjeta) return "";
+  var n = (c.nombre||"").toUpperCase();
+  if(n.indexOf("PAGBANK")>=0) return 15;
+  return "";
 }
 // Lo que se debe en una tarjeta es el saldo en negativo, leído al derecho.
 // Un saldo POSITIVO en una tarjeta es que pagó de más, y eso no es deuda.
@@ -8705,7 +8877,11 @@ function borrarAbonoPrestamo(prestId,abonoId){
 }
 function toggleCuenta(btn){
   var cid=btn.getAttribute("data-cid");
-  autorizarYHacer(function(){var c=(S.cuentas||[]).find(function(x){return x.id===cid;});if(c){c.activa=!c.activa;saveData();R();}});
+  // ARREGLO 188: forzar _mod para que la desactivacion gane la fusion.
+  // Mismo bug que el saldo manual (ARREGLO 148 por su familia): sin _mod
+  // explicito, la fusion puede revertir la desactivacion si el otro aparato
+  // tiene _mod mas nuevo por otro campo.
+  autorizarYHacer(function(){var c=(S.cuentas||[]).find(function(x){return x.id===cid;});if(c){c.activa=!c.activa;c._mod=Date.now();saveData();R();}});
 }
 
 function eliminarCuentaConfig(btn){
@@ -9272,8 +9448,41 @@ function _asegurarFilaCapital(cuenta){
 function saveNewCuenta(){
   var f=S.nCap;
   if(!f.nombre||!f.moneda){alert("Completa nombre y moneda.");return;}
-  S.cuentas.push({id:"c"+Date.now(),nombre:f.nombre,tipo:f.tipo||"banco",moneda:f.moneda,saldo:parseFloat(f.saldo)||0,nota:f.nota||"",activa:true,esPersonal:!!f.esPersonal,esJuridica:!!f.esJuridica});
-  S.nCap={nombre:"",tipo:"banco",moneda:"USDT",saldo:"",nota:"",esPersonal:false,esJuridica:false};
+  // ARREGLO 179 · solo las BRL no personales pueden declarar en PGDAS-D.
+  // Guardia por nombre: si el formulario viene con la marca y la cuenta no
+  // es elegible (p. ej. porque cambio la moneda despues de marcar), se
+  // guarda con declaraPGDAS false sin preguntar — y el check del formulario
+  // ya no la deja volver a marcar.
+  var puedeDeclarar=(f.moneda==="BRL" && !f.esPersonal);
+  S.cuentas.push({
+    id:"c"+Date.now(),nombre:f.nombre,tipo:f.tipo||"banco",moneda:f.moneda,
+    saldo:parseFloat(f.saldo)||0,nota:f.nota||"",activa:true,
+    esPersonal:!!f.esPersonal,esJuridica:!!f.esJuridica,
+    declaraPGDAS: puedeDeclarar && !!f.declaraPGDAS
+  });
+  S.nCap={nombre:"",tipo:"banco",moneda:"USDT",saldo:"",nota:"",esPersonal:false,esJuridica:false,declaraPGDAS:false};
+  saveData();R();
+}
+// ARREGLO 179 · Toggle de declaraPGDAS en una cuenta ya existente, para
+// marcar/desmarcar desde la fila sin reabrir la ficha. Igual que
+// toggleCuentaJuridica, pero con la guardia de BRL+no personal: si una
+// cuenta ya marcada deja de ser elegible (cambia a personal o a otra
+// moneda), tambien se desmarca.
+function toggleCuentaPGDAS(id){
+  var c=(S.cuentas||[]).find(function(x){return x.id===id;});
+  if(!c) return;
+  if(c.moneda!=="BRL" || c.esPersonal){
+    if(c.declaraPGDAS){ c.declaraPGDAS=false; c._mod=Date.now(); saveData(); R(); }
+    alert("Solo cuentas BRL no personales pueden declararse en PGDAS-D.");
+    return;
+  }
+  var nuevoEstado=!c.declaraPGDAS;
+  if(nuevoEstado && !confirm("🧾 Marcar \""+c.nombre+"\" como cuenta DECLARABLE en PGDAS-D.\n\nLas operaciones de esta cuenta contarán como receita bruta del CNPJ en la pestaña 🧾 PGDAS-D.\n\n¿Confirmar?")){
+    return;
+  }
+  c.declaraPGDAS=nuevoEstado;
+  c._mod=Date.now();
+  logAudit("CUENTA_PGDAS",c.nombre+" → declaraPGDAS="+nuevoEstado);
   saveData();R();
 }
 
@@ -14982,6 +15191,25 @@ function guardarRetencionConfig(){
   saveData(); R();
   alert("✅ Retención guardada: "+(r||"(sin régimen)")+" · "+p+"%");
 }
+// ARREGLO 177 · guarda los umbrales RBT12. Vacio = borra la clave y vuelve
+// al valor por omision (80% / 95% / R$ 180.000). Un 0 guardado no vale a
+// proposito: dejaria el aviso apagado sin decirlo.
+function guardarUmbralRBT12(){
+  var am=_leerNumero(document.getElementById('inp-rbt12-am').value);
+  var ro=_leerNumero(document.getElementById('inp-rbt12-ro').value);
+  var tp=_leerNumero(document.getElementById('inp-rbt12-tope').value);
+  if(!S.config) S.config={};
+  // Validar: si estan los dos, ro > am; si el tope esta, > 0.
+  if(!isNaN(am)&&am>0 && !isNaN(ro)&&ro>0 && ro<=am){
+    alert("El umbral rojo tiene que ser MAYOR que el amarillo.");
+    return;
+  }
+  if(isNaN(am)||am<=0) delete S.config.rbt12_amarillo; else S.config.rbt12_amarillo=am;
+  if(isNaN(ro)||ro<=0) delete S.config.rbt12_rojo;      else S.config.rbt12_rojo=ro;
+  if(isNaN(tp)||tp<=0) delete S.config.rbt12_tope_comodo; else S.config.rbt12_tope_comodo=tp;
+  saveData(); R();
+  alert("✅ Umbrales guardados · 🟡 R$ "+f2(_rbt12UmbralAmarillo())+" · 🔴 R$ "+f2(_rbt12UmbralRojo())+" · tope R$ "+f2(_rbt12TopeComodo()));
+}
 function addCatEmpresa(){
   var v=(document.getElementById('inp-cat-emp').value||"").trim().toUpperCase();
   if(!v) return;
@@ -15084,6 +15312,39 @@ function guardarComisionBanco(){
   S.config.comision_banco_transferencia=tr;
   saveData();R();
   alert("✅ Comisiones del banco VE guardadas:\n\nPago móvil: "+(v*100).toFixed(2)+"% (mínimo "+f2(mn)+" Bs)\nTransferencia: "+f2(tr)+" Bs");
+}
+// ARREGLO 185 · Frase destacada del flyer. Vive en S.config.mensajeFlyer,
+// que viaja en el bloque de estado (DATA_KEYS). Vacio -> no se dibuja.
+// ARREGLO 191 · Guarda la plantilla de la descripcion de la NFS-e mensal.
+// Vive en S.config.nfseDescripcion. Vacio -> vuelve a lo por omision.
+function guardarNFSeDescripcion(){
+  var el=document.getElementById("inp-nfse-desc");
+  if(!el) return;
+  var v=(el.value||"").trim();
+  if(v.length>300){alert("La descripción es muy larga (máx 300).");return;}
+  if(!S.config) S.config={};
+  if(!v){
+    delete S.config.nfseDescripcion;
+    saveData();R();
+    alert("✅ Descripción NFS-e vuelta a lo por omisión.");
+    return;
+  }
+  S.config.nfseDescripcion=v;
+  logAudit("CONFIG_NFSE_DESC","Plantilla NFS-e: "+v.slice(0,80));
+  saveData();R();
+  alert("✅ Plantilla NFS-e guardada.");
+}
+
+function guardarMensajeFlyer(){
+  var el=document.getElementById("inp-mensaje-flyer");
+  if(!el) return;
+  var v=(el.value||"").trim();
+  if(v.length>60){alert("La frase es muy larga (máx 60).");return;}
+  if(!S.config) S.config={};
+  S.config.mensajeFlyer=v;
+  logAudit("CONFIG_FLYER_FRASE","Frase destacada del flyer: "+(v||"(vacía)"));
+  saveData();R();
+  alert(v?("✅ Frase guardada:\n\n"+v):"✅ Frase borrada. El flyer sale sin frase destacada.");
 }
 function editComision(){
   var actual=COM();
@@ -15683,6 +15944,7 @@ function rConfigAdmin(){
               (tipoIco[c.tipo||"fiat"]||"🏦")+" "+(inac?"<s>":"")+_escAud(c.nombre)+(inac?"</s>":"")+
               (c.esPersonal?" <span style=\'font-size:10.5px;font-weight:700;background:var(--az6);color:var(--mo4);padding:1px 7px;border-radius:8px;vertical-align:middle\'>💜 Personal</span>":"")+
               (c.esJuridica?" <span style=\'font-size:10.5px;font-weight:700;background:var(--az6-c);color:var(--az3-d);padding:1px 7px;border-radius:8px;vertical-align:middle\'>🏛️ PJ (CNPJ)</span>":"")+
+              (_cuentaDeclara(c)?" <span style=\'font-size:10.5px;font-weight:700;background:var(--vd6-j1);color:var(--vd2-a);padding:1px 7px;border-radius:8px;vertical-align:middle\'>🧾 PGDAS</span>":"")+
             "</div>"+
             "<div style=\'font-size:10px;color:var(--tx4);margin-top:2px\'>"+(c.tipo||"")+(c.operador&&c.operador!=="general"?" · "+c.operador:"")+"</div>"+
             // ARREGLO 158 · si el saldo se escribio a mano, se DICE. Llevaba un
@@ -15696,10 +15958,15 @@ function rConfigAdmin(){
                 // la app ESCRIBIRIA si la cuenta volviera a seguir al inventario
                 // (compras menos ventas de esa cuenta), no lo que deberia haber.
                 // Dicho de la otra forma se lee como dinero que falta.
+                // ARREGLO 189 \u00b7 se quito el boton "que lo siga". Lo pidio ella
+                // el 26/10: "deberia de quitar eso porque en cualquier momento
+                // me puedo equivocar y puedo darle ese bot\u00f3n y se me da\u00f1an los
+                // saldos". El numero que calculaba (compras - ventas de esa
+                // cuenta) no es fiable cuando las ventas se registran con
+                // cuentaOrigenId null, como paso en octubre. Para quitar un
+                // override, lo correcto es escribir el saldo real a mano.
                 (mo.segunInv===null ? "" : " \u00b7 si lo siguiera pasar\u00eda a "+f2(mo.segunInv))+
-                " <button onclick=\'volverASeguirInventario(\""+_jsAttr(String(c.id))+"\")\' style=\'background:none;"+
-                "border:1px solid var(--avi-ln);color:var(--avi-tx);border-radius:6px;padding:1px 6px;"+
-                "font-size:10px;font-weight:700;cursor:pointer;margin-left:4px\'>que lo siga</button></div>";
+                "</div>";
             })()+
           "</div>"+
           // ARREGLO 95: en una tarjeta la cifra grande NO puede salir como
@@ -15737,6 +16004,19 @@ function rConfigAdmin(){
             "style=\'padding:6px 9px;border:1.5px solid "+(c.esPersonal?"var(--az5-g)":"var(--gr6-d)")+";border-radius:8px;font-size:12px;cursor:pointer;background:"+(c.esPersonal?"var(--az6)":"var(--gr6-c)")+"\'>"+(c.esPersonal?"💜":"🤍")+"</button>"+
           "<button onclick=\'toggleCuentaJuridica(\""+c.id+"\")\' title=\'"+(c.esJuridica?"Cuenta jurídica (CNPJ) — click para quitar marca":"Marcar como cuenta jurídica (CNPJ) de la empresa")+"\' "+
             "style=\'padding:6px 9px;border:1.5px solid "+(c.esJuridica?"var(--az5-j1)":"var(--gr6-d)")+";border-radius:8px;font-size:12px;cursor:pointer;background:"+(c.esJuridica?"var(--az6-c)":"var(--gr6-c)")+"\'>🏛️</button>"+
+          // ARREGLO 179 · toggle de declaraPGDAS. Solo tiene sentido en BRL
+          // no personal — en otras el boton sale desactivado con un titulo
+          // que dice por que, en vez de esconderlo (igual que el check del
+          // formulario), o se olvida la regla.
+          (function(){
+            var puede=(c.moneda==="BRL" && !c.esPersonal);
+            var marcada=_cuentaDeclara(c);
+            var ttl=marcada ? "Cuenta declarable en PGDAS-D — click para quitar marca"
+                   : puede   ? "Marcar como cuenta declarable en PGDAS-D"
+                             : "Solo cuentas BRL no personales pueden declararse";
+            return "<button onclick=\'toggleCuentaPGDAS(\""+c.id+"\")\' title=\'"+ttl+"\' "+
+              "style=\'padding:6px 9px;border:1.5px solid "+(marcada?"var(--vd4-j1)":"var(--gr6-d)")+";border-radius:8px;font-size:12px;cursor:"+(puede?"pointer":"not-allowed")+";background:"+(marcada?"var(--vd6-c)":"var(--gr6-c)")+";opacity:"+(puede?1:.5)+"\'>🧾</button>";
+          })()+
           "<button onclick=\'"+(c.esTarjeta?"editarLimiteTarjeta":"toggleCuentaTarjeta")+"(\""+c.id+"\")\' title=\'"+(c.esTarjeta?"Tarjeta de credito - click para cambiar el limite":"Marcar como tarjeta de credito (su saldo es lo que debes)")+"\' "+
             "style=\'padding:6px 9px;border:1.5px solid "+(c.esTarjeta?"var(--am4)":"var(--gr6-d)")+";border-radius:8px;font-size:12px;cursor:pointer;background:"+(c.esTarjeta?"var(--am6)":"var(--gr6-c)")+"\'>&#128179;</button>"+
           "<button onclick=\'toggleCuentaMadre(\""+c.id+"\")\' title=\'"+(c.esMadre?"Cuenta madre — click para quitar marca":"Marcar como cuenta madre: aquí caen los "+c.moneda+" de tus compras y ventas de USDT")+"\' "+
@@ -15891,6 +16171,30 @@ function rConfigAdmin(){
             "<input type='text' inputmode='decimal' id='inp-com-banco-transf' value='"+(((S.config||{}).comision_banco_transferencia!==undefined)?S.config.comision_banco_transferencia:54)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
           "</div>"+
           "<button onclick='guardarComisionBanco()' style='padding:9px 14px;background:var(--mal);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
+        "</div>"+
+        // ARREGLO 185 · Frase destacada del flyer. Lo que diferencia a Jhoselin
+        // de Retorna (que cobra 10% de comision oculta) es que ella no cobra
+        // ninguna. Esta frase aparece en el flyer y mini flyer.
+        // Vacio -> no se dibuja (no deja hueco). Default: "💥 Sin comisiones ocultas".
+        "<div style='margin-top:14px;padding-top:14px;border-top:1px solid var(--ln2)'>"+
+          "<div style='font-size:12px;font-weight:700;color:var(--tx2);margin-bottom:8px'>📢 Frase destacada del flyer</div>"+
+          "<div style='font-size:11px;color:var(--tx3);margin-bottom:8px'>Aparece debajo de las tasas en el flyer y en el mini flyer. Déjala vacía si no quieres ninguna.</div>"+
+          "<div style='display:flex;gap:8px;align-items:center;max-width:500px'>"+
+            "<input type='text' id='inp-mensaje-flyer' maxlength='60' value=\""+_escAud(_fraseFlyer())+"\" placeholder='💥 Sin comisiones ocultas' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+            "<button onclick='guardarMensajeFlyer()' style='padding:9px 14px;background:var(--ac);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
+          "</div>"+
+        "</div>"+
+        // ARREGLO 191 · Plantilla de la descripcion de la NFS-e mensal. Lo que
+        // ella pega en el portal de la prefeitura al emitir la nota.
+        // Placeholders: {competencia}, {mes}, {ano}.
+        "<div style='margin-top:14px;padding-top:14px;border-top:1px solid var(--ln2)'>"+
+          "<div style='font-size:12px;font-weight:700;color:var(--tx2);margin-bottom:8px'>📄 NFS-e mensal · plantilla de descrição</div>"+
+          "<div style='font-size:11px;color:var(--tx3);margin-bottom:8px'>Lo que la app te deja listo para copiar y pegar en el campo <b>Descrição do serviço</b> del portal da prefeitura. Puedes usar <code>{competencia}</code> (ej. Outubro/2026), <code>{mes}</code> y <code>{ano}</code>; la app los sustituye por el mes que estés declarando.</div>"+
+          "<div style='display:flex;gap:8px;align-items:flex-start;max-width:600px'>"+
+            "<textarea id='inp-nfse-desc' rows='2' maxlength='300' placeholder=\""+_escAud(NFSE_DESC_DEFECTO)+"\" style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:13px;font-family:inherit;resize:vertical;line-height:1.4'>"+_escAud(((S.config||{}).nfseDescripcion||NFSE_DESC_DEFECTO))+"</textarea>"+
+            "<button onclick='guardarNFSeDescripcion()' style='padding:9px 14px;background:var(--ac);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
+          "</div>"+
+          "<div style='font-size:10px;color:var(--tx4);margin-top:5px'>Vacío vuelve a lo por omisión.</div>"+
         "</div>"+
         // ARREGLO 128: los dos colchones con que se calcula la tasa que la
         // pestaña de Tasas recomienda cada mañana. Van aquí y no en la propia
@@ -16112,6 +16416,28 @@ function rConfigAdmin(){
             "<span style='font-size:14px;color:var(--tx2);font-weight:700'>%</span>"+
             "<button onclick='guardarRetencionConfig()' style='padding:9px 14px;background:var(--rol-ee);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
           "</div>"+
+        "</div>"+
+        // ARREGLO 177 · Avisos de RBT12 cerca del tope del 6%.
+        "<div style='margin-top:14px;padding-top:14px;border-top:1px solid var(--ln2)'>"+
+          "<div style='font-size:12px;font-weight:700;color:var(--tx2);margin-bottom:8px'>🧾 Aviso de RBT12 (Simples Nacional)</div>"+
+          "<div style='font-size:11px;color:var(--tx3);margin-bottom:8px'>La franja 1 del Anexo III (6%) termina en <b>R$ "+f2(RBT12_TOPE_COMODO_DEFECTO)+"</b>. La app avisa antes para que puedas repartir receita. Vacío = por omisión (80% y 95% del tope).</div>"+
+          "<div style='display:flex;gap:8px;align-items:center;max-width:520px;flex-wrap:wrap;margin-bottom:8px'>"+
+            "<span style='font-size:12px;color:var(--tx2);min-width:88px'>🟡 Amarillo</span>"+
+            "<span style='font-size:12px;color:var(--tx2);font-weight:700'>R$</span>"+
+            "<input type='text' inputmode='decimal' id='inp-rbt12-am' placeholder='"+f2(Math.round(RBT12_TOPE_COMODO_DEFECTO*0.80))+"' value='"+(((S.config||{}).rbt12_amarillo!==undefined&&(S.config||{}).rbt12_amarillo!==null)?f2(S.config.rbt12_amarillo):"")+"' style='width:120px;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:13px'>"+
+          "</div>"+
+          "<div style='display:flex;gap:8px;align-items:center;max-width:520px;flex-wrap:wrap;margin-bottom:8px'>"+
+            "<span style='font-size:12px;color:var(--tx2);min-width:88px'>🔴 Rojo</span>"+
+            "<span style='font-size:12px;color:var(--tx2);font-weight:700'>R$</span>"+
+            "<input type='text' inputmode='decimal' id='inp-rbt12-ro' placeholder='"+f2(Math.round(RBT12_TOPE_COMODO_DEFECTO*0.95))+"' value='"+(((S.config||{}).rbt12_rojo!==undefined&&(S.config||{}).rbt12_rojo!==null)?f2(S.config.rbt12_rojo):"")+"' style='width:120px;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:13px'>"+
+          "</div>"+
+          "<div style='display:flex;gap:8px;align-items:center;max-width:520px;flex-wrap:wrap;margin-bottom:8px'>"+
+            "<span style='font-size:12px;color:var(--tx2);min-width:88px'>Tope cómodo</span>"+
+            "<span style='font-size:12px;color:var(--tx2);font-weight:700'>R$</span>"+
+            "<input type='text' inputmode='decimal' id='inp-rbt12-tope' placeholder='"+f2(RBT12_TOPE_COMODO_DEFECTO)+"' value='"+(((S.config||{}).rbt12_tope_comodo!==undefined&&(S.config||{}).rbt12_tope_comodo!==null)?f2(S.config.rbt12_tope_comodo):"")+"' style='width:120px;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:13px'>"+
+            "<button onclick='guardarUmbralRBT12()' style='padding:9px 14px;background:var(--rol-ee);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
+          "</div>"+
+          "<div style='font-size:10.5px;color:var(--tx3);font-style:italic'>Techo legal de ME: R$ "+f2(RBT12_TOPE_LEGAL)+" (no editable, es ley). El aviso rojo salta al 90% de ese techo.</div>"+
         "</div>"+
       "</div>";
 
@@ -16446,7 +16772,7 @@ function rCapitalTotal(){
       "<div style='display:flex;align-items:center;padding:11px 12px;gap:8px;background:"+(usdt===null?"var(--avi-sup2)":isEditOpen?"var(--az6-k)":"var(--sup)")+"'>"+
         "<div style='font-size:15px;flex-shrink:0'>"+ic+"</div>"+
         "<div style='flex:1;min-width:0'>"+
-          "<div style='font-size:12px;font-weight:700;color:var(--tit);overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>"+_escAud(item.nombre)+(item.esPersonal?" <span style='font-size:10.5px;font-weight:700;background:var(--az6);color:var(--mo4);padding:1px 6px;border-radius:7px'>💜</span>":"")+(item.esJuridica?" <span style='font-size:10.5px;font-weight:700;background:var(--az6-c);color:var(--az3-d);padding:1px 6px;border-radius:7px'>🏛️ PJ</span>":"")+"</div>"+
+          "<div style='font-size:12px;font-weight:700;color:var(--tit);overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>"+_escAud(item.nombre)+(item.esPersonal?" <span style='font-size:10.5px;font-weight:700;background:var(--az6);color:var(--mo4);padding:1px 6px;border-radius:7px'>💜</span>":"")+(item.esJuridica?" <span style='font-size:10.5px;font-weight:700;background:var(--az6-c);color:var(--az3-d);padding:1px 6px;border-radius:7px'>🏛️ PJ</span>":"")+(_cuentaDeclara(item)?" <span style='font-size:10.5px;font-weight:700;background:var(--vd6-j1);color:var(--vd2-a);padding:1px 6px;border-radius:7px' title='Declarable en PGDAS-D'>🧾 PGDAS</span>":"")+"</div>"+
           "<div style='font-size:11.5px;color:var(--tx4)'>"+item.moneda+(fuenteTasa?" · "+fuenteTasa:"")+"</div>"+
           // ARREGLO 158 · aqui tambien, que es donde ella mira los saldos.
           // Ponerlo solo en Configuracion seria dejarlo donde no lo ve: el
@@ -16454,12 +16780,11 @@ function rCapitalTotal(){
           (function(){
             var mo=_saldoAManoInfo(item);
             if(!mo) return "";
+            // ARREGLO 189 \u00b7 boton quitado - ver el comentario en el otro sitio.
             return "<div style='font-size:10.5px;color:var(--avi-tx);font-weight:700;margin-top:2px'>"+
               "\u270d\ufe0f a mano \u00b7 no sigue al inventario"+
               (mo.segunInv===null ? "" : " \u00b7 si lo siguiera pasar\u00eda a "+f2(mo.segunInv))+
-              " <button onclick='volverASeguirInventario(\""+_jsAttr(String(item.id))+"\")' style='background:none;"+
-              "border:1px solid var(--avi-ln);color:var(--avi-tx);border-radius:6px;padding:0 5px;"+
-              "font-size:10px;font-weight:700;cursor:pointer'>que lo siga</button></div>";
+              "</div>";
           })()+
         "</div>"+
         "<div style='text-align:right;flex-shrink:0'>"+
@@ -22825,6 +23150,14 @@ function _rOfflineBlock(){
 function R(){
   var el=document.getElementById("app");
   if(!_hayConexionReal){ el.innerHTML=_rOfflineBlock(); return; }
+  // ARREGLO 179 · migracion unica. Al primer R() con datos cargados, si
+  // nadie tiene declaraPGDAS y existe exactamente una PAGBANK CNPJ no
+  // personal, se marca y se guarda. Idempotente: devuelve false y no
+  // toca nada si ya hay alguna marcada o si la condicion no se cumple.
+  if(!R._pgdasMigrado && S && S.cuentas && S.cuentas.length){
+    R._pgdasMigrado=true;
+    try{ if(_migrarCuentasPGDAS()) saveData(); }catch(e){}
+  }
   // El buscador de Préstamos filtra MIENTRAS ella teclea, así que vive
   // abierto bajo el dedo. Cualquier R() que caiga en medio —el aviso de
   // arranque, una respuesta del servidor, el repaso de cada 5 minutos—
@@ -23285,6 +23618,9 @@ function rMain(){
     _htmlAvisoAperturaFuera()+  // ARREGLO 94
     _htmlAvisoSaldoNegativo()+  // ARREGLO 95
     _htmlAvisoMesSinCerrar()+   // ARREGLO 89
+    _htmlAvisoPGDASAtrasado()+  // ARREGLO 178
+    _htmlAvisoFaturaTarjeta()+  // ARREGLO 184
+    _htmlAvisoRBT12()+          // ARREGLO 177
     _htmlAvisoTasaFijo()+       // ARREGLO 112
     "<div class='navbar3'>"+
       "<button class='menubtn' onclick='document.getElementById(\"navMenuWrap\").classList.add(\"show\")'>☰ Menú</button>"+
@@ -23834,22 +24170,385 @@ function delGanExtra(id){
 
 // Exporta el reporte del contador (3 líneas, en reales) a un CSV simple,
 // listo para enviar por correo o WhatsApp.
-function exportarReporteContadorCSV(mesKey){
-  var rep=S._reporteContadorActual;
-  if(!rep){alert("Abre primero la pestaña 'Contador' en Cierre Mensual para generar el reporte.");return;}
+// ─── ARREGLO 180 · CSV del contador, filtrado y en dos idiomas ──────
+// Sus palabras: "el contador solo necesita saber la cantidad que entro
+// y salio de la cuenta juridica, gasto de empresa y la ganancia que me
+// dejo cada operacion... sin operacion, puedes decir tantos servicios
+// pero no des detalle de operaciones... quita lo que salio, solo lo que
+// entro y la ganancia de esos ejercicios con un nombre que coincida con
+// mis codigos del CNPJ... en español y portugues, yo elijo en que idioma".
+//
+// El CSV viejo (que llamaba a S._reporteContadorActual) metia TODAS las
+// cuentas BRL (PAGBANK, EFECTIVO, PAGBANK RESERVA, TARJETA) con sus
+// entradas Y salidas, Y flujo neto, Y detalle operacion por operacion.
+// Ella no quiere nada de eso: solo lo declarable (ARREGLO 179), solo
+// entradas y ganancia, servicios como cantidad agregada, egresos por
+// categoria, en el idioma que elija cada vez.
+var CNAE_PRINCIPAL = "63.19-4-00";
+var CNAE_DESCRIPCION_PT = "Portais, provedores de conteúdo e outros serviços de informação na internet";
+var CNAE_DESCRIPCION_ES = "Portales, proveedores de contenido y otros servicios de información en internet";
+var NATUREZA_RECEITA_PT = "Receita de prestação de serviços de qualquer natureza — Anexo III";
+var NATUREZA_RECEITA_ES = "Ingreso por prestación de servicios de cualquier naturaleza — Anexo III";
+
+function _reporteContadorFiltrado(mesKey, idioma){
   var partsK=mesKey.split("-");
-  var mesLabel=getMesLabel(partsK[1],partsK[0]);
-  // ARREGLO 57: el informe salia en portugues ("Relatório Financeiro",
-  // "Saídas", "Fluxo líquido") dentro de una app que esta toda en español.
-  var lineas=["Informe financiero · "+mesLabel];
-  Object.keys(rep).forEach(function(k){ lineas.push(k+";"+rep[k]); });
-  var csv=lineas.join("\n");
+  var es = idioma!=="pt";
+  // getMesLabel solo da el nombre en español. En portugues traducimos.
+  var _mesesPT = ["","Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
+  var mesLabel = es
+    ? getMesLabel(partsK[1],partsK[0])
+    : (_mesesPT[parseInt(partsK[1],10)]+" "+partsK[0]);
+  var T = es ? {
+    titulo:"Informe para el contador",
+    empresa:"Empresa", cnpj:"CNPJ", mes:"Mes",
+    cuentas:"Cuentas incluidas",
+    natureza:"Naturaleza del ingreso",
+    cnae:"CNAE principal",
+    servicios:"Servicios prestados",
+    receitaBruta:"Receita bruta (lo que entró)",
+    ganhoServicios:"Ganancia de esos servicios",
+    egresosTit:"Egresos por categoría",
+    totalEgresos:"Total egresos",
+    resultado:"Resultado del mes",
+    natValor:NATUREZA_RECEITA_ES,
+    cnaeValor:CNAE_PRINCIPAL+" — "+CNAE_DESCRIPCION_ES,
+    sinCuentas:"⚠️ No hay cuentas marcadas como declarables. Marca al menos una en Configuración."
+  } : {
+    titulo:"Relatório para o contador",
+    empresa:"Empresa", cnpj:"CNPJ", mes:"Mês",
+    cuentas:"Contas incluídas",
+    natureza:"Natureza da receita",
+    cnae:"CNAE principal",
+    servicios:"Serviços prestados",
+    receitaBruta:"Receita bruta (o que entrou)",
+    ganhoServicios:"Ganho desses serviços",
+    egresosTit:"Despesas por categoria",
+    totalEgresos:"Total despesas",
+    resultado:"Resultado do mês",
+    natValor:NATUREZA_RECEITA_PT,
+    cnaeValor:CNAE_PRINCIPAL+" — "+CNAE_DESCRIPCION_PT,
+    sinCuentas:"⚠️ Não há contas marcadas como declaráveis. Marque pelo menos uma em Configuração."
+  };
+
+  function fmtBRL(v){ return (parseFloat(v)||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}); }
+
+  var cuentasDecl = _cuentasDeclarablesPGDAS();
+  var lineas = [];
+  lineas.push(T.titulo+" · "+mesLabel);
+  lineas.push("");
+  lineas.push(T.empresa+";"+EMPRESA_RAZON);
+  lineas.push(T.cnpj+";"+EMPRESA_CNPJ);
+  lineas.push(T.mes+";"+mesLabel);
+  lineas.push(T.natureza+";"+T.natValor);
+  lineas.push(T.cnae+";"+T.cnaeValor);
+  lineas.push(T.cuentas+";"+(cuentasDecl.length ? cuentasDecl.map(function(c){return c.nombre;}).join(" / ") : "—"));
+  lineas.push("");
+
+  if(!cuentasDecl.length){
+    lineas.push(T.sinCuentas);
+    return lineas.join("\n");
+  }
+
+  // Receita bruta = lo que ENTRO en reales por servicio a una cuenta
+  // declarable. Es decir: remesa que paga el cliente en BRL (orig=BRL)
+  // a una cuenta marcada. Esto es exactamente la "receita de prestacao
+  // de servicos" fiscal — un ingreso en R$ a la cuenta juridica.
+  //
+  // Lo que SALE de la cuenta (vueltas VZ→BR, entrega de reales) NO es
+  // una entrada, asi que no se cuenta. Y una remesa donde el cliente
+  // paga en VES/USD a VZ pero entrega BR no entra como "receita bruta"
+  // porque el dinero no entro a la cuenta en reales: la ganancia de
+  // esos servicios sigue contandose aparte, abajo, en ing.total.
+  var cuentasIdsDecl = {}; cuentasDecl.forEach(function(c){ cuentasIdsDecl[c.id]=true; });
+  var totalEntradas = 0;
+  [].concat(S.brl||[], S.vzla||[], S.eeuu||[]).forEach(function(r){
+    if(_mesDeFecha(r.d)!==mesKey) return;
+    if(r.orig!=="BRL") return;                 // solo lo que entra EN REALES
+    if(!cuentasIdsDecl[r.cuentaBanco]) return; // y a una cuenta declarable
+    totalEntradas += (parseFloat(r.am)||0);
+  });
+
+  // Ganho dos servicos = margen (pr x tasa) de las operaciones que
+  // pasaron por cuentas declarables (ARREGLO 179).
+  var ing = _ingresoDeclarablePGDAS(mesKey);
+  var nServicios = ing.nRemesasBR + ing.nRemesasVZ + ing.nRemesasEE;
+  var ganhoServicios = ing.total;
+
+  // Egresos: solo los pagados DESDE una cuenta declarable, agrupados
+  // por categoria. Un egreso de otra cuenta de empresa no entra aqui —
+  // no sale de la cuenta juridica, no es para este contador. El campo
+  // de "pagado" en S.egresos es `pagada` (no `pagado`) y la fecha es
+  // `fp` cuando se pagó, `d` cuando se registró; igual que _flujoCuentaMes.
+  var porCat = {};
+  var totalEgresos = 0;
+  (S.egresos||[]).forEach(function(e){
+    if(e.pagada===false) return;
+    if(!cuentasIdsDecl[e.cuentaId]) return;
+    var fe = e.fp || e.fecha || e.d;
+    if(_mesDeFecha(fe)!==mesKey) return;
+    var m = parseFloat(e.monto)||0;
+    if(m===0) return;
+    var cat = (e.cat||"OTROS").toString();
+    porCat[cat] = (porCat[cat]||0) + m;
+    totalEgresos += m;
+  });
+
+  lineas.push(T.servicios+";"+nServicios);
+  lineas.push(T.receitaBruta+";"+fmtBRL(totalEntradas));
+  lineas.push(T.ganhoServicios+";"+fmtBRL(ganhoServicios));
+  lineas.push("");
+  lineas.push(T.egresosTit);
+  Object.keys(porCat).sort(function(a,b){return porCat[b]-porCat[a];}).forEach(function(cat){
+    lineas.push("  "+cat+";"+fmtBRL(porCat[cat]));
+  });
+  lineas.push(T.totalEgresos+";"+fmtBRL(totalEgresos));
+  lineas.push("");
+  // Resultado = ganho - egresos (sobre la ganancia, no sobre las
+  // entradas: "lo que entro" es bruto de operacion e incluye capital
+  // que luego sale como vuelta).
+  lineas.push(T.resultado+";"+fmtBRL(ganhoServicios - totalEgresos));
+
+  return lineas.join("\n");
+}
+
+function exportarReporteContadorCSV(mesKey, idioma){
+  idioma = (idioma==="pt") ? "pt" : "es";
+  var csv = _reporteContadorFiltrado(mesKey, idioma);
   var blob=new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8;"});
   var url=URL.createObjectURL(blob);
   var a=document.createElement("a");
-  a.href=url; a.download="informe_contador_"+mesKey+".csv";
+  a.href=url; a.download="contador_"+idioma+"_"+mesKey+".csv";
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+// \u2500\u2500\u2500 ARREGLO 181 \u00B7 texto bonito y PDF para el contador \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// Sus palabras: "Ese formato no se puede abrir en tel\u00E9fono" (sobre el
+// CSV). Un .csv en Android abre como texto feo y el contador que lo
+// recibe por WhatsApp lo ve mal. Dos salidas nuevas, pensadas para el
+// movil, con la lista del ARREGLO 180:
+//
+//   \uD83D\uDCE4 Compartir \u2014 abre WhatsApp/Email con el texto formateado dentro
+//      del mensaje. El contador lo lee en el chat, sin bajar archivo.
+//   \uD83D\uDCC4 PDF \u2014 un papel A4 con el reporte. Se mira en el visor del
+//      telefono y se puede imprimir.
+//
+// El CSV queda detras ("M\u00E1s opciones \u25BE") por si algun contador lo
+// quiere para Excel. Mismo _reporteContadorFiltrado alimenta a los
+// tres \u2014 un numero, un sitio.
+function _textoContadorFiltrado(mesKey, idioma){
+  idioma = (idioma==="pt") ? "pt" : "es";
+  var partsK = mesKey.split("-");
+  var es = idioma!=="pt";
+  var _mesesPT = ["","Janeiro","Fevereiro","Mar\u00E7o","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
+  var mesLabel = es
+    ? getMesLabel(partsK[1],partsK[0])
+    : (_mesesPT[parseInt(partsK[1],10)]+" "+partsK[0]);
+  var T = es ? {
+    titulo:"\uD83D\uDCC4 Informe para el contador",
+    empresa:"\uD83C\uDFE2 Empresa", cnpj:"CNPJ",
+    cuentas:"Cuentas",
+    natureza:"\uD83D\uDCC2 Naturaleza del ingreso",
+    cnae:"CNAE principal",
+    servicios:"\uD83D\uDCBC Servicios prestados",
+    receitaBruta:"\uD83D\uDCB0 Receita bruta (lo que entr\u00F3)",
+    ganhoServicios:"\u2728 Ganancia de esos servicios",
+    egresosTit:"\uD83D\uDCC9 Egresos por categor\u00EDa",
+    totalEgresos:"Total egresos",
+    resultado:"\u2705 Resultado del mes",
+    natValor:NATUREZA_RECEITA_ES,
+    cnaeValor:CNAE_PRINCIPAL+" \u2014 "+CNAE_DESCRIPCION_ES,
+    sinCuentas:"\u26A0\uFE0F No hay cuentas marcadas como declarables. Marca al menos una en Configuraci\u00F3n \u2192 cuentas (bot\u00F3n \uD83E\uDDFE)."
+  } : {
+    titulo:"\uD83D\uDCC4 Relat\u00F3rio para o contador",
+    empresa:"\uD83C\uDFE2 Empresa", cnpj:"CNPJ",
+    cuentas:"Contas",
+    natureza:"\uD83D\uDCC2 Natureza da receita",
+    cnae:"CNAE principal",
+    servicios:"\uD83D\uDCBC Servi\u00E7os prestados",
+    receitaBruta:"\uD83D\uDCB0 Receita bruta (o que entrou)",
+    ganhoServicios:"\u2728 Ganho desses servi\u00E7os",
+    egresosTit:"\uD83D\uDCC9 Despesas por categoria",
+    totalEgresos:"Total despesas",
+    resultado:"\u2705 Resultado do m\u00EAs",
+    natValor:NATUREZA_RECEITA_PT,
+    cnaeValor:CNAE_PRINCIPAL+" \u2014 "+CNAE_DESCRIPCION_PT,
+    sinCuentas:"\u26A0\uFE0F N\u00E3o h\u00E1 contas marcadas como declar\u00E1veis. Marque pelo menos uma em Configura\u00E7\u00E3o \u2192 contas (bot\u00E3o \uD83E\uDDFE)."
+  };
+
+  function fmtBRL(v){ return (parseFloat(v)||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}); }
+
+  var cuentasDecl = _cuentasDeclarablesPGDAS();
+  var L = [];
+  L.push(T.titulo);
+  L.push(mesLabel);
+  L.push("");
+  L.push(T.empresa+": "+EMPRESA_RAZON);
+  L.push(T.cnpj+": "+EMPRESA_CNPJ);
+  L.push(T.natureza+":");
+  L.push("  "+T.natValor);
+  L.push(T.cnae+": "+T.cnaeValor);
+  L.push(T.cuentas+": "+(cuentasDecl.length ? cuentasDecl.map(function(c){return c.nombre;}).join(" / ") : "\u2014"));
+  L.push("");
+
+  if(!cuentasDecl.length){
+    L.push(T.sinCuentas);
+    return L.join("\n");
+  }
+
+  var cuentasIdsDecl = {}; cuentasDecl.forEach(function(c){ cuentasIdsDecl[c.id]=true; });
+  var totalEntradas = 0;
+  [].concat(S.brl||[], S.vzla||[], S.eeuu||[]).forEach(function(r){
+    if(_mesDeFecha(r.d)!==mesKey) return;
+    if(r.orig!=="BRL") return;
+    if(!cuentasIdsDecl[r.cuentaBanco]) return;
+    totalEntradas += (parseFloat(r.am)||0);
+  });
+
+  var ing = _ingresoDeclarablePGDAS(mesKey);
+  var nServicios = ing.nRemesasBR + ing.nRemesasVZ + ing.nRemesasEE;
+  var ganhoServicios = ing.total;
+
+  var porCat = {};
+  var totalEgresos = 0;
+  (S.egresos||[]).forEach(function(e){
+    if(e.pagada===false) return;
+    if(!cuentasIdsDecl[e.cuentaId]) return;
+    var fe = e.fp || e.fecha || e.d;
+    if(_mesDeFecha(fe)!==mesKey) return;
+    var m = parseFloat(e.monto)||0;
+    if(m===0) return;
+    var cat = (e.cat||"OTROS").toString();
+    porCat[cat] = (porCat[cat]||0) + m;
+    totalEgresos += m;
+  });
+
+  L.push(T.servicios+": "+nServicios);
+  L.push(T.receitaBruta+": "+fmtBRL(totalEntradas));
+  L.push(T.ganhoServicios+": "+fmtBRL(ganhoServicios));
+  L.push("");
+  L.push(T.egresosTit+":");
+  var cats = Object.keys(porCat).sort(function(a,b){return porCat[b]-porCat[a];});
+  if(cats.length){
+    cats.forEach(function(cat){ L.push("  \u2022 "+cat+": "+fmtBRL(porCat[cat])); });
+    L.push("  "+T.totalEgresos+": "+fmtBRL(totalEgresos));
+  } else {
+    L.push("  \u2014");
+  }
+  L.push("");
+  L.push(T.resultado+": "+fmtBRL(ganhoServicios - totalEgresos));
+
+  return L.join("\n");
+}
+
+// \uD83D\uDCE4 Compartir el reporte como TEXTO. En movil abre la hoja de
+// compartir (WhatsApp, email\u2026) con el texto dentro. En desktop sin
+// navigator.share, cae a copiar al portapapeles y avisa.
+function compartirReporteContador(mesKey, idioma){
+  idioma = (idioma==="pt") ? "pt" : "es";
+  var texto = _textoContadorFiltrado(mesKey, idioma);
+  var titulo = idioma==="pt" ? "Relat\u00F3rio para o contador" : "Informe para el contador";
+  // Si hay share nativo, usarlo (es lo que resuelve el problema del
+  // telefono \u2014 WhatsApp y Email aparecen en la hoja).
+  if(navigator && navigator.share){
+    navigator.share({title:titulo, text:texto})
+      .catch(function(err){
+        // AbortError = ella cancelo a proposito. No es un fallo.
+        if(err && err.name==="AbortError") return;
+        _copiarAlPortapapeles(texto, idioma==="pt"
+          ? "\uD83D\uDCCB Texto copiado \u2014 pegue no WhatsApp ou email"
+          : "\uD83D\uDCCB Texto copiado \u2014 p\u00E9galo en WhatsApp o email");
+      });
+    return;
+  }
+  _copiarAlPortapapeles(texto, idioma==="pt"
+    ? "\uD83D\uDCCB Texto copiado \u2014 pegue no WhatsApp ou email"
+    : "\uD83D\uDCCB Texto copiado \u2014 p\u00E9galo en WhatsApp o email");
+}
+
+function _copiarAlPortapapeles(texto, aviso){
+  function luegoDe(ok){
+    alert(ok ? aviso : (texto));
+  }
+  try{
+    if(navigator && navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(texto).then(function(){luegoDe(true);}, function(){luegoDe(false);});
+      return;
+    }
+  }catch(e){}
+  // Fallback con textarea.
+  try{
+    var ta = document.createElement("textarea");
+    ta.value = texto; ta.style.position="fixed"; ta.style.opacity="0";
+    document.body.appendChild(ta); ta.select();
+    var ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    luegoDe(ok);
+  }catch(e){ luegoDe(false); }
+}
+
+// \uD83D\uDCC4 PDF A4 con el reporte. Usa html2pdf igual que el informe del
+// cierre. Un papel que se abre en el movil y se puede imprimir o
+// mandar como adjunto.
+function descargarPDFContador(mesKey, idioma){
+  idioma = (idioma==="pt") ? "pt" : "es";
+  var texto = _textoContadorFiltrado(mesKey, idioma);
+  var titulo = idioma==="pt" ? "Relat\u00F3rio para o contador" : "Informe para el contador";
+  // Hoja HTML temporal: colores fijos (como el flyer, ARREGLO 85) para
+  // que lo que sale fuera no dependa del tema del aparato.
+  var cont = document.createElement("div");
+  cont.id = "pdfContadorTemp";
+  cont.style.cssText = "position:fixed;left:-9999px;top:0;width:768px;background:#fff;color:#1a3558;padding:40px;font-family:system-ui,-apple-system,'Segoe UI',Arial,sans-serif;line-height:1.5";
+  // Primera linea = titulo del archivo (icono + "Informe para\u2026"), se
+  // ense\u00F1a grande; el resto como <pre> con fuente proporcional ancha.
+  var lineas = texto.split("\n");
+  var html = "<div style='font-size:22px;font-weight:800;margin-bottom:4px;color:#0f6e3a'>"+_escAud(lineas[0])+"</div>";
+  html += "<div style='font-size:14px;color:#9aa3b5;margin-bottom:18px'>"+_escAud(lineas[1]||"")+"</div>";
+  html += "<pre style='font-size:13px;line-height:1.6;white-space:pre-wrap;margin:0;font-family:inherit'>"+_escAud(lineas.slice(2).join("\n"))+"</pre>";
+  cont.innerHTML = html;
+  document.body.appendChild(cont);
+
+  _cargarHtml2PdfSiHaceFalta(function(){
+    var opciones = {
+      margin:[8,8,8,8],
+      filename:"contador_"+idioma+"_"+mesKey+".pdf",
+      image:{type:"png"},
+      html2canvas:{scale:2, useCORS:true, backgroundColor:"#ffffff", windowWidth:768},
+      jsPDF:{unit:"mm", format:"a4", orientation:"portrait"}
+    };
+    html2pdf().set(opciones).from(cont).toPdf().output("blob").then(function(blob){
+      document.body.removeChild(cont);
+      var archivo = new File([blob], opciones.filename, {type:"application/pdf"});
+      if(navigator.canShare && navigator.canShare({files:[archivo]})){
+        navigator.share({files:[archivo], title:titulo})
+          .catch(function(err){
+            if(err && err.name==="AbortError") return;
+            _descargarBlob(blob, opciones.filename);
+          });
+      } else {
+        _descargarBlob(blob, opciones.filename);
+      }
+    }).catch(function(e){
+      if(cont.parentNode) document.body.removeChild(cont);
+      alert("No se pudo generar el PDF: "+(e&&e.message?e.message:e));
+    });
+  });
+}
+
+function _descargarBlob(blob, nombre){
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a"); a.href=url; a.download=nombre;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){URL.revokeObjectURL(url);}, 2000);
+}
+
+function _cargarHtml2PdfSiHaceFalta(cb){
+  if(typeof html2pdf!=="undefined"){ cb(); return; }
+  var s=document.createElement("script");
+  s.src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
+  s.onload=cb;
+  s.onerror=function(){ alert("No se pudo cargar la librer\u00EDa del PDF."); };
+  document.head.appendChild(s);
 }
 // ── ARREGLO 90 ─ LA GEOMETRIA DE LA HOJA, EN UN SOLO SITIO ────────────────
 // La hoja mide 768 px (ARREGLO 83) y en el PDF ocupa 194 x 281 mm, que es un
@@ -25451,7 +26150,7 @@ function rInformeCierre(){
         "<div style='display:flex;align-items:center;gap:12px;padding:14px 16px'>"+
           "<div style='width:38px;height:38px;border-radius:12px;background:"+(isNeg?"#FDECEA":"#EEF6F0")+";display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0'>"+(_mIcCur[c.moneda]||"🏦")+"</div>"+
           "<div style='flex:1;min-width:0'>"+
-            "<div style='font-size:13.5px;font-weight:800;color:#1a3558;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'>"+_escAud(c.nombre)+(c.esJuridica?" <span style='font-size:8.5px;font-weight:700;background:#E8F0FE;color:#1a5fb4;padding:1px 6px;border-radius:6px;vertical-align:middle'>🏛️ CNPJ</span>":"")+"</div>"+
+            "<div style='font-size:13.5px;font-weight:800;color:#1a3558;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'>"+_escAud(c.nombre)+(c.esJuridica?" <span style='font-size:8.5px;font-weight:700;background:#E8F0FE;color:#1a5fb4;padding:1px 6px;border-radius:6px;vertical-align:middle'>🏛️ CNPJ</span>":"")+(_cuentaDeclara(c)?" <span style='font-size:8.5px;font-weight:700;background:#E8F7EE;color:#1F7A3B;padding:1px 6px;border-radius:6px;vertical-align:middle'>🧾 PGDAS</span>":"")+"</div>"+
             "<div style='font-size:9.5px;color:#9aa3b5;font-weight:600;text-transform:uppercase;letter-spacing:.3px;margin-top:1px'>"+c.moneda+(c.tipo?" · "+c.tipo:"")+"</div>"+
           "</div>"+
           "<div style='text-align:right;flex-shrink:0'>"+
@@ -25571,7 +26270,7 @@ function rInformeCierre(){
       return "<div style='background:#fff;border-radius:16px;box-shadow:0 1px 3px rgba(20,30,60,.08);border:1px solid #f0f1f5;padding:14px 16px;margin-bottom:10px'>"+
         "<div style='display:flex;align-items:center;gap:10px;margin-bottom:10px'>"+
           "<div style='width:32px;height:32px;border-radius:10px;background:#EEF3FF;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0'>🏦</div>"+
-          "<div style='font-size:13px;font-weight:800;color:#1a3558'>"+_escAud(c.nombre)+(c.esJuridica?" <span style='font-size:8.5px;font-weight:700;background:#E8F0FE;color:#1a5fb4;padding:1px 6px;border-radius:6px;vertical-align:middle'>🏛️ CNPJ</span>":"")+"</div>"+
+          "<div style='font-size:13px;font-weight:800;color:#1a3558'>"+_escAud(c.nombre)+(c.esJuridica?" <span style='font-size:8.5px;font-weight:700;background:#E8F0FE;color:#1a5fb4;padding:1px 6px;border-radius:6px;vertical-align:middle'>🏛️ CNPJ</span>":"")+(_cuentaDeclara(c)?" <span style='font-size:8.5px;font-weight:700;background:#E8F7EE;color:#1F7A3B;padding:1px 6px;border-radius:6px;vertical-align:middle'>🧾 PGDAS</span>":"")+"</div>"+
         "</div>"+
         "<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px'>"+
           "<div style='background:#F3FAF5;border-radius:10px;padding:8px 10px'><div style='font-size:8.5px;color:#0f6e3a;font-weight:800;text-transform:uppercase;letter-spacing:.3px'>↑ Entradas</div><div style='font-size:15px;font-weight:900;color:#0f6e3a;margin-top:1px'>"+_fmtBRL(f.totalE)+"</div></div>"+
@@ -25626,7 +26325,24 @@ function rInformeCierre(){
           "<span style='font-size:19px;font-weight:900;color:"+(rc.resultadoReales>=0?"#4ade80":"#ff9a9a")+"'>"+brl(rc.resultadoReales)+"</span>"+
         "</div>"+
         (rc.sinTasa>0?"<div style='background:#FFF8DC;border:1px solid #F5C518;border-radius:8px;padding:8px 12px;margin-top:10px;font-size:10.5px;color:#7a5c00'>⚠️ "+rc.sinTasa+" operación(es) sin tasa guardada: su ganancia no está convertida a reales.</div>":"")+
-        "<button onclick='exportarReporteContadorCSV(\""+mesKey+"\")' style='width:100%;margin-top:14px;padding:13px;background:#0f6e3a;color:#fff;border:none;border-radius:12px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px rgba(15,110,58,.25)'>⬇️ Descargar CSV para el contador</button>"+
+        // ARREGLO 181 · compartir texto y PDF. El CSV abre feo en movil
+        // (lo cazo ella) asi que las dos salidas principales son texto
+        // que se puede pegar directo en WhatsApp y PDF A4 para los que
+        // quieran papel o archivo. El CSV baja a "Mas opciones" por si
+        // algun contador lo quiere para Excel.
+        "<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px'>"+
+          "<button onclick='compartirReporteContador(\""+mesKey+"\",\"es\")' style='padding:12px;background:#0f6e3a;color:#fff;border:none;border-radius:12px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px rgba(15,110,58,.25)'>📤 Compartir (ES)</button>"+
+          "<button onclick='compartirReporteContador(\""+mesKey+"\",\"pt\")' style='padding:12px;background:#0f6e3a;color:#fff;border:none;border-radius:12px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px rgba(15,110,58,.25)'>📤 Compartilhar (PT)</button>"+
+          "<button onclick='descargarPDFContador(\""+mesKey+"\",\"es\")' style='padding:12px;background:#1a3558;color:#fff;border:none;border-radius:12px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px rgba(26,53,88,.25)'>📄 PDF (ES)</button>"+
+          "<button onclick='descargarPDFContador(\""+mesKey+"\",\"pt\")' style='padding:12px;background:#1a3558;color:#fff;border:none;border-radius:12px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 8px rgba(26,53,88,.25)'>📄 PDF (PT)</button>"+
+        "</div>"+
+        "<details style='margin-top:10px'>"+
+          "<summary style='cursor:pointer;font-size:11.5px;color:#6a7489;padding:6px 0'>⋯ Más opciones (CSV para Excel)</summary>"+
+          "<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px'>"+
+            "<button onclick='exportarReporteContadorCSV(\""+mesKey+"\",\"es\")' style='padding:10px;background:#eef3ff;color:#1a3558;border:1px solid #d1dcf0;border-radius:10px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit'>CSV (ES)</button>"+
+            "<button onclick='exportarReporteContadorCSV(\""+mesKey+"\",\"pt\")' style='padding:10px;background:#eef3ff;color:#1a3558;border:1px solid #d1dcf0;border-radius:10px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit'>CSV (PT)</button>"+
+          "</div>"+
+        "</details>"+
       "</div>";
     })()+
     // ARREGLO 59: este pie repetia el "lucro liquido" de la tasa unica, que ya
@@ -28529,7 +29245,66 @@ function _htmlMontosMercado(){
       campo("VES","🇻🇪 Cuánto vendes de una vez","en bolívares · por omisión 112.000")+
     "</div>"+
     "<div id='mercado-monto-pie' style='font-size:10.5px;color:var(--tx4);line-height:1.5'>"+
-      _htmlMontoMercadoPie()+"</div>";
+      _htmlMontoMercadoPie()+"</div>"+
+    // ARREGLO 183 · Margen P2P BRL. CoinGecko da el precio spot internacional
+    // de USDT/BRL, que está ~1% por debajo de Binance P2P Brasil (donde ella
+    // opera). Mientras Railway no se mueva de EE.UU., esto compensa.
+    "<div style='margin-top:16px;padding-top:14px;border-top:1px solid var(--ln2)'>"+
+      "<div style='font-size:11.5px;font-weight:700;color:var(--tx2);margin-bottom:4px'>⚖️ Margen P2P BRL (sobre el spot)</div>"+
+      "<div style='font-size:10.5px;color:var(--tx4);line-height:1.5;margin-bottom:8px'>"+
+        "Cuando la app lee los reales de CoinGecko (porque Binance BR bloquea el servidor), suma este % para acercarse al precio real de Binance P2P Brasil. Hoy la diferencia es <b>~1 %</b>. Si cambia, ajústalo aquí.</div>"+
+      "<div style='display:flex;gap:8px;align-items:center;max-width:260px'>"+
+        "<input type='text' inputmode='decimal' id='inp-margen-p2p-brl' placeholder='"+f2(MARGEN_P2P_BRL_DEFECTO*100)+"' value='"+(((S.config||{}).margenP2P_BRL!==undefined)?f2(parseFloat(S.config.margenP2P_BRL)*100):"")+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;font-family:inherit'>"+
+        "<span style='font-size:14px;color:var(--tx2);font-weight:700'>%</span>"+
+        "<button onclick='guardarMargenP2PBRL()' style='padding:9px 14px;background:var(--rol-ee);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
+      "</div>"+
+      "<div style='font-size:10px;color:var(--tx4);margin-top:5px'>Por omisión "+f2(MARGEN_P2P_BRL_DEFECTO*100)+" %. Vacío vuelve a lo por omisión.</div>"+
+    "</div>"+
+    // ARREGLO 186 · Margen USD/BRL (red de respaldo). Si las tres fuentes
+    // de USDT caen (Binance BR, CoinGecko, Mercado Bitcoin), el servidor
+    // cae a AwesomeAPI (USD/BRL). USD va 1% por encima del P2P de USDT,
+    // asi que aqui el margen RESTA en lugar de sumar.
+    "<div style='margin-top:14px;padding-top:14px;border-top:1px solid var(--ln2)'>"+
+      "<div style='font-size:11.5px;font-weight:700;color:var(--tx2);margin-bottom:4px'>⚖️ Margen USD/BRL (sobre AwesomeAPI)</div>"+
+      "<div style='font-size:10.5px;color:var(--tx4);line-height:1.5;margin-bottom:8px'>"+
+        "Si las tres fuentes de USDT caen, el servidor usa AwesomeAPI (USD/BRL). Como USD va <b>por encima</b> del P2P de USDT, este % se <b>resta</b>. Hoy la diferencia es <b>~1 %</b>.</div>"+
+      "<div style='display:flex;gap:8px;align-items:center;max-width:260px'>"+
+        "<input type='text' inputmode='decimal' id='inp-margen-usd-brl' placeholder='"+f2(MARGEN_USD_BRL_DEFECTO*100)+"' value='"+(((S.config||{}).margenUSD_BRL!==undefined)?f2(parseFloat(S.config.margenUSD_BRL)*100):"")+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;font-family:inherit'>"+
+        "<span style='font-size:14px;color:var(--tx2);font-weight:700'>%</span>"+
+        "<button onclick='guardarMargenUSDBRL()' style='padding:9px 14px;background:var(--rol-ee);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
+      "</div>"+
+      "<div style='font-size:10px;color:var(--tx4);margin-top:5px'>Por omisión "+f2(MARGEN_USD_BRL_DEFECTO*100)+" %. Vacío vuelve a lo por omisión.</div>"+
+    "</div>";
+}
+
+function guardarMargenUSDBRL(){
+  var v = _leerNumero(document.getElementById('inp-margen-usd-brl').value);
+  if(!S.config) S.config={};
+  if(isNaN(v) || v<0){
+    delete S.config.margenUSD_BRL;
+    saveData(); R();
+    alert("Margen USD/BRL vuelto a lo por omisión ("+f2(MARGEN_USD_BRL_DEFECTO*100)+" %).");
+    return;
+  }
+  if(v>100){ alert("Un margen de más del 100% no tiene sentido."); return; }
+  S.config.margenUSD_BRL = v/100;
+  saveData(); R();
+  alert("✅ Margen USD/BRL guardado: "+f2(v)+" %. Pulsa Actualizar para recalcular el suelo.");
+}
+
+function guardarMargenP2PBRL(){
+  var v = _leerNumero(document.getElementById('inp-margen-p2p-brl').value);
+  if(!S.config) S.config={};
+  if(isNaN(v) || v<0){
+    delete S.config.margenP2P_BRL;
+    saveData(); R();
+    alert("Margen P2P BRL vuelto a lo por omisión ("+f2(MARGEN_P2P_BRL_DEFECTO*100)+" %).");
+    return;
+  }
+  if(v>100){ alert("Un margen de más del 100% no tiene sentido."); return; }
+  S.config.margenP2P_BRL = v/100;
+  saveData(); R();
+  alert("✅ Margen P2P BRL guardado: "+f2(v)+" %. Pulsa Actualizar para recalcular el suelo.");
 }
 
 // ── ARREGLO 110 · el suelo que MANDA, calculado en UN solo sitio ──
@@ -29490,6 +30265,16 @@ function _cg(){
   var pub=_misTasasPublicadas();
   if(!g.idaTocada)    g.ida    = (pub.ida   !==null) ? String(pub.ida)    : "";
   if(!g.vueltaTocada) g.vuelta = (pub.vuelta!==null) ? String(pub.vuelta) : "";
+  // ARREGLO 186 · El USD/BRL sigue la MISMA regla: mientras ella no lo toque,
+  // sigue a la tasa de referencia (la que valora todo su dinero). Si lo
+  // escribe queda marcado como suyo y la pantalla ensena el aviso con el
+  // boton de volver. Sus palabras del 26/10: "aqui deberia de agarrar una
+  // misma tasa de referencia no estar escribiendo tasas manuales".
+  if(!g.usdbrlTocada){
+    var rcAhora=(typeof tasaDeReferencia==="function")?tasaDeReferencia("BRL"):null;
+    g.usdbrl = (rcAhora && rcAhora.tasa>0)
+      ? String(Math.round(rcAhora.tasa*10000)/10000) : "";
+  }
   return g;
 }
 // Volver a la tasa que tiene publicada: deja de ser suya y vuelve a seguirla.
@@ -29546,6 +30331,8 @@ function _cgSet(campo,val){
   g[campo]=_num(val);
   // ARREGLO 113: escribirla la hace suya y deja de seguir a la publicada.
   if(campo==="ida"||campo==="vuelta") g[campo+"Tocada"]=true;
+  // ARREGLO 186: el USD/BRL sigue la misma regla.
+  if(campo==="usdbrl") g.usdbrlTocada=true;
   var n=document.getElementById("cg-res");
   if(n) n.innerHTML=_htmlCalceRes();
 }
@@ -29985,15 +30772,21 @@ function _htmlCalceCuerpo(){
   // aquí ponía "Cuánto gano con esta tasa" y justo debajo "Cuánto ganas con
   // esta tasa" — dos renglones casi iguales antes de llegar a lo que importa.
   return "<div style='display:flex;justify-content:flex-end;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:9px'>"+
-      // El USD/BRL va arriba y se puede cambiar, pero NO empieza en 5,00: la
-      // app ya sabe a cuanto compra sus reales y ese es el numero con el que
-      // valora todo su dinero. Un 5,00 de ejemplo convertiria mal la meta.
+      // ARREGLO 186 · El USD/BRL SIGUE la tasa de referencia mientras ella no
+      // lo toque. Antes se auto-rellenaba al abrir y ahi se quedaba congelado:
+      // sus palabras del 26/10 "aqui deberia de agarrar una misma tasa de
+      // referencia no estar escribiendo tasas manuales". Si lo escribe, queda
+      // marcado como suyo y sale un boton ↻ para volver a la de la app, igual
+      // que la ida y la vuelta (ARREGLO 113).
       "<div style='display:flex;align-items:baseline;gap:5px'>"+
         "<span style='font-size:10.5px;color:var(--tx4);font-weight:700'>USD/BRL</span>"+
         "<input type='text' inputmode='decimal' value='"+_escAud(_coma(g.usdbrl))+"' "+
           "oninput='_cgSet(\"usdbrl\",this.value)' "+
-          "style='width:62px;padding:4px 6px;border:1.5px solid var(--ln);border-radius:7px;font-size:12px;"+
+          "style='width:62px;padding:4px 6px;border:1.5px solid "+(g.usdbrlTocada?"var(--ac)":"var(--ln)")+";border-radius:7px;font-size:12px;"+
           "font-weight:800;text-align:center;font-family:inherit;background:var(--sup);color:var(--tit)'>"+
+        (g.usdbrlTocada
+          ? "<button onclick='_cgSoltar(\"usdbrl\")' title='Volver a la tasa de la app' style='padding:3px 7px;background:var(--am6-d);color:var(--avi-tx);border:1.5px solid var(--ac);border-radius:6px;cursor:pointer;font-size:11px;font-weight:700'>↻</button>"
+          : "")+
       "</div>"+
     "</div>"+
     "<div style='font-size:10.5px;color:var(--tx4);font-weight:700;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px'>Qué quieres calcular</div>"+
@@ -31159,6 +31952,32 @@ function _flyerFechaHora(){
   return { fecha:dd+"/"+mm+"/"+yy, hora:h12+":"+m+" "+ampm };
 }
 
+// ARREGLO 185 · Frase destacada del flyer. Editable en Configuracion.
+// Vacio -> no se dibuja (no deja hueco). Escapada para que un texto suyo
+// con <, > o " no rompa el html del flyer (el flyer vive dentro de innerHTML).
+function _fraseFlyer(){
+  var t=(S.config && typeof S.config.mensajeFlyer!=="undefined")
+    ? S.config.mensajeFlyer
+    : "💥 Sin comisiones ocultas";
+  return (t==null?"":String(t)).trim();
+}
+function _htmlFraseFlyer(){
+  var t=_fraseFlyer();
+  if(!t) return "";
+  return "<div style='text-align:center;margin-top:14px;padding:14px 18px;"+
+    "background:rgba(255,138,0,.12);border:1.5px solid rgba(255,138,0,.35);"+
+    "border-radius:16px;font-size:28px;font-weight:900;color:var(--fly-naranja);"+
+    "letter-spacing:.3px;line-height:1.2'>"+_escAud(t)+"</div>";
+}
+function _htmlFraseMiniFlyer(){
+  var t=_fraseFlyer();
+  if(!t) return "";
+  return "<div style='text-align:center;margin-top:18px;padding:12px 16px;"+
+    "background:rgba(255,138,0,.12);border:1.5px solid rgba(255,138,0,.35);"+
+    "border-radius:14px;font-size:22px;font-weight:900;color:var(--fly-naranja);"+
+    "letter-spacing:.3px;line-height:1.2'>"+_escAud(t)+"</div>";
+}
+
 // Genera el flyer en un canvas y lo descarga como imagen PNG
 // Dibuja la insignia "R" de RemesasYA en el canvas (vectorial, sale nítida).
 // cx,cy = esquina superior izquierda del área; s = tamaño (alto≈ancho); col = color.
@@ -31267,6 +32086,9 @@ function generarMiniFlyer(){
       "</div>"+
     "</div>"+
 
+    // ARREGLO 185 · frase destacada ("sin comisiones ocultas", etc.)
+    _htmlFraseMiniFlyer()+
+
     // BOTTOM
     "<div style='display:flex;justify-content:space-between;align-items:center;margin-top:36px'>"+
       "<div style='display:flex;align-items:center;gap:12px'>"+
@@ -31335,6 +32157,9 @@ function generarFlyer(){
       "</div>"+
       // tarjetas con línea de acento abajo
       "<div style='display:flex;gap:20px;width:100%'>"+tIda+tVuelta+"</div>"+
+      // ARREGLO 185 · frase destacada (p. ej. "💥 Sin comisiones ocultas").
+      // Editable en Configuracion. Vacio -> no se dibuja (no deja hueco).
+      _htmlFraseFlyer()+
       // fecha y hora
       "<div style='display:flex;gap:60px;align-items:center'>"+
         "<div style='display:flex;align-items:center;gap:12px'><span style='font-size:40px'>📅</span><span style='font-size:35px;font-weight:600;color:var(--fly-sobre)'>"+fh.fecha+"</span></div>"+
@@ -33164,7 +33989,14 @@ function saveEgPersonal(){
   if(e.pagada&&e.cuentaId){
     var c=(S.cuentas||[]).find(function(x){return x.id===e.cuentaId;});
     if(c&&!confirm("Se descontarán "+f2(e.monto)+" "+mon+" de \""+c.nombre+"\". ¿Confirmar?"))return;
-    ajusteCuentaEgreso(e.cuentaId,-e.monto);e.fp=ds(td());
+    ajusteCuentaEgreso(e.cuentaId,-e.monto);
+    // ARREGLO 192: faltaba descontar el FIFO. Lo cazó ella el 27/10: pagó
+    // 4.335,63 Bs desde Banco de Venezuela como egreso personal creado ya
+    // "pagado". El saldo bajó bien, el lote no — quedó 4.335 Bs por encima
+    // del saldo. pagarEgPersonal() sí lo hacía; saveEgPersonal() se olvidó.
+    // De los lotes salen las tasas que la app sugiere, así que no es cosmético.
+    descontarFIFOEgreso(mon,e.monto,usdt,e.cuentaId);
+    e.fp=ds(td());
   }
   S.egresos_personales.push(e);
   S.nEg={date:td(),cat:f.cat,mot:"",monto:"",usdt:"",fija:false,pagada:false,mon:mon,cuentaId:""};
@@ -35771,6 +36603,26 @@ function _htmlEstadoResultados(mesKey){
 // usdt_equiv va con la tasa de HOY porque es para consolidar; el nativo
 // manda. No es un numero contable: es un ayudante para el que no quiere
 // montar un plan multi-moneda.
+// ARREGLO 176 · r2 global, para las funciones del 173/175.
+//
+// Costo del descuido: en el PR #307 (v257) use r2(...) en
+// _estadoResultados, _flujoEfectivo, _ingresoDeclarablePGDAS y
+// _asientosDelMes — las cuatro funciones nuevas. r2 esta declarada
+// LOCAL dentro de calcMesCompleto (linea ~23376). Fuera de ella no
+// existia y se tiraba `ReferenceError: r2 is not defined` al abrir
+// Cierre Mensual → la pestaña se quedaba en blanco. Sus palabras del
+// 23/10: "el boton de cierre mensual no hace nada".
+//
+// Es el ARREGLO 121 otra vez (`pasada` no declarada): guardia
+// estructural pasaba, dibujar la pestaña lo cazaba. CLAUDE.md:
+// "cuando un arreglo toca lo que se dibuja, hay que dibujarlo". No
+// la dibuje por completo esta vez.
+//
+// Declarar r2 global aqui es seguro: dentro de calcMesCompleto hay
+// `var r2 = ...` propio que lo sobre-sombrea en ese scope. Los que
+// quedan fuera (los mios) usan este.
+var r2 = function(n){return Math.round((isNaN(n)?0:+n)*100)/100;};
+
 // ══════════════════════════════════════════════════════════════════
 // ARREGLO 175 · PGDAS-D (Simples Nacional, Anexo III)
 //
@@ -35804,15 +36656,72 @@ function _htmlEstadoResultados(mesKey){
 // El RBT12 es la suma de la receita bruta de los ULTIMOS 12 MESES, no
 // del ano fiscal. Lo calcula _rbt12PGDAS leyendo pgdasHistorial +
 // mes en curso.
+// ─── ARREGLO 179 · cuentas declarables en PGDAS-D ──────────────────
+// _ingresoDeclarablePGDAS sumaba el margen de TODAS las remesas con BRL,
+// sin mirar la cuenta. En septiembre contaba 60,41 de NUBANK JHOSELIN,
+// una cuenta personal, aunque _ingresoDeclarablePGDAS tenia un esBRL()
+// que las excluia para mercancia y ganExtra pero no para remesas.
+//
+// Y aunque filtrara por 'de empresa', de las 3 CNPJ (PAGBANK EMPRESA,
+// EFECTIVO EMPRESA, BINANCE SAIPA) ella solo quiere declarar PAGBANK —
+// las demas son operacion interna que no pasa por el CNPJ que declara.
+//
+// Por eso el filtro ya no es 'es BRL', es 'esta MARCADA como declarable'.
+// La marca es declaraPGDAS, un bool por cuenta. Diferente de esJuridica
+// (🏛️ CNPJ): una cuenta puede ser CNPJ sin declarar (BINANCE SAIPA) y
+// —hoy no, pero el modelo lo permite— al reves. Solo las BRL no
+// personales pueden marcarse.
+function _cuentaDeclara(c){
+  return !!(c && c.moneda==="BRL" && !c.esPersonal && c.declaraPGDAS===true);
+}
+function _cuentaDeclaraId(id, ctas){
+  var c = ctas ? ctas[id] : (S.cuentas||[]).find(function(x){return x.id===id;});
+  return _cuentaDeclara(c);
+}
+// Lista de cuentas que PUEDEN marcarse (BRL, no personal). Para avisos.
+function _cuentasElegiblesPGDAS(){
+  return (S.cuentas||[]).filter(function(c){
+    return c.moneda==="BRL" && !c.esPersonal && c.activa!==false;
+  });
+}
+function _cuentasDeclarablesPGDAS(){
+  return (S.cuentas||[]).filter(_cuentaDeclara);
+}
+// Migracion unica: si NINGUNA cuenta tiene declaraPGDAS marcada y existe
+// exactamente una PAGBANK (nombre lo contiene) CNPJ no personal, se marca.
+// Si no se cumple (ninguna, o varias), no se toca nada — se avisa en la
+// pestana PGDAS-D. Marcar al azar seria peor que no marcar.
+function _migrarCuentasPGDAS(){
+  var cs=S.cuentas||[];
+  var yaMarcada=cs.some(function(c){return c.declaraPGDAS===true;});
+  if(yaMarcada) return false;
+  var pagbanks=cs.filter(function(c){
+    return c.moneda==="BRL" && !c.esPersonal && c.esJuridica===true
+        && typeof c.nombre==="string" && c.nombre.toUpperCase().indexOf("PAGBANK")>=0;
+  });
+  if(pagbanks.length!==1) return false;
+  pagbanks[0].declaraPGDAS=true;
+  pagbanks[0]._mod=Date.now();
+  return true;
+}
+
 function _ingresoDeclarablePGDAS(mesKey){
   var r={total:0, remesas:0, mercancia:0, ganExtra:0,
          nRemesasBR:0, nRemesasVZ:0, nRemesasEE:0,
+         porCuenta:{}, excluidas:{total:0, nOps:0, cuentas:{}},
          detalle:[], sinTasa:0};
   if(!mesKey) return r;
   var ctas={}; (S.cuentas||[]).forEach(function(c){ctas[c.id]=c;});
-  function esBRL(id){ var c=ctas[id]; return c && c.moneda==="BRL" && !c.esPersonal; }
-  // Tasa de la remesa, por su propia tc o tv segun donde este el BRL. Sin
-  // ellas cae en la de referencia; sin esa, no se inventa nada.
+  function declara(id){ return _cuentaDeclaraId(id, ctas); }
+  // Una cuenta "excluida" aqui es una BRL no personal que NO esta marcada.
+  // No cuentan las no-BRL ni las personales — esas nunca iban a entrar y
+  // enseñarlas como "excluido" seria ruido.
+  function esBRLempresa(id){
+    var c=ctas[id];
+    return !!(c && c.moneda==="BRL" && !c.esPersonal);
+  }
+  function nomCuenta(id){ var c=ctas[id]; return c?c.nombre:"(sin cuenta)"; }
+
   function tasaR$(x){
     var tc=parseFloat(x.tc)||0, tv=parseFloat(x.tv)||0;
     if(x.orig==="BRL" && tc>0) return tc;
@@ -35820,7 +36729,7 @@ function _ingresoDeclarablePGDAS(mesKey){
     var t=getRateToUsdt("BRL");
     return t&&t>0 ? t : 0;
   }
-  function sumR(fuente, descr, pr, tasa, extra){
+  function sumR(fuente, cuentaId, descr, pr, tasa, extra){
     var pR=parseFloat(pr)||0;
     if(pR===0) return;
     if(!(tasa>0)){ r.sinTasa++; return; }
@@ -35829,47 +36738,108 @@ function _ingresoDeclarablePGDAS(mesKey){
     if(fuente==="remesa") r.remesas+=reais;
     else if(fuente==="mercancia") r.mercancia+=reais;
     else if(fuente==="ganExtra") r.ganExtra+=reais;
-    r.detalle.push({fuente:fuente, descr:descr, pr:pR, tasa:tasa, reais:reais, extra:extra});
+    // Agrupar por cuenta — para el desglose "de donde sale" en PGDAS-D.
+    var cid=cuentaId||"(sin cuenta)";
+    var nm=nomCuenta(cuentaId);
+    if(!r.porCuenta[cid]) r.porCuenta[cid]={nombre:nm, total:0, nOps:0};
+    r.porCuenta[cid].total+=reais;
+    r.porCuenta[cid].nOps++;
+    r.detalle.push({fuente:fuente, descr:descr, pr:pR, tasa:tasa, reais:reais, cuentaId:cid, extra:extra});
+  }
+  function sumExcluido(cuentaId, reais){
+    if(!cuentaId) return;
+    var nm=nomCuenta(cuentaId);
+    r.excluidas.total+=reais;
+    r.excluidas.nOps++;
+    if(!r.excluidas.cuentas[cuentaId]) r.excluidas.cuentas[cuentaId]={nombre:nm, total:0, nOps:0};
+    r.excluidas.cuentas[cuentaId].total+=reais;
+    r.excluidas.cuentas[cuentaId].nOps++;
   }
 
-  // Remesas que involucran reales (orig BRL o dest BRL). Son las dos
-  // direcciones, confirmado por ella.
+  // Remesas con reales. SOLO las de IDA (orig=BRL): son servicio prestado,
+  // ganancia del margen entre lo que recibe el cliente y lo que entrega.
+  //
+  // ARREGLO 190: antes incluia tambien las vueltas (orig=VES/USD, dest=BRL).
+  // Como ella dijo el 26/10: "no se supone que la vuelta de ganancia es cero,
+  // porque es una compra de delivery - yo estoy comprando mi mercancia". Es
+  // la regla del ARREGLO 124 (en la vuelta no se gana, se COMPRA bolivares
+  // con reales) aplicada al fisco: una vuelta es DESPESA, no receita.
+  //
+  // Desde el ARREGLO 124 las vueltas nuevas salen con pr=0 y el filtro
+  // `pr===0` las descartaba. Pero las vueltas registradas ANTES del 124
+  // quedaron con pr>0 en los datos y seguian contandose: en octubre eran
+  // 12 vueltas por R$ 377,06, lo que inflo la Receita Bruta declarable
+  // de R$ 1.642 a R$ 2.020 (y el DAS 6% de 98 a 121 - unos R$ 23 de mas).
+  //
+  // Filtrar por orig==="BRL" lo cierra para los datos viejos y los nuevos.
+  // Y mantengo el filtro pr===0 abajo porque hay idas con pr=0 (una
+  // operacion neutra o cancelada no es receita).
   [].concat(S.brl||[],S.vzla||[],S.eeuu||[]).forEach(function(x){
     if(_mesDeFecha(x.d)!==mesKey) return;
-    if(x.orig!=="BRL" && x.dest!=="BRL") return;
+    if(x.orig!=="BRL") return;  // ARREGLO 190: solo ida (BR -> VZ/USD/etc.)
     var pr=parseFloat(x.pr)||0;
     if(pr===0) return;
-    if(x.orig==="BRL") r.nRemesasBR++;
-    else if(x.orig==="VES") r.nRemesasVZ++;
-    else if(x.orig==="USD") r.nRemesasEE++;
-    sumR("remesa",(x.cliente||"")+" · "+(x.orig||"?")+"→"+(x.dest||"?"), pr, tasaR$(x), x.n||x._uid);
+    // Con el filtro de arriba (orig==="BRL") la cuenta de los reales entrantes
+    // es siempre cuentaBanco. ANTES este campo elegia entre cuentaBanco (ida)
+    // o cuentaDest (vuelta); ahora las vueltas no entran.
+    var cuentaBRL = x.cuentaBanco;
+    // Reales valorados a la tasa de la propia remesa.
+    var tasa=tasaR$(x);
+    var reaisAprox = tasa>0 ? Math.round(pr*tasa*100)/100 : 0;
+    if(!declara(cuentaBRL)){
+      // Solo cuenta como "excluida" si es una BRL de la empresa — las no
+      // BRL o personales nunca iban a entrar.
+      if(esBRLempresa(cuentaBRL)) sumExcluido(cuentaBRL, reaisAprox);
+      return;
+    }
+    r.nRemesasBR++;  // ARREGLO 190: solo entran idas (orig=BRL)
+    sumR("remesa", cuentaBRL, (x.cliente||"")+" · "+(x.orig||"?")+"→"+(x.dest||"?"), pr, tasa, x.n||x._uid);
   });
 
   // Mercancia vendida en cuenta BRL: ganancia = venta − costo.
   (S.articulos||[]).forEach(function(a){
-    if(!a.vendido || !a.ventaCuentaId || !esBRL(a.ventaCuentaId)) return;
+    if(!a.vendido || !a.ventaCuentaId) return;
     if(_mesDeFecha(a.ventaFecha)!==mesKey) return;
     var pv=parseFloat(a.ventaMonto)||0, cs=parseFloat(a.costo)||0;
     var gan=pv-cs;
     if(gan===0) return;
+    if(!declara(a.ventaCuentaId)){
+      if(esBRLempresa(a.ventaCuentaId)) sumExcluido(a.ventaCuentaId, gan);
+      return;
+    }
     r.total+=gan; r.mercancia+=gan;
-    r.detalle.push({fuente:"mercancia", descr:a.descripcion||"", pr:gan, tasa:1, reais:gan, extra:a.id});
+    var cid=a.ventaCuentaId;
+    if(!r.porCuenta[cid]) r.porCuenta[cid]={nombre:nomCuenta(cid), total:0, nOps:0};
+    r.porCuenta[cid].total+=gan;
+    r.porCuenta[cid].nOps++;
+    r.detalle.push({fuente:"mercancia", descr:a.descripcion||"", pr:gan, tasa:1, reais:gan, cuentaId:cid, extra:a.id});
   });
 
-  // Ganancias extra que entraron en cuenta BRL (empresa, no personal).
+  // Ganancias extra. Las personales ya se excluyen por tipo.
   (S.gananciaExtra||[]).forEach(function(g){
-    if(g.tipo==="personal" || !g.cuentaId || !esBRL(g.cuentaId)) return;
+    if(g.tipo==="personal" || !g.cuentaId) return;
     if(_mesDeFecha(g.fecha)!==mesKey) return;
     var m=parseFloat(g.monto)||0;
     if(m===0) return;
+    if(!declara(g.cuentaId)){
+      if(esBRLempresa(g.cuentaId)) sumExcluido(g.cuentaId, m);
+      return;
+    }
     r.total+=m; r.ganExtra+=m;
-    r.detalle.push({fuente:"ganExtra", descr:g.descripcion||"", pr:m, tasa:1, reais:m, extra:g.id});
+    var cid=g.cuentaId;
+    if(!r.porCuenta[cid]) r.porCuenta[cid]={nombre:nomCuenta(cid), total:0, nOps:0};
+    r.porCuenta[cid].total+=m;
+    r.porCuenta[cid].nOps++;
+    r.detalle.push({fuente:"ganExtra", descr:g.descripcion||"", pr:m, tasa:1, reais:m, cuentaId:cid, extra:g.id});
   });
 
   r.total=Math.round(r.total*100)/100;
   r.remesas=Math.round(r.remesas*100)/100;
   r.mercancia=Math.round(r.mercancia*100)/100;
   r.ganExtra=Math.round(r.ganExtra*100)/100;
+  r.excluidas.total=Math.round(r.excluidas.total*100)/100;
+  Object.keys(r.porCuenta).forEach(function(k){ r.porCuenta[k].total=Math.round(r.porCuenta[k].total*100)/100; });
+  Object.keys(r.excluidas.cuentas).forEach(function(k){ r.excluidas.cuentas[k].total=Math.round(r.excluidas.cuentas[k].total*100)/100; });
   return r;
 }
 
@@ -35921,6 +36891,143 @@ function _aliquotaAnexoIII(rbt12){
   };
 }
 
+// ─── ARREGLO 177 · aviso de RBT12 cerca del tope cómodo ─────────────
+// La franja 1 del Anexo III (6%) termina en R$ 180.000 de RBT12. Pasar
+// de ahi la mete en la franja 2 (11,2% nominal con dedução, efectiva
+// creciente), asi que avisamos ANTES — mientras todavia puede repartir
+// receita en otra cuenta/CNPJ. Y hay un segundo tope: el legal de ME,
+// R$ 4.800.000/año, que se mide aparte y no es editable.
+//
+// Dos cosas que no son obvias:
+//   1 · El RBT12 vivo incluye el mes en curso (lo registrado hasta hoy),
+//       no solo los 12 anteriores. Si se midiera igual que _rbt12PGDAS
+//       —que lo excluye a proposito para alimentar la alicuota del mes
+//       declarado— el aviso saltaria tarde, cuando el mes ya cerro.
+//   2 · La proyeccion del mes de cruce usa la MEDIANA de los ultimos
+//       3 meses completos (ARREGLO 139), no la media. Un mes raro
+//       grande se come la media y adelanta el cruce sin motivo.
+var RBT12_TOPE_LEGAL = 4800000;   // ME · ley · no se toca
+var RBT12_TOPE_COMODO_DEFECTO = 180000;   // franja 1 Anexo III · ley
+
+function _rbt12TopeComodo(){
+  var v=((S.config||{}).rbt12_tope_comodo);
+  v=parseFloat(v);
+  return (isFinite(v) && v>0) ? v : RBT12_TOPE_COMODO_DEFECTO;
+}
+function _rbt12UmbralAmarillo(){
+  var v=((S.config||{}).rbt12_amarillo);
+  v=parseFloat(v);
+  if(isFinite(v) && v>0) return v;
+  return Math.round(_rbt12TopeComodo()*0.80);
+}
+function _rbt12UmbralRojo(){
+  var v=((S.config||{}).rbt12_rojo);
+  v=parseFloat(v);
+  if(isFinite(v) && v>0) return v;
+  return Math.round(_rbt12TopeComodo()*0.95);
+}
+
+// RBT12 VIVO: últimos 12 meses incluyendo el mes en curso. A diferencia
+// de _rbt12PGDAS, aqui queremos ver donde esta HOY, no la alicuota de un
+// mes a declarar. Lee pgdasHistorial cuando ya se marco como declarada
+// y _ingresoDeclarablePGDAS en lo que no.
+function _rbt12Vivo(){
+  var hoy=new Date();
+  var y=hoy.getFullYear(), m=hoy.getMonth()+1;
+  var tot=0;
+  for(var i=0;i<12;i++){
+    var mm=m-i, yy=y;
+    while(mm<=0){ mm+=12; yy--; }
+    var mk=yy+"-"+String(mm).padStart(2,"0");
+    var dec=(S.pgdasHistorial||[]).find(function(x){return x.mesKey===mk;});
+    if(dec && dec.receita>0) tot+=parseFloat(dec.receita)||0;
+    else tot+=_ingresoDeclarablePGDAS(mk).total;
+  }
+  return Math.round(tot*100)/100;
+}
+
+// Proyeccion: en qué mes el RBT12 cruza un umbral, al ritmo de la MEDIANA
+// de los 3 meses completos anteriores al mes en curso. Devuelve null si
+// la mediana es 0 (no se puede proyectar nada). Al avanzar un mes, se
+// suma la mediana y se resta lo que se cae del borde — el mes mas viejo
+// de la ventana de 12. No es exacto; es orientativo.
+function _proyMesCruceRBT12(umbral){
+  var hoy=new Date();
+  var y=hoy.getFullYear(), m=hoy.getMonth()+1;
+  // Mediana de los 3 meses anteriores al actual (completos).
+  var vals=[];
+  for(var i=1;i<=3;i++){
+    var mm=m-i, yy=y;
+    while(mm<=0){ mm+=12; yy--; }
+    var mk=yy+"-"+String(mm).padStart(2,"0");
+    var dec=(S.pgdasHistorial||[]).find(function(x){return x.mesKey===mk;});
+    vals.push(dec && dec.receita>0 ? (parseFloat(dec.receita)||0) : _ingresoDeclarablePGDAS(mk).total);
+  }
+  vals.sort(function(a,b){return a-b;});
+  var med=vals[1];
+  if(!(med>0)) return null;
+  // Avanzamos mes a mes aplicando "+med, -mes mas viejo que se cae".
+  var rbt=_rbt12Vivo();
+  if(rbt>=umbral) return "YA";
+  var yy=y, mm=m;
+  for(var k=0;k<60;k++){
+    // Mes que se CAE: hace 12 ventanas atras desde el mes actual simulado
+    var dropMM=mm-11, dropYY=yy;
+    while(dropMM<=0){ dropMM+=12; dropYY--; }
+    var dropKey=dropYY+"-"+String(dropMM).padStart(2,"0");
+    var dropDec=(S.pgdasHistorial||[]).find(function(x){return x.mesKey===dropKey;});
+    var dropVal=dropDec && dropDec.receita>0 ? (parseFloat(dropDec.receita)||0) : _ingresoDeclarablePGDAS(dropKey).total;
+    // Avanzamos
+    mm++; if(mm>12){ mm=1; yy++; }
+    rbt=rbt+med-dropVal;
+    if(rbt>=umbral){
+      return getMesLabel(String(mm).padStart(2,"0"),String(yy));
+    }
+  }
+  return null;
+}
+
+// Estado para el aviso. Niveles: "ok" | "amarillo" | "rojo" | "legal".
+// "legal" solo salta cerca del tope legal (R$ 4,8M/ano) y manda sobre el
+// resto: ahi no es que pagues mas, es que te sacan de Simples.
+function _estadoRBT12(){
+  var rbt=_rbt12Vivo();
+  var topeC=_rbt12TopeComodo();
+  var am=_rbt12UmbralAmarillo();
+  var ro=_rbt12UmbralRojo();
+  if(rbt >= RBT12_TOPE_LEGAL*0.90) return {nivel:"legal", rbt:rbt, tope:RBT12_TOPE_LEGAL, pct:rbt/RBT12_TOPE_LEGAL*100, topeC:topeC};
+  if(rbt >= ro)                     return {nivel:"rojo",     rbt:rbt, tope:topeC, pct:rbt/topeC*100, topeC:topeC};
+  if(rbt >= am)                     return {nivel:"amarillo", rbt:rbt, tope:topeC, pct:rbt/topeC*100, topeC:topeC};
+  return {nivel:"ok", rbt:rbt, tope:topeC, pct:rbt/topeC*100, topeC:topeC};
+}
+
+// El aviso arriba del panel (fuera del scroll, ARREGLO 62). Solo sale en
+// amarillo, rojo o legal. "ok" devuelve "" para no gastar espacio.
+function _htmlAvisoRBT12(){
+  var e=_estadoRBT12();
+  if(e.nivel==="ok") return "";
+  var falta=Math.max(0, e.tope-e.rbt);
+  var cruce=null;
+  if(e.nivel==="amarillo") cruce=_proyMesCruceRBT12(_rbt12UmbralRojo());
+  if(e.nivel==="rojo")     cruce=_proyMesCruceRBT12(e.tope);
+  var fondoCss=(e.nivel==="rojo"||e.nivel==="legal") ? "var(--neg)" : "var(--am3)";
+  var texto;
+  if(e.nivel==="legal"){
+    texto="<b>⚠️ Techo legal de ME · R$ "+f2(e.rbt)+" de R$ "+f2(RBT12_TOPE_LEGAL)+" ("+f2(e.pct)+"%).</b> Pasarlo te saca de Simples Nacional el año que viene.";
+  } else if(e.nivel==="rojo"){
+    texto="<b>🔴 RBT12 muy cerca del 6% · R$ "+f2(e.rbt)+" de R$ "+f2(e.tope)+" ("+f2(e.pct)+"%).</b> Faltan R$ "+f2(falta)+". Pasar de aquí te cambia la alíquota del próximo mes.";
+  } else {
+    texto="<b>🟡 Te acercas al tope del 6% · R$ "+f2(e.rbt)+" de R$ "+f2(e.tope)+" ("+f2(e.pct)+"%).</b> Faltan R$ "+f2(falta)+".";
+    if(cruce && cruce!=="YA") texto+=" Al ritmo actual cruzas en "+cruce+".";
+  }
+  return "<div style='background:"+fondoCss+";color:var(--sobre-color);padding:10px 14px;"+
+    "display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-bottom:2px solid var(--sup3)'>"+
+    "<div style='flex:1;min-width:200px;font-size:12.5px;line-height:1.5'>"+texto+"</div>"+
+    "<button onclick='S._cSec=\"pgdas\";st(\"cierre\")' style='background:var(--sobre-color);color:var(--tit);border:none;"+
+      "padding:7px 13px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer'>Ver PGDAS-D</button>"+
+  "</div>";
+}
+
 // Estado PGDAS del mes para el semaforo:
 //   "declarada"   ya se marco como transmitida
 //   "sinmov"      receita 0 — "Sem Movimento" en el portal
@@ -35937,6 +37044,194 @@ function _estadoPGDAS(mesKey){
   var p=mesKey.split("-"), y=parseInt(p[0]), m=parseInt(p[1]);
   var lim=new Date(y, m, 20, 23, 59, 59);  // mes siguiente, dia 20
   return hoy>lim ? "atrasada" : "al_dia";
+}
+
+// ─── ARREGLO 178 · aviso arriba del panel para competencias atrasadas ──
+// El semaforo de dentro de PGDAS-D ya decia "atrasada" desde el 175, pero
+// solo si ella abria esa pestaña. Pasar el 20 sin saberlo es dejarla con
+// multa (R$ 50 minimo + 0,33%/dia). Esto saca el aviso al mismo sitio
+// donde ya viven los de mes sin cerrar y RBT12 (arriba del panel, fuera
+// del scroll, ARREGLO 62).
+//
+// Dos cosas que no son obvias:
+//   1 · Un mes SIN movimiento tambien hay que declarar (sem movimento).
+//       El estado "atrasada" ya lo cubre: _estadoPGDAS no mira la receita,
+//       mira el calendario y si no esta en pgdasHistorial.
+//   2 · Si hay varios atrasados, se señala el MAS VIEJO primero — es el
+//       que lleva mas multa acumulada y el primero que hay que presentar.
+function _mesesPGDASAtrasados(){
+  var out=[];
+  var hoy=new Date();
+  var y=hoy.getFullYear(), m=hoy.getMonth()+1;
+  // Hasta 24 meses hacia atras. Mas alla ya no se puede declarar en el
+  // portal normal (hay que ir a procedimiento especial) y seguir
+  // enseñandolo seria ruido permanente.
+  // Y SOLO los meses con receita > 0 — avisar sem movimento de meses
+  // en que la app ni existia es ruido (ARREGLO 99). Tecnicamente un
+  // CNPJ en Simples debe declarar sem movimento cada mes, pero la app
+  // no sabe desde que mes esta operando: lo decide la primera operacion
+  // Brasil que ella haya registrado. Las sem movimento viejas las
+  // declara ella desde dentro de PGDAS-D del mes.
+  for(var i=1;i<=24;i++){
+    var mm=m-i, yy=y;
+    while(mm<=0){ mm+=12; yy--; }
+    var mk=yy+"-"+String(mm).padStart(2,"0");
+    if(_estadoPGDAS(mk)!=="atrasada") continue;
+    if(_ingresoDeclarablePGDAS(mk).total<=0) continue;
+    out.push(mk);
+  }
+  // Mas viejo primero.
+  out.sort();
+  return out;
+}
+
+function _htmlAvisoPGDASAtrasado(){
+  var atr=_mesesPGDASAtrasados();
+  if(!atr.length) return "";
+  var masViejo=atr[0];
+  var p=masViejo.split("-");
+  var etq=getMesLabel(p[1],p[0]);
+  var cuenta=atr.length>1 ? " (y "+(atr.length-1)+" más)" : "";
+  var pLim=masViejo.split("-"), yL=parseInt(pLim[0]), mL=parseInt(pLim[1]);
+  var limDate=new Date(yL, mL, 20);
+  var limStr=String(limDate.getDate()).padStart(2,"0")+"/"+String(limDate.getMonth()+1).padStart(2,"0")+"/"+limDate.getFullYear();
+  return "<div style='background:var(--neg);color:var(--sobre-color);padding:10px 14px;"+
+    "display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-bottom:2px solid var(--sup3)'>"+
+    "<div style='flex:1;min-width:200px;font-size:12.5px;line-height:1.5'>"+
+      "<b>🔴 PGDAS-D de "+etq+" atrasada"+cuenta+".</b> Venció el "+limStr+". Preséntala en el portal y márcala como declarada aquí."+
+    "</div>"+
+    "<button onclick='S._cMes=\""+masViejo+"\";S._cSec=\"pgdas\";st(\"cierre\")' style='background:var(--sobre-color);color:var(--tit);border:none;"+
+      "padding:7px 13px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer'>Ir a "+etq+"</button>"+
+  "</div>";
+}
+
+// ─── ARREGLO 184 · aviso de factura de tarjeta por pagar ─────────────
+// Sus palabras del 25/10: "sí, agrégale el aviso". Se registro una factura
+// de la TARJETA PAGBANK por R$ 230,58 que vence el 15/11 (debito automatico
+// activo); el ARREGLO 95 creo el modelo donde una compra con la tarjeta sube
+// la deuda y al pagar la factura es un traspaso PAGBANK -> TARJETA. Antes la
+// app no avisaba de nada: habia que acordarse del dia para que el debito
+// automatico no fallara por falta de saldo en PAGBANK.
+//
+// Umbrales confirmados por ella: avisar AMBAR 7 dias antes, ROJO si ya
+// vencio. Vale para todas las tarjetas (empresa o personal). Si una cuenta
+// de tarjeta no tiene diaVencimientoFatura puesto, no se avisa — ella lo
+// edita desde el boton 💳 en Configuracion -> cuentas.
+var FATURA_AMBAR_DIAS = 7;
+
+function _proxVencimientoFatura(c){
+  var dia = parseInt(c && c.diaVencimientoFatura, 10);
+  if(isNaN(dia) || dia<1 || dia>31) return null;
+  var hoy = new Date();
+  var y = hoy.getFullYear(), m = hoy.getMonth();
+  // Si el mes no tiene ese dia (febrero no tiene 30 o 31), se usa el ultimo
+  // dia del mes — new Date(y, m, 32) se desborda y queda en m+1/1, asi que
+  // calculamos el ultimo dia explicitamente con new Date(y, m+1, 0).
+  function fechaFactura(yy, mm, d){
+    var ultimo = new Date(yy, mm+1, 0).getDate();
+    return new Date(yy, mm, Math.min(d, ultimo), 23, 59, 59);
+  }
+  var prop = fechaFactura(y, m, dia);
+  // Si el dia ya pasó este mes, el proximo vencimiento es el mes siguiente.
+  // Pero NO queremos que la factura "pendiente de este mes" se vea como del
+  // mes siguiente apenas pase el dia: si ha pasado 1-7 dias desde el dia del
+  // vencimiento, la contamos como "vencida este mes", no "proxima en 23
+  // dias". Solo cuando han pasado > FATURA_AMBAR_DIAS la movemos al mes
+  // siguiente, para no tener dos avisos a la vez (vencida vieja + proxima).
+  var hoyMs = hoy.getTime();
+  if((hoyMs - prop.getTime())/(24*60*60*1000) > FATURA_AMBAR_DIAS){
+    prop = fechaFactura(y, m+1, dia);
+  }
+  return prop;
+}
+
+function _diasHastaVencimientoFatura(c){
+  var p = _proxVencimientoFatura(c);
+  if(!p) return null;
+  var hoy = new Date();
+  // Diferencia en dias ENTEROS, redondeando al dia natural: hoy 00:00 - vto
+  // 00:00. Asi "vence hoy" sale 0 y "vencio ayer" sale -1.
+  var h0 = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate()).getTime();
+  var v0 = new Date(p.getFullYear(), p.getMonth(), p.getDate()).getTime();
+  return Math.round((v0 - h0)/(24*60*60*1000));
+}
+
+// Devuelve las tarjetas con deuda > 0 clasificadas por urgencia. Lo usan el
+// aviso y las guardias. No incluye las que no tienen dia de vencimiento
+// puesto (no sabemos cuando vencen).
+function _tarjetasPorPagar(){
+  var out = {ambar:[], rojo:[]};
+  (S.cuentas||[]).forEach(function(c){
+    if(!c.esTarjeta || c.activa===false) return;
+    if(_deudaTarjeta(c) <= 0) return;
+    var d = _diasHastaVencimientoFatura(c);
+    if(d===null) return;  // sin dia conocido
+    if(d < 0) out.rojo.push({cuenta:c, dias:d});
+    else if(d <= FATURA_AMBAR_DIAS) out.ambar.push({cuenta:c, dias:d});
+  });
+  return out;
+}
+
+function _htmlAvisoFaturaTarjeta(){
+  var g = _tarjetasPorPagar();
+  if(!g.rojo.length && !g.ambar.length) return "";
+  // Rojo manda sobre ambar: si hay vencidas, el aviso es rojo y se señalan
+  // esas; las ambar se cuentan en el "(y N más)" para que no pierda la vista.
+  var urgente = g.rojo.length ? g.rojo[0] : g.ambar[0];
+  var otras = (g.rojo.length + g.ambar.length) - 1;
+  var hayRojo = g.rojo.length > 0;
+  var c = urgente.cuenta;
+  var d = urgente.dias;
+  var deuda = _deudaTarjeta(c);
+  var fondo = hayRojo ? "var(--neg)" : "var(--am3)";
+  var txt;
+  if(hayRojo){
+    txt = "<b>🔴 Factura de "+_escAud(c.nombre)+" vencida"+(d<-1?" hace "+Math.abs(d)+" días":d===-1?" ayer":" hoy")+".</b> Debes "+c.moneda+" "+f2(deuda)+". Págala para evitar intereses y bloqueo.";
+  } else if(d===0){
+    txt = "<b>🟡 Factura de "+_escAud(c.nombre)+" vence HOY.</b> Debes "+c.moneda+" "+f2(deuda)+".";
+  } else if(d===1){
+    txt = "<b>🟡 Factura de "+_escAud(c.nombre)+" vence mañana.</b> Debes "+c.moneda+" "+f2(deuda)+".";
+  } else {
+    txt = "<b>🟡 Factura de "+_escAud(c.nombre)+" vence en "+d+" días.</b> Debes "+c.moneda+" "+f2(deuda)+".";
+  }
+  if(otras>0) txt += " (y "+otras+" tarjeta"+(otras>1?"s":"")+" más)";
+  return "<div style='background:"+fondo+";color:var(--sobre-color);padding:10px 14px;"+
+    "display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-bottom:2px solid var(--sup3)'>"+
+    "<div style='flex:1;min-width:200px;font-size:12.5px;line-height:1.5'>"+txt+"</div>"+
+    "<button onclick='_pagarFaturaTarjeta(\""+c.id+"\")' style='background:var(--sobre-color);color:var(--tit);border:none;"+
+      "padding:7px 13px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer'>Pagar fatura</button>"+
+  "</div>";
+}
+
+// Lleva a Traspasos con el traspaso ya empezado: desde una cuenta en la
+// misma moneda que la tarjeta hacia la tarjeta, por el monto exacto de la
+// deuda. Ella pulsa Guardar y la deuda baja. Si no hay cuenta en la misma
+// moneda (ej. una tarjeta en BRL sin cuentas BRL activas), se avisa.
+function _pagarFaturaTarjeta(cid){
+  var c = (S.cuentas||[]).find(function(x){return x.id===cid;});
+  if(!c || !c.esTarjeta) return;
+  var deuda = _deudaTarjeta(c);
+  if(deuda <= 0){ alert("Esa tarjeta no tiene deuda que pagar."); return; }
+  // Elige la cuenta de salida: la primera cuenta de empresa (no personal, no
+  // tarjeta, no esta misma) en la misma moneda, con mas saldo. Que ella la
+  // cambie si quiere, pero mandarla a Traspasos vacio seria pedirle que
+  // elija de cero.
+  var origen = (S.cuentas||[]).filter(function(x){
+    return x.id!==c.id && x.activa!==false && !x.esPersonal && !x.esTarjeta
+        && x.moneda===c.moneda;
+  }).sort(function(a,b){return (parseFloat(b.saldo)||0) - (parseFloat(a.saldo)||0);})[0];
+  if(!origen){
+    alert("No hay cuentas de empresa en "+c.moneda+" para pagar la factura. Añade una o cambia la cuenta origen.");
+    return;
+  }
+  S.nTraspaso = S.nTraspaso || {};
+  S.nTraspaso.cuentaOrig = origen.id;
+  S.nTraspaso.cuentaDest = c.id;
+  S.nTraspaso.monto = deuda;
+  // td() devuelve aaaa-mm-dd, que es lo que el input type=date pide.
+  S.nTraspaso.fecha = td();
+  S.nTraspaso.nota = "Pago fatura "+c.nombre;
+  st("traspasos");
 }
 
 // Copy to clipboard con feedback visual. navigator.clipboard puede fallar
@@ -36001,6 +37296,24 @@ function _pgdasDeshacer(mesKey){
   saveData(); R();
 }
 
+// ARREGLO 191 · Plantilla de la descripcion de la NFS-e mensal consolidada.
+// Editable en Configuracion para que el contador pueda ajustar el texto. Los
+// placeholders {mes}, {ano} y {competencia} se sustituyen por el mes actual.
+// Default elegido para su CNAE 63.19-4/00, Anexo III, SAIPHA ME.
+var NFSE_DESC_DEFECTO = "Prestação de serviços de informação pela internet - "+
+  "CNAE 63.19-4/00 - competência {competencia}";
+
+function _nfseDescripcion(mesKey, mesLabel){
+  var plantilla = ((S.config||{}).nfseDescripcion || NFSE_DESC_DEFECTO).trim();
+  // {competencia} = "Outubro/2026", {mes} = "10", {ano} = "2026".
+  var p = (mesKey||"").split("-");
+  var ano = p[0]||"", mesN = p[1]||"";
+  return plantilla
+    .replace(/\{competencia\}/g, mesLabel || (mesN+"/"+ano))
+    .replace(/\{mes\}/g, mesN)
+    .replace(/\{ano\}/g, ano);
+}
+
 function _htmlPGDAS(mesKey, mesLabel){
   var ing=_ingresoDeclarablePGDAS(mesKey);
   var rbt12=_rbt12PGDAS(mesKey);
@@ -36032,6 +37345,37 @@ function _htmlPGDAS(mesKey, mesLabel){
     "<span style='font-size:11px;opacity:.85;font-weight:600'>"+mesLabel+" · SAIPHA ME · CNAE 63.19 · Anexo III</span>"+
   "</div>";
 
+  // ARREGLO 177 · barra del RBT12 vivo contra el tope cómodo.
+  var eRBT=_estadoRBT12();
+  var cruceAm=_proyMesCruceRBT12(_rbt12UmbralAmarillo());
+  var cruceRo=_proyMesCruceRBT12(_rbt12UmbralRojo());
+  var cruceTope=_proyMesCruceRBT12(_rbt12TopeComodo());
+  var pctAncho=Math.min(100, Math.max(0, eRBT.pct));
+  var colorBarra = eRBT.nivel==="rojo"||eRBT.nivel==="legal" ? "var(--neg)"
+                 : eRBT.nivel==="amarillo" ? "var(--am3)" : "var(--pos)";
+  html+="<div style='background:var(--card);border:1px solid var(--sup3);border-radius:11px;padding:14px;margin-bottom:12px'>"+
+    "<div style='display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px'>"+
+      "<div style='font-size:11px;font-weight:700;color:var(--ink2);text-transform:uppercase;letter-spacing:.3px'>RBT12 vivo · últimos 12 meses</div>"+
+      "<div style='font-size:11px;color:var(--ink2)'>Tope del 6%: <b>R$ "+f2(eRBT.topeC)+"</b></div>"+
+    "</div>"+
+    "<div style='display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px'>"+
+      "<div style='font-size:20px;font-weight:800;color:var(--tit)'>R$ "+f2(eRBT.rbt)+"</div>"+
+      "<div style='font-size:12px;font-weight:700;color:"+colorBarra+"'>"+f2(eRBT.pct)+"%</div>"+
+    "</div>"+
+    "<div style='background:var(--sup2d);border-radius:6px;height:10px;overflow:hidden'>"+
+      "<div style='background:"+colorBarra+";height:100%;width:"+pctAncho+"%;transition:width .3s'></div>"+
+    "</div>"+
+    (eRBT.nivel==="legal"
+      ? "<div style='margin-top:8px;font-size:11.5px;color:var(--neg);font-weight:700'>⚠️ Cerca del techo legal de ME (R$ "+f2(RBT12_TOPE_LEGAL)+"). Pasarlo te saca de Simples el próximo año.</div>"
+      : (eRBT.nivel==="rojo"
+        ? "<div style='margin-top:8px;font-size:11.5px;color:var(--neg);font-weight:700'>🔴 A R$ "+f2(eRBT.tope-eRBT.rbt)+" del tope del 6%. "+(cruceTope&&cruceTope!=="YA"?"Cruzas en "+cruceTope+" al ritmo actual.":"")+"</div>"
+        : (eRBT.nivel==="amarillo"
+          ? "<div style='margin-top:8px;font-size:11.5px;color:var(--am3);font-weight:700'>🟡 A R$ "+f2(eRBT.tope-eRBT.rbt)+" del tope. "+(cruceRo&&cruceRo!=="YA"?"Cruzas el umbral rojo en "+cruceRo+".":"")+"</div>"
+          : (cruceAm?"<div style='margin-top:8px;font-size:11px;color:var(--ink2)'>Al ritmo actual, cruzas el aviso en "+(cruceAm==="YA"?"este mes":cruceAm)+".</div>":"")
+        )
+      ))+
+  "</div>";
+
   // Si ya esta declarada, el panel enseña el valor transmitido.
   if(declara){
     html+="<div style='background:var(--card);border:1px solid var(--sup3);border-radius:11px;padding:14px;margin-bottom:12px'>"+
@@ -36056,12 +37400,49 @@ function _htmlPGDAS(mesKey, mesLabel){
         ? "<div style='margin-top:10px;padding:9px 11px;background:var(--sup2c);border-radius:8px;font-size:11px;color:var(--ink2)'>🟦 <b>Sem Movimento.</b> En el portal elige "+"«"+"Declarar sem movimento"+"»"+" y transmite — no hay DAS que pagar.</div>"
         : "<div style='margin-top:12px'>"+
             "<div style='font-size:11px;font-weight:700;color:var(--ink2);margin-bottom:6px;text-transform:uppercase;letter-spacing:.3px'>De dónde sale</div>"+
-            (ing.remesas?    "<div style='display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--sup2f);font-size:12px'><span>Remesas con BRL ("+(ing.nRemesasBR+ing.nRemesasVZ+ing.nRemesasEE)+" ops · BR→VZ "+ing.nRemesasBR+" · VZ→BR "+ing.nRemesasVZ+" · EE→BR "+ing.nRemesasEE+")</span><b>R$ "+f2(ing.remesas)+"</b></div>":"")+
+            // ARREGLO 190: solo entran las IDAS (BR -> VZ/USD/etc.) — las
+            // vueltas son despesa, no receita. El desglose "VZ→BR / EE→BR"
+            // se retiro: siempre serian 0 y confundia.
+            (ing.remesas?    "<div style='display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--sup2f);font-size:12px'><span>Remesas con BRL · "+ing.nRemesasBR+" ida"+(ing.nRemesasBR===1?"":"s")+" BR→VZ/USD</span><b>R$ "+f2(ing.remesas)+"</b></div>":"")+
             (ing.mercancia?  "<div style='display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--sup2f);font-size:12px'><span>Mercancía vendida en reales</span><b>R$ "+f2(ing.mercancia)+"</b></div>":"")+
             (ing.ganExtra?   "<div style='display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--sup2f);font-size:12px'><span>Otras ganancias en cuenta BRL</span><b>R$ "+f2(ing.ganExtra)+"</b></div>":"")+
+            // ARREGLO 179 · desglose por cuenta declarable. Para que ella
+            // pueda sumar a mano cada cuenta y comprobar que lo que la app
+            // le enseña aqui coincide con lo que ella marco. Si una no se
+            // ve es porque no esta marcada — y la linea "excluido" de
+            // debajo la nombra con su total.
+            (Object.keys(ing.porCuenta).length?
+              "<div style='margin-top:8px;padding:8px 10px;background:var(--sup2d);border-radius:7px'>"+
+                "<div style='font-size:10px;font-weight:700;color:var(--ink2);text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px'>Por cuenta declarable</div>"+
+                Object.keys(ing.porCuenta).sort(function(a,b){return ing.porCuenta[b].total-ing.porCuenta[a].total;}).map(function(cid){
+                  var c=ing.porCuenta[cid];
+                  return "<div style='display:flex;justify-content:space-between;padding:3px 0;font-size:11.5px'><span>🧾 "+_escAud(c.nombre)+" <span style=\"color:var(--ink2)\">· "+c.nOps+" ops</span></span><b>R$ "+f2(c.total)+"</b></div>";
+                }).join("")+
+              "</div>"
+            :"")+
+            // Lo que QUEDÓ FUERA. Dicho con nombre: enseñarselo como
+            // "excluido" sin decir que cuenta era obliga a buscarlo.
+            (ing.excluidas.total>0?
+              "<div style='margin-top:8px;padding:8px 10px;background:var(--sup2c);border-radius:7px;font-size:11px;color:var(--ink2)'>"+
+                "<div style='font-weight:700;margin-bottom:3px'>Excluido de la declaración · R$ "+f2(ing.excluidas.total)+" ("+ing.excluidas.nOps+" ops)</div>"+
+                Object.keys(ing.excluidas.cuentas).sort(function(a,b){return ing.excluidas.cuentas[b].total-ing.excluidas.cuentas[a].total;}).map(function(cid){
+                  var c=ing.excluidas.cuentas[cid];
+                  return "<div style='padding:1px 0;font-size:11px'>· "+_escAud(c.nombre)+" — R$ "+f2(c.total)+" ("+c.nOps+" ops) <span style=\"color:var(--tx4);font-style:italic\">no está marcada</span></div>";
+                }).join("")+
+              "</div>"
+            :"")+
             (ing.sinTasa>0 ? "<div style='margin-top:8px;padding:7px 10px;background:var(--sup2d);border-radius:6px;font-size:11px;color:var(--neg)'>⚠️ "+ing.sinTasa+" operación(es) sin tasa R$ — no se contaron. Revisa su `tc` o `tv`.</div>":"")+
           "</div>")+
     "</div>";
+
+    // ARREGLO 179 · si no hay ninguna cuenta marcada, lo decimos ANTES del
+    // numero (que seria 0 y se leeria como "no hubo nada"), con un boton
+    // que la lleva a Configuracion donde las marca.
+    if(_cuentasDeclarablesPGDAS().length===0 && _cuentasElegiblesPGDAS().length>0){
+      html="<div style='background:var(--am3);color:var(--sobre-color);border-radius:11px;padding:11px 14px;margin-bottom:12px;font-size:12px'>"+
+        "<b>⚠️ No hay cuentas marcadas como declarables.</b> La receita se calcula sobre las cuentas BRL marcadas con 🧾 PGDAS. Marca al menos una en Configuración → cuentas."+
+      "</div>"+html;
+    }
 
     // Card alícuota y DAS
     if(!sinMov){
@@ -36076,6 +37457,40 @@ function _htmlPGDAS(mesKey, mesLabel){
           "<span style='font-size:18px;font-weight:800;color:var(--pos)'>R$ "+f2(das)+"</span>"+
         "</div>"+
         "<div style='margin-top:8px;font-size:10.5px;color:var(--ink2);font-style:italic'>Estimado. El DAS oficial lo calcula el portal con los últimos ajustes de la Receita.</div>"+
+      "</div>";
+
+      // ARREGLO 191 · Card NFS-e Mensal consolidada. Su contador confirmo el
+      // 26/10 que su prefeitura permite 1 nota mensual con "consumidor final /
+      // tomador no identificado" sobre la Receita Bruta del mes. Dos botones
+      // copiar: valor y descripcion, para pegar en los campos del portal de la
+      // prefeitura (y el mismo valor sirve para el PGDAS-D).
+      //
+      // Lo mas simple: NO abre modal ni pantalla intermedia. Dos lineas, dos
+      // botones. La descripcion es editable en Configuracion (una vez al año)
+      // porque algunos contadores quieren texto distinto.
+      var _nfseDesc = _nfseDescripcion(mesKey, mesLabel);
+      html+="<div style='background:var(--card);border:2px solid var(--pos);border-radius:11px;padding:14px;margin-bottom:12px'>"+
+        "<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:6px'>"+
+          "<div style='font-size:11px;font-weight:700;color:var(--pos);text-transform:uppercase;letter-spacing:.3px'>📄 NFS-e mensal consolidada</div>"+
+          "<div style='font-size:10px;color:var(--ink2);font-style:italic'>una sola nota al mes · tomador: consumidor final</div>"+
+        "</div>"+
+        // Valor consolidado
+        "<div style='display:flex;justify-content:space-between;align-items:center;background:var(--sup2d);padding:10px 12px;border-radius:8px;margin-bottom:8px;gap:10px;flex-wrap:wrap'>"+
+          "<div>"+
+            "<div style='font-size:10px;color:var(--ink2);margin-bottom:2px'>Valor da nota (R$)</div>"+
+            "<div style='font-size:18px;font-weight:800;color:var(--tit)'>R$ "+f2(ing.total)+"</div>"+
+          "</div>"+
+          "<button onclick='_copiarPGDAS("+JSON.stringify(f2(ing.total).replace(",","."))+", this)' style='padding:9px 14px;background:var(--pos);color:var(--sobre-color);border:none;border-radius:8px;font-size:12px;font-weight:800;cursor:pointer'>📋 Copiar valor</button>"+
+        "</div>"+
+        // Descripcion pre-rellenada
+        "<div style='background:var(--sup2d);padding:10px 12px;border-radius:8px;gap:10px'>"+
+          "<div style='display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;flex-wrap:wrap;gap:6px'>"+
+            "<div style='font-size:10px;color:var(--ink2)'>Descrição do serviço</div>"+
+            "<button onclick='_copiarPGDAS("+JSON.stringify(_nfseDesc)+", this)' style='padding:7px 12px;background:var(--sup2c);color:var(--tit);border:1px solid var(--sup3);border-radius:7px;font-size:11.5px;font-weight:700;cursor:pointer'>📋 Copiar texto</button>"+
+          "</div>"+
+          "<div style='font-size:12px;color:var(--tit);line-height:1.5;padding:6px 0;font-style:italic'>&ldquo;"+_escAud(_nfseDesc)+"&rdquo;</div>"+
+          "<div style='font-size:10px;color:var(--ink2);margin-top:4px'>Para cambiar el texto: Configuración → NFS-e → Plantilla de descripción.</div>"+
+        "</div>"+
       "</div>";
     }
 
@@ -37453,6 +38868,33 @@ function _asignarUidsFaltantes(){
   });
 }
 _asignarUidsFaltantes();
+
+// ARREGLO 187 · podar las 8 cuentas plantilla (c01..c08) que quedaron de una
+// version muy vieja de la app. Para ella se mezclaban con las REALES (c178xxx)
+// y aparecian en Inventario USDT como "activas" aunque nunca las uso: no
+// estaban en el servidor, asi que la fusion no las traia ni las tocaba.
+// Solo las plantillas del default, nunca una cuenta que ella haya creado -
+// esas tienen ids del formato "c<Date.now()>" (13 digitos) o del formato
+// "c178xxxxxxxxxxx" (c1780535378520, 14 digitos) del _CUENTAS_CONOCIDAS.
+// Las plantillas son exactamente c01..c08 (2 caracteres). _marcarBorradoMerge
+// escribe en _deletedMerge para que ni la fusion con el servidor las revive.
+(function _podarCuentasFantasma(){
+  if(!Array.isArray(S.cuentas)) return;
+  var FANTASMA = {"c01":1,"c02":1,"c03":1,"c04":1,"c05":1,"c06":1,"c07":1,"c08":1};
+  var antes = S.cuentas.length;
+  var quitadas = [];
+  S.cuentas = S.cuentas.filter(function(c){
+    if(c && FANTASMA[c.id]){ quitadas.push(c.id+" "+(c.nombre||"")); return false; }
+    return true;
+  });
+  if(quitadas.length){
+    quitadas.forEach(function(q){
+      try{ _marcarBorradoMerge("cuentas", q.split(" ")[0]); }catch(e){}
+    });
+    console.log("🧹 ARREGLO 187 · podadas "+quitadas.length+" cuenta(s) plantilla fantasma: "+quitadas.join(", "));
+  }
+})();
+
 _syncCapitalWithCuentas();
 
 // 2. Merge ONLY clients from base data (non-destructive, no ops)
