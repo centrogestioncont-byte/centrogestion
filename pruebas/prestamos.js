@@ -13263,5 +13263,47 @@ console.log("\nARREGLO 192 · saveEgPersonal baja el lote, no solo la cuenta");
      "en el mismo orden que pagarEgPersonal: cuenta primero, FIFO despues");
 }
 
+// ARREGLO 193 · tope mensual sugerido
+console.log("\nARREGLO 193 · tope mensual del RBT12");
+{
+  const HS = sinComentarios(HTML);
+  // Lo pidio ella el 27/10: evitar un mes grande que acerque al tope
+  // anual sin saberlo. Un UNICO campo editable, 80% y 100% derivados.
+  const _tm = sinComentarios(sacarFuncion("_topeMensualPGDAS"));
+  ok(/S\.config.*tope_mensual_pgdas/.test(_tm),
+     "la clave vive en S.config.tope_mensual_pgdas");
+  // Por omision = tope comodo del RBT12 / 12. Si ella sube el del RBT12,
+  // el mensual lo sigue sin tener que tocar dos campos.
+  ok(/_rbt12TopeComodo\(\)\s*\/\s*12/.test(_tm),
+     "el por omision sale del tope RBT12 / 12, no de una constante fija");
+
+  // Guardar valida: vacio = borra la clave (vuelve al por omision), 0
+  // no vale a proposito. Misma regla que el ARREGLO 177.
+  const _gu = sinComentarios(sacarFuncion("guardarTopeMensualPGDAS"));
+  ok(/delete S\.config\.tope_mensual_pgdas/.test(_gu)
+     && /isNaN\(v\)\|\|v<=0/.test(_gu),
+     "vacio borra la clave; un 0 no vale");
+
+  // Estado con 3 niveles: ok / amarillo (>=80%) / rojo (>=100%).
+  const _es = sinComentarios(sacarFuncion("_estadoTopeMensual"));
+  ok(/pct>=100/.test(_es) && /pct>=80/.test(_es),
+     "umbrales 80% y 100% derivados del tope mensual");
+  // Lee el mismo numero que la tarjeta PGDAS, para que la cuenta de
+  // arriba y el aviso no se separen (regla del 34,27 contra 34,28).
+  ok(/_ingresoDeclarablePGDAS\(mesKey\)\.total/.test(_es),
+     "lee de _ingresoDeclarablePGDAS, no calcula aparte");
+
+  // Aviso arriba del panel (ARREGLO 62).
+  const _ht = sinComentarios(sacarFuncion("_htmlAvisoTopeMensual"));
+  ok(/e\.nivel==="ok".*return ""/.test(_ht),
+     "en verde no gasta espacio");
+  ok(/_estadoTopeMensual\(\)/.test(_ht),
+     "y lo mide del mes en curso (sin mesKey)");
+
+  // Montado en rApp entre RBT12 y TasaFijo, en el mismo bloque arriba.
+  ok(/_htmlAvisoRBT12\(\)\+[\s\S]{0,80}_htmlAvisoTopeMensual\(\)\+/.test(HS),
+     "va en rApp justo despues del aviso RBT12");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
