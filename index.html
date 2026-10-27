@@ -3276,7 +3276,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261027_v274";
+var APP_VERSION = "20261027_v275";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -15210,6 +15210,17 @@ function guardarUmbralRBT12(){
   saveData(); R();
   alert("✅ Umbrales guardados · 🟡 R$ "+f2(_rbt12UmbralAmarillo())+" · 🔴 R$ "+f2(_rbt12UmbralRojo())+" · tope R$ "+f2(_rbt12TopeComodo()));
 }
+// ARREGLO 193 · tope mensual sugerido para que el RBT12 no se dispare.
+// Vacio = borra la clave y vuelve al por omision (R$ 180.000/12 = R$ 15.000).
+// Un 0 guardado no vale a proposito, misma regla que el 177.
+function guardarTopeMensualPGDAS(){
+  var v=_leerNumero(document.getElementById('inp-tope-mes-pgdas').value);
+  if(!S.config) S.config={};
+  if(isNaN(v)||v<=0) delete S.config.tope_mensual_pgdas;
+  else S.config.tope_mensual_pgdas=v;
+  saveData(); R();
+  alert("✅ Tope mensual: R$ "+f2(_topeMensualPGDAS())+" (🟡 80% · 🔴 100%).");
+}
 function addCatEmpresa(){
   var v=(document.getElementById('inp-cat-emp').value||"").trim().toUpperCase();
   if(!v) return;
@@ -16438,6 +16449,20 @@ function rConfigAdmin(){
             "<button onclick='guardarUmbralRBT12()' style='padding:9px 14px;background:var(--rol-ee);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
           "</div>"+
           "<div style='font-size:10.5px;color:var(--tx3);font-style:italic'>Techo legal de ME: R$ "+f2(RBT12_TOPE_LEGAL)+" (no editable, es ley). El aviso rojo salta al 90% de ese techo.</div>"+
+        "</div>"+
+        // ARREGLO 193 · tope mensual sugerido. Reparte el tope cómodo del
+        // RBT12 entre 12 meses para no concentrar receita. No es ley —
+        // la ley es anual (RBT12).
+        "<div style='margin-top:14px;padding-top:14px;border-top:1px solid var(--ln2)'>"+
+          "<div style='font-size:12px;font-weight:700;color:var(--tx2);margin-bottom:8px'>📅 Tope mensual sugerido</div>"+
+          "<div style='font-size:11px;color:var(--tx3);margin-bottom:8px'>Reparte el tope del RBT12 entre 12 meses para no acumular. 🟡 al 80% · 🔴 al 100%. Vacío = <b>R$ "+f2(Math.round(_rbt12TopeComodo()/12))+"</b> (tope cómodo del RBT12 ÷ 12).</div>"+
+          "<div style='display:flex;gap:8px;align-items:center;max-width:520px;flex-wrap:wrap;margin-bottom:8px'>"+
+            "<span style='font-size:12px;color:var(--tx2);min-width:88px'>Tope / mes</span>"+
+            "<span style='font-size:12px;color:var(--tx2);font-weight:700'>R$</span>"+
+            "<input type='text' inputmode='decimal' id='inp-tope-mes-pgdas' placeholder='"+f2(Math.round(_rbt12TopeComodo()/12))+"' value='"+(((S.config||{}).tope_mensual_pgdas!==undefined&&(S.config||{}).tope_mensual_pgdas!==null)?f2(S.config.tope_mensual_pgdas):"")+"' style='width:120px;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:13px'>"+
+            "<button onclick='guardarTopeMensualPGDAS()' style='padding:9px 14px;background:var(--rol-ee);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
+          "</div>"+
+          "<div style='font-size:10.5px;color:var(--tx3);font-style:italic'>Es orientativo: si un mes te pasas, los siguientes 11 tienen que compensar.</div>"+
         "</div>"+
       "</div>";
 
@@ -23621,6 +23646,7 @@ function rMain(){
     _htmlAvisoPGDASAtrasado()+  // ARREGLO 178
     _htmlAvisoFaturaTarjeta()+  // ARREGLO 184
     _htmlAvisoRBT12()+          // ARREGLO 177
+    _htmlAvisoTopeMensual()+    // ARREGLO 193
     _htmlAvisoTasaFijo()+       // ARREGLO 112
     "<div class='navbar3'>"+
       "<button class='menubtn' onclick='document.getElementById(\"navMenuWrap\").classList.add(\"show\")'>☰ Menú</button>"+
@@ -36908,11 +36934,44 @@ function _aliquotaAnexoIII(rbt12){
 //       grande se come la media y adelanta el cruce sin motivo.
 var RBT12_TOPE_LEGAL = 4800000;   // ME · ley · no se toca
 var RBT12_TOPE_COMODO_DEFECTO = 180000;   // franja 1 Anexo III · ley
+// ARREGLO 193 · tope mensual sugerido. R$ 180.000/12 = R$ 15.000. No es
+// ley: la ley es el RBT12 anual. Esto reparte ese techo entre 12 meses
+// para que un mes grande no la acerque al tope. Si un mes se pasa, los
+// siguientes 11 tienen que compensar — lo dice en pantalla, no lo decide
+// el codigo. Un semaforo con solo dos umbrales (80% / 100%): mas umbrales
+// que editar seria copiar el RBT12, y aqui con uno editable alcanza.
+var TOPE_MENSUAL_DEFECTO = Math.round(RBT12_TOPE_COMODO_DEFECTO/12);
 
 function _rbt12TopeComodo(){
   var v=((S.config||{}).rbt12_tope_comodo);
   v=parseFloat(v);
   return (isFinite(v) && v>0) ? v : RBT12_TOPE_COMODO_DEFECTO;
+}
+function _topeMensualPGDAS(){
+  var v=((S.config||{}).tope_mensual_pgdas);
+  v=parseFloat(v);
+  // El por omision sigue al tope comodo del RBT12 (dividido entre 12), no
+  // a la constante fija. Si ella sube el tope del RBT12, el mensual se
+  // mueve con el sin tener que ir a tocarlo dos veces.
+  return (isFinite(v) && v>0) ? v : Math.round(_rbt12TopeComodo()/12);
+}
+// Estado del mes contra el tope mensual. Lo mira solo el mes EN CURSO —
+// un mes ya cerrado y pasado no se puede frenar y avisar seria ruido
+// permanente (ARREGLO 99). _ingresoDeclarablePGDAS devuelve el mismo
+// numero que la tarjeta de PGDAS, asi que la cuenta de arriba y el aviso
+// no se separan nunca (regla del 34,27 contra 34,28).
+function _estadoTopeMensual(mesKey){
+  if(!mesKey){
+    var hoy=new Date();
+    mesKey=hoy.getFullYear()+"-"+String(hoy.getMonth()+1).padStart(2,"0");
+  }
+  var receita=_ingresoDeclarablePGDAS(mesKey).total;
+  var tope=_topeMensualPGDAS();
+  var pct=tope>0 ? receita/tope*100 : 0;
+  var nivel="ok";
+  if(pct>=100) nivel="rojo";
+  else if(pct>=80) nivel="amarillo";
+  return {nivel:nivel, receita:receita, tope:tope, pct:pct, mesKey:mesKey};
 }
 function _rbt12UmbralAmarillo(){
   var v=((S.config||{}).rbt12_amarillo);
@@ -37003,6 +37062,29 @@ function _estadoRBT12(){
 
 // El aviso arriba del panel (fuera del scroll, ARREGLO 62). Solo sale en
 // amarillo, rojo o legal. "ok" devuelve "" para no gastar espacio.
+// ARREGLO 193 · aviso del mes en curso cerca del tope mensual sugerido.
+// Solo el mes en curso: un mes ya cerrado no se puede frenar. Vive donde
+// el aviso del RBT12 (arriba del panel, fuera del scroll, ARREGLO 62).
+function _htmlAvisoTopeMensual(){
+  var e=_estadoTopeMensual();
+  if(e.nivel==="ok") return "";
+  var falta=Math.max(0, e.tope-e.receita);
+  var fondoCss=(e.nivel==="rojo") ? "var(--neg)" : "var(--am3)";
+  var texto;
+  if(e.nivel==="rojo"){
+    texto="<b>🔴 Pasaste el tope mensual · R$ "+f2(e.receita)+" de R$ "+f2(e.tope)+" ("+f2(e.pct)+"%).</b> "+
+      "Los próximos 11 meses tienen que compensar para no superar el techo anual.";
+  } else {
+    texto="<b>🟡 Cerca del tope mensual · R$ "+f2(e.receita)+" de R$ "+f2(e.tope)+" ("+f2(e.pct)+"%).</b> "+
+      "Faltan R$ "+f2(falta)+" para el tope de este mes.";
+  }
+  return "<div style='background:"+fondoCss+";color:var(--sobre-color);padding:10px 14px;"+
+    "display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-bottom:2px solid var(--sup3)'>"+
+    "<div style='flex:1;min-width:200px;font-size:12.5px;line-height:1.5'>"+texto+"</div>"+
+    "<button onclick='S._cSec=\"pgdas\";st(\"cierre\")' style='background:var(--sobre-color);color:var(--tit);border:none;"+
+      "padding:7px 13px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer'>Ver PGDAS-D</button>"+
+  "</div>";
+}
 function _htmlAvisoRBT12(){
   var e=_estadoRBT12();
   if(e.nivel==="ok") return "";
@@ -37393,6 +37475,16 @@ function _htmlPGDAS(mesKey, mesLabel){
         "<div>"+
           "<div style='font-size:11px;color:var(--ink2);margin-bottom:4px'>Receita Bruta del mes (margen)</div>"+
           "<div style='font-size:24px;font-weight:800;color:var(--tit)'>R$ "+f2(ing.total)+"</div>"+
+          // ARREGLO 193 · comparado con el tope mensual sugerido. Solo sale
+          // cuando pasa del 80%: debajo es ruido (ARREGLO 99).
+          (function(){
+            var e=_estadoTopeMensual(mesKey);
+            if(e.nivel==="ok") return "";
+            var col=(e.nivel==="rojo")?"var(--neg)":"var(--am3)";
+            var ico=(e.nivel==="rojo")?"🔴":"🟡";
+            return "<div style='margin-top:5px;font-size:11px;color:"+col+";font-weight:600'>"+
+              ico+" "+f2(e.pct)+"% del tope mensual (R$ "+f2(e.tope)+")</div>";
+          })()+
         "</div>"+
         botCopy(f2(ing.total).replace(",","."),"📋 copiar")+
       "</div>"+
