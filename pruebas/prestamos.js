@@ -13501,5 +13501,15 @@ console.log("\nARREGLO 201 · pre-rellenar tasa al cambiar la moneda del abono")
      "y el de por cobrar llama a setMonPagoCobrar");
 }
 
+// ARREGLO 202 · ningun &var(--...) literal se cuela en el HTML
+// Cuatro sitios escribian "&var(--vd2-j6);" o similar en una cadena,
+// pensando que era una entidad: no lo es, el navegador la pinta tal cual
+// y ella veia "&var(--vd2-j6); O calcula al reves" en azul en la pantalla.
+console.log("\nARREGLO 202 · ningun &var(--...) literal se cuela en el HTML");
+{
+  ok(!/&var\(--/.test(HTML),
+     "no queda ningun &var(--...) literal en index.html");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
