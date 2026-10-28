@@ -13423,12 +13423,11 @@ console.log("\nARREGLO 198 · pagado/pendiente + proxima cuota en la tarjeta");
      "el desglose nombra las dos bolsas separadas: prestamo + mora");
 }
 
-// ARREGLO 199 · boton Cobrar + mora SIEMPRE en Recordar cuando corre
-console.log("\nARREGLO 199 · cobrar por mensaje");
+// ARREGLO 199/200 · boton Cobrar + mora SUMADA + equivalente en BRL
+console.log("\nARREGLO 199/200 · cobrar por mensaje");
 {
-  // La nueva funcion cobrarPrestamoWA debe mandar el total EXACTO a cobrar
-  // (saldo del prestamo + mora si hay). No usa la cuota, es cobro directo
-  // del saldo pendiente.
+  // cobrarPrestamoWA: total consolidado (saldo + mora) sin desglose al
+  // cliente, con equivalente en BRL si el prestamo no es en reales.
   var cb = sinComentarios(sacarFuncion("cobrarPrestamoWA"));
   ok(/Math\.max\(0,Math\.round\(\(montoBase-totalAbonado\)\*100\)\/100\)/.test(cb),
      "cobrarPrestamoWA lee el saldo pendiente del prestamo");
@@ -13440,14 +13439,26 @@ console.log("\nARREGLO 199 · cobrar por mensaje");
      "el mensaje dice 'Total a pagar' con la cifra");
   ok(/wa\.me\/\?text=/.test(cb),
      "y abre WhatsApp");
+  // ARREGLO 200 · la mora NO se desglosa como linea aparte en el mensaje.
+  ok(!/del pr[eé]stamo[\s\S]{0,120}de mora por el atraso/.test(cb),
+     "la mora no se nombra separada en cobrarPrestamoWA (ella no cobra separado)");
+  // Y hay equivalente BRL cuando no es BRL.
+  ok(/monP!=="BRL"/.test(cb) && /Equivalente: ~R\$ /.test(cb),
+     "incluye equivalente en reales cuando el prestamo no es en BRL");
 
   // recordarCuotaWA ahora dice la mora SIEMPRE que corra, no solo cuando
-  // la cuota ya vencio.
+  // la cuota ya vencio. ARREGLO 200: tambien consolida y añade R$.
   var rc = sinComentarios(sacarFuncion("recordarCuotaWA"));
   ok(/_conMora=_mp>0\.009/.test(rc),
      "recordar calcula _conMora de la mora pendiente");
-  ok(/_bloqueMora=_conMora/.test(rc),
-     "y arma un bloque que se mete en los tres mensajes (futura, hoy, vencida)");
+  ok(/Total a pagar: /.test(rc),
+     "los mensajes muestran 'Total a pagar' con la mora SUMADA");
+  // Y la funcion de equivalente BRL se declara localmente.
+  ok(/function _equivBRL/.test(rc),
+     "arma el equivalente en reales con tasa del dia");
+  // La vieja frase "- X USDT de mora por el atraso" NO vuelve.
+  ok(!/USDT de mora por el atraso/.test(rc),
+     "la mora no se nombra como linea separada (ARREGLO 200)");
 
   // El boton nuevo esta en la botonera del prestamo activo, entre Recordar
   // y Captura — asi queda cerca del Recordar que es su hermano logico.
