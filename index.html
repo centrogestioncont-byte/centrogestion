@@ -3302,7 +3302,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261028_v279";
+var APP_VERSION = "20261028_v280";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -12833,20 +12833,58 @@ function recordarCuotaWA(id){
   var hoy=td();
   var esHoy = cu.iso===hoy;
   var esPasada = cu.iso && cu.iso<hoy;
+  // ARREGLO 199 · la mora pendiente se dice SIEMPRE que corra, no solo
+  // cuando la cuota ya venció. Antes sus palabras: "no se entiende lo que
+  // voy a cobrar". Si hay mora atrás viva, un mensaje "cuota de 99,51
+  // USDT" sin nombrarla deja al cliente creyendo que ese es el total y
+  // ella cobrando de menos.
+  var _mp=moraPendiente(p);
+  var _conMora=_mp>0.009;
+  var _total=Math.round((parseFloat(cu.monto)+_mp)*100)/100;
+  var _bloqueMora=_conMora
+    ? "\n\n*Total a pagar: "+f2(_total)+" "+monP+"*\n- "+f2(cu.monto)+" "+monP+" de la cuota\n- "+f2(_mp)+" "+monP+" de mora por el atraso"
+    : "";
   var msg;
   if(esPasada){
     // Si ya corre mora, se le dice con transparencia cuánto y por qué —
     // que se entere al cobrarle es la mejor forma de perder al cliente.
-    var _mp=moraPendiente(p);
     var _diasAtr=_diasIso(cu.iso,hoy);
     msg="Hola "+p.desc+"! 👋 Te escribo porque la cuota "+cu.n+" de "+f2(cu.monto)+" "+monP+" venció el "+cu.fecha+" y no la veo reflejada aún."+
-      (_mp>0.009?"\n\nPor los "+_diasAtr+" días de atraso se sumó una mora de *"+f2(_mp)+" "+monP+"* (un cargo fijo por el atraso más una parte que corre cada día), así que quedaría en *"+f2(Math.round((cu.monto+_mp)*100)/100)+" "+monP+"*. Mientras más esperemos, más sube — si hoy no puedes, dime qué día sí y lo acomodamos.":"")+
+      (_conMora?"\n\nPor los "+_diasAtr+" días de atraso se sumó una mora de *"+f2(_mp)+" "+monP+"* (un cargo fijo por el atraso más una parte que corre cada día), así que quedaría en *"+f2(_total)+" "+monP+"*. Mientras más esperemos, más sube — si hoy no puedes, dime qué día sí y lo acomodamos.":"")+
       "\n\n¿Me puedes confirmar cuándo la pasas? 🙏";
   } else if(esHoy){
-    msg="Hola "+p.desc+"! 👋 Hoy es la fecha de tu cuota "+cu.n+" de *"+f2(cu.monto)+" "+monP+"*. Cuando puedas la confirmas por aquí. ¡Gracias! 🙏";
+    msg="Hola "+p.desc+"! 👋 Hoy es la fecha de tu cuota "+cu.n+" de *"+f2(cu.monto)+" "+monP+"*."+_bloqueMora+"\n\nCuando puedas la confirmas por aquí. ¡Gracias! 🙏";
   } else {
-    msg="Hola "+p.desc+"! 👋 Te recuerdo que tu próxima cuota ("+cu.n+") de *"+f2(cu.monto)+" "+monP+"* vence el "+cu.fecha+". ¡Gracias! 🙏";
+    msg="Hola "+p.desc+"! 👋 Te recuerdo que tu próxima cuota ("+cu.n+") de *"+f2(cu.monto)+" "+monP+"* vence el "+cu.fecha+"."+_bloqueMora+"\n\n¡Gracias! 🙏";
   }
+  window.open("https://wa.me/?text="+encodeURIComponent(msg),"_blank");
+}
+// ARREGLO 199 · "Cobrar" por WhatsApp. Mensaje directo con el TOTAL a
+// pagar hoy (saldo pendiente del préstamo + mora si corre), sin frases
+// de "te recuerdo" ni fecha de la cuota. Para cuando ella necesita
+// cobrar YA. Sus palabras: "hacer el cobro para cobrar por mensaje".
+function cobrarPrestamoWA(id){
+  var p=(S.prestamos||[]).find(function(x){return x.id===id;});
+  if(!p) return;
+  var monP=p.mon||"USDT";
+  // Mismo cálculo que ya hace la tarjeta: saldo pendiente del préstamo,
+  // leído de los abonos. Es la bolsa que SÍ baja el saldo (regla fuerte).
+  var montoBase=parseFloat(p.monto||p.sal)||0;
+  var totalAbonado=(p.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);
+  var saldoPend=Math.max(0,Math.round((montoBase-totalAbonado)*100)/100);
+  if(saldoPend<=0.009){
+    alert("Este préstamo ya está saldado. No hay nada que cobrar.");
+    return;
+  }
+  var _mp=moraPendiente(p);
+  var _total=Math.round((saldoPend+_mp)*100)/100;
+  var msg="Hola "+p.desc+"! 💰 Te escribo para cobrarte el saldo del préstamo.";
+  if(_mp>0.009){
+    msg+="\n\n*Total a pagar: "+f2(_total)+" "+monP+"*\n- "+f2(saldoPend)+" "+monP+" del préstamo\n- "+f2(_mp)+" "+monP+" de mora por el atraso";
+  } else {
+    msg+="\n\n*Total a pagar: "+f2(saldoPend)+" "+monP+"*";
+  }
+  msg+="\n\nConfírmame cuando lo pases. ¡Gracias! 🙏";
   window.open("https://wa.me/?text="+encodeURIComponent(msg),"_blank");
 }
 function agradecerAbonoWA(p,montoPagado,monPago,cuotaN,restante,excedenteInfo,moraCobrada){
@@ -35606,6 +35644,10 @@ function rPrestamos(){
           "<button class='bk-btn icon danger' onclick='reqDel(\"prestamos\","+p.id+",\"id\")' title='Eliminar préstamo'>🗑</button>"+
           "<button class='bk-btn wa' onclick='pedirCompromisoWA("+p.id+")'>Compromiso</button>"+
           "<button class='bk-btn warn' onclick='recordarCuotaWA("+p.id+")'>Recordar</button>"+
+          // ARREGLO 199 · botón de cobro directo. Lo pidió ella el 28/10
+          // ("hacer el cobro para cobrar por mensaje"). Manda un WhatsApp
+          // con el total exacto a pagar hoy (saldo + mora si corre).
+          "<button class='bk-btn danger' onclick='cobrarPrestamoWA("+p.id+")'>💰 Cobrar</button>"+
           "<button class='bk-btn ghost' onclick='adjuntarCapturaPrestamo("+p.id+")'>Captura</button>"+
           "<button class='bk-btn "+(isPaying?"ghost":"pri")+"' onclick='togglePagarPrest("+p.id+")'>"+(isPaying?"✕ Cancelar":"Abonar")+"</button>"+
         "</div>"+

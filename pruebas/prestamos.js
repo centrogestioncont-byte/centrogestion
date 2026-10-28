@@ -13423,5 +13423,44 @@ console.log("\nARREGLO 198 · pagado/pendiente + proxima cuota en la tarjeta");
      "el desglose nombra las dos bolsas separadas: prestamo + mora");
 }
 
+// ARREGLO 199 · boton Cobrar + mora SIEMPRE en Recordar cuando corre
+console.log("\nARREGLO 199 · cobrar por mensaje");
+{
+  // La nueva funcion cobrarPrestamoWA debe mandar el total EXACTO a cobrar
+  // (saldo del prestamo + mora si hay). No usa la cuota, es cobro directo
+  // del saldo pendiente.
+  var cb = sinComentarios(sacarFuncion("cobrarPrestamoWA"));
+  ok(/Math\.max\(0,Math\.round\(\(montoBase-totalAbonado\)\*100\)\/100\)/.test(cb),
+     "cobrarPrestamoWA lee el saldo pendiente del prestamo");
+  ok(/moraPendiente\(p\)/.test(cb),
+     "y suma la mora pendiente si corre");
+  ok(/saldoPend<=0\.009/.test(cb),
+     "y no deja cobrar si el prestamo ya esta saldado");
+  ok(/Total a pagar/.test(cb),
+     "el mensaje dice 'Total a pagar' con la cifra");
+  ok(/wa\.me\/\?text=/.test(cb),
+     "y abre WhatsApp");
+
+  // recordarCuotaWA ahora dice la mora SIEMPRE que corra, no solo cuando
+  // la cuota ya vencio.
+  var rc = sinComentarios(sacarFuncion("recordarCuotaWA"));
+  ok(/_conMora=_mp>0\.009/.test(rc),
+     "recordar calcula _conMora de la mora pendiente");
+  ok(/_bloqueMora=_conMora/.test(rc),
+     "y arma un bloque que se mete en los tres mensajes (futura, hoy, vencida)");
+
+  // El boton nuevo esta en la botonera del prestamo activo, entre Recordar
+  // y Captura — asi queda cerca del Recordar que es su hermano logico.
+  var idx = HTML.indexOf("<div class='bk-item \"+(_vencidaPr?");
+  var seg = HTML.substring(idx, idx+5000);
+  ok(/cobrarPrestamoWA\(\"\+p\.id\+\"\)[^>]*>.{0,30}Cobrar</.test(seg),
+     "el boton 'Cobrar' esta en la tarjeta de prestamo activo");
+  // Y despues del Recordar, antes del Captura.
+  var iRe = seg.indexOf("recordarCuotaWA");
+  var iCob = seg.indexOf("cobrarPrestamoWA");
+  var iCap = seg.indexOf("adjuntarCapturaPrestamo");
+  ok(iRe < iCob && iCob < iCap, "y en orden: Recordar · Cobrar · Captura");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
