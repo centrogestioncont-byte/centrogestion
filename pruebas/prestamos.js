@@ -6023,7 +6023,9 @@ console.log("\n— FASE 2: la cuenta madre —");
        "la diferencia desglosa "+x[1]+" (si no, las filas no la suman)");
   });
   // Las tres cifras grandes: es la cadena que ella pidio, y va entera o no va.
-  ["Ganaste","Creció","Diferencia"].forEach(function(r){
+  // ARREGLO 194 · nombres mas claros ("en el papel" / "tu capital" la
+  // confundian). Ella aprobo "margen neto / capital real / no cuadra".
+  ["Margen neto","Capital real","No cuadra"].forEach(function(r){
     ok(new RegExp('_tile\\("'+r+'"').test(resum),
        "la cadena lleva su cifra de "+r);
   });
@@ -13303,6 +13305,24 @@ console.log("\nARREGLO 193 · tope mensual del RBT12");
   // Montado en rApp entre RBT12 y TasaFijo, en el mismo bloque arriba.
   ok(/_htmlAvisoRBT12\(\)\+[\s\S]{0,80}_htmlAvisoTopeMensual\(\)\+/.test(HS),
      "va en rApp justo despues del aviso RBT12");
+}
+
+// ARREGLO 194 · rotulos mas claros en la tarjeta de conciliacion
+console.log("\nARREGLO 194 · margen neto / capital real / no cuadra");
+{
+  // Sus palabras: "eso de papel no lo entiendo bien". Los tres rotulos
+  // tocaban cambiarse SOLO en pantalla; el calculo es el mismo.
+  ok(/_tile\("Margen neto"/.test(HTML),
+     "la primera cajita dice 'Margen neto'");
+  ok(/_tile\("Capital real"/.test(HTML),
+     "la segunda cajita dice 'Capital real'");
+  ok(/_tile\("No cuadra"/.test(HTML),
+     "la tercera cajita dice 'No cuadra'");
+  // Y los viejos nombres se fueron del balance.
+  var block = HTML.substring(HTML.indexOf("Empezaste el "), HTML.indexOf("Empezaste el ")+2000);
+  ok(!/_tile\("Ganaste"/.test(block) && !/_tile\("Creció"/.test(block)
+     && !/_tile\("Diferencia"/.test(block),
+     "los rotulos viejos no vuelven");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
