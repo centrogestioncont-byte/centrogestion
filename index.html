@@ -3302,7 +3302,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261028_v281";
+var APP_VERSION = "20261028_v282";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -8532,6 +8532,39 @@ function _tasaAutoPago(monDeuda,monPago){
   var rPago=getRateToUsdt(monPago), rDeuda=getRateToUsdt(monDeuda);
   if(!rPago||!rDeuda) return null;
   return Math.round((rPago/rDeuda)*10000)/10000;
+}
+// ARREGLO 201 · al cambiar la moneda del abono, pre-rellena el campo de
+// tasa manual con la tasa automática del día. Antes, el campo salía con
+// placeholder "ej: 5.0529" y value vacío — para quien no sabe que ese
+// placeholder es la tasa que se va a usar, parece que la app no decide
+// nada. Ahora el valor se escribe en el campo, pero sigue editable: si
+// ella sabe que esa remesa va a otra tasa, la cambia.
+//
+// Resetea cuentaId porque las cuentas disponibles dependen de la moneda.
+// Resetea tasaManual (y lo rellena) para que una tasa vieja de una moneda
+// anterior no se mezcle con la nueva — un número en el campo de la tasa
+// con el rótulo de otra moneda es el 34,27 contra el 34,28 moviendo dinero.
+function setMonPagoPrest(monPrest, monPago){
+  var np=S.nPagarPrest||{};
+  np.moneda=monPago; np.cuentaId=""; np.tasaManual="";
+  if(monPago && monPago!==monPrest){
+    var ta=_tasaAutoPago(monPrest, monPago);
+    if(ta && ta>0) np.tasaManual=f4(ta);
+  }
+  S.nPagarPrest=np; R();
+}
+// La versión gemela para Por Cobrar: misma regla, misma funcion
+// _tasaAutoPago, dos sitios porque el campo lo rellena distinto en cada
+// pantalla. Escrita aparte, un día uno pre-rellenaría la tasa y el otro
+// no — es el fallo de los ARREGLOS 101, 119, 150 y 153 aplicado a UX.
+function setMonPagoCobrar(monDeuda, monPago){
+  var na=S.nAbonoCobrar||{};
+  na.moneda=monPago; na.cuentaId=""; na.tasaManual="";
+  if(monPago && monPago!==monDeuda){
+    var ta=_tasaAutoPago(monDeuda, monPago);
+    if(ta && ta>0) na.tasaManual=f4(ta);
+  }
+  S.nAbonoCobrar=na; R();
 }
 // ── ARREGLO 56 (14/09/2026): lo que se le pide al cliente va redondeado
 // HACIA ARRIBA ──────────────────────────────────────────────────────────
@@ -34434,7 +34467,9 @@ function rCuentasCobrar(){
         "<div style='font-size:11px;font-weight:800;color:var(--ink2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:11px'>Registrar abono · pendiente <b style='color:var(--ink)'>"+f2(saldoPend)+" "+c.moneda+"</b></div>"+
         "<div style='display:flex;flex-direction:column;gap:8px;margin-bottom:10px'>"+
           "<div><label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>¿En qué moneda te está pagando?</label>"+
-          "<select onchange='S.nAbonoCobrar=Object.assign(S.nAbonoCobrar||{},{moneda:this.value,cuentaId:\"\"});R()' style='width:100%;padding:11px;font-size:14px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'>"+
+          // ARREGLO 201 · igual que en préstamos (setMonPagoPrest): la tasa de
+          // hoy se pre-rellena al elegir una moneda distinta a la de la deuda.
+          "<select onchange='setMonPagoCobrar(\""+c.moneda+"\",this.value)' style='width:100%;padding:11px;font-size:14px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'>"+
             MONEDAS_COBRAR.map(function(m){return "<option value='"+m+"'"+(monPagoCC===m?" selected":"")+">"+m+(m===c.moneda?" (moneda de la deuda)":"")+"</option>";}).join("")+
           "</select></div>"+
           "<div><label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>Monto recibido ("+monPagoCC+")</label>"+
@@ -35500,7 +35535,14 @@ function rPrestamos(){
           cuotasSelHtml+
           descuentoAnticipoHtml+
           "<div><label style='font-size:11.5px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>¿En qué moneda te está pagando?</label>"+
-          "<select onchange='S.nPagarPrest=Object.assign(S.nPagarPrest||{},{moneda:this.value,cuentaId:\"\"});R()' style='width:100%;padding:11px;font-size:14px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'>"+
+          // ARREGLO 201 · al elegir una moneda distinta a la del préstamo,
+          // la tasa de hoy se escribe sola en el campo tasa (abajo), para
+          // que ella no tenga que buscarla. Sus palabras: "lo que falta
+          // para cobrar entonces es que me pregunte la tasa si yo marcó
+          // que va a pagar con reales y el préstamo fue en usdt". La tasa
+          // sale de _tasaAutoPago (= tasa de referencia del día). Si ella
+          // ya había escrito una tasa manual se respeta.
+          "<select onchange='setMonPagoPrest(\""+monP+"\",this.value)' style='width:100%;padding:11px;font-size:14px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'>"+
             MONEDAS_ABONO.map(function(m){return "<option value='"+m+"'"+(monPago===m?" selected":"")+">"+m+(m===monP?" (moneda del préstamo)":"")+"</option>";}).join("")+
           "</select></div>"+
           "<div><label style='font-size:11.5px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>Monto recibido ("+monPago+")</label>"+
