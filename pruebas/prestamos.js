@@ -13380,5 +13380,40 @@ console.log("\nARREGLO 197 · aviso de cuotas de prestamos");
      "el boton lleva al tab de prestamos");
 }
 
+// ARREGLO 198 · panel resumen de la tarjeta de prestamo
+console.log("\nARREGLO 198 · pagado/pendiente + proxima cuota en la tarjeta");
+{
+  // Sus palabras del 28/10: "me satura la pestaña y quiero que me
+  // reorganices lo visual de prestamos no se entiende que es lo que voy
+  // a cobrar". Eligio la maqueta F (pagado | pendiente + banda ambar con
+  // proxima cuota) con la paleta 4 (colores reales de la app).
+  var cls = /\.pr-tiles\s*{[\s\S]{0,200}grid-template-columns:1fr 1fr/.test(HTML);
+  ok(cls, "existe la rejilla .pr-tiles de dos columnas");
+  ok(/\.pr-tile\.ok\s+\.pr-n\{color:var\(--ok\)\}/.test(HTML),
+     "el tile pagado usa el verde del tema (--ok)");
+  ok(/\.pr-tile\.pend\s+\.pr-n\{color:var\(--mal\)\}/.test(HTML),
+     "el tile pendiente usa el rojo del tema (--mal)");
+  ok(/\.pr-next\s*{[\s\S]{0,300}background:var\(--am6-s3\)/.test(HTML),
+     "la banda proxima cuota usa el ambar del tema");
+
+  // La tarjeta dibuja los tres bloques nuevos y en orden.
+  var idxT = HTML.indexOf("pr-tiles");
+  var idxN = HTML.indexOf("pr-next");
+  var idxC = HTML.indexOf("cuotasHtml+");
+  ok(idxT>0 && idxN>idxT, "los tiles van antes que la banda");
+  ok(idxN<idxC, "y los dos antes del cronograma existente");
+
+  // El monto grande del header ya no vive ahi (seria duplicado con los
+  // tiles). Si corre mora, SI sale en el header porque esa es aparte.
+  // El cardActivo de prestamos es el que lleva _vencidaPr (hay otros bk-item
+  // en Por Cobrar, en cardPagado y en avisos — todos con la misma clase).
+  var idxCardActivo = HTML.indexOf("<div class='bk-item \"+(_vencidaPr?");
+  var seg = HTML.substring(idxCardActivo, idxCardActivo+3000);
+  ok(!/bk-item-amt bk-num[^"]*"\+f2\(tieneAbonos\?saldoPend/.test(seg),
+     "el bk-item-amt grande del header se retiro");
+  ok(/_moraPend>0\.009\?[\s\S]{0,300}f2\(_moraPend\)\+" mora/.test(seg),
+     "pero si hay mora, se nombra en el header (es un cargo APARTE, regla CLAUDE.md)");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
