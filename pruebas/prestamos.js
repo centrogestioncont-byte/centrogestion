@@ -13473,5 +13473,33 @@ console.log("\nARREGLO 199/200 · cobrar por mensaje");
   ok(iRe < iCob && iCob < iCap, "y en orden: Recordar · Cobrar · Captura");
 }
 
+// ARREGLO 201 · tasa de hoy pre-rellena en abono / cobrar cuando cambia la moneda
+console.log("\nARREGLO 201 · pre-rellenar tasa al cambiar la moneda del abono");
+{
+  // Sus palabras del 28/10: "lo que falta para cobrar entonces es que me
+  // pregunte la tasa si yo marco que va a pagar con reales y el prestamo
+  // fue en usdt". Antes el campo salia con placeholder y value vacio.
+  var sp = sinComentarios(sacarFuncion("setMonPagoPrest"));
+  ok(/_tasaAutoPago\(monPrest, ?monPago\)/.test(sp),
+     "setMonPagoPrest calcula la tasa de hoy con _tasaAutoPago");
+  ok(/np\.tasaManual=f4\(ta\)/.test(sp),
+     "y la pre-rellena en S.nPagarPrest.tasaManual");
+  ok(/monPago!==monPrest/.test(sp),
+     "y solo cuando la moneda difiere de la del prestamo");
+
+  var sc = sinComentarios(sacarFuncion("setMonPagoCobrar"));
+  ok(/_tasaAutoPago\(monDeuda, ?monPago\)/.test(sc),
+     "setMonPagoCobrar hace lo mismo para cuentas por cobrar");
+  ok(/na\.tasaManual=f4\(ta\)/.test(sc),
+     "y escribe en S.nAbonoCobrar.tasaManual");
+
+  // Los dos selectores llaman a sus funciones nuevas.
+  ok(/setMonPagoPrest\(\\"\"\+monP\+\"\\"/.test(HTML)
+     || /setMonPagoPrest\(\\"\"\+monP\+\"\\",this\.value\)/.test(HTML),
+     "el selector del formulario de prestamos llama a setMonPagoPrest");
+  ok(/setMonPagoCobrar\(/.test(HTML),
+     "y el de por cobrar llama a setMonPagoCobrar");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
