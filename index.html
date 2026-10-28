@@ -3302,7 +3302,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261028_v280";
+var APP_VERSION = "20261028_v281";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -12838,24 +12838,43 @@ function recordarCuotaWA(id){
   // voy a cobrar". Si hay mora atrás viva, un mensaje "cuota de 99,51
   // USDT" sin nombrarla deja al cliente creyendo que ese es el total y
   // ella cobrando de menos.
+  //
+  // ARREGLO 200 · la mora SUMA al total y NO se desglosa al cliente ("no
+  // voy a cobrar separado"). Y si el préstamo no es en reales, se añade
+  // el equivalente en BRL con la tasa del día.
   var _mp=moraPendiente(p);
   var _conMora=_mp>0.009;
   var _total=Math.round((parseFloat(cu.monto)+_mp)*100)/100;
-  var _bloqueMora=_conMora
-    ? "\n\n*Total a pagar: "+f2(_total)+" "+monP+"*\n- "+f2(cu.monto)+" "+monP+" de la cuota\n- "+f2(_mp)+" "+monP+" de mora por el atraso"
-    : "";
+  // Equivalente del total en reales, para que el cliente que paga en BRL
+  // sepa qué pedirle al banco. Solo si el préstamo no es BRL y hay tasa.
+  function _equivBRL(usdtOrMon, mon){
+    if(mon==="BRL") return "";
+    var _rBRL=(typeof getRateToUsdt==="function")?getRateToUsdt("BRL"):0;
+    var _tUsdt=(mon==="USDT")?usdtOrMon:(typeof bkUsdt==="function"?bkUsdt(usdtOrMon,mon):0);
+    if(!(_rBRL>0 && _tUsdt>0)) return "";
+    var _tBRL=Math.round(_tUsdt*_rBRL*100)/100;
+    return "\n_Equivalente: ~R$ "+f2(_tBRL)+" a la tasa de hoy._";
+  }
   var msg;
   if(esPasada){
-    // Si ya corre mora, se le dice con transparencia cuánto y por qué —
-    // que se entere al cobrarle es la mejor forma de perder al cliente.
+    // Vencida: el total consolidado va grande; el "por qué" (días de
+    // atraso + mora) queda como contexto, pero el número que ella cobra
+    // es uno solo.
     var _diasAtr=_diasIso(cu.iso,hoy);
-    msg="Hola "+p.desc+"! 👋 Te escribo porque la cuota "+cu.n+" de "+f2(cu.monto)+" "+monP+" venció el "+cu.fecha+" y no la veo reflejada aún."+
-      (_conMora?"\n\nPor los "+_diasAtr+" días de atraso se sumó una mora de *"+f2(_mp)+" "+monP+"* (un cargo fijo por el atraso más una parte que corre cada día), así que quedaría en *"+f2(_total)+" "+monP+"*. Mientras más esperemos, más sube — si hoy no puedes, dime qué día sí y lo acomodamos.":"")+
+    msg="Hola "+p.desc+"! 👋 Te escribo porque la cuota "+cu.n+" venció el "+cu.fecha+" y no la veo reflejada aún."+
+      "\n\n*Total a pagar: "+f2(_total)+" "+monP+"*"+_equivBRL(_total,monP)+
+      (_conMora?"\n_Incluye "+_diasAtr+" día"+(_diasAtr===1?"":"s")+" de atraso. Mientras más esperemos, más sube — si hoy no puedes, dime qué día sí y lo acomodamos._":"")+
       "\n\n¿Me puedes confirmar cuándo la pasas? 🙏";
   } else if(esHoy){
-    msg="Hola "+p.desc+"! 👋 Hoy es la fecha de tu cuota "+cu.n+" de *"+f2(cu.monto)+" "+monP+"*."+_bloqueMora+"\n\nCuando puedas la confirmas por aquí. ¡Gracias! 🙏";
+    msg="Hola "+p.desc+"! 👋 Hoy es la fecha de tu cuota "+cu.n+"."+
+      "\n\n*Total a pagar: "+f2(_total)+" "+monP+"*"+_equivBRL(_total,monP)+
+      (_conMora?"\n_Incluye mora pendiente._":"")+
+      "\n\nCuando puedas la confirmas por aquí. ¡Gracias! 🙏";
   } else {
-    msg="Hola "+p.desc+"! 👋 Te recuerdo que tu próxima cuota ("+cu.n+") de *"+f2(cu.monto)+" "+monP+"* vence el "+cu.fecha+"."+_bloqueMora+"\n\n¡Gracias! 🙏";
+    msg="Hola "+p.desc+"! 👋 Te recuerdo que tu próxima cuota ("+cu.n+") vence el "+cu.fecha+"."+
+      "\n\n*Total a pagar: "+f2(_total)+" "+monP+"*"+_equivBRL(_total,monP)+
+      (_conMora?"\n_Incluye mora pendiente._":"")+
+      "\n\n¡Gracias! 🙏";
   }
   window.open("https://wa.me/?text="+encodeURIComponent(msg),"_blank");
 }
@@ -12863,6 +12882,11 @@ function recordarCuotaWA(id){
 // pagar hoy (saldo pendiente del préstamo + mora si corre), sin frases
 // de "te recuerdo" ni fecha de la cuota. Para cuando ella necesita
 // cobrar YA. Sus palabras: "hacer el cobro para cobrar por mensaje".
+//
+// ARREGLO 200 · la mora SUMA al total y NO se desglosa al cliente (sus
+// palabras: "no voy a cobrar separado"), y si el préstamo es en USDT
+// pero el cliente paga en reales, se incluye el equivalente en BRL con
+// la tasa de referencia del día.
 function cobrarPrestamoWA(id){
   var p=(S.prestamos||[]).find(function(x){return x.id===id;});
   if(!p) return;
@@ -12879,10 +12903,18 @@ function cobrarPrestamoWA(id){
   var _mp=moraPendiente(p);
   var _total=Math.round((saldoPend+_mp)*100)/100;
   var msg="Hola "+p.desc+"! 💰 Te escribo para cobrarte el saldo del préstamo.";
-  if(_mp>0.009){
-    msg+="\n\n*Total a pagar: "+f2(_total)+" "+monP+"*\n- "+f2(saldoPend)+" "+monP+" del préstamo\n- "+f2(_mp)+" "+monP+" de mora por el atraso";
-  } else {
-    msg+="\n\n*Total a pagar: "+f2(saldoPend)+" "+monP+"*";
+  msg+="\n\n*Total a pagar: "+f2(_total)+" "+monP+"*";
+  // Equivalente en reales si el préstamo es en otra moneda y hay tasa.
+  // getRateToUsdt("BRL") devuelve BRL por USDT; para pasar un total en
+  // USDT a BRL, multiplicamos. Si el préstamo es en VES, lo pasamos a
+  // USDT primero con bkUsdt.
+  if(monP!=="BRL"){
+    var _rBRL=(typeof getRateToUsdt==="function")?getRateToUsdt("BRL"):0;
+    var _totUsdt=(monP==="USDT")?_total:(typeof bkUsdt==="function"?bkUsdt(_total,monP):0);
+    if(_rBRL>0 && _totUsdt>0){
+      var _totBRL=Math.round(_totUsdt*_rBRL*100)/100;
+      msg+="\n_Equivalente: ~R$ "+f2(_totBRL)+" a la tasa de hoy._";
+    }
   }
   msg+="\n\nConfírmame cuando lo pases. ¡Gracias! 🙏";
   window.open("https://wa.me/?text="+encodeURIComponent(msg),"_blank");
