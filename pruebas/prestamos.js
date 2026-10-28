@@ -13408,11 +13408,19 @@ console.log("\nARREGLO 198 · pagado/pendiente + proxima cuota en la tarjeta");
   // El cardActivo de prestamos es el que lleva _vencidaPr (hay otros bk-item
   // en Por Cobrar, en cardPagado y en avisos — todos con la misma clase).
   var idxCardActivo = HTML.indexOf("<div class='bk-item \"+(_vencidaPr?");
-  var seg = HTML.substring(idxCardActivo, idxCardActivo+3000);
+  var seg = HTML.substring(idxCardActivo, idxCardActivo+4500);
   ok(!/bk-item-amt bk-num[^"]*"\+f2\(tieneAbonos\?saldoPend/.test(seg),
      "el bk-item-amt grande del header se retiro");
-  ok(/_moraPend>0\.009\?[\s\S]{0,300}f2\(_moraPend\)\+" mora/.test(seg),
-     "pero si hay mora, se nombra en el header (es un cargo APARTE, regla CLAUDE.md)");
+  // ARREGLO 198b · banda "cobrarle completo hoy" cuando corre mora
+  ok(/pr-cobro-tit[^<]*>.{0,30}Cobrarle completo hoy/.test(seg),
+     "si hay mora, sale la banda con el total a cobrar (ella pidio el desglose junto)");
+  // El total es saldoPend + _moraPend, calculado una sola vez.
+  ok(/pr-cobro-tot[^<]*>\"\+f2\(Math\.round\(\(saldoPend\+_moraPend\)/.test(seg),
+     "el total es saldoPend + _moraPend, no un numero suelto");
+  // Y el desglose dice QUE SE SUMAN las dos (prestamo + mora) pero las
+  // nombra aparte — la mora NO se absorbe en el pendiente del tile.
+  ok(/f2\(saldoPend\)\+" del pr[\s\S]{0,200}f2\(_moraPend\)\+" de mora/.test(seg),
+     "el desglose nombra las dos bolsas separadas: prestamo + mora");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
