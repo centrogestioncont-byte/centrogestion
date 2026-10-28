@@ -2869,9 +2869,9 @@ ok(F._htmlAvisoPisado() === "", "y sin choques no ocupa ni un pixel");
   // (ARREGLO 112)—, todos fuera de la zona que hace scroll. El margen es un
   // presupuesto: admite que entre otro aviso, pero no que la lista crezca
   // sin control ni que alguno se caiga dentro del scroll.
-  ok(/_htmlAvisoPisado\(\)\+[\s\S]{0,320}?"<div class='navbar3'>"/.test(HTML.replace(/\/\/[^\n]*\n/g, "\n")),
+  ok(/_htmlAvisoPisado\(\)\+[\s\S]{0,400}?"<div class='navbar3'>"/.test(HTML.replace(/\/\/[^\n]*\n/g, "\n")),
    "el aviso va arriba del panel, fuera del scroll");
-  ok(/_htmlAvisoMesSinCerrar\(\)\+[\s\S]{0,320}?"<div class='navbar3'>"/.test(HTML.replace(/\/\/[^\n]*\n/g, "\n")),
+  ok(/_htmlAvisoMesSinCerrar\(\)\+[\s\S]{0,400}?"<div class='navbar3'>"/.test(HTML.replace(/\/\/[^\n]*\n/g, "\n")),
      "y el aviso del mes sin cerrar, tambien");
   // ARREGLO 112: y el de la tasa por debajo del suelo, que es el unico de los
   // nuevos que cuesta dinero en CADA remesa que registre.
@@ -13350,6 +13350,34 @@ console.log("\nARREGLO 196 · cambiar cuentaDest refresca el 'de donde salen'");
     ok(/upC\(\\?"tx\\?"\)/.test(onch),
        "selector cuentaDest #"+(i+1)+" llama a upC(\"tx\")");
   });
+}
+
+// ARREGLO 197 · aviso de cuotas de prestamos arriba del panel
+console.log("\nARREGLO 197 · aviso de cuotas de prestamos");
+{
+  const HS = sinComentarios(HTML);
+  const fn = sinComentarios(sacarFuncion("_cuotasPrestamosProximas"));
+  // Tres categorias: mora (vencidas), vencen hoy, vencen mañana.
+  ok(/out\.mora/.test(fn) && /out\.hoy/.test(fn) && /out\.manana/.test(fn),
+     "agrupa en tres: mora, hoy, mañana");
+  // Solo prestamos activos — un cerrado no tiene cuota que cobrar.
+  ok(/estado==="cerrado"/.test(fn),
+     "los prestamos cerrados no entran");
+  // proximaCuotaPendiente ya cubre la logica de "cuota con saldo" — no
+  // calcular aparte (regla del 34,27 contra 34,28).
+  ok(/proximaCuotaPendiente\(p\)/.test(fn),
+     "lee de proximaCuotaPendiente, no calcula aparte");
+
+  const av = sinComentarios(sacarFuncion("_htmlAvisoPrestamosCobro"));
+  // En verde no gasta espacio (ARREGLO 99).
+  ok(/if\(!c\.mora\.length && !c\.hoy\.length && !c\.manana\.length\) return ""/.test(av),
+     "sin cuotas por cobrar no sale");
+  // Montado en rApp despues del aviso de tope mensual.
+  ok(/_htmlAvisoTopeMensual\(\)\+[\s\S]{0,80}_htmlAvisoPrestamosCobro\(\)\+/.test(HS),
+     "va en rApp arriba del panel, despues del tope mensual");
+  // Lleva al tab de prestamos para accion directa.
+  ok(/st\(\\"prestamos\\"\)/.test(av),
+     "el boton lleva al tab de prestamos");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

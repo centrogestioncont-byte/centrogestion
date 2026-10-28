@@ -3276,7 +3276,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261028_v277";
+var APP_VERSION = "20261028_v278";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -23650,6 +23650,7 @@ function rMain(){
     _htmlAvisoFaturaTarjeta()+  // ARREGLO 184
     _htmlAvisoRBT12()+          // ARREGLO 177
     _htmlAvisoTopeMensual()+    // ARREGLO 193
+    _htmlAvisoPrestamosCobro()+ // ARREGLO 197
     _htmlAvisoTasaFijo()+       // ARREGLO 112
     "<div class='navbar3'>"+
       "<button class='menubtn' onclick='document.getElementById(\"navMenuWrap\").classList.add(\"show\")'>☰ Menú</button>"+
@@ -37073,6 +37074,71 @@ function _estadoRBT12(){
 
 // El aviso arriba del panel (fuera del scroll, ARREGLO 62). Solo sale en
 // amarillo, rojo o legal. "ok" devuelve "" para no gastar espacio.
+// ARREGLO 197 · recordatorios de cuotas de préstamos arriba del panel.
+// Sus palabras del 28/10: "mi cliente no le llega mensajes antes de cobro
+// ni le avisa los dias de mora osea que si yo no me meto en prestamos no
+// me doy cuenta que la gente ya esta cobrando yuros". El botón "Recordar"
+// de cada préstamo ya arma el WhatsApp (recordarCuotaWA): el que faltaba
+// era el disparador para que ELLA no tuviera que entrar a Préstamos.
+// Mira las cuotas pendientes de los préstamos activos y las agrupa por
+// estado: en mora (iso<hoy), vencen hoy, vencen mañana.
+function _cuotasPrestamosProximas(){
+  var hoy=td();
+  // mañana en ISO: aaaa-mm-dd
+  var h=new Date(hoy+"T00:00:00");
+  h.setDate(h.getDate()+1);
+  var mn=h.getFullYear()+"-"+String(h.getMonth()+1).padStart(2,"0")+"-"+String(h.getDate()).padStart(2,"0");
+  var out={mora:[], hoy:[], manana:[]};
+  (S.prestamos||[]).forEach(function(p){
+    if(!p || p.estado==="cerrado") return;
+    var cu=proximaCuotaPendiente(p);
+    if(!cu || !cu.iso) return;
+    // Nombre del cliente: viene en p.desc (en recordarCuotaWA se usa igual).
+    var reg={p:p, cu:cu, nombre:p.desc||"cliente"};
+    if(cu.iso < hoy) out.mora.push(reg);
+    else if(cu.iso === hoy) out.hoy.push(reg);
+    else if(cu.iso === mn) out.manana.push(reg);
+  });
+  return out;
+}
+function _htmlAvisoPrestamosCobro(){
+  var c=_cuotasPrestamosProximas();
+  if(!c.mora.length && !c.hoy.length && !c.manana.length) return "";
+  // Dos filas si hace falta: rojo (mora + vencen hoy) y amarillo (mañana).
+  // En verde no gasta espacio (ARREGLO 99).
+  var html="";
+  var urgentes=c.mora.length + c.hoy.length;
+  if(urgentes>0){
+    var texto="";
+    if(c.mora.length)
+      texto+="<b>🔴 "+c.mora.length+" cuota"+(c.mora.length===1?"":"s")+" en mora</b> · "+
+        c.mora.slice(0,3).map(function(r){return _escAud(r.nombre)+" ("+r.cu.fecha+")";}).join(" · ")+
+        (c.mora.length>3?" · +"+(c.mora.length-3):"");
+    if(c.hoy.length){
+      if(texto) texto+=" &nbsp;&nbsp;|&nbsp;&nbsp; ";
+      texto+="<b>🟢 "+c.hoy.length+" vence"+(c.hoy.length===1?"":"n")+" HOY</b> · "+
+        c.hoy.slice(0,3).map(function(r){return _escAud(r.nombre);}).join(" · ");
+    }
+    html+="<div style='background:var(--neg);color:var(--sobre-color);padding:10px 14px;"+
+      "display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-bottom:2px solid var(--sup3)'>"+
+      "<div style='flex:1;min-width:200px;font-size:12.5px;line-height:1.5'>"+texto+"</div>"+
+      "<button onclick='st(\"prestamos\")' style='background:var(--sobre-color);color:var(--tit);border:none;"+
+        "padding:7px 13px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer'>Ver préstamos</button>"+
+    "</div>";
+  }
+  if(c.manana.length){
+    var tm="<b>🟡 "+c.manana.length+" cuota"+(c.manana.length===1?"":"s")+" vence"+(c.manana.length===1?"":"n")+" mañana</b> · "+
+      c.manana.slice(0,3).map(function(r){return _escAud(r.nombre);}).join(" · ")+
+      (c.manana.length>3?" · +"+(c.manana.length-3):"");
+    html+="<div style='background:var(--am3);color:var(--sobre-color);padding:10px 14px;"+
+      "display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-bottom:2px solid var(--sup3)'>"+
+      "<div style='flex:1;min-width:200px;font-size:12.5px;line-height:1.5'>"+tm+"</div>"+
+      "<button onclick='st(\"prestamos\")' style='background:var(--sobre-color);color:var(--tit);border:none;"+
+        "padding:7px 13px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer'>Ver préstamos</button>"+
+    "</div>";
+  }
+  return html;
+}
 // ARREGLO 193 · aviso del mes en curso cerca del tope mensual sugerido.
 // Solo el mes en curso: un mes ya cerrado no se puede frenar. Vive donde
 // el aviso del RBT12 (arriba del panel, fuera del scroll, ARREGLO 62).
