@@ -11026,7 +11026,9 @@ console.log("\nARREGLO 138 · el metodo sale del origen de los bolivares");
   // mataria el campo") dejo de ser cierta con el contenedor.
   ok((HTML.match(/upC\(\\"tx\\"\);_autoMetodoTxPronto\(\)' onchange='_autoMetodoTx\(\)'/g)||[]).length===2,
      "el monto y la tasa del dia marcan el metodo al teclear Y al salir del campo");
-  ok(/S\.tx\.cuentaDest=this\.value;_autoMetodoTx\(\)/.test(HTML),
+  // ARREGLO 196 · ahora el selector tambien refresca upC("tx") antes del
+  // metodo, para que el bloque "de donde salen" no mienta.
+  ok(/S\.tx\.cuentaDest=this\.value;upC\(\\"tx\\"\);_autoMetodoTx\(\)/.test(HTML),
      "y cambiar la cuenta de entrega tambien, que cambia de que lotes sale");
 
   S.inventarioUsdt=inv; S.tx=tx;
@@ -13323,6 +13325,31 @@ console.log("\nARREGLO 194 · margen neto / capital real / no cuadra");
   ok(!/_tile\("Ganaste"/.test(block) && !/_tile\("Creció"/.test(block)
      && !/_tile\("Diferencia"/.test(block),
      "los rotulos viejos no vuelven");
+}
+
+// ARREGLO 196 · cambiar la cuenta de pago refresca el reparto FIFO
+console.log("\nARREGLO 196 · cambiar cuentaDest refresca el 'de donde salen'");
+{
+  // Lo cazo ella el 28/10: eligio BdV (85.420 Bs libres) y la pantalla
+  // seguia mostrando el reparto del pool con tasa mezclada en vez de la
+  // pura de BdV. Lo guardado sí era correcto; la vista previa mentia.
+  // El ARREGLO 171 ya lo habia arreglado para el selector del aliado USDT.
+  // Faltaba este.
+  const reS = /S\.tx\.cuentaDest=this\.value;([^']+)'/g;
+  const H = HTML; // sin sinComentarios para pillarlos tal cual estan en el codigo
+  let m, encontrados = [];
+  while ((m = reS.exec(H)) !== null) {
+    encontrados.push(m[1]);
+  }
+  ok(encontrados.length >= 2,
+     "hay al menos dos selectores de cuentaDest en S.tx (VES y USDT del aliado)");
+  // Cada selector debe refrescar upC("tx"). Un onchange que solo mueve el
+  // valor sin refrescar deja la pantalla mintiendo (ARREGLOs 55, 120, 136, 140, 171).
+  encontrados.forEach(function(onch, i){
+    // Las comillas en el string estan escapadas en el fuente: upC(\"tx\")
+    ok(/upC\(\\?"tx\\?"\)/.test(onch),
+       "selector cuentaDest #"+(i+1)+" llama a upC(\"tx\")");
+  });
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
