@@ -13421,54 +13421,47 @@ console.log("\nARREGLO 198 · pagado/pendiente + proxima cuota en la tarjeta");
      "el desglose nombra las dos bolsas separadas: prestamo + mora");
 }
 
-// ARREGLO 199/200 · boton Cobrar + mora SUMADA + equivalente en BRL
-console.log("\nARREGLO 199/200 · cobrar por mensaje");
+// ARREGLO 204 · Cobrar abre un formulario antes de ir a WhatsApp
+// Sus palabras del 28/10: "en cobrar la cuota que viene o si son varias
+// yo selecciono qué, esa qué tasa y todo eso". Antes 💰 Cobrar mandaba
+// directo el saldo entero con la tasa de hoy; ahora pregunta cuota,
+// moneda, tasa y mora, y DE AHÍ arma el mensaje.
+console.log("\nARREGLO 204 · formulario de cobrar antes del WhatsApp");
 {
-  // cobrarPrestamoWA: total consolidado (saldo + mora) sin desglose al
-  // cliente, con equivalente en BRL si el prestamo no es en reales.
-  var cb = sinComentarios(sacarFuncion("cobrarPrestamoWA"));
-  ok(/Math\.max\(0,Math\.round\(\(montoBase-totalAbonado\)\*100\)\/100\)/.test(cb),
-     "cobrarPrestamoWA lee el saldo pendiente del prestamo");
-  ok(/moraPendiente\(p\)/.test(cb),
-     "y suma la mora pendiente si corre");
-  ok(/saldoPend<=0\.009/.test(cb),
-     "y no deja cobrar si el prestamo ya esta saldado");
-  ok(/Total a pagar/.test(cb),
-     "el mensaje dice 'Total a pagar' con la cifra");
-  ok(/wa\.me\/\?text=/.test(cb),
-     "y abre WhatsApp");
-  // ARREGLO 200 · la mora NO se desglosa como linea aparte en el mensaje.
-  ok(!/del pr[eé]stamo[\s\S]{0,120}de mora por el atraso/.test(cb),
-     "la mora no se nombra separada en cobrarPrestamoWA (ella no cobra separado)");
-  // Y hay equivalente BRL cuando no es BRL.
-  ok(/monP!=="BRL"/.test(cb) && /Equivalente: ~R\$ /.test(cb),
-     "incluye equivalente en reales cuando el prestamo no es en BRL");
+  // El botón 💰 Cobrar ya no llama a cobrarPrestamoWA sino al abridor.
+  var abrir = sinComentarios(sacarFuncion("abrirCobrarPrest"));
+  ok(/S\._cobrarPrestId===id/.test(abrir),
+     "abrirCobrarPrest hace toggle con S._cobrarPrestId");
+  ok(/S\._pagarPrestId=null/.test(abrir),
+     "y cierra el formulario de abonar si estaba abierto en este préstamo");
+  ok(/S\.nCobrar=\{/.test(abrir),
+     "e inicializa S.nCobrar con los valores por omisión");
 
-  // recordarCuotaWA ahora dice la mora SIEMPRE que corra, no solo cuando
-  // la cuota ya vencio. ARREGLO 200: tambien consolida y añade R$.
-  var rc = sinComentarios(sacarFuncion("recordarCuotaWA"));
-  ok(/_conMora=_mp>0\.009/.test(rc),
-     "recordar calcula _conMora de la mora pendiente");
-  ok(/Total a pagar: /.test(rc),
-     "los mensajes muestran 'Total a pagar' con la mora SUMADA");
-  // Y la funcion de equivalente BRL se declara localmente.
-  ok(/function _equivBRL/.test(rc),
-     "arma el equivalente en reales con tasa del dia");
-  // La vieja frase "- X USDT de mora por el atraso" NO vuelve.
-  ok(!/USDT de mora por el atraso/.test(rc),
-     "la mora no se nombra como linea separada (ARREGLO 200)");
+  // enviarCobrarWA es el que de verdad abre WhatsApp con lo elegido.
+  var env = sinComentarios(sacarFuncion("enviarCobrarWA"));
+  ok(/_montoACobrarPr\(p, ?nc\.cuotaSel\)/.test(env),
+     "enviarCobrarWA lee la cuota elegida del formulario");
+  ok(/nc\.cobrarMora\?moraPendiente\(p\):0/.test(env),
+     "y suma la mora solo si ella marcó el checkbox");
+  ok(/wa\.me\/\?text=/.test(env),
+     "y abre WhatsApp con el mensaje armado");
+  ok(/S\._cobrarPrestId=null/.test(env),
+     "cierra el formulario después de enviar");
 
-  // El boton nuevo esta en la botonera del prestamo activo, entre Recordar
-  // y Captura — asi queda cerca del Recordar que es su hermano logico.
+  // La puerta única del monto por cuota (misma regla que _tasaFijadaAMano,
+  // _cuotasPendPr, etc.): calculada en un sitio, leída por formulario y
+  // enviador. Calculada aparte se separarían con el primer cambio.
+  var mAC = sinComentarios(sacarFuncion("_montoACobrarPr"));
+  ok(/cuotaSel==="saldo"/.test(mAC),
+     '_montoACobrarPr distingue "saldo" de una cuota concreta');
+
+  // El botón de la tarjeta llama al abridor, no al enviador directo.
   var idx = HTML.indexOf("<div class='bk-item \"+(_vencidaPr?");
   var seg = HTML.substring(idx, idx+5000);
-  ok(/cobrarPrestamoWA\(\"\+p\.id\+\"\)[^>]*>.{0,30}Cobrar</.test(seg),
-     "el boton 'Cobrar' esta en la tarjeta de prestamo activo");
-  // Y despues del Recordar, antes del Captura.
-  var iRe = seg.indexOf("recordarCuotaWA");
-  var iCob = seg.indexOf("cobrarPrestamoWA");
-  var iCap = seg.indexOf("adjuntarCapturaPrestamo");
-  ok(iRe < iCob && iCob < iCap, "y en orden: Recordar · Cobrar · Captura");
+  ok(/abrirCobrarPrest\(\"\+p\.id\+\"\)/.test(seg),
+     "el botón 💰 Cobrar llama a abrirCobrarPrest, no al WhatsApp directo");
+  ok(!/onclick='cobrarPrestamoWA/.test(HTML),
+     "ningún botón de la UI llama ya a cobrarPrestamoWA");
 }
 
 // ARREGLO 201 · tasa de hoy pre-rellena en abono / cobrar cuando cambia la moneda
