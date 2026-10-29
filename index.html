@@ -3302,7 +3302,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261029_v284";
+var APP_VERSION = "20261029_v285";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -12883,37 +12883,127 @@ function recordarCuotaWA(id){
 // palabras: "no voy a cobrar separado"), y si el préstamo es en USDT
 // pero el cliente paga en reales, se incluye el equivalente en BRL con
 // la tasa de referencia del día.
-function cobrarPrestamoWA(id){
+// ARREGLO 204 · "Cobrar" ya no manda directo al WhatsApp. Sus palabras del
+// 28/10: "en cobrar la cuota que viene o si son varias yo selecciono qué,
+// esa qué tasa y todo eso". Antes se mandaba el saldo TOTAL con la tasa
+// de hoy sin preguntar — ella pedía elegir cuota, moneda y mora.
+//
+// `_cuotasPendPr(p)` recorre las cuotas y devuelve las que todavía faltan
+// con lo que de verdad queda de cada una (si una está medio abonada, es
+// lo que queda, no el valor de cara). Se calcula en UN sitio y lo leen
+// `abrirCobrarPrest` (para la cuota por omisión) y el formulario (para
+// la lista). Calculado aparte se separarían con el primer cambio.
+function _cuotasPendPr(p){
+  if(!p || !p.cuotas || !p.cuotas.length) return [];
+  var totalAb=(p.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);
+  var acum=0, out=[];
+  p.cuotas.forEach(function(cu,i){
+    var acumPrevio=acum;
+    acum+=cu.monto;
+    if(totalAb<acum-0.01){
+      var yaPag=Math.max(0,totalAb-acumPrevio);
+      out.push({n:i+1, fecha:cu.fecha, monto:Math.round((cu.monto-yaPag)*100)/100});
+    }
+  });
+  return out;
+}
+// Lo que se le va a cobrar HOY en la moneda del préstamo, según cuota
+// elegida. "saldo" = todo lo pendiente.
+function _montoACobrarPr(p, cuotaSel){
+  var montoBase=parseFloat(p.monto||p.sal)||0;
+  var totalAb=(p.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);
+  var saldo=Math.max(0,Math.round((montoBase-totalAb)*100)/100);
+  if(cuotaSel==="saldo" || !p.cuotas || !p.cuotas.length) return saldo;
+  var pend=_cuotasPendPr(p);
+  var hit=pend.find(function(cp){return String(cp.n)===String(cuotaSel);});
+  return hit?Math.min(saldo,hit.monto):saldo;
+}
+function abrirCobrarPrest(id){
   var p=(S.prestamos||[]).find(function(x){return x.id===id;});
   if(!p) return;
-  var monP=p.mon||"USDT";
-  // Mismo cálculo que ya hace la tarjeta: saldo pendiente del préstamo,
-  // leído de los abonos. Es la bolsa que SÍ baja el saldo (regla fuerte).
+  // Toggle: si ya estaba abierto este mismo, lo cierro.
+  if(S._cobrarPrestId===id){ S._cobrarPrestId=null; R(); return; }
+  // Si el formulario de abono estaba abierto en este préstamo, lo cierro
+  // para no tener dos paneles encima (uno es REGISTRAR, otro es PEDIR).
+  if(S._pagarPrestId===id) S._pagarPrestId=null;
+  // Validación: si no queda nada que cobrar, no abro el formulario.
   var montoBase=parseFloat(p.monto||p.sal)||0;
-  var totalAbonado=(p.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);
-  var saldoPend=Math.max(0,Math.round((montoBase-totalAbonado)*100)/100);
-  if(saldoPend<=0.009){
+  var totalAb=(p.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);
+  var saldo=Math.max(0,Math.round((montoBase-totalAb)*100)/100);
+  if(saldo<=0.009){
     alert("Este préstamo ya está saldado. No hay nada que cobrar.");
     return;
   }
+  var monP=p.mon||"USDT";
+  var pend=_cuotasPendPr(p);
   var _mp=moraPendiente(p);
-  var _total=Math.round((saldoPend+_mp)*100)/100;
-  var msg="Hola "+p.desc+"! 💰 Te escribo para cobrarte el saldo del préstamo.";
-  msg+="\n\n*Total a pagar: "+f2(_total)+" "+monP+"*";
-  // Equivalente en reales si el préstamo es en otra moneda y hay tasa.
-  // getRateToUsdt("BRL") devuelve BRL por USDT; para pasar un total en
-  // USDT a BRL, multiplicamos. Si el préstamo es en VES, lo pasamos a
-  // USDT primero con bkUsdt.
-  if(monP!=="BRL"){
-    var _rBRL=(typeof getRateToUsdt==="function")?getRateToUsdt("BRL"):0;
-    var _totUsdt=(monP==="USDT")?_total:(typeof bkUsdt==="function"?bkUsdt(_total,monP):0);
-    if(_rBRL>0 && _totUsdt>0){
-      var _totBRL=Math.round(_totUsdt*_rBRL*100)/100;
-      msg+="\n_Equivalente: ~R$ "+f2(_totBRL)+" a la tasa de hoy._";
+  S._cobrarPrestId=id;
+  S.nCobrar={
+    cuotaSel: pend.length?String(pend[0].n):"saldo",
+    monPago: monP,
+    tasaManual: "",
+    cobrarMora: _mp>0.009
+  };
+  R();
+}
+function setMonCobrarPrest(monPrest, monPago){
+  var nc=S.nCobrar||{};
+  nc.monPago=monPago;
+  // Al cambiar a una moneda distinta, se rellena la tasa de hoy (misma
+  // puerta que setMonPagoPrest del ARREGLO 201). Si vuelve a la del
+  // préstamo, se limpia: ahí no hay tasa que aplicar.
+  if(monPago!==monPrest){
+    var ta=(typeof _tasaAutoPago==="function")?_tasaAutoPago(monPrest, monPago):0;
+    nc.tasaManual=(ta>0)?f4(ta):"";
+  } else {
+    nc.tasaManual="";
+  }
+  S.nCobrar=nc; R();
+}
+// El que de verdad abre WhatsApp — con lo que ella eligió en el formulario.
+function enviarCobrarWA(id){
+  var p=(S.prestamos||[]).find(function(x){return x.id===id;});
+  if(!p) return;
+  var nc=S.nCobrar||{};
+  var monP=p.mon||"USDT";
+  var monPago=nc.monPago||monP;
+  var cuotaMonto=_montoACobrarPr(p, nc.cuotaSel);
+  if(cuotaMonto<=0.009){ alert("No hay nada que cobrar."); return; }
+  var _mp=nc.cobrarMora?moraPendiente(p):0;
+  var totalMon=Math.round((cuotaMonto+_mp)*100)/100;
+  var tasa=parseFloat(nc.tasaManual)||0;
+  var totalPago=totalMon;
+  if(monPago!==monP){
+    if(!(tasa>0)){
+      alert("Escribe la tasa de "+monP+" a "+monPago+" para calcular el total.");
+      return;
     }
+    totalPago=Math.round(totalMon*tasa*100)/100;
+  }
+  // Cómo nombra la cuota en el mensaje: una cuota concreta o "el saldo".
+  var cuotaTxt;
+  if(nc.cuotaSel && nc.cuotaSel!=="saldo" && p.cuotas){
+    var cu=p.cuotas[parseInt(nc.cuotaSel)-1];
+    cuotaTxt=cu?"la cuota "+nc.cuotaSel+" ("+cu.fecha+")":"el saldo pendiente";
+  } else {
+    cuotaTxt="el saldo pendiente";
+  }
+  var msg="Hola "+p.desc+"! 💰 Te escribo para cobrarte "+cuotaTxt+" del préstamo.";
+  // Si hay mora, se desglosa dentro del mensaje para que no haya "monto
+  // sin explicar" — es lo que ya hacía agradecerAbonoWA al revés.
+  if(_mp>0.009){
+    msg+="\n\nCuota: "+f2(cuotaMonto)+" "+monP;
+    msg+="\nMora por atraso: "+f2(_mp)+" "+monP;
+  }
+  msg+="\n\n*Total a pagar: "+f2(totalPago)+" "+monPago+"*";
+  if(monPago!==monP){
+    msg+="\n_("+f2(totalMon)+" "+monP+" a tasa "+f4(tasa)+")_";
   }
   msg+="\n\nConfírmame cuando lo pases. ¡Gracias! 🙏";
   window.open("https://wa.me/?text="+encodeURIComponent(msg),"_blank");
+  // Cierro el formulario después de enviar: enviado = decisión tomada.
+  S._cobrarPrestId=null;
+  R();
 }
 function agradecerAbonoWA(p,montoPagado,monPago,cuotaN,restante,excedenteInfo,moraCobrada){
   var monLoan=p.mon||"USDT";
@@ -35376,6 +35466,63 @@ function rPrestamos(){
       "</div>";
     }
 
+    // ARREGLO 204 · formulario de COBRAR, inline debajo de la tarjeta.
+    // Se abre con el botón 💰 Cobrar y pregunta: qué cuota, moneda, tasa,
+    // mora — y DE AHÍ arma el mensaje de WhatsApp. Antes 💰 mandaba
+    // directo con el saldo entero (ARREGLO 199), que no servía cuando
+    // quería cobrar solo una cuota o en otra moneda.
+    var cobrarForm="";
+    if(S._cobrarPrestId===p.id){
+      var MONEDAS_COB=["USDT","VES","BRL","USD","PEN","EUR","COP","TTD"];
+      var nc=S.nCobrar||{};
+      var monPagoC=nc.monPago||monP;
+      var cuotasPendC=_cuotasPendPr(p);
+      var cuotaMontoC=_montoACobrarPr(p, nc.cuotaSel);
+      var cobrarMoraC=(nc.cobrarMora!==false)&&(_moraPend>0.009);
+      var totalMonC=Math.round((cuotaMontoC+(cobrarMoraC?_moraPend:0))*100)/100;
+      var tasaCobManual=parseFloat(nc.tasaManual)||0;
+      var tasaCobAuto=(monPagoC!==monP)?_tasaAutoPago(monP,monPagoC):0;
+      var tasaCobUsar=tasaCobManual>0?tasaCobManual:(tasaCobAuto||0);
+      var totalPagoC=(monPagoC===monP)?totalMonC:Math.round(totalMonC*tasaCobUsar*100)/100;
+      cobrarForm="<div style='background:var(--sup2c);border:1px solid var(--line);border-left:3px solid var(--mal);border-radius:10px;padding:13px;margin-top:11px'>"+
+        "<div style='font-size:11.5px;font-weight:800;color:var(--ink2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:11px'>💰 Cobrar por WhatsApp</div>"+
+        "<div style='display:flex;flex-direction:column;gap:9px'>"+
+          (cuotasPendC.length>0?
+            "<div><label style='font-size:11.5px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>¿Qué cuota le cobrás?</label>"+
+            "<select onchange='S.nCobrar=Object.assign(S.nCobrar||{},{cuotaSel:this.value});R()' style='width:100%;padding:11px;font-size:14px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'>"+
+              cuotasPendC.map(function(cp){
+                return "<option value='"+cp.n+"'"+(String(nc.cuotaSel)===String(cp.n)?" selected":"")+">Cuota "+cp.n+" &middot; "+cp.fecha+" &middot; "+f2(cp.monto)+" "+monP+"</option>";
+              }).join("")+
+              "<option value='saldo'"+(nc.cuotaSel==="saldo"?" selected":"")+">Todo el saldo pendiente ("+f2(saldoPend)+" "+monP+")</option>"+
+            "</select></div>"
+          :"<div style='font-size:11.5px;color:var(--tx3)'>Saldo pendiente: <b style='color:var(--ink)'>"+f2(saldoPend)+" "+monP+"</b></div>")+
+          "<div><label style='font-size:11.5px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>¿En qué moneda le cobrás?</label>"+
+          "<select onchange='setMonCobrarPrest(\""+monP+"\",this.value)' style='width:100%;padding:11px;font-size:14px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'>"+
+            MONEDAS_COB.map(function(m){return "<option value='"+m+"'"+(monPagoC===m?" selected":"")+">"+m+(m===monP?" (moneda del préstamo)":"")+"</option>";}).join("")+
+          "</select></div>"+
+          (monPagoC!==monP?
+            "<div><label style='font-size:11.5px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>Tasa (1 "+monP+" = ? "+monPagoC+")</label>"+
+            "<input type='text' inputmode='decimal' value='"+(nc.tasaManual||"")+"' onfocus='this.select()' oninput='S.nCobrar=Object.assign(S.nCobrar||{},{tasaManual:_num(this.value)});R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'></div>"
+          :"")+
+          (_moraPend>0.009?
+            "<label style='display:flex;align-items:center;gap:9px;cursor:pointer;background:var(--mal-sup);border:1px solid var(--mal-ln);border-radius:9px;padding:9px 11px'>"+
+              "<input type='checkbox' "+(cobrarMoraC?"checked":"")+" onchange='S.nCobrar=Object.assign(S.nCobrar||{},{cobrarMora:this.checked});R()' style='width:17px;height:17px;flex-shrink:0'>"+
+              "<span style='font-size:12.5px;color:var(--mal);font-weight:700'>Incluir mora: "+f2(_moraPend)+" "+monP+"</span>"+
+            "</label>"
+          :"")+
+          "<div style='background:var(--vd6-c);border:1px solid var(--vd5);border-radius:9px;padding:11px'>"+
+            "<div style='font-size:11px;color:var(--tx3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px'>Le vas a cobrar</div>"+
+            "<div style='font-size:20px;font-weight:800;color:var(--ok)'>"+f2(totalPagoC)+" "+monPagoC+"</div>"+
+            (monPagoC!==monP?"<div style='font-size:11.5px;color:var(--tx3);margin-top:3px'>= "+f2(totalMonC)+" "+monP+" a tasa "+f4(tasaCobUsar)+"</div>":"")+
+          "</div>"+
+        "</div>"+
+        "<div style='display:flex;gap:8px;margin-top:12px'>"+
+          "<button onclick='S._cobrarPrestId=null;R()' style='padding:11px 16px;background:var(--sup);color:var(--tx2);border:1px solid var(--ln);border-radius:9px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit'>Cerrar</button>"+
+          "<button onclick='enviarCobrarWA("+p.id+")' style='flex:1;padding:12px;background:var(--mal);color:var(--sobre-color);border:none;border-radius:9px;font-size:14px;font-weight:800;cursor:pointer;font-family:inherit'>📱 Enviar por WhatsApp</button>"+
+        "</div>"+
+      "</div>";
+    }
+
     // Formulario de abono (columna única, inputs grandes)
     var abonoForm="";
     if(isPaying){
@@ -35677,13 +35824,14 @@ function rPrestamos(){
           // ARREGLO 199 · botón de cobro directo. Lo pidió ella el 28/10
           // ("hacer el cobro para cobrar por mensaje"). Manda un WhatsApp
           // con el total exacto a pagar hoy (saldo + mora si corre).
-          "<button class='bk-btn danger' onclick='cobrarPrestamoWA("+p.id+")'>💰 Cobrar</button>"+
+          "<button class='bk-btn "+(S._cobrarPrestId===p.id?"ghost":"danger")+"' onclick='abrirCobrarPrest("+p.id+")'>"+(S._cobrarPrestId===p.id?"✕ Cerrar":"💰 Cobrar")+"</button>"+
           "<button class='bk-btn ghost' onclick='adjuntarCapturaPrestamo("+p.id+")'>Captura</button>"+
           "<button class='bk-btn "+(isPaying?"ghost":"pri")+"' onclick='togglePagarPrest("+p.id+")'>"+(isPaying?"✕ Cancelar":"Abonar")+"</button>"+
         "</div>"+
       "</div>"+
       cuotasHtml+
       abonosHtml+
+      cobrarForm+
       abonoForm+
     "</div>";
   }
