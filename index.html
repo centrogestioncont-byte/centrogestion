@@ -3302,7 +3302,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261029_v285";
+var APP_VERSION = "20261029_v286";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -12959,6 +12959,37 @@ function setMonCobrarPrest(monPrest, monPago){
     nc.tasaManual="";
   }
   S.nCobrar=nc; R();
+}
+// ARREGLO 205 · dibuja el bloque "Le vas a cobrar" en UN sitio. Lo leen
+// el formulario al crearse y el refresco parcial de cada tecla. Dos sitios
+// se separarían con el primer cambio — el 34,27 contra 34,28 otra vez.
+function _htmlTotalCobrar(p){
+  var nc=S.nCobrar||{};
+  var monP=p.mon||"USDT";
+  var monPagoC=nc.monPago||monP;
+  var _mp=moraPendiente(p);
+  var cuotaMontoC=_montoACobrarPr(p, nc.cuotaSel);
+  var cobrarMoraC=(nc.cobrarMora!==false)&&(_mp>0.009);
+  var totalMonC=Math.round((cuotaMontoC+(cobrarMoraC?_mp:0))*100)/100;
+  var tasaCobManual=parseFloat(nc.tasaManual)||0;
+  var tasaCobAuto=(monPagoC!==monP)?_tasaAutoPago(monP,monPagoC):0;
+  var tasaCobUsar=tasaCobManual>0?tasaCobManual:(tasaCobAuto||0);
+  var totalPagoC=(monPagoC===monP)?totalMonC:Math.round(totalMonC*tasaCobUsar*100)/100;
+  return "<div style='font-size:11px;color:var(--tx3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px'>Le vas a cobrar</div>"+
+    "<div style='font-size:20px;font-weight:800;color:var(--ok)'>"+f2(totalPagoC)+" "+monPagoC+"</div>"+
+    (monPagoC!==monP?"<div style='font-size:11.5px;color:var(--tx3);margin-top:3px'>= "+f2(totalMonC)+" "+monP+" a tasa "+f4(tasaCobUsar)+"</div>":"");
+}
+// ARREGLO 205 · refresco parcial del total al teclear la tasa. R() rehace
+// la tarjeta entera y mata el input bajo el dedo (ARREGLO 32 por sexta vez).
+// Lo cazó ella probando v285 el 28/10: "hay un bug que no deja escribir,
+// se corta". Sólo se refresca lo que depende de la tasa.
+function _refrescarCobrarTotal(id){
+  try{
+    var p=(S.prestamos||[]).find(function(x){return x.id===id;});
+    if(!p) return;
+    var el=document.getElementById("cob-total");
+    if(el) el.innerHTML=_htmlTotalCobrar(p);
+  }catch(e){}
 }
 // El que de verdad abre WhatsApp — con lo que ella eligió en el formulario.
 function enviarCobrarWA(id){
@@ -35477,13 +35508,7 @@ function rPrestamos(){
       var nc=S.nCobrar||{};
       var monPagoC=nc.monPago||monP;
       var cuotasPendC=_cuotasPendPr(p);
-      var cuotaMontoC=_montoACobrarPr(p, nc.cuotaSel);
       var cobrarMoraC=(nc.cobrarMora!==false)&&(_moraPend>0.009);
-      var totalMonC=Math.round((cuotaMontoC+(cobrarMoraC?_moraPend:0))*100)/100;
-      var tasaCobManual=parseFloat(nc.tasaManual)||0;
-      var tasaCobAuto=(monPagoC!==monP)?_tasaAutoPago(monP,monPagoC):0;
-      var tasaCobUsar=tasaCobManual>0?tasaCobManual:(tasaCobAuto||0);
-      var totalPagoC=(monPagoC===monP)?totalMonC:Math.round(totalMonC*tasaCobUsar*100)/100;
       cobrarForm="<div style='background:var(--sup2c);border:1px solid var(--line);border-left:3px solid var(--mal);border-radius:10px;padding:13px;margin-top:11px'>"+
         "<div style='font-size:11.5px;font-weight:800;color:var(--ink2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:11px'>💰 Cobrar por WhatsApp</div>"+
         "<div style='display:flex;flex-direction:column;gap:9px'>"+
@@ -35502,7 +35527,7 @@ function rPrestamos(){
           "</select></div>"+
           (monPagoC!==monP?
             "<div><label style='font-size:11.5px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>Tasa (1 "+monP+" = ? "+monPagoC+")</label>"+
-            "<input type='text' inputmode='decimal' value='"+(nc.tasaManual||"")+"' onfocus='this.select()' oninput='S.nCobrar=Object.assign(S.nCobrar||{},{tasaManual:_num(this.value)});R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'></div>"
+            "<input type='text' inputmode='decimal' value='"+(nc.tasaManual||"")+"' onfocus='this.select()' oninput='S.nCobrar=Object.assign(S.nCobrar||{},{tasaManual:_num(this.value)});_refrescarCobrarTotal("+p.id+")' style='width:100%;padding:12px;font-size:16px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'></div>"
           :"")+
           (_moraPend>0.009?
             "<label style='display:flex;align-items:center;gap:9px;cursor:pointer;background:var(--mal-sup);border:1px solid var(--mal-ln);border-radius:9px;padding:9px 11px'>"+
@@ -35510,11 +35535,7 @@ function rPrestamos(){
               "<span style='font-size:12.5px;color:var(--mal);font-weight:700'>Incluir mora: "+f2(_moraPend)+" "+monP+"</span>"+
             "</label>"
           :"")+
-          "<div style='background:var(--vd6-c);border:1px solid var(--vd5);border-radius:9px;padding:11px'>"+
-            "<div style='font-size:11px;color:var(--tx3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px'>Le vas a cobrar</div>"+
-            "<div style='font-size:20px;font-weight:800;color:var(--ok)'>"+f2(totalPagoC)+" "+monPagoC+"</div>"+
-            (monPagoC!==monP?"<div style='font-size:11.5px;color:var(--tx3);margin-top:3px'>= "+f2(totalMonC)+" "+monP+" a tasa "+f4(tasaCobUsar)+"</div>":"")+
-          "</div>"+
+          "<div id='cob-total' style='background:var(--vd6-c);border:1px solid var(--vd5);border-radius:9px;padding:11px'>"+_htmlTotalCobrar(p)+"</div>"+
         "</div>"+
         "<div style='display:flex;gap:8px;margin-top:12px'>"+
           "<button onclick='S._cobrarPrestId=null;R()' style='padding:11px 16px;background:var(--sup);color:var(--tx2);border:1px solid var(--ln);border-radius:9px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit'>Cerrar</button>"+
