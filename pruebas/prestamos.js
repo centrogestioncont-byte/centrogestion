@@ -141,7 +141,7 @@ const NECESARIAS = ["_egresosHuerfanos", "moverEgresoAPersonal", "_tasaDelDiaFue
                     "COM", "_comIU", "_localeOCR", "_numOCR",
                     "_candUSDT", "_candFiat", "_cuadrarP2P", "_parsearOCR", "_parsearConLocale", "_numLegible",
                     "_tasaAutoPago", "_deudaCubierta", "_htmlTasaInvertida",
-                    "_htmlTasaEnPalabras", "_htmlEquivAbono", "_htmlCalcPago",
+                    "_htmlTasaEnPalabras", "_htmlEquivAbono",
                     "_pasoRedondeoCobro", "_montoACobrar", "_fMontoCobro",
                     "_deudaACobrar",
                     "_jsonEstable", "_escAud", "_anotarTocado", "_unirTocado",
@@ -2389,9 +2389,8 @@ ok(F._htmlTasaEnPalabras(0, 5.30, "USDT", "BRL") === "",
    "y no aparece si todavia no hay de que hablar");
 ok(/87,80 USDT/.test(F._htmlEquivAbono(465.34, 5.30, "USDT", true, "del prestamo")),
    "el recuadro verde divide, ya no multiplica");
-const _calc = F._htmlCalcPago(87.80, 5.30, "BRL");
-ok(/465,34/.test(_calc) && /466 BRL/.test(_calc),
-   "y la calculadora al reves multiplica, ya no divide", _calc);
+// ARREGLO 203 · se fue la calculadora inversa del formulario de abonar
+// (confundía con el botón 💰 Cobrar), así que _htmlCalcPago ya no existe.
 
 // Guardias estructurales: que nadie vuelva a voltear la direccion.
 ok(/1 "\+monP\+" = \? "\+monPago\+"/.test(HTML),
@@ -2405,8 +2404,7 @@ ok(!/monto = Math\.round\(\(montoIngresado\*tasaManual\)\*100\)\/100;/.test(HTML
    "ni un solo sitio multiplica el monto recibido por la tasa manual");
 ok((HTML.match(/_deudaCubierta\(montoIngresado,tasaManual\)/g) || []).length === 2,
    "prestamos y cuentas por cobrar convierten por el mismo sitio");
-ok(/np\.monto=_montoACobrar\(obj,tm,monPago,techo\);/.test(HTML),
-   "la calculadora al reves multiplica y redondea por el mismo sitio");
+// ARREGLO 203 · se fue _rellenarMontoPrest con el bloque de calcular al revés.
 ok(!/np\.monto=Math\.round\(\(obj\/tm\)/.test(HTML),
    "y no queda rastro de la division vieja");
 // El recuadro verde se quedaba con la cuenta vieja porque solo se refrescaba
@@ -13509,6 +13507,21 @@ console.log("\nARREGLO 202 · ningun &var(--...) literal se cuela en el HTML");
 {
   ok(!/&var\(--/.test(HTML),
      "no queda ningun &var(--...) literal en index.html");
+}
+
+// ARREGLO 203 · fuera la calculadora inversa del formulario de abonar
+// Este formulario REGISTRA un pago ya recibido. Para "cuánto le cobro al
+// cliente" ya está el botón 💰 Cobrar (ARREGLO 199). Dos sitios para la
+// misma pregunta se separan con el primer cambio (ARREGLO 98).
+console.log("\nARREGLO 203 · fuera la calculadora inversa del formulario de abonar");
+{
+  var HTMLnc = sinComentarios(HTML);
+  ok(!/O calcul[áa] al rev[ée]s/.test(HTMLnc),
+     "no queda el bloque 'O calculá al revés' en el formulario");
+  ok(!/chgObjetivoPrest/.test(HTMLnc),
+     "chgObjetivoPrest se retiró con el bloque");
+  ok(!/function _htmlCalcPago/.test(HTMLnc),
+     "_htmlCalcPago se retiró con el bloque");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

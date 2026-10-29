@@ -3302,7 +3302,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261028_v283";
+var APP_VERSION = "20261029_v284";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -8649,50 +8649,14 @@ function _htmlEquivAbono(montoPago,tasa,monDeuda,esManual,cola){
   if(!(tasa>0)||!(montoPago>0)) return "";
   return "<div style='font-size:13px;font-weight:800;color:var(--vd2);background:var(--vd6-c);border-radius:7px;padding:8px 10px;margin-top:5px'>= "+f2(_deudaCubierta(montoPago,tasa))+" "+monDeuda+" "+cola+" ("+(esManual?"tasa manual":"tasa actual")+")</div>";
 }
-function _htmlCalcPago(objetivo,tasa,monPago,techo){
-  if(!(tasa>0)||!(objetivo>0)) return "<div style='font-size:10px;color:var(--tx3);margin-top:4px'>Escrib&iacute; la tasa arriba para ver la cuenta</div>";
-  var ef=_deudaACobrar(objetivo,techo);
-  var exacto=Math.round(ef*tasa*100)/100;
-  var pedir=_montoACobrar(objetivo,tasa,monPago,techo);
-  var nota=(ef<objetivo-0.005)
-    ? " <span style='font-weight:400;color:var(--vd3)'>(ajustado a lo que todav&iacute;a debe)</span>"
-    : ((Math.abs(pedir-exacto)<0.005)?"":" <span style='font-weight:400;color:var(--vd3)'>(de "+f2(exacto)+", redondeado hacia arriba)</span>");
-  return "<div style='font-size:12px;color:var(--ok);font-weight:700;margin-top:6px'>&rarr; el cliente te debe dar <b>"+_fMontoCobro(pedir,monPago)+" "+monPago+"</b> (tasa "+f4(tasa)+")"+nota+"</div>";
-}
-// ARREGLO 29: al escribir cuanto se quiere cobrar en la moneda del prestamo,
-// se calcula y se rellena el monto que el cliente tiene que entregar.
-// ARREGLO 32 (04/09/2026): este campo llamaba a R() en cada letra, que
-// redibuja la pantalla y destruye el input: habia que escribir letra por letra.
-// Ahora actualiza el resultado y el campo de monto directamente, sin redibujar.
-// ARREGLO 55: ademas de voltear la cuenta (obj x tasa, ya no obj / tasa),
-// se refrescan TODAS las cajitas que dependen de la tasa. Antes solo se
-// rellenaba el monto y el recuadro verde se quedaba con la cuenta vieja:
-// la pantalla ensenaba 16.566 arriba y 2.635,43 abajo, dos numeros que no
-// cuadraban entre si y que no habia forma de entender.
-function chgObjetivoPrest(v,monPrest,monPago,ref,techo){
-  S.nPagarPrest=Object.assign(S.nPagarPrest||{},{objetivo:v});
-  _rellenarMontoPrest(monPrest,monPago,techo);
-  _refrescarAbonoPrest(monPrest,monPago,ref,techo);
-}
+// ARREGLO 203 · se fueron `_htmlCalcPago`, `chgObjetivoPrest` y
+// `_rellenarMontoPrest`. Este formulario registra un pago YA RECIBIDO;
+// la calculadora inversa confundía — "para cobrar" ya está el botón
+// 💰 Cobrar (ARREGLO 199). ARREGLO 98 otra vez: una pantalla nueva
+// quita el control viejo, no se pone al lado.
 function chgTasaPrest(v,monPrest,monPago,ref,techo){
   S.nPagarPrest=Object.assign(S.nPagarPrest||{},{tasaManual:v});
-  // Si venia usando la calculadora al reves, el monto se rehace solo: si no,
-  // se quedaba el de la tasa anterior y el abono entraba con el monto viejo.
-  _rellenarMontoPrest(monPrest,monPago,techo);
   _refrescarAbonoPrest(monPrest,monPago,ref,techo);
-}
-function _rellenarMontoPrest(monPrest,monPago,techo){
-  var np=S.nPagarPrest||{};
-  var obj=parseFloat(np.objetivo)||0;
-  var tm=parseFloat(np.tasaManual)||_tasaAutoPago(monPrest,monPago)||0;
-  if(!(obj>0&&tm>0)) return;
-  // ARREGLO 56: el campo se rellena con lo que de verdad se le va a pedir,
-  // ya redondeado. Antes ponia 497,246 y ella tenia que arreglarlo a mano.
-  np.monto=_montoACobrar(obj,tm,monPago,techo);
-  try{
-    var inp=document.getElementById("pp-monto");
-    if(inp && document.activeElement!==inp) inp.value=np.monto;
-  }catch(e){}
 }
 // ARREGLO 32: nada de esto puede llamar a R(), que redibuja la pantalla y
 // destruye el input mientras se teclea.
@@ -8702,10 +8666,9 @@ function _refrescarAbonoPrest(monPrest,monPago,ref,techo){
     var tasaAuto=_tasaAutoPago(monPrest,monPago);
     var tm=parseFloat(np.tasaManual)||0;
     var tasaUsar=tm>0?tm:(tasaAuto||0);
-    var obj=parseFloat(np.objetivo)||0, mi=parseFloat(np.monto)||0;
-    var refUsar=obj>0?obj:(parseFloat(ref)||0);
+    var mi=parseFloat(np.monto)||0;
+    var refUsar=parseFloat(ref)||0;
     var el;
-    if((el=document.getElementById("pp-calc"))) el.innerHTML=_htmlCalcPago(obj,tasaUsar,monPago,techo);
     if((el=document.getElementById("pp-eq")))   el.innerHTML=_htmlEquivAbono(mi,tasaUsar,monPrest,tm>0,"del pr&eacute;stamo");
     if((el=document.getElementById("pp-dir")))  el.innerHTML=_htmlTasaEnPalabras(refUsar,tasaUsar,monPrest,monPago,techo);
     if((el=document.getElementById("pp-inv")))  el.innerHTML=_htmlTasaInvertida(tm,tasaAuto,monPrest,monPago);
@@ -35547,21 +35510,14 @@ function rPrestamos(){
           "</select></div>"+
           "<div><label style='font-size:11.5px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>Monto recibido ("+monPago+")</label>"+
           "<input id='pp-monto' type='text' inputmode='decimal' placeholder='0.00' value='"+(np.monto||"")+"' oninput='S.nPagarPrest=Object.assign(S.nPagarPrest||{},{monto:_num(this.value)});_refrescarAbonoPrest(\""+monP+"\",\""+monPago+"\","+_refPend+","+_techoPend+")' onchange='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'>"+
-          // ARREGLO 29 (04/09/2026): calculo en las DOS direcciones. Antes solo se
-          // podia escribir el monto en la moneda del pago; si querias cobrar
-          // "100 reales en USDT" habia que sacar la cuenta con la calculadora.
-          // Ahora se escribe cuanto se quiere cobrar en la moneda del PRESTAMO
-          // y la app dice cuanto tiene que dar el cliente en la moneda del pago.
-          (monPago!==monP?
-            "<div style='background:var(--az6-d);border:1px solid var(--az6-e);border-radius:8px;padding:9px 10px;margin-top:8px'>"+
-              "<label style='font-size:11.5px;font-weight:700;color:var(--info);display:block;margin-bottom:4px'>💡 O calculá al revés: cuánto querés cobrar en "+monP+"</label>"+
-              "<input type='text' inputmode='decimal' placeholder='ej: 100' value='"+(np.objetivo||"")+"' oninput='chgObjetivoPrest(_num(this.value),\""+monP+"\",\""+monPago+"\","+_refPend+","+_techoPend+")' style='width:100%;padding:10px;border:1.5px solid var(--az6-e);border-radius:8px;font-size:13px'>"+
-              // El div existe SIEMPRE, aunque esté vacío: si solo se dibujaba
-              // cuando ya había cuenta, la primera tecla no tenía dónde
-              // escribir el resultado y no se veía nada hasta redibujar.
-              "<div id='pp-calc'>"+_htmlCalcPago(parseFloat(np.objetivo)||0,parseFloat(np.tasaManual)||parseFloat(tasaAuto)||0,monPago,_techoPend)+"</div>"+
-            "</div>"
-          :"")+
+          // ARREGLO 203 · fuera la calculadora inversa de este formulario.
+          // Este formulario REGISTRA un pago que ya se recibió. Para saber
+          // "cuánto decirle al cliente antes de que pague" ya existe el
+          // botón 💰 Cobrar, que lo manda por WhatsApp con el total listo
+          // (ARREGLO 199). Dos sitios para la misma pregunta se separan
+          // con el primer cambio (ARREGLO 98 otra vez). El bloque azul
+          // "O calculá al revés" se fue; `_htmlCalcPago`, `chgObjetivoPrest`
+          // y `np.objetivo` dejaron de existir con él.
           previewHtml+
           "</div>"+
           "<div><label style='font-size:11.5px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>Cuenta donde entra ("+monPago+")</label>"+
