@@ -3302,7 +3302,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261031_v288";
+var APP_VERSION = "20261101_v289";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -6479,6 +6479,191 @@ function _cruceUsdtPersonal(l){
             : {sale:false, cuentaId:dId, monto:dM};   // entró: lo que recibió la empresa
 }
 
+// ARREGLO 208 · Panel "La empresa me debe"
+//
+// Sus palabras del 01/11: "quiero que me ayudes con algo, cuando venda USDT
+// cómo sé exactamente cuánto tengo que pasar de la cuenta empresa a mi
+// cuenta personal". Antes la deuda estaba IMPLÍCITA en la línea verde
+// "+ Metido desde cuentas personales" del Balance, en USDT y mezclado con
+// aportes USDT viejos (Mi Sueldo Binance, 10/26, etc) que ya no son
+// deuda viva.
+//
+// Esto calcula la deuda VIVA por cuenta personal mirando los traspasos
+// entre esa cuenta y las cuentas de empresa: lo que ella le prestó MENOS
+// lo que la empresa ya le devolvió. Si el resultado es positivo, la
+// empresa aún le debe.
+//
+// Solo se consideran cuentas VES personales (sus 2 bancos: JHOSELIN BdV
+// y Banesco Jhoselin). Las USDT (Mi Sueldo Binance) ya no son el caso de
+// uso que ella pidió — por eso se filtran. Si algún día tiene deuda en
+// USDT también, se extiende añadiendo las monedas a `_MONEDAS_DEUDA`.
+var _MONEDAS_DEUDA = ["VES"];
+function _deudaPersonalPorCuenta(){
+  var r = {};
+  function cuenta(id){ return (S.cuentas||[]).find(function(c){return c.id===id;}); }
+  (S.traspasos||[]).forEach(function(t){
+    var cO = cuenta(t.origen), cD = cuenta(t.destino);
+    if(!cO || !cD) return;
+    // Préstamo: cuenta personal → cuenta empresa (misma moneda)
+    if(cO.esPersonal && !cD.esPersonal && cO.moneda===cD.moneda &&
+       _MONEDAS_DEUDA.indexOf(cO.moneda)>=0){
+      if(!r[cO.id]) r[cO.id] = {nombre:cO.nombre, moneda:cO.moneda, monto:0};
+      r[cO.id].monto += parseFloat(t.monto)||0;
+    }
+    // Devolución: cuenta empresa → cuenta personal
+    else if(!cO.esPersonal && cD.esPersonal && cO.moneda===cD.moneda &&
+            _MONEDAS_DEUDA.indexOf(cD.moneda)>=0){
+      if(!r[cD.id]) r[cD.id] = {nombre:cD.nombre, moneda:cD.moneda, monto:0};
+      r[cD.id].monto -= parseFloat(t.montoDestino||t.monto)||0;
+    }
+  });
+  // Filtrar deudas en cero o negativas (ya saldadas)
+  var out = {};
+  for(var id in r){
+    if(r[id].monto > 0.01) out[id] = r[id];
+  }
+  return out;
+}
+// Suma total de la deuda viva, agrupada por moneda. Lo lee el titular del
+// panel para decir "Te deben X Bs" sin convertir a USDT (que depende de la
+// tasa del día y confunde — su decisión del 01/11).
+function _deudaPersonalTotal(){
+  var deudas = _deudaPersonalPorCuenta();
+  var por_mon = {};
+  for(var id in deudas){
+    var d = deudas[id];
+    if(!por_mon[d.moneda]) por_mon[d.moneda] = 0;
+    por_mon[d.moneda] += d.monto;
+  }
+  return por_mon;
+}
+// Abre el prompt para pedirle cuánto quiere devolverse y arma los traspasos
+// BdV → JHOSELIN y BdV → Banesco en proporción a la deuda de cada una.
+// Si solo hay una cuenta con deuda, va todo a esa; si hay varias, se reparte
+// proporcional (misma regla del ARREGLO 97 por el lado de las entregas).
+function _devolvermeAhora(){
+  var deudas = _deudaPersonalPorCuenta();
+  var ids = Object.keys(deudas);
+  if(!ids.length){ alert("✅ No hay deuda pendiente. La empresa no te debe nada."); return; }
+  // Si hay varias monedas, por ahora solo VES (es la única en _MONEDAS_DEUDA)
+  var mon = deudas[ids[0]].moneda;
+  var total = 0;
+  ids.forEach(function(id){ total += deudas[id].monto; });
+  // Cuentas de empresa en esa moneda con saldo positivo (de dónde sale el dinero)
+  var ctasEmp = (S.cuentas||[]).filter(function(c){
+    return c.activa!==false && !c.esPersonal && !c.esReserva && c.moneda===mon && (parseFloat(c.saldo)||0)>0;
+  });
+  if(!ctasEmp.length){
+    alert("No tienes cuentas de empresa con "+mon+" para devolverte. Vendé USDT primero.");
+    return;
+  }
+  ctasEmp.sort(function(a,b){ return (parseFloat(b.saldo)||0) - (parseFloat(a.saldo)||0); });
+  var ctaEmp = ctasEmp[0]; // la cuenta de empresa con más saldo
+  var saldoDisp = parseFloat(ctaEmp.saldo)||0;
+  var sugerido = Math.min(total, saldoDisp);
+  var txt = prompt(
+    "💸 Devolverme préstamo\n\n"+
+    "Deuda pendiente: "+f2(total)+" "+mon+"\n"+
+    "Disponible en "+ctaEmp.nombre+": "+f2(saldoDisp)+" "+mon+"\n\n"+
+    "¿Cuánto querés devolverte? ("+mon+")",
+    f2(sugerido).replace(",",".")
+  );
+  if(txt===null) return;
+  var monto = parseFloat((txt||"").toString().replace(",","."))||0;
+  if(!(monto>0)){ alert("Monto no válido."); return; }
+  if(monto > saldoDisp+0.01){
+    alert("No hay suficiente en "+ctaEmp.nombre+". Hay "+f2(saldoDisp)+" "+mon+".");
+    return;
+  }
+  if(monto > total+0.01){
+    if(!confirm("Vas a devolverte "+f2(monto)+" "+mon+" pero la deuda es "+f2(total)+". ¿Seguro?")) return;
+  }
+  // Repartir proporcional entre las cuentas con deuda
+  var pagos = [];
+  ids.forEach(function(id){
+    var proporcion = deudas[id].monto / total;
+    var paga = Math.round(monto * proporcion * 100) / 100;
+    pagos.push({id:id, monto:paga, nombre:deudas[id].nombre});
+  });
+  // Ajuste de redondeo: la última recibe el centavo diferencia
+  var suma = pagos.reduce(function(a,p){return a+p.monto;},0);
+  if(Math.abs(suma - monto) > 0.001){
+    pagos[pagos.length-1].monto = Math.round((pagos[pagos.length-1].monto + (monto-suma))*100)/100;
+  }
+  var resumen = "Vas a hacer "+pagos.length+" traspaso"+(pagos.length>1?"s":"")+":\n\n";
+  pagos.forEach(function(p){
+    resumen += "  "+ctaEmp.nombre+" → "+p.nombre+" · "+f2(p.monto)+" "+mon+"\n";
+  });
+  resumen += "\nTotal: "+f2(monto)+" "+mon;
+  if(!confirm(resumen+"\n\n¿Confirmar?")) return;
+  // Crear los traspasos
+  if(!S.traspasos) S.traspasos = [];
+  var now = Date.now();
+  pagos.forEach(function(p, i){
+    var saldoAntesOrig = parseFloat(ctaEmp.saldo)||0;
+    S.traspasos.push({
+      id: now + i,
+      fecha: td(),
+      origen: ctaEmp.id,
+      destino: p.id,
+      moneda: mon,
+      monto: p.monto,
+      monedaDestino: mon,
+      montoDestino: p.monto,
+      nota: "Devolución de préstamo personal (ARREGLO 208)",
+      locked: false,
+      _mod: now,
+      _por: S.role||"jhoselin",
+      _porUlt: S.role||"jhoselin"
+    });
+    // Actualizar saldos
+    ctaEmp.saldo = Math.round((parseFloat(ctaEmp.saldo)-p.monto)*100)/100;
+    var cDest = (S.cuentas||[]).find(function(c){return c.id===p.id;});
+    if(cDest) cDest.saldo = Math.round((parseFloat(cDest.saldo||0)+p.monto)*100)/100;
+  });
+  saveData();
+  alert("✅ Hecho. Te devolviste "+f2(monto)+" "+mon+".");
+  R();
+}
+// Pliega/despliega el panel; vive en localStorage para que cada aparato
+// elija si lo quiere abierto o cerrado (misma regla del tema, ARREGLO 166).
+function _toggleDeudaPanel(){
+  try{
+    var abierto = localStorage.getItem("_deudaPanelAbierto")==="1";
+    localStorage.setItem("_deudaPanelAbierto", abierto?"0":"1");
+  }catch(e){}
+  R();
+}
+function _htmlPanelDeuda(){
+  var por_mon = _deudaPersonalTotal();
+  var monedas = Object.keys(por_mon);
+  if(!monedas.length) return "";  // nada que mostrar
+  var abierto = false;
+  try{ abierto = localStorage.getItem("_deudaPanelAbierto")==="1"; }catch(e){}
+  // Titular compacto en una línea
+  var titular = monedas.map(function(m){ return f2(por_mon[m])+" "+m; }).join(" · ");
+  var html = "<div style='background:var(--vd6-c);border:1px solid var(--vd5);border-left:3px solid var(--ok);border-radius:9px;padding:10px 13px;margin-bottom:10px'>"+
+    "<div onclick='_toggleDeudaPanel()' style='display:flex;justify-content:space-between;align-items:center;cursor:pointer;gap:10px'>"+
+      "<div style='font-size:13px;color:var(--ink);font-weight:700'>💰 Te deben <b style='color:var(--ok)'>"+titular+"</b></div>"+
+      "<div style='font-size:11px;color:var(--tx3);font-weight:600'>"+(abierto?"cerrar ▴":"ver cómo cobrarte ▾")+"</div>"+
+    "</div>";
+  if(abierto){
+    var deudas = _deudaPersonalPorCuenta();
+    html += "<div style='margin-top:10px;padding-top:10px;border-top:1px dashed var(--vd5)'>"+
+      Object.keys(deudas).map(function(id){
+        var d = deudas[id];
+        return "<div style='display:flex;justify-content:space-between;font-size:12.5px;padding:4px 0'>"+
+          "<span style='color:var(--tx2)'>"+_escAud(d.nombre)+"</span>"+
+          "<b style='color:var(--ink)'>"+f2(d.monto)+" "+d.moneda+"</b>"+
+        "</div>";
+      }).join("")+
+      "<div style='font-size:11px;color:var(--tx3);margin-top:8px;line-height:1.4'>Cuando vendas USDT y los Bs entren a BdV empresa, pulsá el botón: te pide cuánto y arma los traspasos.</div>"+
+      "<button onclick='_devolvermeAhora()' style='width:100%;margin-top:8px;padding:10px;background:var(--ok);color:var(--sobre-color);border:none;border-radius:8px;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit'>💸 Devolverme ahora</button>"+
+    "</div>";
+  }
+  html += "</div>";
+  return html;
+}
 function traspasosAPersonal(desdeIso){
   var r={total:0, n:0, mismoDia:0, nMismoDia:0};
   if(!desdeIso) return r;
@@ -17790,6 +17975,12 @@ function rCapitalTotal(){
   })();
 
   return "<div style='padding:8px'>"+
+  // ARREGLO 208 · Panel compacto plegable con la deuda a cuentas personales,
+  // calculada por traspasos entre personal↔empresa. Va aquí arriba porque
+  // es la pregunta que ella hace cuando entra a Balance de Cuentas: "¿cuánto
+  // me tengo que devolver cuando venda USDT?". Plegado por omisión: una sola
+  // línea con el total en Bs, para no congestionar su pantalla.
+  _htmlPanelDeuda()+
   conciliacionHtml+
     // Esta barra llevaba position:sticky y se quedaba clavada arriba al
   // deslizar. En el telefono son 163px de los 614 visibles -el 27% de la
