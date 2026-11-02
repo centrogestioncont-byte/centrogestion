@@ -3302,7 +3302,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261101_v289";
+var APP_VERSION = "20261102_v290";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -19081,7 +19081,8 @@ function _candFiat(t, dec){
 // ── Cuadrar el comprobante P2P con sus propias cuentas ────────────────────────
 // Un comprobante de Binance se comprueba solo:
 //     cantidad total = cantidad liberada + comisión
-//     importe en fiat = cantidad liberada × precio
+//     importe en fiat = cantidad liberada × precio    ← formato viejo
+//     importe en fiat = cantidad total    × precio    ← formato nuevo (ARREGLO 209)
 // Sólo una combinación de los números leídos cumple las dos. Si hay más de una,
 // o ninguna, se devuelve null y el parser avisa en vez de rellenar a ciegas.
 function _cuadrarP2P(U, F){
@@ -19099,6 +19100,24 @@ function _cuadrarP2P(U, F){
   // precio (Binance dice 960,79 y el texto trae 960,7). Por eso no se puede
   // exigir que cuadre clavado — hay que quedarse con la que MEJOR cuadra.
   // Sólo se da por dudoso si dos combinaciones distintas empatan en error.
+  //
+  // ARREGLO 209 (02/11/2026): Binance cambió el formato del comprobante y el
+  // cuadre se rompió. El nuevo pone tres líneas:
+  //
+  //   Cantidad recibida  422,54 USDT   ← lo liberado (neto)
+  //   Cantidad total     423,59 USDT   ← lo bruto, antes de comisión
+  //   Comisión          -1,05 USDT
+  //
+  // y el "Importe en fiat" se mide ahora sobre el TOTAL, no sobre lo liberado:
+  //   420.628 Bs = 423,59 × 993 ≈ 420.627
+  //   420.628 Bs ≠ 422,54 × 993 = 419.582   ← la fórmula vieja ya no cuadra
+  //
+  // La fórmula vieja (imp = lib × pre) la pagaba el comprador por lo que
+  // recibe neto; la nueva (imp = tot × pre) la paga por el bruto y la comisión
+  // es un descuento en USDT. Las dos siguen conviviendo según el tipo de
+  // orden, así que se acepta la MEJOR de las dos — un formato nuevo que ya no
+  // cuadra con la vieja volvía a mandar al parser por etiqueta, que es por
+  // donde la comisión -1,05 se colaba como 423,59 (ella lo cazó el 02/11).
   var mejor=null, empates=0, a,b,c,i,j;
   for(a=0;a<U.length;a++) for(b=0;b<U.length;b++) for(c=0;c<U.length;c++){
     if(a===b||a===c||b===c) continue;
@@ -19110,7 +19129,10 @@ function _cuadrarP2P(U, F){
       if(i===j) continue;
       var imp=F[i], pre=F[j];
       if(!(imp>0)||!(pre>0)) continue;
-      var err=Math.abs(imp-lib*pre);
+      // Las dos fórmulas: la mejor manda. Si ninguna cuadra, descarta.
+      var errLib=Math.abs(imp-lib*pre);
+      var errTot=Math.abs(imp-tot*pre);
+      var err=Math.min(errLib, errTot);
       if(err>Math.max(0.05, imp*0.002)) continue;
       var firma=tot+'|'+lib+'|'+com+'|'+imp+'|'+pre;
       if(!mejor || err < mejor.err-0.0001){

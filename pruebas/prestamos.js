@@ -1655,6 +1655,46 @@ ok(F._parsearOCR([
   "Precio Bs 900", "Importe en fiat Bs 12,345.67"
 ].join("\n")).cuadra === false, "un comprobante incoherente se marca como dudoso");
 
+// ARREGLO 209 (02/11/2026): Binance cambio el formato del comprobante y el
+// cuadre se rompio. El nuevo trae tres lineas y el importe se mide ahora
+// sobre la cantidad TOTAL (bruto), no sobre la liberada (neto):
+//
+//   Cantidad recibida  422,54 USDT   <- lo liberado
+//   Cantidad total     423,59 USDT   <- lo bruto
+//   Comision          -1,05 USDT
+//   Importe en fiat    Bs 420.628     = 423,59 x 993  (no 422,54 x 993)
+//
+// La formula vieja (imp = lib x pre) ya no cuadra en este formato; el cuadre
+// se rendia y caia a la lectura por etiqueta, que con "Comision -1.05 USDT"
+// metido entre otros numeros se llevaba 423,59 (la cantidad total) al campo
+// de la comision. Ella lo cazo pegando el comprobante del 02/11.
+comprobante("P2P formato nuevo (02/11/2026)", [
+  "3:03", "+422.54 USDT", "Completada", "Comprar USDT", "Chat",
+  "Importe en fiat", "Bs 420,628", "Precio", "Bs 993",
+  "Cantidad recibida", "422.54 USDT", "Cantidad total", "423.59 USDT",
+  "Comisión", "-1.05 USDT", "Método de pago", "Banesco VES",
+  "N.º de orden", "22950636222555496448", "Hora de creación",
+  "2026-11-02 14:15:41", "Apodo del vendedor", "Nchmujik2412"
+].join("\n\n"), { tipo: "compra", moneda: "VES", usdt: 423.59, liberado: 422.54,
+  comision: 1.05, tasa: 993, monto: 420628, cuadra: true,
+  ordenId: "22950636222555496448", fecha: "2026-11-02" });
+
+// Y en el formato nuevo con el lector del telefono en espanol.
+comprobante("P2P formato nuevo en espanol", [
+  "Comprar USDT", "Importe en fiat", "Bs 420.628", "Precio", "Bs 993",
+  "Cantidad recibida", "422,54 USDT", "Cantidad total", "423,59 USDT",
+  "Comisión", "-1,05 USDT"
+].join("\n\n"), { tipo: "compra", moneda: "VES", usdt: 423.59, liberado: 422.54,
+  comision: 1.05, tasa: 993, monto: 420628, cuadra: true });
+
+// El cuadre tiene que aceptar las DOS formulas (imp = lib x pre, formato
+// viejo; imp = tot x pre, formato nuevo). Mirar solo la primera dejaba el
+// formato nuevo como "no cuadra" y a merced de la lectura por etiqueta.
+ok(/errLib\s*=\s*Math\.abs\(imp\s*-\s*lib\s*\*\s*pre\)/.test(HTML) &&
+   /errTot\s*=\s*Math\.abs\(imp\s*-\s*tot\s*\*\s*pre\)/.test(HTML) &&
+   /Math\.min\(errLib,\s*errTot\)/.test(HTML),
+   "ARREGLO 209: el cuadre compara el importe con lib*pre Y con tot*pre");
+
 // Los numeros, en las dos escrituras.
 ok(F._localeOCR("Bs 19,996.8") === ".", "con 19,996.8 el decimal es el punto");
 ok(F._localeOCR("Bs 19.996,8") === ",", "con 19.996,8 el decimal es la coma");
