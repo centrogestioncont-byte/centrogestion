@@ -3302,7 +3302,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261103_v300";
+var APP_VERSION = "20261103_v301";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -33875,6 +33875,9 @@ function _toggleHistCl(cod){
   // Abrir o cerrar el panel limpia la selección de cuotas: si no, un
   // conjunto marcado en un cliente podría quedar vivo al abrir otro.
   S._multiPg = null;
+  // ARREGLO 220: el filtro por moneda es de este panel; al abrir otro
+  // cliente vuelve a "Todas".
+  S._clHistFiltro = "";
   R();
 }
 // ARREGLO 216 · LIQUIDACIÓN DE VARIAS CUOTAS DE UN CLIENTE
@@ -33979,6 +33982,15 @@ function _multiMarcarTodas(cod, mon){
     });
   });
   m.recibido = "";
+  R();
+}
+// ARREGLO 220: filtrar el panel por moneda y desmarcar todo.
+function _clHistFiltrar(mon){
+  S._clHistFiltro = mon || "";
+  R();
+}
+function _multiDesmarcarTodas(){
+  S._multiPg = null;
   R();
 }
 // Lo que la app propone como recibido cuando la cuenta es de otra
@@ -34189,7 +34201,17 @@ function _htmlHistorialCliente(cl){
   // Préstamos activos
   if(h.prestamos.length){
     htm += "<div style='font-size:11px;font-weight:700;color:var(--tx2);margin-bottom:6px;display:flex;align-items:center;gap:6px'><span>💰 Préstamos activos</span><span style='background:var(--info-sup);color:var(--info);border-radius:10px;padding:1px 7px;font-size:10px'>"+h.prestamos.length+"</span></div>";
-    // ARREGLO 219: un botón por moneda con cuotas pendientes.
+    // ARREGLO 219: cuotas pendientes por moneda.
+    // ARREGLO 220: sus palabras del 03/11 — "si yo le doy arriba, filtrar
+    // por un banco, filtrar por el otro, se filtre realmente. Y saber
+    // distinguir qué está filtrado y qué no, porque las dos formas tienen
+    // un checking". El 219 ponía un "☑ Marcar todas" por moneda, los dos
+    // con la misma pinta y la misma casilla, y ninguno filtraba nada.
+    // Ahora son dos cosas separadas que no se parecen:
+    //   · ARRIBA, pestañas de filtro (Todas / BRL / VES): la elegida va
+    //     RELLENA y con "● Viendo"; las otras, solo con borde. Sin ☑.
+    //   · DEBAJO, y solo con una moneda filtrada, el botón de acción
+    //     "☑ Marcar las N de BRL" (o "☐ Desmarcar todas").
     var _porMon = {};
     h.prestamos.forEach(function(p){
       var mn = p.mon||"USDT", pend = _cuotasPendientesPr(p);
@@ -34198,14 +34220,36 @@ function _htmlHistorialCliente(cl){
       pend.forEach(function(cu){ _porMon[mn].n++; _porMon[mn].t += cu.saldo; });
     });
     var _mons = Object.keys(_porMon);
-    if(_mons.length){
-      htm += "<div style='display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px'>"+
-        _mons.map(function(mn){
-          return "<button onclick='_multiMarcarTodas(\""+_jsAttr(cl.cod)+"\",\""+_jsAttr(mn)+"\")' style='padding:7px 11px;border:1.5px solid var(--vd2-a);border-radius:8px;background:var(--sup);color:var(--vd2-a);font-size:12px;font-weight:800;cursor:pointer;font-family:inherit'>☑ Marcar todas "+mn+" · "+_porMon[mn].n+" · "+f2(Math.round(_porMon[mn].t*100)/100)+"</button>";
-        }).join("")+
+    var _fil = S._clHistFiltro || "";
+    if(_fil && !_porMon[_fil]) _fil = "";      // la moneda filtrada ya no tiene cuotas
+    var _chip = function(val, txt){
+      var on = _fil===val;
+      return "<button onclick='_clHistFiltrar(\""+_jsAttr(val)+"\")' style='padding:8px 12px;border:2px solid var(--info);border-radius:20px;"+
+        (on ? "background:var(--info);color:var(--sobre-color);" : "background:transparent;color:var(--info);")+
+        "font-size:12px;font-weight:800;cursor:pointer;font-family:inherit'>"+(on?"● Viendo: ":"")+txt+"</button>";
+    };
+    // Con una sola moneda no hay nada que filtrar: solo el botón de marcar.
+    if(_mons.length>1){
+      htm += "<div style='font-size:10.5px;color:var(--tx3);margin-bottom:4px'>Filtrar por moneda</div>"+
+        "<div style='display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px'>"+
+        _chip("", "Todas")+
+        _mons.map(function(mn){ return _chip(mn, mn+" · "+_porMon[mn].n+" cuota"+(_porMon[mn].n>1?"s":"")); }).join("")+
       "</div>";
     }
-    htm += h.prestamos.map(function(p){
+    var _monAcc = _fil || (_mons.length===1 ? _mons[0] : "");
+    if(_monAcc){
+      var _mpg = S._multiPg, _nMarc = 0;
+      if(_mpg && _mpg.moneda===_monAcc) _nMarc = (_mpg.marcadas||[]).length;
+      var _todas = _nMarc>0 && _nMarc>=_porMon[_monAcc].n;
+      htm += "<div style='margin-bottom:8px'>"+
+        (_todas
+          ? "<button onclick='_multiDesmarcarTodas()' style='padding:8px 12px;border:1.5px solid var(--ln);border-radius:8px;background:var(--sup);color:var(--tx2);font-size:12px;font-weight:800;cursor:pointer;font-family:inherit'>☐ Desmarcar todas</button>"
+          : "<button onclick='_multiMarcarTodas(\""+_jsAttr(cl.cod)+"\",\""+_jsAttr(_monAcc)+"\")' style='padding:8px 12px;border:none;border-radius:8px;background:var(--vd2-e);color:var(--sobre-color);font-size:12px;font-weight:800;cursor:pointer;font-family:inherit'>☑ Marcar las "+_porMon[_monAcc].n+" de "+_monAcc+" · "+f2(Math.round(_porMon[_monAcc].t*100)/100)+"</button>")+
+      "</div>";
+    } else if(_mons.length>1){
+      htm += "<div style='font-size:11px;color:var(--tx3);margin-bottom:8px'>Toca una moneda para ver solo esas y marcarlas todas juntas.</div>";
+    }
+    htm += h.prestamos.filter(function(p){ return !_fil || (p.mon||"USDT")===_fil; }).map(function(p){
       var base=parseFloat(p.monto||p.sal||0)||0;
       var ab=(p.abonos||[]).reduce(function(s,x){return s+(parseFloat(x.monto)||0);},0);
       var saldo=Math.max(0, Math.round((base-ab)*100)/100);
@@ -34223,15 +34267,18 @@ function _htmlHistorialCliente(cl){
       // _multiTogglePg(). Más robusto y mucho más legible.
       var pend = _cuotasPendientesPr(p);
       var mon = p.mon||"USDT";
-      var monMulti = (S._multiPg && S._multiPg.moneda) || "";
       var cuotasHtml = pend.map(function(cu){
         var marc = _multiMarcada(p.id, cu.n);
         var hoyISO = (typeof _hoyISO==="function") ? _hoyISO() : td();
         var vencida = cu.iso && cu.iso < hoyISO;
         var bgCu = marc ? "var(--vd6-l)" : (vencida ? "var(--mal-sup)" : "var(--sup)");
         var bdCu = marc ? "var(--vd2-a)" : (vencida ? "var(--mal-ln)" : "var(--ln)");
-        var deshab = monMulti && monMulti!==mon && !marc;
-        var click = deshab ? "" : "onclick='_multiTogglePg(\""+_jsAttr(p.id)+"\","+cu.n+","+cu.saldo+",\""+_jsAttr(mon)+"\")'";
+        // ARREGLO 220: las de otra moneda ya NO salen grises al 45 %
+        // ("se ve muy borroso"): se ven normales y sin marcar. Si se
+        // tocan, _multiTogglePg() avisa que la liquidación es de una
+        // sola moneda — no se marcan.
+        var deshab = false;
+        var click = "onclick='_multiTogglePg(\""+_jsAttr(p.id)+"\","+cu.n+","+cu.saldo+",\""+_jsAttr(mon)+"\")'";
         var box = marc ? "☑" : "☐";
         var boxCol = marc ? "var(--vd2-a)" : "var(--tx3)";
         return "<div "+click+" style='display:flex;align-items:center;gap:10px;background:"+bgCu+";border:1.5px solid "+bdCu+";border-radius:8px;padding:9px 11px;margin:5px 0;font-size:12px;cursor:"+(deshab?"not-allowed":"pointer")+";opacity:"+(deshab?"0.45":"1")+";user-select:none'>"+

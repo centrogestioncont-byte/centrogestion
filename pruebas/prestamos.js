@@ -8129,6 +8129,15 @@ console.log("\n— FASE 2: la cuenta madre —");
      "el boton del panel llama a la funcion correcta");
   // ARREGLO 219 · marcar todas por moneda y cobrar en otra moneda
   ok(/_multiMarcarTodas\(/.test(_hhc), "hay boton de marcar todas por moneda");
+  // ARREGLO 220 · filtro real por moneda, y las de otra moneda sin gris
+  ok(/_clHistFiltrar\(/.test(_hhc) && /h\.prestamos\.filter\(function\(p\)\{ return !_fil \|\| \(p\.mon\|\|"USDT"\)===_fil; \}\)/.test(_hhc),
+     "las pestanas de moneda filtran de verdad la lista de prestamos");
+  ok(/Viendo/.test(_hhc) && !/☑ Marcar todas/.test(_hhc),
+     "la pestana elegida dice 'Viendo' y el filtro no lleva casilla (no se confunde con marcar)");
+  ok(!/opacity:"\+\(deshab\?"0\.45"/.test(_hhc) || /var deshab = false;/.test(_hhc),
+     "las cuotas de otra moneda ya no salen grises");
+  ok(/S\._clHistFiltro = "";/.test(sinC(sacarFuncion("_toggleHistCl"))),
+     "abrir otro cliente vuelve el filtro a Todas");
   const _mma = sinC(sacarFuncion("_multiMarcarTodas"));
   ok(/_historialDeCliente\(cl\)\.prestamos/.test(_mma) && /_cuotasPendientesPr\(p\)/.test(_mma),
      "marcar todas sale de la MISMA lista que dibuja el panel");
