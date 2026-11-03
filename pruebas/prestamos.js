@@ -8032,28 +8032,16 @@ console.log("\n— FASE 2: la cuenta madre —");
   // ────────────────────────────────────────────────────────────────────────
   // ARREGLO 213 · PRESTAMO QUE SALE DE MERCANCIA
   // ────────────────────────────────────────────────────────────────────────
-  // Fiar relojes a Abel con cuotas e intereses no encajaba con el modulo de
-  // Prestamos (que exige una cuenta de dinero de origen). Nuevo toggle en el
-  // formulario: "Dinero" (como siempre) o "Mercancia". En modo mercancia el
-  // articulo se marca como vendido al prestatario con cobro="prestamo" y
-  // nada sale de ninguna cuenta.
   const _sPr = sinC(sacarFuncion("savePr"));
   ok(/f\.desdeMercancia/.test(_sPr),
      "savePr decide por f.desdeMercancia: dos caminos");
-  // El bloque "sale de mercancia" NO toca ningun saldo de cuenta.
   const _sPrMerc = _sPr.match(/if\(f\.desdeMercancia\)\{[\s\S]*?\} else if\(f\.cuentaId\)/);
   ok(_sPrMerc && !/c\.saldo=/.test(_sPrMerc[0]) && !/descontarFIFOEgreso\(/.test(_sPrMerc[0]),
      "el bloque desdeMercancia no mueve cuentas ni FIFO");
-  // Marca la mercancia como vendida con cobro="prestamo".
   ok(_sPrMerc && /cobro:"prestamo"/.test(_sPrMerc[0]) && /_mercPr\.estado="vendido"/.test(_sPrMerc[0]),
      "la mercancia sale del inventario marcada como venta a un prestamo");
-  // El prestamo guarda la marca desdeMercancia para que al borrarlo la
-  // mercancia pueda volver.
   ok(/desdeMercancia:_mercPr\?_mercPr\.id:undefined/.test(_sPr),
      "el prestamo guarda desdeMercancia con el id del articulo");
-
-  // reqDel para prestamos: si viene de mercancia, devuelve el articulo al
-  // inventario y NO devuelve dinero a ninguna cuenta.
   const _rqd = sinC(sacarFuncion("reqDel"));
   ok(/if\(item\.desdeMercancia\)/.test(_rqd),
      "reqDel detecta el prestamo que salio de mercancia");
@@ -8061,20 +8049,37 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(_rqdMerc && /_artPr\.estado="mano"/.test(_rqdMerc[0]) && /delete _artPr\.venta/.test(_rqdMerc[0]),
      "al borrarlo, la mercancia vuelve a estado 'mano' sin venta");
   ok(_rqdMerc && !/cPrest\.saldo=/.test(_rqdMerc[0]),
-     "y no toca el saldo de ninguna cuenta (no salio dinero de ahi)");
-
-  // deshacerVentaArt: si la venta es a un prestamo, no se puede deshacer por
-  // aqui — hay que borrar el prestamo, no la venta.
+     "y no toca el saldo de ninguna cuenta");
   const _dva = sinC(sacarFuncion("deshacerVentaArt"));
   ok(/a\.venta\.cobro==="prestamo"/.test(_dva),
      "deshacerVentaArt detecta el modo prestamo y manda al modulo correcto");
-
-  // El formulario de prestamo lleva el toggle y la lista de articulos.
   const _rP = sinC(sacarFuncion("rPrestamos"));
   ok(/S\.nPr\.desdeMercancia=true/.test(_rP) && /S\.nPr\.desdeMercancia=false/.test(_rP),
      "los dos botones del toggle de prestamo cambian la bandera");
   ok(/S\.nPr\.mercanciaId=/.test(_rP),
      "y en modo mercancia hay un selector para elegir el articulo");
+
+  // ────────────────────────────────────────────────────────────────────────
+  // ARREGLO 214 · HISTORIAL UNIFICADO POR CLIENTE
+  // ────────────────────────────────────────────────────────────────────────
+  // Al buscar un cliente en Clientes, un boton 📜 abre un panel bajo la fila
+  // con todo lo que ese cliente debe: prestamos, cuentas por cobrar y remesas
+  // pendientes. Antes habia que ir a tres pestañas y acordarse del total.
+  const _hc = sinC(sacarFuncion("_historialDeCliente"));
+  ok(/S\.prestamos\|\|\[\]/.test(_hc) && /S\.cuentasCobrar\|\|\[\]/.test(_hc),
+     "_historialDeCliente mira prestamos y cuentas por cobrar");
+  ok(/\["brl","vzla","eeuu"\]/.test(_hc),
+     "y las remesas de las tres rutas");
+  ok(/p\.cod===cod/.test(_hc) && /mismoNombre/.test(_hc),
+     "cliente se encuentra por cod primero, luego por nombre");
+  const _tog = sinC(sacarFuncion("_toggleHistCl"));
+  ok(/S\._clHistCod===cod/.test(_tog) && /null\s*:\s*cod/.test(_tog),
+     "_toggleHistCl alterna el cliente seleccionado");
+  const _rCli = sinC(sacarFuncion("rClientes"));
+  ok(/S\._clHistCod===cl\.cod/.test(_rCli) && /_htmlHistorialCliente\(cl\)/.test(_rCli),
+     "rClientes dibuja el panel bajo la fila del cliente seleccionado");
+  ok(/_toggleHistCl\(/.test(_rCli),
+     "el boton 📜 abre el historial");
 }
   // 6b. ARREGLO 141 · las cuentas en CERO se pliegan. Medido en su export: 15
   //     de sus 23 cuentas estan en cero, y de las que ve son 9 de 17 — mas de
