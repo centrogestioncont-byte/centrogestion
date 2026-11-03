@@ -8138,6 +8138,19 @@ console.log("\n— FASE 2: la cuenta madre —");
      "numCuotas undefined cae a len(cuotas) o 1, no sale 'undefined cuota'");
   ok(/S\._multiPg[\s\S]{0,50}marcadas[\s\S]{0,300}margin-bottom:12px/.test(_hhc),
      "el resumen de marcadas tambien sale ARRIBA, no solo al fondo del panel");
+  // ARREGLO 218 · p.id de los prestamos es NUMERO en memoria, pero el onclick
+  // de la fila lo entrega como TEXTO. Comparando con === la cuota se marcaba
+  // por dentro y seguia en ☐ en pantalla, y desmarcar guardaba una entrada
+  // nueva en vez de borrar. String() en los dos lados, en los TRES sitios.
+  const _mm = sinC(sacarFuncion("_multiMarcada"));
+  ok(/String\(x\.prestId\)===String\(prestId\)/.test(_mm),
+     "_multiMarcada compara con String() a los dos lados");
+  const _mtg2 = sinC(sacarFuncion("_multiTogglePg"));
+  ok(/String\(x\.prestId\)===String\(prestId\)/.test(_mtg2),
+     "_multiTogglePg compara con String() en findIndex");
+  const _cfm2 = sinC(sacarFuncion("confirmarLiquidacionMulti"));
+  ok(/String\(pp\.id\)===String\(x\.prestId\)/.test(_cfm2),
+     "confirmarLiquidacionMulti compara el id del prestamo con String()");
 }
   // 6b. ARREGLO 141 · las cuentas en CERO se pliegan. Medido en su export: 15
   //     de sus 23 cuentas estan en cero, y de las que ve son 9 de 17 — mas de
