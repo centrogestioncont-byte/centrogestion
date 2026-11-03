@@ -3302,7 +3302,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261103_v301";
+var APP_VERSION = "20261103_v302";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -33860,26 +33860,17 @@ function rCapital(){
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// ARREGLO 214 · HISTORIAL UNIFICADO POR CLIENTE
+// ARREGLO 221 · LA LIQUIDACIÓN SE MUDÓ A PRÉSTAMOS
 // ──────────────────────────────────────────────────────────────────────────
-// Al buscar Abel Jesús en Clientes ella quería ver TODO lo que le debe en una
-// sola pantalla: préstamos de dinero, préstamos de mercancía, cuentas por
-// cobrar pendientes y remesas recientes — sin tener que ir pestaña por
-// pestaña y acordarse del total.
-//
-// Se despliega BAJO la fila del cliente, no en un modal: así puede comparar
-// con otros clientes de un vistazo. Se cierra tocando el botón otra vez o
-// abriendo otro cliente.
-function _toggleHistCl(cod){
-  S._clHistCod = (S._clHistCod===cod) ? null : cod;
-  // Abrir o cerrar el panel limpia la selección de cuotas: si no, un
-  // conjunto marcado en un cliente podría quedar vivo al abrir otro.
-  S._multiPg = null;
-  // ARREGLO 220: el filtro por moneda es de este panel; al abrir otro
-  // cliente vuelve a "Todas".
-  S._clHistFiltro = "";
-  R();
-}
+// Sus palabras del 03/11: "siento que esto debería de ser parte de la pestaña
+// de préstamo… si yo quiero ver un día en específico cuántos créditos pagó un
+// cliente, aparezca en un historial". El panel 📜 de Clientes (ARREGLO 214) y
+// sus funciones (_toggleHistCl, _historialDeCliente, _htmlHistorialCliente)
+// se retiraron. Las cuotas se liquidan desde la ficha del cliente en
+// Préstamos (_htmlLiquidarCuotas) y lo cobrado se ve en 📅 Pagos del día
+// (_htmlPagosDelDia). Los abonos ya registrados no se tocan: misma forma de
+// siempre, la que leen pagarPrestamo() y borrarAbonoPrestamo().
+// ──────────────────────────────────────────────────────────────────────────
 // ARREGLO 216 · LIQUIDACIÓN DE VARIAS CUOTAS DE UN CLIENTE
 // ──────────────────────────────────────────────────────────────────
 // El panel 📜 del cliente lista cada cuota pendiente con una casilla.
@@ -33963,19 +33954,17 @@ function _multiTotal(){
 // (getRateToUsdt, que DIVIDE) para que no tenga que calcularlo, pero
 // lo que manda es lo que dice el banco.
 //
-// "Marcar todas" sale de _historialDeCliente(), la misma lista que
-// dibuja el panel: si cada uno buscara las cuotas a su manera, el
+// "Marcar todas" sale de _prActivosDeClave(), la misma lista que
+// dibuja la ficha: si cada uno buscara las cuotas a su manera, el
 // botón podría marcar una que en pantalla no aparece.
-function _multiMarcarTodas(cod, mon){
-  var cl = (S.clientes||[]).find(function(c){ return String(c.cod)===String(cod); });
-  if(!cl) return;
+function _multiMarcarTodas(clave, mon){
   var m = S._multiPg;
   if(m && m.marcadas && m.marcadas.length && m.moneda!==mon){
     if(!confirm("Tienes cuotas marcadas en "+m.moneda+". ¿Las desmarco y marco todas las de "+mon+"?")) return;
     m = null;
   }
   if(!m || !m.marcadas || !m.marcadas.length) m = S._multiPg = {moneda:mon, marcadas:[], cuentaId:"", recibido:""};
-  _historialDeCliente(cl).prestamos.forEach(function(p){
+  _prActivosDeClave(clave).forEach(function(p){
     if((p.mon||"USDT")!==mon) return;
     _cuotasPendientesPr(p).forEach(function(cu){
       if(!_multiMarcada(p.id, cu.n)) m.marcadas.push({prestId:p.id, cuotaN:cu.n, monto:cu.saldo});
@@ -33985,8 +33974,8 @@ function _multiMarcarTodas(cod, mon){
   R();
 }
 // ARREGLO 220: filtrar el panel por moneda y desmarcar todo.
-function _clHistFiltrar(mon){
-  S._clHistFiltro = mon || "";
+function _prLiqFiltrar(mon){
+  S._prLiqFiltro = mon || "";
   R();
 }
 function _multiDesmarcarTodas(){
@@ -34138,254 +34127,248 @@ function confirmarLiquidacionMulti(){
   R();
   alert("✅ Liquidación registrada: "+f2(recibido)+" "+monC+" entró en "+c.nombre+(otraMon?" y bajó "+f2(total)+" "+mon+" de deuda":"")+".");
 }
-// Encuentra todo lo que vincula a este cliente con la empresa:
-//   · préstamos activos (sea de dinero o de mercancía)
-//   · cuentas por cobrar pendientes (de ventas fiadas, mercancía fiada…)
-//   · remesas sin pago (fiadas, también)
-// Lo busca por COD cuando existe, y como fallback por nombre normalizado
-// — porque las remesas se guardan con el nombre, no con el código.
-function _historialDeCliente(cl){
-  var cod = cl.cod || "";
-  var nombre = (cl.n||"").trim().toLowerCase();
-  var mismoNombre = function(a){ return (a||"").trim().toLowerCase() === nombre; };
-  var prestamos = (S.prestamos||[]).filter(function(p){
-    if(cod && p.cod && p.cod===cod) return true;
-    return mismoNombre(p.desc);
-  });
-  var activos = prestamos.filter(function(p){
+// ARREGLO 221 · los préstamos activos de una ficha, con la MISMA clave que
+// bkAgrupar() le da al grupo (nombre en mayúsculas, espacios colapsados) y el
+// mismo criterio de "activo" que rPrestamos().
+function _prActivosDeClave(clave){
+  return (S.prestamos||[]).filter(function(p){
     if(p.estado==="pagado"||p.estado==="saldado") return false;
-    var base = parseFloat(p.monto||p.sal||0)||0;
-    var ab   = (p.abonos||[]).reduce(function(s,x){return s+(parseFloat(x.monto)||0);},0);
-    return ab < base - 0.001;
+    var k=((p.desc||"").trim()).toUpperCase().replace(/\s+/g," ");
+    if(k!==clave) return false;
+    var base=parseFloat(p.monto||p.sal||0)||0;
+    var ab=(p.abonos||[]).reduce(function(s,x){return s+(parseFloat(x.monto)||0);},0);
+    return ab<base-0.001;
   });
-  var cxc = (S.cuentasCobrar||[]).filter(function(c){
-    return c.estado==="pendiente" && mismoNombre(c.cliente);
-  });
-  // Remesas sin pago del cliente (brl / vzla / eeuu)
-  var remesasPend = [];
-  ["brl","vzla","eeuu"].forEach(function(k){
-    (S[k]||[]).forEach(function(r){
-      if(!mismoNombre(r.cl)) return;
-      // Una remesa está "pendiente" si está marcada como fiada o si tiene
-      // una Por cobrar ligada todavía abierta.
-      var ligada = (S.cuentasCobrar||[]).find(function(c){ return c.tipo===k && c.refN===r.n && c.estado==="pendiente"; });
-      if(ligada) remesasPend.push({ruta:k, remesa:r, cobrar:ligada});
-    });
-  });
-  return {prestamos:activos, cxc:cxc, remesas:remesasPend};
 }
-// Dibujo del panel desplegable. Secciones vacías no se dibujan — si nada
-// está pendiente, aparece un mensaje corto en vez de 4 bloques vacíos.
-function _htmlHistorialCliente(cl){
-  var h = _historialDeCliente(cl);
-  var tieneAlgo = h.prestamos.length || h.cxc.length || h.remesas.length;
-  var htm = "<div style='background:var(--sup);border-top:2px dashed var(--info);padding:14px 16px'>";
-  htm += "<div style='font-size:11px;font-weight:800;color:var(--info);text-transform:uppercase;letter-spacing:.8px;margin-bottom:10px'>📜 Historial de "+_escAud(cl.n)+"</div>";
-  // ARREGLO 217: aviso de "N marcadas · total" ARRIBA del panel, para
-  // que al tocar una cuota se vea en el acto sin tener que bajar
-  // hasta el fondo de un historial largo. El selector de cuenta y
-  // el botón de confirmar siguen abajo, donde ya están.
+function _prLiqAbrir(){
+  S._prLiqOpen=!S._prLiqOpen;
+  if(!S._prLiqOpen){ S._multiPg=null; S._prLiqFiltro=""; }
+  R();
+}
+// La liquidación de varias cuotas (ARREGLOS 216-220), ahora dentro de la
+// ficha del cliente en Préstamos. Va plegada: la ficha ya enseña los
+// préstamos y abrirla siempre la haría el doble de larga.
+function _htmlLiquidarCuotas(items, clave){
+  var conCuotas=(items||[]).filter(function(p){ return _cuotasPendientesPr(p).length; });
+  if(!conCuotas.length) return "";
+  var abierto=!!S._prLiqOpen || !!(S._multiPg && S._multiPg.marcadas && S._multiPg.marcadas.length);
+  var htm="<div style='margin:12px 0;border:1.5px solid var(--vd2-a);border-radius:12px;background:var(--sup);overflow:hidden'>";
+  htm+="<div onclick='_prLiqAbrir()' style='padding:12px 14px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;font-size:13px;font-weight:800;color:var(--vd2-a)'>"+
+    "<span>🧾 Liquidar varias cuotas</span><span>"+(abierto?"▲":"▼")+"</span></div>";
+  if(!abierto) return htm+"</div>";
+  htm+="<div style='padding:0 14px 14px'>";
   if(S._multiPg && S._multiPg.marcadas && S._multiPg.marcadas.length){
-    var _nTop = S._multiPg.marcadas.length;
-    var _tTop = _multiTotal();
-    htm += "<div style='background:var(--vd2-e);color:var(--sobre-color);border-radius:9px;padding:10px 13px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:8px'>"+
+    var _nTop=S._multiPg.marcadas.length;
+    htm+="<div style='background:var(--vd2-e);color:var(--sobre-color);border-radius:9px;padding:10px 13px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:8px'>"+
       "<span style='font-size:12px;font-weight:800'>💰 "+_nTop+" marcada"+(_nTop>1?"s":"")+"</span>"+
-      "<span style='font-size:16px;font-weight:900'>"+f2(_tTop)+" "+S._multiPg.moneda+"</span>"+
-    "</div>";
+      "<span style='font-size:16px;font-weight:900'>"+f2(_multiTotal())+" "+S._multiPg.moneda+"</span></div>";
   }
-  if(!tieneAlgo){
-    htm += "<div style='font-size:12px;color:var(--tx3);padding:12px;text-align:center'>No hay préstamos, cuentas por cobrar ni remesas pendientes de este cliente.</div>";
-    htm += "</div>";
-    return htm;
+  // ARREGLO 220: pestañas de filtro (sin casilla) y, aparte, el botón de marcar.
+  var _porMon={};
+  conCuotas.forEach(function(p){
+    var mn=p.mon||"USDT";
+    if(!_porMon[mn]) _porMon[mn]={n:0,t:0};
+    _cuotasPendientesPr(p).forEach(function(cu){ _porMon[mn].n++; _porMon[mn].t+=cu.saldo; });
+  });
+  var _mons=Object.keys(_porMon);
+  var _fil=S._prLiqFiltro||"";
+  if(_fil && !_porMon[_fil]) _fil="";
+  var _chip=function(val,txt){
+    var on=_fil===val;
+    return "<button onclick='_prLiqFiltrar(\""+_jsAttr(val)+"\")' style='padding:8px 12px;border:2px solid var(--info);border-radius:20px;"+
+      (on?"background:var(--info);color:var(--sobre-color);":"background:transparent;color:var(--info);")+
+      "font-size:12px;font-weight:800;cursor:pointer;font-family:inherit'>"+(on?"● Viendo: ":"")+txt+"</button>";
+  };
+  if(_mons.length>1){
+    htm+="<div style='font-size:10.5px;color:var(--tx3);margin-bottom:4px'>Filtrar por moneda</div>"+
+      "<div style='display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px'>"+_chip("","Todas")+
+      _mons.map(function(mn){ return _chip(mn, mn+" · "+_porMon[mn].n+" cuota"+(_porMon[mn].n>1?"s":"")); }).join("")+"</div>";
   }
-  // Préstamos activos
-  if(h.prestamos.length){
-    htm += "<div style='font-size:11px;font-weight:700;color:var(--tx2);margin-bottom:6px;display:flex;align-items:center;gap:6px'><span>💰 Préstamos activos</span><span style='background:var(--info-sup);color:var(--info);border-radius:10px;padding:1px 7px;font-size:10px'>"+h.prestamos.length+"</span></div>";
-    // ARREGLO 219: cuotas pendientes por moneda.
-    // ARREGLO 220: sus palabras del 03/11 — "si yo le doy arriba, filtrar
-    // por un banco, filtrar por el otro, se filtre realmente. Y saber
-    // distinguir qué está filtrado y qué no, porque las dos formas tienen
-    // un checking". El 219 ponía un "☑ Marcar todas" por moneda, los dos
-    // con la misma pinta y la misma casilla, y ninguno filtraba nada.
-    // Ahora son dos cosas separadas que no se parecen:
-    //   · ARRIBA, pestañas de filtro (Todas / BRL / VES): la elegida va
-    //     RELLENA y con "● Viendo"; las otras, solo con borde. Sin ☑.
-    //   · DEBAJO, y solo con una moneda filtrada, el botón de acción
-    //     "☑ Marcar las N de BRL" (o "☐ Desmarcar todas").
-    var _porMon = {};
-    h.prestamos.forEach(function(p){
-      var mn = p.mon||"USDT", pend = _cuotasPendientesPr(p);
-      if(!pend.length) return;
-      if(!_porMon[mn]) _porMon[mn] = {n:0, t:0};
-      pend.forEach(function(cu){ _porMon[mn].n++; _porMon[mn].t += cu.saldo; });
-    });
-    var _mons = Object.keys(_porMon);
-    var _fil = S._clHistFiltro || "";
-    if(_fil && !_porMon[_fil]) _fil = "";      // la moneda filtrada ya no tiene cuotas
-    var _chip = function(val, txt){
-      var on = _fil===val;
-      return "<button onclick='_clHistFiltrar(\""+_jsAttr(val)+"\")' style='padding:8px 12px;border:2px solid var(--info);border-radius:20px;"+
-        (on ? "background:var(--info);color:var(--sobre-color);" : "background:transparent;color:var(--info);")+
-        "font-size:12px;font-weight:800;cursor:pointer;font-family:inherit'>"+(on?"● Viendo: ":"")+txt+"</button>";
-    };
-    // Con una sola moneda no hay nada que filtrar: solo el botón de marcar.
-    if(_mons.length>1){
-      htm += "<div style='font-size:10.5px;color:var(--tx3);margin-bottom:4px'>Filtrar por moneda</div>"+
-        "<div style='display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px'>"+
-        _chip("", "Todas")+
-        _mons.map(function(mn){ return _chip(mn, mn+" · "+_porMon[mn].n+" cuota"+(_porMon[mn].n>1?"s":"")); }).join("")+
-      "</div>";
-    }
-    var _monAcc = _fil || (_mons.length===1 ? _mons[0] : "");
-    if(_monAcc){
-      var _mpg = S._multiPg, _nMarc = 0;
-      if(_mpg && _mpg.moneda===_monAcc) _nMarc = (_mpg.marcadas||[]).length;
-      var _todas = _nMarc>0 && _nMarc>=_porMon[_monAcc].n;
-      htm += "<div style='margin-bottom:8px'>"+
-        (_todas
-          ? "<button onclick='_multiDesmarcarTodas()' style='padding:8px 12px;border:1.5px solid var(--ln);border-radius:8px;background:var(--sup);color:var(--tx2);font-size:12px;font-weight:800;cursor:pointer;font-family:inherit'>☐ Desmarcar todas</button>"
-          : "<button onclick='_multiMarcarTodas(\""+_jsAttr(cl.cod)+"\",\""+_jsAttr(_monAcc)+"\")' style='padding:8px 12px;border:none;border-radius:8px;background:var(--vd2-e);color:var(--sobre-color);font-size:12px;font-weight:800;cursor:pointer;font-family:inherit'>☑ Marcar las "+_porMon[_monAcc].n+" de "+_monAcc+" · "+f2(Math.round(_porMon[_monAcc].t*100)/100)+"</button>")+
-      "</div>";
-    } else if(_mons.length>1){
-      htm += "<div style='font-size:11px;color:var(--tx3);margin-bottom:8px'>Toca una moneda para ver solo esas y marcarlas todas juntas.</div>";
-    }
-    htm += h.prestamos.filter(function(p){ return !_fil || (p.mon||"USDT")===_fil; }).map(function(p){
-      var base=parseFloat(p.monto||p.sal||0)||0;
-      var ab=(p.abonos||[]).reduce(function(s,x){return s+(parseFloat(x.monto)||0);},0);
-      var saldo=Math.max(0, Math.round((base-ab)*100)/100);
-      var esMerc = !!p.desdeMercancia;
-      var tipo = esMerc ? "📦 Mercancía" : "💰 Dinero";
-      var color = esMerc ? "var(--mo2-j2)" : "var(--vd2-a)";
-      var bg = esMerc ? "var(--mo6-j2)" : "var(--vd6-l)";
-      // ARREGLO 216: debajo de cada préstamo se listan sus cuotas
-      // pendientes para marcar varias y liquidar todo de una vez.
-      // ARREGLO 217: la primera versión usaba <label> con <input> dentro
-      // y se veía mal — el checkbox quedaba en el centro de una tira
-      // ancha y el texto apelmazado a la derecha, y en el teléfono un
-      // toque sobre la fila no siempre marcaba. Ahora es un <div>
-      // clicable con un cuadradito visual, y el toque llama directo a
-      // _multiTogglePg(). Más robusto y mucho más legible.
-      var pend = _cuotasPendientesPr(p);
-      var mon = p.mon||"USDT";
-      var cuotasHtml = pend.map(function(cu){
-        var marc = _multiMarcada(p.id, cu.n);
-        var hoyISO = (typeof _hoyISO==="function") ? _hoyISO() : td();
-        var vencida = cu.iso && cu.iso < hoyISO;
-        var bgCu = marc ? "var(--vd6-l)" : (vencida ? "var(--mal-sup)" : "var(--sup)");
-        var bdCu = marc ? "var(--vd2-a)" : (vencida ? "var(--mal-ln)" : "var(--ln)");
-        // ARREGLO 220: las de otra moneda ya NO salen grises al 45 %
-        // ("se ve muy borroso"): se ven normales y sin marcar. Si se
-        // tocan, _multiTogglePg() avisa que la liquidación es de una
-        // sola moneda — no se marcan.
-        var deshab = false;
-        var click = "onclick='_multiTogglePg(\""+_jsAttr(p.id)+"\","+cu.n+","+cu.saldo+",\""+_jsAttr(mon)+"\")'";
-        var box = marc ? "☑" : "☐";
-        var boxCol = marc ? "var(--vd2-a)" : "var(--tx3)";
-        return "<div "+click+" style='display:flex;align-items:center;gap:10px;background:"+bgCu+";border:1.5px solid "+bdCu+";border-radius:8px;padding:9px 11px;margin:5px 0;font-size:12px;cursor:"+(deshab?"not-allowed":"pointer")+";opacity:"+(deshab?"0.45":"1")+";user-select:none'>"+
-          "<span style='font-size:19px;line-height:1;color:"+boxCol+";flex-shrink:0;font-weight:900'>"+box+"</span>"+
-          "<div style='flex:1;min-width:0'>"+
-            "<div style='color:var(--tx2);font-weight:800'>Cuota "+cu.n+" · "+cu.fecha+"</div>"+
-            (vencida?"<div style='color:var(--mal);font-weight:700;font-size:10.5px;margin-top:2px'>· vencida</div>":"")+
-          "</div>"+
-          "<span style='font-weight:900;color:var(--tx2);white-space:nowrap'>"+f2(cu.saldo)+" "+mon+"</span>"+
-        "</div>";
-      }).join("");
-      // ARREGLO 217: numCuotas era "undefined cuota" en préstamos
-      // viejos que no lo guardaron; cae en len(cuotas) o 1.
-      var nCu = p.numCuotas || (p.cuotas||[]).length || 1;
-      return "<div style='background:"+bg+";border:1px solid "+color+";border-radius:9px;padding:10px 12px;margin-bottom:6px'>"+
-        "<div style='display:flex;justify-content:space-between;gap:8px;font-size:11.5px'>"+
-          "<span style='font-weight:700;color:"+color+"'>"+tipo+" · "+p.d+(p.notaDesc?" · "+_escAud(p.notaDesc):"")+"</span>"+
-          "<span style='font-weight:900;color:"+color+"'>Saldo "+f2(saldo)+" "+mon+"</span>"+
-        "</div>"+
-        "<div style='font-size:10.5px;color:var(--tx3);margin-top:3px'>"+
-          "Capital "+f2(p.capital||base)+" · "+nCu+" cuota"+(nCu>1?"s":"")+
-          (p.interesPct?" · "+p.interesPct+"% interés":"")+
-          " · abonado "+f2(ab)+
-        "</div>"+
-        (cuotasHtml?"<div style='margin-top:8px'>"+cuotasHtml+"</div>":"")+
-      "</div>";
+  var _monAcc=_fil||(_mons.length===1?_mons[0]:"");
+  if(_monAcc){
+    var _mpg=S._multiPg, _nMarc=0;
+    if(_mpg && _mpg.moneda===_monAcc) _nMarc=(_mpg.marcadas||[]).length;
+    var _todas=_nMarc>0 && _nMarc>=_porMon[_monAcc].n;
+    htm+="<div style='margin-bottom:8px'>"+(_todas
+      ? "<button onclick='_multiDesmarcarTodas()' style='padding:8px 12px;border:1.5px solid var(--ln);border-radius:8px;background:var(--sup);color:var(--tx2);font-size:12px;font-weight:800;cursor:pointer;font-family:inherit'>☐ Desmarcar todas</button>"
+      : "<button onclick='_multiMarcarTodas(\""+_jsAttr(clave)+"\",\""+_jsAttr(_monAcc)+"\")' style='padding:8px 12px;border:none;border-radius:8px;background:var(--vd2-e);color:var(--sobre-color);font-size:12px;font-weight:800;cursor:pointer;font-family:inherit'>☑ Marcar las "+_porMon[_monAcc].n+" de "+_monAcc+" · "+f2(Math.round(_porMon[_monAcc].t*100)/100)+"</button>")+"</div>";
+  } else {
+    htm+="<div style='font-size:11px;color:var(--tx3);margin-bottom:8px'>Toca una moneda para ver solo esas y marcarlas todas juntas.</div>";
+  }
+  var hoyISO=(typeof _hoyISO==="function")?_hoyISO():td();
+  htm+=conCuotas.filter(function(p){ return !_fil||(p.mon||"USDT")===_fil; }).map(function(p){
+    var mon=p.mon||"USDT";
+    var base=parseFloat(p.monto||p.sal||0)||0;
+    var ab=(p.abonos||[]).reduce(function(s,x){return s+(parseFloat(x.monto)||0);},0);
+    var filas=_cuotasPendientesPr(p).map(function(cu){
+      var marc=_multiMarcada(p.id, cu.n);
+      var vencida=cu.iso && cu.iso<hoyISO;
+      var bgCu=marc?"var(--vd6-l)":(vencida?"var(--mal-sup)":"var(--sup)");
+      var bdCu=marc?"var(--vd2-a)":(vencida?"var(--mal-ln)":"var(--ln)");
+      // ARREGLO 220: las de otra moneda se ven normales; al tocarlas
+      // _multiTogglePg() avisa que es una sola moneda por liquidación.
+      return "<div onclick='_multiTogglePg(\""+_jsAttr(p.id)+"\","+cu.n+","+cu.saldo+",\""+_jsAttr(mon)+"\")' style='display:flex;align-items:center;gap:10px;background:"+bgCu+";border:1.5px solid "+bdCu+";border-radius:8px;padding:9px 11px;margin:5px 0;font-size:12px;cursor:pointer;user-select:none'>"+
+        "<span style='font-size:19px;line-height:1;color:"+(marc?"var(--vd2-a)":"var(--tx3)")+";flex-shrink:0;font-weight:900'>"+(marc?"☑":"☐")+"</span>"+
+        "<div style='flex:1;min-width:0'><div style='color:var(--tx2);font-weight:800'>Cuota "+cu.n+" · "+cu.fecha+"</div>"+
+          (vencida?"<div style='color:var(--mal);font-weight:700;font-size:10.5px;margin-top:2px'>· vencida</div>":"")+"</div>"+
+        "<span style='font-weight:900;color:var(--tx2);white-space:nowrap'>"+f2(cu.saldo)+" "+mon+"</span></div>";
     }).join("");
-  }
-  // Cuentas por cobrar pendientes
-  if(h.cxc.length){
-    htm += "<div style='font-size:11px;font-weight:700;color:var(--tx2);margin:10px 0 6px;display:flex;align-items:center;gap:6px'><span>💳 Por cobrar</span><span style='background:var(--am6-d);color:var(--am2-j5);border-radius:10px;padding:1px 7px;font-size:10px'>"+h.cxc.length+"</span></div>";
-    htm += h.cxc.map(function(c){
-      var ab=(c.abonos||[]).reduce(function(s,x){return s+(parseFloat(x.monto)||0);},0);
-      var saldo=Math.max(0, Math.round(((parseFloat(c.monto)||0)-ab)*100)/100);
-      return "<div style='background:var(--am6-d);border:1px solid var(--am3-j5);border-radius:9px;padding:10px 12px;margin-bottom:6px'>"+
-        "<div style='display:flex;justify-content:space-between;gap:8px;font-size:11.5px'>"+
-          "<span style='font-weight:700;color:var(--am2-j5)'>"+_escAud(c.concepto||"Cuenta por cobrar")+" · "+(c.fecha||"")+"</span>"+
-          "<span style='font-weight:900;color:var(--am2-j5)'>Saldo "+f2(saldo)+" "+(c.moneda||"USDT")+"</span>"+
-        "</div>"+
-      "</div>";
-    }).join("");
-  }
-  // Remesas pendientes (fiadas)
-  if(h.remesas.length){
-    htm += "<div style='font-size:11px;font-weight:700;color:var(--tx2);margin:10px 0 6px;display:flex;align-items:center;gap:6px'><span>🌐 Remesas pendientes</span><span style='background:var(--info-sup);color:var(--info);border-radius:10px;padding:1px 7px;font-size:10px'>"+h.remesas.length+"</span></div>";
-    htm += h.remesas.map(function(x){
-      var r=x.remesa, c=x.cobrar;
-      var ab=(c.abonos||[]).reduce(function(s,a){return s+(parseFloat(a.monto)||0);},0);
-      var saldo=Math.max(0, Math.round(((parseFloat(c.monto)||0)-ab)*100)/100);
-      return "<div style='background:var(--info-sup);border:1px solid var(--az3-j3);border-radius:9px;padding:10px 12px;margin-bottom:6px'>"+
-        "<div style='display:flex;justify-content:space-between;gap:8px;font-size:11.5px'>"+
-          "<span style='font-weight:700;color:var(--info)'>"+x.ruta.toUpperCase()+" #"+(r.n||"?")+" · "+(r.d||"")+"</span>"+
-          "<span style='font-weight:900;color:var(--info)'>Saldo "+f2(saldo)+" "+(c.moneda||"USDT")+"</span>"+
-        "</div>"+
-      "</div>";
-    }).join("");
-  }
-  // ARREGLO 216: panel de liquidación al final — solo sale si hay
-  // al menos una cuota marcada. El total se calcula en _multiTotal()
-  // (una sola puerta), y el selector de cuenta se filtra a las de la
-  // moneda marcada: una cuenta en USDT no puede recibir un pago en
-  // BRL, y enseñarla en el desplegable invitaría al error que un
-  // alert tendría que atajar después.
+    return "<div style='border:1px solid var(--ln);border-radius:9px;padding:9px 11px;margin-bottom:6px'>"+
+      "<div style='display:flex;justify-content:space-between;gap:8px;font-size:11.5px;font-weight:700;color:var(--tx2)'>"+
+        "<span>"+(p.desdeMercancia?"📦":"💰")+" "+_escAud(p.d||"")+(p.notaDesc?" · "+_escAud(p.notaDesc):"")+"</span>"+
+        "<span>Saldo "+f2(Math.max(0,Math.round((base-ab)*100)/100))+" "+mon+"</span></div>"+filas+"</div>";
+  }).join("");
   if(S._multiPg && S._multiPg.marcadas && S._multiPg.marcadas.length){
-    var monM = S._multiPg.moneda;
-    var totM = _multiTotal();
-    var nM = S._multiPg.marcadas.length;
-    // ARREGLO 219: todas las cuentas activas, primero las de la moneda
-    // de las cuotas. Antes solo salían esas y pagar en USDT no se podía.
-    var ctasM = (S.cuentas||[]).filter(function(x){ return x.activa!==false; });
+    var monM=S._multiPg.moneda, totM=_multiTotal(), nM=S._multiPg.marcadas.length;
+    // ARREGLO 219: todas las cuentas activas, primero las de la moneda marcada.
+    var ctasM=(S.cuentas||[]).filter(function(x){ return x.activa!==false; });
     ctasM.sort(function(a,b){ return (a.moneda===monM?0:1)-(b.moneda===monM?0:1); });
-    var opts = "<option value=''>— elige cuenta —</option>" +
-      ctasM.map(function(x){
-        var sel = S._multiPg.cuentaId===x.id ? " selected" : "";
-        return "<option value='"+_escAud(x.id)+"'"+sel+">"+_escAud(x.nombre)+" · "+_escAud(x.moneda||"")+"</option>";
-      }).join("");
-    var cSel = (S.cuentas||[]).find(function(x){return x.id===S._multiPg.cuentaId;});
-    var campoRec = "";
+    var opts="<option value=''>— elige cuenta —</option>"+ctasM.map(function(x){
+      return "<option value='"+_escAud(x.id)+"'"+(S._multiPg.cuentaId===x.id?" selected":"")+">"+_escAud(x.nombre)+" · "+_escAud(x.moneda||"")+"</option>";
+    }).join("");
+    var cSel=(S.cuentas||[]).find(function(x){return x.id===S._multiPg.cuentaId;});
+    var campoRec="";
     if(cSel && cSel.moneda!==monM){
-      var _sug = _multiRecibidoSugerido(monM, cSel.moneda, totM);
-      var _val = (S._multiPg.recibido!=="" && S._multiPg.recibido!=null) ? S._multiPg.recibido : (_sug!=null ? f2(_sug) : "");
-      campoRec = "<label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>¿Cuánto "+_escAud(cSel.moneda)+" entró en "+_escAud(cSel.nombre)+"?</label>"+
+      var _sug=_multiRecibidoSugerido(monM, cSel.moneda, totM);
+      var _val=(S._multiPg.recibido!==""&&S._multiPg.recibido!=null)?S._multiPg.recibido:(_sug!=null?f2(_sug):"");
+      campoRec="<label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>¿Cuánto "+_escAud(cSel.moneda)+" entró en "+_escAud(cSel.nombre)+"?</label>"+
         "<input type='text' inputmode='decimal' value='"+_escAud(_val)+"' oninput='_multiSetRecibido(this.value)' style='width:100%;padding:9px;font-size:14px;font-weight:800;border:1.5px solid var(--vd5-d);border-radius:8px;font-family:inherit;margin-bottom:5px'>"+
         "<div id='multi-tasa' style='font-size:11px;color:var(--tx3);margin-bottom:9px'>"+_escAud(_multiTxtTasa())+"</div>";
     }
-    htm += "<div style='position:sticky;bottom:0;background:var(--vd6-l);border:2px solid var(--vd2-a);border-radius:10px;padding:12px 14px;margin-top:14px'>"+
+    htm+="<div style='position:sticky;bottom:0;background:var(--vd6-l);border:2px solid var(--vd2-a);border-radius:10px;padding:12px 14px;margin-top:12px'>"+
       "<div style='display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:9px'>"+
         "<span style='font-size:12px;font-weight:800;color:var(--vd2-a)'>💰 "+nM+" cuota"+(nM>1?"s":"")+" marcada"+(nM>1?"s":"")+"</span>"+
-        "<span style='font-size:15px;font-weight:900;color:var(--vd2-a)'>"+f2(totM)+" "+monM+"</span>"+
-      "</div>"+
+        "<span style='font-size:15px;font-weight:900;color:var(--vd2-a)'>"+f2(totM)+" "+monM+"</span></div>"+
       "<label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>¿En qué cuenta entró el dinero?</label>"+
       "<select onchange='_multiSetCuenta(this.value)' style='width:100%;padding:9px;font-size:13px;border:1.5px solid var(--vd5-d);border-radius:8px;font-family:inherit;margin-bottom:9px'>"+opts+"</select>"+
       campoRec+
       "<div style='display:flex;gap:7px'>"+
         "<button onclick='confirmarLiquidacionMulti()' style='flex:1;padding:11px;border:none;border-radius:8px;background:var(--vd2-e);color:var(--sobre-color);font-size:13px;font-weight:800;cursor:pointer;font-family:inherit'>✅ Registrar liquidación</button>"+
         "<button onclick='S._multiPg=null;R()' style='padding:11px 14px;border:1.5px solid var(--ln);border-radius:8px;background:var(--sup);color:var(--tx2);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>✕ Limpiar</button>"+
+      "</div></div>";
+  }
+  return htm+"</div></div>";
+}
+
+// ARREGLO 221 · 📅 PAGOS DEL DÍA
+// ──────────────────────────────────────────────────────────────────────────
+// Sus palabras: "quiero filtrar… cuánto pagó Jhoselin el día de hoy, y no
+// tengo un registro de cómo ver qué pagó ella el día de hoy". Los abonos ya
+// guardan su fecha (td(), ISO) y la hora va en su id (Date.now()), así que
+// esto solo LEE: no escribe nada en ningún préstamo ni en ninguna cuenta.
+// Entran préstamos activos y saldados, y la mora cobrada como fila aparte
+// (la mora no baja la deuda: vive en p.mora, no en p.abonos).
+function _isoDeAbono(x){
+  var f=String((x&&x.fecha)||"");
+  if(/^\d{4}-\d{2}-\d{2}/.test(f)) return f.slice(0,10);
+  var i=_isoDeDDMMAA(f); if(i) return i;
+  var t=parseFloat(x&&x.id);
+  if(isFinite(t)&&t>=1.4e12&&t<=2.5e12){ var d=new Date(t); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
+  return "";
+}
+function _ddmmaaDeIso(iso){
+  var p=String(iso||"").split("-"); if(p.length!==3) return iso||"";
+  return p[2]+"/"+p[1]+"/"+p[0].slice(2);
+}
+function _pagosDelDia(iso){
+  var out=[];
+  function nomCta(id){ var c=(S.cuentas||[]).find(function(x){return x.id===id;}); return c?c.nombre:""; }
+  (S.prestamos||[]).forEach(function(p){
+    var mon=p.mon||"USDT";
+    var clave=((p.desc||"").trim()).toUpperCase().replace(/\s+/g," ");
+    (p.abonos||[]).forEach(function(ab){
+      if(_isoDeAbono(ab)!==iso) return;
+      var t=parseFloat(ab.id); if(!(isFinite(t)&&t>=1.4e12&&t<=2.5e12)) t=0;
+      out.push({tipo:"abono", ts:t, cliente:(p.desc||"").trim()||"Sin nombre", clave:clave, prest:p, cuotaN:ab.cuotaN,
+        baja:parseFloat(ab.monto)||0, mon:mon,
+        entro:parseFloat(ab.montoPago!==undefined&&ab.montoPago!==null?ab.montoPago:ab.monto)||0,
+        monPago:ab.monedaPago||mon, cuenta:nomCta(ab.cuentaId), premio:parseFloat(ab.premio)||0});
+    });
+    (((p.mora||{}).historial)||[]).forEach(function(mh){
+      if(_isoDeAbono(mh)!==iso) return;
+      var t=parseFloat(mh.id); if(!(isFinite(t)&&t>=1.4e12&&t<=2.5e12)) t=0;
+      out.push({tipo:"mora", ts:t, cliente:(p.desc||"").trim()||"Sin nombre", clave:clave, prest:p, cuotaN:null,
+        baja:0, mon:mon, moraMonto:parseFloat(mh.monto)||0,
+        entro:parseFloat(mh.montoPago!==undefined?mh.montoPago:mh.monto)||0,
+        monPago:mh.monedaPago||mon, cuenta:nomCta(mh.cuentaId), premio:0});
+    });
+  });
+  out.sort(function(a,b){ return (b.ts-a.ts)||a.cliente.localeCompare(b.cliente); });
+  return out;
+}
+function _prPagosDia(v){
+  var base=S._prPagosDia||td();
+  if(typeof v==="number"){
+    var d=new Date(base+"T12:00:00"); d.setDate(d.getDate()+v);
+    S._prPagosDia=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+  } else if(v) S._prPagosDia=v;
+  R();
+}
+function _htmlPagosDelDia(){
+  var dia=S._prPagosDia||td();
+  var todos=_pagosDelDia(dia);
+  var clientes=[]; todos.forEach(function(r){ if(clientes.indexOf(r.clave)===-1) clientes.push(r.clave); });
+  var cli=S._prPagosCli||"";
+  if(cli && clientes.indexOf(cli)===-1 && todos.length) cli="";
+  var filas=cli?todos.filter(function(r){return r.clave===cli;}):todos;
+  var nomDe={}; todos.forEach(function(r){ nomDe[r.clave]=r.cliente; });
+  var esHoy=dia===td();
+  var paresEntro=filas.map(function(r){return {monto:r.entro,mon:r.monPago};});
+  var paresBaja=filas.filter(function(r){return r.tipo==="abono";}).map(function(r){return {monto:r.baja,mon:r.mon};});
+  var nCli=[]; filas.forEach(function(r){ if(nCli.indexOf(r.clave)===-1) nCli.push(r.clave); });
+  var htm="<div class='pr-pant'>"+
+    "<div class='pr-ftop'><div class='pr-vuelta' onclick='_prIrA(\"\")'>‹ Volver a préstamos</div>"+
+      "<div class='pr-fnom' style='margin-top:10px'>📅 Pagos del día</div>"+
+      "<div class='pr-fsub'>"+(esHoy?"Hoy · ":"")+_ddmmaaDeIso(dia)+"</div></div>"+
+    "<div style='padding:12px 4px'>"+
+      "<div style='display:flex;gap:6px;align-items:center;margin-bottom:8px'>"+
+        "<button class='pr-bsec' style='padding:10px 14px' onclick='_prPagosDia(-1)'>‹</button>"+
+        "<input type='date' value='"+_escAud(dia)+"' onchange='_prPagosDia(this.value)' style='flex:1;padding:10px;font-size:14px;border:1.5px solid var(--ln);border-radius:10px;font-family:inherit'>"+
+        "<button class='pr-bsec' style='padding:10px 14px' onclick='_prPagosDia(1)'>›</button>"+
+        (esHoy?"":"<button class='pr-bsec' style='padding:10px 12px;font-size:12px' onclick='_prPagosDia(td())'>Hoy</button>")+
       "</div>"+
+      (clientes.length>1?
+        "<select onchange='S._prPagosCli=this.value;R()' style='width:100%;padding:10px;font-size:13px;border:1.5px solid var(--ln);border-radius:10px;font-family:inherit;margin-bottom:10px'>"+
+          "<option value=''>Todos los clientes ("+clientes.length+")</option>"+
+          clientes.map(function(k){ return "<option value='"+_escAud(k)+"'"+(cli===k?" selected":"")+">"+_escAud(nomDe[k])+"</option>"; }).join("")+
+        "</select>":"");
+  if(!filas.length){
+    return htm+"<div style='text-align:center;padding:26px 12px;color:var(--ink3);font-size:13px'>Ningún pago de préstamos registrado el "+_ddmmaaDeIso(dia)+".</div></div></div>";
+  }
+  htm+="<div style='background:var(--vd6-l);border:1.5px solid var(--vd2-a);border-radius:12px;padding:12px 14px;margin-bottom:12px'>"+
+    "<div style='font-size:11px;font-weight:800;color:var(--vd2-a);text-transform:uppercase;letter-spacing:.5px'>Entró en cuentas</div>"+
+    "<div style='font-size:20px;font-weight:900;color:var(--vd2-a);margin-top:2px'>"+bkPorMoneda(paresEntro)+"</div>"+
+    "<div style='font-size:11.5px;color:var(--tx2);margin-top:4px'>"+filas.length+" pago"+(filas.length!==1?"s":"")+" · "+nCli.length+" cliente"+(nCli.length!==1?"s":"")+
+      (paresBaja.length?" · bajó la deuda "+bkPorMoneda(paresBaja):"")+"</div></div>";
+  // "quedó saldado" va solo en el ÚLTIMO pago de ese préstamo en el día
+  // (las filas vienen de la más nueva a la más vieja): en las demás es falso.
+  var _yaSaldo={};
+  htm+=filas.map(function(r){
+    var hora=r.ts?(function(d){return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");})(new Date(r.ts)):"";
+    var p=r.prest;
+    var saldo=r.tipo==="abono"&&!_yaSaldo[p.id]&&(p.estado==="pagado"||p.estado==="saldado")&&String(p.fechaPago||"").slice(0,10)===dia;
+    if(saldo) _yaSaldo[p.id]=1;
+    var otra=r.monPago!==r.mon;
+    return "<div onclick='_prIrA(\"ficha\",\""+_jsAttr(r.clave)+"\")' style='border:1px solid var(--ln);border-left:4px solid "+(r.tipo==="mora"?"var(--mal)":"var(--vd2-a)")+";border-radius:10px;padding:10px 12px;margin-bottom:7px;cursor:pointer;background:var(--sup)'>"+
+      "<div style='display:flex;justify-content:space-between;gap:8px'>"+
+        "<div style='min-width:0'><div style='font-size:13px;font-weight:800;color:var(--tx)'>"+_escAud(r.cliente)+"</div>"+
+          "<div style='font-size:11px;color:var(--tx3);margin-top:2px'>"+(hora?hora+" · ":"")+
+            (r.tipo==="mora"?"Mora por atraso":(r.cuotaN!=null?"Cuota "+r.cuotaN:"Abono"))+" · préstamo del "+_escAud(p.d||"")+
+            (p.notaDesc?" · "+_escAud(p.notaDesc):"")+"</div></div>"+
+        "<div style='text-align:right;flex-shrink:0'><div style='font-size:14px;font-weight:900;color:var(--vd2-a)'>+"+f2(r.entro)+" "+_escAud(r.monPago)+"</div>"+
+          (r.cuenta?"<div style='font-size:10.5px;color:var(--tx3)'>→ "+_escAud(r.cuenta)+"</div>":"")+"</div>"+
+      "</div>"+
+      (function(){
+        var xs=[];
+        if(r.tipo==="abono"&&otra) xs.push("bajó "+f2(r.baja)+" "+r.mon+" de deuda");
+        if(r.tipo==="mora") xs.push("cargo de mora "+f2(r.moraMonto)+" "+r.mon+" (no baja la deuda)");
+        if(r.premio>0.009) xs.push("incluye premio por anticipo "+f2(r.premio)+" "+r.mon);
+        if(saldo) xs.push("<b style='color:var(--posDeep)'>✓ con esto quedó saldado</b>");
+        return xs.length?"<div style='font-size:11px;color:var(--tx2);margin-top:5px'>"+xs.join(" · ")+"</div>":"";
+      })()+
     "</div>";
-  }
-  // Botón de contactar por WhatsApp si tiene teléfono
-  if(cl.tel){
-    htm += "<div style='margin-top:10px;text-align:right'>"+
-      "<a href='https://wa.me/"+encodeURIComponent(String(cl.tel).replace(/\D/g,""))+"' target='_blank' style='display:inline-block;background:var(--vd2-e);color:var(--sobre-color);border-radius:8px;padding:8px 14px;font-size:12px;font-weight:800;text-decoration:none'>💬 Escribir por WhatsApp</a>"+
-      "</div>";
-  }
-  htm += "</div>";
-  return htm;
+  }).join("");
+  return htm+"</div></div>";
 }
 
 function rClientes(){
@@ -34535,17 +34518,13 @@ function rClientes(){
           "<span style='background:"+(cl.pais==="VENEZUELA"?"var(--rj3-a)":"var(--vd2-e)")+";color:var(--sobre-color);padding:2px 7px;border-radius:5px;font-size:10px;font-weight:600'>"+(cl.pais==="VENEZUELA"?"🇻🇪 VE":"🇧🇷 BR")+"</span>"+
         "</div>"+
         "<div style='display:flex;gap:4px;flex-shrink:0'>"+
-          // ARREGLO 214: botón de historial unificado por cliente. Al abrirlo
-          // se despliega bajo la fila con sus préstamos (dinero y mercancía),
-          // cuentas por cobrar y remesas pendientes.
-          "<button onclick='_toggleHistCl(\""+_jsAttr(cl.cod)+"\")' title='Ver historial' style='border:1px solid var(--az3-j3);background:var(--info-sup);color:var(--info);border-radius:7px;padding:6px 10px;font-size:12px;cursor:pointer;font-weight:700'>📜</button>"+
+          // ARREGLO 221: aquí iba el 📜 del ARREGLO 214. Se quitó a pedido
+          // suyo: lo de préstamos vive en la pestaña Préstamos (ficha del
+          // cliente y 📅 Pagos del día), no en Clientes.
           "<button onclick='S.editCl=\""+_jsAttr(cl.cod)+"\";S._clFormOpen=true;S.nCl=Object.assign({},S.clientes.find(function(x){return x.cod===\""+_jsAttr(cl.cod)+"\";}));R()' title='Editar' style='border:1px solid "+st.bd+";background:"+st.bg+";color:"+st.cl+";border-radius:7px;padding:6px 10px;font-size:12px;cursor:pointer;font-weight:700'>✏️</button>"+
           "<button onclick='delCl(\""+_jsAttr(cl.cod)+"\")' title='Eliminar' style='border:1px solid var(--rj6-d);background:var(--rj6-a);color:var(--mal-ln);border-radius:7px;padding:6px 10px;font-size:12px;cursor:pointer'>🗑</button>"+
         "</div>"+
-      "</div>"+
-      // Panel desplegable con el historial del cliente — solo cuando está
-      // seleccionado. Se dibuja BAJO la fila.
-      (S._clHistCod===cl.cod ? _htmlHistorialCliente(cl) : "");
+      "</div>";
     });
     listHtml+="</div>";
   }
@@ -36148,7 +36127,13 @@ function _plFrec(f){
 // dato del negocio (la misma razón por la que el tema vive aparte).
 function _prIrA(vista,clave){
   S._prVista=vista||"";
-  if(vista==="ficha") S._prFicha=clave||"";
+  if(vista==="ficha"){
+    // ARREGLO 221: cuotas marcadas en la ficha de otro cliente no pueden
+    // quedar vivas al abrir esta.
+    if(S._prFicha!==(clave||"")){ S._multiPg=null; S._prLiqFiltro=""; S._prLiqOpen=false; }
+    S._prFicha=clave||"";
+  }
+  if(vista==="pagos" && clave) S._prPagosCli=clave;
   // Al salir del formulario se deja lo tecleado donde está: si ella sale
   // sin querer, vuelve a entrar y lo encuentra. Vaciarlo es lo que haría
   // perder un préstamo a medio escribir.
@@ -36925,7 +36910,23 @@ function rPrestamos(){
     });
   });
   // El que pagó más recientemente, primero: es a quien se está buscando.
-  gruposPag.sort(function(a,b){return (b.ultimo-a.ultimo)||a.nombre.localeCompare(b.nombre);});
+  // ARREGLO 221: ordenar SOLO por la hora del id dejaba "todo saltado":
+  // los préstamos viejos no tienen hora creíble en el id (ultimo=0) y caían
+  // en orden alfabético, mezclados. Ahora manda la FECHA (la más nueva entre
+  // fechaPago y los abonos), y la hora solo desempata dentro del mismo día.
+  gruposPag.forEach(function(g){
+    var f="";
+    g.items.forEach(function(p){
+      var fp=String(p.fechaPago||"").slice(0,10); if(!/^\d{4}-/.test(fp)) fp=_isoDeDDMMAA(p.fechaPago)||"";
+      if(fp>f) f=fp;
+      (p.abonos||[]).forEach(function(x){ var i=_isoDeAbono(x); if(i>f) f=i; });
+    });
+    g.ultIso=f;
+  });
+  gruposPag.sort(function(a,b){
+    if(a.ultIso!==b.ultIso) return a.ultIso<b.ultIso?1:-1;
+    return (b.ultimo-a.ultimo)||a.nombre.localeCompare(b.nombre);
+  });
 
   // ── Lo que hay que cobrar: vencido + lo que vence pronto ─────────────
   //
@@ -37146,7 +37147,7 @@ function rPrestamos(){
       "<div style='flex:1;min-width:0'>"+
         "<div class='pr-nom'>"+_escAud(g.nombre)+"</div>"+
         "<div class='pr-met'>"+(saldado
-          ? g.items.length+" préstamo"+(g.items.length!==1?"s":"")+" saldado"+(g.items.length!==1?"s":"")
+          ? g.items.length+" préstamo"+(g.items.length!==1?"s":"")+" saldado"+(g.items.length!==1?"s":"")+(g.ultIso?" · último pago "+_ddmmaaDeIso(g.ultIso):"")
           : _escAud(g.nota))+"</div>"+
         "<div class='pr-barra'><i style='width:"+Math.max(pct,2)+"%;background:"+PR_COLOR[est]+"'></i></div>"+
       "</div>"+
@@ -37175,6 +37176,8 @@ function rPrestamos(){
         "</div>"+
       "</div>"+
       bloqueUrgente()+
+      // ARREGLO 221: qué pagaron hoy (o cualquier día), sin abrir ficha por ficha.
+      "<div style='margin:8px 0'><button class='pr-bsec' style='width:100%;font-weight:800' onclick='S._prPagosCli=\"\";_prIrA(\"pagos\")'>📅 Pagos del día</button></div>"+
       "<div class='pr-chips'>"+_CHIPS.map(function(c){
         return "<span class='pr-chip"+(_fEst===c[0]?" on":"")+"' data-chip='"+c[0]+"' "+
                "onclick='_prFiltro("+JSON.stringify(c[0])+")'>"+
@@ -37253,6 +37256,10 @@ function rPrestamos(){
         "<button class='pr-bpri' onclick='compartirEstadoCuenta("+JSON.stringify(clave)+")'>📤 Mandar estado de cuenta</button>"+
         "<button class='pr-bsec' onclick='descargarEstadoCuenta("+JSON.stringify(clave)+")'>⬇️</button>"+
       "</div>"+
+      // ARREGLO 221: lo que estaba en el 📜 de Clientes, y el acceso a lo
+      // que pagó este cliente día por día.
+      "<div style='margin-top:8px'><button class='pr-bsec' style='width:100%' onclick='_prIrA(\"pagos\",\""+_jsAttr(clave)+"\")'>📅 Ver sus pagos por día</button></div>"+
+      (gA?_htmlLiquidarCuotas(gA.items, clave):"")+
       (gA?"<div class='pr-h'>Préstamos activos</div>"+
           gA.items.map(function(pp){return cardPrest(pp,true);}).join(""):"")+
       (gS?"<div class='pr-h'>Saldados</div>"+
@@ -37604,6 +37611,7 @@ function rPrestamos(){
   // cualquiera.
   if(S._prVista==="nuevo") return modalCaptura+entradaCaptura+formHtml;
   if(S._prVista==="ficha") return modalCaptura+entradaCaptura+fichaHtml();
+  if(S._prVista==="pagos") return modalCaptura+entradaCaptura+_htmlPagosDelDia();
   // El filtro se aplica DESPUÉS de que el HTML esté en la página: las filas
   // se dibujan todas y _prPintarFiltro decide cuáles se ven. Sin esto, al
   // volver de una ficha se verían todas aunque ella tuviera un chip puesto.
