@@ -8028,6 +8028,35 @@ console.log("\n— FASE 2: la cuenta madre —");
   // cuando el modo es ya pagada — no se puede mostrar los dos a la vez.
   ok(/f\.pagoNota/.test(_rM),
      "en modo ya pagada el formulario pregunta por la nota del pago (opcional)");
+
+  // ────────────────────────────────────────────────────────────────────────
+  // ARREGLO 214 · HISTORIAL UNIFICADO POR CLIENTE
+  // ────────────────────────────────────────────────────────────────────────
+  // Al buscar un cliente en Clientes, un boton 📜 abre un panel bajo la fila
+  // con todo lo que ese cliente debe: prestamos, cuentas por cobrar y remesas
+  // pendientes. Antes habia que ir a tres pestañas y acordarse del total.
+  const _hc = sinC(sacarFuncion("_historialDeCliente"));
+  ok(/S\.prestamos\|\|\[\]/.test(_hc) && /S\.cuentasCobrar\|\|\[\]/.test(_hc),
+     "_historialDeCliente mira prestamos y cuentas por cobrar");
+  ok(/\["brl","vzla","eeuu"\]/.test(_hc),
+     "y las remesas de las tres rutas");
+  // Preferir COD cuando existe, caer a nombre normalizado como fallback.
+  // Las remesas se guardan con el nombre (no con cod), asi que un cliente sin
+  // cod se queda huerfano sin el fallback.
+  ok(/p\.cod===cod/.test(_hc) && /mismoNombre/.test(_hc),
+     "cliente se encuentra por cod primero, luego por nombre");
+  // El panel se despliega bajo la fila (no en modal) y se cierra tocando
+  // el boton otra vez.
+  const _tog = sinC(sacarFuncion("_toggleHistCl"));
+  ok(/S\._clHistCod===cod/.test(_tog) && /null\s*:\s*cod/.test(_tog),
+     "_toggleHistCl alterna el cliente seleccionado");
+  // En rClientes, el panel se dibuja solo cuando S._clHistCod coincide.
+  const _rC = sinC(sacarFuncion("rClientes"));
+  ok(/S\._clHistCod===cl\.cod/.test(_rC) && /_htmlHistorialCliente\(cl\)/.test(_rC),
+     "rClientes dibuja el panel bajo la fila del cliente seleccionado");
+  // El boton 📜 en cada fila llama a _toggleHistCl.
+  ok(/_toggleHistCl\(/.test(_rC),
+     "el boton 📜 abre el historial");
 }
   // 6b. ARREGLO 141 · las cuentas en CERO se pliegan. Medido en su export: 15
   //     de sus 23 cuentas estan en cero, y de las que ve son 9 de 17 — mas de

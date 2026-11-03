@@ -3302,7 +3302,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261103_v293";
+var APP_VERSION = "20261103_v294";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -33801,6 +33801,132 @@ function rCapital(){
   "<button class='btn-main' onclick='saveCap()' style='background:var(--info-osc);color:var(--sobre-color)'>💾 Agregar cuenta</button></div>";
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// ARREGLO 214 · HISTORIAL UNIFICADO POR CLIENTE
+// ──────────────────────────────────────────────────────────────────────────
+// Al buscar Abel Jesús en Clientes ella quería ver TODO lo que le debe en una
+// sola pantalla: préstamos de dinero, préstamos de mercancía, cuentas por
+// cobrar pendientes y remesas recientes — sin tener que ir pestaña por
+// pestaña y acordarse del total.
+//
+// Se despliega BAJO la fila del cliente, no en un modal: así puede comparar
+// con otros clientes de un vistazo. Se cierra tocando el botón otra vez o
+// abriendo otro cliente.
+function _toggleHistCl(cod){
+  S._clHistCod = (S._clHistCod===cod) ? null : cod;
+  R();
+}
+// Encuentra todo lo que vincula a este cliente con la empresa:
+//   · préstamos activos (sea de dinero o de mercancía)
+//   · cuentas por cobrar pendientes (de ventas fiadas, mercancía fiada…)
+//   · remesas sin pago (fiadas, también)
+// Lo busca por COD cuando existe, y como fallback por nombre normalizado
+// — porque las remesas se guardan con el nombre, no con el código.
+function _historialDeCliente(cl){
+  var cod = cl.cod || "";
+  var nombre = (cl.n||"").trim().toLowerCase();
+  var mismoNombre = function(a){ return (a||"").trim().toLowerCase() === nombre; };
+  var prestamos = (S.prestamos||[]).filter(function(p){
+    if(cod && p.cod && p.cod===cod) return true;
+    return mismoNombre(p.desc);
+  });
+  var activos = prestamos.filter(function(p){
+    if(p.estado==="pagado"||p.estado==="saldado") return false;
+    var base = parseFloat(p.monto||p.sal||0)||0;
+    var ab   = (p.abonos||[]).reduce(function(s,x){return s+(parseFloat(x.monto)||0);},0);
+    return ab < base - 0.001;
+  });
+  var cxc = (S.cuentasCobrar||[]).filter(function(c){
+    return c.estado==="pendiente" && mismoNombre(c.cliente);
+  });
+  // Remesas sin pago del cliente (brl / vzla / eeuu)
+  var remesasPend = [];
+  ["brl","vzla","eeuu"].forEach(function(k){
+    (S[k]||[]).forEach(function(r){
+      if(!mismoNombre(r.cl)) return;
+      // Una remesa está "pendiente" si está marcada como fiada o si tiene
+      // una Por cobrar ligada todavía abierta.
+      var ligada = (S.cuentasCobrar||[]).find(function(c){ return c.tipo===k && c.refN===r.n && c.estado==="pendiente"; });
+      if(ligada) remesasPend.push({ruta:k, remesa:r, cobrar:ligada});
+    });
+  });
+  return {prestamos:activos, cxc:cxc, remesas:remesasPend};
+}
+// Dibujo del panel desplegable. Secciones vacías no se dibujan — si nada
+// está pendiente, aparece un mensaje corto en vez de 4 bloques vacíos.
+function _htmlHistorialCliente(cl){
+  var h = _historialDeCliente(cl);
+  var tieneAlgo = h.prestamos.length || h.cxc.length || h.remesas.length;
+  var htm = "<div style='background:var(--sup);border-top:2px dashed var(--info);padding:14px 16px'>";
+  htm += "<div style='font-size:11px;font-weight:800;color:var(--info);text-transform:uppercase;letter-spacing:.8px;margin-bottom:10px'>📜 Historial de "+_escAud(cl.n)+"</div>";
+  if(!tieneAlgo){
+    htm += "<div style='font-size:12px;color:var(--tx3);padding:12px;text-align:center'>No hay préstamos, cuentas por cobrar ni remesas pendientes de este cliente.</div>";
+    htm += "</div>";
+    return htm;
+  }
+  // Préstamos activos
+  if(h.prestamos.length){
+    htm += "<div style='font-size:11px;font-weight:700;color:var(--tx2);margin-bottom:6px;display:flex;align-items:center;gap:6px'><span>💰 Préstamos activos</span><span style='background:var(--info-sup);color:var(--info);border-radius:10px;padding:1px 7px;font-size:10px'>"+h.prestamos.length+"</span></div>";
+    htm += h.prestamos.map(function(p){
+      var base=parseFloat(p.monto||p.sal||0)||0;
+      var ab=(p.abonos||[]).reduce(function(s,x){return s+(parseFloat(x.monto)||0);},0);
+      var saldo=Math.max(0, Math.round((base-ab)*100)/100);
+      var esMerc = !!p.desdeMercancia;
+      var tipo = esMerc ? "📦 Mercancía" : "💰 Dinero";
+      var color = esMerc ? "var(--mo2-j2)" : "var(--vd2-a)";
+      var bg = esMerc ? "var(--mo6-j2)" : "var(--vd6-l)";
+      return "<div style='background:"+bg+";border:1px solid "+color+";border-radius:9px;padding:10px 12px;margin-bottom:6px'>"+
+        "<div style='display:flex;justify-content:space-between;gap:8px;font-size:11.5px'>"+
+          "<span style='font-weight:700;color:"+color+"'>"+tipo+" · "+p.d+(p.notaDesc?" · "+_escAud(p.notaDesc):"")+"</span>"+
+          "<span style='font-weight:900;color:"+color+"'>Saldo "+f2(saldo)+" "+(p.mon||"USDT")+"</span>"+
+        "</div>"+
+        "<div style='font-size:10.5px;color:var(--tx3);margin-top:3px'>"+
+          "Capital "+f2(p.capital||base)+" · "+p.numCuotas+" cuota"+(p.numCuotas>1?"s":"")+
+          (p.interesPct?" · "+p.interesPct+"% interés":"")+
+          " · abonado "+f2(ab)+
+        "</div>"+
+      "</div>";
+    }).join("");
+  }
+  // Cuentas por cobrar pendientes
+  if(h.cxc.length){
+    htm += "<div style='font-size:11px;font-weight:700;color:var(--tx2);margin:10px 0 6px;display:flex;align-items:center;gap:6px'><span>💳 Por cobrar</span><span style='background:var(--am6-d);color:var(--am2-j5);border-radius:10px;padding:1px 7px;font-size:10px'>"+h.cxc.length+"</span></div>";
+    htm += h.cxc.map(function(c){
+      var ab=(c.abonos||[]).reduce(function(s,x){return s+(parseFloat(x.monto)||0);},0);
+      var saldo=Math.max(0, Math.round(((parseFloat(c.monto)||0)-ab)*100)/100);
+      return "<div style='background:var(--am6-d);border:1px solid var(--am3-j5);border-radius:9px;padding:10px 12px;margin-bottom:6px'>"+
+        "<div style='display:flex;justify-content:space-between;gap:8px;font-size:11.5px'>"+
+          "<span style='font-weight:700;color:var(--am2-j5)'>"+_escAud(c.concepto||"Cuenta por cobrar")+" · "+(c.fecha||"")+"</span>"+
+          "<span style='font-weight:900;color:var(--am2-j5)'>Saldo "+f2(saldo)+" "+(c.moneda||"USDT")+"</span>"+
+        "</div>"+
+      "</div>";
+    }).join("");
+  }
+  // Remesas pendientes (fiadas)
+  if(h.remesas.length){
+    htm += "<div style='font-size:11px;font-weight:700;color:var(--tx2);margin:10px 0 6px;display:flex;align-items:center;gap:6px'><span>🌐 Remesas pendientes</span><span style='background:var(--info-sup);color:var(--info);border-radius:10px;padding:1px 7px;font-size:10px'>"+h.remesas.length+"</span></div>";
+    htm += h.remesas.map(function(x){
+      var r=x.remesa, c=x.cobrar;
+      var ab=(c.abonos||[]).reduce(function(s,a){return s+(parseFloat(a.monto)||0);},0);
+      var saldo=Math.max(0, Math.round(((parseFloat(c.monto)||0)-ab)*100)/100);
+      return "<div style='background:var(--info-sup);border:1px solid var(--az3-j3);border-radius:9px;padding:10px 12px;margin-bottom:6px'>"+
+        "<div style='display:flex;justify-content:space-between;gap:8px;font-size:11.5px'>"+
+          "<span style='font-weight:700;color:var(--info)'>"+x.ruta.toUpperCase()+" #"+(r.n||"?")+" · "+(r.d||"")+"</span>"+
+          "<span style='font-weight:900;color:var(--info)'>Saldo "+f2(saldo)+" "+(c.moneda||"USDT")+"</span>"+
+        "</div>"+
+      "</div>";
+    }).join("");
+  }
+  // Botón de contactar por WhatsApp si tiene teléfono
+  if(cl.tel){
+    htm += "<div style='margin-top:10px;text-align:right'>"+
+      "<a href='https://wa.me/"+encodeURIComponent(String(cl.tel).replace(/\D/g,""))+"' target='_blank' style='display:inline-block;background:var(--vd2-e);color:var(--sobre-color);border-radius:8px;padding:8px 14px;font-size:12px;font-weight:800;text-decoration:none'>💬 Escribir por WhatsApp</a>"+
+      "</div>";
+  }
+  htm += "</div>";
+  return htm;
+}
+
 function rClientes(){
   var q=(S.qCl||"").toLowerCase();
   var fRuta=S.fRutaCl||"";
@@ -33948,10 +34074,17 @@ function rClientes(){
           "<span style='background:"+(cl.pais==="VENEZUELA"?"var(--rj3-a)":"var(--vd2-e)")+";color:var(--sobre-color);padding:2px 7px;border-radius:5px;font-size:10px;font-weight:600'>"+(cl.pais==="VENEZUELA"?"🇻🇪 VE":"🇧🇷 BR")+"</span>"+
         "</div>"+
         "<div style='display:flex;gap:4px;flex-shrink:0'>"+
+          // ARREGLO 214: botón de historial unificado por cliente. Al abrirlo
+          // se despliega bajo la fila con sus préstamos (dinero y mercancía),
+          // cuentas por cobrar y remesas pendientes.
+          "<button onclick='_toggleHistCl(\""+_jsAttr(cl.cod)+"\")' title='Ver historial' style='border:1px solid var(--az3-j3);background:var(--info-sup);color:var(--info);border-radius:7px;padding:6px 10px;font-size:12px;cursor:pointer;font-weight:700'>📜</button>"+
           "<button onclick='S.editCl=\""+_jsAttr(cl.cod)+"\";S._clFormOpen=true;S.nCl=Object.assign({},S.clientes.find(function(x){return x.cod===\""+_jsAttr(cl.cod)+"\";}));R()' title='Editar' style='border:1px solid "+st.bd+";background:"+st.bg+";color:"+st.cl+";border-radius:7px;padding:6px 10px;font-size:12px;cursor:pointer;font-weight:700'>✏️</button>"+
           "<button onclick='delCl(\""+_jsAttr(cl.cod)+"\")' title='Eliminar' style='border:1px solid var(--rj6-d);background:var(--rj6-a);color:var(--mal-ln);border-radius:7px;padding:6px 10px;font-size:12px;cursor:pointer'>🗑</button>"+
         "</div>"+
-      "</div>";
+      "</div>"+
+      // Panel desplegable con el historial del cliente — solo cuando está
+      // seleccionado. Se dibuja BAJO la fila.
+      (S._clHistCod===cl.cod ? _htmlHistorialCliente(cl) : "");
     });
     listHtml+="</div>";
   }
