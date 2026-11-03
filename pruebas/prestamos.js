@@ -8105,8 +8105,10 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(/if\(!m\.marcadas\.length\)/.test(_mtg) && /m\.moneda=""/.test(_mtg),
      "al vaciar la seleccion se libera la moneda para la siguiente ronda");
   const _cfm = sinC(sacarFuncion("confirmarLiquidacionMulti"));
-  ok(/ajusteCuentaEgreso\(m\.cuentaId,\s*total\)/.test(_cfm),
-     "la cuenta se mueve UNA sola vez con el total (un movimiento, no cinco)");
+  // ARREGLO 219: la cuenta sube lo RECIBIDO (puede ser otra moneda),
+  // y sigue siendo un solo movimiento.
+  ok(/ajusteCuentaEgreso\(m\.cuentaId,\s*recibido\)/.test(_cfm) && (_cfm.match(/ajusteCuentaEgreso\(/g)||[]).length===1,
+     "la cuenta se mueve UNA sola vez con lo recibido (un movimiento, no cinco)");
   ok(/p\.abonos\.push\(\{/.test(_cfm) && /cuotaN:\s*it\.cu\.n/.test(_cfm),
      "cada cuota marcada se guarda como un abono con su cuotaN");
   ok(/if\(totalAb\s*>=\s*base/.test(_cfm) && /p\.estado\s*=\s*"pagado"/.test(_cfm),
@@ -8119,10 +8121,27 @@ console.log("\n— FASE 2: la cuenta madre —");
   const _hhc = sinC(sacarFuncion("_htmlHistorialCliente"));
   ok(/_cuotasPendientesPr\(p\)/.test(_hhc) && /_multiMarcada\(/.test(_hhc),
      "cada prestamo lista sus cuotas pendientes con casilla");
-  ok(/x\.moneda===monM/.test(_hhc),
-     "el selector de cuenta en el panel final filtra a la moneda marcada");
+  // ARREGLO 219: ya no filtra — salen todas, primero las de la moneda
+  // marcada, y si la cuenta es de otra moneda se pide lo recibido.
+  ok(/a\.moneda===monM/.test(_hhc) && /_multiSetRecibido\(/.test(_hhc) && /_multiSetCuenta\(/.test(_hhc),
+     "el selector ofrece todas las cuentas (las de la moneda marcada primero) y pide lo recibido si es otra moneda");
   ok(/confirmarLiquidacionMulti\(\)/.test(_hhc),
      "el boton del panel llama a la funcion correcta");
+  // ARREGLO 219 · marcar todas por moneda y cobrar en otra moneda
+  ok(/_multiMarcarTodas\(/.test(_hhc), "hay boton de marcar todas por moneda");
+  const _mma = sinC(sacarFuncion("_multiMarcarTodas"));
+  ok(/_historialDeCliente\(cl\)\.prestamos/.test(_mma) && /_cuotasPendientesPr\(p\)/.test(_mma),
+     "marcar todas sale de la MISMA lista que dibuja el panel");
+  const _msr = sinC(sacarFuncion("_multiSetRecibido"));
+  ok(!/\bR\(\)/.test(_msr) && /multi-tasa/.test(_msr),
+     "teclear lo recibido no repinta (ARREGLO 32): refresca la tasa por su id");
+  ok(/monedaPago:\s*monC/.test(_cfm) && /montoPago:\s*Math\.round\(it\.pago/.test(_cfm),
+     "cada abono anota la moneda y el monto que de verdad entraron");
+  ok(/it\.pago = Math\.round\(\(recibido-_acum\)/.test(_cfm),
+     "la ultima cuota se lleva el resto: la suma de los abonos es exactamente lo recibido");
+  const _mrs = sinC(sacarFuncion("_multiRecibidoSugerido"));
+  ok(/total\/rD/.test(_mrs) && /usdt\*rC/.test(_mrs) && /return null/.test(_mrs),
+     "la conversion sugerida divide para ir a USDT, multiplica para salir, y sin tasa no inventa");
   // ARREGLO 217 · la primera version del 216 usaba <label><input/></label> y
   // en el telefono se veia mal — el checkbox quedaba en el centro de una
   // tira ancha, el texto apelmazado a la derecha, y el toque no siempre

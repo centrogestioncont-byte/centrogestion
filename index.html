@@ -3302,7 +3302,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261103_v299";
+var APP_VERSION = "20261103_v300";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -33914,7 +33914,7 @@ function _multiMarcada(prestId, cuotaN){
   return m.marcadas.some(function(x){ return String(x.prestId)===String(prestId) && x.cuotaN===cuotaN; });
 }
 function _multiTogglePg(prestId, cuotaN, saldo, moneda){
-  if(!S._multiPg) S._multiPg = {moneda:"", marcadas:[], cuentaId:""};
+  if(!S._multiPg) S._multiPg = {moneda:"", marcadas:[], cuentaId:"", recibido:""};
   var m = S._multiPg;
   // ARREGLO 218: mismo tema aquí — findIndex no encontraba la marcada
   // cuando se intentaba desmarcar, porque un lado era número y el
@@ -33924,7 +33924,7 @@ function _multiTogglePg(prestId, cuotaN, saldo, moneda){
     m.marcadas.splice(ya,1);
     // Si se queda vacío, se limpia la moneda para que pueda empezar
     // otra ronda en otra moneda sin reiniciar nada a mano.
-    if(!m.marcadas.length){ m.moneda=""; m.cuentaId=""; }
+    if(!m.marcadas.length){ m.moneda=""; m.cuentaId=""; m.recibido=""; }
   } else {
     if(m.moneda && m.moneda!==moneda){
       alert("Esta cuota está en "+moneda+" y las que ya marcaste son en "+m.moneda+".\nLa liquidación es de una sola moneda. Desmarca las otras primero.");
@@ -33933,11 +33933,98 @@ function _multiTogglePg(prestId, cuotaN, saldo, moneda){
     m.moneda = moneda;
     m.marcadas.push({prestId:prestId, cuotaN:cuotaN, monto:saldo});
   }
+  // ARREGLO 219: cambió el total, así que lo recibido que se hubiera
+  // escrito ya no corresponde; vuelve a salir la conversión de la app.
+  m.recibido = "";
   R();
 }
 function _multiTotal(){
   var m = S._multiPg; if(!m||!m.marcadas) return 0;
   return Math.round(m.marcadas.reduce(function(s,x){return s+x.monto;},0)*100)/100;
+}
+// ARREGLO 219 · MARCAR TODAS DE UNA MONEDA Y COBRAR EN OTRA
+// ──────────────────────────────────────────────────────────────────
+// Sus palabras del 03/11: "poder seleccionar por moneda, ver el total
+// si quiere liquidar varias en reales al mismo tiempo… y que afecte
+// los saldos como corresponda así sea en reales y quiera pagar en
+// usdt". El 216 obligaba a que el dinero entrara en la MISMA moneda
+// de las cuotas; pagar en otra había que hacerlo cuota por cuota.
+//
+// Las cuotas marcadas siguen siendo de UNA moneda (el total de deuda
+// tiene que poder sumarse), pero el dinero puede entrar por cualquier
+// cuenta. La regla es la de pagarPrestamo(), la misma de siempre:
+//   · cada abono baja la deuda en la moneda del PRÉSTAMO (monto)
+//   · y anota lo que de verdad entró (montoPago/monedaPago)
+//   · la cuenta sube lo RECIBIDO, en su propia moneda, una sola vez.
+// Lo recibido lo escribe ella; la app lo rellena con su conversión
+// (getRateToUsdt, que DIVIDE) para que no tenga que calcularlo, pero
+// lo que manda es lo que dice el banco.
+//
+// "Marcar todas" sale de _historialDeCliente(), la misma lista que
+// dibuja el panel: si cada uno buscara las cuotas a su manera, el
+// botón podría marcar una que en pantalla no aparece.
+function _multiMarcarTodas(cod, mon){
+  var cl = (S.clientes||[]).find(function(c){ return String(c.cod)===String(cod); });
+  if(!cl) return;
+  var m = S._multiPg;
+  if(m && m.marcadas && m.marcadas.length && m.moneda!==mon){
+    if(!confirm("Tienes cuotas marcadas en "+m.moneda+". ¿Las desmarco y marco todas las de "+mon+"?")) return;
+    m = null;
+  }
+  if(!m || !m.marcadas || !m.marcadas.length) m = S._multiPg = {moneda:mon, marcadas:[], cuentaId:"", recibido:""};
+  _historialDeCliente(cl).prestamos.forEach(function(p){
+    if((p.mon||"USDT")!==mon) return;
+    _cuotasPendientesPr(p).forEach(function(cu){
+      if(!_multiMarcada(p.id, cu.n)) m.marcadas.push({prestId:p.id, cuotaN:cu.n, monto:cu.saldo});
+    });
+  });
+  m.recibido = "";
+  R();
+}
+// Lo que la app propone como recibido cuando la cuenta es de otra
+// moneda. null si falta una tasa: mejor un campo vacío que un número
+// inventado (misma regla que tasaDeReferencia).
+function _multiRecibidoSugerido(monDeuda, monCuenta, total){
+  if(monDeuda===monCuenta) return total;
+  var rD = getRateToUsdt(monDeuda), rC = getRateToUsdt(monCuenta);
+  if(!rD || !rC) return null;
+  var usdt = monDeuda==="USDT" ? total : total/rD;
+  var v = monCuenta==="USDT" ? usdt : usdt*rC;
+  return Math.round(v*100)/100;
+}
+// Lo recibido que manda: lo escrito si hay, si no lo sugerido. Una
+// sola puerta para la pantalla y para confirmar.
+function _multiRecibido(){
+  var m = S._multiPg; if(!m) return null;
+  var c = (S.cuentas||[]).find(function(x){return x.id===m.cuentaId;});
+  if(!c) return null;
+  var tot = _multiTotal();
+  if(c.moneda===m.moneda) return tot;
+  var esc = _leerNumero(m.recibido);
+  if(m.recibido!=="" && m.recibido!=null && !isNaN(esc)) return esc;
+  return _multiRecibidoSugerido(m.moneda, c.moneda, tot);
+}
+// La línea de la tasa, en las dos direcciones escritas con palabras
+// (la dirección de una tasa no se adivina mirando un número suelto).
+function _multiTxtTasa(){
+  var m = S._multiPg; if(!m) return "";
+  var c = (S.cuentas||[]).find(function(x){return x.id===m.cuentaId;});
+  if(!c || c.moneda===m.moneda) return "";
+  var rec = _multiRecibido(), tot = _multiTotal();
+  if(!(rec>0)) return "Escribe cuánto "+c.moneda+" entró en la cuenta.";
+  return "Tasa: "+f4(tot/rec)+" "+m.moneda+" por 1 "+c.moneda+" · paga "+f2(tot)+" "+m.moneda+" de deuda con "+f2(rec)+" "+c.moneda;
+}
+function _multiSetCuenta(id){
+  S._multiPg.cuentaId = id;
+  S._multiPg.recibido = "";
+  R();
+}
+// Al teclear NO se llama a R() (ARREGLO 32): se refresca la línea
+// de la tasa por su id y el campo se queda con el dedo dentro.
+function _multiSetRecibido(v){
+  S._multiPg.recibido = v;
+  var el = document.getElementById("multi-tasa");
+  if(el) el.textContent = _multiTxtTasa();
 }
 function confirmarLiquidacionMulti(){
   var m = S._multiPg;
@@ -33946,6 +34033,9 @@ function confirmarLiquidacionMulti(){
   var c = (S.cuentas||[]).find(function(x){return x.id===m.cuentaId;});
   if(!c){ alert("Esa cuenta ya no existe."); return; }
   var mon = m.moneda;
+  // ARREGLO 219: la cuenta puede ser de otra moneda.
+  var monC = c.moneda || mon;
+  var otraMon = monC!==mon;
   // Las marcadas se guardan en orden FIFO: primero por fecha de cuota
   // (más vieja primero), luego dentro del mismo día por préstamo —
   // así si una cuota de un préstamo viejo y otra de uno nuevo caen
@@ -33965,7 +34055,20 @@ function confirmarLiquidacionMulti(){
     return (a.p.id<b.p.id?-1:1);
   });
   var total = Math.round(itemsConPr.reduce(function(s,it){return s+it.x.monto;},0)*100)/100;
-  var msg = "Registrar liquidación: "+f2(total)+" "+mon+" en "+c.nombre+"\n\n";
+  var recibido = otraMon ? _multiRecibido() : total;
+  if(otraMon && !(recibido>0)){ alert("Escribe cuánto "+monC+" entró en "+c.nombre+"."); return; }
+  recibido = Math.round(recibido*100)/100;
+  // Reparto de lo recibido entre las cuotas, en proporción a lo que
+  // baja cada una. La última se lleva el resto del redondeo, para que
+  // la suma de los abonos sea EXACTAMENTE lo que entró en la cuenta.
+  var _acum = 0;
+  itemsConPr.forEach(function(it, i){
+    if(i===itemsConPr.length-1){ it.pago = Math.round((recibido-_acum)*100)/100; }
+    else { it.pago = total>0 ? Math.round((recibido*it.x.monto/total)*100)/100 : 0; _acum += it.pago; }
+  });
+  var msg = otraMon
+    ? "Registrar liquidación: entran "+f2(recibido)+" "+monC+" en "+c.nombre+"\ny pagan "+f2(total)+" "+mon+" de deuda (tasa "+f4(total/recibido)+" "+mon+" por "+monC+")\n\n"
+    : "Registrar liquidación: "+f2(total)+" "+mon+" en "+c.nombre+"\n\n";
   itemsConPr.forEach(function(it){
     msg += "· "+it.p.desc+" · Cuota "+it.cu.n+" ("+it.cu.fecha+") · "+f2(it.x.monto)+" "+mon+"\n";
   });
@@ -33978,26 +34081,28 @@ function confirmarLiquidacionMulti(){
   var grupos = {};
   itemsConPr.forEach(function(it, idx){
     if(!grupos[it.p.id]) grupos[it.p.id] = {p: it.p, items:[]};
-    grupos[it.p.id].items.push({cu:it.cu, monto:it.x.monto, idx:idx});
+    grupos[it.p.id].items.push({cu:it.cu, monto:it.x.monto, pago:it.pago, idx:idx});
   });
   var detalle = [];
   Object.keys(grupos).forEach(function(prId){
     var g = grupos[prId], p = g.p;
     if(!p.abonos) p.abonos = [];
     g.items.forEach(function(it){
-      // monedaPago y montoPago = monto, porque v1 es misma moneda:
-      // lo que entra a la cuenta es exactamente lo que baja la deuda.
+      // monto = lo que baja la deuda (moneda del préstamo);
+      // montoPago/monedaPago = lo que entró de verdad (ARREGLO 219).
+      // Misma forma que el abono de pagarPrestamo(), así borrar el
+      // abono devuelve a la cuenta lo que ese abono acreditó.
       p.abonos.push({
         id: ahora + it.idx,
         fecha: td(),
         monto: Math.round(it.monto*100)/100,
         cuentaId: m.cuentaId,
-        monedaPago: mon,
-        montoPago: Math.round(it.monto*100)/100,
+        monedaPago: monC,
+        montoPago: Math.round(it.pago*100)/100,
         cuotaN: it.cu.n,
         premio: 0
       });
-      detalle.push("Cuota "+it.cu.n+" de "+p.desc+" · "+f2(it.monto)+" "+mon);
+      detalle.push("Cuota "+it.cu.n+" de "+p.desc+" · "+f2(it.monto)+" "+mon+(otraMon?" (pagó "+f2(it.pago)+" "+monC+")":""));
     });
     // Si tras este bloque de abonos el préstamo queda saldado, se
     // marca igual que pagarPrestamo() lo haría en el paso final.
@@ -34013,12 +34118,13 @@ function confirmarLiquidacionMulti(){
   // La cuenta se mueve UNA sola vez con el total — así el extracto
   // deja un movimiento, no cinco, y cuadra con lo que la persona
   // depositó de verdad.
-  ajusteCuentaEgreso(m.cuentaId, total);
-  logAudit("LIQUIDACION_CLIENTE", "Liquidación de "+itemsConPr.length+" cuota"+(itemsConPr.length>1?"s":"")+" · "+f2(total)+" "+mon+" → "+c.nombre+" · "+detalle.join(" · "));
+  // ARREGLO 219: sube lo RECIBIDO, en la moneda de la cuenta.
+  ajusteCuentaEgreso(m.cuentaId, recibido);
+  logAudit("LIQUIDACION_CLIENTE", "Liquidación de "+itemsConPr.length+" cuota"+(itemsConPr.length>1?"s":"")+" · "+f2(total)+" "+mon+(otraMon?" pagados con "+f2(recibido)+" "+monC:"")+" → "+c.nombre+" · "+detalle.join(" · "));
   S._multiPg = null;
   saveData();
   R();
-  alert("✅ Liquidación registrada: "+f2(total)+" "+mon+" entró en "+c.nombre+".");
+  alert("✅ Liquidación registrada: "+f2(recibido)+" "+monC+" entró en "+c.nombre+(otraMon?" y bajó "+f2(total)+" "+mon+" de deuda":"")+".");
 }
 // Encuentra todo lo que vincula a este cliente con la empresa:
 //   · préstamos activos (sea de dinero o de mercancía)
@@ -34083,6 +34189,22 @@ function _htmlHistorialCliente(cl){
   // Préstamos activos
   if(h.prestamos.length){
     htm += "<div style='font-size:11px;font-weight:700;color:var(--tx2);margin-bottom:6px;display:flex;align-items:center;gap:6px'><span>💰 Préstamos activos</span><span style='background:var(--info-sup);color:var(--info);border-radius:10px;padding:1px 7px;font-size:10px'>"+h.prestamos.length+"</span></div>";
+    // ARREGLO 219: un botón por moneda con cuotas pendientes.
+    var _porMon = {};
+    h.prestamos.forEach(function(p){
+      var mn = p.mon||"USDT", pend = _cuotasPendientesPr(p);
+      if(!pend.length) return;
+      if(!_porMon[mn]) _porMon[mn] = {n:0, t:0};
+      pend.forEach(function(cu){ _porMon[mn].n++; _porMon[mn].t += cu.saldo; });
+    });
+    var _mons = Object.keys(_porMon);
+    if(_mons.length){
+      htm += "<div style='display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px'>"+
+        _mons.map(function(mn){
+          return "<button onclick='_multiMarcarTodas(\""+_jsAttr(cl.cod)+"\",\""+_jsAttr(mn)+"\")' style='padding:7px 11px;border:1.5px solid var(--vd2-a);border-radius:8px;background:var(--sup);color:var(--vd2-a);font-size:12px;font-weight:800;cursor:pointer;font-family:inherit'>☑ Marcar todas "+mn+" · "+_porMon[mn].n+" · "+f2(Math.round(_porMon[mn].t*100)/100)+"</button>";
+        }).join("")+
+      "</div>";
+    }
     htm += h.prestamos.map(function(p){
       var base=parseFloat(p.monto||p.sal||0)||0;
       var ab=(p.abonos||[]).reduce(function(s,x){return s+(parseFloat(x.monto)||0);},0);
@@ -34177,19 +34299,32 @@ function _htmlHistorialCliente(cl){
     var monM = S._multiPg.moneda;
     var totM = _multiTotal();
     var nM = S._multiPg.marcadas.length;
-    var ctasM = (S.cuentas||[]).filter(function(x){ return x.activa!==false && x.moneda===monM; });
+    // ARREGLO 219: todas las cuentas activas, primero las de la moneda
+    // de las cuotas. Antes solo salían esas y pagar en USDT no se podía.
+    var ctasM = (S.cuentas||[]).filter(function(x){ return x.activa!==false; });
+    ctasM.sort(function(a,b){ return (a.moneda===monM?0:1)-(b.moneda===monM?0:1); });
     var opts = "<option value=''>— elige cuenta —</option>" +
       ctasM.map(function(x){
         var sel = S._multiPg.cuentaId===x.id ? " selected" : "";
-        return "<option value='"+_escAud(x.id)+"'"+sel+">"+_escAud(x.nombre)+"</option>";
+        return "<option value='"+_escAud(x.id)+"'"+sel+">"+_escAud(x.nombre)+" · "+_escAud(x.moneda||"")+"</option>";
       }).join("");
+    var cSel = (S.cuentas||[]).find(function(x){return x.id===S._multiPg.cuentaId;});
+    var campoRec = "";
+    if(cSel && cSel.moneda!==monM){
+      var _sug = _multiRecibidoSugerido(monM, cSel.moneda, totM);
+      var _val = (S._multiPg.recibido!=="" && S._multiPg.recibido!=null) ? S._multiPg.recibido : (_sug!=null ? f2(_sug) : "");
+      campoRec = "<label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>¿Cuánto "+_escAud(cSel.moneda)+" entró en "+_escAud(cSel.nombre)+"?</label>"+
+        "<input type='text' inputmode='decimal' value='"+_escAud(_val)+"' oninput='_multiSetRecibido(this.value)' style='width:100%;padding:9px;font-size:14px;font-weight:800;border:1.5px solid var(--vd5-d);border-radius:8px;font-family:inherit;margin-bottom:5px'>"+
+        "<div id='multi-tasa' style='font-size:11px;color:var(--tx3);margin-bottom:9px'>"+_escAud(_multiTxtTasa())+"</div>";
+    }
     htm += "<div style='position:sticky;bottom:0;background:var(--vd6-l);border:2px solid var(--vd2-a);border-radius:10px;padding:12px 14px;margin-top:14px'>"+
       "<div style='display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:9px'>"+
         "<span style='font-size:12px;font-weight:800;color:var(--vd2-a)'>💰 "+nM+" cuota"+(nM>1?"s":"")+" marcada"+(nM>1?"s":"")+"</span>"+
         "<span style='font-size:15px;font-weight:900;color:var(--vd2-a)'>"+f2(totM)+" "+monM+"</span>"+
       "</div>"+
-      "<label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>¿En qué cuenta "+monM+" entró el dinero?</label>"+
-      "<select onchange='S._multiPg.cuentaId=this.value' style='width:100%;padding:9px;font-size:13px;border:1.5px solid var(--vd5-d);border-radius:8px;font-family:inherit;margin-bottom:9px'>"+opts+"</select>"+
+      "<label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>¿En qué cuenta entró el dinero?</label>"+
+      "<select onchange='_multiSetCuenta(this.value)' style='width:100%;padding:9px;font-size:13px;border:1.5px solid var(--vd5-d);border-radius:8px;font-family:inherit;margin-bottom:9px'>"+opts+"</select>"+
+      campoRec+
       "<div style='display:flex;gap:7px'>"+
         "<button onclick='confirmarLiquidacionMulti()' style='flex:1;padding:11px;border:none;border-radius:8px;background:var(--vd2-e);color:var(--sobre-color);font-size:13px;font-weight:800;cursor:pointer;font-family:inherit'>✅ Registrar liquidación</button>"+
         "<button onclick='S._multiPg=null;R()' style='padding:11px 14px;border:1.5px solid var(--ln);border-radius:8px;background:var(--sup);color:var(--tx2);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>✕ Limpiar</button>"+
