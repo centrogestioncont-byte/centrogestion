@@ -3302,7 +3302,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261103_v297";
+var APP_VERSION = "20261103_v298";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -34049,6 +34049,18 @@ function _htmlHistorialCliente(cl){
   var tieneAlgo = h.prestamos.length || h.cxc.length || h.remesas.length;
   var htm = "<div style='background:var(--sup);border-top:2px dashed var(--info);padding:14px 16px'>";
   htm += "<div style='font-size:11px;font-weight:800;color:var(--info);text-transform:uppercase;letter-spacing:.8px;margin-bottom:10px'>📜 Historial de "+_escAud(cl.n)+"</div>";
+  // ARREGLO 217: aviso de "N marcadas · total" ARRIBA del panel, para
+  // que al tocar una cuota se vea en el acto sin tener que bajar
+  // hasta el fondo de un historial largo. El selector de cuenta y
+  // el botón de confirmar siguen abajo, donde ya están.
+  if(S._multiPg && S._multiPg.marcadas && S._multiPg.marcadas.length){
+    var _nTop = S._multiPg.marcadas.length;
+    var _tTop = _multiTotal();
+    htm += "<div style='background:var(--vd2-e);color:var(--sobre-color);border-radius:9px;padding:10px 13px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:8px'>"+
+      "<span style='font-size:12px;font-weight:800'>💰 "+_nTop+" marcada"+(_nTop>1?"s":"")+"</span>"+
+      "<span style='font-size:16px;font-weight:900'>"+f2(_tTop)+" "+S._multiPg.moneda+"</span>"+
+    "</div>";
+  }
   if(!tieneAlgo){
     htm += "<div style='font-size:12px;color:var(--tx3);padding:12px;text-align:center'>No hay préstamos, cuentas por cobrar ni remesas pendientes de este cliente.</div>";
     htm += "</div>";
@@ -34066,10 +34078,13 @@ function _htmlHistorialCliente(cl){
       var color = esMerc ? "var(--mo2-j2)" : "var(--vd2-a)";
       var bg = esMerc ? "var(--mo6-j2)" : "var(--vd6-l)";
       // ARREGLO 216: debajo de cada préstamo se listan sus cuotas
-      // pendientes con una casilla, para marcar varias y liquidar
-      // todo de una vez. La casilla solo deja marcar cuando la moneda
-      // coincide con la de las ya marcadas; si no, avisa y no hace
-      // nada — _multiTogglePg() se encarga.
+      // pendientes para marcar varias y liquidar todo de una vez.
+      // ARREGLO 217: la primera versión usaba <label> con <input> dentro
+      // y se veía mal — el checkbox quedaba en el centro de una tira
+      // ancha y el texto apelmazado a la derecha, y en el teléfono un
+      // toque sobre la fila no siempre marcaba. Ahora es un <div>
+      // clicable con un cuadradito visual, y el toque llama directo a
+      // _multiTogglePg(). Más robusto y mucho más legible.
       var pend = _cuotasPendientesPr(p);
       var mon = p.mon||"USDT";
       var monMulti = (S._multiPg && S._multiPg.moneda) || "";
@@ -34080,20 +34095,28 @@ function _htmlHistorialCliente(cl){
         var bgCu = marc ? "var(--vd6-l)" : (vencida ? "var(--mal-sup)" : "var(--sup)");
         var bdCu = marc ? "var(--vd2-a)" : (vencida ? "var(--mal-ln)" : "var(--ln)");
         var deshab = monMulti && monMulti!==mon && !marc;
-        return "<label style='display:flex;align-items:center;gap:8px;background:"+bgCu+";border:1px solid "+bdCu+";border-radius:7px;padding:7px 10px;margin:4px 0;font-size:11.5px;cursor:"+(deshab?"not-allowed":"pointer")+";opacity:"+(deshab?"0.5":"1")+"'>"+
-          "<input type='checkbox' "+(marc?"checked":"")+" "+(deshab?"disabled":"")+
-            " onchange='_multiTogglePg(\""+_jsAttr(p.id)+"\","+cu.n+","+cu.saldo+",\""+_jsAttr(mon)+"\")'>"+
-          "<span style='flex:1;color:var(--tx2);font-weight:700'>Cuota "+cu.n+" · "+cu.fecha+(vencida?" · <span style=\"color:var(--mal);font-weight:800\">vencida</span>":"")+"</span>"+
-          "<span style='font-weight:800;color:var(--tx2)'>"+f2(cu.saldo)+" "+mon+"</span>"+
-        "</label>";
+        var click = deshab ? "" : "onclick='_multiTogglePg(\""+_jsAttr(p.id)+"\","+cu.n+","+cu.saldo+",\""+_jsAttr(mon)+"\")'";
+        var box = marc ? "☑" : "☐";
+        var boxCol = marc ? "var(--vd2-a)" : "var(--tx3)";
+        return "<div "+click+" style='display:flex;align-items:center;gap:10px;background:"+bgCu+";border:1.5px solid "+bdCu+";border-radius:8px;padding:9px 11px;margin:5px 0;font-size:12px;cursor:"+(deshab?"not-allowed":"pointer")+";opacity:"+(deshab?"0.45":"1")+";user-select:none'>"+
+          "<span style='font-size:19px;line-height:1;color:"+boxCol+";flex-shrink:0;font-weight:900'>"+box+"</span>"+
+          "<div style='flex:1;min-width:0'>"+
+            "<div style='color:var(--tx2);font-weight:800'>Cuota "+cu.n+" · "+cu.fecha+"</div>"+
+            (vencida?"<div style='color:var(--mal);font-weight:700;font-size:10.5px;margin-top:2px'>· vencida</div>":"")+
+          "</div>"+
+          "<span style='font-weight:900;color:var(--tx2);white-space:nowrap'>"+f2(cu.saldo)+" "+mon+"</span>"+
+        "</div>";
       }).join("");
+      // ARREGLO 217: numCuotas era "undefined cuota" en préstamos
+      // viejos que no lo guardaron; cae en len(cuotas) o 1.
+      var nCu = p.numCuotas || (p.cuotas||[]).length || 1;
       return "<div style='background:"+bg+";border:1px solid "+color+";border-radius:9px;padding:10px 12px;margin-bottom:6px'>"+
         "<div style='display:flex;justify-content:space-between;gap:8px;font-size:11.5px'>"+
           "<span style='font-weight:700;color:"+color+"'>"+tipo+" · "+p.d+(p.notaDesc?" · "+_escAud(p.notaDesc):"")+"</span>"+
           "<span style='font-weight:900;color:"+color+"'>Saldo "+f2(saldo)+" "+mon+"</span>"+
         "</div>"+
         "<div style='font-size:10.5px;color:var(--tx3);margin-top:3px'>"+
-          "Capital "+f2(p.capital||base)+" · "+p.numCuotas+" cuota"+(p.numCuotas>1?"s":"")+
+          "Capital "+f2(p.capital||base)+" · "+nCu+" cuota"+(nCu>1?"s":"")+
           (p.interesPct?" · "+p.interesPct+"% interés":"")+
           " · abonado "+f2(ab)+
         "</div>"+
