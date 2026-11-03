@@ -3302,7 +3302,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261103_v298";
+var APP_VERSION = "20261103_v299";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -33903,12 +33903,23 @@ function _cuotasPendientesPr(p){
 }
 function _multiMarcada(prestId, cuotaN){
   var m = S._multiPg; if(!m||!m.marcadas) return false;
-  return m.marcadas.some(function(x){ return x.prestId===prestId && x.cuotaN===cuotaN; });
+  // ARREGLO 218: p.id en S.prestamos es NÚMERO, pero el onclick de la
+  // fila lo pasa como texto (así es como el navegador lo entrega al
+  // ejecutar un atributo). Comparando con === la coincidencia nunca
+  // daba verdadero, la cuota quedaba marcada por dentro y en pantalla
+  // seguía el ☐. Lo cazó ella pidiéndole al asistente del navegador
+  // que revisara desde SU teléfono con SUS préstamos — lo cual no se
+  // pudo reproducir en Chromium local porque allí los ids de prueba
+  // ya eran strings. String() en los dos lados cierra el agujero.
+  return m.marcadas.some(function(x){ return String(x.prestId)===String(prestId) && x.cuotaN===cuotaN; });
 }
 function _multiTogglePg(prestId, cuotaN, saldo, moneda){
   if(!S._multiPg) S._multiPg = {moneda:"", marcadas:[], cuentaId:""};
   var m = S._multiPg;
-  var ya = m.marcadas.findIndex(function(x){ return x.prestId===prestId && x.cuotaN===cuotaN; });
+  // ARREGLO 218: mismo tema aquí — findIndex no encontraba la marcada
+  // cuando se intentaba desmarcar, porque un lado era número y el
+  // otro texto. Se guardaba otra entrada duplicada en vez de borrar.
+  var ya = m.marcadas.findIndex(function(x){ return String(x.prestId)===String(prestId) && x.cuotaN===cuotaN; });
   if(ya>=0){
     m.marcadas.splice(ya,1);
     // Si se queda vacío, se limpia la moneda para que pueda empezar
@@ -33940,7 +33951,10 @@ function confirmarLiquidacionMulti(){
   // así si una cuota de un préstamo viejo y otra de uno nuevo caen
   // el mismo día, la vieja se cobra antes.
   var itemsConPr = m.marcadas.map(function(x){
-    var p = (S.prestamos||[]).find(function(pp){return pp.id===x.prestId;});
+    // ARREGLO 218: mismo tema que arriba — pp.id es NÚMERO, x.prestId
+    // llega del onclick como TEXTO. Sin String() en los dos lados, no
+    // encuentra el préstamo y la cuota no se registra.
+    var p = (S.prestamos||[]).find(function(pp){return String(pp.id)===String(x.prestId);});
     var cu = p ? (p.cuotas||[]).find(function(c){return c.n===x.cuotaN;}) : null;
     return {x:x, p:p, cu:cu};
   }).filter(function(it){ return it.p && it.cu; });
