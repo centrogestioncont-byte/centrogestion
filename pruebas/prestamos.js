@@ -7980,6 +7980,54 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(/ganMercancia/.test(HTML.slice(HTML.indexOf("Ganancia bruta de todas las operaciones"),
                                     HTML.indexOf("Ganancia bruta de todas las operaciones")+1400)),
      "y la ganancia del mes sale dicha, no escondida dentro de la bruta");
+
+  // ────────────────────────────────────────────────────────────────────────
+  // ARREGLO 212 · MERCANCIA MODO "YA PAGADA"
+  // ────────────────────────────────────────────────────────────────────────
+  // Un reloj que ella compro hace meses con dinero que SI salio de la empresa
+  // (via un prestamo que ella se hizo a si misma y despues devolvio) estaba
+  // en el aire: el dinero salio pero el activo no estaba contado. Al meterlo
+  // ahora en Mercancia, la app pedia "¿de que cuenta salio?" y eso descontaria
+  // el banco otra vez. El modo "ya pagada" lo mete al inventario SIN crear
+  // un egreso nuevo.
+  const _ga = sinC(sacarFuncion("guardarArticulo"));
+  ok(/f\.yaPagada/.test(_ga),
+     "guardarArticulo decide por f.yaPagada: dos caminos");
+  // En el modo "ya pagada" NO se llama a _egresoMerc, y no se valida cuenta
+  // (porque no hay cuenta). El articulo se guarda con yaPagada:true.
+  ok(/if\(f\.yaPagada\)[\s\S]{0,900}yaPagada:true[\s\S]{0,1500}return;/.test(_ga),
+     "en modo ya pagada el articulo entra al inventario sin egreso y sale pronto");
+  ok(/if\(f\.yaPagada\)[\s\S]{0,1500}return;[\s\S]{0,400}_egresoMerc\(/.test(_ga),
+     "el camino que SI crea egreso vive despues del return del yaPagada");
+  // Dentro del bloque yaPagada NO se llama a _egresoMerc.
+  const _gaYP = _ga.match(/if\(f\.yaPagada\)\{[\s\S]*?return;\s*\}/);
+  ok(_gaYP && !/_egresoMerc\(/.test(_gaYP[0]) && !/_ctaMerc\(/.test(_gaYP[0]),
+     "el bloque yaPagada no toca ni cuenta ni egreso");
+
+  // El espejo en gastos: un flete viejo tampoco baja la cuenta.
+  const _gg = sinC(sacarFuncion("agregarGastoArt"));
+  ok(/f\.yaPagada/.test(_gg),
+     "agregarGastoArt tambien tiene los dos caminos");
+  ok(/if\(f\.yaPagada\)[\s\S]{0,700}yaPagada:true[\s\S]{0,700}return;/.test(_gg),
+     "un gasto ya pagado entra sin crear egreso");
+
+  // Borrar: un articulo yaPagada no revierte egreso que no existe. Sin esta
+  // guardia, borrar devolveria dinero inventado a una cuenta que nunca lo
+  // recibio.
+  const _bo = sinC(sacarFuncion("borrarArticulo"));
+  ok(/if\(!a\.yaPagada[^)]*&&[^)]*a\.egresoId\)[^;]*_borrarEgresoMerc/.test(_bo),
+     "borrarArticulo solo revierte el egreso si el articulo lo creo");
+  ok(/if\(!g\.yaPagada[^)]*&&[^)]*g\.egresoId\)[^;]*_borrarEgresoMerc/.test(_bo),
+     "y lo mismo con cada gasto que llevaba la marca ya pagada");
+
+  // El formulario enseña el toggle. Dos botones; el activo cambia S.nArt.yaPagada.
+  const _rM = sinC(sacarFuncion("rMercancia"));
+  ok(/S\.nArt\.yaPagada=false/.test(_rM) && /S\.nArt\.yaPagada=true/.test(_rM),
+     "los dos botones del toggle cambian la bandera");
+  // El bloque "¿de que cuenta salio?" se reemplaza por una nota opcional
+  // cuando el modo es ya pagada — no se puede mostrar los dos a la vez.
+  ok(/f\.pagoNota/.test(_rM),
+     "en modo ya pagada el formulario pregunta por la nota del pago (opcional)");
 }
   // 6b. ARREGLO 141 · las cuentas en CERO se pliegan. Medido en su export: 15
   //     de sus 23 cuentas estan en cero, y de las que ve son 9 de 17 — mas de

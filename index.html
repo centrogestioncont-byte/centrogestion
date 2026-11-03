@@ -3302,7 +3302,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261102_v292";
+var APP_VERSION = "20261103_v293";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -11943,12 +11943,6 @@ function guardarArticulo(){
   var costo=_num(f.costo); costo=parseFloat(costo)||0;
   if(costo<=0){ alert("¿Cuánto te costó?"); return; }
   var mon=f.mon||"USDT";
-  var cuenta=_ctaMerc(f.cuentaId);
-  if(!cuenta){ alert("Elige de qué cuenta salió el dinero."); return; }
-  if(cuenta.moneda!==mon){
-    alert("La cuenta "+cuenta.nombre+" está en "+cuenta.moneda+" y el costo lo pusiste en "+mon+".\n\nElige una cuenta en "+mon+", o cambia la moneda.");
-    return;
-  }
   var usdt=_usdtMerc(costo, mon);
   if(usdt===null){
     alert("No hay tasa para "+mon+", así que no se puede saber qué vale eso en USDT.\n\nRegistra primero una operación de USDT en "+mon+".");
@@ -11958,6 +11952,30 @@ function guardarArticulo(){
   var id=Date.now();
   var fecha=f.fecha||_hoyDMA();
   var iso=f.fechaIso||_hoyISO();
+  // ARREGLO 212: dos caminos. "Sale ahora" como siempre, o "Ya está pagada"
+  // para cuando el egreso YA está en la contabilidad (un préstamo que ella
+  // se hizo y pagó, un gasto antiguo) y lo único que falta es que el activo
+  // de la mercancía exista en el inventario. En ese modo no se crea egreso
+  // nuevo: solo entra al inventario. Capital sube por el valor del artículo,
+  // igual que lo haría cuando aparece un activo que no se contaba.
+  if(f.yaPagada){
+    S.articulos=S.articulos||[];
+    S.articulos.push({id:id, nombre:nombre, nota:String(f.nota||"").trim(),
+      fecha:fecha, fechaIso:iso, costo:costo, mon:mon, costoUsdt:usdt,
+      yaPagada:true, pagoNota:String(f.pagoNota||"").trim(),
+      egresoId:null, cuentaId:null, estado:"mano",
+      precioEsp:esp, monEsp:f.monEsp||mon});
+    S.nArt={}; S._artForm=false;
+    saveData(); R();
+    alert("✅ Guardado como ya pagada.\n\nEntra a tu inventario con costo "+f2(costo)+" "+mon+" (~"+f2(usdt)+" USDT).\n\nNINGÚN saldo se mueve: el dinero ya salió antes.\n\nOjo: tu capital sube por este costo. Si el egreso o préstamo original lo bajó, ahora se compensa y queda cuadrado.");
+    return;
+  }
+  var cuenta=_ctaMerc(f.cuentaId);
+  if(!cuenta){ alert("Elige de qué cuenta salió el dinero."); return; }
+  if(cuenta.moneda!==mon){
+    alert("La cuenta "+cuenta.nombre+" está en "+cuenta.moneda+" y el costo lo pusiste en "+mon+".\n\nElige una cuenta en "+mon+", o cambia la moneda.");
+    return;
+  }
   var egId=_egresoMerc(id, cuenta, costo, mon, usdt, "[Mercancía] "+nombre, fecha);
   S.articulos=S.articulos||[];
   S.articulos.push({id:id, nombre:nombre, nota:String(f.nota||"").trim(),
@@ -11978,13 +11996,26 @@ function agregarGastoArt(id){
   var monto=parseFloat(_num(f.monto))||0;
   if(monto<=0){ alert("¿Cuánto?"); return; }
   var mon=f.mon||a.mon;
-  var cuenta=_ctaMerc(f.cuentaId);
-  if(!cuenta){ alert("Elige de qué cuenta salió."); return; }
-  if(cuenta.moneda!==mon){ alert("La cuenta está en "+cuenta.moneda+" y el gasto lo pusiste en "+mon+"."); return; }
   var usdt=_usdtMerc(monto, mon);
   if(usdt===null){ alert("No hay tasa para "+mon+"."); return; }
   var fecha=_hoyDMA();
   var gid=Date.now();
+  // ARREGLO 212: espejo del "ya pagada" para los gastos. Un flete que ya pagó
+  // en su día desde un préstamo que ella se hizo —y lo devolvió— no hace falta
+  // volver a descontarlo del banco. Solo entra como gasto del artículo.
+  if(f.yaPagada){
+    S.artGastos=S.artGastos||[];
+    S.artGastos.push({id:gid, artId:a.id, fecha:fecha, fechaIso:_hoyISO(),
+      concepto:concepto, monto:monto, mon:mon, montoUsdt:usdt,
+      yaPagada:true, pagoNota:String(f.pagoNota||"").trim(),
+      cuentaId:null, egresoId:null});
+    S.gArt={}; S._artGasto=null;
+    saveData(); R();
+    return;
+  }
+  var cuenta=_ctaMerc(f.cuentaId);
+  if(!cuenta){ alert("Elige de qué cuenta salió."); return; }
+  if(cuenta.moneda!==mon){ alert("La cuenta está en "+cuenta.moneda+" y el gasto lo pusiste en "+mon+"."); return; }
   var egId=_egresoMerc(a.id, cuenta, monto, mon, usdt, "[Mercancía] "+a.nombre+" · "+concepto, fecha);
   S.artGastos=S.artGastos||[];
   S.artGastos.push({id:gid, artId:a.id, fecha:fecha, fechaIso:_hoyISO(),
@@ -12065,14 +12096,21 @@ function borrarArticulo(id){
   var a=_artDe(id); if(!a) return;
   if(a.estado==="vendido"){ alert("Está vendido. Deshaz la venta primero."); return; }
   var gs=_gastosDe(id);
-  if(!confirm("¿Borrar "+a.nombre+"?\n\nVuelven "+f2(a.costo)+" "+a.mon+" a su cuenta"+
+  // ARREGLO 212: los "ya pagada" no tienen egreso que revertir — ni el
+  // artículo ni los gastos que entraron en ese modo. Al borrar, solo salen
+  // del inventario. Confundir los dos devuelve dinero inventado a una cuenta
+  // que nunca lo recibió.
+  var textoCosto = a.yaPagada
+    ? "Sale del inventario, sin tocar saldos (fue registrada como ya pagada)."
+    : "Vuelven "+f2(a.costo)+" "+a.mon+" a su cuenta";
+  if(!confirm("¿Borrar "+a.nombre+"?\n\n"+textoCosto+
       (gs.length?" y se deshacen sus "+gs.length+" gasto(s)":"")+".")) return;
   gs.forEach(function(g){
-    _borrarEgresoMerc(g.egresoId);
+    if(!g.yaPagada && g.egresoId) _borrarEgresoMerc(g.egresoId);
     _marcarBorradoMerge("artGastos", g.id);
   });
   S.artGastos=(S.artGastos||[]).filter(function(g){return String(g.artId)!==String(id);});
-  _borrarEgresoMerc(a.egresoId);
+  if(!a.yaPagada && a.egresoId) _borrarEgresoMerc(a.egresoId);
   _marcarBorradoMerge("articulos", a.id);
   S.articulos=(S.articulos||[]).filter(function(x){return String(x.id)!==String(id);});
   saveData(); R();
@@ -12120,6 +12158,24 @@ function rMercancia(){
         (sinEsp>0?"<br><span style='color:var(--tx4);font-size:10.5px'>"+sinEsp+" sin precio puesto, así que no entra en esa cuenta.</span>":"")+
       "</div>" : "");
 
+  // ARREGLO 212: toggle "Sale ahora" / "Ya está pagada". Dos botones; el que
+  // está activo se dibuja relleno, el otro apagado. El bloque "¿De qué cuenta
+  // salió?" se cambia por una nota opcional cuando el modo es "ya pagada".
+  var yaPag=!!f.yaPagada;
+  var btnModo = function(label, activo, onclick){
+    return "<button onclick='"+onclick+"' style='flex:1;padding:9px;border:1.5px solid "+(activo?"var(--ac)":"var(--ln)")+";border-radius:9px;background:"+(activo?"var(--ac)":"var(--sup2)")+";color:"+(activo?"var(--sobre-color)":"var(--tx2)")+";font-size:12px;font-weight:800;cursor:pointer;font-family:inherit'>"+label+"</button>";
+  };
+  var selectorModo =
+    "<div style='font-size:10.5px;color:var(--tx3);margin-bottom:5px'>¿Cómo la pagas?</div>"+
+    "<div style='display:flex;gap:6px;margin-bottom:9px'>"+
+      btnModo("💸 Sale ahora", !yaPag, "S.nArt=S.nArt||{};S.nArt.yaPagada=false;R()")+
+      btnModo("📥 Ya pagada", yaPag,   "S.nArt=S.nArt||{};S.nArt.yaPagada=true;R()")+
+    "</div>";
+  var bloquePago = yaPag
+    ? _campoMerc("¿Dónde quedó registrado el pago? (opcional)", "<input value='"+_jsAttr(f.pagoNota||"")+"' oninput='S.nArt=S.nArt||{};S.nArt.pagoNota=this.value' placeholder='ej: Préstamo #216 — compra Alibaba' style='"+_estiloMerc()+"'>")+
+      "<div style='font-size:10.5px;color:var(--tx3);margin:-4px 0 10px;line-height:1.5;background:var(--sup2);border-left:3px solid var(--ac);padding:7px 9px;border-radius:4px'>No se mueve ningún saldo: solo entra al inventario. Úsalo cuando el egreso o préstamo que la pagó ya está en la contabilidad y no quieres descontar dos veces.</div>"
+    : _campoMerc("¿De qué cuenta salió?", "<select onchange='S.nArt=S.nArt||{};S.nArt.cuentaId=this.value' style='"+_estiloMerc()+"'><option value=''>— elige —</option>"+_optCtasMerc(f.cuentaId)+"</select>");
+
   var form = !abierto
     ? "<button onclick='S._artForm=true;R()' style='width:100%;padding:11px;border:1px dashed var(--ln2);border-radius:10px;background:var(--sup);color:var(--tx2);font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;margin-bottom:12px'>➕ Agregar algo que compraste para vender</button>"
     : "<div style='background:var(--sup);border:1.5px solid var(--ln2);border-radius:12px;padding:13px;margin-bottom:12px'>"+
@@ -12129,7 +12185,8 @@ function rMercancia(){
           "<div style='flex:2'>"+_campoMerc("¿Qué te costó?", "<input id='art-cos' inputmode='decimal' value='"+_jsAttr(String(f.costo||""))+"' oninput='S.nArt=S.nArt||{};S.nArt.costo=_num(this.value)' placeholder='200' style='"+_estiloMerc()+"'>")+"</div>"+
           "<div style='flex:1'>"+_campoMerc("Moneda", "<select onchange='S.nArt=S.nArt||{};S.nArt.mon=this.value;R()' style='"+_estiloMerc()+"'>"+_optMonMerc(f.mon||"USDT")+"</select>")+"</div>"+
         "</div>"+
-        _campoMerc("¿De qué cuenta salió?", "<select onchange='S.nArt=S.nArt||{};S.nArt.cuentaId=this.value' style='"+_estiloMerc()+"'><option value=''>— elige —</option>"+_optCtasMerc(f.cuentaId)+"</select>")+
+        selectorModo+
+        bloquePago+
         "<div style='display:flex;gap:7px'>"+
           "<div style='flex:2'>"+_campoMerc("¿En cuánto piensas venderlo?", "<input inputmode='decimal' value='"+_jsAttr(String(f.precioEsp||""))+"' oninput='S.nArt=S.nArt||{};S.nArt.precioEsp=_num(this.value)' placeholder='300 · opcional' style='"+_estiloMerc()+"'>")+"</div>"+
           "<div style='flex:1'>"+_campoMerc("Moneda", "<select onchange='S.nArt=S.nArt||{};S.nArt.monEsp=this.value' style='"+_estiloMerc()+"'>"+_optMonMerc(f.monEsp||f.mon||"USDT")+"</select>")+"</div>"+
@@ -12244,6 +12301,21 @@ function _filaArticulo(a){
           "<button onclick='S._artVenta=null;R()' style='padding:10px 14px;border:1px solid var(--ln);border-radius:9px;background:var(--sup);color:var(--tx3);font-size:12px;cursor:pointer;font-family:inherit'>Cancelar</button>"+
         "</div>"+
       "</div>" : "";
+  // ARREGLO 212: espejo del toggle en el gasto. Un flete viejo ya pagado desde
+  // un préstamo entra como gasto del artículo sin volver a bajar cuenta.
+  var gYa=!!g.yaPagada;
+  var btnG = function(label, activo, onclick){
+    return "<button onclick='"+onclick+"' style='flex:1;padding:8px;border:1.5px solid "+(activo?"var(--ac)":"var(--ln)")+";border-radius:8px;background:"+(activo?"var(--ac)":"var(--sup)")+";color:"+(activo?"var(--sobre-color)":"var(--tx2)")+";font-size:11.5px;font-weight:800;cursor:pointer;font-family:inherit'>"+label+"</button>";
+  };
+  var selectorModoG =
+    "<div style='font-size:10.5px;color:var(--tx3);margin-bottom:4px'>¿Cómo lo pagas?</div>"+
+    "<div style='display:flex;gap:6px;margin-bottom:8px'>"+
+      btnG("💸 Sale ahora", !gYa, "S.gArt=S.gArt||{};S.gArt.yaPagada=false;R()")+
+      btnG("📥 Ya pagado",  gYa,  "S.gArt=S.gArt||{};S.gArt.yaPagada=true;R()")+
+    "</div>";
+  var bloquePagoG = gYa
+    ? _campoMerc("¿Dónde quedó registrado el pago? (opcional)", "<input value='"+_jsAttr(g.pagoNota||"")+"' oninput='S.gArt=S.gArt||{};S.gArt.pagoNota=this.value' placeholder='ej: Préstamo #216 — pago flete' style='"+_estiloMerc()+"'>")
+    : _campoMerc("¿De qué cuenta sale?", "<select onchange='S.gArt=S.gArt||{};S.gArt.cuentaId=this.value' style='"+_estiloMerc()+"'><option value=''>— elige —</option>"+_optCtasMerc(g.cuentaId)+"</select>");
   var formGasto = abreGasto
     ? "<div style='background:var(--sup2);border-top:1px solid var(--ln2);padding:12px 13px'>"+
         "<div style='font-size:11.5px;font-weight:800;color:var(--tit);margin-bottom:9px'>➕ Un gasto de "+_escAud(a.nombre)+"</div>"+
@@ -12252,7 +12324,8 @@ function _filaArticulo(a){
           "<div style='flex:2'>"+_campoMerc("¿Cuánto?", "<input inputmode='decimal' value='"+_jsAttr(String(g.monto||""))+"' oninput='S.gArt=S.gArt||{};S.gArt.monto=_num(this.value)' style='"+_estiloMerc()+"'>")+"</div>"+
           "<div style='flex:1'>"+_campoMerc("Moneda", "<select onchange='S.gArt=S.gArt||{};S.gArt.mon=this.value;R()' style='"+_estiloMerc()+"'>"+_optMonMerc(g.mon||a.mon)+"</select>")+"</div>"+
         "</div>"+
-        _campoMerc("¿De qué cuenta sale?", "<select onchange='S.gArt=S.gArt||{};S.gArt.cuentaId=this.value' style='"+_estiloMerc()+"'><option value=''>— elige —</option>"+_optCtasMerc(g.cuentaId)+"</select>")+
+        selectorModoG+
+        bloquePagoG+
         "<div style='font-size:10.5px;color:var(--tx3);margin-bottom:8px;line-height:1.5'>Sube lo que te costó esta cosa, así que tu ganancia al venderla ya lo lleva descontado.</div>"+
         "<div style='display:flex;gap:7px'>"+
           "<button onclick='agregarGastoArt("+_jsAttr(String(a.id))+")' style='flex:1;padding:10px;border:none;border-radius:9px;background:var(--ac);color:var(--sobre-color);font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit'>Guardar gasto</button>"+
