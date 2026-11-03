@@ -3305,7 +3305,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261103_v304";
+var APP_VERSION = "20261103_v305";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -8873,6 +8873,34 @@ function _htmlEquivAbono(montoPago,tasa,monDeuda,esManual,cola){
   if(!(tasa>0)||!(montoPago>0)) return "";
   return "<div style='font-size:13px;font-weight:800;color:var(--vd2);background:var(--vd6-c);border-radius:7px;padding:8px 10px;margin-top:5px'>= "+f2(_deudaCubierta(montoPago,tasa))+" "+monDeuda+" "+cola+" ("+(esManual?"tasa manual":"tasa actual")+")</div>";
 }
+// ARREGLO 224 · PAGAR EXACTO EL SALDO EN OTRA MONEDA
+// ──────────────────────────────────────────────────────────────────
+// Sus palabras del 03/11: "quiero pagar exactamente 70 reales que es el
+// préstamo pero paga en USDT y no puedo calcular exacto". El problema:
+// con tasa 0,1833, Binance mueve 12,83 USDT y eso cubre 69,94 o 70,05
+// BRL (según redondeo), nunca 70,00. No hay forma con 2 decimales.
+//
+// El botón "💯 Exacto X,XX" rellena el USDT (redondeado al céntimo,
+// como Binance acepta) y guarda una bandera _exacto. Al confirmar, la
+// deuda baja EXACTAMENTE el saldo pendiente, y la cuenta sube los USDT
+// que ella escribió — así los dos lados cuadran al mínimo. La "tasa
+// efectiva" implícita queda escrita en la nota.
+function _pagarExacto(cual, deuda, tasa){
+  if(!(deuda>0)||!(tasa>0)) return;
+  var usdt = Math.round(deuda*tasa*100)/100;
+  if(cual==="prest") S.nPagarPrest = Object.assign(S.nPagarPrest||{}, {monto: usdt, _exacto: true});
+  else S.nAbonoCobrar = Object.assign(S.nAbonoCobrar||{}, {monto: usdt, _exacto: true});
+  R();
+}
+// Botón al lado del campo monto. Solo cuando hay tasa y pago en otra
+// moneda; si no, no hay nada que calcular. Un botón que no hace falta
+// deja de leerse (ARREGLO 99).
+function _htmlBotonExacto(cual, deuda, tasa, monDeuda, monPago){
+  if(!(deuda>0)||!(tasa>0)||monPago===monDeuda) return "";
+  var usdt = Math.round(deuda*tasa*100)/100;
+  if(!(usdt>0)) return "";
+  return "<div style='margin-top:5px'><button type='button' onclick='_pagarExacto(\""+cual+"\","+deuda+","+tasa+")' style='padding:8px 11px;border:1.5px solid var(--vd2-a);border-radius:8px;background:var(--vd6-l);color:var(--vd2-a);font-size:12px;font-weight:800;cursor:pointer;font-family:inherit'>💯 Exacto "+f2(deuda)+" "+monDeuda+" &rarr; "+f2(usdt)+" "+monPago+"</button></div>";
+}
 // ARREGLO 203 · se fueron `_htmlCalcPago`, `chgObjetivoPrest` y
 // `_rellenarMontoPrest`. Este formulario registra un pago YA RECIBIDO;
 // la calculadora inversa confundía — "para cobrar" ya está el botón
@@ -8896,6 +8924,8 @@ function _refrescarAbonoPrest(monPrest,monPago,ref,techo){
     if((el=document.getElementById("pp-eq")))   el.innerHTML=_htmlEquivAbono(mi,tasaUsar,monPrest,tm>0,"del pr&eacute;stamo");
     if((el=document.getElementById("pp-dir")))  el.innerHTML=_htmlTasaEnPalabras(refUsar,tasaUsar,monPrest,monPago,techo);
     if((el=document.getElementById("pp-inv")))  el.innerHTML=_htmlTasaInvertida(tm,tasaAuto,monPrest,monPago);
+    // ARREGLO 224 · refrescar el botón Exacto al cambiar la tasa.
+    if((el=document.getElementById("pp-exa")))  el.innerHTML=_htmlBotonExacto("prest",refUsar,tasaUsar,monPrest,monPago);
   }catch(e){}
 }
 // Gemelo de chgTasaPrest para cuentas por cobrar (ARREGLO 55).
@@ -8915,6 +8945,8 @@ function _refrescarAbonoCobrar(monDeuda,monPago,ref){
     if((el=document.getElementById("cc-eq")))  el.innerHTML=_htmlEquivAbono(mi,tasaUsar,monDeuda,tm>0,"de la cuenta por cobrar");
     if((el=document.getElementById("cc-dir"))) el.innerHTML=_htmlTasaEnPalabras(parseFloat(ref)||0,tasaUsar,monDeuda,monPago,parseFloat(ref)||0);
     if((el=document.getElementById("cc-inv"))) el.innerHTML=_htmlTasaInvertida(tm,tasaAuto,monDeuda,monPago);
+    // ARREGLO 224 · refrescar el botón Exacto al cambiar la tasa.
+    if((el=document.getElementById("cc-exa"))) el.innerHTML=_htmlBotonExacto("cobrar",parseFloat(ref)||0,tasaUsar,monDeuda,monPago);
   }catch(e){}
 }
 function pagarPrestamo(id){
@@ -8941,6 +8973,21 @@ function pagarPrestamo(id){
       // La nota lleva la dirección escrita para que dentro de un mes se
       // pueda releer sin adivinar.
       notaPago=" (pagó "+f2(montoIngresado)+" "+monPago+" a "+f4(tasaManual)+" "+monPago+" por "+mon+")";
+      // ARREGLO 224: si pulsó 💯 Exacto, fuerza el abono a cuadrar al
+      // saldo (o a la cuota marcada + mora, que es lo que el formulario
+      // enseña como pendiente). La tasa efectiva queda en la nota.
+      if(np._exacto){
+        var _cuSel=(np.cuotaSel&&np.cuotaSel!=="") ? JSON.parse(np.cuotaSel) : null;
+        var _moraPend = (typeof moraPendiente==="function" && np.cobrarMora!==false) ? (moraPendiente(p)||0) : 0;
+        var _totAb=(p.abonos||[]).reduce(function(s,ab){return s+(parseFloat(ab.monto)||0);},0);
+        var _pendP=Math.max(0, Math.round(((parseFloat(p.monto||p.sal)||0) - _totAb) * 100)/100);
+        var _ref = _cuSel ? Math.round((_cuSel.monto + _moraPend)*100)/100 : Math.round((_pendP + _moraPend)*100)/100;
+        if(_ref>0.001 && Math.abs(monto-_ref)<Math.max(0.5, _ref*0.02)){
+          var _tef = montoIngresado>0 ? monto/montoIngresado : tasaManual;
+          monto = _ref;
+          notaPago=" (pagó "+f2(montoIngresado)+" "+monPago+" por "+f2(_ref)+" "+mon+" exactos · tasa efectiva "+f4(_tef)+" "+monPago+"/"+mon+")";
+        }
+      }
     } else {
       var rPago=getRateToUsdt(monPago);
       var rPrestamo=getRateToUsdt(mon);
@@ -11282,6 +11329,18 @@ function saveAbonoCobrar(id){
       // unidades de monPago vale 1 de la moneda de la deuda, y se divide.
       monto = _deudaCubierta(montoIngresado,tasaManual);
       notaPago=" (pagó "+f2(montoIngresado)+" "+monPago+" a "+f4(tasaManual)+" "+monPago+" por "+monCobrar+")";
+      // ARREGLO 224: si pulsó 💯 Exacto, fuerza la deuda al saldo exacto.
+      // La diferencia por redondeo entre la tasa escrita y la operación real
+      // se absorbe. La tasa efectiva implícita queda en la nota.
+      if(na._exacto){
+        var _tab = (c.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);
+        var _pend = Math.round(((parseFloat(c.monto)||0) - _tab) * 100)/100;
+        if(_pend>0.001 && Math.abs(monto-_pend)<Math.max(0.5, _pend*0.02)){
+          var _tef = montoIngresado>0 ? monto/montoIngresado : tasaManual;
+          monto = _pend;
+          notaPago=" (pagó "+f2(montoIngresado)+" "+monPago+" por "+f2(_pend)+" "+monCobrar+" exactos · tasa efectiva "+f4(_tef)+" "+monPago+"/"+monCobrar+")";
+        }
+      }
     } else {
       var rPago=getRateToUsdt(monPago);
       var rCobrar=getRateToUsdt(monCobrar);
@@ -35572,6 +35631,8 @@ function rCuentasCobrar(){
           "<input type='text' inputmode='decimal' placeholder='"+(_tAutoCC?f4(_tAutoCC):"—")+"' value='"+(na.tasaManual||"")+"' oninput='chgTasaCobrar(_num(this.value),\""+c.moneda+"\",\""+monPagoCC+"\","+saldoPend+")' style='width:100%;padding:9px;font-size:13px;border:1.5px solid var(--ln);border-radius:8px;font-family:inherit'>"+
           "<div id='cc-inv'>"+_htmlTasaInvertida(_tmCC||0,_tAutoCC,c.moneda,monPagoCC)+"</div>"+
           "<div id='cc-dir'>"+_htmlTasaEnPalabras(saldoPend,_tUsarCC,c.moneda,monPagoCC,saldoPend)+"</div>"+
+          // ARREGLO 224 · botón "💯 Exacto" para cuadrar al céntimo.
+          "<div id='cc-exa'>"+_htmlBotonExacto("cobrar",saldoPend,_tUsarCC,c.moneda,monPagoCC)+"</div>"+
         "</div>";
         previewCC+="<div id='cc-eq'>"+_htmlEquivAbono(montoIngCC,_tUsarCC,c.moneda,_tmCC!==null,"de la cuenta por cobrar")+"</div>";
         if(!_tAutoCC&&!(_tUsarCC>0)){
@@ -35589,7 +35650,7 @@ function rCuentasCobrar(){
             MONEDAS_COBRAR.map(function(m){return "<option value='"+m+"'"+(monPagoCC===m?" selected":"")+">"+m+(m===c.moneda?" (moneda de la deuda)":"")+"</option>";}).join("")+
           "</select></div>"+
           "<div><label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>Monto recibido ("+monPagoCC+")</label>"+
-          "<input type='text' inputmode='decimal' placeholder='0.00' value='"+(na.monto||"")+"' oninput='S.nAbonoCobrar=Object.assign(S.nAbonoCobrar||{},{monto:_num(this.value)});_refrescarAbonoCobrar(\""+c.moneda+"\",\""+monPagoCC+"\","+saldoPend+")' onblur='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'>"+
+          "<input type='text' inputmode='decimal' placeholder='0.00' value='"+(na.monto||"")+"' oninput='S.nAbonoCobrar=Object.assign(S.nAbonoCobrar||{},{monto:_num(this.value),_exacto:false});_refrescarAbonoCobrar(\""+c.moneda+"\",\""+monPagoCC+"\","+saldoPend+")' onblur='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'>"+
           previewCC+
           "</div>"+
           "<div><label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>Cuenta donde entra ("+monPagoCC+")</label>"+
@@ -36671,6 +36732,8 @@ function rPrestamos(){
           // caja de color vacía en pantalla.
           "<div id='pp-inv'>"+_htmlTasaInvertida(_tasaManual||0,tasaAuto,monP,monPago)+"</div>"+
           "<div id='pp-dir'>"+_htmlTasaEnPalabras(_refPend,tasaUsar,monP,monPago,_techoPend)+"</div>"+
+          // ARREGLO 224 · botón "💯 Exacto" para cuadrar al céntimo.
+          "<div id='pp-exa'>"+_htmlBotonExacto("prest",_refPend,tasaUsar,monP,monPago)+"</div>"+
         "</div>";
         previewHtml+="<div id='pp-eq'>"+_htmlEquivAbono(montoIng,tasaUsar,monP,_tasaManual!==null,"del préstamo")+"</div>";
         if(!tasaAuto&&!(tasaUsar>0)){
@@ -36715,7 +36778,7 @@ function rPrestamos(){
             MONEDAS_ABONO.map(function(m){return "<option value='"+m+"'"+(monPago===m?" selected":"")+">"+m+(m===monP?" (moneda del préstamo)":"")+"</option>";}).join("")+
           "</select></div>"+
           "<div><label style='font-size:11.5px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>Monto recibido ("+monPago+")</label>"+
-          "<input id='pp-monto' type='text' inputmode='decimal' placeholder='0.00' value='"+(np.monto||"")+"' oninput='S.nPagarPrest=Object.assign(S.nPagarPrest||{},{monto:_num(this.value)});_refrescarAbonoPrest(\""+monP+"\",\""+monPago+"\","+_refPend+","+_techoPend+")' onchange='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'>"+
+          "<input id='pp-monto' type='text' inputmode='decimal' placeholder='0.00' value='"+(np.monto||"")+"' oninput='S.nPagarPrest=Object.assign(S.nPagarPrest||{},{monto:_num(this.value),_exacto:false});_refrescarAbonoPrest(\""+monP+"\",\""+monPago+"\","+_refPend+","+_techoPend+")' onchange='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'>"+
           // ARREGLO 203 · fuera la calculadora inversa de este formulario.
           // Este formulario REGISTRA un pago que ya se recibió. Para saber
           // "cuánto decirle al cliente antes de que pague" ya existe el

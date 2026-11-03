@@ -8160,6 +8160,30 @@ console.log("\n— FASE 2: la cuenta madre —");
   const _mrs = sinC(sacarFuncion("_multiRecibidoSugerido"));
   ok(/total\/rD/.test(_mrs) && /usdt\*rC/.test(_mrs) && /return null/.test(_mrs),
      "la conversion sugerida divide para ir a USDT, multiplica para salir, y sin tasa no inventa");
+  // ARREGLO 224 · pagar EXACTO el saldo cuando la moneda difiere.
+  // Sus palabras: "quiero pagar exactamente 70 reales que es el préstamo pero
+  // paga en USDT y no puedo calcular exacto". Con tasa 0,1833, 12,83 USDT dan
+  // 69,94 o 70,05 BRL, nunca 70,00. Botón 💯 Exacto + flag _exacto que fuerza
+  // la deuda a cuadrar al mínimo y deja la tasa efectiva en la nota.
+  const _pex = sinC(sacarFuncion("_pagarExacto"));
+  ok(/_exacto:\s*true/.test(_pex) && /Math\.round\(deuda\*tasa\*100\)\/100/.test(_pex),
+     "_pagarExacto escribe el USDT redondeado al céntimo y marca _exacto");
+  const _hbe = sinC(sacarFuncion("_htmlBotonExacto"));
+  ok(/monPago===monDeuda/.test(_hbe) && /_pagarExacto\(/.test(_hbe),
+     "el botón sólo sale cuando la moneda de pago es distinta");
+  const _sac = sinC(sacarFuncion("saveAbonoCobrar"));
+  ok(/if\(na\._exacto\)/.test(_sac) && /monto\s*=\s*_pend/.test(_sac),
+     "al guardar con _exacto, saveAbonoCobrar fuerza la deuda al pendiente");
+  const _pap = sinC(sacarFuncion("pagarPrestamo"));
+  ok(/if\(np\._exacto\)/.test(_pap) && /monto\s*=\s*_ref/.test(_pap),
+     "al guardar con _exacto, pagarPrestamo fuerza al pendiente (o cuota+mora)");
+  const _rac = sinC(sacarFuncion("_refrescarAbonoCobrar"));
+  ok(/cc-exa/.test(_rac),
+     "_refrescarAbonoCobrar actualiza el botón Exacto cuando cambia la tasa");
+  const _rap = sinC(sacarFuncion("_refrescarAbonoPrest"));
+  ok(/pp-exa/.test(_rap),
+     "_refrescarAbonoPrest actualiza el botón Exacto cuando cambia la tasa");
+
   // ARREGLO 217 · la primera version del 216 usaba <label><input/></label> y
   // en el telefono se veia mal — el checkbox quedaba en el centro de una
   // tira ancha, el texto apelmazado a la derecha, y el toque no siempre
