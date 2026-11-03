@@ -8030,6 +8030,36 @@ console.log("\n— FASE 2: la cuenta madre —");
      "en modo ya pagada el formulario pregunta por la nota del pago (opcional)");
 
   // ────────────────────────────────────────────────────────────────────────
+  // ARREGLO 213 · PRESTAMO QUE SALE DE MERCANCIA
+  // ────────────────────────────────────────────────────────────────────────
+  const _sPr = sinC(sacarFuncion("savePr"));
+  ok(/f\.desdeMercancia/.test(_sPr),
+     "savePr decide por f.desdeMercancia: dos caminos");
+  const _sPrMerc = _sPr.match(/if\(f\.desdeMercancia\)\{[\s\S]*?\} else if\(f\.cuentaId\)/);
+  ok(_sPrMerc && !/c\.saldo=/.test(_sPrMerc[0]) && !/descontarFIFOEgreso\(/.test(_sPrMerc[0]),
+     "el bloque desdeMercancia no mueve cuentas ni FIFO");
+  ok(_sPrMerc && /cobro:"prestamo"/.test(_sPrMerc[0]) && /_mercPr\.estado="vendido"/.test(_sPrMerc[0]),
+     "la mercancia sale del inventario marcada como venta a un prestamo");
+  ok(/desdeMercancia:_mercPr\?_mercPr\.id:undefined/.test(_sPr),
+     "el prestamo guarda desdeMercancia con el id del articulo");
+  const _rqd = sinC(sacarFuncion("reqDel"));
+  ok(/if\(item\.desdeMercancia\)/.test(_rqd),
+     "reqDel detecta el prestamo que salio de mercancia");
+  const _rqdMerc = _rqd.match(/if\(item\.desdeMercancia\)\{[\s\S]*?return;\s*\}/);
+  ok(_rqdMerc && /_artPr\.estado="mano"/.test(_rqdMerc[0]) && /delete _artPr\.venta/.test(_rqdMerc[0]),
+     "al borrarlo, la mercancia vuelve a estado 'mano' sin venta");
+  ok(_rqdMerc && !/cPrest\.saldo=/.test(_rqdMerc[0]),
+     "y no toca el saldo de ninguna cuenta");
+  const _dva = sinC(sacarFuncion("deshacerVentaArt"));
+  ok(/a\.venta\.cobro==="prestamo"/.test(_dva),
+     "deshacerVentaArt detecta el modo prestamo y manda al modulo correcto");
+  const _rP = sinC(sacarFuncion("rPrestamos"));
+  ok(/S\.nPr\.desdeMercancia=true/.test(_rP) && /S\.nPr\.desdeMercancia=false/.test(_rP),
+     "los dos botones del toggle de prestamo cambian la bandera");
+  ok(/S\.nPr\.mercanciaId=/.test(_rP),
+     "y en modo mercancia hay un selector para elegir el articulo");
+
+  // ────────────────────────────────────────────────────────────────────────
   // ARREGLO 214 · HISTORIAL UNIFICADO POR CLIENTE
   // ────────────────────────────────────────────────────────────────────────
   // Al buscar un cliente en Clientes, un boton 📜 abre un panel bajo la fila
@@ -8040,22 +8070,15 @@ console.log("\n— FASE 2: la cuenta madre —");
      "_historialDeCliente mira prestamos y cuentas por cobrar");
   ok(/\["brl","vzla","eeuu"\]/.test(_hc),
      "y las remesas de las tres rutas");
-  // Preferir COD cuando existe, caer a nombre normalizado como fallback.
-  // Las remesas se guardan con el nombre (no con cod), asi que un cliente sin
-  // cod se queda huerfano sin el fallback.
   ok(/p\.cod===cod/.test(_hc) && /mismoNombre/.test(_hc),
      "cliente se encuentra por cod primero, luego por nombre");
-  // El panel se despliega bajo la fila (no en modal) y se cierra tocando
-  // el boton otra vez.
   const _tog = sinC(sacarFuncion("_toggleHistCl"));
   ok(/S\._clHistCod===cod/.test(_tog) && /null\s*:\s*cod/.test(_tog),
      "_toggleHistCl alterna el cliente seleccionado");
-  // En rClientes, el panel se dibuja solo cuando S._clHistCod coincide.
-  const _rC = sinC(sacarFuncion("rClientes"));
-  ok(/S\._clHistCod===cl\.cod/.test(_rC) && /_htmlHistorialCliente\(cl\)/.test(_rC),
+  const _rCli = sinC(sacarFuncion("rClientes"));
+  ok(/S\._clHistCod===cl\.cod/.test(_rCli) && /_htmlHistorialCliente\(cl\)/.test(_rCli),
      "rClientes dibuja el panel bajo la fila del cliente seleccionado");
-  // El boton 📜 en cada fila llama a _toggleHistCl.
-  ok(/_toggleHistCl\(/.test(_rC),
+  ok(/_toggleHistCl\(/.test(_rCli),
      "el boton 📜 abre el historial");
 }
   // 6b. ARREGLO 141 · las cuentas en CERO se pliegan. Medido en su export: 15
