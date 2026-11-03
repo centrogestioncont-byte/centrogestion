@@ -8086,6 +8086,43 @@ console.log("\n— FASE 2: la cuenta madre —");
      "rClientes dibuja el panel bajo la fila del cliente seleccionado");
   ok(/_toggleHistCl\(/.test(_rCli),
      "el boton 📜 abre el historial");
+
+  // ────────────────────────────────────────────────────────────────────────
+  // ARREGLO 216 · LIQUIDACION DE VARIAS CUOTAS DE UN CLIENTE
+  // ────────────────────────────────────────────────────────────────────────
+  // Desde el panel 📜 del cliente se pueden marcar varias cuotas de sus
+  // prestamos y liquidar todo con UN solo pago. Restriccion v1: una sola
+  // moneda. Sin mora ni premio por anticipo — lo que paga una cuota exacta
+  // no genera ni descuenta nada de eso.
+  const _cpp = sinC(sacarFuncion("_cuotasPendientesPr"));
+  ok(/p\.abonos\|\|\[\]/.test(_cpp) && /cuotaN/.test(_cpp),
+     "_cuotasPendientesPr suma abonos por cuotaN para saber el saldo");
+  ok(/cu\.saldo\s*>\s*0\.00[0-9]/.test(_cpp),
+     "y solo devuelve las que todavia tienen saldo");
+  const _mtg = sinC(sacarFuncion("_multiTogglePg"));
+  ok(/m\.moneda!==moneda/.test(_mtg) && /alert\(/.test(_mtg),
+     "_multiTogglePg no deja mezclar monedas, avisa");
+  ok(/if\(!m\.marcadas\.length\)/.test(_mtg) && /m\.moneda=""/.test(_mtg),
+     "al vaciar la seleccion se libera la moneda para la siguiente ronda");
+  const _cfm = sinC(sacarFuncion("confirmarLiquidacionMulti"));
+  ok(/ajusteCuentaEgreso\(m\.cuentaId,\s*total\)/.test(_cfm),
+     "la cuenta se mueve UNA sola vez con el total (un movimiento, no cinco)");
+  ok(/p\.abonos\.push\(\{/.test(_cfm) && /cuotaN:\s*it\.cu\.n/.test(_cfm),
+     "cada cuota marcada se guarda como un abono con su cuotaN");
+  ok(/if\(totalAb\s*>=\s*base/.test(_cfm) && /p\.estado\s*=\s*"pagado"/.test(_cfm),
+     "si queda saldado el prestamo se marca pagado, igual que pagarPrestamo");
+  ok(/sort\(function/.test(_cfm) && /cu\.iso/.test(_cfm),
+     "las cuotas se aplican FIFO por fecha (iso), como pidio ella");
+  const _tog2 = sinC(sacarFuncion("_toggleHistCl"));
+  ok(/S\._multiPg\s*=\s*null/.test(_tog2),
+     "abrir o cerrar el panel limpia la seleccion: no se arrastra entre clientes");
+  const _hhc = sinC(sacarFuncion("_htmlHistorialCliente"));
+  ok(/_cuotasPendientesPr\(p\)/.test(_hhc) && /_multiMarcada\(/.test(_hhc),
+     "cada prestamo lista sus cuotas pendientes con casilla");
+  ok(/x\.moneda===monM/.test(_hhc),
+     "el selector de cuenta en el panel final filtra a la moneda marcada");
+  ok(/confirmarLiquidacionMulti\(\)/.test(_hhc),
+     "el boton del panel llama a la funcion correcta");
 }
   // 6b. ARREGLO 141 · las cuentas en CERO se pliegan. Medido en su export: 15
   //     de sus 23 cuentas estan en cero, y de las que ve son 9 de 17 — mas de
