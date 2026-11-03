@@ -8066,26 +8066,32 @@ console.log("\n— FASE 2: la cuenta madre —");
      "los onclick del toggle no cierran el atributo con ''");
 
   // ────────────────────────────────────────────────────────────────────────
-  // ARREGLO 214 · HISTORIAL UNIFICADO POR CLIENTE
+  // ARREGLO 221 · el 📜 de Clientes (ARREGLO 214) se retiró: lo de prestamos
+  // vive en Prestamos (ficha + 📅 Pagos del dia)
   // ────────────────────────────────────────────────────────────────────────
-  // Al buscar un cliente en Clientes, un boton 📜 abre un panel bajo la fila
-  // con todo lo que ese cliente debe: prestamos, cuentas por cobrar y remesas
-  // pendientes. Antes habia que ir a tres pestañas y acordarse del total.
-  const _hc = sinC(sacarFuncion("_historialDeCliente"));
-  ok(/S\.prestamos\|\|\[\]/.test(_hc) && /S\.cuentasCobrar\|\|\[\]/.test(_hc),
-     "_historialDeCliente mira prestamos y cuentas por cobrar");
-  ok(/\["brl","vzla","eeuu"\]/.test(_hc),
-     "y las remesas de las tres rutas");
-  ok(/p\.cod===cod/.test(_hc) && /mismoNombre/.test(_hc),
-     "cliente se encuentra por cod primero, luego por nombre");
-  const _tog = sinC(sacarFuncion("_toggleHistCl"));
-  ok(/S\._clHistCod===cod/.test(_tog) && /null\s*:\s*cod/.test(_tog),
-     "_toggleHistCl alterna el cliente seleccionado");
   const _rCli = sinC(sacarFuncion("rClientes"));
-  ok(/S\._clHistCod===cl\.cod/.test(_rCli) && /_htmlHistorialCliente\(cl\)/.test(_rCli),
-     "rClientes dibuja el panel bajo la fila del cliente seleccionado");
-  ok(/_toggleHistCl\(/.test(_rCli),
-     "el boton 📜 abre el historial");
+  ok(!/_toggleHistCl\(|_htmlHistorialCliente\(|_clHistCod/.test(_rCli),
+     "Clientes ya no dibuja el 📜 ni su panel");
+  ok(!/function _toggleHistCl|function _historialDeCliente|function _htmlHistorialCliente/.test(HTML),
+     "las funciones del panel viejo no quedan colgadas");
+  const _rPr221 = sinC(sacarFuncion("rPrestamos"));
+  ok(/_htmlLiquidarCuotas\(gA\.items, clave\)/.test(_rPr221),
+     "la ficha del cliente en Prestamos trae la liquidacion de varias cuotas");
+  ok(/S\._prVista==="pagos"/.test(_rPr221) && /_htmlPagosDelDia\(\)/.test(_rPr221),
+     "Prestamos tiene la vista 📅 Pagos del dia");
+  const _pdd = sinC(sacarFuncion("_pagosDelDia"));
+  ok(!/p\.abonos\s*=|p\.estado\s*=|ajusteCuenta|saveData/.test(_pdd),
+     "Pagos del dia solo LEE: no toca abonos, estados, cuentas ni guarda");
+  ok(/p\.abonos\|\|\[\]/.test(_pdd) && /p\.mora\|\|\{\}/.test(_pdd),
+     "lista abonos y tambien la mora cobrada");
+  const _iab = sinC(sacarFuncion("_isoDeAbono"));
+  ok(/_isoDeDDMMAA\(f\)/.test(_iab) && /1\.4e12/.test(_iab),
+     "la fecha de un abono vale ISO, dd/mm/aa o, si falta, la del id");
+  ok(/g\.ultIso/.test(_rPr221) && /a\.ultIso<b\.ultIso\?1:-1/.test(_rPr221),
+     "los saldados se ordenan por la FECHA del ultimo pago, no solo por la hora del id");
+  const _irA = sinC(sacarFuncion("_prIrA"));
+  ok(/S\._prFicha!==\(clave\|\|""\)\)\{ S\._multiPg=null;/.test(_irA),
+     "abrir la ficha de otro cliente limpia las cuotas marcadas");
 
   // ────────────────────────────────────────────────────────────────────────
   // ARREGLO 216 · LIQUIDACION DE VARIAS CUOTAS DE UN CLIENTE
@@ -8115,10 +8121,7 @@ console.log("\n— FASE 2: la cuenta madre —");
      "si queda saldado el prestamo se marca pagado, igual que pagarPrestamo");
   ok(/sort\(function/.test(_cfm) && /cu\.iso/.test(_cfm),
      "las cuotas se aplican FIFO por fecha (iso), como pidio ella");
-  const _tog2 = sinC(sacarFuncion("_toggleHistCl"));
-  ok(/S\._multiPg\s*=\s*null/.test(_tog2),
-     "abrir o cerrar el panel limpia la seleccion: no se arrastra entre clientes");
-  const _hhc = sinC(sacarFuncion("_htmlHistorialCliente"));
+  const _hhc = sinC(sacarFuncion("_htmlLiquidarCuotas"));
   ok(/_cuotasPendientesPr\(p\)/.test(_hhc) && /_multiMarcada\(/.test(_hhc),
      "cada prestamo lista sus cuotas pendientes con casilla");
   // ARREGLO 219: ya no filtra — salen todas, primero las de la moneda
@@ -8130,16 +8133,16 @@ console.log("\n— FASE 2: la cuenta madre —");
   // ARREGLO 219 · marcar todas por moneda y cobrar en otra moneda
   ok(/_multiMarcarTodas\(/.test(_hhc), "hay boton de marcar todas por moneda");
   // ARREGLO 220 · filtro real por moneda, y las de otra moneda sin gris
-  ok(/_clHistFiltrar\(/.test(_hhc) && /h\.prestamos\.filter\(function\(p\)\{ return !_fil \|\| \(p\.mon\|\|"USDT"\)===_fil; \}\)/.test(_hhc),
+  ok(/_prLiqFiltrar\(/.test(_hhc) && /conCuotas\.filter\(function\(p\)\{ return !_fil\|\|\(p\.mon\|\|"USDT"\)===_fil; \}\)/.test(_hhc),
      "las pestanas de moneda filtran de verdad la lista de prestamos");
   ok(/Viendo/.test(_hhc) && !/☑ Marcar todas/.test(_hhc),
      "la pestana elegida dice 'Viendo' y el filtro no lleva casilla (no se confunde con marcar)");
-  ok(!/opacity:"\+\(deshab\?"0\.45"/.test(_hhc) || /var deshab = false;/.test(_hhc),
+  ok(!/opacity/.test(_hhc),
      "las cuotas de otra moneda ya no salen grises");
-  ok(/S\._clHistFiltro = "";/.test(sinC(sacarFuncion("_toggleHistCl"))),
+  ok(/S\._prLiqFiltro=""/.test(sinC(sacarFuncion("_prIrA"))),
      "abrir otro cliente vuelve el filtro a Todas");
   const _mma = sinC(sacarFuncion("_multiMarcarTodas"));
-  ok(/_historialDeCliente\(cl\)\.prestamos/.test(_mma) && /_cuotasPendientesPr\(p\)/.test(_mma),
+  ok(/_prActivosDeClave\(clave\)/.test(_mma) && /_cuotasPendientesPr\(p\)/.test(_mma),
      "marcar todas sale de la MISMA lista que dibuja el panel");
   const _msr = sinC(sacarFuncion("_multiSetRecibido"));
   ok(!/\bR\(\)/.test(_msr) && /multi-tasa/.test(_msr),
@@ -8156,15 +8159,13 @@ console.log("\n— FASE 2: la cuenta madre —");
   // tira ancha, el texto apelmazado a la derecha, y el toque no siempre
   // marcaba. Ahora cada cuota es un <div onclick> con un ☐/☑ visual que
   // llama directo a _multiTogglePg(). Mas robusto y legible.
-  ok(/div\s+"\+click\+"/.test(_hhc) || /"<div\s+"\+click\+"/.test(_hhc),
+  ok(/"<div onclick='_multiTogglePg\(/.test(_hhc) && !/<label/.test(_hhc.split("campoRec")[0]),
      "cada fila de cuota es un <div> clicable, no un <label>");
   ok(/onclick='_multiTogglePg\(/.test(_hhc),
      "y el onclick llama directo a _multiTogglePg con el id, cuotaN, saldo, moneda");
-  ok(/marc\s*\?\s*"☑"\s*:\s*"☐"/.test(_hhc),
+  ok(/marc\?"☑":"☐"/.test(_hhc),
      "el ☐/☑ visual marca la cuota, sin <input type=checkbox>");
-  ok(/p\.numCuotas\s*\|\|\s*\(p\.cuotas\|\|\[\]\)\.length\s*\|\|\s*1/.test(_hhc),
-     "numCuotas undefined cae a len(cuotas) o 1, no sale 'undefined cuota'");
-  ok(/S\._multiPg[\s\S]{0,50}marcadas[\s\S]{0,300}margin-bottom:12px/.test(_hhc),
+  ok(/S\._multiPg[\s\S]{0,50}marcadas[\s\S]{0,300}margin-bottom:10px/.test(_hhc),
      "el resumen de marcadas tambien sale ARRIBA, no solo al fondo del panel");
   // ARREGLO 218 · p.id de los prestamos es NUMERO en memoria, pero el onclick
   // de la fila lo entrega como TEXTO. Comparando con === la cuota se marcaba
