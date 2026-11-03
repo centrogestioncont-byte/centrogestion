@@ -109,7 +109,7 @@ const NECESARIAS = ["_egresosHuerfanos", "moverEgresoAPersonal", "_tasaDelDiaFue
                     "conciliacionCapital", "getMesKeyActual", "ajustesDesdeApertura",
                     "_tsDeUid", "_tsDeAjuste", "_deducirHoraApertura", "_isoDeDDMMAA", "_motivoDelAjuste", "_ajusteAEgreso", "_ajusteAGanExtra", "_cuentaMadre", "_lotesDeCuenta", "_completarDesdeMadre", "toggleCuentaMadre",
                     "traspasosAPersonal", "egresosPersonalesDesdeCuentaPersonal", "efectoTasasDesde", "_isoDeFechaLote",
-                    "aportesDesde", "_cruceUsdtPersonal", "_gananciaMeses", "_aporteVacio",
+                    "aportesDesde", "retirosSocioPrestamosDesde", "_cruceUsdtPersonal", "_gananciaMeses", "_aporteVacio",
                     "_aporteSubeSaldo", "_egOperativos",
                     // ARREGLO 143 - mercancia. conciliacionCapital las llama,
                     // asi que sin estas la suite entera se cae al cargar.
@@ -7633,7 +7633,7 @@ console.log("\n— FASE 2: la cuenta madre —");
   //    EXPRESION ENTERA: buscar "sueldoPendiente" suelto pasaria con el
   //    termino multiplicado por cero o renombrado (ARREGLO 100).
   const cc = sinCom(sacarFuncion("conciliacionCapital"));
-  ok(/var deberias=r2v\(apertura-intAp\.total\+bruta-egEmpresaSinMerc-egPersonalEmpresa-socios-traspPers\.total-\(real\.sueldoPendiente\|\|0\)\+aportes\.total\);/.test(cc),
+  ok(/var deberias=r2v\(apertura-intAp\.total\+bruta-egEmpresaSinMerc-egPersonalEmpresa-socios-traspPers\.total-\(real\.sueldoPendiente\|\|0\)\+aportes\.total-retSoc\.total\);/.test(cc),
      "«deberias tener» resta el MISMO sueldo que «tienes», y suma lo que ella metio");
   // ── ARREGLO 143 · la compra de mercancia se excluye UNA vez ───────────
   //
@@ -11366,8 +11366,23 @@ console.log("\nARREGLO 146 · plata suya que entra y sale de la empresa");
   const cc = sinC(sacarFuncion("conciliacionCapital"));
   ok(/var aportes=aportesDesde\(desde\);/.test(cc),
      "la conciliacion pregunta por lo que ella metio");
-  ok(/\+aportes\.total\);/.test(cc),
+  ok(/\+aportes\.total-retSoc\.total\);/.test(cc),
      "y lo suma a «deberias tener», el mismo importe que subio el saldo");
+  // ARREGLO 222 · un prestamo de socio liquidado sin cobro baja los DOS lados
+  ok(/var retSoc=retirosSocioPrestamosDesde\(desde\);/.test(cc) && /retSoc:retSoc/.test(cc),
+     "la conciliacion resta el retiro de socios por prestamos y lo devuelve");
+  const _rsp = sinC(sacarFuncion("retirosSocioPrestamosDesde"));
+  ok(/if\(!ab\.sinCobro\) return;/.test(_rsp) && /\(1-fr\)/.test(_rsp) && /getRateToUsdt\(mon\)/.test(_rsp),
+     "el retiro cuenta solo la parte de CAPITAL, a la tasa de hoy (como capitalRealTotal)");
+  const _gpm = sinC(sacarFuncion("gananciaPrestamosDelMes"));
+  ok(/if\(ab\.sinCobro\) return;/.test(_gpm),
+     "un abono sin cobro no cuenta como interes ganado");
+  const _lsc = sinC(sacarFuncion("_prLiquidarSinCobro"));
+  ok(!/ajusteCuenta/.test(_lsc) && /cuentaId:""/.test(_lsc) && /sinCobro:true/.test(_lsc) && /_esSocioClave\(clave\)/.test(_lsc),
+     "liquidar sin cobro no mueve ninguna cuenta y solo vale para socios");
+  const _dsc = sinC(sacarFuncion("_prDeshacerSinCobro"));
+  ok(!/ajusteCuenta/.test(_dsc) && /loteSinCobro===lote/.test(_dsc),
+     "deshacer quita solo los abonos de ese lote y tampoco mueve cuentas");
   ok(/aportes:aportes,/.test(cc), "y lo devuelve, para que la tarjeta tenga su fila");
 
   // 4 · UNA CUENTA 💜 NO VALE NI AQUI NI ALLA. Ese dinero ya esta fuera del
