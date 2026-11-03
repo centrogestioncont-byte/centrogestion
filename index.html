@@ -3302,7 +3302,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261103_v296";
+var APP_VERSION = "20261103_v297";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -33872,7 +33872,139 @@ function rCapital(){
 // abriendo otro cliente.
 function _toggleHistCl(cod){
   S._clHistCod = (S._clHistCod===cod) ? null : cod;
+  // Abrir o cerrar el panel limpia la selección de cuotas: si no, un
+  // conjunto marcado en un cliente podría quedar vivo al abrir otro.
+  S._multiPg = null;
   R();
+}
+// ARREGLO 216 · LIQUIDACIÓN DE VARIAS CUOTAS DE UN CLIENTE
+// ──────────────────────────────────────────────────────────────────
+// El panel 📜 del cliente lista cada cuota pendiente con una casilla.
+// Marcas las que te pagó, abajo sale el total, eliges la cuenta por
+// donde entró el dinero y la app registra UN abono por cuota. Si
+// alguna estaba parcialmente pagada se cobra solo el saldo.
+// Restricción v1: todas las cuotas marcadas tienen que ser de la
+// MISMA moneda (la de los préstamos); el pago entra en esa misma
+// moneda — si quieres pagar otra, se hace una por una por la pantalla
+// de siempre. Sin mora, sin premio por anticipo: eso vive en
+// pagarPrestamo() y quien cobra una cuota a su valor exacto no
+// genera ni descuenta nada de eso.
+function _cuotasPendientesPr(p){
+  var pagadoPorN = {};
+  (p.abonos||[]).forEach(function(ab){
+    if(ab.cuotaN==null) return;
+    pagadoPorN[ab.cuotaN] = (pagadoPorN[ab.cuotaN]||0) + (parseFloat(ab.monto)||0);
+  });
+  return (p.cuotas||[]).map(function(cu){
+    var pag = pagadoPorN[cu.n]||0;
+    var saldo = Math.max(0, Math.round((cu.monto - pag)*100)/100);
+    return {n:cu.n, fecha:cu.fecha, iso:cu.iso, monto:cu.monto, pagado:pag, saldo:saldo};
+  }).filter(function(cu){ return cu.saldo > 0.009; });
+}
+function _multiMarcada(prestId, cuotaN){
+  var m = S._multiPg; if(!m||!m.marcadas) return false;
+  return m.marcadas.some(function(x){ return x.prestId===prestId && x.cuotaN===cuotaN; });
+}
+function _multiTogglePg(prestId, cuotaN, saldo, moneda){
+  if(!S._multiPg) S._multiPg = {moneda:"", marcadas:[], cuentaId:""};
+  var m = S._multiPg;
+  var ya = m.marcadas.findIndex(function(x){ return x.prestId===prestId && x.cuotaN===cuotaN; });
+  if(ya>=0){
+    m.marcadas.splice(ya,1);
+    // Si se queda vacío, se limpia la moneda para que pueda empezar
+    // otra ronda en otra moneda sin reiniciar nada a mano.
+    if(!m.marcadas.length){ m.moneda=""; m.cuentaId=""; }
+  } else {
+    if(m.moneda && m.moneda!==moneda){
+      alert("Esta cuota está en "+moneda+" y las que ya marcaste son en "+m.moneda+".\nLa liquidación es de una sola moneda. Desmarca las otras primero.");
+      return;
+    }
+    m.moneda = moneda;
+    m.marcadas.push({prestId:prestId, cuotaN:cuotaN, monto:saldo});
+  }
+  R();
+}
+function _multiTotal(){
+  var m = S._multiPg; if(!m||!m.marcadas) return 0;
+  return Math.round(m.marcadas.reduce(function(s,x){return s+x.monto;},0)*100)/100;
+}
+function confirmarLiquidacionMulti(){
+  var m = S._multiPg;
+  if(!m || !m.marcadas || !m.marcadas.length){ alert("Marca al menos una cuota."); return; }
+  if(!m.cuentaId){ alert("Elige la cuenta donde entró el dinero."); return; }
+  var c = (S.cuentas||[]).find(function(x){return x.id===m.cuentaId;});
+  if(!c){ alert("Esa cuenta ya no existe."); return; }
+  var mon = m.moneda;
+  // Las marcadas se guardan en orden FIFO: primero por fecha de cuota
+  // (más vieja primero), luego dentro del mismo día por préstamo —
+  // así si una cuota de un préstamo viejo y otra de uno nuevo caen
+  // el mismo día, la vieja se cobra antes.
+  var itemsConPr = m.marcadas.map(function(x){
+    var p = (S.prestamos||[]).find(function(pp){return pp.id===x.prestId;});
+    var cu = p ? (p.cuotas||[]).find(function(c){return c.n===x.cuotaN;}) : null;
+    return {x:x, p:p, cu:cu};
+  }).filter(function(it){ return it.p && it.cu; });
+  if(!itemsConPr.length){ alert("No encontré las cuotas marcadas — refresca la pantalla."); return; }
+  itemsConPr.sort(function(a,b){
+    var fa = a.cu.iso||"", fb = b.cu.iso||"";
+    if(fa!==fb) return fa<fb?-1:1;
+    return (a.p.id<b.p.id?-1:1);
+  });
+  var total = Math.round(itemsConPr.reduce(function(s,it){return s+it.x.monto;},0)*100)/100;
+  var msg = "Registrar liquidación: "+f2(total)+" "+mon+" en "+c.nombre+"\n\n";
+  itemsConPr.forEach(function(it){
+    msg += "· "+it.p.desc+" · Cuota "+it.cu.n+" ("+it.cu.fecha+") · "+f2(it.x.monto)+" "+mon+"\n";
+  });
+  msg += "\n¿Confirmar?";
+  if(!confirm(msg)) return;
+  var ahora = Date.now();
+  // Se agrupa por préstamo para no tener que volver a buscarlo en el
+  // bucle de guardado y para marcar "pagado" una sola vez al final
+  // si la suma de los abonos cierra todas las cuotas.
+  var grupos = {};
+  itemsConPr.forEach(function(it, idx){
+    if(!grupos[it.p.id]) grupos[it.p.id] = {p: it.p, items:[]};
+    grupos[it.p.id].items.push({cu:it.cu, monto:it.x.monto, idx:idx});
+  });
+  var detalle = [];
+  Object.keys(grupos).forEach(function(prId){
+    var g = grupos[prId], p = g.p;
+    if(!p.abonos) p.abonos = [];
+    g.items.forEach(function(it){
+      // monedaPago y montoPago = monto, porque v1 es misma moneda:
+      // lo que entra a la cuenta es exactamente lo que baja la deuda.
+      p.abonos.push({
+        id: ahora + it.idx,
+        fecha: td(),
+        monto: Math.round(it.monto*100)/100,
+        cuentaId: m.cuentaId,
+        monedaPago: mon,
+        montoPago: Math.round(it.monto*100)/100,
+        cuotaN: it.cu.n,
+        premio: 0
+      });
+      detalle.push("Cuota "+it.cu.n+" de "+p.desc+" · "+f2(it.monto)+" "+mon);
+    });
+    // Si tras este bloque de abonos el préstamo queda saldado, se
+    // marca igual que pagarPrestamo() lo haría en el paso final.
+    var totalAb = p.abonos.reduce(function(s,ab){return s+(parseFloat(ab.monto)||0);},0);
+    var base = parseFloat(p.monto||p.sal||0)||0;
+    var moraQ = (typeof moraPendiente==="function") ? moraPendiente(p) : 0;
+    if(totalAb >= base - 0.001 && moraQ <= 0.009){
+      p.estado = "pagado";
+      p.fechaPago = td();
+      p.montoCobrado = totalAb;
+    }
+  });
+  // La cuenta se mueve UNA sola vez con el total — así el extracto
+  // deja un movimiento, no cinco, y cuadra con lo que la persona
+  // depositó de verdad.
+  ajusteCuentaEgreso(m.cuentaId, total);
+  logAudit("LIQUIDACION_CLIENTE", "Liquidación de "+itemsConPr.length+" cuota"+(itemsConPr.length>1?"s":"")+" · "+f2(total)+" "+mon+" → "+c.nombre+" · "+detalle.join(" · "));
+  S._multiPg = null;
+  saveData();
+  R();
+  alert("✅ Liquidación registrada: "+f2(total)+" "+mon+" entró en "+c.nombre+".");
 }
 // Encuentra todo lo que vincula a este cliente con la empresa:
 //   · préstamos activos (sea de dinero o de mercancía)
@@ -33933,16 +34065,39 @@ function _htmlHistorialCliente(cl){
       var tipo = esMerc ? "📦 Mercancía" : "💰 Dinero";
       var color = esMerc ? "var(--mo2-j2)" : "var(--vd2-a)";
       var bg = esMerc ? "var(--mo6-j2)" : "var(--vd6-l)";
+      // ARREGLO 216: debajo de cada préstamo se listan sus cuotas
+      // pendientes con una casilla, para marcar varias y liquidar
+      // todo de una vez. La casilla solo deja marcar cuando la moneda
+      // coincide con la de las ya marcadas; si no, avisa y no hace
+      // nada — _multiTogglePg() se encarga.
+      var pend = _cuotasPendientesPr(p);
+      var mon = p.mon||"USDT";
+      var monMulti = (S._multiPg && S._multiPg.moneda) || "";
+      var cuotasHtml = pend.map(function(cu){
+        var marc = _multiMarcada(p.id, cu.n);
+        var hoyISO = (typeof _hoyISO==="function") ? _hoyISO() : td();
+        var vencida = cu.iso && cu.iso < hoyISO;
+        var bgCu = marc ? "var(--vd6-l)" : (vencida ? "var(--mal-sup)" : "var(--sup)");
+        var bdCu = marc ? "var(--vd2-a)" : (vencida ? "var(--mal-ln)" : "var(--ln)");
+        var deshab = monMulti && monMulti!==mon && !marc;
+        return "<label style='display:flex;align-items:center;gap:8px;background:"+bgCu+";border:1px solid "+bdCu+";border-radius:7px;padding:7px 10px;margin:4px 0;font-size:11.5px;cursor:"+(deshab?"not-allowed":"pointer")+";opacity:"+(deshab?"0.5":"1")+"'>"+
+          "<input type='checkbox' "+(marc?"checked":"")+" "+(deshab?"disabled":"")+
+            " onchange='_multiTogglePg(\""+_jsAttr(p.id)+"\","+cu.n+","+cu.saldo+",\""+_jsAttr(mon)+"\")'>"+
+          "<span style='flex:1;color:var(--tx2);font-weight:700'>Cuota "+cu.n+" · "+cu.fecha+(vencida?" · <span style=\"color:var(--mal);font-weight:800\">vencida</span>":"")+"</span>"+
+          "<span style='font-weight:800;color:var(--tx2)'>"+f2(cu.saldo)+" "+mon+"</span>"+
+        "</label>";
+      }).join("");
       return "<div style='background:"+bg+";border:1px solid "+color+";border-radius:9px;padding:10px 12px;margin-bottom:6px'>"+
         "<div style='display:flex;justify-content:space-between;gap:8px;font-size:11.5px'>"+
           "<span style='font-weight:700;color:"+color+"'>"+tipo+" · "+p.d+(p.notaDesc?" · "+_escAud(p.notaDesc):"")+"</span>"+
-          "<span style='font-weight:900;color:"+color+"'>Saldo "+f2(saldo)+" "+(p.mon||"USDT")+"</span>"+
+          "<span style='font-weight:900;color:"+color+"'>Saldo "+f2(saldo)+" "+mon+"</span>"+
         "</div>"+
         "<div style='font-size:10.5px;color:var(--tx3);margin-top:3px'>"+
           "Capital "+f2(p.capital||base)+" · "+p.numCuotas+" cuota"+(p.numCuotas>1?"s":"")+
           (p.interesPct?" · "+p.interesPct+"% interés":"")+
           " · abonado "+f2(ab)+
         "</div>"+
+        (cuotasHtml?"<div style='margin-top:8px'>"+cuotasHtml+"</div>":"")+
       "</div>";
     }).join("");
   }
@@ -33974,6 +34129,35 @@ function _htmlHistorialCliente(cl){
         "</div>"+
       "</div>";
     }).join("");
+  }
+  // ARREGLO 216: panel de liquidación al final — solo sale si hay
+  // al menos una cuota marcada. El total se calcula en _multiTotal()
+  // (una sola puerta), y el selector de cuenta se filtra a las de la
+  // moneda marcada: una cuenta en USDT no puede recibir un pago en
+  // BRL, y enseñarla en el desplegable invitaría al error que un
+  // alert tendría que atajar después.
+  if(S._multiPg && S._multiPg.marcadas && S._multiPg.marcadas.length){
+    var monM = S._multiPg.moneda;
+    var totM = _multiTotal();
+    var nM = S._multiPg.marcadas.length;
+    var ctasM = (S.cuentas||[]).filter(function(x){ return x.activa!==false && x.moneda===monM; });
+    var opts = "<option value=''>— elige cuenta —</option>" +
+      ctasM.map(function(x){
+        var sel = S._multiPg.cuentaId===x.id ? " selected" : "";
+        return "<option value='"+_escAud(x.id)+"'"+sel+">"+_escAud(x.nombre)+"</option>";
+      }).join("");
+    htm += "<div style='position:sticky;bottom:0;background:var(--vd6-l);border:2px solid var(--vd2-a);border-radius:10px;padding:12px 14px;margin-top:14px'>"+
+      "<div style='display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:9px'>"+
+        "<span style='font-size:12px;font-weight:800;color:var(--vd2-a)'>💰 "+nM+" cuota"+(nM>1?"s":"")+" marcada"+(nM>1?"s":"")+"</span>"+
+        "<span style='font-size:15px;font-weight:900;color:var(--vd2-a)'>"+f2(totM)+" "+monM+"</span>"+
+      "</div>"+
+      "<label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>¿En qué cuenta "+monM+" entró el dinero?</label>"+
+      "<select onchange='S._multiPg.cuentaId=this.value' style='width:100%;padding:9px;font-size:13px;border:1.5px solid var(--vd5-d);border-radius:8px;font-family:inherit;margin-bottom:9px'>"+opts+"</select>"+
+      "<div style='display:flex;gap:7px'>"+
+        "<button onclick='confirmarLiquidacionMulti()' style='flex:1;padding:11px;border:none;border-radius:8px;background:var(--vd2-e);color:var(--sobre-color);font-size:13px;font-weight:800;cursor:pointer;font-family:inherit'>✅ Registrar liquidación</button>"+
+        "<button onclick='S._multiPg=null;R()' style='padding:11px 14px;border:1.5px solid var(--ln);border-radius:8px;background:var(--sup);color:var(--tx2);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>✕ Limpiar</button>"+
+      "</div>"+
+    "</div>";
   }
   // Botón de contactar por WhatsApp si tiene teléfono
   if(cl.tel){
