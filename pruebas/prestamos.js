@@ -8028,6 +8028,53 @@ console.log("\n— FASE 2: la cuenta madre —");
   // cuando el modo es ya pagada — no se puede mostrar los dos a la vez.
   ok(/f\.pagoNota/.test(_rM),
      "en modo ya pagada el formulario pregunta por la nota del pago (opcional)");
+
+  // ────────────────────────────────────────────────────────────────────────
+  // ARREGLO 213 · PRESTAMO QUE SALE DE MERCANCIA
+  // ────────────────────────────────────────────────────────────────────────
+  // Fiar relojes a Abel con cuotas e intereses no encajaba con el modulo de
+  // Prestamos (que exige una cuenta de dinero de origen). Nuevo toggle en el
+  // formulario: "Dinero" (como siempre) o "Mercancia". En modo mercancia el
+  // articulo se marca como vendido al prestatario con cobro="prestamo" y
+  // nada sale de ninguna cuenta.
+  const _sPr = sinC(sacarFuncion("savePr"));
+  ok(/f\.desdeMercancia/.test(_sPr),
+     "savePr decide por f.desdeMercancia: dos caminos");
+  // El bloque "sale de mercancia" NO toca ningun saldo de cuenta.
+  const _sPrMerc = _sPr.match(/if\(f\.desdeMercancia\)\{[\s\S]*?\} else if\(f\.cuentaId\)/);
+  ok(_sPrMerc && !/c\.saldo=/.test(_sPrMerc[0]) && !/descontarFIFOEgreso\(/.test(_sPrMerc[0]),
+     "el bloque desdeMercancia no mueve cuentas ni FIFO");
+  // Marca la mercancia como vendida con cobro="prestamo".
+  ok(_sPrMerc && /cobro:"prestamo"/.test(_sPrMerc[0]) && /_mercPr\.estado="vendido"/.test(_sPrMerc[0]),
+     "la mercancia sale del inventario marcada como venta a un prestamo");
+  // El prestamo guarda la marca desdeMercancia para que al borrarlo la
+  // mercancia pueda volver.
+  ok(/desdeMercancia:_mercPr\?_mercPr\.id:undefined/.test(_sPr),
+     "el prestamo guarda desdeMercancia con el id del articulo");
+
+  // reqDel para prestamos: si viene de mercancia, devuelve el articulo al
+  // inventario y NO devuelve dinero a ninguna cuenta.
+  const _rqd = sinC(sacarFuncion("reqDel"));
+  ok(/if\(item\.desdeMercancia\)/.test(_rqd),
+     "reqDel detecta el prestamo que salio de mercancia");
+  const _rqdMerc = _rqd.match(/if\(item\.desdeMercancia\)\{[\s\S]*?return;\s*\}/);
+  ok(_rqdMerc && /_artPr\.estado="mano"/.test(_rqdMerc[0]) && /delete _artPr\.venta/.test(_rqdMerc[0]),
+     "al borrarlo, la mercancia vuelve a estado 'mano' sin venta");
+  ok(_rqdMerc && !/cPrest\.saldo=/.test(_rqdMerc[0]),
+     "y no toca el saldo de ninguna cuenta (no salio dinero de ahi)");
+
+  // deshacerVentaArt: si la venta es a un prestamo, no se puede deshacer por
+  // aqui — hay que borrar el prestamo, no la venta.
+  const _dva = sinC(sacarFuncion("deshacerVentaArt"));
+  ok(/a\.venta\.cobro==="prestamo"/.test(_dva),
+     "deshacerVentaArt detecta el modo prestamo y manda al modulo correcto");
+
+  // El formulario de prestamo lleva el toggle y la lista de articulos.
+  const _rP = sinC(sacarFuncion("rPrestamos"));
+  ok(/S\.nPr\.desdeMercancia=true/.test(_rP) && /S\.nPr\.desdeMercancia=false/.test(_rP),
+     "los dos botones del toggle de prestamo cambian la bandera");
+  ok(/S\.nPr\.mercanciaId=/.test(_rP),
+     "y en modo mercancia hay un selector para elegir el articulo");
 }
   // 6b. ARREGLO 141 · las cuentas en CERO se pliegan. Medido en su export: 15
   //     de sus 23 cuentas estan en cero, y de las que ve son 9 de 17 — mas de

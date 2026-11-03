@@ -3302,7 +3302,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261103_v293";
+var APP_VERSION = "20261103_v294";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -12072,6 +12072,22 @@ function venderArticulo(id){
 function deshacerVentaArt(id){
   if(!permisoEdicion()) return;
   var a=_artDe(id); if(!a||!a.venta) return;
+  // ARREGLO 213: si la mercancía salió como préstamo, lo que hay que
+  // deshacer es el PRÉSTAMO, no la venta por aquí. Deshacer la venta sin
+  // tocar el préstamo deja un préstamo huérfano apuntando a una mercancía
+  // que vuelve al inventario.
+  if(a.venta.cobro==="prestamo"){
+    var _pr=(S.prestamos||[]).find(function(p){return String(p.id)===String(a.venta.prestamoId);});
+    if(_pr){
+      alert("Este artículo salió como préstamo a "+(_pr.desc||"un cliente")+".\n\nPara devolverlo al inventario, borra el préstamo desde la pestaña Préstamos. Al borrarlo, la mercancía vuelve sola.");
+      return;
+    }
+    // Si el préstamo ya no existe (fue borrado por otro camino), limpiar
+    // la venta y devolver la mercancía al inventario.
+    delete a.venta; a.estado="mano";
+    saveData(); R();
+    return;
+  }
   if(!confirm("¿Deshacer la venta de "+a.nombre+"?\n\nEl dinero vuelve de donde entró y el artículo vuelve a tu inventario.")) return;
   var v=a.venta;
   if(v.cobro==="contado"&&v.cuentaId){
@@ -13973,7 +13989,21 @@ function savePr(){
       : "⚠️ Estás por prestarle "+f2(capital)+" "+mon+" a "+f.desc+", y su margen disponible es "+f2(_lim.disponible)+" "+mon+" (límite "+f2(_lim.tope)+(_lim.expuesto>0.01?", ya te debe "+f2(_lim.expuesto):"")+").";
     if(!confirm(_msgLim+"\n\n¿Continuar igual?")) return;
   }
-  if(f.cuentaId){
+  // ARREGLO 213: sale de mercancía — el artículo deja el inventario y se
+  // marca como VENDIDO al prestatario con cobro="prestamo" (sin cuenta ni
+  // Por cobrar). La ganancia (precio − costo) se apunta hoy, como una venta
+  // normal. El interés del préstamo es aparte: se cobra en los abonos.
+  var _mercPr=null;
+  if(f.desdeMercancia){
+    _mercPr=(S.articulos||[]).find(function(a){return String(a.id)===String(f.mercanciaId)&&a.estado!=="vendido";});
+    if(!_mercPr){ alert("Elige qué artículo del inventario le entregas."); return; }
+    if(!confirm("Vas a entregar \""+_mercPr.nombre+"\" como préstamo a "+f.desc+".\n\nEl artículo sale del inventario.\nEl préstamo queda por "+f2(montoTotal)+" "+mon+" en "+numCuotas+" cuota"+(numCuotas>1?"s":"")+".\n\n¿Confirmar?")) return;
+    // Marcar la mercancía como vendida al prestatario, sin tocar cuenta.
+    _mercPr.venta={fecha:ds(f.date), fechaIso:f.date||_hoyISO(),
+      monto:capital, mon:mon, montoUsdt:usdt, cobro:"prestamo",
+      cliente:f.desc, prestamoId:0 /* se rellena abajo */};
+    _mercPr.estado="vendido";
+  } else if(f.cuentaId){
     var c=(S.cuentas||[]).find(function(x){return x.id===f.cuentaId;});
     if(c){
       if((parseFloat(c.saldo)||0)<capitalOrigen){
@@ -13991,14 +14021,19 @@ function savePr(){
       else if(monedaOrigen==="USDT")                 descontarFIFOEgreso("USDT",0,capitalOrigen,f.cuentaId);
     }
   }
+  var _idPrest=Date.now();
+  if(_mercPr) _mercPr.venta.prestamoId=_idPrest;
   S.prestamos.push({
-    id:Date.now(),d:ds(f.date),desc:f.desc,cod:f.cod||"",notaDesc:(f.notaDesc||"").trim(), // ARREGLO 20: cod vincula con el cliente
+    id:_idPrest,d:ds(f.date),desc:f.desc,cod:f.cod||"",notaDesc:(f.notaDesc||"").trim(), // ARREGLO 20: cod vincula con el cliente
     mon:mon,monto:montoTotal,capital:capital,interesPct:tasaEfectiva,interesPorCuota:tasaInteres,diasExtraPrimeraCuota:ajusteDias,
     numCuotas:numCuotas,frecuencia:frecuencia,cuotas:cuotas,diaPago:diaPago||0,
     diasPlazoPrimera:diasPlazo,ajusteDiasPrimera:ajusteDias,
     usdt:Math.round((usdt||0)*100)/100,
     cuentaId:f.cuentaId||"",estado:"activo",
     monedaOrigen:monedaOrigen,capitalOrigen:capitalOrigen,tasaOrigen:tasaOrigen,
+    // ARREGLO 213: si el préstamo salió de mercancía, se marca aquí
+    // para que al borrarlo la mercancía vuelva al inventario.
+    desdeMercancia:_mercPr?_mercPr.id:undefined,
     // compat legacy: ent/sal/saldo
     ent:0,sal:Math.round((usdt||0)*100)/100,
     saldo:Math.round((usdt||0)*100)/100,soc:f.desc,locked:false
@@ -20376,6 +20411,29 @@ function reqDel(arr,id,field){
         }
       }
     } else if(arr==="prestamos"){
+      // ARREGLO 213: si el préstamo salió de mercancía, el artículo vuelve
+      // al inventario — no hubo dinero que salir de ninguna cuenta.
+      if(item.desdeMercancia){
+        var _artPr=(S.articulos||[]).find(function(a){return String(a.id)===String(item.desdeMercancia);});
+        if(_artPr && _artPr.venta && String(_artPr.venta.prestamoId||"")===String(item.id)){
+          var _abonPr=(item.abonos||[]).reduce(function(x,ab){return x+(parseFloat(ab.monto)||0);},0);
+          if(_abonPr>0 && !confirm("Este préstamo ya tiene abonos recibidos ("+f2(_abonPr)+" "+(item.mon||"")+"). Al borrarlo:\n\n• La mercancía \""+_artPr.nombre+"\" vuelve al inventario\n• Los abonos cobrados NO se devuelven solos (hazlo desde cada abono si hace falta)\n\n¿Continuar?")) return;
+          delete _artPr.venta;
+          _artPr.estado="mano";
+        }
+        // Y aún así se recorren los abonos para quitar el dinero que entró
+        // por ellos (igual que un préstamo normal).
+        if(item.abonos&&item.abonos.length){
+          item.abonos.forEach(function(ab){
+            if(ab.cuentaId) ajusteCuentaEgreso(ab.cuentaId,-(parseFloat(ab.montoPago!==undefined?ab.montoPago:ab.monto)||0));
+          });
+        }
+        logAudit("BORRAR_PRESTAMOS","Borró ID:"+id+" (desde mercancía, artículo vuelto al inventario)");
+        S[arr]=S[arr].filter(function(x){return x!==item;});
+        _marcarBorradoMerge(arr, item.id);
+        saveData(); R();
+        return;
+      }
       // Al borrar un préstamo, devolver el capital a la cuenta bancaria de
       // donde salió Y restaurar el inventario FIFO que se consumió al
       // registrarlo — si no, el dinero queda "perdido" de la cuenta y un
@@ -36716,8 +36774,49 @@ function rPrestamos(){
             })():"")
           :"")+
         "</div>"+
-        "<div><label style='font-size:11.5px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>¿De qué cuenta sale? (opcional) — en "+monOrigen+"</label>"+
-        "<select onchange='S.nPr.cuentaId=this.value' style='width:100%;padding:12px;font-size:14px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'>"+ctaOpts+"</select></div>"+
+        // ARREGLO 213: toggle "Dinero / Mercancía". En modo mercancía, en vez
+        // de elegir una cuenta de dinero, ella entrega un artículo del
+        // inventario. El capital del préstamo es el precio que le pone, y la
+        // mercancía sale del inventario (se marca como vendida al prestatario
+        // con cobro="prestamo"). Nada baja de ninguna cuenta.
+        (function(){
+          var desdeM=!!f.desdeMercancia;
+          var btn=function(label, activo, onclick){
+            return "<button type='button' onclick='"+onclick+"' style='flex:1;padding:9px;border:1.5px solid "+(activo?"var(--ac)":"var(--ln)")+";border-radius:9px;background:"+(activo?"var(--ac)":"var(--sup2)")+";color:"+(activo?"var(--sobre-color)":"var(--tx2)")+";font-size:12px;font-weight:800;cursor:pointer;font-family:inherit'>"+label+"</button>";
+          };
+          var selector =
+            "<div style='font-size:10.5px;color:var(--tx3);margin-bottom:5px;font-weight:700'>¿De qué sale el préstamo?</div>"+
+            "<div style='display:flex;gap:6px;margin-bottom:10px'>"+
+              btn("💰 Dinero", !desdeM, "S.nPr.desdeMercancia=false;S.nPr.mercanciaId='';R()")+
+              btn("📦 Mercancía", desdeM, "S.nPr.desdeMercancia=true;S.nPr.cuentaId='';R()")+
+            "</div>";
+          if(!desdeM){
+            return selector+
+              "<div><label style='font-size:11.5px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>¿De qué cuenta sale? (opcional) — en "+monOrigen+"</label>"+
+              "<select onchange='S.nPr.cuentaId=this.value' style='width:100%;padding:12px;font-size:14px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'>"+ctaOpts+"</select></div>";
+          }
+          // Modo mercancía: lista de artículos "en mano", con costo visible
+          var enMano=(S.articulos||[]).filter(function(a){return a.estado!=="vendido";});
+          if(!enMano.length){
+            return selector+
+              "<div style='background:var(--mal-sup);border:1.5px solid var(--mal);border-radius:10px;padding:12px;font-size:11.5px;color:var(--mal);line-height:1.4'>No hay artículos en el inventario. <br>Agrega uno en <b>📦 Mercancía</b> antes de prestar.</div>";
+          }
+          var artOpts="<option value=''>— elige el artículo —</option>"+
+            enMano.map(function(a){
+              var sel=String(f.mercanciaId)===String(a.id)?" selected":"";
+              return "<option value='"+_escAud(String(a.id))+"'"+sel+">"+_escAud(a.nombre)+" (te costó "+f2(a.costo)+" "+a.mon+")</option>";
+            }).join("");
+          var art=enMano.find(function(a){return String(a.id)===String(f.mercanciaId);});
+          var piePrecio="";
+          if(art){
+            var espText = art.precioEsp>0 ? " · esperabas vender a "+f2(art.precioEsp)+" "+(art.monEsp||art.mon) : "";
+            piePrecio="<div style='font-size:11px;color:var(--tx3);margin-top:4px;line-height:1.4;background:var(--sup2);border-radius:6px;padding:6px 9px'>Te costó <b style='color:var(--tx2)'>"+f2(art.costo)+" "+art.mon+"</b>"+espText+". El <b>Monto</b> del préstamo (arriba) es lo que se lo cobras al cliente — incluye tu ganancia por la mercancía. El interés se calcula aparte.</div>";
+          }
+          return selector+
+            "<div><label style='font-size:11.5px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>¿Qué artículo le entregas?</label>"+
+            "<select onchange='S.nPr.mercanciaId=this.value;R()' style='width:100%;padding:12px;font-size:14px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'>"+artOpts+"</select>"+
+            piePrecio+"</div>";
+        })()+
         // ── Sugerencia de tasa ────────────────────────────────────
         // Antes este campo estaba vacío y había que adivinar el %. Ahora
         // la app propone uno mirando el historial real del cliente y el
