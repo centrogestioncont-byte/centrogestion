@@ -8058,6 +8058,12 @@ console.log("\n— FASE 2: la cuenta madre —");
      "los dos botones del toggle de prestamo cambian la bandera");
   ok(/S\.nPr\.mercanciaId=/.test(_rP),
      "y en modo mercancia hay un selector para elegir el articulo");
+  // ARREGLO 215 · el onclick del toggle iba entre comillas simples y una ''
+  // cerraba el atributo antes de tiempo (ARREGLO 138). Que no vuelva: ningun
+  // reseteo dentro de ese onclick puede ser una cadena vacia con comillas
+  // simples — usar null (que vale igual porque abajo se compara con String()).
+  ok(!/desdeMercancia=(?:true|false);S\.nPr\.[a-zA-Z]+=''/.test(_rP),
+     "los onclick del toggle no cierran el atributo con ''");
 
   // ────────────────────────────────────────────────────────────────────────
   // ARREGLO 214 · HISTORIAL UNIFICADO POR CLIENTE
