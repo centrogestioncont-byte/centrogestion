@@ -2667,6 +2667,9 @@ function gananciaPrestamosDelMes(mesKey){
     var fracInteres=_fraccionInteresPrestamo(p);
     if(fracInteres>0){
       (p.abonos||[]).forEach(function(ab){
+        // ARREGLO 222: un préstamo de socio liquidado sin cobro no trae
+        // dinero, así que tampoco trae interés: no es ganancia.
+        if(ab.sinCobro) return;
         if(_mesKeyISO(ab.fecha)===mesKey){
           var interesEnAbono=(parseFloat(ab.monto)||0)*fracInteres;
           // El "premio" por adelantar no es dinero que haya entrado: es un
@@ -3302,7 +3305,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261103_v302";
+var APP_VERSION = "20261103_v303";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -6879,6 +6882,40 @@ function _gananciaMeses(n){
   return out.reverse();
 }
 
+// ARREGLO 222 · RETIRO DE SOCIOS POR PRÉSTAMOS LIQUIDADOS SIN COBRO
+// ──────────────────────────────────────────────────────────────────────────
+// Sus palabras del 03/11: "Jhoselin Hernández y Julio Francisco Marshall
+// Hernández somos socios de la empresa… ¿cómo liquido esos préstamos de forma
+// que no va a entrar dinero a la empresa? Obviamente el capital va a bajar,
+// pero necesito ver cuál realmente es el saldo real".
+//
+// Liquidar sin cobro es un RETIRO de socio: la empresa ya les dio esa plata y
+// ahora deja de esperarla de vuelta. capitalRealTotal() deja de contar ese
+// préstamo (pasa a pagado), así que "tienes" baja. Si "deberías" no bajara lo
+// mismo, la conciliación diría que falta dinero que nadie perdió. Por eso se
+// resta aquí, por la parte de CAPITAL (el interés pendiente nunca estuvo en el
+// capital, ARREGLO 71) y a la tasa de HOY, la misma con que capitalRealTotal()
+// valoraba ese préstamo — los dos lados se mueven lo mismo, como en
+// aportesDesde().
+function retirosSocioPrestamosDesde(desdeIso){
+  var r={total:0, n:0, sinTasa:[]};
+  if(!desdeIso) return r;
+  (S.prestamos||[]).forEach(function(p){
+    var fr=_fraccionInteresPrestamo(p), mon=p.mon||"USDT";
+    (p.abonos||[]).forEach(function(ab){
+      if(!ab.sinCobro) return;
+      var iso=String(ab.fecha||"").slice(0,10);
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(iso) || iso<=desdeIso) return;
+      var cap=(parseFloat(ab.monto)||0)*(1-fr);
+      var u;
+      if(mon==="USDT"||mon==="USD") u=cap;
+      else { var t=getRateToUsdt(mon); if(!t||isNaN(t)||t<=0){ if(r.sinTasa.indexOf(mon)===-1) r.sinTasa.push(mon); return; } u=cap/t; }
+      r.total+=u; r.n++;
+    });
+  });
+  r.total=Math.round(r.total*100)/100;
+  return r;
+}
 function conciliacionCapital(){
   var cfg=S.config||{};
   var apertura=parseFloat(cfg.aperturaUsdt);
@@ -6949,11 +6986,13 @@ function conciliacionCapital(){
   // fuga. Y NO toca calcMesCompleto, así que no le infla la ganancia del mes
   // ni el sueldo que sale de ella.
   var aportes=aportesDesde(desde);
+  // ARREGLO 222: préstamos de socios liquidados sin cobro.
+  var retSoc=retirosSocioPrestamosDesde(desde);
   // El sueldo sin apartar se resta en los DOS lados, y el de aqui sale del
   // mismo sitio que el de alla (real.sueldoPendiente). Calcularlo aparte seria
   // la segunda respuesta a la misma pregunta, y con que difieran en un centimo
   // el "sin explicar" se mueve solo.
-  var deberias=r2v(apertura-intAp.total+bruta-egEmpresaSinMerc-egPersonalEmpresa-socios-traspPers.total-(real.sueldoPendiente||0)+aportes.total);
+  var deberias=r2v(apertura-intAp.total+bruta-egEmpresaSinMerc-egPersonalEmpresa-socios-traspPers.total-(real.sueldoPendiente||0)+aportes.total-retSoc.total);
   var diferencia=r2v(real.total-deberias);
   // De qué está hecha esa diferencia: los ajustes a mano y el desfase de las
   // tasas se explican solos, lo que quede es lo único que hay que perseguir.
@@ -6973,7 +7012,7 @@ function conciliacionCapital(){
     egPersonalSin:r2v(egPersonalSin), socios:r2v(socios),
     egPersDesdePers:egPersDesdePers,
     deberias:deberias, real:real, diferencia:diferencia,
-    ajustes:ajustes, tasas:tasas, traspPers:traspPers, intAp:intAp, aportes:aportes, sinExplicar:sinExplicar,
+    ajustes:ajustes, tasas:tasas, traspPers:traspPers, intAp:intAp, aportes:aportes, retSoc:retSoc, sinExplicar:sinExplicar,
     // ARREGLO 60: la tarjeta dice contra qué apertura está midiendo. Una
     // apertura sin foto de saldos no permite comparar cuenta por cuenta
     // cuando algo no cuadra, y hasta ahora eso no se veía en ninguna parte.
@@ -17737,6 +17776,9 @@ function rCapitalTotal(){
     if(co.aportes&&Math.abs(co.aportes.total)>0.005)
       _filas.push([co.aportes.total>0?"Plata tuya que metiste":"Plata tuya que sacaste",
                    co.aportes.total, "var(--tx4)", "no es de la empresa"]);
+    // ARREGLO 222: su fila, o la lista deja de sumar el salto (ARREGLO 141).
+    if(co.retSoc&&co.retSoc.total>0.005)
+      _filas.push(["Retiro de socios por préstamos ("+co.retSoc.n+")", -co.retSoc.total, "var(--tx4)", "liquidados sin cobro"]);
     if(co.ajustes&&Math.abs(co.ajustes.total)>0.005)
       _filas.push(["Saldos que escribiste a mano ("+co.ajustes.n+")", co.ajustes.total, "var(--tx4)", ""]);
     if(co.intAp&&co.intAp.total>0.005)
@@ -17891,6 +17933,7 @@ function rCapitalTotal(){
         ((co.intAp&&co.intAp.total>0.005)?"<div style='display:flex;justify-content:space-between;color:var(--tx4)'><span>− Intereses que iban dentro de la apertura ("+co.intAp.n+")</span><b>−$"+f2(co.intAp.total)+"</b></div>":"")+
         ((co.traspPers&&Math.abs(co.traspPers.total)>0.005)?"<div style='display:flex;justify-content:space-between;color:"+(co.traspPers.total>0?"var(--mal)":"var(--ok)")+"'><span>"+(co.traspPers.total>0?"− Pasado a cuentas personales":"+ Metido desde cuentas personales")+" ("+co.traspPers.n+")</span><b>"+(co.traspPers.total>0?"−":"+")+"$"+f2(Math.abs(co.traspPers.total))+"</b></div>":"")+
         ((co.aportes&&Math.abs(co.aportes.total)>0.005)?"<div style='display:flex;justify-content:space-between;color:var(--tx4)'><span>"+(co.aportes.total>0?"+ Plata tuya que metiste":"− Plata tuya que sacaste")+" ("+co.aportes.n+")</span><b>"+(co.aportes.total>0?"+":"−")+"$"+f2(Math.abs(co.aportes.total))+"</b></div>":"")+
+        ((co.retSoc&&co.retSoc.total>0.005)?"<div style='display:flex;justify-content:space-between;color:var(--tx4)'><span>− Retiro de socios por préstamos ("+co.retSoc.n+")</span><b>−$"+f2(co.retSoc.total)+"</b></div>":"")+
         "<div style='display:flex;justify-content:space-between;border-top:1px solid var(--ln);margin-top:5px;padding-top:5px;font-size:13px'><b>Deberías tener</b><b>$"+f2(co.deberias)+"</b></div>"+
       "</div>"+
       "<div style='background:var(--sup);border-radius:9px;padding:10px 12px;margin-bottom:8px'>"+lineaReal+"</div>";
@@ -34140,6 +34183,94 @@ function _prActivosDeClave(clave){
     return ab<base-0.001;
   });
 }
+// ARREGLO 222 · socio: la marca vive en cada PRÉSTAMO (p.deSocio), que ya se
+// sincroniza registro por registro con su _mod. Una clave nueva en config
+// habría que darla de alta también en las cuatro listas del servidor.
+function _esSocioClave(clave){
+  return (S.prestamos||[]).some(function(p){
+    return p.deSocio && ((p.desc||"").trim()).toUpperCase().replace(/\s+/g," ")===clave;
+  });
+}
+function _prMarcarSocio(clave, si){
+  var n=0;
+  (S.prestamos||[]).forEach(function(p){
+    if(((p.desc||"").trim()).toUpperCase().replace(/\s+/g," ")!==clave) return;
+    if(si) p.deSocio=true; else delete p.deSocio;
+    n++;
+  });
+  logAudit("SOCIO_PRESTAMO",(si?"Marcó":"Desmarcó")+" como socio a "+clave+" ("+n+" préstamo"+(n!==1?"s":"")+")");
+  saveData(); R();
+}
+function _prLiquidarSinCobro(clave){
+  if(!_esSocioClave(clave)){ alert("Este cliente no está marcado como socio."); return; }
+  var acts=_prActivosDeClave(clave);
+  if(!acts.length){ alert("No tiene préstamos activos."); return; }
+  var porMon={}, capUsdt=0, sinTasa=[];
+  acts.forEach(function(p){
+    var mon=p.mon||"USDT", base=parseFloat(p.monto||p.sal||0)||0;
+    var ab=(p.abonos||[]).reduce(function(s,x){return s+(parseFloat(x.monto)||0);},0);
+    var pend=Math.max(0,Math.round((base-ab)*100)/100);
+    porMon[mon]=(porMon[mon]||0)+pend;
+    var cap=pend*(1-_fraccionInteresPrestamo(p));
+    if(mon==="USDT"||mon==="USD") capUsdt+=cap;
+    else { var t=getRateToUsdt(mon); if(t>0) capUsdt+=cap/t; else if(sinTasa.indexOf(mon)===-1) sinTasa.push(mon); }
+  });
+  var txt=Object.keys(porMon).map(function(m){return f2(porMon[m])+" "+m;}).join(" + ");
+  var nota=prompt("Liquidar SIN COBRO "+acts.length+" préstamo"+(acts.length!==1?"s":"")+" de "+acts[0].desc+" ("+txt+").\n\nEscribe una nota para el registro (por qué se liquida):","Retiro de socio");
+  if(nota===null) return;
+  nota=String(nota).trim()||"Retiro de socio";
+  if(!confirm("🤝 Liquidar sin cobro · "+acts[0].desc+"\n\n"+
+    "· Deuda que se cancela: "+txt+"\n"+
+    "· NO entra dinero a ninguna cuenta.\n"+
+    "· NO es ganancia (ni el interés).\n"+
+    "· El capital de la empresa baja ≈ $"+f2(capUsdt)+" USDT"+(sinTasa.length?" (sin tasa: "+sinTasa.join(", ")+")":"")+", que queda como «Retiro de socios por préstamos».\n"+
+    "· Si tenía mora pendiente, no se cobra.\n\n"+
+    "Queda registrado y se puede deshacer. ¿Confirmar?")) return;
+  var lote=Date.now(), k=0, hoy=td();
+  acts.forEach(function(p){
+    if(!p.abonos) p.abonos=[];
+    var base=parseFloat(p.monto||p.sal||0)||0;
+    var cuotas=_cuotasPendientesPr(p), suma=0;
+    // Un abono por cuota pendiente, con su cuotaN, para que cada pantalla que
+    // mira las cuotas por número las vea cerradas — igual que la liquidación
+    // de varias cuotas (ARREGLO 216).
+    cuotas.forEach(function(cu){
+      p.abonos.push({id:lote+(k++), fecha:hoy, monto:cu.saldo, cuentaId:"", monedaPago:p.mon||"USDT", montoPago:0,
+        cuotaN:cu.n, premio:0, sinCobro:true, loteSinCobro:lote, nota:nota});
+      suma+=cu.saldo;
+    });
+    var ab=(p.abonos||[]).reduce(function(s,x){return s+(parseFloat(x.monto)||0);},0);
+    var resto=Math.round((base-ab)*100)/100;
+    if(resto>0.009){
+      p.abonos.push({id:lote+(k++), fecha:hoy, monto:resto, cuentaId:"", monedaPago:p.mon||"USDT", montoPago:0,
+        cuotaN:null, premio:0, sinCobro:true, loteSinCobro:lote, nota:nota});
+    }
+    p.estado="pagado"; p.fechaPago=hoy;
+    p.montoCobrado=p.abonos.reduce(function(s,x){return s+(parseFloat(x.monto)||0);},0);
+    p.saldadoSinCobro={lote:lote, fecha:hoy, nota:nota, por:S.usuario||""};
+  });
+  logAudit("RETIRO_SOCIO_PRESTAMO","Liquidó SIN COBRO "+acts.length+" préstamo(s) de "+acts[0].desc+" · "+txt+" · capital ≈ $"+f2(capUsdt)+" USDT · "+nota);
+  S._multiPg=null;
+  saveData(); R();
+  alert("✅ Liquidado sin cobro: "+txt+".\nNinguna cuenta se movió; el capital baja ≈ $"+f2(capUsdt)+" USDT como retiro de socios.");
+}
+function _prDeshacerSinCobro(prestId){
+  var p=(S.prestamos||[]).find(function(x){return String(x.id)===String(prestId);});
+  if(!p||!p.saldadoSinCobro) return;
+  var lote=p.saldadoSinCobro.lote;
+  var quita=(p.abonos||[]).filter(function(x){return x.sinCobro&&x.loteSinCobro===lote;});
+  var tot=quita.reduce(function(s,x){return s+(parseFloat(x.monto)||0);},0);
+  if(!confirm("Deshacer la liquidación sin cobro de "+p.desc+" ("+p.saldadoSinCobro.fecha+").\n\nEl préstamo vuelve a deber "+f2(tot)+" "+(p.mon||"USDT")+". Ninguna cuenta se mueve. ¿Confirmar?")) return;
+  autorizarYHacer(function(){
+    p.abonos=(p.abonos||[]).filter(function(x){return !(x.sinCobro&&x.loteSinCobro===lote);});
+    var base=parseFloat(p.monto||p.sal||0)||0;
+    var ab=p.abonos.reduce(function(s,x){return s+(parseFloat(x.monto)||0);},0);
+    if(ab<base-0.001){ p.estado="activo"; delete p.fechaPago; delete p.montoCobrado; }
+    delete p.saldadoSinCobro;
+    logAudit("RETIRO_SOCIO_DESHECHO","Deshizo la liquidación sin cobro de "+p.desc+" · vuelve a deber "+f2(tot)+" "+(p.mon||"USDT"));
+    saveData(); R();
+  },"Deshacer liquidación sin cobro");
+}
 function _prLiqAbrir(){
   S._prLiqOpen=!S._prLiqOpen;
   if(!S._prLiqOpen){ S._multiPg=null; S._prLiqFiltro=""; }
@@ -34280,8 +34411,9 @@ function _pagosDelDia(iso){
       if(_isoDeAbono(ab)!==iso) return;
       var t=parseFloat(ab.id); if(!(isFinite(t)&&t>=1.4e12&&t<=2.5e12)) t=0;
       out.push({tipo:"abono", ts:t, cliente:(p.desc||"").trim()||"Sin nombre", clave:clave, prest:p, cuotaN:ab.cuotaN,
-        baja:parseFloat(ab.monto)||0, mon:mon,
-        entro:parseFloat(ab.montoPago!==undefined&&ab.montoPago!==null?ab.montoPago:ab.monto)||0,
+        baja:parseFloat(ab.monto)||0, mon:mon, sinCobro:!!ab.sinCobro,
+        // ARREGLO 222: sin cobro no entró nada, aunque la deuda bajara.
+        entro:ab.sinCobro?0:(parseFloat(ab.montoPago!==undefined&&ab.montoPago!==null?ab.montoPago:ab.monto)||0),
         monPago:ab.monedaPago||mon, cuenta:nomCta(ab.cuentaId), premio:parseFloat(ab.premio)||0});
     });
     (((p.mora||{}).historial)||[]).forEach(function(mh){
@@ -34313,7 +34445,8 @@ function _htmlPagosDelDia(){
   var filas=cli?todos.filter(function(r){return r.clave===cli;}):todos;
   var nomDe={}; todos.forEach(function(r){ nomDe[r.clave]=r.cliente; });
   var esHoy=dia===td();
-  var paresEntro=filas.map(function(r){return {monto:r.entro,mon:r.monPago};});
+  var paresEntro=filas.filter(function(r){return !r.sinCobro;}).map(function(r){return {monto:r.entro,mon:r.monPago};});
+  var paresSinCobro=filas.filter(function(r){return r.sinCobro;}).map(function(r){return {monto:r.baja,mon:r.mon};});
   var paresBaja=filas.filter(function(r){return r.tipo==="abono";}).map(function(r){return {monto:r.baja,mon:r.mon};});
   var nCli=[]; filas.forEach(function(r){ if(nCli.indexOf(r.clave)===-1) nCli.push(r.clave); });
   var htm="<div class='pr-pant'>"+
@@ -34337,7 +34470,8 @@ function _htmlPagosDelDia(){
   }
   htm+="<div style='background:var(--vd6-l);border:1.5px solid var(--vd2-a);border-radius:12px;padding:12px 14px;margin-bottom:12px'>"+
     "<div style='font-size:11px;font-weight:800;color:var(--vd2-a);text-transform:uppercase;letter-spacing:.5px'>Entró en cuentas</div>"+
-    "<div style='font-size:20px;font-weight:900;color:var(--vd2-a);margin-top:2px'>"+bkPorMoneda(paresEntro)+"</div>"+
+    "<div style='font-size:20px;font-weight:900;color:var(--vd2-a);margin-top:2px'>"+(paresEntro.length?bkPorMoneda(paresEntro):"0")+"</div>"+
+    (paresSinCobro.length?"<div style='font-size:11.5px;color:var(--avi-tx);margin-top:3px'>🤝 Liquidado sin cobro (socios): "+bkPorMoneda(paresSinCobro)+" — no entró dinero</div>":"")+
     "<div style='font-size:11.5px;color:var(--tx2);margin-top:4px'>"+filas.length+" pago"+(filas.length!==1?"s":"")+" · "+nCli.length+" cliente"+(nCli.length!==1?"s":"")+
       (paresBaja.length?" · bajó la deuda "+bkPorMoneda(paresBaja):"")+"</div></div>";
   // "quedó saldado" va solo en el ÚLTIMO pago de ese préstamo en el día
@@ -34355,12 +34489,15 @@ function _htmlPagosDelDia(){
           "<div style='font-size:11px;color:var(--tx3);margin-top:2px'>"+(hora?hora+" · ":"")+
             (r.tipo==="mora"?"Mora por atraso":(r.cuotaN!=null?"Cuota "+r.cuotaN:"Abono"))+" · préstamo del "+_escAud(p.d||"")+
             (p.notaDesc?" · "+_escAud(p.notaDesc):"")+"</div></div>"+
-        "<div style='text-align:right;flex-shrink:0'><div style='font-size:14px;font-weight:900;color:var(--vd2-a)'>+"+f2(r.entro)+" "+_escAud(r.monPago)+"</div>"+
+        "<div style='text-align:right;flex-shrink:0'>"+(r.sinCobro
+          ? "<div style='font-size:12.5px;font-weight:900;color:var(--avi-tx)'>🤝 sin cobro</div>"
+          : "<div style='font-size:14px;font-weight:900;color:var(--vd2-a)'>+"+f2(r.entro)+" "+_escAud(r.monPago)+"</div>")+
           (r.cuenta?"<div style='font-size:10.5px;color:var(--tx3)'>→ "+_escAud(r.cuenta)+"</div>":"")+"</div>"+
       "</div>"+
       (function(){
         var xs=[];
-        if(r.tipo==="abono"&&otra) xs.push("bajó "+f2(r.baja)+" "+r.mon+" de deuda");
+        if(r.sinCobro) xs.push("canceló "+f2(r.baja)+" "+r.mon+" de deuda · retiro de socio");
+        else if(r.tipo==="abono"&&otra) xs.push("bajó "+f2(r.baja)+" "+r.mon+" de deuda");
         if(r.tipo==="mora") xs.push("cargo de mora "+f2(r.moraMonto)+" "+r.mon+" (no baja la deuda)");
         if(r.premio>0.009) xs.push("incluye premio por anticipo "+f2(r.premio)+" "+r.mon);
         if(saldo) xs.push("<b style='color:var(--posDeep)'>✓ con esto quedó saldado</b>");
@@ -36809,6 +36946,7 @@ function rPrestamos(){
              (x.premio>0?" <span style=\'font-size:10.5px;color:var(--ok)\'>+premio "+f2(x.premio)+"</span>":"")+
            "</div>"+
            (cta?"<div style='font-size:10.5px;color:var(--tx4);margin-top:1px'>🏦 "+cta+"</div>":"")+
+           (x.sinCobro?"<div style='font-size:10.5px;color:var(--avi-tx);margin-top:1px'>🤝 Sin cobro (retiro de socio) · no entró dinero</div>":"")+
            (x.nota?"<div style='font-size:10.5px;color:var(--tx4);margin-top:1px'>"+_escAud(x.nota)+"</div>":"")+
          "</div>"+
          "<div style='text-align:right;white-space:nowrap'>"+
@@ -36849,6 +36987,7 @@ function rPrestamos(){
           "<div class='bk-ref'>"+p.d+(p.fechaPago?" · saldado "+p.fechaPago:"")+" · Ref "+p.id+"</div>"+
           "<div class='bk-item-desc' style='margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>👤 "+_escAud(p.desc)+"</div>"+
           "<div style='margin-top:5px'><span class='bk-chip ok'>✓ Saldado</span>"+
+            (p.saldadoSinCobro?" <span class='bk-chip' style='background:var(--avi-sup2);color:var(--avi-tx)'>🤝 sin cobro (socio)</span>":"")+
             (n?" <span style='font-size:10.5px;color:var(--tx4)'>"+n+" pago"+(n!==1?"s":"")+"</span>":"")+
           "</div>"+
         "</div>"+
@@ -36858,6 +36997,9 @@ function rPrestamos(){
         "</div>"+
       "</div>"+
       (ab?_htmlPagosDe(p):"")+
+      (ab&&p.saldadoSinCobro?"<div style='padding:0 10px 10px'>"+
+        "<div style='font-size:11px;color:var(--tx3);margin-bottom:6px'>Liquidado sin cobro el "+_escAud(p.saldadoSinCobro.fecha)+(p.saldadoSinCobro.por?" por "+_escAud(p.saldadoSinCobro.por):"")+" · "+_escAud(p.saldadoSinCobro.nota||"")+"</div>"+
+        "<button class='pr-bsec' style='width:100%' onclick='_prDeshacerSinCobro(\""+_jsAttr(p.id)+"\")'>↩ Deshacer liquidación sin cobro</button></div>":"")+
     "</div>";
   }
 
@@ -37260,6 +37402,21 @@ function rPrestamos(){
       // que pagó este cliente día por día.
       "<div style='margin-top:8px'><button class='pr-bsec' style='width:100%' onclick='_prIrA(\"pagos\",\""+_jsAttr(clave)+"\")'>📅 Ver sus pagos por día</button></div>"+
       (gA?_htmlLiquidarCuotas(gA.items, clave):"")+
+      // ARREGLO 222: socio y liquidación sin cobro. El botón solo sale si
+      // está marcado como socio, para que no se use por error con un cliente.
+      (function(){
+        var soc=_esSocioClave(clave);
+        return "<div style='margin:10px 0;padding:10px 12px;border:1px dashed var(--ln);border-radius:10px;font-size:12px;color:var(--tx2)'>"+
+          // Un botón y no un checkbox: el estilo global de <label>/<input> de la
+          // app estira la casilla a lo ancho y la separa del texto.
+          "<div style='display:flex;justify-content:space-between;align-items:center;gap:8px'>"+
+            "<span><b>🤝 Socio de la empresa:</b> "+(soc?"<b style='color:var(--vd2-a)'>SÍ</b>":"no")+"</span>"+
+            "<button class='pr-bsec' style='padding:7px 12px;font-size:12px' onclick='_prMarcarSocio(\""+_jsAttr(clave)+"\","+(soc?"false":"true")+")'>"+(soc?"Quitar":"Marcar como socio")+"</button>"+
+          "</div>"+
+          (soc&&gA?"<button class='pr-bsec' style='width:100%;margin-top:8px;font-weight:800' onclick='_prLiquidarSinCobro(\""+_jsAttr(clave)+"\")'>🤝 Liquidar sin cobro (socio)</button>"+
+            "<div style='font-size:10.5px;color:var(--tx3);margin-top:5px'>Cancela su deuda sin que entre dinero. Baja el capital como retiro de socios; no es ganancia.</div>":"")+
+        "</div>";
+      })()+
       (gA?"<div class='pr-h'>Préstamos activos</div>"+
           gA.items.map(function(pp){return cardPrest(pp,true);}).join(""):"")+
       (gS?"<div class='pr-h'>Saldados</div>"+
