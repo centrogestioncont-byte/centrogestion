@@ -5259,7 +5259,9 @@ console.log("\n— FASE 2: la cuenta madre —");
   // Lo que se ENSEÑA y lo que se DESCUENTA tienen que mirar la misma lista.
   // Filtrando estricto aqui, los lotes de la madre quedaban fuera del descuento
   // y se inflaban solos: medido, 129.243,72 Bs sin bajar de ningun lote.
-  [["_repartoFIFO", true], ["consumirInventarioFIFO", false],
+  // ARREGLO 223: _repartoFIFO pasa a estricto, como consumirInventarioFIFO:
+  // lo que se ENSEÑA es lo que se DESCUENTA al guardar.
+  [["_repartoFIFO", false], ["consumirInventarioFIFO", false],
    ["simularConsumoFIFO", false], ["descontarFIFOEgreso", true],
    ["restaurarFIFOEgreso", true], ["_restaurarVentasFIFO", true],
    ["getLastTasaVenta", false]].forEach(([fn, pool]) => {
@@ -5268,6 +5270,10 @@ console.log("\n— FASE 2: la cuenta madre —");
     ok(re.test(t), fn + " reparte por la puerta, con su respaldo de siempre");
     ok(!/cuentaDestinoId===cuenta/.test(t), fn + " no se escribe su propio filtro");
   });
+  // ARREGLO 223 · una cuenta sin lotes no enseña los de otra
+  const _rf = sinComentarios(sacarFuncion("_repartoFIFO"));
+  ok(/sinLotesCuenta:true/.test(_rf) && /getLastTasaVenta\(dest,cuentaDestinoId\)/.test(_rf),
+     "sin lotes en la cuenta que paga: una fila prestada que lo dice, a la misma tasa base de siempre");
   // Las COMPRAS siguen estrictas, a proposito: esto va del dinero que SALE.
   ok(/r\.cuentaOrigenId===cuentaOrigenId/.test(sinComentarios(sacarFuncion("consumirInventarioFIFO"))),
      "las compras siguen estrictas por cuenta, que es lo de siempre");

@@ -3305,7 +3305,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261103_v303";
+var APP_VERSION = "20261103_v304";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -22016,7 +22016,8 @@ function _htmlDeDondeSalen(res, ruta){
     // USDT. Y eso es justo lo que ella tenía que ir a mirar a Inventario.
     // ARREGLO 167: y CUÁL remesa los dejó. "te pagaron estos R$" no dice cuál
     // de las de esa semana, que es justo lo que ella mira para reconocerlos.
-    var de=f.prestada ? "<span style='color:var(--mal)'> · sin lote, tasa prestada</span>"
+    var de=f.sinLotesCuenta ? "<span style='color:var(--mal)'> · esta cuenta no tiene lotes, tasa prestada</span>"
+         : f.prestada ? "<span style='color:var(--mal)'> · sin lote, tasa prestada</span>"
                       : "<span style='color:var(--tx4)'> · "+_escAud((f.lote&&f.lote.fecha)||"")+
                         " · "+(_loteEsDeRemesa(f.lote)?("te pagaron estos "+uni+_deQuienLote(f.lote)):"venta de USDT")+"</span>";
     return "<div style='display:flex;justify-content:space-between;gap:8px;padding:3px 0;font-size:11.5px'>"+
@@ -22039,7 +22040,11 @@ function _htmlDeDondeSalen(res, ruta){
   // Lo que no sale de un lote ya se ve como fila; aquí se dice qué hacer.
   var prest=rep.filas.filter(function(f){return f.prestada;})[0];
   var falta="";
-  if(prest)
+  if(prest && prest.sinLotesCuenta){
+    var _cN=(S.cuentas||[]).find(function(c){return c.id===(S.tx&&S.tx.cuentaDest);});
+    falta="<div style='margin-top:6px;font-size:11.5px;color:var(--mal);font-weight:700'>"+
+      "\u26a0\ufe0f "+_escAud(_cN?_cN.nombre:"Esta cuenta")+" no tiene lotes de "+uni+": no sale de ninguna venta de USDT ni de ninguna remesa registrada en ella, y no se descuenta de los lotes de otras cuentas. La ganancia se calcula con la última tasa conocida.</div>";
+  } else if(prest)
     falta="<div style='margin-top:6px;font-size:11.5px;color:var(--mal);font-weight:700'>"+
       "\u26a0\ufe0f "+f0(prest.usa)+" "+uni+" no salen de ningún lote. Registra la compra o venta de USDT que los trajo.</div>";
   else if(rep.rest>0.01)
@@ -23693,8 +23698,24 @@ function _repartoFIFO(monedaDest, montoBs, cuentaDestinoId){
   var dest=monedaDest||"VES";
   var m=parseFloat(montoBs)||0;
   var lotesTodos=S.inventarioUsdt.filter(function(r){return r.tipo==="venta"&&r.moneda===dest&&(parseFloat(r.tasa)||0)>0;}).sort(ordenFIFO);
-  var lotes=_lotesDeCuenta(lotesTodos,cuentaDestinoId,dest,"cuentaDestinoId",true); // sin lotes propios ni de la madre → el pool general, igual que getLastTasaVenta
-  if(!lotes.length) return {filas:[], usdt:0, rest:m, lotes:lotes};
+  // ARREGLO 223: SIN pool. Sus palabras del 03/11, pagando desde BANESCO
+  // JHOSELIN: "desde esa Banesco no hay ni una compra ni una venta de USDT…
+  // dice que está agarrando la tasa de Heirys, que pagó a otro banco. ¿Por qué
+  // está descontando de los lotes que no le corresponde?". Con conPool=true,
+  // una cuenta sin lotes propios ni madre enseñaba los lotes de OTRAS cuentas
+  // (Banesco Julio, BDV Julio) como si salieran de ellos. Al guardar no se
+  // descontaban —consumirInventarioFIFO ya filtra estricto (ARREGLO 168)—, así
+  // que la pantalla decía una cosa y el guardado hacía otra.
+  // Ahora: sin lotes de esa cuenta, UNA fila prestada que lo dice, valorada con
+  // getLastTasaVenta() — la misma "base" que getTasaVentaPonderada() ya usaba
+  // en ese caso, así que la ganancia apuntada no cambia por esto.
+  var lotes=_lotesDeCuenta(lotesTodos,cuentaDestinoId,dest,"cuentaDestinoId",false);
+  if(!lotes.length){
+    var tB=parseFloat(getLastTasaVenta(dest,cuentaDestinoId))||0;
+    if(m>0.01 && tB>0)
+      return {filas:[{lote:null, usa:m, tasa:tB, usdt:m/tB, prestada:true, sinLotesCuenta:true}], usdt:m/tB, rest:0, lotes:lotes};
+    return {filas:[], usdt:0, rest:m, lotes:lotes};
+  }
   var rest=m,usdt=0,filas=[];
   for(var i=0;i<lotes.length&&rest>0.01;i++){
     var disp=parseFloat(lotes[i].bsRestante)||0;
