@@ -8123,6 +8123,21 @@ console.log("\n— FASE 2: la cuenta madre —");
      "el selector de cuenta en el panel final filtra a la moneda marcada");
   ok(/confirmarLiquidacionMulti\(\)/.test(_hhc),
      "el boton del panel llama a la funcion correcta");
+  // ARREGLO 217 · la primera version del 216 usaba <label><input/></label> y
+  // en el telefono se veia mal — el checkbox quedaba en el centro de una
+  // tira ancha, el texto apelmazado a la derecha, y el toque no siempre
+  // marcaba. Ahora cada cuota es un <div onclick> con un ☐/☑ visual que
+  // llama directo a _multiTogglePg(). Mas robusto y legible.
+  ok(/div\s+"\+click\+"/.test(_hhc) || /"<div\s+"\+click\+"/.test(_hhc),
+     "cada fila de cuota es un <div> clicable, no un <label>");
+  ok(/onclick='_multiTogglePg\(/.test(_hhc),
+     "y el onclick llama directo a _multiTogglePg con el id, cuotaN, saldo, moneda");
+  ok(/marc\s*\?\s*"☑"\s*:\s*"☐"/.test(_hhc),
+     "el ☐/☑ visual marca la cuota, sin <input type=checkbox>");
+  ok(/p\.numCuotas\s*\|\|\s*\(p\.cuotas\|\|\[\]\)\.length\s*\|\|\s*1/.test(_hhc),
+     "numCuotas undefined cae a len(cuotas) o 1, no sale 'undefined cuota'");
+  ok(/S\._multiPg[\s\S]{0,50}marcadas[\s\S]{0,300}margin-bottom:12px/.test(_hhc),
+     "el resumen de marcadas tambien sale ARRIBA, no solo al fondo del panel");
 }
   // 6b. ARREGLO 141 · las cuentas en CERO se pliegan. Medido en su export: 15
   //     de sus 23 cuentas estan en cero, y de las que ve son 9 de 17 — mas de
