@@ -3305,7 +3305,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261103_v305";
+var APP_VERSION = "20261104_v306";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -8869,9 +8869,19 @@ function _htmlTasaInvertida(tasa,tasaAuto,monDeuda,monPago){
 }
 // El recuadro verde con lo que cubre el abono. Lo comparten prestamos y
 // cuentas por cobrar para que no se separen nunca.
-function _htmlEquivAbono(montoPago,tasa,monDeuda,esManual,cola){
+// ARREGLO 225: si el flag _exacto está puesto Y el cálculo cae dentro del
+// margen que fuerza el saldo exacto al guardar (mismo criterio que
+// saveAbonoCobrar/pagarPrestamo), el preview dice el valor FORZADO (70,00),
+// no el redondeado por tasa (69,99). Si no, la pantalla y el guardado dicen
+// cosas distintas y parece que el botón no hizo nada.
+function _htmlEquivAbono(montoPago,tasa,monDeuda,esManual,cola,pendForzar,esExacto){
   if(!(tasa>0)||!(montoPago>0)) return "";
-  return "<div style='font-size:13px;font-weight:800;color:var(--vd2);background:var(--vd6-c);border-radius:7px;padding:8px 10px;margin-top:5px'>= "+f2(_deudaCubierta(montoPago,tasa))+" "+monDeuda+" "+cola+" ("+(esManual?"tasa manual":"tasa actual")+")</div>";
+  var cubre = _deudaCubierta(montoPago,tasa);
+  var usarExacto = esExacto && pendForzar>0.001 && Math.abs(cubre-pendForzar) < Math.max(0.5, pendForzar*0.02);
+  if(usarExacto){
+    return "<div style='font-size:13px;font-weight:800;color:var(--vd2);background:var(--vd6-c);border-radius:7px;padding:8px 10px;margin-top:5px'>= "+f2(pendForzar)+" "+monDeuda+" "+cola+" <span style='font-size:11px;font-weight:700;background:var(--vd2-a);color:var(--sobre-color);border-radius:4px;padding:1px 5px;margin-left:4px'>💯 exacto</span></div>";
+  }
+  return "<div style='font-size:13px;font-weight:800;color:var(--vd2);background:var(--vd6-c);border-radius:7px;padding:8px 10px;margin-top:5px'>= "+f2(cubre)+" "+monDeuda+" "+cola+" ("+(esManual?"tasa manual":"tasa actual")+")</div>";
 }
 // ARREGLO 224 · PAGAR EXACTO EL SALDO EN OTRA MONEDA
 // ──────────────────────────────────────────────────────────────────
@@ -8921,7 +8931,7 @@ function _refrescarAbonoPrest(monPrest,monPago,ref,techo){
     var mi=parseFloat(np.monto)||0;
     var refUsar=parseFloat(ref)||0;
     var el;
-    if((el=document.getElementById("pp-eq")))   el.innerHTML=_htmlEquivAbono(mi,tasaUsar,monPrest,tm>0,"del pr&eacute;stamo");
+    if((el=document.getElementById("pp-eq")))   el.innerHTML=_htmlEquivAbono(mi,tasaUsar,monPrest,tm>0,"del pr&eacute;stamo",parseFloat(ref)||0,!!np._exacto);
     if((el=document.getElementById("pp-dir")))  el.innerHTML=_htmlTasaEnPalabras(refUsar,tasaUsar,monPrest,monPago,techo);
     if((el=document.getElementById("pp-inv")))  el.innerHTML=_htmlTasaInvertida(tm,tasaAuto,monPrest,monPago);
     // ARREGLO 224 · refrescar el botón Exacto al cambiar la tasa.
@@ -8942,7 +8952,7 @@ function _refrescarAbonoCobrar(monDeuda,monPago,ref){
     var tm=parseFloat(na.tasaManual)||0;
     var tasaUsar=tm>0?tm:(tasaAuto||0);
     var mi=parseFloat(na.monto)||0, el;
-    if((el=document.getElementById("cc-eq")))  el.innerHTML=_htmlEquivAbono(mi,tasaUsar,monDeuda,tm>0,"de la cuenta por cobrar");
+    if((el=document.getElementById("cc-eq")))  el.innerHTML=_htmlEquivAbono(mi,tasaUsar,monDeuda,tm>0,"de la cuenta por cobrar",parseFloat(ref)||0,!!na._exacto);
     if((el=document.getElementById("cc-dir"))) el.innerHTML=_htmlTasaEnPalabras(parseFloat(ref)||0,tasaUsar,monDeuda,monPago,parseFloat(ref)||0);
     if((el=document.getElementById("cc-inv"))) el.innerHTML=_htmlTasaInvertida(tm,tasaAuto,monDeuda,monPago);
     // ARREGLO 224 · refrescar el botón Exacto al cambiar la tasa.
@@ -35634,7 +35644,7 @@ function rCuentasCobrar(){
           // ARREGLO 224 · botón "💯 Exacto" para cuadrar al céntimo.
           "<div id='cc-exa'>"+_htmlBotonExacto("cobrar",saldoPend,_tUsarCC,c.moneda,monPagoCC)+"</div>"+
         "</div>";
-        previewCC+="<div id='cc-eq'>"+_htmlEquivAbono(montoIngCC,_tUsarCC,c.moneda,_tmCC!==null,"de la cuenta por cobrar")+"</div>";
+        previewCC+="<div id='cc-eq'>"+_htmlEquivAbono(montoIngCC,_tUsarCC,c.moneda,_tmCC!==null,"de la cuenta por cobrar",saldoPend,!!na._exacto)+"</div>";
         if(!_tAutoCC&&!(_tUsarCC>0)){
           previewCC+="<div style='font-size:11px;color:var(--mal);background:var(--mal-sup);border-radius:7px;padding:7px 10px;margin-top:6px'>⚠️ Sin tasa configurada — escribe la tasa manual arriba</div>";
         }
@@ -36735,7 +36745,7 @@ function rPrestamos(){
           // ARREGLO 224 · botón "💯 Exacto" para cuadrar al céntimo.
           "<div id='pp-exa'>"+_htmlBotonExacto("prest",_refPend,tasaUsar,monP,monPago)+"</div>"+
         "</div>";
-        previewHtml+="<div id='pp-eq'>"+_htmlEquivAbono(montoIng,tasaUsar,monP,_tasaManual!==null,"del préstamo")+"</div>";
+        previewHtml+="<div id='pp-eq'>"+_htmlEquivAbono(montoIng,tasaUsar,monP,_tasaManual!==null,"del préstamo",_refPend,!!np._exacto)+"</div>";
         if(!tasaAuto&&!(tasaUsar>0)){
           previewHtml+="<div style='font-size:11px;color:var(--mal);background:var(--mal-sup);border-radius:7px;padding:7px 10px;margin-top:6px'>⚠️ Sin tasa configurada — escribe la tasa manual arriba</div>";
         }
