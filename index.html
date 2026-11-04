@@ -3305,7 +3305,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261104_v306";
+var APP_VERSION = "20261104_v307";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -8986,16 +8986,22 @@ function pagarPrestamo(id){
       // ARREGLO 224: si pulsó 💯 Exacto, fuerza el abono a cuadrar al
       // saldo (o a la cuota marcada + mora, que es lo que el formulario
       // enseña como pendiente). La tasa efectiva queda en la nota.
+      // ARREGLO 227: quitado el margen como en el lado de cobrar. Si el
+      // flag _exacto llega puesto es porque el botón 💯 fue la última
+      // palabra (el oninput del campo monto lo pone a false al teclear),
+      // así que no hace falta comprobar que el cálculo estuviera cerca.
+      // Antes el popup podía decir ≈69,99 y ella no sabía si se iba a
+      // guardar bien.
       if(np._exacto){
         var _cuSel=(np.cuotaSel&&np.cuotaSel!=="") ? JSON.parse(np.cuotaSel) : null;
         var _moraPend = (typeof moraPendiente==="function" && np.cobrarMora!==false) ? (moraPendiente(p)||0) : 0;
         var _totAb=(p.abonos||[]).reduce(function(s,ab){return s+(parseFloat(ab.monto)||0);},0);
         var _pendP=Math.max(0, Math.round(((parseFloat(p.monto||p.sal)||0) - _totAb) * 100)/100);
         var _ref = _cuSel ? Math.round((_cuSel.monto + _moraPend)*100)/100 : Math.round((_pendP + _moraPend)*100)/100;
-        if(_ref>0.001 && Math.abs(monto-_ref)<Math.max(0.5, _ref*0.02)){
-          var _tef = montoIngresado>0 ? monto/montoIngresado : tasaManual;
+        if(_ref>0.001){
+          var _tef = montoIngresado>0 ? _ref/montoIngresado : tasaManual;
           monto = _ref;
-          notaPago=" (pagó "+f2(montoIngresado)+" "+monPago+" por "+f2(_ref)+" "+mon+" exactos · tasa efectiva "+f4(_tef)+" "+monPago+"/"+mon+")";
+          notaPago=" (pagó "+f2(montoIngresado)+" "+monPago+" por "+f2(_ref)+" "+mon+" EXACTOS · tasa efectiva "+f4(_tef)+" "+monPago+"/"+mon+")";
         }
       }
     } else {
@@ -11342,13 +11348,20 @@ function saveAbonoCobrar(id){
       // ARREGLO 224: si pulsó 💯 Exacto, fuerza la deuda al saldo exacto.
       // La diferencia por redondeo entre la tasa escrita y la operación real
       // se absorbe. La tasa efectiva implícita queda en la nota.
+      // ARREGLO 227: si pulsó 💯 Exacto el flag na._exacto queda puesto, y al
+      // teclear en el campo monto se limpia solo (el oninput lo pone a false).
+      // Entonces si llega con _exacto=true, es porque el botón es la última
+      // palabra: forzamos al saldo exacto SIN mirar ningún margen. Antes el
+      // margen era condicional y en v305/v306 fallaba en algunos casos donde
+      // ella tecleaba a mano después — el popup mostraba 39,99 y ella dudaba
+      // si estaba guardando bien.
       if(na._exacto){
         var _tab = (c.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);
         var _pend = Math.round(((parseFloat(c.monto)||0) - _tab) * 100)/100;
-        if(_pend>0.001 && Math.abs(monto-_pend)<Math.max(0.5, _pend*0.02)){
-          var _tef = montoIngresado>0 ? monto/montoIngresado : tasaManual;
+        if(_pend>0.001){
+          var _tef = montoIngresado>0 ? _pend/montoIngresado : tasaManual;
           monto = _pend;
-          notaPago=" (pagó "+f2(montoIngresado)+" "+monPago+" por "+f2(_pend)+" "+monCobrar+" exactos · tasa efectiva "+f4(_tef)+" "+monPago+"/"+monCobrar+")";
+          notaPago=" (pagó "+f2(montoIngresado)+" "+monPago+" por "+f2(_pend)+" "+monCobrar+" EXACTOS · tasa efectiva "+f4(_tef)+" "+monPago+"/"+monCobrar+")";
         }
       }
     } else {
@@ -11380,7 +11393,7 @@ function saveAbonoCobrar(id){
     if(cta.moneda&&monPago&&cta.moneda!==monPago){
       if(!confirm("⚠️ La cuenta \""+cta.nombre+"\" es en "+cta.moneda+" pero dijiste que pagó en "+monPago+".\n¿Acreditar igual?"))return;
     } else {
-      if(!confirm("Acreditar "+f2(montoIngresado)+" "+monPago+(monPago!==monCobrar?" (≈"+f2(monto)+" "+monCobrar+")":"")+" en \""+cta.nombre+"\". ¿Confirmar?"))return;
+      if(!confirm("Acreditar "+f2(montoIngresado)+" "+monPago+(monPago!==monCobrar?" ("+(na._exacto?"= ":"≈ ")+f2(monto)+" "+monCobrar+(na._exacto?" exactos":"")+")":"")+" en \""+cta.nombre+"\". ¿Confirmar?"))return;
     }
     // Acreditar la cuenta con lo REALMENTE recibido, en SU propia moneda
     ajusteCuentaEgreso(cuentaId,montoIngresado);
