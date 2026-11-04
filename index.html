@@ -3305,7 +3305,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261104_v308";
+var APP_VERSION = "20261104_v309";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -6559,8 +6559,8 @@ function _devolvermeAhora(){
   if(!ids.length){ alert("✅ No hay deuda pendiente. La empresa no te debe nada."); return; }
   // Si hay varias monedas, por ahora solo VES (es la única en _MONEDAS_DEUDA)
   var mon = deudas[ids[0]].moneda;
-  var total = 0;
-  ids.forEach(function(id){ total += deudas[id].monto; });
+  var totalDeuda = 0;
+  ids.forEach(function(id){ totalDeuda += deudas[id].monto; });
   // Cuentas de empresa en esa moneda con saldo positivo (de dónde sale el dinero)
   var ctasEmp = (S.cuentas||[]).filter(function(c){
     return c.activa!==false && !c.esPersonal && !c.esReserva && c.moneda===mon && (parseFloat(c.saldo)||0)>0;
@@ -6572,10 +6572,39 @@ function _devolvermeAhora(){
   ctasEmp.sort(function(a,b){ return (parseFloat(b.saldo)||0) - (parseFloat(a.saldo)||0); });
   var ctaEmp = ctasEmp[0]; // la cuenta de empresa con más saldo
   var saldoDisp = parseFloat(ctaEmp.saldo)||0;
-  var sugerido = Math.min(total, saldoDisp);
+  // ARREGLO 228: antes se repartía proporcional entre TODAS las cuentas con
+  // deuda sin preguntarle nada. Sus palabras del 03/11, con la pantalla
+  // delante: "me debe dejar seleccionar que cuenta estoy devolviendo". Si solo
+  // hay una, va a esa; si hay varias, se le pregunta a cuál devuelve — y queda
+  // la opción de repartir proporcional, para no quitarle ese camino.
+  var destinoId=null, destinoNombre="", deudaDestino=0;
+  var repartoProporcional=false;
+  if(ids.length===1){
+    destinoId = ids[0];
+    destinoNombre = deudas[ids[0]].nombre;
+    deudaDestino = deudas[ids[0]].monto;
+  } else {
+    var opciones = ids.map(function(id, i){
+      return (i+1)+") "+deudas[id].nombre+" · te debe "+f2(deudas[id].monto)+" "+mon;
+    });
+    var ultOp = ids.length+1;
+    opciones.push(ultOp+") Repartir proporcional entre las "+ids.length);
+    var elec = prompt(
+      "💸 ¿A qué cuenta querés devolver?\n\n"+opciones.join("\n")+
+      "\n\nEscribe el número.",
+      "1"
+    );
+    if(elec===null) return;
+    var n = parseInt((elec||"").trim(), 10);
+    if(!(n>=1 && n<=ultOp)){ alert("Opción no válida."); return; }
+    if(n===ultOp){ repartoProporcional=true; destinoNombre="reparto proporcional"; deudaDestino=totalDeuda; }
+    else { destinoId = ids[n-1]; destinoNombre = deudas[destinoId].nombre; deudaDestino = deudas[destinoId].monto; }
+  }
+  var sugerido = Math.min(deudaDestino, saldoDisp);
   var txt = prompt(
     "💸 Devolverme préstamo\n\n"+
-    "Deuda pendiente: "+f2(total)+" "+mon+"\n"+
+    "Destino: "+destinoNombre+"\n"+
+    "Deuda pendiente: "+f2(deudaDestino)+" "+mon+"\n"+
     "Disponible en "+ctaEmp.nombre+": "+f2(saldoDisp)+" "+mon+"\n\n"+
     "¿Cuánto querés devolverte? ("+mon+")",
     f2(sugerido).replace(",",".")
@@ -6587,20 +6616,24 @@ function _devolvermeAhora(){
     alert("No hay suficiente en "+ctaEmp.nombre+". Hay "+f2(saldoDisp)+" "+mon+".");
     return;
   }
-  if(monto > total+0.01){
-    if(!confirm("Vas a devolverte "+f2(monto)+" "+mon+" pero la deuda es "+f2(total)+". ¿Seguro?")) return;
+  if(monto > deudaDestino+0.01){
+    if(!confirm("Vas a devolverte "+f2(monto)+" "+mon+" pero la deuda"+(repartoProporcional?" total":" de "+destinoNombre)+" es "+f2(deudaDestino)+". ¿Seguro?")) return;
   }
-  // Repartir proporcional entre las cuentas con deuda
+  // Repartir: si eligió una cuenta, todo va ahí. Si eligió reparto, proporcional.
   var pagos = [];
-  ids.forEach(function(id){
-    var proporcion = deudas[id].monto / total;
-    var paga = Math.round(monto * proporcion * 100) / 100;
-    pagos.push({id:id, monto:paga, nombre:deudas[id].nombre});
-  });
-  // Ajuste de redondeo: la última recibe el centavo diferencia
-  var suma = pagos.reduce(function(a,p){return a+p.monto;},0);
-  if(Math.abs(suma - monto) > 0.001){
-    pagos[pagos.length-1].monto = Math.round((pagos[pagos.length-1].monto + (monto-suma))*100)/100;
+  if(repartoProporcional){
+    ids.forEach(function(id){
+      var proporcion = deudas[id].monto / totalDeuda;
+      var paga = Math.round(monto * proporcion * 100) / 100;
+      pagos.push({id:id, monto:paga, nombre:deudas[id].nombre});
+    });
+    // Ajuste de redondeo: la última recibe el centavo diferencia
+    var suma = pagos.reduce(function(a,p){return a+p.monto;},0);
+    if(Math.abs(suma - monto) > 0.001){
+      pagos[pagos.length-1].monto = Math.round((pagos[pagos.length-1].monto + (monto-suma))*100)/100;
+    }
+  } else {
+    pagos.push({id:destinoId, monto:monto, nombre:destinoNombre});
   }
   var resumen = "Vas a hacer "+pagos.length+" traspaso"+(pagos.length>1?"s":"")+":\n\n";
   pagos.forEach(function(p){
