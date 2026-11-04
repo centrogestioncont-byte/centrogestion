@@ -7628,7 +7628,7 @@ console.log("\n— FASE 2: la cuenta madre —");
 
   // 2. EL CAPITAL YA VA SIN EL SUELDO. Es lo que pidio ella.
   const crt = sinCom(sacarFuncion("capitalRealTotal"));
-  ok(/var total=r2v\(enCuentas\+enReserva\+porCobrar\+enPrestamos\+enMercancia-sueldoPendiente\);/.test(crt),
+  ok(/var total=r2v\(enCuentas\+enReserva\+porCobrar\+enPrestamos\+enMercancia-sueldoPendiente-deudaParcelas\);/.test(crt),
      "capitalRealTotal descuenta el sueldo y suma la mercancia");
   ok(/sueldoPendiente:r2v\(sueldoPendiente\)/.test(crt),
      "y lo devuelve aparte, para que el otro lado reste EL MISMO numero");
@@ -7639,7 +7639,7 @@ console.log("\n— FASE 2: la cuenta madre —");
   //    EXPRESION ENTERA: buscar "sueldoPendiente" suelto pasaria con el
   //    termino multiplicado por cero o renombrado (ARREGLO 100).
   const cc = sinCom(sacarFuncion("conciliacionCapital"));
-  ok(/var deberias=r2v\(apertura-intAp\.total\+bruta-egEmpresaSinMerc-egPersonalEmpresa-socios-traspPers\.total-\(real\.sueldoPendiente\|\|0\)\+aportes\.total-retSoc\.total\);/.test(cc),
+  ok(/var deberias=r2v\(apertura-intAp\.total\+bruta-egEmpresaSinMerc-egPersonalEmpresa-socios-traspPers\.total-\(real\.sueldoPendiente\|\|0\)-\(real\.deudaParcelas\|\|0\)\+aportes\.total-retSoc\.total\);/.test(cc),
      "«deberias tener» resta el MISMO sueldo que «tienes», y suma lo que ella metio");
   // ── ARREGLO 143 · la compra de mercancia se excluye UNA vez ───────────
   //
@@ -8003,8 +8003,16 @@ console.log("\n— FASE 2: la cuenta madre —");
   // (porque no hay cuenta). El articulo se guarda con yaPagada:true.
   ok(/if\(f\.yaPagada\)[\s\S]{0,900}yaPagada:true[\s\S]{0,1500}return;/.test(_ga),
      "en modo ya pagada el articulo entra al inventario sin egreso y sale pronto");
-  ok(/if\(f\.yaPagada\)[\s\S]{0,1500}return;[\s\S]{0,400}_egresoMerc\(/.test(_ga),
+  // ARREGLO 226: entre el return del yaPagada y la primera llamada a _egresoMerc
+  // vive ahora el bloque "en parcelas" (que tampoco crea egreso al guardar).
+  // La ventana se amplía a 3500 chars para dejarles sitio.
+  ok(/if\(f\.yaPagada\)[\s\S]{0,1500}return;[\s\S]{0,3500}_egresoMerc\(/.test(_ga),
      "el camino que SI crea egreso vive despues del return del yaPagada");
+  // Y el bloque "en parcelas" tampoco crea egreso: la compra entera en
+  // parcelas entra al inventario sin mover cuenta (igual que yaPagada).
+  const _gaPar = _ga.match(/if\(f\.modoPago==="parcelas"\)\{[\s\S]*?return;\s*\}/);
+  ok(_gaPar && !/_egresoMerc\(/.test(_gaPar[0]) && !/_ctaMerc\(/.test(_gaPar[0]),
+     "el bloque 'en parcelas' no toca ni cuenta ni egreso al guardar");
   // Dentro del bloque yaPagada NO se llama a _egresoMerc.
   const _gaYP = _ga.match(/if\(f\.yaPagada\)\{[\s\S]*?return;\s*\}/);
   ok(_gaYP && !/_egresoMerc\(/.test(_gaYP[0]) && !/_ctaMerc\(/.test(_gaYP[0]),

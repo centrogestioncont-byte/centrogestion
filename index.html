@@ -2376,7 +2376,7 @@ let S={
   // La VENTA si va dentro del articulo, y eso no es incoherente: una venta es
   // una sola y siempre se toca junto con el estado del articulo. Es lo
   // contrario de las cuotas, que se marcan de una en una.
-  articulos:[], artGastos:[],
+  articulos:[], artGastos:[], artCuotas:[],
   // ARREGLO 146 · plata SUYA que entra o sale de una cuenta de la empresa.
   //
   // Su sueldo del otro trabajo le entra en bolivares a BANESCO o al B. de
@@ -3305,7 +3305,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261104_v307";
+var APP_VERSION = "20261104_v308";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -5143,7 +5143,8 @@ var DATA_KEYS = ["brl","vzla","eeuu","egresos","prestamos","capital",
   // ARREGLO 134 · el apartamento y su cronograma
   "inmuebles","inmCuotas",
   // ARREGLO 143 · lo que compra para revender
-  "articulos","artGastos",
+  // ARREGLO 226 · la lista de parcelas si pagó con financiación
+  "articulos","artGastos","artCuotas",
   // ARREGLO 146 · plata suya que mete o saca de una cuenta de la empresa
   "aportes",
   // ARREGLO 175 · competencias PGDAS-D ya declaradas
@@ -5740,7 +5741,14 @@ function capitalRealTotal(){
   // abre un hueco del tamaño de la compra.
   var enMercancia=0, nMercancia=0;
   try{ var _mm=_mercanciaEnMano(); enMercancia=_mm.usdt; nMercancia=_mm.n; }catch(e){ enMercancia=0; }
-  var total=r2v(enCuentas+enReserva+porCobrar+enPrestamos+enMercancia-sueldoPendiente);
+  // ARREGLO 226: lo que queda por pagar de parcelas de mercancía. La compra
+  // entró entera al inventario (sube `enMercancia`) pero el dinero no salió
+  // todavía: resta aquí la parte pendiente para que el capital NETO quede
+  // exacto. Y como con el sueldo y los intereses: la conciliación resta este
+  // mismo número al otro lado, para que el "sin explicar" no se mueva.
+  var deudaParcelas=0;
+  try{ deudaParcelas=_deudaParcelasTotalUSDT()||0; }catch(e){ deudaParcelas=0; }
+  var total=r2v(enCuentas+enReserva+porCobrar+enPrestamos+enMercancia-sueldoPendiente-deudaParcelas);
   // Las monedas se ordenan por lo que pesan en USDT: la primera fila del
   // informe es donde de verdad esta su dinero, no la que entro antes.
   var lista=Object.keys(porMoneda).map(function(m){
@@ -5758,6 +5766,7 @@ function capitalRealTotal(){
           enMercancia:r2v(enMercancia), nMercancia:nMercancia,
           enLaCalle:r2v(porCobrar+enPrestamos), total:total, porMoneda:lista,
           sueldoPendiente:r2v(sueldoPendiente),
+          deudaParcelas:r2v(deudaParcelas),
           sinTasa:sinTasa.filter(function(m,i,a){return a.indexOf(m)===i;})};
 }
 
@@ -6992,7 +7001,12 @@ function conciliacionCapital(){
   // mismo sitio que el de alla (real.sueldoPendiente). Calcularlo aparte seria
   // la segunda respuesta a la misma pregunta, y con que difieran en un centimo
   // el "sin explicar" se mueve solo.
-  var deberias=r2v(apertura-intAp.total+bruta-egEmpresaSinMerc-egPersonalEmpresa-socios-traspPers.total-(real.sueldoPendiente||0)+aportes.total-retSoc.total);
+  // ARREGLO 226: la deuda de parcelas de mercancía también se resta en los
+  // DOS lados, por el mismo motivo que el sueldo (ARREGLO 105). Si la
+  // apertura se fijó antes de comprar en parcelas, ese capital sube
+  // (enMercancia) y baja (deudaParcelas) en el lado "real"; aquí espejamos
+  // la bajada para que el "sin explicar" no se mueva.
+  var deberias=r2v(apertura-intAp.total+bruta-egEmpresaSinMerc-egPersonalEmpresa-socios-traspPers.total-(real.sueldoPendiente||0)-(real.deudaParcelas||0)+aportes.total-retSoc.total);
   var diferencia=r2v(real.total-deberias);
   // De qué está hecha esa diferencia: los ajustes a mano y el desfase de las
   // tasas se explican solos, lo que quede es lo único que hay que perseguir.
@@ -12023,6 +12037,174 @@ function _optMonMerc(sel){
 }
 function _artDe(id){ return (S.articulos||[]).filter(function(a){return String(a.id)===String(id);})[0]||null; }
 function _gastosDe(id){ return (S.artGastos||[]).filter(function(g){return String(g.artId)===String(id);}); }
+// ARREGLO 226 · PARCELAS DE UNA COMPRA DE MERCANCÍA
+// ──────────────────────────────────────────────────────────────────
+// Sus palabras del 04/11: "en el módulo de mercancía, estoy comprando
+// también unos productos donde tengo que pagar unas facturas en parcelas".
+// Es el mismo modelo que el apartamento (ARREGLO 134), pero dentro del
+// módulo de Mercancía:
+//   · El artículo entra al inventario DESDE EL DÍA 1 con su costo entero.
+//   · Ninguna cuenta se mueve al comprar; solo quedan las parcelas
+//     pendientes en S.artCuotas.
+//   · capitalRealTotal() suma el inventario y RESTA la deuda viva. Así
+//     "tienes" y "deberías" cuadran al céntimo desde el día 1.
+//   · Pagar una parcela es un egreso normal (baja la cuenta, baja el
+//     lote FIFO). Ese egreso NO cuenta como gasto del mes porque es
+//     inversión — igual que una compra al contado (_egOperativos ya
+//     filtra por fromArticulo; marcamos también esParcelaArt para que
+//     no se confunda con un gasto normal).
+//   · Si hay interés (caso raro), la parcela se parte: capital va al
+//     costo del artículo; interés queda como egreso financiero normal
+//     SÍ cuenta como gasto.
+function _cuotasArt(artId){
+  return (S.artCuotas||[]).filter(function(c){return String(c.artId)===String(artId);})
+         .sort(function(a,b){ return (a.isoFecha||"").localeCompare(b.isoFecha||"") || (a.n||0)-(b.n||0); });
+}
+function _parcelasPendientesArt(artId){
+  return _cuotasArt(artId).filter(function(c){ return !c.pagada; });
+}
+// Suma del capital pendiente de un artículo (lo que NO se ha pagado).
+// Se usa en la conciliación para restarlo de "deberías tener".
+function _deudaParcelasArt(artId){
+  return Math.round(_parcelasPendientesArt(artId).reduce(function(s,c){return s+(parseFloat(c.monto)||0);},0)*100)/100;
+}
+// Deuda viva total de TODAS las compras en parcelas, en USDT.
+// Los egresos de parcelas ya pagadas NO cuentan aquí (bajaron la cuenta
+// y la deuda a la vez), por eso solo las pendientes.
+function _deudaParcelasTotalUSDT(){
+  var t=0;
+  (S.artCuotas||[]).forEach(function(c){
+    if(c.pagada) return;
+    var a=_artDe(c.artId); if(!a) return;
+    var mon=c.mon||a.mon||"USDT";
+    var m=parseFloat(c.monto)||0;
+    if(mon==="USDT"||mon==="USD") t+=m;
+    else { var r=getRateToUsdt(mon); if(r>0) t+=m/r; }
+  });
+  return Math.round(t*100)/100;
+}
+// Calcula el cronograma de parcelas al registrar la compra.
+// Mensual usa _sumarMeses (CLAUDE.md prohíbe setMonth), semanal/quincenal
+// usa días, personalizada deja las fechas tal cual ella escriba.
+function _cronogramaParcelasArt(precioContado, nCuotas, isoPrimera, frecuencia, interesPct){
+  if(!(nCuotas>0)) return [];
+  var cap = Math.round((precioContado/nCuotas)*100)/100;
+  // El último ajusta el redondeo para que la suma sea exactamente precioContado.
+  var caps = [];
+  var acum = 0;
+  for(var i=0;i<nCuotas;i++){
+    if(i===nCuotas-1) caps.push(Math.round((precioContado-acum)*100)/100);
+    else { caps.push(cap); acum += cap; }
+  }
+  var interPorCuota = (parseFloat(interesPct)>0) ? Math.round((precioContado*parseFloat(interesPct)/100/nCuotas)*100)/100 : 0;
+  var out = [];
+  var base = new Date(isoPrimera+"T00:00:00");
+  for(var j=0;j<nCuotas;j++){
+    var fISO;
+    if(frecuencia==="semanal") {
+      var d = new Date(base); d.setDate(base.getDate()+j*7);
+      fISO = d.toISOString().slice(0,10);
+    } else if(frecuencia==="quincenal") {
+      var d2 = new Date(base); d2.setDate(base.getDate()+j*15);
+      fISO = d2.toISOString().slice(0,10);
+    } else {
+      // mensual (default): usa _sumarMeses para no caer en setMonth (31/01 + 1 → 03/03)
+      // _sumarMeses pide un Date y devuelve un Date; lo normaliza _isoDeFecha.
+      if(typeof _sumarMeses==="function" && typeof _isoDeFecha==="function"){
+        var _dM = _sumarMeses(base, j);
+        fISO = _isoDeFecha(_dM);
+      } else {
+        fISO = isoPrimera;
+      }
+    }
+    out.push({
+      n: j+1,
+      fecha: _ddmmaaDeIso(fISO),
+      isoFecha: fISO,
+      monto: caps[j],
+      interes: interPorCuota
+    });
+  }
+  return out;
+}
+function _ddmmaaDeIso(iso){
+  if(!iso) return "";
+  var p=iso.split("-"); if(p.length!==3) return iso;
+  return p[2]+"/"+p[1]+"/"+p[0].slice(-2);
+}
+// Pagar una parcela: elige cuenta, crea el egreso (que baja la cuenta y
+// baja el lote FIFO), marca la parcela como pagada. Si tiene interés,
+// se crea un egreso aparte SIN fromArticulo para que sí cuente como
+// gasto del mes (es gasto financiero, no inversión).
+function _pagarParcelaArt(cuotaId, cuentaId){
+  if(!permisoEdicion()) return;
+  var c=(S.artCuotas||[]).find(function(x){return String(x.id)===String(cuotaId);});
+  if(!c){ alert("Esa parcela ya no existe."); return; }
+  if(c.pagada){ alert("Esa parcela ya está pagada."); return; }
+  var a=_artDe(c.artId); if(!a){ alert("No encuentro el artículo."); return; }
+  var cuenta=_ctaMerc(cuentaId); if(!cuenta){ alert("Elige la cuenta."); return; }
+  var mon=c.mon||a.mon||"USDT";
+  if(cuenta.moneda!==mon){
+    alert("La cuenta "+cuenta.nombre+" es "+cuenta.moneda+" y la parcela es "+mon+".");
+    return;
+  }
+  var cap=parseFloat(c.monto)||0;
+  var inter=parseFloat(c.interes)||0;
+  var totPagar=Math.round((cap+inter)*100)/100;
+  if(cuenta.saldo<totPagar-0.01){
+    if(!confirm("La cuenta "+cuenta.nombre+" sólo tiene "+f2(cuenta.saldo)+" "+mon+", y la parcela son "+f2(totPagar)+" "+mon+".\nQuedará en negativo. ¿Continuar?")) return;
+  }
+  var hoy=_hoyDMA();
+  var usdtCap=_usdtMerc(cap, mon); if(usdtCap===null) usdtCap=0;
+  var egId=_egresoMerc(a.id, cuenta, cap, mon, usdtCap, "[Mercancía] "+a.nombre+" · parcela "+c.n+"/"+_cuotasArt(a.id).length, hoy);
+  var egIntId=null;
+  if(inter>0){
+    // Interés como gasto financiero: SIN fromArticulo (sí cuenta como gasto).
+    var usdtInt=_usdtMerc(inter, mon)||0;
+    egIntId="arteginter_"+_newUid();
+    ajusteCuentaEgreso(cuenta.id, -inter);
+    descontarFIFOEgreso(mon, inter, usdtInt, cuenta.id);
+    S.egresos=S.egresos||[];
+    S.egresos.push({id:egIntId, d:hoy, cat:"Gasto financiero", mot:"[Mercancía] "+a.nombre+" · interés parcela "+c.n,
+      monto:inter, usdt:usdtInt, mon:mon, tipo:"empresa", pagada:true, locked:false,
+      cuentaId:cuenta.id, fromArticuloInteres:a.id});
+  }
+  c.pagada=true;
+  c.cuentaId=cuenta.id;
+  c.egresoId=egId;
+  c.egresoInteresId=egIntId;
+  c.fechaPago=_hoyISO();
+  logAudit("MERCANCIA_PARCELA_PAGADA","Parcela "+c.n+" de "+a.nombre+" · "+f2(totPagar)+" "+mon+" desde "+cuenta.nombre);
+  saveData(); R();
+}
+// Deshacer el pago de una parcela: devuelve el dinero a la cuenta y al
+// lote FIFO (igual que al borrar un egreso de mercancía), y vuelve la
+// parcela a pendiente.
+function _deshacerParcelaArt(cuotaId){
+  if(!permisoEdicion()) return;
+  var c=(S.artCuotas||[]).find(function(x){return String(x.id)===String(cuotaId);});
+  if(!c||!c.pagada) return;
+  if(!confirm("Deshacer el pago de la parcela "+c.n+".\n\nEl dinero vuelve a la cuenta y la parcela queda pendiente. ¿Confirmar?")) return;
+  if(c.egresoId) _borrarEgresoMerc(c.egresoId);
+  if(c.egresoInteresId){
+    // El egreso del interés se devuelve igual, pero no pasa por _borrarEgresoMerc
+    // (eso busca fromArticulo). Lo hacemos a mano.
+    var i=(S.egresos||[]).findIndex(function(e){return String(e.id)===String(c.egresoInteresId);});
+    if(i>=0){
+      var e=S.egresos[i];
+      var cta=_ctaMerc(e.cuentaId);
+      if(cta){
+        ajusteCuentaEgreso(cta.id, +(parseFloat(e.monto)||0));
+        if(typeof restaurarFIFOEgreso==="function") restaurarFIFOEgreso(e.mon, e.monto, e.usdt, cta.id);
+      }
+      S.egresos.splice(i,1);
+    }
+  }
+  c.pagada=false;
+  delete c.cuentaId; delete c.egresoId; delete c.egresoInteresId; delete c.fechaPago;
+  logAudit("MERCANCIA_PARCELA_DESHECHA","Deshecho el pago de la parcela "+c.n);
+  saveData(); R();
+}
 function _hoyDMA(){ var d=new Date();
   return String(d.getDate()).padStart(2,"0")+"/"+String(d.getMonth()+1).padStart(2,"0")+"/"+String(d.getFullYear()).slice(-2); }
 function _hoyISO(){ var d=new Date();
@@ -12089,6 +12271,43 @@ function guardarArticulo(){
     S.nArt={}; S._artForm=false;
     saveData(); R();
     alert("✅ Guardado como ya pagada.\n\nEntra a tu inventario con costo "+f2(costo)+" "+mon+" (~"+f2(usdt)+" USDT).\n\nNINGÚN saldo se mueve: el dinero ya salió antes.\n\nOjo: tu capital sube por este costo. Si el egreso o préstamo original lo bajó, ahora se compensa y queda cuadrado.");
+    return;
+  }
+  // ARREGLO 226: tercer modo — "en parcelas". Es inversión suya y no sale todo
+  // ahora: entra al inventario entero (como "ya pagada", porque el capital
+  // sube por lo que vale la mercancía) y aparte deja un cronograma de parcelas
+  // pendientes. La deuda de esas parcelas se RESTA del capital por su lado
+  // (capitalRealTotal) para que el neto quede exactamente donde debe. Cada
+  // parcela se paga por separado desde el panel del artículo, y pagarla crea
+  // un EGRESO de mercancía normal — pero con bandera "parcelaArt" para que
+  // _egOperativos la filtre (como ya hace con la compra entera del artículo):
+  // una parcela que se paga NO baja la ganancia del mes, es inversión.
+  if(f.modoPago==="parcelas"){
+    var nPar=parseInt(f.nParcelas,10)||0;
+    if(nPar<=0){ alert("¿En cuántas parcelas?"); return; }
+    var iso1=String(f.isoPrimera||"").trim();
+    if(!iso1||!/^\d{4}-\d{2}-\d{2}$/.test(iso1)){ alert("¿Fecha de la primera parcela?"); return; }
+    var frec=f.frecuencia||"mensual";
+    var interes=parseFloat(_num(f.interesPct))||0;
+    var crono=_cronogramaParcelasArt(costo, nPar, iso1, frec, interes);
+    if(!crono||!crono.length){ alert("No se pudo generar el cronograma. Revisa los datos."); return; }
+    S.articulos=S.articulos||[];
+    S.articulos.push({id:id, nombre:nombre, nota:String(f.nota||"").trim(),
+      fecha:fecha, fechaIso:iso, costo:costo, mon:mon, costoUsdt:usdt,
+      modoPago:"parcelas", proveedor:String(f.proveedor||"").trim(),
+      frecuencia:frec, interesPct:interes, nParcelas:nPar,
+      egresoId:null, cuentaId:null, estado:"mano",
+      precioEsp:esp, monEsp:f.monEsp||mon});
+    S.artCuotas=S.artCuotas||[];
+    crono.forEach(function(cu, idx){
+      S.artCuotas.push({id:"ac_"+id+"_"+(idx+1), artId:id, n:cu.n, nTotal:nPar,
+        isoFecha:cu.isoFecha, fecha:cu.fecha, monto:cu.monto, interes:cu.interes||0, mon:mon,
+        pagada:false});
+    });
+    var totalParc=crono.reduce(function(s,cu){return s+cu.monto;},0);
+    S.nArt={}; S._artForm=false;
+    saveData(); R();
+    alert("✅ Guardado como en parcelas.\n\nEntra a tu inventario con costo "+f2(costo)+" "+mon+" (~"+f2(usdt)+" USDT).\n\nNINGÚN saldo se mueve ahora: se registraron "+nPar+" parcelas"+(interes>0?" con "+f2(interes)+"% de interés ("+f2(totalParc)+" "+mon+" total)":"")+".\n\nCada parcela se paga desde el panel del artículo cuando toque. Tu capital NETO no cambia: el valor de la mercancía sube, y la deuda de las parcelas baja por su lado el mismo número.");
     return;
   }
   var cuenta=_ctaMerc(f.cuentaId);
@@ -12302,16 +12521,32 @@ function rMercancia(){
   var btnModo = function(label, activo, onclick){
     return "<button onclick='"+onclick+"' style='flex:1;padding:9px;border:1.5px solid "+(activo?"var(--ac)":"var(--ln)")+";border-radius:9px;background:"+(activo?"var(--ac)":"var(--sup2)")+";color:"+(activo?"var(--sobre-color)":"var(--tx2)")+";font-size:12px;font-weight:800;cursor:pointer;font-family:inherit'>"+label+"</button>";
   };
+  // ARREGLO 226: tres modos ahora, no dos. "Parcelas" es inversión suya que
+  // paga en cuotas — entra el activo entero al inventario y la deuda se
+  // resta por su lado del capital, para que el neto quede donde debe.
+  var esParc = f.modoPago==="parcelas";
   var selectorModo =
     "<div style='font-size:10.5px;color:var(--tx3);margin-bottom:5px'>¿Cómo la pagas?</div>"+
     "<div style='display:flex;gap:6px;margin-bottom:9px'>"+
-      btnModo("💸 Sale ahora", !yaPag, "S.nArt=S.nArt||{};S.nArt.yaPagada=false;R()")+
-      btnModo("📥 Ya pagada", yaPag,   "S.nArt=S.nArt||{};S.nArt.yaPagada=true;R()")+
+      btnModo("💸 Sale ahora", !yaPag && !esParc, "S.nArt=S.nArt||{};S.nArt.yaPagada=false;delete S.nArt.modoPago;R()")+
+      btnModo("📥 Ya pagada", yaPag && !esParc,   "S.nArt=S.nArt||{};S.nArt.yaPagada=true;delete S.nArt.modoPago;R()")+
+      btnModo("📅 En parcelas", esParc,           "S.nArt=S.nArt||{};S.nArt.yaPagada=false;S.nArt.modoPago=\"parcelas\";R()")+
     "</div>";
-  var bloquePago = yaPag
-    ? _campoMerc("¿Dónde quedó registrado el pago? (opcional)", "<input value='"+_jsAttr(f.pagoNota||"")+"' oninput='S.nArt=S.nArt||{};S.nArt.pagoNota=this.value' placeholder='ej: Préstamo #216 — compra Alibaba' style='"+_estiloMerc()+"'>")+
-      "<div style='font-size:10.5px;color:var(--tx3);margin:-4px 0 10px;line-height:1.5;background:var(--sup2);border-left:3px solid var(--ac);padding:7px 9px;border-radius:4px'>No se mueve ningún saldo: solo entra al inventario. Úsalo cuando el egreso o préstamo que la pagó ya está en la contabilidad y no quieres descontar dos veces.</div>"
-    : _campoMerc("¿De qué cuenta salió?", "<select onchange='S.nArt=S.nArt||{};S.nArt.cuentaId=this.value' style='"+_estiloMerc()+"'><option value=''>— elige —</option>"+_optCtasMerc(f.cuentaId)+"</select>");
+  var bloquePago = esParc
+    ? _campoMerc("Proveedor (opcional)", "<input value='"+_jsAttr(f.proveedor||"")+"' oninput='S.nArt=S.nArt||{};S.nArt.proveedor=this.value' placeholder='ej: Casas Bahia' style='"+_estiloMerc()+"'>")+
+      "<div style='display:flex;gap:7px'>"+
+        "<div style='flex:1'>"+_campoMerc("¿Cuántas parcelas?", "<input type='text' inputmode='numeric' value='"+_jsAttr(String(f.nParcelas||""))+"' oninput='S.nArt=S.nArt||{};S.nArt.nParcelas=this.value' placeholder='10' style='"+_estiloMerc()+"'>")+"</div>"+
+        "<div style='flex:1'>"+_campoMerc("Frecuencia", "<select onchange='S.nArt=S.nArt||{};S.nArt.frecuencia=this.value' style='"+_estiloMerc()+"'><option value='mensual'"+(((f.frecuencia||"mensual")==="mensual")?" selected":"")+">Mensual</option><option value='quincenal'"+((f.frecuencia==="quincenal")?" selected":"")+">Quincenal</option><option value='semanal'"+((f.frecuencia==="semanal")?" selected":"")+">Semanal</option></select>")+"</div>"+
+      "</div>"+
+      "<div style='display:flex;gap:7px'>"+
+        "<div style='flex:1'>"+_campoMerc("Primera parcela", "<input type='date' value='"+_jsAttr(f.isoPrimera||"")+"' oninput='S.nArt=S.nArt||{};S.nArt.isoPrimera=this.value' style='"+_estiloMerc()+"'>")+"</div>"+
+        "<div style='flex:1'>"+_campoMerc("Interés total %", "<input inputmode='decimal' value='"+_jsAttr(String(f.interesPct||""))+"' oninput='S.nArt=S.nArt||{};S.nArt.interesPct=_num(this.value)' placeholder='0 · opcional' style='"+_estiloMerc()+"'>")+"</div>"+
+      "</div>"+
+      "<div style='font-size:10.5px;color:var(--tx3);margin:-4px 0 10px;line-height:1.5;background:var(--sup2);border-left:3px solid var(--ac);padding:7px 9px;border-radius:4px'>Entra al inventario completo, y cada parcela se paga desde el panel del artículo. Tu capital NETO no cambia al guardarlo: el valor del activo sube y la deuda baja por el otro lado.</div>"
+    : (yaPag
+      ? _campoMerc("¿Dónde quedó registrado el pago? (opcional)", "<input value='"+_jsAttr(f.pagoNota||"")+"' oninput='S.nArt=S.nArt||{};S.nArt.pagoNota=this.value' placeholder='ej: Préstamo #216 — compra Alibaba' style='"+_estiloMerc()+"'>")+
+        "<div style='font-size:10.5px;color:var(--tx3);margin:-4px 0 10px;line-height:1.5;background:var(--sup2);border-left:3px solid var(--ac);padding:7px 9px;border-radius:4px'>No se mueve ningún saldo: solo entra al inventario. Úsalo cuando el egreso o préstamo que la pagó ya está en la contabilidad y no quieres descontar dos veces.</div>"
+      : _campoMerc("¿De qué cuenta salió?", "<select onchange='S.nArt=S.nArt||{};S.nArt.cuentaId=this.value' style='"+_estiloMerc()+"'><option value=''>— elige —</option>"+_optCtasMerc(f.cuentaId)+"</select>"));
 
   var form = !abierto
     ? "<button onclick='S._artForm=true;R()' style='width:100%;padding:11px;border:1px dashed var(--ln2);border-radius:10px;background:var(--sup);color:var(--tx2);font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;margin-bottom:12px'>➕ Agregar algo que compraste para vender</button>"
@@ -12469,7 +12704,63 @@ function _filaArticulo(a){
           "<button onclick='S._artGasto=null;R()' style='padding:10px 14px;border:1px solid var(--ln);border-radius:9px;background:var(--sup);color:var(--tx3);font-size:12px;cursor:pointer;font-family:inherit'>Cancelar</button>"+
         "</div>"+
       "</div>" : "";
-  return "<div style='border-bottom:1px solid var(--ln2b)'>"+cab+detGastos+botones+formVenta+formGasto+"</div>";
+  // ARREGLO 226: panel de parcelas. Sólo aparece si el artículo se compró en
+  // parcelas; para los otros dos modos ("sale ahora" / "ya pagada") no existe.
+  // Cada parcela se paga por separado desde aquí, con el mismo camino de
+  // siempre (egreso + FIFO), y pagarla NO baja la ganancia porque el egreso
+  // lleva `fromArticulo` (ARREGLO 150).
+  var panelParcelas = "";
+  if(a.modoPago==="parcelas"){
+    var cuotas=_cuotasArt(a.id);
+    var pend=cuotas.filter(function(c){return !c.pagada;});
+    var pag=cuotas.filter(function(c){return c.pagada;});
+    var totPendMon=pend.reduce(function(s,c){return s+(parseFloat(c.monto)||0)+(parseFloat(c.interes)||0);},0);
+    var pagadas=pag.length, nTot=cuotas.length;
+    var abrir=!!S._artParcelas && String(S._artParcelas.id)===String(a.id);
+    panelParcelas=
+      "<div style='background:var(--sup2);border-top:1px solid var(--ln2);padding:11px 13px'>"+
+        "<div style='display:flex;justify-content:space-between;align-items:center;cursor:pointer' onclick='S._artParcelas="+(abrir?"null":"{id:\""+String(a.id)+"\"}")+";R()'>"+
+          "<div>"+
+            "<div style='font-size:11.5px;font-weight:800;color:var(--tit)'>📅 Parcelas · "+pagadas+"/"+nTot+" pagadas</div>"+
+            "<div style='font-size:10.5px;color:var(--tx3);margin-top:1px'>Queda "+f2(totPendMon)+" "+_escAud(a.mon)+(a.proveedor?" · "+_escAud(a.proveedor):"")+"</div>"+
+          "</div>"+
+          "<div style='color:var(--tx3);font-size:14px'>"+(abrir?"▴":"▾")+"</div>"+
+        "</div>"+
+        (abrir
+          ? "<div style='margin-top:9px;border-top:1px dashed var(--ln2);padding-top:9px'>"+
+              cuotas.map(function(c){
+                var tot=Math.round(((parseFloat(c.monto)||0)+(parseFloat(c.interes)||0))*100)/100;
+                var pcSel=!!S._artParcelaPagar && String(S._artParcelaPagar.id)===String(c.id);
+                var npp=S._artParcelaPagar||{};
+                return "<div style='padding:6px 0;border-bottom:1px dashed var(--ln2);font-size:11.5px'>"+
+                  "<div style='display:flex;justify-content:space-between;gap:10px;align-items:center'>"+
+                    "<div>"+
+                      "<b style='color:"+(c.pagada?"var(--ok)":"var(--tx2)")+"'>"+(c.pagada?"✅ ":"")+"Parcela "+c.n+"/"+c.nTotal+"</b>"+
+                      "<span style='color:var(--tx4);font-size:10.5px'> · "+_escAud(c.fecha)+"</span>"+
+                      (c.interes>0?"<span style='color:var(--tx4);font-size:10.5px'> · "+f2(c.monto)+"+"+f2(c.interes)+" int.</span>":"")+
+                    "</div>"+
+                    "<div style='display:flex;gap:6px;align-items:center;flex:none'>"+
+                      "<b style='color:var(--tx2);white-space:nowrap'>"+f2(tot)+" "+_escAud(c.mon)+"</b>"+
+                      (c.pagada
+                        ? "<button onclick='_deshacerParcelaArt(\""+String(c.id)+"\")' style='padding:5px 9px;border:1px solid var(--ln);border-radius:6px;background:var(--sup);color:var(--tx3);font-size:10.5px;cursor:pointer;font-family:inherit'>↩️</button>"
+                        : "<button onclick='S._artParcelaPagar="+(pcSel?"null":"{id:\""+String(c.id)+"\"}")+";R()' style='padding:5px 10px;border:none;border-radius:6px;background:var(--ac);color:var(--sobre-color);font-size:10.5px;font-weight:800;cursor:pointer;font-family:inherit'>💸 Pagar</button>")+
+                    "</div>"+
+                  "</div>"+
+                  (pcSel && !c.pagada
+                    ? "<div style='margin-top:7px;padding:8px;background:var(--sup);border:1px dashed var(--ln2);border-radius:7px'>"+
+                        _campoMerc("¿De qué cuenta?", "<select onchange='S._artParcelaPagar.cuentaId=this.value' style='"+_estiloMerc()+"'><option value=''>— elige —</option>"+_optCtasMerc(npp.cuentaId)+"</select>")+
+                        "<div style='display:flex;gap:6px'>"+
+                          "<button onclick='_pagarParcelaArt(\""+String(c.id)+"\",(S._artParcelaPagar||{}).cuentaId)' style='flex:1;padding:8px;border:none;border-radius:7px;background:var(--ac);color:var(--sobre-color);font-size:11.5px;font-weight:800;cursor:pointer;font-family:inherit'>Confirmar pago</button>"+
+                          "<button onclick='S._artParcelaPagar=null;R()' style='padding:8px 12px;border:1px solid var(--ln);border-radius:7px;background:var(--sup2);color:var(--tx3);font-size:11px;cursor:pointer;font-family:inherit'>Cancelar</button>"+
+                        "</div>"+
+                      "</div>" : "")+
+                "</div>";
+              }).join("")+
+            "</div>"
+          : "")+
+      "</div>";
+  }
+  return "<div style='border-bottom:1px solid var(--ln2b)'>"+cab+detGastos+botones+panelParcelas+formVenta+formGasto+"</div>";
 }
 // ── Abrir un formulario DEJA PUESTO lo que ese formulario va a enseñar ──
 //
@@ -17841,6 +18132,12 @@ function rCapitalTotal(){
     if(co.real&&(co.real.sueldoPendiente||0)>0.005)
       _filas.push(["Tu sueldo, aún sin apartar", -co.real.sueldoPendiente,
                    "var(--tx4)", "sigue siendo tuyo"]);
+    // ARREGLO 226: la deuda viva de las parcelas de mercancía. Baja los dos
+    // lados (ARREGLO 71 calcado), así que sale aquí como fila para que la
+    // lista siga sumando el salto al céntimo.
+    if(co.real&&(co.real.deudaParcelas||0)>0.005)
+      _filas.push(["Parcelas de mercancía por pagar", -co.real.deudaParcelas,
+                   "var(--tx4)", "deuda viva"]);
     // ARREGLO 100: esta fila se llamaba "no es dinero" y eso era FALSO para la
     // pregunta que ella hace. efectoTasasDesde() valora cada movimiento a la
     // tasa de HOY y lo compara con la ganancia que se apuntó aquel día, así que
@@ -40362,7 +40659,7 @@ function _estaBorradoMerge(campo,id){
 // inventarioUsdt se fusiona por "id" (Date.now()): el consumo FIFO siempre
 // reordena por fecha (ordenFIFO) antes de usar los lotes, así que el orden
 // en que quedan en el array no afecta el cálculo.
-var _MERGE_FIELDS = ["cuentas","compromisos","egresos","egresos_personales","prestamos","cuentasCobrar","clientes","inventarioUsdt","brl","vzla","eeuu","traspasos","reposiciones","gastos_eeuu","deudas_paul","movimientosCapital","pagosSocios","gananciaExtra","gastos_socios","inventarioUsdt_cerrado","cierresMes","capital","ajustesSaldo","inmuebles","inmCuotas","articulos","artGastos","aportes","pgdasHistorial"];
+var _MERGE_FIELDS = ["cuentas","compromisos","egresos","egresos_personales","prestamos","cuentasCobrar","clientes","inventarioUsdt","brl","vzla","eeuu","traspasos","reposiciones","gastos_eeuu","deudas_paul","movimientosCapital","pagosSocios","gananciaExtra","gastos_socios","inventarioUsdt_cerrado","cierresMes","capital","ajustesSaldo","inmuebles","inmCuotas","articulos","artGastos","artCuotas","aportes","pgdasHistorial"];
 // clientes usa "cod"; brl/vzla/eeuu usan "_uid"; cierresMes usa "mesKey" (el resto ya usa "id")
 var _MERGE_ID_FIELD = {clientes:"cod",brl:"_uid",vzla:"_uid",eeuu:"_uid",cierresMes:"mesKey"};
 // Primera foto, ya con las listas declaradas y con lo que loadData() dejó en S.
