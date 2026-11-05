@@ -6544,3 +6544,64 @@ vale si mides otra cosa* — y aquí lo otro era el nombre de un campo.
 **Lo que esto NO repara:** las remesas ya guardadas llevan el `tc` de su cuenta,
 que es el correcto. Lo que fallaba era lo que la pantalla enseñaba **antes** de
 guardar, así que no hay nada que rehacer en los datos.
+
+---
+
+## El lote viaja con el dinero de un traspaso (ARREGLO 231)
+
+Salió de auditar BANCO VENEZUELA JULIO el 05/11 con su export: la tarjeta decía
+**17.396,12**, el lote **16.063,97** y el banco **16.063,97**. Reconstruida la
+cuenta desde el 01/11 (2.810,90, que coincide con la foto `histSaldos` del
+02/11), **cada movimiento cuadra con lo registrado**, y desde las 20:45 del 04/11
+lote y saldo se mueven juntos al céntimo. La diferencia nació el 04/11 entre las
+18:47 y las 19:03, por dos puertas:
+
+```
+💸 Devolverme ahora (208) ....... bajó la cuenta 78.628,06 · el lote ni se enteró
+traspaso BdV personal → BdV Julio  entraron 38.601,98 SIN lote en el destino
+                                   lotes 37.215,18 por encima del saldo
+19:03 · ella los cuadra con ✏️ .... bajan 38.547,33 → 1.332,15 de más
+```
+
+O sea que el arreglo de fondo no era el ✏️: **un inventario que obliga a
+editarlo a mano deja de ser un inventario.**
+
+- **Una sola puerta, `_moverLotesTraspaso()`**, que llaman `saveTraspaso` y
+  `_devolvermeAhora`. El 208 escribía los saldos a mano y se saltó el 161 entero:
+  es el fallo de los ARREGLOS 101, 119, 150 y 153 con otra cara.
+- **Misma moneda → el lote renace en la cuenta que recibe** con su tasa, su fecha
+  y su hora (decisión suya: el dinero que pasa de una cuenta a otra sigue
+  costando lo que costó). Con la fecha original, el FIFO lo gasta en su orden.
+  Lo que no salía de ningún lote (`sinLote`) no renace; un cambio de moneda no
+  mueve lotes.
+- **El lote nuevo lleva `_deTraspaso` y NO es una operación de USDT**
+  (`_loteDeTraspaso`): fuera de `_loteEsOpUSDT`, `_ultimaOpUSDT`, las dos
+  lecturas de la conciliación, el Cierre, PGDAS y el conteo de ventas del mes.
+  Su id es de hoy: si contara, la tasa con la que se valora todo saldría de un
+  traspaso. Y va con `cuentaId:""`, o `sincronizarSaldosUsdt` restaría la venta
+  original otra vez.
+- **Si viajó un lote de una vuelta, sigue siendo "te pagaron"**
+  (`_deTraspaso.rem` en `_loteEsDeRemesa`), y "de dónde salen" lo dice:
+  *"llegaron por traspaso de BANCO VENEZUELA JULIO"*.
+- **Al borrar, primero se quita la copia y después se devuelve al origen.** Al
+  revés, la búsqueda por fecha y tasa de `_restaurarVentasFIFO` podía caer en la
+  copia, que tiene la misma fecha y la misma tasa. Se quita de las **dos** listas
+  dejando la marca de borrado (163, 167), y si ya se gastó en parte se avisa con
+  los números antes.
+- **Un lote de traspaso no se borra desde Inventario**: `revertirSaldosInventario`
+  le restaría al banco unos bolívares que "entraron por una venta" que no hubo.
+  La fila enseña 🔄 en vez de 🗑️ y su USDT va con "≈", como la permuta.
+
+**Y de paso un fallo de la versión desplegada:** borrar un "Devolverme ahora"
+llamaba a `devolverLotesMon` sobre un traspaso que nunca consumió nada, así que
+le **regalaba** al lote lo borrado. Medido con su export: 16.063,97 → 21.063,97.
+
+Medido en Chromium con su export, v311 contra v312: las 21 pestañas iguales
+carácter por carácter, 0 errores; capital 1.988,59, te sobran 59,11, utilidad de
+noviembre −35,37 y tasa de referencia VES 1.006,4412 **idénticos** antes y
+después de cada traspaso; el ciclo traspaso → borrado → respuesta del servidor
+deja los dos lotes exactos y la copia no revive. 11 pruebas negativas, 11 cazadas.
+
+**Lo que esto NO repara:** los 1.332,15 de BANCO VENEZUELA JULIO. Si el ✏️ dejó el
+lote como el banco, lo que sobra es saldo: o lo encuentra en el extracto (egreso
++ volver a subir el lote con ✏️) o lo ajusta con "No sé por qué".

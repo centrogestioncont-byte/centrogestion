@@ -3305,7 +3305,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261105_v311";
+var APP_VERSION = "20261105_v312";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -6646,7 +6646,7 @@ function _devolvermeAhora(){
   var now = Date.now();
   pagos.forEach(function(p, i){
     var saldoAntesOrig = parseFloat(ctaEmp.saldo)||0;
-    S.traspasos.push({
+    var _tr = {
       id: now + i,
       fecha: td(),
       origen: ctaEmp.id,
@@ -6660,10 +6660,17 @@ function _devolvermeAhora(){
       _mod: now,
       _por: S.role||"jhoselin",
       _porUlt: S.role||"jhoselin"
-    });
+    };
+    var cDest = (S.cuentas||[]).find(function(c){return c.id===p.id;});
+    // ARREGLO 231: esto escribía los dos saldos a mano y el lote no se
+    // enteraba. El 04/11 bajó BANCO VENEZUELA JULIO 78.628,06 con su lote
+    // entero, y ella tuvo que cuadrarlo con ✏️. Ahora pasa por la misma puerta
+    // que un traspaso normal: se consume en la cuenta de la empresa y el lote
+    // renace en la suya, con su tasa.
+    _moverLotesTraspaso(_tr, ctaEmp, cDest, p.monto);
+    S.traspasos.push(_tr);
     // Actualizar saldos
     ctaEmp.saldo = Math.round((parseFloat(ctaEmp.saldo)-p.monto)*100)/100;
-    var cDest = (S.cuentas||[]).find(function(c){return c.id===p.id;});
     if(cDest) cDest.saldo = Math.round((parseFloat(cDest.saldo||0)+p.monto)*100)/100;
   });
   saveData();
@@ -6734,7 +6741,7 @@ function traspasosAPersonal(desdeIso){
   // traspasos de hecho aunque estén escritos en el inventario, y antes caían
   // dentro del "efecto de las tasas" — ver _cruceUsdtPersonal.
   (S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[]).forEach(function(l){
-    if(l.plataforma==="Remesa"||l.origenRemesa||l._aperturaBRL) return;
+    if(l.plataforma==="Remesa"||l.origenRemesa||l._aperturaBRL||_loteDeTraspaso(l)) return;
     var x=_cruceUsdtPersonal(l);
     if(!x) return;
     var iso=_isoDeFechaLote(l.fecha);
@@ -6849,7 +6856,7 @@ function efectoTasasDesde(desdeIso){
   // es de donde sale la fila "pasaste a tus cuentas 💜". Ver _cruceUsdtPersonal.
   (S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[]).forEach(function(l){
     // El lote que nace de una remesa no mueve ninguna cuenta: lo hizo la remesa.
-    if(l.plataforma==="Remesa"||l.origenRemesa||l._aperturaBRL) return;
+    if(l.plataforma==="Remesa"||l.origenRemesa||l._aperturaBRL||_loteDeTraspaso(l)) return;
     if(_cruceUsdtPersonal(l)) return;
     var iso=_isoDeFechaLote(l.fecha);
     if(!iso || iso<=desdeIso) return;
@@ -7798,6 +7805,102 @@ function devolverLotesMon(reg, mon, monto){
   if(!(m>0.01)) return;
   _restaurarVentasFIFO(reg, mon||"VES", m);
 }
+
+// ══ ARREGLO 231 · el lote VIAJA con el dinero de un traspaso ═══════════════
+//
+// Lo cazó la auditoría de BANCO VENEZUELA JULIO del 05/11: el saldo decía
+// 17.396,12 y el lote 16.063,97 —el banco, 16.063,97— y la diferencia nació el
+// 04/11 entre las 18:47 y las 19:03, por DOS puertas:
+//
+//   💸 Devolverme ahora (ARREGLO 208) .... bajó la cuenta 78.628,06 y el lote
+//                                          ni se enteró: escribía los saldos a
+//                                          mano, sin pasar por el traspaso
+//   traspaso BdV personal → BdV Julio .... entraron 38.601,98 SIN lote: el 161
+//                                          descontaba en el origen y en el
+//                                          destino no nacía nada
+//
+// Con eso los lotes quedaron 37.215,18 por encima, ella los cuadró con ✏️
+// contra el extracto, y el ajuste se pasó 1.332,15 de lo que pedía el saldo.
+// Un inventario que obliga a editarlo a mano deja de ser un inventario.
+//
+// Las dos cosas salen de aquí, de UN sitio que llaman saveTraspaso y
+// _devolvermeAhora. Con una copia en cada uno, la próxima vez que se toque el
+// consumo uno de los dos se quedaría fuera — es el fallo de los ARREGLOS 101,
+// 119, 150 y 153, y el 208 ya lo demostró saltándose el 161.
+//
+// - Se consume en el origen con consumirLotesMon(), igual que antes.
+// - Si el destino es de la MISMA moneda, cada trozo consumido renace en la
+//   cuenta que recibe, con SU tasa, su fecha y su hora. Decisión suya del
+//   05/11: el dinero que pasa de una cuenta a otra sigue costando lo que costó.
+//   Con la fecha original el FIFO lo gasta en el orden en que se consiguió.
+// - Lo que no salía de ningún lote (`sinLote`) no renace: no se inventa.
+// - Un cambio de moneda no mueve lotes: ahí la tasa de un lado no vale en el
+//   otro, y eso es otra operación.
+// - El lote nuevo lleva `_deTraspaso` y por eso NO es una operación de USDT:
+//   queda fuera de tasaDeReferencia, de la conciliación y del Cierre
+//   (_loteDeTraspaso). Su id es de hoy; si contara, la tasa con la que se
+//   valora todo saldría de un traspaso.
+// - cuentaId va vacío: no salió USDT de ninguna cuenta, y sincronizarSaldosUsdt
+//   restaría otra vez la venta original.
+function _loteDeTraspaso(l){ return !!(l && l._deTraspaso); }
+function _nomCuentaLote(id){ var c=(S.cuentas||[]).find(function(x){return x.id===id;}); return c?(c.nombre||""):"otra cuenta"; }
+function _moverLotesTraspaso(tr, cO, cD, monto){
+  if(!tr || !cO) return;
+  if(cO.moneda!=="VES" && cO.moneda!=="BRL") return;
+  var cl=consumirLotesMon(cO.moneda, cO.id, monto);
+  if(!cl) return;
+  tr._lotesConsumidos={ventas:cl.ventas};
+  if(cl.sinLote>0.01) tr._bsSinLote=cl.sinLote;
+  if(!cD || cD.moneda!==cO.moneda || cD.id===cO.id) return;
+  if(!S.inventarioUsdt) S.inventarioUsdt=[];
+  (cl.ventas||[]).forEach(function(v){
+    var bs=Math.round((parseFloat(v.bs)||0)*100)/100;
+    var t=parseFloat(v.tasa)||0;
+    if(!(bs>0.01) || !(t>0)) return;
+    var o=_loteDelEspejo(v,"venta",cO.moneda)||{};
+    var u=Math.round((bs/t)*1000000)/1000000;
+    S.inventarioUsdt.push({id:_idLoteNuevo(), tipo:"venta", fecha:_fechaLote(o.fecha||v.fecha), fechaIso:_isoDeLote(o.fecha?o:v.fecha), hora:o.hora||"",
+      moneda:cO.moneda, montOrigen:0, usdt:u, neto:u, tasa:t, comision:0,
+      bs:bs, bsRestante:bs, plataforma:"Traspaso", ordenId:"",
+      cuentaId:"", cuentaDestinoId:cD.id, restante:0, locked:false,
+      _deTraspaso:{tr:tr.id, lote:(v.id!==undefined?v.id:null), de:cO.id, rem:o.origenRemesa||""},
+      _mod:Date.now(), _por:S.role||"", _porUlt:S.role||""});
+  });
+}
+// Los lotes que un traspaso dejó en la cuenta que recibe. Los leen el aviso de
+// borrado y el propio borrado: calculado aparte, el aviso diría una cifra y el
+// borrado quitaría otra.
+function _lotesDeTraspaso(trId){
+  return (S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[])
+    .filter(function(l){ return l && l._deTraspaso && l._deTraspaso.tr===trId; });
+}
+// Borrar el traspaso quita esos lotes DEJANDO la marca de borrado en las dos
+// listas: sin ella el servidor los devuelve en la siguiente sincronización
+// (ARREGLO 163/167), y un lote archivado del todo está en _cerrado (127).
+function _quitarLotesDeTraspaso(trId){
+  var n=0;
+  ["inventarioUsdt","inventarioUsdt_cerrado"].forEach(function(cat){
+    S[cat]=(S[cat]||[]).filter(function(l){
+      if(!(l && l._deTraspaso && l._deTraspaso.tr===trId)) return true;
+      _marcarBorradoMerge(cat, l.id); n++; return false;
+    });
+  });
+  return n;
+}
+// true = sigue. Si el dinero que llegó ya se gastó en parte, se DICE con los
+// números, como _avisarLoteGastado con una remesa: no se impide —el traspaso
+// puede estar mal y hay que poder borrarlo—, pero lo que se lo gastó queda
+// apuntando a un lote que ya no está.
+function _avisarLotesTraspasoGastados(tr){
+  var ls=_lotesDeTraspaso(tr&&tr.id);
+  var gastado=0, mon="";
+  ls.forEach(function(l){ mon=l.moneda||mon; gastado+=(parseFloat(l.bs)||0)-(parseFloat(l.bsRestante)||0); });
+  gastado=Math.round(gastado*100)/100;
+  if(!(gastado>0.01)) return true;
+  return confirm("⚠️ El dinero que llegó con este traspaso YA SE GASTÓ en parte: "+f2(gastado)+" "+mon+".\n\n"+
+    "Al borrarlo, su lote se va entero de la cuenta que lo recibió y vuelve al de la cuenta de origen. "+
+    "La operación que se lo gastó quedará apuntando a un lote que ya no está.\n\n¿Borrar igual?");
+}
 function saveTraspaso(){
   var f=S.nTraspaso;
   if(!f.fecha||!f.cuentaOrigen||!f.cuentaDestino||!f.monto){alert("Completa todos los campos.");return;}
@@ -7828,13 +7931,10 @@ function saveTraspaso(){
   // ARREGLO 167: y lo mismo si sale de una cuenta en reales. Un traspaso que
   // saca reales de la cuenta los saca de verdad; sin esto el lote seguiría
   // diciendo que están ahí, y de esos lotes salen las tasas que la app sugiere.
-  if(cO.moneda==="VES" || cO.moneda==="BRL"){
-    var _cl=consumirLotesMon(cO.moneda, cO.id, monto);
-    if(_cl){
-      _tr._lotesConsumidos={ventas:_cl.ventas};
-      if(_cl.sinLote>0.01) _tr._bsSinLote=_cl.sinLote;
-    }
-  }
+  // ARREGLO 231: y si el destino es de la misma moneda, el lote viaja con él.
+  // Las dos mitades viven en _moverLotesTraspaso, que también usa 💸
+  // Devolverme ahora.
+  _moverLotesTraspaso(_tr, cO, cD, monto);
   S.traspasos.push(_tr);
   S.nTraspaso={fecha:f.fecha,cuentaOrigen:"",cuentaDestino:"",monto:"",montoDestino:"",nota:""};
   // Esta tampoco anotaba nada, y mover dinero entre cuentas es justo de lo
@@ -15573,7 +15673,7 @@ function _monIU(){ var f=S.nIU; return f.tipo==="venta"?(f.monedaVenta||"VES"):(
 function _ultimasIU(n){
   var f=S.nIU, mon=_monIU();
   return (S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[])
-    .filter(function(l){ return l.moneda===mon && l.tipo===f.tipo && (parseFloat(l.tasa)||0)>0; })
+    .filter(function(l){ return l.moneda===mon && l.tipo===f.tipo && !_loteDeTraspaso(l) && (parseFloat(l.tasa)||0)>0; })
     .sort(function(a,b){ return ordenFIFO(b,a); })
     .slice(0,n||3);
 }
@@ -20860,8 +20960,12 @@ function reqDel(arr,id,field){
         _marcarBorradoMerge("cuentasCobrar",_cobrarLigada.id);
       }
     } else if(arr==="inventarioUsdt"){
+      // ARREGLO 231: y por si se llega aquí por otro camino, la misma regla.
+      if(_loteDeTraspaso(item)){ alert("Este lote llegó con un traspaso. Para quitarlo, borra el traspaso en la pestaña Traspasos: así el dinero y el lote vuelven a la cuenta de origen."); return; }
       revertirSaldosInventario(item);
     } else if(arr==="traspasos"){
+      // ARREGLO 231: el lote que llegó con el traspaso puede estar gastado.
+      if(!_avisarLotesTraspasoGastados(item)) return;
       revertirSaldosTraspaso(item);
     } else if(arr==="egresos"){
       if(item.pagada){
@@ -21382,6 +21486,12 @@ function revertirSaldosTraspaso(t){
   // Traspaso había restado de origen y sumado a destino → invertir
   adjId(t.cuentaOrigen||t.origen, +monto);
   adjId(t.cuentaDestino||t.destino, -montoDest);
+  // ARREGLO 231: primero se quita el lote que el traspaso dejó en la cuenta
+  // que recibió, y DESPUÉS se devuelve al de origen. Al revés, la búsqueda por
+  // fecha y tasa de _restaurarVentasFIFO podría caer en la copia —tiene la
+  // misma fecha y la misma tasa— y devolverle el dinero a la cuenta que no lo
+  // gastó.
+  _quitarLotesDeTraspaso(t.id);
   // Y lo que este traspaso se llevó del inventario, vuelve a su lote.
   devolverLotesMon(t, t.moneda||"VES", monto);
 }
@@ -22489,7 +22599,7 @@ function _htmlDeDondeSalen(res, ruta){
     var de=f.sinLotesCuenta ? "<span style='color:var(--mal)'> · esta cuenta no tiene lotes, tasa prestada</span>"
          : f.prestada ? "<span style='color:var(--mal)'> · sin lote, tasa prestada</span>"
                       : "<span style='color:var(--tx4)'> · "+_escAud((f.lote&&f.lote.fecha)||"")+
-                        " · "+(_loteEsDeRemesa(f.lote)?("te pagaron estos "+uni+_deQuienLote(f.lote)):"venta de USDT")+"</span>";
+                        " · "+(_loteDeTraspaso(f.lote)?("llegaron por traspaso de "+_escAud(_nomCuentaLote(f.lote._deTraspaso.de))):_loteEsDeRemesa(f.lote)?("te pagaron estos "+uni+_deQuienLote(f.lote)):"venta de USDT")+"</span>";
     return "<div style='display:flex;justify-content:space-between;gap:8px;padding:3px 0;font-size:11.5px'>"+
       "<span style='color:var(--tx2)'><b>"+f0(f.usa)+"</b> "+uni+de+"</span>"+
       "<span style='color:var(--tx3);white-space:nowrap'>"+f2(f.tasa)+" "+uni+"/USDT"+
@@ -24081,7 +24191,9 @@ function getTasaCompraPonderada(moneda,montoOrigen,cuentaOrigenId){
 // que le pagaron, y CERO de los dos. Por eso manda la mayoría y se dice, en vez
 // de partir la ganancia por lote: eso tocaría cTx(), de donde sale todo, y
 // cambiaría los números que ve hoy por un caso que nunca le ha pasado.
-function _loteEsDeRemesa(l){ return !!(l && l.origenRemesa); }
+// ARREGLO 231: un lote que viajó con un traspaso sigue siendo lo que era: si
+// nació de una vuelta, son bolívares que "te pagaron" y cuentan para el calce.
+function _loteEsDeRemesa(l){ return !!(l && (l.origenRemesa || (l._deTraspaso && l._deTraspaso.rem))); }
 // ── ARREGLO 167 · de QUÉ remesa salió ese lote ──────────────────────────────
 //
 // Sus palabras del 17/10: "que en De dónde salen de la VZLA→BRL se vea el lote
@@ -24137,6 +24249,9 @@ function _loteEsOpUSDT(l){
   // que dejarlo entrar aqui seria que esa tasa saliera de si misma y se quedara
   // clavada en el dia que se abrio.
   if(l._aperturaBRL) return false;
+  // ARREGLO 231: un lote que llegó con un traspaso no es una operación: su id
+  // es de hoy y su tasa, la de una venta de otro día.
+  if(_loteDeTraspaso(l)) return false;
   if(l.moneda==="BRL" && l.tipo==="venta" && _loteEsDeRemesa(l)) return false;
   return true;
 }
@@ -30527,7 +30642,7 @@ function _ultimaOpUSDT(mon){
   function _mirar(arr){
     for(var i=0;i<(arr||[]).length;i++){
       var l=arr[i];
-      if(l.moneda!==mon || l.permuta || !((parseFloat(l.usdt)||0)>0)) continue;
+      if(l.moneda!==mon || l.permuta || _loteDeTraspaso(l) || !((parseFloat(l.usdt)||0)>0)) continue;
       var t=parseFloat(l.id)||0;
       if(t>1.5e12 && t>mt){ mt=t; mejor=l; }
     }
@@ -32310,7 +32425,7 @@ function _p2pBolivaresDelMes(){
   var pre=String(y)+"-"+(m<10?"0":"")+m;
   var n=0;
   (S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[]).forEach(function(l){
-    if(!l || l.tipo!=="venta" || l.moneda!=="VES" || l.origenRemesa) return;
+    if(!l || l.tipo!=="venta" || l.moneda!=="VES" || l.origenRemesa || _loteDeTraspaso(l)) return;
     if(String(l.fechaIso||"").indexOf(pre)===0) n++;
   });
   return n;
@@ -34528,7 +34643,9 @@ function rInventarioUsdt(){
       // Y en una permuta no se movio USDT: ese numero es lo que VALEN los
       // reales que entraron, no una salida. Va sin signo y sin color de
       // movimiento, que es lo que lo hacia leerse como una venta.
-      "<td style='text-align:right;font-weight:700;color:"+(r.permuta?"var(--tx3)":isComp?"var(--ok)":"var(--mal)")+"'>"+(r.permuta?"≈ "+f4(r.usdt)+" USDT":(isComp?"+":"-")+f4(r.usdt)+" USDT")+"</td>"+
+      // ARREGLO 231: el lote que llegó con un traspaso tampoco sacó USDT de
+      // ningún sitio: "-9,936 USDT" se leería como una venta que no hubo.
+      "<td style='text-align:right;font-weight:700;color:"+((r.permuta||_loteDeTraspaso(r))?"var(--tx3)":isComp?"var(--ok)":"var(--mal)")+"'>"+((r.permuta||_loteDeTraspaso(r))?"≈ "+f4(r.usdt)+" USDT":(isComp?"+":"-")+f4(r.usdt)+" USDT")+"</td>"+
       "<td style='text-align:right'>"+f2(r.tasa)+"</td>"+
       "<td style='text-align:right;font-size:11.5px;color:var(--tx3)'>"+f2(r.comision)+"</td>"+
       "<td style='text-align:right;font-weight:700;color:"+(isComp?"var(--mal)":"var(--ok)")+"'>"+(isComp&&r.montOrigen?"-"+f2(r.montOrigen)+" "+r.moneda:(!isComp?"+"+f2(r.bs)+" "+r.moneda:""))+"</td>"+
@@ -34539,7 +34656,12 @@ function rInventarioUsdt(){
         " <button type='button' onclick='editRestanteInv("+r.id+")' style='background:none;border:none;cursor:pointer;font-size:11px' title='Ajustar restante'>✏️</button>"):"")+
       "</td>"+
       "<td style='text-align:center'>"+(r.locked?"🔒":"")+_com.btn+"</td>"+
-      "<td><button class='del-btn' onclick='reqDel(\"inventarioUsdt\","+r.id+",\"id\")'>🗑️</button></td>"+
+      // ARREGLO 231: un lote de traspaso se borra borrando el traspaso. Borrado
+      // aquí, revertirSaldosInventario le restaría al banco los bolívares que
+      // "entraron por una venta" — y no entraron por ninguna.
+      (_loteDeTraspaso(r)
+        ? "<td style='font-size:10px;color:var(--tx4)' title='Se borra borrando el traspaso'>🔄</td>"
+        : "<td><button class='del-btn' onclick='reqDel(\"inventarioUsdt\","+r.id+",\"id\")'>🗑️</button></td>")+
     "</tr>"+_com.fila;
   }).join("");
   var comActual=COM();
@@ -38866,7 +38988,7 @@ function detalleMes(mesKey){
   });
   (S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[]).forEach(function(l){
     if(_isoDeLote(l).slice(0,7)!==mk) return;
-    if(l.plataforma==="Remesa"||l.origenRemesa||l._aperturaBRL) return;   // no es una operación suya: la creó una remesa
+    if(l.plataforma==="Remesa"||l.origenRemesa||l._aperturaBRL||_loteDeTraspaso(l)) return;   // no es una operación suya: la creó una remesa
     d.usdt.push({fecha:_fechaLoteLegible(l.fecha), tipo:l.tipo, moneda:l.moneda||"",
       montOrigen:parseFloat(l.montOrigen)||0, usdt:parseFloat(l.usdt)||0, bs:parseFloat(l.bs)||0,
       tasa:_tasaEfectivaLote(l)||0, cuenta:nom(l.tipo==="compra"?l.cuentaOrigenId:l.cuentaId)});
@@ -40285,7 +40407,7 @@ function _asientosDelMes(mesKey){
 
   [].concat(S.inventarioUsdt||[],S.inventarioUsdt_cerrado||[]).forEach(function(l){
     if(_isoDeLote(l).slice(0,7)!==mesKey) return;
-    if(l._aperturaBRL||l.permuta) return;
+    if(l._aperturaBRL||l.permuta||_loteDeTraspaso(l)) return;
     var f=_isoDeLote(l), r="U"+l.id;
     var u=parseFloat(l.usdt)||0, b=parseFloat(l.bs||l.montOrigen)||0;
     if(l.tipo==="compra"&&l.cuentaOrigenId&&l.cuentaDestinoId){
