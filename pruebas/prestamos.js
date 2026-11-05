@@ -13910,6 +13910,31 @@ console.log("\nARREGLO 203 · fuera la calculadora inversa del formulario de abo
   ok(/banner\+_htmlBotonImportarRem\(\)\+/.test(sc("rNueva")), "y el botón vive encima del formulario");
   ok(/EE\.UU\. → Venezuela no se importa/.test(sc("_impLeerFila")),
      "EE.UU. no se mete por este camino: va con su socio, por saveTxEE");
+
+  // ── ARREGLO 230 · el código con el que RisApp llama a cada cuenta ──
+  // Casar por nombre se rompe en cuanto la otra app lo escriba distinto; el
+  // código no cambia nunca. Vive EN la cuenta, que ya viaja entre aparatos.
+  console.log("\nARREGLO 230 · código RisApp de cada cuenta");
+  const cb = sc("_impCuentaDeBanco");
+  ok(/^function _impCuentaDeBanco\(nombre, mon, codigo\)\{\s*if\(String\(codigo==null\?"":codigo\)\.trim\(\)\) return _impCuentaDeCodigo\(codigo, mon\);/.test(cb),
+     "con código manda el código y SOLO el código: no cae al nombre ni a lo recordado");
+  const cc = sc("_impCuentaDeCodigo");
+  ok(/c\.moneda!==mon/.test(cc) && /c\.activa===false/.test(cc) && /c\.esPersonal/.test(cc),
+     "un código de otra moneda, de una cuenta pausada o de una 💜 se rechaza diciendo por qué");
+  const fc = sc("_fijarCodigoRisapp");
+  ok(/var otra=\(S\.cuentas\|\|\[\]\)\.find\(function\(x\)\{ return x\.id!==c\.id && x\.codigoRisapp && _impNorm\(x\.codigoRisapp\)===n; \}\);\s*if\(otra\) return "El código/.test(fc),
+     "un código va en UNA sola cuenta");
+  ok(/_fijarCodigoRisapp\(c, nuevo\)/.test(sc("editarCodigoRisapp")) && /_fijarCodigoRisapp\(c, b\.codigo\)/.test(sc("_impAsignarCodigo")),
+     "Configuración y la pantalla de importar escriben el código por la misma puerta");
+  ok((HTML.match(/\.codigoRisapp\s*=/g) || []).length === 1,
+     "y nadie más lo escribe", (HTML.match(/\.codigoRisapp\s*=/g) || []).length);
+  ok(/r\.codIn=String\(o\.banco_recibido_codigo/.test(sc("_impLeerFila")) && /r\.codOut=String\(o\.banco_pago_codigo/.test(sc("_impLeerFila")),
+     "el archivo trae banco_recibido_codigo y banco_pago_codigo");
+  ok(/_impCuentaDeBanco\(r\.bancoIn, r\.orig, r\.codIn\)/.test(rec) && /_impCuentaDeBanco\(r\.bancoOut, r\.dest, r\.codOut\)/.test(rec),
+     "y las dos cuentas de cada remesa se buscan con su código");
+  ok(/_impAsignarCodigo\("\+k\+",this\.value\)/.test(ri), "un código sin cuenta se le pone ahí mismo, por posición");
+  ok(/editarCodigoRisapp\(/.test(sc("rConfigAdmin")) && /RisApp #"\+_escAud\(c\.codigoRisapp\)/.test(sc("rConfigAdmin")),
+     "Configuración → Cuentas enseña el código y deja cambiarlo");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

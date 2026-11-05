@@ -3305,7 +3305,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261105_v310";
+var APP_VERSION = "20261105_v311";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -8742,6 +8742,44 @@ function editarNombreCuenta(cid){
     logAudit("CUENTA_RENAME",prev+" → "+nuevo);
     saveData();R();
     alert("✅ Renombrada: "+nuevo);
+  });
+}
+// ── ARREGLO 230 · El código con el que RisApp llama a cada cuenta ──────────
+//
+// Sus palabras del 05/11: RisApp le da a cada banco un número interno
+// ("banesco 0003") y Centro de Gestión conoce esa misma cuenta por el nombre
+// de su titular ("BANESCO JHOSELIN"). Casar por nombre se rompe en cuanto la
+// otra app lo escriba un poco distinto; el código no cambia nunca.
+//
+// Vive EN la cuenta, no en una lista aparte: S.cuentas ya viaja y se une entre
+// los dos aparatos, así que no hace falta tocar las cuatro listas del servidor.
+//
+// UN código, UNA cuenta. Dos cuentas con el mismo código y el importador no
+// sabría a cuál mandar el dinero — por eso esta es la única puerta que lo
+// escribe, la usen Configuración o la pantalla de importar.
+function _fijarCodigoRisapp(c, codigo){
+  if(!c) return "No encuentro la cuenta.";
+  var cod=String(codigo==null?"":codigo).trim();
+  if(cod){
+    var n=_impNorm(cod);
+    var otra=(S.cuentas||[]).find(function(x){ return x.id!==c.id && x.codigoRisapp && _impNorm(x.codigoRisapp)===n; });
+    if(otra) return "El código "+cod+" ya lo tiene \""+otra.nombre+"\". Un código va en una sola cuenta: quítaselo a esa primero.";
+  }
+  var antes=c.codigoRisapp||"";
+  if(cod) c.codigoRisapp=cod; else delete c.codigoRisapp;
+  logAudit("CUENTA_CODIGO_RISAPP", c.nombre+": "+(antes||"—")+" → "+(cod||"—"));
+  return "";
+}
+function editarCodigoRisapp(cid){
+  var c=(S.cuentas||[]).find(function(x){return x.id===cid;});
+  if(!c) return;
+  var nuevo=prompt("Código con el que RisApp identifica \""+c.nombre+"\" (ej. 0003).\n\nDéjalo vacío para quitarlo.", c.codigoRisapp||"");
+  if(nuevo===null) return;
+  if(String(nuevo).trim()===String(c.codigoRisapp||"")) return;
+  autorizarYHacer(function(){
+    var err=_fijarCodigoRisapp(c, nuevo);
+    if(err){ alert(err); return; }
+    saveData(); R();
   });
 }
 function togglePagarPrest(id){
@@ -16929,6 +16967,8 @@ function rConfigAdmin(){
               (c.esPersonal?" <span style=\'font-size:10.5px;font-weight:700;background:var(--az6);color:var(--mo4);padding:1px 7px;border-radius:8px;vertical-align:middle\'>💜 Personal</span>":"")+
               (c.esJuridica?" <span style=\'font-size:10.5px;font-weight:700;background:var(--az6-c);color:var(--az3-d);padding:1px 7px;border-radius:8px;vertical-align:middle\'>🏛️ PJ (CNPJ)</span>":"")+
               (_cuentaDeclara(c)?" <span style=\'font-size:10.5px;font-weight:700;background:var(--vd6-j1);color:var(--vd2-a);padding:1px 7px;border-radius:8px;vertical-align:middle\'>🧾 PGDAS</span>":"")+
+              // ARREGLO 230: el código con el que RisApp llama a esta cuenta.
+              (c.codigoRisapp?" <span style=\'font-size:10.5px;font-weight:700;background:var(--sup2);color:var(--tx2);border:1px solid var(--ln2);padding:1px 7px;border-radius:8px;vertical-align:middle;white-space:nowrap;display:inline-block\'>RisApp #"+_escAud(c.codigoRisapp)+"</span>":"")+
             "</div>"+
             "<div style=\'font-size:10px;color:var(--tx4);margin-top:2px\'>"+(c.tipo||"")+(c.operador&&c.operador!=="general"?" · "+c.operador:"")+"</div>"+
             // ARREGLO 158 · si el saldo se escribio a mano, se DICE. Llevaba un
@@ -16984,6 +17024,8 @@ function rConfigAdmin(){
             "style=\'flex:1 1 110px;min-width:90px;padding:6px 8px;border:1.5px solid "+(isNeg?"var(--rj5-j2)":"var(--gr6-d)")+";border-radius:8px;font-size:12px;font-weight:700;text-align:right;color:"+(isNeg?"var(--mal)":"var(--tit)")+"\' title=\'Editar saldo\'>"+
           "<button onclick=\'editarNombreCuenta(\""+c.id+"\")\' title=\'Editar nombre\' "+
             "style=\'padding:6px 9px;border:1.5px solid var(--az6-j2);border-radius:8px;font-size:12px;cursor:pointer;background:var(--info-sup2)\'>✏️</button>"+
+          "<button onclick=\'editarCodigoRisapp(\""+c.id+"\")\' title=\'"+(c.codigoRisapp?"Código en RisApp: "+_escAud(c.codigoRisapp)+" — click para cambiarlo":"Poner el código con el que RisApp identifica esta cuenta")+"\' "+
+            "style=\'padding:6px 9px;border:1.5px solid "+(c.codigoRisapp?"var(--az6-j2)":"var(--gr6-d)")+";border-radius:8px;font-size:12px;font-weight:800;cursor:pointer;background:"+(c.codigoRisapp?"var(--info-sup2)":"var(--gr6-c)")+"\'>#</button>"+
           "<button onclick=\'toggleCuentaPersonal(\""+c.id+"\")\' title=\'"+(c.esPersonal?"Cuenta personal — click para quitar marca":"Marcar como cuenta personal (mi propia plata)")+"\' "+
             "style=\'padding:6px 9px;border:1.5px solid "+(c.esPersonal?"var(--az5-g)":"var(--gr6-d)")+";border-radius:8px;font-size:12px;cursor:pointer;background:"+(c.esPersonal?"var(--az6)":"var(--gr6-c)")+"\'>"+(c.esPersonal?"💜":"🤍")+"</button>"+
           "<button onclick=\'toggleCuentaJuridica(\""+c.id+"\")\' title=\'"+(c.esJuridica?"Cuenta jurídica (CNPJ) — click para quitar marca":"Marcar como cuenta jurídica (CNPJ) de la empresa")+"\' "+
@@ -33380,7 +33422,20 @@ function _impCuentasPara(mon){
 function _impCuentaValida(id, mon){
   return _impCuentasPara(mon).some(function(c){ return c.id===id; });
 }
-function _impCuentaDeBanco(nombre, mon){
+// ARREGLO 230: si el archivo trae el código de la cuenta, manda el código y
+// SOLO el código. Un código que no está en ninguna cuenta no cae al nombre:
+// cae a "dime cuál es", porque adivinar aquí es mandar el dinero a otra cuenta.
+function _impCuentaDeCodigo(codigo, mon){
+  var n=_impNorm(codigo);
+  var c=(S.cuentas||[]).find(function(x){ return x.codigoRisapp && _impNorm(x.codigoRisapp)===n; });
+  if(!c) return {id:"", como:"", motivo:""};
+  if(c.moneda!==mon) return {id:"", como:"", motivo:"el código "+codigo+" es de \""+c.nombre+"\", que está en "+c.moneda+" y aquí va "+mon};
+  if(c.activa===false) return {id:"", como:"", motivo:"el código "+codigo+" es de \""+c.nombre+"\", que está pausada"};
+  if(c.esPersonal) return {id:"", como:"", motivo:"el código "+codigo+" es de \""+c.nombre+"\", que es una cuenta 💜 personal"};
+  return {id:c.id, como:"codigo"};
+}
+function _impCuentaDeBanco(nombre, mon, codigo){
+  if(String(codigo==null?"":codigo).trim()) return _impCuentaDeCodigo(codigo, mon);
   if(!nombre||!mon) return {id:"", como:""};
   var m=(S.mapaBinance||{})[_impClaveBanco(nombre,mon)];
   if(m && m.cuentaId && _impCuentaValida(m.cuentaId, mon)) return {id:m.cuentaId, como:"recordada"};
@@ -33395,6 +33450,20 @@ function _impFijarBanco(k, cuentaId){
   var clave=_impClaveBanco(b.nombre, b.mon);
   if(cuentaId) S.mapaBinance[clave]={cuentaId:cuentaId, nombre:b.nombre, moneda:b.mon, _mod:Date.now()};
   else if(S.mapaBinance[clave]) S.mapaBinance[clave]={cuentaId:"", nombre:b.nombre, moneda:b.mon, _mod:Date.now()};
+  _impRecalcular(); R();
+}
+// Un código que ninguna cuenta tiene se le pone aquí mismo a la que ella diga.
+// Es el mismo dato que en Configuración y pasa por la misma puerta, así que
+// tampoco deja un código repetido.
+function _impAsignarCodigo(k, cuentaId){
+  var imp=S._impRem; if(!imp||!imp.bancos||!imp.bancos[k]||!cuentaId) return;
+  var b=imp.bancos[k];
+  var c=(S.cuentas||[]).find(function(x){ return x.id===cuentaId; });
+  if(!c) return;
+  if(c.codigoRisapp && _impNorm(c.codigoRisapp)!==_impNorm(b.codigo) &&
+     !confirm("\""+c.nombre+"\" ya tiene el código "+c.codigoRisapp+".\n\n¿Cambiarlo por "+b.codigo+"?")){ R(); return; }
+  var err=_fijarCodigoRisapp(c, b.codigo);
+  if(err){ alert(err); R(); return; }
   _impRecalcular(); R();
 }
 
@@ -33424,8 +33493,11 @@ function _impLeerFila(o, i){
   if(!(r.cantArch>0)) e.push("falta monto_liquidado");
   r.bancoIn=String(o.banco_recibido==null?"":o.banco_recibido).trim();
   r.bancoOut=String(o.banco_pago==null?"":o.banco_pago).trim();
-  if(!r.bancoIn) e.push("falta banco_recibido");
-  if(!r.bancoOut) e.push("falta banco_pago");
+  r.codIn=String(o.banco_recibido_codigo==null?"":o.banco_recibido_codigo).trim();
+  r.codOut=String(o.banco_pago_codigo==null?"":o.banco_pago_codigo).trim();
+  // Con el código basta para encontrar la cuenta; el nombre es para leerlo.
+  if(!r.bancoIn && !r.codIn) e.push("falta banco_recibido");
+  if(!r.bancoOut && !r.codOut) e.push("falta banco_pago");
   r.por=String(o.procesado_por==null?"":o.procesado_por).trim();
   if(!r.por) a.push("no dice quién la procesó");
   if(r.rt && r.am>0 && r.tasa>0 && r.cantArch>0){
@@ -33473,17 +33545,21 @@ function _impRecalcular(){
     if(r.iso && _diasEnElFuturo(r.iso)>0){ r.futura=true; r.avisos.push("fecha por delante de hoy"); }
     if(ruta && r.tasa>0 && _tasaDelDiaFueraDeRango({tdia:r.tasa}, ruta)){ r.tasaRara=true; r.avisos.push("la tasa está a más de 10 veces de la que publicas"); }
     // Bancos: una lista de los distintos, para elegir cada uno UNA vez.
-    var reg=function(nombre, mon){
-      if(!nombre||!mon) return -1;
-      var k=mon+"·"+_impNorm(nombre);
-      if(idxB[k]===undefined){ idxB[k]=bancos.length; bancos.push({nombre:nombre, mon:mon, n:0}); }
+    // Con código, el banco se agrupa por el código: dos nombres distintos con el
+    // mismo código son la misma cuenta, y un mismo nombre con dos códigos, dos.
+    var reg=function(nombre, mon, codigo){
+      if((!nombre&&!codigo)||!mon) return -1;
+      var k=mon+"·"+(codigo?"#"+_impNorm(codigo):_impNorm(nombre));
+      if(idxB[k]===undefined){ idxB[k]=bancos.length; bancos.push({nombre:nombre||("#"+codigo), mon:mon, codigo:codigo||"", n:0}); }
       bancos[idxB[k]].n++;
       return idxB[k];
     };
     if(ruta){
-      r.kIn=reg(r.bancoIn, r.orig); r.kOut=reg(r.bancoOut, r.dest);
-      var ci=_impCuentaDeBanco(r.bancoIn, r.orig), co=_impCuentaDeBanco(r.bancoOut, r.dest);
+      r.kIn=reg(r.bancoIn, r.orig, r.codIn); r.kOut=reg(r.bancoOut, r.dest, r.codOut);
+      var ci=_impCuentaDeBanco(r.bancoIn, r.orig, r.codIn), co=_impCuentaDeBanco(r.bancoOut, r.dest, r.codOut);
       r.cuentaIn=ci.id; r.cuentaOut=co.id;
+      if(ci.motivo) r.errores.push(_escAud(ci.motivo));
+      if(co.motivo) r.errores.push(_escAud(co.motivo));
       // La comisión del banco venezolano depende de la cuenta del CLIENTE, que la
       // otra app no manda: se pregunta (CLAUDE.md, "lo que cobra el banco").
       r.pideCom=!!(r.dest==="VES" && r.cuentaOut && esBancoVES(r.cuentaOut));
@@ -33496,7 +33572,7 @@ function _impRecalcular(){
     imp.sel[r.i] = !r.importable ? false : (imp.selUser[r.i]!==undefined ? imp.selUser[r.i] : r.limpia);
     return r;
   });
-  bancos.forEach(function(b){ b.res=_impCuentaDeBanco(b.nombre, b.mon); });
+  bancos.forEach(function(b){ b.res=_impCuentaDeBanco(b.nombre, b.mon, b.codigo); });
   // En orden de fecha y hora: cada una gasta lotes, así que meterlas
   // desordenadas haría que una se comiera el lote de otra.
   // Las que no tienen fecha válida van al final: no se van a importar y arriba
@@ -33701,8 +33777,26 @@ function rImportarRemesas(){
   // ── Bancos: cada nombre del archivo se casa UNA vez con una cuenta ──
   var bancos=(imp.bancos||[]).map(function(b,k){
     var ops=_impCuentasPara(b.mon).map(function(c){
-      return "<option value='"+_escAud(c.id)+"'"+(b.res.id===c.id?" selected":"")+">"+_escAud(c.nombre)+"</option>";
+      return "<option value='"+_escAud(c.id)+"'"+(b.res.id===c.id?" selected":"")+">"+_escAud(c.nombre)+
+        (c.codigoRisapp?" · #"+_escAud(c.codigoRisapp):"")+"</option>";
     }).join("");
+    // ARREGLO 230: con código no hay nada que casar a ojo. O ya lo tiene una
+    // cuenta, o se le pone aquí a la que ella diga, una vez.
+    if(b.codigo){
+      var cab0="<div style='font-size:12.5px;font-weight:700;color:var(--tit)'>"+_escAud(b.nombre)+
+        " <span style='color:var(--tx3);font-weight:600'>· código "+_escAud(b.codigo)+" · "+b.mon+" · "+b.n+(b.n===1?" vez":" veces")+"</span></div>";
+      if(b.res.id) return "<div style='padding:8px 0;border-bottom:1px solid var(--ln2b)'>"+cab0+
+        "<div style='font-size:12px;color:var(--ok);margin-top:3px'>✓ "+_escAud(_binNomCuenta(b.res.id))+" · por código</div></div>";
+      if(b.res.motivo) return "<div style='padding:8px 0;border-bottom:1px solid var(--ln2b)'>"+cab0+
+        "<div style='font-size:12px;color:var(--mal);margin-top:3px'>❌ "+_escAud(b.res.motivo)+". Corrígelo en Configuración → Cuentas.</div></div>";
+      return "<div style='padding:8px 0;border-bottom:1px solid var(--ln2b)'>"+cab0+
+        "<select onchange='_impAsignarCodigo("+k+",this.value)' style='width:100%;margin-top:5px;padding:8px;border:1.5px solid var(--avi);border-radius:8px;background:var(--sup);font-size:13px'>"+
+          "<option value=''>— ¿qué cuenta es la "+_escAud(b.codigo)+"? —</option>"+
+          _impCuentasPara(b.mon).map(function(c){ return "<option value='"+_escAud(c.id)+"'>"+_escAud(c.nombre)+(c.codigoRisapp?" · ya es #"+_escAud(c.codigoRisapp):"")+"</option>"; }).join("")+
+        "</select>"+
+        "<div style='font-size:11px;color:var(--tx3);margin-top:3px'>Se le pone el código a esa cuenta y queda guardado. Lo ves y lo cambias en Configuración → Cuentas (botón #).</div>"+
+      "</div>";
+    }
     var est=b.res.id ? (b.res.como==="recordada"?"recordada":"mismo nombre") : "elige la cuenta";
     return "<div style='padding:8px 0;border-bottom:1px solid var(--ln2b)'>"+
       "<div style='font-size:12.5px;font-weight:700;color:var(--tit)'>"+_escAud(b.nombre)+" <span style='color:var(--tx3);font-weight:600'>· "+b.mon+" · "+b.n+(b.n===1?" vez":" veces")+"</span></div>"+
@@ -33736,7 +33830,9 @@ function rImportarRemesas(){
     var faltaCta=(r.ruta && !r.errores.length && (!r.cuentaIn||!r.cuentaOut));
     var faltaCom=(r.pideCom && (r.com===null||r.com===undefined));
     var chips=r.errores.map(function(x){ return "<div style='color:var(--mal)'>❌ "+x+"</div>"; }).join("")+
-      (faltaCta?"<div style='color:var(--avi-tx)'>🏦 falta casar un banco con su cuenta (arriba)</div>":"")+
+      (faltaCta?"<div style='color:var(--avi-tx)'>🏦 "+((!r.cuentaIn&&r.codIn)||(!r.cuentaOut&&r.codOut)
+          ?"el código "+_escAud((!r.cuentaIn&&r.codIn)?r.codIn:r.codOut)+" no está en ninguna cuenta (arriba)"
+          :"falta casar un banco con su cuenta (arriba)")+"</div>":"")+
       (faltaCom?"<div style='color:var(--avi-tx)'>🏦 elige cómo se pagaron los bolívares</div>":"")+
       r.avisos.map(function(x){ return "<div style='color:var(--avi-tx)'>⚠️ "+_escAud(x)+"</div>"; }).join("");
     return "<div style='padding:10px 0;border-bottom:1px solid var(--ln2b);display:flex;gap:10px;align-items:flex-start'>"+
