@@ -3305,7 +3305,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261104_v309";
+var APP_VERSION = "20261105_v310";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -10692,6 +10692,14 @@ function saveTx(){
   if(_quedaTx && !_calceTx) nuevaRemesa.entraQueda=true;
   if(_pagos) nuevaRemesa.pagos=_pagos;   // el desglose, para verlo y para revertirlo
   if(_entregas) nuevaRemesa.entregas=_entregas;   // ARREGLO 97: de qué cuentas salió
+  // ARREGLO 229: la que entra por archivo lleva su id de la otra app. Es la
+  // llave para no importarla dos veces, y lo único que distingue en la lista
+  // una importada de una tecleada a mano.
+  if(f._idExterno){
+    nuevaRemesa.idExterno=String(f._idExterno);
+    nuevaRemesa.procesadoPor=String(f._procesadoPor||"");
+    nuevaRemesa.importadoDe=String(f._importadoDe||"");
+  }
   arr.push(nuevaRemesa);
   arr.sort(function(a,b){var da=a.d.split("/"),db=b.d.split("/");return (parseInt(da[1])*100+parseInt(da[0]))-(parseInt(db[1])*100+parseInt(db[0]))||a.n-b.n;});
   registrarMovimientoCapital({fecha:ds(f.date),rutaOrig:ruta.orig,rutaDest:ruta.dest,amOrigen:res.am,amDestino:res.cant,concepto:f.cl+" · "+f.rt,remesaId:nn});
@@ -10862,11 +10870,16 @@ function saveTx(){
     pais:f.pais,
     _tcLock:null,_tvLock:null,_amLock:null,_tdiaLock:null,_rtLock:null};
   logAudit("REMESA_GUARDAR","Remesa "+f.rt+" · "+f.cl+" · $"+f2(res.pr)+" USDT");
+  // ARREGLO 229: importando un archivo, esto corre una vez por remesa. Treinta
+  // avisos al teléfono, treinta guardados y treinta repintados no le dicen
+  // nada que no diga el resumen de la importación, que guarda y pinta UNA vez.
+  // El aviso al teléfono se calla solo mientras importa (ver avisarAlTelefono).
+  if(_IMPORT_REM) _IMPORT_REM.hecha=nuevaRemesa;
   avisarAlTelefono("💸 Remesa registrada", f.rt+" · "+f.cl+" · $"+f2(res.pr)+" USDT · "+f.am+" "+((f.rt||"").split("↔")[0]||""), "remesa_"+Date.now());
-  saveData();
+  if(!_IMPORT_REM) saveData();
   // Si el mes ya estaba cerrado, recalcular y actualizar el resumen archivado
   if(_txCierreMes) ejecutarCierreMes(_txMesKey, false);
-  S.tab=isV?"vzla":"brl";R();
+  if(!_IMPORT_REM){ S.tab=isV?"vzla":"brl";R(); }
 }
 function saveTxEE(){
   var f=S.txE;
@@ -20034,6 +20047,9 @@ async function leerComprobanteOCR(input){
 // —no en la ronda de la hora— porque su valor es que el OTRO aparato se entere
 // de lo que este acaba de registrar. Con una hora de retraso no avisa de nada.
 function avisarAlTelefono(titulo, texto, clave){
+  // ARREGLO 229: importando un archivo, una por remesa serían treinta avisos
+  // seguidos. La importación manda uno solo al terminar.
+  if(_IMPORT_REM) return;
   // Fire-and-forget, igual que antes: si falla, la remesa ya está guardada y
   // esto no puede estorbarlo.
   try{
@@ -33290,7 +33306,488 @@ function generarFlyer(){
   });
 }
 
+// ── ARREGLO 229 · Importar remesas desde un archivo de la otra app ──────────
+//
+// Sus palabras del 05/11: "ese archivo vendría con una lista de remesas
+// procesadas; al adjuntarlo, Centro de Gestión las agregará a la lista que
+// seguramente ya lleva registrada ese día de forma manual… será híbrido".
+//
+// LA OTRA APP NO SABE DE USDT, Y NO TIENE QUE SABERLO. Trae solo lo que pasó
+// con el cliente: quién, cuánto pagó, cuánto se le liquidó, a qué tasa y por
+// qué bancos. Las tasas de compra y venta de USDT, el lote que se gasta y la
+// ganancia los pone esta app con su inventario, igual que cuando ella teclea
+// la remesa. Tomarlas del archivo sería apuntar una ganancia que no sale de lo
+// que de verdad le costó el USDT — la regla primera del negocio.
+//
+// POR ESO CADA FILA PASA POR saveTx(), Y NO POR UN CAMINO PROPIO. Un segundo
+// sitio que mueva saldos y consuma lotes se separa del primero con el primer
+// arreglo — es el fallo de los ARREGLOS 101, 119, 150 y 153. Aquí se rellena
+// S.tx como lo rellenaría ella, se decide el método igual que el formulario
+// (_autoMetodoTx) y se guarda. Medido: la misma remesa importada y tecleada
+// queda idéntica.
+//
+// saveTx hace hasta diez preguntas por remesa. Importando, ella ya las contestó
+// en la vista previa (duplicadas, mes cerrado, fecha futura, tasa rara), así
+// que mientras corre se ANOTAN en vez de enseñarse y se le dan en el resumen.
+// confirm y alert se reponen en un finally: una excepción a mitad no puede
+// dejar la app sin preguntas.
+//
+// Solo Brasil ↔ Venezuela, que es lo que se pidió. EE.UU. va por otro camino
+// (saveTxEE, con su socio) y se dice en la fila en vez de meterla mal.
+var _IMPORT_REM=null;   // mientras corre una importación: {avisos, errores, hecha}
+var _IMP_RUTAS={"BRL>VES":"BRL ↔ VZLA","VES>BRL":"VZLA ↔ BRL"};
+
+function _impNorm(s){ return String(s==null?"":s).toUpperCase().replace(/\s+/g," ").trim(); }
+// dd/mm/aa es el formato acordado; se aceptan también dd/mm/aaaa y aaaa-mm-dd
+// porque una fecha bien escrita en otro formato no es razón para rechazarla.
+function _impFechaIso(s){
+  s=String(s==null?"":s).trim();
+  var y,mo,d,m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/);
+  if(m){ d=+m[1]; mo=+m[2]; y=+(m[3].length===2?"20"+m[3]:m[3]); }
+  else if((m=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/))){ y=+m[1]; mo=+m[2]; d=+m[3]; }
+  else return "";
+  var dt=new Date(y,mo-1,d);
+  if(dt.getFullYear()!==y||dt.getMonth()!==mo-1||dt.getDate()!==d) return "";   // 31/02 no existe
+  return y+"-"+String(mo).padStart(2,"0")+"-"+String(d).padStart(2,"0");
+}
+// Lo que esta app entregaría con ese monto y esa tasa. Es el MISMO redondeo de
+// cTx(): calculado de otra forma, la comprobación diría que cuadra lo que al
+// guardar no cuadra.
+function _impCantDe(orig, am, tasa){
+  if(!(am>0)||!(tasa>0)) return 0;
+  return orig==="VES" ? Math.round(r4(am/tasa)*100)/100 : Math.floor(r4(am*tasa)*100)/100;
+}
+// Un archivo trae números; si trae texto, se lee como lo lee el resto de la app.
+function _impNum(v){
+  if(typeof v==="number") return v;
+  var n=_leerNumero(v);
+  return isNaN(n)?NaN:n;
+}
+// Cuánto puede separarse lo liquidado de lo calculado. En bolívares un bolívar
+// es redondeo; en reales un real no lo es, así que ahí el margen es de céntimos.
+function _impTolerancia(dest){ return dest==="BRL" ? 0.05 : 1; }
+
+// ── Bancos del archivo → cuentas de la app ──
+// Se recuerda dentro de mapaBinance, con su propio prefijo. No es pereza: es
+// una clave que ya viaja y se une entre los dos aparatos y que ya está en las
+// cuatro listas del servidor. Una clave nueva obligaría a tocar main.py, y una
+// que se añade aquí y se olvida allí viaja y el servidor la tira con un 200 y
+// sin un solo error (ha pasado dos veces).
+function _impClaveBanco(nombre, mon){ return "remesa·"+mon+"·"+_impNorm(nombre); }
+function _impCuentasPara(mon){
+  return (S.cuentas||[]).filter(function(c){ return c.activa!==false && !c.esPersonal && c.moneda===mon; });
+}
+function _impCuentaValida(id, mon){
+  return _impCuentasPara(mon).some(function(c){ return c.id===id; });
+}
+function _impCuentaDeBanco(nombre, mon){
+  if(!nombre||!mon) return {id:"", como:""};
+  var m=(S.mapaBinance||{})[_impClaveBanco(nombre,mon)];
+  if(m && m.cuentaId && _impCuentaValida(m.cuentaId, mon)) return {id:m.cuentaId, como:"recordada"};
+  var n=_impNorm(nombre);
+  var c=_impCuentasPara(mon).find(function(x){ return _impNorm(x.nombre)===n; });
+  return c ? {id:c.id, como:"nombre"} : {id:"", como:""};
+}
+function _impFijarBanco(k, cuentaId){
+  var imp=S._impRem; if(!imp||!imp.bancos||!imp.bancos[k]) return;
+  var b=imp.bancos[k];
+  if(!S.mapaBinance) S.mapaBinance={};
+  var clave=_impClaveBanco(b.nombre, b.mon);
+  if(cuentaId) S.mapaBinance[clave]={cuentaId:cuentaId, nombre:b.nombre, moneda:b.mon, _mod:Date.now()};
+  else if(S.mapaBinance[clave]) S.mapaBinance[clave]={cuentaId:"", nombre:b.nombre, moneda:b.mon, _mod:Date.now()};
+  _impRecalcular(); R();
+}
+
+// ── Leer y comprobar cada fila ──
+function _impLeerFila(o, i){
+  o=o||{};
+  var e=[], a=[], r={i:i, errores:e, avisos:a};
+  r.idExt=String(o.id_remesa==null?"":o.id_remesa).trim();
+  if(!r.idExt) e.push("falta id_remesa");
+  r.iso=_impFechaIso(o.fecha);
+  if(!r.iso) e.push("fecha no válida ("+_escAud(String(o.fecha==null?"vacía":o.fecha))+") — va dd/mm/aa");
+  r.hora=_horaLote(o.hora);
+  if(!r.hora) e.push("hora no válida — va HH:MM");
+  r.cliId=String(o.cliente_id==null?"":o.cliente_id).trim();
+  if(!r.cliId) e.push("falta cliente_id");
+  r.cliNom=_impNorm(o.cliente_nombre);
+  if(!r.cliNom) e.push("falta cliente_nombre");
+  r.orig=_impNorm(o.orig); r.dest=_impNorm(o.dest);
+  r.rt=_IMP_RUTAS[r.orig+">"+r.dest]||"";
+  if(!r.rt){
+    if(r.orig==="USD") e.push("EE.UU. → Venezuela no se importa: va por otro camino, regístrala a mano");
+    else e.push("ruta "+_escAud(r.orig||"?")+" → "+_escAud(r.dest||"?")+" no válida (solo BRL→VES y VES→BRL)");
+  }
+  r.tasa=_impNum(o.tasa); r.am=_impNum(o.monto_pagado); r.cantArch=_impNum(o.monto_liquidado);
+  if(!(r.tasa>0)) e.push("falta la tasa");
+  if(!(r.am>0)) e.push("falta monto_pagado");
+  if(!(r.cantArch>0)) e.push("falta monto_liquidado");
+  r.bancoIn=String(o.banco_recibido==null?"":o.banco_recibido).trim();
+  r.bancoOut=String(o.banco_pago==null?"":o.banco_pago).trim();
+  if(!r.bancoIn) e.push("falta banco_recibido");
+  if(!r.bancoOut) e.push("falta banco_pago");
+  r.por=String(o.procesado_por==null?"":o.procesado_por).trim();
+  if(!r.por) a.push("no dice quién la procesó");
+  if(r.rt && r.am>0 && r.tasa>0 && r.cantArch>0){
+    r.cant=_impCantDe(r.orig, r.am, r.tasa);
+    var dif=Math.round((r.cant-r.cantArch)*100)/100;
+    var op=r.orig==="VES"?" ÷ ":" × ";
+    if(Math.abs(dif)>_impTolerancia(r.dest)){
+      e.push("no cuadra: "+f2(r.am)+op+f2(r.tasa)+" = "+f2(r.cant)+" "+r.dest+", el archivo dice "+f2(r.cantArch));
+    } else if(Math.abs(dif)>=0.01){
+      // Se dice: lo que se guarda es lo que calcula la app, y el saldo de la
+      // cuenta se mueve por eso, no por lo que diga el archivo.
+      a.push("se guarda "+f2(r.cant)+" "+r.dest+" (el archivo dice "+f2(r.cantArch)+")");
+    }
+  }
+  return r;
+}
+
+// Rehace la lista desde el archivo. Se llama al abrirlo y cada vez que cambia un
+// banco, porque el banco decide si una fila se puede importar.
+function _impRecalcular(){
+  var imp=S._impRem; if(!imp) return;
+  var ids={};
+  (S.brl||[]).concat(S.vzla||[]).forEach(function(x){ if(x&&x.idExterno) ids[x.idExterno]=x; });
+  var vistos={};
+  (imp.raw||[]).forEach(function(o){ var k=String((o&&o.id_remesa)==null?"":o.id_remesa).trim(); if(k) vistos[k]=(vistos[k]||0)+1; });
+  var bancos=[], idxB={};
+  var filas=(imp.raw||[]).map(function(o,i){
+    var r=_impLeerFila(o,i);
+    if(r.idExt && vistos[r.idExt]>1) r.errores.push("id_remesa repetido dentro del archivo");
+    var ruta=r.rt ? getRutas().find(function(x){ return x.rt===r.rt; }) : null;
+    r.ruta=ruta||null;
+    if(r.idExt && ids[r.idExt]){ r.ya=ids[r.idExt]; r.avisos.unshift("ya importada (#"+(r.ya.n||"?")+")"); }
+    // Las que ella ya tecleó a mano. Avisa, no bloquea: el mismo cliente puede
+    // mandar dos veces lo mismo el mismo día (ARREGLO 154).
+    if(ruta && r.iso && r.cliNom && r.am>0 && !r.ya){
+      var ig=_remesasIguales({date:r.iso, cl:r.cliNom, am:r.am, tdia:r.tasa}, ruta)
+               .filter(function(x){ return !x.idExterno; });
+      if(ig.length){
+        r.parecida=ig;
+        var misma=ig.some(function(x){ return Math.abs((parseFloat(x.tdia)||0)-r.tasa)<0.0001; });
+        r.avisos.push((misma?"parece la MISMA que ":"hay una parecida: ")+ig.map(function(x){ return "#"+x.n; }).join(", ")+" (a mano)");
+      }
+    }
+    if(r.iso && _binMesCerrado(r.iso)){ r.cerrado=true; r.avisos.push("su mes ya está cerrado"); }
+    if(r.iso && _diasEnElFuturo(r.iso)>0){ r.futura=true; r.avisos.push("fecha por delante de hoy"); }
+    if(ruta && r.tasa>0 && _tasaDelDiaFueraDeRango({tdia:r.tasa}, ruta)){ r.tasaRara=true; r.avisos.push("la tasa está a más de 10 veces de la que publicas"); }
+    // Bancos: una lista de los distintos, para elegir cada uno UNA vez.
+    var reg=function(nombre, mon){
+      if(!nombre||!mon) return -1;
+      var k=mon+"·"+_impNorm(nombre);
+      if(idxB[k]===undefined){ idxB[k]=bancos.length; bancos.push({nombre:nombre, mon:mon, n:0}); }
+      bancos[idxB[k]].n++;
+      return idxB[k];
+    };
+    if(ruta){
+      r.kIn=reg(r.bancoIn, r.orig); r.kOut=reg(r.bancoOut, r.dest);
+      var ci=_impCuentaDeBanco(r.bancoIn, r.orig), co=_impCuentaDeBanco(r.bancoOut, r.dest);
+      r.cuentaIn=ci.id; r.cuentaOut=co.id;
+      // La comisión del banco venezolano depende de la cuenta del CLIENTE, que la
+      // otra app no manda: se pregunta (CLAUDE.md, "lo que cobra el banco").
+      r.pideCom=!!(r.dest==="VES" && r.cuentaOut && esBancoVES(r.cuentaOut));
+      r.com=r.pideCom ? (imp.com[r.i]!==undefined ? imp.com[r.i] : imp.comTodas) : "";
+    }
+    r.importable=!r.errores.length && !!r.cuentaIn && !!r.cuentaOut && (!r.pideCom || (r.com!==null && r.com!==undefined));
+    r.limpia=r.importable && !r.ya && !r.parecida && !r.cerrado && !r.futura && !r.tasaRara;
+    // Lo que marcó ella manda; lo demás lo propone la app y se recalcula. Así una
+    // fila que se completa después (su banco, su comisión) se marca sola.
+    imp.sel[r.i] = !r.importable ? false : (imp.selUser[r.i]!==undefined ? imp.selUser[r.i] : r.limpia);
+    return r;
+  });
+  bancos.forEach(function(b){ b.res=_impCuentaDeBanco(b.nombre, b.mon); });
+  // En orden de fecha y hora: cada una gasta lotes, así que meterlas
+  // desordenadas haría que una se comiera el lote de otra.
+  // Las que no tienen fecha válida van al final: no se van a importar y arriba
+  // solo estorban.
+  filas.sort(function(x,y){
+    if(!x.iso!==!y.iso) return x.iso?-1:1;
+    var a=(x.iso||"")+(x.hora||""), b=(y.iso||"")+(y.hora||"");
+    return a<b?-1:a>b?1:x.i-y.i;
+  });
+  imp.filas=filas; imp.bancos=bancos;
+}
+
+// ── Abrir el archivo ──
+function _impElegirArchivo(input){
+  var file=input&&input.files&&input.files[0];
+  try{ input.value=""; }catch(e){}
+  if(!file) return;
+  if(file.size>2*1024*1024){ alert("El archivo pesa "+Math.round(file.size/1024)+" KB. Uno de remesas no debería pasar de 2 MB: revisa que sea el correcto."); return; }
+  var fr=new FileReader();
+  fr.onload=function(ev){
+    var obj;
+    try{ obj=JSON.parse(String(ev.target.result||"")); }
+    catch(err){ alert("No pude leer \""+file.name+"\": no es un JSON válido.\n\n"+(err&&err.message||"")); return; }
+    var lista=Array.isArray(obj)?obj:(obj&&Array.isArray(obj.remesas)?obj.remesas:null);
+    if(!lista){ alert("\""+file.name+"\" no trae una lista \"remesas\". Revisa que sea el archivo de remesas."); return; }
+    if(obj && obj.version && parseInt(obj.version,10)>1){ alert("Este archivo es de una versión más nueva del formato ("+obj.version+"). Actualiza la app antes de importarlo."); return; }
+    if(!lista.length){ alert("\""+file.name+"\" no trae ninguna remesa."); return; }
+    S._impRem={archivo:file.name, fuente:String((obj&&obj.fuente)||""), exportado:String((obj&&obj.fecha_exportacion)||""),
+               raw:lista, sel:{}, selUser:{}, com:{}, comTodas:null, filas:[], bancos:[], hecho:null};
+    _impRecalcular();
+    S.tab="nueva"; R();
+  };
+  fr.onerror=function(){ alert("No pude leer \""+file.name+"\"."); };
+  fr.readAsText(file);
+}
+function _impCancelar(){ S._impRem=null; R(); }
+
+// Marcar una casilla o elegir una comisión NO llama a R(): repintar pierde el
+// scroll de la lista bajo el dedo (ARREGLO 32). Se cambia lo que depende.
+function _impMarcar(i, v){
+  var imp=S._impRem; if(!imp) return;
+  var r=(imp.filas||[]).find(function(x){ return x.i===i; });
+  imp.selUser[i]=!!v;
+  imp.sel[i]=!!(v && r && r.importable);
+  _impPintarResumen();
+}
+function _impCom(i, v){
+  var imp=S._impRem; if(!imp) return;
+  if(v==="__") delete imp.com[i]; else imp.com[i]=v;
+  _impRecalcular();
+  var r=imp.filas.find(function(x){ return x.i===i; });
+  try{
+    var chk=document.getElementById("imp-chk-"+i);
+    if(chk&&r){ chk.disabled=!r.importable; chk.checked=!!imp.sel[i]; }
+  }catch(e){}
+  _impPintarResumen();
+}
+// A todas: aquí sí se repinta, cambian muchas filas y no hay nada bajo el dedo.
+function _impComTodas(v){
+  var imp=S._impRem; if(!imp) return;
+  imp.comTodas=(v==="__"?null:v); imp.com={};
+  _impRecalcular(); R();
+}
+function _impMarcarTodas(cual){
+  var imp=S._impRem; if(!imp) return;
+  (imp.filas||[]).forEach(function(r){
+    imp.selUser[r.i]= cual==="ninguna" ? false : cual==="todas" ? !r.ya : r.limpia;
+  });
+  _impRecalcular(); R();
+}
+function _impSeleccionadas(){
+  var imp=S._impRem; if(!imp) return [];
+  return (imp.filas||[]).filter(function(r){ return r.importable && imp.sel[r.i]; });
+}
+function _htmlResumenImp(){
+  var sel=_impSeleccionadas(), ida=0, vuelta=0;
+  sel.forEach(function(r){ if(r.orig==="VES") vuelta++; else ida++; });
+  return "<b>"+sel.length+"</b> marcada"+(sel.length===1?"":"s")+" &nbsp;·&nbsp; 🇧🇷→🇻🇪 "+ida+" &nbsp;·&nbsp; 🇻🇪→🇧🇷 "+vuelta;
+}
+function _impPintarResumen(){
+  try{
+    var el=document.getElementById("imp-resumen"); if(el) el.innerHTML=_htmlResumenImp();
+    var b=document.getElementById("imp-btn"); if(b) b.textContent="📥 Importar "+_impSeleccionadas().length;
+  }catch(e){}
+}
+
+// S.tx tal como lo dejaría ella al teclear la remesa.
+function _impTxDeFila(r, imp){
+  return {date:r.iso, hora:r.hora, id:r.cliId, cl:r.cliNom, rt:r.rt,
+    am:String(r.am), tdia:String(r.tasa), tc:"", tv:"", tc_manual:"", tv_manual:"",
+    pais:(r.ruta&&r.ruta.pais)||"", pendiente:false, comisionBanco:(r.pideCom?(r.com||""):""),
+    showTasas:false, cuentaBanco:r.cuentaIn, cuentaDest:r.cuentaOut,
+    pagosMulti:false, entregasMulti:false, pagos:[], entregas:[],
+    metodo:"p2p", permuta:"",
+    _idExterno:r.idExt, _procesadoPor:r.por, _importadoDe:imp.archivo,
+    _tcLock:null, _tvLock:null, _amLock:null, _tdiaLock:null, _rtLock:null};
+}
+
+function _impImportar(){
+  if(!permisoEdicion()){ alert("No tienes permiso para guardar."); return; }
+  var imp=S._impRem; if(!imp) return;
+  _impRecalcular();
+  var sel=_impSeleccionadas();
+  if(!sel.length){ alert("No hay ninguna remesa marcada."); return; }
+  var repes=sel.filter(function(r){ return r.parecida; }).length;
+  var cerr=sel.filter(function(r){ return r.cerrado; }).length;
+  if(!confirm("Vas a registrar "+sel.length+" remesa"+(sel.length===1?"":"s")+".\n\n"+
+      "Cada una mueve saldos y gasta tus lotes FIFO, igual que si la registraras a mano.\n"+
+      "¿Ya registraste las compras y ventas de USDT de hoy? Si no, sus ganancias saldrán sin lote detrás."+
+      (repes?"\n\n⚠️ "+repes+" se parece"+(repes===1?"":"n")+" a una que ya registraste a mano.":"")+
+      (cerr?"\n\n⚠️ "+cerr+" cae"+(cerr===1?"":"n")+" en un mes ya cerrado.":"")+
+      "\n\n¿Continuar?")) return;
+  var txAntes=S.tx, conf=window.confirm, aler=window.alert;
+  var res={ok:[], fallo:[]};
+  try{
+    // Con esto puesto, _autoMetodoTx decide el método y no repinta nada.
+    window._txTocandoGuardar=true;
+    sel.forEach(function(r){
+      _IMPORT_REM={avisos:[], errores:[], hecha:null};
+      window.confirm=function(m){ _IMPORT_REM.avisos.push(String(m||"")); return true; };
+      window.alert=function(m){ _IMPORT_REM.errores.push(String(m||"")); };
+      S.tx=_impTxDeFila(r, imp);
+      try{ _autoMetodoTx(); saveTx(); }
+      catch(err){ _IMPORT_REM.errores.push(String(err&&err.message||err)); }
+      var h=_IMPORT_REM.hecha;
+      if(h){
+        var av=_IMPORT_REM.avisos.slice();
+        // Sin tasa en el inventario la remesa se guarda igual —como a mano—, pero
+        // su ganancia sale de un cero. En la pantalla de Nueva eso se ve en los
+        // recuadros de tasas; aquí no hay recuadros, así que se dice.
+        if(!(parseFloat(h.tc)>0)) av.push("sin tasa de compra de USDT en "+h.orig+" en tu inventario: su ganancia no es fiable hasta que registres esa compra");
+        if(!(parseFloat(h.tv)>0)) av.push("sin tasa de venta de USDT en "+h.dest+" en tu inventario: su ganancia no es fiable hasta que registres esa venta");
+        res.ok.push({r:r, n:h.n, pr:h.pr, metodo:h.metodo||"p2p", avisos:av});
+      }
+      else  res.fallo.push({r:r, motivo:_IMPORT_REM.errores.join(" ")||"no se guardó"});
+    });
+  } finally {
+    window.confirm=conf; window.alert=aler;
+    window._txTocandoGuardar=false;
+    _IMPORT_REM=null;
+    S.tx=txAntes;
+  }
+  if(res.ok.length){
+    logAudit("REMESAS_IMPORTADAS", res.ok.length+" remesas de "+imp.archivo+(imp.fuente?" ("+imp.fuente+")":""));
+    saveData();
+    var _prTot=res.ok.reduce(function(t,x){ return t+(parseFloat(x.pr)||0); },0);
+    avisarAlTelefono("📥 Remesas importadas", res.ok.length+" remesas de "+imp.archivo+" · $"+f2(_prTot)+" USDT", "importar_"+Date.now());
+  }
+  imp.hecho=res;
+  R();
+}
+
+// Lo que se ve de una pregunta anotada: la primera línea dice qué fue, y las
+// viñetas cuánto. "No hay saldo suficiente" sin el "faltan 37.800 VES" obliga a
+// ir a buscar el número a otra pantalla.
+function _impResumirAviso(m){
+  var l=String(m||"").split("\n").map(function(x){ return x.trim(); }).filter(Boolean);
+  if(!l.length) return "";
+  var cab=l[0].replace(/^[^\wÁÉÍÓÚáéíóúñÑ¿¡]+/,"").replace(/:$/,"");
+  var vin=l.filter(function(x){ return /^•/.test(x); }).map(function(x){ return x.replace(/^•\s*/,""); });
+  return (cab+(vin.length?": "+vin.join(" · "):"")).slice(0,220);
+}
+
+function rImportarRemesas(){
+  var imp=S._impRem;
+  var card="background:var(--sup);border:1px solid var(--ln);border-radius:12px;padding:12px 14px;margin-bottom:12px";
+  var btn=function(bg,fg){ return "padding:10px 14px;border:none;border-radius:9px;background:"+bg+";color:"+fg+";font-size:13px;font-weight:800;cursor:pointer;font-family:inherit"; };
+  var cab="<div style='"+card+"'>"+
+    "<div style='font-size:15px;font-weight:800;color:var(--tit)'>📥 Importar remesas</div>"+
+    "<div style='font-size:12px;color:var(--tx3);margin-top:4px;line-height:1.5'>"+_escAud(imp.archivo)+
+      (imp.fuente?" · "+_escAud(imp.fuente):"")+" · "+(imp.raw||[]).length+" remesa"+((imp.raw||[]).length===1?"":"s")+"</div>"+
+  "</div>";
+
+  // ── Después de importar: el resumen, con lo que preguntó cada una ──
+  if(imp.hecho){
+    var h=imp.hecho;
+    var filasOk=h.ok.map(function(x){
+      var av=x.avisos.map(_impResumirAviso).filter(Boolean);
+      return "<div style='padding:8px 0;border-bottom:1px solid var(--ln2b);font-size:12.5px'>"+
+        // Cada ruta numera aparte: sin la bandera, "#1" sale dos veces.
+        (x.r.orig==="VES"?"🇻🇪→🇧🇷 ":"🇧🇷→🇻🇪 ")+"<b style='color:var(--tit)'>#"+x.n+"</b> · "+_escAud(x.r.cliNom)+" · "+f2(x.r.am)+" "+x.r.orig+
+        " · ganancia <b>"+f2(x.pr)+"</b> USDT"+(x.metodo==="calce"?" · 🤝 calce":"")+
+        (av.length?"<div style='margin-top:3px;color:var(--avi-tx);font-size:11.5px'>⚠️ "+av.map(_escAud).join("<br>⚠️ ")+"</div>":"")+
+      "</div>";
+    }).join("");
+    var filasMal=h.fallo.map(function(x){
+      return "<div style='padding:8px 0;border-bottom:1px solid var(--ln2b);font-size:12.5px;color:var(--mal)'>"+
+        _escAud(x.r.idExt||"(sin id)")+" · "+_escAud(x.r.cliNom||"")+" — "+_escAud(_impResumirAviso(x.motivo))+"</div>";
+    }).join("");
+    return "<div style='max-width:640px'>"+cab+
+      "<div style='"+card+"'>"+
+        "<div style='font-size:14px;font-weight:800;color:var(--ok)'>✅ "+h.ok.length+" importada"+(h.ok.length===1?"":"s")+"</div>"+
+        (h.fallo.length?"<div style='font-size:14px;font-weight:800;color:var(--mal);margin-top:4px'>❌ "+h.fallo.length+" no se guardaron</div>":"")+
+        "<div style='font-size:11.5px;color:var(--tx3);margin-top:6px;line-height:1.5'>Cada una pasó por el mismo camino que una remesa tecleada: saldos, lotes FIFO y ganancia con tu inventario.</div>"+
+      "</div>"+
+      (filasOk?"<div style='"+card+"'>"+filasOk+"</div>":"")+
+      (filasMal?"<div style='"+card+"'>"+filasMal+"</div>":"")+
+      "<button onclick='_impCancelar()' style='"+btn("var(--ac)","var(--sobre-color)")+";width:100%'>Listo</button>"+
+    "</div>";
+  }
+
+  // ── Bancos: cada nombre del archivo se casa UNA vez con una cuenta ──
+  var bancos=(imp.bancos||[]).map(function(b,k){
+    var ops=_impCuentasPara(b.mon).map(function(c){
+      return "<option value='"+_escAud(c.id)+"'"+(b.res.id===c.id?" selected":"")+">"+_escAud(c.nombre)+"</option>";
+    }).join("");
+    var est=b.res.id ? (b.res.como==="recordada"?"recordada":"mismo nombre") : "elige la cuenta";
+    return "<div style='padding:8px 0;border-bottom:1px solid var(--ln2b)'>"+
+      "<div style='font-size:12.5px;font-weight:700;color:var(--tit)'>"+_escAud(b.nombre)+" <span style='color:var(--tx3);font-weight:600'>· "+b.mon+" · "+b.n+(b.n===1?" vez":" veces")+"</span></div>"+
+      "<select onchange='_impFijarBanco("+k+",this.value)' style='width:100%;margin-top:5px;padding:8px;border:1.5px solid "+(b.res.id?"var(--ln)":"var(--avi)")+";border-radius:8px;background:var(--sup);font-size:13px'>"+
+        "<option value=''>— "+est+" —</option>"+ops+"</select>"+
+    "</div>";
+  }).join("");
+  var faltanB=(imp.bancos||[]).filter(function(b){ return !b.res.id; }).length;
+
+  // ── Comisión de los bolívares, a todas de una ──
+  var pideCom=(imp.filas||[]).some(function(r){ return r.pideCom; });
+  var optCom=function(sel, conVacio){
+    return (conVacio?"<option value='__'"+(sel===null||sel===undefined?" selected":"")+">— elige —</option>":"")+
+      "<option value=''"+(sel===""?" selected":"")+">Mismo banco — sin comisión</option>"+
+      "<option value='movil'"+(sel==="movil"?" selected":"")+">Pago móvil a otro banco</option>"+
+      "<option value='transf'"+(sel==="transf"?" selected":"")+">Transferencia a otro banco</option>";
+  };
+  var bloqueCom=pideCom
+    ? "<div style='"+card+"'>"+
+        "<div style='font-size:13px;font-weight:800;color:var(--tit)'>🏦 ¿Cómo se pagaron los bolívares?</div>"+
+        "<div style='font-size:11.5px;color:var(--tx3);margin:3px 0 7px;line-height:1.5'>La otra app no lo sabe y la comisión del banco depende de esto. Elige para todas y cambia abajo la que sea distinta.</div>"+
+        "<select onchange='_impComTodas(this.value)' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;background:var(--sup);font-size:13px'>"+optCom(imp.comTodas,true)+"</select>"+
+      "</div>"
+    : "";
+
+  // ── Las filas ──
+  var filas=(imp.filas||[]).map(function(r){
+    var flag=r.orig==="VES"?"🇻🇪→🇧🇷":r.orig==="BRL"?"🇧🇷→🇻🇪":"❓";
+    var op=r.orig==="VES"?" ÷ ":" × ";
+    var nomIn=r.cuentaIn?_binNomCuenta(r.cuentaIn):"", nomOut=r.cuentaOut?_binNomCuenta(r.cuentaOut):"";
+    var faltaCta=(r.ruta && !r.errores.length && (!r.cuentaIn||!r.cuentaOut));
+    var faltaCom=(r.pideCom && (r.com===null||r.com===undefined));
+    var chips=r.errores.map(function(x){ return "<div style='color:var(--mal)'>❌ "+x+"</div>"; }).join("")+
+      (faltaCta?"<div style='color:var(--avi-tx)'>🏦 falta casar un banco con su cuenta (arriba)</div>":"")+
+      (faltaCom?"<div style='color:var(--avi-tx)'>🏦 elige cómo se pagaron los bolívares</div>":"")+
+      r.avisos.map(function(x){ return "<div style='color:var(--avi-tx)'>⚠️ "+_escAud(x)+"</div>"; }).join("");
+    return "<div style='padding:10px 0;border-bottom:1px solid var(--ln2b);display:flex;gap:10px;align-items:flex-start'>"+
+      "<input type='checkbox' id='imp-chk-"+r.i+"' "+(imp.sel[r.i]?"checked ":"")+(r.importable?"":"disabled ")+"onchange='_impMarcar("+r.i+",this.checked)' style='width:18px;height:18px;margin-top:2px;flex:none'>"+
+      "<div style='flex:1;min-width:0;font-size:12.5px;line-height:1.5'>"+
+        "<div><b style='color:var(--tit)'>"+_escAud(r.cliNom||"(sin nombre)")+"</b> <span style='color:var(--tx3)'>· "+(r.iso?ds(r.iso):"?")+" "+(r.hora?r.hora.slice(0,5):"")+" · "+_escAud(r.idExt||"sin id")+"</span></div>"+
+        "<div>"+flag+" "+(r.am>0?f2(r.am):"?")+" "+_escAud(r.orig)+op+(r.tasa>0?f2(r.tasa):"?")+" = <b>"+(r.cant>0?f2(r.cant):(r.cantArch>0?f2(r.cantArch):"?"))+"</b> "+_escAud(r.dest)+"</div>"+
+        "<div style='color:var(--tx3)'>"+(nomIn?_escAud(nomIn):"<i>"+_escAud(r.bancoIn||"?")+"</i>")+" → "+(nomOut?_escAud(nomOut):"<i>"+_escAud(r.bancoOut||"?")+"</i>")+(r.por?" · "+_escAud(r.por):"")+"</div>"+
+        (r.pideCom&&!r.errores.length?"<select onchange='_impCom("+r.i+",this.value)' style='margin-top:5px;width:100%;padding:6px;border:1px solid var(--ln);border-radius:7px;background:var(--sup);font-size:12px'>"+optCom(r.com,true)+"</select>":"")+
+        (chips?"<div style='margin-top:4px;font-size:11.5px'>"+chips+"</div>":"")+
+      "</div>"+
+    "</div>";
+  }).join("");
+
+  return "<div style='max-width:640px'>"+cab+
+    "<div style='background:var(--avi-bg,var(--sup2));border:1px solid var(--avi);border-radius:10px;padding:9px 12px;margin-bottom:12px;font-size:12px;color:var(--avi-tx);line-height:1.5'>"+
+      "Registra <b>primero</b> las compras y ventas de USDT del día. Cada remesa gasta lotes al importarla."+
+    "</div>"+
+    (bancos?"<div style='"+card+"'><div style='font-size:13px;font-weight:800;color:var(--tit);margin-bottom:2px'>🏦 Bancos del archivo"+(faltanB?" <span style='color:var(--avi-tx)'>· faltan "+faltanB+"</span>":"")+"</div>"+
+      "<div style='font-size:11.5px;color:var(--tx3);line-height:1.5'>Cada nombre se casa una vez con su cuenta y queda recordado.</div>"+bancos+"</div>":"")+
+    bloqueCom+
+    "<div style='"+card+"'>"+
+      "<div style='display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px'>"+
+        "<button onclick='_impMarcarTodas(\"limpias\")' style='"+btn("var(--sup2)","var(--tx2)")+";font-size:11.5px;padding:7px 10px'>Marcar las nuevas</button>"+
+        "<button onclick='_impMarcarTodas(\"todas\")' style='"+btn("var(--sup2)","var(--tx2)")+";font-size:11.5px;padding:7px 10px'>Todas</button>"+
+        "<button onclick='_impMarcarTodas(\"ninguna\")' style='"+btn("var(--sup2)","var(--tx2)")+";font-size:11.5px;padding:7px 10px'>Ninguna</button>"+
+      "</div>"+
+      filas+
+    "</div>"+
+    "<div style='"+card+";display:flex;gap:8px;align-items:center;flex-wrap:wrap'>"+
+      "<div id='imp-resumen' style='flex:1;min-width:160px;font-size:12.5px;color:var(--tx2)'>"+_htmlResumenImp()+"</div>"+
+      "<button onclick='_impCancelar()' style='"+btn("var(--sup2)","var(--tx3)")+"'>Cancelar</button>"+
+      "<button id='imp-btn' onclick='_impImportar()' style='"+btn("var(--ac)","var(--sobre-color)")+"'>📥 Importar "+_impSeleccionadas().length+"</button>"+
+    "</div>"+
+  "</div>";
+}
+
+// El botón de entrada vive en la pestaña Nueva, encima del formulario: es la
+// misma pregunta — "registrar remesas" — por dos caminos.
+function _htmlBotonImportarRem(){
+  if(!permisoEdicion()) return "";
+  return "<label style='display:flex;align-items:center;justify-content:center;gap:8px;padding:10px;margin-bottom:12px;border:1.5px dashed var(--ln2);border-radius:10px;background:var(--sup);color:var(--tx2);font-size:13px;font-weight:700;cursor:pointer'>"+
+    "📥 Importar remesas de un archivo"+
+    "<input type='file' accept='.json,application/json' onchange='_impElegirArchivo(this)' style='display:none'>"+
+  "</label>";
+}
+
 function rNueva(){
+  // Con una importación abierta manda ella: el formulario debajo invitaría a
+  // teclear a mano lo que se está a punto de importar.
+  if(S._impRem) return rImportarRemesas();
   var f=S.tx;
   var ruta=getRutas().find(function(r){return r.rt===f.rt;})||getRutas()[0];
   if(f.pais!==ruta.pais) S.tx.pais=ruta.pais;
@@ -33377,7 +33874,7 @@ function rNueva(){
     // FIX: si la tasa del día mostrada viene del valor por defecto de Config,
     // la guardamos en el estado para que el botón Guardar la reconozca (antes se veía pero no se guardaba).
     if(!f.tdia && tdiaVal){ S.tx.tdia=String(tdiaVal); f=S.tx; }
-    return "<div style='max-width:580px'>"+banner+
+    return "<div style='max-width:580px'>"+banner+_htmlBotonImportarRem()+
     "<div class='sec' style='border-left:3px solid var(--ac2)'><div class='sec-title' style='color:var(--ac2)'>📋 Datos de la operación</div>"+
     "<div class='f2'><div class='fl'><label>Fecha</label><input type='date' value='"+(f.date||"")+"' onchange='S.tx.date=this.value'></div>"+
     // FASE 1: la hora a la que ocurrió. Hoy no la mira nadie —el FIFO sigue
