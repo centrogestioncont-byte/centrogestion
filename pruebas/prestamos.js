@@ -125,7 +125,7 @@ const NECESARIAS = ["_egresosHuerfanos", "moverEgresoAPersonal", "_tasaDelDiaFue
                     "_mergeObjetoPorClave", "_unirHistorial", "_unirMarcasCampos",
                     "_huellaCompleta", "_conteoRapido",
                     "crearLoteRecibido", "quitarLoteDeRemesa", "_loteAlCobrar",
-                    "_loteEsOpUSDT", "_loteEsDeRemesa", "_entradaSeQueda", "_puedeQuedarse",
+                    "_loteEsOpUSDT", "_loteEsDeRemesa", "_loteDeTraspaso", "_entradaSeQueda", "_puedeQuedarse",
                     "_remesaEntradaQueda", "esRutaCalce", "esCalceDirecto",
                     "ordenFIFO", "normalizarInventarioFIFO", "simularConsumoFIFO", "_tasaEfectivaLote",
                     "_repartoFIFO", "getTasaVentaPonderada", "_bsPorReal", "_htmlDeDondeSalen",
@@ -133,6 +133,7 @@ const NECESARIAS = ["_egresosHuerfanos", "moverEgresoAPersonal", "_tasaDelDiaFue
                     "_revivirLote", "_loteDelEspejo", "_restaurarVentasFIFO", "_restaurarComprasFIFO",
                     "f4", "f0", "_leerNumero", "_avisoCambioSaldo", "_fechaLote", "_idLoteNuevo",
                     "_diasEnElFuturo", "confirmarFechaFutura",
+                    "_impFechaIso", "_impCantDe", "_impNorm", "_impTolerancia",
                     "comisionBancoVES", "etiquetaComisionBanco", "salidaDeCuentaEntrega",
                     "monedasDeRemesa", "pagosDeRemesa", "sumaPagos", "pagosDebe",
                     "entregasDeRemesa", "sumaEntregas", "comisionesDeEntregas",
@@ -8434,7 +8435,8 @@ console.log("\n— FASE 2: la cuenta madre —");
   //    nunca salieron — el "vendi 30 BRL que nadie hizo" del 12/09, otra vez.
   ok(/r\.permuta\?"🤝 PERMUTA":isComp\?"⬇️ COMPRA":"⬆️ VENTA"/.test(HTML),
      "el inventario la llama permuta, no venta");
-  ok(/r\.permuta\?"≈ "\+f4\(r\.usdt\)\+" USDT"/.test(HTML),
+  // ARREGLO 231: la misma regla vale para el lote que llega con un traspaso.
+  ok(/\(r\.permuta\|\|_loteDeTraspaso\(r\)\)\?"≈ "\+f4\(r\.usdt\)\+" USDT"/.test(HTML),
      "y su USDT va sin signo: ahi no se movio ninguno");
 
   // 10. La pantalla. El selector solo donde la cuenta vale, y cambiar de
@@ -12198,10 +12200,16 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
      "devolverLotesMon pasa por _restaurarVentasFIFO, no por una copia suya");
 
   // Un traspaso desde VES consume, y guarda lo consumido DENTRO del traspaso.
-  const st = sinC(sacarFuncion("saveTraspaso"));
-  ok(/cO\.moneda==="VES" \|\| cO\.moneda==="BRL"/.test(st) && /consumirLotesMon\(cO\.moneda, cO\.id, monto\)/.test(st),
+  // ARREGLO 231: el consumo vive en _moverLotesTraspaso, que llaman el
+  // traspaso normal y 💸 Devolverme ahora. `st` sigue siendo el sitio donde se
+  // decide, para que las comprobaciones de abajo midan lo mismo que antes.
+  const stLlamada = sinC(sacarFuncion("saveTraspaso"));
+  ok(/_moverLotesTraspaso\(_tr, cO, cD, monto\)/.test(stLlamada),
+     "saveTraspaso pasa por _moverLotesTraspaso, no por una copia suya");
+  const st = sinC(sacarFuncion("_moverLotesTraspaso"));
+  ok(/cO\.moneda!=="VES" && cO\.moneda!=="BRL"/.test(st) && /consumirLotesMon\(cO\.moneda, cO\.id, monto\)/.test(st),
      "un traspaso desde cuenta VES descuenta su lote");
-  ok(/_tr\._lotesConsumidos=\{ventas:_cl\.ventas\}/.test(st),
+  ok(/tr\._lotesConsumidos=\{ventas:cl\.ventas\}/.test(st),
      "y guarda el espejo, para que al borrarlo vuelva al lote que se gasto");
 
   // El reverso: al destino entro montoDestino, no monto.
@@ -12631,7 +12639,9 @@ console.log("\nARREGLO 153 · la utilidad sale de un solo sitio");
   ok(/_loteCompra\._lotesConsumidos=\{ventas:_clr\.ventas\}/.test(iu),
      "y se apunta QUE lote gasto, para devolverlo por id al borrar");
   // Y el traspaso que saca reales de la cuenta, igual.
-  ok(/cO\.moneda==="VES" \|\| cO\.moneda==="BRL"/.test(st),
+  // ARREGLO 231: la decisión vive en _moverLotesTraspaso; saveTraspaso la llama.
+  ok(/_moverLotesTraspaso\(_tr, cO, cD, monto\)/.test(st) &&
+     /cO\.moneda!=="VES" && cO\.moneda!=="BRL"/.test(sinC(sacarFuncion("_moverLotesTraspaso"))),
      "un traspaso desde una cuenta en reales tambien lo gasta");
 
   // 5. Al borrar, el lote se va con la remesa — pero si otra operacion ya se
@@ -13808,6 +13818,186 @@ console.log("\nARREGLO 203 · fuera la calculadora inversa del formulario de abo
      "chgObjetivoPrest se retiró con el bloque");
   ok(!/function _htmlCalcPago/.test(HTMLnc),
      "_htmlCalcPago se retiró con el bloque");
+}
+
+// ── ARREGLO 229 · Importar remesas desde un archivo de la otra app ──────────
+//
+// La otra app no sabe de USDT. Trae quién, cuánto pagó, cuánto se liquidó, a
+// qué tasa y por qué bancos; las tasas de USDT, los lotes y la ganancia los
+// pone esta app. Por eso cada fila pasa por saveTx() y no por un camino
+// propio — medido en Chromium: la misma remesa importada y tecleada queda
+// idéntica, con sus saldos y sus lotes.
+{
+  console.log("\nARREGLO 229 · importar remesas de un archivo");
+  const sc = (n) => sinComentarios(sacarFuncion(n));
+
+  // 1. Las fechas del archivo
+  ok(F._impFechaIso("04/11/26") === "2026-11-04", "dd/mm/aa, el formato acordado", F._impFechaIso("04/11/26"));
+  ok(F._impFechaIso("4/11/2026") === "2026-11-04" && F._impFechaIso("2026-11-04") === "2026-11-04",
+     "y también dd/mm/aaaa e ISO: una fecha bien escrita no se rechaza por el formato");
+  ok(F._impFechaIso("31/02/26") === "" && F._impFechaIso("") === "" && F._impFechaIso("mañana") === "",
+     "el 31/02 no existe, y lo que no es fecha no se inventa una");
+
+  // 2. Lo liquidado se comprueba con la MISMA cuenta de cTx — escrita de otra
+  //    forma, diría que cuadra lo que al guardar no cuadra.
+  ok(F._impCantDe("BRL", 500, 189) === 94500, "ida: 500 × 189 = 94.500", F._impCantDe("BRL", 500, 189));
+  ok(F._impCantDe("VES", 42500, 220) === 193.18, "vuelta: 42.500 ÷ 220 = 193,18", F._impCantDe("VES", 42500, 220));
+  ok(F._impCantDe("BRL", 0, 189) === 0 && F._impCantDe("VES", 100, 0) === 0, "sin monto o sin tasa no se inventa nada");
+  const cTxS = sc("cTx");
+  const cantDe = sc("_impCantDe");
+  ok(/Math\.round\(r4\(am\/td2\)\*100\)\/100/.test(cTxS) && /Math\.floor\(r4\(am\*td2\)\*100\)\/100/.test(cTxS) &&
+     /Math\.round\(r4\(am\/tasa\)\*100\)\/100/.test(cantDe) && /Math\.floor\(r4\(am\*tasa\)\*100\)\/100/.test(cantDe),
+     "el redondeo del importador es el de cTx, en los dos sentidos");
+  ok(F._impTolerancia("BRL") < 0.1 && F._impTolerancia("VES") === 1,
+     "en reales el margen es de céntimos; en bolívares, un bolívar");
+  ok(/_impTolerancia\(r\.dest\)/.test(sc("_impLeerFila")), "y la fila lo usa por su moneda de destino");
+
+  // 3. EL MISMO CAMINO: _impImportar llama a saveTx y no escribe remesas por su cuenta.
+  const imp = sc("_impImportar");
+  ok(/saveTx\(\)/.test(imp), "cada fila se guarda con saveTx(), como una tecleada");
+  ok(/_autoMetodoTx\(\)/.test(imp), "y el método (calce o P2P) lo decide la misma regla que el formulario");
+  ok(!/S\.(brl|vzla|eeuu)\.push/.test(imp) && !/ajusteCuenta|consumirFIFO|crearLoteRecibido/.test(imp),
+     "el importador no mueve saldos ni lotes por su cuenta");
+  // Las preguntas se anotan mientras corre, y se reponen pase lo que pase.
+  ok(/finally\s*\{[\s\S]*window\.confirm=conf[\s\S]*window\.alert=aler[\s\S]*_IMPORT_REM=null/.test(imp),
+     "confirm, alert y la marca de importación se reponen en un finally");
+  ok(/S\.tx=txAntes/.test(imp.slice(imp.indexOf("finally"))),
+     "y el formulario que ella tuviera a medias vuelve a su sitio");
+  ok(/saveData\(\)/.test(imp) && (imp.match(/saveData\(\)/g) || []).length === 1,
+     "guarda UNA vez al final, no una por remesa");
+
+  // 4. saveTx: marca la importada y se calla mientras importa.
+  const sv = sc("saveTx");
+  ok(/if\(f\._idExterno\)\{[\s\S]{0,80}nuevaRemesa\.idExterno=String\(f\._idExterno\)/.test(sv),
+     "la remesa importada guarda su id de la otra app — la llave para no duplicarla");
+  ok(/if\(!_IMPORT_REM\) saveData\(\);/.test(sv) && /if\(!_IMPORT_REM\)\{ S\.tab=/.test(sv),
+     "importando, saveTx no guarda ni repinta en cada remesa");
+  ok(/if\(_IMPORT_REM\) _IMPORT_REM\.hecha=nuevaRemesa;/.test(sv),
+     "y le dice al importador cuál guardó, que es como se sabe si salió bien");
+  ok(/^function avisarAlTelefono\([^)]*\)\{\s*if\(_IMPORT_REM\) return;/.test(sc("avisarAlTelefono")),
+     "treinta avisos al teléfono no: se calla mientras importa y avisa una vez al final");
+
+  // 5. Duplicados: por id de la otra app, y avisa de las tecleadas a mano.
+  const rec = sc("_impRecalcular");
+  ok(/x\.idExterno\)\s*ids\[x\.idExterno\]/.test(rec) && /r\.ya=ids\[r\.idExt\]/.test(rec),
+     "una ya importada se reconoce por su id_remesa");
+  ok(/_remesasIguales\(/.test(rec) && /!x\.idExterno/.test(rec),
+     "y la que ella ya tecleó a mano sale avisada (ARREGLO 154)");
+  ok(/r\.limpia=r\.importable && !r\.ya && !r\.parecida && !r\.cerrado && !r\.futura && !r\.tasaRara/.test(rec),
+     "lo dudoso sale desmarcado: ya importada, parecida, mes cerrado, fecha futura, tasa rara");
+  ok(/vistos\[r\.idExt\]>1/.test(rec), "un id repetido dentro del mismo archivo es un error");
+
+  // 6. La comisión del banco venezolano se PREGUNTA: la otra app no la sabe.
+  ok(/r\.pideCom=!!\(r\.dest==="VES" && r\.cuentaOut && esBancoVES\(r\.cuentaOut\)\)/.test(rec) &&
+     /\(!r\.pideCom \|\| \(r\.com!==null && r\.com!==undefined\)\)/.test(rec),
+     "una remesa que sale en bolívares no se importa hasta que ella diga cómo se pagaron");
+
+  // 7. Los bancos se recuerdan en una clave que YA viaja al servidor.
+  ok(/return "remesa·"\+mon\+"·"\+_impNorm\(nombre\);/.test(sc("_impClaveBanco")) &&
+     /S\.mapaBinance\[clave\]=/.test(sc("_impFijarBanco")),
+     "el banco casado se guarda en mapaBinance, que ya está en las cuatro listas del servidor");
+  ok(HTML.indexOf('"artImport"') < 0 && !/DATA_KEYS = \[[^\]]*"impRem/.test(HTML),
+     "y no se añade ninguna clave nueva que sincronizar");
+  ok(/!c\.esPersonal && c\.moneda===mon/.test(sc("_impCuentasPara")),
+     "una cuenta 💜 personal no se ofrece (ARREGLO 96)");
+
+  // 8. Lo que trae el archivo se escapa: lo escribe otra app (ARREGLO 102).
+  const ri = sc("rImportarRemesas");
+  ok(/_escAud\(r\.cliNom/.test(ri) && /_escAud\(r\.idExt/.test(ri) && /_escAud\(b\.nombre\)/.test(ri) &&
+     /_escAud\(r\.bancoIn/.test(ri) && /_escAud\(x\)/.test(ri),
+     "nombres, ids, bancos y avisos del archivo se escapan al dibujarlos");
+  ok(/_impFijarBanco\("\+k\+",this\.value\)/.test(ri) && !/_impFijarBanco\([^)]*nombre/.test(ri),
+     "el banco se elige por su posición, nunca metiendo su nombre en un onclick");
+
+  // 9. Marcar una casilla o una comisión no repinta (ARREGLO 32).
+  ok(!/\bR\(\)/.test(sc("_impMarcar")) && !/\bR\(\)/.test(sc("_impCom")),
+     "marcar una fila no rehace la lista bajo el dedo");
+
+  // 10. La entrada: en Nueva, y con la importación abierta manda ella.
+  ok(/^function rNueva\(\)\{\s*if\(S\._impRem\) return rImportarRemesas\(\);/.test(sc("rNueva")),
+     "con un archivo abierto, Nueva enseña la importación y no el formulario");
+  ok(/banner\+_htmlBotonImportarRem\(\)\+/.test(sc("rNueva")), "y el botón vive encima del formulario");
+  ok(/EE\.UU\. → Venezuela no se importa/.test(sc("_impLeerFila")),
+     "EE.UU. no se mete por este camino: va con su socio, por saveTxEE");
+
+  // ── ARREGLO 230 · el código con el que RisApp llama a cada cuenta ──
+  // Casar por nombre se rompe en cuanto la otra app lo escriba distinto; el
+  // código no cambia nunca. Vive EN la cuenta, que ya viaja entre aparatos.
+  console.log("\nARREGLO 230 · código RisApp de cada cuenta");
+  const cb = sc("_impCuentaDeBanco");
+  ok(/^function _impCuentaDeBanco\(nombre, mon, codigo\)\{\s*if\(String\(codigo==null\?"":codigo\)\.trim\(\)\) return _impCuentaDeCodigo\(codigo, mon\);/.test(cb),
+     "con código manda el código y SOLO el código: no cae al nombre ni a lo recordado");
+  const cc = sc("_impCuentaDeCodigo");
+  ok(/c\.moneda!==mon/.test(cc) && /c\.activa===false/.test(cc) && /c\.esPersonal/.test(cc),
+     "un código de otra moneda, de una cuenta pausada o de una 💜 se rechaza diciendo por qué");
+  const fc = sc("_fijarCodigoRisapp");
+  ok(/var otra=\(S\.cuentas\|\|\[\]\)\.find\(function\(x\)\{ return x\.id!==c\.id && x\.codigoRisapp && _impNorm\(x\.codigoRisapp\)===n; \}\);\s*if\(otra\) return "El código/.test(fc),
+     "un código va en UNA sola cuenta");
+  ok(/_fijarCodigoRisapp\(c, nuevo\)/.test(sc("editarCodigoRisapp")) && /_fijarCodigoRisapp\(c, b\.codigo\)/.test(sc("_impAsignarCodigo")),
+     "Configuración y la pantalla de importar escriben el código por la misma puerta");
+  ok((HTML.match(/\.codigoRisapp\s*=/g) || []).length === 1,
+     "y nadie más lo escribe", (HTML.match(/\.codigoRisapp\s*=/g) || []).length);
+  ok(/r\.codIn=String\(o\.banco_recibido_codigo/.test(sc("_impLeerFila")) && /r\.codOut=String\(o\.banco_pago_codigo/.test(sc("_impLeerFila")),
+     "el archivo trae banco_recibido_codigo y banco_pago_codigo");
+  ok(/_impCuentaDeBanco\(r\.bancoIn, r\.orig, r\.codIn\)/.test(rec) && /_impCuentaDeBanco\(r\.bancoOut, r\.dest, r\.codOut\)/.test(rec),
+     "y las dos cuentas de cada remesa se buscan con su código");
+  ok(/_impAsignarCodigo\("\+k\+",this\.value\)/.test(ri), "un código sin cuenta se le pone ahí mismo, por posición");
+  ok(/editarCodigoRisapp\(/.test(sc("rConfigAdmin")) && /RisApp #"\+_escAud\(c\.codigoRisapp\)/.test(sc("rConfigAdmin")),
+     "Configuración → Cuentas enseña el código y deja cambiarlo");
+}
+
+// ── ARREGLO 231 · el lote VIAJA con el dinero de un traspaso ─────────────────
+// Auditoría de BANCO VENEZUELA JULIO del 05/11: 💸 Devolverme ahora bajó la
+// cuenta 78.628,06 sin tocar el lote, y un traspaso desde su BdV personal metió
+// 38.601,98 sin lote. Las dos puertas pasan ahora por _moverLotesTraspaso.
+{
+  console.log("\nARREGLO 231 · el lote viaja con el traspaso");
+  const sc = (n) => sinComentarios(sacarFuncion(n));
+  const dv = sc("_devolvermeAhora");
+  ok(/_moverLotesTraspaso\(_tr, ctaEmp, cDest, p\.monto\)/.test(dv) && /S\.traspasos\.push\(_tr\)/.test(dv),
+     "💸 Devolverme ahora pasa por _moverLotesTraspaso y guarda ESE traspaso");
+  ok(!/S\.traspasos\.push\(\{/.test(dv),
+     "y ya no empuja un traspaso escrito a mano que se salta el lote");
+  ok(/_moverLotesTraspaso\(_tr, cO, cD, monto\)/.test(sc("saveTraspaso")),
+     "el traspaso normal usa la MISMA puerta");
+  ok((HTML.match(/_moverLotesTraspaso\(/g) || []).length === 3,
+     "una definición y dos llamadas, ni una copia más", (HTML.match(/_moverLotesTraspaso\(/g) || []).length);
+  const mv = sc("_moverLotesTraspaso");
+  ok(/if\(!cD \|\| cD\.moneda!==cO\.moneda \|\| cD\.id===cO\.id\) return;/.test(mv),
+     "solo renace el lote si el destino es de la MISMA moneda");
+  ok(/_deTraspaso:\{tr:tr\.id/.test(mv) && /cuentaId:"", cuentaDestinoId:cD\.id/.test(mv),
+     "el lote nuevo lleva su marca y NO lleva cuenta de USDT (sincronizarSaldosUsdt restaría la venta otra vez)");
+  ok(/\(cl\.ventas\|\|\[\]\)\.forEach/.test(mv) && !/sinLote\)/.test(mv.slice(mv.indexOf("forEach"))),
+     "renace lo que salió de un lote, y lo que no salía de ninguno no se inventa");
+  const rv = sc("revertirSaldosTraspaso");
+  const iQ = rv.indexOf("_quitarLotesDeTraspaso(t.id)"), iD = rv.indexOf("devolverLotesMon(");
+  ok(iQ >= 0 && iD >= 0 && iQ < iD,
+     "al borrar se quita PRIMERO la copia y después se devuelve al origen");
+  const ql = sc("_quitarLotesDeTraspaso");
+  ok(/\["inventarioUsdt","inventarioUsdt_cerrado"\]/.test(ql) && /_marcarBorradoMerge\(cat, l\.id\)/.test(ql),
+     "y se quita de las DOS listas dejando la marca de borrado (si no, el servidor la devuelve)");
+  const rd = sc("reqDel");
+  const iA = rd.indexOf("_avisarLotesTraspasoGastados(item)"), iR = rd.indexOf("revertirSaldosTraspaso(item)");
+  ok(iA >= 0 && iR >= 0 && iA < iR, "si lo que llegó ya se gastó, se avisa ANTES de borrar");
+  // Que no cuente como una operación de USDT en ningún sitio que las cuenta.
+  ok(F._loteEsOpUSDT({moneda:"VES", tipo:"venta", usdt:10, bs:10000, _deTraspaso:{tr:1}}) === false,
+     "un lote de traspaso no decide la tasa de referencia");
+  ok(F._loteEsOpUSDT({moneda:"VES", tipo:"venta", usdt:10, bs:10000}) === true,
+     "y una venta normal sigue decidiéndola (la guardia no apaga todo)");
+  ok(F._loteEsDeRemesa({_deTraspaso:{tr:1, rem:"abc"}}) === true && F._loteEsDeRemesa({_deTraspaso:{tr:1, rem:""}}) === false,
+     "si viajó un lote de una vuelta, sigue contando como bolívares que te pagaron");
+  ok((HTML.match(/\|\|l\._aperturaBRL\|\|_loteDeTraspaso\(l\)\) return;/g) || []).length === 3,
+     "la conciliación (dos sitios) y el Cierre lo apartan, igual que el lote de apertura");
+  ok(/l\.permuta \|\| _loteDeTraspaso\(l\)/.test(sc("_ultimaOpUSDT")),
+     "no cuenta como la última operación de USDT");
+  ok(/_loteDeTraspaso\(l\)/.test(sc("_p2pBolivaresDelMes")),
+     "ni como una venta de Binance del mes");
+  const rd2 = sc("reqDel");
+  const iI = rd2.indexOf('arr==="inventarioUsdt"'), iG = rd2.indexOf("if(_loteDeTraspaso(item))", iI), iRI = rd2.indexOf("revertirSaldosInventario(item)", iI);
+  ok(iI >= 0 && iG > iI && iG < iRI,
+     "un lote de traspaso no se borra desde Inventario (le restaria al banco lo que no entro)");
+  ok(/_loteDeTraspaso\(r\)\s*\?\s*"<td style='font-size:10px;color:var\(--tx4\)' title='Se borra borrando el traspaso'>/.test(HTML),
+     "y su fila no ofrece 🗑️");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
