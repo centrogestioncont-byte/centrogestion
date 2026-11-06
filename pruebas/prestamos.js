@@ -13972,6 +13972,24 @@ console.log("\nARREGLO 203 · fuera la calculadora inversa del formulario de abo
      "0004 y 4 son el mismo código (Excel quita los ceros); uno con letras se deja tal cual");
   ok(/_impNormCod\(x\.codigoRisapp\)===n/.test(sc("_impCuentaDeCodigo")) && !/_impNorm\(x\.codigoRisapp\)/.test(HTML),
      "buscar la cuenta y prohibir el repetido comparan el código igual");
+
+  // ── ARREGLO 233: la comisión sale de la forma de pago del archivo ──
+  const _comForma = new Function(sc("_impComDeForma") + "; return _impComDeForma;")();
+  ok(_comForma("Transferencia") === "transf" && _comForma("Pago Móvil") === "movil" && _comForma("PAGO MOVIL") === "movil",
+     "transferencia y pago móvil se leen, con o sin tilde y en mayúsculas");
+  ok(_comForma("Transferencia mismo banco") === "" && _comForma("Pago móvil mismo banco") === "",
+     "si dice mismo banco, sin comisión");
+  ok(_comForma("") === null && _comForma("PIX") === null && _comForma("Efectivo") === null && _comForma("pago movil o transferencia") === null,
+     "lo que no se reconoce (o es ambiguo) no inventa comisión: se pregunta");
+  const rc = sc("_impRecalcular");
+  ok(/imp\.com\[r\.i\]!==undefined \? imp\.com\[r\.i\] : \(r\.comArch!==null \? r\.comArch : imp\.comTodas\)/.test(rc),
+     "lo que ella cambie en la fila manda; si no, el archivo; si el archivo no dice, el 'para todas'");
+  ok(/r\.comArch=_impComDeForma\(r\.forma\)/.test(sc("_impLeerFila")),
+     "cada fila lee su forma de pago");
+  ok(/return r\.pideCom && r\.comArch===null;/.test(sc("rImportarRemesas")),
+     "el 'para todas' solo sale si alguna fila no trae forma de pago");
+  ok(/_formaPago:r\.forma/.test(sc("_impTxDeFila")) && /nuevaRemesa\.formaPago=String\(f\._formaPago\)/.test(sc("saveTx")),
+     "la forma de pago queda guardada en la remesa");
   ok(/r\.codIn=String\(o\.banco_recibido_codigo/.test(sc("_impLeerFila")) && /r\.codOut=String\(o\.banco_pago_codigo/.test(sc("_impLeerFila")),
      "el archivo trae banco_recibido_codigo y banco_pago_codigo");
   ok(/_impCuentaDeBanco\(r\.bancoIn, r\.orig, r\.codIn\)/.test(rec) && /_impCuentaDeBanco\(r\.bancoOut, r\.dest, r\.codOut\)/.test(rec),
