@@ -13960,7 +13960,7 @@ console.log("\nARREGLO 203 · fuera la calculadora inversa del formulario de abo
      "y ya no empuja un traspaso escrito a mano que se salta el lote");
   ok(/_moverLotesTraspaso\(_tr, cO, cD, monto\)/.test(sc("saveTraspaso")),
      "el traspaso normal usa la MISMA puerta");
-  // ARREGLO 232: y una tercera, ↩️ Pasar a la empresa.
+  // ARREGLO 235: y una tercera, ↩️ Pasar a la empresa.
   ok((HTML.match(/_moverLotesTraspaso\(/g) || []).length === 4,
      "una definición y tres llamadas, ni una copia más", (HTML.match(/_moverLotesTraspaso\(/g) || []).length);
   const mv = sc("_moverLotesTraspaso");
@@ -14001,9 +14001,9 @@ console.log("\nARREGLO 203 · fuera la calculadora inversa del formulario de abo
      "y su fila no ofrece 🗑️");
 }
 
-// ── ARREGLO 232 · lo que se mueve entre sus cuentas 💜 y la empresa ──────────
+// ── ARREGLO 235 · lo que se mueve entre sus cuentas 💜 y la empresa ──────────
 {
-  console.log("\nARREGLO 232 · la deuda cuenta remesas y ventas, no sólo traspasos");
+  console.log("\nARREGLO 235 · la deuda cuenta remesas y ventas, no sólo traspasos");
   const sc = (n) => sinComentarios(sacarFuncion(n));
   const mv = sc("_movsPersonalEmpresa");
   ok(/_movPersonalDeRemesa\(x\)/.test(mv) && /ap\(c, "remesas", -d\)/.test(mv) && /ap\(c, "cobros", d\)/.test(mv),

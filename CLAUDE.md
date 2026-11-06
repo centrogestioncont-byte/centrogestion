@@ -6608,7 +6608,7 @@ lote como el banco, lo que sobra es saldo: o lo encuentra en el extracto (egreso
 
 ---
 
-## La empresa te debe — o tú le debes a ella (ARREGLO 232)
+## La empresa te debe — o tú le debes a ella (ARREGLO 235)
 
 Sus palabras del 06/11: *"en muchos casos las cuentas empresa no tienen
 bolívares y una cuenta personal puede rescatar ese pago… que el sistema cuente
@@ -6651,7 +6651,7 @@ El monto sugerido sale de `f2()` con miles (`17.559,59`) y se leía con
 `replace(",",".")` + `parseFloat`: **17,559**. Por eso el 04/11 salieron dos
 traspasos de 67,63 y 11,00 antes de los buenos. Ahora `_leerNumero()`.
 
-Medido en Chromium con su export, v312 contra v313: 20 pestañas idénticas y
+Medido en Chromium con su export, v312 contra la nueva (v316): 20 pestañas idénticas y
 Balance de Cuentas con el panel nuevo, 0 errores. Devolverme sugiere 17.051,00
 y deja Banesco a cero; Pasar a la empresa sugiere 10.204,45 y deja BdV
 JHOSELIN a cero; el "te sobran" sigue en 59,11. 10 pruebas negativas, 10 cazadas.
