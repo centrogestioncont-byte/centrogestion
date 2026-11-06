@@ -6605,3 +6605,53 @@ deja los dos lotes exactos y la copia no revive. 11 pruebas negativas, 11 cazada
 **Lo que esto NO repara:** los 1.332,15 de BANCO VENEZUELA JULIO. Si el ✏️ dejó el
 lote como el banco, lo que sobra es saldo: o lo encuentra en el extracto (egreso
 + volver a subir el lote con ✏️) o lo ajusta con "No sé por qué".
+
+---
+
+## La empresa te debe — o tú le debes a ella (ARREGLO 232)
+
+Sus palabras del 06/11: *"en muchos casos las cuentas empresa no tienen
+bolívares y una cuenta personal puede rescatar ese pago… que el sistema cuente
+cuánto se tiene que devolver"*. Y la regla, dicha por ella: **"cuando yo no
+marco que es plata mía, es de la empresa; el mismo devolverme debe saber qué
+ya me pagó y qué no"**.
+
+El panel del 208 sólo miraba **traspasos**. Medido con su export, desde el 01/11:
+
+```
+                         traspasos   remesas pagadas   le devolvió   ventas USDT   el panel decía   la cuenta es
+BdV JHOSELIN            +107.799,18    +168.555,96     −86.559,59    −200.000,00   te deben 17.559  tienes 10.204,45 de la empresa
+Banesco JHOSELIN         +11.000,89     +17.051,00     −11.000,89            —          —           te debe 17.051,00
+```
+
+- **Un solo cálculo, `_movsPersonalEmpresa()`**, por cuenta 💜 en bolívares y
+  con sus piezas. Lo leen el panel, 💸 Devolverme ahora y ↩️ Pasar a la
+  empresa. La cifra es la suma de las piezas que se enseñan (ARREGLO 141).
+- **"Plata mía" es la que viene de una cuenta 💜.** Una venta de USDT desde un
+  Binance 💜 no cuenta: `_cruceUsdtPersonal` devuelve null cuando las dos
+  puntas son suyas.
+- **Desde `_DEUDA_DESDE` (01/11), decisión suya.** Con todo el historial salían
+  140.795 en BdV JHOSELIN por remesas de septiembre ya arregladas a mano.
+- **Las dos direcciones**: *"te deben"* en verde y *"tienes de la empresa"* en
+  ámbar, cada una con su botón, y los dos pasan por `_moverLotesTraspaso`
+  (ARREGLO 231): bajan saldo y lote, y el lote viaja con su tasa.
+
+### La conciliación: lo que estaba en "tasas" pasa a "tus cuentas 💜"
+
+Una remesa pagada desde una 💜 caía entera en `efectoTasasDesde` — *"tus
+bolívares valen menos"* — porque su `enUsdt` deja lo personal fuera. Ahora esa
+parte entra en `traspasosAPersonal` (`_movPersonalDeRemesa`, un sitio), con el
+**mismo corte** (`iso > desdeIso`). Medido: tasas 120,88 → −7,68 y "pasaste a
+tus 💜" 581,65 → 453,09, los dos −128,56. **El "te sobran" no se mueve
+(59,11)**, ni el capital ni la utilidad: cambia el rótulo, no el número.
+
+### Y un fallo de Devolverme, que explica el 04/11
+
+El monto sugerido sale de `f2()` con miles (`17.559,59`) y se leía con
+`replace(",",".")` + `parseFloat`: **17,559**. Por eso el 04/11 salieron dos
+traspasos de 67,63 y 11,00 antes de los buenos. Ahora `_leerNumero()`.
+
+Medido en Chromium con su export, v312 contra v313: 20 pestañas idénticas y
+Balance de Cuentas con el panel nuevo, 0 errores. Devolverme sugiere 17.051,00
+y deja Banesco a cero; Pasar a la empresa sugiere 10.204,45 y deja BdV
+JHOSELIN a cero; el "te sobran" sigue en 59,11. 10 pruebas negativas, 10 cazadas.

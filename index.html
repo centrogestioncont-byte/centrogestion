@@ -3305,7 +3305,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261105_v312";
+var APP_VERSION = "20261106_v313";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -6510,30 +6510,108 @@ function _cruceUsdtPersonal(l){
 // uso que ella pidió — por eso se filtran. Si algún día tiene deuda en
 // USDT también, se extiende añadiendo las monedas a `_MONEDAS_DEUDA`.
 var _MONEDAS_DEUDA = ["VES"];
-function _deudaPersonalPorCuenta(){
+// ── ARREGLO 232 · lo que se mueve entre sus cuentas 💜 y la empresa ──────────
+//
+// Sus palabras del 06/11: "en muchos casos las cuentas empresa no tienen
+// bolívares y en el momento una cuenta personal tiene dinero puede rescatar
+// ese pago… al una remesa salir de la cuenta personal el sistema cuente cuánto
+// se tiene que devolver". Y la regla, dicha por ella: "cuando yo no marco que
+// es plata mía, es de la empresa; el mismo devolverme debe saber qué ya me
+// pagó y qué no".
+//
+// El 208 sólo miraba TRASPASOS. Pero desde el 01/11 pagó 168.555,96 Bs de
+// remesas desde BdV JHOSELIN y 17.051 desde Banesco JHOSELIN, y en BdV
+// JHOSELIN cayeron 200.000 Bs de ventas de USDT de la empresa. Nada de eso
+// contaba, así que el panel decía "te deben 17.559,59" cuando la cuenta de
+// verdad era la contraria: BdV JHOSELIN guardaba 10.204,45 de la empresa.
+//
+// Cuenta, por cada cuenta 💜 en bolívares, desde _DEUDA_DESDE:
+//   + traspaso 💜 → empresa ............ te prestaste
+//   + remesa pagada desde la 💜 ........ la entrega y su comisión (el _mov)
+//   + compra de USDT de la empresa pagada con Bs de la 💜
+//   − traspaso empresa → 💜 ............ la empresa te devolvió
+//   − venta de USDT de la empresa que cae en la 💜 ... es plata de la empresa
+//   − remesa cuyo cliente pagó en la 💜 ............... también
+// Positivo: la empresa te debe. Negativo: tienes plata de la empresa.
+//
+// - Lo leen el panel, 💸 Devolverme ahora y su espejo ↩️ Pasar a la empresa.
+//   Escrito en cada uno, un día el panel diría una cifra y el botón otra.
+// - "Plata mía" = la que viene de una cuenta 💜: una venta de USDT desde un
+//   Binance 💜 no cuenta, porque ese USDT ya era suyo (_cruceUsdtPersonal
+//   devuelve null cuando las dos puntas son 💜).
+// - Sólo bolívares (_MONEDAS_DEUDA), igual que el 208: es el caso que pidió.
+// - DESDE el 01/11, decisión suya. Contando todo el historial salían 140.795
+//   en BdV JHOSELIN por remesas de septiembre que ya arregló por su cuenta.
+var _DEUDA_DESDE = "2026-11-01";
+// Lo que vale en USDT un monto de una cuenta, sea suya o de la empresa. Es el
+// mismo criterio que el enUsdt de traspasosAPersonal: las dos mitades de la
+// conciliación tienen que convertir igual o no se cancelan.
+function _enUsdtCualquiera(id, monto){
+  var c=(S.cuentas||[]).find(function(x){return x.id===id;});
+  if(!c) return 0;
+  if(c.moneda==="USDT"||c.moneda==="USD") return monto;
+  var t=getRateToUsdt(c.moneda);
+  return (!t||isNaN(t)||t<=0)?0:monto/t;
+}
+// Los movimientos de una remesa sobre cuentas 💜, en UN sitio: los leen la
+// deuda y la conciliación (traspasosAPersonal / efectoTasasDesde).
+function _movPersonalDeRemesa(x){
+  return (x && x._mov || []).filter(function(m){
+    var c=(S.cuentas||[]).find(function(k){return k.id===m.cuentaId;});
+    return !!(c && c.esPersonal);
+  });
+}
+function _movsPersonalEmpresa(){
   var r = {};
   function cuenta(id){ return (S.cuentas||[]).find(function(c){return c.id===id;}); }
-  (S.traspasos||[]).forEach(function(t){
-    var cO = cuenta(t.origen), cD = cuenta(t.destino);
-    if(!cO || !cD) return;
-    // Préstamo: cuenta personal → cuenta empresa (misma moneda)
-    if(cO.esPersonal && !cD.esPersonal && cO.moneda===cD.moneda &&
-       _MONEDAS_DEUDA.indexOf(cO.moneda)>=0){
-      if(!r[cO.id]) r[cO.id] = {nombre:cO.nombre, moneda:cO.moneda, monto:0};
-      r[cO.id].monto += parseFloat(t.monto)||0;
-    }
-    // Devolución: cuenta empresa → cuenta personal
-    else if(!cO.esPersonal && cD.esPersonal && cO.moneda===cD.moneda &&
-            _MONEDAS_DEUDA.indexOf(cD.moneda)>=0){
-      if(!r[cD.id]) r[cD.id] = {nombre:cD.nombre, moneda:cD.moneda, monto:0};
-      r[cD.id].monto -= parseFloat(t.montoDestino||t.monto)||0;
-    }
-  });
-  // Filtrar deudas en cero o negativas (ya saldadas)
-  var out = {};
-  for(var id in r){
-    if(r[id].monto > 0.01) out[id] = r[id];
+  function esDeuda(c){ return !!(c && c.esPersonal && _MONEDAS_DEUDA.indexOf(c.moneda)>=0); }
+  function ap(c, clave, monto){
+    if(!r[c.id]) r[c.id] = {nombre:c.nombre, moneda:c.moneda, monto:0,
+      prestado:0, remesas:0, compras:0, devuelto:0, ventas:0, cobros:0};
+    r[c.id][clave] += monto;
   }
+  (S.traspasos||[]).forEach(function(t){
+    if(String(t.fecha||"").slice(0,10) < _DEUDA_DESDE) return;
+    var cO = cuenta(t.origen), cD = cuenta(t.destino);
+    if(!cO || !cD || cO.moneda!==cD.moneda) return;
+    if(esDeuda(cO) && !cD.esPersonal) ap(cO, "prestado", parseFloat(t.monto)||0);
+    else if(esDeuda(cD) && !cO.esPersonal) ap(cD, "devuelto", parseFloat(t.montoDestino||t.monto)||0);
+  });
+  ["brl","vzla","eeuu"].forEach(function(k){
+    (S[k]||[]).forEach(function(x){
+      if((_isoDeDDMMAA(x.d)||"") < _DEUDA_DESDE) return;
+      _movPersonalDeRemesa(x).forEach(function(m){
+        var c = cuenta(m.cuentaId), d = parseFloat(m.delta)||0;
+        if(!esDeuda(c) || !d) return;
+        if(d<0) ap(c, "remesas", -d); else ap(c, "cobros", d);
+      });
+    });
+  });
+  (S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[]).forEach(function(l){
+    if(!l || l.plataforma==="Remesa" || l.origenRemesa || l._aperturaBRL || _loteDeTraspaso(l)) return;
+    if(_isoDeLote(l) < _DEUDA_DESDE) return;
+    if(!_cruceUsdtPersonal(l)) return;                // las dos puntas suyas, o ninguna
+    if(l.tipo==="venta"){ var cD=cuenta(l.cuentaDestinoId); if(esDeuda(cD)) ap(cD, "ventas", parseFloat(l.bs)||0); }
+    else { var cO=cuenta(l.cuentaOrigenId); if(esDeuda(cO)) ap(cO, "compras", parseFloat(l.montOrigen)||0); }
+  });
+  for(var id in r){
+    var x=r[id];
+    x.monto = Math.round((x.prestado + x.remesas + x.compras - x.devuelto - x.ventas - x.cobros)*100)/100;
+  }
+  return r;
+}
+// La empresa te debe (positivos). Mantiene la forma del 208: la leen
+// _deudaPersonalTotal y _devolvermeAhora.
+function _deudaPersonalPorCuenta(){
+  var r = _movsPersonalEmpresa(), out = {};
+  for(var id in r) if(r[id].monto > 0.01) out[id] = r[id];
+  return out;
+}
+// Y al revés: plata de la empresa que está en una cuenta 💜 (negativos, en
+// positivo). La lee ↩️ Pasar a la empresa.
+function _empresaEnPersonalPorCuenta(){
+  var r = _movsPersonalEmpresa(), out = {};
+  for(var id in r) if(r[id].monto < -0.01){ out[id] = Object.assign({}, r[id], {monto: -r[id].monto}); }
   return out;
 }
 // Suma total de la deuda viva, agrupada por moneda. Lo lee el titular del
@@ -6607,10 +6685,15 @@ function _devolvermeAhora(){
     "Deuda pendiente: "+f2(deudaDestino)+" "+mon+"\n"+
     "Disponible en "+ctaEmp.nombre+": "+f2(saldoDisp)+" "+mon+"\n\n"+
     "¿Cuánto querés devolverte? ("+mon+")",
-    f2(sugerido).replace(",",".")
+    f2(sugerido)
   );
   if(txt===null) return;
-  var monto = parseFloat((txt||"").toString().replace(",","."))||0;
+  // ARREGLO 232: aquí se leía con replace(",",".") + parseFloat, y el monto
+  // sugerido sale de f2() CON separador de miles: "17.559,59" pasaba a
+  // "17.559.59" y parseFloat se quedaba con 17,559. El 04/11 salieron así dos
+  // traspasos de 67,63 y 11,00 en vez de 67.627 y 11.000. _leerNumero entiende
+  // los dos separadores, y es el lector de toda la app (ARREGLO 159).
+  var monto = _leerNumero(txt)||0;
   if(!(monto>0)){ alert("Monto no válido."); return; }
   if(monto > saldoDisp+0.01){
     alert("No hay suficiente en "+ctaEmp.nombre+". Hay "+f2(saldoDisp)+" "+mon+".");
@@ -6677,6 +6760,65 @@ function _devolvermeAhora(){
   alert("✅ Hecho. Te devolviste "+f2(monto)+" "+mon+".");
   R();
 }
+// ARREGLO 232 · el espejo de 💸 Devolverme ahora: plata de la empresa que
+// quedó en una cuenta 💜 (una venta de USDT que cayó ahí, o lo que se devolvió
+// de más) vuelve a una cuenta de la empresa. Pasa por la MISMA puerta que el
+// traspaso normal (_moverLotesTraspaso, ARREGLO 231): baja la cuenta 💜, baja
+// su lote, sube la cuenta de la empresa y el lote viaja con su tasa.
+function _pasarAEmpresa(){
+  var tiene = _empresaEnPersonalPorCuenta();
+  var ids = Object.keys(tiene);
+  if(!ids.length){ alert("✅ No tienes plata de la empresa en tus cuentas personales."); return; }
+  var origenId = ids[0];
+  if(ids.length>1){
+    var el = prompt("↩️ ¿Desde qué cuenta tuya?\n\n"+ids.map(function(id,i){
+      return (i+1)+") "+tiene[id].nombre+" · tiene "+f2(tiene[id].monto)+" "+tiene[id].moneda+" de la empresa";
+    }).join("\n")+"\n\nEscribe el número.","1");
+    if(el===null) return;
+    var n=parseInt(String(el).trim(),10);
+    if(!(n>=1&&n<=ids.length)){ alert("Opción no válida."); return; }
+    origenId = ids[n-1];
+  }
+  var t = tiene[origenId];
+  var cO = (S.cuentas||[]).find(function(c){return c.id===origenId;});
+  if(!cO){ alert("No encuentro esa cuenta."); return; }
+  var dests = (S.cuentas||[]).filter(function(c){
+    return c.activa!==false && !c.esPersonal && !c.esReserva && c.moneda===cO.moneda;
+  });
+  if(!dests.length){ alert("No tienes cuentas de la empresa en "+cO.moneda+"."); return; }
+  var cD = dests[0];
+  if(dests.length>1){
+    var e2 = prompt("↩️ ¿A qué cuenta de la empresa?\n\n"+dests.map(function(c,i){
+      return (i+1)+") "+c.nombre+" · "+f2(parseFloat(c.saldo)||0)+" "+c.moneda;
+    }).join("\n")+"\n\nEscribe el número.","1");
+    if(e2===null) return;
+    var n2=parseInt(String(e2).trim(),10);
+    if(!(n2>=1&&n2<=dests.length)){ alert("Opción no válida."); return; }
+    cD = dests[n2-1];
+  }
+  var disp = parseFloat(cO.saldo)||0;
+  var txt = prompt("↩️ Pasar a la empresa\n\n"+cO.nombre+" tiene "+f2(t.monto)+" "+cO.moneda+" de la empresa.\n"+
+    "Saldo de "+cO.nombre+": "+f2(disp)+" "+cO.moneda+"\nDestino: "+cD.nombre+"\n\n¿Cuánto pasas? ("+cO.moneda+")",
+    f2(Math.min(t.monto, Math.max(disp,0))));
+  if(txt===null) return;
+  var monto = _leerNumero(txt);
+  if(!(monto>0)){ alert("Monto no válido."); return; }
+  if(monto > disp+0.01){ alert("No hay suficiente en "+cO.nombre+". Hay "+f2(disp)+" "+cO.moneda+"."); return; }
+  if(!confirm(cO.nombre+" → "+cD.nombre+" · "+f2(monto)+" "+cO.moneda+"\n\n¿Confirmar?")) return;
+  if(!S.traspasos) S.traspasos=[];
+  var now=Date.now();
+  var _tr={id:now, fecha:td(), origen:cO.id, destino:cD.id, moneda:cO.moneda, monto:monto,
+    monedaDestino:cD.moneda, montoDestino:monto, nota:"Devolución a la empresa (ARREGLO 232)",
+    locked:false, _mod:now, _por:S.role||"jhoselin", _porUlt:S.role||"jhoselin"};
+  _moverLotesTraspaso(_tr, cO, cD, monto);
+  S.traspasos.push(_tr);
+  cO.saldo=Math.round((disp-monto)*100)/100;
+  cD.saldo=Math.round(((parseFloat(cD.saldo)||0)+monto)*100)/100;
+  logAudit("TRASPASO", f2(monto)+" "+cO.moneda+" · "+(cO.nombre||"")+" → "+(cD.nombre||"")+" (devolución a la empresa)");
+  saveData();
+  alert("✅ Hecho. Pasaste "+f2(monto)+" "+cO.moneda+" a "+cD.nombre+".");
+  R();
+}
 // Pliega/despliega el panel; vive en localStorage para que cada aparato
 // elija si lo quiere abierto o cerrado (misma regla del tema, ARREGLO 166).
 function _toggleDeudaPanel(){
@@ -6687,30 +6829,50 @@ function _toggleDeudaPanel(){
   R();
 }
 function _htmlPanelDeuda(){
-  var por_mon = _deudaPersonalTotal();
-  var monedas = Object.keys(por_mon);
-  if(!monedas.length) return "";  // nada que mostrar
+  // ARREGLO 232: el panel dice las DOS direcciones, porque las dos pasan: si la
+  // empresa te debe, o si tienes plata de la empresa en una cuenta tuya.
+  var movs = _movsPersonalEmpresa();
+  var debe = {}, tiene = {};
+  Object.keys(movs).forEach(function(id){
+    var x=movs[id];
+    if(x.monto>0.01) debe[x.moneda]=(debe[x.moneda]||0)+x.monto;
+    else if(x.monto<-0.01) tiene[x.moneda]=(tiene[x.moneda]||0)-x.monto;
+  });
+  var hayD=Object.keys(debe).length, hayT=Object.keys(tiene).length;
+  if(!hayD && !hayT) return "";  // nada que mostrar
   var abierto = false;
   try{ abierto = localStorage.getItem("_deudaPanelAbierto")==="1"; }catch(e){}
-  // Titular compacto en una línea
-  var titular = monedas.map(function(m){ return f2(por_mon[m])+" "+m; }).join(" · ");
-  var html = "<div style='background:var(--vd6-c);border:1px solid var(--vd5);border-left:3px solid var(--ok);border-radius:9px;padding:10px 13px;margin-bottom:10px'>"+
+  function tit(o){ return Object.keys(o).map(function(m){ return f2(o[m])+" "+m; }).join(" · "); }
+  var cab = [];
+  if(hayD) cab.push("💰 Te deben <b style='color:var(--ok)'>"+tit(debe)+"</b>");
+  if(hayT) cab.push("🏢 Tienes de la empresa <b style='color:var(--avi)'>"+tit(tiene)+"</b>");
+  var html = "<div style='background:var(--vd6-c);border:1px solid var(--vd5);border-left:3px solid "+(hayD?"var(--ok)":"var(--avi)")+";border-radius:9px;padding:10px 13px;margin-bottom:10px'>"+
     "<div onclick='_toggleDeudaPanel()' style='display:flex;justify-content:space-between;align-items:center;cursor:pointer;gap:10px'>"+
-      "<div style='font-size:13px;color:var(--ink);font-weight:700'>💰 Te deben <b style='color:var(--ok)'>"+titular+"</b></div>"+
-      "<div style='font-size:11px;color:var(--tx3);font-weight:600'>"+(abierto?"cerrar ▴":"ver cómo cobrarte ▾")+"</div>"+
+      "<div style='font-size:13px;color:var(--ink);font-weight:700;line-height:1.5'>"+cab.join("<br>")+"</div>"+
+      "<div style='font-size:11px;color:var(--tx3);font-weight:600;white-space:nowrap'>"+(abierto?"cerrar ▴":"ver ▾")+"</div>"+
     "</div>";
   if(abierto){
-    var deudas = _deudaPersonalPorCuenta();
+    // Cada cuenta con sus piezas, para que se pueda sumar a mano: la cifra sale
+    // de las mismas piezas que suma _movsPersonalEmpresa (ARREGLO 141).
+    var PIEZAS=[["prestado","Te prestaste a la empresa",1],["remesas","Remesas pagadas desde aquí",1],
+      ["compras","Compras de USDT pagadas desde aquí",1],["devuelto","La empresa te devolvió",-1],
+      ["ventas","Ventas de USDT de la empresa aquí",-1],["cobros","Remesas que te pagaron aquí",-1]];
     html += "<div style='margin-top:10px;padding-top:10px;border-top:1px dashed var(--vd5)'>"+
-      Object.keys(deudas).map(function(id){
-        var d = deudas[id];
-        return "<div style='display:flex;justify-content:space-between;font-size:12.5px;padding:4px 0'>"+
-          "<span style='color:var(--tx2)'>"+_escAud(d.nombre)+"</span>"+
-          "<b style='color:var(--ink)'>"+f2(d.monto)+" "+d.moneda+"</b>"+
+      Object.keys(movs).filter(function(id){ return Math.abs(movs[id].monto)>0.01; }).map(function(id){
+        var x=movs[id];
+        var fin = x.monto>0 ? "<b style='color:var(--ok)'>te debe "+f2(x.monto)+"</b>"
+                            : "<b style='color:var(--avi)'>tienes "+f2(-x.monto)+" de la empresa</b>";
+        return "<div style='padding:4px 0 8px'>"+
+          "<div style='display:flex;justify-content:space-between;font-size:12.5px;gap:8px'><span style='color:var(--tx2);font-weight:700'>"+_escAud(x.nombre)+"</span>"+fin+"</div>"+
+          PIEZAS.filter(function(p){ return Math.abs(x[p[0]])>0.01; }).map(function(p){
+            return "<div style='display:flex;justify-content:space-between;font-size:11.5px;color:var(--tx3);padding-left:8px'>"+
+              "<span>"+p[1]+"</span><span style='white-space:nowrap'>"+(p[2]>0?"+":"−")+f2(x[p[0]])+" "+x.moneda+"</span></div>";
+          }).join("")+
         "</div>";
       }).join("")+
-      "<div style='font-size:11px;color:var(--tx3);margin-top:8px;line-height:1.4'>Cuando vendas USDT y los Bs entren a BdV empresa, pulsá el botón: te pide cuánto y arma los traspasos.</div>"+
-      "<button onclick='_devolvermeAhora()' style='width:100%;margin-top:8px;padding:10px;background:var(--ok);color:var(--sobre-color);border:none;border-radius:8px;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit'>💸 Devolverme ahora</button>"+
+      "<div style='font-size:11px;color:var(--tx3);margin-top:4px;line-height:1.4'>Cuenta desde el "+_DEUDA_DESDE.split("-").reverse().join("/")+". Lo que no marques como tuyo es de la empresa.</div>"+
+      (hayD?"<button onclick='_devolvermeAhora()' style='width:100%;margin-top:8px;padding:10px;background:var(--ok);color:var(--sobre-color);border:none;border-radius:8px;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit'>💸 Devolverme ahora</button>":"")+
+      (hayT?"<button onclick='_pasarAEmpresa()' style='width:100%;margin-top:8px;padding:10px;background:var(--avi);color:var(--sobre-color);border:none;border-radius:8px;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit'>↩️ Pasar a la empresa</button>":"")+
     "</div>";
   }
   html += "</div>";
@@ -6749,6 +6911,25 @@ function traspasosAPersonal(desdeIso){
     var u=enUsdt(x.cuentaId, x.monto);
     if(!x.sale) u=-u;
     if(iso>desdeIso){ r.total+=u; r.n++; } else { r.mismoDia+=u; r.nMismoDia++; }
+  });
+  // ARREGLO 232: una remesa pagada desde una cuenta 💜 es dinero que ENTRÓ a
+  // la empresa desde lo personal (la empresa lo debe), y una remesa cuyo
+  // cliente pagó en una 💜 es dinero que SALIÓ a lo personal. Hasta aquí no se
+  // contaba en ningún lado de esta fila y caía entero en efectoTasasDesde —
+  // "tus bolívares valen menos" — con el rótulo de otro (el fallo del 146).
+  // El MISMO corte que efectoTasasDesde (iso > desdeIso, el día de la apertura
+  // fuera): lo que sale de allí entra aquí, ni un céntimo más, y el "te sobran"
+  // no se mueve.
+  ["brl","vzla","eeuu"].forEach(function(k){
+    (S[k]||[]).forEach(function(x){
+      var iso=_isoDeDDMMAA(x.d);
+      if(!iso || iso<=desdeIso) return;
+      _movPersonalDeRemesa(x).forEach(function(m){
+        var u=enUsdt(m.cuentaId, parseFloat(m.delta)||0);   // <0: entró · >0: se fue
+        if(!u) return;
+        r.total+=u; r.n++;
+      });
+    });
   });
   r.total=Math.round(r.total*100)/100;
   r.mismoDia=Math.round(r.mismoDia*100)/100;
@@ -6838,6 +7019,12 @@ function efectoTasasDesde(desdeIso){
       if(!iso || iso<=desdeIso) return;
       var mueve=0;
       (x._mov||[]).forEach(function(m){ mueve+=enUsdt(m.cuentaId, parseFloat(m.delta)||0); });
+      // ARREGLO 232: lo que se movió en una cuenta 💜 también lo movió la
+      // remesa. enUsdt() deja fuera lo personal a propósito (ese dinero no es
+      // capital), pero aquí eso convertía la entrega entera en "efecto de las
+      // tasas". Ahora entra en la cuenta y su otra mitad va a
+      // traspasosAPersonal, con el mismo corte: el "te sobran" no se mueve.
+      _movPersonalDeRemesa(x).forEach(function(m){ mueve+=_enUsdtCualquiera(m.cuentaId, parseFloat(m.delta)||0); });
       // Si el cliente quedó a deber, ese dinero sigue siendo suyo: está en "por
       // cobrar" hoy, o ya entró a la cuenta el día que lo marcó cobrado. En los
       // dos casos cuenta igual, por eso no se mira el estado.
