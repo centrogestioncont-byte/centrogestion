@@ -3305,7 +3305,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261106_v313";
+var APP_VERSION = "20261106_v314";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -10837,6 +10837,8 @@ function saveTx(){
     nuevaRemesa.idExterno=String(f._idExterno);
     nuevaRemesa.procesadoPor=String(f._procesadoPor||"");
     nuevaRemesa.importadoDe=String(f._importadoDe||"");
+    // ARREGLO 233: cómo se liquidó, tal como lo dijo la otra app.
+    if(f._formaPago) nuevaRemesa.formaPago=String(f._formaPago);
   }
   arr.push(nuevaRemesa);
   arr.sort(function(a,b){var da=a.d.split("/"),db=b.d.split("/");return (parseInt(da[1])*100+parseInt(da[0]))-(parseInt(db[1])*100+parseInt(db[0]))||a.n-b.n;});
@@ -33526,6 +33528,23 @@ function _impNum(v){
 }
 // Cuánto puede separarse lo liquidado de lo calculado. En bolívares un bolívar
 // es redondeo; en reales un real no lo es, así que ahí el margen es de céntimos.
+// ARREGLO 233: la forma de pago de la liquidación viene en el archivo, y con
+// ella la comisión del banco venezolano. Sus palabras: "yo no tengo por qué
+// elegir con qué fue pagada, estamos procesando por lote".
+// El archivo dice CÓMO (transferencia o pago móvil) pero no a QUÉ banco, y eso
+// es lo que separa "sin comisión" de "con comisión". Sin ese dato se toma OTRO
+// banco: es el que sí cobra, y ante la duda la app no puede apuntar una
+// ganancia mayor que la de verdad. Si RisApp escribe "mismo banco", se lee.
+// Lo que no se reconoce devuelve null y se pregunta: inventar una comisión es
+// peor que pedirla.
+function _impComDeForma(forma){
+  var t=String(forma==null?"":forma).toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+  if(!t.trim()) return null;
+  var mov=/MOVIL/.test(t), tra=/TRANSF/.test(t);
+  if(mov===tra) return null;   // ninguna de las dos, o las dos: no se adivina
+  if(/MISMO BANCO|MISMA ENTIDAD|MISMO\b/.test(t)) return "";
+  return mov ? "movil" : "transf";
+}
 function _impTolerancia(dest){ return dest==="BRL" ? 0.05 : 1; }
 
 // ── Bancos del archivo → cuentas de la app ──
@@ -33609,6 +33628,7 @@ function _impLeerFila(o, i){
     e.push("la ruta dice "+_escAud(rutaArch)+" y las monedas dicen "+_escAud(r.orig)+"-"+_escAud(r.dest));
   }
   r.forma=String(o.forma_de_pago==null?"":o.forma_de_pago).trim();
+  r.comArch=_impComDeForma(r.forma);
   if(!r.rt){
     if(r.orig==="USD") e.push("EE.UU. → Venezuela no se importa: va por otro camino, regístrala a mano");
     else e.push("ruta "+_escAud(r.orig||"?")+" → "+_escAud(r.dest||"?")+" no válida (solo BRL→VES y VES→BRL)");
@@ -33686,10 +33706,12 @@ function _impRecalcular(){
       r.cuentaIn=ci.id; r.cuentaOut=co.id;
       if(ci.motivo) r.errores.push(_escAud(ci.motivo));
       if(co.motivo) r.errores.push(_escAud(co.motivo));
-      // La comisión del banco venezolano depende de la cuenta del CLIENTE, que la
-      // otra app no manda: se pregunta (CLAUDE.md, "lo que cobra el banco").
+      // La comisión del banco venezolano depende de cómo se le pagó al
+      // beneficiario. ARREGLO 233: la trae el archivo (forma_de_pago), y solo
+      // se pregunta si no la trae o no se reconoce. Lo que ella cambie en la
+      // fila manda sobre el archivo.
       r.pideCom=!!(r.dest==="VES" && r.cuentaOut && esBancoVES(r.cuentaOut));
-      r.com=r.pideCom ? (imp.com[r.i]!==undefined ? imp.com[r.i] : imp.comTodas) : "";
+      r.com=r.pideCom ? (imp.com[r.i]!==undefined ? imp.com[r.i] : (r.comArch!==null ? r.comArch : imp.comTodas)) : "";
     }
     r.importable=!r.errores.length && !!r.cuentaIn && !!r.cuentaOut && (!r.pideCom || (r.com!==null && r.com!==undefined));
     r.limpia=r.importable && !r.ya && !r.parecida && !r.cerrado && !r.futura && !r.tasaRara;
@@ -33876,7 +33898,7 @@ function _impTxDeFila(r, imp){
     showTasas:false, cuentaBanco:r.cuentaIn, cuentaDest:r.cuentaOut,
     pagosMulti:false, entregasMulti:false, pagos:[], entregas:[],
     metodo:"p2p", permuta:"",
-    _idExterno:r.idExt, _procesadoPor:r.por, _importadoDe:imp.archivo,
+    _idExterno:r.idExt, _procesadoPor:r.por, _importadoDe:imp.archivo, _formaPago:r.forma,
     _tcLock:null, _tvLock:null, _amLock:null, _tdiaLock:null, _rtLock:null};
 }
 
@@ -34016,7 +34038,8 @@ function rImportarRemesas(){
   var faltanB=(imp.bancos||[]).filter(function(b){ return !b.res.id; }).length;
 
   // ── Comisión de los bolívares, a todas de una ──
-  var pideCom=(imp.filas||[]).some(function(r){ return r.pideCom; });
+  // ARREGLO 233: solo pregunta por las que el archivo no resuelve.
+  var pideCom=(imp.filas||[]).some(function(r){ return r.pideCom && r.comArch===null; });
   var optCom=function(sel, conVacio){
     return (conVacio?"<option value='__'"+(sel===null||sel===undefined?" selected":"")+">— elige —</option>":"")+
       "<option value=''"+(sel===""?" selected":"")+">Mismo banco — sin comisión</option>"+
@@ -34026,7 +34049,7 @@ function rImportarRemesas(){
   var bloqueCom=pideCom
     ? "<div style='"+card+"'>"+
         "<div style='font-size:13px;font-weight:800;color:var(--tit)'>🏦 ¿Cómo se pagaron los bolívares?</div>"+
-        "<div style='font-size:11.5px;color:var(--tx3);margin:3px 0 7px;line-height:1.5'>La otra app no lo sabe y la comisión del banco depende de esto. Elige para todas y cambia abajo la que sea distinta.</div>"+
+        "<div style='font-size:11.5px;color:var(--tx3);margin:3px 0 7px;line-height:1.5'>Algunas no traen la forma de pago en el archivo, y la comisión del banco depende de esto. Elige para esas y cambia abajo la que sea distinta.</div>"+
         "<select onchange='_impComTodas(this.value)' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;background:var(--sup);font-size:13px'>"+optCom(imp.comTodas,true)+"</select>"+
       "</div>"
     : "";
@@ -34050,7 +34073,8 @@ function rImportarRemesas(){
         "<div><b style='color:var(--tit)'>"+_escAud(r.cliNom||"(sin nombre)")+"</b> <span style='color:var(--tx3)'>· "+(r.iso?ds(r.iso):"?")+" "+(r.hora?r.hora.slice(0,5):"")+" · "+_escAud(r.idExt||"sin id")+"</span></div>"+
         "<div>"+flag+" "+(r.am>0?f2(r.am):"?")+" "+_escAud(r.orig)+op+(r.tasa>0?f2(r.tasa):"?")+" = <b>"+(r.cant>0?f2(r.cant):(r.cantArch>0?f2(r.cantArch):"?"))+"</b> "+_escAud(r.dest)+"</div>"+
         "<div style='color:var(--tx3)'>"+(nomIn?_escAud(nomIn):"<i>"+_escAud(r.bancoIn||"?")+"</i>")+" → "+(nomOut?_escAud(nomOut):"<i>"+_escAud(r.bancoOut||"?")+"</i>")+(r.por?" · "+_escAud(r.por):"")+"</div>"+
-        (r.forma?"<div style='color:var(--tx3)'>Forma de pago: "+_escAud(r.forma)+"</div>":"")+
+        (r.forma?"<div style='color:var(--tx3)'>Forma de pago: "+_escAud(r.forma)+
+          (r.pideCom && r.comArch!==null && imp.com[r.i]===undefined ? " · <span style='color:var(--ok)'>comisión elegida por el archivo"+(r.comArch!==""?" (otro banco)":"")+"</span>" : "")+"</div>":"")+
         (r.pideCom&&!r.errores.length?"<select onchange='_impCom("+r.i+",this.value)' style='margin-top:5px;width:100%;padding:6px;border:1px solid var(--ln);border-radius:7px;background:var(--sup);font-size:12px'>"+optCom(r.com,true)+"</select>":"")+
         (chips?"<div style='margin-top:4px;font-size:11.5px'>"+chips+"</div>":"")+
       "</div>"+
