@@ -108,7 +108,7 @@ const NECESARIAS = ["_egresosHuerfanos", "moverEgresoAPersonal", "_tasaDelDiaFue
                     "_mesesDesde", "_acumuladosMes",
                     "conciliacionCapital", "getMesKeyActual", "ajustesDesdeApertura",
                     "_tsDeUid", "_tsDeAjuste", "_deducirHoraApertura", "_isoDeDDMMAA", "_motivoDelAjuste", "_ajusteAEgreso", "_ajusteAGanExtra", "_cuentaMadre", "_lotesDeCuenta", "_completarDesdeMadre", "toggleCuentaMadre",
-                    "traspasosAPersonal", "egresosPersonalesDesdeCuentaPersonal", "efectoTasasDesde", "_isoDeFechaLote",
+                    "traspasosAPersonal", "_movPersonalDeRemesa", "_enUsdtCualquiera", "egresosPersonalesDesdeCuentaPersonal", "efectoTasasDesde", "_isoDeFechaLote",
                     "aportesDesde", "retirosSocioPrestamosDesde", "_cruceUsdtPersonal", "_gananciaMeses", "_aporteVacio",
                     "_aporteSubeSaldo", "_egOperativos",
                     // ARREGLO 143 - mercancia. conciliacionCapital las llama,
@@ -13960,8 +13960,9 @@ console.log("\nARREGLO 203 · fuera la calculadora inversa del formulario de abo
      "y ya no empuja un traspaso escrito a mano que se salta el lote");
   ok(/_moverLotesTraspaso\(_tr, cO, cD, monto\)/.test(sc("saveTraspaso")),
      "el traspaso normal usa la MISMA puerta");
-  ok((HTML.match(/_moverLotesTraspaso\(/g) || []).length === 3,
-     "una definición y dos llamadas, ni una copia más", (HTML.match(/_moverLotesTraspaso\(/g) || []).length);
+  // ARREGLO 235: y una tercera, ↩️ Pasar a la empresa.
+  ok((HTML.match(/_moverLotesTraspaso\(/g) || []).length === 4,
+     "una definición y tres llamadas, ni una copia más", (HTML.match(/_moverLotesTraspaso\(/g) || []).length);
   const mv = sc("_moverLotesTraspaso");
   ok(/if\(!cD \|\| cD\.moneda!==cO\.moneda \|\| cD\.id===cO\.id\) return;/.test(mv),
      "solo renace el lote si el destino es de la MISMA moneda");
@@ -13998,6 +13999,45 @@ console.log("\nARREGLO 203 · fuera la calculadora inversa del formulario de abo
      "un lote de traspaso no se borra desde Inventario (le restaria al banco lo que no entro)");
   ok(/_loteDeTraspaso\(r\)\s*\?\s*"<td style='font-size:10px;color:var\(--tx4\)' title='Se borra borrando el traspaso'>/.test(HTML),
      "y su fila no ofrece 🗑️");
+}
+
+// ── ARREGLO 235 · lo que se mueve entre sus cuentas 💜 y la empresa ──────────
+{
+  console.log("\nARREGLO 235 · la deuda cuenta remesas y ventas, no sólo traspasos");
+  const sc = (n) => sinComentarios(sacarFuncion(n));
+  const mv = sc("_movsPersonalEmpresa");
+  ok(/_movPersonalDeRemesa\(x\)/.test(mv) && /ap\(c, "remesas", -d\)/.test(mv) && /ap\(c, "cobros", d\)/.test(mv),
+     "las remesas pagadas desde una 💜 suman, y las cobradas en una 💜 restan");
+  ok(/ap\(cD, "ventas"/.test(mv) && /ap\(cO, "compras"/.test(mv) && /if\(!_cruceUsdtPersonal\(l\)\) return;/.test(mv),
+     "las ventas de USDT de la empresa que caen en una 💜 restan, y sólo si la otra punta no es suya");
+  ok(/x\.prestado \+ x\.remesas \+ x\.compras - x\.devuelto - x\.ventas - x\.cobros/.test(mv),
+     "la cifra es la suma de las piezas que el panel enseña");
+  ok((mv.match(/< _DEUDA_DESDE/g)||[]).length === 3,
+     "los tres tipos de movimiento cortan en la misma fecha", (mv.match(/< _DEUDA_DESDE/g)||[]).length);
+  ok(/_movsPersonalEmpresa\(\)/.test(sc("_deudaPersonalPorCuenta")) && /_movsPersonalEmpresa\(\)/.test(sc("_empresaEnPersonalPorCuenta")) && /_movsPersonalEmpresa\(\)/.test(sc("_htmlPanelDeuda")),
+     "el panel, Devolverme y Pasar a la empresa leen el MISMO cálculo");
+  ok(!/S\.traspasos\|\|\[\]\)\.forEach/.test(sc("_deudaPersonalPorCuenta")),
+     "y la deuda ya no recorre los traspasos por su cuenta");
+  const pe = sc("_pasarAEmpresa");
+  ok(/_moverLotesTraspaso\(_tr, cO, cD, monto\)/.test(pe) && /!c\.esPersonal && !c\.esReserva/.test(pe),
+     "↩️ Pasar a la empresa baja el lote y va a una cuenta de la empresa, nunca a la reserva");
+  const dv = sc("_devolvermeAhora");
+  ok(/_leerNumero\(txt\)/.test(dv) && !/replace\(",","\."\)/.test(dv),
+     "Devolverme lee el monto con _leerNumero: 17.559,59 ya no se queda en 17,559");
+  // La conciliación: lo que sale de "tasas" entra en "tus cuentas 💜", con el mismo corte.
+  const et = sc("efectoTasasDesde"), tp = sc("traspasosAPersonal");
+  ok(/_movPersonalDeRemesa\(x\)\.forEach\(function\(m\)\{ mueve\+=_enUsdtCualquiera/.test(et),
+     "efectoTasasDesde cuenta también lo que la remesa movió en una 💜");
+  ok(/_movPersonalDeRemesa\(x\)/.test(tp) && /if\(!iso \|\| iso<=desdeIso\) return;/.test(tp),
+     "y traspasosAPersonal lo recoge con el MISMO corte (iso > desdeIso)");
+  // Funcional, con lo que se puede montar aquí.
+  const Cs = S.cuentas;
+  S.cuentas = [{id:"P", nombre:"BDV MIA", moneda:"VES", esPersonal:true},
+               {id:"E", nombre:"BDV EMP", moneda:"VES"}];
+  const x = {_mov:[{cuentaId:"P", delta:-1000},{cuentaId:"E", delta:-5},{cuentaId:"X", delta:3}]};
+  const pm = F._movPersonalDeRemesa(x);
+  ok(pm.length === 1 && pm[0].cuentaId === "P", "sólo los movimientos de cuentas 💜", JSON.stringify(pm));
+  S.cuentas = Cs;
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
