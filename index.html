@@ -3305,7 +3305,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261105_v312";
+var APP_VERSION = "20261106_v313";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -8861,8 +8861,8 @@ function _fijarCodigoRisapp(c, codigo){
   if(!c) return "No encuentro la cuenta.";
   var cod=String(codigo==null?"":codigo).trim();
   if(cod){
-    var n=_impNorm(cod);
-    var otra=(S.cuentas||[]).find(function(x){ return x.id!==c.id && x.codigoRisapp && _impNorm(x.codigoRisapp)===n; });
+    var n=_impNormCod(cod);
+    var otra=(S.cuentas||[]).find(function(x){ return x.id!==c.id && x.codigoRisapp && _impNormCod(x.codigoRisapp)===n; });
     if(otra) return "El código "+cod+" ya lo tiene \""+otra.nombre+"\". Un código va en una sola cuenta: quítaselo a esa primero.";
   }
   var antes=c.codigoRisapp||"";
@@ -33495,6 +33495,10 @@ var _IMPORT_REM=null;   // mientras corre una importación: {avisos, errores, he
 var _IMP_RUTAS={"BRL>VES":"BRL ↔ VZLA","VES>BRL":"VZLA ↔ BRL"};
 
 function _impNorm(s){ return String(s==null?"":s).toUpperCase().replace(/\s+/g," ").trim(); }
+// ARREGLO 232: un código de cuenta solo de cifras se compara sin los ceros de
+// delante. Un CSV abierto y guardado en Excel convierte "0004" en 4, y la misma
+// cuenta pasaría a "no está en ninguna". Un código con letras se deja tal cual.
+function _impNormCod(s){ var n=_impNorm(s); return /^\d+$/.test(n) ? n.replace(/^0+(?=\d)/,"") : n; }
 // dd/mm/aa es el formato acordado; se aceptan también dd/mm/aaaa y aaaa-mm-dd
 // porque una fecha bien escrita en otro formato no es razón para rechazarla.
 function _impFechaIso(s){
@@ -33541,8 +33545,8 @@ function _impCuentaValida(id, mon){
 // SOLO el código. Un código que no está en ninguna cuenta no cae al nombre:
 // cae a "dime cuál es", porque adivinar aquí es mandar el dinero a otra cuenta.
 function _impCuentaDeCodigo(codigo, mon){
-  var n=_impNorm(codigo);
-  var c=(S.cuentas||[]).find(function(x){ return x.codigoRisapp && _impNorm(x.codigoRisapp)===n; });
+  var n=_impNormCod(codigo);
+  var c=(S.cuentas||[]).find(function(x){ return x.codigoRisapp && _impNormCod(x.codigoRisapp)===n; });
   if(!c) return {id:"", como:"", motivo:""};
   if(c.moneda!==mon) return {id:"", como:"", motivo:"el código "+codigo+" es de \""+c.nombre+"\", que está en "+c.moneda+" y aquí va "+mon};
   if(c.activa===false) return {id:"", como:"", motivo:"el código "+codigo+" es de \""+c.nombre+"\", que está pausada"};
@@ -33575,7 +33579,7 @@ function _impAsignarCodigo(k, cuentaId){
   var b=imp.bancos[k];
   var c=(S.cuentas||[]).find(function(x){ return x.id===cuentaId; });
   if(!c) return;
-  if(c.codigoRisapp && _impNorm(c.codigoRisapp)!==_impNorm(b.codigo) &&
+  if(c.codigoRisapp && _impNormCod(c.codigoRisapp)!==_impNormCod(b.codigo) &&
      !confirm("\""+c.nombre+"\" ya tiene el código "+c.codigoRisapp+".\n\n¿Cambiarlo por "+b.codigo+"?")){ R(); return; }
   var err=_fijarCodigoRisapp(c, b.codigo);
   if(err){ alert(err); R(); return; }
@@ -33598,6 +33602,13 @@ function _impLeerFila(o, i){
   if(!r.cliNom) e.push("falta cliente_nombre");
   r.orig=_impNorm(o.orig); r.dest=_impNorm(o.dest);
   r.rt=_IMP_RUTAS[r.orig+">"+r.dest]||"";
+  // ARREGLO 232: el CSV dice la ruta Y las monedas. Si no coinciden, una de las
+  // dos está mal y no hay forma de saber cuál: no se importa.
+  var rutaArch=_impNorm(o.ruta).replace(/\s/g,"").replace(/[>→]/g,"-");
+  if(rutaArch && r.orig && r.dest && rutaArch!==r.orig+"-"+r.dest){
+    e.push("la ruta dice "+_escAud(rutaArch)+" y las monedas dicen "+_escAud(r.orig)+"-"+_escAud(r.dest));
+  }
+  r.forma=String(o.forma_de_pago==null?"":o.forma_de_pago).trim();
   if(!r.rt){
     if(r.orig==="USD") e.push("EE.UU. → Venezuela no se importa: va por otro camino, regístrala a mano");
     else e.push("ruta "+_escAud(r.orig||"?")+" → "+_escAud(r.dest||"?")+" no válida (solo BRL→VES y VES→BRL)");
@@ -33664,7 +33675,7 @@ function _impRecalcular(){
     // mismo código son la misma cuenta, y un mismo nombre con dos códigos, dos.
     var reg=function(nombre, mon, codigo){
       if((!nombre&&!codigo)||!mon) return -1;
-      var k=mon+"·"+(codigo?"#"+_impNorm(codigo):_impNorm(nombre));
+      var k=mon+"·"+(codigo?"#"+_impNormCod(codigo):_impNorm(nombre));
       if(idxB[k]===undefined){ idxB[k]=bancos.length; bancos.push({nombre:nombre||("#"+codigo), mon:mon, codigo:codigo||"", n:0}); }
       bancos[idxB[k]].n++;
       return idxB[k];
@@ -33701,6 +33712,77 @@ function _impRecalcular(){
 }
 
 // ── Abrir el archivo ──
+// ── ARREGLO 232: el CSV que descarga RisApp ──
+// Se traduce aquí a la misma forma que el JSON del 229 y sigue por el MISMO
+// camino: vista previa, códigos, comisión y saveTx(). Dos importadores se
+// separarían con el primer cambio.
+var _IMP_CSV_COLS={
+  fecha:"fecha", hora:"hora", id_operacion:"id_remesa", id_cliente:"cliente_id", nombre_cliente:"cliente_nombre",
+  ruta:"ruta", monto_recibido:"monto_pagado", moneda_recibida:"orig", monto_entregado:"monto_liquidado",
+  moneda_entregada:"dest", tasa:"tasa", banco_cobro:"banco_recibido", codigo_banco_cobro:"banco_recibido_codigo",
+  titular_banco_cobro:"_titIn", banco_pago:"banco_pago", codigo_banco_pago:"banco_pago_codigo",
+  titular_banco_pago:"_titOut", forma_de_pago:"forma_de_pago", procesado_por:"procesado_por"
+};
+var _IMP_CSV_NUM={monto_pagado:1, monto_liquidado:1, tasa:1};
+// Comillas, comas dentro de un nombre y saltos de línea dentro de una celda.
+// Partir por "," a secas rompería "PEREZ, MARIA" en dos columnas y correría el
+// resto de la fila una posición: los montos caerían en la columna equivocada.
+function _impPartirCsv(txt, sep){
+  var filas=[], fila=[], cel="", q=false, i, ch;
+  for(i=0;i<txt.length;i++){
+    ch=txt.charAt(i);
+    if(q){
+      if(ch==='"'){ if(txt.charAt(i+1)==='"'){ cel+='"'; i++; } else q=false; }
+      else cel+=ch;
+    } else if(ch==='"') q=true;
+    else if(ch===sep){ fila.push(cel); cel=""; }
+    else if(ch==="\n"||ch==="\r"){
+      if(ch==="\r"&&txt.charAt(i+1)==="\n") i++;
+      fila.push(cel); filas.push(fila); fila=[]; cel="";
+    } else cel+=ch;
+  }
+  if(cel!==""||fila.length){ fila.push(cel); filas.push(fila); }
+  return filas.filter(function(f){ return f.some(function(c){ return String(c).trim()!==""; }); });
+}
+// Un número de máquina ("99999.90") se lee tal cual. _leerNumero tomaría un
+// punto con tres cifras detrás como de miles. Lo demás (Excel en español,
+// "1.234,56") sí pasa por _leerNumero.
+function _impNumCsv(v){
+  var t=String(v==null?"":v).trim();
+  if(/^-?\d+(\.\d+)?$/.test(t)) return parseFloat(t);
+  return _impNum(t);
+}
+function _impDeCsv(txt){
+  txt=String(txt||"").replace(/^\uFEFF/,"");
+  var l1=(txt.split(/\r?\n/)[0]||"");
+  var cuenta=function(c){ return l1.split(c).length-1; };
+  var sep=[",",";","\t"].sort(function(a,b){ return cuenta(b)-cuenta(a); })[0];
+  var filas=_impPartirCsv(txt, sep);
+  if(filas.length<2) return {error:"no trae ninguna remesa."};
+  var cab=filas[0].map(function(h){
+    return String(h).trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g,"_");
+  });
+  var faltan=["fecha","hora","id_operacion","id_cliente","nombre_cliente","monto_recibido","moneda_recibida",
+              "monto_entregado","moneda_entregada","tasa","codigo_banco_cobro","codigo_banco_pago"]
+             .filter(function(c){ return cab.indexOf(c)<0; });
+  if(faltan.length) return {error:"le faltan columnas: "+faltan.join(", ")+"."};
+  var lista=filas.slice(1).map(function(f){
+    var o={};
+    cab.forEach(function(h,j){
+      var dest=_IMP_CSV_COLS[h]; if(!dest) return;
+      var v=String(f[j]==null?"":f[j]).trim();
+      o[dest]=_IMP_CSV_NUM[dest] ? (v===""?"":_impNumCsv(v)) : v;
+    });
+    // El titular va junto al banco: dos cuentas del Banco de Venezuela de dos
+    // personas tienen que leerse distintas en la pantalla.
+    if(o._titIn) o.banco_recibido=(o.banco_recibido?o.banco_recibido+" · ":"")+o._titIn;
+    if(o._titOut) o.banco_pago=(o.banco_pago?o.banco_pago+" · ":"")+o._titOut;
+    delete o._titIn; delete o._titOut;
+    return o;
+  });
+  return {lista:lista};
+}
+
 function _impElegirArchivo(input){
   var file=input&&input.files&&input.files[0];
   try{ input.value=""; }catch(e){}
@@ -33708,10 +33790,22 @@ function _impElegirArchivo(input){
   if(file.size>2*1024*1024){ alert("El archivo pesa "+Math.round(file.size/1024)+" KB. Uno de remesas no debería pasar de 2 MB: revisa que sea el correcto."); return; }
   var fr=new FileReader();
   fr.onload=function(ev){
-    var obj;
-    try{ obj=JSON.parse(String(ev.target.result||"")); }
-    catch(err){ alert("No pude leer \""+file.name+"\": no es un JSON válido.\n\n"+(err&&err.message||"")); return; }
-    var lista=Array.isArray(obj)?obj:(obj&&Array.isArray(obj.remesas)?obj.remesas:null);
+    var obj, lista, texto=String(ev.target.result||"");
+    // Se decide por el contenido, no solo por el nombre: un CSV renombrado sigue
+    // siendo un CSV, y un JSON empieza siempre por corchete o llave (91 y 123).
+    // Escritos como carácter, el contador de llaves de las pruebas da la
+    // función por abierta.
+    var _c0=texto.replace(/^\uFEFF/,"").trim().charCodeAt(0);
+    var esJson=(_c0===91||_c0===123) && !/\.csv$/i.test(file.name);
+    if(!esJson){
+      var cv=_impDeCsv(texto);
+      if(cv.error){ alert("No pude leer \""+file.name+"\": "+cv.error); return; }
+      obj={fuente:"RisApp (CSV)"}; lista=cv.lista;
+    } else {
+      try{ obj=JSON.parse(texto.replace(/^\uFEFF/,"")); }
+      catch(err){ alert("No pude leer \""+file.name+"\": no es un JSON válido.\n\n"+(err&&err.message||"")); return; }
+      lista=Array.isArray(obj)?obj:(obj&&Array.isArray(obj.remesas)?obj.remesas:null);
+    }
     if(!lista){ alert("\""+file.name+"\" no trae una lista \"remesas\". Revisa que sea el archivo de remesas."); return; }
     if(obj && obj.version && parseInt(obj.version,10)>1){ alert("Este archivo es de una versión más nueva del formato ("+obj.version+"). Actualiza la app antes de importarlo."); return; }
     if(!lista.length){ alert("\""+file.name+"\" no trae ninguna remesa."); return; }
@@ -33956,6 +34050,7 @@ function rImportarRemesas(){
         "<div><b style='color:var(--tit)'>"+_escAud(r.cliNom||"(sin nombre)")+"</b> <span style='color:var(--tx3)'>· "+(r.iso?ds(r.iso):"?")+" "+(r.hora?r.hora.slice(0,5):"")+" · "+_escAud(r.idExt||"sin id")+"</span></div>"+
         "<div>"+flag+" "+(r.am>0?f2(r.am):"?")+" "+_escAud(r.orig)+op+(r.tasa>0?f2(r.tasa):"?")+" = <b>"+(r.cant>0?f2(r.cant):(r.cantArch>0?f2(r.cantArch):"?"))+"</b> "+_escAud(r.dest)+"</div>"+
         "<div style='color:var(--tx3)'>"+(nomIn?_escAud(nomIn):"<i>"+_escAud(r.bancoIn||"?")+"</i>")+" → "+(nomOut?_escAud(nomOut):"<i>"+_escAud(r.bancoOut||"?")+"</i>")+(r.por?" · "+_escAud(r.por):"")+"</div>"+
+        (r.forma?"<div style='color:var(--tx3)'>Forma de pago: "+_escAud(r.forma)+"</div>":"")+
         (r.pideCom&&!r.errores.length?"<select onchange='_impCom("+r.i+",this.value)' style='margin-top:5px;width:100%;padding:6px;border:1px solid var(--ln);border-radius:7px;background:var(--sup);font-size:12px'>"+optCom(r.com,true)+"</select>":"")+
         (chips?"<div style='margin-top:4px;font-size:11.5px'>"+chips+"</div>":"")+
       "</div>"+
@@ -33991,7 +34086,7 @@ function _htmlBotonImportarRem(){
   if(!permisoEdicion()) return "";
   return "<label style='display:flex;align-items:center;justify-content:center;gap:8px;padding:10px;margin-bottom:12px;border:1.5px dashed var(--ln2);border-radius:10px;background:var(--sup);color:var(--tx2);font-size:13px;font-weight:700;cursor:pointer'>"+
     "📥 Importar remesas de un archivo"+
-    "<input type='file' accept='.json,application/json' onchange='_impElegirArchivo(this)' style='display:none'>"+
+    "<input type='file' accept='.json,.csv,application/json,text/csv' onchange='_impElegirArchivo(this)' style='display:none'>"+
   "</label>";
 }
 

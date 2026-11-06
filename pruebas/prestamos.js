@@ -13931,12 +13931,47 @@ console.log("\nARREGLO 203 · fuera la calculadora inversa del formulario de abo
   ok(/c\.moneda!==mon/.test(cc) && /c\.activa===false/.test(cc) && /c\.esPersonal/.test(cc),
      "un código de otra moneda, de una cuenta pausada o de una 💜 se rechaza diciendo por qué");
   const fc = sc("_fijarCodigoRisapp");
-  ok(/var otra=\(S\.cuentas\|\|\[\]\)\.find\(function\(x\)\{ return x\.id!==c\.id && x\.codigoRisapp && _impNorm\(x\.codigoRisapp\)===n; \}\);\s*if\(otra\) return "El código/.test(fc),
+  ok(/var otra=\(S\.cuentas\|\|\[\]\)\.find\(function\(x\)\{ return x\.id!==c\.id && x\.codigoRisapp && _impNormCod\(x\.codigoRisapp\)===n; \}\);\s*if\(otra\) return "El código/.test(fc),
      "un código va en UNA sola cuenta");
   ok(/_fijarCodigoRisapp\(c, nuevo\)/.test(sc("editarCodigoRisapp")) && /_fijarCodigoRisapp\(c, b\.codigo\)/.test(sc("_impAsignarCodigo")),
      "Configuración y la pantalla de importar escriben el código por la misma puerta");
   ok((HTML.match(/\.codigoRisapp\s*=/g) || []).length === 1,
      "y nadie más lo escribe", (HTML.match(/\.codigoRisapp\s*=/g) || []).length);
+
+  // ── ARREGLO 232: el CSV de RisApp entra por el MISMO importador ──
+  const ec = sc("_impElegirArchivo");
+  ok(/_impDeCsv\(texto\)/.test(ec) && /JSON\.parse\(texto/.test(ec) && /_impRecalcular\(\)/.test(ec),
+     "el CSV y el JSON salen del mismo botón y siguen el mismo camino (_impRecalcular)");
+  ok(/esJson=\(_c0===91\|\|_c0===123\)/.test(ec),
+     "se decide por el contenido: un JSON empieza por { o [");
+  ok(/accept='\.json,\.csv/.test(sc("_htmlBotonImportarRem")),
+     "el botón deja elegir un .csv");
+  // El lector de celdas, ejecutado: comillas, comas dentro, comilla doble y CRLF.
+  const _partir = new Function(sc("_impPartirCsv") + "; return _impPartirCsv;")();
+  const pc = _partir('a,b,c\r\n"PEREZ, MARIA","dice ""hola""",3\r\n\r\n', ",");
+  ok(pc.length === 2 && pc[1][0] === "PEREZ, MARIA" && pc[1][1] === 'dice "hola"' && pc[1][2] === "3",
+     "una coma dentro de un nombre no corre las columnas, y las filas vacías se saltan");
+  const _numCsv = new Function("_impNum", sc("_impNumCsv") + "; return _impNumCsv;")(function(v){ return NaN; });
+  ok(_numCsv("99999.90") === 99999.9 && _numCsv("5220.000") === 5220 && _numCsv("174") === 174,
+     "un número de máquina se lee tal cual: 5220.000 no son cinco millones");
+  const dc = sc("_impDeCsv");
+  ok(/monto_recibido:"monto_pagado"/.test(HTML) && /monto_entregado:"monto_liquidado"/.test(HTML) &&
+     /codigo_banco_cobro:"banco_recibido_codigo"/.test(HTML) && /codigo_banco_pago:"banco_pago_codigo"/.test(HTML),
+     "cada columna del CSV cae en su campo: lo recibido es lo pagado, el cobro es la cuenta de entrada");
+  ok(/faltan=\["fecha"/.test(dc) && /"codigo_banco_cobro","codigo_banco_pago"\]/.test(dc) &&
+     /if\(faltan\.length\) return \{error:"le faltan columnas: "/.test(dc),
+     "un CSV sin las columnas obligatorias se rechaza diciendo cuáles");
+  ok(/o\._titIn\) o\.banco_recibido=/.test(dc) && /o\._titOut\) o\.banco_pago=/.test(dc),
+     "el titular va junto al banco: dos Banco de Venezuela de dos personas se leen distintos");
+  const lf = sc("_impLeerFila");
+  ok(/rutaArch!==r\.orig\+"-"\+r\.dest\)\{\s*e\.push\(/.test(lf),
+     "si la ruta y las monedas no coinciden, la fila no se importa");
+  const _normCod = new Function("_impNorm", sc("_impNormCod") + "; return _impNormCod;")(
+    function(s){ return String(s==null?"":s).toUpperCase().replace(/\s+/g," ").trim(); });
+  ok(_normCod("0004") === _normCod("4") && _normCod("0") === "0" && _normCod("A01") !== _normCod("A1"),
+     "0004 y 4 son el mismo código (Excel quita los ceros); uno con letras se deja tal cual");
+  ok(/_impNormCod\(x\.codigoRisapp\)===n/.test(sc("_impCuentaDeCodigo")) && !/_impNorm\(x\.codigoRisapp\)/.test(HTML),
+     "buscar la cuenta y prohibir el repetido comparan el código igual");
   ok(/r\.codIn=String\(o\.banco_recibido_codigo/.test(sc("_impLeerFila")) && /r\.codOut=String\(o\.banco_pago_codigo/.test(sc("_impLeerFila")),
      "el archivo trae banco_recibido_codigo y banco_pago_codigo");
   ok(/_impCuentaDeBanco\(r\.bancoIn, r\.orig, r\.codIn\)/.test(rec) && /_impCuentaDeBanco\(r\.bancoOut, r\.dest, r\.codOut\)/.test(rec),
