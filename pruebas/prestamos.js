@@ -13984,8 +13984,28 @@ console.log("\nARREGLO 203 · fuera la calculadora inversa del formulario de abo
   const rc = sc("_impRecalcular");
   ok(/imp\.com\[r\.i\]!==undefined \? imp\.com\[r\.i\] : \(r\.comArch!==null \? r\.comArch : imp\.comTodas\)/.test(rc),
      "lo que ella cambie en la fila manda; si no, el archivo; si el archivo no dice, el 'para todas'");
-  ok(/r\.comArch=_impComDeForma\(r\.forma\)/.test(sc("_impLeerFila")),
-     "cada fila lee su forma de pago");
+  const lf2 = sc("_impLeerFila");
+  ok(/_cLiq=_impComDeForma\(r\.liq\), _cPago=_impComDeForma\(r\.forma\)/.test(lf2),
+     "cada fila lee su forma de liquidación y su forma de pago");
+
+  // ── ARREGLO 234: forma_de_liquidacion manda, y sin selector ──
+  ok(/if\(_cLiq!==null\)\{ r\.comArch=_cLiq;/.test(lf2) && /else \{ r\.comArch=_cPago;/.test(lf2),
+     "la liquidación (que dice el banco) manda; si viene vacía, la forma de pago");
+  ok(/comSupuesta=\(_cPago!==null && !_diceBanco\(r\.forma\)\)/.test(lf2) && /comSupuesta=!_diceBanco\(r\.liq\)/.test(lf2),
+     "si el archivo no dice el banco, la fila lo marca como supuesto");
+  ok(/forma_de_liquidacion:"forma_de_liquidacion"/.test(HTML),
+     "la columna forma_de_liquidacion del CSV se lee");
+  const ri234 = sc("rImportarRemesas");
+  ok(/r\.pideCom&&!r\.errores\.length&&r\.comArch===null\?"<select onchange='_impCom\(/.test(ri234),
+     "el selector de comisión solo sale cuando el archivo no la decide");
+  ok(/_impTxtCom\(r\.com, r\.cant\)/.test(ri234),
+     "cuando la decide el archivo, la fila dice cuál y cuánto");
+  const _normCod2 = new Function("_impNorm", sc("_impNormCod") + "; return _impNormCod;")(
+    function(s){ return String(s==null?"":s).toUpperCase().replace(/\s+/g," ").trim(); });
+  ok(_normCod2("CI-0004") === _normCod2("0004") && _normCod2("ci - 4") === _normCod2("4") && _normCod2("CI-0004") !== _normCod2("CI-0002"),
+     "CI-0004 es la misma cuenta que 0004: el prefijo de RisApp no rompe lo ya cargado");
+  ok(/nuevaRemesa\.formaLiquidacion=String\(f\._formaLiq\)/.test(sc("saveTx")),
+     "la forma de liquidación queda guardada en la remesa");
   ok(/return r\.pideCom && r\.comArch===null;/.test(sc("rImportarRemesas")),
      "el 'para todas' solo sale si alguna fila no trae forma de pago");
   ok(/_formaPago:r\.forma/.test(sc("_impTxDeFila")) && /nuevaRemesa\.formaPago=String\(f\._formaPago\)/.test(sc("saveTx")),
