@@ -3340,7 +3340,8 @@ console.log("\nArreglo 64 · entrar con huella");
   // CONVIERTE EN SOLUCIONES" en blanco al 55% sobre ese gris da contraste 1,3.
   // Ella lo imprimio y no se leia.
   {
-    ok(/--fly-fondo1:\s*#0a0a0a/.test(HTML) && /--fly-sobre:\s*#fff/.test(HTML),
+    // ARREGLO 236: los valores son los del estilo nuevo, medidos en su pieza.
+    ok(/--fly-papel:\s*#fdf3e7/.test(HTML) && /--fly-tinta:\s*#0f161d/.test(HTML) && /--fly-sobre:\s*#fff/.test(HTML),
        "el flyer tiene sus propios colores, declarados en :root");
     const pap2 = (HTML.match(/html\[data-tema="papel"\]\{[\s\S]*?\n\}/) || [""])[0];
     const pisados2 = [];
@@ -3353,7 +3354,9 @@ console.log("\nArreglo 64 · entrar con huella");
        "ningun tema repinta el flyer: sale igual desde cualquier aparato",
        pisados2.slice(0, 6).join(", "));
     const fueraFly = [];
-    ["generarFlyer", "generarMiniFlyer"].forEach(function(f){
+    // ARREGLO 236: las piezas del flyer viven ahora en ayudantes; cuentan igual.
+    ["generarFlyer", "generarMiniFlyer", "_htmlFraseFlyer", "_htmlFraseMiniFlyer",
+     "_htmlBandaFlyer", "_htmlLogoFlyer", "_flyContorno"].forEach(function(f){
       (sacarFuncion(f).match(/var\(--[\w-]+\)/g) || []).forEach(function(v){
         if (!/^var\(--fly-/.test(v)) fueraFly.push(f + " " + v);
       });
@@ -14111,6 +14114,85 @@ console.log("\nARREGLO 203 · fuera la calculadora inversa del formulario de abo
   const pm = F._movPersonalDeRemesa(x);
   ok(pm.length === 1 && pm[0].cuentaId === "P", "sólo los movimientos de cuentas 💜", JSON.stringify(pm));
   S.cuentas = Cs;
+}
+
+// ── ARREGLO 236 · el estilo nuevo del flyer y sus temporadas ─────────────
+// Se midio generando los dos flyers con la MISMA html2canvas 1.4.1 que carga
+// la app. Lo que estas guardias fijan son los tres fallos que salieron ahi y
+// que ninguna guardia de texto habria visto: una comilla simple dentro de un
+// style='...' que cortaba el atributo, un SVG con comillas que no cargaba, y
+// un repeating-linear-gradient que html2canvas no dibuja.
+{
+  const sinC = (x) => x.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const consts = (nombre) => { const m = HTML.match(new RegExp("var " + nombre + " = \"([^\"]*)\";")); return m ? m[1] : null; };
+  const L = consts("_FLY_LETRA"), C = consts("_FLY_CUERPO");
+  ok(L !== null && C !== null && L.indexOf("'") < 0 && C.indexOf("'") < 0,
+     "las familias de letra del flyer no llevan comilla simple: van dentro de style='...'", L + " · " + C);
+  ok(/^FlyDisplay,/.test(L||""), "la letra del titular es la incrustada, primero");
+  ok(/@font-face\{font-family:'FlyDisplay';src:url\(data:font\/woff2;base64,[A-Za-z0-9+\/=]{8000,}\)/.test(HTML),
+     "la letra va incrustada en el archivo (la politica de contenido no deja otra)");
+
+  const su = sacarFuncion("_flySvgUrl");
+  ok(/replace\(\/'\/g,"%27"\)/.test(su), "el SVG hecho imagen escapa la comilla simple (si no, no carga)");
+  const fsu = new Function("return " + su)();
+  ok(fsu("<svg a='1'/>").indexOf("'") < 0, "y de verdad no queda ninguna", fsu("<svg a='1'/>"));
+  ok(/return _flySvgUrl\(/.test(sacarFuncion("_flyFondoSVG")) && /return _flySvgUrl\(/.test(sacarFuncion("_flyRayas")),
+     "el fondo y las rayas pasan por _flySvgUrl");
+
+  const piezas = ["generarFlyer","generarMiniFlyer","_htmlBandaFlyer","_htmlLogoFlyer","_htmlFraseFlyer","_htmlFraseMiniFlyer"];
+  const prohibido = [];
+  piezas.forEach(function(f){
+    const c = sinC(sacarFuncion(f));
+    ["repeating-linear-gradient","conic-gradient","clip-path","-webkit-text-stroke"].forEach(function(x){
+      if (c.indexOf(x) >= 0) prohibido.push(f + " " + x);
+    });
+  });
+  ok(prohibido.length === 0, "nada que html2canvas no dibuje (medido: la banda salia vacia)", prohibido.join(", "));
+
+  // La letra y las imagenes se esperan ANTES de capturar, en los dos.
+  ["generarFlyer","generarMiniFlyer"].forEach(function(f){
+    const c = sinC(sacarFuncion(f));
+    const a = c.indexOf("_flyListo(card)"), b = c.indexOf("html2canvas(card");
+    ok(a >= 0 && b > a, f + " espera la letra antes de capturar");
+    ok(/_temporadaFlyer\(\)/.test(c) && /_flyFondoSVG\(tm,/.test(c) && /_htmlBandaFlyer\(tm,/.test(c),
+       f + " se pinta con la temporada elegida");
+  });
+  ok(/document\.fonts\.load\("64px FlyDisplay"\)/.test(sacarFuncion("_flyListo")),
+     "_flyListo carga la letra por su nombre");
+
+  // Las temporadas: una fila cada una, con sus colores en :root.
+  const tabla = (HTML.match(/var _TEMPORADAS_FLYER = \[[\s\S]*?\n\];/) || [""])[0];
+  const ids = (tabla.match(/id:"[a-z]+"/g) || []);
+  ok(ids.length >= 2 && /id:"normal"/.test(tabla) && /id:"navidad"/.test(tabla),
+     "hay temporada normal y de navidad", ids.join(","));
+  // Y los que el fondo y el logo leen sueltos con _flyColor: el SVG no ve
+  // :root, asi que uno sin declarar sale NEGRO sin un error.
+  const nombres = (tabla.match(/--[\w-]+/g) || []).concat(
+    (HTML.match(/_flyColor\("--[\w-]+"\)/g) || []).map(function(x){ return x.slice(11, -2); }));
+  const sinDeclarar = nombres.filter(function(n){ return !new RegExp(n + ":\\s*#").test(HTML); });
+  ok(nombres.length > 0 && nombres.every(function(n){ return /^--fly-/.test(n); }) && sinDeclarar.length === 0,
+     "cada temporada usa solo --fly-* y todos estan declarados en :root", sinDeclarar.join(","));
+  ok(/\(S\.config\|\|\{\}\)\.temaFlyer/.test(sacarFuncion("_temporadaFlyer")) && /S\.config\.temaFlyer=id/.test(sacarFuncion("_setTemporadaFlyer")),
+     "la temporada vive en S.config, como la frase: el flyer sale igual desde la PC y el telefono");
+  const stf = sinC(sacarFuncion("_setTemporadaFlyer"));
+  ok(!/\bR\(\)/.test(stf) && /saveData\(\)/.test(stf) && /_htmlBotonesTemporada\(\)/.test(stf),
+     "elegir la temporada guarda y repinta solo el selector, sin R() (ARREGLO 32)");
+  ok(/some\(function\(x\)\{ return x\.id===id; \}\)/.test(stf),
+     "y solo admite temporadas que existen");
+  const filas = sinC(sacarFuncion("_htmlFilasTasas")), exo = sinC(sacarFuncion("_htmlRutasExoticas"));
+  ok(/_htmlSelectorTemporada\(\)\+"<button onclick='generarFlyer\(\)'/.test(filas) &&
+     /_htmlSelectorTemporada\(\)\+[\s\S]{0,10}"<button onclick='generarMiniFlyer\(\)'/.test(exo),
+     "el selector esta junto a los DOS botones de generar");
+  // El logo de WhatsApp: colores literales, porque un var() dentro de un SVG
+  // en linea html2canvas no lo resuelve.
+  const wa = sinC(sacarFuncion("_flyWA"));
+  ok(/_flyColor\("--fly-sobre"\)/.test(wa) && /_flyColor\("--fly-naranja"\)/.test(wa),
+     "el logo de WhatsApp del flyer lleva sus colores ya resueltos");
+  ok(/_flyWA\(/.test(sinC(sacarFuncion("_htmlBandaFlyer"))) && !/_WA_SVG/.test(sinC(sacarFuncion("_htmlBandaFlyer"))),
+     "y la banda usa ese, no el del tema");
+  // Los adornos solo en la franja del borde: por el medio tapaban texto.
+  ok(/if\(x>m && x<W-m && y>m && y<H-m\) continue;/.test(sacarFuncion("_flyFondoSVG")),
+     "los adornos caen solo en el borde");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
