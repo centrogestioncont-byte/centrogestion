@@ -3317,7 +3317,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261107_v318";
+var APP_VERSION = "20261107_v319";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -11039,6 +11039,9 @@ function saveTx(){
     // ARREGLO 233: cómo se liquidó, tal como lo dijo la otra app.
     if(f._formaPago) nuevaRemesa.formaPago=String(f._formaPago);
     if(f._formaLiq) nuevaRemesa.formaLiquidacion=String(f._formaLiq);
+    // ARREGLO 237: los dos bancos con los que se decidió la comisión.
+    if(f._bcoBen) nuevaRemesa.bancoBeneficiario=String(f._bcoBen);
+    if(f._bcoDesde) nuevaRemesa.bancoDesde=String(f._bcoDesde);
   }
   arr.push(nuevaRemesa);
   arr.sort(function(a,b){var da=a.d.split("/"),db=b.d.split("/");return (parseInt(da[1])*100+parseInt(da[0]))-(parseInt(db[1])*100+parseInt(db[0]))||a.n-b.n;});
@@ -33935,19 +33938,89 @@ function _impNum(v){
 // ARREGLO 233: la forma de pago de la liquidación viene en el archivo, y con
 // ella la comisión del banco venezolano. Sus palabras: "yo no tengo por qué
 // elegir con qué fue pagada, estamos procesando por lote".
-// El archivo dice CÓMO (transferencia o pago móvil) pero no a QUÉ banco, y eso
-// es lo que separa "sin comisión" de "con comisión". Sin ese dato se toma OTRO
-// banco: es el que sí cobra, y ante la duda la app no puede apuntar una
-// ganancia mayor que la de verdad. Si RisApp escribe "mismo banco", se lee.
-// Lo que no se reconoce devuelve null y se pregunta: inventar una comisión es
-// peor que pedirla.
-function _impComDeForma(forma){
-  var t=String(forma==null?"":forma).toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
-  if(!t.trim()) return null;
-  var mov=/MOVIL/.test(t), tra=/TRANSF/.test(t);
-  if(mov===tra) return null;   // ninguna de las dos, o las dos: no se adivina
-  if(/MISMO BANCO|MISMA ENTIDAD|MISMO\b/.test(t)) return "";
-  return mov ? "movil" : "transf";
+// ARREGLO 237: y desde el archivo v2 trae también los DOS bancos —el del
+// beneficiario y el desde el que se pagó—, que es lo que de verdad separa
+// "sin comisión" de "con comisión". La comisión la decide esta app con sus
+// tarifas de Configuración, nunca la trae RisApp.
+//
+// Son dos preguntas y se contestan por separado:
+//   ¿pago móvil o transferencia?  → el texto (liquidación, y si no, forma de pago)
+//   ¿mismo banco u otro?          → los BANCOS; el texto solo si faltan
+// Mandan los bancos porque son un dato; el texto lo elige quien registra.
+// Cuando se contradicen, manda el banco y la fila lo dice.
+function _impTxtNorm(t){
+  return String(t==null?"":t).toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+}
+// Lo que no se reconoce (o dice las dos cosas) devuelve null: no se adivina.
+function _impTipoDe(texto){
+  var t=_impTxtNorm(texto), mov=/MOVIL/.test(t), tra=/TRANSF/.test(t);
+  return mov===tra ? null : (mov ? "movil" : "transf");
+}
+// true = mismo banco, false = otro, null = el texto no lo dice.
+function _impMismoDe(texto){
+  var t=_impTxtNorm(texto);
+  if(/MISMO BANCO|MISMA ENTIDAD|\bMISMO\b/.test(t)) return true;
+  if(/OTROS? BANCOS?|OTRA ENTIDAD|INTERBANCARI/.test(t)) return false;
+  return null;
+}
+// El mismo banco se escribe de muchas formas ("Banesco", "Banesco Principal",
+// "BDV", "Banco de Venezuela"). Los específicos van ANTES que VENEZUELA: el
+// Tesoro, el Bicentenario y el Agrícola se llaman "... de Venezuela" también.
+var _IMP_BANCOS_VE=[
+  ["BICENTENARIO",/BICENTENARIO/], ["TESORO",/TESORO/], ["AGRICOLA",/AGRICOLA/],
+  ["VENEZOLANO DE CREDITO",/VENEZOLANO DE CREDITO|\bBVC\b/],
+  ["NACIONAL DE CREDITO",/NACIONAL DE CREDITO|\bBNC\b/],
+  ["FONDO COMUN",/FONDO COMUN|\bBFC\b/], ["BANESCO",/BANESCO/],
+  ["PROVINCIAL",/PROVINCIAL|\bBBVA\b/], ["MERCANTIL",/MERCANTIL/], ["EXTERIOR",/EXTERIOR/],
+  ["CARONI",/CARONI/], ["BANCAMIGA",/BANCAMIGA/], ["BANPLUS",/BANPLUS/], ["PLAZA",/BANCO PLAZA|\bPLAZA\b/],
+  ["SOFITASA",/SOFITASA/], ["ACTIVO",/BANCO ACTIVO/], ["DEL SUR",/DEL SUR\b|DELSUR/],
+  ["100% BANCO",/100\s*%\s*BANCO/], ["MI BANCO",/\bMI BANCO\b/], ["BANCRECER",/BANCRECER/],
+  ["BANFANB",/BANFANB/], ["R4",/\bR4\b/], ["N58",/\bN58\b/], ["BANGENTE",/BANGENTE/],
+  ["VENEZUELA",/BANCO DE VENEZUELA|\bBDV\b|\bVENEZUELA\b/]
+];
+// {key, conocido}. Un nombre que no está en la lista se compara limpio de
+// palabras de relleno; conocido=false dice que es eso, una comparación de texto.
+function _impBancoVE(nombre){
+  var t=_impTxtNorm(nombre).replace(/[^A-Z0-9% ]+/g," ").replace(/\s+/g," ").trim();
+  if(!t) return {key:"", conocido:false};
+  for(var i=0;i<_IMP_BANCOS_VE.length;i++) if(_IMP_BANCOS_VE[i][1].test(t)) return {key:_IMP_BANCOS_VE[i][0], conocido:true};
+  var k=(" "+t+" ").replace(/ (BANCO|BCO|DE|DEL|LA|EL|UNIVERSAL|PRINCIPAL|PAGOS|CUENTA|CTA|CI|\d+) /g," ")
+                   .replace(/ (BANCO|BCO|DE|DEL|LA|EL|UNIVERSAL|PRINCIPAL|PAGOS|CUENTA|CTA|CI|\d+) /g," ").trim();
+  return {key:k, conocido:false};
+}
+// Decide la comisión de UNA fila y deja escrito por qué (r.comPorque) y lo que
+// se supuso (r.comAvisos). Siempre devuelve una: "" (sin comisión), "movil" o
+// "transf". Lo que el archivo no dice se supone del lado que COBRA más: ante la
+// duda la app no puede apuntar una ganancia mayor que la de verdad.
+function _impDecidirCom(r){
+  r.comAvisos=[];
+  var tipo=_impTipoDe(r.liq)||_impTipoDe(r.forma);
+  var txt=_impMismoDe(r.liq); if(txt===null) txt=_impMismoDe(r.forma);
+  var ben=_impBancoVE(r.bcoBen), des=_impBancoVE(r.bcoDesde);
+  // Sin "desde" en el archivo, el banco de la cuenta que pagó. Solo si es un
+  // banco que se reconoce: el nombre de una cuenta lleva el de la persona.
+  if(!des.key){
+    var c=(S.cuentas||[]).find(function(x){ return x.id===r.cuentaOut; });
+    var alt=_impBancoVE(r.bancoOut);
+    if(!alt.conocido) alt=_impBancoVE(c?c.nombre:"");
+    if(alt.conocido) des=alt;
+  }
+  r.comBen=ben.key; r.comDes=des.key;
+  var porBancos=(ben.key && des.key) ? ben.key===des.key : null;
+  var mismo=porBancos!==null ? porBancos : txt;
+  if(porBancos!==null && txt!==null && porBancos!==txt){
+    r.comAvisos.push(txt
+      ? "la liquidación dice «mismo banco» pero son "+ben.key+" y "+des.key+": mandan los bancos"
+      : "la liquidación dice «otros bancos» pero los dos son "+ben.key+": mandan los bancos");
+  }
+  if(mismo===true){ r.comPorque=porBancos!==null ? "los dos bancos son "+ben.key : "el archivo dice mismo banco"; return ""; }
+  if(mismo===null) r.comAvisos.push("el archivo no dice el banco del beneficiario: se toma otro banco");
+  r.comPorque=porBancos===false ? des.key+" → "+ben.key : "";
+  if(tipo) return tipo;
+  var bs=r.cant>0?r.cant:(r.cantArch>0?r.cantArch:0);
+  var t=comisionBancoVES("movil", bs)>=comisionBancoVES("transf", bs) ? "movil" : "transf";
+  r.comAvisos.push("no dice si fue pago móvil o transferencia: se toma la de más comisión");
+  return t;
 }
 // Lo que la fila dice que se va a cobrar, con el número: "transferencia a otro
 // banco" a secas obliga a ir a Configuración a ver cuánto es.
@@ -34044,10 +34117,10 @@ function _impLeerFila(o, i){
   // bancos"). Esa manda. Si viene vacía se cae a forma_de_pago, que no dice el
   // banco: se toma otro banco (el que cobra) y la fila lo dice.
   r.liq=String(o.forma_de_liquidacion==null?"":o.forma_de_liquidacion).trim();
-  var _cLiq=_impComDeForma(r.liq), _cPago=_impComDeForma(r.forma);
-  var _diceBanco=function(t){ return /MISMO|MISMA|OTRO/.test(String(t||"").toUpperCase()); };
-  if(_cLiq!==null){ r.comArch=_cLiq; r.comSupuesta=!_diceBanco(r.liq); }
-  else { r.comArch=_cPago; r.comSupuesta=(_cPago!==null && !_diceBanco(r.forma)); }
+  // ARREGLO 237: los dos bancos de la liquidación. La comisión se decide en
+  // _impRecalcular, que es donde ya se sabe de qué cuenta salió el dinero.
+  r.bcoBen=String(o.banco_beneficiario==null?(o.banco_del_beneficiario==null?"":o.banco_del_beneficiario):o.banco_beneficiario).trim();
+  r.bcoDesde=String(o.banco_desde==null?(o.banco_desde_el_que_se_pago==null?"":o.banco_desde_el_que_se_pago):o.banco_desde).trim();
   if(!r.rt){
     if(r.orig==="USD") e.push("EE.UU. → Venezuela no se importa: va por otro camino, regístrala a mano");
     else e.push("ruta "+_escAud(r.orig||"?")+" → "+_escAud(r.dest||"?")+" no válida (solo BRL→VES y VES→BRL)");
@@ -34125,14 +34198,14 @@ function _impRecalcular(){
       r.cuentaIn=ci.id; r.cuentaOut=co.id;
       if(ci.motivo) r.errores.push(_escAud(ci.motivo));
       if(co.motivo) r.errores.push(_escAud(co.motivo));
-      // La comisión del banco venezolano depende de cómo se le pagó al
-      // beneficiario. ARREGLO 233: la trae el archivo (forma_de_pago), y solo
-      // se pregunta si no la trae o no se reconoce. Lo que ella cambie en la
-      // fila manda sobre el archivo.
+      // La comisión del banco venezolano. ARREGLO 237: la decide siempre esta
+      // app, con los bancos y la forma de liquidación del archivo; no se
+      // pregunta nada. Venezuela → Brasil (PIX) no lleva comisión.
       r.pideCom=!!(r.dest==="VES" && r.cuentaOut && esBancoVES(r.cuentaOut));
-      r.com=r.pideCom ? (imp.com[r.i]!==undefined ? imp.com[r.i] : (r.comArch!==null ? r.comArch : imp.comTodas)) : "";
+      r.comAvisos=[]; r.comPorque="";
+      r.com=r.pideCom ? _impDecidirCom(r) : "";
     }
-    r.importable=!r.errores.length && !!r.cuentaIn && !!r.cuentaOut && (!r.pideCom || (r.com!==null && r.com!==undefined));
+    r.importable=!r.errores.length && !!r.cuentaIn && !!r.cuentaOut;
     r.limpia=r.importable && !r.ya && !r.parecida && !r.cerrado && !r.futura && !r.tasaRara;
     // Lo que marcó ella manda; lo demás lo propone la app y se recalcula. Así una
     // fila que se completa después (su banco, su comisión) se marca sola.
@@ -34163,7 +34236,8 @@ var _IMP_CSV_COLS={
   moneda_entregada:"dest", tasa:"tasa", banco_cobro:"banco_recibido", codigo_banco_cobro:"banco_recibido_codigo",
   titular_banco_cobro:"_titIn", banco_pago:"banco_pago", codigo_banco_pago:"banco_pago_codigo",
   titular_banco_pago:"_titOut", forma_de_pago:"forma_de_pago", procesado_por:"procesado_por",
-  forma_de_liquidacion:"forma_de_liquidacion"
+  forma_de_liquidacion:"forma_de_liquidacion", banco_del_beneficiario:"banco_beneficiario",
+  banco_desde_el_que_se_pago:"banco_desde"
 };
 var _IMP_CSV_NUM={monto_pagado:1, monto_liquidado:1, tasa:1};
 // Comillas, comas dentro de un nombre y saltos de línea dentro de una celda.
@@ -34252,7 +34326,7 @@ function _impElegirArchivo(input){
     if(obj && obj.version && parseInt(obj.version,10)>1){ alert("Este archivo es de una versión más nueva del formato ("+obj.version+"). Actualiza la app antes de importarlo."); return; }
     if(!lista.length){ alert("\""+file.name+"\" no trae ninguna remesa."); return; }
     S._impRem={archivo:file.name, fuente:String((obj&&obj.fuente)||""), exportado:String((obj&&obj.fecha_exportacion)||""),
-               raw:lista, sel:{}, selUser:{}, com:{}, comTodas:null, filas:[], bancos:[], hecho:null};
+               raw:lista, sel:{}, selUser:{}, filas:[], bancos:[], hecho:null};
     _impRecalcular();
     S.tab="nueva"; R();
   };
@@ -34269,23 +34343,6 @@ function _impMarcar(i, v){
   imp.selUser[i]=!!v;
   imp.sel[i]=!!(v && r && r.importable);
   _impPintarResumen();
-}
-function _impCom(i, v){
-  var imp=S._impRem; if(!imp) return;
-  if(v==="__") delete imp.com[i]; else imp.com[i]=v;
-  _impRecalcular();
-  var r=imp.filas.find(function(x){ return x.i===i; });
-  try{
-    var chk=document.getElementById("imp-chk-"+i);
-    if(chk&&r){ chk.disabled=!r.importable; chk.checked=!!imp.sel[i]; }
-  }catch(e){}
-  _impPintarResumen();
-}
-// A todas: aquí sí se repinta, cambian muchas filas y no hay nada bajo el dedo.
-function _impComTodas(v){
-  var imp=S._impRem; if(!imp) return;
-  imp.comTodas=(v==="__"?null:v); imp.com={};
-  _impRecalcular(); R();
 }
 function _impMarcarTodas(cual){
   var imp=S._impRem; if(!imp) return;
@@ -34318,7 +34375,7 @@ function _impTxDeFila(r, imp){
     showTasas:false, cuentaBanco:r.cuentaIn, cuentaDest:r.cuentaOut,
     pagosMulti:false, entregasMulti:false, pagos:[], entregas:[],
     metodo:"p2p", permuta:"",
-    _idExterno:r.idExt, _procesadoPor:r.por, _importadoDe:imp.archivo, _formaPago:r.forma, _formaLiq:r.liq,
+    _idExterno:r.idExt, _procesadoPor:r.por, _importadoDe:imp.archivo, _formaPago:r.forma, _formaLiq:r.liq, _bcoBen:r.bcoBen, _bcoDesde:r.bcoDesde,
     _tcLock:null, _tvLock:null, _amLock:null, _tdiaLock:null, _rtLock:null};
 }
 
@@ -34457,35 +34514,16 @@ function rImportarRemesas(){
   }).join("");
   var faltanB=(imp.bancos||[]).filter(function(b){ return !b.res.id; }).length;
 
-  // ── Comisión de los bolívares, a todas de una ──
-  // ARREGLO 233: solo pregunta por las que el archivo no resuelve.
-  var pideCom=(imp.filas||[]).some(function(r){ return r.pideCom && r.comArch===null; });
-  var optCom=function(sel, conVacio){
-    return (conVacio?"<option value='__'"+(sel===null||sel===undefined?" selected":"")+">— elige —</option>":"")+
-      "<option value=''"+(sel===""?" selected":"")+">Mismo banco — sin comisión</option>"+
-      "<option value='movil'"+(sel==="movil"?" selected":"")+">Pago móvil a otro banco</option>"+
-      "<option value='transf'"+(sel==="transf"?" selected":"")+">Transferencia a otro banco</option>";
-  };
-  var bloqueCom=pideCom
-    ? "<div style='"+card+"'>"+
-        "<div style='font-size:13px;font-weight:800;color:var(--tit)'>🏦 ¿Cómo se pagaron los bolívares?</div>"+
-        "<div style='font-size:11.5px;color:var(--tx3);margin:3px 0 7px;line-height:1.5'>Algunas no traen la forma de pago en el archivo, y la comisión del banco depende de esto. Elige para esas y cambia abajo la que sea distinta.</div>"+
-        "<select onchange='_impComTodas(this.value)' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;background:var(--sup);font-size:13px'>"+optCom(imp.comTodas,true)+"</select>"+
-      "</div>"
-    : "";
-
   // ── Las filas ──
   var filas=(imp.filas||[]).map(function(r){
     var flag=r.orig==="VES"?"🇻🇪→🇧🇷":r.orig==="BRL"?"🇧🇷→🇻🇪":"❓";
     var op=r.orig==="VES"?" ÷ ":" × ";
     var nomIn=r.cuentaIn?_binNomCuenta(r.cuentaIn):"", nomOut=r.cuentaOut?_binNomCuenta(r.cuentaOut):"";
     var faltaCta=(r.ruta && !r.errores.length && (!r.cuentaIn||!r.cuentaOut));
-    var faltaCom=(r.pideCom && (r.com===null||r.com===undefined));
     var chips=r.errores.map(function(x){ return "<div style='color:var(--mal)'>❌ "+x+"</div>"; }).join("")+
       (faltaCta?"<div style='color:var(--avi-tx)'>🏦 "+((!r.cuentaIn&&r.codIn)||(!r.cuentaOut&&r.codOut)
           ?"el código "+_escAud((!r.cuentaIn&&r.codIn)?r.codIn:r.codOut)+" no está en ninguna cuenta (arriba)"
           :"falta casar un banco con su cuenta (arriba)")+"</div>":"")+
-      (faltaCom?"<div style='color:var(--avi-tx)'>🏦 elige cómo se pagaron los bolívares</div>":"")+
       r.avisos.map(function(x){ return "<div style='color:var(--avi-tx)'>⚠️ "+_escAud(x)+"</div>"; }).join("");
     return "<div style='padding:10px 0;border-bottom:1px solid var(--ln2b);display:flex;gap:10px;align-items:flex-start'>"+
       "<input type='checkbox' id='imp-chk-"+r.i+"' "+(imp.sel[r.i]?"checked ":"")+(r.importable?"":"disabled ")+"onchange='_impMarcar("+r.i+",this.checked)' style='width:18px;height:18px;margin-top:2px;flex:none'>"+
@@ -34494,9 +34532,10 @@ function rImportarRemesas(){
         "<div>"+flag+" "+(r.am>0?f2(r.am):"?")+" "+_escAud(r.orig)+op+(r.tasa>0?f2(r.tasa):"?")+" = <b>"+(r.cant>0?f2(r.cant):(r.cantArch>0?f2(r.cantArch):"?"))+"</b> "+_escAud(r.dest)+"</div>"+
         "<div style='color:var(--tx3)'>"+(nomIn?_escAud(nomIn):"<i>"+_escAud(r.bancoIn||"?")+"</i>")+" → "+(nomOut?_escAud(nomOut):"<i>"+_escAud(r.bancoOut||"?")+"</i>")+(r.por?" · "+_escAud(r.por):"")+"</div>"+
         (r.liq||r.forma?"<div style='color:var(--tx3)'>"+(r.liq?"Liquidación: "+_escAud(r.liq):"Forma de pago: "+_escAud(r.forma))+"</div>":"")+
-        (r.pideCom && r.comArch!==null && !r.errores.length ? "<div style='color:var(--ok)'>🏦 "+_impTxtCom(r.com, r.cant)+
-          (r.comSupuesta?" <span style='color:var(--avi-tx)'>· el archivo no dice el banco: se toma otro banco</span>":"")+"</div>" : "")+
-        (r.pideCom&&!r.errores.length&&r.comArch===null?"<select onchange='_impCom("+r.i+",this.value)' style='margin-top:5px;width:100%;padding:6px;border:1px solid var(--ln);border-radius:7px;background:var(--sup);font-size:12px'>"+optCom(r.com,true)+"</select>":"")+
+        (r.bcoBen||r.bcoDesde?"<div style='color:var(--tx3)'>Beneficiario: "+_escAud(r.bcoBen||"—")+" · pagado desde: "+_escAud(r.bcoDesde||"—")+"</div>":"")+
+        (r.pideCom && !r.errores.length ? "<div style='color:var(--ok)'>🏦 "+_impTxtCom(r.com, r.cant)+
+          (r.comPorque?" <span style='color:var(--tx3)'>("+_escAud(r.comPorque)+")</span>":"")+"</div>"+
+          (r.comAvisos||[]).map(function(x){ return "<div style='color:var(--avi-tx)'>⚠️ "+_escAud(x)+"</div>"; }).join("") : "")+
         (chips?"<div style='margin-top:4px;font-size:11.5px'>"+chips+"</div>":"")+
       "</div>"+
     "</div>";
@@ -34508,7 +34547,6 @@ function rImportarRemesas(){
     "</div>"+
     (bancos?"<div style='"+card+"'><div style='font-size:13px;font-weight:800;color:var(--tit);margin-bottom:2px'>🏦 Bancos del archivo"+(faltanB?" <span style='color:var(--avi-tx)'>· faltan "+faltanB+"</span>":"")+"</div>"+
       "<div style='font-size:11.5px;color:var(--tx3);line-height:1.5'>Cada nombre se casa una vez con su cuenta y queda recordado.</div>"+bancos+"</div>":"")+
-    bloqueCom+
     "<div style='"+card+"'>"+
       "<div style='display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px'>"+
         "<button onclick='_impMarcarTodas(\"limpias\")' style='"+btn("var(--sup2)","var(--tx2)")+";font-size:11.5px;padding:7px 10px'>Marcar las nuevas</button>"+
