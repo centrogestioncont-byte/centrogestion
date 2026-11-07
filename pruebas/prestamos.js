@@ -13890,10 +13890,10 @@ console.log("\nARREGLO 203 · fuera la calculadora inversa del formulario de abo
      "lo dudoso sale desmarcado: ya importada, parecida, mes cerrado, fecha futura, tasa rara");
   ok(/vistos\[r\.idExt\]>1/.test(rec), "un id repetido dentro del mismo archivo es un error");
 
-  // 6. La comisión del banco venezolano se PREGUNTA: la otra app no la sabe.
-  ok(/r\.pideCom=!!\(r\.dest==="VES" && r\.cuentaOut && esBancoVES\(r\.cuentaOut\)\)/.test(rec) &&
-     /\(!r\.pideCom \|\| \(r\.com!==null && r\.com!==undefined\)\)/.test(rec),
-     "una remesa que sale en bolívares no se importa hasta que ella diga cómo se pagaron");
+  // 6. La comisión del banco venezolano. Desde el ARREGLO 237 no se pregunta:
+  // la decide la app con los bancos del archivo, y solo cuando sale en bolívares.
+  ok(/r\.pideCom=!!\(r\.dest==="VES" && r\.cuentaOut && esBancoVES\(r\.cuentaOut\)\)/.test(rec),
+     "solo una remesa que sale de un banco venezolano lleva comisión");
 
   // 7. Los bancos se recuerdan en una clave que YA viaja al servidor.
   ok(/return "remesa·"\+mon\+"·"\+_impNorm\(nombre\);/.test(sc("_impClaveBanco")) &&
@@ -13913,7 +13913,7 @@ console.log("\nARREGLO 203 · fuera la calculadora inversa del formulario de abo
      "el banco se elige por su posición, nunca metiendo su nombre en un onclick");
 
   // 9. Marcar una casilla o una comisión no repinta (ARREGLO 32).
-  ok(!/\bR\(\)/.test(sc("_impMarcar")) && !/\bR\(\)/.test(sc("_impCom")),
+  ok(!/\bR\(\)/.test(sc("_impMarcar")),
      "marcar una fila no rehace la lista bajo el dedo");
 
   // 10. La entrada: en Nueva, y con la importación abierta manda ella.
@@ -13976,41 +13976,72 @@ console.log("\nARREGLO 203 · fuera la calculadora inversa del formulario de abo
   ok(/_impNormCod\(x\.codigoRisapp\)===n/.test(sc("_impCuentaDeCodigo")) && !/_impNorm\(x\.codigoRisapp\)/.test(HTML),
      "buscar la cuenta y prohibir el repetido comparan el código igual");
 
-  // ── ARREGLO 233: la comisión sale de la forma de pago del archivo ──
-  const _comForma = new Function(sc("_impComDeForma") + "; return _impComDeForma;")();
-  ok(_comForma("Transferencia") === "transf" && _comForma("Pago Móvil") === "movil" && _comForma("PAGO MOVIL") === "movil",
-     "transferencia y pago móvil se leen, con o sin tilde y en mayúsculas");
-  ok(_comForma("Transferencia mismo banco") === "" && _comForma("Pago móvil mismo banco") === "",
-     "si dice mismo banco, sin comisión");
-  ok(_comForma("") === null && _comForma("PIX") === null && _comForma("Efectivo") === null && _comForma("pago movil o transferencia") === null,
-     "lo que no se reconoce (o es ambiguo) no inventa comisión: se pregunta");
+  // ── ARREGLO 233/234/237: la comisión la decide la app, sin preguntar ──
+  const _cmFn = new Function("S","comisionBancoVES",
+    sc("_impTxtNorm")+";"+sc("_impTipoDe")+";"+sc("_impMismoDe")+";var _IMP_BANCOS_VE=null;"+sc("_impBancoVE")+";"+sc("_impDecidirCom")+
+    ";return {tipo:_impTipoDe, mismo:_impMismoDe, banco:_impBancoVE, decide:_impDecidirCom, set:function(v){_IMP_BANCOS_VE=v;}};");
+  const _bancosSrc = HTML.match(/var _IMP_BANCOS_VE=(\[[\s\S]*?\n\]);/);
+  ok(!!_bancosSrc, "la lista de bancos venezolanos está en un solo sitio");
+  const _comVE = function(t,bs){ return t==="movil" ? Math.max(Math.round(bs*0.003*100)/100,14) : t==="transf" ? 54 : 0; };
+  const _SC = {cuentas:[{id:"cB", nombre:"BANESCO PRINCIPAL"},{id:"cJ", nombre:"PAGOS JULIO"}]};
+  const CM = _cmFn(_SC, _comVE);
+  CM.set(new Function("return "+_bancosSrc[1])());
+  ok(CM.tipo("Transferencia")==="transf" && CM.tipo("Pago Móvil")==="movil" && CM.tipo("PAGO MOVIL otros bancos")==="movil" &&
+     CM.tipo("")===null && CM.tipo("PIX")===null && CM.tipo("pago movil o transferencia")===null,
+     "transferencia y pago móvil se leen; lo que no se reconoce (o es ambiguo) no se adivina");
+  ok(CM.mismo("Transferencia mismo banco")===true && CM.mismo("Pago móvil otros bancos")===false && CM.mismo("Transferencia")===null,
+     "mismo banco / otros bancos se leen del texto");
+  ok(CM.banco("Banesco").key===CM.banco("Banesco Principal").key && CM.banco("BDV").key===CM.banco("Banco de Venezuela").key &&
+     CM.banco("BBVA").key===CM.banco("Banco Provincial").key && CM.banco("Banco Mercantil").key===CM.banco("Mercantil Pagos").key,
+     "el mismo banco se reconoce escrito de varias formas");
+  ok(CM.banco("Banco del Tesoro de Venezuela").key!==CM.banco("Banco de Venezuela").key &&
+     CM.banco("Banco Venezolano de Crédito").key!==CM.banco("Banco de Venezuela").key &&
+     CM.banco("Banco Bicentenario").key!==CM.banco("Banco de Venezuela").key,
+     "el Tesoro, el Venezolano de Crédito y el Bicentenario no son el Banco de Venezuela");
+  const _fila = function(o){ return Object.assign({liq:"",forma:"",bcoBen:"",bcoDesde:"",bancoOut:"",cuentaOut:"cB",cant:1000,cantArch:1000}, o); };
+  let fr;
+  fr=_fila({liq:"Transferencia mismo banco", bcoBen:"Banesco", bcoDesde:"Banesco"});
+  ok(CM.decide(fr)==="" && fr.comAvisos.length===0, "R-34: Banesco → Banesco, sin comisión");
+  fr=_fila({liq:"Pago móvil otros bancos", bcoBen:"Banco de Venezuela", bcoDesde:"Banco Mercantil", cant:28444.5});
+  ok(CM.decide(fr)==="movil" && fr.comAvisos.length===0, "R-35: Mercantil → Venezuela, pago móvil a otro banco");
+  fr=_fila({liq:"Transferencia otros bancos", bcoBen:"Banco Provincial", bcoDesde:"Banesco"});
+  ok(CM.decide(fr)==="transf" && fr.comAvisos.length===0, "R-37: Banesco → Provincial, transferencia a otro banco");
+  fr=_fila({forma:"Transferencia", bcoDesde:"Banesco"});
+  ok(CM.decide(fr)==="transf" && fr.comAvisos.some(x=>/no dice el banco del beneficiario/.test(x)),
+     "R-38: sin banco del beneficiario se supone otro banco, y se dice");
+  fr=_fila({liq:"Transferencia mismo banco", bcoBen:"Banco Provincial", bcoDesde:"Banesco"});
+  ok(CM.decide(fr)==="transf" && fr.comAvisos.some(x=>/mandan los bancos/.test(x)),
+     "si el texto dice mismo banco y los bancos son distintos, mandan los bancos y se avisa");
+  fr=_fila({liq:"Pago móvil otros bancos", bcoBen:"Banesco", bcoDesde:"Banesco Principal"});
+  ok(CM.decide(fr)==="" && fr.comAvisos.some(x=>/mandan los bancos/.test(x)),
+     "si el texto dice otros bancos y los dos son el mismo, sin comisión y se avisa");
+  fr=_fila({liq:"Pago móvil otros bancos", bcoBen:"Banesco", bcoDesde:"", bancoOut:"Banesco Principal"});
+  ok(CM.decide(fr)==="" , "sin 'desde' en el archivo, se usa el banco de la cuenta que pagó");
+  fr=_fila({liq:"Pago móvil mismo banco", bcoBen:"Banesco", bcoDesde:"", bancoOut:"", cuentaOut:"cJ"});
+  ok(CM.decide(fr)==="" && fr.comAvisos.length===0, "una cuenta cuyo nombre no es un banco no decide nada: manda el texto");
+  fr=_fila({bcoBen:"Banco Provincial", bcoDesde:"Banesco", cant:30000});
+  ok(CM.decide(fr)==="movil" && fr.comAvisos.some(x=>/más comisión/.test(x)), "sin tipo, se toma la de más comisión (30.000 Bs: pago móvil, 90)");
+  fr=_fila({bcoBen:"Banco Provincial", bcoDesde:"Banesco", cant:1000});
+  ok(CM.decide(fr)==="transf", "sin tipo y monto pequeño: transferencia (54 > 14)");
+  fr=_fila({});
+  ok(CM.decide(fr)!=="" && fr.comAvisos.length===2, "sin nada en el archivo igual hay comisión, con los dos supuestos dichos");
   const rc = sc("_impRecalcular");
-  ok(/imp\.com\[r\.i\]!==undefined \? imp\.com\[r\.i\] : \(r\.comArch!==null \? r\.comArch : imp\.comTodas\)/.test(rc),
-     "lo que ella cambie en la fila manda; si no, el archivo; si el archivo no dice, el 'para todas'");
-  const lf2 = sc("_impLeerFila");
-  ok(/_cLiq=_impComDeForma\(r\.liq\), _cPago=_impComDeForma\(r\.forma\)/.test(lf2),
-     "cada fila lee su forma de liquidación y su forma de pago");
-
-  // ── ARREGLO 234: forma_de_liquidacion manda, y sin selector ──
-  ok(/if\(_cLiq!==null\)\{ r\.comArch=_cLiq;/.test(lf2) && /else \{ r\.comArch=_cPago;/.test(lf2),
-     "la liquidación (que dice el banco) manda; si viene vacía, la forma de pago");
-  ok(/comSupuesta=\(_cPago!==null && !_diceBanco\(r\.forma\)\)/.test(lf2) && /comSupuesta=!_diceBanco\(r\.liq\)/.test(lf2),
-     "si el archivo no dice el banco, la fila lo marca como supuesto");
-  ok(/forma_de_liquidacion:"forma_de_liquidacion"/.test(HTML),
-     "la columna forma_de_liquidacion del CSV se lee");
+  ok(/r\.com=r\.pideCom \? _impDecidirCom\(r\) : "";/.test(rc), "cada fila con bolívares pasa por _impDecidirCom");
+  ok(!/_impCom\(|_impComTodas|comTodas|comArch|_impComDeForma/.test(HTML), "no queda ningún selector de comisión ni su estado");
+  ok(/banco_del_beneficiario:"banco_beneficiario"/.test(HTML) && /banco_desde_el_que_se_pago:"banco_desde"/.test(HTML),
+     "las dos columnas de bancos del CSV se leen");
+  ok(/forma_de_liquidacion:"forma_de_liquidacion"/.test(HTML), "la columna forma_de_liquidacion del CSV se lee");
   const ri234 = sc("rImportarRemesas");
-  ok(/r\.pideCom&&!r\.errores\.length&&r\.comArch===null\?"<select onchange='_impCom\(/.test(ri234),
-     "el selector de comisión solo sale cuando el archivo no la decide");
-  ok(/_impTxtCom\(r\.com, r\.cant\)/.test(ri234),
-     "cuando la decide el archivo, la fila dice cuál y cuánto");
+  ok(/_impTxtCom\(r\.com, r\.cant\)/.test(ri234) && /r\.comAvisos\|\|\[\]\)\.map/.test(ri234) && /_escAud\(r\.bcoBen/.test(ri234),
+     "la fila dice cuál comisión, cuánto, los bancos y lo que se supuso");
+  ok(/nuevaRemesa\.bancoBeneficiario=String\(f\._bcoBen\)/.test(sc("saveTx")) && /_bcoBen:r\.bcoBen/.test(sc("_impTxDeFila")),
+     "los dos bancos quedan guardados en la remesa");
   const _normCod2 = new Function("_impNorm", sc("_impNormCod") + "; return _impNormCod;")(
     function(s){ return String(s==null?"":s).toUpperCase().replace(/\s+/g," ").trim(); });
   ok(_normCod2("CI-0004") === _normCod2("0004") && _normCod2("ci - 4") === _normCod2("4") && _normCod2("CI-0004") !== _normCod2("CI-0002"),
      "CI-0004 es la misma cuenta que 0004: el prefijo de RisApp no rompe lo ya cargado");
   ok(/nuevaRemesa\.formaLiquidacion=String\(f\._formaLiq\)/.test(sc("saveTx")),
      "la forma de liquidación queda guardada en la remesa");
-  ok(/return r\.pideCom && r\.comArch===null;/.test(sc("rImportarRemesas")),
-     "el 'para todas' solo sale si alguna fila no trae forma de pago");
   ok(/_formaPago:r\.forma/.test(sc("_impTxDeFila")) && /nuevaRemesa\.formaPago=String\(f\._formaPago\)/.test(sc("saveTx")),
      "la forma de pago queda guardada en la remesa");
   ok(/r\.codIn=String\(o\.banco_recibido_codigo/.test(sc("_impLeerFila")) && /r\.codOut=String\(o\.banco_pago_codigo/.test(sc("_impLeerFila")),
