@@ -3305,7 +3305,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261106_v316";
+var APP_VERSION = "20261107_v317";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -9048,8 +9048,8 @@ function _fijarCodigoRisapp(c, codigo){
   if(!c) return "No encuentro la cuenta.";
   var cod=String(codigo==null?"":codigo).trim();
   if(cod){
-    var n=_impNorm(cod);
-    var otra=(S.cuentas||[]).find(function(x){ return x.id!==c.id && x.codigoRisapp && _impNorm(x.codigoRisapp)===n; });
+    var n=_impNormCod(cod);
+    var otra=(S.cuentas||[]).find(function(x){ return x.id!==c.id && x.codigoRisapp && _impNormCod(x.codigoRisapp)===n; });
     if(otra) return "El código "+cod+" ya lo tiene \""+otra.nombre+"\". Un código va en una sola cuenta: quítaselo a esa primero.";
   }
   var antes=c.codigoRisapp||"";
@@ -11024,6 +11024,9 @@ function saveTx(){
     nuevaRemesa.idExterno=String(f._idExterno);
     nuevaRemesa.procesadoPor=String(f._procesadoPor||"");
     nuevaRemesa.importadoDe=String(f._importadoDe||"");
+    // ARREGLO 233: cómo se liquidó, tal como lo dijo la otra app.
+    if(f._formaPago) nuevaRemesa.formaPago=String(f._formaPago);
+    if(f._formaLiq) nuevaRemesa.formaLiquidacion=String(f._formaLiq);
   }
   arr.push(nuevaRemesa);
   arr.sort(function(a,b){var da=a.d.split("/"),db=b.d.split("/");return (parseInt(da[1])*100+parseInt(da[0]))-(parseInt(db[1])*100+parseInt(db[0]))||a.n-b.n;});
@@ -33682,6 +33685,17 @@ var _IMPORT_REM=null;   // mientras corre una importación: {avisos, errores, he
 var _IMP_RUTAS={"BRL>VES":"BRL ↔ VZLA","VES>BRL":"VZLA ↔ BRL"};
 
 function _impNorm(s){ return String(s==null?"":s).toUpperCase().replace(/\s+/g," ").trim(); }
+// ARREGLO 232: un código de cuenta solo de cifras se compara sin los ceros de
+// delante. Un CSV abierto y guardado en Excel convierte "0004" en 4, y la misma
+// cuenta pasaría a "no está en ninguna". Un código con letras se deja tal cual.
+// ARREGLO 234: RisApp empezó a escribirlos con su prefijo ("CI-0004", cuenta
+// interna). El prefijo de letras con guion se quita antes de comparar: si no,
+// las cuentas que ella ya cargó como "0004" dejarían de casar el día que
+// cambió el archivo, y todas las remesas saldrían "sin cuenta".
+function _impNormCod(s){
+  var n=_impNorm(s).replace(/^[A-Z]{1,4}\s*-\s*(?=\d+$)/,"");
+  return /^\d+$/.test(n) ? n.replace(/^0+(?=\d)/,"") : n;
+}
 // dd/mm/aa es el formato acordado; se aceptan también dd/mm/aaaa y aaaa-mm-dd
 // porque una fecha bien escrita en otro formato no es razón para rechazarla.
 function _impFechaIso(s){
@@ -33709,6 +33723,30 @@ function _impNum(v){
 }
 // Cuánto puede separarse lo liquidado de lo calculado. En bolívares un bolívar
 // es redondeo; en reales un real no lo es, así que ahí el margen es de céntimos.
+// ARREGLO 233: la forma de pago de la liquidación viene en el archivo, y con
+// ella la comisión del banco venezolano. Sus palabras: "yo no tengo por qué
+// elegir con qué fue pagada, estamos procesando por lote".
+// El archivo dice CÓMO (transferencia o pago móvil) pero no a QUÉ banco, y eso
+// es lo que separa "sin comisión" de "con comisión". Sin ese dato se toma OTRO
+// banco: es el que sí cobra, y ante la duda la app no puede apuntar una
+// ganancia mayor que la de verdad. Si RisApp escribe "mismo banco", se lee.
+// Lo que no se reconoce devuelve null y se pregunta: inventar una comisión es
+// peor que pedirla.
+function _impComDeForma(forma){
+  var t=String(forma==null?"":forma).toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+  if(!t.trim()) return null;
+  var mov=/MOVIL/.test(t), tra=/TRANSF/.test(t);
+  if(mov===tra) return null;   // ninguna de las dos, o las dos: no se adivina
+  if(/MISMO BANCO|MISMA ENTIDAD|MISMO\b/.test(t)) return "";
+  return mov ? "movil" : "transf";
+}
+// Lo que la fila dice que se va a cobrar, con el número: "transferencia a otro
+// banco" a secas obliga a ir a Configuración a ver cuánto es.
+function _impTxtCom(tipo, montoBs){
+  if(tipo==="") return "Mismo banco · sin comisión";
+  var n=comisionBancoVES(tipo, montoBs);
+  return (tipo==="movil"?"Pago móvil a otro banco":"Transferencia a otro banco")+" · comisión "+f2(n)+" Bs";
+}
 function _impTolerancia(dest){ return dest==="BRL" ? 0.05 : 1; }
 
 // ── Bancos del archivo → cuentas de la app ──
@@ -33728,8 +33766,8 @@ function _impCuentaValida(id, mon){
 // SOLO el código. Un código que no está en ninguna cuenta no cae al nombre:
 // cae a "dime cuál es", porque adivinar aquí es mandar el dinero a otra cuenta.
 function _impCuentaDeCodigo(codigo, mon){
-  var n=_impNorm(codigo);
-  var c=(S.cuentas||[]).find(function(x){ return x.codigoRisapp && _impNorm(x.codigoRisapp)===n; });
+  var n=_impNormCod(codigo);
+  var c=(S.cuentas||[]).find(function(x){ return x.codigoRisapp && _impNormCod(x.codigoRisapp)===n; });
   if(!c) return {id:"", como:"", motivo:""};
   if(c.moneda!==mon) return {id:"", como:"", motivo:"el código "+codigo+" es de \""+c.nombre+"\", que está en "+c.moneda+" y aquí va "+mon};
   if(c.activa===false) return {id:"", como:"", motivo:"el código "+codigo+" es de \""+c.nombre+"\", que está pausada"};
@@ -33762,7 +33800,7 @@ function _impAsignarCodigo(k, cuentaId){
   var b=imp.bancos[k];
   var c=(S.cuentas||[]).find(function(x){ return x.id===cuentaId; });
   if(!c) return;
-  if(c.codigoRisapp && _impNorm(c.codigoRisapp)!==_impNorm(b.codigo) &&
+  if(c.codigoRisapp && _impNormCod(c.codigoRisapp)!==_impNormCod(b.codigo) &&
      !confirm("\""+c.nombre+"\" ya tiene el código "+c.codigoRisapp+".\n\n¿Cambiarlo por "+b.codigo+"?")){ R(); return; }
   var err=_fijarCodigoRisapp(c, b.codigo);
   if(err){ alert(err); R(); return; }
@@ -33785,6 +33823,22 @@ function _impLeerFila(o, i){
   if(!r.cliNom) e.push("falta cliente_nombre");
   r.orig=_impNorm(o.orig); r.dest=_impNorm(o.dest);
   r.rt=_IMP_RUTAS[r.orig+">"+r.dest]||"";
+  // ARREGLO 232: el CSV dice la ruta Y las monedas. Si no coinciden, una de las
+  // dos está mal y no hay forma de saber cuál: no se importa.
+  var rutaArch=_impNorm(o.ruta).replace(/\s/g,"").replace(/[>→]/g,"-");
+  if(rutaArch && r.orig && r.dest && rutaArch!==r.orig+"-"+r.dest){
+    e.push("la ruta dice "+_escAud(rutaArch)+" y las monedas dicen "+_escAud(r.orig)+"-"+_escAud(r.dest));
+  }
+  r.forma=String(o.forma_de_pago==null?"":o.forma_de_pago).trim();
+  // ARREGLO 234: forma_de_liquidacion dice cómo se le pagó al beneficiario Y si
+  // fue al mismo banco ("Pago móvil mismo banco", "Transferencia otros
+  // bancos"). Esa manda. Si viene vacía se cae a forma_de_pago, que no dice el
+  // banco: se toma otro banco (el que cobra) y la fila lo dice.
+  r.liq=String(o.forma_de_liquidacion==null?"":o.forma_de_liquidacion).trim();
+  var _cLiq=_impComDeForma(r.liq), _cPago=_impComDeForma(r.forma);
+  var _diceBanco=function(t){ return /MISMO|MISMA|OTRO/.test(String(t||"").toUpperCase()); };
+  if(_cLiq!==null){ r.comArch=_cLiq; r.comSupuesta=!_diceBanco(r.liq); }
+  else { r.comArch=_cPago; r.comSupuesta=(_cPago!==null && !_diceBanco(r.forma)); }
   if(!r.rt){
     if(r.orig==="USD") e.push("EE.UU. → Venezuela no se importa: va por otro camino, regístrala a mano");
     else e.push("ruta "+_escAud(r.orig||"?")+" → "+_escAud(r.dest||"?")+" no válida (solo BRL→VES y VES→BRL)");
@@ -33851,7 +33905,7 @@ function _impRecalcular(){
     // mismo código son la misma cuenta, y un mismo nombre con dos códigos, dos.
     var reg=function(nombre, mon, codigo){
       if((!nombre&&!codigo)||!mon) return -1;
-      var k=mon+"·"+(codigo?"#"+_impNorm(codigo):_impNorm(nombre));
+      var k=mon+"·"+(codigo?"#"+_impNormCod(codigo):_impNorm(nombre));
       if(idxB[k]===undefined){ idxB[k]=bancos.length; bancos.push({nombre:nombre||("#"+codigo), mon:mon, codigo:codigo||"", n:0}); }
       bancos[idxB[k]].n++;
       return idxB[k];
@@ -33862,10 +33916,12 @@ function _impRecalcular(){
       r.cuentaIn=ci.id; r.cuentaOut=co.id;
       if(ci.motivo) r.errores.push(_escAud(ci.motivo));
       if(co.motivo) r.errores.push(_escAud(co.motivo));
-      // La comisión del banco venezolano depende de la cuenta del CLIENTE, que la
-      // otra app no manda: se pregunta (CLAUDE.md, "lo que cobra el banco").
+      // La comisión del banco venezolano depende de cómo se le pagó al
+      // beneficiario. ARREGLO 233: la trae el archivo (forma_de_pago), y solo
+      // se pregunta si no la trae o no se reconoce. Lo que ella cambie en la
+      // fila manda sobre el archivo.
       r.pideCom=!!(r.dest==="VES" && r.cuentaOut && esBancoVES(r.cuentaOut));
-      r.com=r.pideCom ? (imp.com[r.i]!==undefined ? imp.com[r.i] : imp.comTodas) : "";
+      r.com=r.pideCom ? (imp.com[r.i]!==undefined ? imp.com[r.i] : (r.comArch!==null ? r.comArch : imp.comTodas)) : "";
     }
     r.importable=!r.errores.length && !!r.cuentaIn && !!r.cuentaOut && (!r.pideCom || (r.com!==null && r.com!==undefined));
     r.limpia=r.importable && !r.ya && !r.parecida && !r.cerrado && !r.futura && !r.tasaRara;
@@ -33888,6 +33944,78 @@ function _impRecalcular(){
 }
 
 // ── Abrir el archivo ──
+// ── ARREGLO 232: el CSV que descarga RisApp ──
+// Se traduce aquí a la misma forma que el JSON del 229 y sigue por el MISMO
+// camino: vista previa, códigos, comisión y saveTx(). Dos importadores se
+// separarían con el primer cambio.
+var _IMP_CSV_COLS={
+  fecha:"fecha", hora:"hora", id_operacion:"id_remesa", id_cliente:"cliente_id", nombre_cliente:"cliente_nombre",
+  ruta:"ruta", monto_recibido:"monto_pagado", moneda_recibida:"orig", monto_entregado:"monto_liquidado",
+  moneda_entregada:"dest", tasa:"tasa", banco_cobro:"banco_recibido", codigo_banco_cobro:"banco_recibido_codigo",
+  titular_banco_cobro:"_titIn", banco_pago:"banco_pago", codigo_banco_pago:"banco_pago_codigo",
+  titular_banco_pago:"_titOut", forma_de_pago:"forma_de_pago", procesado_por:"procesado_por",
+  forma_de_liquidacion:"forma_de_liquidacion"
+};
+var _IMP_CSV_NUM={monto_pagado:1, monto_liquidado:1, tasa:1};
+// Comillas, comas dentro de un nombre y saltos de línea dentro de una celda.
+// Partir por "," a secas rompería "PEREZ, MARIA" en dos columnas y correría el
+// resto de la fila una posición: los montos caerían en la columna equivocada.
+function _impPartirCsv(txt, sep){
+  var filas=[], fila=[], cel="", q=false, i, ch;
+  for(i=0;i<txt.length;i++){
+    ch=txt.charAt(i);
+    if(q){
+      if(ch==='"'){ if(txt.charAt(i+1)==='"'){ cel+='"'; i++; } else q=false; }
+      else cel+=ch;
+    } else if(ch==='"') q=true;
+    else if(ch===sep){ fila.push(cel); cel=""; }
+    else if(ch==="\n"||ch==="\r"){
+      if(ch==="\r"&&txt.charAt(i+1)==="\n") i++;
+      fila.push(cel); filas.push(fila); fila=[]; cel="";
+    } else cel+=ch;
+  }
+  if(cel!==""||fila.length){ fila.push(cel); filas.push(fila); }
+  return filas.filter(function(f){ return f.some(function(c){ return String(c).trim()!==""; }); });
+}
+// Un número de máquina ("99999.90") se lee tal cual. _leerNumero tomaría un
+// punto con tres cifras detrás como de miles. Lo demás (Excel en español,
+// "1.234,56") sí pasa por _leerNumero.
+function _impNumCsv(v){
+  var t=String(v==null?"":v).trim();
+  if(/^-?\d+(\.\d+)?$/.test(t)) return parseFloat(t);
+  return _impNum(t);
+}
+function _impDeCsv(txt){
+  txt=String(txt||"").replace(/^\uFEFF/,"");
+  var l1=(txt.split(/\r?\n/)[0]||"");
+  var cuenta=function(c){ return l1.split(c).length-1; };
+  var sep=[",",";","\t"].sort(function(a,b){ return cuenta(b)-cuenta(a); })[0];
+  var filas=_impPartirCsv(txt, sep);
+  if(filas.length<2) return {error:"no trae ninguna remesa."};
+  var cab=filas[0].map(function(h){
+    return String(h).trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g,"_");
+  });
+  var faltan=["fecha","hora","id_operacion","id_cliente","nombre_cliente","monto_recibido","moneda_recibida",
+              "monto_entregado","moneda_entregada","tasa","codigo_banco_cobro","codigo_banco_pago"]
+             .filter(function(c){ return cab.indexOf(c)<0; });
+  if(faltan.length) return {error:"le faltan columnas: "+faltan.join(", ")+"."};
+  var lista=filas.slice(1).map(function(f){
+    var o={};
+    cab.forEach(function(h,j){
+      var dest=_IMP_CSV_COLS[h]; if(!dest) return;
+      var v=String(f[j]==null?"":f[j]).trim();
+      o[dest]=_IMP_CSV_NUM[dest] ? (v===""?"":_impNumCsv(v)) : v;
+    });
+    // El titular va junto al banco: dos cuentas del Banco de Venezuela de dos
+    // personas tienen que leerse distintas en la pantalla.
+    if(o._titIn) o.banco_recibido=(o.banco_recibido?o.banco_recibido+" · ":"")+o._titIn;
+    if(o._titOut) o.banco_pago=(o.banco_pago?o.banco_pago+" · ":"")+o._titOut;
+    delete o._titIn; delete o._titOut;
+    return o;
+  });
+  return {lista:lista};
+}
+
 function _impElegirArchivo(input){
   var file=input&&input.files&&input.files[0];
   try{ input.value=""; }catch(e){}
@@ -33895,10 +34023,22 @@ function _impElegirArchivo(input){
   if(file.size>2*1024*1024){ alert("El archivo pesa "+Math.round(file.size/1024)+" KB. Uno de remesas no debería pasar de 2 MB: revisa que sea el correcto."); return; }
   var fr=new FileReader();
   fr.onload=function(ev){
-    var obj;
-    try{ obj=JSON.parse(String(ev.target.result||"")); }
-    catch(err){ alert("No pude leer \""+file.name+"\": no es un JSON válido.\n\n"+(err&&err.message||"")); return; }
-    var lista=Array.isArray(obj)?obj:(obj&&Array.isArray(obj.remesas)?obj.remesas:null);
+    var obj, lista, texto=String(ev.target.result||"");
+    // Se decide por el contenido, no solo por el nombre: un CSV renombrado sigue
+    // siendo un CSV, y un JSON empieza siempre por corchete o llave (91 y 123).
+    // Escritos como carácter, el contador de llaves de las pruebas da la
+    // función por abierta.
+    var _c0=texto.replace(/^\uFEFF/,"").trim().charCodeAt(0);
+    var esJson=(_c0===91||_c0===123) && !/\.csv$/i.test(file.name);
+    if(!esJson){
+      var cv=_impDeCsv(texto);
+      if(cv.error){ alert("No pude leer \""+file.name+"\": "+cv.error); return; }
+      obj={fuente:"RisApp (CSV)"}; lista=cv.lista;
+    } else {
+      try{ obj=JSON.parse(texto.replace(/^\uFEFF/,"")); }
+      catch(err){ alert("No pude leer \""+file.name+"\": no es un JSON válido.\n\n"+(err&&err.message||"")); return; }
+      lista=Array.isArray(obj)?obj:(obj&&Array.isArray(obj.remesas)?obj.remesas:null);
+    }
     if(!lista){ alert("\""+file.name+"\" no trae una lista \"remesas\". Revisa que sea el archivo de remesas."); return; }
     if(obj && obj.version && parseInt(obj.version,10)>1){ alert("Este archivo es de una versión más nueva del formato ("+obj.version+"). Actualiza la app antes de importarlo."); return; }
     if(!lista.length){ alert("\""+file.name+"\" no trae ninguna remesa."); return; }
@@ -33969,7 +34109,7 @@ function _impTxDeFila(r, imp){
     showTasas:false, cuentaBanco:r.cuentaIn, cuentaDest:r.cuentaOut,
     pagosMulti:false, entregasMulti:false, pagos:[], entregas:[],
     metodo:"p2p", permuta:"",
-    _idExterno:r.idExt, _procesadoPor:r.por, _importadoDe:imp.archivo,
+    _idExterno:r.idExt, _procesadoPor:r.por, _importadoDe:imp.archivo, _formaPago:r.forma, _formaLiq:r.liq,
     _tcLock:null, _tvLock:null, _amLock:null, _tdiaLock:null, _rtLock:null};
 }
 
@@ -34109,7 +34249,8 @@ function rImportarRemesas(){
   var faltanB=(imp.bancos||[]).filter(function(b){ return !b.res.id; }).length;
 
   // ── Comisión de los bolívares, a todas de una ──
-  var pideCom=(imp.filas||[]).some(function(r){ return r.pideCom; });
+  // ARREGLO 233: solo pregunta por las que el archivo no resuelve.
+  var pideCom=(imp.filas||[]).some(function(r){ return r.pideCom && r.comArch===null; });
   var optCom=function(sel, conVacio){
     return (conVacio?"<option value='__'"+(sel===null||sel===undefined?" selected":"")+">— elige —</option>":"")+
       "<option value=''"+(sel===""?" selected":"")+">Mismo banco — sin comisión</option>"+
@@ -34119,7 +34260,7 @@ function rImportarRemesas(){
   var bloqueCom=pideCom
     ? "<div style='"+card+"'>"+
         "<div style='font-size:13px;font-weight:800;color:var(--tit)'>🏦 ¿Cómo se pagaron los bolívares?</div>"+
-        "<div style='font-size:11.5px;color:var(--tx3);margin:3px 0 7px;line-height:1.5'>La otra app no lo sabe y la comisión del banco depende de esto. Elige para todas y cambia abajo la que sea distinta.</div>"+
+        "<div style='font-size:11.5px;color:var(--tx3);margin:3px 0 7px;line-height:1.5'>Algunas no traen la forma de pago en el archivo, y la comisión del banco depende de esto. Elige para esas y cambia abajo la que sea distinta.</div>"+
         "<select onchange='_impComTodas(this.value)' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;background:var(--sup);font-size:13px'>"+optCom(imp.comTodas,true)+"</select>"+
       "</div>"
     : "";
@@ -34143,7 +34284,10 @@ function rImportarRemesas(){
         "<div><b style='color:var(--tit)'>"+_escAud(r.cliNom||"(sin nombre)")+"</b> <span style='color:var(--tx3)'>· "+(r.iso?ds(r.iso):"?")+" "+(r.hora?r.hora.slice(0,5):"")+" · "+_escAud(r.idExt||"sin id")+"</span></div>"+
         "<div>"+flag+" "+(r.am>0?f2(r.am):"?")+" "+_escAud(r.orig)+op+(r.tasa>0?f2(r.tasa):"?")+" = <b>"+(r.cant>0?f2(r.cant):(r.cantArch>0?f2(r.cantArch):"?"))+"</b> "+_escAud(r.dest)+"</div>"+
         "<div style='color:var(--tx3)'>"+(nomIn?_escAud(nomIn):"<i>"+_escAud(r.bancoIn||"?")+"</i>")+" → "+(nomOut?_escAud(nomOut):"<i>"+_escAud(r.bancoOut||"?")+"</i>")+(r.por?" · "+_escAud(r.por):"")+"</div>"+
-        (r.pideCom&&!r.errores.length?"<select onchange='_impCom("+r.i+",this.value)' style='margin-top:5px;width:100%;padding:6px;border:1px solid var(--ln);border-radius:7px;background:var(--sup);font-size:12px'>"+optCom(r.com,true)+"</select>":"")+
+        (r.liq||r.forma?"<div style='color:var(--tx3)'>"+(r.liq?"Liquidación: "+_escAud(r.liq):"Forma de pago: "+_escAud(r.forma))+"</div>":"")+
+        (r.pideCom && r.comArch!==null && !r.errores.length ? "<div style='color:var(--ok)'>🏦 "+_impTxtCom(r.com, r.cant)+
+          (r.comSupuesta?" <span style='color:var(--avi-tx)'>· el archivo no dice el banco: se toma otro banco</span>":"")+"</div>" : "")+
+        (r.pideCom&&!r.errores.length&&r.comArch===null?"<select onchange='_impCom("+r.i+",this.value)' style='margin-top:5px;width:100%;padding:6px;border:1px solid var(--ln);border-radius:7px;background:var(--sup);font-size:12px'>"+optCom(r.com,true)+"</select>":"")+
         (chips?"<div style='margin-top:4px;font-size:11.5px'>"+chips+"</div>":"")+
       "</div>"+
     "</div>";
@@ -34178,7 +34322,7 @@ function _htmlBotonImportarRem(){
   if(!permisoEdicion()) return "";
   return "<label style='display:flex;align-items:center;justify-content:center;gap:8px;padding:10px;margin-bottom:12px;border:1.5px dashed var(--ln2);border-radius:10px;background:var(--sup);color:var(--tx2);font-size:13px;font-weight:700;cursor:pointer'>"+
     "📥 Importar remesas de un archivo"+
-    "<input type='file' accept='.json,application/json' onchange='_impElegirArchivo(this)' style='display:none'>"+
+    "<input type='file' accept='.json,.csv,application/json,text/csv' onchange='_impElegirArchivo(this)' style='display:none'>"+
   "</label>";
 }
 
