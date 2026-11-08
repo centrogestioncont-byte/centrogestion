@@ -50,7 +50,7 @@ function sacarConstante(nombre) {
   }
   throw new Error("la constante " + nombre + " no termina en ';'");
 }
-const CONSTANTES = ["_APROX_LS", "_COLCHON_DEF", "_SIN_APROX", "_UMBRAL_BS_DEF", "_SIN_BS", "_UMBRAL_BRL_DEF", "_SIN_BRL", "_RUTA_DE", "CG_BASE", "_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO", "_AVISO_UMBRAL", "_MERCADO_MONTO_DEF", "_VIZ", "_INM_AVISO_DIAS", "_DIAS_NORMAL_BS", "_TASA_OP_FRESCA_MS",
+const CONSTANTES = ["_TARIFA_BANCO_VES", "_APROX_LS", "_COLCHON_DEF", "_SIN_APROX", "_UMBRAL_BS_DEF", "_SIN_BS", "_UMBRAL_BRL_DEF", "_SIN_BRL", "_RUTA_DE", "CG_BASE", "_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO", "_AVISO_UMBRAL", "_MERCADO_MONTO_DEF", "_VIZ", "_INM_AVISO_DIAS", "_DIAS_NORMAL_BS", "_TASA_OP_FRESCA_MS",
                     "_BIN_COLS_C2C", "_BIN_COLS_TX", "MONEDAS_COMPRA", "MONEDAS_VENTA",
                     "MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
                     "_MERGE_OBJETOS", "_MERGE_BLOQUES", "_MERGE_HISTORIAL", "_RATE_LIMITS",
@@ -135,6 +135,8 @@ const NECESARIAS = ["_egresosHuerfanos", "moverEgresoAPersonal", "_tasaDelDiaFue
                     "_diasEnElFuturo", "confirmarFechaFutura",
                     "_impFechaIso", "_impCantDe", "_impNorm", "_impTolerancia",
                     "comisionBancoVES", "etiquetaComisionBanco", "salidaDeCuentaEntrega",
+                    "tarifaBancoVES", "_numFallidos", "comisionFallidosVES", "comisionTotalVES",
+                    "_txtTarifaBanco", "_opcionesComisionBanco", "_tipoComDeRemesa",
                     "monedasDeRemesa", "pagosDeRemesa", "sumaPagos", "pagosDebe",
                     "entregasDeRemesa", "sumaEntregas", "comisionesDeEntregas",
                     "_uvDeParte", "_entregasParaFIFO", "consumirFIFORemesa", "simularFIFORemesa",
@@ -1095,12 +1097,14 @@ ok(L("198.619") === 198619 && L("1.000") === 1000 && L("10.000") === 10000,
 // Los tres campos de la comision del banco no pueden ser type=number: el
 // navegador se come la coma decimal antes de que el codigo vea nada, asi que
 // "0,003" le llegaba como "0003" = 3. Van como texto y los lee _leerNumero.
-["inp-com-banco", "inp-com-banco-min", "inp-com-banco-transf"].forEach(function (id) {
-  ok(new RegExp("type='text' inputmode='decimal' id='" + id + "'").test(HTML),
-     id + " acepta la coma decimal");
-  ok(!new RegExp("type='number' id='" + id + "'").test(HTML),
-     "y ya no es type=number, que se la comia");
-});
+// ARREGLO 238: ahora son los cinco campos del tarifario, y se dibujan desde
+// _TARIFA_CAMPOS, así que se mira el molde de la fila y su lector.
+{
+  const _tb = sacarFuncion("_htmlTarifaBancoVES"), _gt = sacarFuncion("guardarTarifaBanco");
+  ok(/type='text' inputmode='decimal' id='"\+c\.id\+"'/.test(_tb), "los campos del tarifario aceptan la coma decimal");
+  ok(!/type='number'/.test(_tb), "y ninguno es type=number, que se la comia");
+  ok(/_leerNumero\(el\?el\.value:""\)/.test(_gt), "y se leen con _leerNumero");
+}
 
 // El aviso es la red de seguridad: el punto suelto es ambiguo y ninguna regla
 // lo acierta siempre, asi que lo que de verdad protege es ver lo que se leyo.
@@ -1404,7 +1408,7 @@ console.log("\nLa comision del banco VES");
 S.config = { comision_banco_vzla: 0.003, comision_banco_vzla_min: 14,
              comision_banco_transferencia: 54 };
 const C = (t, bs) => F.comisionBancoVES(t, bs);
-ok(C("", 50000) === 0, "dentro del mismo banco no se cobra nada");
+ok(C("", 50000) === 0, "la transferencia dentro del mismo banco no cobra nada");
 ok(C(false, 50000) === 0, "ni cuando no se marca");
 ok(C("movil", 25056) === 75.17, "pago movil grande: el 0,3%", C("movil", 25056));
 ok(C("movil", 4325) === 14, "y uno pequeno: el minimo de 14, no 12,97", C("movil", 4325));
@@ -1412,19 +1416,21 @@ ok(C("movil", 4666) === 14, "justo por debajo del umbral, el minimo", C("movil",
 ok(C("movil", 4667) === 14.001 || C("movil", 4667) === 14,
    "y en el umbral empieza a mandar el porcentaje", C("movil", 4667));
 ok(C("movil", 10000) === 30, "10.000 → 30", C("movil", 10000));
-ok(C("transf", 25056) === 54 && C("transf", 4325) === 54,
-   "la transferencia son 54 fijos, no depende del monto");
+// ARREGLO 238: la transferencia a otro banco NO son 54 fijos: 0,3 % con
+// minimo de 14, como el pago movil. Los 54 del config viejo ya no se leen.
+ok(C("transf", 25056) === 75.17 && C("transf", 4325) === 14 && C("transf", 6920) === 20.76,
+   "la transferencia a otro banco es el 0,3% con minimo de 14, no 54 fijos",
+   [C("transf", 25056), C("transf", 4325), C("transf", 6920)].join(" · "));
 // El caso real que lo destapo
 ok(casi(C("movil", 4325) - 12.98, 1.02, 0.001),
    "el caso de JOSE LUIS: 1,02 Bs mas de lo que cobraba antes",
    C("movil", 4325) - 12.98);
 // Las remesas guardadas antes llevaban true/false: aquel true era el pago movil.
 ok(C(true, 25056) === 75.17, "una remesa vieja con true sigue saliendo igual");
-ok(F.etiquetaComisionBanco(true) === "pago movil a otro banco" ||
-   F.etiquetaComisionBanco(true).indexOf("vil") > -1, "y tiene su nombre");
+ok(F.etiquetaComisionBanco(true).indexOf("vil") > -1, "y tiene su nombre");
 // Si no hay configuracion, los valores del tarifario
 S.config = {};
-ok(C("movil", 4325) === 14 && C("movil", 25056) === 75.17 && C("transf", 1) === 54,
+ok(C("movil", 4325) === 14 && C("movil", 25056) === 75.17 && C("transf", 1) === 14,
    "sin configuracion usa las tarifas del BCV");
 S.config = {};
 
@@ -6313,7 +6319,7 @@ console.log("\n— FASE 2: la cuenta madre —");
      F.sumaEntregas(_ent([{cuentaId:"cBDV",monto:"1.234,56"}])));
 
   // ── 2. SON DOS COMISIONES, y el minimo de 14 es el que se cuela ─────────
-  S.config = {comision_banco_vzla:0.003, comision_banco_vzla_min:14, comision_banco_transferencia:54};
+  S.config = {comision_banco_vzla:0.003, comision_banco_vzla_min:14};
   // Dos pagos moviles grandes: 0,3% de cada parte.
   const cGrande = F.comisionesDeEntregas([{cuentaId:"cBDV",monto:60000,com:"movil"},
                                           {cuentaId:"cPROV",monto:40000,com:"movil"}]);
@@ -6327,15 +6333,15 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(F.comisionBancoVES("movil", 4000) === 14,
      "medida sobre el total esa misma entrega serian 14 — por eso la comision va por fila",
      F.comisionBancoVES("movil", 4000));
-  // Dos transferencias son 54 + 54, no 54.
+  // Dos transferencias: cada una su 0,3 % (ARREGLO 238: ya no 54 fijos).
   const cTr = F.comisionesDeEntregas([{cuentaId:"cBDV",monto:90000,com:"transf"},
-                                      {cuentaId:"cPROV",monto:10000,com:"transf"}]);
-  ok(cTr.total === 108, "dos transferencias son 54 + 54", cTr.total);
+                                      {cuentaId:"cPROV",monto:2000,com:"transf"}]);
+  ok(cTr.total === 284, "dos transferencias: 270 + el minimo de 14", cTr.total);
   // Mezcladas, cada una con la suya.
   const cMix = F.comisionesDeEntregas([{cuentaId:"cBDV",monto:60000,com:"movil"},
                                        {cuentaId:"cPROV",monto:40000,com:"transf"}]);
-  ok(cMix.total === 234 && cMix.det.length === 2,
-     "una movil y una transferencia: 180 + 54, cada banco con su tarifa", cMix.total);
+  ok(cMix.total === 300 && cMix.det.length === 2,
+     "una movil y una transferencia: 180 + 120, cada banco con su tarifa", cMix.total);
   // Dentro del mismo banco no se cobra nada.
   ok(F.comisionesDeEntregas([{cuentaId:"cBDV",monto:60000,com:""},
                              {cuentaId:"cPROV",monto:40000,com:"movil"}]).total === 120,
@@ -6346,7 +6352,7 @@ console.log("\n— FASE 2: la cuenta madre —");
   // El detalle tiene que decir cual cobro cuanto: un total suelto obliga a
   // rehacer la cuenta a mano para saber si el minimo entro.
   ok(cMix.det[0].cuentaId === "cBDV" && cMix.det[0].comision === 180 &&
-     cMix.det[1].cuentaId === "cPROV" && cMix.det[1].comision === 54,
+     cMix.det[1].cuentaId === "cPROV" && cMix.det[1].comision === 120,
      "y el detalle dice que banco cobro cuanto");
   ok(F.etiquetaComisionBanco("varias") !== "",
      "con varias tarifas la etiqueta no se queda muda diciendo 'pago movil'");
@@ -6487,8 +6493,9 @@ console.log("\n— FASE 2: la cuenta madre —");
      "y no vuelve el calculo propio que restaba COM() a los dos lados");
 
   // 2. Con el desglose puesto, la comision viva sale de las filas.
-  ok(/var _entVivo=entregasDeRemesa\(f\);/.test(rn) &&
-     /_entVivo \? comisionesDeEntregas\(_entVivo\)\.total/.test(rn),
+  // ARREGLO 238: la cuenta vive en _comVivoTx(), que también lee upC().
+  ok(/var _entVivo=entregasDeRemesa\(f\);/.test(rn) && /var comVesVivo=_comVivoTx\(f, cant\);/.test(rn) &&
+     /if\(ent\) return comisionesDeEntregas\(ent, f\.fallidos\)\.total;/.test(sacarFuncion("_comVivoTx")),
      "con el desglose, la comision de la vista previa sale de las filas");
 
   // 3. Y el selector global NO se dibuja: dos sitios para lo mismo es lo que
@@ -13982,7 +13989,7 @@ console.log("\nARREGLO 203 · fuera la calculadora inversa del formulario de abo
     ";return {tipo:_impTipoDe, mismo:_impMismoDe, banco:_impBancoVE, decide:_impDecidirCom, set:function(v){_IMP_BANCOS_VE=v;}};");
   const _bancosSrc = HTML.match(/var _IMP_BANCOS_VE=(\[[\s\S]*?\n\]);/);
   ok(!!_bancosSrc, "la lista de bancos venezolanos está en un solo sitio");
-  const _comVE = function(t,bs){ return t==="movil" ? Math.max(Math.round(bs*0.003*100)/100,14) : t==="transf" ? 54 : 0; };
+  const _comVE = function(t,bs){ return (t==="movil"||t==="transf") ? Math.max(Math.round(bs*0.003*100)/100,14) : 0; };
   const _SC = {cuentas:[{id:"cB", nombre:"BANESCO PRINCIPAL"},{id:"cJ", nombre:"PAGOS JULIO"}]};
   const CM = _cmFn(_SC, _comVE);
   CM.set(new Function("return "+_bancosSrc[1])());
@@ -14010,19 +14017,30 @@ console.log("\nARREGLO 203 · fuera la calculadora inversa del formulario de abo
   ok(CM.decide(fr)==="transf" && fr.comAvisos.some(x=>/no dice el banco del beneficiario/.test(x)),
      "R-38: sin banco del beneficiario se supone otro banco, y se dice");
   fr=_fila({liq:"Transferencia mismo banco", bcoBen:"Banco Provincial", bcoDesde:"Banesco"});
-  ok(CM.decide(fr)==="transf" && fr.comAvisos.some(x=>/mandan los bancos/.test(x)),
-     "si el texto dice mismo banco y los bancos son distintos, mandan los bancos y se avisa");
-  fr=_fila({liq:"Pago móvil otros bancos", bcoBen:"Banesco", bcoDesde:"Banesco Principal"});
-  ok(CM.decide(fr)==="" && fr.comAvisos.some(x=>/mandan los bancos/.test(x)),
-     "si el texto dice otros bancos y los dos son el mismo, sin comisión y se avisa");
-  fr=_fila({liq:"Pago móvil otros bancos", bcoBen:"Banesco", bcoDesde:"", bancoOut:"Banesco Principal"});
+  ok(CM.decide(fr)==="transf" && fr.comAvisos.some(x=>/Forma de pago corregida/.test(x) && /mandan los bancos/.test(x)),
+     "si el texto dice mismo banco y los bancos son distintos, mandan los bancos y se marca «Forma de pago corregida»");
+  fr=_fila({liq:"Transferencia otros bancos", bcoBen:"Banesco", bcoDesde:"Banesco Principal"});
+  ok(CM.decide(fr)==="" && fr.comAvisos.some(x=>/Forma de pago corregida/.test(x)),
+     "una transferencia que dice otros bancos con los dos iguales: sin comisión, y se marca");
+  fr=_fila({liq:"Transferencia otros bancos", bcoBen:"Banesco", bcoDesde:"", bancoOut:"Banesco Principal"});
   ok(CM.decide(fr)==="" , "sin 'desde' en el archivo, se usa el banco de la cuenta que pagó");
+  // ARREGLO 238: el PAGO MÓVIL cobra siempre, aunque sea el mismo banco.
+  fr=_fila({liq:"Pago móvil otros bancos", bcoBen:"Banesco", bcoDesde:"Banesco Principal"});
+  ok(CM.decide(fr)==="movil" && fr.comAvisos.length===0,
+     "un pago móvil entre dos Banesco cobra igual, y no hay nada que corregir");
   fr=_fila({liq:"Pago móvil mismo banco", bcoBen:"Banesco", bcoDesde:"", bancoOut:"", cuentaOut:"cJ"});
-  ok(CM.decide(fr)==="" && fr.comAvisos.length===0, "una cuenta cuyo nombre no es un banco no decide nada: manda el texto");
+  ok(CM.decide(fr)==="movil" && fr.comAvisos.length===0 && /cobra aunque sea el mismo banco/.test(fr.comPorque),
+     "«Pago móvil mismo banco» cobra, y la fila dice por qué");
+  fr=_fila({liq:"Pago móvil mismo banco", forma:"Pago móvil", cant:19030});
+  ok(CM.decide(fr)==="movil" && F.comisionBancoVES("movil", 19030)===57.09,
+     "su R-0001-32: 19.030 Bs por pago móvil «mismo banco» → 57,09", F.comisionBancoVES("movil", 19030));
+  fr=_fila({liq:"mismo banco", bcoBen:"Banesco", bcoDesde:"Banesco"});
+  ok(CM.decide(fr)==="movil" && fr.comAvisos.some(x=>/se toma pago móvil/.test(x)),
+     "sin decir la forma pero con mismo banco: pago móvil, que es el que ahí cobra, y se dice");
   fr=_fila({bcoBen:"Banco Provincial", bcoDesde:"Banesco", cant:30000});
   ok(CM.decide(fr)==="movil" && fr.comAvisos.some(x=>/más comisión/.test(x)), "sin tipo, se toma la de más comisión (30.000 Bs: pago móvil, 90)");
   fr=_fila({bcoBen:"Banco Provincial", bcoDesde:"Banesco", cant:1000});
-  ok(CM.decide(fr)==="transf", "sin tipo y monto pequeño: transferencia (54 > 14)");
+  ok(CM.decide(fr)==="movil", "sin tipo y monto pequeño: las dos cobran 14, se toma pago móvil");
   fr=_fila({});
   ok(CM.decide(fr)!=="" && fr.comAvisos.length===2, "sin nada en el archivo igual hay comisión, con los dos supuestos dichos");
   const rc = sc("_impRecalcular");
@@ -14224,6 +14242,85 @@ console.log("\nARREGLO 203 · fuera la calculadora inversa del formulario de abo
   // Los adornos solo en la franja del borde: por el medio tapaban texto.
   ok(/if\(x>m && x<W-m && y>m && y<H-m\) continue;/.test(sacarFuncion("_flyFondoSVG")),
      "los adornos caen solo en el borde");
+}
+
+
+// ── ARREGLO 238 · El tarifario del banco venezolano ──────────────────────
+// Lo dio ella con el tarifario delante: el pago móvil cobra SIEMPRE (también
+// 0102 → 0102), la transferencia a otro banco es 0,30 % con mínimo de 14 (no
+// 54 fijos), solo la transferencia en el mismo banco es gratis, y cada intento
+// fallido cuesta 14.
+console.log("\nARREGLO 238 · El tarifario del banco venezolano");
+{
+  const antesCfg = S.config, antesCtas = S.cuentas;
+  S.config = {};
+  const T = F.tarifaBancoVES();
+  ok(T.movilPct===0.003 && T.movilMin===14 && T.transfPct===0.003 && T.transfMin===14 && T.fallido===14,
+     "sin tabla guardada: 0,30 % con mínimo 14 para los dos, y 14 por intento fallido");
+  ok(F.comisionBancoVES("movil",9515)===28.55 && F.comisionBancoVES("movil",19030)===57.09 &&
+     F.comisionBancoVES("movil",9610.15)===28.83 && F.comisionBancoVES("transf",6920)===20.76,
+     "su archivo del 07/11: 28,55 · 57,09 · 28,83 · 20,76");
+  ok(F.comisionBancoVES("movil",19030)===57.09, "RC-000016: 19.030 Bs por pago móvil → 57,09");
+  ok(F.comisionBancoVES("movil",3000)===14, "un pago móvil de 3.000 Bs → el mínimo, 14");
+  ok(F.comisionBancoVES("",19030)===0, "una transferencia en el mismo banco → 0");
+  ok(F.comisionFallidosVES(2)===28 && F.comisionFallidosVES(0)===0 && F.comisionFallidosVES("")===0 && F.comisionFallidosVES("-3")===0,
+     "cada intento fallido 14 Bs; vacío o negativo no cobra");
+  ok(F.comisionTotalVES("movil",19030,1)===71.09 && F.comisionTotalVES("",19030,2)===28,
+     "la forma de pago más los fallidos, también si el pago bueno fue al mismo banco");
+  S.config = {tarifaBancoVES:{movilPct:0.004, movilMin:15, transfPct:0.005, transfMin:20, fallido:10}};
+  ok(F.comisionBancoVES("movil",10000)===40 && F.comisionBancoVES("transf",1000)===20 && F.comisionFallidosVES(3)===30,
+     "la tabla de Configuración manda");
+  S.config = {tarifaBancoVES:{movilPct:"x"}, comision_banco_vzla:0.01};
+  ok(F.tarifaBancoVES().movilPct===0.003, "con la tabla guardada, un valor roto vuelve al del tarifario, no a la clave vieja");
+  S.config = {};
+  S.cuentas = [{id:"cBDV",moneda:"VES",tipo:"banco"},{id:"cPROV",moneda:"VES",tipo:"banco"}];
+  const cF = F.comisionesDeEntregas([{cuentaId:"cBDV",monto:2000,com:""},{cuentaId:"cPROV",monto:2000,com:"movil"}], 2);
+  ok(cF.total===42 && cF.fallidosBs===28 && cF.det.length===2,
+     "con varias cuentas los fallidos se cobran UNA vez, en la primera: 28 + 14", cF.total);
+  const op = F._opcionesComisionBanco("movil");
+  ok(/value='movil' selected/.test(op) && /value=''/.test(op) && /mismo banco — sin comisión/.test(op) && /cobra aunque sea el mismo banco/.test(op),
+     "el desplegable dice que el pago móvil cobra aunque sea el mismo banco, y que solo la transferencia ahí es gratis");
+  S.config = antesCfg; S.cuentas = antesCtas;
+}
+{
+  const TS = new Function(sacarFuncion("_impTxtNorm")+";"+sacarFuncion("_impTipoDe")+";"+sacarFuncion("_tipoComDeRemesa")+";"+
+                          sacarFuncion("_tipoComSugerido")+";return _tipoComSugerido;")();
+  ok(TS({comisionBancoTipo:"", formaLiquidacion:"Pago móvil mismo banco"})==="movil" &&
+     TS({comisionBancoTipo:"", formaPago:"Pago móvil"})==="movil" &&
+     TS({comisionBancoTipo:""})==="" && TS({comisionBancoTipo:"", formaLiquidacion:"Transferencia mismo banco"})==="" &&
+     TS({comisionBancoTipo:"transf"})==="transf" && TS({comisionBanco:true})==="movil",
+     "el recálculo solo deduce un pago móvil que el archivo dejó escrito; una remesa a mano sin comisión no se adivina");
+}
+ok(!/Bs fijos<\/option>/.test(HTML) && !/transferencia 54 Bs fijos/.test(HTML),
+   "no queda ningún texto que diga que la transferencia son 54 Bs fijos");
+ok((HTML.match(/_opcionesComisionBanco\(/g)||[]).length>=5,
+   "las opciones de la comisión salen de un solo sitio (formulario, EE.UU., desglose y edición)");
+ok(!/>Dentro del mismo banco — sin comisión</.test(HTML) && !/>Mismo banco — sin comisión</.test(HTML),
+   "ya no hay un «mismo banco — sin comisión» que valga para el pago móvil");
+{
+  const ser = sacarFuncion("saveEditRow");
+  ok(/_ajustarComisionRemesa\(row,/.test(ser), "✏️ Editar cambia la comisión por la misma puerta que el recálculo");
+  ok(/if\(_cambioNum\)\{/.test(ser) && /row\.pr=r4\(row\.pr-_cvG\/tv\)/.test(ser),
+     "editar ya no borra la comisión de la ganancia, y solo recalcula si cambió un número");
+  const aj = sacarFuncion("_ajustarComisionRemesa");
+  ok(/consumirLotesMon\("VES", cta\.id, delta\)/.test(aj) && /_devolverComisionAlLote\(r, -delta\)/.test(aj) &&
+     /r\._mov\.push\(\{cuentaId:cta\.id, delta:-delta\}\)/.test(aj) && /r\.pr=Math\.round\(\(\(parseFloat\(r\.pr\)\|\|0\)-delta\/tv\)/.test(aj),
+     "cambiar una comisión mueve cuenta, lote y ganancia, y lo apunta para el borrado");
+  ok(/!\(r\._mov && r\._mov\.length\)/.test(aj), "una remesa sin _mov no se toca: su borrado no sabría devolverlo");
+  ok(/autorizar\(/.test(sacarFuncion("guardarTarifaBanco")) && /autorizar\(/.test(sacarFuncion("_recComAplicar")) &&
+     /autorizar\(/.test(sacarFuncion("_recComVer")), "las tarifas y el recálculo los guarda solo el administrador");
+  const rcc = sacarFuncion("_recComCandidatas");
+  ok(/_binMesCerrado\(iso\)/.test(rcc) && /varias cuentas/.test(rcc),
+     "el recálculo deja fuera los meses cerrados y lo pagado desde varias cuentas, y lo dice");
+  ok(/_recComCandidatas\(st\.desde, st\.hasta\)/.test(sacarFuncion("_recComAplicar")), "y vuelve a mirar justo antes de aplicar");
+  ok(/px\.innerHTML=_htmlGananciaTx\(res, _cvU\)/.test(sacarFuncion("upC")) && /_htmlGananciaTx\(_resCp, comVesVivo\)/.test(sacarFuncion("rNueva")),
+     "al teclear, la ganancia sale con la comisión del banco restada, igual que al dibujar");
+  const st = sacarFuncion("saveTx");
+  ok(/comisionTotalVES\(f\.comisionBanco, res\.cant, f\.fallidos\)/.test(st) && /comisionesDeEntregas\(_entregas, f\.fallidos\)/.test(st),
+     "guardar suma los intentos fallidos, con una cuenta o con varias");
+  ok(/oninput='_txFallidosSet\(this\.value\)'/.test(sacarFuncion("_htmlCampoFallidosTx")) &&
+     !/R\(\)/.test(sacarFuncion("_txFallidosSet")),
+     "el campo de intentos se refresca por su id, sin repintar (ARREGLO 32)");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

@@ -1110,17 +1110,37 @@ De qué cuenta de USDT sale **depende de dónde haya**, así que se elige cada v
 
 ### Lo que cobra el banco venezolano
 
-Tarifario del BCV. Está en `comisionBancoVES()`, en un solo sitio, y los tres
-valores se editan en Configuración:
+Tarifario del BCV. Está en `comisionBancoVES()`, en un solo sitio, y la tabla
+entera se edita en Configuración → Cuentas y saldos (`S.config.tarifaBancoVES`,
+UNA clave con un objeto: viaja entera entre aparatos). La guarda solo el
+administrador. Desde el **ARREGLO 238** (08/11), con el tarifario del banco
+delante, ella corrigió dos cosas:
 
 ```
-pago móvil a otro banco ... 0,3% del monto, MÍNIMO Bs 14
-transferencia a otro banco  Bs 54 fijos, sin porcentaje
-dentro del mismo banco .... nada
+pago móvil, CUALQUIER banco ...... 0,30 %, mínimo Bs 14   ← también 0102 → 0102
+transferencia a otro banco ........ 0,30 %, mínimo Bs 14   ← no eran 54 fijos
+transferencia en el mismo banco ... nada                   ← lo ÚNICO gratis
+intento fallido o rechazado ....... Bs 14 cada uno, aparte
+P2C / C2P ......................... no van: los paga el comercio que recibe
 ```
 
-Usa las dos formas, **según la cuenta del cliente**, por eso se elige al
-registrar la remesa y no es una casilla de sí/no.
+Los 54 eran los **gastos administrativos** del mismo tarifario (referencias,
+estados de cuenta), no una comisión. Y con la regla vieja un pago móvil que
+RisApp manda como «mismo banco» entraba en 0: su R-0001-32 de 19.030 Bs, que
+son 57,09.
+
+- **Cambiar la tabla vale para lo nuevo.** Lo ya guardado se toca solo desde
+  «Recalcular comisiones» (rango de fechas + vista previa), y por la misma
+  puerta que ✏️ Editar: `_ajustarComisionRemesa()`, que mueve cuenta, lote y
+  ganancia por la DIFERENCIA y la apunta en `_mov` y `_lotesConsumidos` para
+  que el borrado devuelva la comisión de ahora. No entran los meses cerrados,
+  lo pagado desde varias cuentas ni lo que no tiene `_mov`, y se dice.
+- **El recálculo solo deduce un pago móvil que el archivo dejó escrito**
+  (`formaLiquidacion`/`formaPago`). Una remesa a mano en «sin comisión» no dice
+  cómo se pagó, y no se adivina.
+
+Usa las formas **según la cuenta del cliente**, por eso se elige al registrar
+la remesa y no es una casilla de sí/no.
 
 **El mínimo de 14 es el que se cuela.** El 0,3% no llega a 14 Bs hasta los
 4.667, así que toda remesa por debajo se queda corta si no se aplica.
