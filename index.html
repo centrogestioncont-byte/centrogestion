@@ -2365,9 +2365,12 @@ let S={
   config:{
     comision_usdt: 0.06,
     comision_usdt_ves: 0,    // exonerada por terremotos Venezuela
-    comision_banco_vzla: 0.003,        // pago móvil a otro banco (BCV: 0,3%)
-    comision_banco_vzla_min: 14,       // mínimo obligatorio por operación
-    comision_banco_transferencia: 54,  // transferencia a otro banco, fijo
+    // ARREGLO 238: el tarifario entero vive en config.tarifaBancoVES. Estas dos
+    // solo valen mientras no se haya guardado la tabla; la de los 54 Bs de la
+    // transferencia ya no la lee nadie (era una tarifa equivocada).
+    comision_banco_vzla: 0.003,
+    comision_banco_vzla_min: 14,
+    comision_banco_transferencia: 54,
     pct_sueldo: 0.05,
     rutasExtra: [],
     cats_empresa:["GASTOS FIJOS EMPRESA","SERVICIOS DIGITALES","GASTOS OPERATIVOS","GASTOS EXTRAORD. EMPRESA"],
@@ -3235,29 +3238,92 @@ function cTxE(){
 //
 // "tipo" es lo que se marcó en la remesa: "movil", "transf", o nada. Las
 // remesas viejas guardaban true/false, y ese true era el pago móvil.
+//
+// ARREGLO 238 (08/11/2026): el tarifario de arriba tenía DOS errores, y los dos
+// los corrigió ella con el tarifario del banco delante:
+//
+//   · el PAGO MÓVIL cobra SIEMPRE, también 0102 → 0102. "Mismo banco" solo
+//     exime a la TRANSFERENCIA. Con la regla vieja, un pago móvil que RisApp
+//     marca "mismo banco" entraba en 0: su R-0001-32 de 19.030 Bs (57,09);
+//   · la TRANSFERENCIA a otro banco no son 54 fijos: es 0,30 % con mínimo de
+//     14, igual que el pago móvil. Los 54 eran los gastos administrativos del
+//     mismo tarifario (referencias, estados de cuenta), no una comisión.
+//
+// Y cada intento fallido o rechazado cuesta 14 Bs más.
+//
+// El tarifario vive en S.config.tarifaBancoVES, UNA sola clave con un objeto
+// dentro: la fusión decide clave por clave, así que cinco claves sueltas
+// podían quedar con el porcentaje de un aparato y el mínimo del otro (el fallo
+// de la apertura, ARREGLO 60). Un objeto en una clave viaja entero, sin tocar
+// las cuatro listas del servidor.
+//
+// Sin la tabla guardada vale lo de siempre para el pago móvil (las dos claves
+// viejas) y lo del tarifario para lo demás. La clave vieja de la transferencia
+// (comision_banco_transferencia, 54) ya no la lee nadie.
+var _TARIFA_BANCO_VES={movilPct:0.003, movilMin:14, transfPct:0.003, transfMin:14, fallido:14};
+function tarifaBancoVES(){
+  var cfg=S.config||{}, t=cfg.tarifaBancoVES, out={};
+  Object.keys(_TARIFA_BANCO_VES).forEach(function(k){ out[k]=_TARIFA_BANCO_VES[k]; });
+  if(!t || typeof t!=="object"){
+    var p=parseFloat(cfg.comision_banco_vzla), m=parseFloat(cfg.comision_banco_vzla_min);
+    if(!isNaN(p) && p>=0) out.movilPct=p;
+    if(!isNaN(m) && m>=0) out.movilMin=m;
+    return out;
+  }
+  Object.keys(_TARIFA_BANCO_VES).forEach(function(k){
+    var v=parseFloat(t[k]);
+    if(!isNaN(v) && v>=0) out[k]=v;
+  });
+  return out;
+}
+// comisión = max(monto × %, mínimo), redondeada a 2 decimales.
 function comisionBancoVES(tipo, montoBs){
   if(tipo===true) tipo="movil";          // remesas guardadas antes de separarlas
   var bs=parseFloat(montoBs)||0;
-  var cfg=S.config||{};
-  if(tipo==="movil"){
-    var pct=parseFloat(cfg.comision_banco_vzla);
-    if(isNaN(pct)) pct=0.003;
-    var min=parseFloat(cfg.comision_banco_vzla_min);
-    if(isNaN(min)) min=14;
-    return Math.max(Math.round(bs*pct*100)/100, min);
-  }
-  if(tipo==="transf"){
-    var fijo=parseFloat(cfg.comision_banco_transferencia);
-    if(isNaN(fijo)) fijo=54;
-    return fijo;
-  }
+  var t=tarifaBancoVES();
+  if(tipo==="movil")  return Math.max(Math.round(bs*t.movilPct*100)/100, t.movilMin);
+  if(tipo==="transf") return Math.max(Math.round(bs*t.transfPct*100)/100, t.transfMin);
   return 0;
+}
+// Lo que cuestan los intentos fallidos o rechazados: un fijo por intento.
+function _numFallidos(n){ var v=parseInt(n,10); return v>0 ? v : 0; }
+function comisionFallidosVES(n){
+  var v=_numFallidos(n);
+  return v ? Math.round(v*tarifaBancoVES().fallido*100)/100 : 0;
+}
+// La comisión entera de una entrega: la de su forma de pago MÁS los intentos
+// fallidos. Es la que se descuenta de la cuenta, del lote y de la ganancia, y
+// la leen el guardado, la edición y el recálculo: calculada en cada uno, un
+// día la edición diría otra cifra que la que se guardó.
+function comisionTotalVES(tipo, montoBs, fallidos){
+  return Math.round((comisionBancoVES(tipo, montoBs)+comisionFallidosVES(fallidos))*100)/100;
+}
+// "0,30 %, mínimo 14 Bs", para que el desplegable diga la tarifa de verdad.
+function _txtTarifaBanco(tipo){
+  var t=tarifaBancoVES();
+  var pct=tipo==="transf"?t.transfPct:t.movilPct, min=tipo==="transf"?t.transfMin:t.movilMin;
+  return (pct*100).toFixed(2).replace(".",",")+" %, mínimo "+f2(min)+" Bs";
+}
+// Las opciones de "¿cómo le pagas los bolívares?", escritas UNA vez. Las usan
+// el formulario de Venezuela, el de EE.UU., el desglose por cuentas y la
+// edición: con una copia en cada uno, el día que cambie la regla una se queda
+// con la vieja — es lo que pasó con los 54 Bs, que seguían escritos en tres
+// textos distintos.
+function _opcionesComisionBanco(sel, corto){
+  if(sel===true) sel="movil";
+  sel=sel||"";
+  var o=function(v, largo, breve){
+    return "<option value='"+v+"'"+(sel===v?" selected":"")+">"+(corto?breve:largo)+"</option>";
+  };
+  return o("movil", "Pago móvil — "+_txtTarifaBanco("movil")+" (cobra aunque sea el mismo banco)", "Pago móvil")+
+         o("transf", "Transferencia a otro banco — "+_txtTarifaBanco("transf"), "Transf. otro banco")+
+         o("", "Transferencia en el mismo banco — sin comisión", "Transf. mismo banco");
 }
 // Cómo se llama cada una, para no repetir el texto en cada pantalla.
 function etiquetaComisionBanco(tipo){
   if(tipo===true) tipo="movil";
   if(tipo==="varias") return "varias cuentas, cada una con su tarifa";   // ARREGLO 97
-  if(tipo==="movil")  return "pago móvil a otro banco";
+  if(tipo==="movil")  return "pago móvil";
   if(tipo==="transf") return "transferencia a otro banco";
   return "";
 }
@@ -3317,7 +3383,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261107_v319";
+var APP_VERSION = "20261108_v320";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -7829,12 +7895,12 @@ function rOpDiario(){
     // Route
     row+="<td><span class='bd' style='background:var(--sup2g);color:var(--tx);font-size:10px'>"+_escAud(r.rt)+"</span></td>";
     // Amount
-    if(isEd) row+="<td><input id='edit-am' type='text' inputmode='decimal' value='"+r.am+"' style='width:70px;font-size:11px;padding:3px 5px;border:1px solid var(--ok-ln);border-radius:5px;text-align:right'></td>";
+    if(isEd) row+="<td><input id='edit-am' oninput='_editComPrev()' type='text' inputmode='decimal' value='"+r.am+"' style='width:70px;font-size:11px;padding:3px 5px;border:1px solid var(--ok-ln);border-radius:5px;text-align:right'></td>";
     else row+="<td style='text-align:right;font-weight:700'>"+f2(r.am)+"</td>";
     // Currency
     row+="<td style='text-align:center'><span class='bd' style='background:var(--sup2g);color:var(--tx);font-size:10px'>"+r.orig+"</span></td>";
     // Daily rate
-    if(isEd) row+="<td><input id='edit-tdia' type='text' inputmode='decimal' step='0.001' value='"+r.tdia+"' style='width:65px;font-size:11px;padding:3px 5px;border:1px solid var(--ok-ln);border-radius:5px;text-align:right'></td>";
+    if(isEd) row+="<td><input id='edit-tdia' oninput='_editComPrev()' type='text' inputmode='decimal' step='0.001' value='"+r.tdia+"' style='width:65px;font-size:11px;padding:3px 5px;border:1px solid var(--ok-ln);border-radius:5px;text-align:right'></td>";
     else row+="<td style='text-align:right'>"+f2(r.tdia)+"</td>";
     // Gain + lock + actions
     row+="<td style='text-align:right;font-weight:700;color:var(--ok)'>$"+f2(prShow)+"</td>";
@@ -10208,14 +10274,33 @@ function saveEditRow(){
   var idx=arr.findIndex(function(x){return x.n===n;});
   if(idx===-1){S.editRow=null;R();return;}
   var row=arr[idx];
+  // ARREGLO 238: antes esto recalculaba la ganancia SIEMPRE, aunque solo se
+  // corrigiera el nombre del cliente, y la recalculaba sin la comisión del
+  // banco: editar cualquier cosa borraba la comisión de la ganancia y le
+  // restaba COM() a los dos lados aunque la remesa no la llevara. Ahora solo se
+  // recalcula si cambió un número, y la comisión guardada se vuelve a restar.
+  var _antesNum=[row.am,row.tdia,row.tc,row.tv].map(String).join("|");
   ["d","id","cl"].forEach(function(f){var el=document.getElementById("edit-"+f);if(el)row[f]=el.value;});
   ["am","tdia","tc","tv"].forEach(function(f){var el=document.getElementById("edit-"+f);if(el)row[f]=_leerNumero(el.value)||row[f];});
-  var com=COM();
-  var am=parseFloat(row.am)||0,tdia=parseFloat(row.tdia)||0,tc=parseFloat(row.tc)||1,tv=parseFloat(row.tv)||1;
-  row.cant=(type==="vzla")?(tdia>0?Math.round(r4(am/tdia)*100)/100:0):Math.floor(r4(am*tdia)*100)/100;
-  var uc_r=am/tc-com, uv_r=row.cant/tv+com;
-  row.uc=r4(uc_r); row.uv=r4(uv_r);
-  row.pr=r4(uc_r-uv_r); row.total=row.cant;
+  var _cambioNum=[row.am,row.tdia,row.tc,row.tv].map(String).join("|")!==_antesNum;
+  if(_cambioNum){
+    var com=COM();
+    var am=parseFloat(row.am)||0,tdia=parseFloat(row.tdia)||0,tc=parseFloat(row.tc)||1,tv=parseFloat(row.tv)||1;
+    row.cant=_cantEditada(type, am, tdia);
+    var uc_r=am/tc-com, uv_r=row.cant/tv+com;
+    row.uc=r4(uc_r); row.uv=r4(uv_r);
+    row.pr=r4(uc_r-uv_r); row.total=row.cant;
+    var _cvG=parseFloat(row.comisionBancoVes)||0;
+    if(_cvG>0 && tv>0) row.pr=r4(row.pr-_cvG/tv);
+  }
+  // La comisión: la forma de pago elegida en la fila, o la que tenía si cambió
+  // el monto (el 0,30 % se mide sobre lo entregado). Pasa por la misma función
+  // que el recálculo: mueve cuenta, lote y ganancia por la diferencia.
+  var _selC=document.getElementById("edit-com"), _inF=document.getElementById("edit-fal");
+  if(_selC || (_cambioNum && parseFloat(row.comisionBancoVes)>0)){
+    var _rc=_ajustarComisionRemesa(row, _selC?_selC.value:_tipoComDeRemesa(row), _inF?_inF.value:row.intentosFallidos, "edición ✏️");
+    if(!_rc.ok && _selC) alert("La comisión no se cambió: "+_rc.motivo+".");
+  }
   // Si esta operación tiene una Cuenta por Cobrar vinculada y sigue pendiente,
   // reflejar aquí el mismo cambio — antes esto quedaba desactualizado porque
   // nada conectaba la edición de la remesa con su registro en Por Cobrar.
@@ -10544,16 +10629,72 @@ function simularFIFORemesa(monOrig, uc, monDest, cant, ctaOrig, ctaDest, entrega
 // Lo que cobra cada banco por SU parte. Devuelve el total y el detalle, porque
 // la pantalla tiene que poder decir cuál cobró cuánto: un total suelto obliga a
 // rehacer la cuenta a mano para saber si el mínimo de 14 entró o no.
-function comisionesDeEntregas(filas){
-  var det=[], total=0;
+// ARREGLO 238: los intentos fallidos se cobran UNA vez por remesa, no por
+// cuenta, y van a la primera cuenta venezolana del desglose — es la que se
+// intentó pagar primero. Con una fila de "mismo banco" (sin comisión) también
+// entran: un pago que falla cuesta lo mismo sea al banco que sea.
+function comisionesDeEntregas(filas, fallidos){
+  var det=[], total=0, falBs=comisionFallidosVES(fallidos), falPuesto=false;
   (filas||[]).forEach(function(e){
-    if(!e.com || !esBancoVES(e.cuentaId)) return;
-    var cv=comisionBancoVES(e.com, e.monto);
+    if(!esBancoVES(e.cuentaId)) return;
+    var cv=e.com ? comisionBancoVES(e.com, e.monto) : 0;
+    if(falBs>0 && !falPuesto){ cv+=falBs; falPuesto=true; }
+    cv=Math.round(cv*100)/100;
     if(!(cv>0)) return;
-    det.push({cuentaId:e.cuentaId, tipo:e.com, comision:cv});
+    det.push({cuentaId:e.cuentaId, tipo:e.com||"", comision:cv});
     total+=cv;
   });
-  return {total:Math.round(total*100)/100, det:det};
+  return {total:Math.round(total*100)/100, det:det, fallidosBs:falPuesto?falBs:0};
+}
+// ARREGLO 238 · La comisión que va a llevar la remesa que se está escribiendo,
+// en UN sitio: la leen el dibujado de rNueva, upC() al teclear y el campo de
+// intentos fallidos. Con el desglose por cuentas manda el desglose (ARREGLO 98).
+function _comVivoTx(f, cant){
+  f=f||S.tx;
+  var ruta=getRutas().find(function(r){ return r.rt===f.rt; })||getRutas()[0];
+  if(!ruta || ruta.dest!=="VES") return 0;
+  var ent=entregasDeRemesa(f);
+  if(ent) return comisionesDeEntregas(ent, f.fallidos).total;
+  return (f.comisionBanco || _numFallidos(f.fallidos)) ? comisionTotalVES(f.comisionBanco, cant, f.fallidos) : 0;
+}
+// El recuadro de la ganancia de la remesa, con la comisión del banco ya
+// restada: es lo que se guarda. Lo dibujan rNueva y upC(), con la misma cuenta.
+function _htmlGananciaTx(res, comVes){
+  var ok=res.am>0&&res.tdia>0&&res.tc>0&&res.tv>0;
+  if(!ok) return "<div style='text-align:center;color:var(--tx4);font-size:12px;padding:8px'>Completa monto, tasa del día y tasas USDT</div>";
+  var comU=(comVes>0&&res.tv>0)?Math.round(comVes/res.tv*10000)/10000:0;
+  var prN=Math.round(((parseFloat(res.pr)||0)-comU)*10000)/10000;
+  var col=prN>0?"var(--ok)":"var(--mal)";
+  return "<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:6px'><div style='font-size:11px;font-weight:700;color:var(--tx3)'>GANANCIA = USDT comprados − USDT vendidos</div><div style='font-size:22px;font-weight:800;color:"+col+"'>"+(prN>0?"+ ":"")+f2(prN)+" USDT</div></div>"+
+    "<div style='font-size:11px;color:var(--tx2b)'>"+f2(res.uc)+" − "+f2(res.uv)+(comU>0?" − "+f2(comU)+" (comisión del banco)":"")+" = <b style='color:"+col+"'>"+f2(prN)+"</b></div>";
+}
+// La línea de debajo del selector, que dice cuánto cobra el banco. Se refresca
+// por su id al teclear los intentos: repintar rehace el formulario con el
+// campo dentro y se lo lleva bajo el dedo (ARREGLO 32).
+function _htmlNotaComTx(f, cant){
+  var cv=_comVivoTx(f, cant), n=_numFallidos(f.fallidos), fal=comisionFallidosVES(n);
+  if(!(cv>0)) return "";
+  return "<div style='margin-top:8px;font-size:11px;color:var(--rj3)'>📌 Comisión: <b>"+f2(cv)+" Bs</b>"+
+    (fal>0?" ("+n+(n>1?" intentos fallidos":" intento fallido")+": "+f2(fal)+" Bs)":"")+
+    " — la asumes tú, se descuenta de tu ganancia.</div>";
+}
+// El campo de los intentos fallidos. Va dentro del recuadro de la comisión,
+// con el precio por intento al lado: un número suelto no dice cuánto cuesta.
+function _htmlCampoFallidosTx(){
+  return "<div style='display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap'>"+
+    "<span style='font-size:12px;font-weight:600;color:var(--rj3)'>Intentos fallidos o rechazados</span>"+
+    "<input type='text' inputmode='numeric' id='inp-fallidos-tx' value='"+_escAud(S.tx.fallidos||"")+"' placeholder='0' onfocus='this.select()' oninput='_txFallidosSet(this.value)' style='width:56px;padding:6px 8px;border:1.5px solid var(--rj4a88);border-radius:8px;font-size:13px;text-align:center;background:var(--sup)'>"+
+    "<span style='font-size:11px;color:var(--tx3)'>"+f2(tarifaBancoVES().fallido)+" Bs cada uno</span>"+
+  "</div>";
+}
+function _txFallidosSet(v){
+  S.tx.fallidos=String(v==null?"":v).replace(/[^0-9]/g,"");
+  var el=document.getElementById("inp-fallidos-tx");
+  if(el && el.value!==S.tx.fallidos) el.value=S.tx.fallidos;
+  var cant=0; try{ cant=parseFloat(cTx().cant)||0; }catch(e){}
+  var n=document.getElementById("com-tx-nota");
+  if(n) n.innerHTML=_htmlNotaComTx(S.tx, cant);
+  try{ upC("tx"); }catch(e){}
 }
 // La pantalla del desglose. Enseña SIEMPRE cuánto llevas asignado y cuánto
 // falta —cuadrarlo de cabeza es donde se cuelan los descuadres— y, debajo, lo
@@ -10570,7 +10711,7 @@ function _txEntregasHTML(cuentasDest, destMon){
   });
   var asignado=sumaEntregas(leidas);
   var falta=Math.round((total-asignado)*100)/100;
-  var com=comisionesDeEntregas(leidas.filter(function(p){return p.cuentaId&&p.monto>0;}));
+  var com=comisionesDeEntregas(leidas.filter(function(p){return p.cuentaId&&p.monto>0;}), S.tx.fallidos);
   var h="<label>📤 ¿De qué cuentas salieron los "+destMon+"?</label>"+
     "<div style='background:var(--mo6-a);border:1px solid var(--mo5);border-radius:10px;padding:10px'>";
   filas.forEach(function(p,i){
@@ -10590,9 +10731,7 @@ function _txEntregasHTML(cuentasDest, destMon){
       var _cv=p.com?comisionBancoVES(p.com, leidas[i].monto):0;
       h+="<div style='display:flex;gap:6px;align-items:center;margin-bottom:8px'>"+
            "<select onchange='txEntregaSet("+i+",\"com\",this.value)' style='flex:1;padding:6px 8px;border:1.5px solid var(--ln);border-radius:8px;font-size:11.5px;font-family:inherit;background:var(--sup)'>"+
-             "<option value=''"+(!p.com?" selected":"")+">Mismo banco — sin comisión</option>"+
-             "<option value='movil'"+(p.com==="movil"?" selected":"")+">Pago móvil a otro banco</option>"+
-             "<option value='transf'"+(p.com==="transf"?" selected":"")+">Transferencia a otro banco</option>"+
+             _opcionesComisionBanco(p.com, true)+
            "</select>"+
            "<span style='font-size:11px;color:"+(_cv>0?"var(--mal)":"var(--tx4c)")+";min-width:76px;text-align:right'>"+
              (_cv>0?"−"+f2(_cv)+" Bs":"sin comisión")+"</span>"+
@@ -11139,7 +11278,7 @@ function saveTx(){
     // que pagó SU banco. Una sola medida sobre el total se queda corta justo
     // donde muerde el mínimo de 14 Bs: 60.000 + 40.000 por pago móvil son
     // 180 + 120 = 300, pero dos entregas de 2.000 son 14 + 14 = 28, no 12.
-    var _comE=comisionesDeEntregas(_entregas);
+    var _comE=comisionesDeEntregas(_entregas, f.fallidos);
     if(_comE.total>0){
       nuevaRemesa._mov=nuevaRemesa._mov||[];
       _comE.det.forEach(function(d){
@@ -11156,9 +11295,13 @@ function saveTx(){
       // "varias" para que las pantallas que lo escriben no mientan diciendo
       // "pago móvil" cuando fue un pago móvil y una transferencia.
       nuevaRemesa.comisionBancoTipo=(_comE.det.length>1?"varias":_comE.det[0].tipo);
+      if(_comE.fallidosBs>0){ nuevaRemesa.intentosFallidos=_numFallidos(f.fallidos); nuevaRemesa.comisionFallidosBs=_comE.fallidosBs; }
     }
-  } else if(f.comisionBanco && esBancoVES(f.cuentaDest)){
-    var comVes=comisionBancoVES(f.comisionBanco, res.cant);
+  } else if((f.comisionBanco || _numFallidos(f.fallidos)) && esBancoVES(f.cuentaDest)){
+    // ARREGLO 238: la forma de pago MÁS los intentos fallidos, de una sola
+    // función. Un pago que falla cuesta aunque el bueno fuera al mismo banco,
+    // por eso entra también con la forma en "" (transferencia mismo banco).
+    var comVes=comisionTotalVES(f.comisionBanco, res.cant, f.fallidos);
     // Descontar comisión extra de la cuenta VES
     var cDstB=(S.cuentas||[]).find(function(x){return x.id===f.cuentaDest;});
     if(cDstB){
@@ -11191,7 +11334,8 @@ function saveTx(){
     var comUsdt=res.tv>0?Math.round(comVes/res.tv*10000)/10000:0;
     nuevaRemesa.pr=Math.round((nuevaRemesa.pr-comUsdt)*10000)/10000;
     nuevaRemesa.comisionBancoVes=comVes;
-    nuevaRemesa.comisionBancoTipo=(f.comisionBanco===true?"movil":f.comisionBanco);
+    nuevaRemesa.comisionBancoTipo=(f.comisionBanco===true?"movil":(f.comisionBanco||""));
+    if(_numFallidos(f.fallidos)){ nuevaRemesa.intentosFallidos=_numFallidos(f.fallidos); nuevaRemesa.comisionFallidosBs=comisionFallidosVES(f.fallidos); }
   }
   S.tx={date:f.date,id:"",cl:"",rt:f.rt,am:"",
     tdia:f.tdia,
@@ -11200,6 +11344,7 @@ function saveTx(){
     tv_manual:"",
     pendiente:false,
     comisionBanco:false,
+    fallidos:"",
     showTasas:false,
     cuentaBanco:"",
     cuentaDest:"",
@@ -16617,19 +16762,72 @@ function guardarColchones(){
         "\nCon reales en cuentas por encima de "+f2(ur)+" R$, la vuelta usa "+f2(vb)+"%."+
         (r?("\n\nCon tu suelo de "+f2(r.suelo)+" eso es "+_tasaCorta(r.ida)+" y "+_tasaCorta(r.vuelta)+"."):""));
 }
-function guardarComisionBanco(){
-  var v=_leerNumero(document.getElementById("inp-com-banco").value);
-  if(isNaN(v)||v<0||v>0.5){alert("Porcentaje inválido. Usa ej: 0.003 para 0,3%");return;}
-  var mn=_leerNumero(document.getElementById("inp-com-banco-min").value);
-  if(isNaN(mn)||mn<0){alert("Mínimo inválido.");return;}
-  var tr=_leerNumero(document.getElementById("inp-com-banco-transf").value);
-  if(isNaN(tr)||tr<0){alert("Comisión de transferencia inválida.");return;}
-  if(!S.config)S.config={};
-  S.config.comision_banco_vzla=v;
-  S.config.comision_banco_vzla_min=mn;
-  S.config.comision_banco_transferencia=tr;
-  saveData();R();
-  alert("✅ Comisiones del banco VE guardadas:\n\nPago móvil: "+(v*100).toFixed(2)+"% (mínimo "+f2(mn)+" Bs)\nTransferencia: "+f2(tr)+" Bs");
+// ── ARREGLO 238 · El tarifario del banco venezolano, en Configuración ──
+// Una tabla, igual para todos los bancos, y la guarda SOLO el administrador
+// (autorizar): de aquí sale lo que se descuenta de cada cuenta, de cada lote y
+// de cada ganancia. Los porcentajes se escriben como ella los lee en el
+// tarifario —0,30— y se guardan como fracción (0,003), que es lo que
+// multiplica comisionBancoVES().
+var _TARIFA_CAMPOS=[
+  {k:"movilPct",  id:"tb-movil-pct",  rot:"Pago móvil (cualquier banco) · %", pct:true},
+  {k:"movilMin",  id:"tb-movil-min",  rot:"Pago móvil · mínimo Bs"},
+  {k:"transfPct", id:"tb-transf-pct", rot:"Transferencia a otro banco · %", pct:true},
+  {k:"transfMin", id:"tb-transf-min", rot:"Transferencia a otro banco · mínimo Bs"},
+  {k:"fallido",   id:"tb-fallido",    rot:"Intento fallido o rechazado · Bs fijos"}
+];
+function _htmlTarifaBancoVES(){
+  var t=tarifaBancoVES(), admin=_esAdminApi();
+  var fila=function(c){
+    // El porcentaje como lo trae el tarifario, 0,30 y no 0,3.
+    var v=c.pct ? (t[c.k]*100).toFixed(2) : t[c.k];
+    return "<div style='display:flex;gap:8px;align-items:center;max-width:460px;margin-bottom:6px'>"+
+      "<span style='font-size:11px;color:var(--tx2);flex:1'>"+c.rot+"</span>"+
+      "<input type='text' inputmode='decimal' id='"+c.id+"' value='"+String(v).replace(".",",")+"' onfocus='this.select()'"+(admin?"":" disabled")+
+        " style='width:96px;padding:8px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;text-align:right'>"+
+    "</div>";
+  };
+  return "<div style='margin-top:14px;padding-top:14px;border-top:1px solid var(--ln2)'>"+
+    "<div style='font-size:12px;font-weight:700;color:var(--tx2);margin-bottom:6px'>🏦 Comisiones del banco venezolano</div>"+
+    "<div style='font-size:11px;color:var(--tx3);margin-bottom:8px'>Iguales para todos los bancos. Comisión = monto × %, con el mínimo si no llega. "+
+      "<b>El pago móvil cobra siempre</b>, también al mismo banco; solo la <b>transferencia en el mismo banco</b> es gratis. "+
+      "P2C y C2P no van aquí: esos los paga el comercio que recibe.</div>"+
+    _TARIFA_CAMPOS.map(fila).join("")+
+    "<div style='font-size:11px;color:var(--tx3);margin:2px 0 8px'>Transferencia en el mismo banco: <b>0 Bs</b>.</div>"+
+    (admin
+      ?"<button onclick='guardarTarifaBanco()' style='padding:9px 14px;background:var(--mal);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar tarifas</button>"
+      :"<div style='font-size:11px;color:var(--avi-tx)'>🔒 Solo el administrador puede cambiar estas tarifas.</div>")+
+    "<div style='font-size:11px;color:var(--tx3);margin-top:8px'>Cambiar una tarifa vale <b>para las remesas nuevas</b>. Las ya guardadas no se tocan solas: para eso está el recálculo de abajo.</div>"+
+    _htmlRecalcComisiones()+
+  "</div>";
+}
+function guardarTarifaBanco(){
+  if(!autorizar("cambiar las comisiones del banco")) return;
+  var nueva={}, errores=[];
+  _TARIFA_CAMPOS.forEach(function(c){
+    var el=document.getElementById(c.id);
+    var v=_leerNumero(el?el.value:"");
+    if(isNaN(v)||v<0){ errores.push(c.rot); return; }
+    if(c.pct){
+      if(v>10){ errores.push(c.rot+" (más de 10 %)"); return; }
+      v=Math.round(v/100*1000000)/1000000;
+    }
+    nueva[c.k]=v;
+  });
+  if(errores.length){ alert("Revisa estos campos:\n\n· "+errores.join("\n· ")); return; }
+  var antes=tarifaBancoVES();
+  if(!S.config) S.config={};
+  S.config.tarifaBancoVES=nueva;
+  logAudit("TARIFA_BANCO_VES", _TARIFA_CAMPOS.map(function(c){
+    var f=function(x){ return c.pct ? (x*100).toFixed(2)+"%" : f2(x); };
+    return c.k+" "+f(antes[c.k])+" → "+f(nueva[c.k]);
+  }).join(" · "));
+  saveData(); R();
+  alert("✅ Tarifas guardadas:\n\n"+
+    "Pago móvil: "+_txtTarifaBanco("movil")+"\n"+
+    "Transferencia a otro banco: "+_txtTarifaBanco("transf")+"\n"+
+    "Transferencia mismo banco: 0 Bs\n"+
+    "Intento fallido: "+f2(nueva.fallido)+" Bs\n\n"+
+    "Valen para las remesas nuevas. Las ya guardadas no cambian.");
 }
 // ARREGLO 185 · Frase destacada del flyer. Vive en S.config.mensajeFlyer,
 // que viaja en el bloque de estado (DATA_KEYS). Vacio -> no se dibuja.
@@ -17492,23 +17690,8 @@ function rConfigAdmin(){
             "<button onclick='guardarComisionVES()' style='padding:9px 14px;background:"+(comVesActual===0?"var(--ok)":"var(--ac)")+";color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
           "</div>"+
         "</div>"+
-        "<div style='margin-top:14px;padding-top:14px;border-top:1px solid var(--ln2)'>"+
-          "<div style='font-size:12px;font-weight:700;color:var(--tx2);margin-bottom:8px'>🏦 Comisión bancaria Venezuela (otro banco)</div>"+
-          "<div style='font-size:11px;color:var(--tx3);margin-bottom:8px'>Lo que cobra el banco por pagar en Bs a otro banco. Tú asumes el costo. Tarifario del BCV: pago móvil 0,3% con mínimo 14 Bs · transferencia 54 Bs fijos.<br>Puedes escribirlo con coma o con punto: <b>0,003</b> y <b>0.003</b> valen igual.</div>"+
-          "<div style='display:flex;gap:8px;align-items:center;max-width:420px;margin-bottom:6px'>"+
-            "<span style='font-size:11px;color:var(--tx2);min-width:116px'>Pago móvil · %</span>"+
-            "<input type='text' inputmode='decimal' id='inp-com-banco' value='"+(((S.config||{}).comision_banco_vzla!==undefined)?S.config.comision_banco_vzla:0.003)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
-          "</div>"+
-          "<div style='display:flex;gap:8px;align-items:center;max-width:420px;margin-bottom:6px'>"+
-            "<span style='font-size:11px;color:var(--tx2);min-width:116px'>Pago móvil · mínimo</span>"+
-            "<input type='text' inputmode='decimal' id='inp-com-banco-min' value='"+(((S.config||{}).comision_banco_vzla_min!==undefined)?S.config.comision_banco_vzla_min:14)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
-          "</div>"+
-          "<div style='display:flex;gap:8px;align-items:center;max-width:420px;margin-bottom:8px'>"+
-            "<span style='font-size:11px;color:var(--tx2);min-width:116px'>Transferencia · fijo</span>"+
-            "<input type='text' inputmode='decimal' id='inp-com-banco-transf' value='"+(((S.config||{}).comision_banco_transferencia!==undefined)?S.config.comision_banco_transferencia:54)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
-          "</div>"+
-          "<button onclick='guardarComisionBanco()' style='padding:9px 14px;background:var(--mal);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
-        "</div>"+
+        // ARREGLO 238: el tarifario entero del banco venezolano, y el recálculo.
+        _htmlTarifaBancoVES()+
         // ARREGLO 185 · Frase destacada del flyer. Lo que diferencia a Jhoselin
         // de Retorna (que cobra 10% de comision oculta) es que ella no cobra
         // ninguna. Esta frase aparece en el flyer y mini flyer.
@@ -21554,6 +21737,251 @@ function _restaurarVentasFIFO(r, monDest, cant){
     }
   });
 }
+// ── ARREGLO 238 · Cambiar la comisión de una remesa YA guardada ──────────
+// Lo piden dos sitios —✏️ Editar y el botón "Recalcular comisiones"— y los dos
+// pasan por _ajustarComisionRemesa(). Con una copia en cada uno, un día uno
+// bajaría la cuenta y el otro no (el fallo de los ARREGLOS 101, 119, 150, 153).
+//
+// Una comisión guardada ya hizo TRES cosas al registrarse: bajó la cuenta, bajó
+// el lote (ARREGLO 161) y bajó la ganancia. Cambiarla es mover las tres por la
+// DIFERENCIA, y apuntarlo en _mov y en _lotesConsumidos, que es de donde el
+// borrado saca lo que tiene que devolver: si no, borrar la remesa después
+// devolvería la comisión vieja.
+function _tipoComDeRemesa(r){
+  var t=r.comisionBancoTipo;
+  if(t===undefined||t===null||t===false) t=r.comisionBanco;   // remesas de antes del 97
+  if(t===true) return "movil";
+  return t||"";
+}
+// La que le tocaría con la regla de hoy. Lo único que se puede deducir es un
+// PAGO MÓVIL que entró sin comisión por decir "mismo banco": el archivo de
+// RisApp lo dejó escrito en formaLiquidacion / formaPago (ARREGLO 233). Una
+// remesa a mano en "sin comisión" no dice cómo se pagó, y no se adivina.
+function _tipoComSugerido(r){
+  var t=_tipoComDeRemesa(r);
+  if(t==="" && typeof _impTipoDe==="function"){
+    var f=_impTipoDe(r.formaLiquidacion)||_impTipoDe(r.formaPago);
+    if(f==="movil") return "movil";
+  }
+  return t;
+}
+// Devuelve al lote lo que la comisión se llevó de más, empezando por el FINAL
+// del espejo: lo último que se apuntó ahí es justo lo de la comisión, que se
+// consume después de lo entregado. Y el espejo se descuenta con lo devuelto,
+// para que un borrado posterior no lo vuelva a devolver.
+function _devolverComisionAlLote(r, monto){
+  var resto=Math.round((parseFloat(monto)||0)*100)/100;
+  var vs=((r._lotesConsumidos||{}).ventas)||[];
+  for(var i=vs.length-1; i>=0 && resto>0.001; i--){
+    var v=vs[i], tomar=Math.min(resto, parseFloat(v.bs)||0);
+    if(!(tomar>0)) continue;
+    var l=_loteDelEspejo(v,"venta","VES");
+    if(l){
+      var cap=parseFloat(l.bs)||0, act=parseFloat(l.bsRestante)||0;
+      var dev=Math.min(tomar, cap-act);
+      if(dev>0){ l.bsRestante=Math.round((act+dev)*100)/100; l._mod=Date.now(); _revivirLote(l); }
+    }
+    v.bs=Math.round(((parseFloat(v.bs)||0)-tomar)*100)/100;
+    if(!(v.bs>0.001)) vs.splice(i,1);
+    resto=Math.round((resto-tomar)*100)/100;
+  }
+}
+function _ajustarComisionRemesa(r, tipo, fallidos, motivo){
+  if(!r) return {ok:false, motivo:"no se encontró la remesa"};
+  if(r.comisionBancoTipo==="varias" || (r.entregas && r.entregas.length>1))
+    return {ok:false, motivo:"se pagó desde varias cuentas, y cada una lleva su comisión"};
+  tipo=(tipo===true?"movil":(tipo||""));
+  var fal=_numFallidos(fallidos);
+  var cid=r.cuentaDest||"";
+  var cta=(S.cuentas||[]).find(function(x){ return x.id===cid; });
+  var nueva=esBancoVES(cid) ? comisionTotalVES(tipo, r.cant, fal) : 0;
+  var vieja=Math.round((parseFloat(r.comisionBancoVes)||0)*100)/100;
+  var delta=Math.round((nueva-vieja)*100)/100;
+  var mismoTipo=(_tipoComDeRemesa(r)===tipo) && (_numFallidos(r.intentosFallidos)===fal);
+  if(!delta && mismoTipo) return {ok:true, delta:0, antes:vieja, despues:nueva};
+  if(delta){
+    if(!cta) return {ok:false, motivo:"la cuenta desde la que se pagó ya no existe"};
+    // Una remesa sin _mov se borra por el camino viejo, que no sabe de
+    // comisiones: apuntarle aquí un _mov con SOLO la comisión haría que el
+    // borrado devolviera eso y nada más.
+    if(!(r._mov && r._mov.length)) return {ok:false, motivo:"es de antes de que la app guardara sus movimientos"};
+    cta.saldo=Math.round(((parseFloat(cta.saldo)||0)-delta)*100)/100;
+    r._mov.push({cuentaId:cta.id, delta:-delta});
+    if(delta>0){
+      var c=consumirLotesMon("VES", cta.id, delta);
+      if(c && c.ventas.length){
+        r._lotesConsumidos=r._lotesConsumidos||{compras:[],ventas:[]};
+        r._lotesConsumidos.ventas=(r._lotesConsumidos.ventas||[]).concat(c.ventas);
+      }
+    } else _devolverComisionAlLote(r, -delta);
+    var tv=parseFloat(r.tv)||0;
+    if(tv>0) r.pr=Math.round(((parseFloat(r.pr)||0)-delta/tv)*10000)/10000;
+  }
+  r.comisionBancoVes=nueva;
+  r.comisionBancoTipo=tipo;
+  if(fal){ r.intentosFallidos=fal; r.comisionFallidosBs=comisionFallidosVES(fal); }
+  else { delete r.intentosFallidos; delete r.comisionFallidosBs; }
+  logAudit("COMISION_REMESA", "#"+(r.n||"?")+" "+(r.cl||"")+": "+f2(vieja)+" → "+f2(nueva)+" Bs ("+
+    (etiquetaComisionBanco(tipo)||"transferencia mismo banco")+(fal?", "+fal+" fallido(s)":"")+")"+(motivo?" · "+motivo:""));
+  return {ok:true, delta:delta, antes:vieja, despues:nueva};
+}
+
+// ── ✏️ Editar: la comisión se elige y se ve al instante ──
+// Lo entregado se recalcula igual que en saveEditRow, de aquí: escrito dos
+// veces, la vista previa mediría la comisión sobre otro monto.
+function _cantEditada(type, am, tdia){
+  return (type==="vzla") ? (tdia>0?Math.round(r4(am/tdia)*100)/100:0) : Math.floor(r4(am*tdia)*100)/100;
+}
+function _filaEditada(){
+  if(!S.editRow) return null;
+  var arr=S.editRow.type==="brl"?S.brl:S.editRow.type==="vzla"?S.vzla:S.eeuu;
+  return (arr||[]).find(function(x){ return x.n===S.editRow.n; })||null;
+}
+function _htmlEditComision(r, type){
+  var mon=monedasDeRemesa(type, r);
+  if(mon.dest!=="VES" || !esBancoVES(r.cuentaDest)) return "<span style='color:var(--tx4c);font-size:11px'>—</span>";
+  if(r.comisionBancoTipo==="varias" || (r.entregas && r.entregas.length>1))
+    return "<span style='font-size:10.5px;color:var(--tx3)'>varias cuentas · no se edita aquí</span>";
+  return "<div style='display:flex;flex-direction:column;gap:3px;min-width:160px'>"+
+    "<select id='edit-com' onchange='_editComPrev()' style='font-size:11px;padding:3px 4px;border:1px solid var(--ok-ln);border-radius:5px'>"+_opcionesComisionBanco(_tipoComDeRemesa(r), true)+"</select>"+
+    "<label style='font-size:10.5px;color:var(--tx3);display:flex;align-items:center;gap:4px;margin:0'>fallidos "+
+      "<input id='edit-fal' type='text' inputmode='numeric' value='"+(_numFallidos(r.intentosFallidos)||"")+"' placeholder='0' onfocus='this.select()' oninput='_editComPrev()' style='width:34px;font-size:11px;padding:2px 4px;border:1px solid var(--ok-ln);border-radius:5px;text-align:center'></label>"+
+    "<span id='edit-com-prev' style='font-size:11px;font-weight:700;color:var(--mal)'>"+_txtEditComPrev(r, type, null)+"</span>"+
+  "</div>";
+}
+// "−57,09 Bs (antes 0,00)". Con lee=null usa lo guardado; si no, lo tecleado.
+function _txtEditComPrev(r, type, lee){
+  var tipo=lee?lee.tipo:_tipoComDeRemesa(r), fal=lee?lee.fal:r.intentosFallidos;
+  var cant=lee?lee.cant:(parseFloat(r.cant)||0);
+  var nueva=comisionTotalVES(tipo, cant, fal), vieja=Math.round((parseFloat(r.comisionBancoVes)||0)*100)/100;
+  return (nueva>0?"−"+f2(nueva)+" Bs":"sin comisión")+
+    (Math.abs(nueva-vieja)>=0.005?" <span style='font-weight:400;color:var(--tx3)'>(antes "+f2(vieja)+")</span>":"");
+}
+// Se refresca por su id: repintar la fila con R() cerraría el desplegable bajo
+// el dedo y se llevaría lo tecleado en los demás campos (ARREGLO 32).
+function _editComPrev(){
+  var el=document.getElementById("edit-com-prev"); if(!el) return;
+  var r=_filaEditada(); if(!r) return;
+  var g=function(id){ var x=document.getElementById(id); return x?x.value:null; };
+  var am=g("edit-am")!==null?(_leerNumero(g("edit-am"))||parseFloat(r.am)||0):(parseFloat(r.am)||0);
+  var td=g("edit-tdia")!==null?(_leerNumero(g("edit-tdia"))||parseFloat(r.tdia)||0):(parseFloat(r.tdia)||0);
+  el.innerHTML=_txtEditComPrev(r, S.editRow.type, {tipo:g("edit-com")||"", fal:g("edit-fal"), cant:_cantEditada(S.editRow.type, am, td)});
+}
+
+// ── Recalcular comisiones de remesas viejas, con vista previa ──
+// Sus palabras: "no tocar el historial sin avisar". Las tarifas nuevas valen
+// desde el día que se guardan; lo de antes se toca SOLO desde aquí, eligiendo
+// las fechas y viendo antes qué cambia. Y no entra:
+//   · lo de un mes CERRADO: su cierre enseña lo guardado (ARREGLO 155), así que
+//     cambiar la remesa movería la cuenta y no el cierre;
+//   · lo pagado desde varias cuentas (cada fila lleva la suya, ARREGLO 97);
+//   · lo de antes de que la app guardara _mov (ver _ajustarComisionRemesa).
+// Lo que se queda fuera se dice, con su motivo: callarlo haría creer que se
+// recalculó todo.
+function _isoDeD(d){
+  var p=String(d||"").split("/"); if(p.length<2) return "";
+  var m=getMesAnio(d), dd=parseInt(p[0],10), mm=parseInt(m.mes,10);
+  if(!(dd>0)||!(mm>0)||!m.anio) return "";
+  return m.anio+"-"+String(mm).padStart(2,"0")+"-"+String(dd).padStart(2,"0");
+}
+function _recComCandidatas(desde, hasta){
+  var filas=[], fuera=[];
+  [["brl",S.brl],["vzla",S.vzla],["eeuu",S.eeuu]].forEach(function(p){
+    (p[1]||[]).forEach(function(r){
+      var iso=_isoDeD(r.d);
+      if(!iso || iso<desde || iso>hasta) return;
+      if(monedasDeRemesa(p[0], r).dest!=="VES" || !esBancoVES(r.cuentaDest)) return;
+      var tipoAct=_tipoComDeRemesa(r), tipoNuevo=_tipoComSugerido(r), fal=_numFallidos(r.intentosFallidos);
+      var antes=Math.round((parseFloat(r.comisionBancoVes)||0)*100)/100;
+      var despues=(r.comisionBancoTipo==="varias"||(r.entregas&&r.entregas.length>1)) ? antes : comisionTotalVES(tipoNuevo, r.cant, fal);
+      var base={src:p[0], r:r, iso:iso, tipoAct:tipoAct, tipoNuevo:tipoNuevo, fal:fal, antes:antes, despues:despues,
+                delta:Math.round((despues-antes)*100)/100};
+      if(r.comisionBancoTipo==="varias"||(r.entregas&&r.entregas.length>1)){ base.motivo="se pagó desde varias cuentas"; fuera.push(base); return; }
+      if(Math.abs(base.delta)<0.005 && tipoNuevo===tipoAct) return;
+      if(_binMesCerrado(iso)){ base.motivo="su mes está cerrado"; fuera.push(base); return; }
+      if(!(r._mov && r._mov.length)){ base.motivo="es de antes de que la app guardara sus movimientos"; fuera.push(base); return; }
+      filas.push(base);
+    });
+  });
+  var ord=function(a,b){ return a.iso<b.iso?-1:a.iso>b.iso?1:(a.r.n||0)-(b.r.n||0); };
+  filas.sort(ord); fuera.sort(ord);
+  return {filas:filas, fuera:fuera};
+}
+function _hoyIsoLocal(){
+  var d=new Date();
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+}
+function _htmlRecalcComisiones(){
+  if(!_esAdminApi()) return "";
+  var st=S._recCom||{};
+  var hoy=_hoyIsoLocal(), desde=st.desde||hoy.slice(0,8)+"01", hasta=st.hasta||hoy;
+  var nomTipo=function(t){ return t==="movil"?"pago móvil":t==="transf"?"transferencia otro banco":"transf. mismo banco"; };
+  var h="<div style='margin-top:16px;padding-top:12px;border-top:1px dashed var(--ln2)'>"+
+    "<div style='font-size:12px;font-weight:700;color:var(--tx2);margin-bottom:4px'>🔁 Recalcular comisiones de remesas ya guardadas</div>"+
+    "<div style='font-size:11px;color:var(--tx3);margin-bottom:8px'>Con las tarifas de arriba. Primero ves qué cambiaría; <b>no se guarda nada hasta que confirmes</b>. "+
+      "Cada cambio mueve la cuenta, el lote y la ganancia de esa remesa.</div>"+
+    "<div style='display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px'>"+
+      "<label style='font-size:11px;margin:0'>Desde <input type='date' id='rc-desde' value='"+desde+"' style='padding:6px;border:1.5px solid var(--ln);border-radius:8px;font-size:13px'></label>"+
+      "<label style='font-size:11px;margin:0'>Hasta <input type='date' id='rc-hasta' value='"+hasta+"' style='padding:6px;border:1.5px solid var(--ln);border-radius:8px;font-size:13px'></label>"+
+      "<button onclick='_recComVer()' style='padding:8px 12px;background:var(--info);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Ver qué cambiaría</button>"+
+    "</div>";
+  if(st.filas){
+    var tot=st.filas.reduce(function(a,f){ return a+f.delta; },0);
+    h+="<div style='background:var(--sup2);border:1px solid var(--ln2);border-radius:10px;padding:10px'>";
+    if(!st.filas.length) h+="<div style='font-size:12px;color:var(--tx2)'>✅ Ninguna remesa de esas fechas cambia con las tarifas de hoy.</div>";
+    else{
+      h+="<div style='font-size:12px;font-weight:700;color:var(--tit);margin-bottom:6px'>"+st.filas.length+" remesa"+(st.filas.length>1?"s":"")+" cambia"+(st.filas.length>1?"n":"")+
+         " · total "+(tot>=0?"+":"")+f2(tot)+" Bs de comisión</div>";
+      st.filas.forEach(function(f){
+        h+="<div style='padding:6px 0;border-top:1px solid var(--ln2b);font-size:11.5px'>"+
+          "<b>"+_escAud(f.r.d)+" · #"+_escAud(String(f.r.n||""))+" · "+_escAud(f.r.cl||"")+"</b> · "+f2(f.r.cant)+" Bs"+
+          "<div style='color:var(--tx3)'>"+(f.tipoNuevo!==f.tipoAct?nomTipo(f.tipoAct)+" → <b>"+nomTipo(f.tipoNuevo)+"</b> · ":nomTipo(f.tipoNuevo)+" · ")+
+            f2(f.antes)+" → <b>"+f2(f.despues)+"</b> Bs <span style='color:"+(f.delta>0?"var(--mal)":"var(--ok)")+";font-weight:700'>("+(f.delta>0?"+":"")+f2(f.delta)+")</span></div>"+
+        "</div>";
+      });
+      h+="<div style='display:flex;gap:8px;margin-top:8px;flex-wrap:wrap'>"+
+           "<button onclick='_recComAplicar()' style='padding:9px 14px;background:var(--mal);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Aplicar "+st.filas.length+" cambio"+(st.filas.length>1?"s":"")+"</button>"+
+           "<button onclick='S._recCom.filas=null;R()' style='padding:9px 14px;background:var(--sup);border:1px solid var(--ln);border-radius:8px;cursor:pointer;font-size:12px'>Cancelar</button>"+
+         "</div>";
+    }
+    if(st.fuera && st.fuera.length){
+      h+="<div style='margin-top:8px;font-size:11px;color:var(--avi-tx)'>⚠️ "+st.fuera.length+" no se tocan:"+
+        st.fuera.map(function(f){ return "<br>· "+_escAud(f.r.d)+" #"+_escAud(String(f.r.n||""))+" "+_escAud(f.r.cl||"")+" — "+f.motivo; }).join("")+"</div>";
+    }
+    h+="<div style='margin-top:8px;font-size:11px;color:var(--tx3)'>Una remesa a mano en «sin comisión» no dice si fue pago móvil: si lo fue, cámbiala con ✏️.</div>";
+    h+="</div>";
+  }
+  return h+"</div>";
+}
+function _recComVer(){
+  if(!autorizar("recalcular comisiones")) return;
+  var d=(document.getElementById("rc-desde")||{}).value||"", h=(document.getElementById("rc-hasta")||{}).value||"";
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(d)||!/^\d{4}-\d{2}-\d{2}$/.test(h)){ alert("Elige las dos fechas."); return; }
+  if(d>h){ alert("La fecha «desde» va después de «hasta»."); return; }
+  var c=_recComCandidatas(d, h);
+  S._recCom={desde:d, hasta:h, filas:c.filas, fuera:c.fuera};
+  R();
+}
+function _recComAplicar(){
+  if(!autorizar("recalcular comisiones")) return;
+  var st=S._recCom; if(!st||!st.filas||!st.filas.length) return;
+  // Se vuelve a calcular justo antes de aplicar: entre la vista previa y el
+  // botón puede haber llegado algo del otro aparato.
+  var c=_recComCandidatas(st.desde, st.hasta);
+  var tot=c.filas.reduce(function(a,f){ return a+f.delta; },0);
+  if(!c.filas.length){ alert("Ya no hay nada que cambiar."); S._recCom.filas=null; R(); return; }
+  if(!confirm("Vas a cambiar la comisión de "+c.filas.length+" remesa(s), "+(tot>=0?"+":"")+f2(tot)+" Bs en total.\n\n"+
+              "Cada una mueve el saldo de su cuenta, su lote y su ganancia por la diferencia.\n\n¿Seguir?")) return;
+  var ok=0, no=[];
+  c.filas.forEach(function(f){
+    var res=_ajustarComisionRemesa(f.r, f.tipoNuevo, f.fal, "recálculo "+st.desde+" a "+st.hasta);
+    if(res.ok) ok++; else no.push("#"+(f.r.n||"?")+": "+res.motivo);
+  });
+  saveData();
+  S._recCom={desde:st.desde, hasta:st.hasta, filas:null};
+  R();
+  alert("✅ "+ok+" comisión(es) recalculada(s)."+(no.length?"\n\nNo se pudieron cambiar:\n"+no.join("\n"):""));
+}
 function revertirSaldosRemesa(tipo, r){
   // El lote que creó esta remesa se va con ella: ese dinero deja de existir en
   // el inventario igual que deja de existir en la cuenta.
@@ -22955,10 +23383,13 @@ function upC(key){
       var pr=res.pr;
       px.className="result-box"+(pr>0?" gain":"");
       if(key==="tx"){
-        var com=res.com||COM();
-      px.innerHTML="<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:6px'><div style='font-size:11px;font-weight:700;color:var(--tx3)'>GANANCIA = USDT comp. netos − USDT vend. totales</div><div style='font-size:22px;font-weight:800;color:"+(pr>0?"var(--ok)":"var(--mal)")+"'>"+(pr>0?"+ ":"")+f2(pr)+" USDT</div></div>"+
-        "<div style='font-size:11px;color:var(--tx2b);margin-bottom:4px'>Compra: (monto÷tc) − "+(res.comUc!==undefined?res.comUc:com)+" = <b style='color:var(--ok)'>"+f2(res.uc)+" USDT</b> &nbsp;|&nbsp; Venta: (cant÷tv) + "+(res.comUv!==undefined?res.comUv:com)+" = <b style='color:var(--mal)'>"+f2(res.uv)+" USDT</b></div>"+
-        "<div style='font-size:11px;color:var(--tx2b)'>"+f2(res.uc)+" − "+f2(res.uv)+" = <b style='color:"+(pr>0?"var(--ok)":"var(--mal)")+"'>"+f2(pr)+"</b> &nbsp;<span style='color:var(--tx4);font-size:10px'>(comis. compra: "+(res.comUc||com)+" · venta: "+(res.comUv||com)+")</span></div>";
+        // ARREGLO 238: el mismo recuadro que dibuja rNueva, con la comisión del
+        // banco restada. Antes aquí iba otro texto sin ella, así que al teclear
+        // el monto la ganancia subía y al repintar volvía a bajar (ARREGLO 55).
+        var _cvU=_comVivoTx(S.tx, res.cant);
+        var _comUU=(_cvU>0&&res.tv>0)?_cvU/res.tv:0;
+        px.className="result-box"+(pr-_comUU>0?" gain":"");
+        px.innerHTML=_htmlGananciaTx(res, _cvU);
       }else{
         var com2=res.com||COM();
       px.innerHTML="<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px'><div style='font-size:11px;font-weight:700;color:var(--tx3)'>GANANCIA BRUTA (comisión "+com2+"×2 incluida)</div><div style='font-size:22px;font-weight:800;color:"+(pr>0?"var(--info)":"var(--mal)")+"'>"+(pr>0?"+ ":"")+f2(pr)+" USDT</div></div>"+
@@ -29319,8 +29750,8 @@ function rTbl(data,type){
       (isEd?"<td><input id='edit-id' value='"+t.id+"' style='width:45px;font-size:11px;padding:3px 5px;border:1px solid var(--ok-ln);border-radius:5px'></td>":"<td style='font-weight:700'>"+t.id+"</td>")+
       (isEd?"<td><input id='edit-cl' value='"+t.cl+"' style='min-width:130px;font-size:11px;padding:3px 5px;border:1px solid var(--ok-ln);border-radius:5px'></td>":"<td style='min-width:140px;text-align:left;font-weight:600'>"+t.cl+"</td>")+
       "<td><span class='bd' style='background:"+rtBg+";color:"+rtCol+"'>"+t.rt+"</span></td>"+
-      (isEd?"<td><input id='edit-am' type='text' inputmode='decimal' value='"+t.am+"' style='width:70px;font-size:11px;padding:3px 5px;border:1px solid var(--ok-ln);border-radius:5px;text-align:right'></td>":"<td style='text-align:right;font-weight:700'>"+f2(t.am)+"</td>")+
-      (isEd?"<td><input id='edit-tdia' type='text' inputmode='decimal' step='0.001' value='"+t.tdia+"' style='width:70px;font-size:11px;padding:3px 5px;border:1px solid var(--ok-ln);border-radius:5px;text-align:right'></td>":"<td style='text-align:right;color:var(--tx3)'>"+f2(t.tdia)+"</td>")+
+      (isEd?"<td><input id='edit-am' oninput='_editComPrev()' type='text' inputmode='decimal' value='"+t.am+"' style='width:70px;font-size:11px;padding:3px 5px;border:1px solid var(--ok-ln);border-radius:5px;text-align:right'></td>":"<td style='text-align:right;font-weight:700'>"+f2(t.am)+"</td>")+
+      (isEd?"<td><input id='edit-tdia' oninput='_editComPrev()' type='text' inputmode='decimal' step='0.001' value='"+t.tdia+"' style='width:70px;font-size:11px;padding:3px 5px;border:1px solid var(--ok-ln);border-radius:5px;text-align:right'></td>":"<td style='text-align:right;color:var(--tx3)'>"+f2(t.tdia)+"</td>")+
       "<td style='text-align:right;font-weight:700'>"+f2(t.cant)+"</td>"+
       "<td style='text-align:right;color:var(--tx2)'>"+(t.tc?f4(t.tc):"—")+"</td>"+
       "<td style='text-align:right;font-weight:700;color:var(--ok)'>"+(t.uc&&t.uc>0?f4(t.uc):"<span style='color:var(--tx4b)'>0,00</span>")+"</td>"+
@@ -29328,7 +29759,8 @@ function rTbl(data,type){
       "<td style='text-align:right;color:var(--tx2)'>"+(t.tv?f2(t.tv):"—")+"</td>"+
       "<td style='text-align:right;font-weight:700'>"+f2(t.total)+"</td>"+
       "<td class='gc'>$"+f2(t.pr)+"</td>"+
-      "<td style='text-align:right;font-size:11px;color:var(--mal);font-weight:700'>"+(t.comisionBancoVes&&t.comisionBancoVes>0?"−"+f2(t.comisionBancoVes)+" Bs"+(t.tv>0?" <span style='font-size:10px;opacity:.8'>≈ −$"+f2(Math.round(t.comisionBancoVes/t.tv*100)/100)+" USDT</span>":""):"")+"</td>"+
+      (isEd?"<td>"+_htmlEditComision(t,type)+"</td>":
+      "<td style='text-align:right;font-size:11px;color:var(--mal);font-weight:700'>"+(t.comisionBancoVes&&t.comisionBancoVes>0?"−"+f2(t.comisionBancoVes)+" Bs"+(t.tv>0?" <span style='font-size:10px;opacity:.8'>≈ −$"+f2(Math.round(t.comisionBancoVes/t.tv*100)/100)+" USDT</span>":""):"")+"</td>")+
       "<td style='text-align:center'>"+(t.locked?"🔒":"")+"</td>"+
       (tieneDesglose?"<td style='display:flex;gap:3px;align-items:center'><button id='lotes-btn-"+type+"-"+t.n+"' onclick='toggleLotes("+t.n+",\""+type+"\")' title='Ver lotes FIFO' style='background:"+(showL?"var(--tit)":"var(--info-sup2)")+";color:"+(showL?"var(--sobre-color)":"var(--info)")+";border:none;padding:3px 7px;border-radius:5px;cursor:pointer;font-size:10px'>"+(showL?"▲":"📊")+"</button>"+editDelCell(type,t.n).replace("<td","<span").replace("</td>","</span>")+"</td>":editDelCell(type,t.n))+
     "</tr>"+lotesRow;
@@ -29729,16 +30161,16 @@ function rTblUnificada(){
       "<td style='"+tdc+";font-size:11.5px;color:var(--tx4)'>"+(r.id||r.n||"")+"</td>"+
       "<td style='"+td+";font-size:13px;font-weight:700;color:var(--tit)'>"+_escAud(r.cl)+_htmlQuien(r)+"</td>"+
       "<td style='"+tdc+"'>"+rtBadge+"</td>"+
-      (isEd?"<td style='"+tdr+"'><input id='edit-am' type='text' inputmode='decimal' value='"+r.am+"' style='"+edInStyle+"'></td>":"<td style='"+tdr+";font-size:13px;font-weight:700'>"+f2n(r.am)+" <span style='font-size:10.5px;color:var(--tx3)'>"+r.orig+"</span></td>")+
+      (isEd?"<td style='"+tdr+"'><input id='edit-am' oninput='_editComPrev()' type='text' inputmode='decimal' value='"+r.am+"' style='"+edInStyle+"'></td>":"<td style='"+tdr+";font-size:13px;font-weight:700'>"+f2n(r.am)+" <span style='font-size:10.5px;color:var(--tx3)'>"+r.orig+"</span></td>")+
       "<td style='"+tdr+";font-size:13px;font-weight:700'>"+f2n(r.cant)+" <span style='font-size:10.5px;color:var(--tx3)'>"+r.dest+"</span></td>"+
       (isEd?"<td style='"+tdr+"'><input id='edit-tc' type='text' inputmode='decimal' step='0.0001' value='"+r.tc+"' style='"+edInStyle+"'></td>":"<td style='"+tdr+";font-size:12.5px;color:var(--ok-ln)'>"+f2n(r.tc)+"</td>")+
       (isEd?"<td style='"+tdr+"'><input id='edit-tv' type='text' inputmode='decimal' step='0.001' value='"+r.tv+"' style='"+edInStyle+"'></td>":"<td style='"+tdr+";font-size:12.5px;color:var(--am2-e)'>"+f2n(r.tv)+"</td>")+
-      (isEd?"<td style='"+tdr+"'><input id='edit-tdia' type='text' inputmode='decimal' step='0.001' value='"+r.tdia+"' style='"+edInStyle+"'></td>":"<td style='"+tdr+";font-size:12.5px;color:var(--tx2)'>"+f2n(r.tdia)+"</td>")+
+      (isEd?"<td style='"+tdr+"'><input id='edit-tdia' oninput='_editComPrev()' type='text' inputmode='decimal' step='0.001' value='"+r.tdia+"' style='"+edInStyle+"'></td>":"<td style='"+tdr+";font-size:12.5px;color:var(--tx2)'>"+f2n(r.tdia)+"</td>")+
       "<td style='"+tdr+";font-size:12.5px;color:var(--az3-g)'>"+f2n(r.uc)+"</td>"+
       "<td style='"+tdr+";font-size:12.5px;color:var(--mo3-b)'>"+f2n(r.uv)+"</td>"+
       "<td style='"+tdc+";font-size:11.5px'>"+bancoOrigen+"</td>"+
       "<td style='"+tdc+";font-size:11.5px'>"+bancoDest+"</td>"+
-      "<td style='"+tdc+"'>"+comisDisplay+"</td>"+
+      "<td style='"+tdc+"'>"+(isEd?_htmlEditComision(r,sc):comisDisplay)+"</td>"+
       "<td style='"+tdr+"'>"+ganDisplay+"</td>"+
       "<td style='"+tdc+";white-space:nowrap'>"+
       (isEd?
@@ -29805,8 +30237,8 @@ function rTblEE(){
     return "<tr style='background:"+(isEd?"var(--az6-a)":"")+"'>"+
     (isEd?"<td><input id='edit-d' value='"+dFmt(t.d)+"' style='width:50px;font-size:10px;padding:2px 4px;border:1px solid var(--info);border-radius:4px'></td>":"<td style='white-space:nowrap;padding:4px 6px'>"+dFmt(t.d)+"</td>")+
     (isEd?"<td><input id='edit-cl' value='"+_escAud(t.cl)+"' style='min-width:110px;font-size:10px;padding:2px 4px;border:1px solid var(--info);border-radius:4px'></td>":"<td style='text-align:left;font-weight:600'>"+_escAud(t.cl)+"</td>")+
-    (isEd?"<td><input id='edit-am' type='text' inputmode='decimal' value='"+t.am+"' style='width:60px;font-size:10px;padding:2px 4px;border:1px solid var(--info);border-radius:4px;text-align:right'></td>":"<td style='text-align:right;font-weight:700;padding:4px 6px'>"+f2(t.am)+"</td>")+
-    (isEd?"<td><input id='edit-tdia' type='text' inputmode='decimal' step='0.001' value='"+t.tdia+"' style='width:55px;font-size:10px;padding:2px 4px;border:1px solid var(--info);border-radius:4px;text-align:right'></td>":"<td style='text-align:right;padding:4px 6px'>"+f2(t.tdia)+"</td>")+
+    (isEd?"<td><input id='edit-am' oninput='_editComPrev()' type='text' inputmode='decimal' value='"+t.am+"' style='width:60px;font-size:10px;padding:2px 4px;border:1px solid var(--info);border-radius:4px;text-align:right'></td>":"<td style='text-align:right;font-weight:700;padding:4px 6px'>"+f2(t.am)+"</td>")+
+    (isEd?"<td><input id='edit-tdia' oninput='_editComPrev()' type='text' inputmode='decimal' step='0.001' value='"+t.tdia+"' style='width:55px;font-size:10px;padding:2px 4px;border:1px solid var(--info);border-radius:4px;text-align:right'></td>":"<td style='text-align:right;padding:4px 6px'>"+f2(t.tdia)+"</td>")+
     "<td style='text-align:right;font-weight:700;padding:4px 6px'>"+f0(t.cant)+"</td>"+
     (isEd?"<td><input id='edit-tc' type='text' inputmode='decimal' step='0.0001' value='"+t.tc+"' style='width:55px;font-size:10px;padding:2px 4px;border:1px solid var(--info);border-radius:4px;text-align:right'></td>":"<td style='text-align:right;padding:4px 6px'>"+f4(t.tc)+"</td>")+
     "<td style='text-align:right;color:var(--ok);font-weight:700;padding:4px 6px'>"+f2(t.uc)+"</td>"+
@@ -29814,7 +30246,7 @@ function rTblEE(){
     (isEd?"<td><input id='edit-tv' type='text' inputmode='decimal' step='0.001' value='"+t.tv+"' style='width:60px;font-size:10px;padding:2px 4px;border:1px solid var(--info);border-radius:4px;text-align:right'></td>":"<td style='text-align:right;padding:4px 6px'>"+f4(t.tv)+"</td>")+
     "<td style='text-align:right;font-weight:700;padding:4px 6px'>"+f0(t.total)+"</td>"+
     "<td class='gc' style='padding:4px 6px'>$"+f2(t.pr)+"</td>"+
-    "<td style='text-align:right;font-size:11px;color:var(--mal);font-weight:700;padding:4px 6px'>"+(t.comisionBancoVes&&t.comisionBancoVes>0?"−"+f2(t.comisionBancoVes)+" Bs"+(t.tv>0?" <span style='font-size:10px;opacity:.8'>≈ −$"+f2(Math.round(t.comisionBancoVes/t.tv*100)/100)+" USDT</span>":""):"")+"</td>"+
+    (isEd?"<td style='padding:4px 6px'>"+_htmlEditComision(t,"eeuu")+"</td>":"<td style='text-align:right;font-size:11px;color:var(--mal);font-weight:700;padding:4px 6px'>"+(t.comisionBancoVes&&t.comisionBancoVes>0?"−"+f2(t.comisionBancoVes)+" Bs"+(t.tv>0?" <span style='font-size:10px;opacity:.8'>≈ −$"+f2(Math.round(t.comisionBancoVes/t.tv*100)/100)+" USDT</span>":""):"")+"</td>")+
     "<td style='text-align:center;padding:4px 6px'>"+(t.locked?"🔒":"")+"</td>"+
     editDelCell("eeuu",t.n)+
     "</tr>";
@@ -34008,15 +34440,37 @@ function _impDecidirCom(r){
   r.comBen=ben.key; r.comDes=des.key;
   var porBancos=(ben.key && des.key) ? ben.key===des.key : null;
   var mismo=porBancos!==null ? porBancos : txt;
-  if(porBancos!==null && txt!==null && porBancos!==txt){
-    r.comAvisos.push(txt
-      ? "la liquidación dice «mismo banco» pero son "+ben.key+" y "+des.key+": mandan los bancos"
-      : "la liquidación dice «otros bancos» pero los dos son "+ben.key+": mandan los bancos");
+  var ruta=porBancos===false ? des.key+" → "+ben.key : "";
+  // ARREGLO 238 (08/11/2026): el PAGO MÓVIL cobra SIEMPRE, aunque sea 0102 →
+  // 0102 — lo dijo ella con el tarifario del banco delante. "Mismo banco" solo
+  // exime a la TRANSFERENCIA. Antes de esto, un pago móvil con "mismo banco"
+  // entraba en 0: su R-0001-32 de 19.030 Bs, que son 57,09.
+  if(tipo==="movil"){
+    r.comPorque = mismo===true ? "pago móvil: cobra aunque sea el mismo banco"+(porBancos?" ("+ben.key+")":"") : ruta;
+    return "movil";
   }
-  if(mismo===true){ r.comPorque=porBancos!==null ? "los dos bancos son "+ben.key : "el archivo dice mismo banco"; return ""; }
+  // Cuando la etiqueta y los bancos no coinciden mandan los bancos —son un
+  // dato; el texto lo elige quien registra— y la fila lo dice con sus palabras.
+  if(porBancos!==null && txt!==null && porBancos!==txt){
+    r.comAvisos.push("⚠️ Forma de pago corregida: "+(txt
+      ? "la liquidación dice «mismo banco» pero son "+ben.key+" y "+des.key
+      : "la liquidación dice «otros bancos» pero los dos son "+ben.key)+"; mandan los bancos");
+  }
+  if(tipo==="transf"){
+    if(mismo===true){ r.comPorque=porBancos!==null ? "transferencia, los dos bancos son "+ben.key : "transferencia, el archivo dice mismo banco"; return ""; }
+    if(mismo===null) r.comAvisos.push("el archivo no dice el banco del beneficiario: se toma otro banco");
+    r.comPorque=ruta;
+    return "transf";
+  }
+  // No dice ni pago móvil ni transferencia: la de más comisión. Con "mismo
+  // banco" eso es el pago móvil, que es el único que ahí cobra.
+  if(mismo===true){
+    r.comAvisos.push("no dice si fue pago móvil o transferencia: se toma pago móvil, que cobra aunque sea el mismo banco");
+    r.comPorque=porBancos!==null ? "los dos bancos son "+ben.key : "el archivo dice mismo banco";
+    return "movil";
+  }
   if(mismo===null) r.comAvisos.push("el archivo no dice el banco del beneficiario: se toma otro banco");
-  r.comPorque=porBancos===false ? des.key+" → "+ben.key : "";
-  if(tipo) return tipo;
+  r.comPorque=ruta;
   var bs=r.cant>0?r.cant:(r.cantArch>0?r.cantArch:0);
   var t=comisionBancoVES("movil", bs)>=comisionBancoVES("transf", bs) ? "movil" : "transf";
   r.comAvisos.push("no dice si fue pago móvil o transferencia: se toma la de más comisión");
@@ -34025,9 +34479,9 @@ function _impDecidirCom(r){
 // Lo que la fila dice que se va a cobrar, con el número: "transferencia a otro
 // banco" a secas obliga a ir a Configuración a ver cuánto es.
 function _impTxtCom(tipo, montoBs){
-  if(tipo==="") return "Mismo banco · sin comisión";
+  if(tipo==="") return "Transferencia en el mismo banco · sin comisión";
   var n=comisionBancoVES(tipo, montoBs);
-  return (tipo==="movil"?"Pago móvil a otro banco":"Transferencia a otro banco")+" · comisión "+f2(n)+" Bs";
+  return (tipo==="movil"?"Pago móvil":"Transferencia a otro banco")+" · comisión "+f2(n)+" Bs";
 }
 function _impTolerancia(dest){ return dest==="BRL" ? 0.05 : 1; }
 
@@ -34624,18 +35078,11 @@ function rNueva(){
   // decía +1,41 USDT y quedaba en +1,36 (52,92 Bs ÷ 980,97). Un número de la
   // pantalla que no es el que se guarda se deja de mirar.
   var _entVivo=entregasDeRemesa(f);
-  var comVesVivo=(ruta.dest==="VES")
-    ? (_entVivo ? comisionesDeEntregas(_entVivo).total
-                : (f.comisionBanco ? comisionBancoVES(f.comisionBanco,cant) : 0))
-    : 0;
-  // Tarifas para enseñarlas en el desplegable — las de verdad las aplica
-  // comisionBancoVES(), esto es solo el texto.
-  var _cfgCom=S.config||{};
-  var _pctCom=parseFloat(_cfgCom.comision_banco_vzla); if(isNaN(_pctCom)) _pctCom=0.003;
-  var _minCom=parseFloat(_cfgCom.comision_banco_vzla_min); if(isNaN(_minCom)) _minCom=14;
-  var _fijoCom=parseFloat(_cfgCom.comision_banco_transferencia); if(isNaN(_fijoCom)) _fijoCom=54;
+  var comVesVivo=_comVivoTx(f, cant);
+  var _resCp={am:am, tdia:tdia, tc:tc, tv:tv, uc:uc, uv:uv, pr:pr};
+  // ARREGLO 238: las tarifas del desplegable las escribe _opcionesComisionBanco(),
+  // con las de Configuración: aquí había otra copia que decía "54 Bs fijos".
   var _ctTx=(S.tx.comisionBanco===true?"movil":S.tx.comisionBanco);
-  var _cvTx=_ctTx?comisionBancoVES(_ctTx,(parseFloat(S.tx.cant2)||cant)):0;
   var comUsdtVivo=(comVesVivo>0&&tv>0)?Math.round(comVesVivo/tv*10000)/10000:0;
   var prNeto=Math.round((pr-comUsdtVivo)*10000)/10000;
   var ok=am>0&&tdia>0&&tc>0&&tv>0;
@@ -34862,8 +35309,11 @@ function rNueva(){
     // refresque al teclear — si no, se queda del último repintado y enseña un
     // reparto que ya no es el del monto que hay escrito (ARREGLO 55).
     "<div id='fifo-tx'>"+_htmlDeDondeSalen(_rTx, ruta)+"</div>"+
+    // ARREGLO 238: el recuadro sale de _htmlGananciaTx(), que también usa upC().
+    // upC escribía otro texto SIN la comisión del banco, así que al teclear el
+    // monto la ganancia subía sola y al repintar volvía a bajar (ARREGLO 55).
     "<div id='cp-tx' class='result-box"+(ok&&prNeto>0&&tc>0&&tv>0?" gain":"")+"'>"+
-    (ok&&tc>0&&tv>0?"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:6px'><div style='font-size:11px;font-weight:700;color:var(--tx3)'>GANANCIA = USDT comprados − USDT vendidos</div><div style='font-size:22px;font-weight:800;color:"+(prNeto>0?"var(--ok)":"var(--mal)")+"'>"+(prNeto>0?"+ ":"")+f2(prNeto)+" USDT</div></div><div style='font-size:11px;color:var(--tx2b)'>"+f2(uc)+" − "+f2(uv)+""+(comUsdtVivo>0?" − "+f2(comUsdtVivo)+" (comisión del banco)": "")+" = <b style='color:"+(prNeto>0?"var(--ok)":"var(--mal)")+"'>"+f2(prNeto)+"</b></div>":"<div style='text-align:center;color:var(--tx4);font-size:12px;padding:8px'>Completa monto, tasa del día y tasas USDT</div>")+
+    _htmlGananciaTx(_resCp, comVesVivo)+
     "</div>"+
     "<div style='font-size:11px;color:var(--tx3b);margin-bottom:10px'>🔒 Al guardar queda bloqueado. Modificar requiere sesión de administrador.</div>"+
     "<div style='background:var(--avi-sup);border:1.5px solid var(--avi-ln);border-radius:10px;padding:12px 14px;margin-bottom:12px'>"+ 
@@ -34880,18 +35330,16 @@ function rNueva(){
     (ruta.dest==="VES"&&_entVivo
       ?"<div style='background:var(--rj6-h);border:1.5px solid var(--rj4a88);border-radius:10px;padding:11px 14px;margin-bottom:12px;font-size:12px;color:var(--rj3)'>"+
          "🏦 La comisión va <b>por cuenta, arriba</b> — cada banco cobra la suya."+
-         (comVesVivo>0?"<br><span style='font-size:11.5px'>Total: <b>"+f2(comVesVivo)+" Bs</b>"+
-            (tv>0?" ≈ "+f4(comUsdtVivo)+" USDT, ya descontados de la ganancia":"")+"</span>"
-          :"<br><span style='font-size:11.5px'>Ninguna de las cuentas cobra comisión.</span>")+
+         _htmlCampoFallidosTx()+
+         "<div id='com-tx-nota'>"+(comVesVivo>0?_htmlNotaComTx(f, cant):"<div style='margin-top:6px;font-size:11.5px'>Ninguna de las cuentas cobra comisión.</div>")+"</div>"+
        "</div>"
     :ruta.dest==="VES"?"<div style='background:var(--rj6-h);border:1.5px solid var(--rj4a88);border-radius:10px;padding:12px 14px;margin-bottom:12px'>"+
 "<div style='font-size:13px;font-weight:700;color:var(--rj3);margin-bottom:8px'>🏦 ¿Cómo le pagas los bolívares?</div>"+
     "<select onchange=\"S.tx.comisionBanco=this.value;R()\" style='width:100%;padding:9px;border:1.5px solid var(--rj4a88);border-radius:8px;font-size:13px;background:var(--sup)'>"+
-      "<option value=''"+(!_ctTx?" selected":"")+">Dentro del mismo banco — sin comisión</option>"+
-      "<option value='movil'"+(_ctTx==="movil"?" selected":"")+">Pago móvil a otro banco — "+(_pctCom*100).toFixed(2).replace(".",",")+"%, mínimo "+f2(_minCom)+" Bs</option>"+
-      "<option value='transf'"+(_ctTx==="transf"?" selected":"")+">Transferencia a otro banco — "+f2(_fijoCom)+" Bs fijos</option>"+
+      _opcionesComisionBanco(_ctTx)+
     "</select>"+
-    (_cvTx>0?"<div style='margin-top:8px;font-size:11px;color:var(--rj3)'>📌 Comisión: "+f2(_cvTx)+" Bs — la asumes tú, se descuenta de tu ganancia.</div>":"")+
+    _htmlCampoFallidosTx()+
+    "<div id='com-tx-nota'>"+_htmlNotaComTx(f, cant)+"</div>"+
     "</div>":"")+
     "<button class='btn-main btn-green' onpointerdown='_txTocaGuardar()' onclick='saveTx()'>💾 Guardar y bloquear</button></div>";
 }
@@ -34918,12 +35366,7 @@ function rNuevaEE(){
   var uv=tv>0?r4(cant/tv+_comPlatEE):0;
   var pr=r4(uc-uv);
   var comVesVivoEE=(f.comisionBanco)?comisionBancoVES(f.comisionBanco,cant):0;
-  // Tarifas para enseñarlas en el desplegable — las de verdad las aplica
-  // comisionBancoVES(), esto es solo el texto.
-  var _cfgCom=S.config||{};
-  var _pctCom=parseFloat(_cfgCom.comision_banco_vzla); if(isNaN(_pctCom)) _pctCom=0.003;
-  var _minCom=parseFloat(_cfgCom.comision_banco_vzla_min); if(isNaN(_minCom)) _minCom=14;
-  var _fijoCom=parseFloat(_cfgCom.comision_banco_transferencia); if(isNaN(_fijoCom)) _fijoCom=54;
+  // ARREGLO 238: las tarifas del desplegable las escribe _opcionesComisionBanco().
   var _ctEE=(S.txE.comisionBanco===true?"movil":S.txE.comisionBanco);
   var _cvEE=_ctEE?comisionBancoVES(_ctEE,cant):0;
   var comUsdtVivoEE=(comVesVivoEE>0&&tv>0)?Math.round(comVesVivoEE/tv*10000)/10000:0;
@@ -35039,9 +35482,7 @@ function rNuevaEE(){
     "<div style='background:var(--rj6-h);border:1.5px solid var(--rj4a88);border-radius:10px;padding:12px 14px;margin-bottom:12px'>"+
 "<div style='font-size:13px;font-weight:700;color:var(--rj3);margin-bottom:8px'>🏦 ¿Cómo le pagas los bolívares?</div>"+
     "<select onchange=\"S.txE.comisionBanco=this.value;R()\" style='width:100%;padding:9px;border:1.5px solid var(--rj4a88);border-radius:8px;font-size:13px;background:var(--sup)'>"+
-      "<option value=''"+(!_ctEE?" selected":"")+">Dentro del mismo banco — sin comisión</option>"+
-      "<option value='movil'"+(_ctEE==="movil"?" selected":"")+">Pago móvil a otro banco — "+(_pctCom*100).toFixed(2).replace(".",",")+"%, mínimo "+f2(_minCom)+" Bs</option>"+
-      "<option value='transf'"+(_ctEE==="transf"?" selected":"")+">Transferencia a otro banco — "+f2(_fijoCom)+" Bs fijos</option>"+
+      _opcionesComisionBanco(_ctEE)+
     "</select>"+
     (_cvEE>0?"<div style='margin-top:8px;font-size:11px;color:var(--rj3)'>📌 Comisión: "+f2(_cvEE)+" Bs — la asumes tú, se descuenta de tu ganancia.</div>":"")+
     "</div>" +
