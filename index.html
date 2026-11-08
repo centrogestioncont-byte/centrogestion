@@ -3383,7 +3383,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261108_v320";
+var APP_VERSION = "20261108_v321";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -34609,10 +34609,19 @@ function _impLeerFila(o, i){
 
 // Rehace la lista desde el archivo. Se llama al abrirlo y cada vez que cambia un
 // banco, porque el banco decide si una fila se puede importar.
+// ARREGLO 239 · La remesa que ya entró con ESE código de RisApp, o null.
+// Se compara el código TAL CUAL lo manda RisApp: sus palabras, "el mismo código
+// tal cual como esté en RisApp debo tenerlo, no debería haber diferencias de
+// guiones o espacios". Y solo contra lo IMPORTADO (idExterno): lo que ella
+// registra a mano lo atendió por WhatsApp, no tiene código de RisApp, y un
+// número parecido ahí es otra operación. Lo leen la vista previa y la
+// importación, para que las dos digan lo mismo.
+function _remesaPorIdExterno(id){
+  id=String(id==null?"":id).trim(); if(!id) return null;
+  return (S.brl||[]).concat(S.vzla||[]).find(function(x){ return x && x.idExterno===id; })||null;
+}
 function _impRecalcular(){
   var imp=S._impRem; if(!imp) return;
-  var ids={};
-  (S.brl||[]).concat(S.vzla||[]).forEach(function(x){ if(x&&x.idExterno) ids[x.idExterno]=x; });
   var vistos={};
   (imp.raw||[]).forEach(function(o){ var k=String((o&&o.id_remesa)==null?"":o.id_remesa).trim(); if(k) vistos[k]=(vistos[k]||0)+1; });
   var bancos=[], idxB={};
@@ -34621,7 +34630,8 @@ function _impRecalcular(){
     if(r.idExt && vistos[r.idExt]>1) r.errores.push("id_remesa repetido dentro del archivo");
     var ruta=r.rt ? getRutas().find(function(x){ return x.rt===r.rt; }) : null;
     r.ruta=ruta||null;
-    if(r.idExt && ids[r.idExt]){ r.ya=ids[r.idExt]; r.avisos.unshift("ya importada (#"+(r.ya.n||"?")+")"); }
+    r.ya=_remesaPorIdExterno(r.idExt);
+    if(r.ya) r.avisos.unshift("ya importada (#"+(r.ya.n||"?")+") · no se puede volver a importar");
     // Las que ella ya tecleó a mano. Avisa, no bloquea: el mismo cliente puede
     // mandar dos veces lo mismo el mismo día (ARREGLO 154).
     if(ruta && r.iso && r.cliNom && r.am>0 && !r.ya){
@@ -34659,7 +34669,12 @@ function _impRecalcular(){
       r.comAvisos=[]; r.comPorque="";
       r.com=r.pideCom ? _impDecidirCom(r) : "";
     }
-    r.importable=!r.errores.length && !!r.cuentaIn && !!r.cuentaOut;
+    // ARREGLO 239: una "ya importada" NO se puede marcar. Antes salía desmarcada
+    // pero la casilla se podía tocar, y marcarla la registraba otra vez: medido,
+    // el mismo archivo con una fila marcada a mano dejaba 5 remesas donde había
+    // 4, y la pregunta de antes de importar ni lo mencionaba. El código de
+    // RisApp es único: dos remesas con el mismo son la misma.
+    r.importable=!r.errores.length && !r.ya && !!r.cuentaIn && !!r.cuentaOut;
     r.limpia=r.importable && !r.ya && !r.parecida && !r.cerrado && !r.futura && !r.tasaRara;
     // Lo que marcó ella manda; lo demás lo propone la app y se recalcula. Así una
     // fila que se completa después (su banco, su comisión) se marca sola.
@@ -34856,6 +34871,10 @@ function _impImportar(){
       _IMPORT_REM={avisos:[], errores:[], hecha:null};
       window.confirm=function(m){ _IMPORT_REM.avisos.push(String(m||"")); return true; };
       window.alert=function(m){ _IMPORT_REM.errores.push(String(m||"")); };
+      // Y se vuelve a mirar justo antes de guardar: entre la vista previa y el
+      // botón puede haber llegado la misma remesa desde el otro aparato.
+      var _yaEsta=_remesaPorIdExterno(r.idExt);
+      if(_yaEsta){ res.fallo.push({r:r, motivo:"ya estaba importada (#"+(_yaEsta.n||"?")+")"}); return; }
       S.tx=_impTxDeFila(r, imp);
       try{ _autoMetodoTx(); saveTx(); }
       catch(err){ _IMPORT_REM.errores.push(String(err&&err.message||err)); }

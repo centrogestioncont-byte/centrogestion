@@ -13889,7 +13889,8 @@ console.log("\nARREGLO 203 · fuera la calculadora inversa del formulario de abo
 
   // 5. Duplicados: por id de la otra app, y avisa de las tecleadas a mano.
   const rec = sc("_impRecalcular");
-  ok(/x\.idExterno\)\s*ids\[x\.idExterno\]/.test(rec) && /r\.ya=ids\[r\.idExt\]/.test(rec),
+  // ARREGLO 239: la búsqueda vive en _remesaPorIdExterno, exacta.
+  ok(/r\.ya=_remesaPorIdExterno\(r\.idExt\)/.test(rec) && /x\.idExterno===id/.test(sacarFuncion("_remesaPorIdExterno")),
      "una ya importada se reconoce por su id_remesa");
   ok(/_remesasIguales\(/.test(rec) && /!x\.idExterno/.test(rec),
      "y la que ella ya tecleó a mano sale avisada (ARREGLO 154)");
@@ -14321,6 +14322,24 @@ ok(!/>Dentro del mismo banco — sin comisión</.test(HTML) && !/>Mismo banco �
   ok(/oninput='_txFallidosSet\(this\.value\)'/.test(sacarFuncion("_htmlCampoFallidosTx")) &&
      !/R\(\)/.test(sacarFuncion("_txFallidosSet")),
      "el campo de intentos se refresca por su id, sin repintar (ARREGLO 32)");
+}
+// ── ARREGLO 239 · una remesa ya importada no se vuelve a importar ─────────
+console.log("\nARREGLO 239 · No se importa dos veces la misma remesa");
+{
+  const SX = {brl:[{n:1, idExterno:"R-0001-32"}, {n:2, id:"RC-000016"}], vzla:[{n:3, idExterno:"R-0001-40"}]};
+  const busca = new Function("S", sacarFuncion("_remesaPorIdExterno")+"; return _remesaPorIdExterno;")(SX);
+  ok(busca("R-0001-32").n===1 && busca(" R-0001-32 ").n===1 && busca("R-0001-40").n===3,
+     "encuentra la importada por su código de RisApp, tal cual");
+  ok(busca("R-0001-032")===null && busca("r-0001-32")===null && busca("R000132")===null,
+     "un código parecido NO es el mismo: se compara exacto");
+  ok(busca("RC-000016")===null && busca("")===null,
+     "lo registrado a mano (WhatsApp) no tiene código de RisApp y nunca choca");
+  const rc = sacarFuncion("_impRecalcular");
+  ok(/r\.importable=!r\.errores\.length && !r\.ya &&/.test(rc) && /r\.ya=_remesaPorIdExterno\(r\.idExt\)/.test(rc),
+     "una «ya importada» no se puede marcar");
+  const ii = sacarFuncion("_impImportar");
+  ok(/var _yaEsta=_remesaPorIdExterno\(r\.idExt\);\s*if\(_yaEsta\)\{[\s\S]{0,160}?return; \}\s*S\.tx=_impTxDeFila/.test(ii),
+     "y se vuelve a mirar justo antes de guardar cada una");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
