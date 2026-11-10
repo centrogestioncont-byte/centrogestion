@@ -4908,6 +4908,50 @@ correcto. Lo cazó **dibujar la pestaña**.
 
 ---
 
+### Abonar a una factura en parcelas, y editar el precio vendido (ARREGLO 241)
+
+Sus palabras del 10/11: *"quiero abonar a una factura pero no me deja, y si
+quiero editar en cuánto lo vendí"*. Una parcela solo se pagaba **entera**, y el
+selector ofrecía cuentas de **cualquier** moneda: elegir una en USDT contestaba
+*"la cuenta es USDT y la parcela es BRL"* y no pagaba nada.
+
+- **Lo que falta de una parcela sale de `_faltaParcelaArt()`** y de ningún otro
+  sitio: lo leen el panel, el reparto y las dos deudas que resta el capital.
+  Cada abono queda en `c.pagos` con su parte de capital y de interés.
+- **El reparto (`_repartoAbonoArt`) empieza por la parcela que tocó y lo que
+  sobra pasa a las siguientes**; dentro de cada una, primero el interés. Pagar
+  más de lo que queda de la factura **no se acepta**.
+- **Un abono es UN egreso** (más otro de interés si lo hubo), y todas las
+  parcelas que tocó comparten `grupo`: deshacerlo lo deshace entero.
+- **El interés borrado deja marca** (`_borrarEgresoInteresMerc`). Antes se
+  quitaba con un `splice` a secas y el servidor lo devolvía (ARREGLO 163).
+- **✏️ Editar precio** mueve la cuenta **solo por la diferencia**, recalcula la
+  ganancia con la tasa **del día de la venta**, no deja un fiado por debajo de
+  lo abonado, y no toca ventas de un mes cerrado ni las que salieron como
+  préstamo.
+
+### Y la deuda de parcelas se restaba DOS veces (ARREGLO 242)
+
+Salió midiendo el 241. Desde el 226, `deberias` restaba `deudaParcelas` "en los
+dos lados, como el sueldo". Pero no es como el sueldo: el sueldo baja `tienes`
+sin que nada lo suba, y comprar en parcelas **sube** `tienes` por la mercancía y
+lo **baja** por la deuda el mismo número. El lado real ya era neutro.
+
+```
+                              v323 te sobran    v324
+apertura con una deuda viva       +83,03         0,00
+compra en parcelas               +154,71         0,00
+pagada una parcela               +118,87         0,00
+abono de 100                      +99,63         0,00
+```
+
+- **Se quitó la resta de `deberias` y la fila del desglose que la justificaba.**
+  Medido: la lista suma el salto al céntimo en los cinco pasos.
+- **La deuda se sigue viendo** donde es una deuda: el Balance de Contabilidad y
+  el panel de cada artículo. `capitalRealTotal()` la sigue restando.
+- **No hay nada que rehacer a mano**: no se guarda ningún número, se calcula.
+  Lo que ella vea es que el "te sobran" baja por lo que debe de los lotes.
+
 ### Lo que NO entró, y es a propósito
 
 - **Cantidad por artículo.** Una cosa, un registro. Con cantidad habría que

@@ -3383,7 +3383,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261110_v322";
+var APP_VERSION = "20261110_v324";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -7310,12 +7310,19 @@ function conciliacionCapital(){
   // mismo sitio que el de alla (real.sueldoPendiente). Calcularlo aparte seria
   // la segunda respuesta a la misma pregunta, y con que difieran en un centimo
   // el "sin explicar" se mueve solo.
-  // ARREGLO 226: la deuda de parcelas de mercancía también se resta en los
-  // DOS lados, por el mismo motivo que el sueldo (ARREGLO 105). Si la
-  // apertura se fijó antes de comprar en parcelas, ese capital sube
-  // (enMercancia) y baja (deudaParcelas) en el lado "real"; aquí espejamos
-  // la bajada para que el "sin explicar" no se mueva.
-  var deberias=r2v(apertura-intAp.total+bruta-egEmpresaSinMerc-egPersonalEmpresa-socios-traspPers.total-(real.sueldoPendiente||0)-(real.deudaParcelas||0)+aportes.total-retSoc.total);
+  // ARREGLO 242: la deuda de parcelas de mercancía NO se resta aquí. El 226
+  // la restaba "en los DOS lados, como el sueldo", y el sueldo no es lo
+  // mismo: el sueldo baja `tienes` sin que nada lo suba. Comprar en parcelas
+  // SUBE `tienes` por la mercancía (enMercancia) y lo BAJA por la deuda
+  // (deudaParcelas) el mismo número, así que el lado real ya queda neutro.
+  // Restarla también aquí la contaba dos veces. Medido en v322 con una compra
+  // de 71,68 USDT: el "te sobran" pasaba de 0 a +71,68 al comprar, bajaba a
+  // +35,84 al pagar la mitad, y fijar la apertura con una deuda viva dejaba
+  // un sobrante del tamaño de esa deuda desde el primer segundo.
+  // Pagar una parcela tampoco mueve nada aquí: baja la cuenta y la deuda en
+  // `tienes` a la vez, y su egreso lleva `fromArticulo`, así que ya no llega a
+  // `egEmpresaSinMerc` (ARREGLO 143).
+  var deberias=r2v(apertura-intAp.total+bruta-egEmpresaSinMerc-egPersonalEmpresa-socios-traspPers.total-(real.sueldoPendiente||0)+aportes.total-retSoc.total);
   var diferencia=r2v(real.total-deberias);
   // De qué está hecha esa diferencia: los ajustes a mano y el desfase de las
   // tasas se explican solos, lo que quede es lo único que hay que perseguir.
@@ -12553,8 +12560,12 @@ function _usdtMerc(monto, mon){
 function _ctasMerc(){
   return (S.cuentas||[]).filter(function(c){ return c.activa!==false && !c.esPersonal; });
 }
-function _optCtasMerc(sel){
-  return _ctasMerc().map(function(c){
+// ARREGLO 241: con `mon`, solo las cuentas en esa moneda. Al pagar una parcela
+// salían TODAS, y elegir una en otra moneda contestaba "la cuenta es USDT y la
+// parcela es BRL" sin pagar nada: ofrecer lo que no se puede usar es lo que
+// hace que parezca que el botón no funciona.
+function _optCtasMerc(sel, mon){
+  return _ctasMerc().filter(function(c){ return !mon || c.moneda===mon; }).map(function(c){
     var sal=parseFloat(c.saldo)||0;
     var deu=0; try{ deu=_deudaTarjeta(c)||0; }catch(e){ deu=0; }
     var pie = deu>0 ? " · 💳 debes "+f2(deu) : " · "+f2(sal)+" "+c.moneda;
@@ -12601,10 +12612,38 @@ function _cuotasArt(artId){
 function _parcelasPendientesArt(artId){
   return _cuotasArt(artId).filter(function(c){ return !c.pagada; });
 }
+// ARREGLO 241 · LO QUE FALTA DE UNA PARCELA
+// ──────────────────────────────────────────────────────────────────
+// Sus palabras del 10/11, con la factura de AVON Y NATURA delante: "quiero
+// abonar a una factura pero no me deja". No la dejaba porque una parcela solo
+// se podia pagar ENTERA: el boton pagaba `c.monto` y no habia campo para poner
+// otro numero.
+//
+// Ahora una parcela lleva sus `pagos` (cada abono con su parte de capital y su
+// parte de interes) y lo que falta sale de AQUI y de ningun otro sitio: lo leen
+// la deuda del capital (`_deudaParcelasArt`, `_deudaParcelasTotalUSDT`), el
+// panel que la dibuja y el reparto del abono. Calculado aparte, un dia el panel
+// diria "falta 86,37" y la conciliacion restaria otra cosa — el 34,27 contra
+// el 34,28 con dinero de una deuda.
+//
+// Una parcela marcada `pagada` a la antigua (sin `pagos`) no debe nada: esas
+// las pago el boton viejo, con su egreso en `c.egresoId`.
+function _faltaParcelaArt(c){
+  if(!c||c.pagada) return {cap:0, int:0, tot:0, abonado:0};
+  var pc=0, pi=0;
+  (c.pagos||[]).forEach(function(p){ pc+=parseFloat(p.monto)||0; pi+=parseFloat(p.interes)||0; });
+  var cap=Math.max(0, Math.round(((parseFloat(c.monto)||0)-pc)*100)/100);
+  var it =Math.max(0, Math.round(((parseFloat(c.interes)||0)-pi)*100)/100);
+  return {cap:cap, int:it, tot:Math.round((cap+it)*100)/100, abonado:Math.round((pc+pi)*100)/100};
+}
 // Suma del capital pendiente de un artículo (lo que NO se ha pagado).
 // Se usa en la conciliación para restarlo de "deberías tener".
+// ARREGLO 241: lo abonado a una parcela ya salió de la cuenta, así que deja de
+// ser deuda en ese mismo momento. Si se siguiera restando entera hasta pagarla
+// toda, cada abono bajaría "tienes" sin bajar la deuda y el "te sobran" se
+// movería solo.
 function _deudaParcelasArt(artId){
-  return Math.round(_parcelasPendientesArt(artId).reduce(function(s,c){return s+(parseFloat(c.monto)||0);},0)*100)/100;
+  return Math.round(_parcelasPendientesArt(artId).reduce(function(s,c){return s+_faltaParcelaArt(c).cap;},0)*100)/100;
 }
 // Deuda viva total de TODAS las compras en parcelas, en USDT.
 // Los egresos de parcelas ya pagadas NO cuentan aquí (bajaron la cuenta
@@ -12615,7 +12654,7 @@ function _deudaParcelasTotalUSDT(){
     if(c.pagada) return;
     var a=_artDe(c.artId); if(!a) return;
     var mon=c.mon||a.mon||"USDT";
-    var m=parseFloat(c.monto)||0;
+    var m=_faltaParcelaArt(c).cap;
     if(mon==="USDT"||mon==="USD") t+=m;
     else { var r=getRateToUsdt(mon); if(r>0) t+=m/r; }
   });
@@ -12670,11 +12709,116 @@ function _ddmmaaDeIso(iso){
   var p=iso.split("-"); if(p.length!==3) return iso;
   return p[2]+"/"+p[1]+"/"+p[0].slice(-2);
 }
-// Pagar una parcela: elige cuenta, crea el egreso (que baja la cuenta y
-// baja el lote FIFO), marca la parcela como pagada. Si tiene interés,
-// se crea un egreso aparte SIN fromArticulo para que sí cuente como
-// gasto del mes (es gasto financiero, no inversión).
-function _pagarParcelaArt(cuotaId, cuentaId){
+// ARREGLO 241 · ABONAR A LA FACTURA
+// ──────────────────────────────────────────────────────────────────
+// Antes `_pagarParcelaArt` pagaba la parcela ENTERA o nada. Ahora ella pone
+// cuánto paga y el reparto decide qué cubre:
+//   · empieza por la parcela que tocó, y lo que sobra pasa a las siguientes
+//     en orden — la misma regla que el abono de un préstamo (lo que paga de
+//     más baja la cuota siguiente);
+//   · dentro de cada parcela va primero al INTERÉS y después al capital. El
+//     interés es gasto financiero (sí cuenta como gasto del mes); el capital
+//     es inversión (no). Si un abono corto cubriera solo capital, el interés
+//     se quedaría para el final y el gasto del mes saldría corrido.
+//   · pagar más de lo que queda de la factura NO se acepta. No hay dónde
+//     acreditar el sobrante, y un egreso más grande que la deuda bajaría la
+//     cuenta por dinero que nunca se le debió a nadie.
+//
+// El reparto sale de UN sitio y lo leen la línea que ella mira mientras
+// teclea (`_htmlRepartoAbonoArt`) y el botón que lo aplica. Calculado aparte,
+// la pantalla diría "cubre la 2 y 30,00 de la 3" y el dinero iría a otra.
+function _repartoAbonoArt(cuotaId, monto){
+  var c0=(S.artCuotas||[]).find(function(x){return String(x.id)===String(cuotaId);});
+  if(!c0) return null;
+  var todas=_cuotasArt(c0.artId);
+  var orden=[c0].concat(todas.filter(function(c){return String(c.id)!==String(c0.id);}));
+  var resto=Math.round((parseFloat(monto)||0)*100)/100, filas=[], deFactura=0;
+  orden.forEach(function(c){
+    var f=_faltaParcelaArt(c);
+    deFactura+=f.tot;
+    if(resto<=0.004||f.tot<=0.004) return;
+    var pi=Math.min(resto, f.int); resto=Math.round((resto-pi)*100)/100;
+    var pc=Math.min(resto, f.cap); resto=Math.round((resto-pc)*100)/100;
+    pi=Math.round(pi*100)/100; pc=Math.round(pc*100)/100;
+    var falta=Math.round((f.tot-pi-pc)*100)/100;
+    filas.push({c:c, cap:pc, int:pi, falta:falta, completa:falta<=0.004});
+  });
+  return {filas:filas, sobra:resto, deFactura:Math.round(deFactura*100)/100,
+          mon:c0.mon||((_artDe(c0.artId)||{}).mon)||"USDT"};
+}
+// La línea de debajo del campo: qué va a cubrir lo que está escribiendo.
+// Se refresca por su id al teclear (ARREGLO 55): repintar el panel entero
+// mataría el campo bajo el dedo (ARREGLO 32).
+function _htmlRepartoAbonoArt(cuotaId, monto){
+  var m=_leerNumero(monto);
+  if(!(m>0)) return "<span style='color:var(--tx4)'>Escribe cuánto pagas.</span>";
+  var r=_repartoAbonoArt(cuotaId, m); if(!r) return "";
+  var mon=_escAud(r.mon);
+  if(r.sobra>0.004)
+    return "<span style='color:var(--mal)'>⚠️ De esta factura solo queda <b>"+f2(r.deFactura)+" "+mon+"</b>: te sobran "+f2(r.sobra)+".</span>";
+  return r.filas.map(function(x){
+    return "<div>Parcela "+x.c.n+"/"+x.c.nTotal+": "+
+      (x.completa
+        ? "<b style='color:var(--ok)'>queda pagada</b>"
+        : "abonas "+f2(x.cap+x.int)+" · <b style='color:var(--avi-tx2)'>falta "+f2(x.falta)+" "+mon+"</b>")+
+      (x.int>0.004?" <span style='color:var(--tx4)'>("+f2(x.int)+" de interés)</span>":"")+
+    "</div>";
+  }).join("");
+}
+function _refrescarRepartoAbonoArt(){
+  var p=S._artParcelaPagar||{};
+  var el=document.getElementById("aab-rep"); if(!el) return;
+  el.innerHTML=_htmlRepartoAbonoArt(p.id, p.monto);
+}
+// Abrir el formulario DEJA PUESTO lo que enseña (ARREGLO 143): el monto sale
+// relleno con lo que falta de esa parcela, y si solo hay una cuenta en esa
+// moneda, sale elegida. Rellenarlo solo en el `oninput` convierte "no lo tocó"
+// en "está vacío".
+function _abrirPagoParcelaArt(cuotaId){
+  var c=(S.artCuotas||[]).find(function(x){return String(x.id)===String(cuotaId);});
+  if(!c) return;
+  if(S._artParcelaPagar && String(S._artParcelaPagar.id)===String(cuotaId)){ S._artParcelaPagar=null; R(); return; }
+  var a=_artDe(c.artId)||{};
+  var ctas=_ctasMerc().filter(function(x){return x.moneda===(c.mon||a.mon);});
+  S._artParcelaPagar={id:c.id, monto:String(_faltaParcelaArt(c).tot),
+                      cuentaId:ctas.length===1?ctas[0].id:""};
+  R();
+}
+// El interés de una parcela es GASTO FINANCIERO: sin fromArticulo, así que sí
+// cuenta como gasto del mes. Escrito una vez y lo usan pagar y deshacer.
+function _egresoInteresMerc(a, cuenta, inter, mon, motivo, fecha){
+  var usdtInt=_usdtMerc(inter, mon)||0;
+  var id="arteginter_"+_newUid();
+  ajusteCuentaEgreso(cuenta.id, -inter);
+  descontarFIFOEgreso(mon, inter, usdtInt, cuenta.id);
+  S.egresos=S.egresos||[];
+  S.egresos.push({id:id, d:fecha, cat:"Gasto financiero", mot:motivo,
+    monto:inter, usdt:usdtInt, mon:mon, tipo:"empresa", pagada:true, locked:false,
+    cuentaId:cuenta.id, fromArticuloInteres:a.id});
+  return id;
+}
+// Y su vuelta. Antes `_deshacerParcelaArt` lo quitaba con un splice a secas,
+// SIN marca de borrado: el servidor lo devolvía en el siguiente guardado y el
+// gasto financiero reaparecía con el dinero ya devuelto a la cuenta. Es el
+// ARREGLO 163 en otra función que borra registros.
+function _borrarEgresoInteresMerc(egId){
+  var i=(S.egresos||[]).findIndex(function(e){return String(e.id)===String(egId);});
+  if(i<0) return;
+  var e=S.egresos[i];
+  var cta=_ctaMerc(e.cuentaId);
+  if(cta){
+    ajusteCuentaEgreso(cta.id, +(parseFloat(e.monto)||0));
+    try{ restaurarFIFOEgreso(e.mon, e.monto, e.usdt, cta.id); }catch(err){}
+  }
+  _marcarBorradoMerge("egresos", e.id);
+  S.egresos.splice(i,1);
+}
+// Pagar: elige cuenta y monto, crea UN egreso de capital (baja la cuenta y el
+// lote FIFO, y no baja la ganancia del mes porque lleva fromArticulo) y, si
+// hubo interés, otro de gasto financiero. Cada parcela que toca apunta su
+// parte en `pagos`, todas con el mismo `grupo`: así un abono que cubrió dos
+// parcelas se deshace entero, y el dinero vuelve una sola vez.
+function _pagarParcelaArt(cuotaId, cuentaId, montoTxt){
   if(!permisoEdicion()) return;
   var c=(S.artCuotas||[]).find(function(x){return String(x.id)===String(cuotaId);});
   if(!c){ alert("Esa parcela ya no existe."); return; }
@@ -12686,58 +12830,87 @@ function _pagarParcelaArt(cuotaId, cuentaId){
     alert("La cuenta "+cuenta.nombre+" es "+cuenta.moneda+" y la parcela es "+mon+".");
     return;
   }
-  var cap=parseFloat(c.monto)||0;
-  var inter=parseFloat(c.interes)||0;
-  var totPagar=Math.round((cap+inter)*100)/100;
-  if(cuenta.saldo<totPagar-0.01){
-    if(!confirm("La cuenta "+cuenta.nombre+" sólo tiene "+f2(cuenta.saldo)+" "+mon+", y la parcela son "+f2(totPagar)+" "+mon+".\nQuedará en negativo. ¿Continuar?")) return;
+  // Sin monto escrito vale lo que falta de esa parcela: es lo que hacía el
+  // botón de antes, y lo que sale relleno en el campo.
+  var monto=(montoTxt===undefined||montoTxt===null||montoTxt==="") ? _faltaParcelaArt(c).tot : _leerNumero(montoTxt);
+  if(!(monto>0)){ alert("¿Cuánto pagas?"); return; }
+  monto=Math.round(monto*100)/100;
+  var rep=_repartoAbonoArt(c.id, monto);
+  if(!rep||!rep.filas.length){ alert("Esta factura ya no debe nada."); return; }
+  if(rep.sobra>0.004){
+    alert("De esta factura solo quedan "+f2(rep.deFactura)+" "+mon+" y pusiste "+f2(monto)+".\n\nPon "+f2(rep.deFactura)+" o menos.");
+    return;
   }
-  var hoy=_hoyDMA();
-  var usdtCap=_usdtMerc(cap, mon); if(usdtCap===null) usdtCap=0;
-  var egId=_egresoMerc(a.id, cuenta, cap, mon, usdtCap, "[Mercancía] "+a.nombre+" · parcela "+c.n+"/"+_cuotasArt(a.id).length, hoy);
-  var egIntId=null;
-  if(inter>0){
-    // Interés como gasto financiero: SIN fromArticulo (sí cuenta como gasto).
-    var usdtInt=_usdtMerc(inter, mon)||0;
-    egIntId="arteginter_"+_newUid();
-    ajusteCuentaEgreso(cuenta.id, -inter);
-    descontarFIFOEgreso(mon, inter, usdtInt, cuenta.id);
-    S.egresos=S.egresos||[];
-    S.egresos.push({id:egIntId, d:hoy, cat:"Gasto financiero", mot:"[Mercancía] "+a.nombre+" · interés parcela "+c.n,
-      monto:inter, usdt:usdtInt, mon:mon, tipo:"empresa", pagada:true, locked:false,
-      cuentaId:cuenta.id, fromArticuloInteres:a.id});
+  if(cuenta.saldo<monto-0.01){
+    if(!confirm("La cuenta "+cuenta.nombre+" sólo tiene "+f2(cuenta.saldo)+" "+mon+", y vas a pagar "+f2(monto)+" "+mon+".\nQuedará en negativo. ¿Continuar?")) return;
   }
-  c.pagada=true;
-  c.cuentaId=cuenta.id;
-  c.egresoId=egId;
-  c.egresoInteresId=egIntId;
-  c.fechaPago=_hoyISO();
-  logAudit("MERCANCIA_PARCELA_PAGADA","Parcela "+c.n+" de "+a.nombre+" · "+f2(totPagar)+" "+mon+" desde "+cuenta.nombre);
+  var hoy=_hoyDMA(), hoyIso=_hoyISO();
+  var capT=0, intT=0;
+  rep.filas.forEach(function(x){ capT+=x.cap; intT+=x.int; });
+  capT=Math.round(capT*100)/100; intT=Math.round(intT*100)/100;
+  var nTot=_cuotasArt(a.id).length;
+  var nombres=rep.filas.map(function(x){return x.c.n;}).join(" y ");
+  var esAbono=rep.filas.length===1 && !rep.filas[0].completa;
+  var motivo="[Mercancía] "+a.nombre+" · "+(esAbono?"abono a la parcela ":(rep.filas.length>1?"parcelas ":"parcela "))+nombres+"/"+nTot;
+  var grupo="aab_"+_newUid();
+  var egId=null, egIntId=null;
+  if(capT>0.004){
+    var usdtCap=_usdtMerc(capT, mon); if(usdtCap===null) usdtCap=0;
+    egId=_egresoMerc(a.id, cuenta, capT, mon, usdtCap, motivo, hoy);
+  }
+  if(intT>0.004) egIntId=_egresoInteresMerc(a, cuenta, intT, mon, motivo+" · interés", hoy);
+  rep.filas.forEach(function(x){
+    var cc=x.c;
+    cc.pagos=cc.pagos||[];
+    cc.pagos.push({id:grupo+"_"+cc.n, grupo:grupo, monto:x.cap, interes:x.int,
+      cuentaId:cuenta.id, egresoId:egId, egresoInteresId:egIntId, fecha:hoy, fechaIso:hoyIso});
+    if(x.completa){ cc.pagada=true; cc.fechaPago=hoyIso; }
+  });
+  logAudit("MERCANCIA_PARCELA_PAGADA",(esAbono?"Abono a la parcela ":"Parcela(s) ")+nombres+" de "+a.nombre+" · "+f2(monto)+" "+mon+" desde "+cuenta.nombre);
+  S._artParcelaPagar=null;
   saveData(); R();
 }
-// Deshacer el pago de una parcela: devuelve el dinero a la cuenta y al
-// lote FIFO (igual que al borrar un egreso de mercancía), y vuelve la
-// parcela a pendiente.
+// Deshacer un pago: el dinero vuelve a la cuenta y al lote FIFO, y cada
+// parcela que tocó recupera lo que le faltaba. Se deshace por `grupo`: un
+// abono que cubrió dos parcelas es UN movimiento de dinero, y deshacer solo
+// la mitad dejaría un egreso partido que no se corresponde con nada.
+function _deshacerAbonoArt(grupo){
+  if(!permisoEdicion()) return;
+  var tocadas=(S.artCuotas||[]).filter(function(c){
+    return (c.pagos||[]).some(function(p){return p.grupo===grupo;});
+  });
+  if(!tocadas.length) return;
+  var p0=null, tot=0;
+  tocadas.forEach(function(c){ (c.pagos||[]).forEach(function(p){
+    if(p.grupo!==grupo) return; if(!p0) p0=p;
+    tot+=(parseFloat(p.monto)||0)+(parseFloat(p.interes)||0);
+  }); });
+  var cta=_ctaMerc(p0.cuentaId);
+  var mon=tocadas[0].mon||"";
+  if(!confirm("Deshacer este pago de "+f2(tot)+" "+mon+" (parcela"+(tocadas.length>1?"s ":" ")+
+      tocadas.map(function(c){return c.n;}).join(" y ")+").\n\n"+
+      "El dinero vuelve a "+(cta?cta.nombre:"su cuenta")+" y esa parte vuelve a deberse. ¿Confirmar?")) return;
+  if(p0.egresoId) _borrarEgresoMerc(p0.egresoId);
+  if(p0.egresoInteresId) _borrarEgresoInteresMerc(p0.egresoInteresId);
+  tocadas.forEach(function(c){
+    c.pagos=(c.pagos||[]).filter(function(p){return p.grupo!==grupo;});
+    if(c.pagada && _faltaParcelaArt(Object.assign({},c,{pagada:false})).tot>0.004){
+      c.pagada=false; delete c.fechaPago;
+    }
+  });
+  logAudit("MERCANCIA_PARCELA_DESHECHA","Deshecho un pago de "+f2(tot)+" "+mon);
+  saveData(); R();
+}
+// Deshacer el pago de una parcela pagada con el botón de ANTES del 241 (sin
+// `pagos`, con su egreso en `c.egresoId`): devuelve el dinero a la cuenta y al
+// lote FIFO, y vuelve la parcela a pendiente.
 function _deshacerParcelaArt(cuotaId){
   if(!permisoEdicion()) return;
   var c=(S.artCuotas||[]).find(function(x){return String(x.id)===String(cuotaId);});
   if(!c||!c.pagada) return;
   if(!confirm("Deshacer el pago de la parcela "+c.n+".\n\nEl dinero vuelve a la cuenta y la parcela queda pendiente. ¿Confirmar?")) return;
   if(c.egresoId) _borrarEgresoMerc(c.egresoId);
-  if(c.egresoInteresId){
-    // El egreso del interés se devuelve igual, pero no pasa por _borrarEgresoMerc
-    // (eso busca fromArticulo). Lo hacemos a mano.
-    var i=(S.egresos||[]).findIndex(function(e){return String(e.id)===String(c.egresoInteresId);});
-    if(i>=0){
-      var e=S.egresos[i];
-      var cta=_ctaMerc(e.cuentaId);
-      if(cta){
-        ajusteCuentaEgreso(cta.id, +(parseFloat(e.monto)||0));
-        if(typeof restaurarFIFOEgreso==="function") restaurarFIFOEgreso(e.mon, e.monto, e.usdt, cta.id);
-      }
-      S.egresos.splice(i,1);
-    }
-  }
+  if(c.egresoInteresId) _borrarEgresoInteresMerc(c.egresoInteresId);
   c.pagada=false;
   delete c.cuentaId; delete c.egresoId; delete c.egresoInteresId; delete c.fechaPago;
   logAudit("MERCANCIA_PARCELA_DESHECHA","Deshecho el pago de la parcela "+c.n);
@@ -12985,6 +13158,94 @@ function deshacerVentaArt(id){
   saveData(); R();
 }
 
+// ARREGLO 241 · EDITAR EN CUÁNTO LO VENDIÓ
+// ──────────────────────────────────────────────────────────────────
+// Sus palabras del 10/11: "si quiero editar en cuánto lo vendí". Solo había
+// ↩️ Deshacer venta, y con una venta fiada que ya tenía un abono ni eso:
+// había que ir a Por cobrar, deshacer los abonos, deshacer la venta y volver
+// a registrarlo todo — cinco pasos para corregir un número.
+//
+// Corrige el MONTO, no la moneda ni la forma de cobro: para eso está deshacer.
+//   · De contado: la cuenta se mueve SOLO por la diferencia. Mover el monto
+//     entero dos veces (devolver el viejo, meter el nuevo) da lo mismo con
+//     más ocasiones de equivocarse.
+//   · Fiado: cambia lo que le deben en Por cobrar, y no puede quedar por
+//     debajo de lo que ya le abonaron — eso sería un cobro de más que no
+//     tiene dónde ir.
+//   · La ganancia se recalcula con la tasa DEL DÍA DE LA VENTA
+//     (montoUsdt × nuevo ÷ viejo), no con la de hoy. Es la regla de siempre:
+//     el USDT de una venta se guarda del momento, y corregir un tecleo no
+//     puede cambiar también la tasa a la que se vendió.
+//   · Un mes CERRADO no se toca (ARREGLO 155): su ganancia está congelada, y
+//     cambiar la venta movería la cuenta de hoy sin moverla allí.
+//   · Una venta como préstamo se corrige desde Préstamos, como deshacerla
+//     (ARREGLO 213): aquí no hay cuenta ni cobro que mover.
+function editarVentaArt(id){
+  if(!permisoEdicion()) return;
+  var a=_artDe(id); if(!a||!a.venta) return;
+  var v=a.venta;
+  if(v.cobro==="prestamo"){
+    alert("Este artículo salió como préstamo.\n\nEl monto se corrige desde la pestaña Préstamos.");
+    return;
+  }
+  var mk=_mesDeMercancia(v);
+  if(mk && cierreGuardadoDeMes(mk)){
+    alert("Esta venta es de un mes que ya cerraste ("+mk+").\n\nUn mes cerrado no cambia: si hay que corregirla, reabre ese mes primero.");
+    return;
+  }
+  var viejo=parseFloat(v.monto)||0;
+  var txt=prompt("¿En cuánto lo vendiste? ("+v.mon+")\n\nAhora dice "+f2(viejo)+" "+v.mon+".", String(viejo));
+  if(txt===null) return;
+  var nuevo=_leerNumero(txt);
+  if(!(nuevo>0)){ alert("Ese monto no se entiende."); return; }
+  nuevo=Math.round(nuevo*100)/100;
+  if(Math.abs(nuevo-viejo)<0.005) return;
+  var dif=Math.round((nuevo-viejo)*100)/100;
+  // La tasa de la venta: la que quedó guardada. Si por lo que sea no hay
+  // USDT guardado, se calcula con la de hoy y se dice.
+  var usdtViejo=parseFloat(v.montoUsdt)||0;
+  var usdtNuevo, conTasaHoy=false;
+  if(usdtViejo>0 && viejo>0) usdtNuevo=Math.round(usdtViejo*nuevo/viejo*10000)/10000;
+  else { usdtNuevo=_usdtMerc(nuevo, v.mon); conTasaHoy=true; }
+  if(usdtNuevo===null){ alert("No hay tasa para "+v.mon+", así que no se puede calcular la ganancia."); return; }
+  var costo=_costoArticulo(a);
+  var ganV=Math.round((usdtViejo-costo)*100)/100, ganN=Math.round((usdtNuevo-costo)*100)/100;
+  var cuenta=null, cc=null, abonado=0;
+  if(v.cobro==="contado"){
+    cuenta=_ctaMerc(v.cuentaId);
+    if(!cuenta){ alert("No encuentro la cuenta a la que entró esa venta. Deshaz la venta y vuelve a registrarla."); return; }
+  } else if(v.cobrarId){
+    cc=(S.cuentasCobrar||[]).find(function(x){return String(x.id)===String(v.cobrarId);});
+    if(!cc){ alert("No encuentro el cobro de esta venta en Por cobrar. Deshaz la venta y vuelve a registrarla."); return; }
+    abonado=Math.round((cc.abonos||[]).reduce(function(s,ab){return s+(parseFloat(ab.monto)||0);},0)*100)/100;
+    if(nuevo<abonado-0.004){
+      alert(v.cliente+" ya te abonó "+f2(abonado)+" "+v.mon+".\n\nLa venta no puede quedar en menos de eso. Si de verdad fue menos, quita primero el abono de más en Por cobrar.");
+      return;
+    }
+  }
+  var queMueve = cuenta
+    ? (cuenta.nombre+" "+(dif>0?"sube ":"baja ")+f2(Math.abs(dif))+" "+v.mon+": pasa de "+f2(cuenta.saldo)+" a "+f2(Math.round((cuenta.saldo+dif)*100)/100)+".")
+    : ("En Por cobrar, "+v.cliente+" te pasa a deber "+f2(Math.max(0,Math.round((nuevo-abonado)*100)/100))+" "+v.mon+(abonado>0?" (ya te abonó "+f2(abonado)+")":"")+".");
+  if(!confirm("Cambiar la venta de "+a.nombre+":\n\n"+
+      "antes "+f2(viejo)+" "+v.mon+"  →  ahora "+f2(nuevo)+" "+v.mon+"\n"+
+      "ganancia $"+f2(ganV)+"  →  $"+f2(ganN)+"\n\n"+queMueve+
+      (conTasaHoy?"\n\nEsta venta no guardó su USDT, así que la ganancia sale con la tasa de hoy.":"")+
+      "\n\n¿Confirmar?")) return;
+  if(cuenta) ajusteCuentaEgreso(cuenta.id, dif);
+  if(cc){
+    cc.monto=nuevo;
+    if(abonado>=nuevo-0.004){ if(cc.estado!=="cobrado"){ cc.estado="cobrado"; cc.fechaCobro=td(); } }
+    else if(cc.estado==="cobrado"){ cc.estado="pendiente"; cc.fechaCobro=""; }
+  }
+  // La historia de la corrección va dentro de la venta: viaja con el artículo
+  // y no hace falta una lista nueva que sincronizar.
+  v.ediciones=v.ediciones||[];
+  v.ediciones.push({ts:Date.now(), antes:viejo, ahora:nuevo, usdtAntes:usdtViejo});
+  v.monto=nuevo; v.montoUsdt=usdtNuevo;
+  logAudit("MERCANCIA_VENTA_EDITADA", a.nombre+": "+f2(viejo)+" → "+f2(nuevo)+" "+v.mon);
+  saveData(); R();
+}
+
 function borrarArticulo(id){
   if(!permisoEdicion()) return;
   var a=_artDe(id); if(!a) return;
@@ -13179,7 +13440,8 @@ function _filaArticulo(a){
     "</div>";
   var botones = "<div style='display:flex;gap:6px;padding:0 13px 11px;flex-wrap:wrap'>"+
     (vendido
-      ? "<button onclick='deshacerVentaArt("+_jsAttr(String(a.id))+")' style='"+_btnMerc("var(--sup2)","var(--tx3)")+"'>↩️ Deshacer venta</button>"
+      ? "<button onclick='editarVentaArt("+_jsAttr(String(a.id))+")' style='"+_btnMerc("var(--sup2)","var(--tx2)")+"'>✏️ Editar precio</button>"+
+        "<button onclick='deshacerVentaArt("+_jsAttr(String(a.id))+")' style='"+_btnMerc("var(--sup2)","var(--tx3)")+"'>↩️ Deshacer venta</button>"
       : "<button onclick='_abrirVentaArt("+_jsAttr(String(a.id))+")' style='"+_btnMerc("var(--ac)","var(--sobre-color)")+";font-weight:800'>💵 Vender</button>"+
         "<button onclick='_abrirGastoArt("+_jsAttr(String(a.id))+")' style='"+_btnMerc("var(--sup2)","var(--tx2)")+"'>➕ Gasto</button>"+
         "<button onclick='borrarArticulo("+_jsAttr(String(a.id))+")' style='"+_btnMerc("var(--sup2)","var(--mal)")+"'>🗑️</button>")+
@@ -13250,17 +13512,20 @@ function _filaArticulo(a){
   var panelParcelas = "";
   if(a.modoPago==="parcelas"){
     var cuotas=_cuotasArt(a.id);
-    var pend=cuotas.filter(function(c){return !c.pagada;});
     var pag=cuotas.filter(function(c){return c.pagada;});
-    var totPendMon=pend.reduce(function(s,c){return s+(parseFloat(c.monto)||0)+(parseFloat(c.interes)||0);},0);
+    // ARREGLO 241: "Queda" sale de _faltaParcelaArt, igual que la deuda que
+    // resta la conciliación. Sumando c.monto de las pendientes, un abono no
+    // bajaba el "Queda" y el panel decía que debía lo que ya había pagado.
+    var totPendMon=cuotas.reduce(function(s,c){return s+_faltaParcelaArt(c).tot;},0);
     var pagadas=pag.length, nTot=cuotas.length;
     var abrir=!!S._artParcelas && String(S._artParcelas.id)===String(a.id);
+    var monA=_escAud(a.mon);
     panelParcelas=
       "<div style='background:var(--sup2);border-top:1px solid var(--ln2);padding:11px 13px'>"+
-        "<div style='display:flex;justify-content:space-between;align-items:center;cursor:pointer' onclick='S._artParcelas="+(abrir?"null":"{id:\""+String(a.id)+"\"}")+";R()'>"+
+        "<div style='display:flex;justify-content:space-between;align-items:center;cursor:pointer' onclick='S._artParcelas="+(abrir?"null":"{id:\""+_jsAttr(String(a.id))+"\"}")+";R()'>"+
           "<div>"+
             "<div style='font-size:11.5px;font-weight:800;color:var(--tit)'>📅 Parcelas · "+pagadas+"/"+nTot+" pagadas</div>"+
-            "<div style='font-size:10.5px;color:var(--tx3);margin-top:1px'>Queda "+f2(totPendMon)+" "+_escAud(a.mon)+(a.proveedor?" · "+_escAud(a.proveedor):"")+"</div>"+
+            "<div style='font-size:10.5px;color:var(--tx3);margin-top:1px'>Queda "+f2(totPendMon)+" "+monA+(a.proveedor?" · "+_escAud(a.proveedor):"")+"</div>"+
           "</div>"+
           "<div style='color:var(--tx3);font-size:14px'>"+(abrir?"▴":"▾")+"</div>"+
         "</div>"+
@@ -13268,30 +13533,59 @@ function _filaArticulo(a){
           ? "<div style='margin-top:9px;border-top:1px dashed var(--ln2);padding-top:9px'>"+
               cuotas.map(function(c){
                 var tot=Math.round(((parseFloat(c.monto)||0)+(parseFloat(c.interes)||0))*100)/100;
+                var fa=_faltaParcelaArt(c);
+                var conAbono=!c.pagada && fa.abonado>0.004;
                 var pcSel=!!S._artParcelaPagar && String(S._artParcelaPagar.id)===String(c.id);
                 var npp=S._artParcelaPagar||{};
+                var idC=_jsAttr(String(c.id));
+                var monC=_escAud(c.mon||a.mon);
+                // Una línea por pago, con su ↩️. Se deshace por grupo: un abono
+                // que cubrió dos parcelas sale en las dos, y deshacerlo en una
+                // lo deshace entero (lo dice la pregunta antes de confirmar).
+                var lineasPagos=(c.pagos||[]).map(function(p){
+                  var ctaP=(S.cuentas||[]).find(function(x){return String(x.id)===String(p.cuentaId);});
+                  var m=Math.round(((parseFloat(p.monto)||0)+(parseFloat(p.interes)||0))*100)/100;
+                  return "<div style='display:flex;justify-content:space-between;gap:8px;align-items:center;font-size:10.5px;color:var(--tx3);padding:3px 0 0 18px'>"+
+                    "<span>↳ "+_escAud(p.fecha)+" · pagaste "+f2(m)+" "+monC+(ctaP?" · "+_escAud(ctaP.nombre):"")+"</span>"+
+                    "<button onclick='_deshacerAbonoArt(\""+_jsAttr(String(p.grupo))+"\")' title='Deshacer este pago' style='padding:3px 8px;border:1px solid var(--ln);border-radius:6px;background:var(--sup);color:var(--tx3);font-size:10px;cursor:pointer;font-family:inherit;flex:none'>↩️</button>"+
+                  "</div>";
+                }).join("");
+                var tieneBotonViejo=c.pagada && !(c.pagos||[]).length;
                 return "<div style='padding:6px 0;border-bottom:1px dashed var(--ln2);font-size:11.5px'>"+
                   "<div style='display:flex;justify-content:space-between;gap:10px;align-items:center'>"+
                     "<div>"+
                       "<b style='color:"+(c.pagada?"var(--ok)":"var(--tx2)")+"'>"+(c.pagada?"✅ ":"")+"Parcela "+c.n+"/"+c.nTotal+"</b>"+
                       "<span style='color:var(--tx4);font-size:10.5px'> · "+_escAud(c.fecha)+"</span>"+
                       (c.interes>0?"<span style='color:var(--tx4);font-size:10.5px'> · "+f2(c.monto)+"+"+f2(c.interes)+" int.</span>":"")+
+                      (conAbono?"<div style='font-size:10.5px;color:var(--avi-tx2);margin-top:1px'>de "+f2(tot)+" · abonado "+f2(fa.abonado)+"</div>":"")+
                     "</div>"+
                     "<div style='display:flex;gap:6px;align-items:center;flex:none'>"+
-                      "<b style='color:var(--tx2);white-space:nowrap'>"+f2(tot)+" "+_escAud(c.mon)+"</b>"+
+                      "<b style='color:var(--tx2);white-space:nowrap'>"+(conAbono?"falta ":"")+f2(c.pagada?tot:fa.tot)+" "+monC+"</b>"+
                       (c.pagada
-                        ? "<button onclick='_deshacerParcelaArt(\""+String(c.id)+"\")' style='padding:5px 9px;border:1px solid var(--ln);border-radius:6px;background:var(--sup);color:var(--tx3);font-size:10.5px;cursor:pointer;font-family:inherit'>↩️</button>"
-                        : "<button onclick='S._artParcelaPagar="+(pcSel?"null":"{id:\""+String(c.id)+"\"}")+";R()' style='padding:5px 10px;border:none;border-radius:6px;background:var(--ac);color:var(--sobre-color);font-size:10.5px;font-weight:800;cursor:pointer;font-family:inherit'>💸 Pagar</button>")+
+                        ? (tieneBotonViejo ? "<button onclick='_deshacerParcelaArt(\""+idC+"\")' style='padding:5px 9px;border:1px solid var(--ln);border-radius:6px;background:var(--sup);color:var(--tx3);font-size:10.5px;cursor:pointer;font-family:inherit'>↩️</button>" : "")
+                        : "<button onclick='_abrirPagoParcelaArt(\""+idC+"\")' style='padding:5px 10px;border:none;border-radius:6px;background:var(--ac);color:var(--sobre-color);font-size:10.5px;font-weight:800;cursor:pointer;font-family:inherit'>💸 Pagar</button>")+
                     "</div>"+
                   "</div>"+
+                  lineasPagos+
                   (pcSel && !c.pagada
-                    ? "<div style='margin-top:7px;padding:8px;background:var(--sup);border:1px dashed var(--ln2);border-radius:7px'>"+
-                        _campoMerc("¿De qué cuenta?", "<select onchange='S._artParcelaPagar.cuentaId=this.value' style='"+_estiloMerc()+"'><option value=''>— elige —</option>"+_optCtasMerc(npp.cuentaId)+"</select>")+
-                        "<div style='display:flex;gap:6px'>"+
-                          "<button onclick='_pagarParcelaArt(\""+String(c.id)+"\",(S._artParcelaPagar||{}).cuentaId)' style='flex:1;padding:8px;border:none;border-radius:7px;background:var(--ac);color:var(--sobre-color);font-size:11.5px;font-weight:800;cursor:pointer;font-family:inherit'>Confirmar pago</button>"+
-                          "<button onclick='S._artParcelaPagar=null;R()' style='padding:8px 12px;border:1px solid var(--ln);border-radius:7px;background:var(--sup2);color:var(--tx3);font-size:11px;cursor:pointer;font-family:inherit'>Cancelar</button>"+
-                        "</div>"+
-                      "</div>" : "")+
+                    ? (function(){
+                        var monPar=c.mon||a.mon;
+                        var hayCta=_ctasMerc().some(function(x){return x.moneda===monPar;});
+                        return "<div style='margin-top:7px;padding:8px;background:var(--sup);border:1px dashed var(--ln2);border-radius:7px'>"+
+                          // El campo viene RELLENO con lo que falta: onfocus
+                          // select() para que escribir reemplace en vez de
+                          // pegar los dos números (ARREGLO 153).
+                          _campoMerc("¿Cuánto pagas? ("+_escAud(monPar)+")", "<input id='aab-monto' inputmode='decimal' value='"+_jsAttr(String(npp.monto||""))+"' onfocus='this.select()' oninput='S._artParcelaPagar.monto=_num(this.value);_refrescarRepartoAbonoArt()' style='"+_estiloMerc()+"'>")+
+                          "<div id='aab-rep' style='font-size:10.5px;color:var(--tx3);margin:-3px 0 8px;line-height:1.6'>"+_htmlRepartoAbonoArt(c.id, npp.monto)+"</div>"+
+                          (hayCta
+                            ? _campoMerc("¿De qué cuenta?", "<select onchange='S._artParcelaPagar.cuentaId=this.value' style='"+_estiloMerc()+"'><option value=''>— elige —</option>"+_optCtasMerc(npp.cuentaId, monPar)+"</select>")
+                            : "<div style='font-size:10.5px;color:var(--mal);margin-bottom:8px'>No tienes ninguna cuenta en "+_escAud(monPar)+" de donde pagarla.</div>")+
+                          "<div style='display:flex;gap:6px'>"+
+                            "<button onclick='_pagarParcelaArt(\""+idC+"\",(S._artParcelaPagar||{}).cuentaId,(S._artParcelaPagar||{}).monto)' style='flex:1;padding:8px;border:none;border-radius:7px;background:var(--ac);color:var(--sobre-color);font-size:11.5px;font-weight:800;cursor:pointer;font-family:inherit'>Confirmar pago</button>"+
+                            "<button onclick='S._artParcelaPagar=null;R()' style='padding:8px 12px;border:1px solid var(--ln);border-radius:7px;background:var(--sup2);color:var(--tx3);font-size:11px;cursor:pointer;font-family:inherit'>Cancelar</button>"+
+                          "</div>"+
+                        "</div>";
+                      })() : "")+
                 "</div>";
               }).join("")+
             "</div>"
@@ -18304,12 +18598,11 @@ function _htmlConciliacion(sinTitulo){
     if(co.real&&(co.real.sueldoPendiente||0)>0.005)
       _filas.push(["Tu sueldo, aún sin apartar", -co.real.sueldoPendiente,
                    "var(--tx4)", "sigue siendo tuyo"]);
-    // ARREGLO 226: la deuda viva de las parcelas de mercancía. Baja los dos
-    // lados (ARREGLO 71 calcado), así que sale aquí como fila para que la
-    // lista siga sumando el salto al céntimo.
-    if(co.real&&(co.real.deudaParcelas||0)>0.005)
-      _filas.push(["Parcelas de mercancía por pagar", -co.real.deudaParcelas,
-                   "var(--tx4)", "deuda viva"]);
+    // ARREGLO 242: aquí iba la fila "Parcelas de mercancía por pagar". Se fue
+    // con la resta de `deberias` que la justificaba: la deuda ya se cancela
+    // con la mercancía dentro de `tienes`, y dejarla aquí haría que la lista
+    // dejara de sumar el salto. La deuda se sigue viendo donde es una deuda de
+    // verdad: el Balance de Contabilidad y el panel de cada artículo.
     // ARREGLO 100: esta fila se llamaba "no es dinero" y eso era FALSO para la
     // pregunta que ella hace. efectoTasasDesde() valora cada movimiento a la
     // tasa de HOY y lo compara con la ganancia que se apuntó aquel día, así que
