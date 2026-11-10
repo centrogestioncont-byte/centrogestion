@@ -4930,12 +4930,27 @@ selector ofrecía cuentas de **cualquier** moneda: elegir una en USDT contestaba
   lo abonado, y no toca ventas de un mes cerrado ni las que salieron como
   préstamo.
 
-**Lo que se vio midiendo y NO es de este arreglo:** desde el 226, comprar en
-parcelas mueve el *"te sobran"* por el costo entero, y cada pago lo baja por lo
-pagado. Medido en v322 con una compra de 71,68 USDT: 0 → +71,68 → +35,84. La
-causa es que `deberias` resta `deudaParcelas` cuando `tienes` ya la neta con la
-mercancía. Los abonos se comportan exactamente igual que el pago entero de
-antes; arreglarlo es aparte.
+### Y la deuda de parcelas se restaba DOS veces (ARREGLO 242)
+
+Salió midiendo el 241. Desde el 226, `deberias` restaba `deudaParcelas` "en los
+dos lados, como el sueldo". Pero no es como el sueldo: el sueldo baja `tienes`
+sin que nada lo suba, y comprar en parcelas **sube** `tienes` por la mercancía y
+lo **baja** por la deuda el mismo número. El lado real ya era neutro.
+
+```
+                              v323 te sobran    v324
+apertura con una deuda viva       +83,03         0,00
+compra en parcelas               +154,71         0,00
+pagada una parcela               +118,87         0,00
+abono de 100                      +99,63         0,00
+```
+
+- **Se quitó la resta de `deberias` y la fila del desglose que la justificaba.**
+  Medido: la lista suma el salto al céntimo en los cinco pasos.
+- **La deuda se sigue viendo** donde es una deuda: el Balance de Contabilidad y
+  el panel de cada artículo. `capitalRealTotal()` la sigue restando.
+- **No hay nada que rehacer a mano**: no se guarda ningún número, se calcula.
+  Lo que ella vea es que el "te sobran" baja por lo que debe de los lotes.
 
 ### Lo que NO entró, y es a propósito
 
