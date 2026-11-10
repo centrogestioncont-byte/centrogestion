@@ -18123,7 +18123,7 @@ function _syncCapitalWithCuentas(){
 // —sin tocar una sola cuenta— es lo que permite moverla sin que cambie ni un
 // numero: la lee 📒 Contabilidad y Balance de Cuentas se queda con la lista.
 // ══════════════════════════════════════════════════════════════════
-function _htmlConciliacion(){
+function _htmlConciliacion(sinTitulo){
   var conciliacionHtml=(function(){
     var co=conciliacionCapital();
     var R=co.real;
@@ -18508,7 +18508,8 @@ function _htmlConciliacion(){
       // no enseña ninguna cifra roja; la cifra sigue en la línea de abajo.
       "<div style='margin-bottom:10px'>"+
         "<div style='display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:9px'>"+
-          "<div style='font-size:13px;font-weight:800;color:var(--tx2)'>🧾 Desde el saldo de apertura</div>"+
+          // ARREGLO 240: dentro de 📒 Contabilidad el título ya va en la línea plegada.
+          (sinTitulo?"":"<div style='font-size:13px;font-weight:800;color:var(--tx2)'>🧾 Desde el saldo de apertura</div>")+
           "<div style='font-size:10.5px;color:var(--tx3)'>desde el "+ds(co.desde)+" · apertura $"+f2(co.apertura)+
             ((co.aperturaSaldos&&Object.keys(co.aperturaSaldos).length)?"":" <span style='color:var(--avi-tx2)'>(sin foto de saldos)</span>")+"</div>"+
         "</div>"+
@@ -40281,14 +40282,18 @@ function _htmlEstadoResultados(mesKey, fijo){
         var pctLbl=f2(pct*100);
         return "<div style='padding:7px 13px;font-size:11px;color:var(--ink2);background:var(--sup2f);border-top:1px solid var(--sup3)'>🧾 <b>Para apartar</b> ("+(_escAud(reg)||"retención")+", "+pctLbl+"% sobre ingresos reales): <b style='color:var(--tit)'>$"+f2(apart)+"</b> <span style='font-style:italic'>· no descuenta la utilidad, es un recordatorio</span></div>";
       })()+
-      "<div style='padding:7px 13px;font-size:10px;color:var(--ink2);font-style:italic;background:var(--sup2f)'>Sale de calcMesCompleto, no se calcula nada aparte. "+
+      "<div style='padding:7px 13px;font-size:10px;color:var(--ink2);font-style:italic;background:var(--sup2f)'>"+
         // ARREGLO 240: decía "coincide con la utilidad del Cierre" y no
         // coincidía cuando había intereses o ajustes, que el Cierre deja fuera
-        // de su utilidad a propósito (ARREGLO 156). Ahora dice la suma entera.
-        "Utilidad del Cierre $"+f2(e.utilidadEmpresa)+
-        (e.ingFin?" + intereses $"+f2(e.ingFin):"")+
-        (Math.abs(e.ajustesNeto||0)>0.005?(e.ajustesNeto<0?" − ":" + ")+"ajustes de saldo $"+f2(Math.abs(e.ajustesNeto)):"")+
-        " = $"+f2(e.utilMes)+"</div>"+
+        // de su utilidad a propósito (ARREGLO 156). Ahora dice la suma entera,
+        // y solo cuando hay algo que sumar; "calcMesCompleto" era jerga suya
+        // —de la app—, no de ella.
+        ((e.ingFin||Math.abs(e.ajustesNeto||0)>0.005)
+          ? "Utilidad del Cierre $"+f2(e.utilidadEmpresa)+
+            (e.ingFin?" + intereses $"+f2(e.ingFin):"")+
+            (Math.abs(e.ajustesNeto||0)>0.005?(e.ajustesNeto<0?" − ":" + ")+"ajustes de saldo $"+f2(Math.abs(e.ajustesNeto)):"")+
+            " = $"+f2(e.utilMes)
+          : "Es la misma utilidad del Cierre de Mes.")+"</div>"+
     "</div>"+
   "</div>";
 }
@@ -40411,24 +40416,29 @@ function _diaContable(iso){
   if(!a||!b){ out.motivo=!b?"sinApertura":"fotoSinApertura"; return out; }
   if(a.ap!==b.ap||a.desde!==b.desde){ out.motivo="aperturaCambio"; return out; }
   var d=function(k){ return dd(a[k],b[k]); };
+  // Cada fila lleva su tipo: "gan" es lo que contesta "¿cuánto gané?" —lo que
+  // entró por el negocio menos lo que costó— y "otro" es dinero que se movió
+  // sin ser ganancia (lo tuyo, tu sueldo, lo pasado a tus 💜). Separarlos es lo
+  // que deja decir "ganaste $25" sin meter ahí un aporte tuyo de 500.
+  // El quinto campo es el nombre corto con el que sale en la línea que se suma.
   var filas=[];
   var bruta=d("bruta");
   if(ini.mes===fin.mes){
     var rem=dd(ini.rem,fin.rem);
-    filas.push(["Ganancia de remesas", rem, ""]);
-    filas.push(["Otras ganancias", r2(bruta-rem), "extra, intereses cobrados, mercancía"]);
+    filas.push(["Ganancia de remesas", rem, "", "gan", "remesas"]);
+    filas.push(["Otras ganancias", r2(bruta-rem), "extra, intereses cobrados, mercancía", "gan", "otras ganancias"]);
   } else {
-    filas.push(["Ganancia del día", bruta, "cruza de un mes a otro: va junta"]);
+    filas.push(["Ganancia del día", bruta, "cruza de un mes a otro: va junta", "gan", "ganancia"]);
   }
-  filas.push(["Gastos de la empresa", -d("egEmp"), ""]);
-  filas.push(["Gastos personales pagados por la empresa", -d("egPer"), ""]);
-  filas.push(["Parte de los socios", -d("socios"), ""]);
-  filas.push(["Pasado a tus cuentas 💜", -d("trasp"), "sigue siendo tuyo"]);
-  filas.push(["Plata tuya que metiste o sacaste", d("aportes"), "no es de la empresa"]);
-  filas.push(["Tu sueldo, que se va apartando", -dd(ini.sueldo,fin.sueldo), "el % de lo que gana la empresa"]);
-  filas.push(["Parcelas de mercancía", -dd(ini.parcelas,fin.parcelas), ""]);
-  filas.push(["Retiro de socios por préstamos", -d("retSoc"), ""]);
-  filas.push(["Intereses de la apertura", -d("intAp"), ""]);
+  filas.push(["Gastos de la empresa", -d("egEmp"), "", "gan", "gastos"]);
+  filas.push(["Parte de los socios", -d("socios"), "", "gan", "socios"]);
+  filas.push(["Gastos personales pagados por la empresa", -d("egPer"), "", "otro", "gastos personales"]);
+  filas.push(["Pasado a tus cuentas 💜", -d("trasp"), "sigue siendo tuyo", "otro", "a tus 💜"]);
+  filas.push(["Plata tuya que metiste o sacaste", d("aportes"), "no es de la empresa", "otro", "plata tuya"]);
+  filas.push(["Tu sueldo, que se va apartando", -dd(ini.sueldo,fin.sueldo), "el % de lo que gana la empresa", "otro", "tu sueldo"]);
+  filas.push(["Parcelas de mercancía", -dd(ini.parcelas,fin.parcelas), "", "otro", "parcelas"]);
+  filas.push(["Retiro de socios por préstamos", -d("retSoc"), "", "otro", "retiro de socios"]);
+  filas.push(["Intereses de la apertura", -d("intAp"), "", "otro", "intereses de la apertura"]);
   out.filas=filas;
   var suma=0; filas.forEach(function(x){ suma+=x[1]; });
   out.deberias=r2(ini.tienes+suma);
@@ -40447,7 +40457,36 @@ function _diaContable(iso){
   // que el margen es estrecho: un dólar, o el 0,25% de lo que tiene.
   out.tol=r2(Math.max(1, Math.abs(fin.tienes)*0.0025));
   out.cuadra=Math.abs(out.resto)<=out.tol;
+  out.gano=0; filas.forEach(function(x){ if(x[3]==="gan") out.gano+=x[1]; }); out.gano=r2(out.gano);
   return out;
+}
+
+// ── Cómo se dibuja el día, en corto ─────────────────────────────────
+//
+// Sus palabras del 10/11, viendo la primera versión: "hazme la lectura más
+// compacta y de fácil de entender, fácil de usar y ver". La primera ponía las
+// once filas una debajo de otra: medido a 412 px, la tarjeta del día eran
+// 1.300 px de alto — dos pantallas para contestar una pregunta.
+//
+// Ahora lo que se ve sin tocar nada son tres cifras —empezaste, ganaste,
+// cerraste—, si cuadra, y UNA línea que las suma a mano. Las filas siguen
+// enteras detrás de "ver detalle", que no llama a R() (ARREGLO 32): repintar
+// cerraría el selector o el plegable bajo el dedo.
+//
+// La línea que suma no es adorno: "1.090 + 25 = 1.130" no da, y si la pantalla
+// dice tres números que no suman, ella deja de fiarse de los tres (el 34,27
+// contra el 34,28). Por eso lleva TODOS los términos que no son cero, con su
+// nombre: lo de los socios sin pagar, tu sueldo, lo que pasaste a tus 💜.
+function _toggleCont(id){
+  if(!S._contAbierto) S._contAbierto={};
+  S._contAbierto[id]=!S._contAbierto[id];
+  var c=document.getElementById("cont-"+id), f=document.getElementById("cont-fl-"+id);
+  if(c) c.style.display=S._contAbierto[id]?"block":"none";
+  if(f) f.textContent=_rotCont(id);
+}
+function _rotCont(id){
+  var ab=!!(S._contAbierto||{})[id];
+  return id==="dia" ? (ab?"ocultar detalle ▴":"ver detalle ▾") : (ab?"▴":"▾");
 }
 
 function _htmlDiaContable(){
@@ -40457,80 +40496,134 @@ function _htmlDiaContable(){
   var dias=Object.keys(H).filter(function(k){ return k<hoy; }).sort().reverse().slice(0,40);
   if(iso!==hoy && dias.indexOf(iso)<0) iso=hoy;
   var fmt=function(k){ var p=k.split("-"); return p[2]+"/"+p[1]+"/"+p[0].slice(2); };
-  var opts="<option value='"+hoy+"'"+(iso===hoy?" selected":"")+">Hoy · "+fmt(hoy)+"</option>"+
+  var opts="<option value='"+hoy+"'"+(iso===hoy?" selected":"")+">Hoy</option>"+
     dias.map(function(k){ return "<option value='"+k+"'"+(iso===k?" selected":"")+">"+fmt(k)+"</option>"; }).join("");
   var x=_diaContable(iso);
-  var mon=function(v,signo){ return (signo?(v<0?"−":"+"):(v<0?"−":""))+"$"+f2(Math.abs(v)); };
-  var fila=function(rot,v,pie,col,negrita){
-    return "<div style='display:flex;justify-content:space-between;gap:10px;padding:5px 0;"+(negrita?"border-top:1px solid var(--ln);margin-top:3px;padding-top:7px;":"")+"'>"+
-      "<span style='color:"+(negrita?"var(--tx2)":"var(--tx3)")+";"+(negrita?"font-weight:800;":"")+"'>"+rot+
-        (pie?" <span style='font-size:10px;color:var(--tx4)'>· "+pie+"</span>":"")+"</span>"+
-      "<b style='white-space:nowrap;color:"+(col||"var(--tx2)")+"'>"+v+"</b></div>";
+  var sg=function(v){ return (v<0?"−":"+")+"$"+f2(Math.abs(v)); };
+  var cab="<div style='display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px'>"+
+      "<div style='font-size:14px;font-weight:800;color:var(--tx2);white-space:nowrap'>📅 Tu día</div>"+
+      // Cambiar de día SÍ repinta la tarjeta: es un selector, no un campo.
+      "<select onchange='S._contDia=this.value;R()' style='width:auto;max-width:55%;padding:6px 9px;border:1px solid var(--ln);border-radius:8px;background:var(--sup);color:var(--tx2);font-size:12px;font-family:inherit'>"+opts+"</select>"+
+    "</div>";
+  var caja=function(c){ return "<div style='background:var(--sup2);border:1px solid var(--ln);border-radius:14px;padding:14px;margin-bottom:10px'>"+cab+c+"</div>"; };
+  var tile=function(rot,val,col,grande){
+    return "<div style='flex:1;min-width:0;background:var(--sup);border-radius:10px;padding:9px 6px;text-align:center'>"+
+      "<div style='font-size:10px;font-weight:800;color:var(--tx3);text-transform:uppercase;letter-spacing:.3px'>"+rot+"</div>"+
+      "<div style='font-size:"+(grande?"18":"16")+"px;font-weight:900;color:"+(col||"var(--tx2)")+";margin-top:3px;white-space:nowrap'>"+val+"</div></div>";
   };
-  var cab="<div style='display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px'>"+
-      "<div style='font-size:13px;font-weight:800;color:var(--tx2)'>📅 ¿Cómo cerró el día?</div>"+
-      // Elegir el día no llama a R() desde dentro de un campo de texto: es un
-      // selector, y cambiarlo SÍ tiene que repintar la tarjeta entera.
-      "<select onchange='S._contDia=this.value;R()' style='padding:6px 9px;border:1px solid var(--ln);border-radius:8px;background:var(--sup);color:var(--tx2);font-size:12px;font-family:inherit'>"+opts+"</select>"+
-    "</div>";
-  var caja=function(cuerpo){ return "<div style='background:var(--sup2);border:1px solid var(--ln);border-radius:12px;padding:14px;margin-bottom:12px'>"+cab+cuerpo+"</div>"; };
-  if(!x.fin) return caja("<div style='font-size:11.5px;color:var(--tx3)'>Ese día la app no guardó nada, así que no hay con qué cerrarlo.</div>");
+  if(!x.fin) return caja("<div style='font-size:12px;color:var(--tx3)'>Ese día la app no guardó nada.</div>");
+  var tienesRot=x.esHoy?"Tienes":"Cerraste";
   if(!x.ini){
-    // Sin foto anterior no se inventa un punto de partida. Pasa el primer día
-    // de esta hoja: la foto se empieza a tomar ahora y mañana ya hay "ayer".
+    // Sin foto anterior no se inventa un punto de partida (primer día).
     return caja(
-      "<div style='font-size:24px;font-weight:900;color:var(--tx2);line-height:1'>$"+f2(x.fin.tienes)+"</div>"+
-      "<div style='font-size:11px;color:var(--tx3);margin-top:3px'>es lo que tienes "+(x.esHoy?"ahora":"al cerrar ese día")+", todo junto</div>"+
-      "<div style='font-size:11.5px;color:var(--avi-tx);background:var(--sup);border:1px solid var(--am4);border-radius:9px;padding:9px 11px;margin-top:10px;line-height:1.55'>"+
-        "Todavía no hay un día anterior guardado con qué comparar. Desde hoy la app guarda cada día con cuánto cierras, "+
-        "así que <b>a partir de mañana</b> esta tarjeta te dice con cuánto empezaste, qué ganaste, qué gastaste y si cuadra.</div>");
+      "<div style='display:flex;gap:6px'>"+tile(tienesRot,"$"+f2(x.fin.tienes),"var(--tx2)",true)+"</div>"+
+      "<div style='font-size:11.5px;color:var(--tx3);margin-top:9px;line-height:1.5'>Desde hoy se guarda con cuánto cierras cada día. <b style='color:var(--tx2)'>Mañana</b> verás con cuánto empezaste, cuánto ganaste y si cuadra.</div>");
   }
-  // Si el día anterior no se abrió la app, se compara con el último que sí,
-  // y se dice: "empezaste el día con" sería falso.
-  var ayer=_ymd(new Date(new Date(iso+"T12:00:00").getTime()-86400000));
-  var etIni=x.kIni===ayer ? "Empezaste el día con" : "Empezaste con lo del "+fmt(x.kIni);
+  // Lo que cambió de caja sin ser pérdida: el préstamo, lo que te deben…
+  var movCaja=(x.partes||[]).filter(function(p){ return Math.abs(p[1])>0.005 && p[0]!=="Tu sueldo, sin apartar" && p[0]!=="Parcelas por pagar"; });
+  var hayCaja=movCaja.some(function(p){ return p[0]!=="En cuentas"; });
+  var lineaCaja=hayCaja
+    ? "<div style='font-size:11.5px;color:var(--tx3);margin-top:8px;line-height:1.5'>🔄 <b style='color:var(--tx2)'>Cambió de caja</b>, no es pérdida: "+
+        movCaja.map(function(p){ return p[0]+" "+sg(p[1]); }).join(" · ")+"</div>"
+    : "";
+  var detalle="";
+  var abierto=!!(S._contAbierto||{}).dia;
   var cuerpo="";
-  cuerpo+="<div style='font-size:12px;line-height:1.5'>"+fila(etIni, "$"+f2(x.ini.tienes), x.kIni===ayer?"":"el último día que se guardó", "var(--tx2)");
   if(x.filas){
-    x.filas.forEach(function(r){
-      if(Math.abs(r[1])<0.005) return;
-      cuerpo+=fila(r[0], mon(r[1],true), r[2], r[1]<0?"var(--mal)":"var(--ok)");
-    });
-    cuerpo+=fila(x.esHoy?"Deberías tener ahora":"Deberías haber cerrado con", "$"+f2(x.deberias), "", "var(--tx2)", true);
-    cuerpo+=fila(x.esHoy?"Tienes ahora":"Cerraste con", "$"+f2(x.fin.tienes), "", "var(--tx2)", true);
-    cuerpo+="</div>";
-    // El veredicto: lo que sobra o falta DESPUÉS de lo que ya tiene
-    // explicación — los saldos escritos a mano y el valor de las monedas.
     var col=x.cuadra?"var(--ok)":(x.resto<0?"var(--mal)":"var(--avi-tx2)");
-    cuerpo+="<div style='display:flex;align-items:center;gap:11px;background:var(--sup);border:1px solid var(--ln);border-left:4px solid "+col+";border-radius:11px;padding:10px 13px;margin-top:10px'>"+
-      "<div><div style='font-size:17px;font-weight:900;color:"+col+"'>"+(x.cuadra?"✅ Cuadra":(x.resto<0?"Te faltan $":"Te sobran $")+f2(Math.abs(x.resto)))+"</div>"+
-      "<div style='font-size:11px;color:var(--tx3);margin-top:2px;line-height:1.5'>"+
-        (x.cuadra?"la plata que el sistema dice que ganaste está en tu capital":
-          (x.resto<0?"salió dinero que no está registrado":"entró dinero que no está registrado como ganancia"))+
-        " · margen ±$"+f2(x.tol)+"</div></div></div>";
-    var expl=[];
-    if(Math.abs(x.tasas)>0.005) expl.push(fila(x.tasas<0?"Tus bolívares y reales valen menos hoy":"Tus bolívares y reales valen más hoy", mon(x.tasas,true), "no es una operación"));
-    if(Math.abs(x.ajustes)>0.005) expl.push(fila("Saldos que escribiste a mano", mon(x.ajustes,true), ""));
-    if(Math.abs(x.socios)>0.005) expl.push(fila(x.socios>0?"Parte de los socios, aún sin pagarles":"Pagaste a los socios lo de días anteriores", mon(x.socios,true), x.socios>0?"sigue en tus cuentas":""));
-    if(expl.length) cuerpo+="<div style='font-size:11.5px;margin-top:8px;padding:0 2px'>"+
-      "<div style='font-size:10.5px;color:var(--tx4);margin-bottom:2px'>Entre lo que deberías tener y lo que tienes, esto ya tiene explicación:</div>"+expl.join("")+"</div>";
-  } else {
-    cuerpo+=fila(x.esHoy?"Tienes ahora":"Cerraste con", "$"+f2(x.fin.tienes), "", "var(--tx2)", true);
-    cuerpo+=fila("Cambió", mon(x.salto,true), "", x.salto<0?"var(--mal)":"var(--ok)");
-    cuerpo+="</div><div style='font-size:11px;color:var(--tx3);margin-top:8px;line-height:1.55'>"+
-      (x.motivo==="aperturaCambio"?"La apertura se fijó o se corrigió entre esos dos días, así que no se puede decir qué ganaste y qué gastaste: los dos números miden contra puntos de partida distintos."
-        :"Para partir el día en ganancias y gastos hace falta el saldo de apertura. Fíjalo abajo, en «Desde el saldo de apertura».")+"</div>";
-  }
-  // Dónde está el dinero: la respuesta a "di un préstamo".
-  var mov=(x.partes||[]).filter(function(p){ return Math.abs(p[1])>0.005; });
-  if(mov.length){
-    cuerpo+="<div style='background:var(--sup);border-radius:9px;padding:9px 11px;margin-top:10px;font-size:11.5px'>"+
-      "<div style='font-size:10.5px;font-weight:800;color:var(--tx3);text-transform:uppercase;letter-spacing:.3px;margin-bottom:3px'>Dónde se movió tu dinero</div>"+
-      mov.map(function(p){ return fila(p[0], mon(p[1],true), "", p[1]<0?"var(--tx3)":"var(--tx2)"); }).join("")+
-      fila("Total", mon(x.salto,true), "pasar de una caja a otra no cambia el total", x.salto<0?"var(--mal)":"var(--ok)", true)+
+    cuerpo+="<div style='display:flex;gap:6px'>"+
+      tile("Empezaste","$"+f2(x.ini.tienes))+
+      tile(x.gano<0?"Perdiste":"Ganaste", sg(x.gano), x.gano<0?"var(--mal)":"var(--ok)")+
+      tile(tienesRot,"$"+f2(x.fin.tienes),"var(--tx2)",true)+
     "</div>";
+    // El veredicto, en una franja.
+    cuerpo+="<div style='display:flex;align-items:center;gap:8px;background:var(--sup);border-left:4px solid "+col+";border-radius:10px;padding:9px 12px;margin-top:8px'>"+
+      "<div style='font-size:15px;font-weight:900;color:"+col+";white-space:nowrap'>"+
+        (x.cuadra?"✅ Cuadra":(x.resto<0?"⚠️ Te faltan ":"⚠️ Te sobran ")+"$"+f2(Math.abs(x.resto)))+"</div>"+
+      "<div style='font-size:11px;color:var(--tx3);line-height:1.4'>"+
+        (x.cuadra?"lo que ganaste está en tu dinero":(x.resto<0?"salió dinero sin registrar":"entró dinero sin registrar"))+"</div>"+
+    "</div>";
+    // La línea que suma, con todos los términos que no son cero.
+    var t=["$"+f2(x.ini.tienes)];
+    if(Math.abs(x.gano)>0.005) t.push(sg(x.gano)+" ganado");
+    x.filas.forEach(function(r){ if(r[3]==="otro" && Math.abs(r[1])>0.005) t.push(sg(r[1])+" "+r[4]); });
+    if(Math.abs(x.socios)>0.005) t.push(sg(x.socios)+" socios sin pagar");
+    if(Math.abs(x.tasas)>0.005) t.push(sg(x.tasas)+" valor de las monedas");
+    if(Math.abs(x.ajustes)>0.005) t.push(sg(x.ajustes)+" saldos a mano");
+    if(Math.abs(x.resto)>0.005) t.push(sg(x.resto)+(x.cuadra?" redondeo":" sin registrar"));
+    cuerpo+="<div style='font-size:11px;color:var(--tx3);margin-top:7px;line-height:1.5'>"+
+      t.join(" ").replace(/ ([+−])\$/g," $1 $")+" = <b style='color:var(--tx2)'>$"+f2(x.fin.tienes)+"</b></div>";
+    cuerpo+=lineaCaja;
+    // El detalle: las filas enteras, como antes.
+    var fila=function(rot,v,pie,c){
+      return "<div style='display:flex;justify-content:space-between;gap:10px;padding:4px 0;font-size:11.5px'>"+
+        "<span style='color:var(--tx3)'>"+rot+(pie?" <span style='font-size:10px;color:var(--tx4)'>· "+pie+"</span>":"")+"</span>"+
+        "<b style='white-space:nowrap;color:"+(c||"var(--tx2)")+"'>"+v+"</b></div>";
+    };
+    detalle=x.filas.filter(function(r){ return Math.abs(r[1])>0.005; })
+      .map(function(r){ return fila(r[0], sg(r[1]), r[2], r[1]<0?"var(--mal)":"var(--ok)"); }).join("")+
+      "<div style='border-top:1px solid var(--ln);margin-top:4px;padding-top:4px'>"+
+        fila(x.esHoy?"Deberías tener ahora":"Deberías haber cerrado con","$"+f2(x.deberias))+
+        (Math.abs(x.socios)>0.005?fila(x.socios>0?"Parte de los socios, aún sin pagarles":"Pagaste a los socios lo de días anteriores",sg(x.socios),x.socios>0?"sigue en tus cuentas":""):"")+
+        (Math.abs(x.tasas)>0.005?fila(x.tasas<0?"Tus bolívares y reales valen menos hoy":"Tus bolívares y reales valen más hoy",sg(x.tasas),"no es una operación"):"")+
+        (Math.abs(x.ajustes)>0.005?fila("Saldos que escribiste a mano",sg(x.ajustes)):"")+
+        fila(tienesRot,"$"+f2(x.fin.tienes))+
+      "</div>"+
+      (movCaja.length?"<div style='border-top:1px solid var(--ln);margin-top:4px;padding-top:4px'>"+
+        "<div style='font-size:10.5px;font-weight:800;color:var(--tx3);text-transform:uppercase;letter-spacing:.3px;padding:2px 0'>Dónde se movió tu dinero</div>"+
+        movCaja.map(function(p){ return fila(p[0],sg(p[1])); }).join("")+"</div>":"");
+  } else {
+    cuerpo+="<div style='display:flex;gap:6px'>"+
+      tile("Empezaste","$"+f2(x.ini.tienes))+
+      tile("Cambió",sg(x.salto),x.salto<0?"var(--mal)":"var(--ok)")+
+      tile(tienesRot,"$"+f2(x.fin.tienes),"var(--tx2)",true)+
+    "</div>"+
+    "<div style='font-size:11px;color:var(--tx3);margin-top:8px;line-height:1.5'>"+
+      (x.motivo==="aperturaCambio"?"La apertura cambió entre esos dos días: no se puede partir en ganado y gastado."
+        :"Para saber cuánto ganaste y si cuadra, fija el saldo de apertura (abajo, en «Desde la apertura»).")+"</div>"+
+    lineaCaja;
   }
+  // Una vez se dice cuál es el día anterior que se usó, si no es ayer.
+  var ayer=_ymd(new Date(new Date(iso+"T12:00:00").getTime()-86400000));
+  if(x.kIni!==ayer) cuerpo+="<div style='font-size:10.5px;color:var(--tx4);margin-top:5px'>Empieza en lo del "+fmt(x.kIni)+", el último día que se guardó.</div>";
+  if(detalle) cuerpo+=
+    "<div onclick='_toggleCont(\"dia\")' style='margin-top:8px;font-size:11.5px;font-weight:700;color:var(--tx2);cursor:pointer;user-select:none'>"+
+      "<span id='cont-fl-dia'>"+_rotCont("dia")+"</span></div>"+
+    "<div id='cont-dia' style='display:"+(abierto?"block":"none")+";background:var(--sup);border-radius:9px;padding:6px 11px;margin-top:6px'>"+detalle+"</div>";
   return caja(cuerpo);
+}
+
+// Una parte plegada: una línea con su número, y el contenido detrás.
+// Abre y cierra por su id, sin R() (ARREGLO 32), y recuerda en S si está
+// abierta, para que un repintado del sondeo no la cierre sola (ARREGLO 165).
+function _secCont(id, titulo, resumen, cuerpo){
+  var ab=!!(S._contAbierto||{})[id];
+  return "<div style='background:var(--sup2);border:1px solid var(--ln);border-radius:12px;margin-bottom:8px;overflow:hidden'>"+
+    "<div onclick='_toggleCont(\""+id+"\")' style='display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 13px;cursor:pointer;user-select:none'>"+
+      "<div style='min-width:0'>"+
+        "<div style='font-size:13px;font-weight:800;color:var(--tx2)'>"+titulo+"</div>"+
+        "<div style='font-size:11.5px;color:var(--tx3);margin-top:2px'>"+resumen+"</div>"+
+      "</div>"+
+      "<span id='cont-fl-"+id+"' style='font-size:15px;color:var(--tx3)'>"+_rotCont(id)+"</span>"+
+    "</div>"+
+    "<div id='cont-"+id+"' style='display:"+(ab?"block":"none")+";padding:0 10px 10px'>"+cuerpo+"</div>"+
+  "</div>";
+}
+
+// La línea cerrada de la conciliación dice el veredicto Y los avisos. Un
+// aviso escondido detrás de un plegable no es un aviso (ARREGLO 48/60): por
+// eso se cuentan aquí, con los mismos campos que la tarjeta dibuja fuera de
+// su desplegable, y salen en la línea que se ve sin abrir nada.
+function _resumenConciliacion(){
+  var co=conciliacionCapital();
+  if(!co.configurada) return "<span style='color:var(--avi-tx2)'>Sin saldo de apertura · ábrelo para fijarlo</span>";
+  var se=co.sinExplicar||0, sano=Math.abs(se)<=co.tolerancia;
+  var aj=co.ajustes||{};
+  var av=(aj.nMismoDia>0?1:0)+(aj.sinTasa?1:0)+(aj.nSinSaber>0?1:0)+(co.baseFaltante?1:0)+(((co.real||{}).sinTasa||[]).length?1:0);
+  return (sano?"<b style='color:var(--ok)'>✅ Cuadra</b>"
+      :"<b style='color:"+(se<0?"var(--mal)":"var(--avi-tx2)")+"'>"+(se<0?"⚠️ Te faltan":"⚠️ Te sobran")+" $"+f2(Math.abs(se))+"</b>")+
+    " · desde el "+ds(co.desde)+
+    (av?" · <b style='color:var(--avi-tx2)'>⚠️ "+av+" aviso"+(av===1?"":"s")+"</b>":"");
 }
 
 // ── Balance general ─────────────────────────────────────────────────
@@ -40628,8 +40721,10 @@ function _balanceGeneral(){
     sinTasa:sinTasa.concat(R.sinTasa||[]).filter(function(m,i,a){ return a.indexOf(m)===i; })};
 }
 
-function _htmlBalanceGeneral(){
-  var b=_balanceGeneral();
+// ARREGLO 240 (compacto): recibe el cálculo ya hecho —la línea plegada ya lo
+// pidió para enseñar el patrimonio— y no repite el título, que ya va en ella.
+function _htmlBalanceGeneral(b){
+  b=b||_balanceGeneral();
   var fila=function(x){
     if(Math.abs(x[1])<0.005) return "";
     return "<div style='display:flex;justify-content:space-between;gap:10px;padding:6px 12px;border-bottom:1px solid var(--sup2f);font-size:12px'>"+
@@ -40642,8 +40737,7 @@ function _htmlBalanceGeneral(){
   };
   var tit=function(t){ return "<div style='padding:8px 12px;font-size:10.5px;font-weight:800;color:var(--tx3);text-transform:uppercase;letter-spacing:.3px;background:var(--sup2c)'>"+t+"</div>"; };
   var filasPas=b.pas.map(fila).join("");
-  return "<div style='background:var(--card);border:1px solid var(--sup3);border-radius:12px;overflow:hidden;margin-bottom:12px'>"+
-    "<div style='padding:12px 13px;font-size:13px;font-weight:800;color:var(--tit)'>⚖️ Balance general <span style='font-size:10.5px;font-weight:600;color:var(--tx3)'>· hoy, en USDT</span></div>"+
+  return "<div style='background:var(--card);border:1px solid var(--sup3);border-radius:12px;overflow:hidden'>"+
     tit("Lo que tiene la empresa")+b.act.map(fila).join("")+
     total("Total de lo que tiene", b.totAct)+
     tit("Lo que debe")+(filasPas||"<div style='padding:7px 12px;font-size:11.5px;color:var(--tx3)'>No debe nada.</div>")+
@@ -40676,17 +40770,22 @@ function rContabilidad(){
     return out;
   })();
   if(meses.indexOf(mk)<0) meses.push(mk);
-  var selMes="<select onchange='S._contMes=this.value;R()' style='padding:6px 9px;border:1px solid var(--ln);border-radius:8px;background:var(--sup);color:var(--tx2);font-size:12px;font-family:inherit'>"+
-    meses.map(function(k){ var p=k.split("-"); return "<option value='"+k+"'"+(k===mk?" selected":"")+">"+getMesLabel(p[1],p[0])+"</option>"; }).join("")+"</select>";
+  var p=mk.split("-"), er=_estadoResultados(mk), bg=_balanceGeneral();
+  var selMes="<select onchange='S._contMes=this.value;R()' style='width:100%;margin:2px 0 8px;padding:7px 9px;border:1px solid var(--ln);border-radius:8px;background:var(--sup);color:var(--tx2);font-size:12px;font-family:inherit'>"+
+    meses.map(function(k){ var q=k.split("-"); return "<option value='"+k+"'"+(k===mk?" selected":"")+">"+getMesLabel(q[1],q[0])+"</option>"; }).join("")+"</select>";
+  var sg=function(v){ return (v<0?"−":"")+"$"+f2(Math.abs(v)); };
+  // El orden es el que ella pidió: primero el día, siempre a la vista; después
+  // el mes, la foto de hoy y la medición larga, cada una en UNA línea con su
+  // número, y el detalle a un toque.
   return "<div style='padding:8px'>"+
     _htmlDiaContable()+
-    "<div style='display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin:4px 2px 8px'>"+
-      "<div style='font-size:13px;font-weight:800;color:var(--tx2)'>📑 Estado de resultados</div>"+selMes+
-    "</div>"+
-    _htmlEstadoResultados(mk, true)+
-    "<div style='height:12px'></div>"+
-    _htmlBalanceGeneral()+
-    _htmlConciliacion()+
+    _secCont("res","📑 Resultado de "+getMesLabel(p[1],p[0]),
+      "Utilidad <b style='color:"+(er.utilMes<0?"var(--mal)":"var(--ok)")+"'>"+sg(er.utilMes)+"</b>",
+      selMes+_htmlEstadoResultados(mk, true))+
+    _secCont("bal","⚖️ Balance general",
+      "Es de la empresa <b style='color:"+(bg.patrimonio<0?"var(--mal)":"var(--ok)")+"'>"+sg(bg.patrimonio)+"</b> · tiene "+sg(bg.totAct)+" · debe "+sg(bg.totPas),
+      _htmlBalanceGeneral(bg))+
+    _secCont("ap","🧾 Desde la apertura", _resumenConciliacion(), _htmlConciliacion(true))+
   "</div>";
 }
 

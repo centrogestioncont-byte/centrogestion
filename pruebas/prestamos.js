@@ -14423,7 +14423,7 @@ console.log("\nARREGLO 240 · Contabilidad: cómo cerró el día, resultados, ba
   // 3 · La hoja: las cuatro partes, en el orden que ella pidió, y cada una
   //     leída de donde ya se calculaba.
   const rc = sc("rContabilidad");
-  const pos = ["_htmlDiaContable()", "_htmlEstadoResultados(mk, true)", "_htmlBalanceGeneral()", "_htmlConciliacion()"].map(function(s){ return rc.indexOf(s); });
+  const pos = ["_htmlDiaContable()", "_htmlEstadoResultados(mk, true)", "_htmlBalanceGeneral(bg)", "_htmlConciliacion(true)"].map(function(s){ return rc.indexOf(s); });
   ok(pos.every(function(p){ return p > -1; }) && pos[0] < pos[1] && pos[1] < pos[2] && pos[2] < pos[3],
      "Contabilidad: el día, el estado de resultados, el balance general y la conciliación, en ese orden");
   ok(/_estadoResultados\(mk\)/.test(sc("_fotoCapital")) && /conciliacionCapital\(\)/.test(sc("_fotoCapital")),
@@ -14438,6 +14438,26 @@ console.log("\nARREGLO 240 · Contabilidad: cómo cerró el día, resultados, ba
   const herr = sc("_htmlEstadoResultados");
   ok(/row\("− Parte de los socios",-e\.socios\)/.test(herr) && /\(val<0\?"−":""\)\+"\$"\+f2\(Math\.abs\(val\)\)/.test(herr),
      "y lo dice en su fila, con el signo delante del símbolo");
+  //    La versión compacta (sus palabras: "más compacta, fácil de entender").
+  //    Arriba tres cifras —empezaste, ganaste, cerraste— y una línea que las
+  //    SUMA: si dijera "1.090 + 25 = 1.130" sin los 15 de los socios, dejaría
+  //    de fiarse de las tres.
+  ok(x.gano === 40, "en su ejemplo, 'ganaste' son 50 − 10 = 40", String(x.gano));
+  ok(ySoc.gano === 25 && ySoc.socios === 15, "con la socia: ganaste 25 y 15 de socios sin pagar, que la línea dice aparte");
+  const hd = sc("_htmlDiaContable");
+  ["Math.abs(x.socios)", "Math.abs(x.tasas)", "Math.abs(x.ajustes)", "Math.abs(x.resto)", 'r[3]==="otro"'].forEach(function(k){
+    ok(hd.indexOf("t.push") > -1 && new RegExp(k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "[^;]*t\\.push").test(hd),
+       "la línea que suma lleva su término: " + k);
+  });
+  //    Plegar no repinta (ARREGLO 32) y recuerda si está abierto (ARREGLO 165).
+  const tc = sc("_toggleCont");
+  ok(!/\bR\(\)/.test(tc) && /S\._contAbierto\[id\]=!S\._contAbierto\[id\]/.test(tc) && /getElementById\("cont-"\+id\)/.test(tc),
+     "abrir y cerrar una parte no llama a R() y queda recordado en S");
+  //    La conciliación plegada no esconde sus avisos (ARREGLO 48/60).
+  const rcz = sc("_resumenConciliacion");
+  ["aj.nMismoDia", "aj.sinTasa", "aj.nSinSaber", "co.baseFaltante", "sinTasa||[]"].forEach(function(k){
+    ok(rcz.indexOf(k) > -1, "la línea cerrada de la conciliación cuenta el aviso: " + k);
+  });
   //    Lo que se mudó no se queda también en su sitio viejo (ARREGLO 98).
   ok(sc("rCapitalTotal").indexOf("_htmlConciliacion(") < 0 && sc("rCapitalTotal").indexOf("_htmlEnlaceContabilidad()") > -1,
      "Balance de Cuentas ya no dibuja la conciliación: deja el enlace");
