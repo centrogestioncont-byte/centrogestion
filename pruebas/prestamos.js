@@ -5987,7 +5987,7 @@ console.log("\n— FASE 2: la cuenta madre —");
   // 5. La tarjeta: las filas tienen que SUMAR el salto. El primer intento
   //    dejaba fuera los ajustes a mano y el desfase de tasas, y la lista no
   //    cuadraba con el total que ella tiene justo encima.
-  const cap = sinComentarios(sacarFuncion("rCapitalTotal"));
+  const cap = sinComentarios(sacarFuncion("_htmlConciliacion"));  // ARREGLO 240: la tarjeta vive ahi desde que se mudo a 📒 Contabilidad
   // Las guardias se miden SOBRE EL BLOQUE del resumen, no sobre la funcion
   // entera: "co.ajustes" y "R.enPrestamos" aparecen tambien mas abajo, asi que
   // buscandolos en toda la funcion pasaban con la fila ya borrada.
@@ -6524,7 +6524,7 @@ console.log("\n— FASE 2: la cuenta madre —");
 // ══════════════════════════════════════════════════════════════════════════
 {
   console.log("\n── ARREGLO 99: el balance, con menos letra ──");
-  const cap = sinComentarios(sacarFuncion("rCapitalTotal"));
+  const cap = sinComentarios(sacarFuncion("_htmlConciliacion"));  // ARREGLO 240: la tarjeta vive ahi desde que se mudo a 📒 Contabilidad
 
   // 1. El contenedor NO se pinta del color de la alarma. Pintado asi, el bloque
   //    de "cuanto tienes" —que no tiene nada de malo— salia dentro de un
@@ -7989,7 +7989,8 @@ console.log("\n— FASE 2: la cuenta madre —");
 
   // 12 · La cajita del Balance tiene que SUMAR el numero grande: dejandola
   //      fuera, la lista no se podria sumar a mano (ARREGLO 141).
-  ok(/_cajas\.push\(_caja\("En mercancía", R\.enMercancia/.test(rct0),
+  // ARREGLO 240: las cajitas viajan con la tarjeta a _htmlConciliacion.
+  ok(/_cajas\.push\(_caja\("En mercancía", R\.enMercancia/.test(sacarFuncion("_htmlConciliacion").replace(/\/\/[^\n]*/g, "")),
      "Balance de Cuentas enseña la mercancia entre las cajitas que suman");
   // 13 · Y el informe mensual la refleja — se lo pidio ella por su nombre.
   ok(/\["En mercancía",cap\.enMercancia/.test(HTML),
@@ -14340,6 +14341,142 @@ console.log("\nARREGLO 239 · No se importa dos veces la misma remesa");
   const ii = sacarFuncion("_impImportar");
   ok(/var _yaEsta=_remesaPorIdExterno\(r\.idExt\);\s*if\(_yaEsta\)\{[\s\S]{0,160}?return; \}\s*S\.tx=_impTxDeFila/.test(ii),
      "y se vuelve a mirar justo antes de guardar cada una");
+}
+
+// ── ARREGLO 240 · 📒 Contabilidad: una sola hoja ───────────────────────
+console.log("\nARREGLO 240 · Contabilidad: cómo cerró el día, resultados, balance y conciliación");
+{
+  const sc = function(n){ return sacarFuncion(n).replace(/\/\/[^\n]*/g, ""); };
+  // 1 · La foto del día se sincroniza, y se UNE: si se reemplazara, el aparato
+  //     que guarda último borraría los días que el otro tiene.
+  ok(F.DATA_KEYS.indexOf("histCapital") > -1 && F._MERGE_HISTORIAL.indexOf("histCapital") > -1,
+     "histCapital viaja (DATA_KEYS) y se une por fecha (_MERGE_HISTORIAL)");
+  //    Se toma en CADA guardado y antes de volcar, o no viaja en ese guardado.
+  const sd = sc("saveData");
+  ok(sd.indexOf("_capturarCapitalHoy()") > -1 && sd.indexOf("_capturarCapitalHoy()") < sd.indexOf("_volcarDatos(obj)"),
+     "la foto se toma en saveData, antes de volcar lo que se guarda");
+  ok(/try\{\s*_capturarCapitalHoy\(\);\s*\}catch/.test(sd),
+     "y si falla, el guardado sigue: una foto no puede costar los datos");
+  //    De dos fotos del mismo día manda la MÁS NUEVA, sea del aparato que sea.
+  const unir = new Function(sacarFuncion("_unirHistorial") + "; return _unirHistorial;")();
+  const loc = {"2026-11-09": {ts: 100, tienes: 1}}, rem = {"2026-11-09": {ts: 200, tienes: 2}};
+  ok(unir(rem, loc, true)["2026-11-09"].tienes === 2, "en histCapital gana la foto más nueva");
+  ok(unir(rem, loc)["2026-11-09"].tienes === 1, "y en los demás historiales sigue mandando la de aquí");
+  ok(unir({"2026-11-09": {ts: 50, tienes: 3}}, loc, true)["2026-11-09"].tienes === 1,
+     "una foto más VIEJA del otro aparato no pisa la de aquí");
+  ok(/_unirHistorial\(estado\[k\], S\[k\]\|\|\{\}, k==="histCapital"\)/.test(HTML),
+     "la regla de la más nueva es solo para histCapital");
+
+  // 2 · Su ejemplo, al céntimo: empieza con 1.000, gana 50 en remesas, gasta
+  //     10 y presta 100. Tiene que cerrar con 1.040 y CUADRAR, y el préstamo
+  //     tiene que salir como dinero que cambió de caja, no como pérdida.
+  const mkDia = new Function("S", "_fotoCapital", sacarFuncion("_ymd") + sacarFuncion("_diaContable") +
+    "; var r2=function(n){return Math.round((isNaN(n)?0:+n)*100)/100;}; return _diaContable;");
+  const hoy = (function(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); })(new Date());
+  const ayer = (function(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); })(new Date(Date.now()-86400000));
+  const base = {ap: 900, desde: "2026-11-01", deb: 1000, bruta: 100, egEmp: 0, egPer: 0, socios: 0, trasp: 0, aportes: 0, retSoc: 0, intAp: 0, aj: 0, tasas: 0, sinExp: 0};
+  const fIni = {ts: 1, mes: "2026-11", rem: 100, tienes: 1000, cuentas: 1000, prestado: 0, cobrar: 0, reserva: 0, merc: 0, sueldo: 0, parcelas: 0, c: base};
+  const fFin = {ts: 2, mes: "2026-11", rem: 150, tienes: 1040, cuentas: 940, prestado: 100, cobrar: 0, reserva: 0, merc: 0, sueldo: 0, parcelas: 0,
+    c: Object.assign({}, base, {deb: 1040, bruta: 150, egEmp: 10})};
+  const SX = {histCapital: {}}; SX.histCapital[ayer] = fIni;
+  const dia = mkDia(SX, function(){ return fFin; });
+  const x = dia(hoy);
+  ok(x.ini && x.ini.tienes === 1000 && x.deberias === 1040 && x.fin.tienes === 1040,
+     "empieza con 1.000, gana 50, gasta 10 → deberías 1.040, tienes 1.040", JSON.stringify([x.deberias, x.fin && x.fin.tienes]));
+  ok(x.cuadra === true && x.resto === 0, "y cuadra: la plata que dice que ganó está");
+  const fl = {}; (x.filas || []).forEach(function(r){ fl[r[0]] = r[1]; });
+  ok(fl["Ganancia de remesas"] === 50 && fl["Gastos de la empresa"] === -10,
+     "las filas dicen +50 de remesas y −10 de gastos");
+  const pt = {}; (x.partes || []).forEach(function(r){ pt[r[0]] = r[1]; });
+  ok(pt["En cuentas"] === -60 && pt["Prestado"] === 100 && x.salto === 40,
+     "el préstamo sale como dinero que cambió de caja (+100 prestado), no como pérdida");
+  //    Las filas SUMAN el "deberías": se suma lo que se ve.
+  let suma = x.ini.tienes; (x.filas || []).forEach(function(r){ suma += r[1]; });
+  ok(Math.abs(suma - x.deberias) < 0.005, "las filas del día suman su propio total, al céntimo");
+  //    Si falta plata, se dice cuánto — y lo que ya tiene explicación va aparte.
+  const fFalta = Object.assign({}, fFin, {tienes: 1030, cuentas: 930, c: Object.assign({}, fFin.c, {tasas: -4})});
+  const y = mkDia(SX, function(){ return fFalta; })(hoy);
+  ok(y.cuadra === false && y.resto === -6 && y.tasas === -4,
+     "con 1.030 en vez de 1.040: 4 son las tasas y faltan 6 sin registrar", JSON.stringify([y.resto, y.tasas]));
+  //    La parte de los socios: la conciliación la da por ida desde que se
+  //    gana, pero sin pagarles sigue en las cuentas. No puede salir "te sobran".
+  const fSoc = Object.assign({}, fFin, {soc: 15, c: Object.assign({}, fFin.c, {socios: 15})});
+  const ySoc = mkDia(SX, function(){ return fSoc; })(hoy);
+  ok(ySoc.socios === 15 && ySoc.cuadra === true && ySoc.resto === 0,
+     "lo de los socios sin pagar se explica solo: no sale como dinero que sobra", JSON.stringify([ySoc.socios, ySoc.resto]));
+  ok(/_sociosPendientesMes\(mk\)/.test(sc("_fotoCapital")) && /_sociosPendientesMes\(getMesKeyActual\(\)\)/.test(sc("_balanceGeneral")),
+     "el día y el balance leen lo pendiente con los socios del MISMO sitio");
+  //    Sin día anterior no se inventa un punto de partida.
+  ok(!mkDia({histCapital: {}}, function(){ return fFin; })(hoy).ini, "sin foto anterior no hay 'empezaste con'");
+  //    Con la apertura cambiada entre medio no se resta: serían dos puntos de partida.
+  const SC = {histCapital: {}}; SC.histCapital[ayer] = Object.assign({}, fIni, {c: Object.assign({}, base, {ap: 800})});
+  const z = mkDia(SC, function(){ return fFin; })(hoy);
+  ok(z.motivo === "aperturaCambio" && !z.filas, "si la apertura cambió entre los dos días, no inventa el desglose");
+  //    Un día pasado se cierra con SU foto y empieza en la última anterior.
+  const SP = {histCapital: {"2026-11-03": fIni, "2026-11-06": fFin}};
+  const w = mkDia(SP, function(){ throw new Error("no debe pedir la de ahora"); })("2026-11-06");
+  ok(w.kIni === "2026-11-03" && w.deberias === 1040, "un día pasado usa su foto y la última anterior, aunque haya huecos");
+  //    El total de "deberías" sale de las filas, no de restar las dos `deb`.
+  ok(!/b\.deb\s*-\s*a\.deb|a\.deb\s*-\s*b\.deb|d\("deb"\)/.test(sc("_diaContable")),
+     "el 'deberías' del día sale de sumar las filas, no de otra resta");
+
+  // 3 · La hoja: las cuatro partes, en el orden que ella pidió, y cada una
+  //     leída de donde ya se calculaba.
+  const rc = sc("rContabilidad");
+  const pos = ["_htmlDiaContable()", "_htmlEstadoResultados(mk, true)", "_htmlBalanceGeneral(bg)", "_htmlConciliacion(true)"].map(function(s){ return rc.indexOf(s); });
+  ok(pos.every(function(p){ return p > -1; }) && pos[0] < pos[1] && pos[1] < pos[2] && pos[2] < pos[3],
+     "Contabilidad: el día, el estado de resultados, el balance general y la conciliación, en ese orden");
+  ok(/_estadoResultados\(mk\)/.test(sc("_fotoCapital")) && /conciliacionCapital\(\)/.test(sc("_fotoCapital")),
+     "la foto del día lee la conciliación y el estado de resultados, no calcula aparte");
+  ok(/capitalRealTotal\(\)/.test(sc("_balanceGeneral")) && /_movsPersonalEmpresa\(\)/.test(sc("_balanceGeneral")) && /calcMesCompleto\(mk\)/.test(sc("_sociosPendientesMes")),
+     "el balance general lee capitalRealTotal, las cuentas 💜 y el cálculo del mes");
+  //    El estado de resultados resta a los socios y los gastos de EE.UU.: sin
+  //    eso la utilidad del mes salía por encima de la del Cierre.
+  const er = sc("_estadoResultados");
+  ok(/var utilOp=r2\(ingOp-socios-gasEE-egOp\)/.test(er) && /c\.totalCom/.test(er) && /c\.socioParte/.test(er) && /c\.gasEEUU/.test(er),
+     "el estado de resultados resta la parte de los socios y los gastos de EE.UU.");
+  const herr = sc("_htmlEstadoResultados");
+  ok(/row\("− Parte de los socios",-e\.socios\)/.test(herr) && /\(val<0\?"−":""\)\+"\$"\+f2\(Math\.abs\(val\)\)/.test(herr),
+     "y lo dice en su fila, con el signo delante del símbolo");
+  //    La versión compacta (sus palabras: "más compacta, fácil de entender").
+  //    Arriba tres cifras —empezaste, ganaste, cerraste— y una línea que las
+  //    SUMA: si dijera "1.090 + 25 = 1.130" sin los 15 de los socios, dejaría
+  //    de fiarse de las tres.
+  ok(x.gano === 40, "en su ejemplo, 'ganaste' son 50 − 10 = 40", String(x.gano));
+  ok(ySoc.gano === 25 && ySoc.socios === 15, "con la socia: ganaste 25 y 15 de socios sin pagar, que la línea dice aparte");
+  const hd = sc("_htmlDiaContable");
+  ["Math.abs(x.socios)", "Math.abs(x.tasas)", "Math.abs(x.ajustes)", "Math.abs(x.resto)", 'r[3]==="otro"'].forEach(function(k){
+    ok(hd.indexOf("t.push") > -1 && new RegExp(k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "[^;]*t\\.push").test(hd),
+       "la línea que suma lleva su término: " + k);
+  });
+  //    Plegar no repinta (ARREGLO 32) y recuerda si está abierto (ARREGLO 165).
+  const tc = sc("_toggleCont");
+  ok(!/\bR\(\)/.test(tc) && /S\._contAbierto\[id\]=!S\._contAbierto\[id\]/.test(tc) && /getElementById\("cont-"\+id\)/.test(tc),
+     "abrir y cerrar una parte no llama a R() y queda recordado en S");
+  //    La conciliación plegada no esconde sus avisos (ARREGLO 48/60).
+  const rcz = sc("_resumenConciliacion");
+  ["aj.nMismoDia", "aj.sinTasa", "aj.nSinSaber", "co.baseFaltante", "sinTasa||[]"].forEach(function(k){
+    ok(rcz.indexOf(k) > -1, "la línea cerrada de la conciliación cuenta el aviso: " + k);
+  });
+  //    Lo que se mudó no se queda también en su sitio viejo (ARREGLO 98).
+  ok(sc("rCapitalTotal").indexOf("_htmlConciliacion(") < 0 && sc("rCapitalTotal").indexOf("_htmlEnlaceContabilidad()") > -1,
+     "Balance de Cuentas ya no dibuja la conciliación: deja el enlace");
+  ok(sc("rInformeCierre").indexOf("_htmlEstadoResultados(") < 0 && sc("rInformeCierre").indexOf("_htmlEnlaceContabilidad(mesKey)") > -1,
+     "el Cierre ya no dibuja el estado de resultados: deja el enlace a ese mismo mes");
+  //    La pestaña: misma llave que Balance de Cuentas, para que nadie pierda
+  //    la conciliación que hoy ve; y en el menú, en "Dinero".
+  ok(F.PERMISO_DE_TAB.contabilidad === "capital_total", "Contabilidad usa la llave de Balance de Cuentas");
+  ok(TABS.admin.indexOf("contabilidad") > -1 && TABS.lector.indexOf("contabilidad") > -1,
+     "la administradora y el supervisor la tienen");
+  ok(/\["Dinero",\s*\["contabilidad",/.test(HTML), "y va la primera del grupo Dinero");
+  ok(/S\.tab==="contabilidad"\)\s*body=tp\("capital_total",rContabilidad/.test(HTML),
+     "y pasa por tp(): sin permiso dice 'Sin acceso', no pantalla en blanco");
+  //    El balance se puede sumar a mano: los totales son la suma de las filas.
+  ok(/var totAct=sum\(act\), totPas=sum\(pas\)/.test(sc("_balanceGeneral")) && /patrimonio:r2\(totAct-totPas\)/.test(sc("_balanceGeneral")),
+     "el patrimonio es lo que tiene menos lo que debe, con las filas que se ven");
+  //    Los nombres que escribe ella (socios, cuentas) se escapan (ARREGLO 102).
+  ok(/_escAud\(s\.nombre\)/.test(sc("_htmlBalanceGeneral")) && /_escAud\(p\.nombre\)/.test(sc("_htmlBalanceGeneral")),
+     "los nombres de socios y cuentas se escapan en el balance");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
