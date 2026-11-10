@@ -3383,7 +3383,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261110_v324";
+var APP_VERSION = "20261110_v325";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -13277,11 +13277,16 @@ function borrarArticulo(id){
 function rMercancia(){
   var enMano=(S.articulos||[]).filter(function(a){return a.estado!=="vendido";});
   var vendidos=(S.articulos||[]).filter(function(a){return a.estado==="vendido";});
-  var inv=0, esperado=0, sinEsp=0;
+  // ARREGLO 243: "ganarías" es la suma de lo que dicen las TARJETAS, no
+  // `esperado − inv`. Antes restaba lo invertido en TODO —también lo que no
+  // tiene precio puesto— y salía "ganarías $33,66" encima de dos tarjetas que
+  // decían +90 y +98,39. Dos números para lo mismo que no cuadran (el 34,27
+  // contra el 34,28): se deja de fiar de los dos.
+  var inv=0, esperado=0, ganEsp=0, sinEsp=0;
   enMano.forEach(function(a){
     inv+=_costoArticulo(a);
-    var e=_usdtMerc(a.precioEsp, a.monEsp||a.mon);
-    if(e===null||!(parseFloat(a.precioEsp)>0)) sinEsp++; else esperado+=e;
+    var ge=_ganEsperadaArt(a);
+    if(!ge) sinEsp++; else { esperado+=ge.venta; ganEsp+=ge.gan; }
   });
   var mesAct=getMesKeyActual();
   var gm=gananciaMercanciaDelMes(mesAct);
@@ -13307,7 +13312,7 @@ function rMercancia(){
     ((esperado>0.005||sinEsp>0)
       ? "<div style='font-size:11px;color:var(--tx3);background:var(--sup2);border-radius:9px;padding:8px 12px;margin-bottom:10px;line-height:1.5'>"+
         (esperado>0.005
-          ? "Si lo vendes a lo que piensas, sacarías <b style='color:var(--tx2)'>$"+f2(esperado)+"</b> y ganarías <b style='color:var(--tx2)'>$"+f2(Math.round((esperado-inv)*100)/100)+"</b>."
+          ? "Si lo vendes a lo que piensas, sacarías <b style='color:var(--tx2)'>$"+f2(esperado)+"</b> y ganarías <b style='color:var(--tx2)'>$"+f2(Math.round(ganEsp*100)/100)+"</b>."
           : "")+
         " <span style='color:var(--tx4)'>Eso no está sumado en tu capital: se gana el día que vendas.</span>"+
         (sinEsp>0?"<br><span style='color:var(--tx4);font-size:10.5px'>"+sinEsp+" sin precio puesto, así que no entra en esa cuenta.</span>":"")+
@@ -13388,7 +13393,7 @@ function rMercancia(){
       "<div style='font-size:10.5px;color:var(--tx3);line-height:1.55'>Comprar no baja tu capital: el dinero sale de la cuenta y entra aquí. Lo que ganas se apunta el día que vendes.</div>"+
     "</div>"+
     form+
-    "<div style='border:1px solid var(--ln2);border-radius:12px;overflow:hidden'>"+lista+"</div>"+
+    "<div>"+lista+"</div>"+
     histo+
   "</div>";
 }
@@ -13408,6 +13413,57 @@ function _verVendidosArt(){
   if(t) t.textContent = S._artVendidos ? "ocultar ▴" : "ver ▾";
 }
 
+// ARREGLO 243 · el estado de una cosa, en UN sitio: lo leen el distintivo de
+// la tarjeta, sus números y el botón principal. Calculado en cada uno, un día
+// la tarjeta diría "en parcelas" con el botón de Vender como principal.
+// Una compra en parcelas ya pagada entera vuelve a ser "en mano · pagada".
+function _estadoArt(a){
+  if(a.estado==="vendido"){
+    var v=a.venta||{};
+    var como = v.cobro==="fiado" ? "fiada a "+_escAud(v.cliente||"") : (v.cobro==="prestamo" ? "como préstamo" : "de contado");
+    return {k:"vendida", chip:"✅ VENDIDA · "+como};
+  }
+  if(a.modoPago==="parcelas"){
+    var cuotas=_cuotasArt(a.id);
+    var pend=cuotas.filter(function(c){ return _faltaParcelaArt(c).tot>0.004; });
+    if(pend.length){
+      var total=0, debe=0;
+      cuotas.forEach(function(c){ total+=(parseFloat(c.monto)||0)+(parseFloat(c.interes)||0); debe+=_faltaParcelaArt(c).tot; });
+      var pag=cuotas.length-pend.length;
+      return {k:"parcelas", chip:"📅 EN PARCELAS · "+pag+" de "+cuotas.length+" pagada"+(pag===1?"":"s"),
+              debe:Math.round(debe*100)/100, pct:total>0?Math.round((total-debe)/total*100):0,
+              prox:pend[0], mon:pend[0].mon||a.mon};
+    }
+  }
+  return {k:"mano", chip:"📦 EN MANO · PAGADA"};
+}
+// Lo que ganaría si lo vende a lo que piensa. Lo leen la tarjeta y el total de
+// arriba de la pestaña: escrito en los dos, un redondeo distinto haría que la
+// suma de las tarjetas no diera el total. Sin precio o sin tasa, null — no un
+// cero, que se leería como "no ganas nada".
+function _ganEsperadaArt(a){
+  if(!(parseFloat(a.precioEsp)>0)) return null;
+  var e=_usdtMerc(a.precioEsp, a.monEsp||a.mon);
+  if(e===null) return null;
+  return {venta:e, gan:Math.round((e-_costoArticulo(a))*100)/100};
+}
+// ⋯ abre y cierra por su id y queda en S (ARREGLO 32 y 165).
+function _verMasArt(id){
+  S._artMas = String(S._artMas||"")===String(id) ? null : String(id);
+  (S.articulos||[]).forEach(function(x){
+    var el=document.getElementById("art-mas-"+String(x.id));
+    if(el) el.style.display = String(S._artMas||"")===String(x.id) ? "flex" : "none";
+  });
+}
+// "Pagar parcela" abre el pago de la PRÓXIMA que se debe, con su monto puesto.
+function _pagarProximaArt(id){
+  var a=_artDe(id); if(!a) return;
+  var est=_estadoArt(a); if(!est.prox) return;
+  S._artParcelas={id:String(a.id)};
+  S._artParcelaPagar=null;
+  _abrirPagoParcelaArt(est.prox.id);
+}
+
 function _filaArticulo(a){
   var gs=_gastosDe(a.id);
   var costo=_costoArticulo(a);
@@ -13416,36 +13472,82 @@ function _filaArticulo(a){
   var abreVenta=String(S._artVenta||"")===String(a.id);
   var abreGasto=String(S._artGasto||"")===String(a.id);
   var v=S.vArt||{}, g=S.gArt||{};
+  // ARREGLO 243 · UNA TARJETA POR COSA, CON SU ESTADO ARRIBA
+  // ──────────────────────────────────────────────────────────────────
+  // Sus palabras del 10/11: "así como está es complicado entender qué es".
+  // Todas las cosas se dibujaban igual: no decía si estaba pagada, si se debía
+  // o si ya se vendió, las parcelas salían pegadas debajo como otra cosa, y el
+  // "ganarías" no estaba en ningún sitio. De tres maquetas eligió la A:
+  //   · arriba, un distintivo con el ESTADO (📦 en mano · 📅 en parcelas ·
+  //     ✅ vendida), que sale de _estadoArt() y de ningún otro sitio;
+  //   · debajo, los números SIEMPRE en el mismo orden: te costó, la vendes en,
+  //     ganarías — y si está en parcelas, cuánto debes y la próxima;
+  //   · un botón principal según el estado (Pagar parcela o Vender), y lo que
+  //     casi no se usa (borrar, editar, deshacer, ver parcelas) detrás de ⋯.
+  var est=_estadoArt(a);
+  var ge=vendido?null:_ganEsperadaArt(a);
+  var idA=_jsAttr(String(a.id));
+  var colEst = est.k==="vendida" ? "var(--info)" : (est.k==="parcelas" ? "var(--avi)" : "var(--ok)");
+  var filaN = function(rot, val, col){
+    return "<div style='display:flex;justify-content:space-between;gap:10px;font-size:11.5px;margin-top:5px'>"+
+      "<span style='color:var(--tx3)'>"+rot+"</span>"+
+      "<b style='color:"+(col||"var(--tit)")+";text-align:right'>"+val+"</b></div>";
+  };
+  var conSigno = function(x){ return (x<0?"−":"+")+"$"+f2(Math.abs(x)); };
+  var costoTxt = f2(a.costo)+" "+_escAud(a.mon)+
+    (gs.length?" + "+gs.length+" gasto"+(gs.length===1?"":"s"):"")+
+    ((gs.length||(a.mon!=="USDT"&&a.mon!=="USD"))?" <span style='color:var(--tx4);font-weight:600'>· $"+f2(costo)+"</span>":"");
+  var cuerpo;
+  if(vendido){
+    cuerpo =
+      filaN("Te costó → la vendiste en", f2(a.costo)+" "+_escAud(a.mon)+" → "+f2(a.venta.monto)+" "+_escAud(a.venta.mon))+
+      filaN("Ganaste", conSigno(gan), gan>=0?"var(--ok)":"var(--mal)");
+  } else {
+    cuerpo =
+      filaN("Te costó", costoTxt)+
+      filaN("La vendes en", (parseFloat(a.precioEsp)>0)
+        ? f2(a.precioEsp)+" "+_escAud(a.monEsp||a.mon)
+        : "<span style='color:var(--tx4);font-weight:600'>sin precio puesto</span>")+
+      (ge ? filaN("Ganarías", conSigno(ge.gan), ge.gan>=0?"var(--ok)":"var(--mal)") : "")+
+      (est.k==="parcelas"
+        ? filaN("Todavía debes", f2(est.debe)+" "+_escAud(est.mon), "var(--avi)")+
+          "<div style='height:6px;background:var(--sup2);border-radius:4px;margin-top:7px;overflow:hidden'>"+
+            "<div style='height:100%;width:"+est.pct+"%;background:var(--avi)'></div></div>"+
+          (est.prox ? filaN("Próxima parcela · "+_escAud(est.prox.fecha), f2(_faltaParcelaArt(est.prox).tot)+" "+_escAud(est.mon)) : "")
+        : "");
+  }
   var cab =
-    "<div style='display:flex;align-items:flex-start;gap:10px;padding:11px 13px'>"+
-      "<div style='flex:1;min-width:0'>"+
-        "<div style='font-size:13px;font-weight:800;color:var(--tit)'>"+_escAud(a.nombre)+"</div>"+
-        "<div style='font-size:10.5px;color:var(--tx3);margin-top:2px;line-height:1.5'>"+
-          "Te costó <b style='color:var(--tx2)'>"+f2(a.costo)+" "+_escAud(a.mon)+"</b>"+
-          (gs.length?" + "+gs.length+" gasto"+(gs.length===1?"":"s"):"")+
-          " · <b style='color:var(--tx2)'>$"+f2(costo)+"</b> en total"+
-          "<br><span style='color:var(--tx4)'>"+_escAud(a.fecha)+"</span>"+
-          (vendido
-            ? "<br>Vendido el "+_escAud(a.venta.fecha)+" por <b style='color:var(--tx2)'>"+f2(a.venta.monto)+" "+_escAud(a.venta.mon)+"</b>"+
-              (a.venta.cobro==="fiado"?" · <span style='color:var(--avi-tx2)'>fiado a "+_escAud(a.venta.cliente||"")+"</span>":"")
-            : ((parseFloat(a.precioEsp)>0)?"<br>Piensas venderlo en "+f2(a.precioEsp)+" "+_escAud(a.monEsp||a.mon):""))+
-        "</div>"+
+    "<div style='padding:11px 13px 0'>"+
+      "<span style='display:inline-block;font-size:10.5px;font-weight:800;padding:2px 9px;border-radius:20px;border:1px solid "+colEst+";color:"+colEst+"'>"+est.chip+"</span>"+
+      "<div style='font-size:13.5px;font-weight:800;color:var(--tit);margin-top:6px'>"+_escAud(a.nombre)+"</div>"+
+      "<div style='font-size:10.5px;color:var(--tx4);margin-top:1px'>"+
+        (vendido ? "vendida el "+_escAud(a.venta.fecha)+" · comprada el "+_escAud(a.fecha) : "comprada el "+_escAud(a.fecha))+
       "</div>"+
-      (vendido
-        ? "<div style='text-align:right;flex:none'>"+
-            "<div style='font-size:10px;color:var(--tx3)'>ganaste</div>"+
-            "<div style='font-size:15px;font-weight:900;color:"+(gan>=0?"var(--ok)":"var(--mal)")+"'>"+(gan<0?"−":"+")+"$"+f2(Math.abs(gan))+"</div>"+
-          "</div>"
-        : "")+
+      cuerpo+
     "</div>";
-  var botones = "<div style='display:flex;gap:6px;padding:0 13px 11px;flex-wrap:wrap'>"+
-    (vendido
-      ? "<button onclick='editarVentaArt("+_jsAttr(String(a.id))+")' style='"+_btnMerc("var(--sup2)","var(--tx2)")+"'>✏️ Editar precio</button>"+
-        "<button onclick='deshacerVentaArt("+_jsAttr(String(a.id))+")' style='"+_btnMerc("var(--sup2)","var(--tx3)")+"'>↩️ Deshacer venta</button>"
-      : "<button onclick='_abrirVentaArt("+_jsAttr(String(a.id))+")' style='"+_btnMerc("var(--ac)","var(--sobre-color)")+";font-weight:800'>💵 Vender</button>"+
-        "<button onclick='_abrirGastoArt("+_jsAttr(String(a.id))+")' style='"+_btnMerc("var(--sup2)","var(--tx2)")+"'>➕ Gasto</button>"+
-        "<button onclick='borrarArticulo("+_jsAttr(String(a.id))+")' style='"+_btnMerc("var(--sup2)","var(--mal)")+"'>🗑️</button>")+
-  "</div>";
+  // Los botones: uno principal según el estado, y ⋯ para lo demás.
+  // Abrir ⋯ NO llama a R() (ARREGLO 32) y queda recordado en S, para que un
+  // repintado del sondeo no lo cierre bajo el dedo (ARREGLO 165).
+  var masAbierto=String(S._artMas||"")===String(a.id);
+  var bMas = "<button onclick='_verMasArt(\""+idA+"\")' title='Más opciones' style='"+_btnMerc("var(--sup2)","var(--tx2)")+";font-weight:800'>⋯</button>";
+  var principal;
+  if(vendido) principal = "<div style='flex:1'></div>"+bMas;
+  else if(est.k==="parcelas")
+    principal = "<button onclick='_pagarProximaArt(\""+idA+"\")' style='"+_btnMerc("var(--ac)","var(--sobre-color)")+";font-weight:800;flex:1'>💸 Pagar parcela</button>"+
+                "<button onclick='_abrirVentaArt("+idA+")' style='"+_btnMerc("var(--sup2)","var(--tx2)")+"'>💵 Vender</button>"+bMas;
+  else
+    principal = "<button onclick='_abrirVentaArt("+idA+")' style='"+_btnMerc("var(--ac)","var(--sobre-color)")+";font-weight:800;flex:1'>💵 Vender</button>"+
+                "<button onclick='_abrirGastoArt("+idA+")' style='"+_btnMerc("var(--sup2)","var(--tx2)")+"'>➕ Gasto</button>"+bMas;
+  var verPar = String((S._artParcelas||{}).id||"")===String(a.id);
+  var opciones = vendido
+    ? "<button onclick='editarVentaArt("+idA+")' style='"+_btnMerc("var(--sup2)","var(--tx2)")+"'>✏️ Editar precio</button>"+
+      "<button onclick='deshacerVentaArt("+idA+")' style='"+_btnMerc("var(--sup2)","var(--tx3)")+"'>↩️ Deshacer venta</button>"
+    : (est.k==="parcelas" ? "<button onclick='_abrirGastoArt("+idA+")' style='"+_btnMerc("var(--sup2)","var(--tx2)")+"'>➕ Gasto</button>" : "")+
+      (a.modoPago==="parcelas" ? "<button onclick='S._artParcelas="+(verPar?"null":"{id:\""+idA+"\"}")+";R()' style='"+_btnMerc("var(--sup2)","var(--tx2)")+"'>📅 "+(verPar?"Ocultar":"Ver")+" parcelas</button>" : "")+
+      "<button onclick='borrarArticulo("+idA+")' style='"+_btnMerc("var(--sup2)","var(--mal)")+"'>🗑️ Borrar</button>";
+  var botones =
+    "<div style='display:flex;gap:6px;padding:10px 13px 11px'>"+principal+"</div>"+
+    "<div id='art-mas-"+_escAud(String(a.id))+"' style='display:"+(masAbierto?"flex":"none")+";gap:6px;flex-wrap:wrap;padding:0 13px 11px'>"+opciones+"</div>";
   var detGastos = gs.length
     ? "<div style='padding:0 13px 11px;font-size:10.5px;color:var(--tx3);line-height:1.7'>"+
         gs.map(function(x){
@@ -13591,8 +13693,11 @@ function _filaArticulo(a){
             "</div>"
           : "")+
       "</div>";
+    // ARREGLO 243: cerrado ya no se dibuja. La tarjeta dice arriba cuánto debe
+    // y la próxima; el detalle se abre con "Pagar parcela" o con ⋯.
+    if(!abrir) panelParcelas="";
   }
-  return "<div style='border-bottom:1px solid var(--ln2b)'>"+cab+detGastos+botones+panelParcelas+formVenta+formGasto+"</div>";
+  return "<div style='background:var(--sup);border:1px solid var(--ln);border-radius:12px;margin-bottom:8px;overflow:hidden'>"+cab+detGastos+botones+panelParcelas+formVenta+formGasto+"</div>";
 }
 // ── Abrir un formulario DEJA PUESTO lo que ese formulario va a enseñar ──
 //
