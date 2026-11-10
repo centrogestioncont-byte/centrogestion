@@ -14479,5 +14479,74 @@ console.log("\nARREGLO 240 · Contabilidad: cómo cerró el día, resultados, ba
      "los nombres de socios y cuentas se escapan en el balance");
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// ARREGLO 241 · abonar a una factura de mercancía, y editar en cuánto se vendió
+{
+  const sinC = t => t.replace(/\/\/[^\n]*/g, "");
+  const _src = ["_cuotasArt","_parcelasPendientesArt","_faltaParcelaArt","_deudaParcelasArt","_repartoAbonoArt"]
+                 .map(sacarFuncion).join("\n");
+  const MA = new Function("S","_artDe", _src + "; return {_faltaParcelaArt:_faltaParcelaArt, _deudaParcelasArt:_deudaParcelasArt, _repartoAbonoArt:_repartoAbonoArt};");
+  const SA = {artCuotas:[
+    {id:"c1", artId:1, n:1, nTotal:3, isoFecha:"2026-11-28", monto:100, interes:0, mon:"BRL", pagada:false},
+    {id:"c2", artId:1, n:2, nTotal:3, isoFecha:"2026-12-28", monto:100, interes:0, mon:"BRL", pagada:false},
+    {id:"c3", artId:1, n:3, nTotal:3, isoFecha:"2027-01-28", monto:100, interes:10, mon:"BRL", pagada:false},
+    {id:"c0", artId:2, n:1, nTotal:1, isoFecha:"2026-11-01", monto:50, interes:0, mon:"BRL", pagada:true}]};
+  const fa = MA(SA, function(){ return {mon:"BRL"}; });
+  // Un abono corto deja la parcela pendiente y dice cuánto falta.
+  let r = fa._repartoAbonoArt("c1", 40);
+  ok(r.filas.length===1 && r.filas[0].cap===40 && r.filas[0].falta===60 && !r.filas[0].completa,
+     "un abono de 40 a una parcela de 100 la deja pendiente con 60 por pagar");
+  // Lo que sobra pasa a la SIGUIENTE, no se pierde ni se queda.
+  r = fa._repartoAbonoArt("c1", 130);
+  ok(r.filas.length===2 && r.filas[0].completa && r.filas[1].c.id==="c2" && r.filas[1].cap===30 && r.sobra===0,
+     "130 pagan la 1 entera y 30 pasan a la 2");
+  // Pagar más de lo que queda de la factura no reparte nada de más.
+  r = fa._repartoAbonoArt("c1", 400);
+  ok(r.sobra===90 && r.deFactura===310, "400 sobre una factura de 310 dice que sobran 90");
+  // El interés va primero.
+  r = fa._repartoAbonoArt("c3", 15);
+  ok(r.filas[0].int===10 && r.filas[0].cap===5, "dentro de una parcela el abono cubre primero el interés");
+  // La deuda baja con cada abono: lo abonado ya salió de la cuenta.
+  SA.artCuotas[0].pagos=[{grupo:"g", monto:40, interes:0}];
+  ok(fa._faltaParcelaArt(SA.artCuotas[0]).tot===60 && fa._deudaParcelasArt(1)===260,
+     "con 40 abonados la parcela debe 60 y la deuda del artículo baja a 260");
+  ok(fa._faltaParcelaArt(SA.artCuotas[3]).tot===0, "una parcela pagada a la antigua (sin pagos) no debe nada");
+  // Las dos deudas leen la MISMA función, o la conciliación se mueve sola.
+  ok(/_faltaParcelaArt\(c\)\.cap/.test(sinC(sacarFuncion("_deudaParcelasTotalUSDT"))) &&
+     /_faltaParcelaArt\(c\)\.cap/.test(sinC(sacarFuncion("_deudaParcelasArt"))),
+     "la deuda de parcelas (por artículo y total) sale de _faltaParcelaArt");
+  // Pagar pasa por el reparto, no recalcula por su cuenta, y no acepta sobrante.
+  const _pp = sinC(sacarFuncion("_pagarParcelaArt"));
+  ok(/_repartoAbonoArt\(c\.id, monto\)/.test(_pp) && /rep\.sobra>0\.004\)\{[\s\S]*?return;/.test(_pp),
+     "_pagarParcelaArt reparte con _repartoAbonoArt y rechaza pagar de más");
+  ok(/_leerNumero\(montoTxt\)/.test(_pp), "el monto se lee con _leerNumero (acepta la coma)");
+  // El interés borrado deja su marca, o el servidor lo resucita (ARREGLO 163).
+  ok(/_marcarBorradoMerge\("egresos", e\.id\)/.test(sinC(sacarFuncion("_borrarEgresoInteresMerc"))),
+     "borrar el egreso de interés deja marca de borrado");
+  ok(!/S\.egresos\.splice/.test(sinC(sacarFuncion("_deshacerParcelaArt"))),
+     "deshacer a la antigua ya no quita el interés con un splice a secas");
+  // El selector de cuentas filtra por la moneda de la parcela.
+  ok(/_optCtasMerc\(npp\.cuentaId, monPar\)/.test(sinC(sacarFuncion("_filaArticulo"))),
+     "al pagar una parcela solo salen las cuentas en su moneda");
+  // Teclear el monto no repinta (ARREGLO 32) y el campo viene seleccionado (153).
+  const _fl = sacarFuncion("_filaArticulo");
+  ok(/id='aab-monto'[^>]*onfocus='this\.select\(\)'[^>]*oninput='S\._artParcelaPagar\.monto=_num\(this\.value\);_refrescarRepartoAbonoArt\(\)'/.test(_fl),
+     "el campo del abono se selecciona al tocarlo y refresca solo su línea al teclear");
+  ok(!/\bR\(\)/.test(sinC(sacarFuncion("_refrescarRepartoAbonoArt"))), "y refrescar esa línea no llama a R()");
+  // Abrir deja puesto el monto que enseña (ARREGLO 143).
+  ok(/monto:String\(_faltaParcelaArt\(c\)\.tot\)/.test(sinC(sacarFuncion("_abrirPagoParcelaArt"))),
+     "abrir el pago deja guardado el monto que sale en el campo");
+
+  // Editar el precio de la venta.
+  const _ev = sinC(sacarFuncion("editarVentaArt"));
+  ok(/v\.cobro==="prestamo"\)\{[\s\S]*?return;/.test(_ev), "editar una venta como préstamo manda a Préstamos");
+  ok(/cierreGuardadoDeMes\(mk\)\)\{[\s\S]*?return;/.test(_ev), "editar una venta de un mes cerrado no se deja");
+  ok(/ajusteCuentaEgreso\(cuenta\.id, dif\)/.test(_ev) && !/ajusteCuentaEgreso\(cuenta\.id, ?[+-]?\(?nuevo/.test(_ev),
+     "de contado la cuenta se mueve solo por la diferencia");
+  ok(/usdtViejo\*nuevo\/viejo/.test(_ev), "la ganancia nueva sale con la tasa del día de la venta");
+  ok(/nuevo<abonado-0\.004\)\{[\s\S]*?return;/.test(_ev), "fiado: no puede quedar por debajo de lo abonado");
+  ok(/editarVentaArt\(/.test(sinC(sacarFuncion("_filaArticulo"))), "lo vendido tiene su botón de editar precio");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

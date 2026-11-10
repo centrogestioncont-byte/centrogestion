@@ -4908,6 +4908,35 @@ correcto. Lo cazó **dibujar la pestaña**.
 
 ---
 
+### Abonar a una factura en parcelas, y editar el precio vendido (ARREGLO 241)
+
+Sus palabras del 10/11: *"quiero abonar a una factura pero no me deja, y si
+quiero editar en cuánto lo vendí"*. Una parcela solo se pagaba **entera**, y el
+selector ofrecía cuentas de **cualquier** moneda: elegir una en USDT contestaba
+*"la cuenta es USDT y la parcela es BRL"* y no pagaba nada.
+
+- **Lo que falta de una parcela sale de `_faltaParcelaArt()`** y de ningún otro
+  sitio: lo leen el panel, el reparto y las dos deudas que resta el capital.
+  Cada abono queda en `c.pagos` con su parte de capital y de interés.
+- **El reparto (`_repartoAbonoArt`) empieza por la parcela que tocó y lo que
+  sobra pasa a las siguientes**; dentro de cada una, primero el interés. Pagar
+  más de lo que queda de la factura **no se acepta**.
+- **Un abono es UN egreso** (más otro de interés si lo hubo), y todas las
+  parcelas que tocó comparten `grupo`: deshacerlo lo deshace entero.
+- **El interés borrado deja marca** (`_borrarEgresoInteresMerc`). Antes se
+  quitaba con un `splice` a secas y el servidor lo devolvía (ARREGLO 163).
+- **✏️ Editar precio** mueve la cuenta **solo por la diferencia**, recalcula la
+  ganancia con la tasa **del día de la venta**, no deja un fiado por debajo de
+  lo abonado, y no toca ventas de un mes cerrado ni las que salieron como
+  préstamo.
+
+**Lo que se vio midiendo y NO es de este arreglo:** desde el 226, comprar en
+parcelas mueve el *"te sobran"* por el costo entero, y cada pago lo baja por lo
+pagado. Medido en v322 con una compra de 71,68 USDT: 0 → +71,68 → +35,84. La
+causa es que `deberias` resta `deudaParcelas` cuando `tienes` ya la neta con la
+mercancía. Los abonos se comportan exactamente igual que el pago entero de
+antes; arreglarlo es aparte.
+
 ### Lo que NO entró, y es a propósito
 
 - **Cantidad por artículo.** Una cosa, un registro. Con cantidad habría que
