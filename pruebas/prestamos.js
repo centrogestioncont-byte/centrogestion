@@ -14564,5 +14564,44 @@ console.log("\nARREGLO 240 · Contabilidad: cómo cerró el día, resultados, ba
      "el desglose ya no lleva la fila de parcelas, o dejaría de sumar el salto");
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// ARREGLO 243 · Mercancía: una tarjeta por cosa, con su estado arriba
+{
+  const sinC = t => t.replace(/\/\/[^\n]*/g, "");
+  const _src = ["_cuotasArt","_faltaParcelaArt","_usdtMerc","_estadoArt","_ganEsperadaArt"].map(sacarFuncion).join("\n");
+  const ME = new Function("S","_artDe","_escAud","_costoArticulo","getRateToUsdt",
+    _src + "; return {_estadoArt:_estadoArt, _ganEsperadaArt:_ganEsperadaArt};");
+  const SA = {artCuotas:[
+    {id:"c1", artId:1, n:1, nTotal:2, isoFecha:"2026-11-28", fecha:"28/11/26", monto:100, interes:0, mon:"BRL", pagada:true},
+    {id:"c2", artId:1, n:2, nTotal:2, isoFecha:"2026-12-28", fecha:"28/12/26", monto:100, interes:0, mon:"BRL", pagada:false, pagos:[{grupo:"g", monto:40, interes:0}]}]};
+  const fe = ME(SA, ()=>null, x=>String(x), a=>a._c, m=>m==="BRL"?5:null);
+  let e = fe._estadoArt({id:1, modoPago:"parcelas", mon:"BRL", estado:"mano"});
+  ok(e.k==="parcelas" && e.debe===60 && e.prox.id==="c2" && /1 de 2 pagada/.test(e.chip),
+     "en parcelas dice cuánto debe (con el abono descontado) y cuál es la próxima");
+  ok(e.pct===70, "la barra sale de lo pagado sobre el total de la factura");
+  SA.artCuotas[1].pagada=true;
+  e = fe._estadoArt({id:1, modoPago:"parcelas", mon:"BRL", estado:"mano"});
+  ok(e.k==="mano", "pagadas todas las parcelas, vuelve a ser «en mano · pagada»");
+  ok(fe._estadoArt({id:9, estado:"vendido", venta:{cobro:"fiado", cliente:"ANA"}}).chip==="✅ VENDIDA · fiada a ANA",
+     "vendida dice cómo: fiada a quién, de contado o como préstamo");
+  const g = fe._ganEsperadaArt({precioEsp:845, monEsp:"BRL", mon:"BRL", _c:67.23});
+  ok(g && g.venta===169 && g.gan===101.77, "ganarías = lo que saca menos lo que costó");
+  ok(fe._ganEsperadaArt({precioEsp:0, mon:"BRL", _c:10})===null && fe._ganEsperadaArt({precioEsp:10, monEsp:"VES", _c:1})===null,
+     "sin precio o sin tasa no hay «ganarías» (null, no un cero)");
+  // El total de arriba suma lo mismo que las tarjetas.
+  const _rM = sinC(sacarFuncion("rMercancia"));
+  ok(/esperado\+=ge\.venta; ganEsp\+=ge\.gan;/.test(_rM) && /f2\(Math\.round\(ganEsp\*100\)\/100\)/.test(_rM) && !/esperado-inv/.test(_rM),
+     "el «ganarías» de arriba es la suma de las tarjetas, no lo esperado menos todo lo invertido");
+  // La tarjeta lee el estado de UN sitio, y ⋯ no repinta.
+  const _fl = sinC(sacarFuncion("_filaArticulo"));
+  ok(/var est=_estadoArt\(a\);/.test(_fl) && /var ge=vendido\?null:_ganEsperadaArt\(a\);/.test(_fl),
+     "la tarjeta saca estado y ganancia de sus funciones");
+  ok(!/\bR\(\)/.test(sinC(sacarFuncion("_verMasArt"))) && /S\._artMas/.test(sinC(sacarFuncion("_verMasArt"))),
+     "⋯ abre por su id, queda en S y no repinta");
+  ok(/if\(!abrir\) panelParcelas="";/.test(_fl), "el detalle de parcelas sólo se dibuja abierto");
+  ok(/borrarArticulo\(/.test(_fl) && /deshacerVentaArt\(/.test(_fl) && /editarVentaArt\(/.test(_fl),
+     "borrar, deshacer y editar siguen alcanzándose (detrás de ⋯)");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

@@ -4952,6 +4952,25 @@ abono de 100                      +99,63         0,00
 - **No hay nada que rehacer a mano**: no se guarda ningún número, se calcula.
   Lo que ella vea es que el "te sobran" baja por lo que debe de los lotes.
 
+### Una tarjeta por cosa, con su estado arriba (ARREGLO 243)
+
+Sus palabras del 10/11: *"así como está es complicado entender qué es"*. Todas
+las cosas se dibujaban igual: no decía si estaba pagada, si se debía o si ya se
+vendió, y las parcelas salían pegadas debajo como otra cosa. De tres maquetas
+eligió la **A**:
+
+- **Arriba, el estado** (📦 en mano · 📅 en parcelas · ✅ vendida), que sale de
+  `_estadoArt()` y de ningún otro sitio. Una compra en parcelas ya pagada entera
+  vuelve a ser *"en mano · pagada"*.
+- **Los números siempre en el mismo orden:** te costó, la vendes en, ganarías; y
+  en parcelas, cuánto debe y la próxima. *"Ganarías"* sale de `_ganEsperadaArt()`,
+  que lee también el total de arriba.
+- **Y ese total estaba mal:** restaba lo invertido en TODO, también lo que no
+  tiene precio, y decía *"ganarías $33,66"* encima de tarjetas que sumaban
+  188,39. Ahora es la suma de las tarjetas.
+- **Lo que casi no se usa va detrás de ⋯**, que abre por su id y queda en `S`
+  (ARREGLOS 32 y 165). El detalle de parcelas sólo se dibuja abierto.
+
 ### Lo que NO entró, y es a propósito
 
 - **Cantidad por artículo.** Una cosa, un registro. Con cantidad habría que
