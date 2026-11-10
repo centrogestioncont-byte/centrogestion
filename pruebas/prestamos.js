@@ -7650,7 +7650,7 @@ console.log("\n— FASE 2: la cuenta madre —");
   //    EXPRESION ENTERA: buscar "sueldoPendiente" suelto pasaria con el
   //    termino multiplicado por cero o renombrado (ARREGLO 100).
   const cc = sinCom(sacarFuncion("conciliacionCapital"));
-  ok(/var deberias=r2v\(apertura-intAp\.total\+bruta-egEmpresaSinMerc-egPersonalEmpresa-socios-traspPers\.total-\(real\.sueldoPendiente\|\|0\)-\(real\.deudaParcelas\|\|0\)\+aportes\.total-retSoc\.total\);/.test(cc),
+  ok(/var deberias=r2v\(apertura-intAp\.total\+bruta-egEmpresaSinMerc-egPersonalEmpresa-socios-traspPers\.total-\(real\.sueldoPendiente\|\|0\)\+aportes\.total-retSoc\.total\);/.test(cc),
      "«deberias tener» resta el MISMO sueldo que «tienes», y suma lo que ella metio");
   // ── ARREGLO 143 · la compra de mercancia se excluye UNA vez ───────────
   //
@@ -14546,6 +14546,22 @@ console.log("\nARREGLO 240 · Contabilidad: cómo cerró el día, resultados, ba
   ok(/usdtViejo\*nuevo\/viejo/.test(_ev), "la ganancia nueva sale con la tasa del día de la venta");
   ok(/nuevo<abonado-0\.004\)\{[\s\S]*?return;/.test(_ev), "fiado: no puede quedar por debajo de lo abonado");
   ok(/editarVentaArt\(/.test(sinC(sacarFuncion("_filaArticulo"))), "lo vendido tiene su botón de editar precio");
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// ARREGLO 242 · la deuda de parcelas no se resta dos veces
+//   Comprar en parcelas sube `tienes` por la mercancía y lo baja por la deuda
+//   el mismo número. Restarla también en `deberias` movía el "te sobran" por
+//   el costo entero de cada compra (medido en v322: 0 → +71,68).
+{
+  const sinC = t => t.replace(/\/\/[^\n]*/g, "");
+  const _cc = sinC(sacarFuncion("conciliacionCapital"));
+  const _deb = (_cc.match(/var deberias=r2v\([^;]*;/) || [""])[0];
+  ok(_deb && _deb.indexOf("deudaParcelas") < 0, "«deberías tener» no resta la deuda de parcelas (ya va neta en «tienes»)");
+  ok(/enMercancia-sueldoPendiente-deudaParcelas/.test(sinC(sacarFuncion("capitalRealTotal"))),
+     "y «tienes» sí la sigue restando junto a la mercancía");
+  ok(!/_filas\.push\(\["Parcelas de mercancía por pagar"/.test(HTML),
+     "el desglose ya no lleva la fila de parcelas, o dejaría de sumar el salto");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

@@ -3383,7 +3383,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261110_v323";
+var APP_VERSION = "20261110_v324";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -7310,12 +7310,19 @@ function conciliacionCapital(){
   // mismo sitio que el de alla (real.sueldoPendiente). Calcularlo aparte seria
   // la segunda respuesta a la misma pregunta, y con que difieran en un centimo
   // el "sin explicar" se mueve solo.
-  // ARREGLO 226: la deuda de parcelas de mercancía también se resta en los
-  // DOS lados, por el mismo motivo que el sueldo (ARREGLO 105). Si la
-  // apertura se fijó antes de comprar en parcelas, ese capital sube
-  // (enMercancia) y baja (deudaParcelas) en el lado "real"; aquí espejamos
-  // la bajada para que el "sin explicar" no se mueva.
-  var deberias=r2v(apertura-intAp.total+bruta-egEmpresaSinMerc-egPersonalEmpresa-socios-traspPers.total-(real.sueldoPendiente||0)-(real.deudaParcelas||0)+aportes.total-retSoc.total);
+  // ARREGLO 242: la deuda de parcelas de mercancía NO se resta aquí. El 226
+  // la restaba "en los DOS lados, como el sueldo", y el sueldo no es lo
+  // mismo: el sueldo baja `tienes` sin que nada lo suba. Comprar en parcelas
+  // SUBE `tienes` por la mercancía (enMercancia) y lo BAJA por la deuda
+  // (deudaParcelas) el mismo número, así que el lado real ya queda neutro.
+  // Restarla también aquí la contaba dos veces. Medido en v322 con una compra
+  // de 71,68 USDT: el "te sobran" pasaba de 0 a +71,68 al comprar, bajaba a
+  // +35,84 al pagar la mitad, y fijar la apertura con una deuda viva dejaba
+  // un sobrante del tamaño de esa deuda desde el primer segundo.
+  // Pagar una parcela tampoco mueve nada aquí: baja la cuenta y la deuda en
+  // `tienes` a la vez, y su egreso lleva `fromArticulo`, así que ya no llega a
+  // `egEmpresaSinMerc` (ARREGLO 143).
+  var deberias=r2v(apertura-intAp.total+bruta-egEmpresaSinMerc-egPersonalEmpresa-socios-traspPers.total-(real.sueldoPendiente||0)+aportes.total-retSoc.total);
   var diferencia=r2v(real.total-deberias);
   // De qué está hecha esa diferencia: los ajustes a mano y el desfase de las
   // tasas se explican solos, lo que quede es lo único que hay que perseguir.
@@ -18591,12 +18598,11 @@ function _htmlConciliacion(sinTitulo){
     if(co.real&&(co.real.sueldoPendiente||0)>0.005)
       _filas.push(["Tu sueldo, aún sin apartar", -co.real.sueldoPendiente,
                    "var(--tx4)", "sigue siendo tuyo"]);
-    // ARREGLO 226: la deuda viva de las parcelas de mercancía. Baja los dos
-    // lados (ARREGLO 71 calcado), así que sale aquí como fila para que la
-    // lista siga sumando el salto al céntimo.
-    if(co.real&&(co.real.deudaParcelas||0)>0.005)
-      _filas.push(["Parcelas de mercancía por pagar", -co.real.deudaParcelas,
-                   "var(--tx4)", "deuda viva"]);
+    // ARREGLO 242: aquí iba la fila "Parcelas de mercancía por pagar". Se fue
+    // con la resta de `deberias` que la justificaba: la deuda ya se cancela
+    // con la mercancía dentro de `tienes`, y dejarla aquí haría que la lista
+    // dejara de sumar el salto. La deuda se sigue viendo donde es una deuda de
+    // verdad: el Balance de Contabilidad y el panel de cada artículo.
     // ARREGLO 100: esta fila se llamaba "no es dinero" y eso era FALSO para la
     // pregunta que ella hace. efectoTasasDesde() valora cada movimiento a la
     // tasa de HOY y lo compara con la ganancia que se apuntó aquel día, así que
