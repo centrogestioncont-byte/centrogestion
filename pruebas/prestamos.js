@@ -167,7 +167,8 @@ const NECESARIAS = ["_egresosHuerfanos", "moverEgresoAPersonal", "_tasaDelDiaFue
                     "sincronizarFIFOconCuentas", "normalizarInventarioFIFO",
                     "_podarBorrados",
                     "_trioIU", "_fiatIU", "_usdtIU", "_tasaIU", "_descuadreIU",
-                    "_monIU", "_loteConOrden", "_ultimasIU"];
+                    "_monIU", "_loteConOrden", "_ultimasIU",
+                    "_antesDeApertura", "_tasasDeApertura", "_haberDeApertura", "_revalApertura"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
 global.window = global.window || {};
 // Lo mismo con document: las funciones que refrescan un recuadro por su id
