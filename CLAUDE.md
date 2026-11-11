@@ -4116,6 +4116,31 @@ valor correcto al escribirlo bien.
 
 **No cambia ningún dato guardado**: solo cómo se lee lo que se teclea.
 
+#### Y un monto mil veces más grande no se guarda (ARREGLO 247)
+
+La regla del 246 lee `58.140` en un monto como cincuenta y ocho mil, y eso es
+correcto si se escribió así. Si se pegó de un sitio con punto decimal, son
+58,14. La regla no puede adivinarlo; lo que sí ve es que **los números de la
+operación no cuadran entre sí**.
+
+- **Inventario USDT:** si `USDT ≠ monto ÷ tasa` en más de un 2 %, **no guarda**
+  (`_frenoIU`). Del 0,5 % al 2 % sigue la pregunta del ARREGLO 66.
+- **Traspasos entre monedas:** no hay tasa escrita, así que se compara la que
+  sale con la de referencia. Diez veces fuera o más **no guarda**; entre el 2 % y
+  diez veces **pregunta**, porque un cambio de verdad a otra hora puede
+  apartarse más de un 2 % de la referencia y bloquearlo dejaría un traspaso
+  bueno sin forma de guardarse.
+- **Nueva:** lo entregado no se escribe, sale del monto y la tasa. Donde sí se
+  escriben números que tienen que cuadrar es en el desglose (formas de pago y
+  cuentas de entrega), que ya no guardaba si no sumaba exacto.
+- **El aviso dice cuál**: *"¿Quisiste decir 58,14 USDT? Lo escribiste como
+  58.140"*. Se elige el campo que, leído con la otra lectura, deja la cuenta
+  más cerca de cuadrar, y se mide por **razón**, no por diferencia: por
+  diferencia la primera versión sugería "¿1,5 BRL?".
+- **Un campo que repinta al salir conserva su texto** si el número no cambió:
+  redibujado desde `S`, `294.990` volvía como `294990` y la sugerencia ya no
+  tenía de dónde salir.
+
 ### La tasa de un abono se escribe como ella la dice: 1 USDT = 5,30 BRL
 
 Cuando un cliente paga un préstamo —o una cuenta por cobrar— en una moneda
