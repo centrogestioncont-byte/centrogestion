@@ -2990,11 +2990,8 @@ function _frenoIU(){
   if(!(rel>0.02)) return null;
   var usdtEsp=_usdtIU(fiat,tasa,com,esV), r=usdtEsp>0?usdt/usdtEsp:0;
   var cuanto=r>=10?"unas "+_fmtEco(Math.round(r))+" veces más":(r>0&&r<=0.1?"unas "+_fmtEco(Math.round(1/r))+" veces menos":Math.round(Math.abs(r-1)*100)+" % distinto");
-  var mon=_monIU(), elF=document.getElementById(_IDS_IU[t.fiat]), elU=document.getElementById(_IDS_IU.usdt);
-  var q=_mejorQuisiste([{el:elU, unidad:"USDT", k:"usdt"},{el:elF, unidad:mon, k:"fiat"}], function(c, alt){
-    var u=c.k==="usdt"?alt:usdt, fi=c.k==="fiat"?alt:fiat;
-    var e=_fiatIU(u,tasa,com,esV); return (e>0&&fi>0)?Math.log(fi/e):1e9;
-  });
+  var mon=_monIU(), elU=document.getElementById(_IDS_IU.usdt);
+  var q=_quisisteIU();
   var msg="No se guardó: los números no cuadran entre sí.\n\n"+
     _fmtEco(fiat)+" "+mon+" ÷ "+_fmtEco(tasa)+" = "+_fmtEco(Math.round(usdtEsp*100)/100)+" USDT, "+
     "y escribiste "+_fmtEco(usdt)+" USDT ("+cuanto+").";
@@ -3004,6 +3001,21 @@ function _frenoIU(){
   } else msg+="\n\nCorrige el que esté mal.";
   [q?q.el:elU].forEach(function(el){ if(el){ el.style.outline="2px solid var(--mal)"; _ecoCampo(el, "No cuadra"+(q?": ¿"+_fmtEco(q.m.alt)+"?":" con los otros dos")); } });
   return {msg:msg};
+}
+
+// Cuál de los dos campos de Inventario tiene pinta de estar mil veces grande.
+// Sin efectos: la leen el freno al guardar y el recuadro del cálculo mientras
+// teclea. Escrita en cada uno, un día el recuadro sugeriría un número y el
+// aviso al guardar otro.
+function _quisisteIU(){
+  var f=S.nIU, esV=f.tipo==="venta", t=_trioIU(), com=_comIU(f.comision);
+  var fiat=parseFloat(f[t.fiat])||0, usdt=parseFloat(f.usdt)||0, tasa=parseFloat(f.tasa)||0;
+  if(!(fiat>0&&usdt>0&&tasa>0)) return null;
+  var elF=document.getElementById(_IDS_IU[t.fiat]), elU=document.getElementById(_IDS_IU.usdt);
+  return _mejorQuisiste([{el:elU, unidad:"USDT", k:"usdt"},{el:elF, unidad:_monIU(), k:"fiat"}], function(c, alt){
+    var u=c.k==="usdt"?alt:usdt, fi=c.k==="fiat"?alt:fiat;
+    var e=_fiatIU(u,tasa,com,esV); return (e>0&&fi>0)?Math.log(fi/e):1e9;
+  });
 }
 
 // Traspasos entre monedas: no hay tasa escrita, así que se compara la que sale
@@ -17031,17 +17043,34 @@ function _htmlPrevIU(){
     return "<div style='background:var(--sup2g);border-radius:8px;padding:10px;font-size:12px;color:var(--tx3);text-align:center'>Escribe dos de los tres números (monto, USDT y tasa) — el que falte lo calcula la app</div>";
   var tasaMostrar=tasa>0?tasa:_tasaIU(fiat,usdt,com,esV);
   var neto=esV?usdt-com:usdt-com;   // lo que de verdad queda en Binance, en los dos casos
+  var d=_descuadreIU();
   var linea = esV
     ? "("+f4(usdt)+" &minus; "+f4(com)+") &times; "+f2(tasa)+" = <b>"+f2(_fiatIU(usdt,tasa,com,true))+" "+mon+"</b>"
     : f2(fiat)+" "+mon+" &divide; "+f4(tasa)+" = "+f4(usdt)+" USDT &nbsp;&minus;&nbsp;"+f4(com)+" de comisión &rarr; <b>entran "+f4(neto)+" USDT</b>";
-  var d=_descuadreIU();
-  var aviso = d ? "<div style='margin-top:8px;background:var(--mal-sup);border:1px solid var(--rj4-b);border-radius:7px;padding:8px 10px;font-size:11px;color:var(--rj2);line-height:1.5'>"+
+  // ARREGLO 247 · Con los tres números descuadrados, esa línea era una cuenta
+  // FALSA: "1.500 ÷ 5,085 = 58.140 USDT" en verde, que es lo que ella tecleó y
+  // no lo que da. Ahora dice lo que debería dar y lo que escribió, en rojo. El
+  // recuadro existe para comprobar la cuenta a ojo: una igualdad que no es
+  // igualdad enseña a no mirarlo.
+  var grave = !!d && Math.abs(d.dif)/Math.abs(d.esperado) > 0.02;   // el mismo tope que _frenoIU
+  if(d){
+    var mal="<b style='color:var(--mal)'>";
+    linea = esV
+      ? "("+f4(usdt)+" &minus; "+f4(com)+") &times; "+f2(tasa)+" = <b>"+f2(d.esperado)+" "+mon+"</b>, escribiste "+mal+_fmtEco(fiat)+" "+mon+"</b>"
+      : f2(fiat)+" "+mon+" &divide; "+f4(tasa)+" = <b>"+f2(_usdtIU(fiat,tasa,com,false))+" USDT</b>, escribiste "+mal+_fmtEco(usdt)+" USDT</b>";
+  }
+  var q = grave ? _quisisteIU() : null;
+  var aviso = grave ? "<div style='margin-top:8px;background:var(--mal-sup);border:1px solid var(--rj4-b);border-radius:7px;padding:8px 10px;font-size:11px;color:var(--rj2);line-height:1.5'>"+
+      "<b>⛔ No se va a guardar: estos tres números no cuadran.</b>"+
+      (q ? "<br>¿Quisiste decir <b>"+_fmtEco(q.m.alt)+" "+q.unidad+"</b>? Lo escribiste como <b>"+_escAud(q.m.txt)+"</b>, y así son "+_fmtEco(q.m.leido)+" "+q.unidad+"."
+         : "<br>Corrige el que esté mal: el monto, el USDT o la tasa.")+"</div>"
+    : d ? "<div style='margin-top:8px;background:var(--mal-sup);border:1px solid var(--rj4-b);border-radius:7px;padding:8px 10px;font-size:11px;color:var(--rj2);line-height:1.5'>"+
       "<b>⚠️ Estos tres números no cuadran.</b><br>"+
       "Con "+f4(usdt)+" USDT a "+f4(tasa)+" salen <b>"+f2(d.esperado)+" "+mon+"</b>, pero escribiste <b>"+f2(d.real)+"</b> ("+(d.dif>0?"+":"")+f2(d.dif)+")."+
       "<br>O la tasa es <b>"+f4(d.tasaReal)+"</b>, o uno de los otros dos está mal tecleado.</div>" : "";
-  return "<div style='background:"+(esV?"var(--info-sup)":"var(--ok-sup)")+";border-radius:8px;padding:10px 14px'>"+
+  return "<div style='background:"+(grave?"var(--mal-sup)":esV?"var(--info-sup)":"var(--ok-sup)")+";border-radius:8px;padding:10px 14px'>"+
       "<div style='font-size:10px;color:var(--tx2b);text-transform:uppercase;letter-spacing:.5px'>Tasa de esta operación</div>"+
-      "<div style='font-size:22px;font-weight:800;color:"+(esV?"var(--info)":"var(--ok)")+";line-height:1.2'>1 USDT = "+f4(tasaMostrar)+" "+mon+"</div>"+
+      "<div style='font-size:22px;font-weight:800;color:"+(grave?"var(--mal)":esV?"var(--info)":"var(--ok)")+";line-height:1.2'>1 USDT = "+f4(tasaMostrar)+" "+mon+"</div>"+
       "<div style='font-size:11px;color:var(--tx2);border-top:1px solid rgba(0,0,0,.08);margin-top:6px;padding-top:6px'>"+linea+"</div>"+
     "</div>"+aviso;
 }

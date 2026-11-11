@@ -1555,9 +1555,10 @@ ok(!/parseFloat\(f\.comision\)\|\|COM\(\)/.test(HTML),
 // guardia no es el numero sino que NADIE lea la comision a pelo: si alguien
 // vuelve a poner parseFloat(f.comision), el cero escrito se convierte en 0,06.
 // ARREGLO 247: el quinto es _frenoIU, que vuelve a hacer la cuenta para decidir
-// si no se guarda.
-ok((HTML.match(/_comIU\(f\.comision\)/g) || []).length === 5,
-   "los cinco sitios que leen la comision pasan por _comIU",
+// si no se guarda; el sexto, _quisisteIU, que dice cual de los campos parece
+// mil veces grande y la leen el freno y el recuadro del calculo.
+ok((HTML.match(/_comIU\(f\.comision\)/g) || []).length === 6,
+   "los seis sitios que leen la comision pasan por _comIU",
    (HTML.match(/_comIU\(f\.comision\)/g) || []).length);
 ok(!/parseFloat\(\s*f\.comision\s*\)/.test(HTML),
    "y ninguno la lee a pelo con parseFloat");
@@ -14839,8 +14840,8 @@ console.log("\nARREGLO 247 · Seguro contra montos mil veces más grandes");
   const mk = function(SX, campos){
     return new Function("S", "document", "_ecoCampo", "COM",
       sacarConstante("_IDS_IU") + "\n" +
-      ["_leerNumero","_fmtEco","_lecturaMiles","_mejorQuisiste","_textoQuisiste","_frenoIU","_fiatIU","_usdtIU","_trioIU","_comIU","_monIU","_frenoTraspaso"].map(sacarFuncion).join("\n") +
-      "; return {freno:_frenoIU, lect:_lecturaMiles, tras:_frenoTraspaso};")
+      ["_leerNumero","_fmtEco","_lecturaMiles","_mejorQuisiste","_textoQuisiste","_quisisteIU","_frenoIU","_fiatIU","_usdtIU","_tasaIU","_trioIU","_comIU","_monIU","_frenoTraspaso","_descuadreIU","_htmlPrevIU","_escAud","r4","f2","f4"].map(sacarFuncion).join("\n") +
+      "; return {freno:_frenoIU, lect:_lecturaMiles, tras:_frenoTraspaso, prev:_htmlPrevIU};")
       (SX, {getElementById:function(id){ return campos[id]||null; }, querySelector:function(s){ return campos[s]||null; }}, function(){}, function(){ return 0.06; });
   };
   // 1 · Lo que ella pidió: 1.500 BRL, tasa 5,085 y "58.140" pegado en USDT.
@@ -14852,9 +14853,17 @@ console.log("\nARREGLO 247 · Seguro contra montos mil veces más grandes");
   ok(r1 && /¿Quisiste decir 58,14 USDT\? Lo escribiste como 58\.140/.test(r1.msg), "y sugiere 58,14 USDT, no 1,5 BRL", r1 && r1.msg);
   ok(r1 && /294,99 USDT/.test(r1.msg), "y dice lo que da la cuenta: 1.500 ÷ 5,085 = 294,99", r1 && r1.msg);
   ok(C["iu-usdt"].style.outline && /--mal/.test(C["iu-usdt"].style.outline), "y marca en rojo el campo del USDT");
+  // 1b · Y el recuadro del cálculo no enseña una cuenta falsa: dice lo que da
+  // y lo que escribió, y avisa de que no se va a guardar.
+  const pv = F1.prev();
+  ok(/1\.500,00 BRL &divide; 5,085 = <b>294,99 USDT<\/b>, escribiste <b[^>]*>58\.140 USDT/.test(pv), "el recuadro dice 1.500 ÷ 5,085 = 294,99 USDT, escribiste 58.140", pv);
+  ok(!/= 58\.140/.test(pv) && /No se va a guardar/.test(pv) && /¿Quisiste decir <b>58,14 USDT<\/b>/.test(pv), "y no escribe «= 58.140» como si fuera el resultado", pv);
+  ok(/^<div style='background:var\(--mal-sup\)/.test(pv), "y el recuadro deja de ser verde: va en rojo", pv.slice(0,80));
   // 2 · Bien escrito, no frena.
   const S2 = {nIU:{tipo:"compra", moneda:"BRL", montOrigen:1500, usdt:294.99, tasa:5.085, comision:0.06}};
-  ok(mk(S2, {"iu-fiat":campo("1.500"), "iu-usdt":campo("294,99"), "iu-tasa":campo("5,085","tasa")}).freno() === null, "con 294,99 USDT cuadra y no frena");
+  const F2 = mk(S2, {"iu-fiat":campo("1.500"), "iu-usdt":campo("294,99"), "iu-tasa":campo("5,085","tasa")});
+  ok(F2.freno() === null, "con 294,99 USDT cuadra y no frena");
+  ok(!/escribiste|No se va a guardar/.test(F2.prev()) && /var\(--ok-sup\)/.test(F2.prev()), "y cuadrando, el recuadro sigue verde y sin aviso");
   // 3 · Por debajo del 2 % no frena (lo pregunta el aviso del ARREGLO 66).
   const S3 = {nIU:{tipo:"compra", moneda:"BRL", montOrigen:1500, usdt:290, tasa:5.085, comision:0.06}};
   ok(mk(S3, {"iu-usdt":campo("290")}).freno() === null, "un 1,7 % de diferencia no frena: eso lo pregunta el aviso de siempre");
