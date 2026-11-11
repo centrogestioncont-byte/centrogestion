@@ -1554,8 +1554,10 @@ ok(!/parseFloat\(f\.comision\)\|\|COM\(\)/.test(HTML),
 // nada) y anadio los de _autoIU, _descuadreIU y _htmlPrevIU. Lo que protege la
 // guardia no es el numero sino que NADIE lea la comision a pelo: si alguien
 // vuelve a poner parseFloat(f.comision), el cero escrito se convierte en 0,06.
-ok((HTML.match(/_comIU\(f\.comision\)/g) || []).length === 4,
-   "los cuatro sitios que leen la comision pasan por _comIU",
+// ARREGLO 247: el quinto es _frenoIU, que vuelve a hacer la cuenta para decidir
+// si no se guarda.
+ok((HTML.match(/_comIU\(f\.comision\)/g) || []).length === 5,
+   "los cinco sitios que leen la comision pasan por _comIU",
    (HTML.match(/_comIU\(f\.comision\)/g) || []).length);
 ok(!/parseFloat\(\s*f\.comision\s*\)/.test(HTML),
    "y ninguno la lee a pelo con parseFloat");
@@ -14826,6 +14828,63 @@ console.log("\nARREGLO 246 · Leer los números según el tipo de campo");
   ok(/_inmFormCuota\(inm\)/.test(_vacio), "sin cuotas, «+ Agregar una cuota» dibuja su formulario");
   ok(/Object\.defineProperty\(HTMLInputElement\.prototype,"value"/.test(HTML),
      "y se entera cuando el código escribe el campo, o la línea quedaría con el número anterior (ARREGLO 55)");
+}
+
+// ── ARREGLO 247 · un monto mil veces más grande no se guarda ──
+console.log("\nARREGLO 247 · Seguro contra montos mil veces más grandes");
+{
+  const sc = function(n){ return sacarFuncion(n).replace(/\/\/[^\n]*/g, ""); };
+  // Un campo de mentira: lo justo que miran las funciones (valor, tipo, estilo).
+  const campo = function(v, tipo){ return {value:v, style:{}, getAttribute:function(k){ return k==="data-num"?(tipo||null):null; }}; };
+  const mk = function(SX, campos){
+    return new Function("S", "document", "_ecoCampo", "COM",
+      sacarConstante("_IDS_IU") + "\n" +
+      ["_leerNumero","_fmtEco","_lecturaMiles","_mejorQuisiste","_textoQuisiste","_frenoIU","_fiatIU","_usdtIU","_trioIU","_comIU","_monIU","_frenoTraspaso"].map(sacarFuncion).join("\n") +
+      "; return {freno:_frenoIU, lect:_lecturaMiles, tras:_frenoTraspaso};")
+      (SX, {getElementById:function(id){ return campos[id]||null; }, querySelector:function(s){ return campos[s]||null; }}, function(){}, function(){ return 0.06; });
+  };
+  // 1 · Lo que ella pidió: 1.500 BRL, tasa 5,085 y "58.140" pegado en USDT.
+  const C = {"iu-fiat":campo("1.500"), "iu-usdt":campo("58.140"), "iu-tasa":campo("5,085","tasa")};
+  const S1 = {nIU:{tipo:"compra", moneda:"BRL", montOrigen:1500, usdt:58140, tasa:5.085, comision:0.06}};
+  const F1 = mk(S1, C);
+  const r1 = F1.freno();
+  ok(r1 && /No se guardó/.test(r1.msg), "1.500 BRL a 5,085 con 58.140 USDT NO se guarda", r1 && r1.msg);
+  ok(r1 && /¿Quisiste decir 58,14 USDT\? Lo escribiste como 58\.140/.test(r1.msg), "y sugiere 58,14 USDT, no 1,5 BRL", r1 && r1.msg);
+  ok(r1 && /294,99 USDT/.test(r1.msg), "y dice lo que da la cuenta: 1.500 ÷ 5,085 = 294,99", r1 && r1.msg);
+  ok(C["iu-usdt"].style.outline && /--mal/.test(C["iu-usdt"].style.outline), "y marca en rojo el campo del USDT");
+  // 2 · Bien escrito, no frena.
+  const S2 = {nIU:{tipo:"compra", moneda:"BRL", montOrigen:1500, usdt:294.99, tasa:5.085, comision:0.06}};
+  ok(mk(S2, {"iu-fiat":campo("1.500"), "iu-usdt":campo("294,99"), "iu-tasa":campo("5,085","tasa")}).freno() === null, "con 294,99 USDT cuadra y no frena");
+  // 3 · Por debajo del 2 % no frena (lo pregunta el aviso del ARREGLO 66).
+  const S3 = {nIU:{tipo:"compra", moneda:"BRL", montOrigen:1500, usdt:290, tasa:5.085, comision:0.06}};
+  ok(mk(S3, {"iu-usdt":campo("290")}).freno() === null, "un 1,7 % de diferencia no frena: eso lo pregunta el aviso de siempre");
+  // 4 · Solo "58.140" tiene otra lectura; una tasa, una coma o varios puntos no.
+  ok(F1.lect(campo("58.140")).alt === 58.14 && F1.lect(campo("58,14")) === null && F1.lect(campo("5.085","tasa")) === null && F1.lect(campo("1.000.000")) === null,
+     "la otra lectura solo existe para un monto con un punto y tres cifras");
+  // 5 · Traspaso entre monedas: diez veces fuera no guarda; un 5 % se pregunta.
+  global.getRateToUsdt = undefined;
+  const TR = new Function("S", "document", "_ecoCampo", "getRateToUsdt",
+    ["_leerNumero","_fmtEco","_lecturaMiles","_mejorQuisiste","_textoQuisiste","_frenoTraspaso"].map(sacarFuncion).join("\n") + "; return _frenoTraspaso;");
+  const CT = {"input[oninput^='S.nTraspaso.monto=']":campo("1.500"), "input[oninput^='S.nTraspaso.montoDestino=']":campo("294.990")};
+  const tr = TR({}, {querySelector:function(s){ return CT[s]||null; }}, function(){}, function(m){ return {BRL:5.085, USDT:1}[m]; });
+  const t1 = tr({moneda:"BRL"}, {moneda:"USDT"}, 1500, 294990);
+  ok(t1 && t1.bloquea && /¿Quisiste decir 294,99 USDT\?/.test(t1.msg), "traspaso de 1.500 BRL a 294.990 USDT: no guarda y sugiere 294,99", t1 && t1.msg);
+  const t2 = tr({moneda:"BRL"}, {moneda:"USDT"}, 1500, 280);
+  ok(t2 && !t2.bloquea && /5 %/.test(t2.msg), "un cambio un 5 % fuera se pregunta, no se bloquea", t2 && t2.msg);
+  ok(tr({moneda:"BRL"}, {moneda:"USDT"}, 1500, 294.99) === null, "y uno que cuadra no dice nada");
+  // 6 · Conectado donde guarda: Inventario antes del aviso viejo, Traspasos, y las filas de Nueva.
+  const siu = sc("saveIU");
+  ok(siu.indexOf("_frenoIU()") > 0 && siu.indexOf("_frenoIU()") < siu.indexOf("_descuadreIU()"), "saveIU frena antes de preguntar el descuadre pequeño");
+  ok(/_frenoTraspaso\(cO,cD,monto,montoDest\)/.test(sc("saveTraspaso")) && /if\(_ft\.bloquea\)\{ alert\(_ft\.msg\); return; \}/.test(sc("saveTraspaso")),
+     "saveTraspaso frena lo que sale diez veces fuera");
+  const stx = sc("saveTx");
+  ok(/_quisisteEnFilas\("txPagoSet\("/.test(stx) && /_quisisteEnFilas\("txEntregaSet\("/.test(stx), "Nueva dice qué fila tiene pinta de estar mil veces grande, en pagos y en entregas");
+  // 7 · El texto tal como ella lo escribió sobrevive al repintado.
+  ok(/m\[_claveCampo\(l\[i\]\)\]=\{raw:l\[i\]\.value, n:_leerNumero\(l\[i\]\)\}/.test(sc("_numsMalosAntes")) && /_leerNumero\(l\[i\]\)===pk\.n/.test(sc("_ecoEn")),
+     "un campo que repinta al salir conserva lo que escribió si el número no cambió");
+  // 8 · En el teléfono las cuatro casillas de Inventario van de dos en dos.
+  ok(/@media \(max-width:639px\)\{\.iu-rej4\{grid-template-columns:repeat\(2,1fr\)\}\}/.test(HTML) && (HTML.match(/class='iu-rej4'/g)||[]).length === 2,
+     "Inventario baja a dos columnas en el teléfono, en compra y en venta");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
