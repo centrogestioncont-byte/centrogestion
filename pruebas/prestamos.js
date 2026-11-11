@@ -676,9 +676,15 @@ ok(co.egPersonalSin === 15, "pero se muestra aparte para que se vea", co.egPerso
 ok(co.bruta === 100 && co.egEmpresa === 30 && co.socios === 10, "cada linea sale por separado");
 
 console.log("\nTolerancia");
-ok(F.conciliacionCapital().tolerancia >= 5, "nunca baja de 5 USDT");
+// ARREGLO 245: el ruido de las tasas ya tiene su fila, asi que el margen es
+// el de "Tu dia": 0,25 % del capital, minimo 1. Con el 2 % viejo, 10 USDT
+// que salen sin registrar se leian "Cuadra".
+ok(F.conciliacionCapital().tolerancia >= 1, "nunca baja de 1 USDT");
 S.cuentas = [{ id:"a", nombre:"CAJA", moneda:"USDT", saldo:10000, activa:true }];
-ok(casi(F.conciliacionCapital().tolerancia, 200, 1), "en carteras grandes es el 2% del capital",
+ok(casi(F.conciliacionCapital().tolerancia, 25, 0.5), "en carteras grandes es el 0,25% del capital",
+   F.conciliacionCapital().tolerancia);
+S.cuentas = [{ id:"a", nombre:"CAJA", moneda:"USDT", saldo:2000, activa:true }];
+ok(F.conciliacionCapital().tolerancia < 10, "con su tamaño, 10 USDT sin registrar NO caben en el margen",
    F.conciliacionCapital().tolerancia);
 limpiar(); S.config = {}; S.cuentas = [];
 
