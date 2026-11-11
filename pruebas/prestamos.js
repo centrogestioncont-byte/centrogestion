@@ -14820,6 +14820,10 @@ console.log("\nARREGLO 246 · Leer los números según el tipo de campo");
   // 9 · La línea de debajo es UNA para toda la app, y no repinta.
   ok(/document\.addEventListener\("input"/.test(HTML) && /new MutationObserver/.test(HTML) && !/\bR\(\)/.test(sc("_ecoCampo")),
      "un escuchador para toda la app, que no llama a R() (ARREGLO 32)");
+  // 10 · Un inmueble sin cuotas también deja meter la primera: el formulario
+  //      solo se dibujaba cuando ya había cuotas, y el botón no abría nada.
+  const _lc = sc("_inmListaCuotas"), _vacio = _lc.slice(_lc.indexOf("if(!cs.length)"), _lc.indexOf("var filas="));
+  ok(/_inmFormCuota\(inm\)/.test(_vacio), "sin cuotas, «+ Agregar una cuota» dibuja su formulario");
   ok(/Object\.defineProperty\(HTMLInputElement\.prototype,"value"/.test(HTML),
      "y se entera cuando el código escribe el campo, o la línea quedaría con el número anterior (ARREGLO 55)");
 }
