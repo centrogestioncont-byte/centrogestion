@@ -167,7 +167,8 @@ const NECESARIAS = ["_egresosHuerfanos", "moverEgresoAPersonal", "_tasaDelDiaFue
                     "sincronizarFIFOconCuentas", "normalizarInventarioFIFO",
                     "_podarBorrados",
                     "_trioIU", "_fiatIU", "_usdtIU", "_tasaIU", "_descuadreIU",
-                    "_monIU", "_loteConOrden", "_ultimasIU"];
+                    "_monIU", "_loteConOrden", "_ultimasIU",
+                    "_antesDeApertura", "_tasasDeApertura", "_haberDeApertura", "_revalApertura"];
 // _refotografiar escribe en window; en Node no existe, se le pone uno vacio.
 global.window = global.window || {};
 // Lo mismo con document: las funciones que refrescan un recuadro por su id
@@ -675,9 +676,15 @@ ok(co.egPersonalSin === 15, "pero se muestra aparte para que se vea", co.egPerso
 ok(co.bruta === 100 && co.egEmpresa === 30 && co.socios === 10, "cada linea sale por separado");
 
 console.log("\nTolerancia");
-ok(F.conciliacionCapital().tolerancia >= 5, "nunca baja de 5 USDT");
+// ARREGLO 245: el ruido de las tasas ya tiene su fila, asi que el margen es
+// el de "Tu dia": 0,25 % del capital, minimo 1. Con el 2 % viejo, 10 USDT
+// que salen sin registrar se leian "Cuadra".
+ok(F.conciliacionCapital().tolerancia >= 1, "nunca baja de 1 USDT");
 S.cuentas = [{ id:"a", nombre:"CAJA", moneda:"USDT", saldo:10000, activa:true }];
-ok(casi(F.conciliacionCapital().tolerancia, 200, 1), "en carteras grandes es el 2% del capital",
+ok(casi(F.conciliacionCapital().tolerancia, 25, 0.5), "en carteras grandes es el 0,25% del capital",
+   F.conciliacionCapital().tolerancia);
+S.cuentas = [{ id:"a", nombre:"CAJA", moneda:"USDT", saldo:2000, activa:true }];
+ok(F.conciliacionCapital().tolerancia < 10, "con su tamaño, 10 USDT sin registrar NO caben en el margen",
    F.conciliacionCapital().tolerancia);
 limpiar(); S.config = {}; S.cuentas = [];
 
@@ -11423,8 +11430,12 @@ console.log("\nARREGLO 146 · plata suya que entra y sale de la empresa");
   ok(/var retSoc=retirosSocioPrestamosDesde\(desde\);/.test(cc) && /retSoc:retSoc/.test(cc),
      "la conciliacion resta el retiro de socios por prestamos y lo devuelve");
   const _rsp = sinC(sacarFuncion("retirosSocioPrestamosDesde"));
-  ok(/if\(!ab\.sinCobro\) return;/.test(_rsp) && /\(1-fr\)/.test(_rsp) && /getRateToUsdt\(mon\)/.test(_rsp),
-     "el retiro cuenta solo la parte de CAPITAL, a la tasa de hoy (como capitalRealTotal)");
+  // ARREGLO 244: ya NO a la tasa de hoy. Liquidado, el préstamo no está en
+  // "tienes", así que con la tasa de hoy solo se movía "deberías" — y con la
+  // tasa del mercado (ARREGLO 182) eso era un número que cambiaba solo.
+  const _ufs = sinC(sacarFuncion("_usdtFijoSinCobro"));
+  ok(/if\(!ab\.sinCobro\) return;/.test(_rsp) && /_usdtFijoSinCobro\(p, ab\)/.test(_rsp) && !/getRateToUsdt/.test(_rsp) && /\(1-fr\)/.test(_ufs),
+     "el retiro cuenta la parte de CAPITAL con su valor fijo, nunca a la tasa de hoy");
   const _gpm = sinC(sacarFuncion("gananciaPrestamosDelMes"));
   ok(/if\(ab\.sinCobro\) return;/.test(_gpm),
      "un abono sin cobro no cuenta como interes ganado");
@@ -14601,6 +14612,128 @@ console.log("\nARREGLO 240 · Contabilidad: cómo cerró el día, resultados, ba
   ok(/if\(!abrir\) panelParcelas="";/.test(_fl), "el detalle de parcelas sólo se dibuja abierto");
   ok(/borrarArticulo\(/.test(_fl) && /deshacerVentaArt\(/.test(_fl) && /editarVentaArt\(/.test(_fl),
      "borrar, deshacer y editar siguen alcanzándose (detrás de ⋯)");
+}
+
+// ── ARREGLO 244 · el retiro de socio queda fijo, y el día no se mueve solo ──
+console.log("\nARREGLO 244 · Retiro de socio a valor fijo y 'valor de las monedas' del día");
+{
+  const sc = function(n){ return sacarFuncion(n).replace(/\/\/[^\n]*/g, ""); };
+  const frStub = "function _fraccionInteresPrestamo(p){ return 0; }";
+  const mkFijo = function(SX){ return new Function("S", frStub + sacarFuncion("_usdtFijoSinCobro") + "; return _usdtFijoSinCobro;")(SX); };
+  // 1 · De dónde sale el valor: lo guardado, la foto del día, el préstamo. Nunca la tasa de hoy.
+  const pB = {mon:"BRL", monto:1080, usdt:216}, pV = {mon:"VES", monto:119539.02, usdt:119.54};
+  const fx = mkFijo({histTasas:{"2026-11-03":{VES:950}}});
+  const vG = fx(pB, {monto:1080, fecha:"2026-11-03", usdtRetiro:210, usdtFuente:"al liquidar", tasaRetiro:5.1428});
+  const vH = fx(pV, {monto:119539.02, fecha:"2026-11-03"});
+  const vP = fx(pB, {monto:1080, fecha:"2026-11-03"});
+  ok(vG.usdt === 210 && vG.fuente === "al liquidar", "lo guardado al liquidar manda");
+  ok(vH.fuente === "histTasas" && vH.usdt === 125.83, "sin guardar, la tasa que la app guardó ese día (119.539,02 ÷ 950 = 125,83)", JSON.stringify(vH));
+  ok(vP.fuente === "prestamo" && vP.usdt === 216, "sin foto de ese día, la del préstamo: p.usdt ÷ p.monto", JSON.stringify(vP));
+  ok(!/getRateToUsdt/.test(sc("_usdtFijoSinCobro")) && !/getRateToUsdt/.test(sc("retirosSocioPrestamosDesde")),
+     "ni el valor fijo ni la suma miran la tasa de hoy");
+  // 2 · Al liquidar, cada abono nace con su valor.
+  const lq = sc("_prLiquidarSinCobro");
+  ok((lq.match(/p\.abonos\.push\(_conUsdtRetiro\(p,/g) || []).length === 2,
+     "los DOS abonos que crea la liquidación nacen con su valor en USDT");
+  // 3 · El relleno de los viejos es de una vez: la segunda pasada no toca nada.
+  const SM = {histTasas:{"2026-11-03":{VES:950}}, prestamos:[
+    {mon:"VES", monto:119539.02, usdt:119.54, desc:"J", abonos:[{sinCobro:true, monto:119539.02, fecha:"2026-11-03"}]},
+    {mon:"BRL", monto:1080, usdt:216, desc:"J", abonos:[{sinCobro:true, monto:1080, fecha:"2026-11-03"}, {monto:5, fecha:"2026-11-04"}]}]};
+  const fij = new Function("S", "logAudit", "f2", frStub + sacarFuncion("_usdtFijoSinCobro") + sacarFuncion("_fijarUsdtRetirosSocio") + "; return _fijarUsdtRetirosSocio;")(SM, function(){}, function(n){ return String(n); });
+  ok(fij() === 2 && fij() === 0, "el relleno fija los dos viejos una vez, y la segunda pasada no toca nada");
+  ok(SM.prestamos[1].abonos[1].usdtRetiro === undefined, "y no toca un abono normal, que sí entró dinero");
+  ok(/_hayConexionReal/.test(sacarFuncion("R")) && /_fijarUsdtRetirosSocio\(\)/.test(sacarFuncion("R")),
+     "solo rellena con los datos del servidor ya cargados");
+  // 4 · El día: con la tasa moviéndose no sale nada sin registrar, y 10 USDT que faltan salen.
+  const hoy = (function(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); })(new Date());
+  const ayer = (function(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); })(new Date(Date.now()-86400000));
+  const c0 = {ap:1535.54, desde:"2026-11-01", deb:1535.54, bruta:0, egEmp:0, egPer:0, socios:0, trasp:0, aportes:0, retSoc:0, intAp:0, aj:0, tasas:0, sinExp:0};
+  const ini = {ts:1, mes:"2026-11", rem:0, soc:0, tienes:1535.54, cuentas:1200, prestado:335.54, cobrar:0, reserva:0, merc:0, sueldo:0, parcelas:0, c:c0,
+    mon:{BRL:{n:3080, f:0, r:5}, VES:{n:419539.02, f:0, r:1000}}};
+  // liquidados hoy a 5 y a 1000; luego llega el mercado: 5,4 y 1.100
+  const tFin = Math.round((500 + 2000/5.4 + 300000/1100)*100)/100;
+  const fin = {ts:2, mes:"2026-11", rem:0, soc:0, tienes:tFin, cuentas:tFin, prestado:0, cobrar:0, reserva:0, merc:0, sueldo:0, parcelas:0,
+    c:Object.assign({}, c0, {retSoc:335.54}), mon:{BRL:{n:2000, f:0, r:5.4}, VES:{n:300000, f:0, r:1100}}};
+  const SD = {histCapital:{}, prestamos:[
+    {mon:"BRL", abonos:[{sinCobro:true, monto:1080, fecha:hoy, tasaRetiro:5}]},
+    {mon:"VES", abonos:[{sinCobro:true, monto:119539.02, fecha:hoy, tasaRetiro:1000}]}]};
+  SD.histCapital[ayer] = ini;
+  const mkD = function(f){ return new Function("S", "_fotoCapital", frStub + sacarFuncion("_ymd") + sacarFuncion("_diaContable") +
+    "; var r2=function(n){return Math.round((isNaN(n)?0:+n)*100)/100;}; return _diaContable;")(SD, function(){ return f; }); };
+  const x1 = mkD(fin)(hoy);
+  ok(x1.cuadra && Math.abs(x1.resto) < 0.02, "con la tasa moviéndose y préstamos liquidados hoy, no sale nada «sin registrar»", JSON.stringify([x1.resto, x1.reval]));
+  const fin10 = Object.assign({}, fin, {tienes:Math.round((tFin-10)*100)/100});
+  const x2 = mkD(fin10)(hoy);
+  ok(Math.abs(x2.resto + 10) < 0.02 && !x2.cuadra, "10 USDT que salen sin registrar salen como faltante de 10", String(x2.resto));
+  //    Lo que entra o sale sin registrar no está en lo que había al empezar: «valor de las monedas» no lo absorbe.
+  ok(/\(1\/b\.r-1\/a\.r\)/.test(sc("_diaContable")) && /a\.n\)\|\|0\)-\(parseFloat\(a\.f\)\|\|0\)-L/.test(sc("_diaContable")),
+     "la revalorización es de lo que había al empezar, menos lo que ya cuenta efectoTasas y lo liquidado");
+  //    efectoTasas dice qué valoró a la tasa de hoy, y la foto lo guarda.
+  ok(/r\.nat\[mon\]/.test(sc("efectoTasasDesde")) && /f\.mon\[x\.moneda\]=\{n:/.test(sc("_fotoCapital")),
+     "efectoTasasDesde anota lo nativo que valora, y la foto del día lo guarda por moneda");
+  //    Y lo anota de verdad, ejecutándolo: una remesa que movió 100.000 Bs y
+  //    50 R$ tiene que dejar esas dos cantidades en nat.
+  const efx = new Function("S", "getRateToUsdt", "_isoDeDDMMAA", "_movPersonalDeRemesa", "_enUsdtCualquiera", "_isoDeFechaLote", "_cruceUsdtPersonal", "_loteDeTraspaso",
+    sacarFuncion("efectoTasasDesde") + "; return efectoTasasDesde;");
+  const SE = {cuentas:[{id:"v", moneda:"VES"}, {id:"b", moneda:"BRL"}], brl:[{d:"05/11/26", pr:2, _mov:[{cuentaId:"v", delta:-100000}, {cuentaId:"b", delta:50}]}],
+    vzla:[], eeuu:[], cuentasCobrar:[], inventarioUsdt:[], inventarioUsdt_cerrado:[]};
+  const ef = efx(SE, function(m){ return m==="VES"?1000:(m==="BRL"?5:null); }, function(){ return "2026-11-05"; }, function(){ return []; },
+    function(){ return 0; }, function(){ return ""; }, function(){ return null; }, function(){ return false; })("2026-11-01");
+  ok(ef.nat && ef.nat.VES === -100000 && ef.nat.BRL === 50, "efectoTasasDesde anota por moneda lo que valora (−100.000 Bs, +50 R$)", JSON.stringify(ef.nat));
+  // 5 · La lista que enseña cada préstamo lee la MISMA cuenta que la conciliación.
+  ok(/_usdtFijoSinCobro\(p, ab\)/.test(sc("_retirosSocioDetalle")) && /_htmlRetirosSocio\(\)\+_htmlConciliacion\(true\)/.test(sc("rContabilidad")),
+     "Contabilidad enseña los retiros préstamo por préstamo, con la misma cuenta que resta");
+}
+
+// ── ARREGLO 245 · "Desde la apertura" separa lo que la tasa le hizo a lo de la apertura ──
+console.log("\nARREGLO 245 · Revalorización de lo que ya había al abrir");
+{
+  const sc = function(n){ return sacarFuncion(n).replace(/\/\/[^\n]*/g, ""); };
+  const T = {BRL:5, VES:1000, USDT:1};
+  const mk = function(SX){ return new Function("S", "getRateToUsdt",
+    "function _fraccionInteresPrestamo(p){ return 0; }" +
+    ["_ymd","_isoDeDDMMAA","_usdtFijoSinCobro","_antesDeApertura","_tasasDeApertura","_haberDeApertura","_revalApertura","_congelarTasasApertura"].map(sacarFuncion).join("\n") +
+    "; return {rv:_revalApertura, ta:_tasasDeApertura, cong:_congelarTasasApertura};")(SX, function(m){ return T[m]||null; }); };
+  const ts = new Date("2026-10-20T18:00:00").getTime();
+  const SA = {cuentas:[{id:"u",moneda:"USDT",activa:true},{id:"b",moneda:"BRL",activa:true},{id:"v",moneda:"VES",activa:true},{id:"p",moneda:"VES",activa:true,esPersonal:true}],
+    prestamos:[{id:ts-86400000, d:"19/10/26", mon:"BRL", monto:1000, abonos:[]}, {id:ts+3600000, d:"20/10/26", mon:"BRL", monto:999, abonos:[]}],
+    cuentasCobrar:[{id:ts-1000, fecha:"20/10/26", monto:50000, moneda:"VES", abonos:[{id:ts+5000, fecha:"2026-10-21", monto:20000}]}],
+    histTasas:{"2026-10-19":{BRL:5, VES:1000, USDT:1}, "2026-10-23":{BRL:5.2, VES:1050}},
+    config:{aperturaFecha:"2026-10-20", aperturaTs:ts, aperturaBase:{}, aperturaSaldos:{u:500, b:2000, v:300000, p:999999}}};
+  const A = mk(SA);
+  // 1 · Lo que había: saldos de la foto (sin USDT ni 💜), el préstamo de antes, el cobro de antes con su abono de DESPUÉS sin restar.
+  const r0 = A.rv();
+  ok(r0.porMon.BRL && r0.porMon.BRL.n === 3000 && r0.porMon.VES.n === 350000 && !r0.porMon.USDT,
+     "al abrir había 2.000 + 1.000 prestados en R$ y 300.000 + 50.000 por cobrar en Bs (ni el USDT, ni la 💜, ni el préstamo de después)", JSON.stringify(r0.porMon));
+  ok(r0.total === 0 && r0.iso === "2026-10-19" && r0.exacta === false, "sin la tasa del día, la guardada más cercana, y se dice que no es la exacta", JSON.stringify([r0.total, r0.iso, r0.exacta]));
+  // 2 · La tasa se mueve: lo de la apertura se revalúa por (1/hoy − 1/abrir).
+  T.BRL = 5.5; T.VES = 1100;
+  const r1 = A.rv();
+  const esp = Math.round((3000*(1/5.5-1/5) + 350000*(1/1100-1/1000))*100)/100;
+  ok(r1.total === esp, "con la tasa moviéndose, lo de la apertura vale " + esp, String(r1.total));
+  T.BRL = 5; T.VES = 1000;
+  // 3 · Se congela solo el día exacto.
+  ok(A.cong() === false && !SA.config.aperturaBase.tasas, "la más cercana NO se congela: puede llegar el día exacto del otro aparato");
+  SA.histTasas["2026-10-20"] = {BRL:5.1, VES:990};
+  ok(A.cong() === true && SA.config.aperturaBase.tasasIso === "2026-10-20" && A.ta().exacta === true,
+     "con el día exacto en histTasas, se congela dentro de aperturaBase");
+  delete SA.histTasas["2026-10-20"]; SA.histTasas["2026-10-20b"] = 1;
+  ok(A.ta().t.VES === 990, "congelada, ya no depende de que histTasas conserve ese día");
+  // 4 · Al fijar se guardan en el acto, dentro del bloque de la apertura.
+  ok(/aperturaBase\.tasas=_tasasAhora\(\)/.test(sc("fijarAperturaHoy")) && /aperturaBase\.tasasIso=td\(\)/.test(sc("fijarAperturaHoy")),
+     "fijar la apertura guarda las tasas de ese instante dentro de aperturaBase");
+  // 5 · Entra en tasas.total ANTES de calcular lo sin explicar.
+  const cc = sc("conciliacionCapital");
+  ok(/tasas\.total=r2v\(tasas\.total\+_rvA\.total\)/.test(cc) && cc.indexOf("tasas.total+_rvA.total") < cc.indexOf("var sinExplicar=r2v(diferencia-ajustes.total-tasas.total)") && cc.indexOf("var sinExplicar") > 0,
+     "la revalorización de la apertura entra en tasas antes de calcular lo que no cuadra");
+  // 6 · Tu día no la cuenta dos veces, y una foto vieja se lee aparte.
+  ok(/_cubre\[x\.moneda\]/.test(sc("_fotoCapital")) && /rvA:/.test(sc("_fotoCapital")),
+     "la foto del día guarda lo que ya revalúa la apertura");
+  ok(/_viejaIni=\(a\.rvA===undefined && b\.rvA!==undefined\)/.test(sc("_diaContable")) && /_viejaIni\?d\("tasas"\)-\(parseFloat\(b\.rvA\)\|\|0\)/.test(sc("_diaContable")) && /if\(_apIds\[String\(p\.id\)\]\) return;/.test(sc("_diaContable")),
+     "Tu día descuenta lo de la apertura de una foto vieja y no ajusta dos veces un préstamo de la apertura");
+  // 7 · La pantalla dice con qué tasa se valoró.
+  ok(/_notaRevalApertura\(co\.tasas\.apertura\)/.test(HTML) && /la guardada más cercana a la apertura/.test(sacarFuncion("_notaRevalApertura")),
+     "la fila de las tasas dice cuánto es de la apertura y si la tasa no es la del día exacto");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
