@@ -14729,7 +14729,7 @@ console.log("\nARREGLO 245 · Revalorización de lo que ya había al abrir");
   // 6 · Tu día no la cuenta dos veces, y una foto vieja se lee aparte.
   ok(/_cubre\[x\.moneda\]/.test(sc("_fotoCapital")) && /rvA:/.test(sc("_fotoCapital")),
      "la foto del día guarda lo que ya revalúa la apertura");
-  ok(/_viejaIni\?d\("tasas"\)-\(parseFloat\(fin\.rvA\)\|\|0\)/.test(sc("_diaContable")) && /if\(_apIds\[String\(p\.id\)\]\) return;/.test(sc("_diaContable")),
+  ok(/_viejaIni=\(a\.rvA===undefined && b\.rvA!==undefined\)/.test(sc("_diaContable")) && /_viejaIni\?d\("tasas"\)-\(parseFloat\(b\.rvA\)\|\|0\)/.test(sc("_diaContable")) && /if\(_apIds\[String\(p\.id\)\]\) return;/.test(sc("_diaContable")),
      "Tu día descuenta lo de la apertura de una foto vieja y no ajusta dos veces un préstamo de la apertura");
   // 7 · La pantalla dice con qué tasa se valoró.
   ok(/_notaRevalApertura\(co\.tasas\.apertura\)/.test(HTML) && /la guardada más cercana a la apertura/.test(sacarFuncion("_notaRevalApertura")),
