@@ -1079,8 +1079,12 @@ ok(L("5.220,00 Bs")=== 5220,     "con la moneda pegada detras", L("5.220,00 Bs")
 ok(L("0,5")        === 0.5,      "coma decimal suelta", L("0,5"));
 ok(L("306.2367","USDT") === 306.2367,
    "en USDT el punto SI es decimal: se manejan cuatro", L("306.2367","USDT"));
-ok(L("123.295","USDT")  === 123.295,
-   "y tres decimales tambien, que es como estan los lotes", L("123.295","USDT"));
+// ARREGLO 246: en un MONTO, aunque sea de USDT, un punto con tres cifras es de
+// miles (decisión suya del 11/11). Tres decimales en USDT se escriben con coma.
+ok(L("123.295","USDT")  === 123295,
+   "un monto USDT con un punto y tres cifras son miles", L("123.295","USDT"));
+ok(L("123,295","USDT")  === 123.295,
+   "y con coma son tres decimales, que es como estan los lotes", L("123,295","USDT"));
 ok(isNaN(L("")) && isNaN(L("abc")) && isNaN(L(null)),
    "lo que no es un numero se rechaza, no se convierte en 0");
 
@@ -1108,9 +1112,9 @@ ok(L("198.619") === 198619 && L("1.000") === 1000 && L("10.000") === 10000,
 // _TARIFA_CAMPOS, así que se mira el molde de la fila y su lector.
 {
   const _tb = sacarFuncion("_htmlTarifaBancoVES"), _gt = sacarFuncion("guardarTarifaBanco");
-  ok(/type='text' inputmode='decimal' id='"\+c\.id\+"'/.test(_tb), "los campos del tarifario aceptan la coma decimal");
+  ok(/type='text' inputmode='decimal'"\+\(c\.pct\?" data-num='tasa'":""\)\+" id='"\+c\.id\+"'/.test(_tb), "los campos del tarifario aceptan la coma decimal, y los % se leen como tasa");
   ok(!/type='number'/.test(_tb), "y ninguno es type=number, que se la comia");
-  ok(/_leerNumero\(el\?el\.value:""\)/.test(_gt), "y se leen con _leerNumero");
+  ok(/_leerNumero\(el\|\|""\)/.test(_gt), "y se leen con _leerNumero, con el campo entero (su tipo)");
 }
 
 // El aviso es la red de seguridad: el punto suelto es ambiguo y ninguna regla
@@ -2329,17 +2333,19 @@ S.inventarioUsdt = []; S.tasasDia = {}; S._tasasDiaMeta = {};
 // Pasarlo a texto sin mas es PEOR, porque cada parseFloat de mas abajo leeria
 // "5,22" como 5. Por eso se normaliza en la puerta, con _num().
 console.log("\nARREGLO 52 · la coma decimal");
-[["244,50","244.5"],["5,22","5.22"],["0,003","0.003"],["19.996,80","19996.8"],
- ["960,7","960.7"],["1.030,5","1030.5"],
- ["244.50","244.5"],["0.003","0.003"],["19996.80","19996.8"],   // con punto, como antes
- ["1200","1200"],["0","0"]
+// ARREGLO 246: _num devuelve un NUMERO, no texto.
+[["244,50",244.5],["5,22",5.22],["0,003",0.003],["19.996,80",19996.8],
+ ["960,7",960.7],["1.030,5",1030.5],
+ ["244.50",244.5],["0.003",0.003],["19996.80",19996.8],   // con punto, como antes
+ ["1200",1200],["0",0]
 ].forEach(function(par){
   ok(F._num(par[0]) === par[1], '"'+par[0]+'" se guarda como '+par[1], F._num(par[0]));
 });
-// A medio teclear no se puede tirar lo que va escrito: se deja tal cual y ya lo
-// leera el parseFloat de abajo cuando este completo.
-["", "-", ",", "abc"].forEach(function(v){
-  ok(F._num(v) === v, "lo que todavia no es un numero se deja como esta: "+JSON.stringify(v), F._num(v));
+// ARREGLO 246: lo que no es un numero ya NO se deja como texto: "abc" pasaba
+// como "abc" y el parseFloat de abajo lo volvia NaN o 0 sin avisar. Ahora es
+// null, y el guardado (_numsOk) lo para y lo marca en rojo.
+["", "-", ",", "abc", "1e3", "12,5.3"].forEach(function(v){
+  ok(F._num(v) === null, "lo que no es un numero es null, nunca texto: "+JSON.stringify(v), F._num(v));
 });
 // Y que ningun campo de las pantallas donde ella teclea dinero vuelva a
 // type="number": ahi es donde se pierden los centimos.
@@ -2355,7 +2361,7 @@ console.log("\nARREGLO 52 · la coma decimal");
   ok(!/inputmode='decimal' inputmode='decimal'/.test(trozo),
      "  y sin atributos duplicados");
   const conValor = (dinero.match(/inputmode='decimal'/g)||[]).length;
-  const conNum   = (dinero.match(/_num\(this\.value\)/g)||[]).length;
+  const conNum   = (dinero.match(/_num\(this\)/g)||[]).length;   // ARREGLO 246: el campo entero, con su tipo
   ok(conValor === 0 || conNum >= conValor,
      "  y todos los suyos pasan por _num()", conValor+" campos / "+conNum+" normalizados");
 });
@@ -7980,7 +7986,7 @@ console.log("\n— FASE 2: la cuenta madre —");
   const _pant = sinC(sacarFuncion("rMercancia")) + sinC(sacarFuncion("_filaArticulo"));
   ok(!/type='number'/.test(_pant) && !/type="number"/.test(_pant),
      "ningun campo de mercancia es type=number");
-  const nNum = (_pant.match(/_num\(this\.value\)/g)||[]).length;
+  const nNum = (_pant.match(/_num\(this\)/g)||[]).length;
   ok(nNum>=4, "y los montos pasan por _num() al escribirse", "solo "+nNum);
   //      Y el estilo de un campo se escribe en UN sitio: con uno por
   //      formulario, en dos semanas hay tres anchos distintos.
@@ -9045,7 +9051,7 @@ console.log("\n— FASE 2: la cuenta madre —");
   ok(F._cg().ida === "193.5", "y la sigue cuando ella la cambia arriba", F._cg().ida);
   F._cgSet("ida", "188,86");
   S.config.tasasDia.tdia_brl = 200;
-  ok(F._cg().ida === "188.86", "una vez tocada, ya no la sigue", F._cg().ida);
+  ok(F._cg().ida === 188.86, "una vez tocada, ya no la sigue", F._cg().ida);
   F._cg().idaTocada = false;
   ok(F._cg().ida === "200", "y al soltarla vuelve a seguirla", F._cg().ida);
 
@@ -9379,7 +9385,7 @@ console.log("\n— FASE 2: la cuenta madre —");
        id + " acepta la coma");
   });
   ["tdia_brl","tdia_vzla","tdia_usd","tdia_ves_brl","tdia_usd_brl"].forEach(function(k){
-    ok(new RegExp("<input type='text' inputmode='decimal' id='tasa-"+k+"'").test(HTML),
+    ok(new RegExp("<input type='text' inputmode='decimal' data-num='tasa' id='tasa-"+k+"'").test(HTML),
        "tasa-" + k + " acepta la coma");
   });
   ["_convDesde","_msjCliente","_copiarMonto","saveTasasConfig"].forEach(function(f){
@@ -11789,7 +11795,7 @@ console.log("\nARREGLO 152 · el método: que se vea, que sume y que no coma el 
   // indexOf desde el principio se medía el trozo equivocado (ARREGLO 125, el
   // ancla ambigua que convierte una prueba en nada).
   const iCie = rn.indexOf('"</div></div>"+', iSec);
-  const iBtn = rn.indexOf("onclick='saveTx()'");
+  const iBtn = rn.indexOf("onclick='if(_numsOk(this))saveTx()'");
   ok(iSec >= 0, "rNueva dibuja el contenedor sec3-tx");
   ok(iCie > iSec, "y lo cierra");
   ok(iBtn > iCie, "el botón de guardar queda FUERA del bloque que se repinta");
@@ -14541,7 +14547,7 @@ console.log("\nARREGLO 240 · Contabilidad: cómo cerró el día, resultados, ba
      "al pagar una parcela solo salen las cuentas en su moneda");
   // Teclear el monto no repinta (ARREGLO 32) y el campo viene seleccionado (153).
   const _fl = sacarFuncion("_filaArticulo");
-  ok(/id='aab-monto'[^>]*onfocus='this\.select\(\)'[^>]*oninput='S\._artParcelaPagar\.monto=_num\(this\.value\);_refrescarRepartoAbonoArt\(\)'/.test(_fl),
+  ok(/id='aab-monto'[^>]*onfocus='this\.select\(\)'[^>]*oninput='S\._artParcelaPagar\.monto=_num\(this\);_refrescarRepartoAbonoArt\(\)'/.test(_fl),
      "el campo del abono se selecciona al tocarlo y refresca solo su línea al teclear");
   ok(!/\bR\(\)/.test(sinC(sacarFuncion("_refrescarRepartoAbonoArt"))), "y refrescar esa línea no llama a R()");
   // Abrir deja puesto el monto que enseña (ARREGLO 143).
@@ -14734,6 +14740,88 @@ console.log("\nARREGLO 245 · Revalorización de lo que ya había al abrir");
   // 7 · La pantalla dice con qué tasa se valoró.
   ok(/_notaRevalApertura\(co\.tasas\.apertura\)/.test(HTML) && /la guardada más cercana a la apertura/.test(sacarFuncion("_notaRevalApertura")),
      "la fila de las tasas dice cuánto es de la apertura y si la tasa no es la del día exacto");
+}
+
+// ── ARREGLO 246 · números seguros: la regla va por TIPO, y lo mal escrito no se guarda ──
+console.log("\nARREGLO 246 · Leer los números según el tipo de campo");
+{
+  const sc = function(n){ return sacarFuncion(n).replace(/\/\/[^\n]*/g, ""); };
+  const NUM = new Function(sacarFuncion("_leerNumero") + sacarFuncion("_num") + sacarFuncion("_numOCR") + sacarFuncion("_fmtEco") +
+    "; return {L:_leerNumero, N:_num, O:_numOCR, E:_fmtEco};")();
+  // 1 · La tabla que ella pidió: "escribo → guarda", por tipo de campo.
+  const CASOS = [
+    ["1.000,50", "monto", 1000.5], ["1,000.50", "monto", 1000.5], ["50,5", "monto", 50.5],
+    ["5.08", "tasa", 5.08], ["5.085", "tasa", 5.085], ["1076.300", "tasa", 1076.3],
+    ["1.234", "VES", 1234], ["1.234", "USDT", 1234], ["140.314,40", "VES", 140314.4],
+    ["R$ 1.500", "BRL", 1500], ["1.500", "USDT", 1500], ["58,14", "USDT", 58.14],
+    ["58.140", "monto", 58140], ["58.14", "monto", 58.14], ["100.5", "VES", 100.5], ["58,1403", "USDT", 58.1403],
+    ["-5", "monto", -5], ["0.003", "monto", 0.003], ["1.000.000", "monto", 1000000],
+    ["Bs 140.314,40", "VES", 140314.4], ["5 USDT", "USDT", 5],
+    ["12,5.3", "monto", null], ["1e3", "monto", null], ["abc", "monto", null], ["", "monto", null],
+    ["1.00.000", "monto", null], ["12,5.3", "tasa", null], ["1e3", "tasa", null],
+    ["1,000.5.5", "monto", null], ["1234.567.890", "monto", null], ["1.000,5,5", "tasa", null]
+  ];
+  CASOS.forEach(function(c){
+    const r = NUM.N(c[0], c[1]);
+    ok(r === c[2], JSON.stringify(c[0]) + " (" + c[1] + ") → " + (c[2] === null ? "no se guarda" : c[2]), r);
+  });
+  ok(typeof NUM.N("abc") !== "string" && typeof NUM.N("5,22") === "number", "_num devuelve un número o null, nunca texto");
+  ok(isNaN(NUM.L("abc")) && isNaN(NUM.L("")), "_leerNumero sigue devolviendo NaN a lo que no entiende (los que llaman lo miran con isNaN)");
+  ok(NUM.L({value:"5.085", getAttribute:function(k){ return k==="data-num"?"tasa":null; }}) === 5.085 &&
+     NUM.L({value:"5.085", getAttribute:function(){ return null; }}) === 5085,
+     "con el campo entero el tipo sale de su data-num: el mismo 5.085 es tasa en un campo y monto en otro");
+  ok(NUM.L(1234.5) === 1234.5, "un número ya leído no se vuelve a leer como texto");
+  // 2 · _numOCR, con el decimal que dice el comprobante.
+  [["50,5", ".", 50.5], ["1.000,50", ".", 1000.5], ["1,000.50", ",", 1000.5], ["5.085", ".", 5.085],
+   ["1.000", ",", 1000], ["140.314,40", ".", 140314.4], ["0,07", ".", 0.07]].forEach(function(c){
+    ok(NUM.O(c[0], c[1]) === c[2], "OCR (decimal «" + c[1] + "») " + c[0] + " → " + c[2], NUM.O(c[0], c[1]));
+  });
+  // 3 · La línea de debajo escribe como ella lee.
+  ok(NUM.E(1500) === "1.500" && NUM.E(5.085) === "5,085" && NUM.E(140314.4) === "140.314,4" && NUM.E(-5) === "−5",
+     "la línea de debajo dice «= 1.500», «= 5,085», «= 140.314,4»", [NUM.E(1500), NUM.E(5.085), NUM.E(140314.4)].join(" · "));
+  // 4 · Ningún campo vuelve a leerse por su texto suelto, ni con parseFloat.
+  ok(!/_num\(this\.value\)/.test(HTML) && !/_leerNumero\(this\.value\)/.test(HTML),
+     "los campos pasan el campo entero (_num(this)), así su tipo viaja con el número");
+  ok(!/parseFloat\(_num\(this\)\)/.test(HTML), "ni un campo se lee con parseFloat(_num(...))||0, que convertía lo mal escrito en 0");
+  ok(/oninput='S\.nIU\.comision=_num\(this\);/.test(HTML), "la comisión del inventario ya no pasa por parseFloat");
+  // 5 · Las tasas se leen como tasas.
+  ["tasa-tdia_brl","tasa-tdia_vzla","iu-tasa","edit-tc","edit-tv","edit-tdia"].forEach(function(id){
+    const m = HTML.match(new RegExp("<input[^>]*id='" + id + "'[^>]*>"));
+    ok(m && /data-num='tasa'/.test(m[0]), id + " es un campo de tasa");
+  });
+  ok(/S\.tx\.tdia=_num\(this\)/.test(HTML) && /data-num='tasa'[^>]*oninput='S\.tx\.tdia=/.test(HTML),
+     "la tasa del día de Nueva se lee como tasa");
+  ok(/_leerNumero\(tasa, "tasa"\)/.test(sc("setTasaDia")), "setTasaDia lee como tasa, no con la moneda");
+  ok(/alert\("No se guardó la tasa/.test(sc("setTasaDia")), "y lo que no entiende lo dice, en vez de volver a la automática en silencio");
+  // 6 · Lo que se rellena en un campo va con coma, o un 1.234 guardado se releería 1234.
+  const sinComa = [];
+  (HTML.match(/<input[^<>]*?inputmode='decimal'[^<>]*?>/g) || []).forEach(function(tag){
+    const v = tag.match(/value='"\+(.+?)\+"'/);
+    if (v && !/_comaCab\(|\bf2\(|\bf0\(|_escAud\(|\.replace\(/.test(v[1])) sinComa.push(v[1].slice(0, 40));
+  });
+  ok(sinComa.length === 0, "cada valor que se rellena en un campo de dinero pasa por _comaCab", sinComa.join(" | "));
+  // 7 · Al guardar se para lo mal escrito: los botones de los formularios pasan por _numsOk.
+  ["saveTx()","saveTxEE()","saveIU()","saveEg()","saveTraspaso()","savePr()","saveAbonoCobrar(","guardarArticulo()",
+   "venderArticulo(","agregarGastoArt(","_pagarParcelaArt(","saveInmueble()","saveCuotaInm()","pagarPrestamo("].forEach(function(f){
+    ok(HTML.indexOf("onclick='if(_numsOk(this))" + f) > -1, "el botón de " + f.replace(/\(.*$/, "") + " pasa por _numsOk antes de guardar");
+  });
+  const nok = sc("_numsOk");
+  ok(/isNaN\(n\)/.test(nok) && /n<0 && !el\.hasAttribute\("data-neg"\)/.test(nok) && /n===0 && obl/.test(nok) && /return false/.test(nok),
+     "_numsOk para lo que no se entiende, lo negativo y el 0 donde no puede ser 0");
+  ok(/2px solid var\(--mal\)/.test(nok) && /_ecoCampo\(el, motivo\)/.test(nok) && /alert\("No se guardó/.test(nok),
+     "y marca el campo en rojo, dice por qué debajo y avisa");
+  // 8 · Los montos que no pueden ir vacíos ni en 0 lo dicen en el propio campo.
+  ["S.tx.am=_num(this)","S.nIU.usdt=_num(this)","chgMonto(_num(this))","S.nTraspaso.monto=_num(this)","S.nPr.monto=_num(this)",
+   "S.nArt=S.nArt||{};S.nArt.costo=_num(this)","S.vArt=S.vArt||{};S.vArt.monto=_num(this)"].forEach(function(s){
+    const i = HTML.indexOf("oninput='" + s);
+    const tag = HTML.slice(HTML.lastIndexOf("<input", i), i);
+    ok(i > -1 && /data-req='1'/.test(tag), s.replace(/=_num.*$/, "").replace(/^.*;/, "").replace(/\(.*$/, "") + " es obligatorio (data-req)");
+  });
+  // 9 · La línea de debajo es UNA para toda la app, y no repinta.
+  ok(/document\.addEventListener\("input"/.test(HTML) && /new MutationObserver/.test(HTML) && !/\bR\(\)/.test(sc("_ecoCampo")),
+     "un escuchador para toda la app, que no llama a R() (ARREGLO 32)");
+  ok(/Object\.defineProperty\(HTMLInputElement\.prototype,"value"/.test(HTML),
+     "y se entera cuando el código escribe el campo, o la línea quedaría con el número anterior (ARREGLO 55)");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
