@@ -4059,6 +4059,88 @@ guardaba **0,3** —perdía el `,5`— y ahora guarda 0,305.
 parsea **el elemento**, da `NaN`, y `NaN.value` es `undefined`: **las cuatro
 tasas de la calculadora valían 0 siempre**. Hay guardia para que no vuelva.
 
+### Un número se lee según el TIPO de campo, y lo mal escrito no se guarda (ARREGLO 246)
+
+Lo vio ella revisando producción el 11/11: una tasa `5.085` se leía **5085**,
+`12,5.3` entraba como 125,3, `1e3` como 13, y `abc` pasaba como **texto**. Nada
+de eso avisaba. La regla de antes miraba la MONEDA (en USDT el punto era decimal,
+en el resto de miles) y eso no sirve: una tasa de reales lleva tres decimales
+igual que una de USDT.
+
+**La regla, que dictó ella, va por TIPO de campo:**
+
+```
+tasa    un solo punto o coma = decimal         5.085 = 5,085 · 1076.300 = 1076,3
+monto   un punto con 3 cifras = MILES          1.500 = 1500 · 58.140 = 58140
+        con 1 o 2 cifras, o 4 o más = decimal  100.5 · 58.14 · 306.2367
+        la coma sola, siempre decimal          58,1403 (USDT) · 50,5
+los dos punto Y coma: el último es el decimal  1.000,50 = 1,000.50 = 1000,5
+```
+
+Y se **rechaza** (no se adivina): letras salvo el símbolo de la moneda pegado
+(`R$ 1.500`, `Bs 140.314,40`), `1e3`, dos decimales (`12,5.3`) y miles mal
+agrupados (`1.00.000`). `0.` delante sigue siendo decimal (ARREGLO 43).
+
+- **El tipo vive en el CAMPO** (`data-num='tasa'`; sin él, monto) y viaja con
+  él: los campos llaman `_num(this)` / `_leerNumero(el)`, nunca `this.value`.
+  Una moneda pasada como tipo ("USDT", "VES") cuenta como monto.
+- **`_num()` devuelve un número o `null`, nunca texto.** `_leerNumero()` sigue
+  devolviendo `NaN`, porque sus llamadores lo miran con `isNaN` y `null` lo
+  pasaría (`isNaN(null)` es false).
+- **Lo que la app RELLENA en un campo va con coma** (`_comaCab`). Un `1.234`
+  guardado y dibujado con punto en un monto se releería mil doscientos. Vale
+  también para lo que el código escribe en el campo (el cálculo automático de
+  Inventario y de Egresos). Hay guardia que recorre todos los rellenos.
+- **Debajo de cada campo, cómo lo entendió** (`= 1.500`, `= 5,085`, o el aviso
+  en rojo). UN escuchador para toda la app más un MutationObserver, sin `R()`
+  (ARREGLO 32); y engancha el setter de `value`, o la línea se quedaría con el
+  número anterior cuando el código escribe el campo (ARREGLO 55).
+- **Al guardar, `_numsOk(this)` en el botón**: sube hasta el bloque que tiene
+  los campos, y para si algo no se entiende, es negativo sin `data-neg`, o es 0
+  / está vacío en un campo `data-req`. Marca en rojo, dice por qué debajo y
+  avisa. La primera versión miraba solo DENTRO del botón y no paraba nada — lo
+  cazó escribir mal y pulsar en Chromium.
+- **Lo mal escrito sobrevive al repintado** (`_numsMalosAntes`): `null` en `S`
+  no recuerda qué escribió, y en los campos con `onblur='R()'` (Traspasos,
+  Préstamos) su texto desaparecía antes de poder marcarlo.
+- **`_numOCR()` usa la misma regla** sabiendo el decimal del comprobante:
+  `50,5` en un comprobante de punto ya no es 505.
+- **`setTasaDia()` lee como tasa**, y lo que no entiende lo dice: antes lo
+  soltaba y la tasa volvía a la automática sin avisar.
+
+Medido en Chromium, v327 contra v328, en los nueve formularios (Nueva,
+Inventario, Egresos, Traspasos, Préstamos, abonos, Por cobrar, Mercancía,
+Inmuebles): con v327 la tasa `5,1.6` **se guardó como 51,6** en un lote y `abc`
+dejó un egreso **sin monto**; con v328 los nueve paran y los nueve guardan el
+valor correcto al escribirlo bien.
+
+**No cambia ningún dato guardado**: solo cómo se lee lo que se teclea.
+
+#### Y un monto mil veces más grande no se guarda (ARREGLO 247)
+
+La regla del 246 lee `58.140` en un monto como cincuenta y ocho mil, y eso es
+correcto si se escribió así. Si se pegó de un sitio con punto decimal, son
+58,14. La regla no puede adivinarlo; lo que sí ve es que **los números de la
+operación no cuadran entre sí**.
+
+- **Inventario USDT:** si `USDT ≠ monto ÷ tasa` en más de un 2 %, **no guarda**
+  (`_frenoIU`). Del 0,5 % al 2 % sigue la pregunta del ARREGLO 66.
+- **Traspasos entre monedas:** no hay tasa escrita, así que se compara la que
+  sale con la de referencia. Diez veces fuera o más **no guarda**; entre el 2 % y
+  diez veces **pregunta**, porque un cambio de verdad a otra hora puede
+  apartarse más de un 2 % de la referencia y bloquearlo dejaría un traspaso
+  bueno sin forma de guardarse.
+- **Nueva:** lo entregado no se escribe, sale del monto y la tasa. Donde sí se
+  escriben números que tienen que cuadrar es en el desglose (formas de pago y
+  cuentas de entrega), que ya no guardaba si no sumaba exacto.
+- **El aviso dice cuál**: *"¿Quisiste decir 58,14 USDT? Lo escribiste como
+  58.140"*. Se elige el campo que, leído con la otra lectura, deja la cuenta
+  más cerca de cuadrar, y se mide por **razón**, no por diferencia: por
+  diferencia la primera versión sugería "¿1,5 BRL?".
+- **Un campo que repinta al salir conserva su texto** si el número no cambió:
+  redibujado desde `S`, `294.990` volvía como `294990` y la sugerencia ya no
+  tenía de dónde salir.
+
 ### La tasa de un abono se escribe como ella la dice: 1 USDT = 5,30 BRL
 
 Cuando un cliente paga un préstamo —o una cuenta por cobrar— en una moneda
