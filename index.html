@@ -3383,7 +3383,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261111_v326";
+var APP_VERSION = "20261111_v327";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -7298,6 +7298,165 @@ function _fijarUsdtRetirosSocio(){
   if(n) logAudit("RETIRO_SOCIO_FIJADO","Fijó en USDT "+n+" abono(s) sin cobro: "+det.join(" · "));
   return n;
 }
+// ══════════════════════════════════════════════════════════════════
+// ARREGLO 245 · lo que ya tenía al ABRIR también se revalúa, y se dice
+//
+// Sus palabras del 11/11: que "Desde la apertura" separe la revalorización de
+// lo que ya tenía en bolívares y reales al abrir, igual que "Tu día", para que
+// no caiga en "te faltan/sobran".
+//
+// efectoTasasDesde() solo revalora las OPERACIONES desde la apertura. Lo que
+// ya estaba el día de abrir —saldos en Bs y R$, préstamos vivos, cobros— entró
+// en `aperturaUsdt` a la tasa de ese día y hoy se cuenta a la de hoy, que desde
+// el ARREGLO 182 sale del mercado y se mueve cada pocos minutos. Esa diferencia
+// no tenía nombre y caía en "te faltan/sobran". Medido en Chromium: con 2.000
+// R$ y 300.000 Bs parados y una lectura nueva, "te faltan 56,90" de nada.
+//
+// La cuenta, por moneda:   (lo que había al abrir) × (1/tasa hoy − 1/tasa al abrir)
+// Solo lo que EXISTÍA al abrir: un dinero que entra o sale después sin
+// registrar no está en esa base y sigue saliendo como faltante.
+//
+// · Lo que había al abrir se reconstruye, no se inventa: los saldos de la foto
+//   de la apertura (aperturaSaldos), y los préstamos y cobros que estaban
+//   vivos — decidido por la HORA de creación, que va en el id (Date.now()),
+//   contra aperturaTs; si no hay hora, por la fecha.
+// · La tasa de ese día sale de histTasas, y al fijar una apertura nueva se
+//   guarda en el acto. Para una apertura vieja sin foto de ese día se usa la
+//   guardada más cercana, y la tarjeta DICE cuál: un número valorado con la
+//   tasa de otro día presentado como del día exacto sería mentirle.
+// · Un préstamo que existía al abrir y se liquidó sin cobro (ARREGLO 244) se
+//   revalúa solo hasta el momento de liquidarlo: después su valor quedó fijo.
+// · No se guarda nada nuevo que sincronizar: la tasa vive en histTasas, que ya
+//   viaja y se une por fecha. Una clave nueva en el bloque de la apertura
+//   obligaría a tocar también MERGE_BLOQUES del servidor.
+// ══════════════════════════════════════════════════════════════════
+function _antesDeApertura(id, fechaTxt){
+  var cfg=S.config||{}, ts=parseFloat(cfg.aperturaTs), n=parseFloat(id);
+  if(ts>0 && n>1e12) return n<ts;
+  var f=String(fechaTxt||"");
+  var iso=/^\d{4}-\d{2}-\d{2}/.test(f)?f.slice(0,10):_isoDeDDMMAA(f);
+  return !!iso && iso<=String(cfg.aperturaFecha||"");
+}
+// Las tasas de este momento, las mismas monedas que guarda histTasas.
+function _tasasAhora(){
+  var o={};
+  ["VES","BRL","USD","PEN","COP","TTD","EUR"].forEach(function(m){
+    var r=getRateToUsdt(m); if(r) o[m]=r;
+  });
+  return o;
+}
+// La tasa con la que entró en la apertura lo que había. Por orden:
+//   1. la que se guardó al fijarla (aperturaBase.tasas) — la de ese instante;
+//   2. histTasas de ese mismo día;
+//   3. la guardada más cercana, y se dice cuál.
+// Va DENTRO de aperturaBase para que viaje con su bloque (ARREGLO 60): una
+// clave nueva de config habría que añadirla también a MERGE_BLOQUES del
+// servidor, y si se olvida allí se pierde con un 200 y sin un error.
+function _tasasDeApertura(){
+  var cfg=S.config||{}, f=String(cfg.aperturaFecha||""); if(!f) return null;
+  var b=cfg.aperturaBase||{};
+  if(b.tasas && typeof b.tasas==="object" && Object.keys(b.tasas).length)
+    return {iso:b.tasasIso||f, exacta:b.tasasIso?b.tasasIso===f:true, t:b.tasas, fuente:b.tasasFuente||"al fijarla"};
+  var ht=S.histTasas||{};
+  if(ht[f]) return {iso:f, exacta:true, t:ht[f], fuente:"histTasas"};
+  var mejor=null, dist=Infinity;
+  Object.keys(ht).forEach(function(k){
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(k)) return;
+    var dd=Math.abs((new Date(k+"T12:00:00"))-(new Date(f+"T12:00:00")));
+    if(dd<dist || (dd===dist && k<mejor)){ dist=dd; mejor=k; }
+  });
+  return mejor?{iso:mejor, exacta:false, t:ht[mejor], dias:Math.round(dist/86400000), fuente:"histTasas"}:null;
+}
+// Una apertura vieja, de antes de este arreglo, no guardó sus tasas. Si
+// histTasas tiene ESE día y ya pasó, se congelan dentro de aperturaBase: así
+// no dependen de que histTasas conserve ese día (se poda a los 120) ni cambian
+// porque llegue otra cosa. La más cercana NO se congela: puede que el otro
+// aparato sí tenga el día exacto y llegue con la próxima sincronización.
+function _congelarTasasApertura(){
+  var cfg=S.config||{};
+  if(!cfg.aperturaFecha || !cfg.aperturaBase) return false;
+  if(cfg.aperturaBase.tasas) return false;
+  if(cfg.aperturaFecha>=_ymd(new Date())) return false;
+  var ht=(S.histTasas||{})[cfg.aperturaFecha];
+  if(!ht || !Object.keys(ht).length) return false;
+  cfg.aperturaBase.tasas=JSON.parse(JSON.stringify(ht));
+  cfg.aperturaBase.tasasIso=cfg.aperturaFecha;
+  cfg.aperturaBase.tasasFuente="histTasas";
+  return true;
+}
+// Lo que había al abrir, por moneda y en nativo (sin USDT, que no se revalúa).
+function _haberDeApertura(){
+  var cfg=S.config||{}, mon={}, prestIds={};
+  var sum=function(m,v){ if(!m||m==="USDT"||m==="USD"||!v) return; mon[m]=(mon[m]||0)+v; };
+  var sal=cfg.aperturaSaldos||{};
+  Object.keys(sal).forEach(function(id){
+    var c=(S.cuentas||[]).find(function(x){ return String(x.id)===String(id); });
+    if(!c || c.esPersonal || c.activa===false) return;
+    sum(c.moneda, parseFloat(sal[id])||0);
+  });
+  (S.prestamos||[]).forEach(function(p){
+    if(!_antesDeApertura(p.id, p.d)) return;
+    var ab=(p.abonos||[]).filter(function(a){ return _antesDeApertura(a.id, a.fecha); })
+      .reduce(function(s,a){ return s+(parseFloat(a.monto)||0); },0);
+    var pend=Math.max(0,(parseFloat(p.monto||p.sal)||0)-ab-(parseFloat(p.ent)||0));
+    if(pend<=0) return;
+    var cap=pend*(1-_fraccionInteresPrestamo(p));
+    sum(p.mon||"USDT", cap);
+    prestIds[String(p.id)]=true;
+  });
+  (S.cuentasCobrar||[]).forEach(function(c){
+    if(!_antesDeApertura(c.id, c.fecha)) return;
+    var ab=(c.abonos||[]).filter(function(a){ return _antesDeApertura(a.id, a.fecha); })
+      .reduce(function(s,a){ return s+(parseFloat(a.monto)||0); },0);
+    var pend=Math.max(0,(parseFloat(c.monto)||0)-ab);
+    sum(c.moneda||"USDT", pend);
+  });
+  return {mon:mon, prestIds:prestIds};
+}
+// La revalorización desde la apertura. `cubre[m]` es lo que sigue revaluado a
+// la tasa de hoy por esta cuenta (lo de "Tu día" no lo vuelve a contar).
+function _revalApertura(){
+  var out={total:0, iso:null, exacta:false, dias:0, cubre:{}, prestIds:{}, porMon:{}};
+  var cfg=S.config||{};
+  if(!cfg.aperturaFecha) return out;
+  var ta=_tasasDeApertura();
+  if(!ta) return out;
+  out.iso=ta.iso; out.exacta=ta.exacta; out.dias=ta.dias||0;
+  var h=_haberDeApertura(); out.prestIds=h.prestIds;
+  // lo que de eso se liquidó sin cobro después: revaluado solo hasta liquidarlo
+  var liq={}, adj={};
+  (S.prestamos||[]).forEach(function(p){
+    if(!h.prestIds[String(p.id)]) return;
+    var mon=p.mon||"USDT"; if(mon==="USDT"||mon==="USD") return;
+    var fr=_fraccionInteresPrestamo(p), ra=parseFloat((ta.t||{})[mon]);
+    (p.abonos||[]).forEach(function(ab){
+      if(!ab.sinCobro || _antesDeApertura(ab.id, ab.fecha)) return;
+      var cap=(parseFloat(ab.monto)||0)*(1-fr);
+      var v=_usdtFijoSinCobro(p, ab);
+      liq[mon]=(liq[mon]||0)+cap;
+      if(v && ra>0) adj[mon]=(adj[mon]||0)+v.usdt-cap/ra;
+    });
+  });
+  Object.keys(h.mon).forEach(function(m){
+    var ra=parseFloat((ta.t||{})[m]), rh=getRateToUsdt(m);
+    if(!(ra>0) || !(rh>0)) return;
+    var base=h.mon[m]-(liq[m]||0);
+    var v=base*(1/rh-1/ra)+(adj[m]||0);
+    out.porMon[m]={n:Math.round(h.mon[m]*100)/100, tasaAp:ra, tasaHoy:rh, usdt:Math.round(v*100)/100};
+    out.cubre[m]=base;
+    out.total+=v;
+  });
+  out.total=Math.round(out.total*100)/100;
+  return out;
+}
+
+// "incluye −$56,90 de lo que tenías al abrir · tasas del 20/10". Una sola
+// frase, la leen la conciliación y "Tu día".
+function _notaRevalApertura(a){
+  if(!a || !a.iso || Math.abs(a.total||0)<0.005) return "";
+  var cual=a.exacta?"tasas del "+ds(a.iso):"tasas del "+ds(a.iso)+", la guardada más cercana a la apertura";
+  return "incluye "+(a.total<0?"−":"+")+"$"+f2(Math.abs(a.total))+" de lo que ya tenías al abrir · "+cual;
+}
 function conciliacionCapital(){
   var cfg=S.config||{};
   var apertura=parseFloat(cfg.aperturaUsdt);
@@ -7392,6 +7551,13 @@ function conciliacionCapital(){
   // tasas se explican solos, lo que quede es lo único que hay que perseguir.
   var ajustes=ajustesDesdeApertura(desde);
   var tasas=efectoTasasDesde(desde);
+  // ARREGLO 245: lo que ya había al abrir, revaluado. Va DENTRO de `tasas`
+  // para que cada pantalla que ya lee tasas.total —la fila "tus bolívares
+  // valen menos hoy", la tabla de la diferencia, "Tu día"— lo cuente sin
+  // tocarlas, y la lista siga sumando el salto al céntimo.
+  var _rvA=_revalApertura();
+  tasas.apertura=_rvA;
+  tasas.total=r2v(tasas.total+_rvA.total);
   var sinExplicar=r2v(diferencia-ajustes.total-tasas.total);
   return {
     configurada:true, apertura:r2v(apertura), desde:desde, meses:meses.length,
@@ -7412,9 +7578,15 @@ function conciliacionCapital(){
     // cuando algo no cuadra, y hasta ahora eso no se veía en ninguna parte.
     aperturaSaldos:(S.config||{}).aperturaSaldos||null,
     aperturaTs:(S.config||{}).aperturaTs||null,
-    // Un desvio de menos del 2% del capital es ruido de tasas de cambio,
+    // Un desvio de menos del 2% del capital era ruido de tasas de cambio,
     // no una fuga: los saldos se convierten a USDT a la tasa de HOY.
-    tolerancia:r2v(Math.max(5,real.total*0.02))
+    //
+    // ARREGLO 245: ese ruido ya no cae aquí — las operaciones las revalora
+    // efectoTasasDesde() y lo que había al abrir _revalApertura(). Con el 2%
+    // seguía tragándose dinero de verdad: quitando 10 USDT sin registrar, el
+    // titular decía "Cuadra" porque el margen eran ±27 (±40 con su capital).
+    // Es el mismo margen que "Tu día" (_diaContable): uno solo para las dos.
+    tolerancia:r2v(Math.max(1,real.total*0.0025))
   };
 }
 
@@ -9884,6 +10056,12 @@ function fijarAperturaHoy(){
     // Foto de lo que va del mes en curso: ya esta dentro del dinero
     // contado, asi que no se puede volver a sumar.
     S.config.aperturaBase=_acumuladosMes(getMesKeyActual());
+    // ARREGLO 245: las tasas de ESTE instante, que son con las que se acaba de
+    // contar el total. Con ellas se mide después cuánto de lo que había al
+    // abrir cambió solo por la tasa.
+    S.config.aperturaBase.tasas=_tasasAhora();
+    S.config.aperturaBase.tasasIso=td();
+    S.config.aperturaBase.tasasFuente="al fijarla";
     // ARREGLO 149: el monto de arriba sale de capitalRealTotal(), que desde el
     // ARREGLO 71 NO cuenta el interés pendiente. Se deja dicho aquí para que la
     // conciliación no se lo vuelva a restar; sin esta línea queda un hueco
@@ -18779,9 +18957,12 @@ function _htmlConciliacion(sinTitulo){
     // — que es justo el riesgo que ella misma explicó ("tener muchos bolívares
     // parados sí me perjudica"). Con sus datos es −255,32: la pieza más grande
     // del hueco. Llamarlo "no es dinero" le tapaba la respuesta.
+    // ARREGLO 245: dentro va también lo que ya tenía al abrir, revaluado. La
+    // nota dice con qué tasa se valoró ese punto de partida: si no es la del
+    // día exacto, valorarlo con otra y callarlo sería mentirle.
     if(co.tasas&&Math.abs(co.tasas.total)>0.005)
       _filas.push([co.tasas.total<0?"Tus bolívares valen menos hoy":"Tus saldos valen más hoy",
-                   co.tasas.total, "var(--tx4)", ""]);
+                   co.tasas.total, "var(--tx4)", _notaRevalApertura(co.tasas.apertura)]);
     // ARREGLO 146: su plata, la del otro trabajo, entrando o saliendo de una
     // cuenta de la empresa. Tiene que tener su fila o la lista deja de sumar
     // el salto — es la guardia que el ARREGLO 141 tuvo que escribir después de
@@ -25536,6 +25717,7 @@ function R(){
   // nada que rellenar no toca nada ni guarda.
   if(typeof _hayConexionReal!=="undefined" && _hayConexionReal && S && S.prestamos && S.prestamos.length){
     try{ if(_fijarUsdtRetirosSocio()) saveData(); }catch(e){}
+    try{ if(_congelarTasasApertura()) saveData(); }catch(e){}   // ARREGLO 245
   }
   if(!R._pgdasMigrado && S && S.cuentas && S.cuentas.length){
     R._pgdasMigrado=true;
@@ -40831,12 +41013,16 @@ function _fotoCapital(){
   // por cobrar y capital prestado, en nativo), lo que efectoTasasDesde ya
   // valora a la tasa de hoy, y la tasa. Ver _diaContable.
   var _nat=((co.tasas||{}).nat)||{};
+  // ARREGLO 245: f = lo que la conciliación ya revalúa a la tasa de hoy — las
+  // operaciones (nat) Y lo que había al abrir (cubre). "Tu día" solo añade lo
+  // que no cubre ninguna de las dos.
+  var _cubre=(((co.tasas||{}).apertura)||{}).cubre||{};
   f.mon={};
   (R.porMoneda||[]).forEach(function(x){
     if(x.moneda==="USDT"||x.moneda==="USD") return;
     var tr=getRateToUsdt(x.moneda);
     if(!(tr>0)) return;
-    f.mon[x.moneda]={n:r2((x.enCuentas||0)+(x.enReserva||0)+(x.porCobrar||0)+(x.enPrestamos||0)), f:r2(_nat[x.moneda]||0), r:tr};
+    f.mon[x.moneda]={n:r2((x.enCuentas||0)+(x.enReserva||0)+(x.porCobrar||0)+(x.enPrestamos||0)), f:r2((_nat[x.moneda]||0)+(_cubre[x.moneda]||0)), r:tr};
   });
   if(co.configurada){
     f.c={ap:co.apertura, desde:co.desde, deb:co.deberias, bruta:co.bruta,
@@ -40844,6 +41030,9 @@ function _fotoCapital(){
       trasp:(co.traspPers||{}).total||0, aportes:(co.aportes||{}).total||0,
       retSoc:(co.retSoc||{}).total||0, intAp:(co.intAp||{}).total||0,
       aj:(co.ajustes||{}).total||0, tasas:(co.tasas||{}).total||0,
+      // ARREGLO 245: cuánto de `tasas` es lo de la apertura. Una foto sin este
+      // campo es de antes, y "Tu día" la lee distinto (ver _diaContable).
+      rvA:(((co.tasas||{}).apertura)||{}).total||0,
       sinExp:co.sinExplicar||0};
   }
   return f;
@@ -40952,8 +41141,18 @@ function _diaContable(iso){
   // la mañana con la tasa moviéndose por la tarde dejaba +26,87 "sin
   // registrar" que no eran de nadie.
   var liq={}, liqR={};
+  // ARREGLO 245: un préstamo que ya existía al abrir lo revalúa la
+  // conciliación, también su liquidación. Ajustarlo aquí lo contaría dos veces.
+  // Una foto de inicio de ANTES de este arreglo no llevaba lo de la apertura
+  // ni en `tasas` ni en `f`: su (n − f) ya revalúa lo de la apertura de hoy, y
+  // a `tasas` hay que quitarle la parte de la apertura de la foto final, o el
+  // día del cambio de versión diría que en un día se movió todo lo acumulado
+  // desde que abrió.
+  var _viejaIni=(a.rvA===undefined && b.rvA!==undefined);
+  var _apIds=_viejaIni?{}:(function(){ try{ return ((((conciliacionCapital()||{}).tasas||{}).apertura)||{}).prestIds||{}; }catch(e){ return {}; } })();
   (S.prestamos||[]).forEach(function(p){
     var mon=p.mon||"USDT"; if(mon==="USDT"||mon==="USD") return;
+    if(_apIds[String(p.id)]) return;
     var fr=_fraccionInteresPrestamo(p);
     (p.abonos||[]).forEach(function(ab){
       if(!ab.sinCobro) return;
@@ -40975,7 +41174,7 @@ function _diaContable(iso){
     reval+=((parseFloat(a.n)||0)-(parseFloat(a.f)||0)-L)*(1/b.r-1/a.r);
   });
   out.reval=r2(reval);
-  out.tasas=r2(d("tasas")+out.reval);
+  out.tasas=r2((_viejaIni?d("tasas")-(parseFloat(b.rvA)||0):d("tasas"))+out.reval);
   // La conciliación da por ida la parte de los socios desde que se gana
   // (resta `socios` de "deberías"), pero mientras no se les pague ese dinero
   // sigue en las cuentas. Medido en Chromium: con una socia al 50% de una ruta
