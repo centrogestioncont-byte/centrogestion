@@ -3383,7 +3383,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261110_v325";
+var APP_VERSION = "20261111_v326";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -7086,14 +7086,27 @@ function aportesDesde(desdeIso){
 // aritmética de conversión, y mientras no se enseñe la conciliación nunca puede
 // dar cero. Por eso sale como línea propia y no dentro de "sin explicar".
 function efectoTasasDesde(desdeIso){
-  var r={remesas:0, usdt:0, total:0, n:0};
+  // ARREGLO 244 · `nat`: cuánto de cada moneda se valoró aquí a la tasa de
+  // hoy. Con eso "Tu día" separa lo que la tasa le hace a lo que YA tenía de
+  // lo que esta función ya cuenta, sin contar dos veces la misma revalorización.
+  var r={remesas:0, usdt:0, total:0, n:0, nat:{}};
   if(!desdeIso) return r;
+  function _nat(mon, monto, t){ if(t>0) r.nat[mon]=(r.nat[mon]||0)+monto; }
   function enUsdt(id, monto){
     var c=(S.cuentas||[]).find(function(x){return x.id===id;});
     if(!c||c.esPersonal||c.activa===false) return 0;
     if(c.moneda==="USDT"||c.moneda==="USD") return monto;
     var t=getRateToUsdt(c.moneda);
+    _nat(c.moneda, monto, t);
     return (!t||isNaN(t)||t<=0)?0:monto/t;
+  }
+  // Lo que _enUsdtCualquiera convierte (cuentas 💜 incluidas), anotado sin
+  // escribir una segunda conversión: la que vale sigue siendo esa función,
+  // que también lee traspasosAPersonal (ARREGLO 235).
+  function _natCuenta(id, monto){
+    var c=(S.cuentas||[]).find(function(x){return x.id===id;});
+    if(!c||c.moneda==="USDT"||c.moneda==="USD") return;
+    _nat(c.moneda, monto, getRateToUsdt(c.moneda));
   }
   ["brl","vzla","eeuu"].forEach(function(k){
     (S[k]||[]).forEach(function(x){
@@ -7106,7 +7119,7 @@ function efectoTasasDesde(desdeIso){
       // capital), pero aquí eso convertía la entrega entera en "efecto de las
       // tasas". Ahora entra en la cuenta y su otra mitad va a
       // traspasosAPersonal, con el mismo corte: el "te sobran" no se mueve.
-      _movPersonalDeRemesa(x).forEach(function(m){ mueve+=_enUsdtCualquiera(m.cuentaId, parseFloat(m.delta)||0); });
+      _movPersonalDeRemesa(x).forEach(function(m){ mueve+=_enUsdtCualquiera(m.cuentaId, parseFloat(m.delta)||0); _natCuenta(m.cuentaId, parseFloat(m.delta)||0); });
       // Si el cliente quedó a deber, ese dinero sigue siendo suyo: está en "por
       // cobrar" hoy, o ya entró a la cuenta el día que lo marcó cobrado. En los
       // dos casos cuenta igual, por eso no se mira el estado.
@@ -7114,7 +7127,7 @@ function efectoTasasDesde(desdeIso){
       if(cc){
         var mon=cc.moneda||"USDT", mt=parseFloat(cc.monto)||0;
         if(mon==="USDT"||mon==="USD") mueve+=mt;
-        else { var tc=getRateToUsdt(mon); if(tc&&!isNaN(tc)&&tc>0) mueve+=mt/tc; }
+        else { var tc=getRateToUsdt(mon); if(tc&&!isNaN(tc)&&tc>0){ mueve+=mt/tc; _nat(mon, mt, tc); } }
       }
       r.remesas += mueve-(parseFloat(x.pr)||0);
       r.n++;
@@ -7215,24 +7228,75 @@ function _gananciaMeses(n){
 // capital, ARREGLO 71) y a la tasa de HOY, la misma con que capitalRealTotal()
 // valoraba ese préstamo — los dos lados se mueven lo mismo, como en
 // aportesDesde().
+// ── ARREGLO 244 · el retiro se valora UNA vez, el día que se hizo ───────────
+//
+// El 222 lo valoraba a la tasa de HOY, "la misma con que capitalRealTotal()
+// valoraba ese préstamo". Eso solo vale mientras el préstamo está vivo: una
+// vez liquidado ya no está en "tienes", así que con la tasa de hoy solo se
+// movía "deberías". Y desde el ARREGLO 182 la tasa de hoy sale del MERCADO
+// cuando la última operación tiene más de 24 h, y esa lectura se refresca cada
+// pocos minutos. Sus palabras del 11/11, con 11 préstamos liquidados el 03/11:
+// "Tu día muestra 'Retiro de socios por préstamos +$18,38' y 'Te faltan
+// $50,50', y ese número cambia solo minuto a minuto sin que yo mueva nada".
+//
+// Lo que bajó su capital ese día fue el préstamo valorado a la tasa de ESE
+// momento, así que eso es lo que se resta, y queda fijo:
+//   1. lo guardado en el abono (ab.usdtRetiro), que desde ahora se escribe
+//      al liquidar con la misma tasa que enseña la confirmación;
+//   2. para los de antes: la tasa que la app guardó para ese día (histTasas);
+//   3. si ese día no hay foto de tasas: la del propio préstamo,
+//      p.usdt ÷ p.monto — p.usdt es el monto TOTAL en USDT (usdtDeGasto sobre
+//      montoTotal), así que la proporción es la del préstamo entero.
+// Nunca getRateToUsdt de hoy. Un solo sitio: lo leen la conciliación, el
+// relleno de los viejos y la lista que lo enseña.
+function _usdtFijoSinCobro(p, ab){
+  var guardado=parseFloat(ab&&ab.usdtRetiro);
+  if(isFinite(guardado)) return {usdt:guardado, fuente:ab.usdtFuente||"guardado", tasa:parseFloat(ab.tasaRetiro)||null};
+  var mon=p.mon||"USDT", fr=_fraccionInteresPrestamo(p);
+  var cap=(parseFloat(ab.monto)||0)*(1-fr);
+  if(mon==="USDT"||mon==="USD") return {usdt:Math.round(cap*100)/100, fuente:"usdt", tasa:1};
+  var iso=String(ab.fecha||"").slice(0,10);
+  var th=parseFloat(((S.histTasas||{})[iso]||{})[mon]);
+  if(th>0) return {usdt:Math.round(cap/th*100)/100, fuente:"histTasas", tasa:th};
+  var tot=parseFloat(p.monto||p.sal)||0, u=parseFloat(p.usdt)||0;
+  if(tot>0 && u>0) return {usdt:Math.round(cap*u/tot*100)/100, fuente:"prestamo", tasa:Math.round(tot/u*10000)/10000};
+  return null;
+}
 function retirosSocioPrestamosDesde(desdeIso){
   var r={total:0, n:0, sinTasa:[]};
   if(!desdeIso) return r;
   (S.prestamos||[]).forEach(function(p){
-    var fr=_fraccionInteresPrestamo(p), mon=p.mon||"USDT";
+    var mon=p.mon||"USDT";
     (p.abonos||[]).forEach(function(ab){
       if(!ab.sinCobro) return;
       var iso=String(ab.fecha||"").slice(0,10);
       if(!/^\d{4}-\d{2}-\d{2}$/.test(iso) || iso<=desdeIso) return;
-      var cap=(parseFloat(ab.monto)||0)*(1-fr);
-      var u;
-      if(mon==="USDT"||mon==="USD") u=cap;
-      else { var t=getRateToUsdt(mon); if(!t||isNaN(t)||t<=0){ if(r.sinTasa.indexOf(mon)===-1) r.sinTasa.push(mon); return; } u=cap/t; }
-      r.total+=u; r.n++;
+      var v=_usdtFijoSinCobro(p, ab);
+      if(!v){ if(r.sinTasa.indexOf(mon)===-1) r.sinTasa.push(mon); return; }
+      r.total+=v.usdt; r.n++;
     });
   });
   r.total=Math.round(r.total*100)/100;
   return r;
+}
+// Los abonos sin cobro de antes del 244 no llevan su valor: se rellenan UNA
+// vez con la misma cuenta (_usdtFijoSinCobro) y se guardan, para que no
+// dependa de qué aparato los mire ni de qué foto de tasas tenga. Solo con los
+// datos del servidor ya cargados: con la copia local a medias podría fijar un
+// abono con la tasa del préstamo teniendo el otro aparato la del día.
+function _fijarUsdtRetirosSocio(){
+  var n=0, det=[];
+  (S.prestamos||[]).forEach(function(p){
+    (p.abonos||[]).forEach(function(ab){
+      if(!ab.sinCobro || isFinite(parseFloat(ab.usdtRetiro))) return;
+      var v=_usdtFijoSinCobro(p, ab);
+      if(!v) return;
+      ab.usdtRetiro=v.usdt; ab.usdtFuente=v.fuente; if(v.tasa) ab.tasaRetiro=v.tasa;
+      n++; det.push((p.desc||"")+" "+f2(ab.monto)+" "+(p.mon||"USDT")+" → $"+f2(v.usdt)+" ("+v.fuente+")");
+    });
+  });
+  if(n) logAudit("RETIRO_SOCIO_FIJADO","Fijó en USDT "+n+" abono(s) sin cobro: "+det.join(" · "));
+  return n;
 }
 function conciliacionCapital(){
   var cfg=S.config||{};
@@ -25468,6 +25532,11 @@ function R(){
   // nadie tiene declaraPGDAS y existe exactamente una PAGBANK CNPJ no
   // personal, se marca y se guarda. Idempotente: devuelve false y no
   // toca nada si ya hay alguna marcada o si la condicion no se cumple.
+  // ARREGLO 244 · fija en USDT los retiros de socio viejos. Idempotente: sin
+  // nada que rellenar no toca nada ni guarda.
+  if(typeof _hayConexionReal!=="undefined" && _hayConexionReal && S && S.prestamos && S.prestamos.length){
+    try{ if(_fijarUsdtRetirosSocio()) saveData(); }catch(e){}
+  }
   if(!R._pgdasMigrado && S && S.cuentas && S.cuentas.length){
     R._pgdasMigrado=true;
     try{ if(_migrarCuentasPGDAS()) saveData(); }catch(e){}
@@ -36819,6 +36888,16 @@ function _prMarcarSocio(clave, si){
   logAudit("SOCIO_PRESTAMO",(si?"Marcó":"Desmarcó")+" como socio a "+clave+" ("+n+" préstamo"+(n!==1?"s":"")+")");
   saveData(); R();
 }
+// ARREGLO 244 · el abono nace con su valor en USDT, a la tasa de este momento:
+// la misma que usa la confirmación ("el capital baja ≈ $X") y la misma con la
+// que capitalRealTotal() valoraba ese préstamo justo antes de liquidarlo.
+function _conUsdtRetiro(p, ab){
+  var mon=p.mon||"USDT", cap=(parseFloat(ab.monto)||0)*(1-_fraccionInteresPrestamo(p));
+  if(mon==="USDT"||mon==="USD"){ ab.usdtRetiro=Math.round(cap*100)/100; ab.usdtFuente="al liquidar"; ab.tasaRetiro=1; return ab; }
+  var tr=getRateToUsdt(mon);
+  if(tr>0){ ab.usdtRetiro=Math.round(cap/tr*100)/100; ab.usdtFuente="al liquidar"; ab.tasaRetiro=Math.round(tr*10000)/10000; }
+  return ab;
+}
 function _prLiquidarSinCobro(clave){
   if(!_esSocioClave(clave)){ alert("Este cliente no está marcado como socio."); return; }
   var acts=_prActivosDeClave(clave);
@@ -36853,15 +36932,15 @@ function _prLiquidarSinCobro(clave){
     // mira las cuotas por número las vea cerradas — igual que la liquidación
     // de varias cuotas (ARREGLO 216).
     cuotas.forEach(function(cu){
-      p.abonos.push({id:lote+(k++), fecha:hoy, monto:cu.saldo, cuentaId:"", monedaPago:p.mon||"USDT", montoPago:0,
-        cuotaN:cu.n, premio:0, sinCobro:true, loteSinCobro:lote, nota:nota});
+      p.abonos.push(_conUsdtRetiro(p,{id:lote+(k++), fecha:hoy, monto:cu.saldo, cuentaId:"", monedaPago:p.mon||"USDT", montoPago:0,
+        cuotaN:cu.n, premio:0, sinCobro:true, loteSinCobro:lote, nota:nota}));
       suma+=cu.saldo;
     });
     var ab=(p.abonos||[]).reduce(function(s,x){return s+(parseFloat(x.monto)||0);},0);
     var resto=Math.round((base-ab)*100)/100;
     if(resto>0.009){
-      p.abonos.push({id:lote+(k++), fecha:hoy, monto:resto, cuentaId:"", monedaPago:p.mon||"USDT", montoPago:0,
-        cuotaN:null, premio:0, sinCobro:true, loteSinCobro:lote, nota:nota});
+      p.abonos.push(_conUsdtRetiro(p,{id:lote+(k++), fecha:hoy, monto:resto, cuentaId:"", monedaPago:p.mon||"USDT", montoPago:0,
+        cuotaN:null, premio:0, sinCobro:true, loteSinCobro:lote, nota:nota}));
     }
     p.estado="pagado"; p.fechaPago=hoy;
     p.montoCobrado=p.abonos.reduce(function(s,x){return s+(parseFloat(x.monto)||0);},0);
@@ -40748,6 +40827,17 @@ function _fotoCapital(){
     tienes:R.total, cuentas:R.enCuentas, prestado:R.enPrestamos, cobrar:R.porCobrar,
     reserva:R.enReserva, merc:R.enMercancia||0,
     sueldo:R.sueldoPendiente||0, parcelas:R.deudaParcelas||0};
+  // ARREGLO 244 · por moneda: lo que hay valorado a tasa (cuentas, reserva,
+  // por cobrar y capital prestado, en nativo), lo que efectoTasasDesde ya
+  // valora a la tasa de hoy, y la tasa. Ver _diaContable.
+  var _nat=((co.tasas||{}).nat)||{};
+  f.mon={};
+  (R.porMoneda||[]).forEach(function(x){
+    if(x.moneda==="USDT"||x.moneda==="USD") return;
+    var tr=getRateToUsdt(x.moneda);
+    if(!(tr>0)) return;
+    f.mon[x.moneda]={n:r2((x.enCuentas||0)+(x.enReserva||0)+(x.porCobrar||0)+(x.enPrestamos||0)), f:r2(_nat[x.moneda]||0), r:tr};
+  });
   if(co.configurada){
     f.c={ap:co.apertura, desde:co.desde, deb:co.deberias, bruta:co.bruta,
       egEmp:co.egEmpresa, egPer:co.egPersonal, socios:co.socios,
@@ -40842,7 +40932,50 @@ function _diaContable(iso){
   out.deberias=r2(ini.tienes+suma);
   out.diferencia=r2(fin.tienes-out.deberias);
   out.ajustes=d("aj");
-  out.tasas=d("tasas");
+  // ── ARREGLO 244 · "valor de las monedas" = lo que la tasa le hizo a lo que
+  // YA había al empezar el día, y nada más.
+  //
+  // `tasas` (efectoTasasDesde) solo revalora las operaciones desde la apertura.
+  // Lo que ya tenía en bolívares o reales —lo de la apertura, lo prestado— se
+  // revalúa en "tienes" con cada lectura del mercado (ARREGLO 182) y no tenía
+  // explicación: caía en "sin registrar" y movía el número solo.
+  //
+  // La parte que falta es la revalorización de lo que había al empezar (n)
+  // MENOS lo que efectoTasas ya revalora (f), con las tasas de las dos fotos:
+  //     Σ (n − f) × (1/r_fin − 1/r_ini)
+  // Solo mira saldos que EXISTÍAN al empezar: un dinero que entra o sale hoy
+  // sin registrar no está en `n`, así que sigue saliendo en "sin registrar".
+  //
+  // Y lo que se liquidó SIN COBRO entre las dos fotos ya no está al final: su
+  // valor quedó fijo al liquidarlo (ab.tasaRetiro). Se revalúa solo hasta ese
+  // momento. Medido en Chromium: sin esto, un préstamo de socio liquidado por
+  // la mañana con la tasa moviéndose por la tarde dejaba +26,87 "sin
+  // registrar" que no eran de nadie.
+  var liq={}, liqR={};
+  (S.prestamos||[]).forEach(function(p){
+    var mon=p.mon||"USDT"; if(mon==="USDT"||mon==="USD") return;
+    var fr=_fraccionInteresPrestamo(p);
+    (p.abonos||[]).forEach(function(ab){
+      if(!ab.sinCobro) return;
+      var f=String(ab.fecha||"").slice(0,10);
+      if(!(f>out.kIni && f<=iso)) return;
+      var cap=(parseFloat(ab.monto)||0)*(1-fr), tr=parseFloat(ab.tasaRetiro);
+      liq[mon]=(liq[mon]||0)+cap;
+      if(tr>0) liqR[mon]=(liqR[mon]||0)+cap/tr; else liqR[mon]=null;
+    });
+  });
+  var reval=0;
+  Object.keys(ini.mon||{}).forEach(function(m){
+    var a=ini.mon[m], b=(fin.mon||{})[m];
+    if(!a||!(a.r>0)) return;
+    var L=liq[m]||0;
+    // lo liquidado hoy: de la tasa de la foto de inicio a la de liquidar
+    if(L && liqR[m]!==null && liqR[m]!==undefined) reval+=liqR[m]-L/a.r;
+    if(!b||!(b.r>0)) return;
+    reval+=((parseFloat(a.n)||0)-(parseFloat(a.f)||0)-L)*(1/b.r-1/a.r);
+  });
+  out.reval=r2(reval);
+  out.tasas=r2(d("tasas")+out.reval);
   // La conciliación da por ida la parte de los socios desde que se gana
   // (resta `socios` de "deberías"), pero mientras no se les pague ese dinero
   // sigue en las cuentas. Medido en Chromium: con una socia al 50% de una ruta
@@ -40919,7 +41052,11 @@ function _htmlDiaContable(){
   }
   // Lo que cambió de caja sin ser pérdida: el préstamo, lo que te deben…
   var movCaja=(x.partes||[]).filter(function(p){ return Math.abs(p[1])>0.005 && p[0]!=="Tu sueldo, sin apartar" && p[0]!=="Parcelas por pagar"; });
-  var hayCaja=movCaja.some(function(p){ return p[0]!=="En cuentas"; });
+  // ARREGLO 244: "cambió de caja" solo cuando de verdad pasó de una a otra —
+  // una caja sube y otra baja—. Un retiro de socio baja "Prestado" sin que
+  // nada suba, y con la tasa moviéndose "En cuentas" también baja: decir ahí
+  // "no es pérdida" era falso. El detalle sigue entero en "dónde se movió".
+  var hayCaja=movCaja.some(function(p){ return p[1]>0.005; }) && movCaja.some(function(p){ return p[1]<-0.005; });
   var lineaCaja=hayCaja
     ? "<div style='font-size:11.5px;color:var(--tx3);margin-top:8px;line-height:1.5'>🔄 <b style='color:var(--tx2)'>Cambió de caja</b>, no es pérdida: "+
         movCaja.map(function(p){ return p[0]+" "+sg(p[1]); }).join(" · ")+"</div>"
@@ -41156,6 +41293,72 @@ function _htmlBalanceGeneral(b){
 // después el mes, después la foto de hoy, y al final la medición larga desde
 // la apertura. Las cuatro leen de funciones que ya existían; esta solo las
 // pone juntas.
+// ── ARREGLO 244 · los retiros de socio, uno por uno ─────────────────────
+//
+// Sus palabras: "dime qué tasa usó cada uno de los 11 préstamos del 03/11,
+// cuántos dólares quedó la diferencia fija". Desde el entorno de desarrollo no
+// se ven sus datos, así que lo dice la app: por préstamo, de dónde salió la
+// tasa, lo que quedó fijo y lo que daría a la tasa de hoy. La diferencia es
+// lo que antes movía el número solo. Lee _usdtFijoSinCobro, la misma cuenta
+// que resta la conciliación.
+function _retirosSocioDetalle(){
+  var filas=[], fijo=0, hoy=0, sinHoy=false;
+  (S.prestamos||[]).forEach(function(p){
+    var mon=p.mon||"USDT", fr=_fraccionInteresPrestamo(p);
+    var abs=(p.abonos||[]).filter(function(ab){ return ab.sinCobro; });
+    if(!abs.length) return;
+    var cap=0, u=0, fuentes={}, fecha="", sinT=false;
+    abs.forEach(function(ab){
+      var v=_usdtFijoSinCobro(p, ab);
+      cap+=(parseFloat(ab.monto)||0)*(1-fr);
+      fecha=String(ab.fecha||"").slice(0,10);
+      if(!v){ sinT=true; return; }
+      u+=v.usdt; fuentes[v.fuente]=v.tasa;
+    });
+    var tr=(mon==="USDT"||mon==="USD")?1:getRateToUsdt(mon);
+    var h=(tr>0)?cap/tr:null;
+    if(h===null) sinHoy=true; else hoy+=h;
+    fijo+=u;
+    filas.push({desc:p.desc||"", cod:p.cod||"", mon:mon, cap:r2(cap), fecha:fecha, usdt:r2(u),
+      fuentes:fuentes, hoy:h===null?null:r2(h), sinTasa:sinT});
+  });
+  return {filas:filas, fijo:r2(fijo), hoy:r2(hoy), sinHoy:sinHoy};
+}
+var _FUENTE_RETIRO={"al liquidar":"tasa al liquidar", "histTasas":"tasa guardada de ese día",
+  "prestamo":"tasa del préstamo", "usdt":"en USDT", "guardado":"guardado"};
+function _htmlRetirosSocio(){
+  var d=_retirosSocioDetalle();
+  if(!d.filas.length) return "";
+  var ab=!!(S._contAbierto||{}).ret;
+  var dif=r2(d.fijo-d.hoy);
+  return "<div style='background:var(--sup);border:1px solid var(--ln);border-radius:10px;margin-bottom:10px'>"+
+    "<div onclick='_toggleCont(\"ret\")' style='display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;user-select:none'>"+
+      "<div style='min-width:0;font-size:12px;color:var(--tx2)'><b>🤝 Retiros de socio por préstamos</b>"+
+        "<div style='font-size:11px;color:var(--tx3);margin-top:2px'>"+d.filas.length+" préstamo"+(d.filas.length===1?"":"s")+
+        " · fijos en <b style='color:var(--tx2)'>$"+f2(d.fijo)+"</b> · ya no se mueven con la tasa</div></div>"+
+      "<span id='cont-fl-ret' style='font-size:15px;color:var(--tx3)'>"+_rotCont("ret")+"</span>"+
+    "</div>"+
+    "<div id='cont-ret' style='display:"+(ab?"block":"none")+";padding:0 12px 10px;font-size:11.5px'>"+
+      d.filas.map(function(x){
+        var fs=Object.keys(x.fuentes).map(function(k){
+          var tt=x.fuentes[k];
+          return (_FUENTE_RETIRO[k]||k)+(tt&&tt!==1?" ("+f2(tt)+")":"");
+        }).join(" + ");
+        return "<div style='padding:6px 0;border-top:1px solid var(--ln)'>"+
+          "<div style='display:flex;justify-content:space-between;gap:10px'><span style='color:var(--tx2)'>"+_escAud(x.desc)+(x.cod?" · "+_escAud(x.cod):"")+"</span>"+
+            "<b style='color:var(--tx2);white-space:nowrap'>$"+f2(x.usdt)+"</b></div>"+
+          "<div style='font-size:10.5px;color:var(--tx3);line-height:1.5'>"+(x.fecha?ds(x.fecha)+" · ":"")+f2(x.cap)+" "+_escAud(x.mon)+" · "+(fs||"sin tasa")+
+            (x.hoy!==null&&x.mon!=="USDT"&&x.mon!=="USD"?" · a la tasa de hoy serían $"+f2(x.hoy):"")+
+            (x.sinTasa?" · <span style='color:var(--mal)'>⚠️ parte sin tasa: no está contada</span>":"")+"</div></div>";
+      }).join("")+
+      "<div style='border-top:1px solid var(--ln);padding-top:6px;font-size:11px;color:var(--tx3);line-height:1.5'>"+
+        "Quedaron fijos en <b style='color:var(--tx2)'>$"+f2(d.fijo)+"</b>. "+
+        (d.sinHoy?"":"A la tasa de hoy serían $"+f2(d.hoy)+": esa diferencia de <b style='color:var(--tx2)'>"+(dif<0?"−":"+")+"$"+f2(Math.abs(dif))+"</b> es lo que antes movía el número solo.")+
+      "</div>"+
+    "</div>"+
+  "</div>";
+}
+
 function rContabilidad(){
   var mk=S._contMes||getMesKeyActual();
   var meses=(function(){
@@ -41183,7 +41386,7 @@ function rContabilidad(){
     _secCont("bal","⚖️ Balance general",
       "Es de la empresa <b style='color:"+(bg.patrimonio<0?"var(--mal)":"var(--ok)")+"'>"+sg(bg.patrimonio)+"</b> · tiene "+sg(bg.totAct)+" · debe "+sg(bg.totPas),
       _htmlBalanceGeneral(bg))+
-    _secCont("ap","🧾 Desde la apertura", _resumenConciliacion(), _htmlConciliacion(true))+
+    _secCont("ap","🧾 Desde la apertura", _resumenConciliacion(), _htmlRetirosSocio()+_htmlConciliacion(true))+
   "</div>";
 }
 
