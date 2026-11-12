@@ -3717,7 +3717,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261111_v328";
+var APP_VERSION = "20261112_v329";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -12471,16 +12471,26 @@ function editarNotaCuentaCobrar(id,val){
   c.notaDesc=(val||"").trim();
   saveData();
 }
+// ARREGLO 244: el id llega SIEMPRE como texto (los botones lo pasan entre
+// comillas) y aquí se busca por String(). Antes los botones lo escribían sin
+// comillas —toggleAbonarCobrar(1731000000000)— y valía mientras todos los ids
+// eran números. Un cobro que nace de una venta fiada de Mercancía lleva un id
+// con letras (artc_…), así que el botón quedaba escrito como
+// toggleAbonarCobrar(artc_mwb0rv1k_yt4yk6): un nombre de variable que no
+// existe. ReferenceError en silencio, y ✏️ / Abonar / Cobrado / 🗑️ dejaban de
+// hacer nada en ese cobro. Lo que se guarda en S es el id del propio cobro,
+// con su tipo, porque la tarjeta compara con === contra c.id.
 function toggleAbonarCobrar(id){
-  S._abonarCobrarId=(S._abonarCobrarId===id?null:id);
+  var cc=(S.cuentasCobrar||[]).find(function(x){return String(x.id)===String(id);});
+  var real=cc?cc.id:id;
+  S._abonarCobrarId=(String(S._abonarCobrarId)===String(real)?null:real);
   if(S._abonarCobrarId){
-    var cc=(S.cuentasCobrar||[]).find(function(x){return x.id===id;});
     S.nAbonoCobrar={monto:"",cuentaId:"",nota:"",moneda:(cc&&cc.moneda)||"BRL",tasaManual:""};
   }
   R();
 }
 function saveAbonoCobrar(id){
-  var c=(S.cuentasCobrar||[]).find(function(x){return x.id===id;});
+  var c=(S.cuentasCobrar||[]).find(function(x){return String(x.id)===String(id);});
   if(!c) return;
   var na=S.nAbonoCobrar||{};
   var montoIngresado=parseFloat(na.monto)||0;
@@ -12564,20 +12574,20 @@ function saveAbonoCobrar(id){
   saveData();R();
 }
 function eliminarAbonoCobrar(cobrarId,abonoId){
-  var c=(S.cuentasCobrar||[]).find(function(x){return x.id===cobrarId;});
+  var c=(S.cuentasCobrar||[]).find(function(x){return String(x.id)===String(cobrarId);});
   if(!c||!c.abonos) return;
-  var ab=c.abonos.find(function(x){return x.id===abonoId;});
+  var ab=c.abonos.find(function(x){return String(x.id)===String(abonoId);});
   if(!ab) return;
   if(!confirm("Eliminar este abono de "+f2(ab.monto)+" "+c.moneda+"?\nSe restará de la cuenta si estaba asignada."))return;
   if(ab.cuentaId) ajusteCuentaEgreso(ab.cuentaId,-ab.monto);
-  c.abonos=c.abonos.filter(function(x){return x.id!==abonoId;});
+  c.abonos=c.abonos.filter(function(x){return String(x.id)!==String(abonoId);});
   // Reabre si estaba cobrado y el total ya no alcanza
   var total=c.abonos.reduce(function(a,x){return a+x.monto;},0);
   if(total<c.monto-0.001&&c.estado==="cobrado"){c.estado="pendiente";c.fechaCobro="";}
   saveData();R();
 }
 function marcarCobrado(id){
-  var c=(S.cuentasCobrar||[]).find(function(x){return x.id===id;});
+  var c=(S.cuentasCobrar||[]).find(function(x){return String(x.id)===String(id);});
   if(!c){alert("No encontrado.");return;}
   if(c.cuentaBanco){
     var cta=(S.cuentas||[]).find(function(x){return x.id===c.cuentaBanco||x.nombre===c.cuentaBanco;});
@@ -12602,8 +12612,16 @@ function marcarCobrado(id){
 // el botón 🗑️ de esta pantalla llamaba a un nombre que nunca se definió
 // en ningún lado, así que tocarlo no hacía absolutamente nada.
 function eliminarCuenta(id){
-  var c=(S.cuentasCobrar||[]).find(function(x){return x.id===id;});
+  var c=(S.cuentasCobrar||[]).find(function(x){return String(x.id)===String(id);});
   if(!c){alert("No encontrado.");return;}
+  // ARREGLO 244: un cobro que nació de una venta fiada de Mercancía no se
+  // borra desde aquí. La venta seguiría contando su ganancia y el artículo
+  // diciendo "vendido", pero el dinero que le deben habría desaparecido del
+  // capital sin explicación. Se deshace la venta, que quita las dos cosas.
+  if(c.fromArticulo){
+    alert("Este cobro es de una venta de Mercancía.\n\nPara quitarlo, ve a Mercancía → ya vendidas → ⋯ → ↩️ Deshacer venta. Así se quitan juntos la venta y el cobro.");
+    return;
+  }
   var totalAbonado=(c.abonos||[]).reduce(function(a,ab){return a+(parseFloat(ab.monto)||0);},0);
   var msg="¿Eliminar este registro de Cuentas por Cobrar?\n\nCliente: "+c.cliente+"\nMonto: "+f2(c.monto)+" "+c.moneda;
   if(totalAbonado>0) msg+="\n\n⚠️ Ya tiene "+f2(totalAbonado)+" "+c.moneda+" en abonos registrados — se revertirá el saldo que se acreditó en las cuentas correspondientes.";
@@ -12631,8 +12649,11 @@ function eliminarCuenta(id){
       }
     }
   }
-  S.cuentasCobrar=S.cuentasCobrar.filter(function(x){return x.id!==id;});
-  _marcarBorradoMerge("cuentasCobrar",id);
+  // ARREGLO 244: se quita ESE registro y se marca con SU id. Con el id
+  // llegando como texto, `x.id!==id` no casaba con un id numérico: el cobro
+  // no se borraba y además se dejaba una marca de borrado con otro tipo.
+  S.cuentasCobrar=S.cuentasCobrar.filter(function(x){return x!==c;});
+  _marcarBorradoMerge("cuentasCobrar",c.id);
   logAudit("CUENTA_COBRAR_ELIMINADA","Eliminó · Cliente: "+c.cliente+" · "+c.monto+" "+c.moneda);
   saveData();R();
 }
@@ -24123,9 +24144,10 @@ function guardarEditClientePrest(id){
 
 // ── Editar cliente + descripción en una cuenta por cobrar YA EXISTENTE ──
 function toggleEditarClienteCobrar(id){
-  S._editarClienteCobrarId=(S._editarClienteCobrarId===id?null:id);
+  var c=(S.cuentasCobrar||[]).find(function(x){return String(x.id)===String(id);});
+  var real=c?c.id:id;
+  S._editarClienteCobrarId=(String(S._editarClienteCobrarId)===String(real)?null:real);
   if(S._editarClienteCobrarId){
-    var c=(S.cuentasCobrar||[]).find(function(x){return x.id===id;});
     S.nEditCC={cliente:(c&&c.cliente)||"",notaDesc:(c&&c.notaDesc)||""};
   }
   R();
@@ -24153,7 +24175,7 @@ function selClEditCC(cod,nombre){
   R();
 }
 function guardarEditClienteCobrar(id){
-  var c=(S.cuentasCobrar||[]).find(function(x){return x.id===id;});
+  var c=(S.cuentasCobrar||[]).find(function(x){return String(x.id)===String(id);});
   if(!c) return;
   var nom=(S.nEditCC.cliente||"").trim();
   if(!nom){alert("El nombre no puede quedar vacío.");return;}
@@ -38792,7 +38814,7 @@ function rCuentasCobrar(){
               "<div style='font-size:11px;color:var(--tx3);margin-top:1px'>"+ab.fecha+" · "+nCta+"</div>"+
               (ab.nota?"<div style='font-size:11px;color:var(--tx4);font-style:italic'>"+_escAud(ab.nota)+"</div>":"")+
             "</div>"+
-            "<button onclick='eliminarAbonoCobrar("+c.id+","+ab.id+")' class='bk-btn icon danger' style='flex-shrink:0'>🗑</button>"+
+            "<button onclick='eliminarAbonoCobrar(\""+_jsAttr(String(c.id))+"\",\""+_jsAttr(String(ab.id))+"\")' class='bk-btn icon danger' style='flex-shrink:0'>🗑</button>"+
           "</div>";
         }).join("")+
         // Barra de progreso
@@ -38855,7 +38877,7 @@ function rCuentasCobrar(){
           "<div><label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>Nota (opcional)</label>"+
           "<input type='text' placeholder='ej: primera cuota' value='"+(na.nota||"")+"' oninput='S.nAbonoCobrar=Object.assign(S.nAbonoCobrar||{},{nota:this.value})' style='width:100%;padding:12px;font-size:14px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'></div>"+
         "</div>"+
-        "<button onclick='if(_numsOk(this))saveAbonoCobrar("+c.id+")' style='width:100%;padding:12px;border:none;border-radius:9px;font-size:14px;font-weight:700;letter-spacing:.2px;cursor:pointer;background:var(--vd2-f);color:var(--sobre-color);font-family:inherit'>Guardar abono</button>"+
+        "<button onclick='if(_numsOk(this))saveAbonoCobrar(\""+_jsAttr(String(c.id))+"\")' style='width:100%;padding:12px;border:none;border-radius:9px;font-size:14px;font-weight:700;letter-spacing:.2px;cursor:pointer;background:var(--vd2-f);color:var(--sobre-color);font-family:inherit'>Guardar abono</button>"+
       "</div>";
     }
 
@@ -38873,7 +38895,7 @@ function rCuentasCobrar(){
         "<label style='font-size:11px;font-weight:700;color:var(--rol-ee);display:block;margin-bottom:4px'>Descripción</label>"+
         "<input type='text' value='"+(feCC.notaDesc||"")+"' oninput='S.nEditCC.notaDesc=this.value' style='width:100%;padding:9px;font-size:13px;border:1.5px solid var(--ln);border-radius:8px;font-family:inherit;margin-bottom:8px'>"+
         "<div style='display:flex;gap:8px'>"+
-          "<button onclick='guardarEditClienteCobrar("+c.id+")' style='flex:1;padding:9px;border:none;border-radius:8px;background:var(--rol-ee);color:var(--sobre-color);font-weight:700;font-size:12px;cursor:pointer;font-family:inherit'>💾 Guardar</button>"+
+          "<button onclick='guardarEditClienteCobrar(\""+_jsAttr(String(c.id))+"\")' style='flex:1;padding:9px;border:none;border-radius:8px;background:var(--rol-ee);color:var(--sobre-color);font-weight:700;font-size:12px;cursor:pointer;font-family:inherit'>💾 Guardar</button>"+
           "<button onclick='S._editarClienteCobrarId=null;R()' style='padding:9px 14px;border:1px solid var(--ln);border-radius:8px;background:var(--sup);color:var(--tx2);font-size:12px;cursor:pointer;font-family:inherit'>Cancelar</button>"+
         "</div>"+
       "</div>";
@@ -38895,7 +38917,7 @@ function rCuentasCobrar(){
           "<div class='bk-ref'>"+c.fecha+" · Ref "+c.id+"</div>"+
           "<div style='display:flex;align-items:center;gap:6px;margin-top:4px'>"+
             "<div class='bk-item-desc' style='overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>"+monIcon+" "+(agrupado?_escAud(c.ruta):_escAud(c.cliente)+" · "+_escAud(c.ruta))+"</div>"+
-            "<button onclick='toggleEditarClienteCobrar("+c.id+")' title='Editar cliente' style='flex-shrink:0;background:none;border:none;cursor:pointer;font-size:12px;opacity:.45;padding:0'>✏️</button>"+
+            "<button onclick='toggleEditarClienteCobrar(\""+_jsAttr(String(c.id))+"\")' title='Editar cliente' style='flex-shrink:0;background:none;border:none;cursor:pointer;font-size:12px;opacity:.45;padding:0'>✏️</button>"+
           "</div>"+
           "<div style='margin-top:5px'>"+chipCC+(c.fechaCobro?"<span class='bk-ref' style='margin-left:7px'>cobrado "+c.fechaCobro+"</span>":"")+"</div>"+
         "</div>"+
@@ -38912,12 +38934,12 @@ function rCuentasCobrar(){
       "<div class='bk-pie'>"+
         "<input type='text' class='bk-concepto' placeholder='+ agregar concepto' value='"+_escAud(c.notaDesc||"")+"' onchange='editarNotaCuentaCobrar("+c.id+",this.value)'>"+
         (isPend?"<div class='bk-acts'>"+
-          "<button class='bk-btn icon danger' onclick='eliminarCuenta("+c.id+")' title='Eliminar cargo'>🗑</button>"+
-          (!tieneAbonos?"<button class='bk-btn ok-soft' onclick='marcarCobrado("+c.id+")'>✓ Cobrado</button>":"")+
-          (tieneAbonos&&saldoPend<=0.001?"<button class='bk-btn ok-soft' onclick='marcarCobrado("+c.id+")'>✓ Cerrar</button>":"")+
-          "<button class='bk-btn "+(isAbonar?"ghost":"pri")+"' onclick='toggleAbonarCobrar("+c.id+")'>"+(isAbonar?"✕ Cerrar":"Abonar")+"</button>"+
+          "<button class='bk-btn icon danger' onclick='eliminarCuenta(\""+_jsAttr(String(c.id))+"\")' title='Eliminar cargo'>🗑</button>"+
+          (!tieneAbonos?"<button class='bk-btn ok-soft' onclick='marcarCobrado(\""+_jsAttr(String(c.id))+"\")'>✓ Cobrado</button>":"")+
+          (tieneAbonos&&saldoPend<=0.001?"<button class='bk-btn ok-soft' onclick='marcarCobrado(\""+_jsAttr(String(c.id))+"\")'>✓ Cerrar</button>":"")+
+          "<button class='bk-btn "+(isAbonar?"ghost":"pri")+"' onclick='toggleAbonarCobrar(\""+_jsAttr(String(c.id))+"\")'>"+(isAbonar?"✕ Cerrar":"Abonar")+"</button>"+
         "</div>":"<div class='bk-acts'>"+
-          "<button class='bk-btn icon danger' onclick='eliminarCuenta("+c.id+")' title='Eliminar cargo'>🗑</button>"+
+          "<button class='bk-btn icon danger' onclick='eliminarCuenta(\""+_jsAttr(String(c.id))+"\")' title='Eliminar cargo'>🗑</button>"+
         "</div>")+
       "</div>"+
       abonosHtml+
