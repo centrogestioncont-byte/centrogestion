@@ -4971,6 +4971,18 @@ eligió la **A**:
 - **Lo que casi no se usa va detrás de ⋯**, que abre por su id y queda en `S`
   (ARREGLOS 32 y 165). El detalle de parcelas sólo se dibuja abierto.
 
+### Y los botones de Por cobrar no aceptaban un id con letras (ARREGLO 244)
+
+Lo vio ella el 12/11 con el cobro de una venta fiada: ✏️, Abonar, Cobrado y 🗑️
+no hacían nada. Los botones escribían el id **sin comillas**
+(`toggleAbonarCobrar(1731000000000)`), que vale mientras todos los ids son
+números; el cobro de Mercancía lleva `artc_…` y quedaba
+`toggleAbonarCobrar(artc_mwb0rv1k_yt4yk6)` — un nombre que no existe, error en
+silencio. Ahora van entre comillas con `_jsAttr` y las funciones buscan por
+`String(id)`; los toggles guardan en `S` el id del propio cobro, con su tipo,
+porque la tarjeta compara con `===`. Y un cobro de Mercancía no se borra desde
+ahí: la venta seguiría contando su ganancia sin el cobro; se deshace la venta.
+
 ### Lo que NO entró, y es a propósito
 
 - **Cantidad por artículo.** Una cosa, un registro. Con cantidad habría que

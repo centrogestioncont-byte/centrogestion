@@ -14736,5 +14736,24 @@ console.log("\nARREGLO 245 · Revalorización de lo que ya había al abrir");
      "la fila de las tasas dice cuánto es de la apertura y si la tasa no es la del día exacto");
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// ARREGLO 244 · los botones de Por cobrar funcionan con un id de letras
+//   Un cobro de una venta fiada de Mercancía lleva id "artc_…". Escrito sin
+//   comillas en el onclick era un nombre de variable que no existe: ✏️,
+//   Abonar, Cobrado y 🗑️ no hacían nada en ese cobro.
+{
+  const sinC = t => t.replace(/\/\/[^\n]*/g, "");
+  const sinComillas = HTML.match(/(toggleAbonarCobrar|marcarCobrado|eliminarCuenta|toggleEditarClienteCobrar|guardarEditClienteCobrar|saveAbonoCobrar|eliminarAbonoCobrar)\("\+c\.id\+"/g);
+  ok(!sinComillas, "ningún botón de Por cobrar escribe el id sin comillas", sinComillas && sinComillas.join(", "));
+  ["toggleAbonarCobrar","saveAbonoCobrar","eliminarAbonoCobrar","marcarCobrado","eliminarCuenta","toggleEditarClienteCobrar","guardarEditClienteCobrar"].forEach(function(f){
+    const b = sinC(sacarFuncion(f));
+    ok(/\(S\.cuentasCobrar\|\|\[\]\)\.find\(function\(x\)\{return String\(x\.id\)===String\(/.test(b), f + " busca el cobro por String(id)");
+  });
+  const ec = sinC(sacarFuncion("eliminarCuenta"));
+  ok(/filter\(function\(x\)\{return x!==c;\}\)/.test(ec) && /_marcarBorradoMerge\("cuentasCobrar",c\.id\)/.test(ec),
+     "borrar quita ESE cobro y lo marca con su propio id");
+  ok(/if\(c\.fromArticulo\)\{[\s\S]*?return;/.test(ec), "un cobro de Mercancía no se borra desde Por cobrar (se deshace la venta)");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
