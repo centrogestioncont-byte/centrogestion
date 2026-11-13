@@ -1801,6 +1801,12 @@ input::placeholder{color:var(--ink3)}
    van detras. Si cada una se escribe sus estilos, en dos semanas hay
    diecisiete tarjetas distintas otra vez. */
 .pz-rejilla{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:12px;margin-bottom:16px}
+/* ARREGLO 247: las cuatro casillas de Inventario USDT. En el teléfono, con
+   cuatro por fila cada una mide ~80 px y la línea de debajo ("= 5,085") se
+   cortaba. Por debajo de 640 px van dos por fila. */
+.iu-rej4{grid-template-columns:repeat(4,1fr)}
+@media (max-width:639px){.iu-rej4{grid-template-columns:repeat(2,1fr)}}
+.num-eco{overflow-wrap:anywhere}
 .pz-card{background:var(--sup);border:1px solid var(--ln);border-radius:14px;padding:16px 17px 14px}
 .pz-rot{font-size:10px;font-weight:800;letter-spacing:.11em;text-transform:uppercase;color:var(--tx3);margin-bottom:9px}
 .pz-num{font-size:26px;font-weight:800;letter-spacing:-.02em;line-height:1.05;color:var(--tx)}
@@ -2727,54 +2733,382 @@ function r4(n){ // Round to max 4 significant decimals, no floating point artifa
 // el número en el PRIMER punto: "198.619,90" entraba como 198,619. El 12/09 así
 // se vació el Banco de Venezuela —218.629,90 quedaron en 198,89— y la remesa
 // siguiente dejó la cuenta en negativo sin que nada avisara.
-// Un punto suelto ("198.619") es ambiguo y ninguna regla lo acierta siempre, por
-// eso quien llama tiene que CONFIRMAR enseñando lo que se leyó.
+//
+// ── ARREGLO 246 · la regla va por TIPO de campo, y lo mal escrito se rechaza ──
+//
+// Sus palabras del 11/11, revisando producción: "5.085" en una tasa se leía
+// 5085 —mil veces más—, "12,5.3" se leía 125,3, "1e3" se leía 13 y "abc" pasaba
+// como texto. Ninguno avisaba. La regla de antes miraba la MONEDA (en USDT el
+// punto era decimal, en el resto de miles), y eso no sirve: una tasa de reales
+// lleva tres decimales igual que una de USDT. Lo que decide es el TIPO:
+//
+//   tasa  · un solo punto o coma = decimal, con las cifras que sean
+//           "5.085" = 5,085 · "1076.300" = 1076,3
+//   monto · un solo punto con 3 cifras detrás = MILES ("1.500" = 1500,
+//           "58.140" = 58140); con 1 o 2, o con 4 o más, decimal ("100.5",
+//           "58.14", "306.2367"). La coma sola siempre es decimal ("58,1403").
+//   los dos · con punto Y coma, el último es el decimal y el otro de miles
+//           ("1.000,50" = "1,000.50" = 1000,5); varios iguales, todos de miles.
+//
+// Lo que no es un número se RECHAZA (NaN): letras (salvo el símbolo de la
+// moneda, que viene pegado al copiar un comprobante: "R$ 1.500", "Bs 140.314,40",
+// "5 USDT"), exponentes ("1e3"), dos separadores decimales ("12,5.3") y miles mal
+// agrupados ("1.00.000"). Un número mal escrito no puede convertirse en otro.
+//
+// Un "0." delante sigue siendo decimal en cualquier tipo (ARREGLO 43): nadie
+// escribe 0.003 queriendo decir tres mil.
+//
+// El tipo viene del propio campo (data-num='tasa'), así que se le puede pasar
+// el elemento entero; sin tipo es monto, que es lo que hacía antes. Las monedas
+// de antes ("USDT", "VES"...) cuentan como monto: así lo decidió ella.
+function _leerNumero(txt, tipo){
+  if(txt && typeof txt==="object" && "value" in txt){
+    if(!tipo && txt.getAttribute) tipo=txt.getAttribute("data-num");
+    txt=txt.value;
+  }
+  if(typeof txt==="number") return isFinite(txt)?txt:NaN;
+  if(txt===null||txt===undefined) return NaN;
+  // El símbolo de la moneda, que viene pegado al copiar un comprobante.
+  var s=String(txt).replace(/R\$|US\$|S\/\.?|Bs\.?S?|USDT|USD|BRL|VES|PEN|COP|EUR|€|\$/gi,"").replace(/[\s ]/g,"");
+  if(!s) return NaN;
+  var neg=false;
+  if(s.charAt(0)==="-"||s.charAt(0)==="−"){ neg=true; s=s.slice(1); }
+  if(!/^[0-9.,]+$/.test(s) || !/[0-9]/.test(s)) return NaN;   // letras, 1e3, "-" suelto
+  var esTasa=(tipo==="tasa");
+  var iCom=s.lastIndexOf(","), iPun=s.lastIndexOf(".");
+  var nCom=(s.match(/,/g)||[]).length, nPun=(s.match(/\./g)||[]).length;
+  var ent, dec="";
+  // Miles bien agrupados: el primer grupo de 1 a 3 cifras y los demás de 3.
+  var miles=function(x, sep){
+    var g=x.split(sep);
+    if(!/^[0-9]{1,3}$/.test(g[0])) return null;
+    for(var k=1;k<g.length;k++) if(!/^[0-9]{3}$/.test(g[k])) return null;
+    return g.join("");
+  };
+  if(nCom && nPun){
+    var decSep=iCom>iPun?",":".", milSep=decSep===","?".":",";
+    if((decSep===","?nCom:nPun)!==1) return NaN;                 // "12,5.3": dos decimales
+    var partes=s.split(decSep);
+    ent=miles(partes[0], milSep); dec=partes[1];
+    if(ent===null || !/^[0-9]*$/.test(dec)) return NaN;
+  }else if(nCom>1||nPun>1){
+    ent=miles(s, nCom?",":".");                                   // 1.000.000
+    if(ent===null) return NaN;
+  }else if(nCom===1||nPun===1){
+    var sep=nCom?",":".", p2=s.split(sep);
+    var enteroCero=/^0*$/.test(p2[0]);
+    if(sep==="." && !esTasa && !enteroCero && p2[1].length===3 && /^[0-9]{1,3}$/.test(p2[0])){
+      ent=p2[0]+p2[1];                                            // monto: 1.500 = mil quinientos
+    }else{ ent=p2[0]; dec=p2[1]; }
+  }else{ ent=s; }
+  var n=parseFloat((ent||"0")+(dec?"."+dec:""));
+  if(isNaN(n)) return NaN;
+  return neg?-n:n;
+}
 // ── El número tal y como ella lo teclea ─────────────────────────────────────
 // ARREGLO 52 (14/09/2026): los campos `type="number"` descartan en silencio lo
 // que el navegador no considera un número, y con el teclado en español la coma
-// decimal es justo eso. Por ahí se perdió el 0,003 de la comisión del banco: el
-// campo se quedaba con "0003". Y pasar el campo a texto sin más es peor, porque
-// cada parseFloat de más abajo leería "5,22" como 5.
+// decimal es justo eso. Así que se normaliza en la puerta.
 //
-// Así que se normaliza en la puerta: el campo guarda lo que ella escribió,
-// entendido, y los cien parseFloat que hay detrás siguen funcionando igual.
-// Si todavía no es un número —está a medio teclear— se deja el texto tal cual,
-// que es lo que había antes.
-function _num(v){
-  var n=_leerNumero(v);
-  return isNaN(n) ? v : String(n);
+// ARREGLO 246: devuelve un NÚMERO o null, nunca texto. Antes, lo que no era un
+// número se dejaba "tal cual" —"abc" pasaba como "abc"— y el parseFloat de abajo
+// lo convertía en NaN o en 0 sin avisar. Ahora null dice "esto no se entiende",
+// y es al GUARDAR (_numsOk) donde se para y se marca el campo en rojo.
+// Se le puede pasar el campo entero (_num(this)): el tipo sale de su data-num.
+function _num(v, tipo){
+  var n=_leerNumero(v, tipo);
+  return isNaN(n) ? null : n;
 }
-function _leerNumero(txt, moneda){
-  if(txt===null||txt===undefined) return NaN;
-  var s=String(txt).replace(/\s/g,"").replace(/[^0-9.,\-]/g,"");   // quita Bs, $, USDT...
-  if(!s) return NaN;
-  var neg=s.charAt(0)==="-";
-  s=s.replace(/-/g,"");
-  var iCom=s.lastIndexOf(","), iPun=s.lastIndexOf(".");
-  if(iCom>-1 && iPun>-1){
-    // Están los dos: manda el ÚLTIMO, el otro es separador de miles.
-    if(iCom>iPun) s=s.replace(/\./g,"").replace(",",".");
-    else          s=s.replace(/,/g,"");
-  }else if(iCom>-1){
-    // Solo comas: aquí la coma es el decimal; si hay varias, las de delante son miles.
-    s=s.replace(/,(?=.*,)/g,"").replace(",",".");
-  }else if(iPun>-1){
-    var puntos=(s.match(/\./g)||[]).length;
-    var decimales=s.length-iPun-1;
-    // Varios puntos → todos de miles (1.000.000). Uno solo con exactamente tres
-    // cifras detrás → también de miles (198.619), salvo en USDT, que sí se lleva
-    // con tres y cuatro decimales de verdad (306.2367).
-    // ARREGLO 43 (14/09/2026): pero un número que empieza por "0." NUNCA lleva
-    // separador de miles — nadie escribe 0.003 queriendo decir tres mil. Sin esta
-    // salvedad, la comisión del banco 0.003 se leía como 3 y Configuración la
-    // rechazaba por pasarse del 0,5 máximo: la dueña no podía quitarse el 3% que
-    // le estaba comiendo media ganancia en cada remesa, ni escribiéndolo bien.
-    var enteroCero=/^0+$/.test(s.slice(0,s.indexOf(".")));
-    if(!enteroCero && (puntos>1 || (decimales===3 && moneda!=="USDT" && iPun>0))) s=s.replace(/\./g,"");
+// ── ARREGLO 246 · debajo de cada campo de dinero, cómo lo entendió ──────────
+//
+// Sus palabras: que debajo de cada monto o tasa se vea en pequeño cómo lo
+// entendió ("= 1.500") mientras escribe, SIEMPRE, para verlo antes de guardar.
+// "1.500" en un monto son mil quinientos y en una tasa uno y medio: sin esta
+// línea no hay forma de saber cuál de las dos leyó la app.
+//
+// Es UN solo escuchador para toda la app, no código campo por campo: así un
+// campo nuevo queda cubierto solo. No repinta nada (ARREGLO 32): escribe en
+// su propia línea, que vive al lado del campo.
+//   · al teclear: el evento `input`;
+//   · al dibujar: un MutationObserver, porque R() y los repintados parciales
+//     (sec3-tx, la tarjeta de tasas...) crean campos nuevos con su valor;
+//   · cuando el código escribe el campo (los botones "usar"): el setter de
+//     `value`. Sin eso la línea se quedaría con el número anterior, que es el
+//     ARREGLO 55: dos cosas en la misma pantalla que no cuadran.
+function _fmtEco(n){
+  var neg=n<0; n=Math.abs(n);
+  var s=String(Math.round(n*1e8)/1e8);
+  if(/e/.test(s)) s=n.toFixed(8).replace(/0+$/,"").replace(/\.$/,"");
+  var p=s.split("."), ent=p[0].replace(/\B(?=(\d{3})+(?!\d))/g,".");
+  return (neg?"−":"")+ent+(p[1]?","+p[1]:"");
+}
+function _esCampoNum(el){
+  return !!(el && el.tagName==="INPUT" && el.getAttribute && el.getAttribute("inputmode")==="decimal");
+}
+function _ecoCampo(el, error){
+  if(!_esCampoNum(el)) return;
+  var eco=el._eco;
+  if(!eco || !eco.isConnected){
+    eco=document.createElement("div");
+    eco.className="num-eco";
+    eco.style.cssText="font-size:10.5px;line-height:1.3;margin-top:2px;color:var(--tx3);font-weight:600;text-align:left";
+    // En una fila (campo + botón, campo + moneda) la línea va debajo de la
+    // fila: metida dentro empujaría el botón a un lado.
+    var par=el.parentNode, enFila=false;
+    try{ var cs=getComputedStyle(par); enFila=/flex/.test(cs.display) && !/column/.test(cs.flexDirection); }catch(e){}
+    if(enFila && par.parentNode) par.parentNode.insertBefore(eco, par.nextSibling);
+    else par.insertBefore(eco, el.nextSibling);
+    el._eco=eco;
   }
-  var n=parseFloat(s);
-  if(isNaN(n)) return NaN;
-  return neg?-n:n;
+  var txt=String(el.value||"").trim();
+  if(!error){ el.style.outline=""; }
+  if(!txt && !error){ eco.style.display="none"; eco.textContent=""; return; }
+  eco.style.display="";
+  if(error){ eco.style.color="var(--mal)"; eco.textContent="⚠️ "+error; return; }
+  var n=_leerNumero(el);
+  if(isNaN(n)){ eco.style.color="var(--mal)"; eco.textContent="⚠️ No se entiende: escribe solo cifras, con punto o coma"; return; }
+  eco.style.color="var(--tx3)";
+  eco.textContent="= "+_fmtEco(n);
+}
+// Lo mal escrito tiene que seguir VIÉNDOSE después de un repintado. _num()
+// deja null cuando no entiende, y el campo se redibuja desde S: sin esto, en
+// los campos que repintan al salir (onblur='R()', Traspasos y Préstamos) el
+// texto que ella escribió desaparecía y no había nada que marcar en rojo.
+// Antes de repintar se apunta lo que no se entiende, por campo; al volver a
+// aparecer ese campo vacío, se le devuelve, con su aviso debajo.
+function _claveCampo(el){
+  return el.id || ((el.getAttribute("oninput")||"")+"|"+(el.getAttribute("onchange")||""));
+}
+//
+// ARREGLO 247: y no solo lo mal escrito. Un campo que repinta al salir se
+// redibujaba desde S —"294.990" volvía como "294990"— y con eso se perdía
+// cómo lo escribió ella: la línea de debajo seguía diciendo lo mismo, pero el
+// "¿quisiste decir 294,99?" ya no tenía de dónde salir. Si el número que va a
+// dibujarse es el MISMO que el que ella escribió, se le devuelve su texto; si
+// cambió (lo cambió el código), manda el nuevo.
+function _numsMalosAntes(){
+  var m={}, l=document.querySelectorAll("input[inputmode=decimal]");
+  for(var i=0;i<l.length;i++){
+    var txt=String(l[i].value||"").trim();
+    if(txt) m[_claveCampo(l[i])]={raw:l[i].value, n:_leerNumero(l[i])};
+  }
+  window._numPend=m;
+}
+function _ecoEn(raiz){
+  if(!raiz || !raiz.querySelectorAll) return;
+  var l=_esCampoNum(raiz)?[raiz]:raiz.querySelectorAll("input[inputmode=decimal]");
+  var pend=window._numPend||{};
+  for(var i=0;i<l.length;i++){
+    var k=_claveCampo(l[i]);
+    var pk=pend[k];
+    if(pk!==undefined){
+      var ahora=String(l[i].value||"").trim();
+      if((!ahora && isNaN(pk.n)) || (ahora && ahora!==pk.raw && _leerNumero(l[i])===pk.n)) l[i].value=pk.raw;
+      delete pend[k];
+    }
+    _ecoCampo(l[i]);
+  }
+}
+(function(){
+  if(typeof document==="undefined" || !document.addEventListener) return;
+  document.addEventListener("input", function(e){ if(_esCampoNum(e.target)) _ecoCampo(e.target); }, true);
+  try{
+    var d=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value");
+    if(d && d.set && !HTMLInputElement.prototype._ecoValor){
+      Object.defineProperty(HTMLInputElement.prototype,"value",{configurable:true, enumerable:d.enumerable,
+        get:function(){ return d.get.call(this); },
+        set:function(v){ d.set.call(this,v); if(this._eco||_esCampoNum(this)) try{ if(this.isConnected) _ecoCampo(this); }catch(e){} }});
+      HTMLInputElement.prototype._ecoValor=true;
+    }
+  }catch(e){}
+  var arrancar=function(){
+    try{
+      new MutationObserver(function(ms){
+        for(var i=0;i<ms.length;i++){
+          var a=ms[i].addedNodes;
+          for(var j=0;j<a.length;j++) if(a[j].nodeType===1 && a[j].className!=="num-eco") _ecoEn(a[j]);
+        }
+      }).observe(document.body,{childList:true,subtree:true});
+      _ecoEn(document.body);
+    }catch(e){}
+  };
+  if(document.body) arrancar(); else document.addEventListener("DOMContentLoaded", arrancar);
+})();
+
+// ── ARREGLO 247 · "¿Quisiste decir 58,14 USDT? Lo escribiste como 58.140" ────
+//
+// Sus palabras del 11/11: un seguro contra montos MIL veces más grandes. Con
+// la regla del 246 un "58.140" en un monto son cincuenta y ocho mil, y eso es
+// lo correcto si lo escribió así a propósito — pero si lo pegó de un sitio que
+// usa el punto como decimal, son 58,14. La regla no puede adivinarlo: lo que sí
+// puede es ver que los números de la operación NO CUADRAN entre sí, y entonces
+// decir cuál tiene pinta de ser el culpable.
+//
+// _lecturaMiles(el) mira SOLO el caso que se presta a la confusión: un monto
+// con un punto y tres cifras detrás ("58.140"), que se leyó como miles. Una
+// tasa no entra (ahí ese punto ya es decimal), ni un número con coma, ni uno
+// con varios puntos: esos no tienen otra lectura.
+function _lecturaMiles(el){
+  if(!el || !el.getAttribute || el.getAttribute("data-num")==="tasa") return null;
+  var txt=String(el.value||"").trim(), lim=txt.replace(/R\$|US\$|Bs\.?|USDT|USD|BRL|VES|\$|\s/gi,"");
+  if(!/^-?[0-9]{1,3}\.[0-9]{3}$/.test(lim)) return null;
+  var leido=_leerNumero(el), alt=_leerNumero(lim,"tasa");
+  if(isNaN(leido) || isNaN(alt) || leido===alt) return null;
+  return {txt:txt, leido:leido, alt:alt};
+}
+// De varios campos, el que mejor explica el descuadre: el que, leído con la
+// otra lectura, deja la cuenta más cerca de cuadrar. `error(el, alt)` devuelve
+// el logaritmo de la razón entre lo que quedaría y lo que debería (0 = cuadra).
+// Por razón y no por diferencia: medido por diferencia, encoger el MONTO mil
+// veces "acercaba" más que corregir el USDT, y la primera versión sugería
+// "¿1,5 BRL?" donde había que decir "¿58,14 USDT?".
+function _mejorQuisiste(campos, error){
+  var mejor=null;
+  campos.forEach(function(c){
+    var m=_lecturaMiles(c.el); if(!m) return;
+    var e=Math.abs(error(c, m.alt));
+    if(!mejor || e<mejor.e) mejor={e:e, el:c.el, unidad:c.unidad, m:m};
+  });
+  return mejor;
+}
+function _textoQuisiste(q){
+  if(!q) return "";
+  return "¿Quisiste decir "+_fmtEco(q.m.alt)+" "+q.unidad+"? Lo escribiste como "+q.m.txt+
+    ", y así son "+_fmtEco(q.m.leido)+" "+q.unidad+".";
+}
+
+// Inventario USDT: los tres números tienen que contar la misma historia
+// (ARREGLO 66). Hasta el 0,5 % es redondeo de Binance; de ahí al 2 % se
+// pregunta, como antes; por encima del 2 % ya no es redondeo ni un dedazo
+// pequeño, y NO se guarda — su peor dedazo medido iba un 2,4 % fuera.
+function _frenoIU(){
+  var f=S.nIU, esV=f.tipo==="venta", t=_trioIU(), com=_comIU(f.comision);
+  var fiat=parseFloat(f[t.fiat])||0, usdt=parseFloat(f.usdt)||0, tasa=parseFloat(f.tasa)||0;
+  if(!(fiat>0&&usdt>0&&tasa>0)) return null;
+  var esperado=_fiatIU(usdt,tasa,com,esV);
+  var rel=Math.abs(fiat-esperado)/esperado;
+  if(!(rel>0.02)) return null;
+  var usdtEsp=_usdtIU(fiat,tasa,com,esV), r=usdtEsp>0?usdt/usdtEsp:0;
+  var cuanto=r>=10?"unas "+_fmtEco(Math.round(r))+" veces más":(r>0&&r<=0.1?"unas "+_fmtEco(Math.round(1/r))+" veces menos":Math.round(Math.abs(r-1)*100)+" % distinto");
+  var mon=_monIU(), elU=document.getElementById(_IDS_IU.usdt);
+  var q=_quisisteIU();
+  var msg="No se guardó: los números no cuadran entre sí.\n\n"+
+    _fmtEco(fiat)+" "+mon+" ÷ "+_fmtEco(tasa)+" = "+_fmtEco(Math.round(usdtEsp*100)/100)+" USDT, "+
+    "y escribiste "+_fmtEco(usdt)+" USDT ("+cuanto+").";
+  if(q){
+    msg+="\n\n"+_textoQuisiste(q);
+    if(q.e>Math.log(1.02)) msg+="\n\nY aun así no cuadraría: revisa también el monto y la tasa.";
+  } else msg+="\n\nCorrige el que esté mal.";
+  [q?q.el:elU].forEach(function(el){ if(el){ el.style.outline="2px solid var(--mal)"; _ecoCampo(el, "No cuadra"+(q?": ¿"+_fmtEco(q.m.alt)+"?":" con los otros dos")); } });
+  return {msg:msg};
+}
+
+// Cuál de los dos campos de Inventario tiene pinta de estar mil veces grande.
+// Sin efectos: la leen el freno al guardar y el recuadro del cálculo mientras
+// teclea. Escrita en cada uno, un día el recuadro sugeriría un número y el
+// aviso al guardar otro.
+function _quisisteIU(){
+  var f=S.nIU, esV=f.tipo==="venta", t=_trioIU(), com=_comIU(f.comision);
+  var fiat=parseFloat(f[t.fiat])||0, usdt=parseFloat(f.usdt)||0, tasa=parseFloat(f.tasa)||0;
+  if(!(fiat>0&&usdt>0&&tasa>0)) return null;
+  var elF=document.getElementById(_IDS_IU[t.fiat]), elU=document.getElementById(_IDS_IU.usdt);
+  return _mejorQuisiste([{el:elU, unidad:"USDT", k:"usdt"},{el:elF, unidad:_monIU(), k:"fiat"}], function(c, alt){
+    var u=c.k==="usdt"?alt:usdt, fi=c.k==="fiat"?alt:fiat;
+    var e=_fiatIU(u,tasa,com,esV); return (e>0&&fi>0)?Math.log(fi/e):1e9;
+  });
+}
+
+// Traspasos entre monedas: no hay tasa escrita, así que se compara la que sale
+// (lo que entró ÷ lo que salió) contra la de referencia de las dos monedas.
+// Con diez veces o más es un dedazo de los que este arreglo existe para parar,
+// y NO se guarda. Entre el 2 % y diez veces se PREGUNTA en vez de bloquear: la
+// tasa de un cambio de verdad (un P2P a otra hora) puede apartarse más de un 2 %
+// de la de referencia, y bloquearlo dejaría sin forma de guardar un traspaso
+// bueno.
+function _frenoTraspaso(cO, cD, monto, montoDest){
+  var rO=getRateToUsdt(cO.moneda), rD=getRateToUsdt(cD.moneda);
+  if(!(rO>0&&rD>0&&monto>0&&montoDest>0)) return null;
+  var ref=rD/rO, sale=montoDest/monto, q=sale/ref;
+  if(Math.abs(q-1)<=0.02) return null;
+  var elO=document.querySelector("input[oninput^='S.nTraspaso.monto=']"), elD=document.querySelector("input[oninput^='S.nTraspaso.montoDestino=']");
+  var cuentas="Sale "+_fmtEco(monto)+" "+cO.moneda+" y entran "+_fmtEco(montoDest)+" "+cD.moneda+": "+
+    "1 "+cO.moneda+" = "+_fmtEco(Math.round(sale*10000)/10000)+" "+cD.moneda+".\n"+
+    "Con tus tasas de referencia, 1 "+cO.moneda+" = "+_fmtEco(Math.round(ref*10000)/10000)+" "+cD.moneda+".";
+  if(q>=10 || q<=0.1){
+    var qm=_mejorQuisiste([{el:elO, unidad:cO.moneda, k:"o"},{el:elD, unidad:cD.moneda, k:"d"}], function(c, alt){
+      var o=c.k==="o"?alt:monto, d=c.k==="d"?alt:montoDest; return (o>0&&d>0)?Math.log((d/o)/ref):1e9;
+    });
+    if(qm){ qm.el.style.outline="2px solid var(--mal)"; _ecoCampo(qm.el, "No cuadra: ¿"+_fmtEco(qm.m.alt)+"?"); }
+    return {bloquea:true, msg:"No se guardó: el cambio sale "+(q>=10?"más de diez veces":"menos de la décima parte")+" de lo normal.\n\n"+cuentas+
+      (qm?"\n\n"+_textoQuisiste(qm):"\n\nRevisa los dos montos.")};
+  }
+  return {bloquea:false, msg:"⚠️ La tasa de este cambio se aparta un "+Math.round(Math.abs(q-1)*100)+" % de tu referencia.\n\n"+cuentas+
+    "\n\nSi la tasa de verdad fue esa, acepta. Si no, cancela y revisa los montos."};
+}
+// Nueva: lo entregado no se escribe (sale del monto y la tasa), así que donde
+// sí se escriben tres números que tienen que cuadrar es en el desglose de
+// formas de pago y de cuentas de entrega. Esos ya no guardan si no suman
+// exacto; esto añade cuál de las filas tiene pinta de estar mil veces grande.
+function _quisisteEnFilas(prefijoOninput, unidad, objetivo, suma){
+  var els=[].slice.call(document.querySelectorAll("input[oninput^='"+prefijoOninput+"']"));
+  var q=_mejorQuisiste(els.map(function(el){ return {el:el, unidad:unidad}; }), function(c, alt){
+    var v=_leerNumero(c.el), s=suma-v+alt; return (s>0&&objetivo>0)?Math.log(s/objetivo):1e9;
+  });
+  if(q){ q.el.style.outline="2px solid var(--mal)"; _ecoCampo(q.el, "No cuadra: ¿"+_fmtEco(q.m.alt)+"?"); }
+  return q?"\n\n"+_textoQuisiste(q):"";
+}
+
+// ── ARREGLO 246 · al guardar, lo mal escrito NO se guarda ──────────────────
+//
+// Sus palabras: si un monto o tasa no es válido, o es 0 cuando no puede serlo,
+// marcar el campo en rojo, decir por qué y NO guardar.
+//
+// Se mira el CAMPO, no lo que quedó en S: _num() deja null cuando no entiende,
+// y null ya no dice qué escribió ella. El campo sí lo dice, y es el que se
+// marca. Una sola función para todos los formularios: escrita en cada uno, un
+// día uno dejaría pasar lo que otro para (ARREGLOS 101, 119, 150, 153).
+//
+//   raiz  · el elemento (o su id) que contiene el formulario
+//   oblig · ids, o los propios campos, que no pueden ir vacíos ni en 0
+//
+// Un negativo solo vale donde el campo lo dice (data-neg): el saldo de una
+// tarjeta, un ajuste. En un monto o una tasa no significa nada.
+function _numsOk(raiz, oblig){
+  if(typeof raiz==="string") raiz=document.getElementById(raiz);
+  if(!raiz || !raiz.querySelectorAll) return true;
+  // Desde el botón de guardar (_numsOk(this)) se sube hasta el primer bloque
+  // que tiene campos de número: ese es su formulario. Mirando solo dentro del
+  // botón no se encontraba ningún campo y no se paraba nada — lo cazó la
+  // prueba en Chromium, escribiendo mal y pulsando guardar.
+  while(raiz && raiz!==document.body && !raiz.querySelector("input[inputmode=decimal]")) raiz=raiz.parentElement;
+  if(!raiz || raiz===document.body) return true;
+  var req=(oblig||[]).map(function(x){ return typeof x==="string"?document.getElementById(x):x; }).filter(Boolean);
+  var malos=[];
+  var l=raiz.querySelectorAll("input[inputmode=decimal]");
+  for(var i=0;i<l.length;i++){
+    var el=l[i];
+    if(el.disabled || !(el.offsetParent||el.getClientRects().length)) continue;
+    var txt=String(el.value||"").trim(), obl=req.indexOf(el)>-1 || el.hasAttribute("data-req");
+    var motivo=null;
+    if(!txt){ if(obl) motivo="Falta este número"; }
+    else{
+      var n=_leerNumero(el);
+      if(isNaN(n)) motivo="No se entiende «"+txt.slice(0,20)+"»: escribe solo cifras, con punto o coma";
+      else if(n<0 && !el.hasAttribute("data-neg")) motivo="No puede ser negativo";
+      else if(n===0 && obl) motivo="No puede ser 0";
+    }
+    if(motivo){ malos.push({el:el, motivo:motivo}); el.style.outline="2px solid var(--mal)"; _ecoCampo(el, motivo); }
+  }
+  if(!malos.length) return true;
+  var rot=function(el){
+    var f=el.closest&&el.closest(".fl"), lb=f&&f.querySelector("label");
+    var t=(lb&&lb.textContent)||el.getAttribute("placeholder")||"Un campo";
+    return t.replace(/\s+/g," ").trim().slice(0,50);
+  };
+  try{ malos[0].el.focus(); }catch(e){}
+  alert("No se guardó: "+(malos.length===1?"hay un número":"hay "+malos.length+" números")+" que revisar (en rojo).\n\n"+
+    malos.map(function(m){ return "• "+rot(m.el)+": "+m.motivo; }).join("\n"));
+  return false;
 }
 // El texto que se le enseña antes de tocar un saldo. Siempre, no solo cuando el
 // cambio es raro: lo que hace falta ver es el número que la app entendió.
@@ -3383,7 +3717,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261113_v331";
+var APP_VERSION = "20261113_v332";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -8142,12 +8476,12 @@ function rOpDiario(){
     // Route
     row+="<td><span class='bd' style='background:var(--sup2g);color:var(--tx);font-size:10px'>"+_escAud(r.rt)+"</span></td>";
     // Amount
-    if(isEd) row+="<td><input id='edit-am' oninput='_editComPrev()' type='text' inputmode='decimal' value='"+r.am+"' style='width:70px;font-size:11px;padding:3px 5px;border:1px solid var(--ok-ln);border-radius:5px;text-align:right'></td>";
+    if(isEd) row+="<td><input id='edit-am' oninput='_editComPrev()' type='text' inputmode='decimal' value='"+_comaCab(r.am)+"' style='width:70px;font-size:11px;padding:3px 5px;border:1px solid var(--ok-ln);border-radius:5px;text-align:right'></td>";
     else row+="<td style='text-align:right;font-weight:700'>"+f2(r.am)+"</td>";
     // Currency
     row+="<td style='text-align:center'><span class='bd' style='background:var(--sup2g);color:var(--tx);font-size:10px'>"+r.orig+"</span></td>";
     // Daily rate
-    if(isEd) row+="<td><input id='edit-tdia' oninput='_editComPrev()' type='text' inputmode='decimal' step='0.001' value='"+r.tdia+"' style='width:65px;font-size:11px;padding:3px 5px;border:1px solid var(--ok-ln);border-radius:5px;text-align:right'></td>";
+    if(isEd) row+="<td><input id='edit-tdia' oninput='_editComPrev()' type='text' inputmode='decimal' data-num='tasa' step='0.001' value='"+_comaCab(r.tdia)+"' style='width:65px;font-size:11px;padding:3px 5px;border:1px solid var(--ok-ln);border-radius:5px;text-align:right'></td>";
     else row+="<td style='text-align:right'>"+f2(r.tdia)+"</td>";
     // Gain + lock + actions
     row+="<td style='text-align:right;font-weight:700;color:var(--ok)'>$"+f2(prShow)+"</td>";
@@ -8233,7 +8567,7 @@ function rTraspasos(){
   "</div>"+
   "<div class='sec'><div class='sec-title'>Nueva transferencia interna</div>"+
   "<div class='f2'><div class='fl'><label>Fecha</label><input type='date' value='"+(f.fecha||"")+"' onchange='S.nTraspaso.fecha=this.value'></div>"+
-  "<div class='fl'><label>Monto que sale</label><input type='text' inputmode='decimal' step='0.01' placeholder='0.00' value='"+(f.monto||"")+"' oninput='S.nTraspaso.monto=_num(this.value)' onblur='R()'></div></div>"+
+  "<div class='fl'><label>Monto que sale</label><input type='text' inputmode='decimal' data-req='1' step='0.01' placeholder='0.00' value='"+_comaCab((f.monto||""))+"' oninput='S.nTraspaso.monto=_num(this)' onblur='R()'></div></div>"+
   "<div class='f2'><div class='fl'><label>Cuenta Origen</label>"+
     "<select onchange='S.nTraspaso.cuentaOrigen=this.value;R()'>"+
       "<option value=''>-- Seleccionar --</option>"+cuentaOpts+
@@ -8245,7 +8579,7 @@ function rTraspasos(){
   (esConversion?
     "<div style='background:var(--am6-a);border:1px solid var(--am4);border-radius:8px;padding:10px 12px;margin-bottom:10px'>"+
       "<label style='font-size:11px;font-weight:700;color:var(--avi-tx);display:block;margin-bottom:5px'>💱 Cambio de moneda: "+cOrig.moneda+" → "+cDest.moneda+" — ¿cuánto entró en "+cDest.moneda+"?</label>"+
-      "<input type='text' inputmode='decimal' step='0.01' placeholder='0.00' value='"+(f.montoDestino||"")+"' oninput='S.nTraspaso.montoDestino=_num(this.value)' onblur='R()' style='width:100%;padding:10px;font-size:15px;border:1.5px solid var(--ln);border-radius:8px;font-family:inherit'>"+
+      "<input type='text' inputmode='decimal' step='0.01' placeholder='0.00' value='"+_comaCab((f.montoDestino||""))+"' oninput='S.nTraspaso.montoDestino=_num(this)' onblur='R()' style='width:100%;padding:10px;font-size:15px;border:1.5px solid var(--ln);border-radius:8px;font-family:inherit'>"+
       (monto>0&&montoDestino>0?"<div style='font-size:11px;color:var(--avi-tx);margin-top:6px'>Tasa efectiva: 1 "+cOrig.moneda+" = "+f4(montoDestino/monto)+" "+cDest.moneda+"</div>":"")+
     "</div>"
   :"")+
@@ -8262,7 +8596,7 @@ function rTraspasos(){
         :"❌ "+
          (esConversion&&montoDestino<=0?"Escribe cuánto entró en "+cDest.moneda:"Saldo insuficiente en "+cOrig.nombre+" (disponible: "+f2(cOrig.saldo)+" "+cOrig.moneda+")"))+
     "</div>":"")+
-  "<button class='btn-main btn-blue' onclick='saveTraspaso()' "+(canExec?"":"disabled style='opacity:.5;cursor:not-allowed'")+">🔄 Ejecutar traspaso</button></div>"+
+  "<button class='btn-main btn-blue' onclick='if(_numsOk(this))saveTraspaso()' "+(canExec?"":"disabled style='opacity:.5;cursor:not-allowed'")+">🔄 Ejecutar traspaso</button></div>"+
   (rows?
     "<div style='font-size:11px;font-weight:700;color:var(--tx3);text-transform:uppercase;margin-bottom:8px'>Historial de traspasos</div>"+
     "<div class='tw'><table><thead><tr><th>FECHA</th><th colspan='3'>MOVIMIENTO</th><th style='text-align:right'>MONTO</th><th>NOTA</th><th>🔒</th><th></th></tr></thead>"+
@@ -8427,6 +8761,10 @@ function saveTraspaso(){
   if(esConv){
     montoDest=parseFloat(f.montoDestino)||0;
     if(montoDest<=0){alert("Escribe cuánto entró en "+cD.moneda+".");return;}
+    // ARREGLO 247: un cambio diez veces fuera de lo normal es un dedazo y no
+    // se guarda; entre el 2 % y diez veces se pregunta.
+    var _ft=_frenoTraspaso(cO,cD,monto,montoDest);
+    if(_ft){ if(_ft.bloquea){ alert(_ft.msg); return; } if(!confirm(_ft.msg)) return; }
     // La "ganancia" de este cambio no se puede expresar en una sola moneda
     // de forma exacta sin una tasa de referencia común — se registra el
     // movimiento real de ambas cuentas, y si quieres contabilizar la
@@ -8726,13 +9064,24 @@ function montoConMoneda(monto, moneda){ return f2(parseFloat(monto)||0)+" "+(mon
 // Para listar las monedas sin tasa sin repetirlas: .filter(_unicos)
 function _unicos(v,i,a){ return a.indexOf(v)===i; }
 
-function guardarTasaFila(moneda){var inp=document.getElementById("tasa_inp_"+moneda);if(inp)setTasaDia(moneda,inp.value);S._editTasaCuenta=null;R();}
+function guardarTasaFila(moneda){var inp=document.getElementById("tasa_inp_"+moneda);if(inp)setTasaDia(moneda,inp);S._editTasaCuenta=null;R();}
 // ARREGLO 49: escribir una tasa a mano ahora es FIJARLA — una decisión, no un
 // número que se queda pegado sin que nadie se acuerde. Se guarda con su fecha
 // para que el panel la enseñe envejecer, y se suelta con un toque.
 function setTasaDia(moneda, tasa){
-  var v=_leerNumero(tasa, moneda);
-  if(!(v>0)){ soltarTasaDia(moneda); return; }   // borrar el campo = volver a automática
+  // ARREGLO 246: es una TASA, y se lee como tasa. Leída con la moneda como
+  // tipo, "5.085" en BRL entraba como 5085 —la regla de los montos— y el
+  // límite de abajo la rechazaba sin que se entendiera por qué.
+  var txt=String(tasa&&typeof tasa==="object"?tasa.value:(tasa===undefined||tasa===null?"":tasa)).trim();
+  var v=_leerNumero(tasa, "tasa");
+  if(!txt){ soltarTasaDia(moneda); return; }   // borrar el campo = volver a automática
+  // Antes, lo que no se entendía también la soltaba: escribir mal una tasa la
+  // cambiaba por la automática sin decir nada.
+  if(!(v>0)){
+    alert("No se guardó la tasa de "+moneda+": "+(isNaN(v)?"no se entiende «"+txt.slice(0,20)+"». Escribe solo cifras, con punto o coma.":"tiene que ser mayor que 0."));
+    if(tasa&&typeof tasa==="object") _ecoCampo(tasa, isNaN(v)?"No se entiende":"Tiene que ser mayor que 0");
+    return;
+  }
   var lim=_RATE_LIMITS[moneda];
   if(lim&&(v<lim[0]||v>lim[1])){
     alert("Esa tasa no parece de "+moneda+".\n\nSe espera algo entre "+f2(lim[0])+" y "+f2(lim[1])+" "+moneda+" por USDT, y escribiste "+f2(v)+".\n\nRevisa el punto y la coma: 5,11 no es lo mismo que 511.");
@@ -8819,8 +9168,8 @@ function rBalancePlus(){
             "</div>"+
           "</div>"+
           "<div style='display:flex;align-items:center;gap:8px'>"+
-            "<input type='text' inputmode='decimal' placeholder='"+hint+"' value='"+(curTasa||"")+"' "+
-              "onchange='setTasaDia(\"'+mon+'\",this.value)' "+
+            "<input type='text' inputmode='decimal' data-num='tasa' placeholder='"+hint+"' value='"+_comaCab((curTasa||""))+"' "+
+              "onchange='setTasaDia(\"'+mon+'\",this)' "+
               "style='flex:1;padding:9px 11px;font-size:14px;border:1.5px solid "+(tieneRate?"var(--vd5)":"var(--avi-ln)")+";border-radius:7px;font-family:inherit'>"+
             "<div style='font-size:10.5px;color:var(--tx4);text-align:right;min-width:82px'>"+
               (ref.origen==="auto" ? "🔄 sale sola<br>"+(ref.tipo==="compra"?"compra":"venta")+" "+_fechaLoteLegible(ref.fecha)
@@ -8853,7 +9202,7 @@ function rBalancePlus(){
         "<td style='text-align:center'>"+ic+" "+c.moneda+"</td>"+
         "<td style='text-align:right;font-size:14px;font-weight:700;color:var(--ok)'>"+f2(parseFloat(c.saldo)||0)+"</td>"+
         "<td style='text-align:right;background:var(--avi-sup2);font-weight:700;color:var(--info)'>"+(usdt!==null?"≈ "+f2(usdt)+" USDT":"<span style='color:var(--tx4);font-size:10px'>sin tasa</span>")+"</td>"+
-        "<td><input type='text' inputmode='decimal' value='"+(parseFloat(c.saldo)||0)+"' step='0.01' onchange='updateCuentaSaldo(\""+c.id+"\",_num(this.value))' style='width:100px;font-size:12px;text-align:right;padding:4px 7px;border:1px solid var(--ln);border-radius:6px'></td>"+
+        "<td><input type='text' inputmode='decimal' value='"+_comaCab((parseFloat(c.saldo)||0))+"' step='0.01' onchange='updateCuentaSaldo(\""+c.id+"\",_num(this))' style='width:100px;font-size:12px;text-align:right;padding:4px 7px;border:1px solid var(--ln);border-radius:6px'></td>"+
         "<td><button class='del-btn' onclick='deleteCuenta(\""+c.id+"\")'>🗑️</button></td>"+
       "</tr>";
     }).join("");
@@ -8915,7 +9264,7 @@ function rBalancePlus(){
   "<div class='f3'><div class='fl'><label>Nombre</label><input type='text' placeholder='ej: Binance Julio, Nubank...' value='"+(nc.nombre||"")+"' oninput='S.nCap.nombre=this.value'></div>"+
   "<div class='fl'><label>Tipo</label><select onchange='S.nCap.tipo=this.value'>"+tipoOpts+"</select></div>"+
   "<div class='fl'><label>Moneda</label><select onchange='S.nCap.moneda=this.value;R()'>"+monedaOpts+"</select></div></div>"+
-  "<div class='f2'><div class='fl'><label>Saldo actual ("+nc.moneda+")</label><input type='text' inputmode='decimal' step='0.01' placeholder='0.00' value='"+(nc.saldo||"")+"' oninput='S.nCap.saldo=_num(this.value)'></div>"+
+  "<div class='f2'><div class='fl'><label>Saldo actual ("+nc.moneda+")</label><input type='text' inputmode='decimal' step='0.01' placeholder='0.00' value='"+_comaCab((nc.saldo||""))+"' oninput='S.nCap.saldo=_num(this)'></div>"+
   "<div class='fl'><label>Nota</label><input type='text' placeholder='ej: cuenta principal' value='"+(nc.nota||"")+"' oninput='S.nCap.nota=this.value'></div></div>"+
   "<label style='display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:9px 12px;background:var(--az6);border-radius:9px;cursor:pointer'>"+
     "<input type='checkbox' "+(nc.esPersonal?"checked":"")+" onchange='S.nCap.esPersonal=this.checked'>"+
@@ -8938,7 +9287,7 @@ function rBalancePlus(){
       "<span style='font-size:12px'><b>🧾 Declarar en PGDAS-D</b> — las operaciones que entran o salen por esta cuenta cuentan como receita bruta del CNPJ. "+(razon?"<span style=\"color:var(--tx3)\">("+razon+")</span>":"Marca solo las cuentas que de verdad declaras.")+"</span>"+
     "</label>";
   })()+
-  "<button class='btn-main btn-blue' onclick='saveNewCuenta()'>💾 Agregar cuenta</button>"+
+  "<button class='btn-main btn-blue' onclick='if(_numsOk(this))saveNewCuenta()'>💾 Agregar cuenta</button>"+
   "<button onclick='recuperarCuentasConocidas()' style='width:100%;margin-top:10px;padding:11px;border:1.5px dashed var(--mal);border-radius:9px;background:var(--rj6-a);color:var(--mal);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>🆘 Recuperar cuentas conocidas (por el incidente de sincronización)</button>"+
   "</div>"
   );
@@ -10334,7 +10683,7 @@ function guardarLimiteClienteNuevo(){
 function guardarComisionVES(){
   var inp=document.getElementById("inp-com-ves");
   if(!inp) return;
-  var v=_leerNumero(inp.value);
+  var v=_leerNumero(inp);
   if(isNaN(v)||v<0){alert("Valor inválido.");return;}
   autorizarYHacer(function(){
     if(!S.config) S.config={};
@@ -10348,7 +10697,7 @@ function guardarComisionVES(){
 function guardarComision(){
   var inp=document.getElementById("inp-com-usdt");
   if(!inp) return;
-  var v=_leerNumero(inp.value);
+  var v=_leerNumero(inp);
   if(!v||v<0){alert("Valor inválido.");return;}
   autorizarYHacer(function(){if(!S.config)S.config={};logAudit("CONFIG_COMISION","Cambió comisión USDT a "+v);S.config.comision_usdt=v;saveData();R();alert("✅ Comisión: "+v+" USDT");});
 }
@@ -10534,7 +10883,7 @@ function saveEditRow(){
   // recalcula si cambió un número, y la comisión guardada se vuelve a restar.
   var _antesNum=[row.am,row.tdia,row.tc,row.tv].map(String).join("|");
   ["d","id","cl"].forEach(function(f){var el=document.getElementById("edit-"+f);if(el)row[f]=el.value;});
-  ["am","tdia","tc","tv"].forEach(function(f){var el=document.getElementById("edit-"+f);if(el)row[f]=_leerNumero(el.value)||row[f];});
+  ["am","tdia","tc","tv"].forEach(function(f){var el=document.getElementById("edit-"+f);if(el)row[f]=_leerNumero(el)||row[f];});
   var _cambioNum=[row.am,row.tdia,row.tc,row.tv].map(String).join("|")!==_antesNum;
   if(_cambioNum){
     var com=COM();
@@ -10736,7 +11085,7 @@ function _txPagosHTML(cuentasOrig,origMon){
       }).join("")+
       "<option value='"+PAGO_DEBE+"'"+(p.cuentaId===PAGO_DEBE?" selected":"")+">🤝 Le presto (queda por cobrar)</option>";
     h+="<div style='display:flex;gap:6px;align-items:center;margin-bottom:6px'>"+
-         "<input type='text' inputmode='decimal' placeholder='0,00' value='"+(p.monto||"")+"' oninput='txPagoSet("+i+",\"monto\",this.value)' onblur='R()' style='flex:1;min-width:70px;padding:8px;border:1.5px solid var(--ln);border-radius:8px;font-size:13px;font-family:inherit'>"+
+         "<input type='text' inputmode='decimal' placeholder='0,00' value='"+_comaCab((p.monto||""))+"' oninput='txPagoSet("+i+",\"monto\",this)' onblur='R()' style='flex:1;min-width:70px;padding:8px;border:1.5px solid var(--ln);border-radius:8px;font-size:13px;font-family:inherit'>"+
          "<select onchange='txPagoSet("+i+",\"cuentaId\",this.value)' style='flex:2;padding:8px;border:1.5px solid var(--ln);border-radius:8px;font-size:13px;font-family:inherit'>"+opts+"</select>"+
          (filas.length>1?"<button type='button' onclick='txPagoDel("+i+")' style='border:none;background:var(--mal-sup);color:var(--mal);border-radius:7px;padding:7px 9px;cursor:pointer'>✕</button>":"")+
        "</div>";
@@ -10993,7 +11342,7 @@ function _txEntregasHTML(cuentasDest, destMon){
           _escAud(c.nombre)+" ("+f2(s)+" "+destMon+")"+_notaSaldoCuenta(c)+"</option>";
       }).join("");
     h+="<div style='display:flex;gap:6px;align-items:center;margin-bottom:4px'>"+
-         "<input type='text' inputmode='decimal' placeholder='0,00' value='"+(p.monto||"")+"' oninput='txEntregaSet("+i+",\"monto\",this.value)' onblur='R()' style='flex:1;min-width:70px;padding:8px;border:1.5px solid var(--ln);border-radius:8px;font-size:13px;font-family:inherit'>"+
+         "<input type='text' inputmode='decimal' placeholder='0,00' value='"+_comaCab((p.monto||""))+"' oninput='txEntregaSet("+i+",\"monto\",this)' onblur='R()' style='flex:1;min-width:70px;padding:8px;border:1.5px solid var(--ln);border-radius:8px;font-size:13px;font-family:inherit'>"+
          "<select onchange='txEntregaSet("+i+",\"cuentaId\",this.value)' style='flex:2;padding:8px;border:1.5px solid var(--ln);border-radius:8px;font-size:13px;font-family:inherit'>"+opts+"</select>"+
          (filas.length>1?"<button type='button' onclick='txEntregaDel("+i+")' style='border:none;background:var(--mal-sup);color:var(--mal);border-radius:7px;padding:7px 9px;cursor:pointer'>✕</button>":"")+
        "</div>";
@@ -11345,7 +11694,8 @@ function saveTx(){
             "Envía:    "+f2(res.am)+" "+ruta.orig+"\n"+
             "Sumado:   "+f2(sumaPagos(_pagos))+" "+ruta.orig+"\n"+
             (_difP<0?"Faltan:   ":"Sobran:   ")+f2(Math.abs(_difP))+" "+ruta.orig+"\n\n"+
-            "Ajusta los montos hasta que cuadre.");
+            "Ajusta los montos hasta que cuadre."+
+            _quisisteEnFilas("txPagoSet(", ruta.orig, res.am, sumaPagos(_pagos)));   // ARREGLO 247
       return;
     }
   }
@@ -11362,7 +11712,8 @@ function saveTx(){
             "Le entregas: "+f2(res.cant)+" "+(ruta.dest||"VES")+"\n"+
             "Sumado:      "+f2(sumaEntregas(_entregas))+" "+(ruta.dest||"VES")+"\n"+
             (_difE<0?"Faltan:      ":"Sobran:      ")+f2(Math.abs(_difE))+" "+(ruta.dest||"VES")+"\n\n"+
-            "Ajusta los montos hasta que cuadre.");
+            "Ajusta los montos hasta que cuadre."+
+            _quisisteEnFilas("txEntregaSet(", ruta.dest||"VES", res.cant, sumaEntregas(_entregas)));   // ARREGLO 247
       return;
     }
     // ARREGLO 248: aquí se prohibía la cuenta repetida ("júntalas en una sola
@@ -12035,7 +12386,7 @@ function rTabCompromisos(){
             "<div class='fl'><label>Nombre / Descripción</label><input placeholder='ej: Impuesto IVA, Netflix, Seguro...' value='"+(f.nombre||"")+"' oninput='(S.nCmp=S.nCmp||{}).nombre=this.value'></div>"+
           "</div>"+
           "<div class='f2'>"+
-            "<div class='fl'><label>Monto</label><input type='text' inputmode='decimal' step='any' placeholder='0.00' value='"+(f.monto||"")+"' oninput='(S.nCmp=S.nCmp||{}).monto=_num(this.value)'></div>"+
+            "<div class='fl'><label>Monto</label><input type='text' inputmode='decimal' step='any' placeholder='0.00' value='"+_comaCab((f.monto||""))+"' oninput='(S.nCmp=S.nCmp||{}).monto=_num(this)'></div>"+
             "<div class='fl'><label>Moneda</label><select onchange='(S.nCmp=S.nCmp||{}).moneda=this.value;S.nCmp.cuentaId=\"\";R()'>"+
               MONEDAS_CMP.map(function(m){return "<option value='"+m+"'"+((f.moneda||"USDT")===m?" selected":"")+">"+m+"</option>";}).join("")+
             "</select></div>"+
@@ -12050,7 +12401,7 @@ function rTabCompromisos(){
             "</select></div>"+
           "</div>"+
           "<div class='f2'>"+
-            "<div class='fl'><label>Día del mes que vence</label><input type='text' inputmode='decimal' min='1' max='28' placeholder='15' value='"+(f.diaVence||"")+"' oninput='(S.nCmp=S.nCmp||{}).diaVence=_num(this.value)'></div>"+
+            "<div class='fl'><label>Día del mes que vence</label><input type='text' inputmode='decimal' min='1' max='28' placeholder='15' value='"+_comaCab((f.diaVence||""))+"' oninput='(S.nCmp=S.nCmp||{}).diaVence=_num(this)'></div>"+
             "<div class='fl'><label>Cuenta de pago</label><select onchange='(S.nCmp=S.nCmp||{}).cuentaId=this.value'>"+
               "<option value=''>— elegir cuenta —</option>"+
               (S.cuentas||[]).filter(function(c){return c.activa!==false&&c.moneda===(f.moneda||"USDT");}).map(function(c){return "<option value='"+c.id+"'"+(f.cuentaId===c.id?" selected":"")+">"+_escAud(c.nombre)+" ($"+f2(c.saldo)+")</option>";}).join("")+
@@ -12061,7 +12412,7 @@ function rTabCompromisos(){
             "<div class='fl'><label>Desde el mes</label><input type='month' value='"+(f.mesInicio||mesActual)+"' onchange='(S.nCmp=S.nCmp||{}).mesInicio=this.value'></div>"+
             "<div class='fl'><label>Hasta (vacío = sin límite)</label><input type='month' value='"+(f.mesFin||"")+"' onchange='(S.nCmp=S.nCmp||{}).mesFin=this.value||null'></div>"+
           "</div>"+
-          "<button onclick='saveCompromiso()' style='width:100%;padding:11px;background:var(--fondo-osc);color:var(--sobre-color);border:none;border-radius:9px;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit;margin-top:4px'>"+
+          "<button onclick='if(_numsOk(this))saveCompromiso()' style='width:100%;padding:11px;background:var(--fondo-osc);color:var(--sobre-color);border:none;border-radius:9px;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit;margin-top:4px'>"+
             (f.id?"✅ Guardar cambios":"💾 Agregar compromiso")+"</button>"+
         "</div>"
       :"")+
@@ -12091,7 +12442,9 @@ function chgMon(v){S.nEg.mon=v;S.nEg.cuentaId='';S.nEg.usdt='';R();}
 function _setValEg(id,val){
   try{
     var el=document.getElementById(id);
-    if(el && document.activeElement!==el) el.value=val;
+    // ARREGLO 246: con coma. "290.123" escrito con punto en un campo de monto
+    // se releería como 290.123 = doscientos noventa mil.
+    if(el && document.activeElement!==el) el.value=_comaCab(val);
   }catch(e){}
 }
 function chgTasaEg(v){
@@ -13484,7 +13837,7 @@ function editarVentaArt(id){
     return;
   }
   var viejo=parseFloat(v.monto)||0;
-  var txt=prompt("¿En cuánto lo vendiste? ("+v.mon+")\n\nAhora dice "+f2(viejo)+" "+v.mon+".", String(viejo));
+  var txt=prompt("¿En cuánto lo vendiste? ("+v.mon+")\n\nAhora dice "+f2(viejo)+" "+v.mon+".", _comaCab(String(viejo)));   // ARREGLO 246: con coma, o 1.234 se leería mil
   if(txt===null) return;
   var nuevo=_leerNumero(txt);
   if(!(nuevo>0)){ alert("Ese monto no se entiende."); return; }
@@ -13634,7 +13987,7 @@ function rMercancia(){
       "</div>"+
       "<div style='display:flex;gap:7px'>"+
         "<div style='flex:1'>"+_campoMerc("Primera parcela", "<input type='date' value='"+_jsAttr(f.isoPrimera||"")+"' oninput='S.nArt=S.nArt||{};S.nArt.isoPrimera=this.value' style='"+_estiloMerc()+"'>")+"</div>"+
-        "<div style='flex:1'>"+_campoMerc("Interés total %", "<input inputmode='decimal' value='"+_jsAttr(String(f.interesPct||""))+"' oninput='S.nArt=S.nArt||{};S.nArt.interesPct=_num(this.value)' placeholder='0 · opcional' style='"+_estiloMerc()+"'>")+"</div>"+
+        "<div style='flex:1'>"+_campoMerc("Interés total %", "<input inputmode='decimal' data-num='tasa' value='"+_comaCab(_jsAttr(String(f.interesPct||"")))+"' oninput='S.nArt=S.nArt||{};S.nArt.interesPct=_num(this)' placeholder='0 · opcional' style='"+_estiloMerc()+"'>")+"</div>"+
       "</div>"+
       "<div style='font-size:10.5px;color:var(--tx3);margin:-4px 0 10px;line-height:1.5;background:var(--sup2);border-left:3px solid var(--ac);padding:7px 9px;border-radius:4px'>Entra al inventario completo, y cada parcela se paga desde el panel del artículo. Tu capital NETO no cambia al guardarlo: el valor del activo sube y la deuda baja por el otro lado.</div>"
     : (yaPag
@@ -13648,17 +14001,17 @@ function rMercancia(){
         "<div style='font-size:12px;font-weight:800;color:var(--tit);margin-bottom:10px'>➕ Algo nuevo</div>"+
         _campoMerc("¿Qué es?", "<input id='art-nom' value='"+_jsAttr(f.nombre||"")+"' oninput='S.nArt=S.nArt||{};S.nArt.nombre=this.value' placeholder='ej: Máquina de coser' style='"+_estiloMerc()+"'>")+
         "<div style='display:flex;gap:7px'>"+
-          "<div style='flex:2'>"+_campoMerc("¿Qué te costó?", "<input id='art-cos' inputmode='decimal' value='"+_jsAttr(String(f.costo||""))+"' oninput='S.nArt=S.nArt||{};S.nArt.costo=_num(this.value)' placeholder='200' style='"+_estiloMerc()+"'>")+"</div>"+
+          "<div style='flex:2'>"+_campoMerc("¿Qué te costó?", "<input id='art-cos' inputmode='decimal' data-req='1' value='"+_comaCab(_jsAttr(String(f.costo||"")))+"' oninput='S.nArt=S.nArt||{};S.nArt.costo=_num(this)' placeholder='200' style='"+_estiloMerc()+"'>")+"</div>"+
           "<div style='flex:1'>"+_campoMerc("Moneda", "<select onchange='S.nArt=S.nArt||{};S.nArt.mon=this.value;R()' style='"+_estiloMerc()+"'>"+_optMonMerc(f.mon||"USDT")+"</select>")+"</div>"+
         "</div>"+
         selectorModo+
         bloquePago+
         "<div style='display:flex;gap:7px'>"+
-          "<div style='flex:2'>"+_campoMerc("¿En cuánto piensas venderlo?", "<input inputmode='decimal' value='"+_jsAttr(String(f.precioEsp||""))+"' oninput='S.nArt=S.nArt||{};S.nArt.precioEsp=_num(this.value)' placeholder='300 · opcional' style='"+_estiloMerc()+"'>")+"</div>"+
+          "<div style='flex:2'>"+_campoMerc("¿En cuánto piensas venderlo?", "<input inputmode='decimal' value='"+_comaCab(_jsAttr(String(f.precioEsp||"")))+"' oninput='S.nArt=S.nArt||{};S.nArt.precioEsp=_num(this)' placeholder='300 · opcional' style='"+_estiloMerc()+"'>")+"</div>"+
           "<div style='flex:1'>"+_campoMerc("Moneda", "<select onchange='S.nArt=S.nArt||{};S.nArt.monEsp=this.value' style='"+_estiloMerc()+"'>"+_optMonMerc(f.monEsp||f.mon||"USDT")+"</select>")+"</div>"+
         "</div>"+
         "<div style='display:flex;gap:7px;margin-top:4px'>"+
-          "<button onclick='guardarArticulo()' style='flex:1;padding:11px;border:none;border-radius:9px;background:var(--ac);color:var(--sobre-color);font-size:13px;font-weight:800;cursor:pointer;font-family:inherit'>Guardar</button>"+
+          "<button onclick='if(_numsOk(this))guardarArticulo()' style='flex:1;padding:11px;border:none;border-radius:9px;background:var(--ac);color:var(--sobre-color);font-size:13px;font-weight:800;cursor:pointer;font-family:inherit'>Guardar</button>"+
           "<button onclick='S._artForm=false;S.nArt={};R()' style='padding:11px 15px;border:1px solid var(--ln);border-radius:9px;background:var(--sup2);color:var(--tx3);font-size:12.5px;cursor:pointer;font-family:inherit'>Cancelar</button>"+
         "</div>"+
       "</div>";
@@ -13850,7 +14203,7 @@ function _filaArticulo(a){
     ? "<div style='background:var(--sup2);border-top:1px solid var(--ln2);padding:12px 13px'>"+
         "<div style='font-size:11.5px;font-weight:800;color:var(--tit);margin-bottom:9px'>💵 Vender "+_escAud(a.nombre)+"</div>"+
         "<div style='display:flex;gap:7px'>"+
-          "<div style='flex:2'>"+_campoMerc("¿En cuánto?", "<input inputmode='decimal' value='"+_jsAttr(String(v.monto||a.precioEsp||""))+"' oninput='S.vArt=S.vArt||{};S.vArt.monto=_num(this.value)' style='"+_estiloMerc()+"'>")+"</div>"+
+          "<div style='flex:2'>"+_campoMerc("¿En cuánto?", "<input inputmode='decimal' data-req='1' value='"+_comaCab(_jsAttr(String(v.monto||a.precioEsp||"")))+"' oninput='S.vArt=S.vArt||{};S.vArt.monto=_num(this)' style='"+_estiloMerc()+"'>")+"</div>"+
           "<div style='flex:1'>"+_campoMerc("Moneda", "<select onchange='S.vArt=S.vArt||{};S.vArt.mon=this.value;R()' style='"+_estiloMerc()+"'>"+_optMonMerc(v.mon||a.monEsp||a.mon)+"</select>")+"</div>"+
         "</div>"+
         _campoMerc("¿Te pagan ahora?", "<select onchange='S.vArt=S.vArt||{};S.vArt.cobro=this.value;R()' style='"+_estiloMerc()+"'>"+
@@ -13861,7 +14214,7 @@ function _filaArticulo(a){
           : _campoMerc("¿A quién?", "<input value='"+_jsAttr(v.cliente||"")+"' oninput='S.vArt=S.vArt||{};S.vArt.cliente=this.value' placeholder='nombre del cliente' style='"+_estiloMerc()+"'>")+
             "<div style='font-size:10.5px;color:var(--tx3);margin:-4px 0 8px;line-height:1.5'>Se va a <b>💳 Por cobrar</b>. La ganancia se apunta igual hoy: el dinero ya es tuyo, solo que todavía no lo tienes en la mano.</div>")+
         "<div style='display:flex;gap:7px'>"+
-          "<button onclick='venderArticulo("+_jsAttr(String(a.id))+")' style='flex:1;padding:10px;border:none;border-radius:9px;background:var(--ac);color:var(--sobre-color);font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit'>Confirmar venta</button>"+
+          "<button onclick='if(_numsOk(this))venderArticulo("+_jsAttr(String(a.id))+")' style='flex:1;padding:10px;border:none;border-radius:9px;background:var(--ac);color:var(--sobre-color);font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit'>Confirmar venta</button>"+
           "<button onclick='S._artVenta=null;R()' style='padding:10px 14px;border:1px solid var(--ln);border-radius:9px;background:var(--sup);color:var(--tx3);font-size:12px;cursor:pointer;font-family:inherit'>Cancelar</button>"+
         "</div>"+
       "</div>" : "";
@@ -13885,14 +14238,14 @@ function _filaArticulo(a){
         "<div style='font-size:11.5px;font-weight:800;color:var(--tit);margin-bottom:9px'>➕ Un gasto de "+_escAud(a.nombre)+"</div>"+
         _campoMerc("¿De qué?", "<input value='"+_jsAttr(g.concepto||"")+"' oninput='S.gArt=S.gArt||{};S.gArt.concepto=this.value' placeholder='flete, aduana, reparación…' style='"+_estiloMerc()+"'>")+
         "<div style='display:flex;gap:7px'>"+
-          "<div style='flex:2'>"+_campoMerc("¿Cuánto?", "<input inputmode='decimal' value='"+_jsAttr(String(g.monto||""))+"' oninput='S.gArt=S.gArt||{};S.gArt.monto=_num(this.value)' style='"+_estiloMerc()+"'>")+"</div>"+
+          "<div style='flex:2'>"+_campoMerc("¿Cuánto?", "<input inputmode='decimal' data-req='1' value='"+_comaCab(_jsAttr(String(g.monto||"")))+"' oninput='S.gArt=S.gArt||{};S.gArt.monto=_num(this)' style='"+_estiloMerc()+"'>")+"</div>"+
           "<div style='flex:1'>"+_campoMerc("Moneda", "<select onchange='S.gArt=S.gArt||{};S.gArt.mon=this.value;R()' style='"+_estiloMerc()+"'>"+_optMonMerc(g.mon||a.mon)+"</select>")+"</div>"+
         "</div>"+
         selectorModoG+
         bloquePagoG+
         "<div style='font-size:10.5px;color:var(--tx3);margin-bottom:8px;line-height:1.5'>Sube lo que te costó esta cosa, así que tu ganancia al venderla ya lo lleva descontado.</div>"+
         "<div style='display:flex;gap:7px'>"+
-          "<button onclick='agregarGastoArt("+_jsAttr(String(a.id))+")' style='flex:1;padding:10px;border:none;border-radius:9px;background:var(--ac);color:var(--sobre-color);font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit'>Guardar gasto</button>"+
+          "<button onclick='if(_numsOk(this))agregarGastoArt("+_jsAttr(String(a.id))+")' style='flex:1;padding:10px;border:none;border-radius:9px;background:var(--ac);color:var(--sobre-color);font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit'>Guardar gasto</button>"+
           "<button onclick='S._artGasto=null;R()' style='padding:10px 14px;border:1px solid var(--ln);border-radius:9px;background:var(--sup);color:var(--tx3);font-size:12px;cursor:pointer;font-family:inherit'>Cancelar</button>"+
         "</div>"+
       "</div>" : "";
@@ -13967,13 +14320,13 @@ function _filaArticulo(a){
                           // El campo viene RELLENO con lo que falta: onfocus
                           // select() para que escribir reemplace en vez de
                           // pegar los dos números (ARREGLO 153).
-                          _campoMerc("¿Cuánto pagas? ("+_escAud(monPar)+")", "<input id='aab-monto' inputmode='decimal' value='"+_jsAttr(String(npp.monto||""))+"' onfocus='this.select()' oninput='S._artParcelaPagar.monto=_num(this.value);_refrescarRepartoAbonoArt()' style='"+_estiloMerc()+"'>")+
+                          _campoMerc("¿Cuánto pagas? ("+_escAud(monPar)+")", "<input id='aab-monto' inputmode='decimal' data-req='1' value='"+_comaCab(_jsAttr(String(npp.monto||"")))+"' onfocus='this.select()' oninput='S._artParcelaPagar.monto=_num(this);_refrescarRepartoAbonoArt()' style='"+_estiloMerc()+"'>")+
                           "<div id='aab-rep' style='font-size:10.5px;color:var(--tx3);margin:-3px 0 8px;line-height:1.6'>"+_htmlRepartoAbonoArt(c.id, npp.monto)+"</div>"+
                           (hayCta
                             ? _campoMerc("¿De qué cuenta?", "<select onchange='S._artParcelaPagar.cuentaId=this.value' style='"+_estiloMerc()+"'><option value=''>— elige —</option>"+_optCtasMerc(npp.cuentaId, monPar)+"</select>")
                             : "<div style='font-size:10.5px;color:var(--mal);margin-bottom:8px'>No tienes ninguna cuenta en "+_escAud(monPar)+" de donde pagarla.</div>")+
                           "<div style='display:flex;gap:6px'>"+
-                            "<button onclick='_pagarParcelaArt(\""+idC+"\",(S._artParcelaPagar||{}).cuentaId,(S._artParcelaPagar||{}).monto)' style='flex:1;padding:8px;border:none;border-radius:7px;background:var(--ac);color:var(--sobre-color);font-size:11.5px;font-weight:800;cursor:pointer;font-family:inherit'>Confirmar pago</button>"+
+                            "<button onclick='if(_numsOk(this))_pagarParcelaArt(\""+idC+"\",(S._artParcelaPagar||{}).cuentaId,(S._artParcelaPagar||{}).monto)' style='flex:1;padding:8px;border:none;border-radius:7px;background:var(--ac);color:var(--sobre-color);font-size:11.5px;font-weight:800;cursor:pointer;font-family:inherit'>Confirmar pago</button>"+
                             "<button onclick='S._artParcelaPagar=null;R()' style='padding:8px 12px;border:1px solid var(--ln);border-radius:7px;background:var(--sup2);color:var(--tx3);font-size:11px;cursor:pointer;font-family:inherit'>Cancelar</button>"+
                           "</div>"+
                         "</div>";
@@ -14133,7 +14486,11 @@ function _inmListaCuotas(inm){
   if(!cs.length){
     return "<div style='background:var(--sup);border:1px solid var(--ln);border-radius:12px;padding:14px;margin-top:9px;"+
       "font-size:12px;color:var(--tx3);text-align:center'>Este inmueble todavía no tiene cuotas."+
-      "<div style='margin-top:10px'><button onclick='_abrirFormCuota(\""+_jsAttr(inm.id)+"\")' class='btn-main btn-blue'>+ Agregar una cuota</button></div></div>";
+      "<div style='margin-top:10px'><button onclick='_abrirFormCuota(\""+_jsAttr(inm.id)+"\")' class='btn-main btn-blue'>+ Agregar una cuota</button></div></div>"+
+      // ARREGLO 246: sin cuotas, el formulario no se dibujaba nunca, así que
+      // "+ Agregar una cuota" abría... nada. Salió probando este formulario en
+      // Chromium: la primera cuota de un inmueble no se podía meter a mano.
+      _inmFormCuota(inm);
   }
   var filas=cs.map(function(c){
     var vencida=(!c.pagado && c.iso && c.iso<hoy);
@@ -14179,7 +14536,9 @@ function _inmListaCuotas(inm){
 function _inpInm(k,rot,ph,val,ancho){
   return "<div style='flex:1 1 "+(ancho||"140px")+";min-width:0'>"+
     "<label style='font-size:10.5px;font-weight:700;color:var(--tx3);display:block;margin-bottom:3px'>"+rot+"</label>"+
-    "<input type='text' inputmode='decimal' placeholder='"+_escAud(ph)+"' value='"+_escAud(val===undefined||val===null?"":String(val))+"' "+
+    // ARREGLO 246: solo el precio es un número. Con inputmode=decimal en todos,
+    // el nombre y el vendedor salían con "⚠️ No se entiende" debajo.
+    "<input type='text'"+(k==="precio"?" inputmode='decimal'":"")+" placeholder='"+_escAud(ph)+"' value='"+_escAud(val===undefined||val===null?"":(k==="precio"?_comaCab(String(val)):String(val)))+"' "+
       "oninput='_setNInm(\""+k+"\",this.value)' "+
       "style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:9px;font-size:14px;"+
       "font-weight:700;font-family:inherit;background:var(--sup);color:var(--tx)'></div>";
@@ -14245,7 +14604,7 @@ function _inmFormContrato(){
       "</div>"+
     "</div>"+
     "<div style='display:flex;gap:8px'>"+
-      "<button onclick='saveInmueble()' class='btn-main btn-green' style='flex:1'>Guardar</button>"+
+      "<button onclick='if(_numsOk(this))saveInmueble()' class='btn-main btn-green' style='flex:1'>Guardar</button>"+
       "<button onclick='_cerrarFormInm()' class='btn-main btn-gray' style='flex:0 0 100px'>Cancelar</button>"+
     "</div>"+
     (f.id?("<button onclick='delInmueble(\""+_jsAttr(f.id)+"\")' style='width:100%;margin-top:9px;background:none;"+
@@ -14275,7 +14634,7 @@ function _inmFormCuota(inm){
     "<div style='display:flex;gap:9px;flex-wrap:wrap;margin-bottom:9px'>"+
       "<div style='flex:1 1 130px;min-width:0'>"+
         "<label style='font-size:10.5px;font-weight:700;color:var(--tx3);display:block;margin-bottom:3px'>Monto ("+_simMon(inm.moneda||"BRL")+")</label>"+
-        "<input type='text' inputmode='decimal' placeholder='ej: 1.152,44' value='"+_escAud(f.monto===undefined?"":String(f.monto))+"' "+
+        "<input type='text' inputmode='decimal' data-req='1' placeholder='ej: 1.152,44' value='"+_escAud(f.monto===undefined||f.monto===null?"":_comaCab(String(f.monto)))+"' "+
           "oninput='_setNInmC(\"monto\",this.value)' style='width:100%;padding:9px;border:1.5px solid var(--ln);"+
           "border-radius:9px;font-size:14px;font-weight:700;font-family:inherit;background:var(--sup);color:var(--tx)'></div>"+
       "<div style='flex:1 1 150px;min-width:0'>"+
@@ -14296,7 +14655,7 @@ function _inmFormCuota(inm){
       }).join("")+
     "</div>"+
     "<div style='display:flex;gap:8px'>"+
-      "<button onclick='saveCuotaInm()' class='btn-main btn-green' style='flex:1;font-size:13px;padding:11px'>Guardar</button>"+
+      "<button onclick='if(_numsOk(this))saveCuotaInm()' class='btn-main btn-green' style='flex:1;font-size:13px;padding:11px'>Guardar</button>"+
       "<button onclick='_cerrarFormCuota()' class='btn-main btn-gray' style='flex:0 0 100px;font-size:13px;padding:11px'>Cancelar</button>"+
     "</div>"+
     (f.id?("<button onclick='delCuotaInm(\""+_jsAttr(f.id)+"\")' style='width:100%;margin-top:9px;background:none;"+
@@ -16672,7 +17031,7 @@ function _autoIU(tocado){
         if(!el || document.activeElement!==el){
           var val=(k===t.tasa)?Math.round(r*10000)/10000:Math.round(r*100)/100;
           f[k]=String(val); _IU_AUTO=k;
-          if(el) el.value=val;
+          if(el) el.value=_comaCab(val);   // ARREGLO 246: con coma, o 1.234 se releería mil
         }
       }
     }
@@ -16732,17 +17091,34 @@ function _htmlPrevIU(){
     return "<div style='background:var(--sup2g);border-radius:8px;padding:10px;font-size:12px;color:var(--tx3);text-align:center'>Escribe dos de los tres números (monto, USDT y tasa) — el que falte lo calcula la app</div>";
   var tasaMostrar=tasa>0?tasa:_tasaIU(fiat,usdt,com,esV);
   var neto=esV?usdt-com:usdt-com;   // lo que de verdad queda en Binance, en los dos casos
+  var d=_descuadreIU();
   var linea = esV
     ? "("+f4(usdt)+" &minus; "+f4(com)+") &times; "+f2(tasa)+" = <b>"+f2(_fiatIU(usdt,tasa,com,true))+" "+mon+"</b>"
     : f2(fiat)+" "+mon+" &divide; "+f4(tasa)+" = "+f4(usdt)+" USDT &nbsp;&minus;&nbsp;"+f4(com)+" de comisión &rarr; <b>entran "+f4(neto)+" USDT</b>";
-  var d=_descuadreIU();
-  var aviso = d ? "<div style='margin-top:8px;background:var(--mal-sup);border:1px solid var(--rj4-b);border-radius:7px;padding:8px 10px;font-size:11px;color:var(--rj2);line-height:1.5'>"+
+  // ARREGLO 247 · Con los tres números descuadrados, esa línea era una cuenta
+  // FALSA: "1.500 ÷ 5,085 = 58.140 USDT" en verde, que es lo que ella tecleó y
+  // no lo que da. Ahora dice lo que debería dar y lo que escribió, en rojo. El
+  // recuadro existe para comprobar la cuenta a ojo: una igualdad que no es
+  // igualdad enseña a no mirarlo.
+  var grave = !!d && Math.abs(d.dif)/Math.abs(d.esperado) > 0.02;   // el mismo tope que _frenoIU
+  if(d){
+    var mal="<b style='color:var(--mal)'>";
+    linea = esV
+      ? "("+f4(usdt)+" &minus; "+f4(com)+") &times; "+f2(tasa)+" = <b>"+f2(d.esperado)+" "+mon+"</b>, escribiste "+mal+_fmtEco(fiat)+" "+mon+"</b>"
+      : f2(fiat)+" "+mon+" &divide; "+f4(tasa)+" = <b>"+f2(_usdtIU(fiat,tasa,com,false))+" USDT</b>, escribiste "+mal+_fmtEco(usdt)+" USDT</b>";
+  }
+  var q = grave ? _quisisteIU() : null;
+  var aviso = grave ? "<div style='margin-top:8px;background:var(--mal-sup);border:1px solid var(--rj4-b);border-radius:7px;padding:8px 10px;font-size:11px;color:var(--rj2);line-height:1.5'>"+
+      "<b>⛔ No se va a guardar: estos tres números no cuadran.</b>"+
+      (q ? "<br>¿Quisiste decir <b>"+_fmtEco(q.m.alt)+" "+q.unidad+"</b>? Lo escribiste como <b>"+_escAud(q.m.txt)+"</b>, y así son "+_fmtEco(q.m.leido)+" "+q.unidad+"."
+         : "<br>Corrige el que esté mal: el monto, el USDT o la tasa.")+"</div>"
+    : d ? "<div style='margin-top:8px;background:var(--mal-sup);border:1px solid var(--rj4-b);border-radius:7px;padding:8px 10px;font-size:11px;color:var(--rj2);line-height:1.5'>"+
       "<b>⚠️ Estos tres números no cuadran.</b><br>"+
       "Con "+f4(usdt)+" USDT a "+f4(tasa)+" salen <b>"+f2(d.esperado)+" "+mon+"</b>, pero escribiste <b>"+f2(d.real)+"</b> ("+(d.dif>0?"+":"")+f2(d.dif)+")."+
       "<br>O la tasa es <b>"+f4(d.tasaReal)+"</b>, o uno de los otros dos está mal tecleado.</div>" : "";
-  return "<div style='background:"+(esV?"var(--info-sup)":"var(--ok-sup)")+";border-radius:8px;padding:10px 14px'>"+
+  return "<div style='background:"+(grave?"var(--mal-sup)":esV?"var(--info-sup)":"var(--ok-sup)")+";border-radius:8px;padding:10px 14px'>"+
       "<div style='font-size:10px;color:var(--tx2b);text-transform:uppercase;letter-spacing:.5px'>Tasa de esta operación</div>"+
-      "<div style='font-size:22px;font-weight:800;color:"+(esV?"var(--info)":"var(--ok)")+";line-height:1.2'>1 USDT = "+f4(tasaMostrar)+" "+mon+"</div>"+
+      "<div style='font-size:22px;font-weight:800;color:"+(grave?"var(--mal)":esV?"var(--info)":"var(--ok)")+";line-height:1.2'>1 USDT = "+f4(tasaMostrar)+" "+mon+"</div>"+
       "<div style='font-size:11px;color:var(--tx2);border-top:1px solid rgba(0,0,0,.08);margin-top:6px;padding-top:6px'>"+linea+"</div>"+
     "</div>"+aviso;
 }
@@ -16886,6 +17262,8 @@ function saveIU(){
   var usdt=parseFloat(f.usdt)||0,tasa=parseFloat(f.tasa)||0,com=_comIU(f.comision);
   if(!f.fecha||!usdt||!tasa){alert("Completa: fecha, USDT y tasa.");return;}
   if(!confirmarFechaFutura(f.fecha,"Esta operación")) return;
+  // ARREGLO 247: por encima del 2 % no se pregunta: no se guarda.
+  var _fr=_frenoIU(); if(_fr){ alert(_fr.msg); return; }
   // ARREGLO 66: los tres numeros tienen que contar la misma historia. Va
   // antes que el resto de confirmaciones porque es el que revela el dedazo:
   // el 19/08 apunto 1.261,77 USDT donde salieron 1.291,83 y el lote quedo
@@ -17100,7 +17478,7 @@ function confirmarFlujo(){
   // Actualizar saldos de las cuentas según los valores ingresados
   pasos.forEach(function(p, i){
     var el = document.getElementById("flujo-val-"+i);
-    var val = parseFloat(el&&el.value)||0;
+    var val = _leerNumero(el); if(isNaN(val)) val=0;   // ARREGLO 246: con la regla de la app, no parseFloat
     if(val === 0) return;
     // Buscar cuenta por nombre parcial
     var cuenta = (S.capital||[]).find(function(c){
@@ -17129,7 +17507,7 @@ function saveCap(){
 function saveGE(){
   var m2=document.getElementById("ge-m")?document.getElementById("ge-m").value:"Alquiler de cuenta";
   var nota=document.getElementById("ge-n")?document.getElementById("ge-n").value:"";
-  var monto=parseFloat(document.getElementById("ge-v")?document.getElementById("ge-v").value:0);
+  var monto=_leerNumero(document.getElementById("ge-v")||"");   // ARREGLO 246
   if(!monto||monto<=0){alert("Ingresa un monto válido.");return;}
   // Si no es admin, hace falta autorizacion de administrador.
   function _doSaveGE(){
@@ -17242,7 +17620,7 @@ function pagarPaul(){
 
 function saveDeudaPaul(){
   var desc=document.getElementById("deuda-desc")?document.getElementById("deuda-desc").value:"";
-  var monto=parseFloat(document.getElementById("deuda-monto")?document.getElementById("deuda-monto").value:0);
+  var monto=_leerNumero(document.getElementById("deuda-monto")||"");   // ARREGLO 246
   if(!monto||monto<=0){alert("Ingresa un monto válido.");return;}
   if(!autorizar("registrar una deuda o adelanto")) return;
   if(!S.deudas_paul) S.deudas_paul=[];
@@ -17475,7 +17853,7 @@ function _htmlTarifaBancoVES(){
     var v=c.pct ? (t[c.k]*100).toFixed(2) : t[c.k];
     return "<div style='display:flex;gap:8px;align-items:center;max-width:460px;margin-bottom:6px'>"+
       "<span style='font-size:11px;color:var(--tx2);flex:1'>"+c.rot+"</span>"+
-      "<input type='text' inputmode='decimal' id='"+c.id+"' value='"+String(v).replace(".",",")+"' onfocus='this.select()'"+(admin?"":" disabled")+
+      "<input type='text' inputmode='decimal'"+(c.pct?" data-num='tasa'":"")+" id='"+c.id+"' value='"+String(v).replace(".",",")+"' onfocus='this.select()'"+(admin?"":" disabled")+
         " style='width:96px;padding:8px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;text-align:right'>"+
     "</div>";
   };
@@ -17498,7 +17876,7 @@ function guardarTarifaBanco(){
   var nueva={}, errores=[];
   _TARIFA_CAMPOS.forEach(function(c){
     var el=document.getElementById(c.id);
-    var v=_leerNumero(el?el.value:"");
+    var v=_leerNumero(el||"");
     if(isNaN(v)||v<0){ errores.push(c.rot); return; }
     if(c.pct){
       if(v>10){ errores.push(c.rot+" (más de 10 %)"); return; }
@@ -17557,9 +17935,11 @@ function guardarMensajeFlyer(){
 }
 function editComision(){
   var actual=COM();
-  var nueva=prompt("Comision USDT por operacion (Actual: "+actual+") - ej: 0.06",""+actual);
+  var nueva=prompt("Comision USDT por operacion (Actual: "+actual+") - ej: 0.06",_comaCab(""+actual));
   if(nueva===null) return;
-  var val=parseFloat(nueva);
+  // ARREGLO 246: parseFloat("0,06") daba 0 — la comisión se quedaba en cero
+  // sin avisar. Se lee como tasa: un punto o una coma son decimal.
+  var val=_leerNumero(nueva,"tasa");
   if(isNaN(val)||val<0||val>10){alert("Valor invalido.");return;}
   if(!S.config) S.config={};S.config.comision_usdt=val;saveData();R();
 }
@@ -17672,7 +18052,7 @@ function editSocio(id){
   var s=(S.config.socios||[]).find(function(x){return String(x.id)===String(id);});
   if(!s) return;
   var newNombre=prompt("Nombre del socio:",s.nombre); if(!newNombre||!newNombre.trim()) return;
-  var newPct=parseFloat(prompt("Porcentaje (ej: 50):",s.pct)); if(!newPct||newPct<=0||newPct>100){alert("Porcentaje inválido.");return;}
+  var newPct=_leerNumero(prompt("Porcentaje (ej: 50):",_comaCab(s.pct)),"tasa");   /* ARREGLO 246: "33,5" daba 33 */ if(!newPct||newPct<=0||newPct>100){alert("Porcentaje inválido.");return;}
   var newRutas=prompt("Rutas (separadas por coma, ej: PEN ↔ VZLA, BRL ↔ VZLA):",Array.isArray(s.rutas)?s.rutas.join(", "):s.rutas||""); if(newRutas===null) return;
   var esEEUU=confirm("¿Es el socio de la ruta EE.UU (Operador Estados Unidos)?\n\nActual: "+(s.esEEUU?"SÍ":"NO")+"\n\nPresiona OK para SÍ, Cancelar para NO.");
   // Si se marca como EE.UU, quitar la bandera de los demás
@@ -18216,7 +18596,7 @@ function rConfigAdmin(){
         // FASE 2: la madre se dice, no se adivina por el nombre.
         (c.esMadre?"<div style=\'font-size:10.5px;font-weight:800;color:var(--ok);background:var(--vd6-c);border-radius:6px;padding:2px 6px;margin-bottom:4px;display:inline-block\'>🏦 CUENTA MADRE &mdash; aqu&iacute; caen los "+c.moneda+" de tus USDT</div>":"")+
         "<div style=\'display:flex;gap:5px;align-items:center;flex-wrap:wrap\'>"+
-          "<input type=\'number\' value=\'"+saldo+"\' step=\'0.01\' data-cid=\'"+c.id+"\' onchange=\'editarSaldoCuenta(this)\' "+
+          "<input type=\'text\' inputmode=\'decimal\' data-neg=\'1\' value=\'"+_comaCab(saldo)+"\' data-cid=\'"+c.id+"\' onchange=\'editarSaldoCuenta(this)\' "+
             "style=\'flex:1 1 110px;min-width:90px;padding:6px 8px;border:1.5px solid "+(isNeg?"var(--rj5-j2)":"var(--gr6-d)")+";border-radius:8px;font-size:12px;font-weight:700;text-align:right;color:"+(isNeg?"var(--mal)":"var(--tit)")+"\' title=\'Editar saldo\'>"+
           "<button onclick=\'editarNombreCuenta(\""+c.id+"\")\' title=\'Editar nombre\' "+
             "style=\'padding:6px 9px;border:1.5px solid var(--az6-j2);border-radius:8px;font-size:12px;cursor:pointer;background:var(--info-sup2)\'>✏️</button>"+
@@ -18267,15 +18647,15 @@ function rConfigAdmin(){
   var tasasHTML=
     "<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px'>"+
       "<div><label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>🇧🇷→🇻🇪 BRL → VZLA (ida) — lo que le cobras al cliente</label>"+
-      "<input type='text' inputmode='decimal' id='tasa-tdia_brl' value='"+(td.tdia_brl||"")+"' placeholder='ej: 128' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;font-weight:700'></div>"+
+      "<input type='text' inputmode='decimal' data-num='tasa' id='tasa-tdia_brl' value='"+_comaCab((td.tdia_brl||""))+"' placeholder='ej: 128' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;font-weight:700'></div>"+
       "<div><label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>🇻🇪 USD → VES</label>"+
-      "<input type='text' inputmode='decimal' id='tasa-tdia_vzla' value='"+(td.tdia_vzla||"")+"' placeholder='ej: 650' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;font-weight:700'></div>"+
+      "<input type='text' inputmode='decimal' data-num='tasa' id='tasa-tdia_vzla' value='"+_comaCab((td.tdia_vzla||""))+"' placeholder='ej: 650' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;font-weight:700'></div>"+
       "<div><label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>🇺🇸 EE.UU → VES</label>"+
-      "<input type='text' inputmode='decimal' id='tasa-tdia_usd' value='"+(td.tdia_usd||"")+"' placeholder='ej: 650' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;font-weight:700'></div>"+
+      "<input type='text' inputmode='decimal' data-num='tasa' id='tasa-tdia_usd' value='"+_comaCab((td.tdia_usd||""))+"' placeholder='ej: 650' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;font-weight:700'></div>"+
       "<div><label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>🇻🇪→🇧🇷 VZLA → BRL (vuelta) — cuántos Bs por 1 BRL</label>"+
-      "<input type='text' inputmode='decimal' id='tasa-tdia_ves_brl' value='"+(td.tdia_ves_brl||"")+"' placeholder='ej: 150' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;font-weight:700'></div>"+
+      "<input type='text' inputmode='decimal' data-num='tasa' id='tasa-tdia_ves_brl' value='"+_comaCab((td.tdia_ves_brl||""))+"' placeholder='ej: 150' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;font-weight:700'></div>"+
       "<div><label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>🇧🇷 USD→BRL</label>"+
-      "<input type='text' inputmode='decimal' id='tasa-tdia_usd_brl' value='"+(td.tdia_usd_brl||"")+"' placeholder='ej: 5.70' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;font-weight:700'></div>"+
+      "<input type='text' inputmode='decimal' data-num='tasa' id='tasa-tdia_usd_brl' value='"+_comaCab((td.tdia_usd_brl||""))+"' placeholder='ej: 5.70' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;font-weight:700'></div>"+
     "</div>"+
     "<button onclick='saveTasasConfig()' style='background:var(--rol-na);color:var(--sobre-color);border:none;padding:11px 20px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;width:100%'>💾 Guardar tasas del día</button>";
 
@@ -18325,7 +18705,7 @@ function rConfigAdmin(){
             "<div><label style='font-size:10px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>Nombre del socio</label>"+
             "<input type='text' placeholder='ej: Colega Perú' value='"+(ns2.nombre||"")+"' oninput='S._nSocio=Object.assign(S._nSocio||{},{nombre:this.value})' style='width:100%;padding:11px;font-size:14px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'></div>"+
             "<div><label style='font-size:10px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>Porcentaje que le corresponde (%)</label>"+
-            "<input type='text' inputmode='decimal' placeholder='50' min='1' max='100' value='"+(ns2.pct||"")+"' oninput='S._nSocio=Object.assign(S._nSocio||{},{pct:_num(this.value)})' style='width:100%;padding:11px;font-size:14px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'></div>"+
+            "<input type='text' inputmode='decimal' data-num='tasa' placeholder='50' min='1' max='100' value='"+_comaCab((ns2.pct||""))+"' oninput='S._nSocio=Object.assign(S._nSocio||{},{pct:_num(this)})' style='width:100%;padding:11px;font-size:14px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'></div>"+
             "<div><label style='font-size:10px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>Rutas (separadas por coma)</label>"+
             "<input type='text' placeholder='ej: PEN ↔ VZLA, PEN ↔ BRL' value='"+(ns2.rutas||"")+"' oninput='S._nSocio=Object.assign(S._nSocio||{},{rutas:this.value})' style='width:100%;padding:11px;font-size:14px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'>"+
             // ARREGLO 207 · los chips de rutas fallaban silencio si S._nSocio
@@ -18355,7 +18735,7 @@ function rConfigAdmin(){
         "<div class='f3'>"+
           "<div class='fl'><label>Institución</label><input type='text' placeholder='ej: Binance, Nubank...' value='"+(nc.institucion||"")+"' oninput='(S.nCuenta=S.nCuenta||{}).institucion=this.value'></div>"+
           "<div class='fl'><label>Operador</label><select onchange='(S.nCuenta=S.nCuenta||{}).operador=this.value'>"+opOpts+"</select></div>"+
-          "<div class='fl'><label>Saldo inicial ("+nc.moneda+")</label><input type='text' inputmode='decimal' step='0.01' placeholder='0.00' value='"+(nc.saldo||"")+"' oninput='(S.nCuenta=S.nCuenta||{}).saldo=parseFloat(_num(this.value))||0'></div>"+
+          "<div class='fl'><label>Saldo inicial ("+nc.moneda+")</label><input type='text' inputmode='decimal' step='0.01' placeholder='0.00' value='"+_comaCab((nc.saldo||""))+"' data-neg='1' oninput='(S.nCuenta=S.nCuenta||{}).saldo=_num(this)'></div>"+
         "</div>"+
         "<button class='btn-main' onclick='saveCuenta()' style='background:var(--fondo-osc);color:var(--sobre-color)'>➕ Agregar cuenta</button>"+
         "<button onclick='recuperarCuentasConocidas()' style='width:100%;margin-top:10px;padding:11px;border:1.5px dashed var(--mal);border-radius:9px;background:var(--rj6-a);color:var(--mal);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>🆘 Recuperar cuentas conocidas (por el incidente de sincronización)</button>"+
@@ -18363,7 +18743,7 @@ function rConfigAdmin(){
           "<div style='font-size:12px;font-weight:700;color:var(--tx2);margin-bottom:4px'>⚙️ Comisión USDT — lado BRL/USD/PEN</div>"+
           "<div style='font-size:11px;color:var(--tx3);margin-bottom:6px'>Al comprar USDT con reales, dólares o soles.</div>"+
           "<div style='display:flex;gap:8px;align-items:center;max-width:300px'>"+
-            "<input type='text' inputmode='decimal' id='inp-com-usdt' step='0.001' value='"+com+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+            "<input type='text' inputmode='decimal' data-num='tasa' id='inp-com-usdt' step='0.001' value='"+_comaCab(com)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
             "<button onclick='guardarComision()' style='padding:9px 14px;background:var(--ok);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
           "</div>"+
         "</div>"+
@@ -18379,7 +18759,7 @@ function rConfigAdmin(){
             "<button onclick='document.getElementById(\"inp-com-ves\").value=0.06;guardarComisionVES()' style='padding:7px 12px;background:var(--am6-d);color:var(--avi-tx);border:1.5px solid var(--ac);border-radius:8px;font-size:12px;font-weight:700;cursor:pointer'>↩️ Restaurar 0.06</button>"+
           "</div>"+
           "<div style='display:flex;gap:8px;align-items:center;max-width:300px'>"+
-            "<input type='text' inputmode='decimal' id='inp-com-ves' step='0.001' value='"+comVesActual+"' style='flex:1;padding:9px;border:1.5px solid "+(comVesActual===0?"var(--vd3-a)":"var(--ac)")+";border-radius:8px;font-size:14px'>"+
+            "<input type='text' inputmode='decimal' data-num='tasa' id='inp-com-ves' step='0.001' value='"+_comaCab(comVesActual)+"' style='flex:1;padding:9px;border:1.5px solid "+(comVesActual===0?"var(--vd3-a)":"var(--ac)")+";border-radius:8px;font-size:14px'>"+
             "<button onclick='guardarComisionVES()' style='padding:9px 14px;background:"+(comVesActual===0?"var(--ok)":"var(--ac)")+";color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
           "</div>"+
         "</div>"+
@@ -18420,11 +18800,11 @@ function rConfigAdmin(){
             "El 7% de la ida sale de tu octubre: 61 operaciones con un margen medio del 6,8%.</div>"+
           "<div style='display:flex;gap:8px;align-items:center;max-width:420px;margin-bottom:6px'>"+
             "<span style='font-size:11px;color:var(--tx2);min-width:116px'>Ida \u00b7 % por debajo</span>"+
-            "<input type='text' inputmode='decimal' id='inp-colchon-ida' value='"+(Math.round(_colchon("ida")*1000)/10)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+            "<input type='text' inputmode='decimal' data-num='tasa' id='inp-colchon-ida' value='"+_comaCab((Math.round(_colchon("ida")*1000)/10))+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
           "</div>"+
           "<div style='display:flex;gap:8px;align-items:center;max-width:420px;margin-bottom:8px'>"+
             "<span style='font-size:11px;color:var(--tx2);min-width:116px'>Vuelta \u00b7 % por encima</span>"+
-            "<input type='text' inputmode='decimal' id='inp-colchon-vuelta' value='"+(Math.round(_colchon("vuelta")*1000)/10)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+            "<input type='text' inputmode='decimal' data-num='tasa' id='inp-colchon-vuelta' value='"+_comaCab((Math.round(_colchon("vuelta")*1000)/10))+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
           "</div>"+
           // ARREGLO 132: con bolívares parados la ida se acerca al suelo para
           // soltarlos. Va aquí, al lado de los otros dos, porque es el mismo
@@ -18434,7 +18814,7 @@ function rConfigAdmin(){
             "m\u00e1s chico, o sea tasa m\u00e1s alta para el cliente, para que esos bol\u00edvares salgan.</div>"+
           "<div style='display:flex;gap:8px;align-items:center;max-width:420px;margin-bottom:6px'>"+
             "<span style='font-size:11px;color:var(--tx2);min-width:116px'>Ida con Bs \u00b7 % por debajo</span>"+
-            "<input type='text' inputmode='decimal' id='inp-colchon-ida-bs' value='"+(Math.round(_colchon("idaBs")*1000)/10)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+            "<input type='text' inputmode='decimal' data-num='tasa' id='inp-colchon-ida-bs' value='"+_comaCab((Math.round(_colchon("idaBs")*1000)/10))+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
           "</div>"+
           "<div style='display:flex;gap:8px;align-items:center;max-width:420px;margin-bottom:8px'>"+
             "<span style='font-size:11px;color:var(--tx2);min-width:116px'>Umbral \u00b7 R$ en Bs</span>"+
@@ -18454,7 +18834,7 @@ function rConfigAdmin(){
             "cuentas para atenderlas.</div>"+
           "<div style='display:flex;gap:8px;align-items:center;max-width:420px;margin-bottom:6px'>"+
             "<span style='font-size:11px;color:var(--tx2);min-width:116px'>Vuelta con R$ \u00b7 % por encima</span>"+
-            "<input type='text' inputmode='decimal' id='inp-colchon-vuelta-brl' value='"+(Math.round(_colchon("vueltaBrl")*1000)/10)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+            "<input type='text' inputmode='decimal' data-num='tasa' id='inp-colchon-vuelta-brl' value='"+_comaCab((Math.round(_colchon("vueltaBrl")*1000)/10))+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
           "</div>"+
           "<div style='display:flex;gap:8px;align-items:center;max-width:420px;margin-bottom:8px'>"+
             "<span style='font-size:11px;color:var(--tx2);min-width:116px'>Umbral \u00b7 R$ en cuentas</span>"+
@@ -18496,7 +18876,7 @@ function rConfigAdmin(){
           "<div style='font-size:11px;color:var(--tx3);margin-bottom:8px'>Lo que cobra PagBank por adelantarte el dinero. <b>No es parte de lo que recibe el cliente</b>: va como gasto financiero, aparte de la entrega.</div>"+
           "<div style='display:flex;gap:8px;align-items:center;max-width:420px;margin-bottom:8px'>"+
             "<span style='font-size:11px;color:var(--tx2);min-width:116px'>Comisi&oacute;n &middot; %</span>"+
-            "<input type='text' inputmode='decimal' id='inp-pix-tarjeta' value='"+(((S.config||{}).pctPixTarjeta!==undefined)?S.config.pctPixTarjeta:4.98)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+            "<input type='text' inputmode='decimal' data-num='tasa' id='inp-pix-tarjeta' value='"+_comaCab((((S.config||{}).pctPixTarjeta!==undefined)?S.config.pctPixTarjeta:4.98))+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
           "</div>"+
           (function(){ var e=_comisionPixTarjeta(100);
             return "<div style='font-size:11px;color:var(--tx3);margin-bottom:8px'>Con "+f2(e.pct)+"%, un Pix de 100,00 te cuesta <b>"+f2(e.total)+"</b> (comisi&oacute;n "+f2(e.comision)+").</div>"; })()+
@@ -18509,14 +18889,14 @@ function rConfigAdmin(){
             "<div>"+
               "<label style='font-size:10px;font-weight:700;color:var(--tx2);text-transform:uppercase;display:block;margin-bottom:4px'>⏰ Cobro vencido después de</label>"+
               "<div style='display:flex;gap:6px;align-items:center'>"+
-                "<input type='text' inputmode='decimal' id='inp-dias-alerta' min='1' max='90' value='"+(((S.config||{}).diasAlertaCobro!==undefined)?S.config.diasAlertaCobro:5)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+                "<input type='text' inputmode='decimal' id='inp-dias-alerta' min='1' max='90' value='"+_comaCab((((S.config||{}).diasAlertaCobro!==undefined)?S.config.diasAlertaCobro:5))+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
                 "<span style='font-size:12px;color:var(--tx2);white-space:nowrap'>días</span>"+
               "</div>"+
             "</div>"+
             "<div>"+
               "<label style='font-size:10px;font-weight:700;color:var(--tx2);text-transform:uppercase;display:block;margin-bottom:4px'>📦 Alerta si USDT disponible baja de</label>"+
               "<div style='display:flex;gap:6px;align-items:center'>"+
-                "<input type='text' inputmode='decimal' id='inp-min-usdt' min='0' step='10' value='"+(((S.config||{}).minUsdt)||0)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+                "<input type='text' inputmode='decimal' id='inp-min-usdt' min='0' step='10' value='"+_comaCab((((S.config||{}).minUsdt)||0))+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
                 "<span style='font-size:12px;color:var(--tx2);white-space:nowrap'>USDT</span>"+
               "</div>"+
               "<div style='font-size:10px;color:var(--tx4);margin-top:3px'>Pon 0 para desactivar</div>"+
@@ -18534,7 +18914,7 @@ function rConfigAdmin(){
             "<div>"+
               "<label style='font-size:10px;font-weight:700;color:var(--tx2);text-transform:uppercase;display:block;margin-bottom:4px'>Multa única</label>"+
               "<div style='display:flex;gap:5px;align-items:center'>"+
-                "<input type='text' inputmode='decimal' id='inp-mora-multa' min='0' max='20' step='0.5' value='"+(((S.config||{}).moraMultaPct!==undefined)?S.config.moraMultaPct:2)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+                "<input type='text' inputmode='decimal' data-num='tasa' id='inp-mora-multa' min='0' max='20' step='0.5' value='"+_comaCab((((S.config||{}).moraMultaPct!==undefined)?S.config.moraMultaPct:2))+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
                 "<span style='font-size:12px;color:var(--tx2)'>%</span>"+
               "</div>"+
               "<div style='font-size:10.5px;color:var(--tx4);margin-top:3px'>Sobre lo vencido, una sola vez</div>"+
@@ -18542,7 +18922,7 @@ function rConfigAdmin(){
             "<div>"+
               "<label style='font-size:10px;font-weight:700;color:var(--tx2);text-transform:uppercase;display:block;margin-bottom:4px'>Juros de mora</label>"+
               "<div style='display:flex;gap:5px;align-items:center'>"+
-                "<input type='text' inputmode='decimal' id='inp-mora-juros' min='0' max='30' step='0.5' value='"+(((S.config||{}).moraJurosPctMes!==undefined)?S.config.moraJurosPctMes:1)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+                "<input type='text' inputmode='decimal' data-num='tasa' id='inp-mora-juros' min='0' max='30' step='0.5' value='"+_comaCab((((S.config||{}).moraJurosPctMes!==undefined)?S.config.moraJurosPctMes:1))+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
                 "<span style='font-size:12px;color:var(--tx2);white-space:nowrap'>%/mes</span>"+
               "</div>"+
               "<div style='font-size:10.5px;color:var(--tx4);margin-top:3px'>Prorrateado por día</div>"+
@@ -18550,7 +18930,7 @@ function rConfigAdmin(){
             "<div>"+
               "<label style='font-size:10px;font-weight:700;color:var(--tx2);text-transform:uppercase;display:block;margin-bottom:4px'>Días de gracia</label>"+
               "<div style='display:flex;gap:5px;align-items:center'>"+
-                "<input type='text' inputmode='decimal' id='inp-mora-gracia' min='0' max='30' step='1' value='"+(((S.config||{}).moraDiasGracia!==undefined)?S.config.moraDiasGracia:3)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+                "<input type='text' inputmode='decimal' id='inp-mora-gracia' min='0' max='30' step='1' value='"+_comaCab((((S.config||{}).moraDiasGracia!==undefined)?S.config.moraDiasGracia:3))+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
                 "<span style='font-size:12px;color:var(--tx2)'>días</span>"+
               "</div>"+
               "<div style='font-size:10.5px;color:var(--tx4);margin-top:3px'>Antes no se cobra nada</div>"+
@@ -18562,7 +18942,7 @@ function rConfigAdmin(){
           "<div style='font-size:12px;font-weight:700;color:var(--tx2);margin-bottom:6px'>🎯 Sugerencia de tasa de préstamo</div>"+
           "<div style='font-size:11px;color:var(--tx3);margin-bottom:10px'>Cuánto te rinde al mes ese mismo dinero cuando NO está prestado (moviendo remesas). Es el suelo del cálculo: si un préstamo rinde menos que esto, te conviene no prestarlo. El % de impago no se configura — la app lo mide de tus propios préstamos.</div>"+
           "<div style='display:flex;gap:8px;align-items:center;max-width:340px'>"+
-            "<input type='text' inputmode='decimal' id='inp-costo-oport' min='0' max='50' step='0.5' value='"+(((S.config||{}).costoOportunidadMes!==undefined)?S.config.costoOportunidadMes:3)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+            "<input type='text' inputmode='decimal' data-num='tasa' id='inp-costo-oport' min='0' max='50' step='0.5' value='"+_comaCab((((S.config||{}).costoOportunidadMes!==undefined)?S.config.costoOportunidadMes:3))+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
             "<span style='font-size:12px;color:var(--tx2);white-space:nowrap'>% al mes</span>"+
             "<button onclick='guardarCostoOportunidad()' style='padding:9px 14px;background:var(--ok-osc);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
           "</div>"+
@@ -18572,17 +18952,17 @@ function rConfigAdmin(){
             "<div style='display:grid;grid-template-columns:repeat(3,1fr);gap:10px'>"+
               "<div>"+
                 "<label style='font-size:10px;font-weight:700;color:var(--tx2);text-transform:uppercase;display:block;margin-bottom:4px'>Minutos por préstamo</label>"+
-                "<input type='text' inputmode='decimal' id='inp-minutos-prestamo' min='0' step='5' value='"+(((S.config||{}).minutosPorPrestamo!==undefined)?S.config.minutosPorPrestamo:30)+"' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+                "<input type='text' inputmode='decimal' id='inp-minutos-prestamo' min='0' step='5' value='"+_comaCab((((S.config||{}).minutosPorPrestamo!==undefined)?S.config.minutosPorPrestamo:30))+"' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
                 "<div style='font-size:10.5px;color:var(--tx4);margin-top:3px'>De principio a fin, sumando todo</div>"+
               "</div>"+
               "<div>"+
                 "<label style='font-size:10px;font-weight:700;color:var(--tx2);text-transform:uppercase;display:block;margin-bottom:4px'>Vale tu hora (USDT)</label>"+
-                "<input type='text' inputmode='decimal' id='inp-valor-hora' min='0' step='0.5' placeholder='ej: 5' value='"+(((S.config||{}).valorHoraUsdt!==undefined)?S.config.valorHoraUsdt:"")+"' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+                "<input type='text' inputmode='decimal' id='inp-valor-hora' min='0' step='0.5' placeholder='ej: 5' value='"+_comaCab((((S.config||{}).valorHoraUsdt!==undefined)?S.config.valorHoraUsdt:""))+"' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
                 "<div style='font-size:10.5px;color:var(--tx4);margin-top:3px'>$800 al mes ÷ 160 h = $5</div>"+
               "</div>"+
               "<div>"+
                 "<label style='font-size:10px;font-weight:700;color:var(--tx2);text-transform:uppercase;display:block;margin-bottom:4px'>Comisiones (USDT)</label>"+
-                "<input type='text' inputmode='decimal' id='inp-comision-prestamo' min='0' step='0.1' value='"+(((S.config||{}).comisionPorPrestamoUsdt!==undefined)?S.config.comisionPorPrestamoUsdt:0)+"' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+                "<input type='text' inputmode='decimal' id='inp-comision-prestamo' min='0' step='0.1' value='"+_comaCab((((S.config||{}).comisionPorPrestamoUsdt!==undefined)?S.config.comisionPorPrestamoUsdt:0))+"' style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
                 "<div style='font-size:10.5px;color:var(--tx4);margin-top:3px'>Transferencias. Con PIX suele ser 0</div>"+
               "</div>"+
             "</div>"+
@@ -18596,7 +18976,7 @@ function rConfigAdmin(){
           "</div>"+
           "<div style='font-size:11px;color:var(--tx3);margin:12px 0 6px'>Cuánto es lo máximo que le prestas a alguien que nunca te ha devuelto nada. A partir de ahí, el límite de cada cliente lo calcula la app con lo que ya demostró que puede pagar.</div>"+
           "<div style='display:flex;gap:8px;align-items:center;max-width:340px'>"+
-            "<input type='text' inputmode='decimal' id='inp-limite-nuevo' min='0' step='10' value='"+(((S.config||{}).limiteClienteNuevoUsdt!==undefined)?S.config.limiteClienteNuevoUsdt:100)+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+            "<input type='text' inputmode='decimal' id='inp-limite-nuevo' min='0' step='10' value='"+_comaCab((((S.config||{}).limiteClienteNuevoUsdt!==undefined)?S.config.limiteClienteNuevoUsdt:100))+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
             "<span style='font-size:12px;color:var(--tx2);white-space:nowrap'>USDT a cliente nuevo</span>"+
             "<button onclick='guardarLimiteClienteNuevo()' style='padding:9px 14px;background:var(--ok-osc);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
           "</div>"+
@@ -18610,7 +18990,7 @@ function rConfigAdmin(){
           "<div style='font-size:12px;font-weight:700;color:var(--tx2);margin-bottom:8px'>💼 % de sueldo mensual (sobre ganancia neta Julio)</div>"+
           "<div style='font-size:11px;color:var(--tx3);margin-bottom:6px'>Base = Ganancia BRL + VZLA + 50% EE.UU − egresos empresa pagados. Tu sueldo = Base × %. El resto es utilidad empresa.</div>"+
           "<div style='display:flex;gap:8px;align-items:center;max-width:300px'>"+
-            "<input type='text' inputmode='decimal' id='inp-pct-sueldo' step='1' min='0' max='100' placeholder='ej: 5' value='"+(((S.config||{}).pct_sueldo!==undefined)?((S.config.pct_sueldo)*100).toFixed(0):"5")+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
+            "<input type='text' inputmode='decimal' data-num='tasa' id='inp-pct-sueldo' step='1' min='0' max='100' placeholder='ej: 5' value='"+_comaCab((((S.config||{}).pct_sueldo!==undefined)?((S.config.pct_sueldo)*100).toFixed(0):"5"))+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px'>"+
             "<span style='font-size:14px;color:var(--tx2);font-weight:700'>%</span>"+
             "<button onclick='guardarPctSueldo()' style='padding:9px 14px;background:var(--rol-ee);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
           "</div>"+
@@ -18625,7 +19005,7 @@ function rConfigAdmin(){
           "<div style='font-size:11px;color:var(--tx3);margin-bottom:8px'>Si tu contador te dice un % para apartar sobre ingresos reales, ponlo aquí. Vacío = no sale. No descuenta nada: es informativo.</div>"+
           "<div style='display:flex;gap:8px;align-items:center;max-width:420px;flex-wrap:wrap'>"+
             "<input type='text' id='inp-reten-reg' placeholder='Régimen (ej: Simples Nacional)' value='"+_escAud(((S.config||{}).retencion_regimen)||"")+"' style='flex:1;min-width:160px;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:13px'>"+
-            "<input type='text' inputmode='decimal' id='inp-reten-pct' placeholder='%' value='"+(((S.config||{}).retencion_pct!==undefined&&(S.config||{}).retencion_pct!==null)?f2((S.config.retencion_pct)*100):"")+"' style='width:70px;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:13px'>"+
+            "<input type='text' inputmode='decimal' data-num='tasa' id='inp-reten-pct' placeholder='%' value='"+(((S.config||{}).retencion_pct!==undefined&&(S.config||{}).retencion_pct!==null)?f2((S.config.retencion_pct)*100):"")+"' style='width:70px;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:13px'>"+
             "<span style='font-size:14px;color:var(--tx2);font-weight:700'>%</span>"+
             "<button onclick='guardarRetencionConfig()' style='padding:9px 14px;background:var(--rol-ee);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
           "</div>"+
@@ -19436,10 +19816,10 @@ function rCapitalTotal(){
       return "<div style='padding:8px 0;border-bottom:1px solid var(--am5-b)'>"+
         "<div style='display:flex;align-items:center;gap:8px'>"+
           "<div style='min-width:44px;background:"+(ok?"var(--ok)":"var(--mal)")+";color:var(--sobre-color);border-radius:7px;padding:4px 8px;font-size:11px;font-weight:700;text-align:center'>"+mon+"</div>"+
-          "<input id='tasa_"+mon+"' type='text' inputmode='decimal' "+
+          "<input id='tasa_"+mon+"' type='text' inputmode='decimal' data-num='tasa' "+
             "placeholder='"+({"USD":"≈1.00","BRL":"≈5.30","PEN":"≈3.80","VES":"≈790","EUR":"≈0.93","COP":"≈4100"}[mon]||"X "+mon+"=1 USDT")+"' "+
-            "value='"+(ref.origen==="auto"?"":(S.tasasDia&&S.tasasDia[mon]||""))+"' "+
-            "onchange='setTasaDia(\""+mon+"\",this.value)' "+
+            "value='"+_comaCab((ref.origen==="auto"?"":(S.tasasDia&&S.tasasDia[mon]||"")))+"' "+
+            "onchange='setTasaDia(\""+mon+"\",this)' "+
             "style='flex:1;padding:9px;font-size:15px;border:1.5px solid "+(ok?"var(--vd5)":"var(--avi-ln)")+";border-radius:8px;font-family:inherit'>"+
           "<div style='font-size:13px;font-weight:800;color:"+(ok?"var(--ok)":"var(--mal)")+";min-width:74px;text-align:right'>"+(ok?(r<100?f4(r):f2(r)):"—")+"</div>"+
         "</div>"+
@@ -19610,13 +19990,13 @@ function rCapitalTotal(){
     var expandPanel = isEditOpen
       ? "<div style='background:var(--az6-k);border-top:1.5px solid var(--az5-f);padding:11px 14px;display:flex;align-items:center;gap:10px'>"+
           "<div style='font-size:11px;color:var(--tit);font-weight:700;white-space:nowrap'>"+item.moneda+" por 1 USDT</div>"+
-          "<input type='text' inputmode='decimal' step='0.001' "+
+          "<input type='text' inputmode='decimal' data-num='tasa' step='0.001' "+
             "placeholder='"+({USD:"ej: 1.00",BRL:"ej: 5.30",PEN:"ej: 3.80",VES:"ej: 780",EUR:"ej: 0.93",COP:"ej: 4100"}[item.moneda]||"tasa")+"' "+
-            "value='"+(tasaManual||"")+"' "+
+            "value='"+_comaCab((tasaManual||""))+"' "+
             "id='tasa_inp_"+item.moneda+"' "+
-            "onchange='setTasaDia(\""+item.moneda+"\",this.value)' "+
+            "onchange='setTasaDia(\""+item.moneda+"\",this)' "+
             "style='flex:1;padding:10px;font-size:16px;border:1.5px solid var(--az2-b);border-radius:9px;font-family:inherit'>"+
-          "<button onclick='var v=document.getElementById(\"tasa_inp_"+item.moneda+"\").value;setTasaDia(\""+item.moneda+"\",v);S._editTasaCuenta=null;R()' "+
+          "<button onclick='var v=document.getElementById(\"tasa_inp_"+item.moneda+"\");setTasaDia(\""+item.moneda+"\",v);S._editTasaCuenta=null;R()' "+
             "style='background:var(--fondo-osc);color:var(--sobre-color);border:none;border-radius:9px;padding:10px 14px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit'>💾</button>"+
         "</div>"
       : "";
@@ -20609,11 +20989,11 @@ function saveTasasConfig(){
   if(!S.config.tasasDia) S.config.tasasDia={};
   ['tdia_vzla','tdia_usd','tdia_usd_brl'].forEach(function(k){
     var el=document.getElementById('tasa-'+k);
-    if(el&&el.value) S.config.tasasDia[k]=_leerNumero(el.value)||0;
+    if(el&&el.value) S.config.tasasDia[k]=_leerNumero(el)||0;
   });
   [['tdia_brl','ida'],['tdia_ves_brl','vuelta']].forEach(function(par){
     var el=document.getElementById('tasa-'+par[0]);
-    var v=el?_leerNumero(el.value):NaN;
+    var v=el?_leerNumero(el):NaN;
     if(isFinite(v)&&v>0) guardarTasaCalcHoy(par[1], v, true);
   });
   saveData();
@@ -20864,14 +21244,27 @@ function _localeOCR(t){
   }
   return '.'; // sin pistas, el formato propio de Binance: punto=decimal
 }
+// ARREGLO 246: el comprobante dice cuál es su decimal (`dec`), pero un número
+// suelto puede venir escrito con el otro. Antes eso se leía al revés sin
+// avisar: con dec "." un "50,5" salía 505 y un "1.000,50" salía 1,0005.
+// La regla es la de _leerNumero, sabiendo el decimal del comprobante:
+//   · punto Y coma: el último es el decimal, el otro de miles;
+//   · un solo separador que ES el decimal del comprobante: decimal;
+//   · un solo separador que NO lo es: miles solo si lleva 3 cifras detrás
+//     ("1.000" en un comprobante de coma); con 1, 2, 4 o más, decimal ("50,5").
+// Lo que no se entiende da 0, como antes: los que llaman lo descartan.
 function _numOCR(s, dec){
   s=String(s||'').replace(/\s/g,'').replace(/[^0-9.,\-]/g,'');
   if(!s) return 0;
   var neg=s.charAt(0)==='-'; s=s.replace(/-/g,'');
-  var mil=(dec===',')?'.':',';
-  s=s.split(mil).join('');           // fuera los separadores de miles
-  if(dec!=='.') s=s.split(dec).join('.');
-  var n=parseFloat(s);
+  var nCom=(s.match(/,/g)||[]).length, nPun=(s.match(/\./g)||[]).length, n;
+  if((nCom===1&&!nPun)||(nPun===1&&!nCom)){
+    var sep=nCom?',':'.', p2=s.split(sep);
+    var esMiles=(sep!==(dec||'.')) && p2[1].length===3 && /^[0-9]{1,3}$/.test(p2[0]) && !/^0*$/.test(p2[0]);
+    n=esMiles?parseFloat(p2[0]+p2[1]):parseFloat(p2[0]+'.'+p2[1]);
+  }else{
+    n=_leerNumero(s, 'tasa');
+  }
   if(isNaN(n)) return 0;
   return neg?-n:n;
 }
@@ -21552,11 +21945,11 @@ function rTabSocios(socios, gsMes, mesKey){
     "<div><label style='font-size:10px;color:var(--tx2b);font-weight:600'>Fecha</label>"+
     "<input type='date' value='"+(f.fecha||td())+"' onchange='S._nGastoSocio=Object.assign(S._nGastoSocio||{},{fecha:dsFecha(this.value)})' style='width:100%;padding:8px;border:1px solid var(--ln);border-radius:8px;font-size:13px;margin-top:3px;box-sizing:border-box'></div>"+
     "<div><label style='font-size:10px;color:var(--tx2b);font-weight:600'>Monto USD</label>"+
-    "<input type='text' inputmode='decimal' placeholder='0.00' value='"+(f.monto||"")+"' oninput='S._nGastoSocio=Object.assign(S._nGastoSocio||{},{monto:_num(this.value),usdt:_num(this.value)})' style='width:100%;padding:8px;border:1px solid var(--ln);border-radius:8px;font-size:13px;margin-top:3px;box-sizing:border-box'></div>"+
+    "<input type='text' inputmode='decimal' placeholder='0.00' value='"+_comaCab((f.monto||""))+"' oninput='S._nGastoSocio=Object.assign(S._nGastoSocio||{},{monto:_num(this),usdt:_num(this)})' style='width:100%;padding:8px;border:1px solid var(--ln);border-radius:8px;font-size:13px;margin-top:3px;box-sizing:border-box'></div>"+
     "<div><label style='font-size:10px;color:var(--tx2b);font-weight:600'>≈ USDT</label>"+
-    "<input type='text' inputmode='decimal' placeholder='auto' value='"+(f.usdt||"")+"' oninput='S._nGastoSocio=Object.assign(S._nGastoSocio||{},{usdt:_num(this.value)})' style='width:100%;padding:8px;border:1px solid var(--ln);border-radius:8px;font-size:13px;margin-top:3px;box-sizing:border-box'></div>"+
+    "<input type='text' inputmode='decimal' placeholder='auto' value='"+_comaCab((f.usdt||""))+"' oninput='S._nGastoSocio=Object.assign(S._nGastoSocio||{},{usdt:_num(this)})' style='width:100%;padding:8px;border:1px solid var(--ln);border-radius:8px;font-size:13px;margin-top:3px;box-sizing:border-box'></div>"+
     "</div>"+
-    "<button onclick='saveGastoSocioForm()' style='width:100%;margin-top:10px;padding:11px;border:none;border-radius:9px;font-size:13px;font-weight:700;cursor:pointer;background:var(--vd2);color:var(--sobre-color)'>🤝 Guardar gasto de socio</button>"+
+    "<button onclick='if(_numsOk(this))saveGastoSocioForm()' style='width:100%;margin-top:10px;padding:11px;border:none;border-radius:9px;font-size:13px;font-weight:700;cursor:pointer;background:var(--vd2);color:var(--sobre-color)'>🤝 Guardar gasto de socio</button>"+
   "</div>";
 
   // ── Lista por socio ──
@@ -22350,7 +22743,8 @@ function devolverLoteArchivado(id){
     "Esto NO mueve ninguna cuenta: repara el inventario, que es de donde\n"+
     "salen las tasas que la app te sugiere.", _comaCab(hueco));
   if(txt===null) return;
-  var v=parseFloat(_num(txt))||0;
+  var v=_num(txt);
+  if(v===null){ alert("No se entiende «"+String(txt).slice(0,20)+"»: escribe solo cifras, con punto o coma."); return; }
   if(!(v>0)){ alert("Escribe un monto mayor que cero."); return; }
   if(v>hueco+0.0001){ alert("No puedes devolver más de "+f2(hueco)+" "+uni+": el lote fue de "+f2(tope)+"."); return; }
   if(!confirm("¿Devolver "+f2(v)+" "+uni+" al lote del "+(l.fecha||"")+"?\n\n"+
@@ -22581,7 +22975,7 @@ function _txtEditComPrev(r, type, lee){
 function _editComPrev(){
   var el=document.getElementById("edit-com-prev"); if(!el) return;
   var r=_filaEditada(); if(!r) return;
-  var g=function(id){ var x=document.getElementById(id); return x?x.value:null; };
+  var g=function(id){ return document.getElementById(id); };   // ARREGLO 246: el campo entero, con su tipo
   var am=g("edit-am")!==null?(_leerNumero(g("edit-am"))||parseFloat(r.am)||0):(parseFloat(r.am)||0);
   var td=g("edit-tdia")!==null?(_leerNumero(g("edit-tdia"))||parseFloat(r.tdia)||0):(parseFloat(r.tdia)||0);
   el.innerHTML=_txtEditComPrev(r, S.editRow.type, {tipo:g("edit-com")||"", fal:g("edit-fal"), cant:_cantEditada(S.editRow.type, am, td)});
@@ -25395,7 +25789,7 @@ function editRestanteInv(id){
     "<div style='background:var(--sup);border-radius:16px;padding:20px;max-width:360px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,.3)'>"+
       "<div style='font-size:15px;font-weight:800;color:var(--tit);margin-bottom:4px'>✏️ Editar restante</div>"+
       "<div style='font-size:12px;color:var(--tx3);margin-bottom:14px'>"+label+" (máx "+(esCompra?f4(max):f2(max))+" "+unidad+")</div>"+
-      "<input id='editRestanteInput' type='text' inputmode='decimal' step='0.0001' value='"+actual+"' style='width:100%;padding:11px;font-size:16px;font-weight:700;border:1.5px solid var(--ln);border-radius:9px;box-sizing:border-box;margin-bottom:14px' autofocus>"+
+      "<input id='editRestanteInput' type='text' inputmode='decimal' step='0.0001' value='"+_comaCab(actual)+"' style='width:100%;padding:11px;font-size:16px;font-weight:700;border:1.5px solid var(--ln);border-radius:9px;box-sizing:border-box;margin-bottom:14px' autofocus>"+
       "<div style='display:flex;gap:8px'>"+
         "<button id='editRestanteCancel' style='flex:1;padding:11px;border:1.5px solid var(--ln);border-radius:9px;background:var(--sup);color:var(--tx2);font-weight:700;font-size:13px;cursor:pointer;font-family:inherit'>Cancelar</button>"+
         "<button id='editRestanteSave' style='flex:1;padding:11px;border:none;border-radius:9px;background:var(--fondo-osc);color:var(--sobre-color);font-weight:700;font-size:13px;cursor:pointer;font-family:inherit'>Guardar</button>"+
@@ -25408,7 +25802,7 @@ function editRestanteInv(id){
   document.getElementById("editRestanteCancel").onclick=cerrar;
   div.onclick=function(e){ if(e.target===div) cerrar(); };
   function guardar(){
-    var v=_leerNumero(inp.value);
+    var v=_leerNumero(inp);
     if(isNaN(v)||v<0){ alert("Valor no válido."); return; }
     if(esCompra) r.restante=Math.round(v*10000)/10000;
     else r.bsRestante=Math.round(v*100)/100;
@@ -25756,6 +26150,7 @@ function _rOfflineBlock(){
   "</div>";
 }
 function R(){
+  try{ _numsMalosAntes(); }catch(e){}   // ARREGLO 246: lo mal escrito sobrevive al repintado
   var el=document.getElementById("app");
   if(!_hayConexionReal){ el.innerHTML=_rOfflineBlock(); return; }
   // ARREGLO 179 · migracion unica. Al primer R() con datos cargados, si
@@ -29014,11 +29409,11 @@ function rInformeCierre(){
               "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:3px'>Descripción</label>"+
               "<input type='text' placeholder='ej: Alquiler cuenta' value='"+(ng.desc||"")+"' oninput='S._nGastoSocio=Object.assign(S._nGastoSocio||{},{desc:this.value})' style='width:100%;padding:9px;font-size:14px;border:1.5px solid #ddd;border-radius:8px;font-family:inherit;box-sizing:border-box'></div>"+
               "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:3px'>Monto USDT</label>"+
-              "<input type='text' inputmode='decimal' placeholder='0.00' value='"+(ng.usdt||"")+"' oninput='S._nGastoSocio=Object.assign(S._nGastoSocio||{},{usdt:_leerNumero(this.value)||0,monto:_leerNumero(this.value)||0})' style='width:100%;padding:9px;font-size:14px;border:1.5px solid #ddd;border-radius:8px;font-family:inherit;box-sizing:border-box'></div>"+
+              "<input type='text' inputmode='decimal' placeholder='0.00' value='"+_comaCab((ng.usdt||""))+"' oninput='S._nGastoSocio=Object.assign(S._nGastoSocio||{},{usdt:_leerNumero(this)||0,monto:_leerNumero(this)||0})' style='width:100%;padding:9px;font-size:14px;border:1.5px solid #ddd;border-radius:8px;font-family:inherit;box-sizing:border-box'></div>"+
             "</div>"+
             "<div style='margin-bottom:8px'><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:3px'>Fecha</label>"+
             "<input type='text' placeholder='DD/MM/YYYY' value='"+(ng.fecha||td())+"' oninput='S._nGastoSocio=Object.assign(S._nGastoSocio||{},{fecha:this.value})' style='width:100%;padding:9px;font-size:14px;border:1.5px solid #ddd;border-radius:8px;font-family:inherit;box-sizing:border-box'></div>"+
-            "<button onclick='saveGastoSocio(\""+socioId+"\")' style='width:100%;padding:10px;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;background:#c0392b;color:#fff;font-family:inherit'>💾 Registrar gasto</button>"+
+            "<button onclick='if(_numsOk(this))saveGastoSocio(\""+socioId+"\")' style='width:100%;padding:10px;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;background:#c0392b;color:#fff;font-family:inherit'>💾 Registrar gasto</button>"+
             (gastosMes.length?"<div style='margin-top:10px;border-top:1px solid #ffaaaa;padding-top:8px'>"+
               "<div style='font-size:10px;font-weight:700;color:#c0392b;margin-bottom:6px'>Gastos asignados este mes:</div>"+
               gastosMes.map(function(g){return "<div style='display:flex;justify-content:space-between;align-items:center;font-size:11px;padding:4px 0;border-bottom:1px solid rgba(255,0,0,.1)'>"+
@@ -29040,7 +29435,7 @@ function rInformeCierre(){
         (isPaying?"<div style='background:#F0FFF6;border:1px solid #a0e8c0;border-radius:10px;padding:12px;margin-top:10px'>"+
           "<div style='display:flex;flex-direction:column;gap:8px;margin-bottom:10px'>"+
             "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Monto a pagar (USDT)</label>"+
-            "<input type='text' inputmode='decimal' placeholder='"+f2(Math.max(0,final-totalPagado))+"' value='"+(np.monto||"")+"' oninput='S._nPagoSocio=Object.assign(S._nPagoSocio||{},{monto:_num(this.value)})' style='width:100%;padding:11px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
+            "<input type='text' inputmode='decimal' placeholder='"+f2(Math.max(0,final-totalPagado))+"' value='"+_comaCab((np.monto||""))+"' oninput='S._nPagoSocio=Object.assign(S._nPagoSocio||{},{monto:_num(this)})' style='width:100%;padding:11px;font-size:16px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
             "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>¿Este pago es por qué mes?</label>"+
             "<select onchange='S._nPagoSocio=Object.assign(S._nPagoSocio||{},{mesKeyPara:this.value})' style='width:100%;padding:11px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'>"+
               getMesesDisponibles().map(function(m){return "<option value='"+m.key+"'"+((np.mesKeyPara||getMesKeyActual())===m.key?" selected":"")+">"+getMesLabel(m.mes,m.anio)+"</option>";}).join("")+
@@ -29052,7 +29447,7 @@ function rInformeCierre(){
             "<div><label style='font-size:10px;font-weight:700;color:#555;display:block;margin-bottom:4px'>Nota (opcional)</label>"+
             "<input type='text' placeholder='ej: liquidación junio' value='"+(np.nota||"")+"' oninput='S._nPagoSocio=Object.assign(S._nPagoSocio||{},{nota:this.value})' style='width:100%;padding:11px;font-size:14px;border:1.5px solid #ddd;border-radius:9px;font-family:inherit'></div>"+
           "</div>"+
-          "<button onclick='savePagoSocio(\""+socioId+"\")' style='width:100%;padding:12px;border:none;border-radius:9px;font-size:14px;font-weight:700;cursor:pointer;background:#0f6e3a;color:#fff;font-family:inherit'>💳 Confirmar pago</button>"+
+          "<button onclick='if(_numsOk(this))savePagoSocio(\""+socioId+"\")' style='width:100%;padding:12px;border:none;border-radius:9px;font-size:14px;font-weight:700;cursor:pointer;background:#0f6e3a;color:#fff;font-family:inherit'>💳 Confirmar pago</button>"+
         "</div>":"")+
       "</div>";
     }
@@ -30482,8 +30877,8 @@ function rTbl(data,type){
       (isEd?"<td><input id='edit-id' value='"+t.id+"' style='width:45px;font-size:11px;padding:3px 5px;border:1px solid var(--ok-ln);border-radius:5px'></td>":"<td style='font-weight:700'>"+t.id+"</td>")+
       (isEd?"<td><input id='edit-cl' value='"+t.cl+"' style='min-width:130px;font-size:11px;padding:3px 5px;border:1px solid var(--ok-ln);border-radius:5px'></td>":"<td style='min-width:140px;text-align:left;font-weight:600'>"+t.cl+"</td>")+
       "<td><span class='bd' style='background:"+rtBg+";color:"+rtCol+"'>"+t.rt+"</span></td>"+
-      (isEd?"<td><input id='edit-am' oninput='_editComPrev()' type='text' inputmode='decimal' value='"+t.am+"' style='width:70px;font-size:11px;padding:3px 5px;border:1px solid var(--ok-ln);border-radius:5px;text-align:right'></td>":"<td style='text-align:right;font-weight:700'>"+f2(t.am)+"</td>")+
-      (isEd?"<td><input id='edit-tdia' oninput='_editComPrev()' type='text' inputmode='decimal' step='0.001' value='"+t.tdia+"' style='width:70px;font-size:11px;padding:3px 5px;border:1px solid var(--ok-ln);border-radius:5px;text-align:right'></td>":"<td style='text-align:right;color:var(--tx3)'>"+f2(t.tdia)+"</td>")+
+      (isEd?"<td><input id='edit-am' oninput='_editComPrev()' type='text' inputmode='decimal' value='"+_comaCab(t.am)+"' style='width:70px;font-size:11px;padding:3px 5px;border:1px solid var(--ok-ln);border-radius:5px;text-align:right'></td>":"<td style='text-align:right;font-weight:700'>"+f2(t.am)+"</td>")+
+      (isEd?"<td><input id='edit-tdia' oninput='_editComPrev()' type='text' inputmode='decimal' data-num='tasa' step='0.001' value='"+_comaCab(t.tdia)+"' style='width:70px;font-size:11px;padding:3px 5px;border:1px solid var(--ok-ln);border-radius:5px;text-align:right'></td>":"<td style='text-align:right;color:var(--tx3)'>"+f2(t.tdia)+"</td>")+
       "<td style='text-align:right;font-weight:700'>"+f2(t.cant)+"</td>"+
       "<td style='text-align:right;color:var(--tx2)'>"+(t.tc?f4(t.tc):"—")+"</td>"+
       "<td style='text-align:right;font-weight:700;color:var(--ok)'>"+(t.uc&&t.uc>0?f4(t.uc):"<span style='color:var(--tx4b)'>0,00</span>")+"</td>"+
@@ -30893,11 +31288,11 @@ function rTblUnificada(){
       "<td style='"+tdc+";font-size:11.5px;color:var(--tx4)'>"+(r.id||r.n||"")+"</td>"+
       "<td style='"+td+";font-size:13px;font-weight:700;color:var(--tit)'>"+_escAud(r.cl)+_htmlQuien(r)+"</td>"+
       "<td style='"+tdc+"'>"+rtBadge+"</td>"+
-      (isEd?"<td style='"+tdr+"'><input id='edit-am' oninput='_editComPrev()' type='text' inputmode='decimal' value='"+r.am+"' style='"+edInStyle+"'></td>":"<td style='"+tdr+";font-size:13px;font-weight:700'>"+f2n(r.am)+" <span style='font-size:10.5px;color:var(--tx3)'>"+r.orig+"</span></td>")+
+      (isEd?"<td style='"+tdr+"'><input id='edit-am' oninput='_editComPrev()' type='text' inputmode='decimal' value='"+_comaCab(r.am)+"' style='"+edInStyle+"'></td>":"<td style='"+tdr+";font-size:13px;font-weight:700'>"+f2n(r.am)+" <span style='font-size:10.5px;color:var(--tx3)'>"+r.orig+"</span></td>")+
       "<td style='"+tdr+";font-size:13px;font-weight:700'>"+f2n(r.cant)+" <span style='font-size:10.5px;color:var(--tx3)'>"+r.dest+"</span></td>"+
-      (isEd?"<td style='"+tdr+"'><input id='edit-tc' type='text' inputmode='decimal' step='0.0001' value='"+r.tc+"' style='"+edInStyle+"'></td>":"<td style='"+tdr+";font-size:12.5px;color:var(--ok-ln)'>"+f2n(r.tc)+"</td>")+
-      (isEd?"<td style='"+tdr+"'><input id='edit-tv' type='text' inputmode='decimal' step='0.001' value='"+r.tv+"' style='"+edInStyle+"'></td>":"<td style='"+tdr+";font-size:12.5px;color:var(--am2-e)'>"+f2n(r.tv)+"</td>")+
-      (isEd?"<td style='"+tdr+"'><input id='edit-tdia' oninput='_editComPrev()' type='text' inputmode='decimal' step='0.001' value='"+r.tdia+"' style='"+edInStyle+"'></td>":"<td style='"+tdr+";font-size:12.5px;color:var(--tx2)'>"+f2n(r.tdia)+"</td>")+
+      (isEd?"<td style='"+tdr+"'><input id='edit-tc' type='text' inputmode='decimal' data-num='tasa' step='0.0001' value='"+_comaCab(r.tc)+"' style='"+edInStyle+"'></td>":"<td style='"+tdr+";font-size:12.5px;color:var(--ok-ln)'>"+f2n(r.tc)+"</td>")+
+      (isEd?"<td style='"+tdr+"'><input id='edit-tv' type='text' inputmode='decimal' data-num='tasa' step='0.001' value='"+_comaCab(r.tv)+"' style='"+edInStyle+"'></td>":"<td style='"+tdr+";font-size:12.5px;color:var(--am2-e)'>"+f2n(r.tv)+"</td>")+
+      (isEd?"<td style='"+tdr+"'><input id='edit-tdia' oninput='_editComPrev()' type='text' inputmode='decimal' data-num='tasa' step='0.001' value='"+_comaCab(r.tdia)+"' style='"+edInStyle+"'></td>":"<td style='"+tdr+";font-size:12.5px;color:var(--tx2)'>"+f2n(r.tdia)+"</td>")+
       "<td style='"+tdr+";font-size:12.5px;color:var(--az3-g)'>"+f2n(r.uc)+"</td>"+
       "<td style='"+tdr+";font-size:12.5px;color:var(--mo3-b)'>"+f2n(r.uv)+"</td>"+
       "<td style='"+tdc+";font-size:11.5px'>"+bancoOrigen+"</td>"+
@@ -30969,13 +31364,13 @@ function rTblEE(){
     return "<tr style='background:"+(isEd?"var(--az6-a)":"")+"'>"+
     (isEd?"<td><input id='edit-d' value='"+dFmt(t.d)+"' style='width:50px;font-size:10px;padding:2px 4px;border:1px solid var(--info);border-radius:4px'></td>":"<td style='white-space:nowrap;padding:4px 6px'>"+dFmt(t.d)+"</td>")+
     (isEd?"<td><input id='edit-cl' value='"+_escAud(t.cl)+"' style='min-width:110px;font-size:10px;padding:2px 4px;border:1px solid var(--info);border-radius:4px'></td>":"<td style='text-align:left;font-weight:600'>"+_escAud(t.cl)+"</td>")+
-    (isEd?"<td><input id='edit-am' oninput='_editComPrev()' type='text' inputmode='decimal' value='"+t.am+"' style='width:60px;font-size:10px;padding:2px 4px;border:1px solid var(--info);border-radius:4px;text-align:right'></td>":"<td style='text-align:right;font-weight:700;padding:4px 6px'>"+f2(t.am)+"</td>")+
-    (isEd?"<td><input id='edit-tdia' oninput='_editComPrev()' type='text' inputmode='decimal' step='0.001' value='"+t.tdia+"' style='width:55px;font-size:10px;padding:2px 4px;border:1px solid var(--info);border-radius:4px;text-align:right'></td>":"<td style='text-align:right;padding:4px 6px'>"+f2(t.tdia)+"</td>")+
+    (isEd?"<td><input id='edit-am' oninput='_editComPrev()' type='text' inputmode='decimal' value='"+_comaCab(t.am)+"' style='width:60px;font-size:10px;padding:2px 4px;border:1px solid var(--info);border-radius:4px;text-align:right'></td>":"<td style='text-align:right;font-weight:700;padding:4px 6px'>"+f2(t.am)+"</td>")+
+    (isEd?"<td><input id='edit-tdia' oninput='_editComPrev()' type='text' inputmode='decimal' data-num='tasa' step='0.001' value='"+_comaCab(t.tdia)+"' style='width:55px;font-size:10px;padding:2px 4px;border:1px solid var(--info);border-radius:4px;text-align:right'></td>":"<td style='text-align:right;padding:4px 6px'>"+f2(t.tdia)+"</td>")+
     "<td style='text-align:right;font-weight:700;padding:4px 6px'>"+f0(t.cant)+"</td>"+
-    (isEd?"<td><input id='edit-tc' type='text' inputmode='decimal' step='0.0001' value='"+t.tc+"' style='width:55px;font-size:10px;padding:2px 4px;border:1px solid var(--info);border-radius:4px;text-align:right'></td>":"<td style='text-align:right;padding:4px 6px'>"+f4(t.tc)+"</td>")+
+    (isEd?"<td><input id='edit-tc' type='text' inputmode='decimal' data-num='tasa' step='0.0001' value='"+_comaCab(t.tc)+"' style='width:55px;font-size:10px;padding:2px 4px;border:1px solid var(--info);border-radius:4px;text-align:right'></td>":"<td style='text-align:right;padding:4px 6px'>"+f4(t.tc)+"</td>")+
     "<td style='text-align:right;color:var(--ok);font-weight:700;padding:4px 6px'>"+f2(t.uc)+"</td>"+
     "<td style='text-align:right;color:var(--mal);font-weight:700;padding:4px 6px'>"+f2(t.uv)+"</td>"+
-    (isEd?"<td><input id='edit-tv' type='text' inputmode='decimal' step='0.001' value='"+t.tv+"' style='width:60px;font-size:10px;padding:2px 4px;border:1px solid var(--info);border-radius:4px;text-align:right'></td>":"<td style='text-align:right;padding:4px 6px'>"+f4(t.tv)+"</td>")+
+    (isEd?"<td><input id='edit-tv' type='text' inputmode='decimal' data-num='tasa' step='0.001' value='"+_comaCab(t.tv)+"' style='width:60px;font-size:10px;padding:2px 4px;border:1px solid var(--info);border-radius:4px;text-align:right'></td>":"<td style='text-align:right;padding:4px 6px'>"+f4(t.tv)+"</td>")+
     "<td style='text-align:right;font-weight:700;padding:4px 6px'>"+f0(t.total)+"</td>"+
     "<td class='gc' style='padding:4px 6px'>$"+f2(t.pr)+"</td>"+
     (isEd?"<td style='padding:4px 6px'>"+_htmlEditComision(t,"eeuu")+"</td>":"<td style='text-align:right;font-size:11px;color:var(--mal);font-weight:700;padding:4px 6px'>"+(t.comisionBancoVes&&t.comisionBancoVes>0?"−"+f2(t.comisionBancoVes)+" Bs"+(t.tv>0?" <span style='font-size:10px;opacity:.8'>≈ −$"+f2(Math.round(t.comisionBancoVes/t.tv*100)/100)+" USDT</span>":""):"")+"</td>")+
@@ -31230,7 +31625,7 @@ function _rConversorBCV(){
     _htmlTasaCotiza("vuelta", vta)+
     "<div style='display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap'>"+
       "<span style='font-size:11px;color:var(--tx2b)'>🇺🇸 1 USD (BCV) =</span>"+
-      "<input id='bcv-rate-input' type='text' inputmode='decimal' step='0.01' value='"+(bcv||"")+"' placeholder='tasa BCV' oninput='S._bcvRate=_leerNumero(this.value)||null;_reconvertirBCV()' style='width:90px;padding:6px 8px;font-size:13px;font-weight:800;border:1px solid var(--ln);border-radius:7px;text-align:right'>"+
+      "<input id='bcv-rate-input' type='text' inputmode='decimal' data-num='tasa' step='0.01' value='"+_comaCab((bcv||""))+"' placeholder='tasa BCV' oninput='S._bcvRate=_leerNumero(this)||null;_reconvertirBCV()' style='width:90px;padding:6px 8px;font-size:13px;font-weight:800;border:1px solid var(--ln);border-radius:7px;text-align:right'>"+
       "<span style='font-size:11px;color:var(--tx2b)'>VES</span>"+
       "<button type='button' onclick='_fetchTasaBCV()' id='btn-bcv-refresh' style='background:var(--info-sup2);border:1px solid var(--az3a44);color:var(--az3-d);padding:5px 9px;border-radius:8px;font-size:10.5px;font-weight:700;cursor:pointer;margin-left:auto'>🔄 Traer</button>"+
     "</div>"+
@@ -31451,8 +31846,8 @@ function _htmlTasaCotiza(dir,o){
     // salió (ARREGLO 67).
     cuerpo+=
       "<div style='display:flex;align-items:center;gap:7px;margin-top:6px;flex-wrap:wrap'>"+
-        "<input id='tasa-otra-"+dir+"' type='text' inputmode='decimal' value='"+_comaCab(String(o.tasa))+"'"+
-          " oninput='_convSetOtra(\""+dir+"\",this.value)'"+
+        "<input id='tasa-otra-"+dir+"' type='text' inputmode='decimal' data-num='tasa' value='"+_comaCab(String(o.tasa))+"'"+
+          " oninput='_convSetOtra(\""+dir+"\",this)'"+
           " style='width:84px;padding:3px 6px;border:1px solid var(--am4);border-radius:5px;font-weight:800;font-size:12px;color:inherit;background:var(--sup)'>"+
         "<span style='font-size:10.5px;color:var(--am3-e)'>Bs</span>"+
         (o.pub!==null
@@ -31529,13 +31924,13 @@ function _convDesde(campo){
   var tasaVuelta=_getTasaVueltaVESaBRL(); // X VES = 1 BRL (cliente envía bolívares)
   if(campo==="brl"){
     // Cliente escribió cuántos BRL paga → tú entregas VES: bolívares hacia ABAJO (a tu favor)
-    var brl=_leerNumero(elBrl.value)||0;
+    var brl=_leerNumero(elBrl)||0;
     var ves=tasaIda>0?brl*tasaIda:0;
     elVes.value=ves?Math.floor(ves):"";
     elUsd.value=(bcv>0&&ves)?(ves/bcv).toFixed(2):"";
   } else if(campo==="ves"){
     // Cliente da VES → tú entregas BRL: reales hacia ABAJO (a tu favor)
-    var ves2=_leerNumero(elVes.value)||0;
+    var ves2=_leerNumero(elVes)||0;
     elBrl.value=(tasaVuelta>0&&ves2)?Math.floor(ves2/tasaVuelta):"";
     elUsd.value=(bcv>0&&ves2)?(ves2/bcv).toFixed(2):"";
   } else if(campo==="usd"){
@@ -31544,7 +31939,7 @@ function _convDesde(campo){
     // desde ese número final (BRL × tasa) — así, cuando el cliente haga la
     // multiplicación con tu tasa, el monto en Bs le cuadra EXACTO (y siempre
     // le llega al menos lo que pidió en $).
-    var usd=_leerNumero(elUsd.value)||0;
+    var usd=_leerNumero(elUsd)||0;
     var ves3=bcv>0?usd*bcv:0;
     var brlCobrar=(tasaIda>0&&ves3)?Math.ceil(ves3/tasaIda):0;
     elBrl.value=brlCobrar||"";
@@ -31571,7 +31966,7 @@ var _MONEDA_DE_CAMPO = { "conv-brl":"R$", "conv-ves":"Bs", "conv-usd":"$" };
 function _copiarMonto(idCampo,btn){
   var el=document.getElementById(idCampo);
   if(!el||!el.value){ alert("Ese campo está vacío."); return; }
-  var num=_leerNumero(el.value)||0;
+  var num=_leerNumero(el)||0;
   // Con separador de miles y sin el ",00" cuando es entero — es la misma regla
   // que el mensaje al cliente (ARREGLO 92): esto se pega en un chat, no en el
   // campo de un banco, y "Bs 17300" no se lee.
@@ -31850,7 +32245,7 @@ function _guardarMontoMercado(){
 function _htmlMontosMercado(){
   var campo=function(mon,rot,pie){
     return "<div><label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>"+rot+"</label>"+
-      "<input type='text' inputmode='decimal' value='"+_montoMercado(mon)+"' "+
+      "<input type='text' inputmode='decimal' value='"+_comaCab(_montoMercado(mon))+"' "+
         "oninput='_setMontoMercado(\""+mon+"\",this.value)' onchange='_guardarMontoMercado()' "+
         "style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;"+
         "font-weight:700;font-family:inherit;background:var(--sup);color:var(--tit)'>"+
@@ -31874,7 +32269,7 @@ function _htmlMontosMercado(){
       "<div style='font-size:10.5px;color:var(--tx4);line-height:1.5;margin-bottom:8px'>"+
         "Cuando la app lee los reales de CoinGecko (porque Binance BR bloquea el servidor), suma este % para acercarse al precio real de Binance P2P Brasil. Hoy la diferencia es <b>~1 %</b>. Si cambia, ajústalo aquí.</div>"+
       "<div style='display:flex;gap:8px;align-items:center;max-width:260px'>"+
-        "<input type='text' inputmode='decimal' id='inp-margen-p2p-brl' placeholder='"+f2(MARGEN_P2P_BRL_DEFECTO*100)+"' value='"+(((S.config||{}).margenP2P_BRL!==undefined)?f2(parseFloat(S.config.margenP2P_BRL)*100):"")+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;font-family:inherit'>"+
+        "<input type='text' inputmode='decimal' data-num='tasa' id='inp-margen-p2p-brl' placeholder='"+f2(MARGEN_P2P_BRL_DEFECTO*100)+"' value='"+(((S.config||{}).margenP2P_BRL!==undefined)?f2(parseFloat(S.config.margenP2P_BRL)*100):"")+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;font-family:inherit'>"+
         "<span style='font-size:14px;color:var(--tx2);font-weight:700'>%</span>"+
         "<button onclick='guardarMargenP2PBRL()' style='padding:9px 14px;background:var(--rol-ee);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
       "</div>"+
@@ -31889,7 +32284,7 @@ function _htmlMontosMercado(){
       "<div style='font-size:10.5px;color:var(--tx4);line-height:1.5;margin-bottom:8px'>"+
         "Si las tres fuentes de USDT caen, el servidor usa AwesomeAPI (USD/BRL). Como USD va <b>por encima</b> del P2P de USDT, este % se <b>resta</b>. Hoy la diferencia es <b>~1 %</b>.</div>"+
       "<div style='display:flex;gap:8px;align-items:center;max-width:260px'>"+
-        "<input type='text' inputmode='decimal' id='inp-margen-usd-brl' placeholder='"+f2(MARGEN_USD_BRL_DEFECTO*100)+"' value='"+(((S.config||{}).margenUSD_BRL!==undefined)?f2(parseFloat(S.config.margenUSD_BRL)*100):"")+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;font-family:inherit'>"+
+        "<input type='text' inputmode='decimal' data-num='tasa' id='inp-margen-usd-brl' placeholder='"+f2(MARGEN_USD_BRL_DEFECTO*100)+"' value='"+(((S.config||{}).margenUSD_BRL!==undefined)?f2(parseFloat(S.config.margenUSD_BRL)*100):"")+"' style='flex:1;padding:9px;border:1.5px solid var(--ln);border-radius:8px;font-size:14px;font-family:inherit'>"+
         "<span style='font-size:14px;color:var(--tx2);font-weight:700'>%</span>"+
         "<button onclick='guardarMargenUSDBRL()' style='padding:9px 14px;background:var(--rol-ee);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Guardar</button>"+
       "</div>"+
@@ -33364,8 +33759,8 @@ function _htmlCalceCuerpo(){
     }
     return "<div style='flex:1 1 130px;min-width:0'>"+
       "<label style='font-size:10.5px;font-weight:700;color:var(--tx3);display:block;margin-bottom:3px'>"+rot+"</label>"+
-      "<input type='text' inputmode='decimal' placeholder='"+(ph||"")+"' value='"+_escAud(_coma(g[clave]))+"' "+
-        "oninput='_cgSet(\""+clave+"\",this.value)' "+
+      "<input type='text' inputmode='decimal'"+((clave==="ida"||clave==="vuelta"||clave==="pct")?" data-num='tasa'":"")+" placeholder='"+(ph||"")+"' value='"+_escAud(_coma(g[clave]))+"' "+
+        "oninput='_cgSet(\""+clave+"\",this)' "+
         "style='width:100%;padding:9px;border:1.5px solid var(--ln);border-radius:9px;font-size:15px;font-weight:800;"+
         "font-family:inherit;background:var(--sup);color:var(--tit)'>"+
       (pie?"<div style='font-size:10px;color:var(--tx4);margin-top:2px;line-height:1.4'>"+pie+"</div>":"")+
@@ -33400,8 +33795,8 @@ function _htmlCalceCuerpo(){
       // que la ida y la vuelta (ARREGLO 113).
       "<div style='display:flex;align-items:baseline;gap:5px'>"+
         "<span style='font-size:10.5px;color:var(--tx4);font-weight:700'>USD/BRL</span>"+
-        "<input type='text' inputmode='decimal' value='"+_escAud(_coma(g.usdbrl))+"' "+
-          "oninput='_cgSet(\"usdbrl\",this.value)' "+
+        "<input type='text' inputmode='decimal' data-num='tasa' value='"+_escAud(_coma(g.usdbrl))+"' "+
+          "oninput='_cgSet(\"usdbrl\",this)' "+
           "style='width:62px;padding:4px 6px;border:1.5px solid "+(g.usdbrlTocada?"var(--ac)":"var(--ln)")+";border-radius:7px;font-size:12px;"+
           "font-weight:800;text-align:center;font-family:inherit;background:var(--sup);color:var(--tit)'>"+
         (g.usdbrlTocada
@@ -33938,8 +34333,8 @@ function _campoAprox(mon,rot,ph,actual){
   var val=(v!==null)?v:((actual>0)?Math.round(actual*10000)/10000:null);
   return "<div style='flex:1 1 140px;min-width:0'>"+
     "<label style='font-size:10.5px;font-weight:700;color:var(--tx3);display:block;margin-bottom:3px'>"+rot+"</label>"+
-    "<input type='text' inputmode='decimal' placeholder='"+ph+"' value='"+_escAud(val!==null?_comaCab(String(val)):"")+"' "+
-      "oninput='_setAprox(\""+mon+"\",this.value)' "+
+    "<input type='text' inputmode='decimal' data-num='tasa' placeholder='"+ph+"' value='"+_escAud(val!==null?_comaCab(String(val)):"")+"' "+
+      "oninput='_setAprox(\""+mon+"\",this)' "+
       "style='width:100%;padding:9px;border:1.5px solid var(--avi-ln);border-radius:9px;font-size:15px;"+
       "font-weight:800;font-family:inherit;background:var(--sup);color:var(--tit)'>"+
   "</div>";
@@ -34328,8 +34723,8 @@ function _htmlPublicaHoy(){
   // refresca lo que cambia, sin tocar lo que está bajo el dedo.
   var pubAh=_misTasasPublicadas();
   function _celdaPub(dir,val){
-    return "<input type='text' inputmode='decimal' placeholder='—' value='"+_escAud(_comaCab(val))+"' "+
-      "oninput='_setTasaPub(\""+dir+"\",this.value)' onchange='_guardarTasaPub(\""+dir+"\")' "+
+    return "<input type='text' inputmode='decimal' data-num='tasa' placeholder='—' value='"+_escAud(_comaCab(val))+"' "+
+      "oninput='_setTasaPub(\""+dir+"\",this)' onchange='_guardarTasaPub(\""+dir+"\")' "+
       "style='width:100%;border:none;border-bottom:1.5px dashed var(--ln);background:transparent;"+
       "font-size:25px;font-weight:900;color:var(--tx3);text-align:center;font-family:inherit;padding:1px 0 2px'>";
   }
@@ -34480,9 +34875,9 @@ function _htmlRutasExoticas(){
 "<div style='display:flex;gap:10px;margin-bottom:12px;align-items:center'>"+
 "<div style='font-size:11px;color:var(--ink3);font-weight:700;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap'>% Binance:</div>"+
 "<div style='flex:1'><label style='font-size:10.5px;color:var(--ink3);font-weight:700;text-transform:uppercase;letter-spacing:.3px;display:block;margin-bottom:2px'>Compra</label>"+
-"<input type='text' inputmode='decimal' step='0.0001' value='"+(c.exComCompra||"0.0006")+"' oninput='S.calc.exComCompra=_num(this.value);calcUpdateExotico()' style='width:100%;padding:6px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:12px;background:var(--sup2)'></div>"+
+"<input type='text' inputmode='decimal' data-num='tasa' step='0.0001' value='"+_comaCab((c.exComCompra||"0.0006"))+"' oninput='S.calc.exComCompra=_num(this);calcUpdateExotico()' style='width:100%;padding:6px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:12px;background:var(--sup2)'></div>"+
 "<div style='flex:1'><label style='font-size:10.5px;color:var(--ink3);font-weight:700;text-transform:uppercase;letter-spacing:.3px;display:block;margin-bottom:2px'>Venta</label>"+
-"<input type='text' inputmode='decimal' step='0.0001' value='"+(c.exComVenta||"0.0007")+"' oninput='S.calc.exComVenta=_num(this.value);calcUpdateExotico()' style='width:100%;padding:6px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:12px;background:var(--sup2)'></div>"+
+"<input type='text' inputmode='decimal' data-num='tasa' step='0.0001' value='"+_comaCab((c.exComVenta||"0.0007"))+"' oninput='S.calc.exComVenta=_num(this);calcUpdateExotico()' style='width:100%;padding:6px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:12px;background:var(--sup2)'></div>"+
 "</div>"+
 
     // Selector origen → destino
@@ -34505,21 +34900,21 @@ function _htmlRutasExoticas(){
     "<div class='sec'>"+
       "<div style='font-size:13px;font-weight:800;color:var(--ink);margin-bottom:12px'>📊 Tasas Binance del momento</div>"+
       "<div class='fl'><label>Compro USDT con "+moSelOrig.flag+" "+selOrig+" ("+(moSelOrig.hint||selOrig)+" por USDT)</label>"+
-        "<input type='text' inputmode='decimal' step='any' placeholder='"+moSelOrig.hint+"' value='"+(c.exTcCompra||"")+"' oninput='calcSetExotico(\"exTcCompra\",this.value)'>"+(tEx.ok&&tEx.simMonto?"<div style='font-size:11px;color:var(--vd2-d);margin-top:3px;padding-left:2px'>↳ comprando "+((tEx.simMonto/parseFloat(c.exTcCompra)*(1-tEx.comOrig)).toFixed(4))+" USDT</div>":"")+
+        "<input type='text' inputmode='decimal' data-num='tasa' step='any' placeholder='"+moSelOrig.hint+"' value='"+_comaCab((c.exTcCompra||""))+"' oninput='calcSetExotico(\"exTcCompra\",this)'>"+(tEx.ok&&tEx.simMonto?"<div style='font-size:11px;color:var(--vd2-d);margin-top:3px;padding-left:2px'>↳ comprando "+((tEx.simMonto/parseFloat(c.exTcCompra)*(1-tEx.comOrig)).toFixed(4))+" USDT</div>":"")+
         "</div>"+
       "<div class='fl'><label>Vendo USDT en "+moSelDest.flag+" "+selDest+" ("+selDest+" por USDT)</label>"+
-        "<input type='text' inputmode='decimal' step='any' placeholder='ej: ...' value='"+(c.exTvVenta||"")+"' oninput='calcSetExotico(\"exTvVenta\",this.value)'>"+(tEx.ok&&tEx.simMonto?"<div style='font-size:11px;color:var(--mal);margin-top:3px;padding-left:2px'>↳ vendiendo "+(((tEx.simMonto*tEx.cliente)/parseFloat(c.exTvVenta)/(1-tEx.comDest)).toFixed(4))+" USDT</div>":"")+
+        "<input type='text' inputmode='decimal' data-num='tasa' step='any' placeholder='ej: ...' value='"+_comaCab((c.exTvVenta||""))+"' oninput='calcSetExotico(\"exTvVenta\",this)'>"+(tEx.ok&&tEx.simMonto?"<div style='font-size:11px;color:var(--mal);margin-top:3px;padding-left:2px'>↳ vendiendo "+(((tEx.simMonto*tEx.cliente)/parseFloat(c.exTvVenta)/(1-tEx.comDest)).toFixed(4))+" USDT</div>":"")+
         "</div>"+
       "<label style='font-size:11px;color:var(--ink2);font-weight:700;text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:6px'>Mi ganancia</label>"+
       "<div style='display:flex;gap:8px;margin-bottom:12px'>"+mbtnEx("8",c.exMargen)+mbtnEx("9",c.exMargen)+mbtnEx("10",c.exMargen)+
-        "<input type='text' inputmode='decimal' step='any' placeholder='otro' value='"+(c.exMargen||"")+"' oninput='calcSetMargenExoticoLibre(this.value)' style='flex:1;text-align:center'></div>"+
+        "<input type='text' inputmode='decimal' data-num='tasa' step='any' placeholder='otro' value='"+_comaCab((c.exMargen||""))+"' oninput='calcSetMargenExoticoLibre(this)' style='flex:1;text-align:center'></div>"+
       "<div style='background:var(--mo6);border:1.5px dashed var(--ac3);border-radius:10px;padding:10px 12px;margin-bottom:12px'>"+
         "<label style='font-size:11px;font-weight:700;color:var(--ac3);display:block;margin-bottom:4px'>🎯 O escribe la tasa que quieres ofrecer ("+selDest+" por 1 "+selOrig+") — calcula el % solo</label>"+
         (!(c.exTcCompra&&c.exTvVenta)?"<div style='font-size:11px;color:var(--mal);font-weight:700;margin-bottom:6px'>⚠️ Primero llena las dos tasas de Binance arriba — sin esas dos no hay con qué calcular el %</div>":"")+
-        "<input type='text' inputmode='decimal' step='any' placeholder='ej: 0.0025' value='"+(c.objetivoExotico||"")+"' oninput='S.calc.objetivoExotico=_num(this.value)' onblur='calcObjetivoExotico(this.value)' style='width:100%;padding:9px;border:1.5px solid var(--ac3);border-radius:8px;font-size:14px;font-weight:700'>"+
+        "<input type='text' inputmode='decimal' step='any' placeholder='ej: 0.0025' value='"+_comaCab((c.objetivoExotico||""))+"' oninput='S.calc.objetivoExotico=_num(this)' onblur='calcObjetivoExotico(this.value)' style='width:100%;padding:9px;border:1.5px solid var(--ac3);border-radius:8px;font-size:14px;font-weight:700'>"+
       "</div>"+
       "<div class='fl'><label>💡 Simular: cliente envía ("+selOrig+")</label>"+
-        "<input type='text' inputmode='decimal' step='any' placeholder='ej: 500' value='"+(c.exSim||"")+"' oninput='calcSetExotico(\"exSim\",this.value)'></div>"+
+        "<input type='text' inputmode='decimal' step='any' placeholder='ej: 500' value='"+_comaCab((c.exSim||""))+"' oninput='calcSetExotico(\"exSim\",this)'></div>"+
       "<div id='calc-res-exotico' style='background:var(--brandSoft);border-radius:12px;padding:13px 16px'>"+
         "<div style='font-size:12px;color:var(--ink3);text-align:center;padding:8px'>Ingresa ambas tasas de Binance para ver el resultado ↑</div>"+
       "</div>"+
@@ -35874,8 +36269,8 @@ function rNueva(){
     "<div class='fl'><label>Nombre del cliente (auto)</label><input id='tx-nm' type='text' placeholder='Se llena al escribir código' value='"+(f.cl||"")+"' oninput='S.tx.cl=this.value' style='background:"+(f.cl?"var(--vd6-a)":"var(--sup)")+";border-color:"+(f.cl?"var(--ok-ln)":"var(--ln)")+"'></div></div>"+
     "<div class='fl' style='max-width:240px'><label>País destino (automático)</label><div style='background:var(--sup2g);border-radius:7px;padding:8px 12px;font-size:13px;font-weight:700'>"+ruta.flag+" "+ruta.pais+"</div></div></div>"+
     "<div class='sec' style='border-left:3px solid var(--info)'><div class='sec-title' style='color:var(--info)'>1️⃣ Monto recibido en "+ruta.orig+" · Tasa del día</div>"+
-    "<div class='f2'><div class='fl'><label>Valor de transacción ("+ruta.orig+")</label><input type='text' inputmode='decimal' placeholder='ej: 50' value='"+(f.am||"")+"' onfocus='this.select()' oninput='S.tx.am=_num(this.value);upC(\"tx\");_autoMetodoTxPronto()' onchange='_autoMetodoTx()'></div>"+
-    "<div class='fl'><label>"+ruta.lDia+(defTdia&&!f.tdia?" <span style='font-size:11px;color:var(--rol-na);font-weight:600'>← Config: "+defTdia+"</span>":"")+"</label><input type='text' inputmode='decimal' step='0.001' placeholder='"+(defTdia?"Config: "+defTdia:"ej: 629")+"' value='"+tdiaVal+"' onfocus='this.select()' oninput='S.tx.tdia=_num(this.value);upC(\"tx\");_autoMetodoTxPronto()' onchange='_autoMetodoTx()'></div></div>"+
+    "<div class='f2'><div class='fl'><label>Valor de transacción ("+ruta.orig+")</label><input type='text' inputmode='decimal' data-req='1' placeholder='ej: 50' value='"+_comaCab((f.am||""))+"' onfocus='this.select()' oninput='S.tx.am=_num(this);upC(\"tx\");_autoMetodoTxPronto()' onchange='_autoMetodoTx()'></div>"+
+    "<div class='fl'><label>"+ruta.lDia+(defTdia&&!f.tdia?" <span style='font-size:11px;color:var(--rol-na);font-weight:600'>← Config: "+defTdia+"</span>":"")+"</label><input type='text' inputmode='decimal' data-req='1' data-num='tasa' step='0.001' placeholder='"+(defTdia?"Config: "+defTdia:"ej: 629")+"' value='"+_comaCab(tdiaVal)+"' onfocus='this.select()' oninput='S.tx.tdia=_num(this);upC(\"tx\");_autoMetodoTxPronto()' onchange='_autoMetodoTx()'></div></div>"+
     "<div id='s1-tx'>"+(ok?"<div class='step-box' style='background:var(--info-sup);border:1px solid var(--az2a33)'><span style='font-size:11px;color:var(--info)'>"+(ruta.orig==="VES"?(f2(am)+" "+ruta.orig+" ÷ "+f2(tdia)):(f2(am)+" "+ruta.orig+" × "+f2(tdia)))+" = </span><span style='font-weight:700;font-size:14px;color:var(--info)'>📦 "+f0(cant)+" "+ruta.dest+" a entregar</span></div>":"")+"</div></div>"+
     // ── Las cuentas van DESPUÉS del monto (sus palabras: "donde me ponga
     // a colocar qué paga cada uno y después que me ponga a seleccionar en
@@ -36010,9 +36405,9 @@ function rNueva(){
         // tasa de la propia remesa —que ella ya escribió arriba— y pedirla otra
         // vez era pedirle que adivinara a cuánto iba a soltar esos bolívares.
         (ruta.orig==="VES" ? "" :
-        "<div class='fl'><label>A cu\u00e1nto entraron esos bol\u00edvares (Bs por real)</label><input id='permuta-tx' type='text' inputmode='decimal' placeholder='ej: 183,59' value='"+_escAud(_comaCab(f.permuta||""))+"' oninput='S.tx.permuta=_num(this.value);upC(\"tx\")'>"+
+        "<div class='fl'><label>A cu\u00e1nto entraron esos bol\u00edvares (Bs por real)</label><input id='permuta-tx' type='text' inputmode='decimal' data-num='tasa' placeholder='ej: 183,59' value='"+_escAud(_comaCab(f.permuta||""))+"' oninput='S.tx.permuta=_num(this);upC(\"tx\")'>"+
           "<div style='font-size:10px;color:var(--tx4);margin-top:2px;line-height:1.4'>sale de tus lotes \u00b7 c\u00e1mbiala solo si sabes que fue otra</div></div>")+
-        "<div class='fl'><label>Tasa venta USDT ("+ruta.dest+"/USDT)</label><input type='text' inputmode='decimal' placeholder='ej: 948' value='"+(f.tv_manual||tvAuto||"")+"' oninput='S.tx.tv_manual=_num(this.value);upC(\"tx\")'></div>"+
+        "<div class='fl'><label>Tasa venta USDT ("+ruta.dest+"/USDT)</label><input type='text' inputmode='decimal' data-num='tasa' placeholder='ej: 948' value='"+_comaCab((f.tv_manual||tvAuto||""))+"' oninput='S.tx.tv_manual=_num(this);upC(\"tx\")'></div>"+
       "</div>"+
       // ARREGLO 120: con su id, para que upC() lo refresque al teclear. Sin id
       // se quedaba del ultimo repintado y decia "no puedo calcular" con la
@@ -36036,8 +36431,8 @@ function rNueva(){
     // Campos manuales - solo si showTasas está activo
     (S.tx.showTasas?
       "<div class='f2' style='margin-bottom:8px'>"+
-        "<div class='fl'><label>Tasa compra USDT ("+ruta.orig+"/USDT)</label><input id='tcman-tx' type='text' inputmode='decimal' step='0.0001' placeholder='ej: 4.980' value='"+(f.tc_manual||tcAuto||"")+"' oninput='S.tx.tc_manual=_num(this.value);upC(\"tx\")'></div>"+
-        "<div class='fl'><label>Tasa venta USDT ("+ruta.dest+"/USDT)</label><input type='text' inputmode='decimal' step='0.0001' placeholder='ej: 629.000' value='"+(f.tv_manual||tvAuto||"")+"' oninput='S.tx.tv_manual=_num(this.value);upC(\"tx\")'></div>"+
+        "<div class='fl'><label>Tasa compra USDT ("+ruta.orig+"/USDT)</label><input id='tcman-tx' type='text' inputmode='decimal' data-num='tasa' step='0.0001' placeholder='ej: 4.980' value='"+_comaCab((f.tc_manual||tcAuto||""))+"' oninput='S.tx.tc_manual=_num(this);upC(\"tx\")'></div>"+
+        "<div class='fl'><label>Tasa venta USDT ("+ruta.dest+"/USDT)</label><input type='text' inputmode='decimal' data-num='tasa' step='0.0001' placeholder='ej: 629.000' value='"+_comaCab((f.tv_manual||tvAuto||""))+"' oninput='S.tx.tv_manual=_num(this);upC(\"tx\")'></div>"+
       "</div>"+
       (function(){
         var recientes=_ultimasTasasCompra(ruta.orig,4);
@@ -36092,7 +36487,7 @@ function rNueva(){
     _htmlCampoFallidosTx()+
     "<div id='com-tx-nota'>"+_htmlNotaComTx(f, cant)+"</div>"+
     "</div>":"")+
-    "<button class='btn-main btn-green' onpointerdown='_txTocaGuardar()' onclick='saveTx()'>💾 Guardar y bloquear</button></div>";
+    "<button class='btn-main btn-green' onpointerdown='_txTocaGuardar()' onclick='if(_numsOk(this))saveTx()'>💾 Guardar y bloquear</button></div>";
 }
 
 function rNuevaEE(){
@@ -36150,8 +36545,8 @@ function rNuevaEE(){
       "<div id='lista-cl-ee' style='display:none;position:absolute;z-index:50;background:var(--sup);border:1px solid var(--ln);border-radius:8px;box-shadow:0 4px 16px var(--gr1a22);max-height:200px;overflow-y:auto;width:100%;margin-top:2px'>"+(q&&clsFilt.length?clientList:"")+"</div></div></div></div>"+
     "<div class='fl'><label>Cliente seleccionado</label><input id='txE-nm' type='text' placeholder='Se llena al seleccionar' value='"+(f.cl||"")+"' oninput='S.txE.cl=this.value' style='background:"+(f.cl?"var(--vd6-a)":"var(--sup)")+";border-color:"+(f.cl?"var(--ok-ln)":"var(--ln)")+"'></div></div>"+
     "<div class='sec' style='border-left:3px solid var(--info)'><div class='sec-title' style='color:var(--info)'>1️⃣ Monto USD · Tasa del día</div>"+
-    "<div class='f2'><div class='fl'><label>Monto recibido (USD)</label><input type='text' inputmode='decimal' placeholder='ej: 100' value='"+(f.am||"")+"' oninput='S.txE.am=_num(this.value);upC(\"txE\")'></div>"+
-    "<div class='fl'><label>Tasa día (BS × 1 USD)"+(defTdiaEE&&!f.tdia?" <span style='font-size:10px;color:var(--rol-na);font-weight:600'>← Config: "+defTdiaEE+"</span>":"")+"</label><input type='text' inputmode='decimal' placeholder='"+(defTdiaEE?"Config: "+defTdiaEE:"ej: 629")+"' value='"+tdiaEEVal+"' oninput='S.txE.tdia=_num(this.value);upC(\"txE\")'></div></div>"+
+    "<div class='f2'><div class='fl'><label>Monto recibido (USD)</label><input type='text' inputmode='decimal' data-req='1' placeholder='ej: 100' value='"+_comaCab((f.am||""))+"' oninput='S.txE.am=_num(this);upC(\"txE\")'></div>"+
+    "<div class='fl'><label>Tasa día (BS × 1 USD)"+(defTdiaEE&&!f.tdia?" <span style='font-size:10px;color:var(--rol-na);font-weight:600'>← Config: "+defTdiaEE+"</span>":"")+"</label><input type='text' inputmode='decimal' data-req='1' data-num='tasa' placeholder='"+(defTdiaEE?"Config: "+defTdiaEE:"ej: 629")+"' value='"+_comaCab(tdiaEEVal)+"' oninput='S.txE.tdia=_num(this);upC(\"txE\")'></div></div>"+
     "<div id='s1-txE'>"+(ok?"<div class='step-box' style='background:var(--info-sup);border:1px solid var(--az2a33)'><span style='font-size:11px;color:var(--info)'>"+f2(am)+" USD × "+f2(tdia)+" = </span><span style='font-weight:700;font-size:14px;color:var(--info)'>📦 "+f0(cant)+" BS a entregar</span></div>":"")+"</div></div>"+
     // Las cuentas DESPUÉS del monto, igual que en BRL↔VZLA.
     (function(){
@@ -36200,8 +36595,8 @@ function rNuevaEE(){
     )+
     (S.txE.showTasas?
       "<div class='f2' style='margin-bottom:8px'>"+
-        "<div class='fl'><label>Tasa compra USDT (USD/USDT)</label><input id='tcman-txE' type='text' inputmode='decimal' step='0.0001' placeholder='ej: 1.010' value='"+(f.tc_manual||tcAuto||"")+"' oninput='S.txE.tc_manual=_num(this.value);upC(\"txE\")'></div>"+
-        "<div class='fl'><label>Tasa venta USDT (BS/USDT)</label><input type='text' inputmode='decimal' step='0.0001' placeholder='ej: 630.890' value='"+(f.tv_manual||tvAuto||"")+"' oninput='S.txE.tv_manual=_num(this.value);upC(\"txE\")'></div>"+
+        "<div class='fl'><label>Tasa compra USDT (USD/USDT)</label><input id='tcman-txE' type='text' inputmode='decimal' data-num='tasa' step='0.0001' placeholder='ej: 1.010' value='"+_comaCab((f.tc_manual||tcAuto||""))+"' oninput='S.txE.tc_manual=_num(this);upC(\"txE\")'></div>"+
+        "<div class='fl'><label>Tasa venta USDT (BS/USDT)</label><input type='text' inputmode='decimal' data-num='tasa' step='0.0001' placeholder='ej: 630.890' value='"+_comaCab((f.tv_manual||tvAuto||""))+"' oninput='S.txE.tv_manual=_num(this);upC(\"txE\")'></div>"+
       "</div>"+
       (function(){
         var recientes=_ultimasTasasCompra("USD",4);
@@ -36237,7 +36632,7 @@ function rNuevaEE(){
     "</select>"+
     (_cvEE>0?"<div style='margin-top:8px;font-size:11px;color:var(--rj3)'>📌 Comisión: "+f2(_cvEE)+" Bs — la asumes tú, se descuenta de tu ganancia.</div>":"")+
     "</div>" +
-    "<button class='btn-main btn-blue' onclick='saveTxEE()'>💾 Guardar operación EE.UU</button></div>";
+    "<button class='btn-main btn-blue' onclick='if(_numsOk(this))saveTxEE()'>💾 Guardar operación EE.UU</button></div>";
   // ── Añadir sección Ganancia Extra al final de rNueva ──────────
 }
 
@@ -36263,10 +36658,10 @@ function rNuevaEE(){
               MONS_GE.map(function(m){return "<option value='"+m+"'"+(ge.mon===m?" selected":"")+">"+m+"</option>";}).join("")+
             "</select></div>"+
             "<div><label style='font-size:10px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>Monto ("+ge.mon+")</label>"+
-            "<input type='text' inputmode='decimal' placeholder='0.00' value='"+(ge.monto||"")+"' oninput='S._nGanExtra=Object.assign(S._nGanExtra||{},{monto:_num(this.value),usdt:\"\"})' style='width:100%;padding:12px;font-size:16px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'></div>"+
+            "<input type='text' inputmode='decimal' placeholder='0.00' value='"+_comaCab((ge.monto||""))+"' oninput='S._nGanExtra=Object.assign(S._nGanExtra||{},{monto:_num(this),usdt:\"\"})' style='width:100%;padding:12px;font-size:16px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'></div>"+
           "</div>"+
           "<div><label style='font-size:10px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>Equivalente USDT <span style=\"font-size:10.5px;color:var(--tx4)\">(auto si dejas vacío)</span></label>"+
-          "<input type='text' inputmode='decimal' placeholder='Auto' value='"+(ge.usdt||"")+"' oninput='S._nGanExtra=Object.assign(S._nGanExtra||{},{usdt:_num(this.value)})' style='width:100%;padding:12px;font-size:16px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'></div>"+
+          "<input type='text' inputmode='decimal' placeholder='Auto' value='"+_comaCab((ge.usdt||""))+"' oninput='S._nGanExtra=Object.assign(S._nGanExtra||{},{usdt:_num(this)})' style='width:100%;padding:12px;font-size:16px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'></div>"+
           "<div><label style='font-size:10px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>Cuenta donde entró</label>"+
           "<select onchange='S._nGanExtra=Object.assign(S._nGanExtra||{},{cuentaId:this.value})' style='width:100%;padding:12px;font-size:14px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'>"+
             "<option value=''>— Sin acreditar —</option>"+
@@ -36278,7 +36673,7 @@ function rNuevaEE(){
             "<button onclick='S._nGanExtra=Object.assign(S._nGanExtra||{},{tipo:\"personal\"});R()' style='padding:12px;border:2px solid "+(ge.tipo==="personal"?"var(--ok)":"var(--ln)")+";border-radius:9px;font-size:13px;font-weight:700;cursor:pointer;background:"+(ge.tipo==="personal"?"var(--vd6-c)":"var(--sup)")+";color:"+(ge.tipo==="personal"?"var(--ok)":"var(--tx2b)")+";font-family:inherit'>👤 Personal</button>"+
           "</div></div>"+
         "</div>"+
-        "<button onclick='saveGanExtra()' style='width:100%;padding:14px;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;background:var(--am2-b);color:var(--sobre-color);font-family:inherit;margin-top:12px'>💰 Guardar ganancia extra</button>"+
+        "<button onclick='if(_numsOk(this))saveGanExtra()' style='width:100%;padding:14px;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;background:var(--am2-b);color:var(--sobre-color);font-family:inherit;margin-top:12px'>💰 Guardar ganancia extra</button>"+
       "</div>":"";
     var btnToggle="<div style='margin-top:14px'>"+
       "<button onclick='toggleGanExtra()' style='width:100%;padding:12px;border:1.5px dashed "+(S._showGanExtra?"var(--gr3-a)":"var(--avi-ln)")+";border-radius:11px;font-size:13px;font-weight:700;cursor:pointer;background:"+(S._showGanExtra?"var(--sup2f)":"var(--avi-sup2)")+";color:"+(S._showGanExtra?"var(--tx3)":"var(--avi-tx)")+";font-family:inherit'>"+(S._showGanExtra?"✕ Cerrar":"💰 Registrar ganancia extra (P2P, trabajo, venta...)")+"</button>"+
@@ -36335,11 +36730,11 @@ function _htmlAporte(){
           ctas.map(function(c){return "<option value='"+c.id+"'"+(a.cuentaId===c.id?" selected":"")+">"+_escAud(c.nombre)+" ("+c.moneda+")</option>";}).join("")+
         "</select></div>"+
         "<div><label id='ap-rot' style='font-size:10px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>"+_rotMontoAporte()+"</label>"+
-        "<input type='text' inputmode='decimal' placeholder='0,00' value='"+(a.monto||"")+"' oninput='S._nAporte=Object.assign(S._nAporte||_aporteVacio(),{monto:_num(this.value)})' style='width:100%;padding:12px;font-size:16px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'></div>"+
+        "<input type='text' inputmode='decimal' placeholder='0,00' value='"+_comaCab((a.monto||""))+"' oninput='S._nAporte=Object.assign(S._nAporte||_aporteVacio(),{monto:_num(this)})' style='width:100%;padding:12px;font-size:16px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'></div>"+
         "<div><label style='font-size:10px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>¿De qué fue? <span style='font-size:10.5px;color:var(--tx4)'>(opcional)</span></label>"+
         "<input type='text' placeholder='Ej: mi sueldo del otro trabajo' value='"+_escAud(a.nota||"")+"' oninput='S._nAporte=Object.assign(S._nAporte||_aporteVacio(),{nota:this.value})' style='width:100%;padding:12px;font-size:14px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'></div>"+
       "</div>"+
-      "<button onclick='saveAporte()' style='width:100%;padding:14px;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;background:var(--ok);color:var(--sobre-color);font-family:inherit;margin-top:12px'>👛 Guardar</button>"+
+      "<button onclick='if(_numsOk(this))saveAporte()' style='width:100%;padding:14px;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;background:var(--ok);color:var(--sobre-color);font-family:inherit;margin-top:12px'>👛 Guardar</button>"+
       (mios.length?"<div style='margin-top:12px;border-top:1px solid var(--ln);padding-top:9px'>"+
         "<div style='font-size:10px;font-weight:700;color:var(--tx3);margin-bottom:5px'>LO ÚLTIMO</div>"+
         mios.map(function(x){
@@ -36635,18 +37030,18 @@ function rInventarioUsdt(){
     "</div>"+
     (function(){
       if(f.tipo==="compra"){
-        return "<div style='display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:10px'>"+
-          "<div class='fl'><label>Monto gastado ("+(f.moneda||"BRL")+")</label><input id='iu-fiat' type='text' inputmode='decimal' step='0.01' placeholder='ej: 300' value='"+(f.montOrigen||"")+"'"+_estiloAutoIU("montOrigen")+" oninput='S.nIU.montOrigen=_num(this.value);_autoIU(\"montOrigen\")'></div>"+
-          "<div class='fl'><label>Cantidad de la orden (USDT)</label><input id='iu-usdt' type='text' inputmode='decimal' step='0.01' placeholder='ej: 58.14' value='"+(f.usdt||"")+"'"+_estiloAutoIU("usdt")+" oninput='S.nIU.usdt=_num(this.value);_autoIU(\"usdt\")'></div>"+
-          "<div class='fl'><label>Tasa ("+(f.moneda||"BRL")+"/USDT)</label><input id='iu-tasa' type='text' inputmode='decimal' step='0.0001' placeholder='ej: 5.08' value='"+(f.tasa||"")+"'"+_estiloAutoIU("tasa")+" oninput='S.nIU.tasa=_num(this.value);_autoIU(\"tasa\")'></div>"+
-          "<div class='fl'><label>Comisión (USDT)</label><input id='iu-com' type='text' inputmode='decimal' step='0.001' value='"+(f.comision!==undefined?f.comision:0.06)+"' oninput='S.nIU.comision=parseFloat(_num(this.value))||0;_autoIU(\"comision\")'></div>"+
+        return "<div class='iu-rej4' style='display:grid;gap:10px;margin-bottom:10px'>"+
+          "<div class='fl'><label>Monto gastado ("+(f.moneda||"BRL")+")</label><input id='iu-fiat' type='text' inputmode='decimal' data-req='1' step='0.01' placeholder='ej: 300' value='"+_comaCab((f.montOrigen||""))+"'"+_estiloAutoIU("montOrigen")+" oninput='S.nIU.montOrigen=_num(this);_autoIU(\"montOrigen\")'></div>"+
+          "<div class='fl'><label>Cantidad de la orden (USDT)</label><input id='iu-usdt' type='text' inputmode='decimal' data-req='1' step='0.01' placeholder='ej: 58.14' value='"+_comaCab((f.usdt||""))+"'"+_estiloAutoIU("usdt")+" oninput='S.nIU.usdt=_num(this);_autoIU(\"usdt\")'></div>"+
+          "<div class='fl'><label>Tasa ("+(f.moneda||"BRL")+"/USDT)</label><input id='iu-tasa' type='text' inputmode='decimal' data-req='1' data-num='tasa' step='0.0001' placeholder='ej: 5.08' value='"+_comaCab((f.tasa||""))+"'"+_estiloAutoIU("tasa")+" oninput='S.nIU.tasa=_num(this);_autoIU(\"tasa\")'></div>"+
+          "<div class='fl'><label>Comisión (USDT)</label><input id='iu-com' type='text' inputmode='decimal' step='0.001' value='"+_comaCab((f.comision!==undefined?f.comision:0.06))+"' oninput='S.nIU.comision=_num(this);_autoIU(\"comision\")'></div>"+
         "</div>";
       } else {
-        return "<div style='display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:10px'>"+
-          "<div class='fl'><label>💰 Total liberado en Binance (USDT)</label><input id='iu-usdt' type='text' inputmode='decimal' step='0.01' placeholder='ej: 273.57' value='"+(f.usdt||"")+"'"+_estiloAutoIU("usdt","font-weight:700;border-color:var(--tit)")+" oninput='S.nIU.usdt=_num(this.value);_autoIU(\"usdt\")'></div>"+
-          "<div class='fl'><label>Comisión Binance (USDT)</label><input id='iu-com' type='text' inputmode='decimal' step='0.001' placeholder='ej: 0.06' value='"+(f.comision!==undefined?f.comision:0.06)+"' oninput='S.nIU.comision=parseFloat(_num(this.value))||0;_autoIU(\"comision\")'></div>"+
-          "<div class='fl'><label>Tasa ("+(f.monedaVenta||"VES")+"/USDT)</label><input id='iu-tasa' type='text' inputmode='decimal' step='0.01' placeholder='ej: 731.23' value='"+(f.tasa||"")+"'"+_estiloAutoIU("tasa")+" oninput='S.nIU.tasa=_num(this.value);_autoIU(\"tasa\")'></div>"+
-          "<div class='fl'><label>"+(f.monedaVenta||"VES")+" recibidos</label><input id='iu-fiat' type='text' inputmode='decimal' step='0.01' placeholder='ej: 200000' value='"+(f.bsRecibidos||"")+"'"+_estiloAutoIU("bsRecibidos","background:var(--avi-sup2);border-color:var(--avi-ln)")+" oninput='S.nIU.bsRecibidos=_num(this.value);_autoIU(\"bsRecibidos\")'></div>"+
+        return "<div class='iu-rej4' style='display:grid;gap:10px;margin-bottom:10px'>"+
+          "<div class='fl'><label>💰 Total liberado en Binance (USDT)</label><input id='iu-usdt' type='text' inputmode='decimal' data-req='1' step='0.01' placeholder='ej: 273.57' value='"+_comaCab((f.usdt||""))+"'"+_estiloAutoIU("usdt","font-weight:700;border-color:var(--tit)")+" oninput='S.nIU.usdt=_num(this);_autoIU(\"usdt\")'></div>"+
+          "<div class='fl'><label>Comisión Binance (USDT)</label><input id='iu-com' type='text' inputmode='decimal' step='0.001' placeholder='ej: 0.06' value='"+_comaCab((f.comision!==undefined?f.comision:0.06))+"' oninput='S.nIU.comision=_num(this);_autoIU(\"comision\")'></div>"+
+          "<div class='fl'><label>Tasa ("+(f.monedaVenta||"VES")+"/USDT)</label><input id='iu-tasa' type='text' inputmode='decimal' data-req='1' data-num='tasa' step='0.01' placeholder='ej: 731.23' value='"+_comaCab((f.tasa||""))+"'"+_estiloAutoIU("tasa")+" oninput='S.nIU.tasa=_num(this);_autoIU(\"tasa\")'></div>"+
+          "<div class='fl'><label>"+(f.monedaVenta||"VES")+" recibidos</label><input id='iu-fiat' type='text' inputmode='decimal' data-req='1' step='0.01' placeholder='ej: 200000' value='"+_comaCab((f.bsRecibidos||""))+"'"+_estiloAutoIU("bsRecibidos","background:var(--avi-sup2);border-color:var(--avi-ln)")+" oninput='S.nIU.bsRecibidos=_num(this);_autoIU(\"bsRecibidos\")'></div>"+
         "</div>";
       }
     })()+
@@ -36698,7 +37093,7 @@ function rInventarioUsdt(){
     html+="<div style='font-size:11.5px;color:var(--tx3);margin-bottom:10px'>Al guardar, los saldos de las cuentas seleccionadas se actualizarán automáticamente.</div>";
     return html;
   })()+
-  "<button class='btn-main' onclick='saveIU()' style='background:var(--fondo-osc);color:var(--sobre-color)'>💾 Registrar y actualizar cuenta</button></div>"+
+  "<button class='btn-main' onclick='if(_numsOk(this))saveIU()' style='background:var(--fondo-osc);color:var(--sobre-color)'>💾 Registrar y actualizar cuenta</button></div>"+
     "<div style='display:flex;align-items:center;justify-content:space-between;margin-bottom:9px;gap:8px;flex-wrap:wrap'>"+
     "<div style='font-size:11.5px;font-weight:700;color:var(--tx3);text-transform:uppercase'>📋 Historial</div>"+
     "<div style='display:flex;gap:8px'>"+
@@ -36785,7 +37180,7 @@ function rCapital(){
       "<td style='text-align:right;font-size:15px;font-weight:800;color:var(--ok)'>"+f2(parseFloat(item.saldo)||0)+"</td>"+
       "<td style='text-align:right;background:var(--avi-sup2);border-left:2px solid var(--am3a22)'>"+(usdt!==null?"<span style='font-size:12px;font-weight:700;color:var(--info)'>≈ "+f4(usdt)+" USDT</span><div style='font-size:10.5px;color:var(--tx3)'>÷ "+f2(rate)+"</div>":"<span style='font-size:10px;color:var(--tx4)'>Sin tasa</span>")+"</td>"+
       "<td class='mu' style='font-size:10px'>"+_escAud(item.nota)+"</td>"+
-      "<td style='text-align:right'><input type='text' inputmode='decimal' value='"+(parseFloat(item.saldo)||0)+"' step='0.01' onchange='S.capital["+idx+"].saldo=parseFloat(_num(this.value))||0;saveData();R()' style='width:100px;font-size:12px;text-align:right;padding:4px 7px;border:1px solid var(--ln);border-radius:6px'></td>"+
+      "<td style='text-align:right'><input type='text' inputmode='decimal' value='"+_comaCab((parseFloat(item.saldo)||0))+"' step='0.01' data-neg='1' onchange='var _v=_num(this);if(_v===null){_ecoCampo(this,\"No se entiende: no se guardó\");return;}S.capital["+idx+"].saldo=_v;saveData();R()' style='width:100px;font-size:12px;text-align:right;padding:4px 7px;border:1px solid var(--ln);border-radius:6px'></td>"+
       "<td><button class='del-btn' onclick='var _delId=(S.capital["+idx+"]||{}).id;S.capital=S.capital.filter(function(x,i){return i!=="+idx+";});_marcarBorradoMerge(\"capital\",_delId);saveData();R()'>🗑️</button></td></tr>";
   }).join("");
   var monOpts=["USDT","BRL","VES","USD","EUR","COP","PEN","TTD"].map(function(m){return "<option value='"+m+"'"+(f.moneda===m?" selected":"")+">"+m+"</option>";}).join("");
@@ -36814,7 +37209,7 @@ function rCapital(){
   "<div class='f3'><div class='fl'><label>Nombre de la cuenta</label><input type='text' placeholder='ej: Binance, Nubank, BDV, KRAKEN...' value='"+(f.nombre||"")+"' oninput='S.nCap.nombre=this.value'></div>"+
   "<div class='fl'><label>Tipo</label><select onchange='S.nCap.tipo=this.value'>"+tipoOpts+"</select></div>"+
   "<div class='fl'><label>Moneda</label><select onchange='S.nCap.moneda=this.value;R()'>"+monOpts+"</select></div></div>"+
-  "<div class='f2'><div class='fl'><label>Saldo actual ("+f.moneda+")</label><input type='text' inputmode='decimal' step='0.01' placeholder='0.00' value='"+(f.saldo||"")+"' oninput='S.nCap.saldo=_num(this.value)'></div>"+
+  "<div class='f2'><div class='fl'><label>Saldo actual ("+f.moneda+")</label><input type='text' inputmode='decimal' step='0.01' placeholder='0.00' value='"+_comaCab((f.saldo||""))+"' oninput='S.nCap.saldo=_num(this)'></div>"+
   "<div class='fl'><label>Nota (opcional)</label><input type='text' placeholder='ej: cuenta principal, p2p...' value='"+(f.nota||"")+"' oninput='S.nCap.nota=this.value'></div></div>"+
   (f.saldo&&parseFloat(f.saldo)>0&&rateMap[f.moneda]?"<div style='background:var(--avi-sup2);border:1px solid var(--avi-ln);border-radius:8px;padding:9px 13px;margin-bottom:10px;font-size:12px;color:var(--avi-tx)'>💡 "+f2(parseFloat(f.saldo))+" "+f.moneda+" ÷ "+f2(rateMap[f.moneda])+" = <b>≈ "+f4(parseFloat(f.saldo)/rateMap[f.moneda])+" USDT</b></div>":"")+
   "<button class='btn-main' onclick='saveCap()' style='background:var(--info-osc);color:var(--sobre-color)'>💾 Agregar cuenta</button></div>";
@@ -37693,9 +38088,9 @@ function rEgresos(){
           "<div style='font-size:11px;color:var(--tx3);margin-bottom:9px'>Pones dinero de vuelta en una cuenta USDT de la empresa (devolver lo que gastaste o saldar lo que te excediste). Sube el saldo de esa cuenta y tu disponible. No afecta el inventario.</div>"+
           (ctasUsdt.length?
             "<div class='f2'><div class='fl'><label>Cuenta USDT</label><select onchange='S.nRep=Object.assign(S.nRep||{},{cuentaId:this.value})'><option value=''>— elegir —</option>"+ctasUsdt.map(function(c){return "<option value='"+c.id+"'"+(nr.cuentaId===c.id?" selected":"")+">"+_escAud(c.nombre)+" ($"+f2(c.saldo)+")</option>";}).join("")+"</select></div>"+
-            "<div class='fl'><label>Monto (USDT)</label><input type='text' inputmode='decimal' placeholder='0.00' value='"+(nr.monto||"")+"' oninput='S.nRep=Object.assign(S.nRep||{},{monto:_num(this.value)})'></div></div>"+
+            "<div class='fl'><label>Monto (USDT)</label><input type='text' inputmode='decimal' data-req='1' placeholder='0.00' value='"+_comaCab((nr.monto||""))+"' oninput='S.nRep=Object.assign(S.nRep||{},{monto:_num(this)})'></div></div>"+
             "<div class='fl' style='margin-bottom:10px'><label>Nota (opcional)</label><input type='text' placeholder='ej: devolución gasto personal' value='"+(nr.nota||"")+"' oninput='S.nRep=Object.assign(S.nRep||{},{nota:this.value})'></div>"+
-            "<button type='button' onclick='saveRep()' style='width:100%;padding:11px;border:none;border-radius:9px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;background:var(--ok);color:var(--sobre-color)'>💵 Guardar reposición</button>"
+            "<button type='button' onclick='if(_numsOk(this))saveRep()' style='width:100%;padding:11px;border:none;border-radius:9px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;background:var(--ok);color:var(--sobre-color)'>💵 Guardar reposición</button>"
             :"<div style='font-size:11px;color:var(--mal);text-align:center;padding:8px'>No tienes cuentas USDT activas. Crea una en ⚙️ Configuración.</div>")+
         "</div>":"")+
       (repsMes.length?
@@ -38000,15 +38395,15 @@ function rEgresos(){
         "<div style='background:var(--mo6-d);border:1px solid var(--mo5-a);border-radius:8px;padding:8px 10px;margin:-4px 0 12px;font-size:11px;color:var(--rol-ee)'>💼 Sin cuenta seleccionada → este gasto se resta directo de <b>tu sueldo</b> (💼 MI SUELDO 30%), sin tocar ninguna cuenta bancaria. Úsalo cuando ya vendiste/gastaste el dinero por fuera (ej: vendiste USDT de tu sueldo y gastaste los reales).</div>":
         "<div style='background:var(--am6-a);border:1px solid var(--am4);border-radius:8px;padding:8px 10px;margin:-4px 0 12px;font-size:11px;color:var(--avi-tx)'>🏦 Se descontará de esa cuenta específica y se contará contra ese \"bolsillo\", no contra tu sueldo directamente.</div>")
       :"")+
-    "<div class='f2'><div class='fl'><label>Monto ("+monAct+")</label><input type='text' inputmode='decimal' placeholder='0.00' value='"+(f.monto||"")+"' oninput='chgMonto(_num(this.value))'></div>"+
-    "<div class='fl'><label>Tasa ("+(f.mon||"BRL")+" por 1 USDT)</label><input id='eg-tasa' type='text' inputmode='decimal' step='0.0001' placeholder='ej: 5.30' value='"+(f.tasaManual!==undefined&&f.tasaManual!==""?f.tasaManual:"")+"' oninput='chgTasaEg(_num(this.value))' style='width:100%;padding:10px;border:1.5px solid var(--ln);border-radius:8px;font-size:13px'><div style='font-size:11px;color:var(--tx3);margin-top:3px'>Si el sistema no tiene tasa, escribila acá y calcula solo</div>"+
+    "<div class='f2'><div class='fl'><label>Monto ("+monAct+")</label><input type='text' inputmode='decimal' data-req='1' placeholder='0.00' value='"+_comaCab((f.monto||""))+"' oninput='chgMonto(_num(this))'></div>"+
+    "<div class='fl'><label>Tasa ("+(f.mon||"BRL")+" por 1 USDT)</label><input id='eg-tasa' type='text' inputmode='decimal' data-num='tasa' step='0.0001' placeholder='ej: 5.30' value='"+_comaCab((f.tasaManual!==undefined&&f.tasaManual!==""?f.tasaManual:""))+"' oninput='chgTasaEg(_num(this))' style='width:100%;padding:10px;border:1.5px solid var(--ln);border-radius:8px;font-size:13px'><div style='font-size:11px;color:var(--tx3);margin-top:3px'>Si el sistema no tiene tasa, escribila acá y calcula solo</div>"+
       "<div id='eg-aviso-tasa' style='display:none;font-size:11px;color:var(--am3-g);background:var(--avi-sup2);border:1px solid var(--avi-ln);border-radius:6px;padding:5px 7px;margin-top:4px'></div></div>"+
-    "<div class='fl'><label>≈ USDT</label><input id='eg-usdt' type='text' inputmode='decimal' placeholder='0.00' value='"+(f.usdt!==""&&f.usdt!==undefined?f.usdt:"")+"' oninput='S.nEg.usdt=_num(this.value)'></div></div>"+
+    "<div class='fl'><label>≈ USDT</label><input id='eg-usdt' type='text' inputmode='decimal' placeholder='0.00' value='"+_comaCab((f.usdt!==""&&f.usdt!==undefined?f.usdt:""))+"' oninput='S.nEg.usdt=_num(this)'></div></div>"+
     "<div style='display:flex;gap:16px;margin-bottom:12px'>"+
     "<label style='display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer'><input type='checkbox' "+(f.fija?"checked":"")+" onchange='S.nEg.fija=this.checked;R()'> ⭐ Recurrente</label>"+
     "<label style='display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer'><input type='checkbox' "+(f.pagada?"checked":"")+" onchange='S.nEg.pagada=this.checked'> ✅ Ya pagado</label></div>"+
-    (f.fija?"<div class='fl' style='margin-bottom:12px'><label>📅 Día de pago (1-28)</label><input type='text' inputmode='decimal' min='1' max='28' value='"+(f.diaPago||"")+"' oninput='S.nEg.diaPago=_num(this.value)'></div>":"")+
-    "<button onclick='saveEg()' style='width:100%;padding:13px;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;background:"+(esPersonal?"var(--rol-ee)":"var(--tit)")+";color:var(--sobre-color)'>💾 Guardar "+(esPersonal?"gasto personal":"egreso empresa")+"</button></div>"+
+    (f.fija?"<div class='fl' style='margin-bottom:12px'><label>📅 Día de pago (1-28)</label><input type='text' inputmode='decimal' min='1' max='28' value='"+_comaCab((f.diaPago||""))+"' oninput='S.nEg.diaPago=_num(this)'></div>":"")+
+    "<button onclick='if(_numsOk(this))saveEg()' style='width:100%;padding:13px;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;background:"+(esPersonal?"var(--rol-ee)":"var(--tit)")+";color:var(--sobre-color)'>💾 Guardar "+(esPersonal?"gasto personal":"egreso empresa")+"</button></div>"+
 
     // ARREGLO 153: los gastos personales guardados en la lista de la empresa.
     // Va ARRIBA de las pestañas a propósito: no es de ninguna de las tres —ese
@@ -38476,7 +38871,7 @@ function rCuentasCobrar(){
         var _tUsarCC=(_tmCC!==null&&!isNaN(_tmCC)&&_tmCC>0)?_tmCC:_tAutoCC;
         previewCC="<div style='margin-top:6px'>"+
           "<label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>💱 1 "+c.moneda+" = ? "+monPagoCC+" (lo que te paga por cada "+c.moneda+")</label>"+
-          "<input type='text' inputmode='decimal' placeholder='"+(_tAutoCC?f4(_tAutoCC):"—")+"' value='"+(na.tasaManual||"")+"' oninput='chgTasaCobrar(_num(this.value),\""+c.moneda+"\",\""+monPagoCC+"\","+saldoPend+")' style='width:100%;padding:9px;font-size:13px;border:1.5px solid var(--ln);border-radius:8px;font-family:inherit'>"+
+          "<input type='text' inputmode='decimal' data-num='tasa' placeholder='"+(_tAutoCC?f4(_tAutoCC):"—")+"' value='"+_comaCab((na.tasaManual||""))+"' oninput='chgTasaCobrar(_num(this),\""+c.moneda+"\",\""+monPagoCC+"\","+saldoPend+")' style='width:100%;padding:9px;font-size:13px;border:1.5px solid var(--ln);border-radius:8px;font-family:inherit'>"+
           "<div id='cc-inv'>"+_htmlTasaInvertida(_tmCC||0,_tAutoCC,c.moneda,monPagoCC)+"</div>"+
           "<div id='cc-dir'>"+_htmlTasaEnPalabras(saldoPend,_tUsarCC,c.moneda,monPagoCC,saldoPend)+"</div>"+
           // ARREGLO 224 · botón "💯 Exacto" para cuadrar al céntimo.
@@ -38498,7 +38893,7 @@ function rCuentasCobrar(){
             MONEDAS_COBRAR.map(function(m){return "<option value='"+m+"'"+(monPagoCC===m?" selected":"")+">"+m+(m===c.moneda?" (moneda de la deuda)":"")+"</option>";}).join("")+
           "</select></div>"+
           "<div><label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>Monto recibido ("+monPagoCC+")</label>"+
-          "<input type='text' inputmode='decimal' placeholder='0.00' value='"+(na.monto||"")+"' oninput='S.nAbonoCobrar=Object.assign(S.nAbonoCobrar||{},{monto:_num(this.value),_exacto:false});_refrescarAbonoCobrar(\""+c.moneda+"\",\""+monPagoCC+"\","+saldoPend+")' onblur='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'>"+
+          "<input type='text' inputmode='decimal' data-req='1' placeholder='0.00' value='"+_comaCab((na.monto||""))+"' oninput='S.nAbonoCobrar=Object.assign(S.nAbonoCobrar||{},{monto:_num(this),_exacto:false});_refrescarAbonoCobrar(\""+c.moneda+"\",\""+monPagoCC+"\","+saldoPend+")' onblur='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'>"+
           previewCC+
           "</div>"+
           "<div><label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>Cuenta donde entra ("+monPagoCC+")</label>"+
@@ -38509,7 +38904,7 @@ function rCuentasCobrar(){
           "<div><label style='font-size:11px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>Nota (opcional)</label>"+
           "<input type='text' placeholder='ej: primera cuota' value='"+(na.nota||"")+"' oninput='S.nAbonoCobrar=Object.assign(S.nAbonoCobrar||{},{nota:this.value})' style='width:100%;padding:12px;font-size:14px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'></div>"+
         "</div>"+
-        "<button onclick='saveAbonoCobrar(\""+_jsAttr(String(c.id))+"\")' style='width:100%;padding:12px;border:none;border-radius:9px;font-size:14px;font-weight:700;letter-spacing:.2px;cursor:pointer;background:var(--vd2-f);color:var(--sobre-color);font-family:inherit'>Guardar abono</button>"+
+        "<button onclick='if(_numsOk(this))saveAbonoCobrar(\""+_jsAttr(String(c.id))+"\")' style='width:100%;padding:12px;border:none;border-radius:9px;font-size:14px;font-weight:700;letter-spacing:.2px;cursor:pointer;background:var(--vd2-f);color:var(--sobre-color);font-family:inherit'>Guardar abono</button>"+
       "</div>";
     }
 
@@ -39474,7 +39869,7 @@ function rPrestamos(){
           "</select></div>"+
           (monPagoC!==monP?
             "<div><label style='font-size:11.5px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>Tasa (1 "+monP+" = ? "+monPagoC+")</label>"+
-            "<input type='text' inputmode='decimal' value='"+(nc.tasaManual||"")+"' onfocus='this.select()' oninput='S.nCobrar=Object.assign(S.nCobrar||{},{tasaManual:_num(this.value)});_refrescarCobrarTotal("+p.id+")' style='width:100%;padding:12px;font-size:16px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'></div>"
+            "<input type='text' inputmode='decimal' data-num='tasa' value='"+_comaCab((nc.tasaManual||""))+"' onfocus='this.select()' oninput='S.nCobrar=Object.assign(S.nCobrar||{},{tasaManual:_num(this)});_refrescarCobrarTotal("+p.id+")' style='width:100%;padding:12px;font-size:16px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'></div>"
           :"")+
           (_moraPend>0.009?
             "<label style='display:flex;align-items:center;gap:9px;cursor:pointer;background:var(--mal-sup);border:1px solid var(--mal-ln);border-radius:9px;padding:9px 11px'>"+
@@ -39574,7 +39969,7 @@ function rPrestamos(){
         })();
         previewHtml="<div style='margin-top:6px'>"+
           "<label style='font-size:11.5px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>💱 1 "+monP+" = ? "+monPago+" (lo que te paga por cada "+monP+")</label>"+
-          "<input type='text' inputmode='decimal' placeholder='"+(tasaAuto?f4(tasaAuto):"—")+"' value='"+(np.tasaManual||"")+"' oninput='chgTasaPrest(_num(this.value),\""+monP+"\",\""+monPago+"\","+_refPend+","+_techoPend+")' onchange='R()' style='width:100%;padding:9px;font-size:13px;border:1.5px solid var(--ln);border-radius:8px;font-family:inherit'>"+
+          "<input type='text' inputmode='decimal' data-num='tasa' placeholder='"+(tasaAuto?f4(tasaAuto):"—")+"' value='"+_comaCab((np.tasaManual||""))+"' oninput='chgTasaPrest(_num(this),\""+monP+"\",\""+monPago+"\","+_refPend+","+_techoPend+")' onchange='R()' style='width:100%;padding:9px;font-size:13px;border:1.5px solid var(--ln);border-radius:8px;font-family:inherit'>"+
           // Los tres avisos van en divs con id propio y SIN estilo: el estilo
           // viaja dentro del contenido, para que al vaciarlos no quede una
           // caja de color vacía en pantalla.
@@ -39626,7 +40021,7 @@ function rPrestamos(){
             MONEDAS_ABONO.map(function(m){return "<option value='"+m+"'"+(monPago===m?" selected":"")+">"+m+(m===monP?" (moneda del préstamo)":"")+"</option>";}).join("")+
           "</select></div>"+
           "<div><label style='font-size:11.5px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>Monto recibido ("+monPago+")</label>"+
-          "<input id='pp-monto' type='text' inputmode='decimal' placeholder='0.00' value='"+(np.monto||"")+"' oninput='S.nPagarPrest=Object.assign(S.nPagarPrest||{},{monto:_num(this.value),_exacto:false});_refrescarAbonoPrest(\""+monP+"\",\""+monPago+"\","+_refPend+","+_techoPend+")' onchange='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'>"+
+          "<input id='pp-monto' type='text' inputmode='decimal' data-req='1' placeholder='0.00' value='"+_comaCab((np.monto||""))+"' oninput='S.nPagarPrest=Object.assign(S.nPagarPrest||{},{monto:_num(this),_exacto:false});_refrescarAbonoPrest(\""+monP+"\",\""+monPago+"\","+_refPend+","+_techoPend+")' onchange='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'>"+
           // ARREGLO 203 · fuera la calculadora inversa de este formulario.
           // Este formulario REGISTRA un pago que ya se recibió. Para saber
           // "cuánto decirle al cliente antes de que pague" ya existe el
@@ -39645,7 +40040,7 @@ function rPrestamos(){
           (ctasPago.length===0?"<div style='font-size:11.5px;color:var(--mal);margin-top:4px'>No tienes cuentas activas en "+monPago+". Créala en ⚙️ Configuración o elige otra moneda.</div>":"")+
           "</div>"+
         "</div>"+
-        "<button onclick='pagarPrestamo("+p.id+")' style='width:100%;padding:12px;border:none;border-radius:9px;font-size:14px;font-weight:700;letter-spacing:.2px;cursor:pointer;background:var(--vd2-f);color:var(--sobre-color);font-family:inherit'>Confirmar abono</button>"+
+        "<button onclick='if(_numsOk(this))pagarPrestamo("+p.id+")' style='width:100%;padding:12px;border:none;border-radius:9px;font-size:14px;font-weight:700;letter-spacing:.2px;cursor:pointer;background:var(--vd2-f);color:var(--sobre-color);font-family:inherit'>Confirmar abono</button>"+
       "</div>";
     }
 
@@ -40385,7 +40780,7 @@ function rPrestamos(){
           "<div><label style='font-size:11.5px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>Moneda</label>"+
           "<select onchange='S.nPr.mon=this.value;S.nPr.cuentaId=\"\";R()' style='width:100%;padding:12px;font-size:14px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'>"+monOpts+"</select></div>"+
           "<div><label style='font-size:11.5px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>Monto ("+mon+")</label>"+
-          "<input type='text' inputmode='decimal' placeholder='0.00' value='"+(f.monto||"")+"' oninput='S.nPr.monto=_num(this.value)' onblur='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'></div>"+
+          "<input type='text' inputmode='decimal' data-req='1' placeholder='0.00' value='"+_comaCab((f.monto||""))+"' oninput='S.nPr.monto=_num(this)' onblur='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'></div>"+
         "</div>"+
         // Moneda de origen real + cuenta — se dejan FIJAS aquí, justo
         // después del monto, para que no se muevan de lugar cuando el
@@ -40397,7 +40792,7 @@ function rPrestamos(){
           "<select onchange='S.nPr.monedaOrigen=this.value;S.nPr.cuentaId=\"\";R()' style='width:100%;padding:11px;font-size:14px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit;margin-bottom:"+(monOrigen!==mon?"8px":"0")+"'>"+monOrigenOpts+"</select>"+
           (monOrigen!==mon?
             "<label style='font-size:11.5px;font-weight:700;color:var(--avi-tx);display:block;margin-bottom:4px'>1 "+mon+" = ? "+monOrigen+" (tasa a la que convertiste)</label>"+
-            "<input type='text' inputmode='decimal' placeholder='"+(_tasaOrigenAuto?f4(_tasaOrigenAuto):"—")+"' value='"+(f.tasaOrigen||"")+"' oninput='S.nPr.tasaOrigen=_num(this.value)' onblur='R()' style='width:100%;padding:10px;font-size:14px;border:1.5px solid var(--ln);border-radius:8px;font-family:inherit'>"+
+            "<input type='text' inputmode='decimal' data-num='tasa' placeholder='"+(_tasaOrigenAuto?f4(_tasaOrigenAuto):"—")+"' value='"+_comaCab((f.tasaOrigen||""))+"' oninput='S.nPr.tasaOrigen=_num(this)' onblur='R()' style='width:100%;padding:10px;font-size:14px;border:1.5px solid var(--ln);border-radius:8px;font-family:inherit'>"+
             (_capitalActual>0?(function(){
               var _tOr=(f.tasaOrigen&&!isNaN(parseFloat(f.tasaOrigen)))?parseFloat(f.tasaOrigen):_tasaOrigenAuto;
               if(!_tOr) return "<div style='font-size:11px;color:var(--mal);margin-top:6px'>⚠️ Sin tasa disponible — escríbela arriba</div>";
@@ -40588,7 +40983,7 @@ function rPrestamos(){
             "<div style='font-size:12px;font-weight:800;color:var(--tit);margin-bottom:8px'>📊 Comparar opciones de pago</div>"+
             "<div style='display:flex;align-items:center;gap:8px;margin-bottom:6px'>"+
               "<label style='font-size:11px;color:var(--tx2);white-space:nowrap'>Interés por cuota (%):</label>"+
-              "<input type='text' inputmode='decimal' value='"+_pct+"' oninput='S.nPr.tasaComparador=_num(this.value)' onblur='R()' style='flex:1;padding:9px;font-size:14px;border:1.5px solid var(--ln-b);border-radius:8px;font-family:inherit'>"+
+              "<input type='text' inputmode='decimal' data-num='tasa' value='"+_comaCab(_pct)+"' oninput='S.nPr.tasaComparador=_num(this)' onblur='R()' style='flex:1;padding:9px;font-size:14px;border:1.5px solid var(--ln-b);border-radius:8px;font-family:inherit'>"+
             "</div>"+
             (_refTxt?"<div style='font-size:11.5px;color:"+_refColor+";font-weight:600;margin-bottom:4px'>"+_refTxt+"</div>":"")+
             (_pct>0?"<div style='font-size:11.5px;color:var(--tx3c);margin-bottom:10px'>Equivale a un <b>"+f2(tasaAnualEfectiva(_pct,_periodDays))+"%</b> anual efectivo (CET).</div>":"")+
@@ -40645,7 +41040,7 @@ function rPrestamos(){
           "</label>"+
           (f.conInteres?
             "<div><label style='font-size:11.5px;font-weight:700;color:var(--tx2);display:block;margin-bottom:4px'>Interés por cuota/período (%)</label>"+
-            "<input type='text' inputmode='decimal' placeholder='ej: 10' value='"+(f.tasaInteres||"")+"' oninput='S.nPr.tasaInteres=_num(this.value)' onblur='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'>"+
+            "<input type='text' inputmode='decimal' data-num='tasa' placeholder='ej: 10' value='"+_comaCab((f.tasaInteres||""))+"' oninput='S.nPr.tasaInteres=_num(this)' onblur='R()' style='width:100%;padding:12px;font-size:16px;border:1.5px solid var(--ln);border-radius:9px;font-family:inherit'>"+
             "<div style='font-size:10.5px;color:var(--tx3b);margin-top:3px'>Se aplica por cada cuota — a más cuotas, más interés total (como un préstamo real).</div></div>"
           :"")+
         "</div>"+
@@ -40683,7 +41078,7 @@ function rPrestamos(){
             (_cet>0?"<div style='font-size:11.5px;color:"+(_cet>300?"var(--mal)":"var(--az3-h)")+";margin-top:5px'>Costo efectivo anual (CET): <b>"+f2(_cet)+"%</b> — es "+_tasaInt+"% cada "+_periodDays2+" días"+(_cet>300?" · muy por encima de cualquier banco":"")+"</div>":"")+
           "</div>";
         })()+
-        "<button onclick='savePr()' style='width:100%;padding:14px;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;background:var(--fondo-osc);color:var(--sobre-color);font-family:inherit'>💾 Registrar préstamo</button>"+
+        "<button onclick='if(_numsOk(this))savePr()' style='width:100%;padding:14px;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;background:var(--fondo-osc);color:var(--sobre-color);font-family:inherit'>💾 Registrar préstamo</button>"+
       "</div>"+
     "</div>";
 
@@ -42441,7 +42836,7 @@ function _copiarPGDASFallback(txt, cb){
 
 function _pgdasMarcarDeclarada(mesKey){
   var el=document.getElementById("pgdas-das-input");
-  var das=el?_leerNumero(el.value):0;
+  var das=el?_leerNumero(el):0;
   if(!(das>=0)){ alert("Pon el valor del DAS pagado (R$)."); return; }
   var ing=_ingresoDeclarablePGDAS(mesKey);
   var rbt12=_rbt12PGDAS(mesKey);
