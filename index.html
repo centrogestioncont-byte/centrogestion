@@ -3717,7 +3717,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261112_v329";
+var APP_VERSION = "20261113_v332";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -11194,9 +11194,27 @@ function _uvDeParte(uvTotal, parte, total){
 // El reparto del consumo de bolívares, con desglose o sin él. Con una sola
 // cuenta devuelve una fila: así el camino es EL MISMO y no hay dos maneras de
 // consumir el FIFO que puedan separarse con el primer cambio.
+// ARREGLO 248 · La misma cuenta puede salir en DOS filas: sus palabras del
+// 13/11, "hice dos pagos desde esa cuenta, uno fue pago móvil y otro
+// transferencia, el mismo cliente lo pidió así". Cada fila lleva SU forma de
+// pago y SU comisión (comisionesDeEntregas va fila por fila), pero el SALDO y
+// el LOTE se descuentan por cuenta, con las filas de esa cuenta ya sumadas.
+// Antes se prohibía la cuenta repetida porque cada fila simulaba el lote por su
+// lado y las dos veían el lote entero: la app decía que alcanzaba cuando no, y
+// el espejo apuntaba el mismo lote dos veces. Sumando aquí —un solo sitio, que
+// leen el consumo, la simulación, el saldo y el borrado— eso no puede pasar.
+function _entregasPorCuenta(entregas){
+  var orden=[], por={};
+  (entregas||[]).forEach(function(e){
+    if(!e || !e.cuentaId) return;
+    var m=parseFloat(e.monto)||0;
+    if(!por[e.cuentaId]){ por[e.cuentaId]={cuentaId:e.cuentaId, monto:0}; orden.push(por[e.cuentaId]); }
+    por[e.cuentaId].monto=Math.round((por[e.cuentaId].monto+m)*100)/100;
+  });
+  return orden;
+}
 function _entregasParaFIFO(entregas, cuentaDest, cant){
-  if(entregas && entregas.length)
-    return entregas.map(function(e){ return {cuentaId:e.cuentaId, monto:e.monto}; });
+  if(entregas && entregas.length) return _entregasPorCuenta(entregas);
   return [{cuentaId:cuentaDest||"", monto:Math.round((parseFloat(cant)||0)*100)/100}];
 }
 // El USDT se consume UNA vez: depende de la cuenta de ENTRADA, no de por dónde
@@ -11462,7 +11480,9 @@ function actualizarCuentasPorRemesa(ruta, am, tc, tv, pr, cuentaBancoId, cuentaD
     // suyo por el MISMO camino que la cuenta única —salidaDeCuentaEntrega() y
     // _completarDesdeMadre()— y queda anotada en _mov, que es de donde sale la
     // reversión exacta al borrar la remesa. Por eso el borrado no cambia.
-    entregas.forEach(function(e){
+    // ARREGLO 248: por cuenta, no por fila. Con dos filas de la misma cuenta,
+    // _completarDesdeMadre miraría el saldo entero dos veces.
+    _entregasPorCuenta(entregas).forEach(function(e){
       if(!e || !e.cuentaId) return;
       var _cE=(S.cuentas||[]).find(function(x){return x.id===e.cuentaId;});
       var _sE=salidaDeCuentaEntrega(_cE, e.monto, _uvDeParte(uvUsdt, e.monto, vesEntregado), monDest);
@@ -11696,16 +11716,11 @@ function saveTx(){
             _quisisteEnFilas("txEntregaSet(", ruta.dest||"VES", res.cant, sumaEntregas(_entregas)));   // ARREGLO 247
       return;
     }
-    // Una cuenta repetida descuadra la comprobación del FIFO: las dos filas
-    // verían el mismo saldo de lotes entero y la app diría que alcanza cuando
-    // no alcanza. Y no hace falta para nada: se suman en una sola fila.
-    var _vistas={}, _rep=null;
-    _entregas.forEach(function(e){ if(_vistas[e.cuentaId]) _rep=e.cuentaId; _vistas[e.cuentaId]=1; });
-    if(_rep){
-      var _cR=(S.cuentas||[]).find(function(x){return x.id===_rep;});
-      alert("La cuenta \""+((_cR&&_cR.nombre)||_rep)+"\" está dos veces.\n\nJúntalas en una sola fila con el total que salió de ahí.");
-      return;
-    }
+    // ARREGLO 248: aquí se prohibía la cuenta repetida ("júntalas en una sola
+    // fila"), y eso no dejaba registrar dos pagos de verdad desde el mismo
+    // banco —un pago móvil y una transferencia— con su comisión cada uno. Lo
+    // que el bloqueo protegía (que cada fila viera el lote entero) lo cubre
+    // ahora _entregasPorCuenta(), que suma las filas antes de tocar saldo y lote.
     // Todas las filas en la misma moneda. Mezclar una cuenta en USDT (la
     // entrega la hace un aliado) con una en la moneda de destino obliga a
     // repartir el costo entre dos reglas distintas, y eso se hace aparte y con
@@ -11891,6 +11906,18 @@ function saveTx(){
         _cC.saldo=Math.round(((parseFloat(_cC.saldo)||0)-d.comision)*100)/100;
         _cC._mod=Date.now();
         nuevaRemesa._mov.push({cuentaId:_cC.id,delta:-d.comision});
+        // ARREGLO 249: y baja el LOTE de esa cuenta, como con una sola cuenta
+        // (ARREGLO 161). Este camino se lo saltó: la comisión bajaba el saldo y
+        // el lote no, así que el lote quedaba por encima del banco en lo que
+        // costó la comisión — medido con dos pagos móviles de 9.275 desde dos
+        // bancos: saldo 81.394,34, lote 81.550, 55,66 de más. De esos lotes
+        // salen las tasas que la app sugiere. Va al espejo para que el borrado
+        // la devuelva al lote que la pagó.
+        var _clE=consumirLotesMon("VES", _cC.id, d.comision);
+        if(_clE && _clE.ventas.length){
+          nuevaRemesa._lotesConsumidos=nuevaRemesa._lotesConsumidos||{compras:[],ventas:[]};
+          nuevaRemesa._lotesConsumidos.ventas=(nuevaRemesa._lotesConsumidos.ventas||[]).concat(_clE.ventas);
+        }
       });
       var _comUE=res.tv>0?Math.round(_comE.total/res.tv*10000)/10000:0;
       nuevaRemesa.pr=Math.round((nuevaRemesa.pr-_comUE)*10000)/10000;
@@ -22802,7 +22829,7 @@ function _restaurarVentasFIFO(r, monDest, cant){
   });
   if(resto<=0.001) return;
   var partes=(r.entregas&&r.entregas.length)
-    ? r.entregas.map(function(e){ return {cuentaId:e.cuentaId, monto:parseFloat(e.monto)||0}; })
+    ? _entregasPorCuenta(r.entregas)
     : [{cuentaId:r.cuentaDest||"", monto:resto}];
   var ventasTodas=S.inventarioUsdt.filter(function(l){
     return l.tipo==="venta"&&l.moneda===monDest;

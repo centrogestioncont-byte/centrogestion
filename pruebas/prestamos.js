@@ -139,7 +139,7 @@ const NECESARIAS = ["_egresosHuerfanos", "moverEgresoAPersonal", "_tasaDelDiaFue
                     "_txtTarifaBanco", "_opcionesComisionBanco", "_tipoComDeRemesa",
                     "monedasDeRemesa", "pagosDeRemesa", "sumaPagos", "pagosDebe",
                     "entregasDeRemesa", "sumaEntregas", "comisionesDeEntregas",
-                    "_uvDeParte", "_entregasParaFIFO", "consumirFIFORemesa", "simularFIFORemesa",
+                    "_uvDeParte", "_entregasPorCuenta", "_entregasParaFIFO", "consumirFIFORemesa", "simularFIFORemesa",
                     "esBancoVES", "consumirInventarioFIFO", "_restaurarVentasFIFO",
                     "COM", "_comIU", "_localeOCR", "_numOCR",
                     "_candUSDT", "_candFiat", "_cuadrarP2P", "_parsearOCR", "_parsearConLocale", "_numLegible",
@@ -6445,8 +6445,8 @@ console.log("\n— FASE 2: la cuenta madre —");
   // La salida de cada fila pasa por salidaDeCuentaEntrega, igual que la unica:
   // si no, un aliado pagado en USDT dejaria de descontar.
   const ac = sinComentarios(sacarFuncion("actualizarCuentasPorRemesa"));
-  ok(/entregas\.forEach/.test(ac) && /salidaDeCuentaEntrega\(_cE/.test(ac),
-     "cada fila descuenta por el mismo camino que la cuenta unica");
+  ok(/_entregasPorCuenta\(entregas\)\.forEach/.test(ac) && /salidaDeCuentaEntrega\(_cE/.test(ac),
+     "cada cuenta descuenta por el mismo camino que la cuenta unica (ARREGLO 248: ya sumada por cuenta)");
   ok(/_completarDesdeMadre\(_cE/.test(ac),
      "y la cuenta madre completa a cada banco que se quede corto, como siempre");
   // El desglose se guarda en la remesa: sin eso, borrarla no sabria repartir.
@@ -6459,9 +6459,11 @@ console.log("\n— FASE 2: la cuenta madre —");
   // No se guarda si las filas no suman lo entregado.
   ok(/sumaEntregas\(_entregas\)-res\.cant/.test(H),
      "no deja guardar si las filas no suman exactamente lo entregado");
-  // Ni con una cuenta repetida, que descuadraria la comprobacion del FIFO.
-  ok(/\u00e1 dos veces/.test(HTML) && /_vistas\[e\.cuentaId\]/.test(HTML),
-     "ni con la misma cuenta dos veces");
+  // ARREGLO 248: la cuenta repetida YA NO se prohíbe (dos pagos de verdad
+  // desde el mismo banco). Lo que el bloqueo protegía lo cubre que las filas se
+  // sumen por cuenta antes de tocar saldo y lote: se prueba más abajo.
+  ok(!/_vistas\[e\.cuentaId\]/.test(HTML),
+     "la misma cuenta en dos filas ya no frena el guardado");
   // Ni mezclando monedas.
   ok(/no son todas de la misma moneda/.test(HTML),
      "ni mezclando cuentas de monedas distintas");
@@ -14913,6 +14915,41 @@ console.log("\nARREGLO 247 · Seguro contra montos mil veces más grandes");
   ok(/filter\(function\(x\)\{return x!==c;\}\)/.test(ec) && /_marcarBorradoMerge\("cuentasCobrar",c\.id\)/.test(ec),
      "borrar quita ESE cobro y lo marca con su propio id");
   ok(/if\(c\.fromArticulo\)\{[\s\S]*?return;/.test(ec), "un cobro de Mercancía no se borra desde Por cobrar (se deshace la venta)");
+}
+
+// ── ARREGLO 248 · Dos pagos desde la MISMA cuenta ───────────────────────
+// Sus palabras del 13/11: "hice dos pagos desde esa cuenta, uno fue pago móvil
+// y otro transferencia, el mismo cliente lo pidió así". Cada fila con su
+// comisión; el saldo y el lote, por cuenta y una sola vez.
+console.log("\nARREGLO 248 · Dos pagos desde la misma cuenta");
+{
+  const PC = F._entregasPorCuenta([{cuentaId:"cBDV",monto:9275,com:"movil"},{cuentaId:"cPROV",monto:100},{cuentaId:"cBDV",monto:9275,com:""}]);
+  ok(PC.length===2 && PC[0].cuentaId==="cBDV" && PC[0].monto===18550 && PC[1].cuentaId==="cPROV" && PC[1].monto===100,
+     "las filas de la misma cuenta se suman en una, en el orden en que salen: 18.550 + 100", JSON.stringify(PC));
+  const PF = F._entregasParaFIFO([{cuentaId:"cBDV",monto:9275},{cuentaId:"cBDV",monto:9275}], "", 18550);
+  ok(PF.length===1 && PF[0].monto===18550, "el FIFO ve UNA cuenta con el total, no dos filas que miran el lote entero cada una");
+  ok(F._entregasParaFIFO(null,"cX",500.004)[0].monto===500, "sin desglose sigue siendo una fila con lo entregado");
+  const antesCtas=S.cuentas, antesCfg=S.config;
+  S.config={}; S.cuentas=[{id:"cBDV",moneda:"VES",tipo:"banco"}];
+  const cm = F.comisionesDeEntregas([{cuentaId:"cBDV",monto:9275,com:"movil"},{cuentaId:"cBDV",monto:9275,com:""}], "");
+  ok(cm.total===27.83 && cm.det.length===1, "su caso: 9.275 por pago móvil = 27,83 y 9.275 por transferencia del mismo banco = 0", cm.total);
+  const cm2 = F.comisionesDeEntregas([{cuentaId:"cBDV",monto:2000,com:"movil"},{cuentaId:"cBDV",monto:2000,com:"movil"}], "");
+  ok(cm2.total===28, "dos pagos móviles desde el mismo banco son dos mínimos: 14 + 14", cm2.total);
+  S.cuentas=antesCtas; S.config=antesCfg;
+  const rv = sinComentarios(sacarFuncion("_restaurarVentasFIFO"));
+  ok(/_entregasPorCuenta\(r\.entregas\)/.test(rv), "al borrar, lo que no casa con el espejo se reparte por cuenta, no por fila");
+}
+
+// ── ARREGLO 249 · La comisión con varias cuentas también baja el lote ───
+console.log("\nARREGLO 249 · La comisión con varias cuentas baja el lote");
+{
+  const st = sinComentarios(sacarFuncion("saveTx"));
+  const i = st.indexOf("comisionesDeEntregas(_entregas, f.fallidos)");
+  const tramo = st.slice(i, i+1400);
+  ok(i>0 && /consumirLotesMon\("VES", _cC\.id, d\.comision\)/.test(tramo),
+     "cada comisión del desglose consume el lote de SU cuenta, como con una sola (ARREGLO 161)");
+  ok(/_lotesConsumidos\.ventas=\(nuevaRemesa\._lotesConsumidos\.ventas\|\|\[\]\)\.concat\(_clE\.ventas\)/.test(tramo),
+     "y queda en el espejo, que es de donde el borrado la devuelve");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
