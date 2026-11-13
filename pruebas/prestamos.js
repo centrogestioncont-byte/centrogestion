@@ -14780,5 +14780,17 @@ console.log("\nARREGLO 248 · Dos pagos desde la misma cuenta");
   ok(/_entregasPorCuenta\(r\.entregas\)/.test(rv), "al borrar, lo que no casa con el espejo se reparte por cuenta, no por fila");
 }
 
+// ── ARREGLO 249 · La comisión con varias cuentas también baja el lote ───
+console.log("\nARREGLO 249 · La comisión con varias cuentas baja el lote");
+{
+  const st = sinComentarios(sacarFuncion("saveTx"));
+  const i = st.indexOf("comisionesDeEntregas(_entregas, f.fallidos)");
+  const tramo = st.slice(i, i+1400);
+  ok(i>0 && /consumirLotesMon\("VES", _cC\.id, d\.comision\)/.test(tramo),
+     "cada comisión del desglose consume el lote de SU cuenta, como con una sola (ARREGLO 161)");
+  ok(/_lotesConsumidos\.ventas=\(nuevaRemesa\._lotesConsumidos\.ventas\|\|\[\]\)\.concat\(_clE\.ventas\)/.test(tramo),
+     "y queda en el espejo, que es de donde el borrado la devuelve");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
