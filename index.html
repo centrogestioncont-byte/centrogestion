@@ -3717,7 +3717,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261113_v332";
+var APP_VERSION = "20261114_v333";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -26920,6 +26920,32 @@ function togglePagoSocioForm(socioId){
   if(S._pagoSocioId) S._nPagoSocio={monto:"",cuentaId:"",nota:""};
   R();
 }
+// ARREGLO 250 · borrar un pago a socio. No existía: la tarjeta solo tenía
+// "✏️ mes", así que un pago mal registrado no se podía deshacer sin escribir
+// saldos a mano. Devuelve el USDT a la cuenta y, si el pago guardó su espejo,
+// lo que gastó a los MISMOS lotes de compra. Los pagos anteriores a este
+// arreglo no tienen espejo y NO tocan lotes al borrarse: no gastaron ninguno,
+// y los de noviembre se cuadraron a mano — devolverles saldo los inflaría.
+// Deja la marca de borrado, o el otro aparato lo devuelve (ARREGLO 163).
+function borrarPagoSocio(id){
+  var p=(S.pagosSocios||[]).find(function(x){return x.id===id;});
+  if(!p) return;
+  var cta=(S.cuentas||[]).find(function(x){return x.id===p.cuentaId;});
+  var espejo=((p._lotesConsumidos||{}).compras||[]);
+  var gastado=espejo.reduce(function(a,v){return a+(parseFloat(v.usdt)||0);},0);
+  if(!confirm("Borrar el pago de $"+f2(p.monto)+" USDT a "+(p.socioNombre||"socio")+" del "+p.fecha+".\n\n"+
+    (cta?"Vuelven $"+f2(p.monto)+" USDT a "+cta.nombre+" (de $"+f2(cta.saldo)+" a $"+f2((parseFloat(cta.saldo)||0)+(parseFloat(p.monto)||0))+").\n":"La cuenta de ese pago ya no existe: no se devuelve ningún saldo.\n")+
+    (espejo.length?"Y vuelven "+f2(gastado)+" USDT a los lotes de compra que gastó.":"Este pago es de antes del arreglo: no gastó lotes, así que el inventario NO se toca.")+
+    "\n\n¿Confirmar?")) return;
+  autorizarYHacer(function(){
+    if(cta) ajusteCuentaEgreso(cta.id, +(parseFloat(p.monto)||0));
+    if(espejo.length) _devolverComprasDeVenta(p);
+    S.pagosSocios=S.pagosSocios.filter(function(x){return x.id!==id;});
+    _marcarBorradoMerge("pagosSocios", id);
+    logAudit("PAGO_SOCIO_DEL","Borró el pago de $"+f2(p.monto)+" USDT a "+(p.socioNombre||"socio")+" del "+p.fecha+(espejo.length?" · devolvió "+f2(gastado)+" USDT a los lotes":" · sin espejo, lotes intactos"));
+    saveData();R();
+  },"borrar pago a socio");
+}
 function editarMesPagoSocio(id){
   var p=(S.pagosSocios||[]).find(function(x){return x.id===id;});
   if(!p) return;
@@ -26947,9 +26973,31 @@ function savePagoSocio(socioId){
   var mesParaLbl=getMesLabel(mesParaKey.split("-")[1],mesParaKey.split("-")[0]);
   if(!confirm("Pagar $"+f2(monto)+" USDT a "+nomS+" desde "+cta.nombre+" (por "+mesParaLbl+").\n¿Confirmar?"))return;
   ajusteCuentaEgreso(np.cuentaId,-monto);
-  S.pagosSocios.push({id:Date.now(),socioId:socioId,socioNombre:nomS,
+  // ARREGLO 250 · el pago a un socio GASTA lotes de compra de USDT.
+  //
+  // Antes solo bajaba la cuenta: ajusteCuentaEgreso -> ajustarLotePorCuenta
+  // sale con return cuando la moneda es USDT, así que los lotes de compra
+  // seguían con su "restante" y cada pago dejaba un hueco entre la cuenta y
+  // el inventario. En noviembre hubo que cuadrar Binance Saipha a mano.
+  //
+  // Va por el MISMO camino que una venta de USDT (ARREGLO 170): "*" = todas
+  // las monedas, porque en Binance el USDT es un solo saldo y un pago no sabe
+  // con qué se compró lo que sale. Sin filtrar por cuenta: el cuentaOrigenId
+  // de un lote de compra es la cuenta que PAGÓ (reales o bolívares), no la
+  // cuenta USDT de la que sale el pago.
+  //
+  // Y no por descontarFIFOEgreso: ese descuenta los mismos lotes pero no
+  // anota de cuáles, y restaurarFIFOEgreso devuelve al más nuevo sin revivir
+  // un archivado. Con el espejo, el borrado devuelve exacto al lote que pagó
+  // (_devolverComprasDeVenta, ARREGLO 127/137). El simulador va ANTES de
+  // consumir, o el espejo saldría vacío (ARREGLO 161).
+  var _simPS=simularConsumoFIFO("*", monto, null, 0, null, null);
+  consumirInventarioFIFO("*", monto, null, 0, null, null);
+  var _pagoS={id:Date.now(),socioId:socioId,socioNombre:nomS,
     fecha:td(),mesKey:getMesKeyActual(),mesKeyPara:mesParaKey,monto:Math.round(monto*100)/100,
-    cuentaId:np.cuentaId,nota:(np.nota||"").trim()});
+    cuentaId:np.cuentaId,nota:(np.nota||"").trim()};
+  if(_simPS && _simPS.compras.length) _pagoS._lotesConsumidos={compras:_simPS.compras};
+  S.pagosSocios.push(_pagoS);
   logAudit("PAGO_SOCIO","Pagó $"+f2(monto)+" USDT a "+nomS+" desde "+cta.nombre+" (por "+mesParaLbl+")");
   S._pagoSocioId=null;S._nPagoSocio={monto:"",cuentaId:"",nota:""};
   saveData();R();
@@ -29396,7 +29444,7 @@ function rInformeCierre(){
         "</div>"+
         (totalPagado>0?"<div style='background:#E3F8EC;border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:11px;color:#0f6e3a'>"+
           "<b>✅ Ya pagado este mes: $"+f2(totalPagado)+" USDT</b><br>"+
-          pagosSocio.map(function(p){return "<div style='display:flex;justify-content:space-between;align-items:center;padding:2px 0'><span>"+p.fecha+" · $"+f2(p.monto)+(p.nota?" · "+p.nota:"")+"</span><button onclick='editarMesPagoSocio("+p.id+")' style='background:#fff;border:1px solid #a0e8c0;border-radius:5px;padding:2px 7px;font-size:10px;cursor:pointer;color:#0f6e3a'>✏️ mes</button></div>";}).join("")+
+          pagosSocio.map(function(p){return "<div style='display:flex;justify-content:space-between;align-items:center;padding:2px 0'><span>"+p.fecha+" · $"+f2(p.monto)+(p.nota?" · "+p.nota:"")+"</span><span style='display:flex;gap:4px'><button onclick='editarMesPagoSocio("+p.id+")' style='background:#fff;border:1px solid #a0e8c0;border-radius:5px;padding:2px 7px;font-size:10px;cursor:pointer;color:#0f6e3a'>✏️ mes</button><button onclick='borrarPagoSocio("+p.id+")' title='Borrar este pago' style='background:#fff;border:1px solid #f0b0b0;border-radius:5px;padding:2px 7px;font-size:10px;cursor:pointer;color:#b42318'>🗑️</button></span></div>";}).join("")+
         "</div>":"")+
         "<button onclick='generarReporteSocio(\""+socioId+"\",\""+mesKey+"\")' style='width:100%;padding:10px;border:1.5px solid #FFA31C;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;background:#fff;color:#7a5c00;font-family:inherit;margin-top:8px'>📄 Generar reporte para "+nombre+"</button>"+
         "<button onclick='toggleGastoSocioForm(\""+socioId+"\")' style='width:100%;padding:8px;border:1.5px solid #c0392b;border-radius:9px;font-size:11px;font-weight:700;cursor:pointer;background:#fff;color:#c0392b;font-family:inherit;margin-top:6px'>💸 "+(S._editGastoSocio===String(socioId)?"✕ Cancelar":"Registrar gasto asignado a "+nombre)+"</button>"+

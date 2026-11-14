@@ -14952,5 +14952,26 @@ console.log("\nARREGLO 249 · La comisión con varias cuentas baja el lote");
      "y queda en el espejo, que es de donde el borrado la devuelve");
 }
 
+// ── ARREGLO 250 · El pago a un socio gasta lotes de compra de USDT ──────
+// Antes solo bajaba la cuenta (ajustarLotePorCuenta sale con return en USDT)
+// y cada pago dejaba un hueco entre la cuenta y el inventario.
+console.log("\nARREGLO 250 · El pago a socio gasta y devuelve lotes de compra");
+{
+  const sp = sinComentarios(sacarFuncion("savePagoSocio"));
+  const iSim = sp.indexOf('simularConsumoFIFO("*", monto, null, 0, null, null)');
+  const iCon = sp.indexOf('consumirInventarioFIFO("*", monto, null, 0, null, null)');
+  ok(iSim>0 && iCon>0, "el pago consume lotes de compra de TODAS las monedas, como una venta de USDT (ARREGLO 170)");
+  ok(iSim>0 && iCon>iSim, "el simulador va ANTES de consumir, o el espejo sale vacío (ARREGLO 161)");
+  ok(/_pagoS\._lotesConsumidos=\{compras:_simPS\.compras\}/.test(sp) && /S\.pagosSocios\.push\(_pagoS\)/.test(sp),
+     "y guarda el espejo en el propio pago, que es lo que se empuja a la lista");
+  ok(!/descontarFIFOEgreso/.test(sp), "no va por descontarFIFOEgreso, que no anota de qué lote salió");
+  const bp = sinComentarios(sacarFuncion("borrarPagoSocio"));
+  ok(/ajusteCuentaEgreso\(cta\.id, \+\(parseFloat\(p\.monto\)\|\|0\)\)/.test(bp), "borrar devuelve el USDT a la cuenta");
+  ok(/if\(espejo\.length\) _devolverComprasDeVenta\(p\)/.test(bp), "y a los lotes SOLO lo que dice el espejo: un pago viejo no los toca");
+  ok(!/restaurarFIFOEgreso/.test(bp), "no devuelve por el más nuevo (restaurarFIFOEgreso)");
+  ok(/_marcarBorradoMerge\("pagosSocios", id\)/.test(bp), "deja la marca de borrado, o el otro aparato lo resucita (ARREGLO 163)");
+  ok(/onclick='borrarPagoSocio\("\+p\.id\+"\)'/.test(HTML), "la tarjeta del socio tiene el botón 🗑️");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
