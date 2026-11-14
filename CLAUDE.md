@@ -6928,3 +6928,32 @@ el traspaso — borrar un movimiento que sí ocurrió.
 Medido con su export: el traspaso normal mueve la deuda 1.750,09, el marcado
 no; marcar y desmarcar después devuelve el número exacto y no toca saldos;
 capital y *te sobran* idénticos. 7 negativas cazadas.
+
+### Y las dos patas de una conversión no siempre llevan la misma hora (ARREGLO 253)
+
+Lo vio ella con su CSV real de Saipha: la conversión del 05/11 (R$ 1.500 →
+272,91 USDT) no salía. En el archivo las dos patas van a **1 segundo**:
+
+```
+2026-11-05 15:41:32 · Binance Convert · USDT ·  272.91086731
+2026-11-05 15:41:33 · Binance Convert · BRL  · -1500
+```
+
+`_binConverts` agrupaba por la hora EXACTA, así que cada pata quedaba sola y la
+conversión desaparecía **sin aviso**.
+
+- **Se empareja por cercanía** (`_binParesConvert`): a cada pata de fiat —las
+  más grandes primero— la de USDT sin pareja más cercana, de **signo
+  contrario**, a ≤ `_BIN_CONV_SEG` (3 s). Una pata no se usa dos veces.
+- **Una hora ilegible solo empareja con la idéntica**, como antes. No se
+  adivina.
+- **Hora y número salen de la pata más temprana**: con las dos en el mismo
+  segundo el `CNV-…` es el de siempre, y lo ya importado se sigue reconociendo.
+- **Y «ya está» no depende del número ni de la hora.** `_binYaRegistrado`
+  casa una conversión por USDT (±0,07) + fiat (±0,2 %) + fecha (≤ 10 días, la
+  más cercana). Su compra del 05/11 cargada a mano —`CNV-P6JN7T`, 15:45:17,
+  plataforma «Binance P2P»— sale como «ya está» y desmarcada. Hay prueba con
+  ese lote exacto.
+
+Medido con SheetJS 0.18.5 y un CSV con su forma: v335 se saltaba la del 05/11;
+v336 la encuentra y la casa con la suya. 7 negativas cazadas.
