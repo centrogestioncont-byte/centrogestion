@@ -6832,3 +6832,34 @@ Medido en Chromium con su export, v312 contra la nueva (v316): 20 pestañas idé
 Balance de Cuentas con el panel nuevo, 0 errores. Devolverme sugiere 17.051,00
 y deja Banesco a cero; Pasar a la empresa sugiere 10.204,45 y deja BdV
 JHOSELIN a cero; el "te sobran" sigue en 59,11. 10 pruebas negativas, 10 cazadas.
+
+---
+
+## El pago a un socio gasta lotes de compra de USDT (ARREGLO 250)
+
+`savePagoSocio` solo hacía `ajusteCuentaEgreso`, y `ajustarLotePorCuenta` sale
+con `return` en USDT: la cuenta bajaba y los lotes de compra seguían con su
+`restante`. Cada pago dejaba un hueco; en noviembre se cuadró Binance Saipha a
+mano (19,23).
+
+- **Va por el camino de la venta de USDT (ARREGLO 170)**: `"*"`, todas las
+  monedas, sin filtrar por cuenta — el `cuentaOrigenId` de un lote de compra es
+  la cuenta que PAGÓ, no la USDT de la que sale el pago.
+- **Y guarda su espejo** (`_lotesConsumidos.compras`), simulado ANTES de
+  consumir (161). No va por `descontarFIFOEgreso`: ese no anota de qué lote
+  salió, y `restaurarFIFOEgreso` devuelve al más nuevo sin revivir archivados.
+- **🗑️ en cada pago** (`borrarPagoSocio`): devuelve el USDT a la cuenta, lo
+  del espejo a sus lotes (`_devolverComprasDeVenta`) y deja la marca de borrado
+  (163). Antes no se podía borrar un pago a socio.
+- **Los pagos viejos no tienen espejo y al borrarlos NO tocan lotes**: no los
+  gastaron, y los de noviembre ya se cuadraron a mano. La confirmación lo dice.
+
+pagarEgreso, pagarCompromiso y pagarCuotaInm ya pasaban por el FIFO; las demás
+llamadas a `ajusteCuentaEgreso` sin FIFO son deshacer una ENTRADA (abono, mora,
+ganancia extra, venta de mercancía), que no creó lote. El pago a socio era la
+única salida con el hueco.
+
+Medido con su export del 05/11, pagando 25 desde BINANCE SAIPHA: lotes de
+compra 678,40 → 653,40 (en v332 no se movían), borrar los deja idénticos lote
+por lote, la respuesta del servidor no lo resucita, y capital, *te sobran* y
+utilidad salen iguales que en v332. 21 pestañas, 0 errores, 8 negativas cazadas.
