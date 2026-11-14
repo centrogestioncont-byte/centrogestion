@@ -51,7 +51,7 @@ function sacarConstante(nombre) {
   throw new Error("la constante " + nombre + " no termina en ';'");
 }
 const CONSTANTES = ["_TARIFA_BANCO_VES", "_APROX_LS", "_COLCHON_DEF", "_SIN_APROX", "_UMBRAL_BS_DEF", "_SIN_BS", "_UMBRAL_BRL_DEF", "_SIN_BRL", "_RUTA_DE", "CG_BASE", "_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO", "_AVISO_UMBRAL", "_MERCADO_MONTO_DEF", "_VIZ", "_INM_AVISO_DIAS", "_DIAS_NORMAL_BS", "_TASA_OP_FRESCA_MS",
-                    "_BIN_COLS_C2C", "_BIN_COLS_TX", "MONEDAS_COMPRA", "MONEDAS_VENTA",
+                    "_BIN_COLS_C2C", "_BIN_COLS_TX", "_BIN_CONV_SEG", "MONEDAS_COMPRA", "MONEDAS_VENTA",
                     "MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
                     "_MERGE_OBJETOS", "_MERGE_BLOQUES", "_MERGE_HISTORIAL", "_RATE_LIMITS",
                     "DATA_KEYS", "_CLAVES_QUE_NO_SON_DATOS", "PAGO_DEBE",
@@ -156,7 +156,7 @@ const NECESARIAS = ["_egresosHuerfanos", "moverEgresoAPersonal", "_tasaDelDiaFue
                     "_permisoPorOmision", "tienePermiso", "permisoEdicion",
                     "_resumenPermisos", "_binCuentaDeUid",
                     "_binNum", "_binNorm", "_binMapaCols", "_binBuscarCabecera",
-                    "_binIdentificar", "_binOrdenesC2C", "_binConverts", "_binDias",
+                    "_binIdentificar", "_binOrdenesC2C", "_binConverts", "_binDias", "_binSegundos", "_binParesConvert", "_binPlanSaldos", "_binMovsDeOp", "_binOpsMarcadas",
                     "_binMonedaConocida", "_binYaRegistrado", "_binCuentaSugerida", "_binMesCerrado",
                     "_binConfianzaBanco", "_binSinBanco", "_htmlOrdenCopiable", "_htmlSupuesto",
                     "_marcarBorradoMerge", "_estaBorradoMerge", "_levantarBorradoMerge",
@@ -14950,6 +14950,129 @@ console.log("\nARREGLO 249 · La comisión con varias cuentas baja el lote");
      "cada comisión del desglose consume el lote de SU cuenta, como con una sola (ARREGLO 161)");
   ok(/_lotesConsumidos\.ventas=\(nuevaRemesa\._lotesConsumidos\.ventas\|\|\[\]\)\.concat\(_clE\.ventas\)/.test(tramo),
      "y queda en el espejo, que es de donde el borrado la devuelve");
+}
+
+// ── ARREGLO 250 · El pago a un socio gasta lotes de compra de USDT ──────
+// Antes solo bajaba la cuenta (ajustarLotePorCuenta sale con return en USDT)
+// y cada pago dejaba un hueco entre la cuenta y el inventario.
+console.log("\nARREGLO 250 · El pago a socio gasta y devuelve lotes de compra");
+{
+  const sp = sinComentarios(sacarFuncion("savePagoSocio"));
+  const iSim = sp.indexOf('simularConsumoFIFO("*", monto, null, 0, null, null)');
+  const iCon = sp.indexOf('consumirInventarioFIFO("*", monto, null, 0, null, null)');
+  ok(iSim>0 && iCon>0, "el pago consume lotes de compra de TODAS las monedas, como una venta de USDT (ARREGLO 170)");
+  ok(iSim>0 && iCon>iSim, "el simulador va ANTES de consumir, o el espejo sale vacío (ARREGLO 161)");
+  ok(/_pagoS\._lotesConsumidos=\{compras:_simPS\.compras\}/.test(sp) && /S\.pagosSocios\.push\(_pagoS\)/.test(sp),
+     "y guarda el espejo en el propio pago, que es lo que se empuja a la lista");
+  ok(!/descontarFIFOEgreso/.test(sp), "no va por descontarFIFOEgreso, que no anota de qué lote salió");
+  const bp = sinComentarios(sacarFuncion("borrarPagoSocio"));
+  ok(/ajusteCuentaEgreso\(cta\.id, \+\(parseFloat\(p\.monto\)\|\|0\)\)/.test(bp), "borrar devuelve el USDT a la cuenta");
+  ok(/if\(espejo\.length\) _devolverComprasDeVenta\(p\)/.test(bp), "y a los lotes SOLO lo que dice el espejo: un pago viejo no los toca");
+  ok(!/restaurarFIFOEgreso/.test(bp), "no devuelve por el más nuevo (restaurarFIFOEgreso)");
+  ok(/_marcarBorradoMerge\("pagosSocios", id\)/.test(bp), "deja la marca de borrado, o el otro aparato lo resucita (ARREGLO 163)");
+  ok(/onclick='borrarPagoSocio\("\+p\.id\+"\)'/.test(HTML), "la tarjeta del socio tiene el botón 🗑️");
+}
+
+// ── ARREGLO 251 · Importador de Binance: CSV, UTF-8 y saldos a mano ─────
+console.log("\nARREGLO 251 · Importador de Binance: CSV y saldos a mano");
+{
+  ok(F._binNorm("UTC_Time")==="utc time" && F._binNorm("﻿Número de orden")==="numero de orden",
+     "el guion bajo vale como espacio y la marca BOM del CSV no estorba");
+  const c2c=[["Número de orden","Tipo de orden","Tipo de activo","Tipo de fiat","Precio total","Precio","Cantidad","Tarifa de tomador","Contraparte","Estado","Hora de creación"],
+             ["2281","Sell","USDT","VES","100192.00","1010.00","99.20","0","José","Completed","2026-11-10 14:32:05"]];
+  const id1=F._binIdentificar(c2c);
+  ok(id1.tipo==="c2c" && id1.csv===true && id1.uid==="", "un CSV de órdenes C2C sin título se reconoce por sus columnas, sin uid", JSON.stringify(id1));
+  const ord=F._binOrdenesC2C(c2c);
+  ok(ord.length===1 && ord[0].hora==="2026-11-10 14:32:05", "y la hora llega entera, con sus segundos");
+  const tx=[["ID de usuario","Hora","Cuenta","Operación","Moneda","Cambiar","Observación"],
+            ["987654321","2026-11-09 10:00:01","Funding","Binance Convert","BRL","-540",""],
+            ["987654321","2026-11-09 10:00:01","Funding","Binance Convert","USDT","100",""]];
+  const id2=F._binIdentificar(tx);
+  ok(id2.tipo==="tx" && id2.uid==="987654321", "el CSV de transacciones saca el uid de la columna de cada fila", JSON.stringify(id2));
+  const ea=sinComentarios(sacarFuncion("_binElegirArchivos"));
+  ok(/XLSX\.read\(new Uint8Array\(e\.target\.result\),\{type:"array",raw:true,codepage:65001\}\)/.test(ea), "se lee como UTF-8 y sin convertir fechas (raw:true, codepage 65001)");
+  const rc=sinComentarios(sacarFuncion("_binRecalcular"));
+  ok(/if\(nTx===1\)/.test(rc) && /uid="\?"\+a\.nombre/.test(rc), "las órdenes sin uid toman el de su archivo de transacciones, y si no hay uno solo se pregunta");
+  const fc=sinComentarios(sacarFuncion("_binFijarCuenta"));
+  ok(/charAt\(0\)==="\?"[\s\S]*?S\._impBin\.manual\[uid\]=cuentaId;[\s\S]*?return;/.test(fc), "la cuenta de un archivo sin uid NO se guarda en mapaBinance");
+  // El plan de saldos
+  const antes={c:S.cuentas,i:S._impBin};
+  S.cuentas=[{id:"bj",nombre:"BINANCE JULIO",moneda:"USDT",saldo:104.17,manual_override:true},
+             {id:"bv",nombre:"BdV",moneda:"VES",saldo:17396.12}];
+  S._impBin={ops:[{sel:true,tipo:"venta",hora:"2026-11-10",usdt:99.2,comision:0,monto:100192,cuentaId:"bj",cuentaFiat:"bv"},
+                  {sel:false,tipo:"venta",hora:"2026-11-11",usdt:10,comision:0,monto:10100,cuentaId:"bj",cuentaFiat:"bv"}]};
+  let pl=F._binPlanSaldos();
+  const pj=pl.find(x=>x.id==="bj"), pv=pl.find(x=>x.id==="bv");
+  ok(pj && pj.mover===false && pj.despues===4.97 && pv && pv.mover===true && pv.despues===117588.12,
+     "una cuenta a mano sale sin mover, las demás sí, y solo cuenta lo marcado", JSON.stringify(pl));
+  S._impBin.mover={bj:true}; pl=F._binPlanSaldos();
+  ok(pl.find(x=>x.id==="bj").mover===true, "ella puede marcar la cuenta a mano si de verdad hay que moverla");
+  S._impBin.noMover=true; pl=F._binPlanSaldos();
+  ok(pl.every(x=>x.mover===false), "«No mover ningún saldo» deja todas quietas");
+  S.cuentas=antes.c; S._impBin=antes.i;
+  const im=sinComentarios(sacarFuncion("_binImportar"));
+  ok(/_binMovsDeOp\(o\)\.forEach\(function\(m\)\{\s*if\(!mueve\[m\.id\]\) return;/.test(im), "importar mueve solo las cuentas que el plan deja marcadas");
+  ok(!/cFiat\.saldo|cObj\.saldo/.test(im), "y no queda ningún otro sitio que escriba el saldo por su cuenta");
+  ok(/var plan=_binPlanSaldos\(\)/.test(im) && /Saldos:/.test(im), "la pregunta final dice el antes y el después de cada saldo");
+}
+
+// ── ARREGLO 252 · Un traspaso 💜 → empresa puede no ser préstamo ────────
+console.log("\nARREGLO 252 · Traspaso 💜 → empresa marcado «no es préstamo»");
+{
+  const mv = sinComentarios(sacarFuncion("_movsPersonalEmpresa"));
+  ok(/if\(t\.noPrestamo\) return;/.test(mv) && mv.indexOf("if(t.noPrestamo) return;") < mv.indexOf('ap(cO, "prestado"'),
+     "un traspaso marcado «no es préstamo» no entra en lo que la empresa le debe");
+  const st = sinComentarios(sacarFuncion("saveTraspaso"));
+  ok(/if\(f\.noPrestamo && _traspasoPuedeSerPrestamo\(_tr\)\) _tr\.noPrestamo=true;/.test(st), "el guardado solo lo marca donde de verdad cuenta como préstamo");
+  ok(/noPrestamo:false/.test(st), "y la casilla vuelve a blanco para el siguiente traspaso");
+  const pp = sinComentarios(sacarFuncion("_traspasoPuedeSerPrestamo"));
+  ok(/cO\.esPersonal && !cD\.esPersonal && cO\.moneda===cD\.moneda/.test(pp) && /_MONEDAS_DEUDA\.indexOf\(cO\.moneda\)>=0/.test(pp),
+     "la casilla sale con la misma condición con la que se cuenta «prestado»");
+  const np = sinComentarios(sacarFuncion("_traspasoNoPrestamo"));
+  ok(/t\._mod=Date\.now\(\)/.test(np) && !/saldo/.test(np.replace(/ning[uú]n saldo/g,"")) && !/_moverLotesTraspaso|consumirLotesMon|devolverLotesMon/.test(np),
+     "marcarlo después lleva su _mod y no toca ningún saldo ni ningún lote");
+  ok(/onchange='S\.nTraspaso\.noPrestamo=this\.checked'/.test(HTML), "la casilla del formulario no repinta (ARREGLO 32)");
+}
+
+// ── ARREGLO 253 · Una conversión con las patas a 1 segundo ──────────────
+console.log("\nARREGLO 253 · Conversiones con las dos patas en segundos distintos");
+{
+  const cab=["ID de usuario","Hora","Cuenta","Operación","Moneda","Cambiar","Observación"];
+  const fila=(h,m,v)=>["987654321",h,"Spot","Binance Convert",m,v,""];
+  // Su caso exacto del 05/11, Saipha.
+  let cv=F._binConverts([cab, fila("2026-11-05 15:41:32","USDT","272.91086731"), fila("2026-11-05 15:41:33","BRL","-1500")]);
+  ok(cv.length===1 && cv[0].tipo==="compra" && cv[0].moneda==="BRL" && cv[0].monto===1500 && Math.abs(cv[0].usdt-272.91086731)<1e-9,
+     "su conversión del 05/11 (R$ 1.500 → 272,91 USDT, patas a 1 s) sale como UNA compra", JSON.stringify(cv));
+  ok(cv.length===1 && Math.abs(cv[0].tasa-5.4963)<1e-6, "a tasa 5,4963", cv[0]&&cv[0].tasa);
+  ok(cv.length===1 && cv[0].hora==="2026-11-05 15:41:32", "la hora es la de la pata más temprana");
+  // Mismo segundo: el número sale igual que antes del arreglo.
+  cv=F._binConverts([cab, fila("2026-09-01 10:00:00","USDT","-69.0076668"), fila("2026-09-01 10:00:00","BRL","355.77592695")]);
+  ok(cv.length===1 && cv[0].tipo==="venta" && cv[0].ordenId==="CNV-202609011000", "con las dos patas en el mismo segundo, el número es el de siempre", cv[0]&&cv[0].ordenId);
+  // A 5 segundos ya no son la misma operación.
+  cv=F._binConverts([cab, fila("2026-11-05 15:41:30","USDT","100"), fila("2026-11-05 15:41:35","BRL","-540")]);
+  ok(cv.length===0, "con 5 segundos de diferencia no se juntan");
+  // Dos conversiones en el mismo segundo no se cruzan.
+  cv=F._binConverts([cab, fila("2026-11-06 09:00:00","USDT","100"), fila("2026-11-06 09:00:00","USDT","50"),
+                         fila("2026-11-06 09:00:01","BRL","-545"), fila("2026-11-06 09:00:01","BRL","-272.5")]);
+  ok(cv.length===2 && cv.every(o=>Math.abs(o.tasa-5.45)<1e-6), "dos conversiones en el mismo segundo salen las dos, y ninguna con la pareja de la otra", JSON.stringify(cv.map(o=>o.tasa)));
+  // USDT↔BTC sigue fuera, y no le roba la pata a la de reales.
+  cv=F._binConverts([cab, fila("2026-11-07 11:00:00","USDT","-20"), fila("2026-11-07 11:00:01","BTC","0.0002"),
+                         fila("2026-11-07 11:00:00","USDT","50"), fila("2026-11-07 11:00:01","BRL","-272")]);
+  ok(cv.length===1 && cv[0].moneda==="BRL", "una conversión a BTC sigue fuera y no se lleva la pata de la de reales");
+  // La pata de USDT con el MISMO signo no vale, aunque esté más cerca.
+  cv=F._binConverts([cab, fila("2026-11-08 09:00:00","USDT","100"), fila("2026-11-08 09:00:01","BRL","540"), fila("2026-11-08 09:00:02","USDT","-100")]);
+  ok(cv.length===1 && cv[0].tipo==="venta" && Math.abs(cv[0].tasa-5.4)<1e-6, "una pata de USDT del mismo signo no se empareja aunque esté más cerca", JSON.stringify(cv));
+  // Hora ilegible: solo con la idéntica, no se adivina.
+  cv=F._binConverts([cab, fila("05/11/2026 15:41","USDT","100"), fila("05/11/2026 15:42","BRL","-540")]);
+  ok(cv.length===0, "con una hora que no se puede leer, solo empareja con la idéntica");
+  // Y la que ya está a mano en producción sale como «ya está».
+  const loteSuyo={id:1,tipo:"compra",moneda:"BRL",fecha:"11/05",fechaIso:"2026-11-05",hora:"15:45:17",usdt:272.9109,montOrigen:1500,plataforma:"Binance P2P",ordenId:"CNV-P6JN7T"};
+  const op=F._binConverts([cab, fila("2026-11-05 15:41:32","USDT","272.91086731"), fila("2026-11-05 15:41:33","BRL","-1500")])[0];
+  ok(op && op.ordenId!=="CNV-P6JN7T" && F._binYaRegistrado(op,[loteSuyo])===loteSuyo,
+     "su compra cargada a mano (CNV-P6JN7T, 15:45:17) se reconoce como «ya está» aunque el número y la hora sean otros");
+  ok(op && F._binYaRegistrado(op,[Object.assign({},loteSuyo,{montOrigen:1600})])===null, "con otro monto en reales no se da por registrada");
+  const pc=sinComentarios(sacarFuncion("_binParesConvert"));
+  ok(!/porHora/.test(sinComentarios(sacarFuncion("_binConverts"))) && /d>_BIN_CONV_SEG/.test(pc), "ya no se agrupa por hora exacta");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

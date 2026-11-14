@@ -6832,3 +6832,128 @@ Medido en Chromium con su export, v312 contra la nueva (v316): 20 pestañas idé
 Balance de Cuentas con el panel nuevo, 0 errores. Devolverme sugiere 17.051,00
 y deja Banesco a cero; Pasar a la empresa sugiere 10.204,45 y deja BdV
 JHOSELIN a cero; el "te sobran" sigue en 59,11. 10 pruebas negativas, 10 cazadas.
+
+---
+
+## El pago a un socio gasta lotes de compra de USDT (ARREGLO 250)
+
+`savePagoSocio` solo hacía `ajusteCuentaEgreso`, y `ajustarLotePorCuenta` sale
+con `return` en USDT: la cuenta bajaba y los lotes de compra seguían con su
+`restante`. Cada pago dejaba un hueco; en noviembre se cuadró Binance Saipha a
+mano (19,23).
+
+- **Va por el camino de la venta de USDT (ARREGLO 170)**: `"*"`, todas las
+  monedas, sin filtrar por cuenta — el `cuentaOrigenId` de un lote de compra es
+  la cuenta que PAGÓ, no la USDT de la que sale el pago.
+- **Y guarda su espejo** (`_lotesConsumidos.compras`), simulado ANTES de
+  consumir (161). No va por `descontarFIFOEgreso`: ese no anota de qué lote
+  salió, y `restaurarFIFOEgreso` devuelve al más nuevo sin revivir archivados.
+- **🗑️ en cada pago** (`borrarPagoSocio`): devuelve el USDT a la cuenta, lo
+  del espejo a sus lotes (`_devolverComprasDeVenta`) y deja la marca de borrado
+  (163). Antes no se podía borrar un pago a socio.
+- **Los pagos viejos no tienen espejo y al borrarlos NO tocan lotes**: no los
+  gastaron, y los de noviembre ya se cuadraron a mano. La confirmación lo dice.
+
+pagarEgreso, pagarCompromiso y pagarCuotaInm ya pasaban por el FIFO; las demás
+llamadas a `ajusteCuentaEgreso` sin FIFO son deshacer una ENTRADA (abono, mora,
+ganancia extra, venta de mercancía), que no creó lote. El pago a socio era la
+única salida con el hueco.
+
+Medido con su export del 05/11, pagando 25 desde BINANCE SAIPHA: lotes de
+compra 678,40 → 653,40 (en v332 no se movían), borrar los deja idénticos lote
+por lote, la respuesta del servidor no lo resucita, y capital, *te sobran* y
+utilidad salen iguales que en v332. 21 pestañas, 0 errores, 8 negativas cazadas.
+
+---
+
+## Importador de Binance: CSV, UTF-8 y saldos a mano (ARREGLO 251)
+
+Solo reconocía el `.xlsx`: buscaba el título *"Historial de órdenes C2C"* y el
+*ID de usuario* arriba, y el **CSV** que descarga Binance no trae ninguno de los
+dos — empieza por la cabecera.
+
+- **Sin título, se reconoce por las COLUMNAS** (`_binIdentificar`), las mismas
+  que leen `_binOrdenesC2C` / `_binConverts`. `_binNorm` lee el guion bajo como
+  espacio (`UTC_Time`) y quita la marca BOM.
+- **El uid**: el CSV de transacciones lo trae en la columna *ID de usuario* de
+  cada fila. El de órdenes C2C no lo trae: si junto a él viene **un solo**
+  archivo de transacciones, es de esa cuenta; si no, se pregunta, y esa
+  respuesta vale solo para esta importación (`S._impBin.manual`), **nunca** en
+  `mapaBinance` — un nombre de archivo no es un uid.
+- **`XLSX.read` con `raw:true` y `codepage:65001`**: sin eso la hora salía
+  `11/1/26` (SheetJS la convertía en fecha) y los acentos rotos. En `.xlsx` no
+  cambia nada.
+
+**Y no mueve en silencio un saldo escrito a mano.** Al importar 3 ventas,
+BINANCE JULIO quedó en −575,28 y BANCO VENEZUELA JULIO en 624.874,14: los dos
+saldos ya contaban esas ventas. Es el ARREGLO 107 por otra puerta.
+
+- **`_binPlanSaldos()` es UN sitio** y lo leen el recuadro *"Saldos que va a
+  mover"*, la pregunta final y `_binImportar`, operación por operación y con el
+  mismo redondeo, o el "después" se iría un céntimo.
+- **Una cuenta con `manual_override` sale DESMARCADA.** Las demás, marcadas.
+  Hay casilla por cuenta y una para no mover ninguno. No mover **no** quita el
+  lote: FIFO y ganancia se registran igual.
+- **Ojo:** en la app solo las cuentas USDT llevan esa marca (ARREGLO 158). Una
+  cuenta de banco nunca la tiene, así que sale marcada: si su saldo ya cuenta
+  esas ventas, hay que desmarcarla. El recuadro lo enseña con el antes y el
+  después.
+
+Probado con SheetJS 0.18.5 (la versión del CDN) y CSV con su forma: órdenes +
+transacciones (el uid sale del segundo), órdenes solas (pide la cuenta y no
+toca `mapaBinance`), y su `.xlsx` de siempre, idéntico. 9 negativas cazadas.
+
+---
+
+## Un traspaso 💜 → empresa puede no ser préstamo (ARREGLO 252)
+
+`_movsPersonalEmpresa` (235) cuenta **todo** traspaso de una 💜 en bolívares a
+una cuenta de la empresa como *prestado*: "la empresa te debe". El 14/11 pasó
+1.750,09 Bs que ya eran de la empresa, y para quitar el aviso hubo que **borrar**
+el traspaso — borrar un movimiento que sí ocurrió.
+
+- **Casilla "No es préstamo (era dinero de la empresa)"** en el formulario, y un
+  botón en el historial para marcarlo o desmarcarlo después. El traspaso lleva
+  `noPrestamo` y `_movsPersonalEmpresa` lo salta.
+- **Cuándo sale la casilla lo decide `_traspasoPuedeSerPrestamo()`**, la misma
+  condición con la que se cuenta "prestado". Lo leen el formulario, el guardado
+  y el historial.
+- **No mueve ningún saldo ni ningún lote**: solo decide si entra en la deuda.
+- **El botón va en la PRIMERA columna**: la tabla hace scroll y en el teléfono
+  el final queda fuera de pantalla (ARREGLO 137).
+- **Ojo**: si esa plata entró a la 💜 por algo que la app ya cuenta (una remesa
+  cobrada en la 💜), devolverla SÍ cancela, y marcarla "no es préstamo" dejaría
+  el panel diciendo que tiene plata de la empresa.
+
+Medido con su export: el traspaso normal mueve la deuda 1.750,09, el marcado
+no; marcar y desmarcar después devuelve el número exacto y no toca saldos;
+capital y *te sobran* idénticos. 7 negativas cazadas.
+
+### Y las dos patas de una conversión no siempre llevan la misma hora (ARREGLO 253)
+
+Lo vio ella con su CSV real de Saipha: la conversión del 05/11 (R$ 1.500 →
+272,91 USDT) no salía. En el archivo las dos patas van a **1 segundo**:
+
+```
+2026-11-05 15:41:32 · Binance Convert · USDT ·  272.91086731
+2026-11-05 15:41:33 · Binance Convert · BRL  · -1500
+```
+
+`_binConverts` agrupaba por la hora EXACTA, así que cada pata quedaba sola y la
+conversión desaparecía **sin aviso**.
+
+- **Se empareja por cercanía** (`_binParesConvert`): a cada pata de fiat —las
+  más grandes primero— la de USDT sin pareja más cercana, de **signo
+  contrario**, a ≤ `_BIN_CONV_SEG` (3 s). Una pata no se usa dos veces.
+- **Una hora ilegible solo empareja con la idéntica**, como antes. No se
+  adivina.
+- **Hora y número salen de la pata más temprana**: con las dos en el mismo
+  segundo el `CNV-…` es el de siempre, y lo ya importado se sigue reconociendo.
+- **Y «ya está» no depende del número ni de la hora.** `_binYaRegistrado`
+  casa una conversión por USDT (±0,07) + fiat (±0,2 %) + fecha (≤ 10 días, la
+  más cercana). Su compra del 05/11 cargada a mano —`CNV-P6JN7T`, 15:45:17,
+  plataforma «Binance P2P»— sale como «ya está» y desmarcada. Hay prueba con
+  ese lote exacto.
+
+Medido con SheetJS 0.18.5 y un CSV con su forma: v335 se saltaba la del 05/11;
+v336 la encuentra y la casa con la suya. 7 negativas cazadas.
