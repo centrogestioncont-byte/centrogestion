@@ -51,7 +51,7 @@ function sacarConstante(nombre) {
   throw new Error("la constante " + nombre + " no termina en ';'");
 }
 const CONSTANTES = ["_TARIFA_BANCO_VES", "_APROX_LS", "_COLCHON_DEF", "_SIN_APROX", "_UMBRAL_BS_DEF", "_SIN_BS", "_UMBRAL_BRL_DEF", "_SIN_BRL", "_RUTA_DE", "CG_BASE", "_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO", "_AVISO_UMBRAL", "_MERCADO_MONTO_DEF", "_VIZ", "_INM_AVISO_DIAS", "_DIAS_NORMAL_BS", "_TASA_OP_FRESCA_MS",
-                    "_BIN_COLS_C2C", "_BIN_COLS_TX", "MONEDAS_COMPRA", "MONEDAS_VENTA",
+                    "_BIN_COLS_C2C", "_BIN_COLS_TX", "_BIN_CONV_SEG", "MONEDAS_COMPRA", "MONEDAS_VENTA",
                     "MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
                     "_MERGE_OBJETOS", "_MERGE_BLOQUES", "_MERGE_HISTORIAL", "_RATE_LIMITS",
                     "DATA_KEYS", "_CLAVES_QUE_NO_SON_DATOS", "PAGO_DEBE",
@@ -156,7 +156,7 @@ const NECESARIAS = ["_egresosHuerfanos", "moverEgresoAPersonal", "_tasaDelDiaFue
                     "_permisoPorOmision", "tienePermiso", "permisoEdicion",
                     "_resumenPermisos", "_binCuentaDeUid",
                     "_binNum", "_binNorm", "_binMapaCols", "_binBuscarCabecera",
-                    "_binIdentificar", "_binOrdenesC2C", "_binConverts", "_binDias", "_binPlanSaldos", "_binMovsDeOp", "_binOpsMarcadas",
+                    "_binIdentificar", "_binOrdenesC2C", "_binConverts", "_binDias", "_binSegundos", "_binParesConvert", "_binPlanSaldos", "_binMovsDeOp", "_binOpsMarcadas",
                     "_binMonedaConocida", "_binYaRegistrado", "_binCuentaSugerida", "_binMesCerrado",
                     "_binConfianzaBanco", "_binSinBanco", "_htmlOrdenCopiable", "_htmlSupuesto",
                     "_marcarBorradoMerge", "_estaBorradoMerge", "_levantarBorradoMerge",
@@ -15032,6 +15032,47 @@ console.log("\nARREGLO 252 · Traspaso 💜 → empresa marcado «no es préstam
   ok(/t\._mod=Date\.now\(\)/.test(np) && !/saldo/.test(np.replace(/ning[uú]n saldo/g,"")) && !/_moverLotesTraspaso|consumirLotesMon|devolverLotesMon/.test(np),
      "marcarlo después lleva su _mod y no toca ningún saldo ni ningún lote");
   ok(/onchange='S\.nTraspaso\.noPrestamo=this\.checked'/.test(HTML), "la casilla del formulario no repinta (ARREGLO 32)");
+}
+
+// ── ARREGLO 253 · Una conversión con las patas a 1 segundo ──────────────
+console.log("\nARREGLO 253 · Conversiones con las dos patas en segundos distintos");
+{
+  const cab=["ID de usuario","Hora","Cuenta","Operación","Moneda","Cambiar","Observación"];
+  const fila=(h,m,v)=>["987654321",h,"Spot","Binance Convert",m,v,""];
+  // Su caso exacto del 05/11, Saipha.
+  let cv=F._binConverts([cab, fila("2026-11-05 15:41:32","USDT","272.91086731"), fila("2026-11-05 15:41:33","BRL","-1500")]);
+  ok(cv.length===1 && cv[0].tipo==="compra" && cv[0].moneda==="BRL" && cv[0].monto===1500 && Math.abs(cv[0].usdt-272.91086731)<1e-9,
+     "su conversión del 05/11 (R$ 1.500 → 272,91 USDT, patas a 1 s) sale como UNA compra", JSON.stringify(cv));
+  ok(cv.length===1 && Math.abs(cv[0].tasa-5.4963)<1e-6, "a tasa 5,4963", cv[0]&&cv[0].tasa);
+  ok(cv.length===1 && cv[0].hora==="2026-11-05 15:41:32", "la hora es la de la pata más temprana");
+  // Mismo segundo: el número sale igual que antes del arreglo.
+  cv=F._binConverts([cab, fila("2026-09-01 10:00:00","USDT","-69.0076668"), fila("2026-09-01 10:00:00","BRL","355.77592695")]);
+  ok(cv.length===1 && cv[0].tipo==="venta" && cv[0].ordenId==="CNV-202609011000", "con las dos patas en el mismo segundo, el número es el de siempre", cv[0]&&cv[0].ordenId);
+  // A 5 segundos ya no son la misma operación.
+  cv=F._binConverts([cab, fila("2026-11-05 15:41:30","USDT","100"), fila("2026-11-05 15:41:35","BRL","-540")]);
+  ok(cv.length===0, "con 5 segundos de diferencia no se juntan");
+  // Dos conversiones en el mismo segundo no se cruzan.
+  cv=F._binConverts([cab, fila("2026-11-06 09:00:00","USDT","100"), fila("2026-11-06 09:00:00","USDT","50"),
+                         fila("2026-11-06 09:00:01","BRL","-545"), fila("2026-11-06 09:00:01","BRL","-272.5")]);
+  ok(cv.length===2 && cv.every(o=>Math.abs(o.tasa-5.45)<1e-6), "dos conversiones en el mismo segundo salen las dos, y ninguna con la pareja de la otra", JSON.stringify(cv.map(o=>o.tasa)));
+  // USDT↔BTC sigue fuera, y no le roba la pata a la de reales.
+  cv=F._binConverts([cab, fila("2026-11-07 11:00:00","USDT","-20"), fila("2026-11-07 11:00:01","BTC","0.0002"),
+                         fila("2026-11-07 11:00:00","USDT","50"), fila("2026-11-07 11:00:01","BRL","-272")]);
+  ok(cv.length===1 && cv[0].moneda==="BRL", "una conversión a BTC sigue fuera y no se lleva la pata de la de reales");
+  // La pata de USDT con el MISMO signo no vale, aunque esté más cerca.
+  cv=F._binConverts([cab, fila("2026-11-08 09:00:00","USDT","100"), fila("2026-11-08 09:00:01","BRL","540"), fila("2026-11-08 09:00:02","USDT","-100")]);
+  ok(cv.length===1 && cv[0].tipo==="venta" && Math.abs(cv[0].tasa-5.4)<1e-6, "una pata de USDT del mismo signo no se empareja aunque esté más cerca", JSON.stringify(cv));
+  // Hora ilegible: solo con la idéntica, no se adivina.
+  cv=F._binConverts([cab, fila("05/11/2026 15:41","USDT","100"), fila("05/11/2026 15:42","BRL","-540")]);
+  ok(cv.length===0, "con una hora que no se puede leer, solo empareja con la idéntica");
+  // Y la que ya está a mano en producción sale como «ya está».
+  const loteSuyo={id:1,tipo:"compra",moneda:"BRL",fecha:"11/05",fechaIso:"2026-11-05",hora:"15:45:17",usdt:272.9109,montOrigen:1500,plataforma:"Binance P2P",ordenId:"CNV-P6JN7T"};
+  const op=F._binConverts([cab, fila("2026-11-05 15:41:32","USDT","272.91086731"), fila("2026-11-05 15:41:33","BRL","-1500")])[0];
+  ok(op && op.ordenId!=="CNV-P6JN7T" && F._binYaRegistrado(op,[loteSuyo])===loteSuyo,
+     "su compra cargada a mano (CNV-P6JN7T, 15:45:17) se reconoce como «ya está» aunque el número y la hora sean otros");
+  ok(op && F._binYaRegistrado(op,[Object.assign({},loteSuyo,{montOrigen:1600})])===null, "con otro monto en reales no se da por registrada");
+  const pc=sinComentarios(sacarFuncion("_binParesConvert"));
+  ok(!/porHora/.test(sinComentarios(sacarFuncion("_binConverts"))) && /d>_BIN_CONV_SEG/.test(pc), "ya no se agrupa por hora exacta");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

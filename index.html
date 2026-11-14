@@ -3717,7 +3717,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261114_v335";
+var APP_VERSION = "20261114_v336";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -16340,33 +16340,76 @@ function _binMonedaConocida(m){
 // reales y al día siguiente los volvió a convertir). Un par con USDT en los
 // dos lados es un movimiento interno entre sus propios monederos: no es ni
 // compra ni venta y se descarta.
-function _binConverts(filas){
+// ARREGLO 253 · las dos patas NO siempre llevan la misma hora. En su CSV de
+// Saipha la conversión del 05/11 (R$ 1.500 → 272,91 USDT) sale así:
+//
+//   2026-11-05 15:41:32 · Binance Convert · USDT ·  272.91086731
+//   2026-11-05 15:41:33 · Binance Convert · BRL  · -1500
+//
+// Agrupando por la hora exacta cada pata quedaba sola y la conversión
+// desaparecía sin decir nada. Ahora se empareja por CERCANÍA: a cada pata de
+// fiat, la de USDT sin pareja más cercana, de signo contrario y a ≤ 3 s. Una
+// hora que no se puede leer (formato raro en un .xlsx) solo empareja con otra
+// idéntica, como antes: no se adivina.
+//
+// La hora y el número de la conversión salen de la pata más TEMPRANA. Con las
+// dos patas en el mismo segundo es lo mismo que antes, así que lo ya importado
+// se sigue reconociendo.
+var _BIN_CONV_SEG=3;
+function _binSegundos(h){
+  var m=String(h||"").match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+  if(!m) return null;
+  return Date.UTC(+m[1],+m[2]-1,+m[3],+m[4],+m[5],+m[6])/1000;
+}
+function _binParesConvert(filas){
   var cab=_binBuscarCabecera(filas,_BIN_COLS_TX,["hora","operacion","moneda","cambio"]);
   if(!cab) return [];
-  var c=cab.cols, porHora={}, i;
+  var c=cab.cols, patas=[], i, j;
   for(i=cab.fila+1;i<filas.length;i++){
     var f=filas[i]||[];
     if(_binNorm(f[c.operacion])!=="binance convert") continue;
     var h=String(f[c.hora]||"").trim(); if(!h) continue;
     var v=_binNum(f[c.cambio]); if(isNaN(v)||v===0) continue;
-    (porHora[h]=porHora[h]||[]).push({mon:String(f[c.moneda]||"").trim().toUpperCase(), v:v});
+    patas.push({mon:String(f[c.moneda]||"").trim().toUpperCase(), v:v, h:h, t:_binSegundos(h), usada:false});
   }
-  var out=[];
-  for(var h2 in porHora){
-    var g=porHora[h2];
-    var usdt=null, fiat=null;
-    for(i=0;i<g.length;i++){
-      if(g[i].mon==="USDT"){ if(!usdt||Math.abs(g[i].v)>Math.abs(usdt.v)) usdt=g[i]; }
-      else if(!fiat||Math.abs(g[i].v)>Math.abs(fiat.v)) fiat=g[i];
+  // Distancia en segundos entre dos patas. Sin hora legible: 0 si el texto es
+  // idéntico (lo de siempre) y "no se pueden juntar" si no.
+  function dist(a,b){
+    if(a.t===null||b.t===null) return a.h===b.h ? 0 : Infinity;
+    return Math.abs(a.t-b.t);
+  }
+  var fiats=patas.filter(function(p){ return p.mon!=="USDT"; });
+  // Las de fiat más grandes primero: en el mismo segundo puede colarse una
+  // pata pequeña (la regla vieja ya se quedaba con la mayor de cada lado).
+  fiats.sort(function(a,b){ return Math.abs(b.v)-Math.abs(a.v); });
+  var pares=[];
+  for(i=0;i<fiats.length;i++){
+    var fi=fiats[i], mejor=null, mejorD=Infinity;
+    for(j=0;j<patas.length;j++){
+      var u=patas[j];
+      if(u.mon!=="USDT"||u.usada) continue;
+      if((u.v>0)===(fi.v>0)) continue;               // los dos en el mismo sentido: no es un cambio
+      var d=dist(u,fi);
+      if(d>_BIN_CONV_SEG) continue;
+      if(d<mejorD||(d===mejorD&&mejor&&Math.abs(u.v)>Math.abs(mejor.v))){ mejorD=d; mejor=u; }
     }
-    if(!usdt||!fiat) continue;                       // movimiento interno
-    if((usdt.v>0)===(fiat.v>0)) continue;            // los dos en el mismo sentido: no es un cambio
+    if(!mejor) continue;                             // sin pareja: movimiento interno o suelto
+    mejor.usada=true; fi.usada=true;
+    var temprana=(mejor.t!==null&&fi.t!==null&&fi.t<mejor.t)?fi:mejor;
+    pares.push({usdt:mejor, fiat:fi, hora:temprana.h});
+  }
+  return pares;
+}
+function _binConverts(filas){
+  var out=[];
+  _binParesConvert(filas).forEach(function(p){
+    var usdt=p.usdt, fiat=p.fiat, h2=p.hora;
     // Solo monedas de las que la app conoce. En la cuenta de Julio hay dos
     // conversiones USDT<->BTC (mueve criptomoneda, no dinero de clientes) y
     // colarlas crearia un lote en BTC con una tasa de 0,0000.
-    if(!_binMonedaConocida(fiat.mon)) continue;
+    if(!_binMonedaConocida(fiat.mon)) return;
     var compra=usdt.v>0, cu=Math.abs(usdt.v), cf=Math.abs(fiat.v);
-    if(!(cu>0)||!(cf>0)) continue;
+    if(!(cu>0)||!(cf>0)) return;
     out.push({
       origen:"convert", tipo:compra?"compra":"venta", moneda:fiat.mon, hora:h2,
       // La tasa sale de dividir, y eso deja cola: 355.77592695/69.0076668 da
@@ -16379,7 +16422,7 @@ function _binConverts(filas){
       ordenId:"CNV-"+h2.replace(/[^\d]/g,"").slice(0,12),
       plataforma:"Binance Convert"
     });
-  }
+  });
   out.sort(function(a,b){ return a.hora<b.hora?-1:a.hora>b.hora?1:0; });
   return out;
 }
