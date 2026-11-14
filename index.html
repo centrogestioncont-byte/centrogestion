@@ -3717,7 +3717,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261114_v334";
+var APP_VERSION = "20261114_v335";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -6988,6 +6988,9 @@ function _movsPersonalEmpresa(){
   }
   (S.traspasos||[]).forEach(function(t){
     if(String(t.fecha||"").slice(0,10) < _DEUDA_DESDE) return;
+    // ARREGLO 252: ella dijo que este traspaso no era un préstamo, sino dinero
+    // de la empresa que volvía a su sitio. No crea deuda.
+    if(t.noPrestamo) return;
     var cO = cuenta(t.origen), cD = cuenta(t.destino);
     if(!cO || !cD || cO.moneda!==cD.moneda) return;
     if(esDeuda(cO) && !cD.esPersonal) ap(cO, "prestado", parseFloat(t.monto)||0);
@@ -8554,7 +8557,13 @@ function rTraspasos(){
   var rows=S.traspasos.slice().reverse().map(function(t){
     var co=S.cuentas.find(function(c){return c.id===t.origen;})||{nombre:t.origen};
     var cd=S.cuentas.find(function(c){return c.id===t.destino;})||{nombre:t.destino};
-    return "<tr><td>"+t.fecha+"</td><td>"+_escAud(co.nombre)+"</td><td>→</td><td>"+_escAud(cd.nombre)+"</td>"+
+    return "<tr><td>"+t.fecha+
+      // ARREGLO 252: marcarlo después, sin tener que borrarlo. En la PRIMERA
+      // columna: la tabla hace scroll horizontal y en su teléfono el final
+      // queda fuera de pantalla (la misma razón del botón del ARREGLO 137).
+      (_traspasoPuedeSerPrestamo(t)?"<br><button type='button' onclick='_traspasoNoPrestamo(\""+_jsAttr(String(t.id))+"\")' style='margin-top:3px;background:var(--sup);border:1px solid var(--ln);border-radius:6px;padding:2px 7px;font-size:10.5px;cursor:pointer;color:var(--tx2);white-space:nowrap'>"+
+        (t.noPrestamo?"🏷️ no es préstamo":"💜 préstamo")+" · cambiar</button>":"")+
+      "</td><td>"+_escAud(co.nombre)+"</td><td>→</td><td>"+_escAud(cd.nombre)+"</td>"+
       "<td style='text-align:right;font-weight:700'>"+f2(t.monto)+" "+t.moneda+(t.monedaDestino&&t.monedaDestino!==t.moneda?" → "+f2(t.montoDestino)+" "+t.monedaDestino:"")+"</td>"+
       "<td class='mu'>"+_escAud(t.nota)+(t.ganancia?" · gan: "+f2(t.ganancia)+" "+t.monedaDestino:"")+"</td>"+
       "<td style='text-align:center'>"+(t.locked?"🔒":"")+"</td>"+
@@ -8584,6 +8593,14 @@ function rTraspasos(){
     "</div>"
   :"")+
   "<div class='fl'><label>Nota</label><input type='text' placeholder='ej: Compra de dólares en efectivo' value='"+(f.nota||"")+"' oninput='S.nTraspaso.nota=this.value'></div>"+
+  // ARREGLO 252: solo donde cambia algo — de una 💜 a la empresa, que es lo que
+  // cuenta como préstamo. Marcarla no llama a R(): no hay nada que repintar.
+  (_traspasoPuedeSerPrestamo({origen:f.cuentaOrigen,destino:f.cuentaDestino})?
+    "<label style='display:flex;gap:8px;align-items:flex-start;background:var(--sup2);border:1px solid var(--ln);border-radius:8px;padding:9px 11px;margin-bottom:10px;font-size:12px;cursor:pointer;line-height:1.45'>"+
+      "<input type='checkbox' "+(f.noPrestamo?"checked":"")+" onchange='S.nTraspaso.noPrestamo=this.checked' style='width:auto;flex:0 0 auto;margin:2px 0 0'>"+
+      "<span style='flex:1;min-width:0'><b>No es préstamo (era dinero de la empresa)</b><br>"+
+      "<span style='font-size:11px;color:var(--tx3)'>Sin marcar, la app apunta que la empresa te debe este monto. Márcala si esa plata ya era de la empresa y solo vuelve a su cuenta.</span></span></label>"
+  :"")+
   // Preview
   (cOrig&&cDest&&monto>0?
     "<div style='background:"+(canExec?"var(--ok-sup)":"var(--mal-sup)")+";border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:12px'>"+
@@ -8747,6 +8764,40 @@ function _avisarLotesTraspasoGastados(tr){
     "Al borrarlo, su lote se va entero de la cuenta que lo recibió y vuelve al de la cuenta de origen. "+
     "La operación que se lo gastó quedará apuntando a un lote que ya no está.\n\n¿Borrar igual?");
 }
+// ══ ARREGLO 252 · un traspaso 💜 → empresa no siempre es un préstamo ═══════
+//
+// _movsPersonalEmpresa (ARREGLO 235) cuenta TODO traspaso de una cuenta 💜 en
+// bolívares a una de la empresa como "prestado": la empresa le debe. Casi
+// siempre es así —su plata rescata un pago que la empresa no podía hacer— pero
+// no siempre: el 14/11 pasó 1.750,09 Bs que eran de la empresa, el panel dijo
+// "la empresa te debe" y para quitar el aviso hubo que BORRAR el traspaso, que
+// es borrar un movimiento que sí ocurrió.
+//
+// La regla de cuándo puede ser préstamo vive aquí, en UN sitio: la leen el
+// formulario (para enseñar la casilla), el guardado y el botón del historial.
+// Es la misma condición con la que _movsPersonalEmpresa lo cuenta como
+// "prestado"; escrita aparte, un día la casilla saldría donde no cambia nada.
+//
+// Lo que NO hace: no mueve ningún saldo ni ningún lote. Solo decide si ese
+// traspaso entra en la cuenta de lo que la empresa le debe.
+function _traspasoPuedeSerPrestamo(t){
+  if(!t) return false;
+  var cO=(S.cuentas||[]).find(function(c){return c.id===(t.origen||t.cuentaOrigen);});
+  var cD=(S.cuentas||[]).find(function(c){return c.id===(t.destino||t.cuentaDestino);});
+  return !!(cO && cD && cO.esPersonal && !cD.esPersonal && cO.moneda===cD.moneda &&
+            _MONEDAS_DEUDA.indexOf(cO.moneda)>=0);
+}
+function _traspasoNoPrestamo(id){
+  var t=(S.traspasos||[]).find(function(x){return String(x.id)===String(id);});
+  if(!t || !_traspasoPuedeSerPrestamo(t)) return;
+  var nuevo=!t.noPrestamo;
+  if(!confirm(nuevo
+      ? "Marcar este traspaso de "+f2(t.monto)+" "+t.moneda+" como «no es préstamo»?\n\nDeja de contar en lo que la empresa te debe. No mueve ningún saldo."
+      : "Volver a contar este traspaso de "+f2(t.monto)+" "+t.moneda+" como préstamo a la empresa?\n\nVuelve a sumar en lo que la empresa te debe. No mueve ningún saldo.")) return;
+  t.noPrestamo=nuevo; t._mod=Date.now();
+  logAudit("TRASPASO_NO_PRESTAMO",(nuevo?"marcado":"desmarcado")+" · "+f2(t.monto)+" "+t.moneda+" · "+t.fecha);
+  saveData(); R();
+}
 function saveTraspaso(){
   var f=S.nTraspaso;
   if(!f.fecha||!f.cuentaOrigen||!f.cuentaDestino||!f.monto){alert("Completa todos los campos.");return;}
@@ -8775,6 +8826,7 @@ function saveTraspaso(){
   cO.saldo=Math.round((cO.saldo-monto)*10000)/10000;
   cD.saldo=Math.round((cD.saldo+montoDest)*10000)/10000;
   var _tr={id:Date.now(),fecha:f.fecha,origen:f.cuentaOrigen,destino:f.cuentaDestino,moneda:cO.moneda,monto:monto,monedaDestino:cD.moneda,montoDestino:montoDest,nota:f.nota||"",locked:true};
+  if(f.noPrestamo && _traspasoPuedeSerPrestamo(_tr)) _tr.noPrestamo=true;   // ARREGLO 252
   // ARREGLO 161: estos bolívares salen del banco, así que salen del lote. Lo
   // consumido se guarda DENTRO del traspaso, como ya hace una remesa, para que
   // al borrarlo vuelva al lote que de verdad se gastó y no a otro.
@@ -8786,7 +8838,7 @@ function saveTraspaso(){
   // Devolverme ahora.
   _moverLotesTraspaso(_tr, cO, cD, monto);
   S.traspasos.push(_tr);
-  S.nTraspaso={fecha:f.fecha,cuentaOrigen:"",cuentaDestino:"",monto:"",montoDestino:"",nota:""};
+  S.nTraspaso={fecha:f.fecha,cuentaOrigen:"",cuentaDestino:"",monto:"",montoDestino:"",nota:"",noPrestamo:false};
   // Esta tampoco anotaba nada, y mover dinero entre cuentas es justo de lo
   // que ella querría saber quién lo hizo.
   logAudit("TRASPASO",f2(monto)+" "+cO.moneda+" · "+(cO.nombre||"")+" → "+(cD.nombre||""));

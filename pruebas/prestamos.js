@@ -15016,5 +15016,23 @@ console.log("\nARREGLO 251 · Importador de Binance: CSV y saldos a mano");
   ok(/var plan=_binPlanSaldos\(\)/.test(im) && /Saldos:/.test(im), "la pregunta final dice el antes y el después de cada saldo");
 }
 
+// ── ARREGLO 252 · Un traspaso 💜 → empresa puede no ser préstamo ────────
+console.log("\nARREGLO 252 · Traspaso 💜 → empresa marcado «no es préstamo»");
+{
+  const mv = sinComentarios(sacarFuncion("_movsPersonalEmpresa"));
+  ok(/if\(t\.noPrestamo\) return;/.test(mv) && mv.indexOf("if(t.noPrestamo) return;") < mv.indexOf('ap(cO, "prestado"'),
+     "un traspaso marcado «no es préstamo» no entra en lo que la empresa le debe");
+  const st = sinComentarios(sacarFuncion("saveTraspaso"));
+  ok(/if\(f\.noPrestamo && _traspasoPuedeSerPrestamo\(_tr\)\) _tr\.noPrestamo=true;/.test(st), "el guardado solo lo marca donde de verdad cuenta como préstamo");
+  ok(/noPrestamo:false/.test(st), "y la casilla vuelve a blanco para el siguiente traspaso");
+  const pp = sinComentarios(sacarFuncion("_traspasoPuedeSerPrestamo"));
+  ok(/cO\.esPersonal && !cD\.esPersonal && cO\.moneda===cD\.moneda/.test(pp) && /_MONEDAS_DEUDA\.indexOf\(cO\.moneda\)>=0/.test(pp),
+     "la casilla sale con la misma condición con la que se cuenta «prestado»");
+  const np = sinComentarios(sacarFuncion("_traspasoNoPrestamo"));
+  ok(/t\._mod=Date\.now\(\)/.test(np) && !/saldo/.test(np.replace(/ning[uú]n saldo/g,"")) && !/_moverLotesTraspaso|consumirLotesMon|devolverLotesMon/.test(np),
+     "marcarlo después lleva su _mod y no toca ningún saldo ni ningún lote");
+  ok(/onchange='S\.nTraspaso\.noPrestamo=this\.checked'/.test(HTML), "la casilla del formulario no repinta (ARREGLO 32)");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

@@ -6902,3 +6902,29 @@ saldos ya contaban esas ventas. Es el ARREGLO 107 por otra puerta.
 Probado con SheetJS 0.18.5 (la versión del CDN) y CSV con su forma: órdenes +
 transacciones (el uid sale del segundo), órdenes solas (pide la cuenta y no
 toca `mapaBinance`), y su `.xlsx` de siempre, idéntico. 9 negativas cazadas.
+
+---
+
+## Un traspaso 💜 → empresa puede no ser préstamo (ARREGLO 252)
+
+`_movsPersonalEmpresa` (235) cuenta **todo** traspaso de una 💜 en bolívares a
+una cuenta de la empresa como *prestado*: "la empresa te debe". El 14/11 pasó
+1.750,09 Bs que ya eran de la empresa, y para quitar el aviso hubo que **borrar**
+el traspaso — borrar un movimiento que sí ocurrió.
+
+- **Casilla "No es préstamo (era dinero de la empresa)"** en el formulario, y un
+  botón en el historial para marcarlo o desmarcarlo después. El traspaso lleva
+  `noPrestamo` y `_movsPersonalEmpresa` lo salta.
+- **Cuándo sale la casilla lo decide `_traspasoPuedeSerPrestamo()`**, la misma
+  condición con la que se cuenta "prestado". Lo leen el formulario, el guardado
+  y el historial.
+- **No mueve ningún saldo ni ningún lote**: solo decide si entra en la deuda.
+- **El botón va en la PRIMERA columna**: la tabla hace scroll y en el teléfono
+  el final queda fuera de pantalla (ARREGLO 137).
+- **Ojo**: si esa plata entró a la 💜 por algo que la app ya cuenta (una remesa
+  cobrada en la 💜), devolverla SÍ cancela, y marcarla "no es préstamo" dejaría
+  el panel diciendo que tiene plata de la empresa.
+
+Medido con su export: el traspaso normal mueve la deuda 1.750,09, el marcado
+no; marcar y desmarcar después devuelve el número exacto y no toca saldos;
+capital y *te sobran* idénticos. 7 negativas cazadas.
