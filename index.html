@@ -3717,7 +3717,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261114_v333";
+var APP_VERSION = "20261114_v334";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -16139,7 +16139,9 @@ function _binNum(v){
 // "Hora" y "Tiempo", "Comentario" y "Observación"), así que no se puede ir por
 // posición ni por un solo nombre.
 function _binNorm(s){
-  return String(s==null?"":s).toLowerCase()
+  // ARREGLO 251: el CSV en inglés escribe los rótulos con guion bajo
+  // ("UTC_Time", "User_ID"); se leen igual que con espacio.
+  return String(s==null?"":s).toLowerCase().replace(/_/g," ").replace(/^\ufeff/,"")
     .replace(/[áàä]/g,"a").replace(/[éèë]/g,"e").replace(/[íìï]/g,"i")
     .replace(/[óòö]/g,"o").replace(/[úùü]/g,"u").replace(/\s+/g," ").trim();
 }
@@ -16153,7 +16155,7 @@ var _BIN_COLS_C2C={
   cantidad:["cantidad","quantity"],
   comCre:["comision del creador","tarifa de creador","maker fee"],
   comTom:["comision del tomador","comision de tomador","taker fee"],
-  contraparte:["contraparte","counterparty"],
+  contraparte:["contraparte","counterparty","couterparty"],
   estado:["estado","status"],
   hora:["hora de creacion","created time"]
 };
@@ -16163,7 +16165,9 @@ var _BIN_COLS_TX={
   operacion:["operacion","operation"],
   moneda:["moneda","coin"],
   cambio:["cambiar","cambio","change"],
-  comentario:["comentario","observacion","remark"]
+  comentario:["comentario","observacion","remark"],
+  // ARREGLO 251: el CSV no trae el titular arriba, el uid viene en cada fila.
+  uid:["id de usuario","id. de usuario","user id"]
 };
 // Devuelve {campo: indiceDeColumna} buscando la fila de cabecera. Una columna
 // solo cuenta si el rótulo coincide ENTERO: "precio" es prefijo de "precio
@@ -16207,6 +16211,26 @@ function _binIdentificar(filas){
     }
   if(texto.indexOf("historial de ordenes c2c")!==-1) r.tipo="c2c";
   else if(texto.indexOf("historial de transacciones")!==-1) r.tipo="tx";
+  // ARREGLO 251 · el CSV que descarga Binance no trae el titular ni el ID de
+  // usuario arriba: empieza directamente por la cabecera. Así que, sin
+  // título, se reconoce por las COLUMNAS, que son las mismas que lee después
+  // _binOrdenesC2C / _binConverts — reconocerlo con otra lista dejaría pasar
+  // un archivo que luego no da ninguna operación.
+  if(!r.tipo){
+    if(_binBuscarCabecera(filas,_BIN_COLS_C2C,["orden","tipoOrden","fiat","total","precio","cantidad","hora"])) r.tipo="c2c";
+    else if(_binBuscarCabecera(filas,_BIN_COLS_TX,["hora","operacion","moneda","cambio"])) r.tipo="tx";
+    if(r.tipo) r.csv=true;
+  }
+  // En el de transacciones el uid va en una columna de cada fila. El de
+  // órdenes C2C no lo trae en ningún sitio: se resuelve en _binRecalcular.
+  if(r.tipo==="tx" && !r.uid){
+    var cab=_binBuscarCabecera(filas,_BIN_COLS_TX,["hora","operacion","moneda","cambio"]);
+    if(cab && cab.cols.uid!==undefined)
+      for(i=cab.fila+1;i<filas.length;i++){
+        var u=String(((filas[i]||[])[cab.cols.uid])==null?"":filas[i][cab.cols.uid]).trim();
+        if(/^\d{6,12}$/.test(u)){ r.uid=u; break; }
+      }
+  }
   return r;
 }
 
@@ -16388,10 +16412,18 @@ function _binCuentaSugerida(lotes, cuentaUsdtId, moneda, tipo){
 // vez por ID de usuario y se recuerda; el archivo trae el ID dentro, así que
 // ella no tiene que acordarse de cuál descargó.
 function _binCuentaDeUid(uid){
+  // ARREGLO 251: un "?archivo" es un CSV sin uid; su cuenta vive solo en esta
+  // importación.
+  if(String(uid||"").charAt(0)==="?") return ((S._impBin||{}).manual||{})[uid]||"";
   return ((S.mapaBinance||{})[String(uid||"")]||{}).cuentaId||"";
 }
 function _binFijarCuenta(uid, cuentaId){
   if(!uid) return;
+  if(String(uid).charAt(0)==="?"){
+    if(!S._impBin) return;
+    S._impBin.manual=S._impBin.manual||{}; S._impBin.manual[uid]=cuentaId;
+    _binRecalcular(); R(); return;
+  }
   if(!S.mapaBinance) S.mapaBinance={};
   S.mapaBinance[String(uid)]=Object.assign(S.mapaBinance[String(uid)]||{},{cuentaId:cuentaId,_mod:Date.now()});
   _binRecalcular(); R();
@@ -16609,7 +16641,12 @@ function _binElegirArchivos(input){
     var fr=new FileReader();
     fr.onload=function(e){
       try{
-        var wb=XLSX.read(new Uint8Array(e.target.result),{type:"array"});
+        // ARREGLO 251: raw:true para que SheetJS no convierta la hora del CSV en
+        // fecha ("2026-11-01 13:45:12" salía "11/1/26" y la hora se perdía), y
+        // codepage 65001 = UTF-8, o "Número" y "Operación" llegan rotos y no
+        // casan con ninguna cabecera. En un .xlsx las dos opciones no cambian
+        // nada: solo valen para texto plano.
+        var wb=XLSX.read(new Uint8Array(e.target.result),{type:"array",raw:true,codepage:65001});
         var hoja=wb.Sheets[wb.SheetNames[0]];
         // header:1 devuelve filas como arrays; raw:false para que los números
         // lleguen como texto tal cual los escribió Binance y los lea _binNum.
@@ -16637,9 +16674,23 @@ function _binRecalcular(){
   if(!S._impBin) return;
   var lotes=(S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[]);
   var ops=[];
+  // ARREGLO 251 · el CSV de órdenes C2C no dice de qué cuenta es. Si junto a
+  // él viene UN solo archivo de transacciones con su uid, es de esa cuenta
+  // (Binance los descarga por pares). Con cero o con varios, no se adivina:
+  // se le pregunta, y la respuesta vale solo para esta importación — un
+  // nombre de archivo no es un uid y no puede quedarse en mapaBinance.
+  var uidsTx={}, nTx=0;
+  S._impBin.archivos.forEach(function(a){ if(a.id.tipo==="tx" && a.id.uid && !uidsTx[a.id.uid]){ uidsTx[a.id.uid]=a.id; nTx++; } });
   S._impBin.archivos.forEach(function(a){
+    var uid=a.id.uid, nom=a.id.correo||a.id.nombre||a.id.uid;
+    a.uidDe="";
+    if(!uid){
+      if(nTx===1){ uid=Object.keys(uidsTx)[0]; var t=uidsTx[uid]; nom=t.correo||t.nombre||uid; a.uidDe="tx"; }
+      else { uid="?"+a.nombre; nom="📄 "+a.nombre+" · el archivo no dice de qué cuenta es"; a.uidDe="pregunta"; }
+    }
+    a.uidEf=uid;
     var l=(a.id.tipo==="c2c")?_binOrdenesC2C(a.filas):_binConverts(a.filas);
-    l.forEach(function(o){ o.uid=a.id.uid; o.cuentaNombre=a.id.correo||a.id.nombre||a.id.uid; ops.push(o); });
+    l.forEach(function(o){ o.uid=uid; o.cuentaNombre=nom; ops.push(o); });
   });
   // El mismo archivo dos veces, o dos exports con periodos que se solapan
   // —le pasó: mandó el de 15/08-15/09 y el de 01-15/09 de la misma cuenta—.
@@ -16712,6 +16763,7 @@ function _binFiat(i,id){
   // Repintar entero perdería el scroll de una tabla de 46 filas (ARREGLO 32):
   // se cambia solo la etiqueta de esa fila.
   try{ var el=document.getElementById("bin-sup-"+i); if(el) el.innerHTML=_htmlSupuesto(o); }catch(e){}
+  _binPintarSaldos();   // ARREGLO 251: cambiar el banco cambia qué saldo se mueve
 }
 // "supuesto" es lo que separa lo que propuso la app de lo que decidió ella.
 // Va DEBAJO del desplegable, no al lado: medido en su tabla, las 62 etiquetas
@@ -16740,7 +16792,106 @@ function _binResumenImp(){
   try{
     var el=document.getElementById("bin-resumen");
     if(el) el.innerHTML=_htmlResumenBin();
+    _binPintarSaldos();
   }catch(e){}
+}
+// ══ ARREGLO 251 · importar NO mueve en silencio un saldo escrito a mano ════
+//
+// Al importar 3 ventas de noviembre, BINANCE JULIO quedó en −575,28 y BANCO
+// VENEZUELA JULIO en 624.874,14 Bs: _binImportar restaba los USDT y sumaba los
+// bolívares SIEMPRE, también en cuentas cuyo saldo ella lleva a mano
+// (manual_override, "a mano · no sigue al inventario", ARREGLO 158). Ese saldo
+// ya contaba esas ventas, así que importarlas lo movió dos veces, y hubo que
+// corregirlo a mano.
+//
+// Es el ARREGLO 107 otra vez —poner el banco movía saldos sin preguntar— por
+// otra puerta. Y la regla es la misma: un saldo que cambia sin que se haya
+// visto el número es lo que cuesta la tarde.
+//
+//  - El plan se calcula en UN sitio y lo leen la pantalla, la pregunta final y
+//    la importación. Calculado aparte, la pantalla diría un "después" y la
+//    cuenta quedaría en otro.
+//  - Se simula en el MISMO orden y con el MISMO redondeo que la importación
+//    (operación por operación), o el "después" podría irse un céntimo.
+//  - Una cuenta "a mano" sale DESMARCADA: no se mueve salvo que ella la
+//    marque. Las demás salen marcadas, como hasta ahora. Y hay un botón para
+//    no mover ninguna.
+//  - No mover un saldo NO quita el lote: el FIFO y la ganancia se registran
+//    igual. Solo se deja la cuenta como estaba.
+function _binOpsMarcadas(){
+  var sel=((S._impBin&&S._impBin.ops)||[]).filter(function(o){ return o.sel; });
+  sel.sort(function(a,b){ return a.hora<b.hora?-1:a.hora>b.hora?1:0; });
+  return sel;
+}
+// Lo que cada operación le hace a cada cuenta. Escrito una vez: lo leen el
+// plan y _binImportar.
+function _binMovsDeOp(o){
+  var com=parseFloat(o.comision)||0, out=[];
+  var cObj=(S.cuentas||[]).find(function(c){ return c.id===o.cuentaId; });
+  if(o.tipo==="compra"){
+    var neto=Math.round((o.usdt-com)*10000)/10000;
+    if(cObj&&cObj.moneda==="USDT") out.push({id:cObj.id, d:neto});
+    if(o.cuentaFiat) out.push({id:o.cuentaFiat, d:-o.monto});
+  }else{
+    var bs=Math.round(o.monto*1000)/1000;
+    if(cObj&&cObj.moneda==="USDT") out.push({id:cObj.id, d:-o.usdt});
+    if(o.cuentaFiat) out.push({id:o.cuentaFiat, d:bs});
+  }
+  return out;
+}
+function _binPlanSaldos(){
+  var imp=S._impBin||{}, por={}, orden=[];
+  _binOpsMarcadas().forEach(function(o){
+    _binMovsDeOp(o).forEach(function(m){
+      var c=(S.cuentas||[]).find(function(x){ return x.id===m.id; }); if(!c) return;
+      if(!por[c.id]){
+        por[c.id]={id:c.id, nombre:c.nombre, moneda:c.moneda, manual:!!c.manual_override,
+                   antes:Math.round((parseFloat(c.saldo)||0)*100)/100, despues:parseFloat(c.saldo)||0};
+        orden.push(c.id);
+      }
+      por[c.id].despues=Math.round((por[c.id].despues+m.d)*100)/100;
+    });
+  });
+  return orden.map(function(id){
+    var x=por[id], m=(imp.mover||{})[id];
+    x.delta=Math.round((x.despues-x.antes)*100)/100;
+    x.mover = imp.noMover ? false : (m===undefined ? !x.manual : !!m);
+    return x;
+  });
+}
+function _binMoverCuenta(id, v){
+  if(!S._impBin) return;
+  S._impBin.mover=S._impBin.mover||{}; S._impBin.mover[id]=!!v;
+  if(v) S._impBin.noMover=false;
+  _binPintarSaldos();
+}
+function _binNoMoverNinguno(v){
+  if(!S._impBin) return;
+  S._impBin.noMover=!!v;
+  _binPintarSaldos();
+}
+// Marcar una casilla no llama a R(): rehace la tabla y pierde el scroll
+// (ARREGLO 32). Se refresca el recuadro por su id.
+function _binPintarSaldos(){
+  try{ var el=document.getElementById("bin-saldos"); if(el) el.innerHTML=_htmlSaldosBin(); }catch(e){}
+}
+function _htmlSaldosBin(){
+  var plan=_binPlanSaldos(), imp=S._impBin||{};
+  if(!plan.length) return "<div style='font-size:11px;color:var(--tx3)'>Con lo marcado no se mueve ningún saldo.</div>";
+  var h="<div style='font-size:10px;font-weight:700;color:var(--tx2);text-transform:uppercase;margin-bottom:7px'>Saldos que va a mover</div>";
+  plan.forEach(function(x){
+    h+="<label style='display:flex;gap:8px;align-items:flex-start;margin-bottom:6px;font-size:11px;cursor:pointer;line-height:1.45'>"+
+      "<input type='checkbox' "+(x.mover?"checked":"")+" onchange='_binMoverCuenta(\""+_jsAttr(String(x.id))+"\",this.checked)' style='width:auto;flex:0 0 auto;margin:2px 0 0'>"+
+      "<span style='flex:1;min-width:0'><b>"+_escAud(x.nombre)+"</b>: "+f2(x.antes)+" → "+
+        (x.mover?"<b>"+f2(x.despues)+"</b>":"<s style='color:var(--tx4)'>"+f2(x.despues)+"</s> <b>se queda en "+f2(x.antes)+"</b>")+
+        " "+x.moneda+" <span style='color:var(--tx3)'>("+(x.delta<0?"−":"+")+f2(Math.abs(x.delta))+")</span>"+
+        (x.manual?"<br><span style='color:var(--avi-tx)'>✍️ a mano · no sigue al inventario: por eso sale sin marcar. Márcala solo si ese saldo todavía NO cuenta estas operaciones.</span>":"")+
+      "</span></label>";
+  });
+  h+="<label style='display:flex;gap:8px;align-items:center;margin-top:6px;font-size:11px;font-weight:700;cursor:pointer'>"+
+     "<input type='checkbox' "+(imp.noMover?"checked":"")+" onchange='_binNoMoverNinguno(this.checked)' style='width:auto;flex:0 0 auto;margin:0'><span style='flex:1;min-width:0'>No mover ningún saldo (solo registrar las operaciones en el inventario)</span></label>"+
+     "<div style='font-size:10px;color:var(--tx3);margin-top:4px'>El lote, el FIFO y la ganancia se registran igual: lo que esto decide es solo si el saldo de la cuenta cambia.</div>";
+  return h;
 }
 function _htmlResumenBin(){
   var ops=(S._impBin&&S._impBin.ops)||[], n=0, c=0, v=0, i;
@@ -16763,7 +16914,8 @@ function rImportarBinance(){
   // Qué archivos entraron, y de qué cuenta es cada uno.
   H+="<div style='font-size:11px;color:var(--tx2b);margin-bottom:10px'>";
   imp.archivos.forEach(function(a){
-    H+="<div>· <b>"+(a.id.tipo==="c2c"?"Órdenes P2P":"Transacciones")+"</b> — "+(a.id.correo||a.id.uid)+
+    H+="<div>· <b>"+(a.id.tipo==="c2c"?"Órdenes P2P":"Transacciones")+"</b>"+(a.id.csv?" (CSV)":"")+" — "+_escAud(a.id.correo||a.id.uid||a.nombre)+
+       (a.uidDe==="tx"?" <span style='color:var(--tx4)'>· la cuenta sale del archivo de transacciones</span>":"")+
        (a.id.periodo?" <span style='color:var(--tx4)'>("+a.id.periodo+")</span>":"")+"</div>";
   });
   H+="</div>";
@@ -16778,8 +16930,8 @@ function rImportarBinance(){
   Object.keys(uids).forEach(function(uid){
     var sel=_binCuentaDeUid(uid); if(!sel) faltaCuenta=true;
     H+="<div style='display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap'>"+
-       "<span style='font-size:11px;min-width:230px'>"+uids[uid]+" <span style='color:var(--tx4)'>("+uid+")</span></span>"+
-       "<select onchange='_binFijarCuenta(\""+uid+"\",this.value)' style='flex:1;min-width:170px;padding:6px;border:1.5px solid "+(sel?"var(--az5)":"var(--rj4-b)")+";border-radius:7px;font-family:inherit'>"+
+       "<span style='font-size:11px;min-width:230px'>"+_escAud(uids[uid])+(uid.charAt(0)==="?"?"":" <span style='color:var(--tx4)'>("+uid+")</span>")+"</span>"+
+       "<select onchange='_binFijarCuenta(\""+_jsAttr(uid)+"\",this.value)' style='flex:1;min-width:170px;padding:6px;border:1.5px solid "+(sel?"var(--az5)":"var(--rj4-b)")+";border-radius:7px;font-family:inherit'>"+
        "<option value=''>-- elige la cuenta --</option>"+
        cuentasUsdt.map(function(c){ return "<option value='"+c.id+"'"+(sel===c.id?" selected":"")+">"+_escAud(c.nombre)+"</option>"; }).join("")+
        "</select></div>";
@@ -16892,12 +17044,13 @@ function rImportarBinance(){
      "<b>"+nCerr+(nCerr===1?" operación cae":" operaciones caen")+" en un mes que ya tiene su cierre hecho</b> y por eso "+(nCerr===1?"entra desmarcada":"entran desmarcadas")+": registrarlas cambia una ganancia que ya diste por buena. "+
      "Si aun asi las quieres, usa el boton de arriba o marcalas una a una.</div>";
   if(nYa) H+="<div style='font-size:11px;color:var(--tx3);margin-top:7px'>"+(nYa===1?"1 ya estaba registrada y se queda fuera.":nYa+" ya estaban registradas y se quedan fuera.")+"</div>";
+  H+="<div id='bin-saldos' style='background:var(--sup2);border:1px solid var(--gr5-a);border-radius:9px;padding:10px 12px;margin-top:12px'>"+_htmlSaldosBin()+"</div>";
   H+="<div style='display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap'>"+
      "<div id='bin-resumen' style='font-size:12px;color:var(--tx2)'>"+_htmlResumenBin()+"</div>"+
      "<button class='btn-main' onclick='_binImportar()' style='background:"+(faltaCuenta?"var(--gr4)":"var(--tit)")+";color:var(--sobre-color);margin:0;width:auto;padding:11px 22px'"+
      (faltaCuenta?" disabled":"")+">📥 Importar las marcadas</button></div>";
   if(faltaCuenta) H+="<div style='font-size:11px;color:var(--mal);margin-top:7px'>Elige arriba a qué cuenta tuya va cada cuenta de Binance.</div>";
-  H+="<div style='font-size:10px;color:var(--tx3);margin-top:8px'>Las operaciones entran en orden de fecha, para que el FIFO las consuma como toca. Los saldos de las cuentas se actualizan solos.</div>";
+  H+="<div style='font-size:10px;color:var(--tx3);margin-top:8px'>Las operaciones entran en orden de fecha, para que el FIFO las consuma como toca. Solo se mueven los saldos marcados en «Saldos que va a mover».</div>";
   return H+"</div>";
 }
 
@@ -16913,9 +17066,16 @@ function _binImportar(){
   if(sinCuenta.length){ alert("Hay "+sinCuenta.length+" operaciones sin cuenta de Binance. Elígela arriba."); return; }
   var repes=sel.filter(function(o){ return o.ya; }).length;
   var cerr=sel.filter(function(o){ return o.cerrado; }).length;
+  // ARREGLO 251: el antes y el después de cada saldo, en la misma pregunta.
+  var plan=_binPlanSaldos(), mueve={};
+  plan.forEach(function(x){ mueve[x.id]=x.mover; });
+  var txtPlan=plan.length ? plan.map(function(x){
+      return "   "+x.nombre+": "+(x.mover ? f2(x.antes)+" → "+f2(x.despues) : "NO se mueve, se queda en "+f2(x.antes))+" "+x.moneda;
+    }).join("\n") : "   ninguno";
   if(!confirm("Vas a registrar "+sel.length+" operaciones"+
       (repes?"\n\n⚠️ "+repes+" de ellas ya estaban registradas y las vas a duplicar.":"")+
       (cerr?"\n\n⚠️ "+cerr+" caen en un mes que ya tiene su cierre hecho. La ganancia de ese mes cambiará.":"")+
+      "\n\nSaldos:\n"+txtPlan+
       "\n\n¿Continuar?")) return;
 
   // En orden de fecha: el FIFO consume por antigüedad, así que meterlas
@@ -16930,8 +17090,6 @@ function _binImportar(){
     // trajera, mejor sin hora que con una falsa.
     var horaOp=_horaLote(o.hora);
     var com=parseFloat(o.comision)||0;
-    var cObj=(S.cuentas||[]).find(function(c){ return c.id===o.cuentaId; });
-    var cFiat=o.cuentaFiat?(S.cuentas||[]).find(function(c){ return c.id===o.cuentaFiat; }):null;
     if(o.tipo==="compra"){
       // Binance acredita el neto: lo que entra es la cantidad menos su comisión.
       var neto=Math.round((o.usdt-com)*10000)/10000;
@@ -16941,8 +17099,6 @@ function _binImportar(){
         contraparte:o.contraparte||"",
         cuentaId:o.cuentaId, cuentaOrigenId:o.cuentaFiat||"",
         restante:neto, locked:false, _mod:Date.now()});
-      if(cObj&&cObj.moneda==="USDT") cObj.saldo=Math.round(((parseFloat(cObj.saldo)||0)+neto)*100)/100;
-      if(cFiat) cFiat.saldo=Math.round(((parseFloat(cFiat.saldo)||0)-o.monto)*100)/100;
     }else{
       var netoV=Math.round((o.usdt-com)*10000)/10000;
       var bs=Math.round(o.monto*1000)/1000;
@@ -16952,14 +17108,24 @@ function _binImportar(){
         contraparte:o.contraparte||"",
         cuentaId:o.cuentaId, cuentaDestinoId:o.cuentaFiat||"",
         restante:0, locked:false, _mod:Date.now()});
-      if(cObj&&cObj.moneda==="USDT") cObj.saldo=Math.round(((parseFloat(cObj.saldo)||0)-o.usdt)*100)/100;
-      if(cFiat) cFiat.saldo=Math.round(((parseFloat(cFiat.saldo)||0)+bs)*100)/100;
     }
+    // ARREGLO 251: los saldos, por la misma cuenta que enseñó el plan, y solo
+    // en las cuentas que ella dejó marcadas.
+    _binMovsDeOp(o).forEach(function(m){
+      if(!mueve[m.id]) return;
+      var c=(S.cuentas||[]).find(function(x){ return x.id===m.id; }); if(!c) return;
+      c.saldo=Math.round(((parseFloat(c.saldo)||0)+m.d)*100)/100;
+      c._mod=Date.now();
+    });
     hechas++;
   });
+  var quietas=plan.filter(function(x){ return !x.mover; });
+  if(plan.length) logAudit("BINANCE_IMPORT_SALDOS", plan.map(function(x){ return x.nombre+(x.mover?" "+f2(x.antes)+"→"+f2(x.despues):" sin mover"); }).join(" · "));
   S._impBin=null;
   saveData(); R();
-  alert("✅ "+hechas+" operaciones importadas.\n\nRevisa el inventario: si alguna tasa no es la que esperabas, corrígela ahí.");
+  alert("✅ "+hechas+" operaciones importadas."+
+    (quietas.length?"\n\nNo se movió el saldo de: "+quietas.map(function(x){ return x.nombre; }).join(", ")+".":"")+
+    "\n\nRevisa el inventario: si alguna tasa no es la que esperabas, corrígela ahí.");
 }
 
 // ── ARREGLO 66: el formulario de compra/venta de USDT ────────────────────

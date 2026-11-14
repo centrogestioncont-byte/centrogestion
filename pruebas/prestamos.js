@@ -156,7 +156,7 @@ const NECESARIAS = ["_egresosHuerfanos", "moverEgresoAPersonal", "_tasaDelDiaFue
                     "_permisoPorOmision", "tienePermiso", "permisoEdicion",
                     "_resumenPermisos", "_binCuentaDeUid",
                     "_binNum", "_binNorm", "_binMapaCols", "_binBuscarCabecera",
-                    "_binIdentificar", "_binOrdenesC2C", "_binConverts", "_binDias",
+                    "_binIdentificar", "_binOrdenesC2C", "_binConverts", "_binDias", "_binPlanSaldos", "_binMovsDeOp", "_binOpsMarcadas",
                     "_binMonedaConocida", "_binYaRegistrado", "_binCuentaSugerida", "_binMesCerrado",
                     "_binConfianzaBanco", "_binSinBanco", "_htmlOrdenCopiable", "_htmlSupuesto",
                     "_marcarBorradoMerge", "_estaBorradoMerge", "_levantarBorradoMerge",
@@ -14971,6 +14971,49 @@ console.log("\nARREGLO 250 · El pago a socio gasta y devuelve lotes de compra")
   ok(!/restaurarFIFOEgreso/.test(bp), "no devuelve por el más nuevo (restaurarFIFOEgreso)");
   ok(/_marcarBorradoMerge\("pagosSocios", id\)/.test(bp), "deja la marca de borrado, o el otro aparato lo resucita (ARREGLO 163)");
   ok(/onclick='borrarPagoSocio\("\+p\.id\+"\)'/.test(HTML), "la tarjeta del socio tiene el botón 🗑️");
+}
+
+// ── ARREGLO 251 · Importador de Binance: CSV, UTF-8 y saldos a mano ─────
+console.log("\nARREGLO 251 · Importador de Binance: CSV y saldos a mano");
+{
+  ok(F._binNorm("UTC_Time")==="utc time" && F._binNorm("﻿Número de orden")==="numero de orden",
+     "el guion bajo vale como espacio y la marca BOM del CSV no estorba");
+  const c2c=[["Número de orden","Tipo de orden","Tipo de activo","Tipo de fiat","Precio total","Precio","Cantidad","Tarifa de tomador","Contraparte","Estado","Hora de creación"],
+             ["2281","Sell","USDT","VES","100192.00","1010.00","99.20","0","José","Completed","2026-11-10 14:32:05"]];
+  const id1=F._binIdentificar(c2c);
+  ok(id1.tipo==="c2c" && id1.csv===true && id1.uid==="", "un CSV de órdenes C2C sin título se reconoce por sus columnas, sin uid", JSON.stringify(id1));
+  const ord=F._binOrdenesC2C(c2c);
+  ok(ord.length===1 && ord[0].hora==="2026-11-10 14:32:05", "y la hora llega entera, con sus segundos");
+  const tx=[["ID de usuario","Hora","Cuenta","Operación","Moneda","Cambiar","Observación"],
+            ["987654321","2026-11-09 10:00:01","Funding","Binance Convert","BRL","-540",""],
+            ["987654321","2026-11-09 10:00:01","Funding","Binance Convert","USDT","100",""]];
+  const id2=F._binIdentificar(tx);
+  ok(id2.tipo==="tx" && id2.uid==="987654321", "el CSV de transacciones saca el uid de la columna de cada fila", JSON.stringify(id2));
+  const ea=sinComentarios(sacarFuncion("_binElegirArchivos"));
+  ok(/XLSX\.read\(new Uint8Array\(e\.target\.result\),\{type:"array",raw:true,codepage:65001\}\)/.test(ea), "se lee como UTF-8 y sin convertir fechas (raw:true, codepage 65001)");
+  const rc=sinComentarios(sacarFuncion("_binRecalcular"));
+  ok(/if\(nTx===1\)/.test(rc) && /uid="\?"\+a\.nombre/.test(rc), "las órdenes sin uid toman el de su archivo de transacciones, y si no hay uno solo se pregunta");
+  const fc=sinComentarios(sacarFuncion("_binFijarCuenta"));
+  ok(/charAt\(0\)==="\?"[\s\S]*?S\._impBin\.manual\[uid\]=cuentaId;[\s\S]*?return;/.test(fc), "la cuenta de un archivo sin uid NO se guarda en mapaBinance");
+  // El plan de saldos
+  const antes={c:S.cuentas,i:S._impBin};
+  S.cuentas=[{id:"bj",nombre:"BINANCE JULIO",moneda:"USDT",saldo:104.17,manual_override:true},
+             {id:"bv",nombre:"BdV",moneda:"VES",saldo:17396.12}];
+  S._impBin={ops:[{sel:true,tipo:"venta",hora:"2026-11-10",usdt:99.2,comision:0,monto:100192,cuentaId:"bj",cuentaFiat:"bv"},
+                  {sel:false,tipo:"venta",hora:"2026-11-11",usdt:10,comision:0,monto:10100,cuentaId:"bj",cuentaFiat:"bv"}]};
+  let pl=F._binPlanSaldos();
+  const pj=pl.find(x=>x.id==="bj"), pv=pl.find(x=>x.id==="bv");
+  ok(pj && pj.mover===false && pj.despues===4.97 && pv && pv.mover===true && pv.despues===117588.12,
+     "una cuenta a mano sale sin mover, las demás sí, y solo cuenta lo marcado", JSON.stringify(pl));
+  S._impBin.mover={bj:true}; pl=F._binPlanSaldos();
+  ok(pl.find(x=>x.id==="bj").mover===true, "ella puede marcar la cuenta a mano si de verdad hay que moverla");
+  S._impBin.noMover=true; pl=F._binPlanSaldos();
+  ok(pl.every(x=>x.mover===false), "«No mover ningún saldo» deja todas quietas");
+  S.cuentas=antes.c; S._impBin=antes.i;
+  const im=sinComentarios(sacarFuncion("_binImportar"));
+  ok(/_binMovsDeOp\(o\)\.forEach\(function\(m\)\{\s*if\(!mueve\[m\.id\]\) return;/.test(im), "importar mueve solo las cuentas que el plan deja marcadas");
+  ok(!/cFiat\.saldo|cObj\.saldo/.test(im), "y no queda ningún otro sitio que escriba el saldo por su cuenta");
+  ok(/var plan=_binPlanSaldos\(\)/.test(im) && /Saldos:/.test(im), "la pregunta final dice el antes y el después de cada saldo");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

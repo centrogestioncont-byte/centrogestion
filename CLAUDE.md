@@ -6863,3 +6863,42 @@ Medido con su export del 05/11, pagando 25 desde BINANCE SAIPHA: lotes de
 compra 678,40 → 653,40 (en v332 no se movían), borrar los deja idénticos lote
 por lote, la respuesta del servidor no lo resucita, y capital, *te sobran* y
 utilidad salen iguales que en v332. 21 pestañas, 0 errores, 8 negativas cazadas.
+
+---
+
+## Importador de Binance: CSV, UTF-8 y saldos a mano (ARREGLO 251)
+
+Solo reconocía el `.xlsx`: buscaba el título *"Historial de órdenes C2C"* y el
+*ID de usuario* arriba, y el **CSV** que descarga Binance no trae ninguno de los
+dos — empieza por la cabecera.
+
+- **Sin título, se reconoce por las COLUMNAS** (`_binIdentificar`), las mismas
+  que leen `_binOrdenesC2C` / `_binConverts`. `_binNorm` lee el guion bajo como
+  espacio (`UTC_Time`) y quita la marca BOM.
+- **El uid**: el CSV de transacciones lo trae en la columna *ID de usuario* de
+  cada fila. El de órdenes C2C no lo trae: si junto a él viene **un solo**
+  archivo de transacciones, es de esa cuenta; si no, se pregunta, y esa
+  respuesta vale solo para esta importación (`S._impBin.manual`), **nunca** en
+  `mapaBinance` — un nombre de archivo no es un uid.
+- **`XLSX.read` con `raw:true` y `codepage:65001`**: sin eso la hora salía
+  `11/1/26` (SheetJS la convertía en fecha) y los acentos rotos. En `.xlsx` no
+  cambia nada.
+
+**Y no mueve en silencio un saldo escrito a mano.** Al importar 3 ventas,
+BINANCE JULIO quedó en −575,28 y BANCO VENEZUELA JULIO en 624.874,14: los dos
+saldos ya contaban esas ventas. Es el ARREGLO 107 por otra puerta.
+
+- **`_binPlanSaldos()` es UN sitio** y lo leen el recuadro *"Saldos que va a
+  mover"*, la pregunta final y `_binImportar`, operación por operación y con el
+  mismo redondeo, o el "después" se iría un céntimo.
+- **Una cuenta con `manual_override` sale DESMARCADA.** Las demás, marcadas.
+  Hay casilla por cuenta y una para no mover ninguno. No mover **no** quita el
+  lote: FIFO y ganancia se registran igual.
+- **Ojo:** en la app solo las cuentas USDT llevan esa marca (ARREGLO 158). Una
+  cuenta de banco nunca la tiene, así que sale marcada: si su saldo ya cuenta
+  esas ventas, hay que desmarcarla. El recuadro lo enseña con el antes y el
+  después.
+
+Probado con SheetJS 0.18.5 (la versión del CDN) y CSV con su forma: órdenes +
+transacciones (el uid sale del segundo), órdenes solas (pide la cuenta y no
+toca `mapaBinance`), y su `.xlsx` de siempre, idéntico. 9 negativas cazadas.
