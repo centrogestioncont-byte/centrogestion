@@ -31112,6 +31112,156 @@ function _rBalanceRealDia(){
   "</div>";
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 256 · el día en UNA imagen, para mandársela a Julio
+// ══════════════════════════════════════════════════════════════════════
+// Sus palabras del 15/11: "quiero también poder descargar una sola imagen con
+// lo que se hizo del día así como sale en la app para que mi esposo vea lo de
+// hoy sin necesidad de entrar a mi app". Con los nombres de los clientes: él
+// es dueño y ya ve todo en el Informe Mensual (ARREGLO 87).
+//
+// Los números salen de _datosDia, el mismo sitio que la tarjeta del Diario.
+function _datosDia(dia){
+  var brlD = (S.brl||[]).filter(function(r){return r.d===dia;});
+  var vzlaD= (S.vzla||[]).filter(function(r){return r.d===dia;});
+  var eeuuD= (S.eeuu||[]).filter(function(r){return r.d===dia;});
+  var allD = [].concat(brlD,vzlaD,eeuuD);
+  var ganBrlD  = brlD.reduce(function(a,r){return a+r.pr;},0);
+  var ganVzlaD = vzlaD.reduce(function(a,r){return a+r.pr;},0);
+  var ganEEbruD= eeuuD.reduce(function(a,r){return a+r.pr;},0);
+  // EE.UU gastos del día (no filter by date exists, use all gastos_eeuu as general)
+  var ganJulioD= ganEEbruD/2;  // 50% of bruta (simplified daily)
+  var ganExtraD=(S.gananciaExtra||[]).filter(function(g){return g.d===dia;});
+  var ganExtraUsdtD=ganExtraD.reduce(function(a,g){return a+(parseFloat(g.usdt)||0);},0);
+  var ganDia = ganBrlD + ganVzlaD + ganJulioD + ganExtraUsdtD;
+  // Capital flows
+  var entradas={}, salidas={};
+  allD.forEach(function(r){
+    entradas[r.orig]=(entradas[r.orig]||0)+r.am;
+    salidas[r.dest] =(salidas[r.dest] ||0)+r.cant;
+  });
+  return {brlD:brlD, vzlaD:vzlaD, eeuuD:eeuuD, allD:allD, ganBrlD:ganBrlD, ganVzlaD:ganVzlaD,
+          ganJulioD:ganJulioD, ganDia:ganDia, ganExtraD:ganExtraD, ganExtraUsdtD:ganExtraUsdtD,
+          entradas:entradas, salidas:salidas};
+}
+// Lo que sale HACIA FUERA tiene sus propios colores, no los del tema: el tema
+// es del aparato que la genera (la regla del flyer y del PDF, ARREGLOS 83-85).
+// Y su propio ANCHO: en el teléfono la tabla no cabe y la columna del cliente
+// queda fuera; en la imagen sale entera, la genere quien la genere.
+var _IMG_DIA_ANCHO=600;
+var _IMG_DIA_COL={fondo:"#14161c", tarjeta:"#1e2129", linea:"#2c303a", tx:"#e9e7ec",
+  tx2:"#b9b6c0", tx3:"#8b8894", ok:"#3ddc84", okSup:"#16352a", mal:"#ff7a6b",
+  malSup:"#3a1f1f", info:"#6cb6ff", infoSup:"#1a2a40", avi:"#f2c14e", aviSup:"#3a3018"};
+function _htmlImagenDia(dia){
+  var C=_IMG_DIA_COL, d=_datosDia(dia), W=_IMG_DIA_ANCHO;
+  // El signo va UNA vez y delante del símbolo (la regla de usd(), ARREGLO 90):
+  // una vuelta con pr −0,00001 se escribía "+$-0,00". Lo que redondea a cero
+  // es cero, sin signo.
+  var sgDia=function(v){ var r=Math.round((parseFloat(v)||0)*100)/100;
+    return r===0?"$0,00":(r>0?"+$"+f2(r):"−$"+f2(-r)); };
+  var mIco={"USDT":"💰","BRL":"🇧🇷","VES":"🇻🇪","USD":"🇺🇸","EUR":"🇪🇺","COP":"🇨🇴","PEN":"🇵🇪","TTD":"🇹🇹"};
+  var chip=function(txt,bg,col){
+    return "<span style='display:inline-block;background:"+bg+";color:"+col+";padding:3px 9px;border-radius:6px;font-size:13px;margin:0 5px 5px 0'>"+txt+"</span>";
+  };
+  var flujos=Object.keys(d.entradas).map(function(m){ return chip("+("+f2(d.entradas[m])+") "+(mIco[m]||"")+_escAud(m),C.okSup,C.ok); }).join("")+
+             Object.keys(d.salidas).map(function(m){ return chip("-("+f0(d.salidas[m])+") "+(mIco[m]||"")+_escAud(m),C.malSup,C.mal); }).join("");
+  // Divs, no <table>: las reglas globales de td/th llevan !important y el
+  // clon que dibuja html2canvas las heredaría (la trampa del ARREGLO 85).
+  var cols="grid-template-columns:1.6fr 1.1fr 1fr 1fr .8fr";
+  var celda=function(t,ex){ return "<div style='padding:7px 6px;font-size:13px;color:"+C.tx+";"+(ex||"")+"'>"+t+"</div>"; };
+  var cab="<div style='display:grid;"+cols+";background:"+C.linea+";border-radius:6px 6px 0 0'>"+
+    ["CLIENTE","RUTA","RECIBÍ","ENTREGUÉ","GANANCIA"].map(function(h,i){
+      return "<div style='padding:7px 6px;font-size:11.5px;font-weight:700;color:"+(i===4?C.ok:C.tx3)+";text-align:"+(i>=2?"right":"left")+"'>"+h+"</div>";
+    }).join("")+"</div>";
+  var grupo=function(arr,col,sup,rot){
+    if(!arr.length) return "";
+    return "<div style='background:"+sup+";color:"+col+";font-size:11.5px;font-weight:700;padding:5px 8px;text-transform:uppercase'>"+rot+" ("+arr.length+")</div>"+
+      arr.map(function(r){
+        var isEE=r.rt&&r.rt.indexOf("UU.EE")>-1;
+        var pr=isEE?r.pr/2:r.pr;
+        return "<div style='display:grid;"+cols+";border-bottom:1px solid "+C.linea+"'>"+
+          celda(_escAud(r.cl),"font-weight:600;word-break:break-word")+
+          celda("<span style='background:"+sup+";color:"+col+";padding:2px 6px;border-radius:5px;font-size:11.5px'>"+_escAud(r.rt)+"</span>")+
+          celda(f2(r.am)+" "+_escAud(r.orig),"text-align:right")+
+          celda(f0(r.cant)+" "+_escAud(r.dest),"text-align:right")+
+          celda(sgDia(pr)+(isEE?" (50%)":""),"text-align:right;font-weight:700;color:"+(Math.round(pr*100)<0?C.mal:C.ok))+
+        "</div>";
+      }).join("");
+  };
+  var extras="";
+  if(d.ganExtraD.length){
+    extras="<div style='margin-top:12px;padding-top:10px;border-top:1px dashed "+C.linea+"'>"+
+      "<div style='font-size:11.5px;font-weight:700;color:"+C.avi+";text-transform:uppercase;margin-bottom:6px'>💰 Ganancias extra del día</div>"+
+      d.ganExtraD.map(function(g){
+        return "<div style='display:flex;justify-content:space-between;gap:8px;background:"+C.aviSup+";border-radius:8px;padding:7px 10px;margin-bottom:5px'>"+
+          "<span style='font-size:13px;color:"+C.avi+";font-weight:700'>"+_escAud(g.desc||"")+(g.esAjuste?" <span style='color:"+C.tx3+";font-weight:400'>· ajuste de saldo</span>":"")+"</span>"+
+          "<span style='font-size:13px;color:"+C.avi+";font-weight:800;white-space:nowrap'>"+sgDia(g.usdt)+"</span></div>";
+      }).join("")+"</div>";
+  }
+  var ahora=new Date();
+  var hora=String(ahora.getDate()).padStart(2,"0")+"/"+String(ahora.getMonth()+1).padStart(2,"0")+" "+
+           String(ahora.getHours()).padStart(2,"0")+":"+String(ahora.getMinutes()).padStart(2,"0");
+  return "<div id='_imgDiaCard' style='width:"+W+"px;box-sizing:border-box;background:"+C.fondo+";padding:18px;"+
+      "font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:"+C.tx+"'>"+
+    "<div style='background:"+C.tarjeta+";border:1px solid "+C.linea+";border-radius:12px;padding:16px'>"+
+      "<div style='display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:12px'>"+
+        "<div><div style='font-size:20px;font-weight:800;color:"+C.tx+"'>📅 "+_escAud(dia)+"</div>"+
+          "<div style='font-size:13px;color:"+C.tx3+";margin-top:3px'>"+d.allD.length+" operaciones · "+
+            (d.brlD.length?"🇧🇷 "+d.brlD.length+" BRL  ":"")+(d.vzlaD.length?"🇻🇪 "+d.vzlaD.length+" VZLA  ":"")+(d.eeuuD.length?"🇺🇸 "+d.eeuuD.length+" EE.UU":"")+"</div></div>"+
+        "<div style='text-align:right'><div style='font-size:26px;font-weight:900;color:"+(Math.round(d.ganDia*100)<0?C.mal:C.ok)+";white-space:nowrap'>"+sgDia(d.ganDia).replace("$","")+" USDT</div>"+
+          "<div style='font-size:11.5px;color:"+C.tx3+"'>ganancia del día</div></div>"+
+      "</div>"+
+      (flujos?"<div style='margin-bottom:10px'><div style='font-size:11.5px;color:"+C.tx3+";font-weight:700;text-transform:uppercase;margin-bottom:5px'>Flujos de capital</div>"+flujos+"</div>":"")+
+      cab+
+      grupo(d.brlD,C.ok,C.okSup,"🇧🇷 Brasil")+
+      grupo(d.vzlaD,C.mal,C.malSup,"🇻🇪 Venezuela")+
+      grupo(d.eeuuD,C.info,C.infoSup,"🇺🇸 EE.UU (Julio 50%)")+
+      extras+
+    "</div>"+
+    // La versión va DENTRO de la imagen (ARREGLO 84): una captura suya dice
+    // sola qué copia de la app la hizo y cuándo.
+    "<div style='font-size:11px;color:"+C.tx3+";text-align:right;margin-top:8px'>Centro de Gestión · "+_escAud(APP_VERSION)+" · generada "+hora+"</div>"+
+  "</div>";
+}
+// Se DESCARGA, no se comparte: Android pide un gesto reciente para abrir la
+// hoja de compartir y dibujar la imagen tarda, así que se rechazaría (el fallo
+// del botón de compartir del ARREGLO 84). Ella la manda por WhatsApp.
+function imagenDelDia(dia, btn){
+  if(typeof html2canvas==="undefined"){
+    alert("No se pudo cargar el generador de imagen. Verifica tu conexión a internet e intenta de nuevo.");
+    return;
+  }
+  var holder=document.createElement("div");
+  holder.style.position="fixed"; holder.style.left="-99999px"; holder.style.top="0";
+  holder.innerHTML=_htmlImagenDia(dia);
+  document.body.appendChild(holder);
+  var card=holder.querySelector("#_imgDiaCard");
+  var W=_IMG_DIA_ANCHO, H=Math.ceil(card.offsetHeight)||1;
+  // La escala se MIDE contra un presupuesto de píxeles (ARREGLO 84): un día
+  // con muchas operaciones no puede pedir un lienzo que Android corte en
+  // silencio.
+  var esc=Math.max(1, Math.min(2, Math.sqrt(12000000/(W*H))));
+  var rot=btn?btn.textContent:"";
+  if(btn){ btn.disabled=true; btn.textContent="⏳ Generando…"; }
+  var fin=function(){
+    if(holder.parentNode) document.body.removeChild(holder);
+    if(btn){ btn.disabled=false; btn.textContent=rot; }
+  };
+  html2canvas(card,{backgroundColor:_IMG_DIA_COL.fondo, scale:esc, width:W, height:H,
+      windowWidth:W, windowHeight:H, useCORS:true, logging:false})
+  .then(function(canvas){
+    try{
+      var a=document.createElement("a");
+      a.href=canvas.toDataURL("image/png");
+      a.download="Diario_"+String(dia).replace(/\//g,"-")+".png";
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    }catch(e){ alert("No se pudo descargar: "+e.message); }
+    fin();
+  }).catch(function(e){
+    fin();
+    alert("No se pudo generar la imagen: "+(e&&e.message||e));
+  });
+}
 function rDiario(){
   // Default to "todos" if current month has no ops, so user sees all data
   var _mesAct=getMesKeyActual();
@@ -31170,28 +31320,14 @@ function rDiario(){
 
 
   var cards=dias.map(function(dia){
-    var brlD = allBrl.filter(function(r){return r.d===dia;});
-    var vzlaD= allVzla.filter(function(r){return r.d===dia;});
-    var eeuuD= allEeuu.filter(function(r){return r.d===dia;});
-    var allD = [].concat(brlD,vzlaD,eeuuD);
-
-    var ganBrlD  = brlD.reduce(function(a,r){return a+r.pr;},0);
-    var ganVzlaD = vzlaD.reduce(function(a,r){return a+r.pr;},0);
-    var ganEEbruD= eeuuD.reduce(function(a,r){return a+r.pr;},0);
-    // EE.UU gastos del día (no filter by date exists, use all gastos_eeuu as general)
-    var ganJulioD= ganEEbruD/2;  // 50% of bruta (simplified daily)
-    var ganDia   = ganBrlD + ganVzlaD + ganJulioD;
-
-    var ganExtraD=(S.gananciaExtra||[]).filter(function(g){return g.d===dia;});
-    var ganExtraUsdtD=ganExtraD.reduce(function(a,g){return a+(parseFloat(g.usdt)||0);},0);
-    ganDia+=ganExtraUsdtD;
-
-    // Capital flows
-    var entradas={}, salidas={};
-    allD.forEach(function(r){
-      entradas[r.orig]=(entradas[r.orig]||0)+r.am;
-      salidas[r.dest] =(salidas[r.dest] ||0)+r.cant;
-    });
+    // ARREGLO 256: los números del día salen de _datosDia, que lee también
+    // la imagen que ella descarga para Julio. Calculados aparte, la imagen y
+    // la tarjeta podrían decir dos ganancias distintas del mismo día.
+    var _dd=_datosDia(dia);
+    var brlD=_dd.brlD, vzlaD=_dd.vzlaD, eeuuD=_dd.eeuuD, allD=_dd.allD;
+    var ganBrlD=_dd.ganBrlD, ganVzlaD=_dd.ganVzlaD, ganJulioD=_dd.ganJulioD, ganDia=_dd.ganDia;
+    var ganExtraD=_dd.ganExtraD, ganExtraUsdtD=_dd.ganExtraUsdtD;
+    var entradas=_dd.entradas, salidas=_dd.salidas;
     var entrBars=Object.keys(entradas).map(function(mon){
       return "<span style='background:var(--ok-sup);color:var(--ok-tx);padding:2px 8px;border-radius:5px;font-size:12.5px;margin-right:4px'>+("+f2(entradas[mon])+") "+(mIco[mon]||"")+mon+"</span>";
     }).join("");
@@ -31227,6 +31363,7 @@ function rDiario(){
         "<div style='text-align:right'>"+
           "<div style='font-size:22px;font-weight:800;color:var(--ok)'>+"+f2(ganDia)+" USDT</div>"+
           (eeuuD.length?"<div style='font-size:11.5px;color:var(--tx3);margin-top:2px'>BRL/VZLA: $"+f2(ganBrlD+ganVzlaD)+" · Julio EE.UU: $"+f2(ganJulioD)+"</div>":"")+
+          "<button type='button' onclick='imagenDelDia(\""+_jsAttr(dia)+"\",this)' style='margin-top:6px;background:none;border:1px solid var(--ln);color:var(--tx2);padding:5px 10px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit'>📸 Imagen</button>"+
         "</div>"+
       "</div>"+
       // Flujos de capital
