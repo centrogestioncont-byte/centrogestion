@@ -3743,7 +3743,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261115_v337";
+var APP_VERSION = "20261115_v338";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -8741,6 +8741,17 @@ function _moverLotesTraspaso(tr, cO, cD, monto){
   tr._lotesConsumidos={ventas:cl.ventas};
   if(cl.sinLote>0.01) tr._bsSinLote=cl.sinLote;
   if(!cD || cD.moneda!==cO.moneda || cD.id===cO.id) return;
+  // ARREGLO 255: a una TARJETA el lote no viaja. Sus palabras del 15/11,
+  // mirando Inventario: "esto de traspaso ¿altera mucho al FIFO?". En general
+  // no —el lote se mueve, no nace—, pero TARJETA PAGBANK tenía tres lotes de
+  // traspaso (40, 90 y 106 R$). Una tarjeta no guarda dinero: su saldo es lo
+  // que debe (ARREGLO 95). Pagar la factura es GASTAR esos reales en compras
+  // que ya se hicieron, así que el lote se consume en la cuenta que paga
+  // (arriba) y no renace en ningún sitio. Si renaciera, un Pix pagado con la
+  // tarjeta lo gastaría como si fueran reales suyos y tomaría su tasa.
+  // Lo consumido sigue en tr._lotesConsumidos: borrar el traspaso lo devuelve
+  // al origen, igual que cualquier otro.
+  if(cD.esTarjeta) return;
   if(!S.inventarioUsdt) S.inventarioUsdt=[];
   (cl.ventas||[]).forEach(function(v){
     var bs=Math.round((parseFloat(v.bs)||0)*100)/100;
@@ -25966,6 +25977,115 @@ function deshacerCorreccionLotesVES(){
   alert("↩️ Devueltos "+f2(u.bs)+" Bs. Ninguna cuenta se movió.");
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// ARREGLO 255 · los lotes que ya están en una tarjeta, una vez y con su OK
+// ══════════════════════════════════════════════════════════════════════
+// Lo de arriba (_moverLotesTraspaso) vale de aquí en adelante. Los que ya
+// llegaron a una tarjeta por traspaso se quedan ahí hasta que se quiten, y
+// "Cuadrar lotes con las cuentas" no los ve: mira solo bolívares (ARREGLO
+// 164). Esto los deja en 0 —el dinero ya se gastó al pagar la factura— con la
+// misma forma que aquel: vista previa, lo de antes guardado DENTRO del lote
+// (_ajTj, sin lista nueva que sincronizar) y deshacer por su hora.
+// No mueve el saldo de ninguna cuenta.
+function _lotesEnTarjetas(){
+  var tj={};
+  (S.cuentas||[]).forEach(function(c){ if(c && c.esTarjeta) tj[String(c.id)]=c; });
+  var por={};
+  (S.inventarioUsdt||[]).forEach(function(l){
+    if(!l || l.tipo!=="venta") return;
+    var c=tj[String(l.cuentaDestinoId||"")];
+    if(!c) return;
+    var r=Math.round((parseFloat(l.bsRestante)||0)*100)/100;
+    if(!(r>0.01)) return;
+    var f=por[c.id]=por[c.id]||{id:c.id, cuenta:c.nombre, moneda:l.moneda||c.moneda, lotes:[], total:0};
+    f.lotes.push(l); f.total=Math.round((f.total+r)*100)/100;
+  });
+  var filas=Object.keys(por).map(function(k){ return por[k]; });
+  var n=0; filas.forEach(function(f){ n+=f.lotes.length; });
+  return {filas:filas, n:n};
+}
+function _ultimaLimpiezaTj(){
+  var marcados=(S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[])
+    .filter(function(l){ return l && l._ajTj && l._ajTj.ts; });
+  if(!marcados.length) return null;
+  var ts=0; marcados.forEach(function(l){ if(l._ajTj.ts>ts) ts=l._ajTj.ts; });
+  return {ts:ts, lotes:marcados.filter(function(l){ return l._ajTj.ts===ts; })};
+}
+function quitarLotesTarjetas(){
+  if(!permisoEdicion()){ alert("No tienes permiso para editar."); return; }
+  var d=_lotesEnTarjetas();
+  if(!d.n){ alert("Ninguna tarjeta tiene lotes."); return; }
+  var resumen=d.filas.map(function(f){
+    return "• "+f.cuenta+": "+f.lotes.length+" lote"+(f.lotes.length===1?"":"s")+" · "+f2(f.total)+" "+f.moneda;
+  }).join("\n");
+  if(!confirm("💳 QUITAR LOS LOTES DE LAS TARJETAS\n\n"+resumen+"\n\n"+
+    "Llegaron por traspasos para pagar la factura. Ese dinero ya se gastó, así\n"+
+    "que los lotes quedan en 0.\n\n"+
+    "NO se mueve el saldo de ninguna cuenta. Se puede deshacer desde el mismo sitio.\n\n¿Aplicar?")) return;
+  var ts=Date.now(), por=_quienSoy();
+  d.filas.forEach(function(f){
+    f.lotes.forEach(function(l){
+      l._ajTj={ts:ts, por:por, antes:Math.round((parseFloat(l.bsRestante)||0)*100)/100};
+      l.bsRestante=0;
+    });
+  });
+  logAudit("QUITAR_LOTES_TARJETA","Dejó en 0 "+d.n+" lote(s) de tarjeta: "+d.filas.map(function(f){return f.cuenta+" "+f2(f.total)+" "+f.moneda;}).join(", "));
+  saveData(); R();
+  alert("✅ "+d.n+" lote(s) de tarjeta en 0. Ninguna cuenta se movió.");
+}
+function deshacerLotesTarjetas(){
+  if(!permisoEdicion()){ alert("No tienes permiso para editar."); return; }
+  var u=_ultimaLimpiezaTj();
+  if(!u){ alert("No hay nada que deshacer."); return; }
+  if(!confirm("↩️ DESHACER\n\nSe devuelve su saldo a "+u.lotes.length+" lote(s) de tarjeta, tal como estaban.\n\nTampoco esto mueve ninguna cuenta.\n\n¿Deshacer?")) return;
+  u.lotes.forEach(function(l){
+    l.bsRestante=Math.round((parseFloat(l._ajTj.antes)||0)*100)/100;
+    delete l._ajTj;
+    // Archivado al quedar en 0: sin sacarlo del archivo, el saldo devuelto
+    // queda escondido (ARREGLO 137, las dos mitades).
+    if(l._cerrado && (parseFloat(l.bsRestante)||0)>0.001) _revivirLote(l);
+  });
+  logAudit("DESHACER_LOTES_TARJETA","Devolvió su saldo a "+u.lotes.length+" lote(s) de tarjeta");
+  saveData(); R();
+  alert("↩️ Devuelto. Ninguna cuenta se movió.");
+}
+// Plegar no llama a R() (ARREGLO 32) y el abierto vive en S (ARREGLO 165).
+function _verLotesTj(){
+  S._verLotesTj=!S._verLotesTj;
+  var el=document.getElementById("lotes-tj");
+  if(el) el.style.display=S._verLotesTj?"block":"none";
+  var b=document.getElementById("lotes-tj-btn");
+  if(b) b.textContent=_rotLotesTj();
+}
+function _rotLotesTj(){ return "💳 Lotes en tarjetas"+(S._verLotesTj?" ▴":" ▾"); }
+function _htmlLotesTj(){
+  var d=_lotesEnTarjetas(), u=_ultimaLimpiezaTj();
+  if(!d.n && !u) return "";
+  var h="<div id='lotes-tj' style='display:"+(S._verLotesTj?"block":"none")+
+        ";border:1px solid var(--ln);border-radius:10px;padding:12px;margin-bottom:10px;background:var(--sup)'>";
+  if(d.n){
+    h+="<div style='font-size:12px;color:var(--tx2);margin-bottom:9px;line-height:1.5'>"+
+       "Una tarjeta no guarda dinero: su saldo es lo que debes. Estos lotes llegaron por traspasos "+
+       "para pagar la factura, y ese dinero ya se gastó. Si se quedan, un pago con la tarjeta los "+
+       "gastaría como si fueran reales tuyos.<br><b>No mueve el saldo de ninguna cuenta.</b></div>";
+    d.filas.forEach(function(f){
+      h+="<div style='display:flex;justify-content:space-between;gap:8px;font-size:12px;"+
+         "padding:7px 0;border-top:1px solid var(--ln2)'>"+
+         "<span style='color:var(--tx2)'>"+_escAud(f.cuenta)+" · "+f.lotes.length+" lote"+(f.lotes.length===1?"":"s")+"</span>"+
+         "<span style='font-weight:700;font-variant-numeric:tabular-nums'>"+f2(f.total)+" "+_escAud(f.moneda)+" → 0,00</span></div>";
+    });
+    h+="<button type='button' onclick='quitarLotesTarjetas()' style='margin-top:9px;background:var(--ac2);color:var(--sobre-color);"+
+       "border:none;padding:9px 14px;border-radius:8px;font-size:12px;font-weight:800;cursor:pointer;font-family:inherit'>💳 Dejarlos en 0</button>";
+  }
+  if(u){
+    h+="<div style='font-size:11px;color:var(--tx3);margin-top:10px;padding-top:10px;border-top:1px solid var(--ln2)'>"+
+       "Ya quitaste "+u.lotes.length+" lote"+(u.lotes.length===1?"":"s")+" de tarjeta."+
+       "<br><button type='button' onclick='deshacerLotesTarjetas()' style='margin-top:7px;background:none;"+
+       "border:1px solid var(--ln);color:var(--tx2);padding:7px 12px;border-radius:8px;font-size:11px;"+
+       "cursor:pointer;font-family:inherit'>↩️ Deshacer</button></div>";
+  }
+  return h+"</div>";
+}
 // La vista previa. Se dibuja SIEMPRE antes de poder aplicar nada: el boton de
 // Aplicar vive dentro de ella, no fuera, porque lo que ella pidio es ver qué
 // lotes toca antes de tocarlos.
@@ -37468,7 +37588,7 @@ function rInventarioUsdt(){
   "<button class='btn-main' onclick='if(_numsOk(this))saveIU()' style='background:var(--fondo-osc);color:var(--sobre-color)'>💾 Registrar y actualizar cuenta</button></div>"+
     "<div style='display:flex;align-items:center;justify-content:space-between;margin-bottom:9px;gap:8px;flex-wrap:wrap'>"+
     "<div style='font-size:11.5px;font-weight:700;color:var(--tx3);text-transform:uppercase'>📋 Historial</div>"+
-    "<div style='display:flex;gap:8px'>"+
+    "<div style='display:flex;gap:8px;flex-wrap:wrap'>"+
     "<button type='button' onclick='toggleArchivados()' style='background:"+(S._verArchivados?"var(--am1-a)":"var(--am5-b)")+";color:"+(S._verArchivados?"var(--sobre-color)":"var(--avi-tx)")+";border:none;padding:6px 12px;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer'>📦 Archivados ("+((S.inventarioUsdt_cerrado||[]).length)+")</button>"+
     "<button type='button' onclick='cerrarLotesViejos()' style='background:var(--am2-b);color:var(--sobre-color);border:none;padding:6px 12px;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer'>🧹 Cerrar lotes viejos</button>"+
     // ARREGLO 164: el boton solo sale cuando hay algo que hacer —deriva que
@@ -37480,10 +37600,14 @@ function rInventarioUsdt(){
     // hay algo que abrir o una apertura que deshacer.
     ((_realesSinLote().total>0.01||_ultimaAperturaBRL())?
       "<button type='button' id='apertura-brl-btn' onclick='_verAperturaBRL()' style='background:var(--ok-sup);color:var(--ok-tx);border:none;padding:6px 12px;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer'>"+_rotAperturaBRL()+"</button>":"")+
+    // ARREGLO 255: y el de las tarjetas, con la misma regla.
+    ((_lotesEnTarjetas().n||_ultimaLimpiezaTj())?
+      "<button type='button' id='lotes-tj-btn' onclick='_verLotesTj()' style='background:var(--am5-b);color:var(--avi-tx);border:none;padding:6px 12px;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer'>"+_rotLotesTj()+"</button>":"")+
     "</div>"+
     "</div>"+
     _htmlDerivaVES()+
     _htmlAperturaBRL()+
+    _htmlLotesTj()+
     (function(){
       if(!S._verArchivados) return "";
       var arch=(S.inventarioUsdt_cerrado||[]).slice().sort(function(a,b){return (b.id||0)-(a.id||0);});

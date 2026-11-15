@@ -15110,5 +15110,40 @@ console.log("\nARREGLO 254 · Una vuelta Bs → R$ no apunta ganancia si ella no
   ok(/ruta\.orig==="VES"\) return _htmlMetodoVuelta\(/.test(sinComentarios(sacarFuncion("_htmlMetodoElegido"))), "la línea del método de la vuelta sale de _htmlMetodoVuelta");
 }
 
+// ── ARREGLO 255 · A una tarjeta el lote no viaja ─────────────────────────
+console.log("\nARREGLO 255 · Pagar la factura gasta el lote; no lo pasa a la tarjeta");
+{
+  const mv=sinComentarios(sacarFuncion("_moverLotesTraspaso"));
+  const iTj=mv.indexOf("if(cD.esTarjeta) return;"), iPush=mv.indexOf("S.inventarioUsdt.push(");
+  const iCons=mv.indexOf("consumirLotesMon(");
+  ok(iTj>0 && iPush>iTj && iCons>=0 && iCons<iTj && mv.slice(0,iCons).indexOf("esTarjeta")<0,
+     "el traspaso consume en la cuenta que paga y, si el destino es tarjeta, no crea lote");
+  const src=["_lotesEnTarjetas","_ultimaLimpiezaTj","quitarLotesTarjetas","deshacerLotesTarjetas"].map(sacarFuncion).join("\n");
+  const S={cuentas:[{id:"pag",nombre:"PAGBANK",moneda:"BRL",saldo:500},{id:"tj",nombre:"TARJETA",moneda:"BRL",saldo:-300,esTarjeta:true}],
+           inventarioUsdt:[], inventarioUsdt_cerrado:[]};
+  const L=(id,cta,r)=>({id:id,tipo:"venta",moneda:"BRL",bs:r,bsRestante:r,cuentaDestinoId:cta});
+  S.inventarioUsdt=[L(1,"tj",40),L(2,"tj",90),L(3,"tj",106.05),L(4,"pag",500),{id:5,tipo:"compra",moneda:"BRL",restante:10,bsRestante:10,cuentaDestinoId:"tj"}];
+  const sald=JSON.stringify(S.cuentas);
+  let rev=0;
+  const G=new Function("S","permisoEdicion","alert","confirm","_quienSoy","logAudit","saveData","R","f2","_revivirLote",
+    src+"\nreturn {_lotesEnTarjetas,quitarLotesTarjetas,deshacerLotesTarjetas,_ultimaLimpiezaTj};")(
+    S,()=>true,()=>{},()=>true,()=>"yo",()=>{},()=>{},()=>{},(x)=>String(x),()=>{rev++;});
+  const d=G._lotesEnTarjetas();
+  ok(d.n===3 && d.filas.length===1 && Math.abs(d.filas[0].total-236.05)<1e-9, "ve los 3 lotes de la tarjeta (236,05) y ninguno más", JSON.stringify(d.filas.map(f=>[f.cuenta,f.total])));
+  G.quitarLotesTarjetas();
+  const r=(id)=>S.inventarioUsdt.find(l=>l.id===id).bsRestante;
+  ok(r(1)===0 && r(2)===0 && r(3)===0, "quitar deja en 0 los lotes de la tarjeta");
+  ok(r(4)===500, "los lotes de una cuenta normal no se tocan");
+  ok(JSON.stringify(S.cuentas)===sald, "no mueve el saldo de ninguna cuenta");
+  // Uno archivado al quedar en 0: deshacer lo revive.
+  const arch=S.inventarioUsdt.splice(0,1)[0]; arch._cerrado=true; S.inventarioUsdt_cerrado.push(arch);
+  G.deshacerLotesTarjetas();
+  ok(arch.bsRestante===40 && r(2)===90 && r(3)===106.05 && rev===1, "deshacer devuelve lo de antes y revive el archivado");
+  ok(!arch._ajTj && G._ultimaLimpiezaTj()===null, "y no deja marca para deshacer otra vez");
+  const ri=sinComentarios(sacarFuncion("rInventarioUsdt"));
+  ok(/_lotesEnTarjetas\(\)\.n\|\|_ultimaLimpiezaTj\(\)/.test(ri) && /_htmlLotesTj\(\)/.test(ri), "Inventario dibuja el botón solo cuando hay algo que hacer o deshacer");
+  ok(!/\bR\(\)/.test(sinComentarios(sacarFuncion("_verLotesTj"))), "plegar el panel no llama a R()");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

@@ -6992,3 +6992,27 @@ solo se aplica al teclear y guardar no lo volvía a mirar. Guardaba P2P a 960 co
 
 **Lo que NO repara:** las vueltas ya guardadas con ganancia. Se borran (vuelven
 cuenta y lotes, el de 960 incluido) y se registran o importan otra vez.
+
+---
+
+## A una tarjeta el lote no viaja (ARREGLO 255)
+
+Sus palabras del 15/11, mirando Inventario: *"esto de traspaso ¿altera mucho al
+FIFO?"*. En general no: desde el ARREGLO 231 el lote **se mueve** con el dinero,
+no nace. Pero TARJETA PAGBANK tenía tres lotes de traspaso (40, 90 y 106 R$), y
+una tarjeta no guarda dinero: su saldo es lo que debe (ARREGLO 95). Pagar la
+factura es **gastar** esos reales en compras que ya se hicieron. Dejados ahí, un
+Pix pagado con la tarjeta los gastaría como reales suyos y tomaría su tasa.
+
+- **`_moverLotesTraspaso` consume en la cuenta que paga y, si el destino es
+  tarjeta, no crea lote.** Lo consumido sigue en `tr._lotesConsumidos`, así que
+  borrar el traspaso lo devuelve al origen igual que cualquier otro.
+- **Los que ya estaban se quitan una vez y con su OK** (💳 Lotes en tarjetas, en
+  Inventario): vista previa, lo de antes guardado DENTRO del lote (`_ajTj`, sin
+  lista nueva que sincronizar) y deshacer por su hora, reviviendo el archivado
+  (ARREGLO 137). Es la forma del ARREGLO 164, que solo mira bolívares.
+- **No mueve el saldo de ninguna cuenta.**
+
+Medido con su export: pagar la factura baja los lotes de PagBank y la tarjeta se
+queda en 0; un traspaso a EFECTIVO EMPRESA sigue moviendo el lote; borrar los dos
+deja todo exacto. 21 pestañas, 0 errores, 8 pruebas negativas y las 8 cazadas.
