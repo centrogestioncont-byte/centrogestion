@@ -15218,6 +15218,13 @@ console.log("\nARREGLO 256 · La imagen del día sale de los mismos números que
   ok(a>=0 && b>a, "generarFlyerApp espera las letras antes de capturar");
   ok(/if\(!f\.ok\)\{[\s\S]{0,300}return;/.test(ga) && ga.indexOf("if(!f.ok)") >= 0 && ga.indexOf("if(!f.ok)") < b,
      "si la de la app no es mejor, NO se genera (antes de capturar)");
+  // ARREGLO 259: el de RIS App sale exacto al tamaño del estado (1080 × 1920),
+  // y el de RemesasYA sigue al doble porque se imprime.
+  ok(/_flyAlTamano\(canvas, W, H\)\.toDataURL/.test(ga) && /var W=1080, H=1920;/.test(ga),
+     "el flyer de RIS App sale exacto a 1080 × 1920, el tamaño del estado");
+  ok(/html2canvas\(card,\{backgroundColor:null,scale:2,width:W,height:H/.test(ga),
+     "pero se DIBUJA al doble: a escala 1 html2canvas pinta mal las sombras");
+  ok(/scale:2/.test(sinC(sacarFuncion("generarFlyer"))), "y el de RemesasYA sigue al doble: se imprime");
   ok(/^function generarFlyerApp\(dir\)/.test(sacarFuncion("generarFlyerApp")) && /x\.dir===dir/.test(ga),
      "una imagen por ruta (15/11: 'mejor rutas separadas')");
   const cpa = sinC(sacarFuncion("_htmlCamposFlyerApp"));
