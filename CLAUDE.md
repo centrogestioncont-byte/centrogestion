@@ -6957,3 +6957,38 @@ conversión desaparecía **sin aviso**.
 
 Medido con SheetJS 0.18.5 y un CSV con su forma: v335 se saltaba la del 05/11;
 v336 la encuentra y la casa con la suya. 7 negativas cazadas.
+
+---
+
+## La vuelta es una COMPRA, siempre (ARREGLO 254)
+
+Sus palabras del 15/11: *"cuando registro de bolívares a reales la tasa no es
+la correcta, se supone que estoy comprando los bolívares, no debería de
+arrojar ganancia"*.
+
+El ARREGLO 124 ya decía que una vuelta no gana, pero solo en calce, y el calce
+de la vuelta lo decidía el inventario (`_origenBsRemesa` sobre los lotes de
+reales). Con reales de la apertura, de una venta de USDT o sin lote, la vuelta
+quedaba en **P2P**, y P2P toma la compra de USDT con Bs **más vieja que aún
+tiene saldo**. En su RisApp del 15/11, RC-000029 y RC-000009 salieron con
+**960 y 5,20** y apuntaron $1,06 y $0,81.
+
+Y en Nueva era peor, reproducido con su export en v336: la línea decía
+*"Lo eligió la app: … calce"* mientras el botón seguía en P2P, porque el método
+solo se aplica al teclear y guardar no lo volvía a mirar. Guardaba P2P a 960 con
+**7,09** de ganancia.
+
+- **La regla vive en `esCalceDirecto()`**: vuelta BRL ↔ VES sin `_metodoTocado`
+  → calce. Por ahí pasan `cTx`, `saveTx`, la permuta, el lote que nace y el
+  importador de RisApp. Todas las llamadas son sobre el formulario, nunca sobre
+  una remesa guardada.
+- **P2P solo a mano**, decisión suya: es el caso raro en que de verdad compró
+  USDT con esos Bs y los vendió por reales. Con P2P pulsado, la línea dice de
+  qué compra sale la tasa y **de cuándo** (`_htmlMetodoVuelta`,
+  `_loteCompraVuelta`): un 960 de hace 63 días ya no pasa sin verse.
+- **Cambiar de ruta suelta la elección** (`setRutaTx`): un P2P pulsado en una
+  ida no puede seguir mandando en la vuelta.
+- **La ida no cambia**: medido, las mismas tasas y la misma ganancia que v336.
+
+**Lo que NO repara:** las vueltas ya guardadas con ganancia. Se borran (vuelven
+cuenta y lotes, el de 960 incluido) y se registran o importan otra vez.
