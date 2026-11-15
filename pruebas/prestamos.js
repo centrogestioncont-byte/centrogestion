@@ -15075,5 +15075,40 @@ console.log("\nARREGLO 253 · Conversiones con las dos patas en segundos distint
   ok(!/porHora/.test(sinComentarios(sacarFuncion("_binConverts"))) && /d>_BIN_CONV_SEG/.test(pc), "ya no se agrupa por hora exacta");
 }
 
+// ── ARREGLO 254 · La vuelta es una compra: ganancia 0 salvo P2P a mano ──────
+console.log("\nARREGLO 254 · Una vuelta Bs → R$ no apunta ganancia si ella no pulsa P2P");
+{
+  const src=["esRutaCalce","esCalceDirecto","cTx"].map(sacarFuncion).join("\n");
+  const RUTAS=[{rt:"BRL ↔ VZLA",orig:"BRL",dest:"VES"},{rt:"VZLA ↔ BRL",orig:"VES",dest:"BRL"},{rt:"BRL ↔ COL",orig:"BRL",dest:"COP"}];
+  // Las tasas viejas de su RisApp del 15/11: compra de USDT con Bs a 960 y reales a 5,20.
+  const mk=new Function("S","getRutas","getAutoRates","COM","COMVES","r4", src+"\nreturn {cTx:cTx, esCalceDirecto:esCalceDirecto};");
+  const r4=(x)=>Math.round(x*10000)/10000;
+  const S={tx:{}};
+  const G=mk(S,()=>RUTAS,()=>({tc:960,tv:5.2}),()=>0.06,()=>0,r4);
+  const vuelta=(extra)=>Object.assign({rt:"VZLA ↔ BRL",am:"42000",tdia:"210",cuentaBanco:"",cuentaDest:""},extra||{});
+  S.tx=vuelta({metodo:"p2p"});
+  let r=G.cTx();
+  ok(r.calce===true && r.pr===0, "vuelta importada como p2p sin tocar: sale calce y ganancia 0", JSON.stringify({calce:r.calce,pr:r.pr}));
+  ok(Math.abs(r.uc-r.uv)<1e-9 && Math.abs(r.uv-200/5.2)<1e-3, "el lote de Bs nace al costo de los reales que salieron (uc = uv)", r.uc+" / "+r.uv);
+  S.tx=vuelta({});
+  ok(G.cTx().pr===0, "vuelta sin método escrito (Nueva recién abierta): ganancia 0");
+  S.tx=vuelta({metodo:"p2p",_metodoTocado:true});
+  r=G.cTx();
+  ok(r.calce===false && r.pr>0, "si ella pulsa P2P, P2P manda y apunta ganancia", JSON.stringify({calce:r.calce,pr:r.pr}));
+  S.tx=vuelta({metodo:"calce",_metodoTocado:true});
+  ok(G.cTx().pr===0, "si ella pulsa calce, sigue en 0");
+  S.tx={rt:"BRL ↔ VZLA",am:"200",tdia:"190",metodo:"p2p"};
+  r=G.cTx();
+  ok(r.calce===false, "la IDA sigue decidiéndose por los lotes: sin tocar no se vuelve calce");
+  ok(G.esCalceDirecto({metodo:"p2p"},RUTAS[2])===false && G.esCalceDirecto({metodo:"calce"},RUTAS[2])===false,
+     "una ruta que no es BRL ↔ VES no es calce nunca");
+  ok(/S\.tx\._metodoTocado=false/.test(sacarFuncion("setRutaTx")), "cambiar de ruta suelta la elección del método");
+  ok(/ruta\.orig==="VES"\)\s*return;/.test(sinComentarios(sacarFuncion("_autoMetodoTx"))), "_autoMetodoTx no decide nada en la vuelta");
+  const mv=sinComentarios(sacarFuncion("_htmlMetodoVuelta"));
+  ok(/_loteCompraVuelta\(/.test(mv) && /hace <b>/.test(mv) && /met-eleg-tx/.test(mv),
+     "con P2P pulsado en una vuelta, la línea dice de qué compra y de cuándo sale la tasa");
+  ok(/ruta\.orig==="VES"\) return _htmlMetodoVuelta\(/.test(sinComentarios(sacarFuncion("_htmlMetodoElegido"))), "la línea del método de la vuelta sale de _htmlMetodoVuelta");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);

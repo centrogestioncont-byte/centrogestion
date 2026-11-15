@@ -3217,7 +3217,30 @@ function esRutaCalce(ruta){
   return (o==="BRL"&&d==="VES") || (o==="VES"&&d==="BRL");
 }
 function esCalceDirecto(f, ruta){
-  return !!(f && f.metodo==="calce" && esRutaCalce(ruta));
+  if(!f || !esRutaCalce(ruta)) return false;
+  if(f.metodo==="calce") return true;
+  // ARREGLO 254 · en la VUELTA no se gana: se COMPRA, y eso ya no lo decide
+  // el inventario. Sus palabras del 15/11: "cuando registro de bolívares a
+  // reales la tasa no es la correcta, se supone que estoy comprando los
+  // bolívares, no debería de arrojar ganancia".
+  //
+  // Hasta aquí una vuelta solo era calce si los reales que entrega salían de
+  // lotes que dejó una ida (_origenBsRemesa sobre los lotes de BRL). Con reales
+  // de la apertura, de una venta de USDT o sin lote, quedaba en P2P, y P2P toma
+  // la compra de USDT con Bs más VIEJA que aún tiene saldo: en su RisApp del
+  // 15/11 salieron RC-000029 y RC-000009 con 960 y 5,20 y apuntaron $1,06 y
+  // $0,81 de una compra de bolívares. Es el ARREGLO 124 aplicado a TODAS las
+  // vueltas: ganancia 0 y el lote de Bs nace al costo de los reales.
+  //
+  // P2P sigue existiendo, pero SOLO si ella lo pulsa (_metodoTocado): es el
+  // caso raro en que de verdad compró USDT con esos Bs y los vendió por reales
+  // (2 en octubre). Decisión suya, del 15/11: "déjalo solo a mano".
+  //
+  // Va AQUÍ y no en el formulario: por esta puerta pasan cTx, saveTx, la
+  // permuta, el lote que nace y el importador de RisApp. Todas las llamadas
+  // son sobre el formulario (S.tx), nunca sobre una remesa guardada.
+  if(ruta.orig==="VES" && !f._metodoTocado) return true;
+  return false;
 }
 // ── ARREGLO 167 · lo que ENTRA, ¿se convierte o se queda? ───────────────────
 //
@@ -3312,6 +3335,9 @@ function _autoMetodoTx(){
   if(!S.tx || S.tx._metodoTocado) return;
   var ruta=getRutas().find(function(r){return r.rt===S.tx.rt;})||getRutas()[0];
   if(!ruta || !esRutaCalce(ruta)) return;
+  // ARREGLO 254: en la vuelta no hay nada que decidir — es calce mientras ella
+  // no pulse P2P, y eso lo dice esCalceDirecto().
+  if(ruta.orig==="VES") return;
   var res; try{ res=cTx(); }catch(e){ return; }
   var cant=parseFloat(res&&res.cant)||0;
   if(!(cant>0)) return;
@@ -3717,7 +3743,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261114_v336";
+var APP_VERSION = "20261115_v337";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -24333,7 +24359,7 @@ function sscl(v){
   },300);
 }
 function autoFill(val,key){var p=val.split("|");S[key].id=p[0]||"";S[key].cl=p[1]||"";var el=document.getElementById(key+"-nm");if(el&&S[key].cl)el.value=S[key].cl;}
-function setRutaTx(rt){S.tx.rt=rt;S.tx._tcLock=null;S.tx._tvLock=null;S.tx._amLock=null;S.tx._tdiaLock=null;S.tx._rtLock=null;var r=getRutas().find(function(x){return x.rt===rt;})||getRutas()[0];S.tx.pais=r.pais;R();}
+function setRutaTx(rt){S.tx.rt=rt;S.tx._metodoTocado=false;S.tx.metodo="";S.tx.permuta="";S.tx._tcLock=null;S.tx._tvLock=null;S.tx._amLock=null;S.tx._tdiaLock=null;S.tx._rtLock=null;var r=getRutas().find(function(x){return x.rt===rt;})||getRutas()[0];S.tx.pais=r.pais;R();}
 function buscarClienteTx(val){
   S.tx.id=val;
   var lista=document.getElementById("tx-lista"),nm=document.getElementById("tx-nm");
@@ -24558,6 +24584,8 @@ function _htmlMetodoElegido(res, ruta){
   // abrir, upC() no tendría dónde escribirlo al teclear el primer monto.
   var vacio="<div id='met-eleg-tx'></div>";
   if(!res || !ruta || !esRutaCalce(ruta)) return vacio;
+  // ARREGLO 254: la vuelta tiene su propia línea, sin mirar lotes.
+  if(ruta.orig==="VES") return _htmlMetodoVuelta(res, ruta);
   var cant=parseFloat(res.cant)||0;
   if(!(cant>0)) return vacio;
   var org=_origenBsRemesa(ruta.dest||"VES", cant, S.tx && S.tx.cuentaDest);
@@ -24578,6 +24606,41 @@ function _htmlMetodoElegido(res, ruta){
         : "la mayor parte de esos "+uni+" sale de ventas de USDT, que sí pagan comisión");
   return "<div id='met-eleg-tx' style='font-size:11px;color:var(--tx3);margin:-4px 0 10px;line-height:1.5'>"+
     "✅ <b>Lo eligió la app</b>: "+pq+". <span style='color:var(--tx4)'>Cámbialo si sabes que fue otra cosa.</span></div>";
+}
+// ARREGLO 254 · la línea del método en la VUELTA.
+//
+// Sin pulsar nada: dice que es una compra y que la ganancia sale en la ida. Con
+// P2P pulsado: dice de QUÉ compra de USDT con Bs sale la tasa y de cuándo es.
+// Es lo que no se veía: la tasa de P2P sale del lote más viejo con saldo, y
+// con sus datos era un 960 de hace semanas. Los reales tienen su fila con
+// fecha en "de dónde salen", así que aquí va solo el lado de los bolívares.
+function _loteCompraVuelta(f){
+  normalizarInventarioFIFO();
+  // Las mismas reglas que getTasaCompraPonderada: compras en VES, de la cuenta
+  // de entrada si las hay, si no el pool; la primera con saldo en orden FIFO.
+  var todos=(S.inventarioUsdt||[]).filter(function(r){return r.tipo==="compra"&&r.moneda==="VES"&&(parseFloat(r.tasa)||0)>0;}).sort(ordenFIFO);
+  var lotes=(f&&f.cuentaBanco)?todos.filter(function(r){return r.cuentaOrigenId===f.cuentaBanco;}):todos;
+  if(!lotes.length) lotes=todos;
+  for(var i=0;i<lotes.length;i++) if((parseFloat(lotes[i].restante)||0)>0.0001) return lotes[i];
+  return null;
+}
+function _htmlMetodoVuelta(res, ruta){
+  var est="font-size:11px;margin:-4px 0 10px;line-height:1.5";
+  if(res && res.calce)
+    return "<div id='met-eleg-tx' style='"+est+";color:var(--tx3)'>"+
+      "🤝 <b>Es una compra de bolívares</b>: ganancia 0. La ganancia se apunta en la ida, cuando sueltes estos Bs. "+
+      "<span style='color:var(--tx4)'>Pulsa P2P solo si de verdad compraste USDT con estos Bs y los vendiste por reales.</span></div>";
+  var l=_loteCompraVuelta(S.tx);
+  var de;
+  if(l){
+    var iso=_isoDeLote(l), dias=null;
+    if(iso){ dias=Math.round((new Date(_hoyIsoLocal()+"T12:00:00")-new Date(iso+"T12:00:00"))/86400000); }
+    de="La tasa de compra (<b>"+f2(_tasaEfectivaLote(l))+" Bs/USDT</b>) sale de tu compra de USDT con Bs del <b>"+_escAud(l.fecha||"")+"</b>"+
+       (dias!==null&&dias>=1?" — hace <b>"+dias+" día"+(dias===1?"":"s")+"</b>":"")+".";
+  } else
+    de="No hay ninguna compra de USDT con Bs con saldo: la tasa de compra es prestada.";
+  return "<div id='met-eleg-tx' style='"+est+";color:var(--avi-tx);font-weight:600'>"+
+    "⚠️ <b>P2P en una vuelta: apunta ganancia.</b> "+de+" Vuelve a 🤝 Calce si no hiciste ese P2P.</div>";
 }
 function _htmlDeDondeSalen(res, ruta){
   if(!res || !ruta) return "";
