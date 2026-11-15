@@ -15179,7 +15179,7 @@ console.log("\nARREGLO 256 · La imagen del día sale de los mismos números que
 // es mejor, no se genera: un flyer que lo dice tiene que ser verdad.
 {
   const sinC = (x) => x.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
-  const piezas = ["generarFlyerApp","_htmlRutaFlyerApp","_flyAppFondoSVG"];
+  const piezas = ["generarFlyerApp","_htmlRutaFlyerApp","_flyAppFondoSVG","_flyFlecha"];
   const fuera = [], noDecl = [], prohib = [];
   piezas.forEach(function(f){
     const c = sinC(sacarFuncion(f));
@@ -15200,9 +15200,19 @@ console.log("\nARREGLO 256 · La imagen del día sale de los mismos números que
   ok(fuera.length===0, "el flyer RIS App solo usa sus propios colores (--fly-*)", fuera.join(", "));
   ok(noDecl.length===0, "y todos estan declarados en :root (un SVG con uno sin declarar sale en NEGRO)", noDecl.join(", "));
   ok(prohib.length===0, "nada que html2canvas no dibuje", prohib.join(", "));
-  ok(/@font-face\{font-family:'FlySerif';src:url\(data:font\/woff2;base64,[A-Za-z0-9+\/=]{8000,}\)/.test(HTML),
-     "la letra con serifa va incrustada");
-  ok(/document\.fonts\.load\("64px FlySerif"\)/.test(sacarFuncion("_flyListo")), "y se espera antes de capturar");
+  // ARREGLO 258: TODA la letra es Poppins incrustada, en los cuatro pesos que usa.
+  [400,600,700,800].forEach(function(w){
+    ok(new RegExp("@font-face\\{font-family:'FlyApp';src:url\\(data:font\\/woff2;base64,[A-Za-z0-9+\\/=]{4000,}\\) format\\('woff2'\\);font-weight:"+w+";").test(HTML),
+       "Poppins "+w+" va incrustada");
+  });
+  ok(/\[400,600,700,800\]\.forEach\(function\(w\)\{\s*esperas\.push\(document\.fonts\.load\(w\+" 64px FlyApp"\)/.test(sacarFuncion("_flyListo")),
+     "y se esperan los cuatro pesos antes de capturar");
+  ok(!/FlySerif|_FLY_SERIF/.test(HTML), "la serifa de antes no queda colgando");
+  const ff = sinC(sacarFuncion("_htmlRutaFlyerApp")) + sinC(sacarFuncion("generarFlyerApp"));
+  ok(!/_FLY_CUERPO/.test(ff) && (ff.match(/_FLY_APP/g)||[]).length >= 8,
+     "ningun texto del flyer RIS App usa la letra del aparato: en Android salia otra");
+  ok(/_flyFlecha\(64\)/.test(ff) && /_flyColor\("--fly-app-tinta"\)/.test(sacarFuncion("_flyFlecha")),
+     "la flecha de la ruta va dibujada, con su color ya resuelto");
   const ga = sinC(sacarFuncion("generarFlyerApp"));
   const a = ga.indexOf("_flyListo(card)"), b = ga.indexOf("html2canvas(card");
   ok(a>=0 && b>a, "generarFlyerApp espera las letras antes de capturar");
