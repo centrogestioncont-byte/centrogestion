@@ -15173,5 +15173,85 @@ console.log("\nARREGLO 256 · La imagen del día sale de los mismos números que
   ok((im.match(/fin\(\)/g)||[]).length>=2, "el contenedor y el botón se reponen salga bien o falle");
 }
 
+// ── ARREGLO 257 · flyer RIS App vs WhatsApp ───────────────────────────────
+// La de WhatsApp sale de la publicada; la de la app la escribe ella y se
+// guarda; "mejor" es al reves en cada ruta (ARREGLO 74); y si la de la app no
+// es mejor, no se genera: un flyer que lo dice tiene que ser verdad.
+{
+  const sinC = (x) => x.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const piezas = ["generarFlyerApp","_htmlRutaFlyerApp","_flyAppFondoSVG"];
+  const fuera = [], noDecl = [], prohib = [];
+  piezas.forEach(function(f){
+    const c = sinC(sacarFuncion(f));
+    (c.match(/var\(--[\w-]+\)/g)||[]).forEach(function(v){
+      if (!/^var\(--fly-/.test(v)) fuera.push(f+" "+v);
+      const n = v.slice(4,-1);
+      if (!new RegExp(n+":\\s*#").test(HTML)) noDecl.push(n);
+    });
+    // cualquier "--fly-..." escrito como texto: el fondo los lee con un atajo
+    // c("--..."), y un _flyColor exacto dejaba pasar uno sin declarar.
+    (c.match(/"--fly-[\w-]+"/g)||[]).forEach(function(x){
+      const n = x.slice(1,-1); if (!new RegExp(n+":\\s*#").test(HTML)) noDecl.push(n);
+    });
+    ["repeating-linear-gradient","conic-gradient","clip-path","-webkit-text-stroke","filter:"].forEach(function(x){
+      if (c.indexOf(x)>=0) prohib.push(f+" "+x);
+    });
+  });
+  ok(fuera.length===0, "el flyer RIS App solo usa sus propios colores (--fly-*)", fuera.join(", "));
+  ok(noDecl.length===0, "y todos estan declarados en :root (un SVG con uno sin declarar sale en NEGRO)", noDecl.join(", "));
+  ok(prohib.length===0, "nada que html2canvas no dibuje", prohib.join(", "));
+  ok(/@font-face\{font-family:'FlySerif';src:url\(data:font\/woff2;base64,[A-Za-z0-9+\/=]{8000,}\)/.test(HTML),
+     "la letra con serifa va incrustada");
+  ok(/document\.fonts\.load\("64px FlySerif"\)/.test(sacarFuncion("_flyListo")), "y se espera antes de capturar");
+  const ga = sinC(sacarFuncion("generarFlyerApp"));
+  const a = ga.indexOf("_flyListo(card)"), b = ga.indexOf("html2canvas(card");
+  ok(a>=0 && b>a, "generarFlyerApp espera las letras antes de capturar");
+  ok(/if\(!f\.ok\)\{[\s\S]{0,300}return;/.test(ga) && ga.indexOf("if(!f.ok)") >= 0 && ga.indexOf("if(!f.ok)") < b,
+     "si la de la app no es mejor, NO se genera (antes de capturar)");
+  ok(/^function generarFlyerApp\(dir\)/.test(sacarFuncion("generarFlyerApp")) && /x\.dir===dir/.test(ga),
+     "una imagen por ruta (15/11: 'mejor rutas separadas')");
+  const cpa = sinC(sacarFuncion("_htmlCamposFlyerApp"));
+  ok(/generarFlyerApp\(\\"ida\\"\)/.test(cpa) && /generarFlyerApp\(\\"vuelta\\"\)/.test(cpa),
+     "y un boton para cada ruta");
+  ok(/_temporadaFlyer\(\)/.test(ga) && /_flyAppFondoSVG\(tm,/.test(ga), "sigue la temporada elegida");
+  ok(/_misTasasPublicadas\(\)/.test(sinC(sacarFuncion("_filasFlyerApp"))),
+     "la de WhatsApp es la PUBLICADA, no un numero aparte");
+  // "mejor" al reves en cada ruta, y la frase con el
+  const ra = new Function("return " + sacarFuncion("_rutaApp"))();
+  ok(ra("ida").mejor(191,186) && !ra("ida").mejor(180,186), "ida: mejor = MAS bolivares por real");
+  ok(ra("vuelta").mejor(190,195) && !ra("vuelta").mejor(196,195), "vuelta: mejor = MENOS bolivares por real");
+  ok(/más/.test(ra("ida").frase("5")) && /Recibes/.test(ra("ida").frase("5")) && /menos/.test(ra("vuelta").frase("5")) && /Pagas/.test(ra("vuelta").frase("5")),
+     "ida dice 'recibes mas', vuelta dice 'pagas menos'");
+  ok(/Recibe más/.test(ra("ida").titulo) && /Paga menos/.test(ra("vuelta").titulo),
+     "y el titulo tambien: 'Recibe más' en la ida, 'Paga menos' en la vuelta");
+  ok(!/reais/.test(ra("ida").frase("5")+ra("vuelta").frase("5")), "'por cada real', no 'por cada reais'");
+  // Funcional: las filas, con sus tasas
+  {
+    const Sx = {config:{tasasDia:{tdia_brl:"186", tdia_ves_brl:"195"}, tasasApp:{ida:191, vuelta:196}}};
+    const fn = new Function("S","_tasaCorta",
+      sacarFuncion("_misTasasPublicadas")+sacarFuncion("_rutaApp")+sacarFuncion("_tasaApp")+sacarFuncion("_filasFlyerApp")+"return _filasFlyerApp();");
+    const fs = fn(Sx, (n)=>String(n));
+    ok(fs[0].ok && fs[0].dif===5 && fs[0].wa===186 && fs[0].app===191, "ida 186 → 191: sale, con 5 de diferencia", JSON.stringify(fs[0]));
+    ok(!fs[1].ok && /no es mejor/.test(fs[1].motivo), "vuelta 195 → 196: NO sale, y dice por que", fs[1].motivo);
+    Sx.config.tasasApp = {};
+    const fs2 = fn(Sx, (n)=>String(n));
+    ok(!fs2[0].ok && !fs2[1].ok && /no escribiste/.test(fs2[0].motivo), "sin tasa de la app no sale esa ruta");
+  }
+  // La tasa de la app se guarda en S.config y escribirla no repinta
+  const st = sinC(sacarFuncion("_setTasaApp"));
+  ok(/S\.config\.tasasApp\[dir\]=n/.test(st) && /_leerNumero\(val\)/.test(st) && !/\bR\(\)/.test(st) && !/saveData/.test(st),
+     "teclear la tasa de la app: la lee con coma, no repinta (ARREGLO 32) y no guarda en cada tecla");
+  ok(/saveData\(\)/.test(sinC(sacarFuncion("_guardarTasaApp"))), "al salir del campo se guarda y se sincroniza");
+  const cp = sinC(sacarFuncion("_htmlCamposFlyerApp"));
+  ok(/oninput='_setTasaApp\(/.test(cp) && /onchange='_guardarTasaApp\(\)'/.test(cp) && /onfocus='this\.select\(\)'/.test(cp) && !/type='number'/.test(cp),
+     "los campos: texto con coma, se seleccionan al tocar (ARREGLO 153), guardan al salir");
+  ok(/_htmlCamposFlyerApp\(\)/.test(sinC(sacarFuncion("_htmlFilasTasas"))), "y estan en la fila del flyer, en Tasas");
+  ok((HTML.match(/^var _LOGO_R="data:image\/webp/mg)||[]).length===1 && !/var _LOGO_R=/.test(sacarFuncion("generarMiniFlyer")),
+     "el icono R se declara UNA vez, fuera del mini flyer");
+  // Lo pendiente del 07/11: las rutas del flyer normal, mas grandes
+  ok(/font-family:"\+_FLY_LETRA\+";font-size:42px;[^']*color:var\(--fly-tinta\)'>"\+ruta\+"/.test(sacarFuncion("generarFlyer")),
+     "la ruta del flyer normal sale grande, con la letra del titular");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
