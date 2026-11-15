@@ -15206,8 +15206,13 @@ console.log("\nARREGLO 256 · La imagen del día sale de los mismos números que
   const ga = sinC(sacarFuncion("generarFlyerApp"));
   const a = ga.indexOf("_flyListo(card)"), b = ga.indexOf("html2canvas(card");
   ok(a>=0 && b>a, "generarFlyerApp espera las letras antes de capturar");
-  ok(/if\(malas\.length\)\{[\s\S]{0,400}return;/.test(ga) && ga.indexOf("if(malas.length)") < b,
+  ok(/if\(!f\.ok\)\{[\s\S]{0,300}return;/.test(ga) && ga.indexOf("if(!f.ok)") >= 0 && ga.indexOf("if(!f.ok)") < b,
      "si la de la app no es mejor, NO se genera (antes de capturar)");
+  ok(/^function generarFlyerApp\(dir\)/.test(sacarFuncion("generarFlyerApp")) && /x\.dir===dir/.test(ga),
+     "una imagen por ruta (15/11: 'mejor rutas separadas')");
+  const cpa = sinC(sacarFuncion("_htmlCamposFlyerApp"));
+  ok(/generarFlyerApp\(\\"ida\\"\)/.test(cpa) && /generarFlyerApp\(\\"vuelta\\"\)/.test(cpa),
+     "y un boton para cada ruta");
   ok(/_temporadaFlyer\(\)/.test(ga) && /_flyAppFondoSVG\(tm,/.test(ga), "sigue la temporada elegida");
   ok(/_misTasasPublicadas\(\)/.test(sinC(sacarFuncion("_filasFlyerApp"))),
      "la de WhatsApp es la PUBLICADA, no un numero aparte");
@@ -15217,6 +15222,8 @@ console.log("\nARREGLO 256 · La imagen del día sale de los mismos números que
   ok(ra("vuelta").mejor(190,195) && !ra("vuelta").mejor(196,195), "vuelta: mejor = MENOS bolivares por real");
   ok(/más/.test(ra("ida").frase("5")) && /Recibes/.test(ra("ida").frase("5")) && /menos/.test(ra("vuelta").frase("5")) && /Pagas/.test(ra("vuelta").frase("5")),
      "ida dice 'recibes mas', vuelta dice 'pagas menos'");
+  ok(/Recibe más/.test(ra("ida").titulo) && /Paga menos/.test(ra("vuelta").titulo),
+     "y el titulo tambien: 'Recibe más' en la ida, 'Paga menos' en la vuelta");
   ok(!/reais/.test(ra("ida").frase("5")+ra("vuelta").frase("5")), "'por cada real', no 'por cada reais'");
   // Funcional: las filas, con sus tasas
   {
