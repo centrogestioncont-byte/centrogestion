@@ -15110,5 +15110,68 @@ console.log("\nARREGLO 254 · Una vuelta Bs → R$ no apunta ganancia si ella no
   ok(/ruta\.orig==="VES"\) return _htmlMetodoVuelta\(/.test(sinComentarios(sacarFuncion("_htmlMetodoElegido"))), "la línea del método de la vuelta sale de _htmlMetodoVuelta");
 }
 
+// ── ARREGLO 255 · A una tarjeta el lote no viaja ─────────────────────────
+console.log("\nARREGLO 255 · Pagar la factura gasta el lote; no lo pasa a la tarjeta");
+{
+  const mv=sinComentarios(sacarFuncion("_moverLotesTraspaso"));
+  const iTj=mv.indexOf("if(cD.esTarjeta) return;"), iPush=mv.indexOf("S.inventarioUsdt.push(");
+  const iCons=mv.indexOf("consumirLotesMon(");
+  ok(iTj>0 && iPush>iTj && iCons>=0 && iCons<iTj && mv.slice(0,iCons).indexOf("esTarjeta")<0,
+     "el traspaso consume en la cuenta que paga y, si el destino es tarjeta, no crea lote");
+  const src=["_lotesEnTarjetas","_ultimaLimpiezaTj","quitarLotesTarjetas","deshacerLotesTarjetas"].map(sacarFuncion).join("\n");
+  const S={cuentas:[{id:"pag",nombre:"PAGBANK",moneda:"BRL",saldo:500},{id:"tj",nombre:"TARJETA",moneda:"BRL",saldo:-300,esTarjeta:true}],
+           inventarioUsdt:[], inventarioUsdt_cerrado:[]};
+  const L=(id,cta,r)=>({id:id,tipo:"venta",moneda:"BRL",bs:r,bsRestante:r,cuentaDestinoId:cta});
+  S.inventarioUsdt=[L(1,"tj",40),L(2,"tj",90),L(3,"tj",106.05),L(4,"pag",500),{id:5,tipo:"compra",moneda:"BRL",restante:10,bsRestante:10,cuentaDestinoId:"tj"}];
+  const sald=JSON.stringify(S.cuentas);
+  let rev=0;
+  const G=new Function("S","permisoEdicion","alert","confirm","_quienSoy","logAudit","saveData","R","f2","_revivirLote",
+    src+"\nreturn {_lotesEnTarjetas,quitarLotesTarjetas,deshacerLotesTarjetas,_ultimaLimpiezaTj};")(
+    S,()=>true,()=>{},()=>true,()=>"yo",()=>{},()=>{},()=>{},(x)=>String(x),()=>{rev++;});
+  const d=G._lotesEnTarjetas();
+  ok(d.n===3 && d.filas.length===1 && Math.abs(d.filas[0].total-236.05)<1e-9, "ve los 3 lotes de la tarjeta (236,05) y ninguno más", JSON.stringify(d.filas.map(f=>[f.cuenta,f.total])));
+  G.quitarLotesTarjetas();
+  const r=(id)=>S.inventarioUsdt.find(l=>l.id===id).bsRestante;
+  ok(r(1)===0 && r(2)===0 && r(3)===0, "quitar deja en 0 los lotes de la tarjeta");
+  ok(r(4)===500, "los lotes de una cuenta normal no se tocan");
+  ok(JSON.stringify(S.cuentas)===sald, "no mueve el saldo de ninguna cuenta");
+  // Uno archivado al quedar en 0: deshacer lo revive.
+  const arch=S.inventarioUsdt.splice(0,1)[0]; arch._cerrado=true; S.inventarioUsdt_cerrado.push(arch);
+  G.deshacerLotesTarjetas();
+  ok(arch.bsRestante===40 && r(2)===90 && r(3)===106.05 && rev===1, "deshacer devuelve lo de antes y revive el archivado");
+  ok(!arch._ajTj && G._ultimaLimpiezaTj()===null, "y no deja marca para deshacer otra vez");
+  const ri=sinComentarios(sacarFuncion("rInventarioUsdt"));
+  ok(/_lotesEnTarjetas\(\)\.n\|\|_ultimaLimpiezaTj\(\)/.test(ri) && /_htmlLotesTj\(\)/.test(ri), "Inventario dibuja el botón solo cuando hay algo que hacer o deshacer");
+  ok(!/\bR\(\)/.test(sinComentarios(sacarFuncion("_verLotesTj"))), "plegar el panel no llama a R()");
+}
+
+// ── ARREGLO 256 · El día en una imagen ───────────────────────────────────
+console.log("\nARREGLO 256 · La imagen del día sale de los mismos números que la tarjeta");
+{
+  const rd=sinComentarios(sacarFuncion("rDiario"));
+  ok(/var _dd=_datosDia\(dia\);/.test(rd) && !/allBrl\.filter\(function\(r\)\{return r\.d===dia;\}\)/.test(rd),
+     "la tarjeta del Diario saca sus números de _datosDia, no de una cuenta propia");
+  ok(/imagenDelDia\(/.test(rd), "cada día del Diario lleva su botón 📸 Imagen");
+  const src=["_datosDia","_htmlImagenDia"].map(sacarFuncion).join("\n");
+  const esc=(t)=>String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+  const f2=(v)=>(Math.round(v*100)/100).toFixed(2).replace(".",","), f0=(v)=>String(Math.round(v));
+  const S={brl:[{d:"03/11/26",cl:"ANA <b>X</b>",rt:"BRL ↔ VZLA",orig:"BRL",dest:"VES",am:100,cant:17000,pr:2.5}],
+           vzla:[{d:"03/11/26",cl:"LUIS",rt:"VZLA ↔ BRL",orig:"VES",dest:"BRL",am:21000,cant:100,pr:-0.00001}],
+           eeuu:[], gananciaExtra:[{d:"03/11/26",desc:"P2P",usdt:1.5}]};
+  const G=new Function("S","f2","f0","_escAud","APP_VERSION", src+"\nvar _IMG_DIA_ANCHO=600; var _IMG_DIA_COL={fondo:'#000',tarjeta:'#111',linea:'#222',tx:'#fff',tx2:'#eee',tx3:'#ddd',ok:'#0f0',okSup:'#030',mal:'#f00',malSup:'#300',info:'#00f',infoSup:'#003',avi:'#ff0',aviSup:'#330'};\nreturn {_datosDia,_htmlImagenDia};")(S,f2,f0,esc,"20261115_v338");
+  const d=G._datosDia("03/11/26");
+  ok(Math.abs(d.ganDia-(2.5-0.00001+1.5))<1e-9 && d.allD.length===2, "el día suma remesas y ganancias extra", d.ganDia);
+  const h=G._htmlImagenDia("03/11/26");
+  ok(h.indexOf("ANA &lt;b&gt;X&lt;/b&gt;")>-1 && h.indexOf("ANA <b>")<0, "el nombre del cliente va escapado");
+  ok(h.indexOf("+$-")<0 && h.indexOf(">$0,00<")>-1, "una ganancia que redondea a 0 se escribe $0,00, no +$-0,00");
+  ok(h.indexOf("20261115_v338")>-1, "la versión va dentro de la imagen");
+  ok(!/var\(--/.test(h) && !/<table|<td|<th/.test(h), "colores propios (sin var(--) y sin <table> que herede los td/th globales");
+  ok(/width:600px/.test(h), "ancho fijo, lo genere quien lo genere");
+  const im=sinComentarios(sacarFuncion("imagenDelDia"));
+  ok(/windowWidth:W/.test(im) && /12000000/.test(im), "html2canvas recibe el ancho del marco y la escala se mide contra el presupuesto");
+  ok(!/navigator\.share/.test(im), "se descarga, no se comparte (Android rechaza share tras una espera)");
+  ok((im.match(/fin\(\)/g)||[]).length>=2, "el contenedor y el botón se reponen salga bien o falle");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
