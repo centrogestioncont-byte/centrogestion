@@ -6992,3 +6992,59 @@ solo se aplica al teclear y guardar no lo volvía a mirar. Guardaba P2P a 960 co
 
 **Lo que NO repara:** las vueltas ya guardadas con ganancia. Se borran (vuelven
 cuenta y lotes, el de 960 incluido) y se registran o importan otra vez.
+
+---
+
+## A una tarjeta el lote no viaja (ARREGLO 255)
+
+Sus palabras del 15/11, mirando Inventario: *"esto de traspaso ¿altera mucho al
+FIFO?"*. En general no: desde el ARREGLO 231 el lote **se mueve** con el dinero,
+no nace. Pero TARJETA PAGBANK tenía tres lotes de traspaso (40, 90 y 106 R$), y
+una tarjeta no guarda dinero: su saldo es lo que debe (ARREGLO 95). Pagar la
+factura es **gastar** esos reales en compras que ya se hicieron. Dejados ahí, un
+Pix pagado con la tarjeta los gastaría como reales suyos y tomaría su tasa.
+
+- **`_moverLotesTraspaso` consume en la cuenta que paga y, si el destino es
+  tarjeta, no crea lote.** Lo consumido sigue en `tr._lotesConsumidos`, así que
+  borrar el traspaso lo devuelve al origen igual que cualquier otro.
+- **Los que ya estaban se quitan una vez y con su OK** (💳 Lotes en tarjetas, en
+  Inventario): vista previa, lo de antes guardado DENTRO del lote (`_ajTj`, sin
+  lista nueva que sincronizar) y deshacer por su hora, reviviendo el archivado
+  (ARREGLO 137). Es la forma del ARREGLO 164, que solo mira bolívares.
+- **No mueve el saldo de ninguna cuenta.**
+
+Medido con su export: pagar la factura baja los lotes de PagBank y la tarjeta se
+queda en 0; un traspaso a EFECTIVO EMPRESA sigue moviendo el lote; borrar los dos
+deja todo exacto. 21 pestañas, 0 errores, 8 pruebas negativas y las 8 cazadas.
+
+---
+
+## El día en una imagen, para Julio (ARREGLO 256)
+
+Sus palabras del 15/11: *"quiero también poder descargar una sola imagen con lo
+que se hizo del día así como sale en la app para que mi esposo vea lo de hoy sin
+necesidad de entrar a mi app"*. Con los nombres de los clientes, decisión suya:
+Julio es dueño y ya ve todo en el Informe Mensual (ARREGLO 87).
+
+Cada día del Diario lleva **📸 Imagen**, que descarga un PNG con la fecha, las
+operaciones, la ganancia, los flujos de capital, la tabla y las ganancias extra.
+
+- **Los números salen de `_datosDia()`**, y la tarjeta del Diario lee de ahí
+  también. Calculados aparte, la imagen y la pantalla podrían decir dos
+  ganancias distintas del mismo día.
+- **Colores y ancho propios** (`_IMG_DIA_COL`, `_IMG_DIA_ANCHO` = 600): lo que
+  sale hacia fuera no depende del tema ni de la pantalla del aparato (ARREGLOS
+  83-85). En el teléfono la columna del cliente queda fuera de la tabla; en la
+  imagen sale entera.
+- **Divs, no `<table>`**: las reglas globales de `td`/`th` llevan `!important` y
+  html2canvas dibuja un clon que las hereda (la trampa del ARREGLO 85).
+- **html2canvas recibe los cuatro números** y la escala se mide contra un
+  presupuesto de 12 M de píxeles (ARREGLO 84).
+- **Se descarga, no se comparte**: Android rechaza `navigator.share` cuando la
+  imagen tarda en dibujarse (ARREGLO 84). Ella la manda por WhatsApp.
+- **La versión y la hora van dentro de la imagen.**
+- **El signo va una vez**: una vuelta con `pr` −0,00001 se escribía `+$-0,00`.
+
+Medido con html2canvas 1.4.1 (la del CDN) y su export, a 412 y 1280 px: el mismo
+PNG de 1.200 × 1.220 px en los dos, y un día de 44 operaciones a 1.200 × 4.064.
+21 pestañas, 0 errores, 7 pruebas negativas y las 7 cazadas.
