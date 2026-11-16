@@ -15284,5 +15284,33 @@ console.log("\nARREGLO 256 · La imagen del día sale de los mismos números que
      "la ruta del flyer normal sale grande, con la letra del titular");
 }
 
+// ── ARREGLO 261 · Con todas las compras gastadas, la remesa seguía sin tasa ──
+console.log("\nARREGLO 261 · Tasa de compra con todo archivado, y nada sin tasa se guarda");
+{
+  const GL = new Function("S", "normalizarInventarioFIFO", "ordenFIFO", "_tasaEfectivaLote",
+    sacarFuncion("getLastTasaCompra") + "; return getLastTasaCompra;");
+  const ord = function(a,b){ return (a.id||0)-(b.id||0); };
+  const efe = function(l){ return parseFloat(l.tasa)||0; };
+  const c1 = {id:1, tipo:"compra", moneda:"BRL", tasa:5.10, restante:0, cuentaOrigenId:"cNU"};
+  const c2 = {id:2, tipo:"compra", moneda:"BRL", tasa:5.26, restante:0, cuentaOrigenId:"cNU"};
+  const g1 = GL({inventarioUsdt:[], inventarioUsdt_cerrado:[c1,c2]}, function(){}, ord, efe);
+  ok(g1("BRL","cNU")===5.26 && g1("BRL")===5.26, "con todas las compras archivadas usa la última: 5,26 (antes null)", g1("BRL"));
+  const g2 = GL({inventarioUsdt:[], inventarioUsdt_cerrado:[]}, function(){}, ord, efe);
+  ok(g2("BRL")===null, "sin ninguna compra, ni viva ni archivada, sigue sin tasa");
+  const vivo = {id:3, tipo:"compra", moneda:"BRL", tasa:5.40, restante:10};
+  const g3 = GL({inventarioUsdt:[vivo], inventarioUsdt_cerrado:[c1,c2]}, function(){}, ord, efe);
+  ok(g3("BRL")===5.40, "con un lote vivo manda el vivo, como siempre: el archivo no se mira");
+  const st = sinComentarios(sacarFuncion("saveTx"));
+  const iR = st.indexOf("var res=cTx();"), iG = st.indexOf("!(res.tc>0) || !(res.tv>0)");
+  ok(iR>0 && iG>iR && iG-iR<200 && /No se guardó nada/.test(st), "saveTx no guarda una remesa sin tasa de compra o de venta");
+  const rs = sinComentarios(sacarFuncion("_remesasSinTasa"));
+  ok(/_binMesCerrado\(iso\)/.test(rs) && /metodo==="calce"/.test(rs) && /if\(tc>0/.test(rs),
+     "el recálculo deja fuera los meses cerrados, los calces y las que ya tienen tasa");
+  const ap = sinComentarios(sacarFuncion("_remesasSinTasaAplicar"));
+  ok(/autorizar\(/.test(ap) && !/saldo/.test(ap) && !/consumir|devolver|restaurar/i.test(ap),
+     "recalcular solo lo hace el administrador y no toca saldos ni lotes");
+  ok(/_htmlRemesasSinTasa\(\)\+/.test(HTML), "la tarjeta se dibuja en Configuración");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
