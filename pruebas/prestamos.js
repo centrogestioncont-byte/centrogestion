@@ -8429,7 +8429,7 @@ console.log("\n— FASE 2: la cuenta madre —");
   // 7. saveTx: ni lotes en blanco, ni el aviso de FIFO del lado que no
   //    consume, y el metodo viaja CON la remesa (el borrado lo lee de ahi).
   const sv = sinCom(sacarFuncion("saveTx"));
-  ok(/if\(!rates\.hasRates && !_calceTx\)\{/.test(sv),
+  ok(/if\(!rates\.hasRates && !_calceTx && tcF>0 && tvF>0\)\{/.test(sv),   // ARREGLO 262: y nunca con tasa 0
      "en calce no nacen los dos lotes en blanco de «Operación»");
   ok(/var _faltaU=_quedaTx\?0:/.test(sv),
      "ni salta el aviso de «falta saldo FIFO» por el lado que no consume");
@@ -15310,6 +15310,27 @@ console.log("\nARREGLO 261 · Tasa de compra con todo archivado, y nada sin tasa
   ok(/autorizar\(/.test(ap) && !/saldo/.test(ap) && !/consumir|devolver|restaurar/i.test(ap),
      "recalcular solo lo hace el administrador y no toca saldos ni lotes");
   ok(/_htmlRemesasSinTasa\(\)\+/.test(HTML), "la tarjeta se dibuja en Configuración");
+}
+
+// ── ARREGLO 262 · Un lote de compra en blanco (tasa 0) tapaba la tasa ──────
+console.log("\nARREGLO 262 · Un lote con tasa 0 no es tasa, y saveTx ya no los deja");
+{
+  const GL = new Function("S", "normalizarInventarioFIFO", "ordenFIFO", "_tasaEfectivaLote",
+    sacarFuncion("getLastTasaCompra") + "; return getLastTasaCompra;");
+  const ord = function(a,b){ return (a.id||0)-(b.id||0); };
+  const efe = function(l){ return parseFloat(l.tasa)||0; };
+  // Su caso del 16/11: el lote en blanco vivo delante, su compra de 5,773 archivada
+  const blanco = {id:9, tipo:"compra", moneda:"BRL", tasa:0, usdt:0, montOrigen:0, restante:0, plataforma:"Operación"};
+  const arch = {id:8, tipo:"compra", moneda:"BRL", tasa:5.773, restante:0, cuentaOrigenId:"cX"};
+  const g = GL({inventarioUsdt:[blanco], inventarioUsdt_cerrado:[arch]}, function(){}, ord, efe);
+  ok(g("BRL")===5.773 && g("BRL","cX")===5.773, "con un lote en blanco vivo sale su última compra: 5,773 (antes 0)", g("BRL"));
+  const vivo = {id:7, tipo:"compra", moneda:"BRL", tasa:5.40, restante:10};
+  const g2 = GL({inventarioUsdt:[blanco, vivo], inventarioUsdt_cerrado:[arch]}, function(){}, ord, efe);
+  ok(g2("BRL")===5.40, "con un lote vivo de verdad, el en blanco no le estorba");
+  const st = sinComentarios(sacarFuncion("saveTx"));
+  const iG = st.indexOf("!(res.tc>0) || !(res.tv>0)"), iB = st.indexOf("plataforma:\"Operación\"");
+  ok(iG>0 && iB>iG, "los lotes en blanco se crean DESPUÉS del aviso: una remesa que no se guarda no deja basura");
+  ok(/!rates\.hasRates && !_calceTx && tcF>0 && tvF>0/.test(st), "y nunca con tasa 0");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

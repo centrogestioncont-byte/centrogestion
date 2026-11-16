@@ -3749,7 +3749,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261116_v343";
+var APP_VERSION = "20261116_v344";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -11760,7 +11760,21 @@ function saveTx(){
   // tasas que la app sugiere. Ademas no llevan origenRemesa, asi que el
   // borrado no se los lleva: medido, guardar una remesa de calce dejaba TRES
   // lotes donde debia dejar uno, y al borrarla se quedaban dos para siempre.
-  if(!rates.hasRates && !_calceTx){
+  var res=cTx();
+  // ARREGLO 261 · sin tasa de compra o de venta cTx() devuelve ganancia 0, y
+  // antes se guardaba así, en silencio: la utilidad del mes salía más baja sin
+  // que nada lo dijera. Un número inventado es peor que no guardar.
+  if(!(res.tc>0) || !(res.tv>0)){
+    alert("No puedo calcular la ganancia de esta remesa: falta la tasa de "+
+      (!(res.tc>0)?"COMPRA de USDT ("+ruta.orig+")":"VENTA de USDT ("+(ruta.dest||"VES")+")")+".\n\n"+
+      (res.calce?"En un calce, escribe la permuta.":"Registra primero la operación de USDT en Inventario, o escribe la tasa a mano.")+
+      "\n\nNo se guardó nada.");
+    return;
+  }
+  // ARREGLO 262 · este bloque iba ANTES del aviso del 261, así que una remesa
+  // que no se guardaba dejaba igual sus dos lotes en blanco, con tasa 0. Ahora
+  // va después: solo se crean cuando la remesa sí se guarda, y nunca con 0.
+  if(!rates.hasRates && !_calceTx && tcF>0 && tvF>0){
     // La fecha de un lote va SIEMPRE en mm/dd, como todas las demás: ds()
     // devuelve dd/mm/aa y ordenFIFO lo leía como otro día.
     var fd=_fechaLote(f.date), fdIso=_fechaLoteIso(f.date);   // ARREGLO 51: el año, aparte
@@ -11774,17 +11788,6 @@ function saveTx(){
     // mal, que es justo lo que no se puede permitir aquí.
     // En las de EE.UU (USD→VES) el destino sí es VES y ese sitio no cambia.
     S.inventarioUsdt.push({id:Date.now()+1,tipo:"venta",fecha:fd,fechaIso:fdIso,hora:fh,moneda:ruta.dest||"VES",montOrigen:0,usdt:0,tasa:tvF,comision:COM(),bs:0,plataforma:"Operación",pais:"",restante:0,locked:false});
-  }
-  var res=cTx();
-  // ARREGLO 261 · sin tasa de compra o de venta cTx() devuelve ganancia 0, y
-  // antes se guardaba así, en silencio: la utilidad del mes salía más baja sin
-  // que nada lo dijera. Un número inventado es peor que no guardar.
-  if(!(res.tc>0) || !(res.tv>0)){
-    alert("No puedo calcular la ganancia de esta remesa: falta la tasa de "+
-      (!(res.tc>0)?"COMPRA de USDT ("+ruta.orig+")":"VENTA de USDT ("+(ruta.dest||"VES")+")")+".\n\n"+
-      (res.calce?"En un calce, escribe la permuta.":"Registra primero la operación de USDT en Inventario, o escribe la tasa a mano.")+
-      "\n\nNo se guardó nada.");
-    return;
   }
   // ARREGLO 44: si el cliente pagó de varias formas, las filas tienen que sumar
   // exactamente lo que envía. Cuadrar a ojo y guardar descuadrado es justo lo
@@ -25233,7 +25236,12 @@ function ordenFIFO(a,b){
 function getLastTasaCompra(moneda,cuentaOrigenId){
   normalizarInventarioFIFO();
   var mon=moneda||"BRL";
-  var todas=S.inventarioUsdt.filter(function(r){return r.tipo==="compra"&&r.moneda===mon;}).sort(ordenFIFO);
+  // ARREGLO 262 · un lote de compra con tasa 0 no es una tasa. Los deja
+  // saveTx cuando no hay inventario ("lotes en blanco"), y con uno de esos
+  // vivo esta función devolvía 0: el TC salía 0,00 y el archivo del 261 no se
+  // miraba nunca, porque "todas" ya no estaba vacía. Pasó el 16/11 con un lote
+  // en blanco de las 9:59 delante de su compra de 5,773.
+  var todas=S.inventarioUsdt.filter(function(r){return r.tipo==="compra"&&r.moneda===mon&&_tasaEfectivaLote(r)>0;}).sort(ordenFIFO);
   if(cuentaOrigenId){
     var propias=todas.filter(function(r){return r.cuentaOrigenId===cuentaOrigenId;});
     if(propias.length){
