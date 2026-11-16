@@ -3749,7 +3749,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261116_v344";
+var APP_VERSION = "20261116_v345";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -26550,8 +26550,28 @@ function _deQuienLote(l){
 //
 // En VES NO cambia nada, a propósito: allí el lote de venta ES la
 // contrapartida natural (vende USDT por bolívares) y lleva tiempo contando.
+// ARREGLO 263 · una operación con un CLIENTE no dice a cuánto está el mercado.
+//
+// Sus palabras del 16/11: "esas son compras de clientes que me ofrecen usdt y
+// yo les doy reales y yo le cotizo a esa tasa, por eso a mí me sale a ese
+// precio, pero no es la tasa real que está el mercado". Las registra con la
+// plataforma BINANCE PAY, a ~5,20, mientras sus compras de mercado (P2P) iban
+// a 5,50–5,77. Como la tasa de referencia es la ÚLTIMA operación, saltaba un
+// 11 % según el canal de la última: con su export, de 5,2002 el 15/11 a 5,7753
+// el 16/11, y eso revaluaba de golpe sus ~9.300 R$ (la reserva sola, −19,23).
+//
+// Siguen siendo compras: crean su lote, se gastan, y la ganancia de las idas
+// que usen esos USDT sale con su costo de verdad. Lo único que dejan de hacer
+// es fijar la tasa con la que se valora su capital y su suelo.
+//
+// La plataforma se escribe a mano (hay "BINANCE PAY" y "BINANCE PAY "), así que
+// se compara sin espacios ni mayúsculas.
+function _loteDeCliente(l){
+  return !!l && String(l.plataforma||"").replace(/\s+/g," ").trim().toUpperCase()==="BINANCE PAY";
+}
 function _loteEsOpUSDT(l){
   if(!l || l.permuta) return false;
+  if(_loteDeCliente(l)) return false;
   // ARREGLO 170: el lote de apertura nace valiendo tasaDeReferencia("BRL"), asi
   // que dejarlo entrar aqui seria que esa tasa saliera de si misma y se quedara
   // clavada en el dia que se abrio.
@@ -33145,7 +33165,9 @@ function _ultimaOpUSDT(mon){
   function _mirar(arr){
     for(var i=0;i<(arr||[]).length;i++){
       var l=arr[i];
-      if(l.moneda!==mon || l.permuta || _loteDeTraspaso(l) || !((parseFloat(l.usdt)||0)>0)) continue;
+      // ARREGLO 263: la misma regla que tasaDeReferencia, o la tarjeta diría
+      // que el suelo sale de una compra a un cliente que la tasa ya no mira.
+      if(l.moneda!==mon || l.permuta || _loteDeTraspaso(l) || _loteDeCliente(l) || !((parseFloat(l.usdt)||0)>0)) continue;
       var t=parseFloat(l.id)||0;
       if(t>1.5e12 && t>mt){ mt=t; mejor=l; }
     }

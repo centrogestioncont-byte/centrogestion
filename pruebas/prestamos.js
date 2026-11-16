@@ -75,7 +75,7 @@ const NECESARIAS = ["_egresosHuerfanos", "moverEgresoAPersonal", "_tasaDelDiaFue
                     "_colchon", "_tasasRecomendadas", "_tasaCorta", "_tasasConLoMio",
                     "_tsUltimaOpUSDT", "_aproxManda", "_toggleProbar", "_volverAMiTasa",
                     // ARREGLO 130
-                    "_ultimaOpUSDT", "_origenLado",
+                    "_ultimaOpUSDT", "_origenLado", "_loteDeCliente",
                     // ARREGLO 132
                     "_inventarioBs", "_umbralBsReales", "_colchonIdaAhora", "_tasasSinBs",
                     // ARREGLO 133
@@ -125,7 +125,7 @@ const NECESARIAS = ["_egresosHuerfanos", "moverEgresoAPersonal", "_tasaDelDiaFue
                     "_mergeObjetoPorClave", "_unirHistorial", "_unirMarcasCampos",
                     "_huellaCompleta", "_conteoRapido",
                     "crearLoteRecibido", "quitarLoteDeRemesa", "_loteAlCobrar",
-                    "_loteEsOpUSDT", "_loteEsDeRemesa", "_loteDeTraspaso", "_entradaSeQueda", "_puedeQuedarse",
+                    "_loteEsOpUSDT", "_loteDeCliente", "_loteEsDeRemesa", "_loteDeTraspaso", "_entradaSeQueda", "_puedeQuedarse",
                     "_remesaEntradaQueda", "esRutaCalce", "esCalceDirecto",
                     "ordenFIFO", "normalizarInventarioFIFO", "simularConsumoFIFO", "_tasaEfectivaLote",
                     "_repartoFIFO", "getTasaVentaPonderada", "_bsPorReal", "_htmlDeDondeSalen",
@@ -15331,6 +15331,18 @@ console.log("\nARREGLO 262 · Un lote con tasa 0 no es tasa, y saveTx ya no los 
   const iG = st.indexOf("!(res.tc>0) || !(res.tv>0)"), iB = st.indexOf("plataforma:\"Operación\"");
   ok(iG>0 && iB>iG, "los lotes en blanco se crean DESPUÉS del aviso: una remesa que no se guarda no deja basura");
   ok(/!rates\.hasRates && !_calceTx && tcF>0 && tvF>0/.test(st), "y nunca con tasa 0");
+}
+
+// ── ARREGLO 263 · Binance Pay no fija la tasa · el signo de `nat` ─────────
+console.log("\nARREGLO 263 · Las compras a clientes no deciden la tasa del real");
+{
+  const C=new Function(sacarFuncion("_loteDeCliente")+"\nreturn _loteDeCliente;")();
+  ok(C({plataforma:"BINANCE PAY"}) && C({plataforma:"BINANCE PAY "}) && C({plataforma:" binance  pay"}), "reconoce BINANCE PAY sin mirar espacios ni mayúsculas");
+  ok(!C({plataforma:"Binance P2P"}) && !C({plataforma:"BINANCE"}) && !C({}), "una compra de mercado no es de cliente");
+  const op=new Function("_loteDeCliente","_loteDeTraspaso","_loteEsDeRemesa", sacarFuncion("_loteEsOpUSDT")+"\nreturn _loteEsOpUSDT;")(C,()=>false,()=>false);
+  ok(op({tipo:"compra",moneda:"BRL",plataforma:"Binance P2P"}) && !op({tipo:"compra",moneda:"BRL",plataforma:"BINANCE PAY"}),
+     "la tasa de referencia mira la P2P y no la de Binance Pay");
+  ok(/_loteDeCliente\(l\)/.test(sinComentarios(sacarFuncion("_ultimaOpUSDT"))), "la tarjeta del suelo usa la misma regla");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
