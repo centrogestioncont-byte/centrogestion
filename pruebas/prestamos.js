@@ -15179,7 +15179,7 @@ console.log("\nARREGLO 256 · La imagen del día sale de los mismos números que
 // es mejor, no se genera: un flyer que lo dice tiene que ser verdad.
 {
   const sinC = (x) => x.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
-  const piezas = ["generarFlyerApp","_htmlRutaFlyerApp","_flyAppFondoSVG","_flyFlecha"];
+  const piezas = ["generarFlyerApp","_htmlRutaFlyerApp","_flyRisFondo","_flyRisSombras"];
   const fuera = [], noDecl = [], prohib = [];
   piezas.forEach(function(f){
     const c = sinC(sacarFuncion(f));
@@ -15200,19 +15200,32 @@ console.log("\nARREGLO 256 · La imagen del día sale de los mismos números que
   ok(fuera.length===0, "el flyer RIS App solo usa sus propios colores (--fly-*)", fuera.join(", "));
   ok(noDecl.length===0, "y todos estan declarados en :root (un SVG con uno sin declarar sale en NEGRO)", noDecl.join(", "));
   ok(prohib.length===0, "nada que html2canvas no dibuje", prohib.join(", "));
-  // ARREGLO 258: TODA la letra es Poppins incrustada, en los cuatro pesos que usa.
-  [400,600,700,800].forEach(function(w){
-    ok(new RegExp("@font-face\\{font-family:'FlyApp';src:url\\(data:font\\/woff2;base64,[A-Za-z0-9+\\/=]{4000,}\\) format\\('woff2'\\);font-weight:"+w+";").test(HTML),
-       "Poppins "+w+" va incrustada");
+  // ARREGLO 260: el diseño es el de SU plantilla «volante-tasa», con sus letras:
+  // Source Serif 4 (numeros, marca) y Public Sans (textos), incrustadas.
+  [["FlyRisT",600],["FlyRisS",500],["FlyRisS",700]].forEach(function(p){
+    ok(new RegExp("@font-face\\{font-family:'"+p[0]+"';src:url\\(data:font\\/woff2;base64,[A-Za-z0-9+\\/=]{4000,}\\) format\\('woff2'\\);font-weight:"+p[1]+";").test(HTML),
+       p[0]+" "+p[1]+" va incrustada");
   });
-  ok(/\[400,600,700,800\]\.forEach\(function\(w\)\{\s*esperas\.push\(document\.fonts\.load\(w\+" 64px FlyApp"\)/.test(sacarFuncion("_flyListo")),
-     "y se esperan los cuatro pesos antes de capturar");
-  ok(!/FlySerif|_FLY_SERIF/.test(HTML), "la serifa de antes no queda colgando");
+  const fl = sacarFuncion("_flyListo");
+  ok(/"600 64px FlyRisT"/.test(fl) && /"500 64px FlyRisS"/.test(fl) && /"700 64px FlyRisS"/.test(fl),
+     "y se esperan las tres antes de capturar");
+  ok(!/FlySerif|_FLY_SERIF|'FlyApp'|_FLY_APP|_flyFlecha|_flyAppFondoSVG|--fly-app-/.test(HTML),
+     "lo del diseño anterior (Poppins, el fondo viejo, --fly-app-*) no queda colgando");
   const ff = sinC(sacarFuncion("_htmlRutaFlyerApp")) + sinC(sacarFuncion("generarFlyerApp"));
-  ok(!/_FLY_CUERPO/.test(ff) && (ff.match(/_FLY_APP/g)||[]).length >= 8,
-     "ningun texto del flyer RIS App usa la letra del aparato: en Android salia otra");
-  ok(/_flyFlecha\(64\)/.test(ff) && /_flyColor\("--fly-app-tinta"\)/.test(sacarFuncion("_flyFlecha")),
-     "la flecha de la ruta va dibujada, con su color ya resuelto");
+  ok(!/_FLY_CUERPO|_FLY_LETRA/.test(ff), "ningun texto del flyer RIS App usa otra letra");
+  const css = (HTML.match(/var _FLY_RIS_CSS =[\s\S]*?;\n/)||[""])[0];
+  ok(/font-family:"\+_FLY_RIS_S\+"/.test(css) && /font-family:"\+_FLY_RIS_T\+"/.test(css), "las dos letras de su plantilla, en su sitio");
+  // Lo que html2canvas no dibuja, medido contra su plantilla:
+  ok(css.length > 1000 && !/box-shadow/.test(css), "sin box-shadow en el CSS: a escala 2 no se dibujaba (van en _flyRisSombras)");
+  ok(!/transform:translateX/.test(css), "sin translateX: la sombra de un elemento transformado no se dibujaba");
+  ok(!/#[0-9a-fA-F]{8}\b|#[0-9a-fA-F]{4}\b/.test(css), "sin colores de 8/4 cifras en hexadecimal: van en rgba()");
+  ok(/\.vr-sombras/.test(ff) && /sm\.src=_flyRisSombras\(card\)/.test(ff), "las sombras se miden con las letras ya puestas");
+  ok(/vr-sombras' src='"\+_flySvgUrl\(/.test(ff), "y la capa nace con imagen: sin src la espera no acaba nunca");
+  const fo = sacarFuncion("_flyRisFondo");
+  ok(/nav\?\(_RIS_RAMAS\+_RIS_BOLAS\):""/.test(fo) && /_RIS_BOKEH/.test(fo) && /_RIS_DESTELLOS/.test(fo),
+     "Navidad lleva ramas y bolas; Normal, el mismo fondo sin ellas");
+  ok(/\(tm\.id==="navidad"\) \? "FELICES FIESTAS" : "TASA SUJETA A CAMBIO"/.test(ff), "y el saludo cambia con la temporada");
+  ok(/^var _RIS_LOGO = "data:image\/png;base64,/m.test(HTML), "el logo es el de su plantilla");
   const ga = sinC(sacarFuncion("generarFlyerApp"));
   const a = ga.indexOf("_flyListo(card)"), b = ga.indexOf("html2canvas(card");
   ok(a>=0 && b>a, "generarFlyerApp espera las letras antes de capturar");
@@ -15230,7 +15243,7 @@ console.log("\nARREGLO 256 · La imagen del día sale de los mismos números que
   const cpa = sinC(sacarFuncion("_htmlCamposFlyerApp"));
   ok(/generarFlyerApp\(\\"ida\\"\)/.test(cpa) && /generarFlyerApp\(\\"vuelta\\"\)/.test(cpa),
      "y un boton para cada ruta");
-  ok(/_temporadaFlyer\(\)/.test(ga) && /_flyAppFondoSVG\(tm,/.test(ga), "sigue la temporada elegida");
+  ok(/_temporadaFlyer\(\)/.test(ga) && /_flyRisFondo\(tm\)/.test(ga), "sigue la temporada elegida");
   ok(/_misTasasPublicadas\(\)/.test(sinC(sacarFuncion("_filasFlyerApp"))),
      "la de WhatsApp es la PUBLICADA, no un numero aparte");
   // "mejor" al reves en cada ruta, y la frase con el
@@ -15241,7 +15254,8 @@ console.log("\nARREGLO 256 · La imagen del día sale de los mismos números que
      "ida dice 'recibes mas', vuelta dice 'pagas menos'");
   ok(/Recibe más/.test(ra("ida").titulo) && /Paga menos/.test(ra("vuelta").titulo),
      "y el titulo tambien: 'Recibe más' en la ida, 'Paga menos' en la vuelta");
-  ok(!/reais/.test(ra("ida").frase("5")+ra("vuelta").frase("5")), "'por cada real', no 'por cada reais'");
+  // ARREGLO 260: "por cada reais", como en su paquete — decision suya del 16/11.
+  ok(/por cada reais$/.test(ra("ida").frase("5")) && /por cada reais$/.test(ra("vuelta").frase("5")), "'por cada reais', como en su plantilla");
   // Funcional: las filas, con sus tasas
   {
     const Sx = {config:{tasasDia:{tdia_brl:"186", tdia_ves_brl:"195"}, tasasApp:{ida:191, vuelta:196}}};
