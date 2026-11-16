@@ -3749,7 +3749,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261116_v342";
+var APP_VERSION = "20261116_v343";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -11776,6 +11776,16 @@ function saveTx(){
     S.inventarioUsdt.push({id:Date.now()+1,tipo:"venta",fecha:fd,fechaIso:fdIso,hora:fh,moneda:ruta.dest||"VES",montOrigen:0,usdt:0,tasa:tvF,comision:COM(),bs:0,plataforma:"Operación",pais:"",restante:0,locked:false});
   }
   var res=cTx();
+  // ARREGLO 261 · sin tasa de compra o de venta cTx() devuelve ganancia 0, y
+  // antes se guardaba así, en silencio: la utilidad del mes salía más baja sin
+  // que nada lo dijera. Un número inventado es peor que no guardar.
+  if(!(res.tc>0) || !(res.tv>0)){
+    alert("No puedo calcular la ganancia de esta remesa: falta la tasa de "+
+      (!(res.tc>0)?"COMPRA de USDT ("+ruta.orig+")":"VENTA de USDT ("+(ruta.dest||"VES")+")")+".\n\n"+
+      (res.calce?"En un calce, escribe la permuta.":"Registra primero la operación de USDT en Inventario, o escribe la tasa a mano.")+
+      "\n\nNo se guardó nada.");
+    return;
+  }
   // ARREGLO 44: si el cliente pagó de varias formas, las filas tienen que sumar
   // exactamente lo que envía. Cuadrar a ojo y guardar descuadrado es justo lo
   // que deja un saldo sin explicación, así que aquí no se guarda a medias.
@@ -18173,6 +18183,7 @@ function _htmlTarifaBancoVES(){
       :"<div style='font-size:11px;color:var(--avi-tx)'>🔒 Solo el administrador puede cambiar estas tarifas.</div>")+
     "<div style='font-size:11px;color:var(--tx3);margin-top:8px'>Cambiar una tarifa vale <b>para las remesas nuevas</b>. Las ya guardadas no se tocan solas: para eso está el recálculo de abajo.</div>"+
     _htmlRecalcComisiones()+
+    _htmlRemesasSinTasa()+
   "</div>";
 }
 function guardarTarifaBanco(){
@@ -23399,6 +23410,80 @@ function _recComAplicar(){
   R();
   alert("✅ "+ok+" comisión(es) recalculada(s)."+(no.length?"\n\nNo se pudieron cambiar:\n"+no.join("\n"):""));
 }
+// ── ARREGLO 261 · Remesas que se guardaron SIN tasa de compra ────────────
+// Antes del 261, con todas las compras de USDT gastadas, getLastTasaCompra
+// devolvía null, cTx() salía con tc 0 y ganancia 0, y saveTx lo guardaba así,
+// en silencio (y encima le restaba la comisión del banco: quedaba negativa).
+// La utilidad del mes salía más baja de lo que fue. Esto las encuentra y les
+// recalcula la ganancia con la tasa de compra de SU día: la última compra de
+// esa moneda registrada hasta esa fecha, viva o archivada.
+//
+// Solo toca tc, uc, uv y pr. No mueve ninguna cuenta ni ningún lote: el dinero
+// ya se movió bien al guardar; lo único que faltaba era la cuenta de la
+// ganancia. Un mes cerrado no se toca (ARREGLO 155), y un calce tampoco: su
+// tasa de compra sale de la permuta, no de los lotes.
+function _tasaCompraDelDia(mon, iso){
+  var todas=(S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[]).filter(function(l){
+    return l && l.tipo==="compra" && l.moneda===mon && (parseFloat(l.tasa)||0)>0;
+  });
+  var mejor=null, mejorIso="";
+  todas.forEach(function(l){
+    var li=_isoDeLote(l)||"";
+    if(li && li<=iso && li>=mejorIso){ mejor=l; mejorIso=li; }
+  });
+  return mejor ? _tasaEfectivaLote(mejor) : null;
+}
+function _remesasSinTasa(){
+  var out=[];
+  [["brl",S.brl],["vzla",S.vzla]].forEach(function(par){
+    (par[1]||[]).forEach(function(r){
+      if(!r || r.metodo==="calce" || r.orig==="USDT") return;
+      var am=parseFloat(r.am)||0, tv=parseFloat(r.tv)||0, tc=parseFloat(r.tc)||0;
+      if(tc>0 || !(am>0) || !(tv>0)) return;
+      var iso=_isoDeD(r.d); if(!iso || _binMesCerrado(iso)) return;
+      var t=_tasaCompraDelDia(r.orig||"BRL", iso); if(!(t>0)) return;
+      var isV=(r.orig==="VES"), cant=parseFloat(r.cant)||0, td=parseFloat(r.tdia)||0;
+      var ucR=am/t, uvR=isV ? cant/tv : (am*td)/tv;
+      var com=parseFloat(r.comisionBancoVes)||0;
+      out.push({tipo:par[0], r:r, tc:t, uc:r4(ucR), uv:r4(uvR),
+                pr:r4(ucR-uvR-(com>0?com/tv:0)), antes:parseFloat(r.pr)||0});
+    });
+  });
+  return out;
+}
+function _htmlRemesasSinTasa(){
+  if(!_esAdminApi()) return "";
+  var c=_remesasSinTasa(); if(!c.length) return "";
+  var tot=c.reduce(function(a,x){ return a+(x.pr-x.antes); },0);
+  var filas=c.slice(0,30).map(function(x){
+    return "<div style='display:flex;justify-content:space-between;gap:8px;font-size:12px;padding:3px 0;border-bottom:1px solid var(--ln2)'>"+
+      "<span>#"+(x.r.n||"?")+" · "+_escAud(x.r.d||"")+" · "+_escAud(x.r.cl||"")+" · "+f2(x.r.am)+" "+_escAud(x.r.orig||"")+"</span>"+
+      "<span style='white-space:nowrap'>"+f2(x.antes)+" → <b style='color:var(--ok)'>"+f2(x.pr)+"</b> USDT</span></div>";
+  }).join("");
+  return "<div id='rst-caja' style='margin-top:16px;padding:12px;border:1.5px solid var(--avi);border-radius:10px'>"+
+    "<div style='font-size:13px;font-weight:700;color:var(--avi-tx);margin-bottom:4px'>⚠️ "+c.length+" remesa(s) guardadas sin tasa de compra · ganancia en 0</div>"+
+    "<div style='font-size:11px;color:var(--tx3);margin-bottom:8px'>Se guardaron cuando la app no encontraba tasa de compra. Se recalculan con la tasa de compra de su día. "+
+      "<b>No mueve ninguna cuenta ni ningún lote</b>: solo la ganancia.</div>"+
+    filas+(c.length>30?"<div style='font-size:11px;color:var(--tx3);margin-top:4px'>… y "+(c.length-30)+" más</div>":"")+
+    "<div style='display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:8px;flex-wrap:wrap'>"+
+      "<span style='font-size:12px'>La utilidad sube <b style='color:var(--ok)'>"+(tot>=0?"+":"")+f2(tot)+" USDT</b></span>"+
+      "<button onclick='_remesasSinTasaAplicar()' style='padding:8px 12px;background:var(--ok);color:var(--sobre-color);border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700'>Recalcular las "+c.length+"</button>"+
+    "</div></div>";
+}
+function _remesasSinTasaAplicar(){
+  if(!autorizar("recalcular remesas sin tasa")) return;
+  // Se vuelve a mirar justo antes: pudo llegar algo del otro aparato.
+  var c=_remesasSinTasa();
+  if(!c.length){ alert("Ya no hay ninguna remesa sin tasa."); R(); return; }
+  var tot=c.reduce(function(a,x){ return a+(x.pr-x.antes); },0);
+  if(!confirm("Vas a recalcular la ganancia de "+c.length+" remesa(s): "+(tot>=0?"+":"")+f2(tot)+" USDT en total.\n\nNo se mueve ninguna cuenta ni ningún lote.\n\n¿Seguir?")) return;
+  c.forEach(function(x){
+    x.r.tc=x.tc; x.r.uc=x.uc; x.r.uv=x.uv; x.r.pr=x.pr; x.r._recalc261=Date.now();
+    try{ logAudit("RECALC_SIN_TASA","#"+(x.r.n||"?")+" "+(x.r.d||"")+": "+f2(x.antes)+" → "+f2(x.pr)+" (tc "+x.tc+")"); }catch(e){}
+  });
+  saveData(); R();
+  alert("✅ "+c.length+" remesa(s) recalculada(s).");
+}
 function revertirSaldosRemesa(tipo, r){
   // El lote que creó esta remesa se va con ella: ese dinero deja de existir en
   // el inventario igual que deja de existir en la cuenta.
@@ -25157,7 +25242,18 @@ function getLastTasaCompra(moneda,cuentaOrigenId){
     }
     // Esta cuenta nunca ha comprado en esta moneda (cuenta nueva) → cae al pool general de abajo
   }
-  if(!todas.length) return null;
+  // ARREGLO 261 · con TODAS las compras gastadas no hay lote vivo, y antes
+  // devolvía null: la remesa se quedaba sin tasa de compra, la pantalla decía
+  // "Completa monto, tasa del día y tasas USDT" con todo escrito, y guardarla
+  // apuntaba ganancia 0 sin avisar. Desde el ARREGLO 170 la venta de USDT gasta
+  // las compras, así que quedarse sin ninguna viva es lo normal, no lo raro.
+  // La intención de esta función ya era "todo consumido → la última como
+  // referencia"; lo que lo rompía es que lo consumido se ARCHIVA. Se mira el
+  // archivo solo cuando no queda ninguna viva: con lotes vivos nada cambia.
+  if(!todas.length){
+    var cerr=(S.inventarioUsdt_cerrado||[]).filter(function(r){return r.tipo==="compra"&&r.moneda===mon&&(parseFloat(r.tasa)||0)>0;}).sort(ordenFIFO);
+    return cerr.length ? _tasaEfectivaLote(cerr[cerr.length-1]) : null;
+  }
   for(var i=0;i<todas.length;i++){
     if((parseFloat(todas[i].restante)||0)>0.01) return _tasaEfectivaLote(todas[i]);
   }
