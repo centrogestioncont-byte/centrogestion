@@ -3749,7 +3749,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261116_v344";
+var APP_VERSION = "20261116_v345";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -7454,7 +7454,7 @@ function aportesDesde(desdeIso){
 // 10 operaciones de Binance y −24,72 en las 25 remesas. Eso no es una fuga, es
 // aritmética de conversión, y mientras no se enseñe la conciliación nunca puede
 // dar cero. Por eso sale como línea propia y no dentro de "sin explicar".
-function efectoTasasDesde(desdeIso){
+function efectoTasasDesde(desdeIso, hastaIso){
   // ARREGLO 244 · `nat`: cuánto de cada moneda se valoró aquí a la tasa de
   // hoy. Con eso "Tu día" separa lo que la tasa le hace a lo que YA tenía de
   // lo que esta función ya cuenta, sin contar dos veces la misma revalorización.
@@ -7481,6 +7481,9 @@ function efectoTasasDesde(desdeIso){
     (S[k]||[]).forEach(function(x){
       var iso=_isoDeDDMMAA(x.d);
       if(!iso || iso<=desdeIso) return;
+      // ARREGLO 263: `hastaIso` solo lo pasa "Tu día" para rehacer el `nat` de
+      // una foto vieja (ver _monDeFoto). Sin él, todo hasta hoy, como siempre.
+      if(hastaIso && iso>hastaIso) return;
       var mueve=0;
       (x._mov||[]).forEach(function(m){ mueve+=enUsdt(m.cuentaId, parseFloat(m.delta)||0); });
       // ARREGLO 235: lo que se movió en una cuenta 💜 también lo movió la
@@ -7511,12 +7514,20 @@ function efectoTasasDesde(desdeIso){
     if(_cruceUsdtPersonal(l)) return;
     var iso=_isoDeFechaLote(l.fecha);
     if(!iso || iso<=desdeIso) return;
+    if(hastaIso && iso>hastaIso) return;
     var mueve=0;
+    // ARREGLO 263: lo que SALE se pasa en NEGATIVO a enUsdt, no se resta
+    // después. El resultado en USDT es el mismo (enUsdt es lineal), pero
+    // enUsdt anota `nat` con el signo que recibe: restando fuera, una compra
+    // de USDT pagada en reales SUMABA sus reales a `nat` en vez de restarlos.
+    // Con su export del 16/11 `nat` de BRL decía 36.814 donde el neto son
+    // 6.624, y "Tu día" lo convertía en +361,82 de "valor de las monedas" y
+    // −414,59 "sin registrar" en un solo día.
     if(l.tipo==="compra"){
-      mueve -= enUsdt(l.cuentaOrigenId, parseFloat(l.montOrigen)||0);
+      mueve += enUsdt(l.cuentaOrigenId, -(parseFloat(l.montOrigen)||0));
       if(l.cuentaId) mueve += enUsdt(l.cuentaId, parseFloat(l.usdt)||0);
     } else {
-      if(l.cuentaId) mueve -= enUsdt(l.cuentaId, parseFloat(l.usdt)||0);
+      if(l.cuentaId) mueve += enUsdt(l.cuentaId, -(parseFloat(l.usdt)||0));
       mueve += enUsdt(l.cuentaDestinoId, parseFloat(l.bs)||0);
     }
     r.usdt += mueve;   // una compra o una venta no apunta ganancia: el hueco es entero
@@ -26550,8 +26561,28 @@ function _deQuienLote(l){
 //
 // En VES NO cambia nada, a propósito: allí el lote de venta ES la
 // contrapartida natural (vende USDT por bolívares) y lleva tiempo contando.
+// ARREGLO 263 · una operación con un CLIENTE no dice a cuánto está el mercado.
+//
+// Sus palabras del 16/11: "esas son compras de clientes que me ofrecen usdt y
+// yo les doy reales y yo le cotizo a esa tasa, por eso a mí me sale a ese
+// precio, pero no es la tasa real que está el mercado". Las registra con la
+// plataforma BINANCE PAY, a ~5,20, mientras sus compras de mercado (P2P) iban
+// a 5,50–5,77. Como la tasa de referencia es la ÚLTIMA operación, saltaba un
+// 11 % según el canal de la última: con su export, de 5,2002 el 15/11 a 5,7753
+// el 16/11, y eso revaluaba de golpe sus ~9.300 R$ (la reserva sola, −19,23).
+//
+// Siguen siendo compras: crean su lote, se gastan, y la ganancia de las idas
+// que usen esos USDT sale con su costo de verdad. Lo único que dejan de hacer
+// es fijar la tasa con la que se valora su capital y su suelo.
+//
+// La plataforma se escribe a mano (hay "BINANCE PAY" y "BINANCE PAY "), así que
+// se compara sin espacios ni mayúsculas.
+function _loteDeCliente(l){
+  return !!l && String(l.plataforma||"").replace(/\s+/g," ").trim().toUpperCase()==="BINANCE PAY";
+}
 function _loteEsOpUSDT(l){
   if(!l || l.permuta) return false;
+  if(_loteDeCliente(l)) return false;
   // ARREGLO 170: el lote de apertura nace valiendo tasaDeReferencia("BRL"), asi
   // que dejarlo entrar aqui seria que esa tasa saliera de si misma y se quedara
   // clavada en el dia que se abrio.
@@ -33145,7 +33176,9 @@ function _ultimaOpUSDT(mon){
   function _mirar(arr){
     for(var i=0;i<(arr||[]).length;i++){
       var l=arr[i];
-      if(l.moneda!==mon || l.permuta || _loteDeTraspaso(l) || !((parseFloat(l.usdt)||0)>0)) continue;
+      // ARREGLO 263: la misma regla que tasaDeReferencia, o la tarjeta diría
+      // que el suelo sale de una compra a un cliente que la tasa ya no mira.
+      if(l.moneda!==mon || l.permuta || _loteDeTraspaso(l) || _loteDeCliente(l) || !((parseFloat(l.usdt)||0)>0)) continue;
       var t=parseFloat(l.id)||0;
       if(t>1.5e12 && t>mt){ mt=t; mejor=l; }
     }
@@ -42507,7 +42540,9 @@ function _fotoCapital(){
   // Lo que se les debe a los socios y sigue en las cuentas (neto: lo que se
   // les debe menos lo que ellos deben). Ver _diaContable.
   var soc=0; try{ var _so=_sociosPendientesMes(mk); soc=r2(_so.porPagar-_so.deben); }catch(e){ soc=0; }
-  var f={ts:Date.now(), mes:mk, rem:r2(rem), soc:soc,
+  // natV:2 = `f` ya sale con el signo bueno (ARREGLO 263). Una foto sin él se
+  // rehace al leerla (_monDeFoto).
+  var f={ts:Date.now(), mes:mk, rem:r2(rem), soc:soc, natV:2,
     tienes:R.total, cuentas:R.enCuentas, prestado:R.enPrestamos, cobrar:R.porCobrar,
     reserva:R.enReserva, merc:R.enMercancia||0,
     sueldo:R.sueldoPendiente||0, parcelas:R.deudaParcelas||0};
@@ -42519,6 +42554,9 @@ function _fotoCapital(){
   // operaciones (nat) Y lo que había al abrir (cubre). "Tu día" solo añade lo
   // que no cubre ninguna de las dos.
   var _cubre=(((co.tasas||{}).apertura)||{}).cubre||{};
+  // ARREGLO 263: se guarda aparte para rehacer las fotos viejas sin volver a
+  // calcular la conciliación entera (le costaba 0,6 s más a "Tu día").
+  f.cub={}; Object.keys(_cubre).forEach(function(m){ f.cub[m]=r2(_cubre[m]); });
   f.mon={};
   (R.porMoneda||[]).forEach(function(x){
     if(x.moneda==="USDT"||x.moneda==="USD") return;
@@ -42563,6 +42601,28 @@ function _capturarCapitalHoy(){
 // sale de sumar las filas que se ven, no de restar las dos `deb`: con el
 // redondeo de cada una, la lista podría no cuadrar con su propio total
 // (ARREGLO 141). Lo mismo abajo: lo que sobra o falta es el resto exacto.
+// ARREGLO 263 · las fotos guardadas antes del arreglo llevan `f` con las compras
+// de USDT SUMADAS en vez de restadas, y "Tu día" las lee como inicio: sin esto,
+// el día del cambio de versión —y cualquier día anterior que se elija— seguiría
+// diciendo +361,82 de "valor de las monedas" y −414,59 "sin registrar". El
+// `nat` no depende de la tasa, solo de los movimientos, así que se rehace con
+// los de hasta ese día. `cubre` (lo que había al abrir) no tenía el fallo y se
+// toma de ahora.
+function _monDeFoto(foto, isoFoto, cubreHoy){
+  if(!foto || !foto.mon || foto.natV>=2) return foto && foto.mon;
+  var desde=(foto.c&&foto.c.desde)||(S.config||{}).aperturaFecha;
+  if(!desde) return foto.mon;
+  var nat={}, cubre={};
+  try{ nat=efectoTasasDesde(desde, isoFoto).nat||{}; }catch(e){ return foto.mon; }
+  if(cubreHoy) cubre=cubreHoy;
+  else { try{ cubre=((((conciliacionCapital()||{}).tasas||{}).apertura)||{}).cubre||{}; }catch(e){ cubre={}; } }
+  var out={};
+  Object.keys(foto.mon).forEach(function(m){
+    var x=foto.mon[m];
+    out[m]={n:x.n, r:x.r, f:r2((nat[m]||0)+(cubre[m]||0))};
+  });
+  return out;
+}
 function _diaContable(iso){
   var hoy=_ymd(new Date());
   var H=S.histCapital||{};
@@ -42574,7 +42634,10 @@ function _diaContable(iso){
   out.kIni=prev.length?prev[prev.length-1]:null;
   out.ini=out.kIni?H[out.kIni]:null;
   if(!out.ini) return out;
-  var ini=out.ini;
+  // ARREGLO 263: una copia, con su `f` rehecho si es una foto de antes. No se
+  // escribe en S.histCapital: corregir lo guardado es otra decisión.
+  var ini=Object.assign({}, out.ini, {mon:_monDeFoto(out.ini, out.kIni, fin.cub)});
+  out.ini=ini;
   var dd=function(a,b){ return r2((parseFloat(b)||0)-(parseFloat(a)||0)); };
   // Dónde está el dinero: lo que pasa de una caja a otra no cambia el total.
   // Es lo que contesta "di un préstamo": baja En cuentas y sube Prestado.
