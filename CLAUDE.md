@@ -7048,3 +7048,58 @@ operaciones, la ganancia, los flujos de capital, la tabla y las ganancias extra.
 Medido con html2canvas 1.4.1 (la del CDN) y su export, a 412 y 1280 px: el mismo
 PNG de 1.200 × 1.220 px en los dos, y un día de 44 operaciones a 1.200 × 4.064.
 21 pestañas, 0 errores, 7 pruebas negativas y las 7 cazadas.
+
+---
+
+## Una compra a un cliente no dice a cuánto está el real (ARREGLO 263)
+
+Lo vio ella el 16/11 en Contabilidad: *"Te faltan $414,59 · salió dinero sin
+registrar"* y *"+$361,82 valor de las monedas"*, con todo registrado.
+
+**Eran dos fallos, y ninguno era dinero.**
+
+**1 · Las filas de BINANCE PAY fijaban la tasa del real.** Son clientes que le
+pagan en USDT y a los que ella les da reales, a la tasa que ella les cotiza
+(~5,20). Sus palabras: *"no es la tasa real que está el mercado"*. Pero eran la
+última compra de USDT en BRL, así que `tasaDeReferencia("BRL")` saltaba de su
+P2P (5,50–5,77) a 5,20 y **revaloraba todos sus reales de golpe**: la reserva de
+1.004 R$ sola movía 19,23 USDT.
+
+- **`_loteDeCliente()` las reconoce por la plataforma** y `_loteEsOpUSDT()` las
+  deja fuera, igual que la permuta. `_ultimaOpUSDT` usa la misma regla.
+- **Siguen siendo compras normales** para el FIFO, la ganancia y la
+  conciliación: solo dejan de decidir a cuánto se valora el dinero parado.
+
+**2 · En "Tu día" las compras de USDT SUMABAN sus reales en vez de restarlos.**
+`efectoTasasDesde` restaba `enUsdt(...)` a `mueve` —bien— pero `enUsdt` también
+apunta el monto nativo en `nat`, y ahí entraba en **positivo**. Con sus datos
+`nat.BRL` decía 36.814 donde son 6.624, y "Tu día" revaloraba 30.000 reales que
+no existen (`reval` 660,81).
+
+- **Lo que sale se pasa en NEGATIVO a `enUsdt`**, así `mueve` y `nat` llevan el
+  mismo signo. El efecto en USDT es idéntico; solo cambia `nat`.
+- **Las fotos guardadas antes llevan el `f` malo.** `_fotoCapital` marca las
+  nuevas con `natV:2` y guarda la apertura (`f.cub`); `_monDeFoto()` rehace al
+  LEER el `f` de una foto vieja con `efectoTasasDesde(desde, isoFoto)`. **No
+  escribe en `histCapital`**: la foto guardada no se toca.
+- **Cuesta ~0,35 s en Contabilidad** mientras quedan fotos viejas que rehacer;
+  desaparece solo cuando envejecen.
+
+Medido con su export del 16/11, v344 contra v345:
+
+```
+                         v344        v345
+Tu día · hoy          −414,59      +92,66
+Tu día · 12/11          ...         +2,88  ✅ cuadra
+tasa ref. BRL          5,2002      5,7753   (con su compra Binance Pay)
+capital             2.117,34    2.117,34
+utilidad nov          225,24      225,24
+te sobran (apertura)  422,31      422,32   (1 céntimo de redondeo)
+```
+
+**Lo que esto NO repara:** los días 14/11 y 16/11 conservan en su foto la tasa
+del salto, así que su "Tu día" sigue con un resto. Y el **"te sobran $422"
+desde la apertura no viene de aquí**: ~7.000 R$ de flujos se revalorizan a la
+tasa de hoy al entrar (remesas y lotes) pero salen por egresos, traspasos y
+préstamos a su valor de entonces, así que ese número se mueve ~$13 por cada 1 %
+que sube el real. Es otro arreglo.

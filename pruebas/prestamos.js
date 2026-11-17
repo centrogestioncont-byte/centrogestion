@@ -75,7 +75,7 @@ const NECESARIAS = ["_egresosHuerfanos", "moverEgresoAPersonal", "_tasaDelDiaFue
                     "_colchon", "_tasasRecomendadas", "_tasaCorta", "_tasasConLoMio",
                     "_tsUltimaOpUSDT", "_aproxManda", "_toggleProbar", "_volverAMiTasa",
                     // ARREGLO 130
-                    "_ultimaOpUSDT", "_origenLado",
+                    "_ultimaOpUSDT", "_origenLado", "_loteDeCliente",
                     // ARREGLO 132
                     "_inventarioBs", "_umbralBsReales", "_colchonIdaAhora", "_tasasSinBs",
                     // ARREGLO 133
@@ -125,7 +125,7 @@ const NECESARIAS = ["_egresosHuerfanos", "moverEgresoAPersonal", "_tasaDelDiaFue
                     "_mergeObjetoPorClave", "_unirHistorial", "_unirMarcasCampos",
                     "_huellaCompleta", "_conteoRapido",
                     "crearLoteRecibido", "quitarLoteDeRemesa", "_loteAlCobrar",
-                    "_loteEsOpUSDT", "_loteEsDeRemesa", "_loteDeTraspaso", "_entradaSeQueda", "_puedeQuedarse",
+                    "_loteEsOpUSDT", "_loteDeCliente", "_loteEsDeRemesa", "_loteDeTraspaso", "_entradaSeQueda", "_puedeQuedarse",
                     "_remesaEntradaQueda", "esRutaCalce", "esCalceDirecto",
                     "ordenFIFO", "normalizarInventarioFIFO", "simularConsumoFIFO", "_tasaEfectivaLote",
                     "_repartoFIFO", "getTasaVentaPonderada", "_bsPorReal", "_htmlDeDondeSalen",
@@ -14392,7 +14392,7 @@ console.log("\nARREGLO 240 · Contabilidad: cómo cerró el día, resultados, ba
   // 2 · Su ejemplo, al céntimo: empieza con 1.000, gana 50 en remesas, gasta
   //     10 y presta 100. Tiene que cerrar con 1.040 y CUADRAR, y el préstamo
   //     tiene que salir como dinero que cambió de caja, no como pérdida.
-  const mkDia = new Function("S", "_fotoCapital", sacarFuncion("_ymd") + sacarFuncion("_diaContable") +
+  const mkDia = new Function("S", "_fotoCapital", sacarFuncion("_ymd") + sacarFuncion("_monDeFoto") + sacarFuncion("_diaContable") +
     "; var r2=function(n){return Math.round((isNaN(n)?0:+n)*100)/100;}; return _diaContable;");
   const hoy = (function(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); })(new Date());
   const ayer = (function(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); })(new Date(Date.now()-86400000));
@@ -14669,7 +14669,7 @@ console.log("\nARREGLO 244 · Retiro de socio a valor fijo y 'valor de las moned
     {mon:"BRL", abonos:[{sinCobro:true, monto:1080, fecha:hoy, tasaRetiro:5}]},
     {mon:"VES", abonos:[{sinCobro:true, monto:119539.02, fecha:hoy, tasaRetiro:1000}]}]};
   SD.histCapital[ayer] = ini;
-  const mkD = function(f){ return new Function("S", "_fotoCapital", frStub + sacarFuncion("_ymd") + sacarFuncion("_diaContable") +
+  const mkD = function(f){ return new Function("S", "_fotoCapital", frStub + sacarFuncion("_ymd") + sacarFuncion("_monDeFoto") + sacarFuncion("_diaContable") +
     "; var r2=function(n){return Math.round((isNaN(n)?0:+n)*100)/100;}; return _diaContable;")(SD, function(){ return f; }); };
   const x1 = mkD(fin)(hoy);
   ok(x1.cuadra && Math.abs(x1.resto) < 0.02, "con la tasa moviéndose y préstamos liquidados hoy, no sale nada «sin registrar»", JSON.stringify([x1.resto, x1.reval]));
@@ -15331,6 +15331,42 @@ console.log("\nARREGLO 262 · Un lote con tasa 0 no es tasa, y saveTx ya no los 
   const iG = st.indexOf("!(res.tc>0) || !(res.tv>0)"), iB = st.indexOf("plataforma:\"Operación\"");
   ok(iG>0 && iB>iG, "los lotes en blanco se crean DESPUÉS del aviso: una remesa que no se guarda no deja basura");
   ok(/!rates\.hasRates && !_calceTx && tcF>0 && tvF>0/.test(st), "y nunca con tasa 0");
+}
+
+// ── ARREGLO 263 · Binance Pay no fija la tasa · el signo de `nat` ─────────
+console.log("\nARREGLO 263 · Las compras a clientes no deciden la tasa del real, y las compras restan en `nat`");
+{
+  const C=new Function(sacarFuncion("_loteDeCliente")+"\nreturn _loteDeCliente;")();
+  ok(C({plataforma:"BINANCE PAY"}) && C({plataforma:"BINANCE PAY "}) && C({plataforma:" binance  pay"}), "reconoce BINANCE PAY sin mirar espacios ni mayúsculas");
+  ok(!C({plataforma:"Binance P2P"}) && !C({plataforma:"BINANCE"}) && !C({}), "una compra de mercado no es de cliente");
+  const op=new Function("_loteDeCliente","_loteDeTraspaso","_loteEsDeRemesa", sacarFuncion("_loteEsOpUSDT")+"\nreturn _loteEsOpUSDT;")(C,()=>false,()=>false);
+  ok(op({tipo:"compra",moneda:"BRL",plataforma:"Binance P2P"}) && !op({tipo:"compra",moneda:"BRL",plataforma:"BINANCE PAY"}),
+     "la tasa de referencia mira la P2P y no la de Binance Pay");
+  ok(/_loteDeCliente\(l\)/.test(sinComentarios(sacarFuncion("_ultimaOpUSDT"))), "la tarjeta del suelo usa la misma regla");
+  // El signo: una compra de USDT pagada con 520 R$ RESTA 520 a nat.BRL.
+  const S={cuentas:[{id:"pag",moneda:"BRL"},{id:"usd",moneda:"USDT"},{id:"bdv",moneda:"VES"}],
+    brl:[], vzla:[], eeuu:[], cuentasCobrar:[],
+    inventarioUsdt:[{tipo:"compra",moneda:"BRL",fecha:"11/16",montOrigen:520,usdt:100,cuentaOrigenId:"pag",cuentaId:"usd"},
+                    {tipo:"venta",moneda:"VES",fecha:"11/17",usdt:10,bs:10600,cuentaId:"usd",cuentaDestinoId:"bdv"}],
+    inventarioUsdt_cerrado:[]};
+  const E=new Function("S","getRateToUsdt","_isoDeDDMMAA","_movPersonalDeRemesa","_enUsdtCualquiera","_loteDeTraspaso","_cruceUsdtPersonal","_isoDeFechaLote",
+    sacarFuncion("efectoTasasDesde")+"\nreturn efectoTasasDesde;")(S,(m)=>({BRL:5.2,VES:1060})[m],()=>"",()=>[],()=>0,()=>false,()=>false,(f)=>"2026-"+f.replace("/","-"));
+  const r=E("2026-11-01");
+  ok(r.nat.BRL===-520, "una compra pagada en reales resta sus reales a nat", r.nat.BRL);
+  ok(r.nat.VES===10600, "una venta suma los bolívares que entran", r.nat.VES);
+  ok(Math.abs(r.usdt-(100-520/5.2-10+10600/1060))<1e-9, "y el efecto en USDT es el mismo de siempre", r.usdt);
+  ok(E("2026-11-01","2026-11-16").nat.VES===undefined && E("2026-11-01","2026-11-16").nat.BRL===-520, "hastaIso deja fuera lo posterior");
+  // Las fotos de antes se rehacen al leerlas; las nuevas no.
+  const MF=new Function("S","efectoTasasDesde","conciliacionCapital","r2", sacarFuncion("_monDeFoto")+"\nreturn _monDeFoto;")(
+    {config:{aperturaFecha:"2026-10-20"}}, ()=>({nat:{BRL:-300}}), ()=>({}), (n)=>Math.round(n*100)/100);
+  const vieja={mon:{BRL:{n:900,f:42000,r:5.2}}, c:{desde:"2026-10-20"}};
+  ok(MF(vieja,"2026-11-15",{BRL:1000}).BRL.f===700, "una foto sin natV rehace f (nat de hasta ese día + lo de la apertura)");
+  ok(vieja.mon.BRL.f===42000, "y no toca lo guardado");
+  const nueva={natV:2, mon:{BRL:{n:900,f:123,r:5.2}}};
+  ok(MF(nueva,"2026-11-16",{BRL:1000}).BRL.f===123, "una foto nueva se lee tal cual");
+  const fc=sinComentarios(sacarFuncion("_fotoCapital"));
+  ok(/natV:2/.test(fc) && /f\.cub=/.test(fc), "la foto nueva lleva natV y lo de la apertura");
+  ok(/_monDeFoto\(out\.ini, out\.kIni, fin\.cub\)/.test(sinComentarios(sacarFuncion("_diaContable"))), "Tu día lee la foto de inicio corregida");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
