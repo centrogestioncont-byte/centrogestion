@@ -7103,3 +7103,24 @@ desde la apertura no viene de aquí**: ~7.000 R$ de flujos se revalorizan a la
 tasa de hoy al entrar (remesas y lotes) pero salen por egresos, traspasos y
 préstamos a su valor de entonces, así que ese número se mueve ~$13 por cada 1 %
 que sube el real. Es otro arreglo.
+
+---
+
+## El recargo por atraso de un cobro (ARREGLO 264)
+
+Sus palabras del 17/11, con SARA MARIN (108 R$ desde el 14/10): *"quiero que
+esa función de mora se aplique solo a lo que yo quiera"*. Dos decisiones suyas:
+el recargo es un **monto que escribe ella** cuando quiere (no un reloj), y
+cobrado cuenta **como la mora de un préstamo**: ganancia bruta, no utilidad.
+
+- **Vive en `c.recargos`, nunca en `c.monto`** — la regla de `p.mora` contra
+  `p.abonos`. Pendiente no suma a nada; cobrado entra a una cuenta
+  (`ajusteCuentaEgreso`) con su USDT guardado del momento.
+- **Lo suma `gananciaPrestamosDelMes()`** y sale de ahí a la bruta, el Diario
+  y la conciliación. `calcMesCompleto` dice cuánto es en `ganRecargosCobro`.
+- **Cerrar un cargo con recargo pendiente pregunta** (`_decidirRecargoAlCerrar`,
+  antes de mover nada): lo pagó → entra; no → pasa a otro cargo suyo, o se
+  perdona, o el cargo no se cierra. Colgado de un cargo cobrado no lo ve nadie.
+- **📲 Cobrar por WhatsApp** (`_msgCobroCliente`) lee lo mismo que la pantalla;
+  el texto lo aprobó ella.
+- Viaja dentro del registro del cobro: sin clave nueva, sin tocar el servidor.

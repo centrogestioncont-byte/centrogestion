@@ -15369,5 +15369,54 @@ console.log("\nARREGLO 263 · Las compras a clientes no deciden la tasa del real
   ok(/_monDeFoto\(out\.ini, out\.kIni, fin\.cub\)/.test(sinComentarios(sacarFuncion("_diaContable"))), "Tu día lee la foto de inicio corregida");
 }
 
+// ── ARREGLO 264 · Recargo por atraso en Cuentas por cobrar ───────────────
+console.log("\nARREGLO 264 · El recargo de un cobro va aparte, se cobra como la mora y se pregunta al cerrar");
+{
+  // La ganancia: un recargo cobrado entra con el USDT que se guardó; uno
+  // pendiente, o de otro mes, no entra.
+  const S={prestamos:[], cuentasCobrar:[
+    {recargos:[{monto:5,cobrado:{fecha:"2026-11-17",cuentaId:"pb",usdt:0.91}},{monto:7}]},
+    {recargos:[{monto:3,cobrado:{fecha:"2026-10-30",cuentaId:"pb",usdt:0.55}}]}]};
+  const G=new Function("S","_fraccionInteresPrestamo","_mesKeyISO",
+    sacarFuncion("gananciaPrestamosDelMes")+"\nreturn gananciaPrestamosDelMes;")(S,()=>0,(f)=>String(f).slice(0,7));
+  const g=G("2026-11");
+  ok(g.usdt===0.91 && g.recUsdt===0.91 && g.recCant===1, "solo el recargo COBRADO de ese mes, con su USDT guardado", JSON.stringify(g));
+  ok(G("2026-10").usdt===0.55, "el de octubre cuenta en octubre");
+  // Pendiente no suma a nada: vive en c.recargos, nunca en c.monto.
+  const ap=sinComentarios(sacarFuncion("aplicarRecargoCliente"));
+  ok(/c\.recargos\.push\(/.test(ap) && !/c\.monto\s*[+\-]?=/.test(ap), "aplicar un recargo no toca c.monto");
+  const co=sinComentarios(sacarFuncion("_cobrarRecargosEn"));
+  ok(/ajusteCuentaEgreso\(cuentaId/.test(co) && /usdt:u/.test(co) && !/c\.monto/.test(co), "cobrarlo entra a la cuenta, guarda su USDT y no toca c.monto");
+  // Al cerrar un cargo se decide ANTES de mover nada y se aplica al final, en
+  // los DOS caminos. Contado: si se quita uno, falla.
+  const mc=sinComentarios(sacarFuncion("marcarCobrado"));
+  ok(mc.indexOf("_decidirRecargoAlCerrar(")>=0 && mc.indexOf("_decidirRecargoAlCerrar(")<mc.indexOf("cta.saldo=") &&
+     /_aplicarRecargoAlCerrar\(c,_accRec\)/.test(mc), "✓ Cobrado decide el recargo antes de acreditar y lo aplica al cerrar");
+  const sa=sinComentarios(sacarFuncion("saveAbonoCobrar"));
+  ok(sa.indexOf("_decidirRecargoAlCerrar(")>=0 && sa.indexOf("_decidirRecargoAlCerrar(")<sa.indexOf("ajusteCuentaEgreso(cuentaId") &&
+     /_aplicarRecargoAlCerrar\(c,_accRecAb\)/.test(sa), "el abono que cierra el cargo hace lo mismo");
+  // Borrar el cargo devuelve el recargo cobrado a su cuenta.
+  ok(/_recCob\.forEach\(function\(r\)\{ if\(r\.cobrado\.cuentaId\) ajusteCuentaEgreso\(r\.cobrado\.cuentaId,-/.test(sinComentarios(sacarFuncion("eliminarCuenta"))),
+     "borrar el cargo devuelve el recargo cobrado");
+  // El nombre del cliente va escapado en los dos botones (ARREGLO 102).
+  const rc=sacarFuncion("rCuentasCobrar");
+  ok(/aplicarRecargoCliente\(\\""\+_jsAttr\(g\.clave\)/.test(rc) && /cobrarClienteWA\(\\""\+_jsAttr\(g\.clave\)/.test(rc), "los botones del cliente escapan el nombre con _jsAttr");
+  // El mensaje: los cargos, los días, el recargo y el total con el recargo.
+  const cargos=[{cliente:"SARA MARIN",fecha:"14/10/26",monto:48,moneda:"BRL",abonos:[],recargos:[{monto:5}]},
+                {cliente:"SARA MARIN",fecha:"20/10/26",monto:60,moneda:"BRL",abonos:[{monto:10}],recargos:[]}];
+  const f2=(n)=>(Math.round(n*100)/100).toFixed(2).replace(".",",");
+  const M=new Function("_cargosPendDeCliente","_diasEsperaCliente","_saldoCargoCC","_recargoPendDe","_isoDeDDMMAA","_simMon","f2",
+    sacarFuncion("_msgCobroCliente")+"\nreturn _msgCobroCliente;")(
+    ()=>cargos, ()=>34,
+    (c)=>c.monto-c.abonos.reduce((a,x)=>a+x.monto,0),
+    (c)=>c.recargos.filter(r=>!r.cobrado).reduce((a,r)=>a+r.monto,0),
+    (f)=>{const p=f.split("/");return "20"+p[2]+"-"+p[1]+"-"+p[0];}, (m)=>({BRL:"R$"})[m]||m, f2);
+  const msg=M("SARA MARIN");
+  ok(/• 14\/10 · R\$ 48,00/.test(msg) && /• 20\/10 · R\$ 50,00/.test(msg), "cada cargo con lo que FALTA (descontando abonos)", msg);
+  ok(/Ya son 34 días de espera/.test(msg) && /Recargo por atraso: R\$ 5,00/.test(msg) && /\*Total a pagar: R\$ 103,00\*/.test(msg), "días, recargo y total con el recargo");
+  cargos[0].recargos=[];
+  ok(!/Recargo/.test(M("SARA MARIN")) && /\*Total a pagar: R\$ 98,00\*/.test(M("SARA MARIN")), "sin recargo no sale esa línea");
+}
+
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));
 process.exit(fallos ? 1 : 0);
