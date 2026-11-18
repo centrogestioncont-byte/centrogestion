@@ -3763,7 +3763,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261117_v346";
+var APP_VERSION = "20261118_v347";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -13324,7 +13324,41 @@ function delCatPersonal(cat){
 // enteran solos, sin tocar ni una linea de los cuatro. Aqui solo vive el
 // CALENDARIO: que se debe, cuando, y si ya se pago.
 
-var _INM_AVISO_DIAS = 30;   // cuantos dias antes se avisa de una cuota
+// ARREGLO 265: eran 30 y avisaba solo de UNA cuota, la siguiente. Con el contrato
+// firmado del 03/11 hay tres pagos distintos al mes —la Caixa el 06, Plano y el
+// ITBI el 10— y con una sola cuota avisada se escapaban dos. Ahora avisa de
+// CADA una que venza en estos dias, y 30 dias con tres pagos al mes serian seis
+// avisos fijos en el Resumen: un aviso que siempre esta deja de leerse (99).
+var _INM_AVISO_DIAS = 10;   // cuantos dias antes se avisa de una cuota
+var _INM_AVISO_ROJO = 3;    // a partir de aqui el aviso va en rojo
+
+// A QUIEN se le paga cada cuota (ARREGLO 265). No es adorno: cada uno se paga
+// de una forma distinta y eso es lo que ella tiene que saber para no fallar —
+// la Caixa la debita sola (hay que tener saldo ese dia), Plano y el ITBI se
+// pagan con boleto que hay que ir a sacar al Portal del Cliente. Lo que no
+// lleva grupo (cuotas viejas o metidas a mano) cae en "otras", no se pierde.
+var _INM_GRUPOS = [
+  {k:"plano", nom:"Plano & Plano",   como:"boleto en el Portal del Cliente"},
+  {k:"caixa", nom:"Caixa",           como:"débito automático en tu cuenta"},
+  {k:"itbi",  nom:"ITBI y registro", como:"boleto de Plano & Plano"},
+  {k:"otras", nom:"Otras cuotas",    como:""}
+];
+function _inmGrupo(c){
+  var g=c&&c.grupo;
+  for(var i=0;i<_INM_GRUPOS.length;i++) if(_INM_GRUPOS[i].k===g) return g;
+  return "otras";
+}
+// "Plano & Plano · Señal", pero "ITBI y registro 3 de 12" y no "ITBI y
+// registro · ITBI y registro 3 de 12": si el concepto ya nombra al grupo, no se
+// repite. Lo leen los avisos y el pago, para que digan lo mismo.
+function _inmTitulo(c){
+  var nom=_inmGrupoDe(_inmGrupo(c)).nom, cn=String((c&&c.concepto)||"");
+  return (_inmGrupo(c)==="otras" || cn.indexOf(nom)===0) ? cn : nom+" · "+cn;
+}
+function _inmGrupoDe(k){
+  for(var i=0;i<_INM_GRUPOS.length;i++) if(_INM_GRUPOS[i].k===k) return _INM_GRUPOS[i];
+  return _INM_GRUPOS[_INM_GRUPOS.length-1];
+}
 
 function _inmDe(id){ return (S.inmuebles||[]).find(function(x){return x.id===id;})||null; }
 function _inmPrimero(){ var l=S.inmuebles||[]; return l.length?l[0]:null; }
@@ -13352,26 +13386,41 @@ function _inmDias(iso){
 //               seria cobrarle algo que probablemente no pague; esconderlo
 //               seria peor, porque si falla lo tiene que pagar entero.
 function _inmResumen(inm){
-  var out={propio:0,pagado:0,falta:0,banco:0,condonable:0,prox:null,vencidas:[],nCuotas:0,nPagadas:0,nPropias:0,nPropiasPag:0};
+  var out={propio:0,pagado:0,falta:0,banco:0,condonable:0,prox:null,vencidas:[],nCuotas:0,nPagadas:0,nPropias:0,nPropiasPag:0,
+           grupos:{},proximas:[]};
   if(!inm) return out;
   var hoy=td();
+  // ARREGLO 265: lo de cada grupo (a quien se le paga) se suma en el MISMO
+  // recorrido. Calculado aparte en la lista, el grupo diria una cosa y la
+  // cifra grande de arriba otra.
+  _INM_GRUPOS.forEach(function(g){ out.grupos[g.k]={falta:0,n:0,nPag:0,prox:null,total:0}; });
   _inmCuotasDe(inm.id).forEach(function(c){
-    var m=parseFloat(c.monto)||0;
-    out.nCuotas++;
+    var m=parseFloat(c.monto)||0, g=out.grupos[_inmGrupo(c)];
+    out.nCuotas++; g.total++;
     if(c.pagado) out.nPagadas++;
     if(c.banco)           out.banco+=m;
     else if(c.condonable) out.condonable+=m;
     else {
       out.propio+=m; out.nPropias++;
-      if(c.pagado){ out.pagado+=(parseFloat(c.montoPagado)||m); out.nPropiasPag++; }
-      else out.falta+=m;
+      if(c.pagado){ out.pagado+=(parseFloat(c.montoPagado)||m); out.nPropiasPag++; g.nPag++; }
+      else {
+        out.falta+=m; g.falta+=m; g.n++;
+        if(!g.prox || String(c.iso)<String(g.prox.iso)) g.prox=c;
+      }
     }
     if(!c.pagado){
       if(c.iso && c.iso<hoy) out.vencidas.push(c);
-      else if(!out.prox || String(c.iso)<String(out.prox.iso)) out.prox=c;
+      else {
+        if(!out.prox || String(c.iso)<String(out.prox.iso)) out.prox=c;
+        // Lo que el banco paga a la constructora no es un pago suyo: no se
+        // le avisa como si tuviera que pagarlo.
+        var dd=_inmDias(c.iso);
+        if(!c.banco && dd!==null && dd<=_INM_AVISO_DIAS) out.proximas.push(c);
+      }
     }
   });
   ["propio","pagado","falta","banco","condonable"].forEach(function(k){ out[k]=Math.round(out[k]*100)/100; });
+  _INM_GRUPOS.forEach(function(g){ out.grupos[g.k].falta=Math.round(out.grupos[g.k].falta*100)/100; });
   return out;
 }
 
@@ -13381,27 +13430,35 @@ function _inmResumen(inm){
 function _avisosInmueble(){
   var out=[];
   (S.inmuebles||[]).forEach(function(inm){
-    var r=_inmResumen(inm);
+    var r=_inmResumen(inm), sim=_simMon(inm.moneda||"BRL");
     r.vencidas.forEach(function(c){
       var d=Math.abs(_inmDias(c.iso)||0);
       out.push({urg:1,color:"var(--mal)",bg:"var(--mal-sup)",brd:"var(--mal-ln)",ico:"🔴",
-        msg:inm.nombre+" · "+c.concepto+" venció hace "+d+" día"+(d===1?"":"s")+": "+_simMon(inm.moneda||"BRL")+" "+f2(c.monto),
+        msg:inm.nombre+" · "+_inmTitulo(c)+" venció hace "+d+" día"+(d===1?"":"s")+": "+sim+" "+f2(c.monto)+
+          " — si ya la pagaste, márcala pagada",
         accion:"inmuebles",aLbl:"Ver →"});
     });
-    if(r.prox){
-      var dd=_inmDias(r.prox.iso);
-      if(dd!==null && dd<=_INM_AVISO_DIAS){
-        // La cuota que la paga el banco lleva su propio texto: lo que se juega
-        // ahi no es la cuota, es el abono que se pierde si no cae en su dia.
-        var extra="";
-        if(r.prox.banco && r.condonable>0)
-          extra=" — si no cae en su día pierdes el abono de "+_simMon(inm.moneda||"BRL")+" "+f2(r.condonable);
-        out.push({urg:(dd<=7?1:0),color:(dd<=7?"var(--mal)":"var(--avi-tx)"),
-          bg:(dd<=7?"var(--mal-sup)":"var(--avi-sup)"),brd:(dd<=7?"var(--mal-ln)":"var(--avi-ln)"),ico:(dd<=7?"🔴":"⏳"),
-          msg:inm.nombre+" · "+r.prox.concepto+" "+(dd===0?"vence HOY":dd===1?"vence mañana":"en "+dd+" días")+": "+_simMon(inm.moneda||"BRL")+" "+f2(r.prox.monto)+extra,
-          accion:"inmuebles",aLbl:"Ver →"});
-      }
-    }
+    // ARREGLO 265: CADA cuota que venza en estos días, no solo la primera.
+    // Antes salía r.prox y nada más: el 06 la Caixa y el 10 Plano, y el aviso
+    // de Plano no salía hasta pagar la de la Caixa.
+    r.proximas.forEach(function(c){
+      var dd=_inmDias(c.iso), rojo=(dd<=_INM_AVISO_ROJO && !c.condonable);
+      var cuando=(dd===0?"HOY":dd===1?"mañana":"en "+dd+" días")+" ("+ds(c.iso)+")";
+      var msg;
+      if(c.debito)
+        // La Caixa debita sola: lo que se juega es tener el saldo ese día.
+        msg=inm.nombre+" · Caixa debita "+cuando+" "+sim+" "+f2(c.monto)+": deja ese dinero en la cuenta";
+      else if(c.condonable)
+        // Esta se perdona si cumple: el aviso es para que no se le olvide la
+        // condición, no para que la pague.
+        msg=inm.nombre+" · "+c.concepto+" "+cuando+": "+sim+" "+f2(c.monto)+" que se perdonan si estás al día con todo — revisa que no tengas nada vencido";
+      else
+        msg=inm.nombre+" · "+_inmTitulo(c)+" vence "+cuando+": "+sim+" "+f2(c.monto)+
+          (_inmGrupoDe(_inmGrupo(c)).como?" — "+_inmGrupoDe(_inmGrupo(c)).como:"");
+      out.push({urg:(rojo?1:0),color:(rojo?"var(--mal)":"var(--avi-tx)"),
+        bg:(rojo?"var(--mal-sup)":"var(--avi-sup)"),brd:(rojo?"var(--mal-ln)":"var(--avi-ln)"),ico:(rojo?"🔴":"⏳"),
+        msg:msg, accion:"inmuebles",aLbl:"Ver →"});
+    });
   });
   return out;
 }
@@ -13446,6 +13503,13 @@ function saveCuotaInm(){
   var obj={id:f.id||("inmc_"+_newUid()),inmId:f.inmId,concepto:String(f.concepto).trim(),
     iso:f.iso,monto:Math.round(m*100)/100,
     banco:!!f.banco,condonable:!!f.condonable,
+    // ARREGLO 265: el objeto se rehace entero al guardar, así que lo que no
+    // está en el formulario se tiene que copiar del viejo. Sin esto, editar una
+    // cuota del contrato le quitaba su clave (y "Actualizar" la volvía a meter
+    // duplicada) y la de la Caixa dejaba de avisar como débito automático.
+    grupo:(f.grupo!==undefined?f.grupo:(viejo?(viejo.grupo||""):"")),
+    clave:viejo?(viejo.clave||""):"",
+    debito:viejo?!!viejo.debito:false,
     pagado:viejo?!!viejo.pagado:false,
     fechaPago:viejo?(viejo.fechaPago||null):null,
     egresoId:viejo?(viejo.egresoId||null):null,
@@ -13490,37 +13554,67 @@ function pagarCuotaInm(id){
 
   // "Ya lo pagué y ya lo tengo apuntado" — sin esto, marcarla crearia un
   // segundo egreso por el mismo dinero y la cuenta bajaria dos veces.
-  var cuenta=null, cid=c.cuentaId||inm.cuentaId||"";
-  if(cid) cuenta=(S.cuentas||[]).find(function(x){return x.id===cid;});
-  if(!cuenta){
-    alert("Esta cuota no tiene cuenta de pago.\n\nEdítala (✏️) y elige de qué cuenta sale el dinero, o ponle una cuenta por defecto al inmueble.");
-    return;
-  }
-  if(cuenta.moneda!==mon){
-    alert("La cuenta \""+cuenta.nombre+"\" es en "+cuenta.moneda+" y esta cuota es en "+mon+".\n\nEdita la cuota y elige una cuenta en "+mon+".");
-    return;
-  }
-  var soloMarcar=!confirm("💰 PAGAR: "+c.concepto+"\n\nSe descontarán "+f2(c.monto)+" "+mon+" de \""+cuenta.nombre+"\"\nSaldo ahora: "+f2(cuenta.saldo)+" → quedará "+f2((parseFloat(cuenta.saldo)||0)-(parseFloat(c.monto)||0))+"\n\nAceptar = registrar el gasto y descontar.\nCancelar = solo marcarla (si ya la registraste aparte).");
-  if(soloMarcar){
+  var g=_inmGrupo(c), grp=_inmGrupoDe(g);
+  var registrar=confirm("💰 PAGAR: "+_inmTitulo(c)+"\n"+_simMon(mon)+" "+f2(c.monto)+" · vence "+ds(c.iso)+
+    "\n\nAceptar = registrar el gasto y descontarlo de una cuenta.\nCancelar = solo marcarla (si ya la registraste aparte).");
+  if(!registrar){
     if(!confirm("Marcar \""+c.concepto+"\" como pagada SIN registrar el gasto.\n\nÚsalo solo si ese pago ya está en Egresos. Si no, el apartamento dirá que está al día y de tu cuenta no habrá salido nada.\n\n¿Confirmar?")) return;
     c.pagado=true; c.fechaPago=td(); c.montoPagado=c.monto; c.egresoId=null;
     saveData(); R(); return;
   }
+  // ARREGLO 265: la cuenta se elige AL PAGAR. Antes, sin cuenta puesta, había
+  // que salir, editar la cuota y volver — con 462 cuotas eso no se puede pedir.
+  // Se propone la última que se usó en ese mismo grupo (inm.ctaGrupo): la Caixa
+  // debita siempre de la misma, y Plano casi siempre sale del mismo banco.
+  var porDef=c.cuentaId||(inm.ctaGrupo&&inm.ctaGrupo[g])||inm.cuentaId||"";
+  var cuenta=_elegirCuentaInm(mon, porDef, _inmTitulo(c));
+  if(!cuenta) return;
+  // El monto de verdad. El boleto de Plano lleva INCC e interés encima de los
+  // 1.000 que dice el documento, y la Caixa reajusta su encargo: lo que sale
+  // del banco es lo que se apunta, no lo que decía el calendario.
+  var tx=prompt("¿Cuánto pagaste de verdad? ("+_simMon(mon)+")\n\nEl calendario dice "+f2(c.monto)+
+    (g==="plano"?". El boleto de Plano viene con INCC e interés encima.":g==="caixa"?". La Caixa reajusta el encargo: mira el débito en tu extracto.":"."),
+    _comaCab(String(c.monto)));
+  if(tx===null) return;
+  var real=_leerNumero(tx);
+  if(isNaN(real)||real<=0){ alert("No se entendió el monto: \""+tx+"\". No se registró nada."); return; }
+  real=Math.round(real*100)/100;
   var fin=prompt("¿Qué día se pagó de verdad? (AAAA-MM-DD)", c.iso||td());
   if(fin===null) return;
   if(!/^\d{4}-\d{2}-\d{2}$/.test(fin)){alert("Formato de fecha inválido. Usa AAAA-MM-DD, por ejemplo: "+td());return;}
-  var usdt=mon==="USDT"?(parseFloat(c.monto)||0):(function(){var r=getRateToUsdt(mon);return (r&&r>0)?((parseFloat(c.monto)||0)/r):0;}());
+  if(!confirm("Se descuentan "+_simMon(mon)+" "+f2(real)+" de \""+cuenta.nombre+"\"\n"+
+     "Saldo ahora: "+f2(cuenta.saldo)+" → quedará "+f2((parseFloat(cuenta.saldo)||0)-real)+"\nFecha: "+ds(fin)+
+     (Math.abs(real-(parseFloat(c.monto)||0))>=0.005?"\n\nEl calendario decía "+f2(c.monto)+": se apunta lo que pagaste.":"")+
+     "\n\n¿Confirmar?")) return;
+  var usdt=mon==="USDT"?real:(function(){var r=getRateToUsdt(mon);return (r&&r>0)?(real/r):0;}());
   usdt=Math.round(usdt*100)/100;
   var egId="inmeg_"+_newUid();
-  ajusteCuentaEgreso(cuenta.id,-(parseFloat(c.monto)||0));
-  descontarFIFOEgreso(mon,c.monto,usdt,cuenta.id);
+  ajusteCuentaEgreso(cuenta.id,-real);
+  descontarFIFOEgreso(mon,real,usdt,cuenta.id);
   S.egresos=S.egresos||[];
   S.egresos.push({id:egId,d:ds(fin),cat:_inmCategoria(inm),
-    mot:"["+inm.nombre+"] "+c.concepto,monto:c.monto,usdt:usdt,mon:mon,
+    mot:"["+inm.nombre+"] "+c.concepto,monto:real,usdt:usdt,mon:mon,
     tipo:(inm.tipo==="empresa"?"empresa":"personal"),pagada:true,locked:false,
     cuentaId:cuenta.id,fromInmueble:inm.id,fromInmCuota:c.id});
-  c.pagado=true; c.fechaPago=fin; c.montoPagado=c.monto; c.egresoId=egId; c.cuentaId=cuenta.id;
+  c.pagado=true; c.fechaPago=fin; c.montoPagado=real; c.egresoId=egId; c.cuentaId=cuenta.id;
+  inm.ctaGrupo=inm.ctaGrupo||{}; inm.ctaGrupo[g]=cuenta.id;
   saveData(); R();
+}
+
+// La cuenta de un pago del inmueble, elegida en el momento. Solo las cuentas
+// activas en la moneda del inmueble: una cuota en reales no puede salir de una
+// cuenta en bolívares, y ofrecerla sería dejarla elegir algo que después hay
+// que rechazar. La que se usó la última vez en ese grupo sale marcada.
+function _elegirCuentaInm(mon, porDef, que){
+  var l=(S.cuentas||[]).filter(function(x){return x.activa!==false && x.moneda===mon;});
+  if(!l.length){ alert("No tienes ninguna cuenta activa en "+mon+".\n\nCrea una en Configuración → Cuentas y vuelve a pulsar pagar."); return null; }
+  var iDef=0; l.forEach(function(x,i){ if(x.id===porDef) iDef=i; });
+  var txt=l.map(function(x,i){ return (i+1)+") "+x.nombre+" · "+f2(x.saldo); }).join("\n");
+  var r=prompt("¿De qué cuenta sale? — "+que+"\n\n"+txt+"\n\nEscribe el número:", String(iDef+1));
+  if(r===null) return null;
+  var n=parseInt(String(r).trim(),10);
+  if(!(n>=1 && n<=l.length)){ alert("Ese número no está en la lista. No se registró nada."); return null; }
+  return l[n-1];
 }
 
 // La categoria del egreso: la primera de las suyas que le toque segun de
@@ -14769,7 +14863,7 @@ function _inmVacio(){
       // "Proposta" (ver _VIZ).
       "<button onclick='cargarContratoViz()' style='width:100%;margin-top:9px;background:none;border:1px dashed var(--ln2);"+
         "border-radius:11px;padding:10px;font-size:12px;font-weight:700;color:var(--tx3);cursor:pointer;font-family:inherit'>"+
-        "\ud83c\udfe0 Meter el contrato del VIZ con sus 28 cuotas</button>"+
+        "\ud83c\udfe0 Meter el contrato firmado del VIZ</button>"+
     "</div>"+
     _inmFormContrato()+
   "</div>";
@@ -14808,6 +14902,34 @@ function _inmTarjeta(inm){
         "<div style='background:var(--ok);height:100%;width:"+pct+"%'></div></div>"+
       "<div style='font-size:11px;color:var(--tx4);margin-top:5px'>"+
         r.nPropiasPag+" de "+r.nPropias+" cuotas tuyas pagadas · "+String(pct).replace(".",",")+" %</div>";
+
+  // ARREGLO 265: lo que falta, partido por a quién se le paga. Las filas salen
+  // del mismo _inmResumen() que la cifra grande, así que suman exactamente lo
+  // de arriba: se pueden sumar a mano (ARREGLO 141).
+  var lin=_INM_GRUPOS.filter(function(g){ return r.grupos[g.k].n>0; }).map(function(g){
+    var G=r.grupos[g.k], pr=G.prox;
+    return "<div style='display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-top:1px solid var(--ln)'>"+
+      "<div style='min-width:0'><div style='font-size:12.5px;font-weight:800'>"+_escAud(g.nom)+"</div>"+
+        "<div style='font-size:10.5px;color:var(--tx4)'>"+G.n+" por pagar"+(g.como?" · "+_escAud(g.como):"")+"</div>"+
+        // Si la más vieja sin pagar ya pasó, se dice "vencida" en rojo: llamarla
+        // "próxima" escondería que hay algo atrasado.
+        (pr?"<div style='font-size:10.5px;margin-top:1px;color:"+(pr.iso<td()?"var(--mal-ln)":"var(--tx3)")+"'>"+
+          (pr.iso<td()?"vencida ":"próxima ")+ds(pr.iso)+" · "+mon+" "+f2(pr.monto)+"</div>":"")+
+      "</div>"+
+      "<div style='font-size:13.5px;font-weight:800;white-space:nowrap'>"+mon+" "+f2(G.falta)+"</div></div>";
+  }).join("");
+  if(lin) h+="<div style='margin-top:11px'>"+lin+"</div>";
+  // Los números de la Caixa son los de su planilla; el encargo real lo
+  // reajusta ella. Callarlo haría pasar por exacto un total que no lo es.
+  if(r.grupos.caixa.n>12)
+    h+="<div style='font-size:10.5px;color:var(--tx4);line-height:1.5;margin-top:3px'>Lo de la Caixa sale de su planilla: "+
+       "la Caixa reajusta el encargo, así que el total es aproximado. Al pagar se apunta lo que debitó de verdad.</div>";
+  // El contrato firmado del 03/11 cambia el calendario: se ofrece mientras
+  // falte algo por meter, y desaparece cuando ya está.
+  var plan=_vizPlan(inm);
+  if(_vizPendiente(plan))
+    h+="<button onclick='actualizarContratoViz(\""+_jsAttr(inm.id)+"\")' class='btn-main btn-blue' style='width:100%;margin-top:12px;font-size:13px;padding:11px'>"+
+       "📄 Actualizar al contrato firmado del 03/11</button>";
 
   // El dinero del banco NO suma a lo que ella debe, y por eso va aparte y
   // dicho: meterlo dentro diría que tiene que pagar 280.197 que no pasan por
@@ -14851,22 +14973,9 @@ function _toggleInmCuotas(id){
   if(b) b.textContent=(S._inmAbierto===id)?"Ocultar cuotas":"Ver cuotas";
 }
 
-// La lista de cuotas. Cada fila dice su estado y lleva su botón: pagar una
-// cuota es el gesto que más se repite, y esconderlo detrás de un menú lo
-// convierte en dos toques por cuota.
-function _inmListaCuotas(inm){
-  if(!inm) return "";
-  var cs=_inmCuotasDe(inm.id), hoy=td();
-  if(!cs.length){
-    return "<div style='background:var(--sup);border:1px solid var(--ln);border-radius:12px;padding:14px;margin-top:9px;"+
-      "font-size:12px;color:var(--tx3);text-align:center'>Este inmueble todavía no tiene cuotas."+
-      "<div style='margin-top:10px'><button onclick='_abrirFormCuota(\""+_jsAttr(inm.id)+"\")' class='btn-main btn-blue'>+ Agregar una cuota</button></div></div>"+
-      // ARREGLO 246: sin cuotas, el formulario no se dibujaba nunca, así que
-      // "+ Agregar una cuota" abría... nada. Salió probando este formulario en
-      // Chromium: la primera cuota de un inmueble no se podía meter a mano.
-      _inmFormCuota(inm);
-  }
-  var filas=cs.map(function(c){
+// Una fila de cuota. Sale de aquí y de ningún otro sitio: la dibujan el bloque
+// visible y los plegados, y escrita dos veces se separarían con el primer cambio.
+function _inmFila(c,hoy){
     var vencida=(!c.pagado && c.iso && c.iso<hoy);
     var dd=_inmDias(c.iso);
     var col=c.pagado?"var(--ok)":(vencida?"var(--mal-ln)":(dd!==null&&dd<=_INM_AVISO_DIAS?"var(--avi-tx)":"var(--tx3)"));
@@ -14882,7 +14991,10 @@ function _inmListaCuotas(inm){
         (nota?"<div style='font-size:10px;color:var(--tx4);margin-top:1px'>"+nota+"</div>":"")+
       "</td>"+
       "<td style='padding:9px 8px;text-align:right;vertical-align:top;white-space:nowrap;"+
-        "font-size:13px;font-weight:800;color:"+(c.pagado?"var(--tx3)":"var(--tx)")+"'>"+f2(c.monto)+"</td>"+
+        "font-size:13px;font-weight:800;color:"+(c.pagado?"var(--tx3)":"var(--tx)")+"'>"+
+        // Pagada, enseña lo que se pagó de verdad (ARREGLO 265: el boleto puede
+        // venir distinto del calendario).
+        f2(c.pagado?(parseFloat(c.montoPagado)||c.monto):c.monto)+"</td>"+
       "<td style='padding:9px 10px 9px 4px;text-align:right;vertical-align:top;white-space:nowrap'>"+
         "<button onclick='pagarCuotaInm(\""+_jsAttr(c.id)+"\")' style='background:none;border:1px solid var(--ln2);"+
           "border-radius:7px;padding:4px 9px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;"+
@@ -14891,9 +15003,98 @@ function _inmListaCuotas(inm){
           "color:var(--tx4);font-size:12px;cursor:pointer;padding:4px 2px 4px 6px'>✏️</button>")+
       "</td>"+
     "</tr>";
+  }
+
+// Un grupo de cuotas (ARREGLO 265): cabecera con lo que falta, las pagadas
+// plegadas, las vencidas y las próximas 12 a la vista, y el resto por año.
+var _INM_A_LA_VISTA = 12;
+function _inmBloqueGrupo(inm,g,del,hoy){
+  var sim=_simMon(inm.moneda||"BRL");
+  var pag=del.filter(function(c){return c.pagado;}), pen=del.filter(function(c){return !c.pagado;});
+  // Lo que falta del grupo se LEE de _inmResumen(), no se vuelve a sumar aquí:
+  // es el mismo número que la línea del grupo en la tarjeta de arriba.
+  var falta=_inmResumen(inm).grupos[g.k].falta;
+  var h="<div style='padding:11px 12px 8px;background:var(--bg);border-top:1px solid var(--ln)'>"+
+    "<div style='display:flex;justify-content:space-between;gap:8px;align-items:baseline'>"+
+      "<div style='font-size:12.5px;font-weight:800'>"+_escAud(g.nom)+"</div>"+
+      "<div style='font-size:12.5px;font-weight:800;white-space:nowrap'>"+(falta>0?"falta "+sim+" "+f2(falta):"✅ al día")+"</div></div>"+
+    (g.como?"<div style='font-size:10.5px;color:var(--tx4);margin-top:1px'>Se paga con "+_escAud(g.como)+"</div>":"")+
+  "</div>";
+  var base=inm.id+"_"+g.k;
+  if(pag.length) h+=_inmPlegable(base+"_pag","✅ "+pag.length+" pagada"+(pag.length===1?"":"s"),pag,hoy);
+  var vis=[], resto=[];
+  pen.forEach(function(c){
+    if((c.iso && c.iso<hoy) || vis.length<_INM_A_LA_VISTA) vis.push(c); else resto.push(c);
+  });
+  if(vis.length) h+="<table style='width:100%;border-collapse:collapse'>"+vis.map(function(c){return _inmFila(c,hoy);}).join("")+"</table>";
+  // El resto, por año: "2031 · 12 cuotas · R$ 25.268" se lee; 420 filas no.
+  var anios={}, orden=[];
+  resto.forEach(function(c){ var a=String(c.iso||"").slice(0,4)||"sin fecha"; if(!anios[a]){anios[a]=[];orden.push(a);} anios[a].push(c); });
+  orden.forEach(function(a){
+    var t=0; anios[a].forEach(function(c){ t+=(parseFloat(c.monto)||0); });
+    h+=_inmPlegable(base+"_"+a, a+" · "+anios[a].length+" cuota"+(anios[a].length===1?"":"s")+" · "+sim+" "+f2(t), anios[a], hoy);
+  });
+  return h;
+}
+// Plegable que abre por su id, sin R() (ARREGLO 32), y que RECUERDA en S si
+// está abierto: el sondeo repinta cada 8 s y un abierto que vive solo en el DOM
+// se cierra solo (ARREGLO 165).
+function _inmPlegable(key,rot,lista,hoy){
+  var ab=!!(S._inmVer&&S._inmVer[key]);
+  return "<div style='border-top:1px solid var(--ln)'>"+
+    "<button id='inmbl-"+_escAud(key)+"' onclick='_inmVerBloque(\""+_jsAttr(key)+"\")' style='width:100%;text-align:left;background:none;border:none;"+
+      "padding:9px 12px;font-size:11.5px;font-weight:700;color:var(--tx3);cursor:pointer;font-family:inherit'>"+
+      _escAud(rot)+" "+(ab?"▴":"▾")+"</button>"+
+    "<div id='inmb-"+_escAud(key)+"' data-rot='"+_escAud(rot)+"'>"+(ab?_inmFilasTabla(key):"")+"</div></div>";
+}
+// Lo que hay dentro de un plegable se busca por su clave al abrirlo, en vez de
+// guardarlo en el DOM: así lo que se abre es lo que hay ahora, no lo de cuando
+// se dibujó.
+function _inmFilasDeClave(key){
+  var p=String(key).split("_"), cola=p.pop(), g=p.pop(), id=p.join("_");
+  var hoy=td(), cs=_inmCuotasDe(id).filter(function(c){ return _inmGrupo(c)===g; });
+  if(cola==="pag") return cs.filter(function(c){return c.pagado;});
+  var pen=cs.filter(function(c){return !c.pagado;}), vis=0;
+  return pen.filter(function(c){
+    if((c.iso && c.iso<hoy) || vis<_INM_A_LA_VISTA){ vis++; return false; }
+    return (String(c.iso||"").slice(0,4)||"sin fecha")===cola;
+  });
+}
+function _inmFilasTabla(key){
+  var hoy=td();
+  return "<table style='width:100%;border-collapse:collapse'>"+_inmFilasDeClave(key).map(function(c){return _inmFila(c,hoy);}).join("")+"</table>";
+}
+function _inmVerBloque(key){
+  S._inmVer=S._inmVer||{}; S._inmVer[key]=!S._inmVer[key];
+  var n=document.getElementById("inmb-"+key), b=document.getElementById("inmbl-"+key);
+  if(n) n.innerHTML=S._inmVer[key]?_inmFilasTabla(key):"";
+  if(b && n) b.textContent=(n.getAttribute("data-rot")||"")+" "+(S._inmVer[key]?"▴":"▾");
+}
+
+// La lista de cuotas. Cada fila dice su estado y lleva su botón: pagar una
+// cuota es el gesto que más se repite, y esconderlo detrás de un menú lo
+// convierte en dos toques por cuota.
+function _inmListaCuotas(inm){
+  if(!inm) return "";
+  var cs=_inmCuotasDe(inm.id), hoy=td();
+  if(!cs.length){
+    return "<div style='background:var(--sup);border:1px solid var(--ln);border-radius:12px;padding:14px;margin-top:9px;"+
+      "font-size:12px;color:var(--tx3);text-align:center'>Este inmueble todavía no tiene cuotas."+
+      "<div style='margin-top:10px'><button onclick='_abrirFormCuota(\""+_jsAttr(inm.id)+"\")' class='btn-main btn-blue'>+ Agregar una cuota</button></div></div>"+
+      // ARREGLO 246: sin cuotas, el formulario no se dibujaba nunca, así que
+      // "+ Agregar una cuota" abría... nada. Salió probando este formulario en
+      // Chromium: la primera cuota de un inmueble no se podía meter a mano.
+      _inmFormCuota(inm);
+  }
+  // ARREGLO 265: por grupos (a quién se le paga), y dentro de cada grupo lo
+  // pagado plegado y lo que viene de un año en adelante plegado por año. Son
+  // 420 cuotas de la Caixa: dibujadas todas, la lista no se podría usar.
+  var filas=_INM_GRUPOS.map(function(g){
+    var del=cs.filter(function(c){ return _inmGrupo(c)===g.k; });
+    return del.length?_inmBloqueGrupo(inm,g,del,hoy):"";
   }).join("");
   return "<div style='background:var(--sup);border:1px solid var(--ln);border-radius:12px;margin-top:9px;overflow:hidden'>"+
-    "<table style='width:100%;border-collapse:collapse'>"+filas+"</table>"+
+    filas+
     "<div style='padding:10px;border-top:1px solid var(--ln)'>"+
       "<button onclick='_abrirFormCuota(\""+_jsAttr(inm.id)+"\")' style='width:100%;background:none;border:1px dashed var(--ln2);"+
         "border-radius:9px;padding:9px;font-size:12px;font-weight:700;color:var(--tx3);cursor:pointer;font-family:inherit'>"+
@@ -15019,6 +15220,15 @@ function _inmFormCuota(inm){
           cuentas.map(function(c){return "<option value='"+_escAud(c.id)+"'"+(f.cuentaId===c.id?" selected":"")+">"+_escAud(c.nombre)+"</option>";}).join("")+
         "</select></div>"+
     "</div>"+
+    // ARREGLO 265: a quién se le paga, para que caiga en su grupo. Un <select>
+    // y no botones: no llama a R(), así que no borra lo que ya escribió (32).
+    "<div style='margin-bottom:9px'>"+
+      "<label style='font-size:10.5px;font-weight:700;color:var(--tx3);display:block;margin-bottom:3px'>A quién se paga</label>"+
+      "<select onchange='_setNInmC(\"grupo\",this.value)' style='width:100%;padding:9px;border:1.5px solid var(--ln);"+
+        "border-radius:9px;font-size:12.5px;font-family:inherit;background:var(--sup);color:var(--tx)'>"+
+        _INM_GRUPOS.map(function(g){ var k=(g.k==="otras"?"":g.k);
+          return "<option value='"+k+"'"+(((f.grupo||"")===k)?" selected":"")+">"+_escAud(g.nom)+"</option>"; }).join("")+
+      "</select></div>"+
     "<div style='display:flex;gap:8px;margin-bottom:11px;flex-wrap:wrap'>"+
       ["banco","condonable"].map(function(k){
         var on=!!f[k];
@@ -15037,77 +15247,217 @@ function _inmFormCuota(inm){
   "</div>";
 }
 
-// ── EL CONTRATO DEL VIZ, YA TECLEADO ────────────────────────────────
-// Veintiséis cuotas a mano son veintiséis sitios donde equivocarse, y este
-// contrato ya está leído: sale del Quadro Resumo (cláusulas 3.1 y 4.2) y de la
-// hoja "Proposta de Venda" del instrumento firmado el 10/10/2026.
+// ── EL CONTRATO DEL VIZ, FIRMADO (ARREGLO 265) ──────────────────────
+// Lo que firmó el 03/11/2026. Sustituye al calendario del ARREGLO 134, que
+// salía de la propuesta y del compromiso de compra del 10/10 y ya NO coincide:
 //
-// Los montos son los del CONTRATO, no los de la propuesta. No es lo mismo y la
-// diferencia se paga: la propuesta lista la mensual en R$ 1.000,00 —el principal
-// sin intereses— y la cláusula 4.2.2 (c.1) la fija en R$ 1.152,44 con Tabla
-// Price al 12,68% anual. Igual la anual: 2.136,18 en la propuesta, 2.455,42 en
-// el contrato. Comprobado que cuadra: 500 + 43.413,08 + 280.197,03 + 27.658,60
-// + 2.455,42 = 354.224,13, que es el precio con intereses de la cláusula 3.1.
+//   financiamiento Caixa        280.197,03  →  279.882,14 (contrato 8.7877.2934564-9)
+//   encargo mensual Caixa       "en 2027"   →  2.099,99 desde el 06/12/2026, 420 meses,
+//                                              débito automático (B11.3)
+//   pró-soluto Plano, mensual   1.152,44    →  1.000,00 desde el 10/01/2027 (confesión
+//                                              de deuda, cláusula 4.a)
+//   pró-soluto Plano, anual     2.455,42    →  2.451,06 el 20/12/2027 (4.b)
+//   ITBI y registro             no estaba   →  11 × 915,26 desde el 10/12/2026
+//                                              + 915,33 el 10/11/2027 = 10.983,19
 //
-// Las fechas de las 24 mensuales salen de _sumarMeses(), nunca de setMonth():
-// la primera es el 10/01/2027 y el día 10 tiene que seguir siendo el 10 en
-// febrero. Es la misma regla que el cronograma de los préstamos.
+// Comprobado que cuadra: 500 (señal) + 43.413,08 (Bom Pagador) + 26.451,06
+// (pró-soluto) = 70.364,14, exactamente los "recursos propios" de la letra B5
+// del contrato de la Caixa. Y 279.882,14 + 70.364,14 = 350.246,28, el precio.
 //
-// Y HAY 4 CÉNTIMOS QUE NO CUADRAN, a propósito. La cláusula 4.2.2 (c.1) dice
-// las dos cosas a la vez: que la partida son R$ 27.658,60 y que cada una de
-// las 24 cuotas son R$ 1.152,44. Pero 24 × 1.152,44 = 27.658,56. El redondeo
-// es del contrato, no de aquí.
+// LOS 1.000 NO SON LO QUE VA A PAGAR. La confesión los pone "atualizadas
+// monetariamente e com juros" — INCC hasta el Habite-se, IPCA después, y
+// 12,68 % al año por Tabla Price (cláusula 7). Se cargan los 1.000 porque es
+// lo único escrito en un papel firmado; inventarse el boleto sería peor. Lo
+// que lo arregla es que pagar pregunta el monto real (pagarCuotaInm).
 //
-//   suma de estas cuotas    354.224,09
-//   cláusula 3.1 del mismo  354.224,13
-//
-// Se mete lo que dice la cláusula POR CUOTA, que es lo que el banco va a
-// cobrar cada mes, y no un número inventado para cuadrar el total: si algún
-// día la última cuota llega con 4 céntimos más, se edita esa y ya. Un total
-// que cuadra porque alguien repartió el redondeo a mano es peor que uno que
-// no cuadra y dice por qué.
+// La tarifa de evaluación (4.198,23) y el seguro al contado (54,49) son
+// "despesas devidas até a contratação": entran como cuotas del 03/11. Si ya
+// las pagó, las marca; si no, las ve como vencidas, que es la verdad.
 var _VIZ = {
   nombre:"Apto 1818 · VIZ", vendedor:"Plano & Plano", moneda:"BRL",
-  precio:350246.29, tipo:"personal",
+  precio:350246.28, tipo:"personal", firmado:"2026-11-03",
   cuotas:[
-    {concepto:"Señal",                 iso:"2026-10-13", monto:500.00},
-    {concepto:"Financiamiento Caixa",   iso:"2026-12-31", monto:280197.03, banco:true},
-    {concepto:"Parcela Bom Pagador",    iso:"2027-02-02", monto:43413.08, condonable:true},
-    {concepto:"Anual",                  iso:"2027-12-20", monto:2455.42}
+    {clave:"senal",     grupo:"plano", concepto:"Señal",                   iso:"2026-10-13", monto:500.00},
+    {clave:"caixa-fin", grupo:"caixa", concepto:"Financiamiento Caixa",    iso:"2026-11-03", monto:279882.14, banco:true, alFirmar:true},
+    {clave:"tarifa",    grupo:"caixa", concepto:"Tarifa de evaluación",    iso:"2026-11-03", monto:4198.23},
+    {clave:"seguro0",   grupo:"caixa", concepto:"Seguro al contado",       iso:"2026-11-03", monto:54.49},
+    {clave:"bompag",    grupo:"plano", concepto:"Parcela Bom Pagador",     iso:"2027-02-02", monto:43413.08, condonable:true},
+    {clave:"pro-anual", grupo:"plano", concepto:"Pró-soluto anual",        iso:"2027-12-20", monto:2451.06},
+    {clave:"itbi-12",   grupo:"itbi",  concepto:"ITBI y registro 12 de 12",iso:"2027-11-10", monto:915.33}
   ],
-  mensual:{concepto:"Mensual", desde:"2027-01-10", n:24, monto:1152.44}
+  series:[
+    {clave:"pro",   grupo:"plano", concepto:"Pró-soluto mensual", desde:"2027-01-10", n:24,  monto:1000.00},
+    {clave:"itbi",  grupo:"itbi",  concepto:"ITBI y registro",    desde:"2026-12-10", n:11,  de:12, monto:915.26},
+    // De la planilla de evolución de la Caixa (28/10/2026): cada mes su
+    // encargo —prestación + MIP + DFI + 25 de tarifa—. Es nominal: la Caixa lo
+    // reajusta, y al pagar se apunta lo que debitó de verdad.
+    {clave:"caixa", grupo:"caixa", concepto:"Encargo mensual",    desde:"2026-12-06", n:420, debito:true, montos:"_VIZ_CAIXA"}
+  ]
 };
-function cargarContratoViz(){
-  if(!confirm("🏠 METER EL CONTRATO DEL VIZ\n\n"+
-     "Apto 1818, Torre A · Plano & Plano\nPrecio R$ 350.246,29\n\n"+
-     "Se crean 28 cuotas: la señal, el financiamiento de la Caixa, la Bom Pagador, "+
-     "24 mensuales de R$ 1.152,44 y la anual.\n\n"+
-     "Los montos son los del CONTRATO (cláusula 4.2), que llevan los intereses "+
-     "dentro — la hoja \"Proposta\" los lista sin ellos y se queda corta.\n\n¿Seguir?")) return;
-  var inm={id:"inm_"+_newUid(), nombre:_VIZ.nombre, vendedor:_VIZ.vendedor,
-    moneda:_VIZ.moneda, precio:_VIZ.precio, tipo:_VIZ.tipo, cuentaId:"", nota:""};
-  S.inmuebles=S.inmuebles||[]; S.inmuebles.push(inm);
-  S.inmCuotas=S.inmCuotas||[];
-  function meter(c){
-    S.inmCuotas.push({id:"inmc_"+_newUid(), inmId:inm.id, concepto:c.concepto,
-      iso:c.iso, monto:c.monto, banco:!!c.banco, condonable:!!c.condonable,
-      pagado:false, fechaPago:null, egresoId:null, montoPagado:null, cuentaId:""});
+var _VIZ_CAIXA = [
+  2099.99,2099.98,2099.97,2099.96,2099.95,2099.94,2099.93,2099.92,2099.91,2099.90,2099.89,2099.88,2099.86,2099.85,2099.84,
+  2099.83,2099.82,2099.81,2099.80,2099.79,2099.78,2099.76,2099.75,2099.74,2099.73,2099.72,2099.71,2099.69,2099.68,2099.67,
+  2106.00,2105.99,2105.97,2105.95,2105.94,2105.92,2105.91,2105.89,2105.87,2105.86,2105.84,2105.82,2105.81,2105.79,2105.77,
+  2105.76,2105.74,2105.72,2105.70,2105.69,2105.67,2105.65,2105.63,2105.61,2105.60,2105.58,2105.56,2105.54,2105.52,2105.50,
+  2105.48,2105.46,2105.45,2105.43,2105.41,2105.39,2105.37,2105.35,2105.33,2105.31,2105.29,2105.27,2105.24,2105.22,2105.20,
+  2105.18,2105.16,2105.14,2105.12,2105.10,2105.07,2105.05,2105.03,2105.01,2104.99,2104.96,2104.94,2104.92,2104.89,2104.87,
+  2114.39,2114.36,2114.33,2114.30,2114.27,2114.24,2114.20,2114.17,2114.14,2114.11,2114.07,2114.04,2114.00,2113.97,2113.94,
+  2113.90,2113.87,2113.83,2113.80,2113.76,2113.73,2113.69,2113.65,2113.62,2113.58,2113.54,2113.51,2113.47,2113.43,2113.40,
+  2113.36,2113.32,2113.28,2113.24,2113.20,2113.16,2113.12,2113.08,2113.04,2113.00,2112.96,2112.92,2112.88,2112.84,2112.80,
+  2112.75,2112.71,2112.67,2112.63,2112.58,2112.54,2112.49,2112.45,2112.41,2112.36,2112.32,2112.27,2112.22,2112.18,2112.13,
+  2137.00,2136.92,2136.84,2136.76,2136.68,2136.60,2136.51,2136.43,2136.35,2136.26,2136.18,2136.09,2136.01,2135.92,2135.83,
+  2135.75,2135.66,2135.57,2135.48,2135.39,2135.30,2135.21,2135.12,2135.02,2134.93,2134.84,2134.74,2134.65,2134.55,2134.46,
+  2134.36,2134.26,2134.16,2134.06,2133.96,2133.86,2133.76,2133.66,2133.56,2133.46,2133.35,2133.25,2133.14,2133.04,2132.93,
+  2132.82,2132.71,2132.61,2132.50,2132.39,2132.28,2132.16,2132.05,2131.94,2131.82,2131.71,2131.59,2131.48,2131.36,2131.24,
+  2157.00,2156.83,2156.65,2156.47,2156.29,2156.11,2155.93,2155.75,2155.56,2155.38,2155.19,2155.00,2154.81,2154.62,2154.43,
+  2154.24,2154.04,2153.84,2153.65,2153.45,2153.25,2153.05,2152.84,2152.64,2152.43,2152.23,2152.02,2151.81,2151.60,2151.38,
+  2151.17,2150.95,2150.74,2150.52,2150.30,2150.08,2149.85,2149.63,2149.40,2149.18,2148.95,2148.72,2148.48,2148.25,2148.01,
+  2147.78,2147.54,2147.30,2147.06,2146.81,2146.57,2146.32,2146.07,2145.82,2145.57,2145.32,2145.06,2144.80,2144.54,2144.28,
+  2198.04,2197.57,2197.09,2196.61,2196.12,2195.64,2195.15,2194.65,2194.15,2193.65,2193.15,2192.64,2192.13,2191.61,2191.09,
+  2190.57,2190.05,2189.52,2188.98,2188.45,2187.91,2187.36,2186.82,2186.27,2185.71,2185.15,2184.59,2184.02,2183.45,2182.88,
+  2182.30,2181.72,2181.13,2180.55,2179.95,2179.35,2178.75,2178.15,2177.54,2176.92,2176.30,2175.68,2175.05,2174.42,2173.79,
+  2173.15,2172.50,2171.86,2171.20,2170.55,2169.88,2169.22,2168.55,2167.87,2167.19,2166.51,2165.82,2165.12,2164.42,2163.72,
+  2179.03,2178.18,2177.33,2176.48,2175.62,2174.75,2173.87,2172.99,2172.11,2171.22,2170.32,2169.42,2168.51,2167.59,2166.67,
+  2165.74,2164.80,2163.86,2162.92,2161.96,2161.00,2160.03,2159.06,2158.08,2157.09,2156.10,2155.10,2154.09,2153.08,2152.06,
+  2151.03,2149.99,2148.95,2147.90,2146.85,2145.78,2144.71,2143.64,2142.55,2141.46,2140.36,2139.25,2138.14,2137.01,2135.88,
+  2134.74,2133.60,2132.45,2131.28,2130.12,2128.94,2127.75,2126.56,2125.36,2124.15,2122.93,2121.71,2120.47,2119.23,2117.98,
+  2144.92,2142.77,2140.61,2138.43,2136.23,2134.02,2131.80,2129.55,2127.30,2125.03,2122.74,2120.44,2118.12,2115.79,2113.44,
+  2111.07,2108.69,2106.29,2103.88,2101.45,2099.00,2096.54,2094.06,2091.56,2089.05,2086.52,2083.97,2081.40,2078.82,2050.92
+];
+// Las cuotas del contrato firmado, en UN sitio: las leen cargarContratoViz()
+// (contrato nuevo) y _vizPlan() (actualizar uno viejo). Escritas dos veces,
+// un día meter el contrato y actualizarlo darían calendarios distintos.
+// Las fechas de las series salen de _sumarMeses(), nunca de setMonth():
+// setMonth() convierte el 31/01 + 1 mes en 03/03.
+function _vizCuotasNuevas(){
+  var out=_VIZ.cuotas.map(function(c){ return JSON.parse(JSON.stringify(c)); });
+  _VIZ.series.forEach(function(sr){
+    var base=new Date(sr.desde+"T00:00:00"), montos=(sr.montos==="_VIZ_CAIXA")?_VIZ_CAIXA:null;
+    for(var i=0;i<sr.n;i++){
+      var f=_sumarMeses(new Date(base.getTime()), i);
+      out.push({clave:sr.clave+"-"+(i+1), grupo:sr.grupo, debito:!!sr.debito,
+        concepto:sr.concepto+" "+(i+1)+" de "+(sr.de||sr.n),
+        monto:montos?montos[i]:sr.monto,
+        iso:f.getFullYear()+"-"+String(f.getMonth()+1).padStart(2,"0")+"-"+String(f.getDate()).padStart(2,"0")});
+    }
+  });
+  return out;
+}
+function _vizCuotaDe(inmId,t){
+  return {id:"inmc_"+_newUid(), inmId:inmId, concepto:t.concepto, iso:t.iso, monto:t.monto,
+    banco:!!t.banco, condonable:!!t.condonable, debito:!!t.debito, grupo:t.grupo, clave:"viz:"+t.clave,
+    pagado:!!t.alFirmar, fechaPago:t.alFirmar?_VIZ.firmado:null, egresoId:null, montoPagado:null, cuentaId:""};
+}
+// ¿Es el contrato del VIZ? Por el nombre o el vendedor que puso el botón del
+// 134; uno que ella haya metido a mano con otro nombre no se toca.
+function _esInmViz(inm){
+  return !!inm && (/viz/i.test(inm.nombre||"") || (/plano/i.test(inm.vendedor||"") && /1818/.test(inm.nombre||"")));
+}
+
+// Qué haría "Actualizar" con este inmueble, SIN tocar nada. Lo leen el botón
+// (para saber si sale) y actualizarContratoViz() (para la vista previa y para
+// aplicarlo): mirar no puede ser ya haberlo hecho.
+//   quitar   las cuotas viejas del 134 SIN pagar que el contrato firmado cambió
+//   ajustar  las que siguen valiendo y solo cambian de monto, fecha o grupo
+//   nuevas   las que faltan
+// Lo pagado no se quita NUNCA: ese dinero salió de verdad y tiene su egreso.
+function _vizPlan(inm){
+  if(!_esInmViz(inm)) return null;
+  var cs=_inmCuotasDe(inm.id), tiene={}, quitar=[], ajustar=[], avisos=[];
+  var plant={}; _vizCuotasNuevas().forEach(function(t){ plant[t.clave]=t; });
+  cs.forEach(function(c){
+    if(c.clave && /^viz:/.test(c.clave)){ tiene[c.clave.slice(4)]=true; return; }
+    var cn=String(c.concepto||"");
+    var k = /^señal$/i.test(cn) ? "senal"
+          : /^financiamiento caixa$/i.test(cn) ? "caixa-fin"
+          : /bom pagador/i.test(cn) ? "bompag"
+          : (/^mensual \d+ de 24$/i.test(cn) || /^anual$/i.test(cn)) ? "viejo" : null;
+    if(!k) return;                     // una suya, metida a mano: no se toca
+    if(k==="viejo"){
+      if(c.pagado) avisos.push(c);     // ya pagada: se queda, y se dice
+      else quitar.push(c);
+      return;
+    }
+    var t=plant[k], cambios={clave:"viz:"+k, grupo:t.grupo};
+    if(!c.pagado){
+      if(Math.abs((parseFloat(c.monto)||0)-t.monto)>=0.005) cambios.monto=t.monto;
+      if(c.iso!==t.iso) cambios.iso=t.iso;
+      if(t.alFirmar){ cambios.pagado=true; cambios.fechaPago=_VIZ.firmado; }
+    }
+    ajustar.push({c:c, cambios:cambios, t:t});
+    tiene[k]=true;
+  });
+  var nuevas=_vizCuotasNuevas().filter(function(t){ return !tiene[t.clave]; });
+  return {quitar:quitar, ajustar:ajustar, nuevas:nuevas, avisos:avisos};
+}
+
+// Si hay algo que hacer. Lo leen el botón y la función: con dos criterios, el
+// botón saldría y al pulsarlo diría "ya está al día".
+function _vizPendiente(plan){
+  return !!plan && (plan.nuevas.length>0 || plan.quitar.length>0 || plan.ajustar.length>0);
+}
+function actualizarContratoViz(id){
+  var inm=_inmDe(id), plan=_vizPlan(inm);
+  if(!plan){ alert("Este inmueble no es el del VIZ."); return; }
+  if(!_vizPendiente(plan)){
+    alert("Ya está al día con el contrato firmado."); return;
   }
-  _VIZ.cuotas.forEach(meter);
-  // Las 24 mensuales con _sumarMeses(): setMonth() convertiría el 31/01 + 1 mes
-  // en 03/03. Aquí el día es el 10 y no muerde, pero la regla es la regla —
-  // una copia de este código con otra fecha sí mordería.
-  var m=_VIZ.mensual, base=new Date(m.desde+"T00:00:00");
-  for(var i=0;i<m.n;i++){
-    var f=_sumarMeses(new Date(base.getTime()), i);
-    meter({concepto:m.concepto+" "+(i+1)+" de "+m.n, monto:m.monto,
-      iso:f.getFullYear()+"-"+String(f.getMonth()+1).padStart(2,"0")+"-"+String(f.getDate()).padStart(2,"0")});
+  var sim=_simMon(inm.moneda||"BRL");
+  var suma=function(l,f){ var t=0; l.forEach(function(x){ t+=(parseFloat(f(x))||0); }); return t; };
+  var txt="📄 ACTUALIZAR AL CONTRATO FIRMADO DEL 03/11\n\n";
+  if(plan.quitar.length)
+    txt+="Se QUITAN "+plan.quitar.length+" cuotas viejas sin pagar ("+sim+" "+f2(suma(plan.quitar,function(c){return c.monto;}))+
+         "): las 24 de 1.152,44 y la anual de 2.455,42, que salían de la propuesta.\n\n";
+  plan.ajustar.forEach(function(a){
+    var cb=a.cambios, d=[];
+    if(cb.monto!==undefined) d.push(f2(a.c.monto)+" → "+f2(cb.monto));
+    if(cb.iso) d.push(ds(a.c.iso)+" → "+ds(cb.iso));
+    if(cb.pagado) d.push("la Caixa ya se la pagó a Plano al firmar");
+    if(d.length) txt+="Se CORRIGE "+a.c.concepto+": "+d.join(" · ")+"\n";
+  });
+  if(plan.ajustar.some(function(a){return a.cambios.monto!==undefined||a.cambios.iso||a.cambios.pagado;})) txt+="\n";
+  if(plan.nuevas.length){
+    txt+="Se AÑADEN "+plan.nuevas.length+" cuotas:\n";
+    _INM_GRUPOS.forEach(function(g){
+      var l=plan.nuevas.filter(function(t){return t.grupo===g.k;});
+      if(l.length) txt+="· "+g.nom+": "+l.length+" · "+sim+" "+f2(suma(l,function(t){return t.monto;}))+"\n";
+    });
+    txt+="\n";
   }
+  txt+="Lo que ya pagaste no se toca. Las 24 de Plano van con los 1.000 del documento: el boleto trae INCC e interés encima, "+
+       "y al pagar te pregunto el monto de verdad.\n\n";
+  if(plan.avisos.length) txt+="⚠️ "+plan.avisos.length+" cuota(s) vieja(s) ya pagada(s) se quedan como están: revísalas.\n\n";
+  txt+="¿Seguir?";
+  if(!confirm(txt)) return;
+  plan.quitar.forEach(function(c){ _marcarBorradoMerge("inmCuotas",c.id); });
+  var fuera={}; plan.quitar.forEach(function(c){ fuera[c.id]=true; });
+  S.inmCuotas=(S.inmCuotas||[]).filter(function(c){ return !fuera[c.id]; });
+  plan.ajustar.forEach(function(a){ Object.keys(a.cambios).forEach(function(k){ a.c[k]=a.cambios[k]; }); });
+  plan.nuevas.forEach(function(t){ S.inmCuotas.push(_vizCuotaDe(inm.id,t)); });
+  inm.precio=_VIZ.precio; inm.contratoFirmado=_VIZ.firmado;
   S._inmAbierto=inm.id;
   saveData(); R();
   alert("✅ Listo: "+_inmCuotasDe(inm.id).length+" cuotas.\n\n"+
-        "La señal del 13/10 sale como pendiente: púlsale \"pagar\" y elige la cuenta "+
-        "de donde salió de verdad, para que el gasto quede registrado.");
+        "La tarifa de evaluación y el seguro al contado salen como vencidas del 03/11: si ya los pagaste, márcalos pagados.");
+}
+
+function cargarContratoViz(){
+  var nuevas=_vizCuotasNuevas();
+  if(!confirm("🏠 METER EL CONTRATO DEL VIZ (firmado el 03/11)\n\n"+
+     "Apto 1818, Torre A · Plano & Plano\nPrecio R$ 350.246,28\n\n"+
+     "Se crean "+nuevas.length+" cuotas: la señal, el financiamiento de la Caixa (ya pagado por el banco), "+
+     "la Bom Pagador, el pró-soluto de Plano (24 × 1.000 + 2.451,06), el ITBI y registro (12) "+
+     "y los 420 encargos de la Caixa.\n\n¿Seguir?")) return;
+  var inm={id:"inm_"+_newUid(), nombre:_VIZ.nombre, vendedor:_VIZ.vendedor,
+    moneda:_VIZ.moneda, precio:_VIZ.precio, tipo:_VIZ.tipo, cuentaId:"", nota:"", contratoFirmado:_VIZ.firmado};
+  S.inmuebles=S.inmuebles||[]; S.inmuebles.push(inm);
+  S.inmCuotas=S.inmCuotas||[];
+  nuevas.forEach(function(t){ S.inmCuotas.push(_vizCuotaDe(inm.id,t)); });
+  S._inmAbierto=inm.id;
+  saveData(); R();
+  alert("✅ Listo: "+_inmCuotasDe(inm.id).length+" cuotas.\n\n"+
+        "La señal del 13/10, la tarifa de evaluación y el seguro al contado salen como pendientes: púlsales \"pagar\" "+
+        "y elige la cuenta de donde salió de verdad, o márcalas si ya están en Egresos.");
 }
 
 function getCatsEmpresa(){return (S.config&&S.config.cats_empresa&&S.config.cats_empresa.length)?S.config.cats_empresa:["GASTOS FIJOS EMPRESA","SERVICIOS DIGITALES","GASTOS OPERATIVOS","GASTOS EXTRAORD. EMPRESA"];}

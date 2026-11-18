@@ -4677,10 +4677,41 @@ alguien repartió el redondeo es peor que uno que no cuadra y dice por qué.**
 - **De quién es el inmueble se PREGUNTA**, no se adivina: decide si cada cuota es
   gasto personal o de la empresa, y eso mueve el capital.
 
-**Lo que NO entró, y es a propósito:** la cuota mensual de la Caixa (R$ 2.100 ×
-420). No empieza hasta 2027 y el monto exacto sale del contrato de financiamiento
-que aún no está firmado. Cuando lo esté, eso es un *compromiso* de los que ya
-existen — no hace falta código.
+### El contrato FIRMADO del 03/11 (ARREGLO 265)
+
+Lo de arriba salía de la propuesta del 10/10. El 03/11 firmó el contrato de la
+Caixa, la confesión de deuda del pró-soluto y la del ITBI, y **los números
+cambiaron**:
+
+```
+financiamiento Caixa     280.197,03  →  279.882,14, pagado por el banco al firmar
+encargo Caixa            "en 2027"   →  2.099,99 desde el 06/12/2026 · 420 meses · débito
+pró-soluto Plano         24 × 1.152,44 + 2.455,42  →  24 × 1.000 + 2.451,06 (+ INCC e interés)
+ITBI y registro          no estaba   →  11 × 915,26 desde el 10/12/2026 + 915,33 = 10.983,19
+tarifa y seguro Caixa    no estaban  →  4.198,23 + 54,49 "hasta la contratación"
+```
+
+Cuadra: 500 + 43.413,08 + 26.451,06 = **70.364,14**, los recursos propios de la
+letra B5 de la Caixa. Son **462 cuotas** (7 sueltas + 24 + 11 + 420).
+
+- **El calendario vive en `_VIZ` + `_VIZ_CAIXA`** (los 420 encargos de la
+  planilla, que es nominal) y sale de `_vizCuotasNuevas()`, que leen meter el
+  contrato y actualizar uno viejo. Cada cuota lleva `clave` (`viz:…`), `grupo`
+  y, la Caixa, `debito`.
+- **"Actualizar" (`_vizPlan` / `actualizarContratoViz`)** quita solo las
+  cuotas viejas **sin pagar**, corrige el financiamiento, añade lo que falta y
+  no toca lo pagado ni lo metido a mano. Dos veces seguidas no duplica.
+- **Los 1.000 del pró-soluto NO son el boleto**: llevan INCC e interés encima.
+  Por eso **pagar pregunta el monto real** y se apunta ese (egreso, cuenta,
+  FIFO y `montoPagado`). La cuenta se elige al pagar y se recuerda por grupo
+  (`inm.ctaGrupo`).
+- **Grupos (`_INM_GRUPOS`)**: Plano (boleto), Caixa (débito), ITBI (boleto),
+  otras. Lo que falta por grupo sale de `_inmResumen()` y suma la cifra grande.
+  La lista enseña las vencidas y las 12 siguientes; lo pagado y el resto, por
+  año, plegado en `S._inmVer` (sin `R()`, ARREGLOS 32 y 165).
+- **Avisos: cada cuota que vence en 10 días**, no solo la primera (`proximas`).
+  Rojo a 3 días o vencida. La del banco no avisa.
+- **Sin clave nueva que sincronizar**: todo va en `inmuebles` e `inmCuotas`.
 
 
 ---
