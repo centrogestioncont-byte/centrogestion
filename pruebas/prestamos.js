@@ -50,7 +50,7 @@ function sacarConstante(nombre) {
   }
   throw new Error("la constante " + nombre + " no termina en ';'");
 }
-const CONSTANTES = ["_TARIFA_BANCO_VES", "_APROX_LS", "_COLCHON_DEF", "_SIN_APROX", "_UMBRAL_BS_DEF", "_SIN_BS", "_UMBRAL_BRL_DEF", "_SIN_BRL", "_RUTA_DE", "CG_BASE", "_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO", "_AVISO_UMBRAL", "_MERCADO_MONTO_DEF", "_VIZ", "_INM_AVISO_DIAS", "_DIAS_NORMAL_BS", "_TASA_OP_FRESCA_MS",
+const CONSTANTES = ["_TARIFA_BANCO_VES", "_APROX_LS", "_COLCHON_DEF", "_SIN_APROX", "_UMBRAL_BS_DEF", "_SIN_BS", "_UMBRAL_BRL_DEF", "_SIN_BRL", "_RUTA_DE", "CG_BASE", "_PODA_CATS", "_MOTIVOS_AJUSTE", "_MERCADO", "_AVISO_UMBRAL", "_MERCADO_MONTO_DEF", "_VIZ", "_VIZ_CAIXA", "_INM_GRUPOS", "_INM_AVISO_ROJO", "_INM_A_LA_VISTA", "_SIM_MON", "_INM_AVISO_DIAS", "_DIAS_NORMAL_BS", "_TASA_OP_FRESCA_MS",
                     "_BIN_COLS_C2C", "_BIN_COLS_TX", "_BIN_CONV_SEG", "MONEDAS_COMPRA", "MONEDAS_VENTA",
                     "MIN_DIAS_PRIMERA_CUOTA", "_MERGE_FIELDS", "_MERGE_ID_FIELD",
                     "_MERGE_OBJETOS", "_MERGE_BLOQUES", "_MERGE_HISTORIAL", "_RATE_LIMITS",
@@ -87,7 +87,8 @@ const NECESARIAS = ["_egresosHuerfanos", "moverEgresoAPersonal", "_tasaDelDiaFue
                     "margenSobreSuelo", "_calcTasas", "_misTasasPublicadas", "_fpTasa",
                     "avisoTasa", "_umbralAviso", "_refSuelo", "_sueloDeFecha", "guardarTasaCalcHoy",
                     "_cgSoltar", "_montoMercado",
-                    "_inmResumen", "_inmCuotasDe", "_inmDe", "_inmDias", "_avisosInmueble",
+                    "_inmResumen", "_inmCuotasDe", "_inmDe", "_inmDias", "_avisosInmueble", "_simMon",
+                    "_inmGrupo", "_inmGrupoDe", "_inmTitulo", "_vizCuotasNuevas", "_esInmViz", "_vizPlan", "_vizPendiente",
                     "_motivoPub",
                     "_apuntarAvisoParaPush", "_htmlAvisosTelefono", "_pushSoportado",
                     "_cgPublicar", "_pieFlyer", "_refrescarTasasTodo",
@@ -11077,54 +11078,139 @@ console.log("\nARREGLO 134 · el apartamento y su cronograma");
   // ── Las fechas de las mensuales usan _sumarMeses ───────────────────
   // setMonth() convierte el 31/01 + 1 mes en 03/03. Aqui el dia es el 10 y no
   // muerde, pero una copia de este codigo con otra fecha si.
-  const viz = sinComentarios(sacarFuncion("cargarContratoViz"));
+  // ARREGLO 265: el calendario sale de _vizCuotasNuevas(), que lo leen meter
+  // el contrato y actualizarlo. Las series con _sumarMeses(), nunca setMonth().
+  const viz = sinComentarios(sacarFuncion("_vizCuotasNuevas"));
   ok(/_sumarMeses\(/.test(viz) && !/setMonth\(/.test(viz),
-     "las 24 mensuales salen de _sumarMeses(), nunca de setMonth()");
+     "las series salen de _sumarMeses(), nunca de setMonth()");
+  ok(/_vizCuotasNuevas\(\)/.test(sinComentarios(sacarFuncion("cargarContratoViz"))) &&
+     /_vizCuotasNuevas\(\)/.test(sinComentarios(sacarFuncion("_vizPlan"))),
+     "meter el contrato y actualizarlo leen el MISMO calendario");
 
-  // ── Los montos son los del CONTRATO, no los de la propuesta ────────
-  // La hoja "Proposta" lista la mensual en 1.000,00 (el principal sin
-  // intereses) y la clausula 4.2.2 (c.1) en 1.152,44 con Tabla Price. Igual la
-  // anual: 2.136,18 contra 2.455,42. Poner los de la propuesta le diria que
-  // paga 3.977,84 menos de lo que va a pagar.
-  const V = F._VIZ;
-  ok(V && V.mensual && Math.abs(V.mensual.monto-1152.44)<1e-9,
-     "la mensual es la del contrato (1.152,44), no la de la propuesta (1.000)");
-  ok(V && (V.cuotas||[]).some(function(c){return Math.abs(c.monto-2455.42)<1e-9;}),
-     "y la anual es 2.455,42, no 2.136,18");
-  ok(V && V.mensual.n===24, "son 24 mensuales");
-  // El precio y las piezas del contrato, por si alguien los toca sin leerlo.
-  ok(V && Math.abs(V.precio-350246.29)<1e-9, "el precio es el de la cláusula 3.1");
-  const fin = (V.cuotas||[]).find(function(c){return c.banco;});
-  ok(fin && Math.abs(fin.monto-280197.03)<1e-9 && fin.iso==="2026-12-31",
-     "el financiamiento son 280.197,03 el 31/12/2026");
-  const bp = (V.cuotas||[]).find(function(c){return c.condonable;});
-  ok(bp && Math.abs(bp.monto-43413.08)<1e-9,
-     "y la Bom Pagador son 43.413,08, marcada como condonable");
+  // ── Los montos son los del contrato FIRMADO el 03/11 (ARREGLO 265) ─
+  // El 134 cargó la propuesta del 10/10 (1.152,44 · 2.455,42 · 280.197,03).
+  // Lo firmado es la confesión de deuda de Plano y el contrato de la Caixa.
+  const V = F._VIZ, T = F._vizCuotasNuevas();
+  const de = function(pre){ return T.filter(function(t){ return t.clave.indexOf(pre)===0; }); };
+  const sum = function(l){ return Math.round(l.reduce(function(a,t){return a+t.monto;},0)*100)/100; };
+  ok(Math.abs(V.precio-350246.28)<1e-9, "el precio es el del contrato de la Caixa (350.246,28)");
+  const fin = T.find(function(t){return t.banco;});
+  ok(fin && Math.abs(fin.monto-279882.14)<1e-9 && fin.alFirmar,
+     "el financiamiento son 279.882,14, ya pagado por el banco al firmar", fin && fin.monto);
+  const bp = T.find(function(t){return t.condonable;});
+  ok(bp && Math.abs(bp.monto-43413.08)<1e-9, "la Bom Pagador sigue en 43.413,08, condonable");
+  const pro = de("pro-").filter(function(t){return t.clave!=="pro-anual";});
+  ok(pro.length===24 && pro.every(function(t){return t.monto===1000;}) && pro[0].iso==="2027-01-10" && pro[23].iso==="2028-12-10",
+     "pró-soluto: 24 × 1.000 del 10/01/2027 al 10/12/2028", pro.length);
+  ok(Math.abs(sum(de("pro-"))-26451.06)<0.005, "y con la anual suma la deuda confesada, 26.451,06", sum(de("pro-")));
+  ok(Math.abs(500+43413.08+sum(de("pro-"))-70364.14)<0.005,
+     "señal + Bom Pagador + pró-soluto = los 70.364,14 de recursos propios del contrato de la Caixa");
+  const itbi = de("itbi-").slice().sort(function(a,b){ return a.iso<b.iso?-1:1; });
+  ok(itbi.length===12 && itbi[0].iso==="2026-12-10" && itbi[11].iso==="2027-11-10" && Math.abs(sum(itbi)-10983.19)<0.005,
+     "ITBI y registro: 12 parcelas del 10/12/2026 al 10/11/2027, 10.983,19", sum(itbi));
+  const cx = de("caixa-").filter(function(t){return t.clave!=="caixa-fin";});
+  ok(cx.length===420 && cx[0].iso==="2026-12-06" && cx[419].iso==="2061-11-06" && Math.abs(cx[0].monto-2099.99)<1e-9,
+     "Caixa: 420 encargos del 06/12/2026 al 06/11/2061, el primero 2.099,99", cx.length);
+  ok(cx.every(function(t){return t.debito && t.grupo==="caixa";}), "y todos van como débito automático de la Caixa");
+  ok(Math.abs(sum(cx)-896520.20)<0.005, "los 420 suman lo de la planilla, 896.520,20", sum(cx));
+  ok(T.length===7+24+11+420 && T.length===462, "462 cuotas en total", T.length);
+  ok(new Set(T.map(function(t){return t.clave;})).size===T.length, "y cada una con su clave, sin repetir");
 
   // ── El resumen, con el contrato de verdad ──────────────────────────
-  S.inmuebles=[{id:"i1",nombre:"Apto",moneda:"BRL",precio:350246.29,tipo:"personal",cuentaId:""}];
-  S.inmCuotas=[];
-  var mete=function(c,i){
-    S.inmCuotas.push({id:"c"+i,inmId:"i1",concepto:c.concepto,iso:c.iso,monto:c.monto,
-      banco:!!c.banco,condonable:!!c.condonable,pagado:!!c.pagado,montoPagado:null});
-  };
-  V.cuotas.forEach(mete);
-  for(var i=0;i<24;i++) mete({concepto:"Mensual "+(i+1),iso:"2027-01-10",monto:V.mensual.monto},100+i);
+  S.inmuebles=[{id:"i1",nombre:"Apto 1818 · VIZ",vendedor:"Plano & Plano",moneda:"BRL",precio:350246.28,tipo:"personal",cuentaId:""}];
+  S.inmCuotas=T.map(function(t,i){ return {id:"c"+i,inmId:"i1",concepto:t.concepto,iso:t.iso,monto:t.monto,grupo:t.grupo,
+    clave:"viz:"+t.clave,debito:!!t.debito,banco:!!t.banco,condonable:!!t.condonable,pagado:!!t.alFirmar,montoPagado:null}; });
   var R1=F._inmResumen(S.inmuebles[0]);
-  ok(R1.nCuotas===28, "28 cuotas en total", R1.nCuotas);
-  ok(Math.abs(R1.propio-30613.98)<0.005,
-     "de ella salen 30.613,98: la señal, las 24 mensuales y la anual", R1.propio);
-  ok(Math.abs(R1.banco-280197.03)<0.005, "el banco pone 280.197,03", R1.banco);
-  ok(Math.abs(R1.condonable-43413.08)<0.005, "y 43.413,08 se perdonan", R1.condonable);
-  ok(Math.abs(R1.propio-R1.falta)<0.005 && R1.pagado===0,
-     "sin nada pagado, falta todo lo propio");
-  // Pagada una, falta baja y pagado sube, y la suma se conserva.
+  ok(R1.nCuotas===462, "462 cuotas en el resumen", R1.nCuotas);
+  ok(Math.abs(R1.banco-279882.14)<0.005 && Math.abs(R1.condonable-43413.08)<0.005,
+     "el banco y la condonable siguen aparte");
+  var gsum=0; Object.keys(R1.grupos).forEach(function(k){ gsum+=R1.grupos[k].falta; });
+  ok(Math.abs(gsum-R1.falta)<0.005, "lo que falta por grupo suma lo que falta arriba", gsum+" vs "+R1.falta);
+  ok(Math.abs(R1.grupos.itbi.falta-10983.19)<0.005 && Math.abs(R1.grupos.plano.falta-(500+26451.06))<0.005,
+     "ITBI 10.983,19 y Plano 26.951,06 (señal + pró-soluto)", R1.grupos.plano.falta);
   S.inmCuotas[0].pagado=true; S.inmCuotas[0].montoPagado=500;
   var R2=F._inmResumen(S.inmuebles[0]);
-  ok(Math.abs(R2.pagado-500)<0.005 && Math.abs(R2.falta-(R1.propio-500))<0.005,
+  ok(Math.abs(R2.pagado-500)<0.005 && Math.abs(R2.falta-(R1.falta-500))<0.005,
      "al pagar la señal, lo pagado sube 500 y lo que falta baja 500");
   ok(Math.abs((R2.pagado+R2.falta)-R1.propio)<0.005,
      "y pagado + falta sigue siendo lo propio");
+}
+
+// ══════════════════════════════════════════════════════════════════════
+console.log("\nARREGLO 265 · el contrato firmado, actualizar sin perder lo pagado, y avisos de cada cuota");
+{
+  // ── Actualizar un contrato del 134: quita lo viejo SIN pagar, nunca lo pagado ──
+  const V = F._VIZ, T = F._vizCuotasNuevas();
+  S.inmuebles=[{id:"i1",nombre:"Apto 1818 · VIZ",vendedor:"Plano & Plano",moneda:"BRL",precio:350246.29,tipo:"personal",cuentaId:""}];
+  S.inmCuotas=[
+    {id:"o1",inmId:"i1",concepto:"Señal",iso:"2026-10-13",monto:500,pagado:true,montoPagado:500,egresoId:"e1"},
+    {id:"o2",inmId:"i1",concepto:"Financiamiento Caixa",iso:"2026-12-31",monto:280197.03,banco:true,pagado:false},
+    {id:"o3",inmId:"i1",concepto:"Parcela Bom Pagador",iso:"2027-02-02",monto:43413.08,condonable:true,pagado:false},
+    {id:"o4",inmId:"i1",concepto:"Anual",iso:"2027-12-20",monto:2455.42,pagado:false},
+    {id:"m1",inmId:"i1",concepto:"Mensual 1 de 24",iso:"2027-01-10",monto:1152.44,pagado:false},
+    {id:"m2",inmId:"i1",concepto:"Mensual 2 de 24",iso:"2027-02-10",monto:1152.44,pagado:true,montoPagado:1152.44},
+    {id:"x1",inmId:"i1",concepto:"Mudanza",iso:"2027-03-01",monto:800,pagado:false}
+  ];
+  const P = F._vizPlan(S.inmuebles[0]);
+  ok(P && F._vizPendiente(P), "un contrato del 134 tiene algo que actualizar");
+  ok(P.quitar.map(function(c){return c.id;}).sort().join()==="m1,o4", "se quitan la anual vieja y la mensual vieja SIN pagar", P.quitar.map(function(c){return c.id;}).join());
+  ok(P.avisos.length===1 && P.avisos[0].id==="m2", "la mensual vieja YA pagada no se quita: se avisa");
+  ok(!P.quitar.some(function(c){return c.pagado;}), "nada pagado entra en lo que se quita");
+  ok(!P.quitar.some(function(c){return c.id==="x1";}) && !P.ajustar.some(function(a){return a.c.id==="x1";}),
+     "una cuota suya metida a mano no se toca");
+  const aj = {}; P.ajustar.forEach(function(a){ aj[a.c.id]=a.cambios; });
+  ok(aj.o2 && Math.abs(aj.o2.monto-279882.14)<1e-9 && aj.o2.pagado===true && aj.o2.fechaPago==="2026-11-03",
+     "el financiamiento se corrige a 279.882,14 y queda liquidado el 03/11");
+  ok(aj.o1 && aj.o1.monto===undefined && aj.o1.pagado===undefined && aj.o1.clave==="viz:senal",
+     "la señal ya pagada solo recibe su clave: ni monto ni fecha cambian");
+  ok(aj.o3 && aj.o3.clave==="viz:bompag" && aj.o3.monto===undefined, "la Bom Pagador se queda como estaba");
+  ok(P.nuevas.length===T.length-3, "se añade todo lo demás (462 − las 3 que ya estaban)", P.nuevas.length);
+  ok(!P.nuevas.some(function(t){return t.clave==="senal"||t.clave==="caixa-fin"||t.clave==="bompag";}),
+     "y no se duplican las que ya estaban");
+  // Mirar no puede ser ya haberlo hecho.
+  ok(S.inmCuotas.length===7 && S.inmCuotas[1].monto===280197.03, "_vizPlan no toca nada");
+  // Aplicado, ya no queda nada que hacer: el botón desaparece.
+  S.inmCuotas=S.inmCuotas.filter(function(c){return c.id!=="m1"&&c.id!=="o4";});
+  P.ajustar.forEach(function(a){ Object.keys(a.cambios).forEach(function(k){ a.c[k]=a.cambios[k]; }); });
+  P.nuevas.forEach(function(t,i){ S.inmCuotas.push({id:"n"+i,inmId:"i1",concepto:t.concepto,iso:t.iso,monto:t.monto,grupo:t.grupo,clave:"viz:"+t.clave,debito:!!t.debito,banco:!!t.banco,condonable:!!t.condonable,pagado:false}); });
+  ok(!F._vizPendiente(F._vizPlan(S.inmuebles[0])), "aplicado una vez, la segunda no hace nada (no duplica)");
+  ok(F._vizPlan({id:"z",nombre:"Casa de mamá",vendedor:"Fulano"})===null, "un inmueble que no es el VIZ no se toca");
+
+  // ── Avisos: CADA cuota que venga, no solo la primera ─────────────
+  const avi = sinComentarios(sacarFuncion("_avisosInmueble"));
+  ok(/r\.proximas\.forEach/.test(avi) && !/r\.prox\b(?!imas)/.test(avi), "los avisos recorren todas las próximas, no solo r.prox");
+  const hoy=new Date(); const iso=function(d){ var x=new Date(hoy.getTime()+d*86400000); return x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0"); };
+  S.inmuebles=[{id:"i2",nombre:"Apto",moneda:"BRL"}];
+  S.inmCuotas=[
+    {id:"a",inmId:"i2",concepto:"Encargo mensual 1 de 420",iso:iso(2),monto:2099.99,grupo:"caixa",debito:true},
+    {id:"b",inmId:"i2",concepto:"Pró-soluto mensual 1 de 24",iso:iso(6),monto:1000,grupo:"plano"},
+    {id:"c",inmId:"i2",concepto:"ITBI y registro 1 de 12",iso:iso(6),monto:915.26,grupo:"itbi"},
+    {id:"d",inmId:"i2",concepto:"Encargo mensual 2 de 420",iso:iso(33),monto:2099.98,grupo:"caixa",debito:true},
+    {id:"e",inmId:"i2",concepto:"Tarifa",iso:iso(-15),monto:4198.23,grupo:"caixa"},
+    {id:"f",inmId:"i2",concepto:"Financiamiento",iso:iso(4),monto:279882.14,grupo:"caixa",banco:true}
+  ];
+  const A=F._avisosInmueble();
+  ok(A.length===4, "avisa de las 3 que vienen en 10 días y de la vencida, no de la del mes siguiente ni la del banco", A.length);
+  ok(A.some(function(a){return /Caixa debita/.test(a.msg) && /deja ese dinero en la cuenta/.test(a.msg) && a.urg===1;}),
+     "la Caixa dice que deja el dinero en la cuenta, en rojo a 2 días");
+  ok(A.some(function(a){return /Plano & Plano/.test(a.msg) && /Portal del Cliente/.test(a.msg) && a.urg===0;}),
+     "la de Plano dice dónde se saca el boleto");
+  ok(A.some(function(a){return /ITBI/.test(a.msg);}), "y la del ITBI también sale, el mismo día que la de Plano");
+  ok(A.some(function(a){return /venció hace 15 días/.test(a.msg) && a.urg===1;}), "la vencida va en rojo");
+
+  // ── Pagar: la cuenta y el monto se eligen al pagar ────────────────
+  const pag = sinComentarios(sacarFuncion("pagarCuotaInm"));
+  ok(/_elegirCuentaInm\(/.test(pag) && /_leerNumero\(tx\)/.test(pag), "pagar elige la cuenta y pregunta el monto real");
+  ok(/monto:real/.test(pag) && /ajusteCuentaEgreso\(cuenta\.id,-real\)/.test(pag) && /descontarFIFOEgreso\(mon,real/.test(pag) && /montoPagado=real/.test(pag),
+     "y lo que se apunta, se descuenta y se guarda es lo pagado de verdad, no el calendario");
+  // Editar una cuota no le quita la clave ni el débito.
+  const sav = sinComentarios(sacarFuncion("saveCuotaInm"));
+  ok(/clave:viejo\?/.test(sav) && /debito:viejo\?/.test(sav) && /grupo:/.test(sav), "editar una cuota conserva su clave, su grupo y su débito");
+  // Desplegar no repinta y recuerda en S.
+  const vb = sinComentarios(sacarFuncion("_inmVerBloque"));
+  ok(!/\bR\(\)/.test(vb) && /S\._inmVer/.test(vb), "abrir un año o las pagadas no llama a R() y queda en S (ARREGLO 32 y 165)");
+  ok(/_inmResumen\(inm\)\.grupos/.test(sinComentarios(sacarFuncion("_inmBloqueGrupo"))),
+     "lo que falta de cada grupo se lee del resumen, no se vuelve a sumar");
 }
 
 // ══════════════════════════════════════════════════════════════════════
