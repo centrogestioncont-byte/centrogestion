@@ -7155,3 +7155,83 @@ cobrado cuenta **como la mora de un préstamo**: ganancia bruta, no utilidad.
 - **📲 Cobrar por WhatsApp** (`_msgCobroCliente`) lee lo mismo que la pantalla;
   el texto lo aprobó ella.
 - Viaja dentro del registro del cobro: sin clave nueva, sin tocar el servidor.
+
+---
+
+## "Tu día": el valor de las monedas sale de los saldos de las fotos (ARREGLO 266)
+
+Lo vio ella el 21/11: *"⚠️ Te faltan $34,25 · salió dinero sin registrar"* con
+todo registrado, y *"+$34,42 tus bolívares y reales valen más hoy"* el día en
+que el bolívar pasó de 1.069,72 a 1.089 y el real de 5,9755 a 5,9994 — los dos
+valían **menos**.
+
+**Eran dos causas, y las dos venían de restar dos fotos de algo que se valora a
+la tasa de HOY.** Medido con su export del 21/11 (pantalla de las 18:45):
+
+```
+"valor de las monedas" en pantalla ......................... +34,32
+  cambio de la línea de tasas de la conciliación .......... +26,33
+     registros de días anteriores contados distinto en
+     la foto del 20/11 que hoy, a la MISMA tasa ........... +31,34
+     (Bs 624.833 de más en la foto; no se pudo nombrar el
+     registro con un solo export)
+  (n − f) × Δ .............................................   +7,99
+lo que la tasa le hizo de verdad a sus saldos .............   −8,29
+"Plata tuya" sin un solo aporte ese día ...................   −8,11  ← revalorización
+```
+
+1. **La línea de tasas de la conciliación es un ACUMULADO desde la apertura**
+   (`efectoTasasDesde` + `_revalApertura`). Restada entre dos fotos cambia por
+   cualquier cosa que cambie en los registros viejos, no solo por la tasa, y
+   sale como "valor de las monedas".
+2. **"Plata tuya" y "a tus 💜" se valoran a la tasa de hoy** (`aportesDesde`,
+   `traspasosAPersonal`). Restadas entre dos fotos, cada día movían TODO lo
+   acumulado desde la apertura: −8,11 sin haber metido ni sacado nada.
+
+**La regla, que dictó ella:** la revalorización sale de los MISMOS saldos y las
+MISMAS tasas con que se valúan "Empezaste" y "Tienes":
+
+```
+valor de las monedas = saldos de cierre × (1/tasa de hoy − 1/tasa de Empezaste)
+```
+
+- **Los saldos y las tasas son los de las fotos** (`f.mon[m] = {n, r}`). El `f`
+  que se guardaba —lo que la conciliación ya revaluaba— se fue, y con él
+  `_monDeFoto`, `natV`, `f.cub` y el `nat` de `efectoTasasDesde`.
+- **Lo que pasó en el día se cuenta a la tasa de Empezaste** (`_flujosDelDia`):
+  plata tuya, lo pasado a tus 💜, los saldos a mano y la diferencia de cambio
+  de las operaciones salen de los registros de HOY con fecha en el día, no de
+  restar fotos. Así un cambio en una operación vieja no se cuela, y el dinero
+  del día no se revalúa dos veces.
+- **Las tasas se fijan en la puerta, `getRateToUsdt`** (`_TASAS_FIJAS`), y solo
+  dentro de un `try/finally`: mirar un día no puede cambiar la tasa del resto de
+  la app. Hay prueba negativa para el `finally`.
+- **El cambio de las operaciones va en su propia fila**, no dentro de "valor de
+  las monedas": es lo que una remesa movió en las cuentas a la tasa de
+  Empezaste menos la ganancia apuntada. Su 21/11: +0,27.
+- **Lo liquidado sin cobro en el día** sigue sumando su diferencia entre la tasa
+  de Empezaste y la de liquidar (ARREGLO 244).
+
+Medido con su export, v347 contra v348:
+
+```
+              v347                    v348
+21/11   te faltan 34,22         ✅ cuadra (0,00) · valor −8,29
+20/11   cuadra (4,16)           ✅ cuadra (0,69)
+19/11   te sobran 41,58         te sobran 46,05  ← REAL: su ajuste «No sé por
+                                                  qué» de +258,04 R$ en
+                                                  MERCANCIA PRODUCTOS-PICPAY
+                                                  (43,18) + el cambio de
+                                                  200 USD a 1.200 R$ (0,82)
+18/11   cuadra (−0,62)          ✅ cuadra (−0,33)
+```
+
+Y en vivo: solo la tasa se mueve → cuadra; salen 50 USDT sin registrar → te
+faltan 50; un egreso registrado → cuadra; su registro borrado con el dinero ya
+fuera → te faltan 20. **"Desde la apertura" no se toca**: no resta fotos, y sus
+números salen idénticos en todos los casos.
+
+**Lo que esto NO repara, y es a propósito:** el +46 del 19/11 es dinero que
+entró sin operación (el ajuste «No sé por qué»), y sigue saliendo. Un día con
+una remesa registrada hoy pero fechada en un día anterior dejará su diferencia
+de cambio en ese día; es poco y es lo que pasó.
