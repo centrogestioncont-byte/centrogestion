@@ -14478,7 +14478,7 @@ console.log("\nARREGLO 240 · Contabilidad: cómo cerró el día, resultados, ba
   // 2 · Su ejemplo, al céntimo: empieza con 1.000, gana 50 en remesas, gasta
   //     10 y presta 100. Tiene que cerrar con 1.040 y CUADRAR, y el préstamo
   //     tiene que salir como dinero que cambió de caja, no como pérdida.
-  const mkDia = new Function("S", "_fotoCapital", sacarFuncion("_ymd") + sacarFuncion("_monDeFoto") + sacarFuncion("_diaContable") +
+  const mkDia = new Function("S", "_fotoCapital", "function _flujosDelDia(){ return {ops:0,aportes:0,trasp:0,aj:0}; }" + "function _fraccionInteresPrestamo(){ return 0; }" + sacarFuncion("_ymd") + sacarFuncion("_diaContable") +
     "; var r2=function(n){return Math.round((isNaN(n)?0:+n)*100)/100;}; return _diaContable;");
   const hoy = (function(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); })(new Date());
   const ayer = (function(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); })(new Date(Date.now()-86400000));
@@ -14502,8 +14502,11 @@ console.log("\nARREGLO 240 · Contabilidad: cómo cerró el día, resultados, ba
   let suma = x.ini.tienes; (x.filas || []).forEach(function(r){ suma += r[1]; });
   ok(Math.abs(suma - x.deberias) < 0.005, "las filas del día suman su propio total, al céntimo");
   //    Si falta plata, se dice cuánto — y lo que ya tiene explicación va aparte.
-  const fFalta = Object.assign({}, fFin, {tienes: 1030, cuentas: 930, c: Object.assign({}, fFin.c, {tasas: -4})});
-  const y = mkDia(SX, function(){ return fFalta; })(hoy);
+  //    (ARREGLO 266: el valor de las monedas sale de los saldos de las fotos:
+  //    20.000 Bs que pasan de 1.000 a 1.250 por USDT valen 4 menos.)
+  const SXm = {histCapital: {}}; SXm.histCapital[ayer] = Object.assign({}, fIni, {mon: {VES: {n: 20000, r: 1000}}});
+  const fFalta = Object.assign({}, fFin, {tienes: 1030, cuentas: 930, mon: {VES: {n: 20000, r: 1250}}});
+  const y = mkDia(SXm, function(){ return fFalta; })(hoy);
   ok(y.cuadra === false && y.resto === -6 && y.tasas === -4,
      "con 1.030 en vez de 1.040: 4 son las tasas y faltan 6 sin registrar", JSON.stringify([y.resto, y.tasas]));
   //    La parte de los socios: la conciliación la da por ida desde que se
@@ -14755,28 +14758,19 @@ console.log("\nARREGLO 244 · Retiro de socio a valor fijo y 'valor de las moned
     {mon:"BRL", abonos:[{sinCobro:true, monto:1080, fecha:hoy, tasaRetiro:5}]},
     {mon:"VES", abonos:[{sinCobro:true, monto:119539.02, fecha:hoy, tasaRetiro:1000}]}]};
   SD.histCapital[ayer] = ini;
-  const mkD = function(f){ return new Function("S", "_fotoCapital", frStub + sacarFuncion("_ymd") + sacarFuncion("_monDeFoto") + sacarFuncion("_diaContable") +
+  const mkD = function(f){ return new Function("S", "_fotoCapital", frStub + "function _flujosDelDia(){ return {ops:0,aportes:0,trasp:0,aj:0}; }" + sacarFuncion("_ymd") + sacarFuncion("_diaContable") +
     "; var r2=function(n){return Math.round((isNaN(n)?0:+n)*100)/100;}; return _diaContable;")(SD, function(){ return f; }); };
   const x1 = mkD(fin)(hoy);
-  ok(x1.cuadra && Math.abs(x1.resto) < 0.02, "con la tasa moviéndose y préstamos liquidados hoy, no sale nada «sin registrar»", JSON.stringify([x1.resto, x1.reval]));
+  ok(x1.cuadra && Math.abs(x1.resto) < 0.02, "con la tasa moviéndose y préstamos liquidados hoy, no sale nada «sin registrar»", JSON.stringify([x1.resto, x1.tasas]));
   const fin10 = Object.assign({}, fin, {tienes:Math.round((tFin-10)*100)/100});
   const x2 = mkD(fin10)(hoy);
   ok(Math.abs(x2.resto + 10) < 0.02 && !x2.cuadra, "10 USDT que salen sin registrar salen como faltante de 10", String(x2.resto));
   //    Lo que entra o sale sin registrar no está en lo que había al empezar: «valor de las monedas» no lo absorbe.
-  ok(/\(1\/b\.r-1\/a\.r\)/.test(sc("_diaContable")) && /a\.n\)\|\|0\)-\(parseFloat\(a\.f\)\|\|0\)-L/.test(sc("_diaContable")),
-     "la revalorización es de lo que había al empezar, menos lo que ya cuenta efectoTasas y lo liquidado");
-  //    efectoTasas dice qué valoró a la tasa de hoy, y la foto lo guarda.
-  ok(/r\.nat\[mon\]/.test(sc("efectoTasasDesde")) && /f\.mon\[x\.moneda\]=\{n:/.test(sc("_fotoCapital")),
-     "efectoTasasDesde anota lo nativo que valora, y la foto del día lo guarda por moneda");
-  //    Y lo anota de verdad, ejecutándolo: una remesa que movió 100.000 Bs y
-  //    50 R$ tiene que dejar esas dos cantidades en nat.
-  const efx = new Function("S", "getRateToUsdt", "_isoDeDDMMAA", "_movPersonalDeRemesa", "_enUsdtCualquiera", "_isoDeFechaLote", "_cruceUsdtPersonal", "_loteDeTraspaso",
-    sacarFuncion("efectoTasasDesde") + "; return efectoTasasDesde;");
-  const SE = {cuentas:[{id:"v", moneda:"VES"}, {id:"b", moneda:"BRL"}], brl:[{d:"05/11/26", pr:2, _mov:[{cuentaId:"v", delta:-100000}, {cuentaId:"b", delta:50}]}],
-    vzla:[], eeuu:[], cuentasCobrar:[], inventarioUsdt:[], inventarioUsdt_cerrado:[]};
-  const ef = efx(SE, function(m){ return m==="VES"?1000:(m==="BRL"?5:null); }, function(){ return "2026-11-05"; }, function(){ return []; },
-    function(){ return 0; }, function(){ return ""; }, function(){ return null; }, function(){ return false; })("2026-11-01");
-  ok(ef.nat && ef.nat.VES === -100000 && ef.nat.BRL === 50, "efectoTasasDesde anota por moneda lo que valora (−100.000 Bs, +50 R$)", JSON.stringify(ef.nat));
+  //    ARREGLO 266: el valor de las monedas son los saldos de cierre por
+  //    (1/tasa de hoy − 1/tasa de Empezaste), más lo liquidado en el día.
+  ok(/\(parseFloat\(x\.n\)\|\|0\)\*\(1\/x\.r-1\/y\.r\)/.test(sc("_diaContable")) && /liqR\[m\]-liq\[m\]\/y\.r/.test(sc("_diaContable")),
+     "la revalorización son los saldos de cierre a la tasa de hoy menos a la de Empezaste, y lo liquidado");
+  ok(/f\.mon\[x\.moneda\]=\{n:/.test(sc("_fotoCapital")), "la foto del día guarda los saldos por moneda y su tasa");
   // 5 · La lista que enseña cada préstamo lee la MISMA cuenta que la conciliación.
   ok(/_usdtFijoSinCobro\(p, ab\)/.test(sc("_retirosSocioDetalle")) && /_htmlRetirosSocio\(\)\+_htmlConciliacion\(true\)/.test(sc("rContabilidad")),
      "Contabilidad enseña los retiros préstamo por préstamo, con la misma cuenta que resta");
@@ -14824,10 +14818,10 @@ console.log("\nARREGLO 245 · Revalorización de lo que ya había al abrir");
   ok(/tasas\.total=r2v\(tasas\.total\+_rvA\.total\)/.test(cc) && cc.indexOf("tasas.total+_rvA.total") < cc.indexOf("var sinExplicar=r2v(diferencia-ajustes.total-tasas.total)") && cc.indexOf("var sinExplicar") > 0,
      "la revalorización de la apertura entra en tasas antes de calcular lo que no cuadra");
   // 6 · Tu día no la cuenta dos veces, y una foto vieja se lee aparte.
-  ok(/_cubre\[x\.moneda\]/.test(sc("_fotoCapital")) && /rvA:/.test(sc("_fotoCapital")),
-     "la foto del día guarda lo que ya revalúa la apertura");
-  ok(/_viejaIni=\(a\.rvA===undefined && b\.rvA!==undefined\)/.test(sc("_diaContable")) && /_viejaIni\?d\("tasas"\)-\(parseFloat\(b\.rvA\)\|\|0\)/.test(sc("_diaContable")) && /if\(_apIds\[String\(p\.id\)\]\) return;/.test(sc("_diaContable")),
-     "Tu día descuenta lo de la apertura de una foto vieja y no ajusta dos veces un préstamo de la apertura");
+  //    ARREGLO 266: "Tu día" ya no resta la línea de tasas de la conciliación
+  //    entre dos fotos, así que lo de la apertura no puede contarse dos veces.
+  ok(!/d\("tasas"\)/.test(sc("_diaContable")) && !/\.rvA/.test(sc("_diaContable")),
+     "Tu día no lee la línea de tasas de la conciliación (ni la parte de la apertura)");
   // 7 · La pantalla dice con qué tasa se valoró.
   ok(/_notaRevalApertura\(co\.tasas\.apertura\)/.test(HTML) && /la guardada más cercana a la apertura/.test(sacarFuncion("_notaRevalApertura")),
      "la fila de las tasas dice cuánto es de la apertura y si la tasa no es la del día exacto");
@@ -15438,21 +15432,71 @@ console.log("\nARREGLO 263 · Las compras a clientes no deciden la tasa del real
   const E=new Function("S","getRateToUsdt","_isoDeDDMMAA","_movPersonalDeRemesa","_enUsdtCualquiera","_loteDeTraspaso","_cruceUsdtPersonal","_isoDeFechaLote",
     sacarFuncion("efectoTasasDesde")+"\nreturn efectoTasasDesde;")(S,(m)=>({BRL:5.2,VES:1060})[m],()=>"",()=>[],()=>0,()=>false,()=>false,(f)=>"2026-"+f.replace("/","-"));
   const r=E("2026-11-01");
-  ok(r.nat.BRL===-520, "una compra pagada en reales resta sus reales a nat", r.nat.BRL);
-  ok(r.nat.VES===10600, "una venta suma los bolívares que entran", r.nat.VES);
-  ok(Math.abs(r.usdt-(100-520/5.2-10+10600/1060))<1e-9, "y el efecto en USDT es el mismo de siempre", r.usdt);
-  ok(E("2026-11-01","2026-11-16").nat.VES===undefined && E("2026-11-01","2026-11-16").nat.BRL===-520, "hastaIso deja fuera lo posterior");
-  // Las fotos de antes se rehacen al leerlas; las nuevas no.
-  const MF=new Function("S","efectoTasasDesde","conciliacionCapital","r2", sacarFuncion("_monDeFoto")+"\nreturn _monDeFoto;")(
-    {config:{aperturaFecha:"2026-10-20"}}, ()=>({nat:{BRL:-300}}), ()=>({}), (n)=>Math.round(n*100)/100);
-  const vieja={mon:{BRL:{n:900,f:42000,r:5.2}}, c:{desde:"2026-10-20"}};
-  ok(MF(vieja,"2026-11-15",{BRL:1000}).BRL.f===700, "una foto sin natV rehace f (nat de hasta ese día + lo de la apertura)");
-  ok(vieja.mon.BRL.f===42000, "y no toca lo guardado");
-  const nueva={natV:2, mon:{BRL:{n:900,f:123,r:5.2}}};
-  ok(MF(nueva,"2026-11-16",{BRL:1000}).BRL.f===123, "una foto nueva se lee tal cual");
-  const fc=sinComentarios(sacarFuncion("_fotoCapital"));
-  ok(/natV:2/.test(fc) && /f\.cub=/.test(fc), "la foto nueva lleva natV y lo de la apertura");
-  ok(/_monDeFoto\(out\.ini, out\.kIni, fin\.cub\)/.test(sinComentarios(sacarFuncion("_diaContable"))), "Tu día lee la foto de inicio corregida");
+  ok(Math.abs(r.usdt-(100-520/5.2-10+10600/1060))<1e-9, "el efecto en USDT de una compra y una venta es el de siempre", r.usdt);
+  ok(Math.abs(E("2026-11-01","2026-11-16").usdt-(100-520/5.2))<1e-9, "hastaIso deja fuera lo posterior");
+  ok(!/natV|f\.cub|_nat\[/.test(sinComentarios(sacarFuncion("_fotoCapital"))) && HTML.indexOf("function _monDeFoto(")<0,
+     "ARREGLO 266: la foto ya no guarda `f` ni lo de la apertura, y _monDeFoto se fue");
+}
+
+// ── ARREGLO 266 · "Tu día": el valor de las monedas sale de los saldos de las fotos ──
+console.log("\nARREGLO 266 · Tu día: valor de las monedas con los mismos saldos y tasas de Empezaste y Tienes");
+{
+  const sc = function(n){ return sinComentarios(sacarFuncion(n)); };
+  const hoy = (function(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); })(new Date());
+  const ayer = (function(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); })(new Date(Date.now()-86400000));
+  const mk = function(SX, fin, flu){ return new Function("S", "_fotoCapital", "_flujosDelDia",
+    "function _fraccionInteresPrestamo(){ return 0; }" + sacarFuncion("_ymd") + sacarFuncion("_diaContable") +
+    "; var r2=function(n){return Math.round((isNaN(n)?0:+n)*100)/100;}; return _diaContable;")
+    (SX, function(){ return fin; }, function(){ return Object.assign({ops:0,aportes:0,trasp:0,aj:0}, flu||{}); }); };
+  // 1 · Su caso del 21/11, con las dos fotos tal como quedaron guardadas. La
+  //     línea de tasas de la conciliación cambió +26,33 entre las dos fotos,
+  //     "plata tuya" −8,11 sin un solo aporte: nada de eso puede entrar.
+  const cI = {ap:2742.85, desde:"2026-10-20", deb:1922.95, bruta:823.97, egEmp:574.19, egPer:301.44, socios:9.88, trasp:414.9, aportes:457.99, retSoc:801.45, intAp:0, aj:64.36, tasas:-349.28, rvA:-269.11, sinExp:521.29};
+  const cF = Object.assign({}, cI, {deb:1921.04, bruta:830.18, trasp:414.91, aportes:449.88, tasas:-322.95, rvA:-275.96, sinExp:495.46});
+  const ini = {ts:1, mes:"2026-11", rem:475.46, soc:0, tienes:2159.32, cuentas:1032.4, prestado:469.76, cobrar:368.17, reserva:168.02, merc:221.96, sueldo:0, parcelas:100.99, c:cI,
+    mon:{BRL:{n:10059.01, f:16837.56, r:5.9755}, VES:{n:148219.99, f:357963.56, r:1069.716}}};
+  const fin = {ts:2, mes:"2026-11", rem:481.67, soc:0, tienes:2157.91, cuentas:984.31, prestado:468.17, cobrar:416.71, reserva:167.35, merc:221.96, sueldo:0, parcelas:100.59, c:cF,
+    mon:{BRL:{n:10489.5, f:16268.05, r:5.9994}, VES:{n:78079.91, f:-337009.2, r:1089}}};
+  const SX = {histCapital:{}, prestamos:[]}; SX.histCapital[ayer] = ini;
+  const x = mk(SX, fin, {ops:0.27})(hoy);
+  ok(x.tasas === -8.29, "21/11: el valor de las monedas son −8,29 (el Bs de 1.069,72 a 1.089 y el R$ de 5,9755 a 5,9994), no +34,42", String(x.tasas));
+  ok(x.cuadra && Math.abs(x.resto) < 0.01, "21/11: sin «te faltan $34,25» — queda en céntimos", String(x.resto));
+  const fl = {}; (x.filas||[]).forEach(function(r){ fl[r[4]] = r[1]; });
+  ok(fl["plata tuya"] === 0 && fl["a tus 💜"] === 0, "sin aportes ni traspasos ese día, «plata tuya» y «a tus 💜» son 0 (antes −8,11 y −0,01)", JSON.stringify(fl));
+  ok(fl["cambio de las operaciones"] === 0.27, "y el cambio de las operaciones del día va en su fila", String(fl["cambio de las operaciones"]));
+  // 2 · La tasa se mueve sola: Tienes cambia por los saldos × la tasa, y cuadra.
+  const fin2 = Object.assign({}, ini, {ts:3, mon:{BRL:{n:10059.01, r:6.2}, VES:{n:148219.99, r:1200}}});
+  fin2.tienes = Math.round((ini.tienes + 10059.01*(1/6.2-1/5.9755) + 148219.99*(1/1200-1/1069.716))*100)/100;
+  const x2 = mk(SX, fin2)(hoy);
+  ok(x2.cuadra && Math.abs(x2.resto) < 0.01 && x2.tasas < 0, "solo la tasa se mueve: el valor lo explica todo y no sale nada sin registrar", JSON.stringify([x2.tasas, x2.resto]));
+  // 3 · Y el dinero que sale sin registrar sí sale.
+  const fin3 = Object.assign({}, fin2, {tienes: Math.round((fin2.tienes-50)*100)/100});
+  const x3 = mk(SX, fin3)(hoy);
+  ok(!x3.cuadra && Math.abs(x3.resto + 50) < 0.01, "50 que salen sin registrar: «te faltan 50», con la tasa moviéndose", String(x3.resto));
+  // 4 · Una línea de tasas de la conciliación que cambia sola no mueve nada.
+  const fin4 = Object.assign({}, fin2, {c:Object.assign({}, ini.c, {tasas:500, rvA:-900, aportes:999, trasp:-77, aj:123})});
+  const x4 = mk(SX, fin4)(hoy);
+  ok(x4.resto === x2.resto && x4.tasas === x2.tasas, "lo que la conciliación acumula a la tasa de hoy no entra en el día", JSON.stringify([x4.resto, x2.resto]));
+  ok(!/d\("(aportes|trasp|aj|tasas)"\)/.test(sc("_diaContable")), "Tu día no resta entre fotos nada que se valore a la tasa de hoy");
+  // 5 · Lo del día se mira a la tasa de Empezaste, y la tasa vuelve después.
+  const F = new Function("S", "efectoTasasDesde", "tasaDeReferencia", "traspasosAPersonal", "ajustesDesdeApertura",
+    "var _RATE_LIMITS={}; var _TASAS_FIJAS=null;" + sacarFuncion("getRateToUsdt") + sacarFuncion("aportesDesde") + sacarFuncion("_flujosDelDia") +
+    "; return {flu:_flujosDelDia, rate:getRateToUsdt, fijas:function(){ return _TASAS_FIJAS; }};");
+  const manana = (function(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); })(new Date(Date.now()+86400000));
+  const SA = {cuentas:[{id:"v", moneda:"VES"}], aportes:[{fechaIso:ayer, cuentaId:"v", monto:5000, dir:"entra"}, {fechaIso:hoy, cuentaId:"v", monto:1000, dir:"entra"},
+    {fechaIso:manana, cuentaId:"v", monto:7000, dir:"entra"}]};
+  const G = F(SA, function(){ return {total: 2000/G.rate("VES")}; }, function(){ return {tasa:2000}; },
+    function(){ return {total:0}; }, function(){ return {total:0}; });
+  const fz = G.flu(ayer, hoy, {VES:{n:1, r:1000}});
+  ok(fz.aportes === 1 && fz.ops === 2, "el aporte de hoy (1.000 Bs) y las operaciones se valoran a la tasa de Empezaste (1.000), no a la de ahora (2.000); ni el de ayer ni el de mañana entran", JSON.stringify(fz));
+  ok(G.rate("VES") === 2000 && G.fijas() === null, "después de mirar, la tasa de la app vuelve a ser la de siempre");
+  const Gx = F(SA, function(){ throw new Error("x"); }, function(){ return {tasa:2000}; }, function(){ return {total:0}; }, function(){ return {total:0}; });
+  try{ Gx.flu(ayer, hoy, {VES:{r:1000}}); }catch(e){}
+  ok(Gx.fijas() === null, "y vuelve aunque algo falle a mitad (finally)");
+  ok(/if\(_TASAS_FIJAS && _TASAS_FIJAS\[moneda\]>0\) return _TASAS_FIJAS\[moneda\];/.test(sc("getRateToUsdt")),
+     "las tasas fijas pasan por la puerta de todas las conversiones");
+  ok(/hastaIso && \(iso>hastaIso \|\| iso<=desdeIso\)/.test(sc("ajustesDesdeApertura")) && (sc("traspasosAPersonal").match(/hastaIso && iso>hastaIso/g)||[]).length === 3,
+     "los ajustes y los tres caminos a lo personal miran solo ese día");
 }
 
 // ── ARREGLO 264 · Recargo por atraso en Cuentas por cobrar ───────────────
