@@ -75,7 +75,7 @@ const NECESARIAS = ["_egresosHuerfanos", "moverEgresoAPersonal", "_tasaDelDiaFue
                     "_colchon", "_tasasRecomendadas", "_tasaCorta", "_tasasConLoMio",
                     "_tsUltimaOpUSDT", "_aproxManda", "_toggleProbar", "_volverAMiTasa",
                     // ARREGLO 130
-                    "_ultimaOpUSDT", "_origenLado", "_loteDeCliente",
+                    "_ultimaOpUSDT", "_origenLado", "_loteDeCliente", "_loteDeCobro",
                     // ARREGLO 132
                     "_inventarioBs", "_umbralBsReales", "_colchonIdaAhora", "_tasasSinBs",
                     // ARREGLO 133
@@ -126,7 +126,7 @@ const NECESARIAS = ["_egresosHuerfanos", "moverEgresoAPersonal", "_tasaDelDiaFue
                     "_mergeObjetoPorClave", "_unirHistorial", "_unirMarcasCampos",
                     "_huellaCompleta", "_conteoRapido",
                     "crearLoteRecibido", "quitarLoteDeRemesa", "_loteAlCobrar",
-                    "_loteEsOpUSDT", "_loteDeCliente", "_loteEsDeRemesa", "_loteDeTraspaso", "_entradaSeQueda", "_puedeQuedarse",
+                    "_loteEsOpUSDT", "_loteDeCliente", "_loteDeCobro", "_loteEsDeRemesa", "_loteDeTraspaso", "_entradaSeQueda", "_puedeQuedarse",
                     "_remesaEntradaQueda", "esRutaCalce", "esCalceDirecto",
                     "ordenFIFO", "normalizarInventarioFIFO", "simularConsumoFIFO", "_tasaEfectivaLote",
                     "_repartoFIFO", "getTasaVentaPonderada", "_bsPorReal", "_htmlDeDondeSalen",
@@ -15419,7 +15419,7 @@ console.log("\nARREGLO 263 · Las compras a clientes no deciden la tasa del real
   const C=new Function(sacarFuncion("_loteDeCliente")+"\nreturn _loteDeCliente;")();
   ok(C({plataforma:"BINANCE PAY"}) && C({plataforma:"BINANCE PAY "}) && C({plataforma:" binance  pay"}), "reconoce BINANCE PAY sin mirar espacios ni mayúsculas");
   ok(!C({plataforma:"Binance P2P"}) && !C({plataforma:"BINANCE"}) && !C({}), "una compra de mercado no es de cliente");
-  const op=new Function("_loteDeCliente","_loteDeTraspaso","_loteEsDeRemesa", sacarFuncion("_loteEsOpUSDT")+"\nreturn _loteEsOpUSDT;")(C,()=>false,()=>false);
+  const op=new Function("_loteDeCliente","_loteDeTraspaso","_loteEsDeRemesa","_loteDeCobro", sacarFuncion("_loteEsOpUSDT")+"\nreturn _loteEsOpUSDT;")(C,()=>false,()=>false,()=>false);
   ok(op({tipo:"compra",moneda:"BRL",plataforma:"Binance P2P"}) && !op({tipo:"compra",moneda:"BRL",plataforma:"BINANCE PAY"}),
      "la tasa de referencia mira la P2P y no la de Binance Pay");
   ok(/_loteDeCliente\(l\)/.test(sinComentarios(sacarFuncion("_ultimaOpUSDT"))), "la tarjeta del suelo usa la misma regla");
@@ -15524,7 +15524,7 @@ console.log("\nARREGLO 264 · El recargo de un cobro va aparte, se cobra como la
   ok(mc.indexOf("_decidirRecargoAlCerrar(")>=0 && mc.indexOf("_decidirRecargoAlCerrar(")<mc.indexOf("cta.saldo=") &&
      /_aplicarRecargoAlCerrar\(c,_accRec\)/.test(mc), "✓ Cobrado decide el recargo antes de acreditar y lo aplica al cerrar");
   const sa=sinComentarios(sacarFuncion("saveAbonoCobrar"));
-  ok(sa.indexOf("_decidirRecargoAlCerrar(")>=0 && sa.indexOf("_decidirRecargoAlCerrar(")<sa.indexOf("ajusteCuentaEgreso(cuentaId") &&
+  ok(sa.indexOf("_decidirRecargoAlCerrar(")>=0 && sa.indexOf("_decidirRecargoAlCerrar(")<sa.indexOf("creditCuentaRep(cuentaId") &&
      /_aplicarRecargoAlCerrar\(c,_accRecAb\)/.test(sa), "el abono que cierra el cargo hace lo mismo");
   // Borrar el cargo devuelve el recargo cobrado a su cuenta.
   ok(/_recCob\.forEach\(_salirRecargoManual\)/.test(sinComentarios(sacarFuncion("eliminarCuenta"))),
@@ -15570,7 +15570,7 @@ console.log("\nARREGLO 267 · El recargo sale de la fecha prometida, con la fór
   ok(mc.indexOf("_elegirRecargo(")>=0 && mc.indexOf("_elegirRecargo(")<mc.indexOf("cta.saldo=") && /_aplicarRecargoCobro\(c,_rc,_recM,_ctaRec,_monRec,1\)/.test(mc),
      "✓ Cobrado pregunta con los tres botones antes de acreditar y apunta la decisión");
   const sa=sinComentarios(sacarFuncion("saveAbonoCobrar"));
-  ok(sa.indexOf("_elegirRecargo(")>=0 && sa.indexOf("_elegirRecargo(")<sa.indexOf("ajusteCuentaEgreso(cuentaId") && /var _cierra=monto>=pendiente-0\.001;/.test(sa) &&
+  ok(sa.indexOf("_elegirRecargo(")>=0 && sa.indexOf("_elegirRecargo(")<sa.indexOf("creditCuentaRep(cuentaId") && /var _cierra=monto>=pendiente-0\.001;/.test(sa) &&
      /if\(_recM!==null\) _aplicarRecargoCobro\(c,_rc,_recM,/.test(sa), "el abono que cierra pregunta igual; uno parcial no (_cierra)");
   const er=sinComentarios(sacarFuncion("_elegirRecargo"));
   ok(/id='recCon'/.test(er) && /id='recSin'/.test(er) && /id='recNo'/.test(er) && /getElementById\("recNo"\)\.onclick=cerrar;/.test(er) &&
@@ -15605,6 +15605,82 @@ console.log("\nARREGLO 267 · El recargo sale de la fecha prometida, con la fór
   ok(/Ya abonaste R\$ 10,00, quedan R\$ 50,00/.test(msg) && /Recargo por atraso: R\$ 5,00/.test(msg) && /\*Total a pagar: R\$ 912,74\*/.test(msg),
      "el manual viejo sigue saliendo, y el total suma todo");
   ok(!/[\u{1F000}-\u{1FFFF}\u2600-\u27BF]/u.test(msg), "el mensaje no lleva emojis (wa.me los convierte en �)");
+}
+
+// ── ARREGLO 268 · Lo que entra por un abono o una mora no infla un lote ajeno ──
+console.log("\nARREGLO 268 · Abonos de Por cobrar y cobros de préstamos: solo saldo + su propio lote");
+{
+  // El fallo dormido: ajustarLotePorCuenta solo encuentra un lote cuyo cuentaId
+  // sea la cuenta de banco. Los lotes que nacen por dinero que entra ponen el
+  // banco en cuentaDestinoId y dejan cuentaId vacío. Si eso cambia, el fallo
+  // se despierta y cada entrada por ajusteCuentaEgreso inflaría esos lotes.
+  const cl=sinComentarios(sacarFuncion("crearLoteRecibido"));
+  ok(/cuentaId:""/.test(cl) && /cuentaDestinoId:cuentaDestinoId/.test(cl), "crearLoteRecibido deja cuentaId vacío y el banco en cuentaDestinoId");
+  const al=sinComentarios(sacarFuncion("ajustarLotePorCuenta"));
+  ok(/r\.cuentaId===cuentaId/.test(al), "ajustarLotePorCuenta busca por cuentaId (por eso los lotes nuevos no deben llevar ahí el banco)");
+  // Por cobrar: entra como ✓ Cobrado.
+  const sa=sinComentarios(sacarFuncion("saveAbonoCobrar"));
+  ok(/creditCuentaRep\(cuentaId,montoIngresado\)/.test(sa) && !/ajusteCuentaEgreso\(cuentaId/.test(sa), "el abono de Por cobrar entra con creditCuentaRep, no con ajusteCuentaEgreso");
+  ok(/entraSaldo:true/.test(sa) && /loteId:/.test(sa) && /cta\.moneda===c\.moneda\)\?_loteAlCobrar\(/.test(sa), "y apunta cómo entró y qué lote dejó (solo si la cuenta es de su moneda)");
+  ok(/_salirAbonoCobrar\(ab\)/.test(sinComentarios(sacarFuncion("eliminarAbonoCobrar"))) && /_salirAbonoCobrar\(ab\)/.test(sinComentarios(sacarFuncion("eliminarCuenta"))),
+     "borrar el abono, o el cargo entero, lo saca por donde entró");
+  {
+    const S={cuentas:[{id:"pb",saldo:1000}],inventarioUsdt:[{id:7,bs:50,bsRestante:50}],inventarioUsdt_cerrado:[]};
+    const log=[];
+    const F=new Function("S","creditCuentaRep","ajusteCuentaEgreso","_marcarBorradoMerge",
+      sacarFuncion("_salirAbonoCobrar")+"\n"+sacarFuncion("_quitarLotePorId")+"\nreturn _salirAbonoCobrar;")(
+      S,(c,m)=>log.push("credit "+c+" "+m),(c,m)=>log.push("ajuste "+c+" "+m),(cat,id)=>log.push("marca "+cat+" "+id));
+    F({cuentaId:"pb",monto:10,montoPago:50,entraSaldo:true,loteId:7});
+    ok(log.join("|")==="credit pb -50|marca inventarioUsdt 7" && S.inventarioUsdt.length===0, "nuevo: sale lo que entró (montoPago) y su lote, con marca de borrado", log.join("|"));
+    log.length=0; F({cuentaId:"pb",monto:10,montoPago:50});
+    ok(log.join("|")==="ajuste pb -10", "viejo: sale como entró, con ajusteCuentaEgreso por ab.monto", log.join("|"));
+  }
+  // Préstamos: el cobro entra una vez y cada pieza deja su lote a la tasa del préstamo.
+  const pp=sinComentarios(sacarFuncion("pagarPrestamo"));
+  ok(/creditCuentaRep\(np\.cuentaId,_cashAcreditado\)/.test(pp) && !/ajusteCuentaEgreso\(np\.cuentaId/.test(pp) && /_loteCobroPrestamo\(p,x\.reg,x\.tipo\)/.test(pp),
+     "el cobro de un préstamo entra con creditCuentaRep y deja un lote por pieza");
+  ok((pp.match(/_nuevosCobros\.push\(/g)||[]).length===2, "las dos piezas, abono y mora, van a la lista");
+  {
+    const S={cuentas:[{id:"bv",moneda:"VES"},{id:"pu",moneda:"USDT"}]};
+    let args=null;
+    const L=new Function("S","crearLoteRecibido","td",
+      sacarFuncion("_usdtPorUnidadPrest")+"\n"+sacarFuncion("_loteCobroPrestamo")+"\nreturn _loteCobroPrestamo;")(
+      S,function(m){args=[].slice.call(arguments);return (m==="VES"||m==="BRL")?{id:1}:null;},()=>"2026-11-24");
+    const p={id:5,monto:1200,usdt:100};          // 12 por USDT
+    const ab={id:9,monto:600,montoPago:600,monedaPago:"VES",cuentaId:"bv"};
+    L(p,ab,"abono");
+    ok(args && args[0]==="VES" && args[1]===600 && Math.abs(args[2]-50)<1e-9 && args[3]==="bv" && args[5]==="pab:5:9" && args[7]===true,
+       "abono de 600 Bs de un préstamo de 1.200 que valió 100 USDT: lote de 600 Bs = 50 USDT", JSON.stringify(args));
+    ok(ab.entraSaldo===true && ab.loteRef==="pab:5:9", "y apunta cómo entró y su lote");
+    args=null; const mo={id:3,monto:24,montoPago:24,monedaPago:"VES",cuentaId:"bv"}; L(p,mo,"mora");
+    ok(args && args[5]==="pmo:5:3" && Math.abs(args[2]-2)<1e-9, "la mora también, a la misma tasa (24 Bs = 2 USDT)");
+    args=null; const uu={id:4,monto:10,montoPago:10,monedaPago:"USDT",cuentaId:"pu"}; L(p,uu,"abono");
+    ok(uu.entraSaldo===true && uu.loteRef===undefined, "en una cuenta USDT no nace lote, pero se apunta cómo entró");
+    args=null; const mx={id:6,monto:10,montoPago:2,monedaPago:"USDT",cuentaId:"bv"}; L(p,mx,"abono");
+    ok(args===null, "si la cuenta no es de la moneda en que pagó, no se inventa un lote");
+  }
+  {
+    const log=[];
+    const F=new Function("creditCuentaRep","ajusteCuentaEgreso","quitarLoteDeRemesa",sacarFuncion("_salirCobroPrestamo")+"\nreturn _salirCobroPrestamo;")(
+      (c,m)=>log.push("credit "+c+" "+m),(c,m)=>log.push("ajuste "+c+" "+m),(r)=>log.push("quita "+r));
+    F({cuentaId:"bv",monto:600,montoPago:600,entraSaldo:true,loteRef:"pab:5:9"});
+    F({cuentaId:"bv",monto:600,montoPago:600});
+    ok(log.join("|")==="credit bv -600|quita pab:5:9|ajuste bv -600", "borrar sale por donde entró: nuevo con su lote, viejo con ajusteCuentaEgreso", log.join("|"));
+  }
+  // El lote de un cobro no decide la tasa con la que se valora todo.
+  {
+    const E=new Function(["_loteDeCliente","_loteDeTraspaso","_loteEsDeRemesa","_loteDeCobro","_loteEsOpUSDT"].map(sacarFuncion).join("\n")+"\nreturn _loteEsOpUSDT;")();
+    const v=(o)=>Object.assign({tipo:"venta",moneda:"VES",plataforma:"Remesa"},o);
+    ok(["pab:1:2","pmo:1:3","rcc:9","rcm:9:1"].every(r=>E(v({origenRemesa:r}))===false), "los lotes de abono, mora y recargo no son operaciones de USDT");
+    ok(E(v({origenRemesa:"k3x_9"}))===true && E({tipo:"venta",moneda:"VES"})===true, "una vuelta en Bs y una venta normal siguen contando como antes");
+  }
+  ok(/_loteDeCobro\(l\)/.test(sinComentarios(sacarFuncion("_ultimaOpUSDT"))) && /!_loteDeCobro\(l\)/.test(sinComentarios(sacarFuncion("_ultimasIU"))),
+     "tampoco cuentan como la última operación ni en la comparación de Inventario");
+  ok(/_salirCobroPrestamo\(ab\)/.test(sinComentarios(sacarFuncion("borrarAbonoPrestamo"))) && /_salirCobroPrestamo\(m\)/.test(sinComentarios(sacarFuncion("borrarMoraPrestamo"))),
+     "borrar un abono o una mora de préstamo pasa por _salirCobroPrestamo");
+  const rd=sinComentarios(sacarFuncion("reqDel"));
+  ok((rd.match(/item\.abonos\.forEach\(_salirCobroPrestamo\)/g)||[]).length===2 && (rd.match(/if\(m\.entraSaldo\) _salirCobroPrestamo\(m\)/g)||[]).length===2,
+     "borrar el préstamo entero saca sus abonos y su mora nueva, en los dos caminos");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

@@ -7272,7 +7272,49 @@ SARA) se siguen viendo, cobrando y perdonando; no se pueden crear más.
 - **El WhatsApp no lleva emojis**: wa.me los convertía en "�".
 - Todo vive dentro del cargo: sin clave nueva, sin tocar el servidor.
 
-**Pendiente, aparte y a propósito:** la mora de préstamos y el **abono normal**
-de Por cobrar siguen entrando con `ajusteCuentaEgreso`, así que suben el primer
-lote de la cuenta. Medido en Chromium: un abono de 336 subió un lote de reales
-de 300 a 636. Es otro PR.
+**Corrección, del 24/11:** aquí ponía que un abono de 336 subió un lote de 300
+a 636. Era falso para sus datos: se midió con un lote de prueba que llevaba el
+banco en `cuentaId`, y ningún lote suyo lo lleva. Ver el ARREGLO 268.
+
+---
+
+## Lo que entra por un abono o una mora: solo saldo y su propio lote (ARREGLO 268)
+
+`ajusteCuentaEgreso` sube el saldo **y** el primer lote de venta cuyo `cuentaId`
+sea esa cuenta (`ajustarLotePorCuenta`), sin tocar su tasa. **Ese fallo está
+dormido:** hoy ningún lote lleva el banco en `cuentaId` (las ventas llevan la
+cuenta de USDT o nada; el banco va en `cuentaDestinoId`). Medido con su copia
+del 24/11: **0 de 26 ventas abiertas y 0 de 527 archivadas**. No hubo nada
+inflado que corregir. (El 267 decía lo contrario por medir con un lote de
+prueba mal formado.)
+
+- **Abono de Por cobrar = ✓ Cobrado:** `creditCuentaRep` + el lote propio de
+  `_loteAlCobrar` (solo si la cuenta es de la moneda del cobro). Guarda
+  `entraSaldo` y `loteId`; borrarlo saca lo que entró (`montoPago`) y ese lote,
+  con marca de borrado (`_salirAbonoCobrar`). En v349 borrar un abono dejaba su
+  lote vivo. Los abonos de antes salen como entraron (`ajusteCuentaEgreso`).
+- **Abono y mora de préstamos:** el cobro entra una vez con `creditCuentaRep` y
+  cada pieza deja su lote (`_loteCobroPrestamo`, ref `pab:`/`pmo:`), **valorado
+  a la tasa del propio préstamo** (`p.usdt/p.monto`, decisión suya), la misma de
+  `gananciaPrestamosDelMes`. En una cuenta USDT, o si la cuenta no es de la
+  moneda en que pagó, no nace lote. Borrar sale por donde entró
+  (`_salirCobroPrestamo`), también al borrar el préstamo entero.
+- **El lote de un cobro NO es una operación de USDT** (`_loteDeCobro`: `pab`,
+  `pmo`, `rcc`, `rcm`): fuera de `tasaDeReferencia`, `_ultimaOpUSDT` y
+  `_ultimasIU`. Sin eso, un abono de 600 Bs movía el capital +11 (medido),
+  porque el lote más nuevo de VES decidía a cuánto se valoran todos sus Bs.
+  Arregla también el recargo del 267 cobrado en Bs.
+- **Una ida pagada con esos Bs sale como calce**, como con los de una vuelta:
+  no pasaron por Binance. "De dónde salen" dice *"abono de <préstamo>"*.
+- **Guardia del fallo dormido:** `crearLoteRecibido` tiene que dejar
+  `cuentaId:""`. Si un día pone ahí el banco, todo lo que entra por
+  `ajusteCuentaEgreso` (mercancía, ganancia extra, plata mía, liquidación
+  múltiple) inflaría esos lotes. Hay prueba.
+- **Lo ya registrado no se toca** (decisión suya): en noviembre entraron
+  16.236,20 Bs y 1.156,53 R$ por préstamos sin lote, y se quedan así.
+
+**Pendiente, lo vemos después:** el abono de un cobro de una remesa en **reales**
+que no lleva la marca de "se quedan" (`entraQueda`) no deja lote
+(`_loteAlCobrar` solo crea en VES o con esa marca), así que esos reales se gastan
+después con tasa prestada. En noviembre hay 2.044 R$ de abonos de Por cobrar.
+Y borrar un préstamo de antes del 268 no saca de la cuenta la mora que ya entró.
