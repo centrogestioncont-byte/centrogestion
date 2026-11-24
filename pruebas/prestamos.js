@@ -15513,10 +15513,11 @@ console.log("\nARREGLO 264 · El recargo de un cobro va aparte, se cobra como la
   ok(g.usdt===0.91 && g.recUsdt===0.91 && g.recCant===1, "solo el recargo COBRADO de ese mes, con su USDT guardado", JSON.stringify(g));
   ok(G("2026-10").usdt===0.55, "el de octubre cuenta en octubre");
   // Pendiente no suma a nada: vive en c.recargos, nunca en c.monto.
-  const ap=sinComentarios(sacarFuncion("aplicarRecargoCliente"));
-  ok(/c\.recargos\.push\(/.test(ap) && !/c\.monto\s*[+\-]?=/.test(ap), "aplicar un recargo no toca c.monto");
+  // ARREGLO 267: el botón que los creaba se fue; los que ya hay se siguen cobrando.
+  ok(!/function aplicarRecargoCliente\(/.test(HTML), "el botón ⚠️ Recargo manual ya no existe");
   const co=sinComentarios(sacarFuncion("_cobrarRecargosEn"));
-  ok(/ajusteCuentaEgreso\(cuentaId/.test(co) && /usdt:u/.test(co) && !/c\.monto/.test(co), "cobrarlo entra a la cuenta, guarda su USDT y no toca c.monto");
+  ok(/creditCuentaRep\(cuentaId,m\)/.test(co) && /crearLoteRecibido\(/.test(co) && !/ajusteCuentaEgreso/.test(co) && /usdt:u/.test(co) && !/c\.monto/.test(co),
+     "cobrarlo entra a la cuenta SIN ajusteCuentaEgreso (no sube el primer lote), con su propio lote, y no toca c.monto");
   // Al cerrar un cargo se decide ANTES de mover nada y se aplica al final, en
   // los DOS caminos. Contado: si se quita uno, falla.
   const mc=sinComentarios(sacarFuncion("marcarCobrado"));
@@ -15526,26 +15527,84 @@ console.log("\nARREGLO 264 · El recargo de un cobro va aparte, se cobra como la
   ok(sa.indexOf("_decidirRecargoAlCerrar(")>=0 && sa.indexOf("_decidirRecargoAlCerrar(")<sa.indexOf("ajusteCuentaEgreso(cuentaId") &&
      /_aplicarRecargoAlCerrar\(c,_accRecAb\)/.test(sa), "el abono que cierra el cargo hace lo mismo");
   // Borrar el cargo devuelve el recargo cobrado a su cuenta.
-  ok(/_recCob\.forEach\(function\(r\)\{ if\(r\.cobrado\.cuentaId\) ajusteCuentaEgreso\(r\.cobrado\.cuentaId,-/.test(sinComentarios(sacarFuncion("eliminarCuenta"))),
+  ok(/_recCob\.forEach\(_salirRecargoManual\)/.test(sinComentarios(sacarFuncion("eliminarCuenta"))),
      "borrar el cargo devuelve el recargo cobrado");
+  const sm=sinComentarios(sacarFuncion("_salirRecargoManual"));
+  ok(/if\(r\.cobrado\.loteRef\)\{ creditCuentaRep\(r\.cobrado\.cuentaId,-m\); quitarLoteDeRemesa\(r\.cobrado\.loteRef\); \}/.test(sm) && /else ajusteCuentaEgreso\(r\.cobrado\.cuentaId,-m\)/.test(sm),
+     "deshacer un manual sale como entró: el nuevo con su lote, el viejo con ajusteCuentaEgreso");
   // El nombre del cliente va escapado en los dos botones (ARREGLO 102).
   const rc=sacarFuncion("rCuentasCobrar");
-  ok(/aplicarRecargoCliente\(\\""\+_jsAttr\(g\.clave\)/.test(rc) && /cobrarClienteWA\(\\""\+_jsAttr\(g\.clave\)/.test(rc), "los botones del cliente escapan el nombre con _jsAttr");
-  // El mensaje: los cargos, los días, el recargo y el total con el recargo.
-  const cargos=[{cliente:"SARA MARIN",fecha:"14/10/26",monto:48,moneda:"BRL",abonos:[],recargos:[{monto:5}]},
-                {cliente:"SARA MARIN",fecha:"20/10/26",monto:60,moneda:"BRL",abonos:[{monto:10}],recargos:[]}];
+  ok(!/aplicarRecargoCliente/.test(rc) && /cobrarClienteWA\(\\""\+_jsAttr\(g\.clave\)/.test(rc), "el botón del cliente escapa el nombre con _jsAttr, y el de recargo manual no se dibuja");
+}
+
+// ── ARREGLO 267 · Recargo por mora con fecha prometida ───────────────────
+console.log("\nARREGLO 267 · El recargo sale de la fecha prometida, con la fórmula de la mora, y se decide al cobrar");
+{
+  const cfg={activa:true,multaPct:2,jurosPctMes:2,diasGracia:3};
+  const deps="_saldoCargoCC,_isoFechaCC,_isoMasDias,_recargoDecidido,_diasIso,_isoDeDDMMAA";
+  const RC=new Function("cfgMora","td",
+    ["_saldoCargoCC","_isoFechaCC","_isoMasDias","_recargoDecidido","_diasIso","_isoDeDDMMAA","_recargoCobro"].map(sacarFuncion).join("\n")+
+    "\nreturn _recargoCobro;")(()=>cfg,()=>"2026-11-24");
+  // Su ejemplo, al céntimo.
+  const c={monto:836,moneda:"BRL",fecha:"01/11/26",fechaPrometida:"2026-11-15",abonos:[]};
+  let r=RC(c);
+  ok(r.dias===9 && r.multa===16.72 && r.juros===5.02 && r.total===21.74 && Math.round((r.saldo+r.total)*100)/100===857.74,
+     "836 BRL prometidos el 15/11, al 24/11: 9 días, multa 16,72 + interés 5,02 = 21,74; total 857,74", JSON.stringify(r));
+  ok(!RC({monto:836,abonos:[]}).hay, "sin fecha prometida no hay recargo");
+  r=RC(c,"2026-11-18");
+  ok(r.enGracia && !r.hay && r.graciaHasta==="2026-11-18", "dentro de los 3 días de gracia: en gracia hasta el 18/11 y sin recargo", JSON.stringify(r));
+  ok(RC(c,"2026-11-10").futura, "una fecha que aún no llega: futura, sin recargo");
+  cfg.activa=false; ok(!RC(c).hay && RC(c).activa===false, "con la mora apagada en Configuración no se calcula"); cfg.activa=true;
+  // Abono a tiempo: no entra en la multa. Abono atrasado: baja el interés desde su día.
+  r=RC({monto:836,fechaPrometida:"2026-11-15",abonos:[{fecha:"2026-11-17",monto:336}]});
+  ok(r.base===500 && r.multa===10 && Math.abs(r.juros-Math.round((836*0.02/30*2+500*0.02/30*7)*100)/100)<0.001,
+     "la multa va sobre el saldo al terminar la gracia (500) y el interés por tramos", JSON.stringify(r));
+  // Bloqueado: manda lo guardado, cambie la fecha o no.
+  const cb={monto:836,fechaPrometida:"2026-10-01",abonos:[],recargoCobrado:21.74,recargoDias:9,recargoMulta:16.72,recargoJuros:5.02};
+  r=RC(cb);
+  ok(r.bloqueado && r.total===21.74 && r.dias===9, "decidido el recargo, cambiar la fecha no lo recalcula");
+  ok(RC({monto:836,fechaPrometida:"2026-11-15",abonos:[],recargoCobrado:0}).bloqueado && !RC({monto:836,fechaPrometida:"2026-11-15",abonos:[],recargoCobrado:0}).hay,
+     "cerrado sin recargo también queda bloqueado");
+  // Al cobrar: los tres botones ANTES de mover dinero, en los dos caminos.
+  const mc=sinComentarios(sacarFuncion("marcarCobrado"));
+  ok(mc.indexOf("_elegirRecargo(")>=0 && mc.indexOf("_elegirRecargo(")<mc.indexOf("cta.saldo=") && /_aplicarRecargoCobro\(c,_rc,_recM,_ctaRec,_monRec,1\)/.test(mc),
+     "✓ Cobrado pregunta con los tres botones antes de acreditar y apunta la decisión");
+  const sa=sinComentarios(sacarFuncion("saveAbonoCobrar"));
+  ok(sa.indexOf("_elegirRecargo(")>=0 && sa.indexOf("_elegirRecargo(")<sa.indexOf("ajusteCuentaEgreso(cuentaId") && /var _cierra=monto>=pendiente-0\.001;/.test(sa) &&
+     /if\(_recM!==null\) _aplicarRecargoCobro\(c,_rc,_recM,/.test(sa), "el abono que cierra pregunta igual; uno parcial no (_cierra)");
+  const er=sinComentarios(sacarFuncion("_elegirRecargo"));
+  ok(/id='recCon'/.test(er) && /id='recSin'/.test(er) && /id='recNo'/.test(er) && /getElementById\("recNo"\)\.onclick=cerrar;/.test(er) &&
+     /if\(t===null\) return;/.test(er) && /onElegir\(0\)/.test(er), "tres botones; Cancelar y cancelar el monto no hacen nada; sin recargo = 0");
+  // El dinero: solo el saldo y su propio lote; deshacer lo devuelve.
+  const ap=sinComentarios(sacarFuncion("_aplicarRecargoCobro"));
+  ok(/creditCuentaRep\(cuentaId,c\.recargoPago\)/.test(ap) && /crearLoteRecibido\(.*"rcc:"\+c\.id/.test(ap) && !/ajusteCuentaEgreso/.test(ap) && !/c\.monto\s*=/.test(ap),
+     "el recargo entra con creditCuentaRep y su propio lote, sin ajusteCuentaEgreso ni tocar c.monto");
+  const de=sinComentarios(sacarFuncion("_deshacerRecargoCobro"));
+  ok(/creditCuentaRep\(c\.recargoCuentaId,-/.test(de) && /quitarLoteDeRemesa\("rcc:"\+c\.id\)/.test(de), "deshacerlo saca el dinero y el lote");
+  ok(/_deshacerRecargoCobro\(c\)/.test(sinComentarios(sacarFuncion("eliminarAbonoCobrar"))) && /_deshacerRecargoCobro\(c\)/.test(sinComentarios(sacarFuncion("eliminarCuenta"))),
+     "quitar el abono que cerró el cargo, o borrar el cargo, deshace el recargo");
+  ok(/c\.estado==="cobrado"\|\|_recargoDecidido\(c\)/.test(sinComentarios(sacarFuncion("setFechaPrometida"))) && !/\bR\(\)/.test(sinComentarios(sacarFuncion("setFechaPrometida")).replace(/alert\([^;]*;\s*R\(\); return;/,"")),
+     "la fecha no se cambia en un cargo cobrado, y ponerla no repinta (ARREGLO 32)");
+  // La ganancia: cuenta en el mes en que se cobró, con su USDT.
+  const S={prestamos:[],cuentasCobrar:[{recargoCobrado:21.74,recargoUsdt:3.62,recargoFecha:"2026-11-24"},{recargoCobrado:0,recargoUsdt:0,recargoFecha:"2026-11-24"}]};
+  const G=new Function("S","_fraccionInteresPrestamo","_mesKeyISO",sacarFuncion("gananciaPrestamosDelMes")+"\nreturn gananciaPrestamosDelMes;")(S,()=>0,(f)=>String(f).slice(0,7));
+  const g=G("2026-11");
+  ok(g.recUsdt===3.62 && g.recCant===1 && G("2026-10").usdt===0, "el recargo cobrado es ganancia de mora del mes en que se cobró; el perdonado no", JSON.stringify(g));
+  // El mensaje: monto original, fecha prometida, días, recargo, total. Sin emojis.
+  const cargos=[{cliente:"SARA MARIN",fecha:"14/10/26",monto:836,moneda:"BRL",fechaPrometida:"2026-11-15",abonos:[]},
+                {cliente:"SARA MARIN",fecha:"20/10/26",monto:60,moneda:"BRL",abonos:[{monto:10}],recargos:[{monto:5}]}];
   const f2=(n)=>(Math.round(n*100)/100).toFixed(2).replace(".",",");
-  const M=new Function("_cargosPendDeCliente","_diasEsperaCliente","_saldoCargoCC","_recargoPendDe","_isoDeDDMMAA","_simMon","f2",
+  const M=new Function("_cargosPendDeCliente","_saldoCargoCC","_recargoCobro","_recargoPendDe","_isoDeDDMMAA","_simMon","f2","_ddmm",
     sacarFuncion("_msgCobroCliente")+"\nreturn _msgCobroCliente;")(
-    ()=>cargos, ()=>34,
-    (c)=>c.monto-c.abonos.reduce((a,x)=>a+x.monto,0),
-    (c)=>c.recargos.filter(r=>!r.cobrado).reduce((a,r)=>a+r.monto,0),
-    (f)=>{const p=f.split("/");return "20"+p[2]+"-"+p[1]+"-"+p[0];}, (m)=>({BRL:"R$"})[m]||m, f2);
+    ()=>cargos, (c)=>c.monto-c.abonos.reduce((a,x)=>a+x.monto,0), (c)=>RC(c),
+    (c)=>(c.recargos||[]).filter(r=>!r.cobrado).reduce((a,r)=>a+r.monto,0),
+    (f)=>{const p=f.split("/");return "20"+p[2]+"-"+p[1]+"-"+p[0];}, (m)=>({BRL:"R$"})[m]||m, f2, (i)=>i.slice(8,10)+"/"+i.slice(5,7));
   const msg=M("SARA MARIN");
-  ok(/• 14\/10 · R\$ 48,00/.test(msg) && /• 20\/10 · R\$ 50,00/.test(msg), "cada cargo con lo que FALTA (descontando abonos)", msg);
-  ok(/Ya son 34 días de espera/.test(msg) && /Recargo por atraso: R\$ 5,00/.test(msg) && /\*Total a pagar: R\$ 103,00\*/.test(msg), "días, recargo y total con el recargo");
-  cargos[0].recargos=[];
-  ok(!/Recargo/.test(M("SARA MARIN")) && /\*Total a pagar: R\$ 98,00\*/.test(M("SARA MARIN")), "sin recargo no sale esa línea");
+  ok(/Operación del 14\/10: R\$ 836,00/.test(msg) && /Prometiste pagar el 15\/11 · 9 días de atraso/.test(msg) && /Recargo por atraso: R\$ 21,74/.test(msg) &&
+     /Total de esta operación: R\$ 857,74/.test(msg), "monto original, fecha prometida, días, recargo y total", msg);
+  ok(/Ya abonaste R\$ 10,00, quedan R\$ 50,00/.test(msg) && /Recargo por atraso: R\$ 5,00/.test(msg) && /\*Total a pagar: R\$ 912,74\*/.test(msg),
+     "el manual viejo sigue saliendo, y el total suma todo");
+  ok(!/[\u{1F000}-\u{1FFFF}\u2600-\u27BF]/u.test(msg), "el mensaje no lleva emojis (wa.me los convierte en �)");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

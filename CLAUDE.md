@@ -7235,3 +7235,44 @@ números salen idénticos en todos los casos.
 entró sin operación (el ajuste «No sé por qué»), y sigue saliendo. Un día con
 una remesa registrada hoy pero fechada en un día anterior dejará su diferencia
 de cambio en ese día; es poco y es lo que pasó.
+
+---
+
+## El recargo de un cobro sale de la FECHA PROMETIDA (ARREGLO 267)
+
+Sus palabras del 24/11: *"el recargo solo se calcula si yo pongo esa fecha, y
+nunca se cobra solo: lo decido yo al momento de cobrar"*. Sustituye al botón
+⚠️ Recargo del 264 (un monto a mano): dos formas de poner recargo en la misma
+pantalla es el ARREGLO 98. Los manuales que ya hay (`c.recargos`, los 5 R$ de
+SARA) se siguen viendo, cobrando y perdonando; no se pueden crear más.
+
+- **Un cálculo, `_recargoCobro(c)`**, que leen la tarjeta, la cabecera del
+  cliente, el cobro y el WhatsApp. La fórmula es la de la mora de préstamos
+  (`cfgMora()`: multa, interés mensual por día, gracia, `moraActiva`). Su
+  ejemplo, fijado en la prueba: 836 BRL prometidos el 15/11, al 24/11 → 9 días,
+  multa 16,72 + interés 5,02 = **21,74**; total 857,74.
+- **La multa va sobre el saldo que quedaba al terminar la gracia** y el
+  interés **por tramos** desde la fecha prometida (decisiones suyas). Un abono
+  parcial no pregunta: baja el saldo desde su día.
+- **Al cerrar el cargo, tres botones** (`_elegirRecargo`): con recargo (abre el
+  monto, editable; 0 = perdonado), sin recargo, o Cancelar. Cancelar, y
+  cancelar el monto, no tocan nada. Va **antes** de mover dinero, en ✓ Cobrado
+  y en el abono que cierra.
+- **La decisión queda escrita en el cargo** (`recargoCobrado`, `recargoDias`,
+  multa, interés, USDT, cuenta) y desde ahí manda lo guardado: la fecha ya no se
+  edita ni recalcula. Quitar el abono que lo cerró, o borrar el cargo, la
+  deshace con su dinero (`_deshacerRecargoCobro`).
+- **Cuenta como la mora de un préstamo**: `gananciaPrestamosDelMes`, bruta y no
+  utilidad, el mes en que se cobró.
+- **El dinero entra SIN `ajusteCuentaEgreso`** (eso subía el primer lote sin su
+  tasa: error del 264). `creditCuentaRep` + su propio lote (`rcc:<id>`, los
+  manuales `rcm:<id>:<r>`), que no decide la tasa de referencia y se quita con
+  marca de borrado. Los manuales cobrados antes salen con `ajusteCuentaEgreso`,
+  como entraron.
+- **El WhatsApp no lleva emojis**: wa.me los convertía en "�".
+- Todo vive dentro del cargo: sin clave nueva, sin tocar el servidor.
+
+**Pendiente, aparte y a propósito:** la mora de préstamos y el **abono normal**
+de Por cobrar siguen entrando con `ajusteCuentaEgreso`, así que suben el primer
+lote de la cuenta. Medido en Chromium: un abono de 336 subió un lote de reales
+de 300 a 636. Es otro PR.
