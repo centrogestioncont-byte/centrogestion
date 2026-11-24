@@ -3771,7 +3771,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261124_v349";
+var APP_VERSION = "20261124_v350";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -10301,19 +10301,28 @@ function pagarPrestamo(id){
   // Acreditar la cuenta con lo REALMENTE recibido (en su propia moneda),
   // mora incluida — el efectivo entra completo aunque por dentro se
   // reparta entre mora y cuotas.
-  ajusteCuentaEgreso(np.cuentaId,_cashAcreditado);
+  // ARREGLO 268: entra con creditCuentaRep (solo el saldo), no con
+  // ajusteCuentaEgreso, que al sumar sube el primer lote "ligado" a la cuenta
+  // sin tocar su tasa. Cada pieza (abono y mora) deja después su propio lote.
+  creditCuentaRep(np.cuentaId,_cashAcreditado);
+  var _nuevosCobros=[];
   // Registrar la mora cobrada (aparte de los abonos, ver nota arriba)
   if(_moraCobradaAhora>0.009){
     if(!p.mora) p.mora={cobrada:0,porCuota:{},historial:[]};
     if(!p.mora.historial) p.mora.historial=[];
-    p.mora.historial.push({id:Date.now()+900,fecha:td(),monto:_moraCobradaAhora,
-      montoPago:_moraCashAhora,monedaPago:monPago,cuentaId:np.cuentaId});
+    var _regMora={id:Date.now()+900,fecha:td(),monto:_moraCobradaAhora,
+      montoPago:_moraCashAhora,monedaPago:monPago,cuentaId:np.cuentaId};
+    p.mora.historial.push(_regMora);
+    _nuevosCobros.push({reg:_regMora,tipo:"mora"});
     p.mora.cobrada=Math.round(((parseFloat(p.mora.cobrada)||0)+_moraCobradaAhora)*100)/100;
   }
   // Trackear el/los abono(s) en la moneda ORIGINAL del préstamo
   _abonosAregistrar.forEach(function(ax,idx){
-    p.abonos.push({id:Date.now()+idx,fecha:td(),monto:Math.round(ax.monto*100)/100,cuentaId:np.cuentaId,monedaPago:monPago,montoPago:Math.round(ax.montoPago*100)/100,cuotaN:ax.cuotaN,premio:ax.premio||0});
+    var _regAb={id:Date.now()+idx,fecha:td(),monto:Math.round(ax.monto*100)/100,cuentaId:np.cuentaId,monedaPago:monPago,montoPago:Math.round(ax.montoPago*100)/100,cuotaN:ax.cuotaN,premio:ax.premio||0};
+    p.abonos.push(_regAb);
+    _nuevosCobros.push({reg:_regAb,tipo:"abono"});
   });
+  _nuevosCobros.forEach(function(x){ _loteCobroPrestamo(p,x.reg,x.tipo); });
   var nuevoTotal=p.abonos.reduce(function(a,ab){return a+ab.monto;},0);
   var restante=Math.round((montoBase-nuevoTotal)*100)/100;
   // Solo se cierra si tambien quedo saldada la mora: si no, un cliente
@@ -10331,6 +10340,55 @@ function pagarPrestamo(id){
     agradecerAbonoWA(p,_cashAcreditado,monPago,_cuotaSel?_cuotaSel.n:null,restante,_excedenteInfo,_moraCashAhora);
   }
 }
+// ── ARREGLO 268 · lo que entra por un préstamo deja SU lote ────────────
+//
+// Antes el cobro entraba con ajusteCuentaEgreso, que sube el primer lote de
+// venta cuyo cuentaId sea esa cuenta, sin tocar su tasa. Con los lotes de hoy
+// (el banco va en cuentaDestinoId, no en cuentaId) eso no encontraba ningún
+// lote — medido en su copia del 24/11: 0 de 553 —, así que lo que entraba por
+// abono o mora no dejaba NINGUNO, y al gastarlo la app lo valoraba con una
+// tasa prestada. DECISIÓN SUYA (24/11): un lote propio por pieza, valorado a
+// la tasa del propio préstamo, la misma con la que gananciaPrestamosDelMes
+// cuenta su ganancia (p.usdt / p.monto).
+//
+//  · El saldo ya entró con creditCuentaRep; aquí solo nace el lote.
+//  · crearLoteRecibido deja cuentaId:"" y el banco en cuentaDestinoId, así que
+//    ajustarLotePorCuenta nunca lo encuentra (prueba en prestamos.js).
+//  · reg.entraSaldo dice cómo entró: los registros de antes del 268 no lo
+//    llevan y al borrarlos salen como entraron, con ajusteCuentaEgreso.
+//  · Lo ya registrado no se toca (decisión suya): vale de aquí en adelante.
+function _usdtPorUnidadPrest(p){
+  var mt=parseFloat(p&&p.monto)||0;
+  return mt>0 ? (parseFloat(p.usdt)||0)/mt : 0;
+}
+function _loteCobroPrestamo(p,reg,tipo){
+  if(!p||!reg) return;
+  reg.entraSaldo=true;
+  var cta=(S.cuentas||[]).find(function(x){return x.id===reg.cuentaId;});
+  if(!cta) return;
+  // El lote va en la moneda de la cuenta; si no es la moneda en que pagó, no
+  // se sabe cuánto entró en ella y no se inventa.
+  if(reg.monedaPago && cta.moneda!==reg.monedaPago) return;
+  var ref=(tipo==="mora"?"pmo:":"pab:")+p.id+":"+reg.id;
+  var usdt=(parseFloat(reg.monto)||0)*_usdtPorUnidadPrest(p);
+  var lote=crearLoteRecibido(cta.moneda,parseFloat(reg.montoPago)||0,usdt,cta.id,td(),ref,"",true,false);
+  if(lote) reg.loteRef=ref;
+}
+// Saca de la cuenta lo que entró por un abono o una mora de préstamo, por el
+// mismo camino por el que entró.
+function _salirCobroPrestamo(reg){
+  if(!reg||!reg.cuentaId) return;
+  var pago=parseFloat(reg.montoPago!==undefined?reg.montoPago:reg.monto)||0;
+  if(reg.entraSaldo){
+    creditCuentaRep(reg.cuentaId,-pago);
+    if(reg.loteRef) quitarLoteDeRemesa(reg.loteRef);
+  } else ajusteCuentaEgreso(reg.cuentaId,-pago);
+}
+// Si el lote que dejó ya se gastó en parte, se dice antes de borrar.
+function _txtLoteCobroGastado(reg){
+  var g=reg&&reg.loteRef?_loteDeRemesaGastado(reg.loteRef):null;
+  return g?"\n\n⚠️ El dinero que entró por aquí ya se gastó en parte ("+f2(g.gastado)+" de "+f2(g.cap)+" "+(g.lote.moneda||"")+"). Su lote se quita entero.":"";
+}
 // ── Borrar/revertir un abono individual de un préstamo ──
 // Le devuelve el dinero a la cuenta donde había entrado (exactamente lo
 // que ese abono acreditó, en SU propia moneda — no el equivalente), lo
@@ -10345,10 +10403,11 @@ function borrarAbonoPrestamo(prestId,abonoId){
   if(!ab) return;
   var montoReal=parseFloat(ab.montoPago!==undefined?ab.montoPago:ab.monto)||0;
   var monedaReal=ab.monedaPago||p.mon||"USDT";
-  if(!confirm("¿Borrar este abono de "+f2(montoReal)+" "+monedaReal+" ("+ab.fecha+")?\n\nSe le restará ese monto a la cuenta donde había entrado, y el préstamo vuelve a quedar pendiente por ese valor."))return;
+  if(!confirm("¿Borrar este abono de "+f2(montoReal)+" "+monedaReal+" ("+ab.fecha+")?\n\nSe le restará ese monto a la cuenta donde había entrado, y el préstamo vuelve a quedar pendiente por ese valor."+_txtLoteCobroGastado(ab)))return;
   autorizarYHacer(function(){
-    // Restar de la cuenta donde había entrado (en su moneda real)
-    if(ab.cuentaId) ajusteCuentaEgreso(ab.cuentaId,-montoReal);
+    // Restar de la cuenta donde había entrado (en su moneda real), por el
+    // mismo camino por el que entró (ARREGLO 268)
+    _salirCobroPrestamo(ab);
     // Quitar el abono del historial
     p.abonos=p.abonos.filter(function(x){return x.id!==abonoId;});
     // Recalcular estado del préstamo
@@ -12755,13 +12814,19 @@ function saveAbonoCobrar(id,recDec){
     } else {
       if(!confirm("Acreditar "+f2(montoIngresado)+" "+monPago+(monPago!==monCobrar?" ("+(na._exacto?"= ":"≈ ")+f2(monto)+" "+monCobrar+(na._exacto?" exactos":"")+")":"")+_txtRec+" en \""+cta.nombre+"\". ¿Confirmar?"))return;
     }
-    // Acreditar la cuenta con lo REALMENTE recibido, en SU propia moneda
-    ajusteCuentaEgreso(cuentaId,montoIngresado);
+    // Acreditar la cuenta con lo REALMENTE recibido, en SU propia moneda.
+    // ARREGLO 268: igual que ✓ Cobrado — solo el saldo (creditCuentaRep) y el
+    // lote propio del cobro. ajusteCuentaEgreso además subía el primer lote
+    // "ligado" a la cuenta, sin su tasa.
+    creditCuentaRep(cuentaId,montoIngresado);
     // Un abono también es dinero que entró: nace su lote por la parte que trajo.
-    _loteAlCobrar(c, monto, cuentaId);
+    // Solo si la cuenta está en la moneda del cobro: si no, el lote saldría en
+    // una moneda que no es la de la cuenta.
+    var _loteAb=(cta.moneda===c.moneda)?_loteAlCobrar(c, monto, cuentaId):null;
   }
   // Trackear el abono en la moneda ORIGINAL de la cuenta por cobrar para que el saldo cuadre
-  c.abonos.push({id:Date.now(),fecha:td(),monto:Math.round(monto*100)/100,cuentaId:cuentaId||"",nota:na.nota||"",monedaPago:monPago,montoPago:Math.round(montoIngresado*100)/100});
+  c.abonos.push({id:Date.now(),fecha:td(),monto:Math.round(monto*100)/100,cuentaId:cuentaId||"",nota:na.nota||"",monedaPago:monPago,montoPago:Math.round(montoIngresado*100)/100,
+    entraSaldo:true,loteId:(_loteAb&&_loteAb.id)||undefined});
   var nuevoTotal=c.abonos.reduce(function(a,ab){return a+ab.monto;},0);
   var restante=Math.round((c.monto-nuevoTotal)*100)/100;
   if(restante<=0.001){
@@ -12783,8 +12848,8 @@ function eliminarAbonoCobrar(cobrarId,abonoId){
   var _totSin=(c.abonos||[]).filter(function(x){return String(x.id)!==String(abonoId);}).reduce(function(a,x){return a+(parseFloat(x.monto)||0);},0);
   var _reabre=_totSin<c.monto-0.001&&c.estado==="cobrado";
   var _txtRec=(_reabre&&_recargoDecidido(c)&&(parseFloat(c.recargoCobrado)||0)>0.009)?"\n\nEl cargo vuelve a pendiente y el recargo cobrado de "+f2(c.recargoCobrado)+" "+c.moneda+" se deshace (sale de la cuenta).":"";
-  if(!confirm("Eliminar este abono de "+f2(ab.monto)+" "+c.moneda+"?\nSe restará de la cuenta si estaba asignada."+_txtRec))return;
-  if(ab.cuentaId) ajusteCuentaEgreso(ab.cuentaId,-ab.monto);
+  if(!confirm("Eliminar este abono de "+f2(ab.monto)+" "+c.moneda+"?\nSe restará de la cuenta si estaba asignada."+_txtRec+_txtLoteAbonoGastado(ab)))return;
+  _salirAbonoCobrar(ab);
   c.abonos=c.abonos.filter(function(x){return String(x.id)!==String(abonoId);});
   // Reabre si estaba cobrado y el total ya no alcanza
   var total=c.abonos.reduce(function(a,x){return a+x.monto;},0);
@@ -13292,6 +13357,32 @@ function marcarCobrado(id,recDec){
   logAudit("COBRO_MARCADO","Marcó cobrado · Cliente: "+c.cliente+" · "+c.monto+" "+c.moneda);
   saveData();R();
 }
+// ── ARREGLO 268 · el abono de Por cobrar sale por donde entró ──
+// Los de antes del 268 entraron con ajusteCuentaEgreso por ab.monto y salen
+// igual. Los nuevos entraron con creditCuentaRep por lo que de verdad llegó
+// (montoPago) y dejaron su lote (loteId): sale el dinero y sale ese lote, con
+// su marca de borrado para que el servidor no lo devuelva (ARREGLO 163).
+function _salirAbonoCobrar(ab){
+  if(!ab||!ab.cuentaId) return;
+  if(ab.entraSaldo){
+    creditCuentaRep(ab.cuentaId,-(parseFloat(ab.montoPago!==undefined?ab.montoPago:ab.monto)||0));
+    if(ab.loteId!==undefined && ab.loteId!==null) _quitarLotePorId(ab.loteId);
+  } else ajusteCuentaEgreso(ab.cuentaId,-ab.monto);
+}
+function _quitarLotePorId(id){
+  ["inventarioUsdt","inventarioUsdt_cerrado"].forEach(function(cat){
+    var antes=(S[cat]||[]).length;
+    S[cat]=(S[cat]||[]).filter(function(r){ return String(r.id)!==String(id); });
+    if(S[cat].length!==antes) _marcarBorradoMerge(cat, id);
+  });
+}
+function _txtLoteAbonoGastado(ab){
+  if(!ab||ab.loteId===undefined||ab.loteId===null) return "";
+  var l=(S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[]).find(function(r){return String(r.id)===String(ab.loteId);});
+  if(!l) return "";
+  var cap=parseFloat(l.bs)||0, gast=Math.round((cap-(parseFloat(l.bsRestante)||0))*100)/100;
+  return gast>0.01?"\n\n⚠️ El dinero de este abono ya se gastó en parte ("+f2(gast)+" de "+f2(cap)+" "+(l.moneda||"")+"). Su lote se quita entero.":"";
+}
 // Elimina un registro de Cuentas por Cobrar. Esta función NO EXISTÍA —
 // el botón 🗑️ de esta pantalla llamaba a un nombre que nunca se definió
 // en ningún lado, así que tocarlo no hacía absolutamente nada.
@@ -13322,6 +13413,8 @@ function eliminarCuenta(id){
   // dinero "fantasma" metido en un banco sin el registro que lo respalda.
   (c.abonos||[]).forEach(function(ab){
     if(!ab.cuentaId) return;
+    // ARREGLO 268: el abono nuevo sale con lo que de verdad entró y con su lote.
+    if(ab.entraSaldo){ _salirAbonoCobrar(ab); return; }
     var cta=(S.cuentas||[]).find(function(x){return x.id===ab.cuentaId;});
     if(cta) cta.saldo=Math.round(((parseFloat(cta.saldo)||0)-(parseFloat(ab.monto)||0))*100)/100;
   });
@@ -16469,9 +16562,9 @@ function borrarMoraPrestamo(prestId,moraId){
   if(!m) return;
   var montoReal=parseFloat(m.montoPago)||0;
   var monedaReal=m.monedaPago||p.mon||"USDT";
-  if(!confirm("¿Borrar este cobro de mora de "+f2(montoReal)+" "+monedaReal+" ("+m.fecha+")?\n\nSe le restará ese monto a la cuenta donde había entrado y la mora vuelve a quedar pendiente."))return;
+  if(!confirm("¿Borrar este cobro de mora de "+f2(montoReal)+" "+monedaReal+" ("+m.fecha+")?\n\nSe le restará ese monto a la cuenta donde había entrado y la mora vuelve a quedar pendiente."+_txtLoteCobroGastado(m)))return;
   autorizarYHacer(function(){
-    if(m.cuentaId) ajusteCuentaEgreso(m.cuentaId,-montoReal);
+    _salirCobroPrestamo(m);
     p.mora.historial=p.mora.historial.filter(function(x){return x.id!==moraId;});
     p.mora.cobrada=Math.max(0,Math.round(((parseFloat(p.mora.cobrada)||0)-(parseFloat(m.monto)||0))*100)/100);
     // Si el prestamo se habia cerrado, vuelve a abrirse: aun debe mora.
@@ -18299,7 +18392,7 @@ function _monIU(){ var f=S.nIU; return f.tipo==="venta"?(f.monedaVenta||"VES"):(
 function _ultimasIU(n){
   var f=S.nIU, mon=_monIU();
   return (S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[])
-    .filter(function(l){ return l.moneda===mon && l.tipo===f.tipo && !_loteDeTraspaso(l) && (parseFloat(l.tasa)||0)>0; })
+    .filter(function(l){ return l.moneda===mon && l.tipo===f.tipo && !_loteDeTraspaso(l) && !_loteDeCobro(l) && (parseFloat(l.tasa)||0)>0; })
     .sort(function(a,b){ return ordenFIFO(b,a); })
     .slice(0,n||3);
 }
@@ -23766,10 +23859,11 @@ function reqDel(arr,id,field){
         // Y aún así se recorren los abonos para quitar el dinero que entró
         // por ellos (igual que un préstamo normal).
         if(item.abonos&&item.abonos.length){
-          item.abonos.forEach(function(ab){
-            if(ab.cuentaId) ajusteCuentaEgreso(ab.cuentaId,-(parseFloat(ab.montoPago!==undefined?ab.montoPago:ab.monto)||0));
-          });
+          item.abonos.forEach(_salirCobroPrestamo);
         }
+        // ARREGLO 268: la mora que entró con su lote sale también. La de antes
+        // del 268 se queda como estaba (no se ajusta hacia atrás).
+        ((item.mora&&item.mora.historial)||[]).forEach(function(m){ if(m.entraSaldo) _salirCobroPrestamo(m); });
         logAudit("BORRAR_PRESTAMOS","Borró ID:"+id+" (desde mercancía, artículo vuelto al inventario)");
         S[arr]=S[arr].filter(function(x){return x!==item;});
         _marcarBorradoMerge(arr, item.id);
@@ -23813,10 +23907,10 @@ function reqDel(arr,id,field){
       // se recibieron — hay que restárselo también, o si no, ese dinero
       // queda "de más" en esa cuenta aunque el préstamo ya no exista.
       if(item.abonos&&item.abonos.length){
-        item.abonos.forEach(function(ab){
-          if(ab.cuentaId) ajusteCuentaEgreso(ab.cuentaId,-(parseFloat(ab.montoPago!==undefined?ab.montoPago:ab.monto)||0));
-        });
+        item.abonos.forEach(_salirCobroPrestamo);
       }
+      // ARREGLO 268: ídem la mora nueva.
+      ((item.mora&&item.mora.historial)||[]).forEach(function(m){ if(m.entraSaldo) _salirCobroPrestamo(m); });
     }
     // Lista negra: evita que Firebase re-agregue entradas borradas en sync
     if(arr==="brl"||arr==="vzla"||arr==="eeuu"){
@@ -27434,6 +27528,17 @@ function _indiceRemesas(){
 // y además pasa de verdad (la remesa se borró y el lote quedó vivo).
 function _deQuienLote(l){
   if(!l || !l.origenRemesa) return "";
+  // ARREGLO 268: el lote de un cobro dice de qué préstamo o de qué cliente vino.
+  var _mc=/^(pab|pmo):([^:]+):/.exec(String(l.origenRemesa));
+  if(_mc){
+    var _pr=(S.prestamos||[]).find(function(x){return String(x.id)===_mc[2];});
+    return " · "+(_mc[1]==="pmo"?"mora de ":"abono de ")+(_pr?_escAud(String(_pr.desc||"").slice(0,22)):"un préstamo");
+  }
+  var _rc=/^rc[cm]:([^:]+)/.exec(String(l.origenRemesa));
+  if(_rc){
+    var _cc=(S.cuentasCobrar||[]).find(function(x){return String(x.id)===_rc[1];});
+    return " · recargo de "+(_cc?_escAud(String(_cc.cliente||"").slice(0,22)):"un cobro");
+  }
   var r=_indiceRemesas()[l.origenRemesa];
   if(!r) return "";
   var cl=String(r.cl||"").trim();
@@ -27476,9 +27581,17 @@ function _deQuienLote(l){
 function _loteDeCliente(l){
   return !!l && String(l.plataforma||"").replace(/\s+/g," ").trim().toUpperCase()==="BINANCE PAY";
 }
+// ARREGLO 268 · el lote que deja un COBRO (abono o mora de un préstamo, el
+// recargo de un cobro) no es una operación de USDT: su tasa es la del préstamo
+// o la de la remesa, de hace semanas. Contándolo, el lote más nuevo de VES
+// decidiría a cuánto se valoran TODOS sus bolívares. Medido en Chromium con su
+// copia: un abono de 600 Bs movía el capital +11 sin que entrara nada más. Es
+// la misma razón por la que se apartaron las compras de Binance Pay (263).
+function _loteDeCobro(l){ return !!(l && /^(pab|pmo|rcc|rcm):/.test(String(l.origenRemesa||""))); }
 function _loteEsOpUSDT(l){
   if(!l || l.permuta) return false;
   if(_loteDeCliente(l)) return false;
+  if(_loteDeCobro(l)) return false;
   // ARREGLO 170: el lote de apertura nace valiendo tasaDeReferencia("BRL"), asi
   // que dejarlo entrar aqui seria que esa tasa saliera de si misma y se quedara
   // clavada en el dia que se abrio.
@@ -34077,7 +34190,7 @@ function _ultimaOpUSDT(mon){
       var l=arr[i];
       // ARREGLO 263: la misma regla que tasaDeReferencia, o la tarjeta diría
       // que el suelo sale de una compra a un cliente que la tasa ya no mira.
-      if(l.moneda!==mon || l.permuta || _loteDeTraspaso(l) || _loteDeCliente(l) || !((parseFloat(l.usdt)||0)>0)) continue;
+      if(l.moneda!==mon || l.permuta || _loteDeTraspaso(l) || _loteDeCliente(l) || _loteDeCobro(l) || !((parseFloat(l.usdt)||0)>0)) continue;
       var t=parseFloat(l.id)||0;
       if(t>1.5e12 && t>mt){ mt=t; mejor=l; }
     }
