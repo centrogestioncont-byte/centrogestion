@@ -2736,6 +2736,14 @@ function gananciaPrestamosDelMes(mesKey){
       usdt+=u; recUsdt+=u; recCant++; cant++;
     });
   });
+  // ARREGLO 267 · el recargo por fecha prometida, decidido al cerrar el cargo.
+  // Mismo camino y misma regla que el manual: cuenta el mes en que se cobró, con
+  // el USDT guardado aquel día.
+  (S.cuentasCobrar||[]).forEach(function(c){
+    if(!((parseFloat(c.recargoCobrado)||0)>0.009) || _mesKeyISO(c.recargoFecha)!==mesKey) return;
+    var u=parseFloat(c.recargoUsdt)||0;
+    usdt+=u; recUsdt+=u; recCant++; cant++;
+  });
   return {monto:Math.round(monto*100)/100,usdt:Math.round(usdt*100)/100,cant:cant,
           recUsdt:Math.round(recUsdt*100)/100,recCant:recCant};
 }
@@ -3763,7 +3771,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261121_v348";
+var APP_VERSION = "20261124_v349";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -12653,7 +12661,7 @@ function toggleAbonarCobrar(id){
   }
   R();
 }
-function saveAbonoCobrar(id){
+function saveAbonoCobrar(id,recDec){
   var c=(S.cuentasCobrar||[]).find(function(x){return String(x.id)===String(id);});
   if(!c) return;
   var na=S.nAbonoCobrar||{};
@@ -12709,6 +12717,18 @@ function saveAbonoCobrar(id){
   if(!c.abonos) c.abonos=[];
   var totalAbonado=c.abonos.reduce(function(a,ab){return a+ab.monto;},0);
   var pendiente=Math.round((c.monto-totalAbonado)*100)/100;
+  // ARREGLO 267: si este abono termina de pagar el cargo y corre un recargo por
+  // fecha prometida, los tres botones van ANTES de cualquier otra pregunta y de
+  // mover nada. Un abono parcial no pregunta: baja el saldo por tramos.
+  var _rc=_recargoCobro(c);
+  var _cierra=monto>=pendiente-0.001;
+  var _conRec=_cierra&&_rc.hay&&!_rc.bloqueado;
+  if(_conRec&&recDec===undefined){
+    if(_usdtDeRecargo(_rc.total,monCobrar)===null){alert("No hay tasa de "+monCobrar+" para valorar el recargo en USDT.\nPublica la tasa en 🧮 Tasas y vuelve a intentarlo.");return;}
+    _elegirRecargo(c,_rc,function(m){ saveAbonoCobrar(id,m); });
+    return;
+  }
+  var _recM=_conRec?(parseFloat(recDec)||0):null;
   if(monto>pendiente+0.01){
     if(!confirm("El abono equivale a "+f2(monto)+" "+monCobrar+notaPago+", que supera el saldo pendiente ("+f2(pendiente)+" "+monCobrar+").\nSe ajustará al saldo restante.\n¿Continuar?"))return;
     var factor=monto>0?(pendiente/monto):0;
@@ -12724,11 +12744,16 @@ function saveAbonoCobrar(id){
     _accRecAb=_decidirRecargoAlCerrar(c,(cta&&cta.moneda===monCobrar)?cta.id:null);
     if(!_accRecAb) return;
   }
+  // El recargo sigue la tasa del propio abono: lo que vale 1 de la deuda en la
+  // moneda en que pagó.
+  var _factorRec=monto>0.009?(montoIngresado/monto):1;
+  var _recPago=(_recM>0.009)?Math.round(_recM*_factorRec*100)/100:0;
+  var _txtRec=_recPago>0.009?" + "+f2(_recPago)+" "+monPago+" de recargo":"";
   if(cuentaId&&cta){
     if(cta.moneda&&monPago&&cta.moneda!==monPago){
-      if(!confirm("⚠️ La cuenta \""+cta.nombre+"\" es en "+cta.moneda+" pero dijiste que pagó en "+monPago+".\n¿Acreditar igual?"))return;
+      if(!confirm("⚠️ La cuenta \""+cta.nombre+"\" es en "+cta.moneda+" pero dijiste que pagó en "+monPago+".\n¿Acreditar igual?"+_txtRec))return;
     } else {
-      if(!confirm("Acreditar "+f2(montoIngresado)+" "+monPago+(monPago!==monCobrar?" ("+(na._exacto?"= ":"≈ ")+f2(monto)+" "+monCobrar+(na._exacto?" exactos":"")+")":"")+" en \""+cta.nombre+"\". ¿Confirmar?"))return;
+      if(!confirm("Acreditar "+f2(montoIngresado)+" "+monPago+(monPago!==monCobrar?" ("+(na._exacto?"= ":"≈ ")+f2(monto)+" "+monCobrar+(na._exacto?" exactos":"")+")":"")+_txtRec+" en \""+cta.nombre+"\". ¿Confirmar?"))return;
     }
     // Acreditar la cuenta con lo REALMENTE recibido, en SU propia moneda
     ajusteCuentaEgreso(cuentaId,montoIngresado);
@@ -12739,7 +12764,10 @@ function saveAbonoCobrar(id){
   c.abonos.push({id:Date.now(),fecha:td(),monto:Math.round(monto*100)/100,cuentaId:cuentaId||"",nota:na.nota||"",monedaPago:monPago,montoPago:Math.round(montoIngresado*100)/100});
   var nuevoTotal=c.abonos.reduce(function(a,ab){return a+ab.monto;},0);
   var restante=Math.round((c.monto-nuevoTotal)*100)/100;
-  if(restante<=0.001){c.estado="cobrado";c.fechaCobro=td();_aplicarRecargoAlCerrar(c,_accRecAb);}
+  if(restante<=0.001){
+    c.estado="cobrado";c.fechaCobro=td();_aplicarRecargoAlCerrar(c,_accRecAb);
+    if(_recM!==null) _aplicarRecargoCobro(c,_rc,_recM,(cuentaId&&cta)?cuentaId:"",monPago,_factorRec);
+  }
   logAudit("ABONO_COBRAR","Abono "+f2(monto)+" "+monCobrar+notaPago+" de "+c.cliente+(restante>0.001?" · pendiente: "+f2(restante):" · COBRADO TOTAL"));
   S._abonarCobrarId=null;S.nAbonoCobrar={monto:"",cuentaId:"",nota:"",moneda:"",tasaManual:""};
   saveData();R();
@@ -12749,12 +12777,18 @@ function eliminarAbonoCobrar(cobrarId,abonoId){
   if(!c||!c.abonos) return;
   var ab=c.abonos.find(function(x){return String(x.id)===String(abonoId);});
   if(!ab) return;
-  if(!confirm("Eliminar este abono de "+f2(ab.monto)+" "+c.moneda+"?\nSe restará de la cuenta si estaba asignada."))return;
+  // ARREGLO 267: si este abono es el que cerró el cargo, quitarlo lo reabre, y
+  // el recargo que se cobró con él se deshace también (sale de la cuenta) para
+  // que al volver a cerrarlo se decida otra vez con el saldo de verdad.
+  var _totSin=(c.abonos||[]).filter(function(x){return String(x.id)!==String(abonoId);}).reduce(function(a,x){return a+(parseFloat(x.monto)||0);},0);
+  var _reabre=_totSin<c.monto-0.001&&c.estado==="cobrado";
+  var _txtRec=(_reabre&&_recargoDecidido(c)&&(parseFloat(c.recargoCobrado)||0)>0.009)?"\n\nEl cargo vuelve a pendiente y el recargo cobrado de "+f2(c.recargoCobrado)+" "+c.moneda+" se deshace (sale de la cuenta).":"";
+  if(!confirm("Eliminar este abono de "+f2(ab.monto)+" "+c.moneda+"?\nSe restará de la cuenta si estaba asignada."+_txtRec))return;
   if(ab.cuentaId) ajusteCuentaEgreso(ab.cuentaId,-ab.monto);
   c.abonos=c.abonos.filter(function(x){return String(x.id)!==String(abonoId);});
   // Reabre si estaba cobrado y el total ya no alcanza
   var total=c.abonos.reduce(function(a,x){return a+x.monto;},0);
-  if(total<c.monto-0.001&&c.estado==="cobrado"){c.estado="pendiente";c.fechaCobro="";}
+  if(total<c.monto-0.001&&c.estado==="cobrado"){c.estado="pendiente";c.fechaCobro="";_deshacerRecargoCobro(c);}
   saveData();R();
 }
 // ── ARREGLO 264 · Recargo por atraso en Cuentas por cobrar ──────────────
@@ -12805,33 +12839,11 @@ function _saldoCargoCC(c){
   var ab=(c.abonos||[]).reduce(function(a,x){return a+(parseFloat(x.monto)||0);},0);
   return Math.max(0,Math.round(((parseFloat(c.monto)||0)-ab)*100)/100);
 }
-// Días que lleva esperando: desde el cargo más viejo que sigue pendiente.
-function _diasEsperaCliente(cargos){
-  var iso=cargos.length?_isoDeDDMMAA(cargos[0].fecha):"";
-  return iso?Math.max(0,_diasIso(iso,td())):0;
-}
-function aplicarRecargoCliente(clave){
-  var cargos=_cargosPendDeCliente(clave);
-  if(!cargos.length){alert("Este cliente no tiene cargos pendientes.");return;}
-  // Va al cargo más viejo: es el que lleva el atraso. Con monedas mezcladas
-  // se cobra en la del cargo más viejo y se dice.
-  var c=cargos[0];
-  var mon=c.moneda||"BRL";
-  var dias=_diasEsperaCliente(cargos);
-  var ya=cargos.reduce(function(a,x){return a+_recargoPendDe(x);},0);
-  var txt=prompt("Recargo por atraso para "+c.cliente+
-    "\n\nLleva "+dias+" día"+(dias===1?"":"s")+" esperando."+
-    (ya>0.009?"\nYa tiene "+f2(ya)+" "+mon+" de recargo; esto se SUMA.":"")+
-    "\n\n¿Cuánto le cobras? (en "+mon+")","");
-  if(txt===null) return;
-  var m=_leerNumero(txt,"monto");
-  if(isNaN(m)||m<=0){alert("No entendí el monto: \""+txt+"\".\nEscríbelo así: 5 o 5,50");return;}
-  m=Math.round(m*100)/100;
-  if(!c.recargos) c.recargos=[];
-  c.recargos.push({id:Date.now(),fecha:td(),monto:m});
-  logAudit("RECARGO_COBRAR","Recargo de "+f2(m)+" "+mon+" a "+c.cliente+" ("+dias+" días de atraso)");
-  saveData();R();
-}
+// ARREGLO 267: aquí vivía aplicarRecargoCliente() —el botón ⚠️ Recargo que
+// pedía un monto a mano—. Se fue: el recargo sale ahora de la fecha prometida
+// (_recargoCobro). Dos formas de poner recargo en la misma pantalla es lo que
+// hace que no se sepa cuál manda (ARREGLO 98). Los manuales que ya existían
+// (c.recargos) se siguen viendo y cobrando con las funciones de abajo.
 // El USDT del recargo se calcula UNA vez, al cobrarlo. Sin tasa no se inventa
 // un cero (eso lo dejaría fuera de la ganancia sin decirlo): devuelve null.
 function _usdtDeRecargo(monto,mon){
@@ -12869,8 +12881,17 @@ function _cobrarRecargosEn(c,cuentaId){
     pend[i].cobrado={fecha:td(),cuentaId:cuentaId,usdt:u};
     total+=m;
   }
+  // ARREGLO 267: antes entraba con ajusteCuentaEgreso, que al sumar SUBE el
+  // primer lote de la cuenta sin tocar su tasa (lo que la regla del inventario
+  // prohíbe). Ahora solo el saldo, y cada recargo con su propio lote.
+  pend.forEach(function(r){
+    var m=parseFloat(r.monto)||0;
+    if(m<=0.009) return;
+    creditCuentaRep(cuentaId,m);
+    r.cobrado.loteRef="rcm:"+c.id+":"+r.id;
+    crearLoteRecibido(mon,m,r.cobrado.usdt,cuentaId,td(),r.cobrado.loteRef,"",true,false);
+  });
   if(total>0.009){
-    ajusteCuentaEgreso(cuentaId,Math.round(total*100)/100);
     logAudit("RECARGO_COBRADO","Cobró "+f2(total)+" "+mon+" de recargo de "+c.cliente+" → "+nombreCuentaEg(cuentaId));
   }
   return true;
@@ -12888,6 +12909,15 @@ function cobrarRecargo(cargoId){
   if(!_cobrarRecargosEn(c,cid)) return;
   saveData();R();
 }
+// Saca de la cuenta un recargo manual cobrado. Los cobrados desde el 267 llevan
+// su lote (loteRef) y salen igual que entraron; los de antes entraron con
+// ajusteCuentaEgreso y salen con él, para que el lote que subieron vuelva.
+function _salirRecargoManual(r){
+  if(!r||!r.cobrado||!r.cobrado.cuentaId) return;
+  var m=parseFloat(r.monto)||0;
+  if(r.cobrado.loteRef){ creditCuentaRep(r.cobrado.cuentaId,-m); quitarLoteDeRemesa(r.cobrado.loteRef); }
+  else ajusteCuentaEgreso(r.cobrado.cuentaId,-m);
+}
 // Perdonar (pendiente) o deshacer (cobrado). Deshacer devuelve la cuenta.
 function quitarRecargo(cargoId,recId){
   var c=(S.cuentasCobrar||[]).find(function(x){return String(x.id)===String(cargoId);});
@@ -12897,7 +12927,7 @@ function quitarRecargo(cargoId,recId){
   var mon=c.moneda||"BRL";
   if(r.cobrado){
     if(!confirm("Deshacer el recargo cobrado de "+f2(r.monto)+" "+mon+".\n\nSe le resta a "+nombreCuentaEg(r.cobrado.cuentaId)+" y sale de la ganancia.\n\n¿Confirmar?")) return;
-    if(r.cobrado.cuentaId) ajusteCuentaEgreso(r.cobrado.cuentaId,-(parseFloat(r.monto)||0));
+    _salirRecargoManual(r);
   } else {
     if(!confirm("¿Le perdonas el recargo de "+f2(r.monto)+" "+mon+" a "+c.cliente+"?\n\nNo mueve ninguna cuenta.")) return;
   }
@@ -12943,47 +12973,297 @@ function _aplicarRecargoAlCerrar(c,acc){
   c.recargos=(c.recargos||[]).filter(function(r){return r.cobrado;});
   return true;
 }
-// Mensaje de cobro por WhatsApp, para el cliente entero. El texto lo aprobó
-// ella el 17/11. Las cifras salen de lo que la pantalla ya dibuja: el saldo de
-// cada cargo (_saldoCargoCC) y el recargo pendiente; calculadas aparte, el
+// Mensaje de cobro por WhatsApp, para el cliente entero. Las cifras salen de lo
+// que la pantalla ya dibuja: el saldo de cada cargo (_saldoCargoCC) y su recargo
+// (_recargoCobro, más el manual viejo que siga pendiente); calculadas aparte, el
 // mensaje podría pedir otra cosa que la que ella ve.
+// ARREGLO 267: SIN EMOJIS. wa.me los rompe y al cliente le llegaba "�" donde
+// iba el 👋. Y por cargo dice lo que pidió ella: el monto original, la fecha que
+// prometió, los días de atraso, el recargo y el total.
 function _msgCobroCliente(clave){
   var cargos=_cargosPendDeCliente(clave);
   if(!cargos.length) return "";
   var nombre=cargos[0].cliente;
-  var dias=_diasEsperaCliente(cargos);
-  var tot={},rec={},orden=[];
-  var add=function(o,m,v){ if(o[m]===undefined){o[m]=0;} o[m]+=v; if(orden.indexOf(m)<0) orden.push(m); };
-  var lineas=cargos.map(function(c){
-    var mon=c.moneda||"BRL", s=_saldoCargoCC(c);
-    add(tot,mon,s);
-    var r=_recargoPendDe(c); if(r>0.009) add(rec,mon,r);
+  var tot={},orden=[];
+  var add=function(m,v){ if(tot[m]===undefined){tot[m]=0;} tot[m]+=v; if(orden.indexOf(m)<0) orden.push(m); };
+  var hayRec=false;
+  var bloques=cargos.map(function(c){
+    var mon=_simMon(c.moneda||"BRL"), s=_saldoCargoCC(c), orig=parseFloat(c.monto)||0;
+    var rc=_recargoCobro(c), r=Math.round((rc.total+_recargoPendDe(c))*100)/100;
     var iso=_isoDeDDMMAA(c.fecha);
-    var fc=iso?iso.slice(8,10)+"/"+iso.slice(5,7):c.fecha;
-    return "• "+fc+" · "+_simMon(mon)+" "+f2(s);
+    var l=["- Operación del "+(iso?_ddmm(iso):c.fecha)+": "+mon+" "+f2(orig)];
+    if(s<orig-0.009) l.push("  Ya abonaste "+mon+" "+f2(Math.round((orig-s)*100)/100)+", quedan "+mon+" "+f2(s));
+    if(rc.fp&&!rc.futura) l.push("  Prometiste pagar el "+_ddmm(rc.fp)+" · "+rc.dias+" día"+(rc.dias===1?"":"s")+" de atraso");
+    else if(rc.fp) l.push("  Prometiste pagar el "+_ddmm(rc.fp));
+    if(r>0.009){ hayRec=true; l.push("  Recargo por atraso: "+mon+" "+f2(r)); }
+    if(r>0.009) l.push("  Total de esta operación: "+mon+" "+f2(Math.round((s+r)*100)/100));
+    add(c.moneda||"BRL",s+r);
+    return l.join("\n");
   });
-  var txtMon=function(o){
-    return orden.filter(function(m){return (o[m]||0)>0.009;}).map(function(m){return _simMon(m)+" "+f2(Math.round(o[m]*100)/100);}).join(" + ");
-  };
-  var hayRec=Object.keys(rec).length>0;
-  var total={};
-  orden.forEach(function(m){ total[m]=(tot[m]||0)+(rec[m]||0); });
-  return "Hola "+nombre+"! 👋 Te escribo por lo que tienes pendiente:\n"+
-    lineas.join("\n")+
-    "\nYa son "+dias+" día"+(dias===1?"":"s")+" de espera."+
-    (hayRec?"\nRecargo por atraso: "+txtMon(rec):"")+
-    "\n\n*Total a pagar: "+txtMon(total)+"*"+
-    "\n\nRecuerda cancelar lo más pronto posible para evitar más recargos."+
-    "\n¿Me confirmas qué día lo pasas? 🙏";
+  var total=orden.filter(function(m){return (tot[m]||0)>0.009;}).map(function(m){return _simMon(m)+" "+f2(Math.round(tot[m]*100)/100);}).join(" + ");
+  return "Hola "+nombre+", te escribo por lo que tienes pendiente:\n\n"+
+    bloques.join("\n\n")+
+    "\n\n*Total a pagar: "+total+"*"+
+    "\n\n"+(hayRec?"El recargo sigue subiendo cada día de atraso, así que conviene cancelar lo más pronto posible.":"Recuerda cancelar lo más pronto posible para evitar recargos.")+
+    "\n¿Me confirmas qué día lo pasas?";
 }
 function cobrarClienteWA(clave){
   var msg=_msgCobroCliente(clave);
   if(!msg){alert("Este cliente no tiene cargos pendientes.");return;}
   window.open("https://wa.me/?text="+encodeURIComponent(msg),"_blank");
 }
-function marcarCobrado(id){
+// ── ARREGLO 267 · Recargo por mora con FECHA PROMETIDA ──────────────────
+//
+// Sus palabras del 24/11: "cobrar recargo por mora a un cliente que no pagó en
+// la fecha que prometió. El recargo solo se calcula si yo pongo esa fecha, y
+// nunca se cobra solo: lo decido yo al momento de cobrar."
+//
+// Sustituye al botón ⚠️ Recargo del 264 (un monto escrito a mano): dos formas de
+// poner recargo en la misma pantalla es lo que hace que no se sepa cuál manda
+// (ARREGLO 98). Los recargos manuales que ya existían (c.recargos) se siguen
+// viendo, cobrando y perdonando hasta que se cierren; no se pueden crear más.
+//
+// Lo que no hay que deshacer:
+//  · LA FÓRMULA ES LA DE LA MORA DE PRÉSTAMOS (cfgMora(), detalleMora): multa
+//    fija + interés mensual prorrateado por día, con su gracia y su moraActiva.
+//    Ejemplo de ella: 836 BRL prometidos para el 15/11, al 24/11 → 9 días,
+//    multa 16,72 + interés 5,02 = 21,74; total 857,74. Fijado en
+//    pruebas/prestamos.js.
+//  · LA MULTA va sobre el saldo que quedaba AL TERMINAR LA GRACIA (decisión
+//    suya): lo que pagó a tiempo no es atraso.
+//  · EL INTERÉS va POR TRAMOS desde la fecha prometida: cada abono baja el
+//    saldo desde su día. Los abonos parciales no preguntan por el recargo; se
+//    cobra al terminar de pagar (decisión suya).
+//  · NADA DE ESTO VA EN c.monto. Es la regla de p.mora contra p.abonos: c.monto
+//    lo leen el capital, el "por cobrar" y la conciliación.
+//  · Fechas LOCALES (td(), _diasIso), nunca toISOString(): a las 21:00 de
+//    Brasil toISOString ya es mañana y el atraso saldría con un día de más.
+//  · AL CERRAR EL CARGO LA DECISIÓN QUEDA ESCRITA (recargoCobrado, recargoDias…)
+//    y desde ahí manda lo guardado: cambiar la fecha después no recalcula nada
+//    (lo pidió ella). Quitar el abono que lo cerró la deshace con su dinero.
+//  · EL DINERO ENTRA SIN ajusteCuentaEgreso. Esa función, al sumar, sube el
+//    primer lote de la cuenta sin tocar su tasa — el aumentarLoteRecibido que la
+//    regla del inventario prohíbe. Era un error del 264. Ahora entra con
+//    creditCuentaRep (solo el saldo) y su PROPIO lote (crearLoteRecibido), con
+//    origenRemesa "rcc:<id>" para que no decida la tasa de referencia y para
+//    poder quitarlo al deshacer (quitarLoteDeRemesa deja la marca de borrado).
+function _isoFechaCC(v){
+  var s=String(v||"").trim();
+  if(/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  if(s.indexOf("/")>=0) return _isoDeDDMMAA(s)||"";
+  return "";
+}
+// Suma días a una fecha aaaa-mm-dd con el calendario LOCAL.
+function _isoMasDias(iso,n){
+  var p=String(iso||"").split("-");
+  if(p.length!==3) return "";
+  var d=new Date(parseInt(p[0],10),parseInt(p[1],10)-1,parseInt(p[2],10)+(n||0));
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+}
+function _ddmm(iso){ return iso?iso.slice(8,10)+"/"+iso.slice(5,7):""; }
+// ¿Ya se decidió el recargo de este cargo? Desde ahí manda lo guardado.
+function _recargoDecidido(c){ return !!c && c.recargoCobrado!==undefined && c.recargoCobrado!==null; }
+// La ÚNICA cuenta del recargo. La leen la tarjeta, la cabecera del cliente, el
+// cobro y el WhatsApp: calculado en cada sitio, un día la pantalla diría 21,74
+// y el cobro pediría otra cosa (el 34,27 contra el 34,28).
+function _recargoCobro(c,hoyIso){
+  var out={hay:false,bloqueado:false,fp:"",dias:0,futura:false,enGracia:false,graciaHasta:"",
+           activa:true,base:0,multa:0,juros:0,total:0,saldo:c?_saldoCargoCC(c):0};
+  if(!c) return out;
+  if(_recargoDecidido(c)){
+    out.bloqueado=true;
+    out.fp=_isoFechaCC(c.fechaPrometida);
+    out.dias=parseInt(c.recargoDias,10)||0;
+    out.multa=parseFloat(c.recargoMulta)||0;
+    out.juros=parseFloat(c.recargoJuros)||0;
+    out.total=Math.round((parseFloat(c.recargoCobrado)||0)*100)/100;
+    out.hay=out.total>0.009;
+    return out;
+  }
+  var fp=_isoFechaCC(c.fechaPrometida);
+  if(!fp) return out;
+  out.fp=fp;
+  var cfg=cfgMora();
+  out.activa=cfg.activa;
+  var hoy=hoyIso||td();
+  var dias=_diasIso(fp,hoy);
+  out.dias=dias;
+  out.graciaHasta=_isoMasDias(fp,cfg.diasGracia);
+  if(dias<0){ out.futura=true; return out; }
+  if(!cfg.activa) return out;
+  if(dias<=cfg.diasGracia){ out.enGracia=true; return out; }
+  var monto=parseFloat(c.monto)||0;
+  var abonos=(c.abonos||[]).map(function(a){return {iso:_isoFechaCC(a.fecha),m:parseFloat(a.monto)||0};})
+    .filter(function(a){return a.iso && a.m>0;})
+    .sort(function(a,b){return a.iso.localeCompare(b.iso);});
+  var saldoAl=function(iso){
+    var t=monto;
+    abonos.forEach(function(a){ if(a.iso<=iso) t-=a.m; });
+    return Math.max(0,t);
+  };
+  out.base=Math.round(saldoAl(out.graciaHasta)*100)/100;
+  // Interés por tramos: del día prometido a cada abono, con el saldo de ese tramo.
+  var cur=fp, saldo=saldoAl(fp), interes=0, pct=(cfg.jurosPctMes/100)/30;
+  abonos.forEach(function(a){
+    if(a.iso<=fp || a.iso>hoy) return;
+    interes+=saldo*pct*_diasIso(cur,a.iso);
+    saldo=Math.max(0,saldo-a.m);
+    cur=a.iso;
+  });
+  interes+=saldo*pct*_diasIso(cur,hoy);
+  out.multa=Math.round(out.base*(cfg.multaPct/100)*100)/100;
+  out.juros=Math.round(interes*100)/100;
+  out.total=Math.round((out.multa+out.juros)*100)/100;
+  out.hay=out.total>0.009;
+  return out;
+}
+// Poner, cambiar o quitar la fecha prometida. No llama a R() (ARREGLO 32): en la
+// PC el campo de fecha dispara "change" a mitad de teclear, y repintar se lo
+// llevaría. Se refresca por su id lo que depende de la fecha (ARREGLO 55). El
+// _mod lo pone saveData() al ver el cargo cambiado, como a todo lo demás.
+function setFechaPrometida(cargoId,val){
+  var c=(S.cuentasCobrar||[]).find(function(x){return String(x.id)===String(cargoId);});
+  if(!c) return;
+  if(c.estado==="cobrado"||_recargoDecidido(c)){
+    alert("Este cargo ya se cobró: la fecha prometida y el recargo quedaron bloqueados.");
+    R(); return;
+  }
+  var iso=_isoFechaCC(val);
+  if(iso) c.fechaPrometida=iso; else delete c.fechaPrometida;
+  logAudit("FECHA_PROMETIDA",c.cliente+": "+(iso?"prometió pagar el "+_ddmm(iso):"sin fecha prometida"));
+  saveData();
+  _pintarRecargoCC(c);
+}
+function _pintarRecargoCC(c){
+  var el=document.getElementById("ccrec-"+_idClaveCC(String(c.id)));
+  if(el) el.innerHTML=_htmlRecargoCargo(c);
+  var clave=String(c.cliente||"").trim().toUpperCase().replace(/\s+/g," ");
+  var eg=document.getElementById("ccrecg-"+_idClaveCC(clave));
+  if(eg) eg.innerHTML=_htmlRecargoGrupo(clave);
+}
+function _idClaveCC(clave){ return String(clave||"").replace(/[^A-Za-z0-9]/g,"_"); }
+// Lo que se dibuja de la fecha prometida y del recargo de UN cargo.
+function _htmlRecargoCargo(c){
+  var rc=_recargoCobro(c), mon=c.moneda||"BRL";
+  var caja=function(color,html){
+    return "<div style='margin-top:8px;padding:8px 11px;background:var(--avi-sup);border:1px solid var(--avi-ln);border-left:3px solid "+color+";border-radius:8px;font-size:13px;color:var(--tx2);line-height:1.45'>"+html+"</div>";
+  };
+  if(rc.bloqueado){
+    if(!rc.hay) return caja("var(--tx3)","🔒 "+(rc.fp?"Prometió pagar el "+_ddmm(rc.fp)+" · ":"")+"cerrado <b>sin recargo</b>");
+    return caja("var(--ok)","🔒 Prometió pagar el "+_ddmm(rc.fp)+" · "+rc.dias+" días de atraso<br>"+
+      "<b style='color:var(--ok)'>Recargo cobrado "+f2(rc.total)+" "+mon+"</b>"+
+      (c.recargoCuentaId?" en "+_escAud(nombreCuentaEg(c.recargoCuentaId)):""));
+  }
+  if(!rc.fp) return "";
+  if(rc.futura) return caja("var(--tx3)","Prometió pagar el <b>"+_ddmm(rc.fp)+"</b> · faltan "+(-rc.dias)+" día"+(rc.dias===-1?"":"s"));
+  if(!rc.activa) return caja("var(--tx3)","Prometió pagar el "+_ddmm(rc.fp)+" · la mora está apagada en Configuración: no se calcula recargo");
+  if(rc.enGracia) return caja("var(--tx3)","Prometió pagar el "+_ddmm(rc.fp)+" · <b>en gracia hasta "+_ddmm(rc.graciaHasta)+"</b>");
+  if(!rc.hay) return "";
+  return caja("var(--avi)","⚠️ Prometió pagar el <b>"+_ddmm(rc.fp)+"</b> · <b>"+rc.dias+" días de atraso</b><br>"+
+    "Recargo <b style='color:var(--avi-tx)'>"+f2(rc.total)+" "+mon+"</b> (multa "+f2(rc.multa)+" + interés "+f2(rc.juros)+")<br>"+
+    "Total con recargo <b>"+f2(Math.round((rc.saldo+rc.total)*100)/100)+" "+mon+"</b>");
+}
+// El recargo que hoy corre en los cargos de un cliente, por moneda (el calculado
+// y el manual viejo que siga pendiente). No suma a la deuda: se dice aparte.
+function _recargosDeCliente(clave){
+  var pares=[];
+  _cargosPendDeCliente(clave).forEach(function(c){
+    var r=_recargoCobro(c).total+_recargoPendDe(c);
+    if(r>0.009) pares.push({monto:Math.round(r*100)/100,mon:c.moneda});
+  });
+  return pares;
+}
+function _htmlRecargoGrupo(clave){
+  var p=_recargosDeCliente(clave);
+  return p.length?"+ "+bkPorMoneda(p)+" recargo":"";
+}
+// Las tres salidas que pidió ella, con botones y no con Aceptar/Cancelar:
+// cobrar con recargo, cobrar sin recargo, o no hacer nada. "Con recargo" abre
+// un segundo cuadro con el monto escrito (0 = perdonado); cancelarlo tampoco
+// hace nada. onElegir recibe el monto del recargo (0 si va sin él).
+function _elegirRecargo(c,rc,onElegir){
+  var mon=c.moneda||"BRL";
+  var old=document.getElementById("recargoModal"); if(old) old.remove();
+  var div=document.createElement("div");
+  div.id="recargoModal";
+  div.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px";
+  var btn="display:block;width:100%;padding:13px;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;margin-top:8px;";
+  div.innerHTML=
+    "<div style='background:var(--sup);border-radius:16px;padding:20px;max-width:380px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,.3)'>"+
+      "<div style='font-size:16px;font-weight:800;color:var(--tit);margin-bottom:6px'>Recargo por atraso · "+_escAud(c.cliente)+"</div>"+
+      "<div style='font-size:13px;color:var(--tx2);line-height:1.5;margin-bottom:6px'>Prometió pagar el <b>"+_ddmm(rc.fp)+"</b> · <b>"+rc.dias+" días</b> de atraso<br>"+
+        "Multa "+f2(rc.multa)+" + interés "+f2(rc.juros)+" = <b>"+f2(rc.total)+" "+mon+"</b></div>"+
+      "<button id='recCon' style='"+btn+"border:none;background:var(--fondo-osc);color:var(--sobre-color)'>Cobrar con recargo "+f2(rc.total)+" "+mon+"</button>"+
+      "<button id='recSin' style='"+btn+"border:1.5px solid var(--ln);background:var(--sup);color:var(--tx)'>Cobrar sin recargo</button>"+
+      "<button id='recNo' style='"+btn+"border:none;background:none;color:var(--tx3)'>Cancelar</button>"+
+    "</div>";
+  document.body.appendChild(div);
+  var cerrar=function(){ var m=document.getElementById("recargoModal"); if(m) m.remove(); };
+  div.onclick=function(e){ if(e.target===div) cerrar(); };
+  document.getElementById("recNo").onclick=cerrar;
+  document.getElementById("recSin").onclick=function(){ cerrar(); onElegir(0); };
+  document.getElementById("recCon").onclick=function(){
+    cerrar();
+    var t=prompt("Recargo a cobrar a "+c.cliente+" (en "+mon+").\n\nCalculado: "+f2(rc.total)+". Puedes cambiarlo; 0 = se lo perdonas.",_comaCab(rc.total));
+    if(t===null) return;
+    var m=_leerNumero(t,"monto");
+    if(isNaN(m)||m<0){ alert("No entendí el monto: \""+t+"\". No se cobró nada."); return; }
+    onElegir(Math.round(m*100)/100);
+  };
+}
+// Deja escrita la decisión y, si se cobró algo, mete el dinero en la cuenta del
+// cobro con su propio lote. factor = lo que vale 1 de la deuda en la moneda en
+// que pagó (1 si es la misma), así el recargo sigue la tasa del propio cobro.
+function _aplicarRecargoCobro(c,rc,monto,cuentaId,monPago,factor){
+  var mon=c.moneda||"BRL";
+  c.recargoCalculado=rc.total;
+  c.recargoDias=rc.dias;
+  c.recargoMulta=rc.multa;
+  c.recargoJuros=rc.juros;
+  c.recargoFecha=td();
+  if(!(monto>0.009)){
+    c.recargoCobrado=0;
+    logAudit("RECARGO_COBRO","Sin recargo a "+c.cliente+" (calculado "+f2(rc.total)+" "+mon+", "+rc.dias+" días)");
+    return;
+  }
+  var usdt=_usdtDeRecargo(monto,mon);
+  c.recargoCobrado=monto;
+  c.recargoUsdt=usdt||0;
+  c.recargoMonPago=monPago||mon;
+  c.recargoPago=Math.round(monto*(factor||1)*100)/100;
+  c.recargoCuentaId=cuentaId||"";
+  if(cuentaId){
+    creditCuentaRep(cuentaId,c.recargoPago);
+    crearLoteRecibido(c.recargoMonPago,c.recargoPago,usdt,cuentaId,td(),"rcc:"+c.id,"",true,false);
+  }
+  logAudit("RECARGO_COBRO","Recargo de "+f2(monto)+" "+mon+" a "+c.cliente+" ("+rc.dias+" días)"+(cuentaId?" → "+nombreCuentaEg(cuentaId):""));
+}
+// Deshace lo que dejó _aplicarRecargoCobro: el dinero sale de la cuenta, su
+// lote se quita con su marca de borrado, y el cargo vuelve a "sin decidir".
+function _deshacerRecargoCobro(c){
+  if(!_recargoDecidido(c)) return;
+  if((parseFloat(c.recargoPago)||0)>0.009 && c.recargoCuentaId){
+    creditCuentaRep(c.recargoCuentaId,-(parseFloat(c.recargoPago)||0));
+    quitarLoteDeRemesa("rcc:"+c.id);
+  }
+  ["recargoCobrado","recargoCalculado","recargoDias","recargoMulta","recargoJuros","recargoFecha",
+   "recargoUsdt","recargoMonPago","recargoPago","recargoCuentaId"].forEach(function(k){ delete c[k]; });
+}
+function marcarCobrado(id,recDec){
   var c=(S.cuentasCobrar||[]).find(function(x){return String(x.id)===String(id);});
   if(!c){alert("No encontrado.");return;}
+  // ARREGLO 267: con recargo por fecha prometida, primero los tres botones.
+  // Cancelar no toca nada; las otras dos vuelven aquí con el monto decidido.
+  var _rc=_recargoCobro(c);
+  var _conRec=_rc.hay&&!_rc.bloqueado;
+  if(_conRec&&recDec===undefined){
+    if(_usdtDeRecargo(_rc.total,c.moneda||"BRL")===null){alert("No hay tasa de "+(c.moneda||"BRL")+" para valorar el recargo en USDT.\nPublica la tasa en 🧮 Tasas y vuelve a intentarlo.");return;}
+    _elegirRecargo(c,_rc,function(m){ marcarCobrado(id,m); });
+    return;
+  }
+  var _recM=_conRec?(parseFloat(recDec)||0):null;
+  var _txtRec=(_recM>0.009)?" + "+f2(_recM)+" de recargo":"";
+  var _ctaRec="", _monRec=c.moneda;
   // ARREGLO 264: el recargo pendiente se decide ANTES de tocar nada.
   var _ctaSug=(S.cuentas||[]).find(function(x){return x.id===c.cuentaBanco||x.nombre===c.cuentaBanco;});
   var _accRec=_decidirRecargoAlCerrar(c,_ctaSug?_ctaSug.id:null);
@@ -12993,10 +13273,11 @@ function marcarCobrado(id){
     if(cta){
       // Verificar que la moneda de la operación coincida con la moneda de la cuenta
       if(cta.moneda&&c.moneda&&cta.moneda!==c.moneda){
-        if(!confirm("⚠️ La operación es en "+c.moneda+" pero la cuenta \""+cta.nombre+"\" es en "+cta.moneda+".\n\nSi ya convertiste el dinero y el saldo a acreditar es correcto, confirma.\nSi no, cancela y ajusta la cuenta destino primero.\n\n¿Acreditar "+f2(c.monto)+" en "+cta.nombre+"?"))return;
+        if(!confirm("⚠️ La operación es en "+c.moneda+" pero la cuenta \""+cta.nombre+"\" es en "+cta.moneda+".\n\nSi ya convertiste el dinero y el saldo a acreditar es correcto, confirma.\nSi no, cancela y ajusta la cuenta destino primero.\n\n¿Acreditar "+f2(c.monto)+_txtRec+" en "+cta.nombre+"?"))return;
       } else {
-        if(!confirm("Marcar como cobrado y acreditar "+f2(c.monto)+" "+c.moneda+" en \""+cta.nombre+"\".\n¿Confirmar?"))return;
+        if(!confirm("Marcar como cobrado y acreditar "+f2(c.monto)+" "+c.moneda+_txtRec+" en \""+cta.nombre+"\".\n¿Confirmar?"))return;
       }
+      _ctaRec=cta.id; _monRec=cta.moneda||c.moneda;
       cta.saldo=Math.round(((parseFloat(cta.saldo)||0)+(parseFloat(c.monto)||0))*100)/100;
       // Ahora sí entró: nace su lote, con el costo del día en que se pactó.
       _loteAlCobrar(c, parseFloat(c.monto)||0, cta.id);
@@ -13005,6 +13286,9 @@ function marcarCobrado(id){
   c.estado="cobrado";
   c.fechaCobro=td();
   _aplicarRecargoAlCerrar(c,_accRec);
+  // El recargo entra a la MISMA cuenta que el cobro; si el cobro no entra a
+  // ninguna (cargo sin cuenta), el recargo tampoco, y queda solo apuntado.
+  if(_recM!==null) _aplicarRecargoCobro(c,_rc,_recM,_ctaRec,_monRec,1);
   logAudit("COBRO_MARCADO","Marcó cobrado · Cliente: "+c.cliente+" · "+c.monto+" "+c.moneda);
   saveData();R();
 }
@@ -13029,8 +13313,11 @@ function eliminarCuenta(id){
   if(totalAbonado>0) msg+="\n\n⚠️ Ya tiene "+f2(totalAbonado)+" "+c.moneda+" en abonos registrados — se revertirá el saldo que se acreditó en las cuentas correspondientes.";
   // ARREGLO 264: un recargo cobrado también entró a una cuenta y sale con él.
   if(_recCobTot>0.009) msg+="\n\n⚠️ Tiene "+f2(_recCobTot)+" "+c.moneda+" de recargo cobrado — se le resta a la cuenta donde entró.";
+  // ARREGLO 267: y el recargo por fecha prometida, que entró con el cobro.
+  if((parseFloat(c.recargoPago)||0)>0.009) msg+="\n\n⚠️ Se cobró "+f2(c.recargoCobrado)+" "+c.moneda+" de recargo por atraso — sale de la cuenta donde entró.";
   if(!confirm(msg)) return;
-  _recCob.forEach(function(r){ if(r.cobrado.cuentaId) ajusteCuentaEgreso(r.cobrado.cuentaId,-(parseFloat(r.monto)||0)); });
+  _recCob.forEach(_salirRecargoManual);
+  _deshacerRecargoCobro(c);
   // Revertir cualquier abono ya acreditado a una cuenta, para no dejar
   // dinero "fantasma" metido en un banco sin el registro que lo respalda.
   (c.abonos||[]).forEach(function(ab){
@@ -40579,6 +40866,21 @@ function rCuentasCobrar(){
       "</div>";
     }
 
+    // ── ARREGLO 267 · fecha prometida y su recargo ──
+    // Pendiente y sin decidir: se escribe, se cambia o se quita. Cobrado: queda
+    // bloqueada con lo que se decidió. El bloque de debajo lleva id para que
+    // setFechaPrometida lo refresque sin R() (ARREGLO 32 y 55).
+    var fpHtml="";
+    var _fpIso=_isoFechaCC(c.fechaPrometida);
+    if(isPend&&!_recargoDecidido(c)){
+      fpHtml="<div style='display:flex;align-items:center;gap:8px;margin-top:9px;flex-wrap:wrap'>"+
+        "<label style='font-size:12px;font-weight:700;color:var(--tx2)'>📅 Prometió pagar el</label>"+
+        "<input type='date' value='"+_fpIso+"' onchange='setFechaPrometida(\""+_jsAttr(String(c.id))+"\",this.value)' style='width:auto;max-width:170px;flex:0 1 auto;padding:6px 8px;font-size:13px;border:1.5px solid var(--ln);border-radius:8px;font-family:inherit;background:var(--sup);color:var(--tx)'>"+
+        (_fpIso?"<button class='bk-btn ghost' style='padding:5px 10px' title='Quitar la fecha prometida' onclick='this.previousElementSibling.value=\"\";setFechaPrometida(\""+_jsAttr(String(c.id))+"\",\"\")'>✕</button>":"")+
+      "</div>";
+    }
+    fpHtml+="<div id='ccrec-"+_idClaveCC(String(c.id))+"'>"+_htmlRecargoCargo(c)+"</div>";
+
     // ── Formulario de abono inline ──
     var abonarForm="";
     if(isAbonar&&isPend){
@@ -40693,6 +40995,7 @@ function rCuentasCobrar(){
           "<button class='bk-btn icon danger' onclick='eliminarCuenta(\""+_jsAttr(String(c.id))+"\")' title='Eliminar cargo'>🗑</button>"+
         "</div>")+
       "</div>"+
+      fpHtml+
       abonosHtml+
       recargosHtml+
       abonarForm+
@@ -40731,8 +41034,8 @@ function rCuentasCobrar(){
       g.saldoUsdt=Math.round(g.saldoUsdt*100)/100;
       // ARREGLO 264: el recargo pendiente, por moneda. NO entra en saldoUsdt
       // (eso es la deuda, y ordena la lista); se enseña aparte.
-      g.recPares=[];
-      g.items.forEach(function(c){ var r=_recargoPendDe(c); if(r>0.009) g.recPares.push({monto:r,mon:c.moneda}); });
+      // ARREGLO 267: el calculado por fecha prometida más el manual que quede.
+      g.recPares=_recargosDeCliente(g.clave);
     });
     // El que más debe, primero; a igual saldo, por nombre, para que la
     // lista no baile de orden entre renders.
@@ -40760,7 +41063,7 @@ function rCuentasCobrar(){
               "<div class='bk-cli-meta'>"+g.items.length+" cargo"+(g.items.length!==1?"s":"")+" pendiente"+(g.items.length!==1?"s":"")+"</div>"+
             "</div>"+
             "<div class='bk-cli-amt bk-num'>"+bkPorMoneda(g.pares)+
-              (g.recPares.length?"<small style='color:var(--avi-tx)'>+ "+bkPorMoneda(g.recPares)+" recargo</small>":"")+
+              "<small id='ccrecg-"+_idClaveCC(g.clave)+"' style='color:var(--avi-tx)'>"+(g.recPares.length?"+ "+bkPorMoneda(g.recPares)+" recargo":"")+"</small>"+
               "<small>"+(g.saldoUsdt>0?"≈ $"+f2(g.saldoUsdt)+" USDT"+(g.sinTasa?" (parcial)":""):"sin tasa USDT")+"</small>"+
             "</div>"+
             "<div class='bk-chev'>"+(ab?"▲":"▼")+"</div>"+
@@ -40769,7 +41072,7 @@ function rCuentasCobrar(){
             // ARREGLO 264: las dos acciones del CLIENTE, no de un cargo. Van
             // en el cuerpo y no en la cabecera, que al tocarla se pliega.
             "<div style='display:flex;gap:8px;flex-wrap:wrap;padding:10px 2px 2px'>"+
-              "<button class='bk-btn warn' onclick='aplicarRecargoCliente(\""+_jsAttr(g.clave)+"\")'>⚠️ Recargo</button>"+
+
               "<button class='bk-btn wa' onclick='cobrarClienteWA(\""+_jsAttr(g.clave)+"\")'>📲 Cobrar por WhatsApp</button>"+
             "</div>"+
             g.items.map(function(c){return rowCuenta(c,true);}).join("")+"</div>":"")+
