@@ -15616,8 +15616,6 @@ console.log("\nARREGLO 268 · Abonos de Por cobrar y cobros de préstamos: solo 
   // se despierta y cada entrada por ajusteCuentaEgreso inflaría esos lotes.
   const cl=sinComentarios(sacarFuncion("crearLoteRecibido"));
   ok(/cuentaId:""/.test(cl) && /cuentaDestinoId:cuentaDestinoId/.test(cl), "crearLoteRecibido deja cuentaId vacío y el banco en cuentaDestinoId");
-  const al=sinComentarios(sacarFuncion("ajustarLotePorCuenta"));
-  ok(/r\.cuentaId===cuentaId/.test(al), "ajustarLotePorCuenta busca por cuentaId (por eso los lotes nuevos no deben llevar ahí el banco)");
   // Por cobrar: entra como ✓ Cobrado.
   const sa=sinComentarios(sacarFuncion("saveAbonoCobrar"));
   ok(/creditCuentaRep\(cuentaId,montoIngresado\)/.test(sa) && !/ajusteCuentaEgreso\(cuentaId/.test(sa), "el abono de Por cobrar entra con creditCuentaRep, no con ajusteCuentaEgreso");
@@ -15681,6 +15679,48 @@ console.log("\nARREGLO 268 · Abonos de Por cobrar y cobros de préstamos: solo 
   const rd=sinComentarios(sacarFuncion("reqDel"));
   ok((rd.match(/item\.abonos\.forEach\(_salirCobroPrestamo\)/g)||[]).length===2 && (rd.match(/if\(m\.entraSaldo\) _salirCobroPrestamo\(m\)/g)||[]).length===2,
      "borrar el préstamo entero saca sus abonos y su mora nueva, en los dos caminos");
+}
+
+// ── ARREGLO 269 · un ajuste de saldo no toca ningún lote ─────────────────
+console.log("\nARREGLO 269 · ajusteCuentaEgreso mueve solo el saldo; los egresos siguen gastando su lote");
+{
+  // La función que inflaba ya no existe, ni su llamada.
+  ok(!/function ajustarLotePorCuenta\(/.test(HTML) && !/ajustarLotePorCuenta\(/.test(HTML.replace(/\/\/[^\n]*/g,"")),
+     "ajustarLotePorCuenta no existe ni se llama desde ningún sitio");
+  const ac=sinComentarios(sacarFuncion("ajusteCuentaEgreso"));
+  ok(!/inventarioUsdt|bsRestante|restante|crearLoteRecibido/.test(ac), "ajusteCuentaEgreso no toca el inventario");
+  // Probado de verdad: con un lote con la forma VIEJA (el banco en cuentaId),
+  // que es justo el que antes se inflaba, y uno normal.
+  {
+    const lotes=()=>[{id:1,tipo:"venta",moneda:"VES",cuentaId:"bv",bs:500,bsRestante:500},
+                     {id:2,tipo:"venta",moneda:"VES",cuentaId:"bu",cuentaDestinoId:"bv",bs:1000,bsRestante:1000},
+                     {id:3,tipo:"compra",moneda:"BRL",cuentaOrigenId:"pb",usdt:100,restante:100}];
+    const S={cuentas:[{id:"bv",nombre:"BANCO",moneda:"VES",saldo:10000},{id:"pb",nombre:"PAG",moneda:"BRL",saldo:500}],capital:[],inventarioUsdt:lotes()};
+    const A=new Function("S",sacarFuncion("ajusteCuentaEgreso")+"\nreturn ajusteCuentaEgreso;")(S);
+    const antes=JSON.stringify(S.inventarioUsdt);
+    A("bv",300);   // vender mercancía, ganancia extra, metí plata mía, liquidación
+    A("pb",120);
+    ok(S.cuentas[0].saldo===10300 && S.cuentas[1].saldo===620 && JSON.stringify(S.inventarioUsdt)===antes,
+       "lo que ENTRA sube el saldo y no crea ni infla ningún lote (tampoco el de forma vieja)", JSON.stringify(S.inventarioUsdt));
+    A("bv",-300); A("pb",-120);
+    ok(S.cuentas[0].saldo===10000 && JSON.stringify(S.inventarioUsdt)===antes, "deshacerlo baja el saldo y tampoco toca lotes");
+    // Un egreso normal sigue gastando su lote por su camino: descontarFIFOEgreso.
+    const D=new Function("S","normalizarInventarioFIFO","ordenFIFO","_cuentaMadre",
+      sacarFuncion("_lotesDeCuenta")+"\n"+sacarFuncion("descontarFIFOEgreso")+"\nreturn descontarFIFOEgreso;")(
+      S,()=>{},(a,b)=>a.id-b.id,()=>null);
+    A("bv",-200); D("VES",200,0,"bv");
+    ok(S.cuentas[0].saldo===9800 && S.inventarioUsdt[1].bsRestante===800 && S.inventarioUsdt[0].bsRestante===500,
+       "un egreso de 200 Bs baja el saldo y su lote (1.000 → 800); el lote de forma vieja no se toca", JSON.stringify(S.inventarioUsdt));
+  }
+  // Las ocho puertas: el dinero solo por ajusteCuentaEgreso, una vez, y nada de lotes.
+  ["venderArticulo","editarVentaArt","deshacerVentaArt","saveGanExtra","delGanExtra","saveAporte","delAporte","confirmarLiquidacionMulti"].forEach(function(f){
+    const b=sinComentarios(sacarFuncion(f));
+    ok((b.match(/ajusteCuentaEgreso\(/g)||[]).length===1 && !/crearLoteRecibido|inventarioUsdt|bsRestante|_loteAlCobrar|consumirLotesMon|descontarFIFOEgreso|_loteCobroPrestamo/.test(b),
+       f+" mueve el dinero solo por ajusteCuentaEgreso y no crea ni gasta lotes");
+  });
+  // Y los egresos siguen llamando a su descuento.
+  ok(/descontarFIFOEgreso\(/.test(sinComentarios(sacarFuncion("saveEg"))) && /descontarFIFOEgreso\(/.test(sinComentarios(sacarFuncion("pagarEgreso"))),
+     "guardar y pagar un egreso siguen descontando su lote");
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

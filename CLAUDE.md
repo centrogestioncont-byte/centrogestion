@@ -7307,9 +7307,8 @@ prueba mal formado.)
 - **Una ida pagada con esos Bs sale como calce**, como con los de una vuelta:
   no pasaron por Binance. "De dónde salen" dice *"abono de <préstamo>"*.
 - **Guardia del fallo dormido:** `crearLoteRecibido` tiene que dejar
-  `cuentaId:""`. Si un día pone ahí el banco, todo lo que entra por
-  `ajusteCuentaEgreso` (mercancía, ganancia extra, plata mía, liquidación
-  múltiple) inflaría esos lotes. Hay prueba.
+  `cuentaId:""`. (Desde el ARREGLO 269 el fallo ya no está dormido: está
+  quitado. La guardia se queda por si vuelve.)
 - **Lo ya registrado no se toca** (decisión suya): en noviembre entraron
   16.236,20 Bs y 1.156,53 R$ por préstamos sin lote, y se quedan así.
 
@@ -7318,3 +7317,39 @@ que no lleva la marca de "se quedan" (`entraQueda`) no deja lote
 (`_loteAlCobrar` solo crea en VES o con esa marca), así que esos reales se gastan
 después con tasa prestada. En noviembre hay 2.044 R$ de abonos de Por cobrar.
 Y borrar un préstamo de antes del 268 no saca de la cuenta la mora que ya entró.
+
+---
+
+## Un ajuste de saldo no toca ningún lote (ARREGLO 269)
+
+Decisión suya del 25/11: el fallo del 268 se cierra **en un solo sitio**, no
+función por función. `ajusteCuentaEgreso` mueve **solo el saldo**; la llamada a
+`ajustarLotePorCuenta` se quitó y esa función se borró (era su única llamada).
+Arreglarlo en cada puerta es lo que ya falló en los ARREGLOS 101, 119, 150 y 153.
+
+- **Los lotes se gastan por su camino de siempre**: los egresos por
+  `descontarFIFOEgreso`, las remesas por `consumirFIFORemesa`, los traspasos y
+  compras por `consumirLotesMon`. Ninguno pasaba por la función quitada.
+- **Vender mercancía, ganancia extra, "metí plata mía" y la liquidación
+  múltiple no crean ni inflan lotes** (decisiones de los ARREGLOS 143 y 146).
+- **Hoy no cambia ningún número suyo**: ningún lote tenía la forma que esa
+  función tocaba (medido el 24/11: 0 de 553).
+- **Prueba en el CI** (`prestamos.js`): `ajusteCuentaEgreso` corrida con un lote
+  de forma vieja no lo toca; las ocho funciones mueven el dinero solo por
+  `ajusteCuentaEgreso` y no tocan lotes; un egreso sigue bajando su lote.
+
+Medido en Chromium con su copia, con un lote de forma vieja (banco en
+`cuentaId`, 300 R$) puesto a propósito:
+
+```
+                           v350          v351
+vender mercancía 500     300 → 800        300
+ganancia extra 100       800 → 900        300
+metí plata mía 50        900 → 950        300
+liquidación 700          950 → 1.650      300
+egreso 200               su lote 1.000 → 800 en las dos
+```
+
+**Pendiente, decisión suya:** la liquidación múltiple cobra cuotas de préstamos
+y **no deja lote**, mientras que el abono normal de un préstamo sí lo deja desde
+el 268. Son dos maneras de cobrar lo mismo que ahora se comportan distinto.
