@@ -3771,7 +3771,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261125_v351";
+var APP_VERSION = "20261125_v352";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -39532,7 +39532,7 @@ function confirmarLiquidacionMulti(){
     if(!grupos[it.p.id]) grupos[it.p.id] = {p: it.p, items:[]};
     grupos[it.p.id].items.push({cu:it.cu, monto:it.x.monto, pago:it.pago, idx:idx});
   });
-  var detalle = [];
+  var detalle = [], _nuevosLiq = [];
   Object.keys(grupos).forEach(function(prId){
     var g = grupos[prId], p = g.p;
     if(!p.abonos) p.abonos = [];
@@ -39541,7 +39541,7 @@ function confirmarLiquidacionMulti(){
       // montoPago/monedaPago = lo que entró de verdad (ARREGLO 219).
       // Misma forma que el abono de pagarPrestamo(), así borrar el
       // abono devuelve a la cuenta lo que ese abono acreditó.
-      p.abonos.push({
+      var _regLiq = {
         id: ahora + it.idx,
         fecha: td(),
         monto: Math.round(it.monto*100)/100,
@@ -39550,7 +39550,9 @@ function confirmarLiquidacionMulti(){
         montoPago: Math.round(it.pago*100)/100,
         cuotaN: it.cu.n,
         premio: 0
-      });
+      };
+      p.abonos.push(_regLiq);
+      _nuevosLiq.push({p:p, reg:_regLiq});
       detalle.push("Cuota "+it.cu.n+" de "+p.desc+" · "+f2(it.monto)+" "+mon+(otraMon?" (pagó "+f2(it.pago)+" "+monC+")":""));
     });
     // Si tras este bloque de abonos el préstamo queda saldado, se
@@ -39568,7 +39570,14 @@ function confirmarLiquidacionMulti(){
   // deja un movimiento, no cinco, y cuadra con lo que la persona
   // depositó de verdad.
   // ARREGLO 219: sube lo RECIBIDO, en la moneda de la cuenta.
-  ajusteCuentaEgreso(m.cuentaId, recibido);
+  // ARREGLO 270: igual que el abono normal (268): el saldo entra con
+  // creditCuentaRep y cada cuota cobrada deja SU lote a la tasa de su
+  // préstamo. Antes la liquidación no dejaba ninguno, así que cobrar la
+  // misma cuota por un botón o por el otro dejaba el inventario distinto.
+  // Borrar una de estas cuotas sale por _salirCobroPrestamo, que quita su
+  // lote. Aquí no hay mora: la liquidación solo cobra cuotas.
+  creditCuentaRep(m.cuentaId, recibido);
+  _nuevosLiq.forEach(function(x){ _loteCobroPrestamo(x.p, x.reg, "abono"); });
   logAudit("LIQUIDACION_CLIENTE", "Liquidación de "+itemsConPr.length+" cuota"+(itemsConPr.length>1?"s":"")+" · "+f2(total)+" "+mon+(otraMon?" pagados con "+f2(recibido)+" "+monC:"")+" → "+c.nombre+" · "+detalle.join(" · "));
   S._multiPg = null;
   saveData();

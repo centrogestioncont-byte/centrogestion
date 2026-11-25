@@ -8157,10 +8157,10 @@ console.log("\n— FASE 2: la cuenta madre —");
      "al vaciar la seleccion se libera la moneda para la siguiente ronda");
   const _cfm = sinC(sacarFuncion("confirmarLiquidacionMulti"));
   // ARREGLO 219: la cuenta sube lo RECIBIDO (puede ser otra moneda),
-  // y sigue siendo un solo movimiento.
-  ok(/ajusteCuentaEgreso\(m\.cuentaId,\s*recibido\)/.test(_cfm) && (_cfm.match(/ajusteCuentaEgreso\(/g)||[]).length===1,
+  // y sigue siendo un solo movimiento. (ARREGLO 270: por creditCuentaRep.)
+  ok(/creditCuentaRep\(m\.cuentaId,\s*recibido\)/.test(_cfm) && (_cfm.match(/creditCuentaRep\(/g)||[]).length===1,
      "la cuenta se mueve UNA sola vez con lo recibido (un movimiento, no cinco)");
-  ok(/p\.abonos\.push\(\{/.test(_cfm) && /cuotaN:\s*it\.cu\.n/.test(_cfm),
+  ok(/p\.abonos\.push\(_regLiq\)/.test(_cfm) && /cuotaN:\s*it\.cu\.n/.test(_cfm),
      "cada cuota marcada se guarda como un abono con su cuotaN");
   ok(/if\(totalAb\s*>=\s*base/.test(_cfm) && /p\.estado\s*=\s*"pagado"/.test(_cfm),
      "si queda saldado el prestamo se marca pagado, igual que pagarPrestamo");
@@ -15712,8 +15712,10 @@ console.log("\nARREGLO 269 · ajusteCuentaEgreso mueve solo el saldo; los egreso
     ok(S.cuentas[0].saldo===9800 && S.inventarioUsdt[1].bsRestante===800 && S.inventarioUsdt[0].bsRestante===500,
        "un egreso de 200 Bs baja el saldo y su lote (1.000 → 800); el lote de forma vieja no se toca", JSON.stringify(S.inventarioUsdt));
   }
-  // Las ocho puertas: el dinero solo por ajusteCuentaEgreso, una vez, y nada de lotes.
-  ["venderArticulo","editarVentaArt","deshacerVentaArt","saveGanExtra","delGanExtra","saveAporte","delAporte","confirmarLiquidacionMulti"].forEach(function(f){
+  // Las siete puertas: el dinero solo por ajusteCuentaEgreso, una vez, y nada de lotes.
+  // (La liquidación múltiple salió de esta lista en el ARREGLO 270: ahora deja
+  // su lote como el abono normal, y su prueba va abajo.)
+  ["venderArticulo","editarVentaArt","deshacerVentaArt","saveGanExtra","delGanExtra","saveAporte","delAporte"].forEach(function(f){
     const b=sinComentarios(sacarFuncion(f));
     ok((b.match(/ajusteCuentaEgreso\(/g)||[]).length===1 && !/crearLoteRecibido|inventarioUsdt|bsRestante|_loteAlCobrar|consumirLotesMon|descontarFIFOEgreso|_loteCobroPrestamo/.test(b),
        f+" mueve el dinero solo por ajusteCuentaEgreso y no crea ni gasta lotes");
@@ -15721,6 +15723,41 @@ console.log("\nARREGLO 269 · ajusteCuentaEgreso mueve solo el saldo; los egreso
   // Y los egresos siguen llamando a su descuento.
   ok(/descontarFIFOEgreso\(/.test(sinComentarios(sacarFuncion("saveEg"))) && /descontarFIFOEgreso\(/.test(sinComentarios(sacarFuncion("pagarEgreso"))),
      "guardar y pagar un egreso siguen descontando su lote");
+}
+
+// ── ARREGLO 270 · la liquidación múltiple deja su lote como el abono normal ──
+console.log("\nARREGLO 270 · liquidación múltiple: saldo por creditCuentaRep y un lote por cuota");
+{
+  const b=sinComentarios(sacarFuncion("confirmarLiquidacionMulti"));
+  ok(!/ajusteCuentaEgreso\(/.test(b) && (b.match(/creditCuentaRep\(/g)||[]).length===1,
+     "la liquidación sube el saldo UNA vez y por creditCuentaRep, no por ajusteCuentaEgreso");
+  ok(/_nuevosLiq\.forEach\(function\(x\)\{\s*_loteCobroPrestamo\(x\.p,\s*x\.reg,\s*"abono"\)/.test(b),
+     "cada cuota cobrada pasa por _loteCobroPrestamo, la misma puerta del abono normal");
+  ok(/p\.abonos\.push\(_regLiq\);\s*_nuevosLiq\.push\(\{p:p,\s*reg:_regLiq\}\)/.test(b),
+     "el lote sale del MISMO registro que se guarda en p.abonos (así borrarlo lo quita)");
+  // Probado de verdad: dos préstamos, una cuota de cada uno, y borrar una.
+  const lotes=[], quitados=[];
+  const S={cuentas:[{id:"pb",nombre:"PAGBANK",moneda:"BRL",saldo:1000}],capital:[],inventarioUsdt:[],
+    prestamos:[{id:11,desc:"ANA",monto:600,usdt:100,mon:"BRL",abonos:[],cuotas:[{n:1,iso:"2026-11-01",fecha:"01/11/26"},{n:2,iso:"2026-12-01",fecha:"01/12/26"}]},
+               {id:22,desc:"LUIS",monto:400,usdt:80,mon:"BRL",abonos:[],cuotas:[{n:1,iso:"2026-11-05",fecha:"05/11/26"}]}],
+    _multiPg:{marcadas:[{prestId:"11",cuotaN:1,monto:300},{prestId:"22",cuotaN:1,monto:400}],cuentaId:"pb",moneda:"BRL"}};
+  const env={S, td:()=>"25/11/26", f2:x=>String(x), f4:x=>String(x), alert:()=>{}, confirm:()=>true, logAudit:()=>{}, saveData:()=>{}, R:()=>{},
+    moraPendiente:()=>0, _multiRecibido:()=>0, ajusteCuentaEgreso:()=>{ throw new Error("no debía llamarse"); },
+    crearLoteRecibido:(mon,monto,usdt,cta,f,ref)=>{ const l={id:lotes.length+1,moneda:mon,bs:monto,usdt:Math.round(usdt*10000)/10000,cuentaDestinoId:cta,origenRemesa:ref}; lotes.push(l); return l; },
+    quitarLoteDeRemesa:ref=>{ quitados.push(ref); }};
+  const nombres=Object.keys(env);
+  const F=new Function(...nombres, ["creditCuentaRep","_usdtPorUnidadPrest","_loteCobroPrestamo","_salirCobroPrestamo","confirmarLiquidacionMulti"].map(sacarFuncion).join("\n")+
+    "\nreturn {liq:confirmarLiquidacionMulti, salir:_salirCobroPrestamo};")(...nombres.map(k=>env[k]));
+  F.liq();
+  const a1=S.prestamos[0].abonos[0], a2=S.prestamos[1].abonos[0];
+  ok(S.cuentas[0].saldo===1700, "entran 700 R$ a la cuenta, una vez", S.cuentas[0].saldo);
+  ok(lotes.length===2 && lotes[0].bs+lotes[1].bs===700, "nace un lote por cuota (2) y suman lo que entró", JSON.stringify(lotes));
+  const lA=lotes.find(l=>l.origenRemesa.indexOf("pab:11:")===0), lL=lotes.find(l=>l.origenRemesa.indexOf("pab:22:")===0);
+  ok(lA && lA.usdt===50 && lL && lL.usdt===80, "cada lote va a la tasa de SU préstamo (300×100/600 = 50 · 400×80/400 = 80)", JSON.stringify(lotes));
+  ok(a1.entraSaldo===true && a1.loteRef===lA.origenRemesa && a2.loteRef===lL.origenRemesa, "cada abono guarda cómo entró y qué lote dejó");
+  F.salir(a1);
+  ok(S.cuentas[0].saldo===1400 && quitados.length===1 && quitados[0]===lA.origenRemesa,
+     "borrar esa cuota saca sus 300 R$ y quita SU lote, no el del otro préstamo", JSON.stringify({saldo:S.cuentas[0].saldo,quitados}));
 }
 
 console.log("\n" + (fallos ? "FALLARON " + fallos + " prueba(s)" : "Todo en orden."));

@@ -7350,6 +7350,28 @@ liquidación 700          950 → 1.650      300
 egreso 200               su lote 1.000 → 800 en las dos
 ```
 
-**Pendiente, decisión suya:** la liquidación múltiple cobra cuotas de préstamos
-y **no deja lote**, mientras que el abono normal de un préstamo sí lo deja desde
-el 268. Son dos maneras de cobrar lo mismo que ahora se comportan distinto.
+**Resuelto en el ARREGLO 270:** la liquidación múltiple cobraba cuotas sin
+dejar lote, mientras el abono normal sí lo deja desde el 268.
+
+---
+
+## La liquidación múltiple deja su lote como el abono normal (ARREGLO 270)
+
+Decisión suya del 25/11: cobrar la misma cuota por el abono normal o por la
+liquidación múltiple tiene que dejar el mismo inventario.
+
+- **El saldo entra UNA vez, con `creditCuentaRep`**, por lo recibido en la
+  moneda de la cuenta (ARREGLO 219). Ya no pasa por `ajusteCuentaEgreso`.
+- **Cada cuota cobrada pasa por `_loteCobroPrestamo`**, la misma puerta del
+  abono normal: un lote por cuota, a la tasa de SU préstamo (`p.usdt/p.monto`),
+  con ref `pab:`. El lote sale del mismo registro que se guarda en `p.abonos`,
+  así que borrar esa cuota (`_salirCobroPrestamo`) saca su dinero y quita su
+  lote con marca de borrado, sin tocar el de las otras cuotas.
+- **No hay mora aquí**: la liquidación solo cobra cuotas.
+- **Lo ya registrado no se toca.** Las liquidaciones de antes no llevan
+  `entraSaldo` y al borrarlas salen como entraron.
+
+Medido con su copia del 24/11, dos cuotas (868,59 + 700 R$ en PAGBANK CNPJ):
+v351 no dejaba ningún lote; v352 deja dos (170,44 y 127,36 USDT), los demás
+lotes intactos, y capital y *te sobran* idénticos a v351. Borrar una cuota
+quita solo su lote. 21 pestañas, 0 errores, 5 negativas cazadas.
