@@ -15317,10 +15317,11 @@ console.log("\nARREGLO 256 · La imagen del día sale de los mismos números que
   ok(a>=0 && b>a, "generarFlyerApp espera las letras antes de capturar");
   ok(/if\(!f\.ok\)\{[\s\S]{0,300}return;/.test(ga) && ga.indexOf("if(!f.ok)") >= 0 && ga.indexOf("if(!f.ok)") < b,
      "si la de la app no es mejor, NO se genera (antes de capturar)");
-  // ARREGLO 259: el de RIS App sale exacto al tamaño del estado (1080 × 1920),
-  // y el de RemesasYA sigue al doble porque se imprime.
-  ok(/_flyAlTamano\(canvas, W, H\)\.toDataURL/.test(ga) && /var W=1080, H=1920;/.test(ga),
-     "el flyer de RIS App sale exacto a 1080 × 1920, el tamaño del estado");
+  // ARREGLO 261: el de RIS App sale al DOBLE (2160 × 3840) sin reducir. A
+  // 1080 × 1920 WhatsApp decía "no tiene resolución HD" y no la dejaba
+  // publicarlo en HD (27/11). Que no vuelva a reducirse.
+  ok(/a\.href=canvas\.toDataURL\("image\/png"\)/.test(ga) && /var W=1080, H=1920;/.test(ga) && !/_flyAlTamano/.test(HTML),
+     "el flyer de RIS App sale al doble (2160 × 3840), sin reducir: si no, WhatsApp no deja HD");
   ok(/html2canvas\(card,\{backgroundColor:null,scale:2,width:W,height:H/.test(ga),
      "pero se DIBUJA al doble: a escala 1 html2canvas pinta mal las sombras");
   ok(/scale:2/.test(sinC(sacarFuncion("generarFlyer"))), "y el de RemesasYA sigue al doble: se imprime");
