@@ -7155,3 +7155,223 @@ cobrado cuenta **como la mora de un préstamo**: ganancia bruta, no utilidad.
 - **📲 Cobrar por WhatsApp** (`_msgCobroCliente`) lee lo mismo que la pantalla;
   el texto lo aprobó ella.
 - Viaja dentro del registro del cobro: sin clave nueva, sin tocar el servidor.
+
+---
+
+## "Tu día": el valor de las monedas sale de los saldos de las fotos (ARREGLO 266)
+
+Lo vio ella el 21/11: *"⚠️ Te faltan $34,25 · salió dinero sin registrar"* con
+todo registrado, y *"+$34,42 tus bolívares y reales valen más hoy"* el día en
+que el bolívar pasó de 1.069,72 a 1.089 y el real de 5,9755 a 5,9994 — los dos
+valían **menos**.
+
+**Eran dos causas, y las dos venían de restar dos fotos de algo que se valora a
+la tasa de HOY.** Medido con su export del 21/11 (pantalla de las 18:45):
+
+```
+"valor de las monedas" en pantalla ......................... +34,32
+  cambio de la línea de tasas de la conciliación .......... +26,33
+     registros de días anteriores contados distinto en
+     la foto del 20/11 que hoy, a la MISMA tasa ........... +31,34
+     (Bs 624.833 de más en la foto; no se pudo nombrar el
+     registro con un solo export)
+  (n − f) × Δ .............................................   +7,99
+lo que la tasa le hizo de verdad a sus saldos .............   −8,29
+"Plata tuya" sin un solo aporte ese día ...................   −8,11  ← revalorización
+```
+
+1. **La línea de tasas de la conciliación es un ACUMULADO desde la apertura**
+   (`efectoTasasDesde` + `_revalApertura`). Restada entre dos fotos cambia por
+   cualquier cosa que cambie en los registros viejos, no solo por la tasa, y
+   sale como "valor de las monedas".
+2. **"Plata tuya" y "a tus 💜" se valoran a la tasa de hoy** (`aportesDesde`,
+   `traspasosAPersonal`). Restadas entre dos fotos, cada día movían TODO lo
+   acumulado desde la apertura: −8,11 sin haber metido ni sacado nada.
+
+**La regla, que dictó ella:** la revalorización sale de los MISMOS saldos y las
+MISMAS tasas con que se valúan "Empezaste" y "Tienes":
+
+```
+valor de las monedas = saldos de cierre × (1/tasa de hoy − 1/tasa de Empezaste)
+```
+
+- **Los saldos y las tasas son los de las fotos** (`f.mon[m] = {n, r}`). El `f`
+  que se guardaba —lo que la conciliación ya revaluaba— se fue, y con él
+  `_monDeFoto`, `natV`, `f.cub` y el `nat` de `efectoTasasDesde`.
+- **Lo que pasó en el día se cuenta a la tasa de Empezaste** (`_flujosDelDia`):
+  plata tuya, lo pasado a tus 💜, los saldos a mano y la diferencia de cambio
+  de las operaciones salen de los registros de HOY con fecha en el día, no de
+  restar fotos. Así un cambio en una operación vieja no se cuela, y el dinero
+  del día no se revalúa dos veces.
+- **Las tasas se fijan en la puerta, `getRateToUsdt`** (`_TASAS_FIJAS`), y solo
+  dentro de un `try/finally`: mirar un día no puede cambiar la tasa del resto de
+  la app. Hay prueba negativa para el `finally`.
+- **El cambio de las operaciones va en su propia fila**, no dentro de "valor de
+  las monedas": es lo que una remesa movió en las cuentas a la tasa de
+  Empezaste menos la ganancia apuntada. Su 21/11: +0,27.
+- **Lo liquidado sin cobro en el día** sigue sumando su diferencia entre la tasa
+  de Empezaste y la de liquidar (ARREGLO 244).
+
+Medido con su export, v347 contra v348:
+
+```
+              v347                    v348
+21/11   te faltan 34,22         ✅ cuadra (0,00) · valor −8,29
+20/11   cuadra (4,16)           ✅ cuadra (0,69)
+19/11   te sobran 41,58         te sobran 46,05  ← REAL: su ajuste «No sé por
+                                                  qué» de +258,04 R$ en
+                                                  MERCANCIA PRODUCTOS-PICPAY
+                                                  (43,18) + el cambio de
+                                                  200 USD a 1.200 R$ (0,82)
+18/11   cuadra (−0,62)          ✅ cuadra (−0,33)
+```
+
+Y en vivo: solo la tasa se mueve → cuadra; salen 50 USDT sin registrar → te
+faltan 50; un egreso registrado → cuadra; su registro borrado con el dinero ya
+fuera → te faltan 20. **"Desde la apertura" no se toca**: no resta fotos, y sus
+números salen idénticos en todos los casos.
+
+**Lo que esto NO repara, y es a propósito:** el +46 del 19/11 es dinero que
+entró sin operación (el ajuste «No sé por qué»), y sigue saliendo. Un día con
+una remesa registrada hoy pero fechada en un día anterior dejará su diferencia
+de cambio en ese día; es poco y es lo que pasó.
+
+---
+
+## El recargo de un cobro sale de la FECHA PROMETIDA (ARREGLO 267)
+
+Sus palabras del 24/11: *"el recargo solo se calcula si yo pongo esa fecha, y
+nunca se cobra solo: lo decido yo al momento de cobrar"*. Sustituye al botón
+⚠️ Recargo del 264 (un monto a mano): dos formas de poner recargo en la misma
+pantalla es el ARREGLO 98. Los manuales que ya hay (`c.recargos`, los 5 R$ de
+SARA) se siguen viendo, cobrando y perdonando; no se pueden crear más.
+
+- **Un cálculo, `_recargoCobro(c)`**, que leen la tarjeta, la cabecera del
+  cliente, el cobro y el WhatsApp. La fórmula es la de la mora de préstamos
+  (`cfgMora()`: multa, interés mensual por día, gracia, `moraActiva`). Su
+  ejemplo, fijado en la prueba: 836 BRL prometidos el 15/11, al 24/11 → 9 días,
+  multa 16,72 + interés 5,02 = **21,74**; total 857,74.
+- **La multa va sobre el saldo que quedaba al terminar la gracia** y el
+  interés **por tramos** desde la fecha prometida (decisiones suyas). Un abono
+  parcial no pregunta: baja el saldo desde su día.
+- **Al cerrar el cargo, tres botones** (`_elegirRecargo`): con recargo (abre el
+  monto, editable; 0 = perdonado), sin recargo, o Cancelar. Cancelar, y
+  cancelar el monto, no tocan nada. Va **antes** de mover dinero, en ✓ Cobrado
+  y en el abono que cierra.
+- **La decisión queda escrita en el cargo** (`recargoCobrado`, `recargoDias`,
+  multa, interés, USDT, cuenta) y desde ahí manda lo guardado: la fecha ya no se
+  edita ni recalcula. Quitar el abono que lo cerró, o borrar el cargo, la
+  deshace con su dinero (`_deshacerRecargoCobro`).
+- **Cuenta como la mora de un préstamo**: `gananciaPrestamosDelMes`, bruta y no
+  utilidad, el mes en que se cobró.
+- **El dinero entra SIN `ajusteCuentaEgreso`** (eso subía el primer lote sin su
+  tasa: error del 264). `creditCuentaRep` + su propio lote (`rcc:<id>`, los
+  manuales `rcm:<id>:<r>`), que no decide la tasa de referencia y se quita con
+  marca de borrado. Los manuales cobrados antes salen con `ajusteCuentaEgreso`,
+  como entraron.
+- **El WhatsApp no lleva emojis**: wa.me los convertía en "�".
+- Todo vive dentro del cargo: sin clave nueva, sin tocar el servidor.
+
+**Corrección, del 24/11:** aquí ponía que un abono de 336 subió un lote de 300
+a 636. Era falso para sus datos: se midió con un lote de prueba que llevaba el
+banco en `cuentaId`, y ningún lote suyo lo lleva. Ver el ARREGLO 268.
+
+---
+
+## Lo que entra por un abono o una mora: solo saldo y su propio lote (ARREGLO 268)
+
+`ajusteCuentaEgreso` sube el saldo **y** el primer lote de venta cuyo `cuentaId`
+sea esa cuenta (`ajustarLotePorCuenta`), sin tocar su tasa. **Ese fallo está
+dormido:** hoy ningún lote lleva el banco en `cuentaId` (las ventas llevan la
+cuenta de USDT o nada; el banco va en `cuentaDestinoId`). Medido con su copia
+del 24/11: **0 de 26 ventas abiertas y 0 de 527 archivadas**. No hubo nada
+inflado que corregir. (El 267 decía lo contrario por medir con un lote de
+prueba mal formado.)
+
+- **Abono de Por cobrar = ✓ Cobrado:** `creditCuentaRep` + el lote propio de
+  `_loteAlCobrar` (solo si la cuenta es de la moneda del cobro). Guarda
+  `entraSaldo` y `loteId`; borrarlo saca lo que entró (`montoPago`) y ese lote,
+  con marca de borrado (`_salirAbonoCobrar`). En v349 borrar un abono dejaba su
+  lote vivo. Los abonos de antes salen como entraron (`ajusteCuentaEgreso`).
+- **Abono y mora de préstamos:** el cobro entra una vez con `creditCuentaRep` y
+  cada pieza deja su lote (`_loteCobroPrestamo`, ref `pab:`/`pmo:`), **valorado
+  a la tasa del propio préstamo** (`p.usdt/p.monto`, decisión suya), la misma de
+  `gananciaPrestamosDelMes`. En una cuenta USDT, o si la cuenta no es de la
+  moneda en que pagó, no nace lote. Borrar sale por donde entró
+  (`_salirCobroPrestamo`), también al borrar el préstamo entero.
+- **El lote de un cobro NO es una operación de USDT** (`_loteDeCobro`: `pab`,
+  `pmo`, `rcc`, `rcm`): fuera de `tasaDeReferencia`, `_ultimaOpUSDT` y
+  `_ultimasIU`. Sin eso, un abono de 600 Bs movía el capital +11 (medido),
+  porque el lote más nuevo de VES decidía a cuánto se valoran todos sus Bs.
+  Arregla también el recargo del 267 cobrado en Bs.
+- **Una ida pagada con esos Bs sale como calce**, como con los de una vuelta:
+  no pasaron por Binance. "De dónde salen" dice *"abono de <préstamo>"*.
+- **Guardia del fallo dormido:** `crearLoteRecibido` tiene que dejar
+  `cuentaId:""`. (Desde el ARREGLO 269 el fallo ya no está dormido: está
+  quitado. La guardia se queda por si vuelve.)
+- **Lo ya registrado no se toca** (decisión suya): en noviembre entraron
+  16.236,20 Bs y 1.156,53 R$ por préstamos sin lote, y se quedan así.
+
+**Pendiente, lo vemos después:** el abono de un cobro de una remesa en **reales**
+que no lleva la marca de "se quedan" (`entraQueda`) no deja lote
+(`_loteAlCobrar` solo crea en VES o con esa marca), así que esos reales se gastan
+después con tasa prestada. En noviembre hay 2.044 R$ de abonos de Por cobrar.
+Y borrar un préstamo de antes del 268 no saca de la cuenta la mora que ya entró.
+
+---
+
+## Un ajuste de saldo no toca ningún lote (ARREGLO 269)
+
+Decisión suya del 25/11: el fallo del 268 se cierra **en un solo sitio**, no
+función por función. `ajusteCuentaEgreso` mueve **solo el saldo**; la llamada a
+`ajustarLotePorCuenta` se quitó y esa función se borró (era su única llamada).
+Arreglarlo en cada puerta es lo que ya falló en los ARREGLOS 101, 119, 150 y 153.
+
+- **Los lotes se gastan por su camino de siempre**: los egresos por
+  `descontarFIFOEgreso`, las remesas por `consumirFIFORemesa`, los traspasos y
+  compras por `consumirLotesMon`. Ninguno pasaba por la función quitada.
+- **Vender mercancía, ganancia extra, "metí plata mía" y la liquidación
+  múltiple no crean ni inflan lotes** (decisiones de los ARREGLOS 143 y 146).
+- **Hoy no cambia ningún número suyo**: ningún lote tenía la forma que esa
+  función tocaba (medido el 24/11: 0 de 553).
+- **Prueba en el CI** (`prestamos.js`): `ajusteCuentaEgreso` corrida con un lote
+  de forma vieja no lo toca; las ocho funciones mueven el dinero solo por
+  `ajusteCuentaEgreso` y no tocan lotes; un egreso sigue bajando su lote.
+
+Medido en Chromium con su copia, con un lote de forma vieja (banco en
+`cuentaId`, 300 R$) puesto a propósito:
+
+```
+                           v350          v351
+vender mercancía 500     300 → 800        300
+ganancia extra 100       800 → 900        300
+metí plata mía 50        900 → 950        300
+liquidación 700          950 → 1.650      300
+egreso 200               su lote 1.000 → 800 en las dos
+```
+
+**Resuelto en el ARREGLO 270:** la liquidación múltiple cobraba cuotas sin
+dejar lote, mientras el abono normal sí lo deja desde el 268.
+
+---
+
+## La liquidación múltiple deja su lote como el abono normal (ARREGLO 270)
+
+Decisión suya del 25/11: cobrar la misma cuota por el abono normal o por la
+liquidación múltiple tiene que dejar el mismo inventario.
+
+- **El saldo entra UNA vez, con `creditCuentaRep`**, por lo recibido en la
+  moneda de la cuenta (ARREGLO 219). Ya no pasa por `ajusteCuentaEgreso`.
+- **Cada cuota cobrada pasa por `_loteCobroPrestamo`**, la misma puerta del
+  abono normal: un lote por cuota, a la tasa de SU préstamo (`p.usdt/p.monto`),
+  con ref `pab:`. El lote sale del mismo registro que se guarda en `p.abonos`,
+  así que borrar esa cuota (`_salirCobroPrestamo`) saca su dinero y quita su
+  lote con marca de borrado, sin tocar el de las otras cuotas.
+- **No hay mora aquí**: la liquidación solo cobra cuotas.
+- **Lo ya registrado no se toca.** Las liquidaciones de antes no llevan
+  `entraSaldo` y al borrarlas salen como entraron.
+
+Medido con su copia del 24/11, dos cuotas (868,59 + 700 R$ en PAGBANK CNPJ):
+v351 no dejaba ningún lote; v352 deja dos (170,44 y 127,36 USDT), los demás
+lotes intactos, y capital y *te sobran* idénticos a v351. Borrar una cuota
+quita solo su lote. 21 pestañas, 0 errores, 5 negativas cazadas.

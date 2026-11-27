@@ -2736,6 +2736,14 @@ function gananciaPrestamosDelMes(mesKey){
       usdt+=u; recUsdt+=u; recCant++; cant++;
     });
   });
+  // ARREGLO 267 · el recargo por fecha prometida, decidido al cerrar el cargo.
+  // Mismo camino y misma regla que el manual: cuenta el mes en que se cobró, con
+  // el USDT guardado aquel día.
+  (S.cuentasCobrar||[]).forEach(function(c){
+    if(!((parseFloat(c.recargoCobrado)||0)>0.009) || _mesKeyISO(c.recargoFecha)!==mesKey) return;
+    var u=parseFloat(c.recargoUsdt)||0;
+    usdt+=u; recUsdt+=u; recCant++; cant++;
+  });
   return {monto:Math.round(monto*100)/100,usdt:Math.round(usdt*100)/100,cant:cant,
           recUsdt:Math.round(recUsdt*100)/100,recCant:recCant};
 }
@@ -3763,7 +3771,7 @@ setInterval(_checkAppUpdate,5*60*1000);
 // cambia y este número no.
 // Si la versión local no coincide, el nuevo archivo SIEMPRE carga desde Firebase,
 // garantizando que los datos nunca se pierdan al actualizar el sistema.
-var APP_VERSION = "20261118_v347";
+var APP_VERSION = "20261127_v353";
 console.log("Centro de Gestión · versión "+APP_VERSION);
 
 // ══════════════════════════════════════════════════════════════════════
@@ -6793,7 +6801,7 @@ function _deducirHoraApertura(){
           objetivo:objetivo, mismoDia:(isoCorte===desde)};
 }
 
-function ajustesDesdeApertura(desdeIso){
+function ajustesDesdeApertura(desdeIso, hastaIso){
   var r={total:0, n:0, mismoDia:0, nMismoDia:0, nSinSaber:0, sinTasa:false, enElAire:[]};
   if(!desdeIso) return r;
   // ARREGLO 50: si el ajuste y la apertura llevan hora, ya no hay que adivinar.
@@ -6803,6 +6811,9 @@ function ajustesDesdeApertura(desdeIso){
   (S.ajustesSaldo||[]).forEach(function(a){
     var iso=_isoDeDDMMAA(a.fecha);
     if(!iso || iso<desdeIso) return;
+    // ARREGLO 266: con `hastaIso` es un día suelto (el de "Tu día"): lo del día
+    // de inicio ya está en la foto de inicio, y la apertura no tiene que ver.
+    if(hastaIso && (iso>hastaIso || iso<=desdeIso)) return;
     var c=(S.cuentas||[]).find(function(x){return x.id===a.cuentaId;});
     if(!c || c.esPersonal) return;      // lo personal no es dinero de la empresa
     // ARREGLO 68. Lo que entra en r.total se RESTA de la diferencia, o sea que
@@ -7343,7 +7354,7 @@ function _htmlPanelDeuda(){
   html += "</div>";
   return html;
 }
-function traspasosAPersonal(desdeIso){
+function traspasosAPersonal(desdeIso, hastaIso){
   var r={total:0, n:0, mismoDia:0, nMismoDia:0};
   if(!desdeIso) return r;
   function esPers(id){ var c=(S.cuentas||[]).find(function(x){return x.id===id;}); return c?!!c.esPersonal:false; }
@@ -7357,6 +7368,7 @@ function traspasosAPersonal(desdeIso){
   (S.traspasos||[]).forEach(function(t){
     var iso=String(t.fecha||"").slice(0,10);
     if(!/^\d{4}-\d{2}-\d{2}$/.test(iso) || iso<desdeIso) return;
+    if(hastaIso && iso>hastaIso) return;   // ARREGLO 266: solo un día
     var oP=esPers(t.origen), dP=esPers(t.destino);
     if(oP===dP) return;                         // ni sale ni entra de lo personal
     var u = dP
@@ -7373,6 +7385,7 @@ function traspasosAPersonal(desdeIso){
     if(!x) return;
     var iso=_isoDeFechaLote(l.fecha);
     if(!iso || iso<desdeIso) return;
+    if(hastaIso && iso>hastaIso) return;
     var u=enUsdt(x.cuentaId, x.monto);
     if(!x.sale) u=-u;
     if(iso>desdeIso){ r.total+=u; r.n++; } else { r.mismoDia+=u; r.nMismoDia++; }
@@ -7389,6 +7402,7 @@ function traspasosAPersonal(desdeIso){
     (S[k]||[]).forEach(function(x){
       var iso=_isoDeDDMMAA(x.d);
       if(!iso || iso<=desdeIso) return;
+      if(hastaIso && iso>hastaIso) return;
       _movPersonalDeRemesa(x).forEach(function(m){
         var u=enUsdt(m.cuentaId, parseFloat(m.delta)||0);   // <0: entró · >0: se fue
         if(!u) return;
@@ -7426,7 +7440,7 @@ function traspasosAPersonal(desdeIso){
 // conciliación no se entera. Con la tasa del día en que entró, cada aporte
 // dejaría un resto que acabaría en el "sin explicar" — justo lo que esto viene
 // a quitar.
-function aportesDesde(desdeIso){
+function aportesDesde(desdeIso, hastaIso){
   var r={total:0, n:0, mismoDia:0, nMismoDia:0};
   if(!desdeIso) return r;
   function enUsdt(id, monto){
@@ -7439,6 +7453,7 @@ function aportesDesde(desdeIso){
   (S.aportes||[]).forEach(function(a){
     var iso=String(a.fechaIso||"").slice(0,10);
     if(!/^\d{4}-\d{2}-\d{2}$/.test(iso) || iso<desdeIso) return;
+    if(hastaIso && iso>hastaIso) return;   // ARREGLO 266: solo un día
     // Una cuenta 💜 personal no cuenta: ese dinero ya está fuera del capital
     // (ARREGLO 96), así que meterlo o sacarlo de ahí no mueve "lo que tienes" y
     // moverlo en "deberías" abriría un hueco del tamaño del aporte.
@@ -7469,34 +7484,24 @@ function aportesDesde(desdeIso){
 // aritmética de conversión, y mientras no se enseñe la conciliación nunca puede
 // dar cero. Por eso sale como línea propia y no dentro de "sin explicar".
 function efectoTasasDesde(desdeIso, hastaIso){
-  // ARREGLO 244 · `nat`: cuánto de cada moneda se valoró aquí a la tasa de
-  // hoy. Con eso "Tu día" separa lo que la tasa le hace a lo que YA tenía de
-  // lo que esta función ya cuenta, sin contar dos veces la misma revalorización.
-  var r={remesas:0, usdt:0, total:0, n:0, nat:{}};
+  // ARREGLO 266: aquí se anotaba también `nat` (lo nativo que se valoraba a la
+  // tasa de hoy) para que "Tu día" lo restara entre dos fotos. Ya no lo lee
+  // nadie —el valor de las monedas sale de los saldos de las fotos— y se fue.
+  var r={remesas:0, usdt:0, total:0, n:0};
   if(!desdeIso) return r;
-  function _nat(mon, monto, t){ if(t>0) r.nat[mon]=(r.nat[mon]||0)+monto; }
   function enUsdt(id, monto){
     var c=(S.cuentas||[]).find(function(x){return x.id===id;});
     if(!c||c.esPersonal||c.activa===false) return 0;
     if(c.moneda==="USDT"||c.moneda==="USD") return monto;
     var t=getRateToUsdt(c.moneda);
-    _nat(c.moneda, monto, t);
     return (!t||isNaN(t)||t<=0)?0:monto/t;
-  }
-  // Lo que _enUsdtCualquiera convierte (cuentas 💜 incluidas), anotado sin
-  // escribir una segunda conversión: la que vale sigue siendo esa función,
-  // que también lee traspasosAPersonal (ARREGLO 235).
-  function _natCuenta(id, monto){
-    var c=(S.cuentas||[]).find(function(x){return x.id===id;});
-    if(!c||c.moneda==="USDT"||c.moneda==="USD") return;
-    _nat(c.moneda, monto, getRateToUsdt(c.moneda));
   }
   ["brl","vzla","eeuu"].forEach(function(k){
     (S[k]||[]).forEach(function(x){
       var iso=_isoDeDDMMAA(x.d);
       if(!iso || iso<=desdeIso) return;
-      // ARREGLO 263: `hastaIso` solo lo pasa "Tu día" para rehacer el `nat` de
-      // una foto vieja (ver _monDeFoto). Sin él, todo hasta hoy, como siempre.
+      // `hastaIso` solo lo pasa "Tu día" (ARREGLO 266, _flujosDelDia): lo de UN
+      // día. Sin él, todo hasta hoy, como siempre.
       if(hastaIso && iso>hastaIso) return;
       var mueve=0;
       (x._mov||[]).forEach(function(m){ mueve+=enUsdt(m.cuentaId, parseFloat(m.delta)||0); });
@@ -7505,7 +7510,7 @@ function efectoTasasDesde(desdeIso, hastaIso){
       // capital), pero aquí eso convertía la entrega entera en "efecto de las
       // tasas". Ahora entra en la cuenta y su otra mitad va a
       // traspasosAPersonal, con el mismo corte: el "te sobran" no se mueve.
-      _movPersonalDeRemesa(x).forEach(function(m){ mueve+=_enUsdtCualquiera(m.cuentaId, parseFloat(m.delta)||0); _natCuenta(m.cuentaId, parseFloat(m.delta)||0); });
+      _movPersonalDeRemesa(x).forEach(function(m){ mueve+=_enUsdtCualquiera(m.cuentaId, parseFloat(m.delta)||0); });
       // Si el cliente quedó a deber, ese dinero sigue siendo suyo: está en "por
       // cobrar" hoy, o ya entró a la cuenta el día que lo marcó cobrado. En los
       // dos casos cuenta igual, por eso no se mira el estado.
@@ -7513,7 +7518,7 @@ function efectoTasasDesde(desdeIso, hastaIso){
       if(cc){
         var mon=cc.moneda||"USDT", mt=parseFloat(cc.monto)||0;
         if(mon==="USDT"||mon==="USD") mueve+=mt;
-        else { var tc=getRateToUsdt(mon); if(tc&&!isNaN(tc)&&tc>0){ mueve+=mt/tc; _nat(mon, mt, tc); } }
+        else { var tc=getRateToUsdt(mon); if(tc&&!isNaN(tc)&&tc>0) mueve+=mt/tc; }
       }
       r.remesas += mueve-(parseFloat(x.pr)||0);
       r.n++;
@@ -9154,7 +9159,14 @@ function _tsDeIsoDia(iso){
   return d.getTime();
 }
 
+// ARREGLO 266 · "Tu día" valora lo que pasó en el día con las tasas con que se
+// valoró "Empezaste" (las de la foto del día anterior). Se fijan aquí, en la
+// puerta por la que pasan todas las conversiones, y solo dentro de un
+// try/finally (_flujosDelDia): mirar un día no puede cambiar la tasa del resto
+// de la app.
+var _TASAS_FIJAS=null;
 function getRateToUsdt(moneda){
+  if(_TASAS_FIJAS && _TASAS_FIJAS[moneda]>0) return _TASAS_FIJAS[moneda];
   // ARREGLO 49: el orden lo decide tasaDeReferencia() — fijada a mano, si no la
   // última operación de esa moneda, si no lo último que escribió.
   var r=tasaDeReferencia(moneda);
@@ -10289,19 +10301,28 @@ function pagarPrestamo(id){
   // Acreditar la cuenta con lo REALMENTE recibido (en su propia moneda),
   // mora incluida — el efectivo entra completo aunque por dentro se
   // reparta entre mora y cuotas.
-  ajusteCuentaEgreso(np.cuentaId,_cashAcreditado);
+  // ARREGLO 268: entra con creditCuentaRep (solo el saldo), no con
+  // ajusteCuentaEgreso, que al sumar sube el primer lote "ligado" a la cuenta
+  // sin tocar su tasa. Cada pieza (abono y mora) deja después su propio lote.
+  creditCuentaRep(np.cuentaId,_cashAcreditado);
+  var _nuevosCobros=[];
   // Registrar la mora cobrada (aparte de los abonos, ver nota arriba)
   if(_moraCobradaAhora>0.009){
     if(!p.mora) p.mora={cobrada:0,porCuota:{},historial:[]};
     if(!p.mora.historial) p.mora.historial=[];
-    p.mora.historial.push({id:Date.now()+900,fecha:td(),monto:_moraCobradaAhora,
-      montoPago:_moraCashAhora,monedaPago:monPago,cuentaId:np.cuentaId});
+    var _regMora={id:Date.now()+900,fecha:td(),monto:_moraCobradaAhora,
+      montoPago:_moraCashAhora,monedaPago:monPago,cuentaId:np.cuentaId};
+    p.mora.historial.push(_regMora);
+    _nuevosCobros.push({reg:_regMora,tipo:"mora"});
     p.mora.cobrada=Math.round(((parseFloat(p.mora.cobrada)||0)+_moraCobradaAhora)*100)/100;
   }
   // Trackear el/los abono(s) en la moneda ORIGINAL del préstamo
   _abonosAregistrar.forEach(function(ax,idx){
-    p.abonos.push({id:Date.now()+idx,fecha:td(),monto:Math.round(ax.monto*100)/100,cuentaId:np.cuentaId,monedaPago:monPago,montoPago:Math.round(ax.montoPago*100)/100,cuotaN:ax.cuotaN,premio:ax.premio||0});
+    var _regAb={id:Date.now()+idx,fecha:td(),monto:Math.round(ax.monto*100)/100,cuentaId:np.cuentaId,monedaPago:monPago,montoPago:Math.round(ax.montoPago*100)/100,cuotaN:ax.cuotaN,premio:ax.premio||0};
+    p.abonos.push(_regAb);
+    _nuevosCobros.push({reg:_regAb,tipo:"abono"});
   });
+  _nuevosCobros.forEach(function(x){ _loteCobroPrestamo(p,x.reg,x.tipo); });
   var nuevoTotal=p.abonos.reduce(function(a,ab){return a+ab.monto;},0);
   var restante=Math.round((montoBase-nuevoTotal)*100)/100;
   // Solo se cierra si tambien quedo saldada la mora: si no, un cliente
@@ -10319,6 +10340,55 @@ function pagarPrestamo(id){
     agradecerAbonoWA(p,_cashAcreditado,monPago,_cuotaSel?_cuotaSel.n:null,restante,_excedenteInfo,_moraCashAhora);
   }
 }
+// ── ARREGLO 268 · lo que entra por un préstamo deja SU lote ────────────
+//
+// Antes el cobro entraba con ajusteCuentaEgreso, que sube el primer lote de
+// venta cuyo cuentaId sea esa cuenta, sin tocar su tasa. Con los lotes de hoy
+// (el banco va en cuentaDestinoId, no en cuentaId) eso no encontraba ningún
+// lote — medido en su copia del 24/11: 0 de 553 —, así que lo que entraba por
+// abono o mora no dejaba NINGUNO, y al gastarlo la app lo valoraba con una
+// tasa prestada. DECISIÓN SUYA (24/11): un lote propio por pieza, valorado a
+// la tasa del propio préstamo, la misma con la que gananciaPrestamosDelMes
+// cuenta su ganancia (p.usdt / p.monto).
+//
+//  · El saldo ya entró con creditCuentaRep; aquí solo nace el lote.
+//  · crearLoteRecibido deja cuentaId:"" y el banco en cuentaDestinoId. (Lo que
+//    lo hacía importante, ajustarLotePorCuenta, se fue en el ARREGLO 269.)
+//  · reg.entraSaldo dice cómo entró: los registros de antes del 268 no lo
+//    llevan y al borrarlos salen como entraron, con ajusteCuentaEgreso.
+//  · Lo ya registrado no se toca (decisión suya): vale de aquí en adelante.
+function _usdtPorUnidadPrest(p){
+  var mt=parseFloat(p&&p.monto)||0;
+  return mt>0 ? (parseFloat(p.usdt)||0)/mt : 0;
+}
+function _loteCobroPrestamo(p,reg,tipo){
+  if(!p||!reg) return;
+  reg.entraSaldo=true;
+  var cta=(S.cuentas||[]).find(function(x){return x.id===reg.cuentaId;});
+  if(!cta) return;
+  // El lote va en la moneda de la cuenta; si no es la moneda en que pagó, no
+  // se sabe cuánto entró en ella y no se inventa.
+  if(reg.monedaPago && cta.moneda!==reg.monedaPago) return;
+  var ref=(tipo==="mora"?"pmo:":"pab:")+p.id+":"+reg.id;
+  var usdt=(parseFloat(reg.monto)||0)*_usdtPorUnidadPrest(p);
+  var lote=crearLoteRecibido(cta.moneda,parseFloat(reg.montoPago)||0,usdt,cta.id,td(),ref,"",true,false);
+  if(lote) reg.loteRef=ref;
+}
+// Saca de la cuenta lo que entró por un abono o una mora de préstamo, por el
+// mismo camino por el que entró.
+function _salirCobroPrestamo(reg){
+  if(!reg||!reg.cuentaId) return;
+  var pago=parseFloat(reg.montoPago!==undefined?reg.montoPago:reg.monto)||0;
+  if(reg.entraSaldo){
+    creditCuentaRep(reg.cuentaId,-pago);
+    if(reg.loteRef) quitarLoteDeRemesa(reg.loteRef);
+  } else ajusteCuentaEgreso(reg.cuentaId,-pago);
+}
+// Si el lote que dejó ya se gastó en parte, se dice antes de borrar.
+function _txtLoteCobroGastado(reg){
+  var g=reg&&reg.loteRef?_loteDeRemesaGastado(reg.loteRef):null;
+  return g?"\n\n⚠️ El dinero que entró por aquí ya se gastó en parte ("+f2(g.gastado)+" de "+f2(g.cap)+" "+(g.lote.moneda||"")+"). Su lote se quita entero.":"";
+}
 // ── Borrar/revertir un abono individual de un préstamo ──
 // Le devuelve el dinero a la cuenta donde había entrado (exactamente lo
 // que ese abono acreditó, en SU propia moneda — no el equivalente), lo
@@ -10333,10 +10403,11 @@ function borrarAbonoPrestamo(prestId,abonoId){
   if(!ab) return;
   var montoReal=parseFloat(ab.montoPago!==undefined?ab.montoPago:ab.monto)||0;
   var monedaReal=ab.monedaPago||p.mon||"USDT";
-  if(!confirm("¿Borrar este abono de "+f2(montoReal)+" "+monedaReal+" ("+ab.fecha+")?\n\nSe le restará ese monto a la cuenta donde había entrado, y el préstamo vuelve a quedar pendiente por ese valor."))return;
+  if(!confirm("¿Borrar este abono de "+f2(montoReal)+" "+monedaReal+" ("+ab.fecha+")?\n\nSe le restará ese monto a la cuenta donde había entrado, y el préstamo vuelve a quedar pendiente por ese valor."+_txtLoteCobroGastado(ab)))return;
   autorizarYHacer(function(){
-    // Restar de la cuenta donde había entrado (en su moneda real)
-    if(ab.cuentaId) ajusteCuentaEgreso(ab.cuentaId,-montoReal);
+    // Restar de la cuenta donde había entrado (en su moneda real), por el
+    // mismo camino por el que entró (ARREGLO 268)
+    _salirCobroPrestamo(ab);
     // Quitar el abono del historial
     p.abonos=p.abonos.filter(function(x){return x.id!==abonoId;});
     // Recalcular estado del préstamo
@@ -12649,7 +12720,7 @@ function toggleAbonarCobrar(id){
   }
   R();
 }
-function saveAbonoCobrar(id){
+function saveAbonoCobrar(id,recDec){
   var c=(S.cuentasCobrar||[]).find(function(x){return String(x.id)===String(id);});
   if(!c) return;
   var na=S.nAbonoCobrar||{};
@@ -12705,6 +12776,18 @@ function saveAbonoCobrar(id){
   if(!c.abonos) c.abonos=[];
   var totalAbonado=c.abonos.reduce(function(a,ab){return a+ab.monto;},0);
   var pendiente=Math.round((c.monto-totalAbonado)*100)/100;
+  // ARREGLO 267: si este abono termina de pagar el cargo y corre un recargo por
+  // fecha prometida, los tres botones van ANTES de cualquier otra pregunta y de
+  // mover nada. Un abono parcial no pregunta: baja el saldo por tramos.
+  var _rc=_recargoCobro(c);
+  var _cierra=monto>=pendiente-0.001;
+  var _conRec=_cierra&&_rc.hay&&!_rc.bloqueado;
+  if(_conRec&&recDec===undefined){
+    if(_usdtDeRecargo(_rc.total,monCobrar)===null){alert("No hay tasa de "+monCobrar+" para valorar el recargo en USDT.\nPublica la tasa en 🧮 Tasas y vuelve a intentarlo.");return;}
+    _elegirRecargo(c,_rc,function(m){ saveAbonoCobrar(id,m); });
+    return;
+  }
+  var _recM=_conRec?(parseFloat(recDec)||0):null;
   if(monto>pendiente+0.01){
     if(!confirm("El abono equivale a "+f2(monto)+" "+monCobrar+notaPago+", que supera el saldo pendiente ("+f2(pendiente)+" "+monCobrar+").\nSe ajustará al saldo restante.\n¿Continuar?"))return;
     var factor=monto>0?(pendiente/monto):0;
@@ -12720,22 +12803,36 @@ function saveAbonoCobrar(id){
     _accRecAb=_decidirRecargoAlCerrar(c,(cta&&cta.moneda===monCobrar)?cta.id:null);
     if(!_accRecAb) return;
   }
+  // El recargo sigue la tasa del propio abono: lo que vale 1 de la deuda en la
+  // moneda en que pagó.
+  var _factorRec=monto>0.009?(montoIngresado/monto):1;
+  var _recPago=(_recM>0.009)?Math.round(_recM*_factorRec*100)/100:0;
+  var _txtRec=_recPago>0.009?" + "+f2(_recPago)+" "+monPago+" de recargo":"";
   if(cuentaId&&cta){
     if(cta.moneda&&monPago&&cta.moneda!==monPago){
-      if(!confirm("⚠️ La cuenta \""+cta.nombre+"\" es en "+cta.moneda+" pero dijiste que pagó en "+monPago+".\n¿Acreditar igual?"))return;
+      if(!confirm("⚠️ La cuenta \""+cta.nombre+"\" es en "+cta.moneda+" pero dijiste que pagó en "+monPago+".\n¿Acreditar igual?"+_txtRec))return;
     } else {
-      if(!confirm("Acreditar "+f2(montoIngresado)+" "+monPago+(monPago!==monCobrar?" ("+(na._exacto?"= ":"≈ ")+f2(monto)+" "+monCobrar+(na._exacto?" exactos":"")+")":"")+" en \""+cta.nombre+"\". ¿Confirmar?"))return;
+      if(!confirm("Acreditar "+f2(montoIngresado)+" "+monPago+(monPago!==monCobrar?" ("+(na._exacto?"= ":"≈ ")+f2(monto)+" "+monCobrar+(na._exacto?" exactos":"")+")":"")+_txtRec+" en \""+cta.nombre+"\". ¿Confirmar?"))return;
     }
-    // Acreditar la cuenta con lo REALMENTE recibido, en SU propia moneda
-    ajusteCuentaEgreso(cuentaId,montoIngresado);
+    // Acreditar la cuenta con lo REALMENTE recibido, en SU propia moneda.
+    // ARREGLO 268: igual que ✓ Cobrado — solo el saldo (creditCuentaRep) y el
+    // lote propio del cobro. ajusteCuentaEgreso además subía el primer lote
+    // "ligado" a la cuenta, sin su tasa.
+    creditCuentaRep(cuentaId,montoIngresado);
     // Un abono también es dinero que entró: nace su lote por la parte que trajo.
-    _loteAlCobrar(c, monto, cuentaId);
+    // Solo si la cuenta está en la moneda del cobro: si no, el lote saldría en
+    // una moneda que no es la de la cuenta.
+    var _loteAb=(cta.moneda===c.moneda)?_loteAlCobrar(c, monto, cuentaId):null;
   }
   // Trackear el abono en la moneda ORIGINAL de la cuenta por cobrar para que el saldo cuadre
-  c.abonos.push({id:Date.now(),fecha:td(),monto:Math.round(monto*100)/100,cuentaId:cuentaId||"",nota:na.nota||"",monedaPago:monPago,montoPago:Math.round(montoIngresado*100)/100});
+  c.abonos.push({id:Date.now(),fecha:td(),monto:Math.round(monto*100)/100,cuentaId:cuentaId||"",nota:na.nota||"",monedaPago:monPago,montoPago:Math.round(montoIngresado*100)/100,
+    entraSaldo:true,loteId:(_loteAb&&_loteAb.id)||undefined});
   var nuevoTotal=c.abonos.reduce(function(a,ab){return a+ab.monto;},0);
   var restante=Math.round((c.monto-nuevoTotal)*100)/100;
-  if(restante<=0.001){c.estado="cobrado";c.fechaCobro=td();_aplicarRecargoAlCerrar(c,_accRecAb);}
+  if(restante<=0.001){
+    c.estado="cobrado";c.fechaCobro=td();_aplicarRecargoAlCerrar(c,_accRecAb);
+    if(_recM!==null) _aplicarRecargoCobro(c,_rc,_recM,(cuentaId&&cta)?cuentaId:"",monPago,_factorRec);
+  }
   logAudit("ABONO_COBRAR","Abono "+f2(monto)+" "+monCobrar+notaPago+" de "+c.cliente+(restante>0.001?" · pendiente: "+f2(restante):" · COBRADO TOTAL"));
   S._abonarCobrarId=null;S.nAbonoCobrar={monto:"",cuentaId:"",nota:"",moneda:"",tasaManual:""};
   saveData();R();
@@ -12745,12 +12842,18 @@ function eliminarAbonoCobrar(cobrarId,abonoId){
   if(!c||!c.abonos) return;
   var ab=c.abonos.find(function(x){return String(x.id)===String(abonoId);});
   if(!ab) return;
-  if(!confirm("Eliminar este abono de "+f2(ab.monto)+" "+c.moneda+"?\nSe restará de la cuenta si estaba asignada."))return;
-  if(ab.cuentaId) ajusteCuentaEgreso(ab.cuentaId,-ab.monto);
+  // ARREGLO 267: si este abono es el que cerró el cargo, quitarlo lo reabre, y
+  // el recargo que se cobró con él se deshace también (sale de la cuenta) para
+  // que al volver a cerrarlo se decida otra vez con el saldo de verdad.
+  var _totSin=(c.abonos||[]).filter(function(x){return String(x.id)!==String(abonoId);}).reduce(function(a,x){return a+(parseFloat(x.monto)||0);},0);
+  var _reabre=_totSin<c.monto-0.001&&c.estado==="cobrado";
+  var _txtRec=(_reabre&&_recargoDecidido(c)&&(parseFloat(c.recargoCobrado)||0)>0.009)?"\n\nEl cargo vuelve a pendiente y el recargo cobrado de "+f2(c.recargoCobrado)+" "+c.moneda+" se deshace (sale de la cuenta).":"";
+  if(!confirm("Eliminar este abono de "+f2(ab.monto)+" "+c.moneda+"?\nSe restará de la cuenta si estaba asignada."+_txtRec+_txtLoteAbonoGastado(ab)))return;
+  _salirAbonoCobrar(ab);
   c.abonos=c.abonos.filter(function(x){return String(x.id)!==String(abonoId);});
   // Reabre si estaba cobrado y el total ya no alcanza
   var total=c.abonos.reduce(function(a,x){return a+x.monto;},0);
-  if(total<c.monto-0.001&&c.estado==="cobrado"){c.estado="pendiente";c.fechaCobro="";}
+  if(total<c.monto-0.001&&c.estado==="cobrado"){c.estado="pendiente";c.fechaCobro="";_deshacerRecargoCobro(c);}
   saveData();R();
 }
 // ── ARREGLO 264 · Recargo por atraso en Cuentas por cobrar ──────────────
@@ -12801,33 +12904,11 @@ function _saldoCargoCC(c){
   var ab=(c.abonos||[]).reduce(function(a,x){return a+(parseFloat(x.monto)||0);},0);
   return Math.max(0,Math.round(((parseFloat(c.monto)||0)-ab)*100)/100);
 }
-// Días que lleva esperando: desde el cargo más viejo que sigue pendiente.
-function _diasEsperaCliente(cargos){
-  var iso=cargos.length?_isoDeDDMMAA(cargos[0].fecha):"";
-  return iso?Math.max(0,_diasIso(iso,td())):0;
-}
-function aplicarRecargoCliente(clave){
-  var cargos=_cargosPendDeCliente(clave);
-  if(!cargos.length){alert("Este cliente no tiene cargos pendientes.");return;}
-  // Va al cargo más viejo: es el que lleva el atraso. Con monedas mezcladas
-  // se cobra en la del cargo más viejo y se dice.
-  var c=cargos[0];
-  var mon=c.moneda||"BRL";
-  var dias=_diasEsperaCliente(cargos);
-  var ya=cargos.reduce(function(a,x){return a+_recargoPendDe(x);},0);
-  var txt=prompt("Recargo por atraso para "+c.cliente+
-    "\n\nLleva "+dias+" día"+(dias===1?"":"s")+" esperando."+
-    (ya>0.009?"\nYa tiene "+f2(ya)+" "+mon+" de recargo; esto se SUMA.":"")+
-    "\n\n¿Cuánto le cobras? (en "+mon+")","");
-  if(txt===null) return;
-  var m=_leerNumero(txt,"monto");
-  if(isNaN(m)||m<=0){alert("No entendí el monto: \""+txt+"\".\nEscríbelo así: 5 o 5,50");return;}
-  m=Math.round(m*100)/100;
-  if(!c.recargos) c.recargos=[];
-  c.recargos.push({id:Date.now(),fecha:td(),monto:m});
-  logAudit("RECARGO_COBRAR","Recargo de "+f2(m)+" "+mon+" a "+c.cliente+" ("+dias+" días de atraso)");
-  saveData();R();
-}
+// ARREGLO 267: aquí vivía aplicarRecargoCliente() —el botón ⚠️ Recargo que
+// pedía un monto a mano—. Se fue: el recargo sale ahora de la fecha prometida
+// (_recargoCobro). Dos formas de poner recargo en la misma pantalla es lo que
+// hace que no se sepa cuál manda (ARREGLO 98). Los manuales que ya existían
+// (c.recargos) se siguen viendo y cobrando con las funciones de abajo.
 // El USDT del recargo se calcula UNA vez, al cobrarlo. Sin tasa no se inventa
 // un cero (eso lo dejaría fuera de la ganancia sin decirlo): devuelve null.
 function _usdtDeRecargo(monto,mon){
@@ -12865,8 +12946,17 @@ function _cobrarRecargosEn(c,cuentaId){
     pend[i].cobrado={fecha:td(),cuentaId:cuentaId,usdt:u};
     total+=m;
   }
+  // ARREGLO 267: antes entraba con ajusteCuentaEgreso, que al sumar SUBE el
+  // primer lote de la cuenta sin tocar su tasa (lo que la regla del inventario
+  // prohíbe). Ahora solo el saldo, y cada recargo con su propio lote.
+  pend.forEach(function(r){
+    var m=parseFloat(r.monto)||0;
+    if(m<=0.009) return;
+    creditCuentaRep(cuentaId,m);
+    r.cobrado.loteRef="rcm:"+c.id+":"+r.id;
+    crearLoteRecibido(mon,m,r.cobrado.usdt,cuentaId,td(),r.cobrado.loteRef,"",true,false);
+  });
   if(total>0.009){
-    ajusteCuentaEgreso(cuentaId,Math.round(total*100)/100);
     logAudit("RECARGO_COBRADO","Cobró "+f2(total)+" "+mon+" de recargo de "+c.cliente+" → "+nombreCuentaEg(cuentaId));
   }
   return true;
@@ -12884,6 +12974,15 @@ function cobrarRecargo(cargoId){
   if(!_cobrarRecargosEn(c,cid)) return;
   saveData();R();
 }
+// Saca de la cuenta un recargo manual cobrado. Los cobrados desde el 267 llevan
+// su lote (loteRef) y salen igual que entraron; los de antes entraron con
+// ajusteCuentaEgreso y salen con él, para que el lote que subieron vuelva.
+function _salirRecargoManual(r){
+  if(!r||!r.cobrado||!r.cobrado.cuentaId) return;
+  var m=parseFloat(r.monto)||0;
+  if(r.cobrado.loteRef){ creditCuentaRep(r.cobrado.cuentaId,-m); quitarLoteDeRemesa(r.cobrado.loteRef); }
+  else ajusteCuentaEgreso(r.cobrado.cuentaId,-m);
+}
 // Perdonar (pendiente) o deshacer (cobrado). Deshacer devuelve la cuenta.
 function quitarRecargo(cargoId,recId){
   var c=(S.cuentasCobrar||[]).find(function(x){return String(x.id)===String(cargoId);});
@@ -12893,7 +12992,7 @@ function quitarRecargo(cargoId,recId){
   var mon=c.moneda||"BRL";
   if(r.cobrado){
     if(!confirm("Deshacer el recargo cobrado de "+f2(r.monto)+" "+mon+".\n\nSe le resta a "+nombreCuentaEg(r.cobrado.cuentaId)+" y sale de la ganancia.\n\n¿Confirmar?")) return;
-    if(r.cobrado.cuentaId) ajusteCuentaEgreso(r.cobrado.cuentaId,-(parseFloat(r.monto)||0));
+    _salirRecargoManual(r);
   } else {
     if(!confirm("¿Le perdonas el recargo de "+f2(r.monto)+" "+mon+" a "+c.cliente+"?\n\nNo mueve ninguna cuenta.")) return;
   }
@@ -12939,47 +13038,297 @@ function _aplicarRecargoAlCerrar(c,acc){
   c.recargos=(c.recargos||[]).filter(function(r){return r.cobrado;});
   return true;
 }
-// Mensaje de cobro por WhatsApp, para el cliente entero. El texto lo aprobó
-// ella el 17/11. Las cifras salen de lo que la pantalla ya dibuja: el saldo de
-// cada cargo (_saldoCargoCC) y el recargo pendiente; calculadas aparte, el
+// Mensaje de cobro por WhatsApp, para el cliente entero. Las cifras salen de lo
+// que la pantalla ya dibuja: el saldo de cada cargo (_saldoCargoCC) y su recargo
+// (_recargoCobro, más el manual viejo que siga pendiente); calculadas aparte, el
 // mensaje podría pedir otra cosa que la que ella ve.
+// ARREGLO 267: SIN EMOJIS. wa.me los rompe y al cliente le llegaba "�" donde
+// iba el 👋. Y por cargo dice lo que pidió ella: el monto original, la fecha que
+// prometió, los días de atraso, el recargo y el total.
 function _msgCobroCliente(clave){
   var cargos=_cargosPendDeCliente(clave);
   if(!cargos.length) return "";
   var nombre=cargos[0].cliente;
-  var dias=_diasEsperaCliente(cargos);
-  var tot={},rec={},orden=[];
-  var add=function(o,m,v){ if(o[m]===undefined){o[m]=0;} o[m]+=v; if(orden.indexOf(m)<0) orden.push(m); };
-  var lineas=cargos.map(function(c){
-    var mon=c.moneda||"BRL", s=_saldoCargoCC(c);
-    add(tot,mon,s);
-    var r=_recargoPendDe(c); if(r>0.009) add(rec,mon,r);
+  var tot={},orden=[];
+  var add=function(m,v){ if(tot[m]===undefined){tot[m]=0;} tot[m]+=v; if(orden.indexOf(m)<0) orden.push(m); };
+  var hayRec=false;
+  var bloques=cargos.map(function(c){
+    var mon=_simMon(c.moneda||"BRL"), s=_saldoCargoCC(c), orig=parseFloat(c.monto)||0;
+    var rc=_recargoCobro(c), r=Math.round((rc.total+_recargoPendDe(c))*100)/100;
     var iso=_isoDeDDMMAA(c.fecha);
-    var fc=iso?iso.slice(8,10)+"/"+iso.slice(5,7):c.fecha;
-    return "• "+fc+" · "+_simMon(mon)+" "+f2(s);
+    var l=["- Operación del "+(iso?_ddmm(iso):c.fecha)+": "+mon+" "+f2(orig)];
+    if(s<orig-0.009) l.push("  Ya abonaste "+mon+" "+f2(Math.round((orig-s)*100)/100)+", quedan "+mon+" "+f2(s));
+    if(rc.fp&&!rc.futura) l.push("  Prometiste pagar el "+_ddmm(rc.fp)+" · "+rc.dias+" día"+(rc.dias===1?"":"s")+" de atraso");
+    else if(rc.fp) l.push("  Prometiste pagar el "+_ddmm(rc.fp));
+    if(r>0.009){ hayRec=true; l.push("  Recargo por atraso: "+mon+" "+f2(r)); }
+    if(r>0.009) l.push("  Total de esta operación: "+mon+" "+f2(Math.round((s+r)*100)/100));
+    add(c.moneda||"BRL",s+r);
+    return l.join("\n");
   });
-  var txtMon=function(o){
-    return orden.filter(function(m){return (o[m]||0)>0.009;}).map(function(m){return _simMon(m)+" "+f2(Math.round(o[m]*100)/100);}).join(" + ");
-  };
-  var hayRec=Object.keys(rec).length>0;
-  var total={};
-  orden.forEach(function(m){ total[m]=(tot[m]||0)+(rec[m]||0); });
-  return "Hola "+nombre+"! 👋 Te escribo por lo que tienes pendiente:\n"+
-    lineas.join("\n")+
-    "\nYa son "+dias+" día"+(dias===1?"":"s")+" de espera."+
-    (hayRec?"\nRecargo por atraso: "+txtMon(rec):"")+
-    "\n\n*Total a pagar: "+txtMon(total)+"*"+
-    "\n\nRecuerda cancelar lo más pronto posible para evitar más recargos."+
-    "\n¿Me confirmas qué día lo pasas? 🙏";
+  var total=orden.filter(function(m){return (tot[m]||0)>0.009;}).map(function(m){return _simMon(m)+" "+f2(Math.round(tot[m]*100)/100);}).join(" + ");
+  return "Hola "+nombre+", te escribo por lo que tienes pendiente:\n\n"+
+    bloques.join("\n\n")+
+    "\n\n*Total a pagar: "+total+"*"+
+    "\n\n"+(hayRec?"El recargo sigue subiendo cada día de atraso, así que conviene cancelar lo más pronto posible.":"Recuerda cancelar lo más pronto posible para evitar recargos.")+
+    "\n¿Me confirmas qué día lo pasas?";
 }
 function cobrarClienteWA(clave){
   var msg=_msgCobroCliente(clave);
   if(!msg){alert("Este cliente no tiene cargos pendientes.");return;}
   window.open("https://wa.me/?text="+encodeURIComponent(msg),"_blank");
 }
-function marcarCobrado(id){
+// ── ARREGLO 267 · Recargo por mora con FECHA PROMETIDA ──────────────────
+//
+// Sus palabras del 24/11: "cobrar recargo por mora a un cliente que no pagó en
+// la fecha que prometió. El recargo solo se calcula si yo pongo esa fecha, y
+// nunca se cobra solo: lo decido yo al momento de cobrar."
+//
+// Sustituye al botón ⚠️ Recargo del 264 (un monto escrito a mano): dos formas de
+// poner recargo en la misma pantalla es lo que hace que no se sepa cuál manda
+// (ARREGLO 98). Los recargos manuales que ya existían (c.recargos) se siguen
+// viendo, cobrando y perdonando hasta que se cierren; no se pueden crear más.
+//
+// Lo que no hay que deshacer:
+//  · LA FÓRMULA ES LA DE LA MORA DE PRÉSTAMOS (cfgMora(), detalleMora): multa
+//    fija + interés mensual prorrateado por día, con su gracia y su moraActiva.
+//    Ejemplo de ella: 836 BRL prometidos para el 15/11, al 24/11 → 9 días,
+//    multa 16,72 + interés 5,02 = 21,74; total 857,74. Fijado en
+//    pruebas/prestamos.js.
+//  · LA MULTA va sobre el saldo que quedaba AL TERMINAR LA GRACIA (decisión
+//    suya): lo que pagó a tiempo no es atraso.
+//  · EL INTERÉS va POR TRAMOS desde la fecha prometida: cada abono baja el
+//    saldo desde su día. Los abonos parciales no preguntan por el recargo; se
+//    cobra al terminar de pagar (decisión suya).
+//  · NADA DE ESTO VA EN c.monto. Es la regla de p.mora contra p.abonos: c.monto
+//    lo leen el capital, el "por cobrar" y la conciliación.
+//  · Fechas LOCALES (td(), _diasIso), nunca toISOString(): a las 21:00 de
+//    Brasil toISOString ya es mañana y el atraso saldría con un día de más.
+//  · AL CERRAR EL CARGO LA DECISIÓN QUEDA ESCRITA (recargoCobrado, recargoDias…)
+//    y desde ahí manda lo guardado: cambiar la fecha después no recalcula nada
+//    (lo pidió ella). Quitar el abono que lo cerró la deshace con su dinero.
+//  · EL DINERO ENTRA SIN ajusteCuentaEgreso. Esa función, al sumar, sube el
+//    primer lote de la cuenta sin tocar su tasa — el aumentarLoteRecibido que la
+//    regla del inventario prohíbe. Era un error del 264. Ahora entra con
+//    creditCuentaRep (solo el saldo) y su PROPIO lote (crearLoteRecibido), con
+//    origenRemesa "rcc:<id>" para que no decida la tasa de referencia y para
+//    poder quitarlo al deshacer (quitarLoteDeRemesa deja la marca de borrado).
+function _isoFechaCC(v){
+  var s=String(v||"").trim();
+  if(/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  if(s.indexOf("/")>=0) return _isoDeDDMMAA(s)||"";
+  return "";
+}
+// Suma días a una fecha aaaa-mm-dd con el calendario LOCAL.
+function _isoMasDias(iso,n){
+  var p=String(iso||"").split("-");
+  if(p.length!==3) return "";
+  var d=new Date(parseInt(p[0],10),parseInt(p[1],10)-1,parseInt(p[2],10)+(n||0));
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+}
+function _ddmm(iso){ return iso?iso.slice(8,10)+"/"+iso.slice(5,7):""; }
+// ¿Ya se decidió el recargo de este cargo? Desde ahí manda lo guardado.
+function _recargoDecidido(c){ return !!c && c.recargoCobrado!==undefined && c.recargoCobrado!==null; }
+// La ÚNICA cuenta del recargo. La leen la tarjeta, la cabecera del cliente, el
+// cobro y el WhatsApp: calculado en cada sitio, un día la pantalla diría 21,74
+// y el cobro pediría otra cosa (el 34,27 contra el 34,28).
+function _recargoCobro(c,hoyIso){
+  var out={hay:false,bloqueado:false,fp:"",dias:0,futura:false,enGracia:false,graciaHasta:"",
+           activa:true,base:0,multa:0,juros:0,total:0,saldo:c?_saldoCargoCC(c):0};
+  if(!c) return out;
+  if(_recargoDecidido(c)){
+    out.bloqueado=true;
+    out.fp=_isoFechaCC(c.fechaPrometida);
+    out.dias=parseInt(c.recargoDias,10)||0;
+    out.multa=parseFloat(c.recargoMulta)||0;
+    out.juros=parseFloat(c.recargoJuros)||0;
+    out.total=Math.round((parseFloat(c.recargoCobrado)||0)*100)/100;
+    out.hay=out.total>0.009;
+    return out;
+  }
+  var fp=_isoFechaCC(c.fechaPrometida);
+  if(!fp) return out;
+  out.fp=fp;
+  var cfg=cfgMora();
+  out.activa=cfg.activa;
+  var hoy=hoyIso||td();
+  var dias=_diasIso(fp,hoy);
+  out.dias=dias;
+  out.graciaHasta=_isoMasDias(fp,cfg.diasGracia);
+  if(dias<0){ out.futura=true; return out; }
+  if(!cfg.activa) return out;
+  if(dias<=cfg.diasGracia){ out.enGracia=true; return out; }
+  var monto=parseFloat(c.monto)||0;
+  var abonos=(c.abonos||[]).map(function(a){return {iso:_isoFechaCC(a.fecha),m:parseFloat(a.monto)||0};})
+    .filter(function(a){return a.iso && a.m>0;})
+    .sort(function(a,b){return a.iso.localeCompare(b.iso);});
+  var saldoAl=function(iso){
+    var t=monto;
+    abonos.forEach(function(a){ if(a.iso<=iso) t-=a.m; });
+    return Math.max(0,t);
+  };
+  out.base=Math.round(saldoAl(out.graciaHasta)*100)/100;
+  // Interés por tramos: del día prometido a cada abono, con el saldo de ese tramo.
+  var cur=fp, saldo=saldoAl(fp), interes=0, pct=(cfg.jurosPctMes/100)/30;
+  abonos.forEach(function(a){
+    if(a.iso<=fp || a.iso>hoy) return;
+    interes+=saldo*pct*_diasIso(cur,a.iso);
+    saldo=Math.max(0,saldo-a.m);
+    cur=a.iso;
+  });
+  interes+=saldo*pct*_diasIso(cur,hoy);
+  out.multa=Math.round(out.base*(cfg.multaPct/100)*100)/100;
+  out.juros=Math.round(interes*100)/100;
+  out.total=Math.round((out.multa+out.juros)*100)/100;
+  out.hay=out.total>0.009;
+  return out;
+}
+// Poner, cambiar o quitar la fecha prometida. No llama a R() (ARREGLO 32): en la
+// PC el campo de fecha dispara "change" a mitad de teclear, y repintar se lo
+// llevaría. Se refresca por su id lo que depende de la fecha (ARREGLO 55). El
+// _mod lo pone saveData() al ver el cargo cambiado, como a todo lo demás.
+function setFechaPrometida(cargoId,val){
+  var c=(S.cuentasCobrar||[]).find(function(x){return String(x.id)===String(cargoId);});
+  if(!c) return;
+  if(c.estado==="cobrado"||_recargoDecidido(c)){
+    alert("Este cargo ya se cobró: la fecha prometida y el recargo quedaron bloqueados.");
+    R(); return;
+  }
+  var iso=_isoFechaCC(val);
+  if(iso) c.fechaPrometida=iso; else delete c.fechaPrometida;
+  logAudit("FECHA_PROMETIDA",c.cliente+": "+(iso?"prometió pagar el "+_ddmm(iso):"sin fecha prometida"));
+  saveData();
+  _pintarRecargoCC(c);
+}
+function _pintarRecargoCC(c){
+  var el=document.getElementById("ccrec-"+_idClaveCC(String(c.id)));
+  if(el) el.innerHTML=_htmlRecargoCargo(c);
+  var clave=String(c.cliente||"").trim().toUpperCase().replace(/\s+/g," ");
+  var eg=document.getElementById("ccrecg-"+_idClaveCC(clave));
+  if(eg) eg.innerHTML=_htmlRecargoGrupo(clave);
+}
+function _idClaveCC(clave){ return String(clave||"").replace(/[^A-Za-z0-9]/g,"_"); }
+// Lo que se dibuja de la fecha prometida y del recargo de UN cargo.
+function _htmlRecargoCargo(c){
+  var rc=_recargoCobro(c), mon=c.moneda||"BRL";
+  var caja=function(color,html){
+    return "<div style='margin-top:8px;padding:8px 11px;background:var(--avi-sup);border:1px solid var(--avi-ln);border-left:3px solid "+color+";border-radius:8px;font-size:13px;color:var(--tx2);line-height:1.45'>"+html+"</div>";
+  };
+  if(rc.bloqueado){
+    if(!rc.hay) return caja("var(--tx3)","🔒 "+(rc.fp?"Prometió pagar el "+_ddmm(rc.fp)+" · ":"")+"cerrado <b>sin recargo</b>");
+    return caja("var(--ok)","🔒 Prometió pagar el "+_ddmm(rc.fp)+" · "+rc.dias+" días de atraso<br>"+
+      "<b style='color:var(--ok)'>Recargo cobrado "+f2(rc.total)+" "+mon+"</b>"+
+      (c.recargoCuentaId?" en "+_escAud(nombreCuentaEg(c.recargoCuentaId)):""));
+  }
+  if(!rc.fp) return "";
+  if(rc.futura) return caja("var(--tx3)","Prometió pagar el <b>"+_ddmm(rc.fp)+"</b> · faltan "+(-rc.dias)+" día"+(rc.dias===-1?"":"s"));
+  if(!rc.activa) return caja("var(--tx3)","Prometió pagar el "+_ddmm(rc.fp)+" · la mora está apagada en Configuración: no se calcula recargo");
+  if(rc.enGracia) return caja("var(--tx3)","Prometió pagar el "+_ddmm(rc.fp)+" · <b>en gracia hasta "+_ddmm(rc.graciaHasta)+"</b>");
+  if(!rc.hay) return "";
+  return caja("var(--avi)","⚠️ Prometió pagar el <b>"+_ddmm(rc.fp)+"</b> · <b>"+rc.dias+" días de atraso</b><br>"+
+    "Recargo <b style='color:var(--avi-tx)'>"+f2(rc.total)+" "+mon+"</b> (multa "+f2(rc.multa)+" + interés "+f2(rc.juros)+")<br>"+
+    "Total con recargo <b>"+f2(Math.round((rc.saldo+rc.total)*100)/100)+" "+mon+"</b>");
+}
+// El recargo que hoy corre en los cargos de un cliente, por moneda (el calculado
+// y el manual viejo que siga pendiente). No suma a la deuda: se dice aparte.
+function _recargosDeCliente(clave){
+  var pares=[];
+  _cargosPendDeCliente(clave).forEach(function(c){
+    var r=_recargoCobro(c).total+_recargoPendDe(c);
+    if(r>0.009) pares.push({monto:Math.round(r*100)/100,mon:c.moneda});
+  });
+  return pares;
+}
+function _htmlRecargoGrupo(clave){
+  var p=_recargosDeCliente(clave);
+  return p.length?"+ "+bkPorMoneda(p)+" recargo":"";
+}
+// Las tres salidas que pidió ella, con botones y no con Aceptar/Cancelar:
+// cobrar con recargo, cobrar sin recargo, o no hacer nada. "Con recargo" abre
+// un segundo cuadro con el monto escrito (0 = perdonado); cancelarlo tampoco
+// hace nada. onElegir recibe el monto del recargo (0 si va sin él).
+function _elegirRecargo(c,rc,onElegir){
+  var mon=c.moneda||"BRL";
+  var old=document.getElementById("recargoModal"); if(old) old.remove();
+  var div=document.createElement("div");
+  div.id="recargoModal";
+  div.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px";
+  var btn="display:block;width:100%;padding:13px;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;margin-top:8px;";
+  div.innerHTML=
+    "<div style='background:var(--sup);border-radius:16px;padding:20px;max-width:380px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,.3)'>"+
+      "<div style='font-size:16px;font-weight:800;color:var(--tit);margin-bottom:6px'>Recargo por atraso · "+_escAud(c.cliente)+"</div>"+
+      "<div style='font-size:13px;color:var(--tx2);line-height:1.5;margin-bottom:6px'>Prometió pagar el <b>"+_ddmm(rc.fp)+"</b> · <b>"+rc.dias+" días</b> de atraso<br>"+
+        "Multa "+f2(rc.multa)+" + interés "+f2(rc.juros)+" = <b>"+f2(rc.total)+" "+mon+"</b></div>"+
+      "<button id='recCon' style='"+btn+"border:none;background:var(--fondo-osc);color:var(--sobre-color)'>Cobrar con recargo "+f2(rc.total)+" "+mon+"</button>"+
+      "<button id='recSin' style='"+btn+"border:1.5px solid var(--ln);background:var(--sup);color:var(--tx)'>Cobrar sin recargo</button>"+
+      "<button id='recNo' style='"+btn+"border:none;background:none;color:var(--tx3)'>Cancelar</button>"+
+    "</div>";
+  document.body.appendChild(div);
+  var cerrar=function(){ var m=document.getElementById("recargoModal"); if(m) m.remove(); };
+  div.onclick=function(e){ if(e.target===div) cerrar(); };
+  document.getElementById("recNo").onclick=cerrar;
+  document.getElementById("recSin").onclick=function(){ cerrar(); onElegir(0); };
+  document.getElementById("recCon").onclick=function(){
+    cerrar();
+    var t=prompt("Recargo a cobrar a "+c.cliente+" (en "+mon+").\n\nCalculado: "+f2(rc.total)+". Puedes cambiarlo; 0 = se lo perdonas.",_comaCab(rc.total));
+    if(t===null) return;
+    var m=_leerNumero(t,"monto");
+    if(isNaN(m)||m<0){ alert("No entendí el monto: \""+t+"\". No se cobró nada."); return; }
+    onElegir(Math.round(m*100)/100);
+  };
+}
+// Deja escrita la decisión y, si se cobró algo, mete el dinero en la cuenta del
+// cobro con su propio lote. factor = lo que vale 1 de la deuda en la moneda en
+// que pagó (1 si es la misma), así el recargo sigue la tasa del propio cobro.
+function _aplicarRecargoCobro(c,rc,monto,cuentaId,monPago,factor){
+  var mon=c.moneda||"BRL";
+  c.recargoCalculado=rc.total;
+  c.recargoDias=rc.dias;
+  c.recargoMulta=rc.multa;
+  c.recargoJuros=rc.juros;
+  c.recargoFecha=td();
+  if(!(monto>0.009)){
+    c.recargoCobrado=0;
+    logAudit("RECARGO_COBRO","Sin recargo a "+c.cliente+" (calculado "+f2(rc.total)+" "+mon+", "+rc.dias+" días)");
+    return;
+  }
+  var usdt=_usdtDeRecargo(monto,mon);
+  c.recargoCobrado=monto;
+  c.recargoUsdt=usdt||0;
+  c.recargoMonPago=monPago||mon;
+  c.recargoPago=Math.round(monto*(factor||1)*100)/100;
+  c.recargoCuentaId=cuentaId||"";
+  if(cuentaId){
+    creditCuentaRep(cuentaId,c.recargoPago);
+    crearLoteRecibido(c.recargoMonPago,c.recargoPago,usdt,cuentaId,td(),"rcc:"+c.id,"",true,false);
+  }
+  logAudit("RECARGO_COBRO","Recargo de "+f2(monto)+" "+mon+" a "+c.cliente+" ("+rc.dias+" días)"+(cuentaId?" → "+nombreCuentaEg(cuentaId):""));
+}
+// Deshace lo que dejó _aplicarRecargoCobro: el dinero sale de la cuenta, su
+// lote se quita con su marca de borrado, y el cargo vuelve a "sin decidir".
+function _deshacerRecargoCobro(c){
+  if(!_recargoDecidido(c)) return;
+  if((parseFloat(c.recargoPago)||0)>0.009 && c.recargoCuentaId){
+    creditCuentaRep(c.recargoCuentaId,-(parseFloat(c.recargoPago)||0));
+    quitarLoteDeRemesa("rcc:"+c.id);
+  }
+  ["recargoCobrado","recargoCalculado","recargoDias","recargoMulta","recargoJuros","recargoFecha",
+   "recargoUsdt","recargoMonPago","recargoPago","recargoCuentaId"].forEach(function(k){ delete c[k]; });
+}
+function marcarCobrado(id,recDec){
   var c=(S.cuentasCobrar||[]).find(function(x){return String(x.id)===String(id);});
   if(!c){alert("No encontrado.");return;}
+  // ARREGLO 267: con recargo por fecha prometida, primero los tres botones.
+  // Cancelar no toca nada; las otras dos vuelven aquí con el monto decidido.
+  var _rc=_recargoCobro(c);
+  var _conRec=_rc.hay&&!_rc.bloqueado;
+  if(_conRec&&recDec===undefined){
+    if(_usdtDeRecargo(_rc.total,c.moneda||"BRL")===null){alert("No hay tasa de "+(c.moneda||"BRL")+" para valorar el recargo en USDT.\nPublica la tasa en 🧮 Tasas y vuelve a intentarlo.");return;}
+    _elegirRecargo(c,_rc,function(m){ marcarCobrado(id,m); });
+    return;
+  }
+  var _recM=_conRec?(parseFloat(recDec)||0):null;
+  var _txtRec=(_recM>0.009)?" + "+f2(_recM)+" de recargo":"";
+  var _ctaRec="", _monRec=c.moneda;
   // ARREGLO 264: el recargo pendiente se decide ANTES de tocar nada.
   var _ctaSug=(S.cuentas||[]).find(function(x){return x.id===c.cuentaBanco||x.nombre===c.cuentaBanco;});
   var _accRec=_decidirRecargoAlCerrar(c,_ctaSug?_ctaSug.id:null);
@@ -12989,10 +13338,11 @@ function marcarCobrado(id){
     if(cta){
       // Verificar que la moneda de la operación coincida con la moneda de la cuenta
       if(cta.moneda&&c.moneda&&cta.moneda!==c.moneda){
-        if(!confirm("⚠️ La operación es en "+c.moneda+" pero la cuenta \""+cta.nombre+"\" es en "+cta.moneda+".\n\nSi ya convertiste el dinero y el saldo a acreditar es correcto, confirma.\nSi no, cancela y ajusta la cuenta destino primero.\n\n¿Acreditar "+f2(c.monto)+" en "+cta.nombre+"?"))return;
+        if(!confirm("⚠️ La operación es en "+c.moneda+" pero la cuenta \""+cta.nombre+"\" es en "+cta.moneda+".\n\nSi ya convertiste el dinero y el saldo a acreditar es correcto, confirma.\nSi no, cancela y ajusta la cuenta destino primero.\n\n¿Acreditar "+f2(c.monto)+_txtRec+" en "+cta.nombre+"?"))return;
       } else {
-        if(!confirm("Marcar como cobrado y acreditar "+f2(c.monto)+" "+c.moneda+" en \""+cta.nombre+"\".\n¿Confirmar?"))return;
+        if(!confirm("Marcar como cobrado y acreditar "+f2(c.monto)+" "+c.moneda+_txtRec+" en \""+cta.nombre+"\".\n¿Confirmar?"))return;
       }
+      _ctaRec=cta.id; _monRec=cta.moneda||c.moneda;
       cta.saldo=Math.round(((parseFloat(cta.saldo)||0)+(parseFloat(c.monto)||0))*100)/100;
       // Ahora sí entró: nace su lote, con el costo del día en que se pactó.
       _loteAlCobrar(c, parseFloat(c.monto)||0, cta.id);
@@ -13001,8 +13351,37 @@ function marcarCobrado(id){
   c.estado="cobrado";
   c.fechaCobro=td();
   _aplicarRecargoAlCerrar(c,_accRec);
+  // El recargo entra a la MISMA cuenta que el cobro; si el cobro no entra a
+  // ninguna (cargo sin cuenta), el recargo tampoco, y queda solo apuntado.
+  if(_recM!==null) _aplicarRecargoCobro(c,_rc,_recM,_ctaRec,_monRec,1);
   logAudit("COBRO_MARCADO","Marcó cobrado · Cliente: "+c.cliente+" · "+c.monto+" "+c.moneda);
   saveData();R();
+}
+// ── ARREGLO 268 · el abono de Por cobrar sale por donde entró ──
+// Los de antes del 268 entraron con ajusteCuentaEgreso por ab.monto y salen
+// igual. Los nuevos entraron con creditCuentaRep por lo que de verdad llegó
+// (montoPago) y dejaron su lote (loteId): sale el dinero y sale ese lote, con
+// su marca de borrado para que el servidor no lo devuelva (ARREGLO 163).
+function _salirAbonoCobrar(ab){
+  if(!ab||!ab.cuentaId) return;
+  if(ab.entraSaldo){
+    creditCuentaRep(ab.cuentaId,-(parseFloat(ab.montoPago!==undefined?ab.montoPago:ab.monto)||0));
+    if(ab.loteId!==undefined && ab.loteId!==null) _quitarLotePorId(ab.loteId);
+  } else ajusteCuentaEgreso(ab.cuentaId,-ab.monto);
+}
+function _quitarLotePorId(id){
+  ["inventarioUsdt","inventarioUsdt_cerrado"].forEach(function(cat){
+    var antes=(S[cat]||[]).length;
+    S[cat]=(S[cat]||[]).filter(function(r){ return String(r.id)!==String(id); });
+    if(S[cat].length!==antes) _marcarBorradoMerge(cat, id);
+  });
+}
+function _txtLoteAbonoGastado(ab){
+  if(!ab||ab.loteId===undefined||ab.loteId===null) return "";
+  var l=(S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[]).find(function(r){return String(r.id)===String(ab.loteId);});
+  if(!l) return "";
+  var cap=parseFloat(l.bs)||0, gast=Math.round((cap-(parseFloat(l.bsRestante)||0))*100)/100;
+  return gast>0.01?"\n\n⚠️ El dinero de este abono ya se gastó en parte ("+f2(gast)+" de "+f2(cap)+" "+(l.moneda||"")+"). Su lote se quita entero.":"";
 }
 // Elimina un registro de Cuentas por Cobrar. Esta función NO EXISTÍA —
 // el botón 🗑️ de esta pantalla llamaba a un nombre que nunca se definió
@@ -13025,12 +13404,17 @@ function eliminarCuenta(id){
   if(totalAbonado>0) msg+="\n\n⚠️ Ya tiene "+f2(totalAbonado)+" "+c.moneda+" en abonos registrados — se revertirá el saldo que se acreditó en las cuentas correspondientes.";
   // ARREGLO 264: un recargo cobrado también entró a una cuenta y sale con él.
   if(_recCobTot>0.009) msg+="\n\n⚠️ Tiene "+f2(_recCobTot)+" "+c.moneda+" de recargo cobrado — se le resta a la cuenta donde entró.";
+  // ARREGLO 267: y el recargo por fecha prometida, que entró con el cobro.
+  if((parseFloat(c.recargoPago)||0)>0.009) msg+="\n\n⚠️ Se cobró "+f2(c.recargoCobrado)+" "+c.moneda+" de recargo por atraso — sale de la cuenta donde entró.";
   if(!confirm(msg)) return;
-  _recCob.forEach(function(r){ if(r.cobrado.cuentaId) ajusteCuentaEgreso(r.cobrado.cuentaId,-(parseFloat(r.monto)||0)); });
+  _recCob.forEach(_salirRecargoManual);
+  _deshacerRecargoCobro(c);
   // Revertir cualquier abono ya acreditado a una cuenta, para no dejar
   // dinero "fantasma" metido en un banco sin el registro que lo respalda.
   (c.abonos||[]).forEach(function(ab){
     if(!ab.cuentaId) return;
+    // ARREGLO 268: el abono nuevo sale con lo que de verdad entró y con su lote.
+    if(ab.entraSaldo){ _salirAbonoCobrar(ab); return; }
     var cta=(S.cuentas||[]).find(function(x){return x.id===ab.cuentaId;});
     if(cta) cta.saldo=Math.round(((parseFloat(cta.saldo)||0)-(parseFloat(ab.monto)||0))*100)/100;
   });
@@ -15485,32 +15869,21 @@ function ajusteCuentaEgreso(cuentaId,delta){
   c.saldo=Math.round(((parseFloat(c.saldo)||0)+(parseFloat(delta)||0))*100)/100;
   var cap=(S.capital||[]).find(function(k){return k.nombre&&c.nombre&&k.nombre.toLowerCase()===c.nombre.toLowerCase();});
   if(cap)cap.saldo=c.saldo;
-  // Reflejar el movimiento también en el lote de inventario ligado a esa cuenta (si existe).
-  ajustarLotePorCuenta(cuentaId, c.moneda, delta);
+  // ARREGLO 269 · esta función mueve SOLO el saldo. Antes llamaba además a
+  // ajustarLotePorCuenta(), que subía o bajaba el primer lote de venta cuyo
+  // cuentaId fuera esa cuenta, SIN tocar su tasa: lo que entraba por una venta
+  // de mercancía, una ganancia extra, "metí plata mía" o una liquidación
+  // inflaba un lote que decía haber costado otra cosa. Estaba dormido —ningún
+  // lote suyo lleva el banco en cuentaId (medido el 24/11: 0 de 553)— pero
+  // bastaba un lote con esa forma para despertarlo. Se quita aquí, en el único
+  // sitio que la llamaba, y no función por función (ARREGLOS 101, 119, 150,
+  // 153: siempre queda una fuera). Los lotes se gastan por su camino de
+  // siempre: descontarFIFOEgreso, consumirFIFORemesa, consumirLotesMon.
 }
 
-// ── AJUSTAR LOTE DE INVENTARIO POR MOVIMIENTO EN UNA CUENTA ──────────
-// Cuando una cuenta de bolívares/reales sube o baja por un EGRESO (u otro ajuste manual),
-// el lote de venta de USDT ligado a esa MISMA cuenta debe moverse igual.
-// delta negativo = salió dinero (baja el lote). delta positivo = volvió (revierte un pago).
-// IMPORTANTE: si la cuenta NO tiene lote (ej: Banesco sin venta de USDT registrada),
-// NO se toca ningún lote. Solo se afecta el saldo de la cuenta (eso se hace aparte).
-function ajustarLotePorCuenta(cuentaId, moneda, delta){
-  if(!cuentaId) return;
-  var d = Math.round((parseFloat(delta)||0)*100)/100;
-  if(d===0) return;
-  // Solo monedas que llevan saldo en lote de venta (VES, BRL, etc.). USDT no usa bsRestante.
-  if(moneda==="USDT" || moneda==="USD") return;
-  // Buscar el lote de venta de esa moneda ligado EXACTAMENTE a esa cuenta.
-  var objetivo = (S.inventarioUsdt||[]).filter(function(r){
-    return r.tipo==="venta" && r.moneda===moneda && r.cuentaId===cuentaId;
-  }).sort(ordenFIFO)[0] || null;
-  if(!objetivo) return; // cuenta sin lote → no inventamos nada
-  var actual = parseFloat(objetivo.bsRestante)||0;
-  var nuevo = actual + d;
-  if(nuevo < 0) nuevo = 0; // nunca dejar el lote en negativo
-  objetivo.bsRestante = Math.round(nuevo*100)/100;
-}
+// ARREGLO 269: aquí vivía ajustarLotePorCuenta(). Se fue con su única llamada
+// (ver ajusteCuentaEgreso). No vuelvas a mover un lote desde un ajuste de saldo:
+// un lote solo nace o se gasta por una operación (ARREGLO 161).
 function nombreCuentaEg(cid){var c=(S.cuentas||[]).find(function(x){return x.id===cid;});return c?c.nombre:"";}
 // ── REPOSICIONES (saldar / reponer sueldo · solo USDT) ──
 function repMesUsdt(mesKey){
@@ -16178,9 +16551,9 @@ function borrarMoraPrestamo(prestId,moraId){
   if(!m) return;
   var montoReal=parseFloat(m.montoPago)||0;
   var monedaReal=m.monedaPago||p.mon||"USDT";
-  if(!confirm("¿Borrar este cobro de mora de "+f2(montoReal)+" "+monedaReal+" ("+m.fecha+")?\n\nSe le restará ese monto a la cuenta donde había entrado y la mora vuelve a quedar pendiente."))return;
+  if(!confirm("¿Borrar este cobro de mora de "+f2(montoReal)+" "+monedaReal+" ("+m.fecha+")?\n\nSe le restará ese monto a la cuenta donde había entrado y la mora vuelve a quedar pendiente."+_txtLoteCobroGastado(m)))return;
   autorizarYHacer(function(){
-    if(m.cuentaId) ajusteCuentaEgreso(m.cuentaId,-montoReal);
+    _salirCobroPrestamo(m);
     p.mora.historial=p.mora.historial.filter(function(x){return x.id!==moraId;});
     p.mora.cobrada=Math.max(0,Math.round(((parseFloat(p.mora.cobrada)||0)-(parseFloat(m.monto)||0))*100)/100);
     // Si el prestamo se habia cerrado, vuelve a abrirse: aun debe mora.
@@ -18008,7 +18381,7 @@ function _monIU(){ var f=S.nIU; return f.tipo==="venta"?(f.monedaVenta||"VES"):(
 function _ultimasIU(n){
   var f=S.nIU, mon=_monIU();
   return (S.inventarioUsdt||[]).concat(S.inventarioUsdt_cerrado||[])
-    .filter(function(l){ return l.moneda===mon && l.tipo===f.tipo && !_loteDeTraspaso(l) && (parseFloat(l.tasa)||0)>0; })
+    .filter(function(l){ return l.moneda===mon && l.tipo===f.tipo && !_loteDeTraspaso(l) && !_loteDeCobro(l) && (parseFloat(l.tasa)||0)>0; })
     .sort(function(a,b){ return ordenFIFO(b,a); })
     .slice(0,n||3);
 }
@@ -23475,10 +23848,11 @@ function reqDel(arr,id,field){
         // Y aún así se recorren los abonos para quitar el dinero que entró
         // por ellos (igual que un préstamo normal).
         if(item.abonos&&item.abonos.length){
-          item.abonos.forEach(function(ab){
-            if(ab.cuentaId) ajusteCuentaEgreso(ab.cuentaId,-(parseFloat(ab.montoPago!==undefined?ab.montoPago:ab.monto)||0));
-          });
+          item.abonos.forEach(_salirCobroPrestamo);
         }
+        // ARREGLO 268: la mora que entró con su lote sale también. La de antes
+        // del 268 se queda como estaba (no se ajusta hacia atrás).
+        ((item.mora&&item.mora.historial)||[]).forEach(function(m){ if(m.entraSaldo) _salirCobroPrestamo(m); });
         logAudit("BORRAR_PRESTAMOS","Borró ID:"+id+" (desde mercancía, artículo vuelto al inventario)");
         S[arr]=S[arr].filter(function(x){return x!==item;});
         _marcarBorradoMerge(arr, item.id);
@@ -23522,10 +23896,10 @@ function reqDel(arr,id,field){
       // se recibieron — hay que restárselo también, o si no, ese dinero
       // queda "de más" en esa cuenta aunque el préstamo ya no exista.
       if(item.abonos&&item.abonos.length){
-        item.abonos.forEach(function(ab){
-          if(ab.cuentaId) ajusteCuentaEgreso(ab.cuentaId,-(parseFloat(ab.montoPago!==undefined?ab.montoPago:ab.monto)||0));
-        });
+        item.abonos.forEach(_salirCobroPrestamo);
       }
+      // ARREGLO 268: ídem la mora nueva.
+      ((item.mora&&item.mora.historial)||[]).forEach(function(m){ if(m.entraSaldo) _salirCobroPrestamo(m); });
     }
     // Lista negra: evita que Firebase re-agregue entradas borradas en sync
     if(arr==="brl"||arr==="vzla"||arr==="eeuu"){
@@ -27143,6 +27517,17 @@ function _indiceRemesas(){
 // y además pasa de verdad (la remesa se borró y el lote quedó vivo).
 function _deQuienLote(l){
   if(!l || !l.origenRemesa) return "";
+  // ARREGLO 268: el lote de un cobro dice de qué préstamo o de qué cliente vino.
+  var _mc=/^(pab|pmo):([^:]+):/.exec(String(l.origenRemesa));
+  if(_mc){
+    var _pr=(S.prestamos||[]).find(function(x){return String(x.id)===_mc[2];});
+    return " · "+(_mc[1]==="pmo"?"mora de ":"abono de ")+(_pr?_escAud(String(_pr.desc||"").slice(0,22)):"un préstamo");
+  }
+  var _rc=/^rc[cm]:([^:]+)/.exec(String(l.origenRemesa));
+  if(_rc){
+    var _cc=(S.cuentasCobrar||[]).find(function(x){return String(x.id)===_rc[1];});
+    return " · recargo de "+(_cc?_escAud(String(_cc.cliente||"").slice(0,22)):"un cobro");
+  }
   var r=_indiceRemesas()[l.origenRemesa];
   if(!r) return "";
   var cl=String(r.cl||"").trim();
@@ -27185,9 +27570,17 @@ function _deQuienLote(l){
 function _loteDeCliente(l){
   return !!l && String(l.plataforma||"").replace(/\s+/g," ").trim().toUpperCase()==="BINANCE PAY";
 }
+// ARREGLO 268 · el lote que deja un COBRO (abono o mora de un préstamo, el
+// recargo de un cobro) no es una operación de USDT: su tasa es la del préstamo
+// o la de la remesa, de hace semanas. Contándolo, el lote más nuevo de VES
+// decidiría a cuánto se valoran TODOS sus bolívares. Medido en Chromium con su
+// copia: un abono de 600 Bs movía el capital +11 sin que entrara nada más. Es
+// la misma razón por la que se apartaron las compras de Binance Pay (263).
+function _loteDeCobro(l){ return !!(l && /^(pab|pmo|rcc|rcm):/.test(String(l.origenRemesa||""))); }
 function _loteEsOpUSDT(l){
   if(!l || l.permuta) return false;
   if(_loteDeCliente(l)) return false;
+  if(_loteDeCobro(l)) return false;
   // ARREGLO 170: el lote de apertura nace valiendo tasaDeReferencia("BRL"), asi
   // que dejarlo entrar aqui seria que esa tasa saliera de si misma y se quedara
   // clavada en el dia que se abrio.
@@ -33786,7 +34179,7 @@ function _ultimaOpUSDT(mon){
       var l=arr[i];
       // ARREGLO 263: la misma regla que tasaDeReferencia, o la tarjeta diría
       // que el suelo sale de una compra a un cliente que la tasa ya no mira.
-      if(l.moneda!==mon || l.permuta || _loteDeTraspaso(l) || _loteDeCliente(l) || !((parseFloat(l.usdt)||0)>0)) continue;
+      if(l.moneda!==mon || l.permuta || _loteDeTraspaso(l) || _loteDeCliente(l) || _loteDeCobro(l) || !((parseFloat(l.usdt)||0)>0)) continue;
       var t=parseFloat(l.id)||0;
       if(t>1.5e12 && t>mt){ mt=t; mejor=l; }
     }
@@ -36728,7 +37121,7 @@ function _htmlCamposFlyerApp(){
 // vea igual a este". El diseño (posiciones, colores, letras, ramas, bolas y
 // destellos) sale TAL CUAL de su plantilla.html; lo que hace la app sigue igual:
 // la de WhatsApp es la publicada, la de la app la escribe ella, un boton por
-// ruta, no se genera si la app no es mejor, y sale a 1080 × 1920 (ARREGLO 259).
+// ruta, no se genera si la app no es mejor, y sale a 2160 × 3840 (ARREGLO 261).
 //
 // - "por cada reais", como en su paquete: decision suya del 16/11.
 // - Temporada 🎄: su plantilla entera. ☀️ Normal: lo mismo SIN ramas ni bolas, y
@@ -36839,26 +37232,6 @@ function _htmlRutaFlyerApp(f){
     "<div class='vr-ah'>"+f.ruta.frase(_tasaCorta(f.dif))+"</div>";
 }
 
-// Reduce el lienzo al tamaño final con suavizado de alta calidad, en dos
-// pasos de mitad: de un salto, el navegador toma una muestra de cada cuatro
-// pixeles y el borde de las letras sale dentado.
-function _flyAlTamano(canvas, W, H){
-  if(!canvas || (canvas.width===W && canvas.height===H)) return canvas;
-  var src=canvas;
-  while(src.width/2>=W && src.height/2>=H && src.width>W){
-    var mid=document.createElement("canvas");
-    mid.width=Math.round(src.width/2); mid.height=Math.round(src.height/2);
-    var m=mid.getContext("2d"); m.imageSmoothingEnabled=true; m.imageSmoothingQuality="high";
-    m.drawImage(src,0,0,mid.width,mid.height);
-    src=mid;
-  }
-  if(src.width===W && src.height===H) return src;
-  var out=document.createElement("canvas"); out.width=W; out.height=H;
-  var c=out.getContext("2d"); c.imageSmoothingEnabled=true; c.imageSmoothingQuality="high";
-  c.drawImage(src,0,0,W,H);
-  return out;
-}
-
 function generarFlyerApp(dir){
   var f=_filasFlyerApp().filter(function(x){ return x.dir===dir; })[0];
   if(!f){ return; }
@@ -36898,15 +37271,14 @@ function generarFlyerApp(dir){
   }).then(function(canvas){
     try{
       var a=document.createElement("a");
-      // ARREGLO 259 · sale EXACTO al tamaño del estado, 1080 × 1920. Sus
-      // palabras del 15/11: lo publica en WhatsApp y "se ve como de baja
-      // calidad". A 2160 × 3840 WhatsApp lo reducía él, con su redondeo,
-      // antes de comprimirlo.
-      // Se DIBUJA al doble y se reduce aqui: dibujado a escala 1, html2canvas
-      // pinta mal las sombras difuminadas (medido: un bloque gris encima de la
-      // tarjeta de la app y las pastillas con los extremos oscuros).
-      // Solo en ESTE flyer: el de RemesasYA sigue al doble porque se imprime.
-      a.href=_flyAlTamano(canvas, W, H).toDataURL("image/png");
+      // ARREGLO 261 · sale al DOBLE, 2160 × 3840. El 259 lo reducía a
+      // 1080 × 1920 pensando que WhatsApp lo dejaría mejor, y fue al revés: el
+      // 27/11 WhatsApp le dijo "Este archivo multimedia no tiene resolución HD"
+      // y no la dejó publicarlo en HD. Probado con ella: a 2160 × 3840 SÍ la
+      // deja. No hay que volver a reducirlo.
+      // Se dibuja a escala 2 igual que antes (a escala 1 html2canvas pinta mal
+      // las sombras), así que ahora el lienzo sale tal cual se dibujó.
+      a.href=canvas.toDataURL("image/png");
       a.download="RISApp_"+(dir==="ida"?"Brasil-Venezuela":"Venezuela-Brasil")+"_"+fh.fecha.replace(/\//g,"-")+".png";
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
     }catch(e){ alert("No se pudo descargar: "+e.message); }
@@ -39139,7 +39511,7 @@ function confirmarLiquidacionMulti(){
     if(!grupos[it.p.id]) grupos[it.p.id] = {p: it.p, items:[]};
     grupos[it.p.id].items.push({cu:it.cu, monto:it.x.monto, pago:it.pago, idx:idx});
   });
-  var detalle = [];
+  var detalle = [], _nuevosLiq = [];
   Object.keys(grupos).forEach(function(prId){
     var g = grupos[prId], p = g.p;
     if(!p.abonos) p.abonos = [];
@@ -39148,7 +39520,7 @@ function confirmarLiquidacionMulti(){
       // montoPago/monedaPago = lo que entró de verdad (ARREGLO 219).
       // Misma forma que el abono de pagarPrestamo(), así borrar el
       // abono devuelve a la cuenta lo que ese abono acreditó.
-      p.abonos.push({
+      var _regLiq = {
         id: ahora + it.idx,
         fecha: td(),
         monto: Math.round(it.monto*100)/100,
@@ -39157,7 +39529,9 @@ function confirmarLiquidacionMulti(){
         montoPago: Math.round(it.pago*100)/100,
         cuotaN: it.cu.n,
         premio: 0
-      });
+      };
+      p.abonos.push(_regLiq);
+      _nuevosLiq.push({p:p, reg:_regLiq});
       detalle.push("Cuota "+it.cu.n+" de "+p.desc+" · "+f2(it.monto)+" "+mon+(otraMon?" (pagó "+f2(it.pago)+" "+monC+")":""));
     });
     // Si tras este bloque de abonos el préstamo queda saldado, se
@@ -39175,7 +39549,14 @@ function confirmarLiquidacionMulti(){
   // deja un movimiento, no cinco, y cuadra con lo que la persona
   // depositó de verdad.
   // ARREGLO 219: sube lo RECIBIDO, en la moneda de la cuenta.
-  ajusteCuentaEgreso(m.cuentaId, recibido);
+  // ARREGLO 270: igual que el abono normal (268): el saldo entra con
+  // creditCuentaRep y cada cuota cobrada deja SU lote a la tasa de su
+  // préstamo. Antes la liquidación no dejaba ninguno, así que cobrar la
+  // misma cuota por un botón o por el otro dejaba el inventario distinto.
+  // Borrar una de estas cuotas sale por _salirCobroPrestamo, que quita su
+  // lote. Aquí no hay mora: la liquidación solo cobra cuotas.
+  creditCuentaRep(m.cuentaId, recibido);
+  _nuevosLiq.forEach(function(x){ _loteCobroPrestamo(x.p, x.reg, "abono"); });
   logAudit("LIQUIDACION_CLIENTE", "Liquidación de "+itemsConPr.length+" cuota"+(itemsConPr.length>1?"s":"")+" · "+f2(total)+" "+mon+(otraMon?" pagados con "+f2(recibido)+" "+monC:"")+" → "+c.nombre+" · "+detalle.join(" · "));
   S._multiPg = null;
   saveData();
@@ -40575,6 +40956,21 @@ function rCuentasCobrar(){
       "</div>";
     }
 
+    // ── ARREGLO 267 · fecha prometida y su recargo ──
+    // Pendiente y sin decidir: se escribe, se cambia o se quita. Cobrado: queda
+    // bloqueada con lo que se decidió. El bloque de debajo lleva id para que
+    // setFechaPrometida lo refresque sin R() (ARREGLO 32 y 55).
+    var fpHtml="";
+    var _fpIso=_isoFechaCC(c.fechaPrometida);
+    if(isPend&&!_recargoDecidido(c)){
+      fpHtml="<div style='display:flex;align-items:center;gap:8px;margin-top:9px;flex-wrap:wrap'>"+
+        "<label style='font-size:12px;font-weight:700;color:var(--tx2)'>📅 Prometió pagar el</label>"+
+        "<input type='date' value='"+_fpIso+"' onchange='setFechaPrometida(\""+_jsAttr(String(c.id))+"\",this.value)' style='width:auto;max-width:170px;flex:0 1 auto;padding:6px 8px;font-size:13px;border:1.5px solid var(--ln);border-radius:8px;font-family:inherit;background:var(--sup);color:var(--tx)'>"+
+        (_fpIso?"<button class='bk-btn ghost' style='padding:5px 10px' title='Quitar la fecha prometida' onclick='this.previousElementSibling.value=\"\";setFechaPrometida(\""+_jsAttr(String(c.id))+"\",\"\")'>✕</button>":"")+
+      "</div>";
+    }
+    fpHtml+="<div id='ccrec-"+_idClaveCC(String(c.id))+"'>"+_htmlRecargoCargo(c)+"</div>";
+
     // ── Formulario de abono inline ──
     var abonarForm="";
     if(isAbonar&&isPend){
@@ -40689,6 +41085,7 @@ function rCuentasCobrar(){
           "<button class='bk-btn icon danger' onclick='eliminarCuenta(\""+_jsAttr(String(c.id))+"\")' title='Eliminar cargo'>🗑</button>"+
         "</div>")+
       "</div>"+
+      fpHtml+
       abonosHtml+
       recargosHtml+
       abonarForm+
@@ -40727,8 +41124,8 @@ function rCuentasCobrar(){
       g.saldoUsdt=Math.round(g.saldoUsdt*100)/100;
       // ARREGLO 264: el recargo pendiente, por moneda. NO entra en saldoUsdt
       // (eso es la deuda, y ordena la lista); se enseña aparte.
-      g.recPares=[];
-      g.items.forEach(function(c){ var r=_recargoPendDe(c); if(r>0.009) g.recPares.push({monto:r,mon:c.moneda}); });
+      // ARREGLO 267: el calculado por fecha prometida más el manual que quede.
+      g.recPares=_recargosDeCliente(g.clave);
     });
     // El que más debe, primero; a igual saldo, por nombre, para que la
     // lista no baile de orden entre renders.
@@ -40756,7 +41153,7 @@ function rCuentasCobrar(){
               "<div class='bk-cli-meta'>"+g.items.length+" cargo"+(g.items.length!==1?"s":"")+" pendiente"+(g.items.length!==1?"s":"")+"</div>"+
             "</div>"+
             "<div class='bk-cli-amt bk-num'>"+bkPorMoneda(g.pares)+
-              (g.recPares.length?"<small style='color:var(--avi-tx)'>+ "+bkPorMoneda(g.recPares)+" recargo</small>":"")+
+              "<small id='ccrecg-"+_idClaveCC(g.clave)+"' style='color:var(--avi-tx)'>"+(g.recPares.length?"+ "+bkPorMoneda(g.recPares)+" recargo":"")+"</small>"+
               "<small>"+(g.saldoUsdt>0?"≈ $"+f2(g.saldoUsdt)+" USDT"+(g.sinTasa?" (parcial)":""):"sin tasa USDT")+"</small>"+
             "</div>"+
             "<div class='bk-chev'>"+(ab?"▲":"▼")+"</div>"+
@@ -40765,7 +41162,7 @@ function rCuentasCobrar(){
             // ARREGLO 264: las dos acciones del CLIENTE, no de un cargo. Van
             // en el cuerpo y no en la cabecera, que al tocarla se pliega.
             "<div style='display:flex;gap:8px;flex-wrap:wrap;padding:10px 2px 2px'>"+
-              "<button class='bk-btn warn' onclick='aplicarRecargoCliente(\""+_jsAttr(g.clave)+"\")'>⚠️ Recargo</button>"+
+
               "<button class='bk-btn wa' onclick='cobrarClienteWA(\""+_jsAttr(g.clave)+"\")'>📲 Cobrar por WhatsApp</button>"+
             "</div>"+
             g.items.map(function(c){return rowCuenta(c,true);}).join("")+"</div>":"")+
@@ -43182,29 +43579,22 @@ function _fotoCapital(){
   // Lo que se les debe a los socios y sigue en las cuentas (neto: lo que se
   // les debe menos lo que ellos deben). Ver _diaContable.
   var soc=0; try{ var _so=_sociosPendientesMes(mk); soc=r2(_so.porPagar-_so.deben); }catch(e){ soc=0; }
-  // natV:2 = `f` ya sale con el signo bueno (ARREGLO 263). Una foto sin él se
-  // rehace al leerla (_monDeFoto).
-  var f={ts:Date.now(), mes:mk, rem:r2(rem), soc:soc, natV:2,
+  var f={ts:Date.now(), mes:mk, rem:r2(rem), soc:soc,
     tienes:R.total, cuentas:R.enCuentas, prestado:R.enPrestamos, cobrar:R.porCobrar,
     reserva:R.enReserva, merc:R.enMercancia||0,
     sueldo:R.sueldoPendiente||0, parcelas:R.deudaParcelas||0};
   // ARREGLO 244 · por moneda: lo que hay valorado a tasa (cuentas, reserva,
-  // por cobrar y capital prestado, en nativo), lo que efectoTasasDesde ya
-  // valora a la tasa de hoy, y la tasa. Ver _diaContable.
-  var _nat=((co.tasas||{}).nat)||{};
-  // ARREGLO 245: f = lo que la conciliación ya revalúa a la tasa de hoy — las
-  // operaciones (nat) Y lo que había al abrir (cubre). "Tu día" solo añade lo
-  // que no cubre ninguna de las dos.
-  var _cubre=(((co.tasas||{}).apertura)||{}).cubre||{};
-  // ARREGLO 263: se guarda aparte para rehacer las fotos viejas sin volver a
-  // calcular la conciliación entera (le costaba 0,6 s más a "Tu día").
-  f.cub={}; Object.keys(_cubre).forEach(function(m){ f.cub[m]=r2(_cubre[m]); });
+  // por cobrar y capital prestado, en nativo) y la tasa con que se valoró.
+  // Es todo lo que "Tu día" necesita para el valor de las monedas (ARREGLO
+  // 266): esos mismos saldos y esas mismas tasas. El `f` que se guardaba aquí
+  // —lo que la conciliación ya revaluaba— se fue con él: restado entre dos
+  // fotos arrastraba cualquier cambio en los registros viejos.
   f.mon={};
   (R.porMoneda||[]).forEach(function(x){
     if(x.moneda==="USDT"||x.moneda==="USD") return;
     var tr=getRateToUsdt(x.moneda);
     if(!(tr>0)) return;
-    f.mon[x.moneda]={n:r2((x.enCuentas||0)+(x.enReserva||0)+(x.porCobrar||0)+(x.enPrestamos||0)), f:r2((_nat[x.moneda]||0)+(_cubre[x.moneda]||0)), r:tr};
+    f.mon[x.moneda]={n:r2((x.enCuentas||0)+(x.enReserva||0)+(x.porCobrar||0)+(x.enPrestamos||0)), r:tr};
   });
   if(co.configurada){
     f.c={ap:co.apertura, desde:co.desde, deb:co.deberias, bruta:co.bruta,
@@ -43243,27 +43633,28 @@ function _capturarCapitalHoy(){
 // sale de sumar las filas que se ven, no de restar las dos `deb`: con el
 // redondeo de cada una, la lista podría no cuadrar con su propio total
 // (ARREGLO 141). Lo mismo abajo: lo que sobra o falta es el resto exacto.
-// ARREGLO 263 · las fotos guardadas antes del arreglo llevan `f` con las compras
-// de USDT SUMADAS en vez de restadas, y "Tu día" las lee como inicio: sin esto,
-// el día del cambio de versión —y cualquier día anterior que se elija— seguiría
-// diciendo +361,82 de "valor de las monedas" y −414,59 "sin registrar". El
-// `nat` no depende de la tasa, solo de los movimientos, así que se rehace con
-// los de hasta ese día. `cubre` (lo que había al abrir) no tenía el fallo y se
-// toma de ahora.
-function _monDeFoto(foto, isoFoto, cubreHoy){
-  if(!foto || !foto.mon || foto.natV>=2) return foto && foto.mon;
-  var desde=(foto.c&&foto.c.desde)||(S.config||{}).aperturaFecha;
-  if(!desde) return foto.mon;
-  var nat={}, cubre={};
-  try{ nat=efectoTasasDesde(desde, isoFoto).nat||{}; }catch(e){ return foto.mon; }
-  if(cubreHoy) cubre=cubreHoy;
-  else { try{ cubre=((((conciliacionCapital()||{}).tasas||{}).apertura)||{}).cubre||{}; }catch(e){ cubre={}; } }
-  var out={};
-  Object.keys(foto.mon).forEach(function(m){
-    var x=foto.mon[m];
-    out[m]={n:x.n, r:x.r, f:r2((nat[m]||0)+(cubre[m]||0))};
-  });
-  return out;
+// ARREGLO 266 · lo que pasó en UN día, a la tasa de "Empezaste".
+//
+// Recorre los registros de HOY (no la foto guardada) con fecha en
+// (desdeIso, hastaIso], y fija las tasas de la foto de inicio mientras mira.
+// Leído de los registros, un cambio en una operación vieja ya no se cuela en
+// el día; y a la tasa de inicio, lo del día no se revalúa dos veces.
+// Las tasas se devuelven en el finally: mirar no puede ser haberlo aplicado.
+function _flujosDelDia(desdeIso, hastaIso, monIni){
+  var r={ops:0, aportes:0, trasp:0, aj:0};
+  if(!desdeIso || !hastaIso) return r;
+  var fijas={};
+  Object.keys(monIni||{}).forEach(function(m){ var t=parseFloat((monIni[m]||{}).r); if(t>0) fijas[m]=t; });
+  var antes=_TASAS_FIJAS;
+  _TASAS_FIJAS=fijas;
+  try{
+    r.ops=efectoTasasDesde(desdeIso, hastaIso).total||0;
+    r.aportes=aportesDesde(desdeIso, hastaIso).total||0;
+    r.trasp=traspasosAPersonal(desdeIso, hastaIso).total||0;
+    r.aj=ajustesDesdeApertura(desdeIso, hastaIso).total||0;
+  } finally { _TASAS_FIJAS=antes; }
+  Object.keys(r).forEach(function(k){ r[k]=Math.round(r[k]*100)/100; });
+  return r;
 }
 function _diaContable(iso){
   var hoy=_ymd(new Date());
@@ -43276,10 +43667,9 @@ function _diaContable(iso){
   out.kIni=prev.length?prev[prev.length-1]:null;
   out.ini=out.kIni?H[out.kIni]:null;
   if(!out.ini) return out;
-  // ARREGLO 263: una copia, con su `f` rehecho si es una foto de antes. No se
-  // escribe en S.histCapital: corregir lo guardado es otra decisión.
-  var ini=Object.assign({}, out.ini, {mon:_monDeFoto(out.ini, out.kIni, fin.cub)});
-  out.ini=ini;
+  // ARREGLO 266: ya no se rehace el `f` de la foto de inicio (_monDeFoto): el
+  // valor de las monedas sale solo de los saldos y las tasas de las fotos.
+  var ini=out.ini;
   var dd=function(a,b){ return r2((parseFloat(b)||0)-(parseFloat(a)||0)); };
   // Dónde está el dinero: lo que pasa de una caja a otra no cambia el total.
   // Es lo que contesta "di un préstamo": baja En cuentas y sube Prestado.
@@ -43317,49 +43707,58 @@ function _diaContable(iso){
   filas.push(["Gastos de la empresa", -d("egEmp"), "", "gan", "gastos"]);
   filas.push(["Parte de los socios", -d("socios"), "", "gan", "socios"]);
   filas.push(["Gastos personales pagados por la empresa", -d("egPer"), "", "otro", "gastos personales"]);
-  filas.push(["Pasado a tus cuentas 💜", -d("trasp"), "sigue siendo tuyo", "otro", "a tus 💜"]);
-  filas.push(["Plata tuya que metiste o sacaste", d("aportes"), "no es de la empresa", "otro", "plata tuya"]);
+  // ARREGLO 266: lo que se valora a la tasa de HOY en la conciliación —lo
+  // pasado a tus 💜, tu plata, la diferencia de cambio de las operaciones, los
+  // saldos a mano— NO sale de restar las dos fotos. Restadas, cada fila
+  // arrastraba la revalorización de TODO lo acumulado desde la apertura: el
+  // 21/11 "Plata tuya −8,19" sin haber metido ni sacado nada, solo porque el
+  // bolívar pasó de 1.069,72 a 1.089. Y arrastraba también cualquier cambio en
+  // los registros viejos entre una foto y otra. Ahora es lo de ESE día, con
+  // los registros de hoy y a la tasa de "Empezaste" (_flujosDelDia).
+  var flu=_flujosDelDia(out.kIni, iso, ini.mon);
+  out.flujos=flu;
+  filas.push(["Pasado a tus cuentas 💜", -flu.trasp, "sigue siendo tuyo", "otro", "a tus 💜"]);
+  filas.push(["Plata tuya que metiste o sacaste", flu.aportes, "no es de la empresa", "otro", "plata tuya"]);
   filas.push(["Tu sueldo, que se va apartando", -dd(ini.sueldo,fin.sueldo), "el % de lo que gana la empresa", "otro", "tu sueldo"]);
   filas.push(["Parcelas de mercancía", -dd(ini.parcelas,fin.parcelas), "", "otro", "parcelas"]);
   filas.push(["Retiro de socios por préstamos", -d("retSoc"), "", "otro", "retiro de socios"]);
   filas.push(["Intereses de la apertura", -d("intAp"), "", "otro", "intereses de la apertura"]);
+  // Lo que las remesas y las operaciones de USDT del día movieron en las
+  // cuentas, a la tasa de "Empezaste", menos la ganancia que se apuntó. Es la
+  // línea de "efecto de las tasas" de la conciliación, pero solo de hoy.
+  filas.push(["Cambio en las operaciones del día", flu.ops, "lo que movieron en tus cuentas menos lo apuntado", "otro", "cambio de las operaciones"]);
   out.filas=filas;
   var suma=0; filas.forEach(function(x){ suma+=x[1]; });
   out.deberias=r2(ini.tienes+suma);
   out.diferencia=r2(fin.tienes-out.deberias);
-  out.ajustes=d("aj");
-  // ── ARREGLO 244 · "valor de las monedas" = lo que la tasa le hizo a lo que
-  // YA había al empezar el día, y nada más.
+  out.ajustes=flu.aj;
+  // ── ARREGLO 266 · "valor de las monedas" = sus saldos, a sus tasas ────────
   //
-  // `tasas` (efectoTasasDesde) solo revalora las operaciones desde la apertura.
-  // Lo que ya tenía en bolívares o reales —lo de la apertura, lo prestado— se
-  // revalúa en "tienes" con cada lectura del mercado (ARREGLO 182) y no tenía
-  // explicación: caía en "sin registrar" y movía el número solo.
+  // Su regla, del 21/11: la revalorización sale de los MISMOS saldos y las
+  // MISMAS tasas con que se valúan "Empezaste" y "Tienes":
+  //     saldos de cierre × (1/tasa de hoy − 1/tasa de Empezaste)
+  // y lo que pasó en el día se cuenta a la tasa de Empezaste (_flujosDelDia),
+  // así la suma da "Tienes" sin contar dos veces el dinero del día.
   //
-  // La parte que falta es la revalorización de lo que había al empezar (n)
-  // MENOS lo que efectoTasas ya revalora (f), con las tasas de las dos fotos:
-  //     Σ (n − f) × (1/r_fin − 1/r_ini)
-  // Solo mira saldos que EXISTÍAN al empezar: un dinero que entra o sale hoy
-  // sin registrar no está en `n`, así que sigue saliendo en "sin registrar".
+  // Antes se armaba con dos piezas: el cambio de la línea de tasas de la
+  // conciliación entre las dos fotos, más (n − f) × Δ. La primera es un
+  // acumulado desde la apertura, y cambia también por cosas que no son la
+  // tasa. Medido con su export del 21/11 (+34,42 en pantalla):
+  //     cambio de la línea de tasas ..... +26,33
+  //        de ello, registros de días anteriores contados distinto en la
+  //        foto del 20/11 que hoy, a la MISMA tasa ................ +31,34
+  //     (n − f) × Δ ..................... +7,99
+  //     lo que de verdad le hizo la tasa a sus saldos ........... −8,29
+  // El bolívar pasó de 1.069,72 a 1.089 y el real de 5,9755 a 5,9994: los dos
+  // valen MENOS, y la pantalla decía "valen más".
   //
-  // Y lo que se liquidó SIN COBRO entre las dos fotos ya no está al final: su
-  // valor quedó fijo al liquidarlo (ab.tasaRetiro). Se revalúa solo hasta ese
-  // momento. Medido en Chromium: sin esto, un préstamo de socio liquidado por
-  // la mañana con la tasa moviéndose por la tarde dejaba +26,87 "sin
-  // registrar" que no eran de nadie.
+  // Lo que se liquidó SIN COBRO en el día ya no está al cierre: su valor quedó
+  // fijo al liquidarlo (ab.tasaRetiro) y la fila "Retiro de socios" lo resta a
+  // esa tasa. La diferencia con la tasa de Empezaste es tasa, y va aquí
+  // (ARREGLO 244).
   var liq={}, liqR={};
-  // ARREGLO 245: un préstamo que ya existía al abrir lo revalúa la
-  // conciliación, también su liquidación. Ajustarlo aquí lo contaría dos veces.
-  // Una foto de inicio de ANTES de este arreglo no llevaba lo de la apertura
-  // ni en `tasas` ni en `f`: su (n − f) ya revalúa lo de la apertura de hoy, y
-  // a `tasas` hay que quitarle la parte de la apertura de la foto final, o el
-  // día del cambio de versión diría que en un día se movió todo lo acumulado
-  // desde que abrió.
-  var _viejaIni=(a.rvA===undefined && b.rvA!==undefined);
-  var _apIds=_viejaIni?{}:(function(){ try{ return ((((conciliacionCapital()||{}).tasas||{}).apertura)||{}).prestIds||{}; }catch(e){ return {}; } })();
   (S.prestamos||[]).forEach(function(p){
     var mon=p.mon||"USDT"; if(mon==="USDT"||mon==="USD") return;
-    if(_apIds[String(p.id)]) return;
     var fr=_fraccionInteresPrestamo(p);
     (p.abonos||[]).forEach(function(ab){
       if(!ab.sinCobro) return;
@@ -43370,18 +43769,18 @@ function _diaContable(iso){
       if(tr>0) liqR[mon]=(liqR[mon]||0)+cap/tr; else liqR[mon]=null;
     });
   });
-  var reval=0;
-  Object.keys(ini.mon||{}).forEach(function(m){
-    var a=ini.mon[m], b=(fin.mon||{})[m];
-    if(!a||!(a.r>0)) return;
-    var L=liq[m]||0;
-    // lo liquidado hoy: de la tasa de la foto de inicio a la de liquidar
-    if(L && liqR[m]!==null && liqR[m]!==undefined) reval+=liqR[m]-L/a.r;
-    if(!b||!(b.r>0)) return;
-    reval+=((parseFloat(a.n)||0)-(parseFloat(a.f)||0)-L)*(1/b.r-1/a.r);
+  var valor=0;
+  Object.keys(fin.mon||{}).forEach(function(m){
+    var x=fin.mon[m], y=(ini.mon||{})[m];
+    if(!x||!(x.r>0)||!y||!(y.r>0)) return;
+    valor+=(parseFloat(x.n)||0)*(1/x.r-1/y.r);
   });
-  out.reval=r2(reval);
-  out.tasas=r2((_viejaIni?d("tasas")-(parseFloat(b.rvA)||0):d("tasas"))+out.reval);
+  Object.keys(liq).forEach(function(m){
+    var y=(ini.mon||{})[m];
+    if(!y||!(y.r>0)||liqR[m]===null||liqR[m]===undefined) return;
+    valor+=liqR[m]-liq[m]/y.r;
+  });
+  out.tasas=r2(valor);
   // La conciliación da por ida la parte de los socios desde que se gana
   // (resta `socios` de "deberías"), pero mientras no se les pague ese dinero
   // sigue en las cuentas. Medido en Chromium: con una socia al 50% de una ruta
